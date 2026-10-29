@@ -2,7 +2,7 @@
 
 This record decides the stance on a future hosted, multi-user version.
 
-- **Status:** Accepted. Amended by ADR-0063 (2026-10-27): one open workspace per user container; sharing a workspace between users excluded. Amended by ADR-0064 (2026-10-27, applied in S0047): no process-wide state; the re-check (R4) runs in hosted mode too.
+- **Status:** Accepted. Amended by ADR-0063 (2026-10-27): one open workspace per user container; sharing a workspace between users excluded. Amended by ADR-0064 (2026-10-27, applied in S0047): no process-wide state; the re-check (R4) runs in hosted mode too. Note of 2026-10-29 (S0056): the desktop trust prompt is deferred too (ADR-0040).
 - **Date:** 2026-10-24
 - **Deciders:** owner
 - **Area:** architecture, hosting
@@ -51,3 +51,9 @@ Owner, on ADR-0064: "we go back to one engine doing one job at a time and massiv
 - **Superseded:** "no module-level mutable state outside an allowlist, whose only process-wide entry is the heavy-load semaphore". **Instead:** there is no process-wide state at all. ADR-0064 replaced the semaphore with one engine doing one job at a time, behind a queue that hangs off `UserContainer` (INV-11, as amended on 2026-10-27); the state registry refuses a process-wide entry (`backend/tests/architecture/test_globals.py`).
 - **Superseded:** "the D2 background reconciliation is off in hosted mode". **Instead:** the re-check (R4) runs right after "saved" in every mode, hosted included, and is never switched off; it gates only the next save of that workspace (ADR-0008 and ADR-0010 amendments, ADR-0064 decision 7).
 - **Unchanged:** every other seam and guard of this record.
+
+## Note (2026-10-29): the desktop trust prompt is deferred too (ADR-0040)
+
+Owner, 2026-10-29, in session: "I'm wondering if we should remove this feature for now. None of the beancount tools I know have this.. it'll likely cause some confusion (unless explained well) to even well-versed users.. or, at minimum, add one more friction step whose answer is difficult to give precisely or correctly. I'd say, pause this feature. Mark it as something to be done later, and be done with it. What do you think?" (S0056 verifier round 1; the orchestrator agreed).
+- **Superseded in "Deferred until hosting is planned":** "(the desktop trust prompt for ledgers that run code, and its restrictive `LoadPolicy`, are NOT deferred: they ship in v0.4.0 per ADR-0010 and ADR-0040)". **Instead:** v0.4.0 has no desktop trust prompt; on desktop a ledger's plugins and `insert_pythonpath` run as Beancount runs them, and the desktop `LoadPolicy` body allows everything (ADR-0040 amendment "no trust prompt on desktop in v0.4.0"). A trust prompt is later work (BL-0156, `post-v0.4`; CAP-WS-TRUST `deferred`).
+- **Unchanged:** the hosted `LoadPolicy` body and plugin allowlist stay deferred until hosting is planned; the seam is kept.

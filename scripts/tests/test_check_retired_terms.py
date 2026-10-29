@@ -149,10 +149,23 @@ class Terms(unittest.TestCase):
                 self.assertEqual(names(hits(line)), ["limiter"], line)
 
     def test_every_spelling_of_the_hooks_folder_is_refused(self) -> None:  # S0056
-        for line in ("    hooks/          the feature's composables", "the `hooks/` folder", "hooks/useTree.ts",
-                     "`features/accounts/hooks/useTree.ts`", "src/features/transactions/hooks", "(hooks/, machines/)"):
+        for line in ("    hooks/          the feature's composables", "the `hooks/` folder", "src/hooks/useTree.ts",
+                     "`features/accounts/hooks/useTree.ts`", "src/features/transactions/hooks", "(hooks/, machines/)",
+                     # S0056 verifier round 1, F4 (the verifier's probes)
+                     "frontend/src/hooks/useTheme.ts holds shared composables", "`src/hooks/`",
+                     "the features' `hooks` folder", "features/accounts/Hooks/useTree.ts",
+                     "feature folders: queries.ts, machines/, hooks/, views/", "src/features/x/hooks.ts",
+                     "the `hooks`\ndirectory of a feature"):
             with self.subTest(line=line):
                 self.assertEqual(names(hits(line)), ["hooks/ folder"], line)
+
+    def test_git_and_claude_code_hooks_in_prose_pass(self) -> None:  # S0056 verifier round 1, F4
+        for line in ("Agents, skills and hooks/guards (S0000)", "Claude Code hooks/skills are installed once",
+                     "the guard in `hooks/guards.py` of `.claude/`", "`~/.claude/hooks/`",
+                     "git config core.hooksPath .githooks", "the `hooks` key of `.claude/settings.json`",
+                     "`.claude/hooks/guards.py` and `.githooks/pre-commit`"):
+            with self.subTest(line=line):
+                self.assertEqual(names(hits(line)), [], line)
 
     def test_a_term_split_by_a_line_break_is_refused_on_its_first_line(self) -> None:  # S0047 verifier V6
         found = hits("Saves go through the engine\npool, one slot per workspace.\n")

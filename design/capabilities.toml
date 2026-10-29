@@ -377,18 +377,17 @@ tests = []
 
 [[capability]]
 id = "CAP-WS-TRUST"
-area = "Setup and workspaces"
+area = "Deferred by decision (listed so \"did we do X?\" has an answer; not counted below)"
 capability = "Desktop trust prompt for ledgers that run code (plugins, `insert_pythonpath`); answer kept machine-local"
-v04 = "new"
-v04_note = "a ledger that runs code does not open until the user trusts it; Beancount's own plugins are trusted (ADR-0040 amendment of 2026-10-29; review:23 §5.1; review:18 §2.4)"
-status = "planned"
-milestone = "M2"
-release_blocking = "yes"
+v04 = "deferred"
+v04_note = "not in v0.4.0 (owner, 2026-10-29: \"I'd say, pause this feature. Mark it as something to be done later, and be done with it.\"): a ledger's plugins and `insert_pythonpath` run as Beancount runs them, as bean-check and Fava do; the user docs say to open only ledgers you trust (BL-0157); later work is BL-0156 (ADR-0040 amendment \"no trust prompt on desktop in v0.4.0\"; review:23 §5.1; review:18 §2.4)"
+status = "deferred"
+release_blocking = "no"
 doc = "—"
 legacy_entry = "—"
 demo = "no"
-backlog = ["BL-0156", "L11.M-1", "L11-02", "L11-06"]
-adrs = ["ADR-0040"]
+backlog = ["BL-0156", "BL-0157"]
+adrs = ["ADR-0040", "ADR-0041"]
 code = []
 tests = []
 
@@ -5327,7 +5326,7 @@ id = "CAP-DATA-PLUGINS"
 area = "Data and lifecycle"
 capability = "Ledgers using plugins (`implicit_prices`, documents, others)"
 v04 = "change"
-v04_note = "plugin-generated entries are never written to disk; ledgers that run code need desktop trust (review:10 I3; CAP-WS-TRUST)"
+v04_note = "plugin-generated entries are never written to disk; plugins and `insert_pythonpath` run as Beancount runs them, with no trust prompt in v0.4.0 (ADR-0040; CAP-WS-TRUST is deferred) (review:10 I3)"
 status = "planned"
 milestone = "M3"
 release_blocking = "yes"

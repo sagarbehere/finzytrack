@@ -2,7 +2,7 @@
 
 This record decides how the contract runs a full official load of text that is not yet on disk.
 
-- **Status:** Accepted. Amended by ADR-0064 (2026-10-27): guardrail 3's re-check runs after "saved" in every mode and is never switched off; the load rule's "heavy-load semaphore" becomes one engine job at a time.
+- **Status:** Accepted. Amended by ADR-0064 (2026-10-27): guardrail 3's re-check runs after "saved" in every mode and is never switched off; the load rule's "heavy-load semaphore" becomes one engine job at a time. Note of 2026-10-29 (S0056): on desktop every ledger loads in full; no trust prompt in v0.4.0 (ADR-0040).
 - **Date:** 2026-10-24
 - **Deciders:** owner
 - **Area:** write path, ledger
@@ -46,3 +46,9 @@ Owner, approving the first golden review's recommendations for the engine-schedu
 - **Superseded in guardrail 3:** "in the background; synchronously during rollout and dogfooding; off in hosted mode". **Instead:** after each committed write, the real `load_file` (through the `LoadPolicy`) is compared with the adopted result right after the save reports "saved", in every mode; the next save to that workspace waits for it (ADR-0008 amendment); a mismatch pauses saving, adopts the `load_file` result and shows the backup (`design/specs/engine-jobs.md` §6.7). It is never switched off. If hosting is ever planned, its cost is decided then, by a new ADR.
 - **Also (ADR-0064 decision 1):** the load rule's "both under the heavy-load semaphore" becomes "both inside engine jobs, which run one at a time".
 - **Unchanged:** the overlay load, the `LoadPolicy`, guardrails 1, 2 and 4, and the mismatch handling.
+
+## Note (2026-10-29): desktop loads every ledger in full (ADR-0040)
+
+Owner, 2026-10-29, in session: "I'm wondering if we should remove this feature for now. None of the beancount tools I know have this.. it'll likely cause some confusion (unless explained well) to even well-versed users.. or, at minimum, add one more friction step whose answer is difficult to give precisely or correctly. I'd say, pause this feature. Mark it as something to be done later, and be done with it. What do you think?" (S0056 verifier round 1, F3).
+- **No longer holds on desktop:** "Untrusted code-running ledgers load under the hosted body until the user trusts them (ADR-0040)". **Instead:** v0.4.0 has no trust prompt (ADR-0040 amendment "no trust prompt on desktop in v0.4.0"); on desktop every ledger loads in full under the permissive body, its plugins and `insert_pythonpath` included, as `bean-check` and Fava load it. The hosted body is still written only when hosting is planned (ADR-0041).
+- **Unchanged:** one `LoadPolicy` parameter on every load path, and everything else in this record.

@@ -483,3 +483,4 @@ Format:
 - Why: a `hooks/` folder in a Vue app, beside git and Claude Code hooks, is the React leftover S0055 cleaned up elsewhere.
 - Expected effect: no current-state document names a frontend `hooks/` folder again.
 - Status: kept (invariant wording owner-approved; the term is an agent-approved tightening asked for by the owner's rename; S0056).
+- Fix (S0056 verifier round 1, F4, 2026-10-29): the term now matches exactly a frontend `hooks/` folder: `src/hooks` (so `frontend/src/hooks/`), `features/<x>/hooks`, a bare `hooks/` that names the folder alone, and "`hooks` folder"; prose such as "hooks/guards", "hooks/skills" and Claude Code's `hooks/guards.py` passes (ADR-0066 note).

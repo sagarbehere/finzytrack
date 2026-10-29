@@ -2,7 +2,7 @@
 
 This record states the security requirements every v0.4 build meets from the start, and how security work is handled in a public repo.
 
-- **Status:** Accepted
+- **Status:** Accepted. Amended 2026-10-29 (S0056): no trust prompt on desktop in v0.4.0 (a same-day amendment that asked for one is superseded).
 - **Date:** 2026-10-24
 - **Deciders:** owner
 - **Area:** security, privacy
@@ -46,6 +46,8 @@ Owner: "I am accepting Q16 recommendation." (2026-10-25, in session)
 
 ## Amendment (2026-10-29): a ledger that runs code does not open until the user trusts it
 
+*Superseded the same day by the amendment "no trust prompt on desktop in v0.4.0" below (owner paused the feature, 2026-10-29); kept for the record.*
+
 Owner, 2026-10-29, in session: "Yes, rename to composables everywhere including INV-12. Agreed with the rest. No, ledger that runs code dosen not open before I trust it." (option 1 of `design/inbox/answered/20261028-untrusted-ledger-load.md`); on how trust is stored, owner, 2026-10-29, in session: "Yes, that works" (that file's section "How trust is stored").
 - **Replaces** "until trusted, it loads under the restrictive policy": on desktop, a ledger that runs code **does not open** until the user trusts it. No figure is ever shown that was computed without the ledger's own code. Example: a ledger whose plugin adds price entries would show a different net worth without it; such a ledger is not opened at all until trusted.
 - **A ledger runs code** when it has any of: a `plugin` directive naming a module outside Beancount's own `beancount.plugins.*` and `beancount.ops.*`; an `option "insert_pythonpath"`; a plugin that evaluates its config as Python, given a config that is not a plain literal (one Python's `ast.literal_eval` accepts). The last one is about Beancount's own plugins: in Beancount 3.2.0, `check_average_cost`, `check_commodity` and `commodity_attr` pass their config to `eval` (the list is pinned to the Beancount version and redone on an upgrade). **Beancount's own plugins are otherwise trusted** and never ask, whatever their config (`currency_accounts` takes an account name, which is no Python literal and is never evaluated).
@@ -54,6 +56,16 @@ Owner, 2026-10-29, in session: "Yes, rename to composables everywhere including 
 - **`LoadPolicy`'s desktop body** allows a load only when the ledger runs no code or its code set is trusted; to judge a config, `may_run_plugin` receives each plugin's config (S0049 gives it only the name).
 - INV-03 is not narrowed: a trusted ledger loads in full, as Beancount loads it; the only addition is the question before its code first runs. The hosted body stays deferred (ADR-0041).
 - Built in M2 with the open flow: BL-0156 (it also closes the desktop part of L11-02, L11-06 and L11.M-1).
+
+## Amendment (2026-10-29, later): no trust prompt on desktop in v0.4.0
+
+Owner, 2026-10-29, in session, after the S0056 verifier found that one more of Beancount's own plugins (`beancount.plugins.pedantic`) passes its config to `eval`: "I'm wondering if we should remove this feature for now. None of the beancount tools I know have this.. it'll likely cause some confusion (unless explained well) to even well-versed users.. or, at minimum, add one more friction step whose answer is difficult to give precisely or correctly. I'd say, pause this feature. Mark it as something to be done later, and be done with it. What do you think?" The orchestrator agreed. This supersedes, for v0.4.0, the owner's earlier answer of the same day, "No, ledger that runs code dosen not open before I trust it." (the amendment above, now superseded).
+- **Superseded:** the original decision's "asks 'This ledger runs code … Trust?' on first open; the answer is machine-local; until trusted, it loads under the restrictive policy", and the whole amendment above (no-open-before-trust, the trust screen, the trust record).
+- **Instead, on desktop in v0.4.0 there is no trust prompt.** A ledger's plugins and `insert_pythonpath` run as Beancount runs them, as `bean-check` and Fava do. `LoadPolicy`'s desktop body allows everything, as S0049 built it (`ledger_engine.ledger.policy.DESKTOP`). This is option 3 of `design/inbox/answered/20261028-untrusted-ledger-load.md`.
+- **The honest limit (for users):** opening a ledger runs its plugins and code folders, with your user's rights. Open only ledgers you trust, exactly as with `bean-check` or Fava. The user docs say so (BL-0157).
+- **The seam stays.** `LoadPolicy` is still asked before every file read, plugin, code folder and documents root, so a later trust prompt (BL-0156, `post-v0.4`) and the hosted body (ADR-0041) need no change to the load.
+- **Moot:** the question of the S0056 verifier (F3, second part) whether the pre-trust scan of a ledger's code reads includes outside any confinement: there is no pre-trust scan in v0.4.0. Also moot: which of Beancount's own plugins evaluate their config (F1) and whether the trust key holds each config's text (F2); BL-0156 records both for whoever builds the prompt.
+- INV-03 is unchanged: every ledger loads in full, as Beancount loads it. CAP-WS-TRUST is `deferred`; L11-02, L11-06 and L11.M-1 are `post-v0.4` (only their hosted body is left).
 
 ## References
 

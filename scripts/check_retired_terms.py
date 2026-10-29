@@ -12,7 +12,8 @@ Since S0055 it also refuses the React target of ADR-0006, which ADR-0053 replace
 documents described React in their body for four days under a "read the Vue equivalents" banner, until the owner
 found it (2026-10-29). The Vue stack's own names (vue-sonner, `vue-tsc --noEmit`, shadcn-vue on Reka UI) pass, and so
 do bare "hooks" (git hooks, Vue Query's own word) and the verb "react". Since S0056 a `hooks/` folder of the frontend
-is refused (it is `composables/`, owner 2026-10-29); git's and Claude Code's hook paths pass.
+is refused (it is `composables/`, owner 2026-10-29); git's and Claude Code's hook paths, and prose such as
+"hooks/guards", pass.
 
 Checked (the current-state documents): `design/ARCHITECTURE.md`, `design/INVARIANTS.md`, `design/ENGINEERING.md`,
 `design/glossary.md`, every Markdown file under `design/specs/`, `design/capabilities.toml` and `design/backlog.md`;
@@ -145,9 +146,13 @@ ACTIVE: tuple[Term, ...] = (
     Term("tsc type gate", r"(?<![\w-])tsc --noEmit\b", case=True),  # vue-tsc --noEmit passes
     Term("S13 pending", r"\bpending S13\b|\b(?:if|until) (?:spike )?S13\b|\bS13 (?:keeps|fails)\b"),
     Term("Vue fallback", r"\bVue fallback\b"),
-    # S0056: the features' folder of composables is `composables/` (owner, 2026-10-29). A `hooks/` path segment that
-    # starts a path, or one under `features/`; `.githooks/`, `.claude/hooks/` and `core.hooksPath` pass.
-    Term("hooks/ folder", r"(?<![\w./-])hooks/|\bfeatures/[^\s/`'\"]+/hooks\b"),
+    # S0056: the features' folder of composables is `composables/` (owner, 2026-10-29). Refused: `src/hooks`
+    # (`frontend/src/hooks/` too), `features/<x>/hooks`, a bare `hooks/` that names the folder alone (a tree or list
+    # entry, "`hooks/`") and "`hooks` folder". A `hooks/` followed by a name passes, so "hooks/guards", "hooks/skills"
+    # and `hooks/guards.py` (Claude Code's) pass, and so do `.githooks/`, `.claude/hooks/` and `core.hooksPath`
+    # (S0056 verifier round 1, F4). Stated limit: a bare `hooks/useX.ts` with no `src/` or `features/` before it passes.
+    Term("hooks/ folder", r"\bsrc/hooks\b|\bfeatures/[^\s/`'\"]+/hooks\b|(?<![\w./~-])hooks/(?![\w.*-])"
+                          r"|`hooks`\s+(?:folders?|director(?:y|ies))\b"),
 )
 
 # TODO(BL-0109): the engine-jobs slice removes the per-request time limits (spec §5.5); it moves these into ACTIVE

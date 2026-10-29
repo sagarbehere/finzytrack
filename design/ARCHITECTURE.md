@@ -210,9 +210,10 @@ engine/src/ledger_engine/
                  also each include's glob answer, plain paths too, documents listings with each name's presence, the
                  files of the `document` entries Beancount checks)
     policy.py    LoadPolicy: may_read, may_run_plugin, may_add_pythonpath, may_scan_documents (built: the desktop
-                 body for a trusted ledger, which allows all; the trust body is BL-0156, M2: on desktop a ledger
-                 that runs code does not open until the user trusts it, ADR-0040 amendment of 2026-10-29; the
-                 hosted body is deferred, ADR-0041) (S0049)
+                 body, which allows all: v0.4.0 has no trust prompt, so a ledger's plugins and insert_pythonpath
+                 run as Beancount runs them, as bean-check and Fava do; limit: opening a ledger runs its code, so
+                 open only ledgers you trust (ADR-0040 amendment "no trust prompt on desktop in v0.4.0"); a later
+                 trust prompt is BL-0156 and the hosted body ADR-0041, both post-v0.4) (S0049)
     contract.py  the write-safety contract as a pipeline of steps (ADR-0008), each fail-closed
     writer.py    the single commit path: locks -> fingerprint -> backup -> atomic write -> read-back
     journal.py   the write-intent journal for multi-file commits (ADR-0012)

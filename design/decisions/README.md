@@ -25,7 +25,7 @@ This folder holds the architecture decision records of Finzytrack v0.4: why the 
 | [ADR-0007](ADR-0007-tauri-2-desktop-shell.md) | Tauri 2 desktop shell with a Python sidecar | Accepted | 2026-10-24 | desktop, release |
 | [ADR-0008](ADR-0008-write-safety-contract.md) | Every ledger write passes the write-safety contract | Accepted; amended by ADR-0064 and S0047 (parse cache) | 2026-10-24 | write path, data safety |
 | [ADR-0009](ADR-0009-fava-style-source-splicing.md) | Fava-style source splicing; mutators are edit producers | Accepted | 2026-10-24 | write path |
-| [ADR-0010](ADR-0010-overlay-load-with-load-policy.md) | Validate candidate text with an overlay load (D2), behind a LoadPolicy | Accepted; amended by ADR-0064 | 2026-10-24 | write path, ledger |
+| [ADR-0010](ADR-0010-overlay-load-with-load-policy.md) | Validate candidate text with an overlay load (D2), behind a LoadPolicy | Accepted; amended by ADR-0064; note by S0056 (desktop loads in full) | 2026-10-24 | write path, ledger |
 | [ADR-0011](ADR-0011-no-resident-ledger.md) | No resident ledger; bounded memory and serialized writes | Accepted; amended by ADR-0064 | 2026-10-24 | backend, performance, memory |
 | [ADR-0012](ADR-0012-write-intent-journal-and-recovery.md) | Write-intent journal and one recovery spec | Accepted; amended by ADR-0063, ADR-0064 | 2026-10-24 | write path, data safety, lifecycle |
 | [ADR-0013](ADR-0013-atomic-swap-replace.md) | Replace by atomic swap; the external-editor race is accepted with detection | Accepted | 2026-10-24 | write path, data safety |
@@ -55,10 +55,10 @@ This folder holds the architecture decision records of Finzytrack v0.4: why the 
 | [ADR-0037](ADR-0037-server-state-with-tanstack-query.md) | Server state lives in TanStack Query, scoped by workspace, invalidated by ledger version | Accepted; amended by S0056 (Vue 3) | 2026-10-24 | frontend, API |
 | [ADR-0038](ADR-0038-api-contract-and-code-generation.md) | API contract: one envelope, plans and confirm, offline OpenAPI, openapi-typescript | Accepted | 2026-10-24 | API, codegen |
 | [ADR-0039](ADR-0039-errors-logging-and-diagnostics.md) | Errors, logging and diagnostics | Accepted | 2026-10-24 | backend, frontend, observability, privacy |
-| [ADR-0040](ADR-0040-security-foundations.md) | Security foundations are part of the shell from the first build | Accepted; amended by S0056 (no open before trust) | 2026-10-24 | security, privacy |
-| [ADR-0041](ADR-0041-no-hosted-multi-user-build.md) | Hosted multi-user mode: don't foreclose, don't build | Accepted; amended by ADR-0063, ADR-0064 | 2026-10-24 | architecture, hosting |
+| [ADR-0040](ADR-0040-security-foundations.md) | Security foundations are part of the shell from the first build | Accepted; amended by S0056 (no trust prompt on desktop in v0.4.0) | 2026-10-24 | security, privacy |
+| [ADR-0041](ADR-0041-no-hosted-multi-user-build.md) | Hosted multi-user mode: don't foreclose, don't build | Accepted; amended by ADR-0063, ADR-0064; note by S0056 (desktop trust prompt deferred) | 2026-10-24 | architecture, hosting |
 | [ADR-0042](ADR-0042-licence.md) | Licence: owner code GPL-2.0-or-later; notices and licence checks; legal advice before v0.4.0 | Accepted | 2026-10-24 | legal, release |
-| [ADR-0043](ADR-0043-release-scope-and-release-gate.md) | Release scope: exactly four capabilities are deferred; the release gate | Accepted; amended by ADR-0062, ADR-0064 | 2026-10-24 | release, scope |
+| [ADR-0043](ADR-0043-release-scope-and-release-gate.md) | Release scope: exactly four capabilities are deferred; the release gate | Accepted; amended by ADR-0062, ADR-0064; note by S0056 (CAP-WS-TRUST deferred) | 2026-10-24 | release, scope |
 | [ADR-0044](ADR-0044-process-lanes-and-review-cadences.md) | Process lanes and review cadences | Accepted | 2026-10-24 | process |
 | [ADR-0045](ADR-0045-local-agents-deterministic-ci-direct-commits.md) | Agents run locally; CI runs deterministic gates only; direct commits on `next` | Accepted; amended by ADR-0058 | 2026-10-24 | process, CI, repository |
 | [ADR-0046](ADR-0046-g1-checkpoint-and-pilot.md) | The G1 go/no-go checkpoint, the pilot, and the M1a/M1b split | Accepted | 2026-10-24 | process, planning |
@@ -81,7 +81,7 @@ This folder holds the architecture decision records of Finzytrack v0.4: why the 
 | [ADR-0063](ADR-0063-one-open-workspace-no-shared-files.md) | One open workspace at a time, and every unfinished save recovered before any workspace opens | Accepted; amended by ADR-0064 and S0047 | 2026-10-27 | workspaces, API, lifecycle, data safety, hosting |
 | [ADR-0064](ADR-0064-one-engine-one-job-at-a-time.md) | One engine, one job at a time | Accepted; amended by S0047 | 2026-10-27 | engine, scheduling, write path, performance |
 | [ADR-0065](ADR-0065-agents-ask-the-owner-to-stop-the-running-app.md) | Agents ask the owner to stop the running app; the guard protects data, not the app | Accepted | 2026-10-29 | process, agents, invariants |
-| [ADR-0066](ADR-0066-frontend-composables-folder-and-inv-12-wording.md) | The features' headless logic lives in `composables/`; INV-12 says "composables" | Accepted | 2026-10-29 | frontend, invariants |
+| [ADR-0066](ADR-0066-frontend-composables-folder-and-inv-12-wording.md) | The features' headless logic lives in `composables/`; INV-12 says "composables" | Accepted; note by S0056 (the check made exact) | 2026-10-29 | frontend, invariants |
 
 ## Template
 

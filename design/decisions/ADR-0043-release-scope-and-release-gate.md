@@ -2,7 +2,7 @@
 
 This record decides what v0.4.0 may ship without, and the gate that must hold before release.
 
-- **Status:** Accepted. Amended by ADR-0062 (2026-10-27): Share mode is cut, so it is no longer a release-blocking item. Amended by ADR-0064 (2026-10-27, applied in S0047): gate item 7's semaphore becomes the engine job queue.
+- **Status:** Accepted. Amended by ADR-0062 (2026-10-27): Share mode is cut, so it is no longer a release-blocking item. Amended by ADR-0064 (2026-10-27, applied in S0047): gate item 7's semaphore becomes the engine job queue. Note of 2026-10-29 (S0056): CAP-WS-TRUST becomes `deferred` (ADR-0040).
 - **Date:** 2026-10-24
 - **Deciders:** owner
 - **Area:** release, scope
@@ -54,3 +54,7 @@ review:F §2 item 3; review:21 §3 step 8; review:27 §0.1; ADR-0007, ADR-0014, 
 
 Owner, on ADR-0064: "we go back to one engine doing one job at a time and massively simplify everything" (2026-10-27, in session). Applied in S0047 (convergence audit C19).
 - **Superseded in gate item 7:** "every full load through the overlay and the semaphore". **Instead:** every full load runs inside an engine job, through the overlay or `load_file` behind the `LoadPolicy` (ADR-0010's load rule as amended), and engine jobs run one at a time. The rest of item 7 and of the gate is unchanged.
+
+## Note (2026-10-29): the desktop trust prompt leaves v0.4.0 (ADR-0040)
+
+Owner, 2026-10-29, in session: "I'd say, pause this feature. Mark it as something to be done later, and be done with it." (the full quote is in ADR-0040's amendment "no trust prompt on desktop in v0.4.0"). CAP-WS-TRUST, a release-blocking `planned` row until then, becomes `deferred` (not in v0.4.0's scope, blocks nothing). The four deferred `planned` capabilities and the release gate are unchanged.

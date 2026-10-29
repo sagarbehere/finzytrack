@@ -4,7 +4,7 @@
 
 Every user-visible capability of Finzytrack, with its status: `planned`, `partial`, `built`, `cut` (absent on purpose) or `deferred` (not in v0.4.0). This page is the index; each row's full description, what changes in v0.4, where it lived in v0.3, its doc page, backlog items, ADRs, code and tests are in `design/capabilities.toml` (search for the ID). Edit the `.toml`, then run `python3 scripts/gen_capabilities.py`. Rules: `design/process/PROCESS.md` ("Project memory").
 
-**Totals:** cut 16, deferred 12, partial 2, planned 312; 342 rows; release-blocking 309.
+**Totals:** cut 16, deferred 13, partial 2, planned 311; 342 rows; release-blocking 308.
 
 ## Setup and workspaces
 
@@ -32,7 +32,6 @@ Every user-visible capability of Finzytrack, with its status: `planned`, `partia
 | CAP-WS-BRING-IN | "Bring the ledger into this folder": copy an externally referenced ledger set in, making the… | new | planned | M3 | yes |
 | CAP-WS-TEST-COPY | Make a test copy: copies files (never an external reference) into a new workspace marked… | new | planned | M3 | yes |
 | CAP-WS-SECRETS | Per-workspace secret scope | new | planned | M3 | yes |
-| CAP-WS-TRUST | Desktop trust prompt for ledgers that run code (plugins, `insert_pythonpath`) | new | planned | M2 | yes |
 | CAP-WS-SYNC-CONFLICT | Detect sync-client conflicted copies in the ledger set and `.finzytrack/` | new | planned | M2 | yes |
 | CAP-WS-DEMO | "Try the demo": a separate demo workspace (`kind: demo`), replaced on each release without asking… | new | planned | M3 | yes |
 | CAP-WS-REGISTRY | Manage workspaces: recents, pin, rename, reveal, locate, forget (never deletes files) | new | planned | M2 | yes |
@@ -48,6 +47,23 @@ Every user-visible capability of Finzytrack, with its status: `planned`, `partia
 | CAP-LEGACY-ADOPT | Bring in a v0.2/v0.3 install: detect it, classify each ledger, copy settings, rules and dashboards | new | planned | M3 | yes |
 | CAP-LEGACY-COEXIST | Share a ledger with a running legacy app: take every legacy lock, banner when a legacy app runs… | new | cut | M3 | n/a |
 | CAP-WS-MULTIWINDOW | Several native windows on different workspaces | cut | cut | M2 | n/a |
+
+## Deferred by decision (listed so "did we do X?" has an answer; not counted below)
+
+| ID | Capability | v0.4 | Status | Milestone | Blocks release |
+|---|---|---|---|---|---|
+| CAP-WS-TRUST | Desktop trust prompt for ledgers that run code (plugins, `insert_pythonpath`) | deferred | deferred | — | no |
+| CAP-LEGACY-REIMPORT | Re-import settings from the legacy install later, with a per-file diff | deferred | deferred | — | no |
+| CAP-WS-LIBRARY | App-level user library of dashboards/rules referenced by workspaces | deferred | deferred | — | no |
+| CAP-HOSTED-WORKSPACES | Hosted multi-user workspaces | deferred | deferred | — | no |
+| CAP-FISCAL-YEAR | Fiscal year (start month and day) for presets, budgets, dashboards | deferred | deferred | — | no |
+| CAP-BUD-GOALS | Asset/Liability goals (a target balance by a date) | deferred | deferred | — | no |
+| CAP-DASH-GUI-BUILDER | GUI dashboard builder | deferred | deferred | — | no |
+| CAP-PHONE-UI | A phone UI | deferred | deferred | — | no |
+| CAP-INV-TAX-PROFILE | Jurisdiction rules (Indian debt MFs, holding periods) | deferred | deferred | — | no |
+| CAP-INV-TWR | Time-weighted return beside a benchmark | deferred | deferred | — | no |
+| CAP-SEC-KEYCHAIN | OS keychain for secrets | deferred | deferred | — | no |
+| CAP-MIRROR-INCREMENTAL | Incremental mirror diff | deferred | deferred | — | no |
 
 ## Accounts
 
@@ -456,19 +472,3 @@ Every user-visible capability of Finzytrack, with its status: `planned`, `partia
 | CAP-UI-A11Y | Accessible names, linked labels and errors, tab semantics, keyboard alternatives to mouse-only… | change | planned | M2 | yes |
 | CAP-UI-ROUTER | Per-route scroll restoration of the main pane | keep | planned | M2 | yes |
 | CAP-APP-OFFLINE | Everything works offline except prices, AI, IMAP and the update check | new | planned | M10 | yes |
-
-## Deferred by decision (listed so "did we do X?" has an answer; not counted below)
-
-| ID | Capability | v0.4 | Status | Milestone | Blocks release |
-|---|---|---|---|---|---|
-| CAP-LEGACY-REIMPORT | Re-import settings from the legacy install later, with a per-file diff | deferred | deferred | — | no |
-| CAP-WS-LIBRARY | App-level user library of dashboards/rules referenced by workspaces | deferred | deferred | — | no |
-| CAP-HOSTED-WORKSPACES | Hosted multi-user workspaces | deferred | deferred | — | no |
-| CAP-FISCAL-YEAR | Fiscal year (start month and day) for presets, budgets, dashboards | deferred | deferred | — | no |
-| CAP-BUD-GOALS | Asset/Liability goals (a target balance by a date) | deferred | deferred | — | no |
-| CAP-DASH-GUI-BUILDER | GUI dashboard builder | deferred | deferred | — | no |
-| CAP-PHONE-UI | A phone UI | deferred | deferred | — | no |
-| CAP-INV-TAX-PROFILE | Jurisdiction rules (Indian debt MFs, holding periods) | deferred | deferred | — | no |
-| CAP-INV-TWR | Time-weighted return beside a benchmark | deferred | deferred | — | no |
-| CAP-SEC-KEYCHAIN | OS keychain for secrets | deferred | deferred | — | no |
-| CAP-MIRROR-INCREMENTAL | Incremental mirror diff | deferred | deferred | — | no |

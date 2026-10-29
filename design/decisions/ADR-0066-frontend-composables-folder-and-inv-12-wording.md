@@ -2,7 +2,7 @@
 
 This record renames the frontend features' `hooks/` folder to `composables/` and changes INV-12's wording to match, the Vue 3 word for the same thing (ADR-0053).
 
-- **Status:** Accepted
+- **Status:** Accepted. Note of 2026-10-29: decision 3's check made exact (S0056 verifier round 1).
 - **Date:** 2026-10-29
 - **Deciders:** owner: "Yes, rename to composables everywhere including INV-12. Agreed with the rest. No, ledger that runs code dosen not open before I trust it." (2026-10-29, in session; S0056)
 - **Area:** frontend, invariants
@@ -31,3 +31,7 @@ ADR-0053 chose Vue 3 and read "hooks" in the design documents as composables. S0
 ## References
 
 INV-12; ADR-0036, ADR-0053; S0055 journal (open items 1 and 2); S0056 journal; IMP-0048.
+
+## Note (2026-10-29): decision 3 made exact (S0056 verifier round 1, F4)
+
+Decision 3 means any frontend `hooks/` folder, and only that. The check's first wording ("a `hooks/` segment that starts a path, or one under `features/`") missed `frontend/src/hooks/`, `src/hooks/` and "the features' `hooks` folder", and refused prose such as "hooks/guards", "hooks/skills" and Claude Code's `hooks/guards.py`. **Instead** it refuses `src/hooks` (so `frontend/src/hooks/` too), `features/<x>/hooks`, a bare `hooks/` that names the folder alone (a tree or list entry, "`hooks/`") and "`hooks` folder"/"directory"; a `hooks/` followed by a name passes. Stated limit: a bare `hooks/useX.ts` with no `src/` or `features/` before it passes. Tests: `scripts/tests/test_check_retired_terms.py` (the verifier's probes, both ways).
