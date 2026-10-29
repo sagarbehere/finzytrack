@@ -19,6 +19,7 @@ import fcntl
 import inspect
 import os
 import queue
+import resource
 import signal
 import subprocess
 import sys
@@ -34,6 +35,7 @@ import pytest
 from app.platform.adapters.engine_client import (
     EngineClient,
     EngineCommand,
+    _Lines,  # pyright: ignore[reportPrivateUsage]
     _pump_lines_until_reaped,  # pyright: ignore[reportPrivateUsage]
     next_request_id,
 )
@@ -60,6 +62,8 @@ from app.platform.engine_supervision import (
     Idle,
     Ready,
     RestartPolicy,
+    Send,
+    SupervisionEvent,
     Unavailable,
 )
 from app.platform.observability import Event
@@ -2156,3 +2160,157 @@ def test_an_engine_dead_between_requests_is_noticed_before_its_reaper_sees_it(fa
     finally:
         ops.release.set()
         c.close()
+
+
+# -- S0057 verifier round 2 -------------------------------------------------------------------------------------------
+
+
+def gated(c: EngineClient) -> Callable[[EngineEvent], None]:
+    def on_event(event: EngineEvent) -> None:
+        if isinstance(event, GateReached):
+            assert c.proceed()
+
+    return on_event
+
+
+SECOND_REQUEST = SLOW_WRITE.replace(
+    "sys.stdin.read()",
+    "req = json.loads(sys.stdin.readline())\n"
+    "send({'v': 2, 'id': req['id'], 'op': req['op'], 'ok': True, 'result': {'second': 'ran'}})\n"
+    "sys.stdin.read()",
+)
+
+
+def test_a_cancel_at_the_start_of_the_next_call_after_a_proceeded_job_is_not_lost(tmp_path: Path) -> None:
+    """R2-F2 (§4: past the commit point is the job's, not the engine's; §5.2): the previous job's commit point must
+    not outlive it. A Cancel of the next call, between its start and its request, ends that call."""
+    c = EngineClient(EngineCommand(argv=(sys.executable, "-I", "-c", SECOND_REQUEST, str(tmp_path / "m")), env=None))
+    try:
+        assert isinstance(c.start(), EngineInfo)
+        assert bounded_call(c, "save", {}, gated(c)) == {}
+        real_feed = c._feed  # pyright: ignore[reportPrivateUsage] (the interleaving is forced at this one point)
+
+        def feed(event: SupervisionEvent) -> object:
+            if isinstance(event, Send):  # the second call is in flight, its request not yet handed over
+                canceller = threading.Thread(target=lambda: c.end("cancel"))
+                canceller.start()
+                canceller.join(DEADLINE)
+            return real_feed(event)
+
+        c._feed = feed  # type: ignore[method-assign]
+        out = bounded_call(c, "second", {}, lambda _e: None)
+        assert out == EngineFailure("cancelled", "the engine was ended by us (cancel)")
+    finally:
+        c.close()
+
+
+@pytest.mark.parametrize("how", ["retire", "cancel", "close"])
+def test_after_a_proceeded_job_an_idle_end_still_ends_the_engine(tmp_path: Path, how: str) -> None:
+    """@regression-guard (S0057 verifier R2-F3; §5.1: "An engine that ran user code is ended after its job"): the
+    commit point belongs to its request; once the job has finished, a retire, Cancel or close of the idle engine ends
+    it, and the next call gets a fresh engine."""
+    ends = Ends()
+    c = EngineClient(
+        EngineCommand(argv=(sys.executable, "-I", "-c", SECOND_REQUEST, str(tmp_path / "m")), env=None),
+        on_engine_ended=ends,
+    )
+    try:
+        assert isinstance(c.start(), EngineInfo)
+        assert c.serial == 1
+        assert bounded_call(c, "save", {}, gated(c)) == {}
+        if how == "close":
+            c.close()
+            assert isinstance(c.state, Closed)
+        else:
+            c.end(how)  # type: ignore[arg-type]
+            assert c.state == Idle(())
+        assert ends.wait(1)
+        assert ends.reports[0].reason == how
+        if how != "close":
+            assert isinstance(c.start(), EngineInfo)
+            assert c.serial == 2
+    finally:
+        c.close()
+
+
+def test_a_close_past_the_commit_point_is_reported_as_our_close(tmp_path: Path) -> None:
+    """R2-F1 (the end report, R1-F3): a close during a job past its commit point is settled after the job; the end it
+    causes is our `close`, not a failure's `stop`."""
+    ends = Ends()
+    c = EngineClient(
+        EngineCommand(argv=(sys.executable, "-I", "-c", SLOW_WRITE, str(tmp_path / "m")), env=None),
+        on_engine_ended=ends,
+    )
+    try:
+        assert isinstance(c.start(), EngineInfo)
+        t, out = in_thread(lambda: c.call("save", {}, on_event=gated(c)))
+        assert wait_until(lambda: (tmp_path / "m.half").exists())
+        c.close()
+        t.join(DEADLINE)
+        assert out == [{}]
+        assert wait_until(lambda: isinstance(c.state, Closed))
+        assert ends.wait(1)
+        assert ends.reports[0].reason == "close"
+    finally:
+        c.close()
+
+
+def test_the_line_splitter_is_linear() -> None:
+    """R2-F4: a 16 MiB reply in 16 KiB pipe chunks is split in time linear in its size (the old `readline` was); the
+    first splitter rescanned and copied the buffer on every chunk."""
+    lines_queue: queue.Queue[object] = queue.Queue()
+    lines = _Lines(lines_queue)  # pyright: ignore[reportArgumentType]
+    chunk = b"a" * 16384
+    n = (16 * 1024 * 1024 - 1024) // len(chunk)
+    began = time.perf_counter()
+    for _ in range(n):
+        lines.feed(chunk)
+    lines.feed(b"\n")
+    split = time.perf_counter() - began
+    began = time.perf_counter()
+    buf = bytearray()
+    for _ in range(n):
+        buf += chunk
+    accumulate = time.perf_counter() - began
+    assert lines_queue.qsize() == 1
+    assert split < 10 * accumulate + 0.05, (split, accumulate)
+
+
+def test_many_small_lines_in_one_chunk_are_split_in_order() -> None:
+    """@regression-guard (R2-F4): the linear splitter keeps the lines, their order and a last partial line."""
+    lines_queue: queue.Queue[object] = queue.Queue()
+    lines = _Lines(lines_queue)  # pyright: ignore[reportArgumentType]
+    lines.feed(b"".join(b"%d\n" % i for i in range(5000)) + b"tail")
+    lines.end()
+    got = [lines_queue.get_nowait() for _ in range(lines_queue.qsize())]
+    assert got == [b"%d\n" % i for i in range(5000)] + [b"tail", None]
+
+
+@pytest.mark.skipif(os.name != "posix", reason="the reply pump runs on POSIX; Windows is BL-0087")
+def test_the_reply_pump_reads_a_descriptor_above_fd_setsize() -> None:
+    """R2-F5: `select.select` refuses a descriptor at or above FD_SETSIZE (1024), which a sidecar with many open files
+    can reach; the pump must still read the live engine's reply."""
+    soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+    if hard != resource.RLIM_INFINITY and hard < 1600:
+        pytest.skip("the hard limit on open files is below the test's descriptors")
+    resource.setrlimit(resource.RLIMIT_NOFILE, (max(soft, 2048), hard))
+    out_read, out_write = os.pipe()
+    wake_read, wake_write = os.pipe()
+    high_out, high_wake = os.dup2(out_read, 1500), os.dup2(wake_read, 1501)
+    os.close(out_read)
+    os.close(wake_read)
+    replies: queue.Queue[object] = queue.Queue()
+    try:
+        t = threading.Thread(
+            target=_pump_lines_until_reaped, args=(os.fdopen(high_out, "rb"), replies, high_wake), daemon=True
+        )
+        t.start()
+        os.write(out_write, b'{"v":2,"id":1,"op":"x","ok":true,"result":{}}\n')
+        assert replies.get(timeout=DEADLINE) == b'{"v":2,"id":1,"op":"x","ok":true,"result":{}}\n'
+        os.write(wake_write, b"x")
+        t.join(DEADLINE)
+        assert replies.get_nowait() is None
+    finally:
+        os.close(out_write)
+        os.close(wake_write)
+        resource.setrlimit(resource.RLIMIT_NOFILE, (soft, hard))

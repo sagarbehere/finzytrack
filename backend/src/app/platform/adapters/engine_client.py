@@ -414,30 +414,37 @@ the pipe (a pipe's buffer is 16 KiB to 1 MiB), so a child that escaped the group
 
 class _Lines:
     """Splits the output into reply lines as `readline(MAX_LINE_BYTES + 2)` would: a line longer than the limit is
-    passed on cut, without its newline, so the decoder refuses it."""
+    passed on cut, without its newline, so the decoder refuses it. Linear in the output: each byte is scanned once
+    (S0057 verifier R2-F4)."""
 
     def __init__(self, replies: queue.Queue[_Reply]) -> None:
         self._replies = replies
-        self._buf = b""
+        self._buf = bytearray()
+        self._scanned = 0  # the bytes before this offset hold no newline
 
     def feed(self, chunk: bytes) -> None:
         self._buf += chunk
         limit = MAX_LINE_BYTES + 2
+        start = 0
         while True:
-            end = self._buf.find(b"\n", 0, limit)
+            end = self._buf.find(b"\n", max(self._scanned, start), start + limit)
             if end >= 0:
-                self._replies.put(self._buf[: end + 1])
-                self._buf = self._buf[end + 1 :]
-            elif len(self._buf) >= limit:
-                self._replies.put(self._buf[:limit])
-                self._buf = self._buf[limit:]
+                self._replies.put(bytes(self._buf[start : end + 1]))
+                start = end + 1
+            elif len(self._buf) - start >= limit:
+                self._replies.put(bytes(self._buf[start : start + limit]))
+                start += limit
             else:
-                return
+                self._scanned = len(self._buf)
+                break
+            self._scanned = start
+        del self._buf[:start]
+        self._scanned -= start
 
     def end(self) -> None:
         if self._buf:
-            self._replies.put(self._buf)  # a last line without its newline: the decoder calls it cut off
-            self._buf = b""
+            self._replies.put(bytes(self._buf))  # a last line without its newline: the decoder calls it cut off
+            self._buf = bytearray()
         self._replies.put(None)
 
 
@@ -448,12 +455,16 @@ def _pump_lines_until_reaped(pipe: IO[bytes], replies: queue.Queue[_Reply], wake
     (S0057 verifier R1-F2). Raw reads on the descriptor; the buffered `pipe` object is never read."""
     fd = pipe.fileno()
     lines = _Lines(replies)
+    both, out = select.poll(), select.poll()  # poll, not select: any descriptor number (R2-F5)
+    for poller, fds in ((both, (fd, wake)), (out, (fd,))):
+        for each in fds:
+            poller.register(each, select.POLLIN)
     try:
         while True:
-            ready, _, _ = select.select([fd, wake], [], [])
+            ready = {each for each, _ in both.poll()}
             if wake in ready:  # the engine is reaped: read what it left, without waiting, then end the stream
                 left = DRAIN_AFTER_REAP_BYTES
-                while left > 0 and select.select([fd], [], [], 0)[0]:
+                while left > 0 and out.poll(0):
                     chunk = os.read(fd, 65536)
                     if not chunk:
                         break
@@ -611,7 +622,7 @@ class EngineClient:
                 return False
             rid, op = run.in_flight
             run.gate = "proceeded"
-            run.past_commit = True  # until the next request: only Quit anyway ends this engine now (§4)
+            run.past_commit = True  # until this call ends: only Quit anyway ends this engine now (§4)
             run.requests.put(encode_proceed(rid, op))
             return True
 
@@ -683,7 +694,7 @@ class EngineClient:
         point: nothing: the job finishes"; INV-01): a Cancel or a close changes nothing, and the close is settled
         when the job has finished."""
         run = self._run
-        if reason != "quit_anyway" and self._in_call and run is not None and run.past_commit:
+        if reason != "quit_anyway" and run is not None and run.past_commit:
             return
         if run is not None and run.reason is None and not (run.group.exited.is_set() or run.group.leader_exited()):
             run.reason = reason  # an engine that already ended by itself keeps that truth: it is no end of ours
@@ -721,6 +732,10 @@ class EngineClient:
             elif run.group.exited.is_set() or run.group.leader_exited():  # it died since the last request: a stop
                 self._drive(Exited("the engine exited between requests", self._monotonic()))
         if self._closing and not isinstance(self._state, Closed):
+            with self._signals:
+                run = self._run
+                if run is not None and run.reason is None and not run.group.exited.is_set():
+                    run.reason = "close"  # a close deferred past a commit point is still ours (R2-F1)
             self._drive(Close())
 
     def _ours(self, reason: _Ours, run: _Running | None = None) -> SupervisionEvent:
@@ -763,6 +778,8 @@ class EngineClient:
                     with self._signals:
                         self._in_call = False
                         self._pending = None
+                        if self._run is not None:
+                            self._run.past_commit = False  # the commit point is the request's; it ends with the call
                     self._settle()
         finally:
             self._settle_if_idle()  # an end or close that came while this call held the lock (R1-F4)
@@ -935,7 +952,7 @@ class EngineClient:
         handed to the writer thread and the caller waits for the reply queue only, with no time limit (§5.4)."""
         rid, op, line = request
         with self._signals:
-            run.in_flight, run.gate, run.committed, run.past_commit = (rid, op), "none", False, False
+            run.in_flight, run.gate, run.committed = (rid, op), "none", False
         run.requests.put(line)
         try:
             while True:
