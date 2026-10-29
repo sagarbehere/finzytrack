@@ -1,6 +1,6 @@
 # Process improvement log
 
-Append-only. One entry per process improvement or heal (`PROCESS.md` §9). Each kept entry names the `PROCESS.md` section it changed.
+Append-only. One entry per process improvement or heal (`PROCESS.md` §9). Each kept entry names the `PROCESS.md` section it changed. Since IMP-0045 an entry has no "Observed effect" field; the periodic reflection measures effects.
 
 Format:
 
@@ -11,7 +11,6 @@ Format:
 - PROCESS.md section: §n
 - Why:
 - Expected effect:
-- Observed effect: <filled in at the next reflection>
 - Status: kept | reverted | superseded by IMP-nnnn
 - Owner approval: "<verbatim quote>" (date, commit)   ← only where the change class needs one
 ```
@@ -367,7 +366,7 @@ Format:
 - Why: review loops on a moving spec kept finding Highs in the mechanisms the last fix added; a model built from a spec still under review checks the wrong design (the owner, 2026-10-27, on running the model on draft 3 while draft 4 was planned).
 - Expected effect: the single-engine scheduler (draft 5) reaches golden in one or two rounds; the model's run checks the design that is built.
 - Observed effect: pending (the draft 5 review).
-- Status: kept (tightening, owner-approved).
+- Status: kept (tightening, owner-approved); superseded by IMP-0045 (S0054).
 - Owner approval: "Let's come up with a draft that stands all scrutiny.. it then becomes the golden specification. We'll then produce the model from that, the run it, make any needed changes and run the whole loop again. Once the model is green, we start the implementation." and "The one tweak I'd make is that instead of "no Highs" I'd say, "No Highs or Mediums"." (2026-10-27, in session).
 
 ## IMP-0038: the owner may end a golden-review loop early and hand the edge cases to the model (2026-10-27)
@@ -377,7 +376,7 @@ Format:
 - Why: each fresh full review of a ~390-line spec found a new tail of edge cases at a rate that did not fall towards zero; the model explores every ordering inside its world, and the slice's stateful test runs the same properties against the code.
 - Expected effect: the scheduler reaches the model after one targeted review; the model's findings, not more reading, find the remaining ordering and liveness edges.
 - Observed effect: pending (the model run on draft 5).
-- Status: kept (loosening, owner-approved).
+- Status: kept (loosening, owner-approved); superseded by IMP-0045 (S0054).
 - Owner approval: "Let's do B. That still enables us to get to a watertight spec and implementation, right? Just that instead of uncovering issues by review, we will uncover them through a formal model checker? And we'll also get an insight into how long that model checking takes?" (2026-10-27, in session).
 
 ## IMP-0039: the model is built alongside the spec, from the first draft (2026-10-27)
@@ -387,7 +386,7 @@ Format:
 - Why: ordering and liveness gaps should be found by the checker in minutes, not by reading over several rounds; reviewers then spend their time on what the model cannot see and on the mapping's fidelity.
 - Expected effect: the next model-checked spec (the read core's mirror publish, migrations) reaches golden in fewer review rounds.
 - Observed effect: pending.
-- Status: kept (tightening, owner-approved).
+- Status: kept (tightening, owner-approved); superseded by IMP-0045 (S0054).
 - Owner approval: "Yes, add it so that model building and checking happens alongside the English spec" (2026-10-27, in session).
 
 ## IMP-0040: INV-11 names only the engine job queue and the AI chat store; the state registry refuses a process-wide entry (2026-10-27)
@@ -416,7 +415,7 @@ Format:
 - Why: a long run of a model that does not say what the spec says, or whose properties are vacuous, costs hours and proves nothing; the review is minutes of reading.
 - Expected effect: no long run on an unreviewed model; the review's findings reach the spec before the hours are spent.
 - Observed effect: pending.
-- Status: kept (tightening, agent-approved; S0047).
+- Status: kept (tightening, agent-approved; S0047); superseded by IMP-0045 (S0054).
 
 
 ## IMP-0043: EP-19 names the engine-jobs model and keeps a formal model for the mirror publish (2026-10-27)
@@ -426,7 +425,7 @@ Format:
 - Why: the planned model's scope was retired with the designs it modelled, except the mirror publish, whose interleavings (readers pinning a generation while GC runs) are what a model checker finds and tests rarely reach.
 - Expected effect: no part of the write or publish protocol leaves formal scope by accident.
 - Observed effect: pending.
-- Status: kept (the EP rewritten with the owner's approval).
+- Status: kept (the EP rewritten with the owner's approval); narrowed by IMP-0045 (S0054).
 - Owner approval: "I agree with both recommendations, including that EP-19 keeps requiring a formal model for the mirror publish" (2026-10-27, in session; S0047 verifier round 1).
 
 
@@ -437,6 +436,26 @@ Format:
 - Why: "no High and no Medium" with no bound never converged on a large design: an adversarial reviewer almost always finds a Medium, and each fix adds new edges. Tests and the slice verifier find code-level edges more cheaply than prose reviews; models pay where interleavings can lose data.
 - Expected effect: no design spends more than two full review rounds before code; fewer findings per round once simplification comes first; the share of product work per week rises (measured at the next reflection).
 - Observed effect: pending.
-- Status: kept (a loosening, approved by the owner first).
+- Status: kept (a loosening, approved by the owner first); superseded by IMP-0045 (S0054).
 - Owner approval: "agreed" (2026-10-28, in session, to the four proposals: bounded review rounds; simplify first; formal models only for durability and recovery; run the overdue reflection now).
 
+## IMP-0045: process consolidation from the periodic reflection of 2026-10-28 (2026-10-29)
+- Trigger: the periodic reflection of 2026-10-28 (report in the owner's private archive, `m1a/reflection-2026-10-28/`, §4, proposals 1-12): 0 of 308 release-blocking capability rows built, product source 6.6k lines against 16.3k of gate tooling and 11.8k of TLA+, slice throughput down from 30 to 1 a day, the engine-jobs design about half the branch's calendar time, bash-guard false positives in 5 slices with no true positive.
+- What changed (doc, gate, prompt, skill), by proposal:
+  1. Engine-jobs goes to code without a further review round; the owner's long model runs run beside it and their findings become tests or backlog rows: PROCESS.md §3 "Designs checked by a formal model"; backlog BL-0109, BL-0110; ARCHITECTURE.md §8.3.
+  2. The gates' self-defence is frozen (no gate red teams, no new hardening against deliberate bypass, a new check script or meta-test class only after a real escape that touched product code, real data or the owner): PROCESS.md §4, §9, §11 (seeded-defect classes b and e are stated limits); BL-0042, BL-0055, BL-0062 `removed`.
+  3. The golden-spec rules (IMP-0037, IMP-0038, IMP-0039, IMP-0042, IMP-0044) collapsed into one rule (simplification pass, one full review, the small tier, one fidelity review, code; later findings become tests or backlog rows unless a High data-safety issue; "no High and no Medium" dropped): PROCESS.md §3.
+  4. Formal models check durability only; liveness, truthful outcomes and UI messages become statechart and stateful tests; the mirror publish model checks only `ReadersSeeCompleteGeneration` and `SnapshotIsSomeCommittedState`: ENGINEERING.md EP-19, ARCHITECTURE.md §8.3, BL-0113 (`formal/` unchanged).
+  5. One implementer on the product critical path at all times; design and model work beside it (worktrees allowed; the orchestrator checks `core.hooksPath` after creating one): PROCESS.md §4.
+  6. Simplify before a second fix round, in slices too: ENGINEERING.md EP-30 (one sentence), PROCESS.md §3 step 7 (pointer).
+  7. Self-mutation only for checks that guard ledger data, finance, real-data privacy or product security, optional on tooling, no tried/killed count: PROCESS.md §3 step 4, `.claude/agents/implementer.md`, `.claude/skills/slice/SKILL.md`, the journal template.
+  8. The bash guard narrowed to acts aimed at the owner's app and data: `.claude/hooks/guards.py` (heredoc bodies are data; a line continuation joins a command; the whole-text kill-word rule, the `$(...)`-next-to-git rule and the refusal of network redirects to other ports removed; pkill and killall always refused; kill refused beside a process lookup or port 8001), `scripts/tests/test_guards.py`; PROCESS.md §8.
+  9. The privacy scan's rules are frozen; each false-positive workaround is a journal line against the rule: PROCESS.md §8.
+  10. One fixed retro line (PROCESS.md §9, `design/journal/README.md`, the slice skill); this file's "Observed effect" field dropped from the format; PROCESS.md's "Last change" paragraph replaced by a pointer here.
+  11. At G1, at least half the seeded-defect plants in product code: PROCESS.md §4.
+  12. Confirmations of non-rubric recommendations batched into one message a day; rubric questions at once: PROCESS.md §5.
+- PROCESS.md section: header, §3, §4, §5, §8, §9, §11 (153 lines and 4,984 words before, 144 and 4,301 after).
+- Why: most process cost since S0030 went into designs, models and the gates' defence against agents, while product work slowed; each of these spent more than it found (the reflection's "worst yield" list).
+- Expected effect: product source per day back to at least the 2026-10-26 level; gate tooling grows under 5% to G1; no tooling slice over two verifier rounds; BL-0113 reaches code with at most three review or model runs.
+- Status: kept (loosenings 1, 2, 3, 4, 7, 8, 10, 12 owner-approved; 5, 6, 9, 11 and the template part of 10 agent-approved tightenings or scheduling; S0054).
+- Owner approval: "Yes to Reflection proposals 1, 2, 3, 4, 7, 8, 10 and 12." (2026-10-29, in session; S0054).

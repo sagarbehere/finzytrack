@@ -56,6 +56,38 @@ class GuardTest(unittest.TestCase):
         self.assertTrue(self.blocked("killall python3"))
         self.assertFalse(self.blocked("kill 12345"))
 
+    def test_kills_are_judged_by_what_runs_not_by_words(self) -> None:
+        """S0054 (reflection proposal 8): the guard refuses acts aimed at the owner's app, not text that mentions
+        them. pkill and killall pick processes by name, so any use is refused; kill is refused when the same command
+        looks a process up (pgrep, pidof, ps, lsof) or names port 8001."""
+        refused = [
+            "pkill -f my_worker", "killall node", "kill $(pgrep -f uvicorn)", "ps aux | grep x | xargs kill -9",
+            "kill $(pidof something)", "kill -9 $(lsof -t -i :8001)",
+        ]
+        for cmd in refused:
+            self.assertTrue(self.blocked(cmd), cmd)
+        allowed = [
+            # S0038, S0040, S0048 false positives: test code that ends a process, written through a heredoc
+            "cat > /tmp/t.py <<'EOF'\nos.kill(proc.pid, signal.SIGTERM)  # end the python backend\nEOF",
+            'grep -rn "kill" backend/src', "python3 -m pytest -k test_kill_the_engine backend/tests",
+            "kill $PID && uv run pytest backend/tests -q", "kill %1",
+        ]
+        for cmd in allowed:
+            self.assertFalse(self.blocked(cmd), cmd)
+
+    def test_a_heredoc_body_is_data(self) -> None:
+        """S0054 (BL-0042's false positive): the lines of a heredoc body are not parsed as commands; the opener's
+        line still is. Stated limit (PROCESS.md §11): a body fed to a shell or an interpreter is not parsed."""
+        L = self.legacy
+        allowed = [
+            f"cat > /tmp/notes.md <<'EOF'\nrm -rf {L}/backend\ngit push --force origin next\nEOF",
+            "git commit -q -F - <<'EOF'\nS0054: the guard no longer refuses git push --force in a message body\nEOF",
+        ]
+        for cmd in allowed:
+            self.assertFalse(self.blocked(cmd), cmd)
+        self.assertTrue(self.blocked(f"cat <<EOF && rm -rf {L}/backend\nbody\nEOF"))  # the opener's line runs
+        self.assertTrue(self.blocked("cat > /tmp/x <<'EOF'\nsee ~/FinzytrackData\nEOF"))  # live data: any mention
+
     def test_pushes(self) -> None:
         self.assertTrue(self.blocked("git push --force origin next"))
         self.assertTrue(self.blocked("git push origin :next"))
@@ -142,17 +174,19 @@ class GuardTest(unittest.TestCase):
         # Stated limit (PROCESS.md §11, the guards are a safety net): writers the guard does not parse (interpreters,
         # git checkout/restore/apply, patch, curl -o, awk -i inplace, ed) are not caught.
 
-    def test_bl_0055_gaps(self) -> None:
-        """BL-0055 (found by the S0014 verifier): each must be refused; the ordinary forms beside them must not."""
+    def test_the_owners_port_and_the_git_gates(self) -> None:
+        """BL-0055's forms that reach the owner's app or the git gates: each must be refused; the ordinary forms
+        beside them must not. S0054 dropped its refusals of deliberately built commands (a flag carried by a
+        `$(...)` next to git; a network redirect to another port): stated limits, PROCESS.md §11."""
         nv = "--no-" + "verify"  # spelled in two parts so this file's text is not itself a command the guard reads
         net = "/dev/" + "tcp"
         refused = [
-            f"git commit -m x $(echo {nv})", f"git commit -m x `echo {nv}`", f"F={nv}; git commit -m x $F",
-            "git commit -m x ${F}", "git push origin next $(echo --force)", "git -C . commit -m x $(printf -- '-n')",
-            "git config $(echo core.hooks)Path /dev/null", "git add $FILES",
-            f"cat < {net}/127.0.0.1/8001", "echo hi > /dev/" + "udp/localhost/9",
+            f"cat < {net}/127.0.0.1/8001",
             f'exec 3<>"{net}/127.0.0.1/8001"',  # a quoted redirect target still opens the connection
             "git log > .git/config", "printf x >> .git/hooks/pre-commit", "git show HEAD:x > .git/config",
+            f"git commit -m \"it's\" {nv} -m 'x'",  # an apostrophe inside double quotes is not a quote
+            f"cat <<EOF && git commit -m x {nv}\nbody\nEOF",  # the opener's line still runs
+            f"git commit -m x \\\n {nv}",  # a line continuation joins the command
         ]
         for cmd in refused:
             self.assertTrue(self.blocked(cmd), cmd)
@@ -160,10 +194,11 @@ class GuardTest(unittest.TestCase):
             'git commit -q -m "S0001: msg $(date)"', 'git commit -m "$MSG"', "git push origin next",
             f"git commit -q -F - <<'EOF'\nmsg with $(echo {nv}) inside the body\nEOF",
             "git log --oneline $(git merge-base HEAD main)..HEAD", "git log > /tmp/x.txt", "cat .git/config",
-            "printf x > .githooks/pre-push.tmp",
-            # a heredoc body is data, not a command: a doc that shows such a line may be written
+            "printf x > .githooks/pre-push.tmp", "git add $FILES", "git commit -F \"$F\" $EXTRA",
+            "echo hi > /dev/" + "udp/localhost/9",
             "cat > /tmp/notes.md <<'EOF'\ngit push origin next $(echo x)\nEOF",
             f"cat > /tmp/notes.md <<'EOF'\na doc that mentions {net} in its text\nEOF",
+            "git commit -m \"user's fix\" -m 'costs $5'",
         ]
         for cmd in allowed:
             self.assertFalse(self.blocked(cmd), cmd)
@@ -171,28 +206,9 @@ class GuardTest(unittest.TestCase):
         self.assertTrue(guards.path_problem(str(self.repo / ".git" / "hooks" / "pre-push"), self.repo, writing=True))
         self.assertIsNone(guards.path_problem(str(self.repo / ".git" / "config"), self.repo, writing=False))
         self.assertIsNone(guards.path_problem(str(self.repo / ".githooks" / "pre-push"), self.repo, writing=True))
-        # Stated limit (PROCESS.md §11): a command run through `sh -c`, `eval` or an interpreter is not parsed.
-
-    def test_bl_0055_round_2(self) -> None:
-        """S0028 verifier F1, F7, F8: quoting in one pass, heredoc opener lines, every gated subcommand."""
-        nv = "--no-" + "verify"
-        refused = [
-            f"git commit -m \"it's\" $(echo {nv}) -m 'x'",  # an apostrophe inside double quotes is not a quote
-            f"cat <<EOF && git commit -m x $(echo {nv})\nbody\nEOF",  # the opener's line still runs
-            f"git commit -m x \\\n $(echo {nv})",  # a line continuation joins the command
-        ]
-        refused += [f"git {sub} $X" for sub in ("commit", "push", "add", "clean", "stash", "tag", "config", "worktree")]
-        for cmd in refused:
-            self.assertTrue(self.blocked(cmd), cmd)
-        allowed = [
-            "git commit -m \"user's fix\" -m 'costs $5'",  # ordinary messages are not mis-blanked
-            "git status $X",  # a non-gated subcommand
-        ]
-        for cmd in allowed:
-            self.assertFalse(self.blocked(cmd), cmd)
-        # Stated limits (PROCESS.md §11; BL-0062, parked with BL-0042): escaped or quoted `git` words, a gated git
-        # nested inside another command or after a single `&`, brace and zsh glob expansions, a network path spelled
-        # in parts, and redirect operators the parser does not know (the clobber form, `&>>`, `<>`).
+        # Stated limits (PROCESS.md §11): a command run through `sh -c`, `eval`, an interpreter or a heredoc fed to
+        # one is not parsed; nor are commands built on purpose to slip past the parser (BL-0042, BL-0055, BL-0062
+        # removed by the owner, 2026-10-29).
 
     def test_hooks_fail_closed(self) -> None:
         """INV-22's spirit for the guards (S0014 round-2 verifier F2): Claude Code runs a command when the hook

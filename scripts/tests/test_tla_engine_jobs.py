@@ -1,6 +1,6 @@
 """Meta-tests for formal/tla/engine-jobs: the TLA+ model stays in step with its spec and its mapping.
 
-PROCESS.md §3 "Golden specs": the model comes with a two-way mapping table and a seeded mutant per property.
+ENGINEERING.md EP-19: the model comes with a two-way mapping table and a seeded mutant per property.
 These tests do not run TLC (formal/tla/engine-jobs/run_all.sh does); they check that the names line up:
 - every property and every mutant that design/specs/engine-jobs.md §13 names exists in the model and
   in the configuration table, so a spec change that renames or adds one fails here until the model follows;

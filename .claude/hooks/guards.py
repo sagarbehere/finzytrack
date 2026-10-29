@@ -1,9 +1,9 @@
 """Shared rules for the Claude Code guard hooks (INV-24): keep agents away from the owner's real data.
 
-These guards are a safety net, not a sandbox: they catch the common and the known-clever ways an agent
-could touch the live data folder, delete ignored files, write into the read-only legacy worktree, stop or
-call the owner's running app, or switch off the git gates (bypasses found by review:G are meta-tested in
-scripts/tests/test_guards.py). The rules are in design/process/PROCESS.md §8 ("Agents and real data").
+These guards are a safety net, not a sandbox: they catch the common ways an agent could touch the live data
+folder, delete ignored files, write into the read-only legacy worktree, stop or call the owner's running app,
+or switch off the git gates (meta-tested in scripts/tests/test_guards.py). Commands built on purpose to slip
+past the parser are a stated limit, not a target (S0054). The rules are in design/process/PROCESS.md §8.
 """
 
 from __future__ import annotations
@@ -128,8 +128,9 @@ def _join_continuations(command: str) -> str:
 
 
 def _split(command: str) -> list[list[str]]:
+    """The simple commands the shell runs. Heredoc bodies are data (S0054); line continuations join a command."""
     segs: list[list[str]] = []
-    for part in re.split(r"\|\||&&|;|\||\n|\$\(|`|\)", command):
+    for part in re.split(r"\|\||&&|;|\||\n|\$\(|`|\)", _join_continuations(_without_heredoc_bodies(command))):
         try:
             toks = shlex.split(part, comments=True)
         except ValueError:
@@ -200,50 +201,35 @@ def _git_problem(toks: list[str], cwd: Path) -> str | None:
     return None
 
 
-GATED_GIT = {"commit", "push", "add", "clean", "stash", "tag", "config", "worktree"}
-# One left-to-right pass: whichever quote opens first wins, so an apostrophe inside "..." is not a quote.
-QUOTED = re.compile(r"'[^']*'" + r'|"(?:[^"\\]|\\.)*"')
 # A heredoc's body (the lines after its opener, up to the delimiter); the rest of the opener's line is kept,
 # because the shell runs it.
 HEREDOC = re.compile(r"(<<-?\s*(['\"]?)(\w+)\2[^\n]*\n).*?^\s*\3\s*$", re.S | re.M)
+# Commands that look a process up by name or port; a kill in the same command then aims at a name, not a PID.
+PID_FINDERS = {"pgrep", "pidof", "ps", "lsof"}
 
 
-def _unquoted(command: str) -> str:
-    """The command with heredoc bodies and quoted strings blanked: what the shell word-splits."""
-    text = HEREDOC.sub(lambda m: m.group(1), command)
-    return QUOTED.sub(lambda m: m.group(0)[0] * 2, text)
-
-
-def _expansion_in_gated_git(command: str) -> bool:
-    """An unquoted $-expansion or backtick in the same simple command as a gated git subcommand (BL-0055): its
-    output is word-split into arguments, so it can carry a flag (`git commit -m x $(echo --no-verify)`)."""
-    for part in re.split(r"\|\||&&|;|\||\n", _unquoted(command)):
-        words = part.split()
-        if "git" not in [os.path.basename(w) for w in words]:
-            continue
-        i = [os.path.basename(w) for w in words].index("git")
-        _, sub, _ = _git_parts(words[i:])
-        if sub in GATED_GIT and re.search(r"\$|`", part):
-            return True
-    return False
+def _without_heredoc_bodies(command: str) -> str:
+    return HEREDOC.sub(lambda m: m.group(1), command)
 
 
 def bash_problem(command: str, cwd: Path) -> str | None:
-    """Why this shell command is refused, or None if it may run."""
-    # Heredoc bodies are data; quoted text is not skipped (bash opens a quoted /dev/tcp redirect target too).
-    if re.search(r"/dev/(tcp|udp)/", HEREDOC.sub(lambda m: m.group(1), command)):
-        return "bash network redirects (/dev/tcp, /dev/udp) are refused (BL-0055); use a real client on your own instance"
-    if _expansion_in_gated_git(_join_continuations(command)):
-        return ("an unquoted $-expansion or backtick next to git commit/push/add/clean/stash/tag/config/worktree is "
-                "refused: its output could carry flags (BL-0055); quote it, or run the commands separately")
+    """Why this shell command is refused, or None if it may run. S0054 (reflection proposal 8): the guard refuses
+    acts aimed at the owner's app and data, the legacy worktree and the git gates; text that only mentions them
+    passes, and commands built on purpose to slip past the parser are a stated limit (PROCESS.md §11)."""
+    code = _without_heredoc_bodies(command)
+    # quoted text is not skipped: bash opens a quoted /dev/tcp redirect target too
+    if re.search(rf"/dev/(tcp|udp)/[^/\s]+/{OWNER_PORT}\b", code):
+        return f"a network redirect to port {OWNER_PORT} reaches the owner's running app; never call it (INV-24)"
     if LIVE_NAME.search(command) or any(str(r).lower() in command.lower() for r in live_data_roots()):
         return "the owner's live data folder is off-limits to agents (INV-24)"
     if OWNER_URL.search(command):
         return f"port {OWNER_PORT} is the owner's running app; never call it (INV-24). Use your own instance"
-    if re.search(r"\b(kill|pkill|killall|fuser)\b", command) and OWNER_PROC.search(command):
-        return "this could stop the owner's running app; kill only processes you started, by PID"
+    segments = _split(command)
+    names = {os.path.basename(t[0]) for t in segments}
+    if names & KILLERS and (names & PID_FINDERS or re.search(rf"\b{OWNER_PORT}\b", code)):
+        return "this kills a process found by name or port, which could be the owner's app; kill only by the PID you saved"
     here = cwd
-    for toks in _split(command):
+    for toks in segments:
         cmd = os.path.basename(toks[0])
         args = toks[1:]
         plain = [a for a in args if not a.startswith("-")]
@@ -271,7 +257,9 @@ def bash_problem(command: str, cwd: Path) -> str | None:
             if any(a == "-1" or re.match(r"^-\w+$", a) and a.endswith("1") and len(args) > 1 and args[-1] == "-1" for a in args) \
                     or "-1" in args:
                 return "kill -1 signals every process; refused"
-            if OWNER_PROC.search(" ".join(args)) or cmd in ("pkill", "killall") and not plain:
+            if cmd in ("pkill", "killall"):
+                return f"{cmd} picks processes by name and could stop the owner's app; kill only by the PID you saved"
+            if OWNER_PROC.search(" ".join(args)):
                 return "this could stop the owner's running app; kill only processes you started, by PID"
             continue
         if cmd == "find":
