@@ -19,3 +19,6 @@ Crypto tokens often use 18 decimal places. A user writes `12345678901.1234567890
 Option 1. The mirror's whole rule is exact numbers, and the number in question is one the user wrote, not one Beancount computed. The difference from other tools is in the 28th digit and is named by a warning, so nothing is hidden. It does not reimplement Beancount (INV-02): Beancount's own booking runs, only with more precision. If you prefer that every Beancount tool shows the same figure, option 2 is the honest alternative.
 
 ## Answer (owner, verbatim, with date)
+Owner, 2026-10-29, in session: "Yes, keep numbers beyond 28 digits as exact, with a warning and amend adr-0015 to content hashes"
+
+To apply (BL-0123): option 1. The engine loads with 64-digit precision (the mirror's), so every number is exactly what the ledger says; the load adds a warning naming each line where Finzytrack differs from bean-check and Fava; the load never raises on such numbers.

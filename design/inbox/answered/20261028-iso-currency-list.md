@@ -25,3 +25,6 @@ There is also a source question: Python has no ISO 4217 list, so the engine need
 Option 2. Every code that was ever a country's money is cash, which is what a user means by "currency", including old pre-euro accounts; metals, funds and accounting units are holdings unless the ledger declares `asset-class: "cash"`, which still decides first. Gold is the case that matters most: option 3 would move it out of investments without the user asking. The list is pinned in the engine with its source date; a later change of the standard is a small slice, and its effect is visible because the mirror is rebuilt.
 
 ## Answer (owner, verbatim, with date)
+Owner, 2026-10-29, in session: "Yes co every code that was ever a country's money (for currency codes that count as cash), moving BL-0119 to M4, to keeping the per-file locks as a second line and having retry recover first." (the other parts answer other questions)
+
+To apply (BL-0120): option 2. Every ISO 4217 code that was ever a country's money, current and historic, counts as cash; precious metals, funds and accounting units are holdings unless the ledger declares `asset-class: "cash"`, which decides first. The list is pinned in the engine with its source date.

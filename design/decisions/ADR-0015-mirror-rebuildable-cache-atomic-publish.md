@@ -43,6 +43,13 @@ Owner: "I accept your recommendation on Q31" (2026-10-25, in session).
 - A deletion that fails because a file is open (Windows) is expected and retried at the next collection, never reported as an error.
 - The grace period is a configuration value (INV-10 style bound), not a development target.
 
+## Amendment (2026-10-29): the fingerprint is a content hash
+
+Owner: "Yes, keep numbers beyond 28 digits as exact, with a warning and amend adr-0015 to content hashes" (2026-10-29, in session; `design/inbox/answered/20261028-adr-0015-fingerprint.md`).
+- The ledger fingerprint is no longer `(path, mtime, size)` of every include. It is, as `design/specs/engine-jobs.md` §1 defines it and S0051 built it: per file the load reads, a SHA-256 of its bytes or its state (absent, or unreadable with its error); per `include` (a plain path too, which the loader also globs), the glob's match list in the loader's order; per documents folder, its listing with each name's presence; the presence of the file of each `document` entry Beancount checks.
+- Why: an edit that keeps the size and restores the modification time is caught, and a `touch` or a sync tool rewriting the same bytes no longer forces a rebuild. Measured cost at 54k entries: about 3 ms per check (S0051).
+- ADR-0064's "Unchanged: … ADR-0015" holds for everything else in this ADR.
+
 ## References
 
 review:D1 §11; review:10 I4, D4, D5; review:23 §1.2, §3.4; review:00 §1b; ADR-0011, ADR-0016, ADR-0017; INV-05; CAP-DATA-MIRROR, CAP-MIRROR-EXTERNAL.

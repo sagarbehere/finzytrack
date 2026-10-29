@@ -17,3 +17,6 @@ The content hash is the stronger choice: an edit that keeps the size and puts th
 Option 1. It records what is built and what the engine-jobs spec already requires, and it is the safer check.
 
 ## Answer (owner, verbatim, with date)
+Owner, 2026-10-29, in session: "Yes, keep numbers beyond 28 digits as exact, with a warning and amend adr-0015 to content hashes"
+
+Applied: ADR-0015 amendment of 2026-10-29 (option 1).
