@@ -1,6 +1,6 @@
 # How to run the engine-jobs model checks
 
-The TLA+ model of `design/specs/engine-jobs.md` §13 (spec with simplification B of 2026-10-28: the engine lock, Back always recovers first; model with fidelity review 4's fixes and simplification B, MAPPING.md §5). It runs as a plain shell script with Java;
+The TLA+ model of `design/specs/engine-jobs.md` §13 (spec with simplification B of 2026-10-28: the engine lock, Back always recovers first; and of 2026-10-29: Retry recovers first too; model with fidelity review 4's fixes and simplification B, MAPPING.md §5). It runs as a plain shell script with Java;
 no AI is involved. MAPPING.md says what the model checks and how it maps to the spec.
 
 ## Before the first run

@@ -284,7 +284,10 @@ MUTANTS = [
      S(MaxCrash=1, MaxBg=0, MaxReads=0, MaxSwitch=1), "blocked"),
     ("back_skips_recovery", "S_switch", "KeepOnlyJudged",                                                 # M1
      S(MaxCrash=1, MaxBg=0, MaxReads=0, MaxSwitch=1), "keep"),
-    ("assess_waits_for_work", "S_switch_hung_create", "AssessNeverWaits", S(MaxCrash=1, MaxUnreach=1)),  # M2
+    # M2. Since Retry recovers first (2026-10-29) only Keep enters the assess stage while a create runs:
+    # b3 on the unreachable disk blocks the boot's open of W3, a create starts, then Keep (MAPPING.md §5)
+    ("assess_waits_for_work", "S_switch_hung_create", "AssessNeverWaits",
+     S(MaxCrash=1, MaxUnreach=1, BootJ=strs("b3"), BootTarget=3)),
     ("rv4_quit_drops_create", "S_create_absent", "OutcomeTruthful", S(DoQuit=True, MaxDrop=0)),          # L2
     ("rv4_no_cancel_recover", "S_recover", "EveryWaitHasAnExit", {}),
     ("rv4_outcome_open_notsaved", "S_save_crash", "OutcomeTruthful", {}),

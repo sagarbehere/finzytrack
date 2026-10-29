@@ -3,7 +3,8 @@
 (* TLA+ model of design/specs/engine-jobs.md (draft 5 with the model      *)
 (* findings F1-F4, O1, N1-N3 and fidelity reviews 1-3 folded in,         *)
 (* c87ce786; the model fixes of fidelity review 4; simplification B of    *)
-(* 2026-10-28: the engine lock, Back always recovers first),              *)
+(* 2026-10-28: the engine lock, Back always recovers first; 2026-10-29:   *)
+(* Retry recovers first too),                                             *)
 (* built only from that spec's §13 obligations and the sections it cites. *)
 (* MAPPING.md maps every spec rule and property to this file, both ways,  *)
 (* and lists what is abstracted away.                                      *)
@@ -568,16 +569,16 @@ GKeep   == ses.screen = "blocked" /\ ~(MUTANT = "boot_no_actions" /\ ses.sctx = 
 UserRetry ==
   /\ GRetry /\ MUTANT # "retry_disabled" /\ CanAct
   /\ n' = Spent
-  \* blocked, or the switch's own job cancelled (M4): recover_all runs again, then the open
-  \* (seeded bug rv_retry_skips_recovery, review 3: after a cancelled switch, Retry only assesses)
-  /\ IF ses.screen = "blocked" \/ (ses.screen = "cancelled" /\ MUTANT # "rv_retry_skips_recovery")
-     THEN /\ ses' = [ses EXCEPT !.app = "switch", !.stage = "recover", !.screen = "none"]
+  \* recover_all runs again, then the open by the same path, on the cancelled, failed and blocked screens
+  \* alike (§8.1, §9.1 step 6, §9.2; owner, 2026-10-29: "having retry recover first"; ADR-0063 amendment).
+  \* (Seeded bug rv_retry_skips_recovery, review 3: after a cancelled switch or boot, Retry only assesses.
+  \* The old I15, Retry only assessing after a failed open, breaks no property: MAPPING.md §5, 2026-10-29.)
+  /\ IF ses.screen = "cancelled" /\ MUTANT = "rv_retry_skips_recovery"
+     THEN /\ ses' = [ses EXCEPT !.app = "switch", !.stage = "assess", !.screen = "none"]
+          /\ UNCHANGED <<q, jr>>
+     ELSE /\ ses' = [ses EXCEPT !.app = "switch", !.stage = "recover", !.screen = "none"]
           /\ q' = q \o <<RecJob(NewId)>>
           /\ jr' = MarkOld
-     \* after a failed open this switch's or boot's recover-all has run: the target is assessed again; no
-     \* recover-all is queued, so the journals keep the reasons it gave (fidelity review 4, M1)
-     ELSE /\ ses' = [ses EXCEPT !.app = "switch", !.stage = "assess", !.screen = "none"]
-          /\ UNCHANGED <<q, jr>>
   /\ UNCHANGED <<fs, pst, tgt, runs, ctl, eng, gh>>
 \* §9.1 step 6, ADR-0063 decision 1 step 6, §14: Back opens A "by the same path": Back is Retry with A as the
 \* target, recover-all first, then the open, on the cancelled, failed and blocked screens alike (owner,
