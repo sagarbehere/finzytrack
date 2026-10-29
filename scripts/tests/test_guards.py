@@ -51,11 +51,12 @@ class GuardTest(unittest.TestCase):
         self.assertTrue(guards.path_problem(str(self.live / "data/ledger.db"), self.repo, writing=False))
 
     def test_a_heredoc_fed_to_a_shell_is_code(self) -> None:
-        """S0054 verifier F2, F3: a body that a shell reads is parsed as commands (as before S0054); a body written
-        to a file or another command is data. A here-string (<<<) opens no heredoc, so the lines after it are
-        commands. Stated limit (PROCESS.md §11; round 2): a "<<EOF" inside quotes or a comment is taken as an
-        opener, so `echo "<<EOF"`, then commands, then an EOF line, hides those commands; only a command built on
-        purpose has that shape."""
+        """S0054 verifier F2, F3: a body is parsed as commands (as before S0054) only when a shell word stands on
+        its opener's line; any other body is data. A here-string (<<<) opens no heredoc, so the lines after it are
+        commands. Stated limits (PROCESS.md §11; rounds 2 and 3; BL-0155): a script written to a file by a heredoc
+        (or by the Write tool) and run later, by `bash /tmp/x.sh` after the end line or by running the file
+        directly, is not inspected; a "<<EOF" inside quotes or a comment is taken as an opener, so
+        `echo "<<EOF"`, then commands, then an EOF line, hides those commands."""
         L = self.legacy
         refused = [
             f"bash <<'EOF'\nrm -rf {L}/backend\nEOF", "sh <<EOF\ngit push --force origin next\nEOF",
@@ -219,8 +220,8 @@ class GuardTest(unittest.TestCase):
         self.assertIsNone(guards.path_problem(str(self.repo / ".git" / "config"), self.repo, writing=False))
         self.assertIsNone(guards.path_problem(str(self.repo / ".githooks" / "pre-push"), self.repo, writing=True))
         # Stated limits (PROCESS.md §11): code given to `sh -c` or `eval`, or run by an interpreter, is not parsed;
-        # nor are commands built on purpose to slip past the parser (BL-0042 and BL-0062 removed, BL-0055's
-        # anti-bypass refusals removed; owner, 2026-10-29).
+        # nor are commands built on purpose to slip past the parser (BL-0062 removed, BL-0055's anti-bypass
+        # refusals removed; owner, 2026-10-29), nor a heredoc-written script run later or a `(cd …` subshell (BL-0155).
 
     def test_hooks_fail_closed(self) -> None:
         """INV-22's spirit for the guards (S0014 round-2 verifier F2): Claude Code runs a command when the hook
