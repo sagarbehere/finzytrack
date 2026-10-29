@@ -366,6 +366,7 @@ New codes join the registry of ARCHITECTURE §6.1; the existing ones keep their 
 | stopped by the system | failure-modes E4's text | Try again, Copy diagnostics | `ENGINE_STOPPED {killed_by_system}` |
 | bound reached | failure-modes E1's text | Try again, Copy diagnostics | `ENGINE_UNAVAILABLE` |
 | a save's engine stopped, outcome found | "Your change was saved." / "Your change was not saved. Your ledger is unchanged." / "…not saved, and a file was changed by another program." | — / — / Review | result |
+| **temporary, until BL-0151:** a writing job's engine stopped past its commit point, outcome not read from disk yet (S0058) | "The ledger engine stopped while it was saving your change, so Finzytrack does not know yet whether it was saved." Next step: "Do not make the change again until you have checked whether it is in your ledger." Replaced by the row above once §6.6's outcome check exists | — (no Retry: the change may have landed) | `CHANGE_OUTCOME_UNKNOWN` |
 | unfinished save in this session | "Finzytrack could not finish your change. Reopen the workspace so Finzytrack can check your files and undo the unfinished change." | Reopen | `WRITES_PAUSED {unfinished_save}` |
 | a save waits for R4 | "Checking your last change first…" | Cancel | — |
 | a save's R4 could not finish | "Finzytrack could not check your last change, so it did not save this one." ("Your ledger is unchanged." by the rule above) | Try again, Copy diagnostics | `WRITES_PAUSED {check_pending}` |

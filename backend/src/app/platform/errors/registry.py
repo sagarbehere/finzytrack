@@ -90,10 +90,10 @@ class EngineStoppedDetails:
 @dataclass(frozen=True, slots=True)
 class EngineUnavailableDetails:
     """No engine could be started for this job (engine-jobs §5.3, §11). `stopped_often`: the restart bound is
-    reached (failure-modes E1); `cannot_start`: the engine is incompatible or the wait for the engine lock failed
-    (E6); `closing`: Finzytrack is closing."""
+    reached (failure-modes E1); `incompatible`: the engine speaks another protocol, a damaged install (E6: reinstall);
+    `cannot_start`: the wait for the engine lock failed (E6); `closing`: Finzytrack is closing."""
 
-    reason: Literal["stopped_often", "cannot_start", "closing"]
+    reason: Literal["stopped_often", "incompatible", "cannot_start", "closing"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -198,7 +198,7 @@ def specs() -> tuple[ErrorSpec, ...]:
             message="The ledger engine stopped while it was saving your change, so Finzytrack does not know yet "
             "whether it was saved.",
             data_safe=False,
-            next_step="Do not make the change again yet. Reopen the workspace so Finzytrack can check your files.",
+            next_step="Do not make the change again until you have checked whether it is in your ledger.",
             details=None,  # TODO(BL-0151): replaced by the outcome check of §6.6 (saved, not saved, or unfinished)
         ),
         ErrorSpec(

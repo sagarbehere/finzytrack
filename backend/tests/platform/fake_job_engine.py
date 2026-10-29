@@ -183,6 +183,7 @@ class FakeEngine:
             self._cond.wait_for(lambda: self._in_call == 0)
             self.resets += 1
             self.state_now = Idle()
+            self.start_failure = None  # the client's reset forgets the stops and an incompatible verdict
 
     # -- the test's controls -----------------------------------------------------------------------------------
 

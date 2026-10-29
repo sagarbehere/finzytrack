@@ -818,7 +818,7 @@ def test_try_again_resets_the_engine_and_lets_jobs_start() -> None:
         wait_until(lambda: slot(rig) == "none")
         first = submit(rig, user("preview"), calls("ok"))
         assert code_of(outcome(first)) == ErrorCode.ENGINE_UNAVAILABLE
-        assert details(outcome(first)) == EngineUnavailableDetails(reason="cannot_start")
+        assert details(outcome(first)) == EngineUnavailableDetails(reason="incompatible")
         wait_until(lambda: rig.jobs.status().queue.unavailable)
         rig.engine.available()
         rig.jobs.try_again()
@@ -827,6 +827,21 @@ def test_try_again_resets_the_engine_and_lets_jobs_start() -> None:
         assert outcome(submit(rig, user("preview"), calls("ok"))) == Done({"op": "ok"})
     finally:
         rig.close()
+
+
+def test_r2_a_try_again_is_ignored_while_the_table_lags_the_clients_unavailable(rig: Rig) -> None:
+    """Failure-modes E1 "After the bound ... Try again (reset)"; model `UserTryAgain` guards on the client's own
+    `Unavail` (S0058 verifier R2-F1). The client is unavailable but the table has not heard it yet (an idle engine's
+    death is fed as `EngineDied`, which reads no availability): Try again reads the client first, so it resets."""
+    t = rig.clock.now
+    rig.engine.unavailable((t, t, t))
+    rig.engine.die()
+    wait_until(lambda: slot(rig) == "none")
+    assert not rig.jobs.status().queue.unavailable
+    rig.jobs.try_again()
+    wait_until(lambda: rig.engine.resets == 1)
+    wait_until(lambda: not rig.jobs.status().queue.unavailable)
+    assert outcome(submit(rig, user("preview"), calls("ok"))) == Done({"op": "ok"})
 
 
 def test_try_again_while_the_engine_is_available_changes_nothing(rig: Rig) -> None:

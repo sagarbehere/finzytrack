@@ -469,7 +469,7 @@ class EngineJobs:
         self._kind_on: dict[int, JobKind] = {}  # engine number -> the kind of the last job started on it
         self._advice_due: tuple[float, int] | None = None
         self._window_due: float | None = None
-        self._unavailable_reason: Literal["stopped_often", "cannot_start"] = "stopped_often"
+        self._unavailable_reason: Literal["stopped_often", "incompatible"] = "stopped_often"
         self._follow: list[Event] = []
         self._status = JobsStatus(self._state, self._policy, {})
 
@@ -508,8 +508,14 @@ class EngineJobs:
 
     def try_again(self) -> None:
         """§5.3 "Try again": a step of the table, which asks for the client's reset while the engine is unavailable;
-        the reset runs on a thread of its own and jobs start once it is done. Never waits for the engine."""
-        self._ask(lambda: self._step(TryAgain()), None)
+        the reset runs on a thread of its own and jobs start once it is done. Never waits for the engine. The
+        client's own state is read first (its `state` never waits), so a table that has not heard of the bound yet
+        (an idle engine's death, a cancelled job's failed start) does not drop the Try again (S0058 verifier R2-F1)."""
+        self._ask(self._try_again, None)
+
+    def _try_again(self) -> None:
+        self._read_availability()
+        self._step(TryAgain())
 
     def tick(self) -> None:
         """Fire the timers that are due now: the scheduler's own wait does it with the real clock; a test whose clock
@@ -812,7 +818,7 @@ class EngineJobs:
         job = self._jobs.get(job_id)
         kind = job.failure.kind if job is not None and job.failure is not None else "crashed"
         if kind in ("unavailable", "incompatible"):
-            reason = "cannot_start" if kind == "incompatible" else "stopped_often"
+            reason = "incompatible" if kind == "incompatible" else "stopped_often"
             return Failed(error(ErrorCode.ENGINE_UNAVAILABLE, EngineUnavailableDetails(reason)))
         if kind == "closed":
             return self._closing()
@@ -882,7 +888,7 @@ class EngineJobs:
     def _read_availability(self) -> None:
         state = self._engine.state
         if isinstance(state, Incompatible):
-            self._unavailable_reason = "cannot_start"
+            self._unavailable_reason = "incompatible"
             self._step(EngineAvailability(available=False))
         elif isinstance(state, Unavailable):
             self._unavailable_reason = "stopped_often"

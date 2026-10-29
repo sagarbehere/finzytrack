@@ -230,11 +230,12 @@
         "type": "object"
       },
       "EngineUnavailableDetails": {
-        "description": "No engine could be started for this job (engine-jobs §5.3, §11). `stopped_often`: the restart bound is\nreached (failure-modes E1); `cannot_start`: the engine is incompatible or the wait for the engine lock failed\n(E6); `closing`: Finzytrack is closing.",
+        "description": "No engine could be started for this job (engine-jobs §5.3, §11). `stopped_often`: the restart bound is\nreached (failure-modes E1); `incompatible`: the engine speaks another protocol, a damaged install (E6: reinstall);\n`cannot_start`: the wait for the engine lock failed (E6); `closing`: Finzytrack is closing.",
         "properties": {
           "reason": {
             "enum": [
               "stopped_often",
+              "incompatible",
               "cannot_start",
               "closing"
             ],

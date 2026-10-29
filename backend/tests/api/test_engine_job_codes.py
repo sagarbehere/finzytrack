@@ -192,7 +192,7 @@ def test_an_engine_that_cannot_run_is_engine_unavailable_with_its_reason(scenari
     error = payload["error"]
     assert error["code"] == "ENGINE_UNAVAILABLE"
     assert error["retryable"] is True
-    assert error["details"] == {"reason": "cannot_start"}
+    assert error["details"] == {"reason": "incompatible"}
     conforms(app, payload)
 
 

@@ -71,7 +71,7 @@ describe('[S0046] the generated API types', () => {
       reason: 'crashed' | 'killed_by_system'
     }>()
     expectTypeOf<Extract<ApiError, { code: 'ENGINE_UNAVAILABLE' }>['details']>().toEqualTypeOf<{
-      reason: 'stopped_often' | 'cannot_start' | 'closing'
+      reason: 'stopped_often' | 'incompatible' | 'cannot_start' | 'closing'
     }>()
     expectTypeOf<Extract<ApiError, { code: 'WORKSPACE_UNKNOWN' }>['details']>().toEqualTypeOf<null>()
   })

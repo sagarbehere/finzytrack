@@ -122,15 +122,15 @@ export interface components {
         /**
          * EngineUnavailableDetails
          * @description No engine could be started for this job (engine-jobs §5.3, §11). `stopped_often`: the restart bound is
-         *     reached (failure-modes E1); `cannot_start`: the engine is incompatible or the wait for the engine lock failed
-         *     (E6); `closing`: Finzytrack is closing.
+         *     reached (failure-modes E1); `incompatible`: the engine speaks another protocol, a damaged install (E6: reinstall);
+         *     `cannot_start`: the wait for the engine lock failed (E6); `closing`: Finzytrack is closing.
          */
         EngineUnavailableDetails: {
             /**
              * Reason
              * @enum {string}
              */
-            reason: "stopped_often" | "cannot_start" | "closing";
+            reason: "stopped_often" | "incompatible" | "cannot_start" | "closing";
         };
         /** EngineUnavailableError */
         EngineUnavailableError: {

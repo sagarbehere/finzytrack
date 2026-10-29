@@ -202,6 +202,7 @@ def test_a_background_job_queued_carries_no_advice_so_the_notice_shows() -> None
             "cannot_start",
             "The ledger engine could not start. You can still look at your ledgers; saving changes is off.",
         ),
+        ("incompatible", "This installation is damaged. Please reinstall Finzytrack."),
         ("closing", "Finzytrack is closing."),
     ],
 )
