@@ -75,7 +75,7 @@ Next: the rest of **M1a**, then **M1b** (write contract), then **G1**, your go/n
 - **R3. Git under the book of record** while dogfooding; you review the diff of every write.
 - **R4. Reconciliation before the next write** (a real Beancount load compared with the overlay load), in every mode and never switched off (ADR-0008 amendment, ADR-0064). It runs right after the reply and completes before the next write to that workspace is accepted; any mismatch blocks writes, and while dogfooding it stops dogfooding of that mutator.
 - **R5. Never both apps writing one ledger.** v0.3 has no external-edit check and rewrites whole files. v0.4 has no Share mode (ADR-0062): your legacy ledger comes in by Copy, and the old app keeps its own file.
-- **R6. Agents never touch real data or your running app** (INV-24). Copies of real ledgers live outside the repo and run only in the local tier, which prints counts and case IDs only.
+- **R6. Agents never touch real data, and never stop, start or call your running app** (INV-24; they ask you to stop it, ADR-0065). Copies of real ledgers live outside the repo and run only in the local tier, which prints counts and case IDs only.
 - **R7. Downgrade note.** If v0.2/v0.3 rewrites a ledger v0.4 edited, comments and splices are lost.
 
 ### 3.2 Exit gates every milestone includes

@@ -62,7 +62,7 @@ sys.path.insert(0, str(REPO / "scripts" / "oracle"))
 
 import copies  # noqa: E402  (the shared copy guards, stdlib only)
 
-OWNER_PORT = 8001  # the owner's running app (.claude/hooks/guards.py OWNER_PORT; a test keeps them equal)
+OWNER_PORT = 8001  # the owner's running app (scripts/oracle/launch_legacy.py OWNER_PORT; a test keeps them equal)
 LOOPBACK = "127.0.0.1"
 READY = "FT_HARNESS_READY "
 ROOT_PREFIX = "ft-acceptance-"

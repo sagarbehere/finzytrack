@@ -1,9 +1,10 @@
 """Shared rules for the Claude Code guard hooks (INV-24): keep agents away from the owner's real data.
 
 These guards are a safety net, not a sandbox: they catch the common ways an agent could touch the live data
-folder, delete ignored files, write into the read-only legacy worktree, stop or call the owner's running app,
-or switch off the git gates (meta-tested in scripts/tests/test_guards.py). Commands built on purpose to slip
-past the parser are a stated limit, not a target (S0054). The rules are in design/process/PROCESS.md §8.
+folder, delete ignored files, write into the read-only legacy worktree, or switch off the git gates (meta-tested
+in scripts/tests/test_guards.py). Commands built on purpose to slip past the parser are a stated limit, not a
+target (S0054). The owner's running app is not guarded: agents never stop, start or call it, and ask the owner
+when it is in their way (INV-24, a working rule; owner, 2026-10-29). The rules are in design/process/PROCESS.md §8.
 """
 
 from __future__ import annotations
@@ -15,7 +16,6 @@ import shlex
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
-OWNER_PORT = "8001"
 
 
 def live_data_roots() -> list[Path]:
@@ -110,10 +110,6 @@ def path_problem(raw: str, cwd: Path, writing: bool) -> str | None:
     return None
 
 
-# a loopback host and the owner's port, as host:port or host port (nc, telnet); host 0 is loopback too (BL-0140)
-OWNER_URL = re.compile(rf"(?i)(localhost|127\.0\.0\.1|0\.0\.0\.0|\[::1\]|::1|(?<![\w.])0)(\s*:\s*|\s+){OWNER_PORT}\b")
-LEGACY_START = re.compile(r"^run-v0\.3")  # the legacy app's start script (BL-0140)
-OWNER_PROC = re.compile(rf"(?i)\b{OWNER_PORT}\b|app\.main|run-v0\.3|python|uvicorn|backend|finzytrack|beancount")
 READONLY_GIT = {"log", "show", "diff", "status", "grep", "ls-files", "ls-tree", "rev-parse", "cat-file", "blame",
                 "describe", "shortlog", "reflog", "rev-list", "name-rev", "for-each-ref"}
 READONLY_CMDS = {"ls", "cat", "head", "tail", "grep", "rg", "wc", "file", "stat", "du", "diff", "cmp", "less", "more",
@@ -124,14 +120,10 @@ WRITE_ANY_ARG = {"rm", "rmdir", "unlink", "truncate", "shred", "chmod", "chown",
                  "xattr", "setfacl"}
 
 
-def _join_continuations(command: str) -> str:
-    return command.replace("\\\n", " ")
-
-
 def _split(command: str) -> list[list[str]]:
     """The simple commands the shell runs. Heredoc bodies are data (S0054); line continuations join a command."""
     segs: list[list[str]] = []
-    for part in re.split(r"\|\||&&|;|\||\n|\$\(|`|\)", _join_continuations(_without_heredoc_bodies(command))):
+    for part in re.split(r"\|\||&&|;|\||\n|\$\(|`|\)", _without_heredoc_bodies(command).replace("\\\n", " ")):
         try:
             toks = shlex.split(part, comments=True)
         except ValueError:
@@ -202,190 +194,32 @@ def _git_problem(toks: list[str], cwd: Path) -> str | None:
     return None
 
 
-# Programs that run the text they are given (a heredoc body on stdin, a -c argument) as code.
-SHELLS = re.compile(r"^(?:ba|z|da|k|mk|fi|c|tc)?sh$|^(?:eval|source|\.)$")
-INTERPRETERS = re.compile(r"^(?:python[\d.]*|pypy[\d.]*|node(?:js)?|deno|bun|perl|ruby|php|osascript|lua|tsx|ts-node)$")
-HEREDOC_OPENER = re.compile(r"<<(-?)[ \t]*(?:'([^'\n]*)'|\"([^\"\n]*)\"|([^\s;&|<>()'\"]+))")
-
-
-def _rough_words(text: str) -> list[str]:
-    return [os.path.basename(w) for w in re.findall(r"[\w./:-]+", text)]
-
-
-def _runs_code(line: str) -> str | None:
-    """'shell' or 'interpreter' when a heredoc opened on this line is read as code, else None (data)."""
-    words = _rough_words(line)
-    if any(SHELLS.match(w) for w in words):
-        return "shell"
-    if any(INTERPRETERS.match(w) for w in words):
-        return "interpreter"
-    return None
-
-
-def _heredocs(command: str) -> list[tuple[int, int, str | None]]:
-    """(start, end, kind) of each heredoc body with its end line. kind: None for data (a body written to a file or a
-    non-shell command), 'shell' or 'interpreter' for a body the opener's line runs as code. An opener inside
-    quotes, a here-string (<<<) and a body without its end line open nothing."""
-    spans: list[tuple[int, int, str | None]] = []
-    stack = ["code"]  # "code", "dq" (inside "..."), "sub" (inside $(...))
-    pending: list[tuple[str, bool]] = []
-    i, n, line_start = 0, len(command), 0
-    while i < n:
-        c = command[i]
-        if c == "\\":
-            i += 2
-            continue
-        if stack[-1] == "dq":
-            if c == '"':
-                stack.pop()
-            elif command.startswith("$(", i):
-                stack.append("sub")
-                i += 1
-            i += 1
-            continue
-        if c == "\n":
-            kind = _runs_code(command[line_start:i])
-            i += 1
-            for delim, tabs in pending:
-                j, end = i, None
-                while j <= n:
-                    k = command.find("\n", j)
-                    k = n if k == -1 else k
-                    if (command[j:k].lstrip("\t") if tabs else command[j:k]).strip() == delim:
-                        end = min(k + 1, n)
-                        break
-                    if k >= n:
-                        break
-                    j = k + 1
-                if end is None:
-                    return spans  # unterminated: the rest stays code
-                spans.append((i, end, kind))
-                i = end
-            pending, line_start = [], i
-            continue
-        if c == "'":
-            k = command.find("'", i + 1)
-            i = n if k == -1 else k + 1
-        elif c == '"':
-            stack.append("dq")
-            i += 1
-        elif command.startswith("$(", i):
-            stack.append("sub")
-            i += 2
-        elif c == ")" and stack[-1] == "sub":
-            stack.pop()
-            i += 1
-        elif command.startswith("<<", i) and not command.startswith("<<<", i) and command[i - 1:i] != "<" \
-                and (m := HEREDOC_OPENER.match(command, i)):
-            raw = next(g for g in m.groups()[1:] if g is not None)
-            pending.append((re.sub(r"[\\'\"]", "", raw), m.group(1) == "-"))
-            i = m.end()
-        else:
-            i += 1
-    return spans
-
-
-def _code(command: str) -> tuple[str, list[str]]:
-    """The command without its data heredoc bodies (S0054), and the bodies an interpreter runs."""
-    out, scripts, at = [], [], 0
-    for start, end, kind in _heredocs(command):
-        if kind is None:
-            out.append(command[at:start])
-            at = end
-        elif kind == "interpreter":
-            scripts.append(command[start:end])
-    out.append(command[at:])
-    return "".join(out), scripts
+# A heredoc: its opener's line (kept, the shell runs it), then the body up to the delimiter line. A here-string
+# (<<<) opens nothing; a body without its end line stays code. Openers inside quotes or comments are not told
+# apart (a stated limit: only a command built on purpose has one, PROCESS.md §11).
+HEREDOC = re.compile(r"((?<!<)<<(?!<)-?[ \t]*(['\"]?)(\w+)\2[^\n]*\n).*?^[ \t]*\3[ \t]*$", re.DOTALL | re.MULTILINE)
+# A shell reads the body; `.` is left out (it is also an argument, `git add .`).
+SHELLS = re.compile(r"^(?:ba|z|da|k|mk|fi|c|tc)?sh$|^(?:eval|source)$")
 
 
 def _without_heredoc_bodies(command: str) -> str:
-    return _code(command)[0]
-
-
-# The kill rule (S0054, verifier F1): judged by the words of the whole command after quote handling, wherever they
-# stand (after xargs flags, keywords, groups, wrappers such as timeout, nice, sudo, parallel or npx).
-NAME_KILLERS = {"pkill", "killall", "kill-port"}
-PID_FINDERS = {"pgrep", "pidof", "ps", "lsof", "fuser"}  # a kill beside one aims at a name or a port, not a PID
-SEARCHERS = {"grep", "egrep", "fgrep", "rg"}  # their words are patterns: data
-SEPARATOR = re.compile(r"^[();<>|&]*[();|&][();<>|&]*$")
-LEADING = {"do", "then", "else", "elif", "if", "while", "until", "!", "{", "time"}
-
-
-def _word_segments(text: str, depth: int = 0) -> list[list[str]]:
-    """The words of each simple command, quotes removed. A quoted string is one word, so a message that mentions
-    a kill is not a kill; command substitutions, and the code given to a shell or an interpreter, are read too."""
-    flat = _join_continuations(text).replace("\n", " ; ")
-    try:
-        lex = shlex.shlex(flat, posix=True, punctuation_chars=True)
-        lex.commenters = ""  # a comment's words count: it is cheaper to refuse than to misread quoting
-        tokens = list(lex)
-    except ValueError:
-        tokens = [t for t in re.split(r"[\s'\"]+|([();|&]+)", flat) if t]
-    segs: list[list[str]] = [[]]
-    for t in tokens:
-        if SEPARATOR.match(t):
-            segs.append([])
-        else:
-            segs[-1].append(t)
-    out = [s for s in segs if s]
-    if depth < 4:
-        for seg in list(out):
-            names = [os.path.basename(w) for w in seg]
-            shell = any(SHELLS.match(w) for w in names)
-            interp = any(INTERPRETERS.match(w) for w in names)
-            for w in seg:
-                if "$(" in w or "`" in w or shell and re.search(r"[\s;|&()]", w):
-                    out += _word_segments(w.replace("`", " ; "), depth + 1)
-                elif interp and re.search(r"[\s;|&()]", w):
-                    out.append(_rough_words(w))
-    return out
-
-
-def _kill_problem(code: str, scripts: list[str]) -> str | None:
-    segs = _word_segments(code) + [_rough_words(s) for s in scripts]
-    words = {os.path.basename(w) for s in segs for w in s}
-    text = (code + "".join(scripts)).lower()
-    # a finder, the owner's port, or a file in the legacy worktree (a PID file there is the legacy app's)
-    aimed = words & PID_FINDERS or re.search(rf"\b{OWNER_PORT}\b", text) or "finzytrack-legacy" in text or any(
-        s in text for r in legacy_roots() for s in (str(r).lower(), _norm(r)))
-    for seg in segs:
-        lead = [w for w in seg if w not in LEADING and not re.match(r"^\w+=", w)][:1]
-        if lead and os.path.basename(lead[0]) in SEARCHERS:
-            continue
-        for j, w in enumerate(seg):
-            name, rest = os.path.basename(w), seg[j + 1:]
-            if name in NAME_KILLERS:
-                return f"{name} picks processes by name or port and could stop the owner's app; kill only by the PID you saved"
-            if name == "fuser" and any(re.match(r"^-[A-Za-z]*k", a) for a in rest):
-                return "fuser -k could stop the owner's running app; kill only processes you started, by PID"
-            if name == "kill":
-                if "-1" in rest:
-                    return "kill -1 signals every process; refused"
-                if aimed:
-                    return ("this kills a process found by name or port, which could be the owner's app; kill only by "
-                            "the PID you saved")
-                if OWNER_PROC.search(" ".join(rest)):
-                    return "this could stop the owner's running app; kill only processes you started, by PID"
-    return None
+    """The lines a shell runs (S0054): a heredoc body is data unless a shell word stands on its opener's line
+    (`bash <<EOF`, `cat <<EOF | sh`, `cat > x.sh <<EOF && bash x.sh`); that refuses more than needed."""
+    def body(m: re.Match[str]) -> str:
+        line = command[command.rfind("\n", 0, m.start()) + 1:m.end(1)]
+        words = re.findall(r"[^\s;&|()<>'\"`]+", line)
+        return m.group(0) if any(SHELLS.match(os.path.basename(w)) for w in words) else m.group(1)
+    return HEREDOC.sub(body, command)
 
 
 def bash_problem(command: str, cwd: Path) -> str | None:
-    """Why this shell command is refused, or None if it may run. S0054 (reflection proposal 8): the guard refuses
-    acts aimed at the owner's app and data, the legacy worktree and the git gates; text that only mentions them
-    passes, and commands built on purpose to slip past the parser are a stated limit (PROCESS.md §11)."""
-    code, scripts = _code(command)
-    # quoted text is not skipped: bash opens a quoted /dev/tcp redirect target too
-    if re.search(rf"/dev/(tcp|udp)/[^/\s]+/{OWNER_PORT}\b", code):
-        return f"a network redirect to port {OWNER_PORT} reaches the owner's running app; never call it (INV-24)"
+    """Why this shell command is refused, or None if it may run. S0054: the guard refuses acts aimed at the owner's
+    data, the legacy worktree and the git gates; text that only mentions them passes (the live data folder
+    excepted), and commands built on purpose to slip past the parser are a stated limit (PROCESS.md §11)."""
     if LIVE_NAME.search(command) or any(str(r).lower() in command.lower() for r in live_data_roots()):
         return "the owner's live data folder is off-limits to agents (INV-24)"
-    if OWNER_URL.search(command):
-        return f"port {OWNER_PORT} is the owner's running app; never call it (INV-24). Use your own instance"
-    if problem := _kill_problem(code, scripts):
-        return problem
-    segments = _split(command)
     here = cwd
-    for toks in segments:
+    for toks in _split(command):
         cmd = os.path.basename(toks[0])
         args = toks[1:]
         plain = [a for a in args if not a.startswith("-")]
@@ -407,8 +241,6 @@ def bash_problem(command: str, cwd: Path) -> str | None:
             if problem := _git_problem(toks, here):
                 return problem
             continue
-        if LEGACY_START.match(cmd) or SHELLS.match(cmd) and any(LEGACY_START.match(os.path.basename(a)) for a in plain):
-            return "this starts the legacy app, which the owner runs on port 8001 with the live data (INV-24); refused"
         if cmd == "find":
             start = [a for a in args if not a.startswith(("-", "(", "!"))][:1]
             root = _resolve(start[0], here) if start else here

@@ -25,9 +25,9 @@ from unittest import mock
 
 REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO / "scripts" / "acceptance"))
-sys.path.insert(0, str(REPO / ".claude" / "hooks"))
+sys.path.insert(0, str(REPO / "scripts" / "oracle"))
 
-import guards  # noqa: E402
+import launch_legacy  # noqa: E402
 import launcher as harness  # noqa: E402
 
 BACKEND_PY = REPO / "backend" / ".venv" / "bin" / "python"
@@ -231,8 +231,8 @@ class TempRootTest(EnvMixin):
 
 
 class PortTest(unittest.TestCase):
-    def test_the_owner_port_is_the_guard_hooks_owner_port(self) -> None:
-        self.assertEqual(str(harness.OWNER_PORT), guards.OWNER_PORT)
+    def test_the_owner_port_is_the_legacy_launchers_owner_port(self) -> None:
+        self.assertEqual(harness.OWNER_PORT, launch_legacy.OWNER_PORT)
 
     def test_check_port_accepts_unprivileged_ports_other_than_the_owners(self) -> None:
         for good in (1025, 49152, 65535, 8000, 8002):

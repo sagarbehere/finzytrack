@@ -50,117 +50,45 @@ class GuardTest(unittest.TestCase):
         self.assertTrue(self.blocked("cat ~/FinzytrackData/config/config.yaml"))
         self.assertTrue(guards.path_problem(str(self.live / "data/ledger.db"), self.repo, writing=False))
 
-    def test_owner_app(self) -> None:
-        self.assertTrue(self.blocked("lsof -ti:8001 | xargs kill"))
-        self.assertTrue(self.blocked("pkill -f app.main"))
-        self.assertTrue(self.blocked("killall python3"))
-        self.assertFalse(self.blocked("kill 12345"))
-
-    def test_kills_are_judged_by_what_runs_not_by_words(self) -> None:
-        """S0054 (reflection proposal 8): the guard refuses acts aimed at the owner's app, not text that mentions
-        them. pkill and killall pick processes by name, so any use is refused; kill is refused when the same command
-        looks a process up (pgrep, pidof, ps, lsof) or names port 8001."""
-        refused = [
-            "pkill -f my_worker", "killall node", "kill $(pgrep -f uvicorn)", "ps aux | grep x | xargs kill -9",
-            "kill $(pidof something)", "kill -9 $(lsof -t -i :8001)",
-        ]
-        for cmd in refused:
-            self.assertTrue(self.blocked(cmd), cmd)
-        allowed = [
-            # S0038, S0040, S0048 false positives: test code that ends a process, written through a heredoc
-            "cat > /tmp/t.py <<'EOF'\nos.kill(proc.pid, signal.SIGTERM)  # end the python backend\nEOF",
-            'grep -rn "kill" backend/src', "python3 -m pytest -k test_kill_the_engine backend/tests",
-            "kill $PID && uv run pytest backend/tests -q", "kill %1",
-        ]
-        for cmd in allowed:
-            self.assertFalse(self.blocked(cmd), cmd)
-
-    def test_a_kill_is_judged_by_its_words_wherever_they_stand(self) -> None:
-        """S0054 verifier F1: the kill rule reads the words of the whole command, not the first word of each
-        simple command, so xargs flags, shell keywords, groups and wrappers do not hide a kill. pkill, killall,
-        kill-port and fuser -k are refused anywhere; kill is refused beside port 8001 or a process finder."""
-        refused = [
-            # the verifier's 14 (each passed at f66811dd)
-            "lsof -ti:8001 | xargs -r kill", "lsof -ti :8001 | xargs -n1 kill",
-            "lsof -nP -iTCP:8001 -sTCP:LISTEN -t | xargs -r kill -TERM",
-            "for p in $(lsof -ti:8001); do kill $p; done",
-            "if pgrep -f uvicorn >/dev/null; then kill $(pgrep -f uvicorn); fi",
-            'while read p; do kill "$p"; done < <(pgrep -f uvicorn)',
-            "{ kill $(pgrep -f uvicorn); }", "(kill -9 $(lsof -ti:8001))",
-            "pgrep -f uvicorn | xargs -I{} kill -9 {}",
-            "ps aux | grep uvicorn | awk '{print $2}' | xargs -r kill",
-            "timeout 5 pkill -f uvicorn", "nice -n 5 pkill -f uvicorn", "sudo -n pkill -f app.main",
-            "npx kill-port 8001",
-            # more of the same class
-            "npx --yes kill-port 8001", "lsof -ti:8001 | parallel kill", "timeout 5 fuser -k 8001/tcp",
-            "sudo fuser -k 8001/tcp", '"kill" $(lsof -ti:8001)', "/bin/kill $(pgrep -f app.main)",
-            "bash -c 'pkill -f uvicorn'", "pgrep -f uvicorn | xargs -I{} sh -c 'kill {}'",
-            'git commit -m "$(pkill -f uvicorn)"', "echo `pkill -f uvicorn`",
-            "python3 -c \"import os; os.system('pkill -f uvicorn')\"",
-            "launchctl kill TERM gui/501/finzytrack.backend", "kill -9 4242 # the python backend on 8001",
-        ]
-        for cmd in refused:
-            with self.subTest(cmd=cmd):
-                self.assertTrue(self.blocked(cmd), cmd)
-        allowed = [
-            # the approved removal: the word in data (a message, a heredoc written to a file, a search pattern)
-            'git commit -m "kill the old helper"', "cat > notes.md <<'EOF'\nwe kill the process\nEOF",
-            'git commit -m "pkill and killall are refused; so is lsof -ti:8001 | xargs kill"',
-            "git commit -q -F - <<'EOF'\nthe guard refuses pkill -f uvicorn and kill $(lsof -ti:8001)\nEOF",
-            "git commit -m \"$(cat <<'EOF'\nS1: pkill and kill-port are refused\nEOF\n)\"",
-            "grep -rn pkill scripts/", 'rg -n "kill-port" .', "ps aux | grep kill",
-            "python3 -c 'import os; os.kill(pid, 15)'", "kill $PID", "lsof -iTCP -sTCP:LISTEN -nP",
-        ]
-        for cmd in allowed:
-            with self.subTest(cmd=cmd):
-                self.assertFalse(self.blocked(cmd), cmd)
-
-    def test_a_kill_beside_port_8001_needs_no_finder(self) -> None:
-        """S0054 verifier F4: the port clause stands on its own (a mutant that drops it passed every other test)."""
-        for cmd in ("kill -9 $(cat /tmp/app.pid) # whatever holds 8001",
-                    "kill $(ss -ltnp 'sport = :8001' | awk 'NR>1{print $6}')", "kill 4242; echo 8001",
-                    f"kill -TERM $(cat {self.legacy}/backend.pid)"):  # a PID file in the legacy worktree
-            with self.subTest(cmd=cmd):
-                self.assertTrue(self.blocked(cmd), cmd)
-        self.assertFalse(self.blocked("kill 4242; echo 18001"))
-
-    def test_a_heredoc_fed_to_a_shell_or_an_interpreter_is_code(self) -> None:
-        """S0054 verifier F2, F3: a body that a shell or an interpreter reads is parsed as commands (as before
-        S0054); only a body written to a file or another command is data. A here-string (<<<) and a quoted "<<EOF"
-        open no heredoc, so the lines after them are commands."""
+    def test_a_heredoc_fed_to_a_shell_is_code(self) -> None:
+        """S0054 verifier F2, F3: a body that a shell reads is parsed as commands (as before S0054); a body written
+        to a file or another command is data. A here-string (<<<) opens no heredoc, so the lines after it are
+        commands. Stated limit (PROCESS.md §11; round 2): a "<<EOF" inside quotes or a comment is taken as an
+        opener, so `echo "<<EOF"`, then commands, then an EOF line, hides those commands; only a command built on
+        purpose has that shape."""
         L = self.legacy
         refused = [
-            f"bash <<'EOF'\nrm -rf {L}/backend\nEOF", "sh <<EOF\npkill -f uvicorn\nEOF",
-            "bash <<'EOF'\nkill $(lsof -ti:8001)\nEOF", f"cat <<'EOF' | bash\nrm -rf {L}/backend\nEOF",
-            "python3 - <<'EOF'\nimport subprocess; subprocess.run('pkill -f uvicorn', shell=True)\nEOF",
+            f"bash <<'EOF'\nrm -rf {L}/backend\nEOF", "sh <<EOF\ngit push --force origin next\nEOF",
+            f"cat <<'EOF' | bash\nrm -rf {L}/backend\nEOF",
             f"cat > /tmp/x.sh <<'EOF' && bash /tmp/x.sh\nrm -rf {L}/backend\nEOF",
-            # F3: not heredoc openers
-            f"cat <<<EOF\nrm -rf {L}/backend\nEOF", f'echo "<<EOF"\nrm -rf {L}/backend\nEOF',
-            f"echo '<<EOF'\nrm -rf {L}/backend\nEOF",
-            # a body with no end line is not taken as data
-            f"cat > /tmp/x <<'EOF'\nrm -rf {L}/backend",
+            f"cat <<<EOF\nrm -rf {L}/backend\nEOF",  # F3: a here-string is not a heredoc opener
+            # a body with no end line is not taken as data; the end line is the delimiter alone
+            f"cat > /tmp/x <<'EOF'\nrm -rf {L}/backend", f"cat > /tmp/x <<'EOF'\nrm -rf {L}/backend # EOF",
         ]
         for cmd in refused:
             with self.subTest(cmd=cmd):
                 self.assertTrue(self.blocked(cmd), cmd)
         allowed = [
-            f"cat > /tmp/x.sh <<'EOF'\nrm -rf {L}/backend\nEOF", "tee /tmp/x <<EOF\npkill -f uvicorn\nEOF",
-            "cat > /tmp/t.py <<'EOF'\nos.kill(proc.pid, signal.SIGTERM)\nEOF",
+            f"cat > /tmp/x.sh <<'EOF'\nrm -rf {L}/backend\nEOF", "tee /tmp/x <<EOF\ngit push --force origin next\nEOF",
+            # R2-F3: `.` on the opener's line is an argument, not the `.` builtin
+            f"git add . && git commit -q -F - <<'EOF'\nS1: a message\n\nrm -rf {L}/backend\ngit push --force origin next\nEOF",
+            "git commit -F - <<'EOF'\nS1: notes # with a hash\ngit push --force is refused\nEOF",
         ]
         for cmd in allowed:
             with self.subTest(cmd=cmd):
                 self.assertFalse(self.blocked(cmd), cmd)
 
-    def test_the_owners_app_is_not_started_or_probed(self) -> None:
-        """BL-0140 (S0054 verifier F10): the legacy app's start script run from anywhere, and a loopback host and
-        port 8001 written with a space or as host 0, are refused; reading the script and other ports pass."""
+    def test_the_owners_app_is_not_guarded(self) -> None:
+        """S0054 verifier round 2 (owner, 2026-10-29: "Why do we even care about the running v0.3 app? You should
+        just ask me to kill the app myself, so you can proceed."): the guard has no rules about the owner's app.
+        Agents never stop, start or call it; if it is in their way they ask the owner (INV-24, a working rule).
+        These commands pass on purpose, so a rule that comes back is a deliberate change."""
         L = self.legacy
-        for cmd in (f"bash {L}/run-v0.3.sh", f"{L}/run-v0.3.sh", f"nohup {L}/run-v0.3.sh &", "./run-v0.3.sh",
-                    "nc localhost 8001", "nc -z 127.0.0.1 8001", "curl -s http://0:8001/", "telnet localhost 8001"):
-            with self.subTest(cmd=cmd):
-                self.assertTrue(self.blocked(cmd), cmd)
-        for cmd in (f"cat {L}/run-v0.3.sh", f"grep -n uvicorn {L}/run-v0.3.sh", "nc -z localhost 18950",
-                    "curl -s http://127.0.0.1:18001/", "curl -s http://10:8001/"):
+        net = "/dev/" + "tcp"
+        for cmd in ("pkill -f uvicorn", "killall python3", "lsof -ti:8001 | xargs kill", "kill -9 $(pgrep -f app.main)",
+                    "fuser -k 8001/tcp", "npx kill-port 8001", "kill -TERM -1", "curl -s http://localhost:8001/health",
+                    "nc -z 127.0.0.1 8001", f"cat < {net}/127.0.0.1/8001", f"bash {L}/run-v0.3.sh",
+                    "git grep -n pkill", "cat > /tmp/n.md <<'EOF'\nlocalhost:8001\nEOF"):
             with self.subTest(cmd=cmd):
                 self.assertFalse(self.blocked(cmd), cmd)
 
@@ -171,6 +99,8 @@ class GuardTest(unittest.TestCase):
         allowed = [
             f"cat > /tmp/notes.md <<'EOF'\nrm -rf {L}/backend\ngit push --force origin next\nEOF",
             "git commit -q -F - <<'EOF'\nS0054: the guard no longer refuses git push --force in a message body\nEOF",
+            "git commit -q -m \"$(cat <<'EOF'\nS1: msg\n\ngit push --force origin next\nEOF\n)\"",
+            f"cat > /tmp/x <<-EOF\n\trm -rf {L}/backend\n\tEOF",
         ]
         for cmd in allowed:
             self.assertFalse(self.blocked(cmd), cmd)
@@ -210,7 +140,7 @@ class GuardTest(unittest.TestCase):
         self.assertIsNone(guards.path_problem(str(gen), self.repo, writing=False))
 
     def test_bypasses_found_by_review(self) -> None:
-        """review:G G-12..G-20 and G-14: each must be refused."""
+        """review:G G-12..G-20: each must be refused (G-14 and G-19, the owner's app, removed in S0054 round 2)."""
         L = self.legacy
         refused = [
             # G-12 hook skipping
@@ -219,9 +149,6 @@ class GuardTest(unittest.TestCase):
             # G-13 push gate and refspecs
             "git config finzytrack.allowPush true", "git -c core.hooksPath=/dev/null push", "git push origin +next",
             "git push origin HEAD:main", "git push -d origin next",
-            # G-14 the owner's running app over HTTP
-            "curl -X POST http://localhost:8001/api/transactions -d x", "curl -X DELETE 127.0.0.1:8001/api/x",
-            "wget -qO- http://[::1]:8001/health",
             # G-15 live data by indirection
             "find ~ -name '*.beancount'", "ls ~/Finzy*Data", 'cat "$FT_LIVE_DATA/config/config.yaml"',
             "ls ~/finzytrack-data",
@@ -232,8 +159,6 @@ class GuardTest(unittest.TestCase):
             f"dd if=/dev/zero of={L}/f", f"npm --prefix {L}/frontend install", f"find {L} -name '*.pyc' -delete",
             f"git -C {L} branch -D main", "git tag -d v0.3.0", f"git worktree remove --force {L}",
             f"rm -rf {L.parent}/*legacy*", f"cd {L} && python3 -m app.main",
-            # G-19 kills
-            "fuser -k 8001/tcp", "killall Python", "kill -TERM -1", "pkill -f backend",
             # G-20 clean / stash
             "git -c x=y clean -fdx", "git stash --all", "git clean -e '!*' -fd",
         ]
@@ -263,15 +188,13 @@ class GuardTest(unittest.TestCase):
         # Stated limit (PROCESS.md §11, the guards are a safety net): writers the guard does not parse (interpreters,
         # git checkout/restore/apply, patch, curl -o, awk -i inplace, ed) are not caught.
 
-    def test_the_owners_port_and_the_git_gates(self) -> None:
-        """BL-0055's forms that reach the owner's app or the git gates: each must be refused; the ordinary forms
-        beside them must not. S0054 dropped its refusals of deliberately built commands (a flag carried by a
-        `$(...)` next to git; a network redirect to another port): stated limits, PROCESS.md §11."""
+    def test_the_git_gates(self) -> None:
+        """BL-0055's forms that reach the git gates: each must be refused; the ordinary forms beside them must not.
+        S0054 dropped its refusals of deliberately built commands (a flag carried by a `$(...)` next to git) and,
+        in round 2, every network redirect rule: stated limits, PROCESS.md §11."""
         nv = "--no-" + "verify"  # spelled in two parts so this file's text is not itself a command the guard reads
         net = "/dev/" + "tcp"
         refused = [
-            f"cat < {net}/127.0.0.1/8001",
-            f'exec 3<>"{net}/127.0.0.1/8001"',  # a quoted redirect target still opens the connection
             "git log > .git/config", "printf x >> .git/hooks/pre-commit", "git show HEAD:x > .git/config",
             f"git commit -m \"it's\" {nv} -m 'x'",  # an apostrophe inside double quotes is not a quote
             f"cat <<EOF && git commit -m x {nv}\nbody\nEOF",  # the opener's line still runs
@@ -295,9 +218,9 @@ class GuardTest(unittest.TestCase):
         self.assertTrue(guards.path_problem(str(self.repo / ".git" / "hooks" / "pre-push"), self.repo, writing=True))
         self.assertIsNone(guards.path_problem(str(self.repo / ".git" / "config"), self.repo, writing=False))
         self.assertIsNone(guards.path_problem(str(self.repo / ".githooks" / "pre-push"), self.repo, writing=True))
-        # Stated limits (PROCESS.md §11): code given to `sh -c` or `eval`, or run by an interpreter, is checked for
-        # kill words only, its paths and git flags are not parsed; nor are commands built on purpose to slip past the
-        # parser (BL-0042 and BL-0062 removed, BL-0055's anti-bypass refusals removed; owner, 2026-10-29).
+        # Stated limits (PROCESS.md §11): code given to `sh -c` or `eval`, or run by an interpreter, is not parsed;
+        # nor are commands built on purpose to slip past the parser (BL-0042 and BL-0062 removed, BL-0055's
+        # anti-bypass refusals removed; owner, 2026-10-29).
 
     def test_hooks_fail_closed(self) -> None:
         """INV-22's spirit for the guards (S0014 round-2 verifier F2): Claude Code runs a command when the hook

@@ -80,6 +80,7 @@ This folder holds the architecture decision records of Finzytrack v0.4: why the 
 | [ADR-0062](ADR-0062-single-instance-no-legacy-coexistence.md) | One running Finzytrack at a time: no ledger shared with a running legacy app, a single v0.4 instance | Accepted | 2026-10-27 | workspaces, lifecycle, data safety, desktop |
 | [ADR-0063](ADR-0063-one-open-workspace-no-shared-files.md) | One open workspace at a time, and every unfinished save recovered before any workspace opens | Accepted; amended by ADR-0064 and S0047 | 2026-10-27 | workspaces, API, lifecycle, data safety, hosting |
 | [ADR-0064](ADR-0064-one-engine-one-job-at-a-time.md) | One engine, one job at a time | Accepted; amended by S0047 | 2026-10-27 | engine, scheduling, write path, performance |
+| [ADR-0065](ADR-0065-agents-ask-the-owner-to-stop-the-running-app.md) | Agents ask the owner to stop the running app; the guard protects data, not the app | Accepted | 2026-10-29 | process, agents, invariants |
 
 ## Template
 
