@@ -42,6 +42,7 @@ class FakeEngine:
     spawns_per_start: int = 1  # 2: the bytecode retry (spec §5.1), one start that spawns twice
     start_failure: EngineFailure | None = None
     stuck: bool = False  # hold every end report until `release_ends()`
+    hold_ends: bool = False  # hold every end report until the next `release_ends()`, for good (the replay, S0059)
     spawned: Callable[[int], None] | None = None
     before_start: Callable[[], None] | None = None  # runs as `start()` begins, before the client has an engine
     hold_start: bool = False  # `start()` waits for an `end()` that finds no engine, which waits for the job's decision
@@ -204,7 +205,8 @@ class FakeEngine:
     def release_ends(self) -> None:
         with self._cond:
             held, self._held = self._held, []
-            self.stuck = False
+            self.stuck = False  # `hold_ends` stays
+
         for end in held:
             if self.ended is not None:
                 self.ended(end)
@@ -231,6 +233,12 @@ class FakeEngine:
             self.state_now = Closed()
 
     @property
+    def held(self) -> int:
+        """How many end reports are held."""
+        with self._cond:
+            return len(self._held)
+
+    @property
     def serial(self) -> int:
         return self._serial
 
@@ -243,8 +251,9 @@ class FakeEngine:
 
     def _report(self, end: EngineEnd) -> None:
         """Under the lock: the end is reported on a thread of its own, as the client's reaper does."""
-        if self.stuck:
+        if self.stuck or self.hold_ends:
             self._held.append(end)
+            self._cond.notify_all()
             return
         if self.ended is not None:
             threading.Thread(target=self.ended, args=(end,), name="fake-reaper", daemon=True).start()

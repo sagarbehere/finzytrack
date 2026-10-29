@@ -16,9 +16,11 @@ the pieces land. The markers are read from the source (AST), never by importing 
 reader refuses a disjunct it cannot read rather than dropping it (S0053 verifier F9).
 
 Limit: the check sees which actions are marked, not whether the marked function is the one that carries the action
-out. A marker on the wrong function passes; the conformance tests of BL-0150 (S0059) replay the model's traces through
-the code and catch a wrong function by behaviour. (Until S0058 `SpawnStep` sat on `_engine_needed`, which records the
-ask; it is now on `_spawn_step`, which starts the fresh engine or, while the engine is unavailable, ends the job.)
+out. A marker on the wrong function passes; the conformance replay (S0059,
+`tests/platform/test_engine_jobs_conformance.py`) runs the model's traces through the table and the shell and catches
+wrong behaviour, whichever function holds it.
+(Until S0058 `SpawnStep` sat on `_engine_needed`, which records the ask; it is now on `_spawn_step`, which starts the
+fresh engine or, while the engine is unavailable, ends the job.)
 """
 
 from __future__ import annotations

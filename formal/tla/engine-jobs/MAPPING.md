@@ -524,3 +524,23 @@ Each runs on a small world (`cfg/MUT_<name>.cfg`) and checks only its property; 
 | `manifest_overwrite` | model review 1 (finding 5) | `DroppedFileNeverReplaced` | `S_create_empty` | the manifest's rename replaces a `.finzytrack` that appeared |
 | `app_scoped_during_recovery` | model review 1 (finding 14) | `AppScopedWaitsForRecovery` | `S_boot` | a create or copy may start during a switch or boot |
 | `read_refusal_stuck` | this update | `NoEngineStall` | `S_save_crash` | a read meeting an `.open` journal cannot refuse |
+
+## 7. The code's conformance (S0059)
+
+`gen_traces.py` walks small worlds of this model with TLC's simulate mode (a fixed seed, one worker) and writes
+`traces/corpus.json`; `backend/tests/platform/test_engine_jobs_conformance.py` replays each trace through the queue
+table (`app.platform.engine_jobs.queue`) and the scheduler shell (`app.platform.engine_jobs.scheduler`) over a fake
+engine port, and checks at every settled step the queued and running jobs, the engine slot, the engine's availability,
+the timer's advice, the open workspace, how every ended job was answered and how many fresh engines were started.
+
+The walk is the model's `Next` with each step labelled, the app's dispatch (`Dispatch`, `DispatchUnavail`,
+`SpawnStep`) taken first whenever it is enabled (the table dispatches inside the step of the event that allows it),
+and the actions and branches of later pieces left out; every trace is a behaviour of `Spec`. The test classifies each
+action of `Next` (read from the model by the code map's reader, `test_tla_mapping.py`, so a new action fails the
+test until it is classified): BL-0150's own actions (19) map to the
+code's requests, engine reports and time events; the job steps of the save, recovery, R4 and the reads (48) map
+through what they do to the queue (the job ends, reaches its commit point, asks for a fresh engine or queues a job);
+`Assess` and `AppFocusCheck` are played through the shell's seams (`workspace_opened`, a submit); the outside world's
+file actions and two record actions (7) must leave the queue's state as it is; create and copy (BL-0153) and the
+switch, quit, the app's crash, a power loss and the next start (BL-0154) (29) are left out of the walk. The test's
+docstring and `design/journal/S0059-conformance-traces.md` give the equivalences and what the replay cannot see.

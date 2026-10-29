@@ -105,6 +105,20 @@ no counters (§13 requires that). Distinct states per second stayed at 50,000-90
 - `LL_jobs` (the large liveness world of 84c8b8c9) is dropped: its properties are checked in the small
   liveness worlds, and TLC checks liveness 20-40 times slower per state.
 
+## The conformance traces (S0059)
+
+`traces/corpus.json` holds TLC-simulated traces of small worlds that `backend/tests/platform/test_engine_jobs_conformance.py`
+replays through the queue table and the scheduler shell (no Java at test time). Regenerate it after any change to
+`EngineJobs.tla`, to a `.cfg` it uses or to the generator (the test fails until then, naming this command):
+
+```sh
+python3 formal/tla/engine-jobs/gen_traces.py           # about 15 s; Java 21 and the pinned jar
+python3 formal/tla/engine-jobs/gen_traces.py --check   # is the corpus current? (no Java)
+```
+
+The worlds, the seed, the trace depth and what the walk leaves out are in the generator's header; MAPPING.md §7 says
+how the model's actions map to the code.
+
 ## Changing the model
 
 - Edit `EngineJobs.tla`; edit the worlds and mutants in `gen_cfgs.py`, then run
