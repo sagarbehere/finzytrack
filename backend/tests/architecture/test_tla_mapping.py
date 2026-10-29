@@ -12,7 +12,13 @@ action may carry one. The check fails:
 
 `PLANNED` names, for each action not built yet, the backlog row of the BL-0109 piece that builds it; `PARTIAL` names
 the row that builds the rest of an action whose marked function carries only part of it. Both shrink to nothing as
-the pieces land. The markers are read from the source (AST), never by importing the engine (ADR-0054).
+the pieces land. The markers are read from the source (AST), never by importing the engine (ADR-0054). The step
+reader refuses a disjunct it cannot read rather than dropping it (S0053 verifier F9).
+
+Limit: the check sees which actions are marked, not whether the marked function is the one that carries the action
+out. A marker on the wrong function (today `SpawnStep` sits on `_engine_needed`, which records the ask, while the
+start itself happens in `_dispatch`) passes; the conformance tests of BL-0150 replay the model's traces through the
+code and catch a wrong function by behaviour.
 """
 
 from __future__ import annotations
@@ -137,17 +143,33 @@ class Marker:
     where: str
 
 
+DISJUNCT = re.compile(r"(?:\\E\s+[^:]+:\s*)*([A-Za-z_][A-Za-z0-9_]*)(?:\([^()]*\))?")
+"""One disjunct of a step: an operator, applied or not, under any number of existentials."""
+
+
 def defined_operators(model: str) -> set[str]:
     return set(re.findall(r"^([A-Za-z_][A-Za-z0-9_]*)(?:\([^)]*\))?\s*==", model, re.MULTILINE))
 
 
 def step_actions(model: str, group: str) -> set[str]:
-    """The actions a disjunction of `Next` names (`EngineStep`, `AppStep`, `UserStep`, `EnvStep`)."""
+    """The actions a disjunction of `Next` names (`EngineStep`, `AppStep`, `UserStep`, `EnvStep`). Each disjunct
+    must be an operator of the model, applied or not, possibly under existentials (`\\/ A`, `\\/ A(x)`,
+    `\\/ \\E i \\in S : \\E j \\in T : A(i, j)`); any other form is refused rather than dropped, since a dropped
+    disjunct would leave its action out of the required set."""
     match = re.search(rf"^{group}\s*==\s*\n(.*?)(?:\n\s*\n)", model, re.MULTILINE | re.DOTALL)
     assert match is not None, f"{group} not found in the model"
-    # each disjunct is an action, possibly under an existential: `\/ A`, `\/ \E i \in S : A(i)`
-    names = set(re.findall(r"\\/\s*(?:\\E\s+[^:]+:\s*)?([A-Za-z_][A-Za-z0-9_]*)", match.group(1)))
-    return names & defined_operators(model)
+    parts = [part.strip() for part in re.split(r"\\/", match.group(1))]
+    assert parts[0] == "", f"{group}: cannot read {parts[0]!r} before its first disjunct"
+    defined = defined_operators(model)
+    names: set[str] = set()
+    for part in parts[1:]:
+        read = DISJUNCT.fullmatch(part)
+        assert read is not None, (
+            f"{group}: cannot read the disjunct {part!r}; write it as an action, or extend the reader"
+        )
+        assert read.group(1) in defined, f"{group}: cannot read the disjunct {part!r}: no operator of that name"
+        names.add(read.group(1))
+    return names
 
 
 def markers(roots: Iterable[Path]) -> list[Marker]:
@@ -288,6 +310,30 @@ def test_must_not_pass(
 ) -> None:
     out = problems(TOY, found, planned, partial, live)
     assert any(needle in p for p in out), out
+
+
+def test_nested_existentials_are_read_as_their_action() -> None:
+    model = TOY.replace(
+        "\\/ A_One \\/ \\E i \\in S : A_Two(i)", "\\/ A_One \\/ \\E i \\in S : \\E j \\in T : A_Two(i, j)"
+    )
+    assert "\\E j" in model
+    assert step_actions(model, "EngineStep") == {"A_One", "A_Two"}
+    out = problems(model, [m("A_One"), m("B"), m("AdviceTimer")], {}, {}, set[str]())
+    assert any("A_Two: an engine or app action" in p for p in out), out
+
+
+@pytest.mark.parametrize(
+    "disjunct",
+    ["(A_One)", "A_One /\\ x = 1", "IF c THEN A_One ELSE A_Two(1)", "\\E i \\in S : (A_Two(i))", "Undefined"],
+    ids=["parenthesised", "conjunction", "if-then-else", "parenthesised-under-exists", "not-an-operator"],
+)
+def test_a_disjunct_the_reader_cannot_parse_is_refused_not_dropped(disjunct: str) -> None:
+    """S0053 verifier F9: a disjunct the reader does not understand would drop an action from the required set, and
+    the code map would pass with it unmarked. The reader refuses instead."""
+    model = TOY.replace("AppStep ==\n  \\/ B", f"AppStep ==\n  \\/ B \\/ {disjunct}")
+    assert disjunct in model
+    with pytest.raises(AssertionError, match="cannot read"):
+        step_actions(model, "AppStep")
 
 
 def test_a_marker_naming_an_action_with_a_non_literal_is_refused(tmp_path: Path) -> None:

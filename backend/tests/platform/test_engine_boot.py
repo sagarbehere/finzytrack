@@ -8,10 +8,16 @@ from __future__ import annotations
 
 import threading
 from collections.abc import Mapping
+from pathlib import Path
 from typing import override
 
+import pytest
+
+from app.platform.adapters.engine_lock import engine_lock_path, wait_engine_lock
 from app.platform.engine import EngineFailure, EngineInfo, EngineRefusal, Pong
 from app.platform.engine_boot import EngineBoot, EngineDown, EngineReady, EngineStarting
+from app.platform.observability import Event
+from app.platform.observability.events import ENGINE_START_FAILED
 
 INFO = EngineInfo(protocol=1, engine_version="0.4.0.dev0", beancount_version="3.2.0")
 
@@ -85,3 +91,41 @@ def test_while_the_lock_is_waited_for_the_engine_is_starting_and_not_started() -
     thread.join(15)
     assert engine.starts == 1
     assert isinstance(boot.state, EngineReady)
+
+
+class Recorder:
+    def __init__(self) -> None:
+        self.events: list[tuple[Event, dict[str, object]]] = []
+
+    def __call__(self, event: Event, /, **fields: object) -> None:
+        self.events.append((event, fields))
+
+
+def test_a_failed_engine_lock_wait_is_a_down_state_logged_and_no_engine_starts(tmp_path: Path) -> None:
+    """EP-13 (never swallowed), EP-15, engine-jobs §5.1 (no engine before the wait): when the wait itself fails (a
+    file where `locks/` belongs, a read-only app-local-data folder), the boot reports `EngineDown` with
+    `start_failed`, logs `engine.start_failed`, and starts no engine: it cannot know whether an earlier session's
+    engine still runs (S0053 verifier F2)."""
+    (tmp_path / "locks").write_text("a file where the folder belongs")
+    engine = FakeEngine(INFO)
+    log = Recorder()
+    boot = EngineBoot(engine, wait_engine_lock=lambda: wait_engine_lock(engine_lock_path(tmp_path)), log=log)
+    boot.start_in_background().join(15)
+    assert engine.starts == 0
+    state = boot.state
+    assert isinstance(state, EngineDown)
+    assert state.failure.kind == "start_failed"
+    assert [(e, f["kind"]) for e, f in log.events] == [(ENGINE_START_FAILED, "start_failed")]
+
+
+@pytest.mark.parametrize("error", [PermissionError(13, "denied"), OSError(30, "read-only file system")])
+def test_any_os_error_of_the_wait_is_a_down_state(error: OSError) -> None:
+    def fail() -> None:
+        raise error
+
+    engine = FakeEngine(INFO)
+    boot = EngineBoot(engine, wait_engine_lock=fail, log=Recorder())
+    state = boot.run()
+    assert isinstance(state, EngineDown)
+    assert boot.state == state
+    assert engine.starts == 0

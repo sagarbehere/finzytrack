@@ -186,6 +186,7 @@ def wire(args: Args, log: EventSink, app_version: str) -> Wiring:
             engine,
             pid=lambda: engine.pid,
             wait_engine_lock=lambda: wait_engine_lock(engine_lock_path(args.app_local_data)),
+            log=log,
         ),
         # TODO(BL-0102): the registry's gate replaces NoWorkspaces (every key is WORKSPACE_UNKNOWN until then).
         api=SidecarContainer(app_version=app_version, ids=Uuid7Ids(), workspaces=NoWorkspaces(), log=log),

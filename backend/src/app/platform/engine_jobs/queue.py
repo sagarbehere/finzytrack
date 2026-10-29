@@ -14,8 +14,8 @@ product calls it. Each rule names its spec line.
   session must have ended before this session's first ledger work (simplification B).
 - **The ordering rule** (§3): when the engine is free, the oldest eligible queued waited-for job starts, else the
   oldest eligible background job. A running job is never interrupted to start another. Eligible: during a switch's,
-  a Reopen's or the boot's window (`exclusive`) only its own jobs (`owner == "switch"`); otherwise jobs of the open
-  workspace and app-scoped ones (§3; INV-31).
+  a Reopen's or the boot's window (`exclusive`; the boot's opens with `Boot`, "from the start") only its own jobs
+  (`owner == "switch"`); otherwise jobs of the open workspace and app-scoped ones (§3; INV-31).
 - **Admission** (§3): a job of a workspace that is not open is refused `WORKSPACE_NOT_OPEN` (INV-28); beyond
   `max_queued` queued jobs `ENGINE_QUEUE_FULL` (INV-10); a second queued `r4` or background save of one workspace is
   not queued (`AlreadyQueued`; every job is idempotent at its start, §2).
@@ -118,6 +118,9 @@ class Running:
 
 @dataclass(frozen=True, slots=True)
 class QueueState:
+    """`engine_job`: the last job started on the engine in the slot (None when the slot is `none`); it names the
+    engine an `EngineDied` is about."""
+
     queued: tuple[Job, ...] = ()
     running: Running | None = None
     slot: Slot = "none"
@@ -127,6 +130,7 @@ class QueueState:
     advice: bool = False
     epoch: int = 0
     next_id: int = 1
+    engine_job: int | None = None
 
 
 # -- Events -----------------------------------------------------------------------------------------------------------
@@ -178,7 +182,9 @@ class JobDone:
 
 @dataclass(frozen=True, slots=True)
 class EngineDied:
-    """The engine ended without our signal (§5.3: noticed by its exit); `job_id` is the job it ran, if any."""
+    """The engine ended without our signal (§5.3: noticed by its exit), busy or idle. `job_id` is the last job
+    started on it, or None when the shell cannot tell; a report naming another job is about an engine already gone
+    and changes nothing."""
 
     job_id: int | None
 
@@ -436,7 +442,7 @@ def _dispatch(state: QueueState) -> tuple[QueueState, tuple[Effect, ...]]:
     if running is not None:
         if not running.wants_engine:
             return state, ()
-        state = replace(state, running=replace(running, wants_engine=False), slot="busy")
+        state = replace(state, running=replace(running, wants_engine=False), slot="busy", engine_job=running.job.id)
         return state, (Start(running.job, reuse),)
     pool = [j for j in state.queued if eligible(state, j)]
     if not pool:
@@ -444,7 +450,7 @@ def _dispatch(state: QueueState) -> tuple[QueueState, tuple[Effect, ...]]:
     waited = [j for j in pool if j.waited_for]
     job = waited[0] if waited else pool[0]
     queued = tuple(j for j in state.queued if j.id != job.id)
-    return replace(state, queued=queued, running=Running(job), slot="busy"), (Start(job, reuse),)
+    return replace(state, queued=queued, running=Running(job), slot="busy", engine_job=job.id), (Start(job, reuse),)
 
 
 @tla_action("SpawnStep")
@@ -469,9 +475,11 @@ def _retire_engine(p: QueuePolicy, s: QueueState, e: RetireEngine) -> Step:
 
 def _boot(p: QueuePolicy, s: QueueState, e: Boot) -> Step:
     """§5.1: at start, before its first engine, the sidecar waits for the engine lock; the advice shows after the
-    display delay while it waits."""
+    display delay while it waits. §3: the boot's window is open "from the start" (model `SwitchExclusive` holds from
+    `Init`): only its own jobs start until the shell feeds `ExclusiveEnded` when the boot ends (BL-0154)."""
     epoch = s.epoch + 1
-    return Step(replace(s, engine_lock="waiting", epoch=epoch), (WaitEngineLock(), ArmAdviceTimer(epoch)))
+    state = replace(s, engine_lock="waiting", exclusive=True, epoch=epoch)
+    return Step(state, (WaitEngineLock(), ArmAdviceTimer(epoch)))
 
 
 def _clear_advice(state: QueueState) -> tuple[QueueState, tuple[Effect, ...]]:
@@ -535,6 +543,8 @@ def _cancel_running(s: QueueState, r: Running) -> Step:
         return Step(s)
     if r.past_commit:
         return Step(s, (TooLate(r.job.id),))
+    if r.job.kind == "recover_all" and s.slot != "busy":
+        return Step(s)  # model: between engines it holds none, nothing to cancel; a stuck slot gets the advice (§5.2)
     # TODO(BL-0151): a Cancel of recover-all after its listing ends only its engine and goes on with the next journal.
     state, ended = _end_running(s)
     return Step(state, (*ended, Cancelled(r.job.id)))
@@ -600,19 +610,19 @@ def _engine_died(p: QueuePolicy, s: QueueState, e: EngineDied) -> Step:
     """§5.3: a crash is noticed by the engine's exit. Its job is lost (not run again by itself); its group is
     drained before the next engine (§5.2)."""
     r = s.running
-    if s.slot == "busy" and r is not None and e.job_id in (None, r.job.id):
+    if s.slot not in ("busy", "idle") or e.job_id not in (None, s.engine_job):
+        return Step(s)
+    if s.slot == "busy" and r is not None:
         state, ended = _ending(replace(s, running=None), "crashed")
         return Step(state, (EngineLost(r.job.id), *ended))
-    if s.slot == "idle" and e.job_id is None:
-        state, ended = _ending(s, "crashed")
-        return Step(state, ended)
-    return Step(s)
+    state, ended = _ending(s, "crashed")
+    return Step(state, ended)
 
 
 def _engine_ended(p: QueuePolicy, s: QueueState, e: EngineEnded) -> Step:
     if s.slot != "ending":
         return Step(s)
-    state, effects = _clear_advice(replace(s, slot="none"))
+    state, effects = _clear_advice(replace(s, slot="none", engine_job=None))
     return Step(state, effects)
 
 

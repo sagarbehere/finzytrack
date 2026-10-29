@@ -279,11 +279,13 @@ def _discard_rest_of_line(channel: IO[bytes]) -> None:
 
 def hold_engine_lock(path: str) -> None:
     """Take the engine lock, waiting, and keep it for the life of the process (§5.1): the descriptor is never
-    closed."""
+    closed. Creates the folder if it is missing, as the sidecar's wait does, so the engine never depends on the
+    sidecar having waited first."""
     if os.name != "posix":  # pragma: no cover (Windows)
         return  # TODO(BL-0087): the Windows lock (LockFileEx), with the engine's nested Job Object.
     import fcntl  # POSIX only
 
+    os.makedirs(os.path.dirname(path), exist_ok=True)
     fd = os.open(path, os.O_RDWR | os.O_CREAT, 0o600)
     fcntl.flock(fd, fcntl.LOCK_EX)
 

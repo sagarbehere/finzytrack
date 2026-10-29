@@ -12,7 +12,10 @@ current one.
 lock (`wait_engine_lock`, the composition root's `app.platform.adapters.engine_lock.wait_engine_lock`), so no engine
 of this session starts while an engine of an earlier session still holds it. The wait has no time limit; the state
 stays `EngineStarting` meanwhile and the sidecar keeps answering. The quit advice while it waits (spec §5.1) comes
-with the job queue's shell (BL-0150).
+with the job queue's shell (BL-0150). A wait that fails (an `OSError`: a file where `locks/` belongs, a read-only
+folder) starts no engine, since an earlier session's engine may still run: the state is `EngineDown` with
+`start_failed`, and this module logs it as `engine.start_failed` (the one outcome no client start logs; EP-13,
+S0053 verifier F2).
 """
 
 from __future__ import annotations
@@ -22,6 +25,12 @@ from collections.abc import Callable
 from dataclasses import dataclass
 
 from app.platform.engine import EngineFailure, EngineInfo, EnginePort
+from app.platform.observability import Event, EventSink
+from app.platform.observability.events import ENGINE_START_FAILED
+
+
+def _no_log(event: Event, /, **fields: object) -> None:
+    pass
 
 
 @dataclass(frozen=True, slots=True)
@@ -51,10 +60,12 @@ class EngineBoot:
         engine: EnginePort,
         pid: Callable[[], int | None] = lambda: None,
         wait_engine_lock: Callable[[], object] = lambda: None,
+        log: EventSink | None = None,
     ) -> None:
         self._engine = engine
         self._pid = pid
         self._wait_engine_lock = wait_engine_lock
+        self._log: EventSink = log or _no_log
         self._lock = threading.Lock()
         self._state: EngineState = EngineStarting()
 
@@ -64,10 +75,17 @@ class EngineBoot:
             return self._state
 
     def run(self) -> EngineState:
-        """Wait out the engine lock, then start the engine and record the outcome."""
-        self._wait_engine_lock()
-        out = self._engine.start()
-        state: EngineState = EngineDown(out) if isinstance(out, EngineFailure) else EngineReady(out, self._pid())
+        """Wait out the engine lock, then start the engine and record the outcome. A failed wait starts nothing."""
+        state: EngineState
+        try:
+            self._wait_engine_lock()
+        except OSError as exc:
+            failure = EngineFailure("start_failed", f"the engine lock could not be waited for: {exc}")
+            self._log(ENGINE_START_FAILED, kind=failure.kind, detail=failure.detail)
+            state = EngineDown(failure)
+        else:
+            out = self._engine.start()
+            state = EngineDown(out) if isinstance(out, EngineFailure) else EngineReady(out, self._pid())
         with self._lock:
             self._state = state
         return state

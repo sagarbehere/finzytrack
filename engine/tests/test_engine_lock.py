@@ -159,3 +159,20 @@ def test_the_lock_file_is_never_deleted(lock: Path, procs: list[subprocess.Popen
     proc.stdin.close()
     proc.wait(DEADLINE)
     assert lock.is_file()
+
+
+def test_an_engine_whose_lock_folder_is_missing_creates_it_and_holds_the_lock(
+    tmp_path: Path, procs: list[subprocess.Popen[bytes]]
+) -> None:
+    """§5.1: every engine holds the lock for its life; nothing in the spec makes the engine depend on the sidecar
+    having made `locks/` first (S0053 verifier F7: an engine spawned before the sidecar's wait, as piece 2's lazy
+    spawn could be, answered its handshake and then died)."""
+    lock = tmp_path / "locks" / "engine.lock"
+    proc = engine("--engine-lock", str(lock))
+    procs.append(proc)
+    replies = Replies(proc)
+    send(proc, "handshake", 1)
+    send(proc, "ping", 2)
+    assert replies.wait(2), "the engine did not answer after its handshake"
+    assert replies[1]["ok"] is True
+    assert held_by_another(lock)

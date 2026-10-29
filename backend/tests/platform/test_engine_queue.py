@@ -154,6 +154,30 @@ def test_the_boot_waits_for_the_engine_lock_and_arms_the_advice_timer() -> None:
     assert step.state.engine_lock == "waiting"
 
 
+def test_the_boot_opens_the_exclusive_window_so_only_its_own_jobs_start() -> None:
+    """§3: "During a switch, a Reopen and the boot, from the moment the current workspace has closed (at boot, from
+    the start) ... only its own jobs start"; model `SwitchExclusive` holds from `Init` (`ses.app = "boot"`). A create
+    submitted at boot waits for the boot's recover-all, whatever order the shell feeds events in."""
+    state, _ = run(QueueState(), Boot())
+    assert state.exclusive
+    state, (create,) = submit(state, user("create", None))
+    state, (recover,) = submit(state, switch_job("recover_all"))
+    state, effects = run(state, EngineLockFree())
+    assert started(effects) == [recover]
+    state, effects = run(state, JobDone(recover, ran_user_code=False), ExclusiveEnded())
+    assert started(effects) == [create]
+
+
+def test_the_boots_own_job_waiting_for_the_engine_lock_is_the_users_to_cancel() -> None:
+    """§5.1: "While the sidecar waits, jobs stay queued (the boot's own job can be cancelled, §9.2)"; model
+    `SwitchJobBehind` (`~SlotFree`, which holds while an earlier session's engine holds the lock)."""
+    state, _ = run(QueueState(), Boot())
+    state, (recover,) = submit(state, switch_job("recover_all"))
+    state, effects = run(state, Cancel(recover))
+    assert effects == [Cancelled(recover)]
+    assert state.queued == ()
+
+
 def test_no_engine_starts_while_the_engine_lock_is_waited_for() -> None:
     state, (jid,) = submit(QueueState(open_workspace=W1), user("preview"))
     assert state.running is None
@@ -241,6 +265,38 @@ def test_an_engine_that_ran_only_parse_only_work_serves_the_next_job() -> None:
     assert [(e.job.id, e.reuse) for e in effects if isinstance(e, Start)] == [(second, True)]
 
 
+def test_an_idle_engine_that_dies_is_drained_and_never_reused() -> None:
+    """§5.3: a crash is noticed by the engine's exit, also between jobs; §5.2: its group is drained before the next
+    engine; "Queued jobs stay queued and run on the next engine". The shell reports the death with the last job
+    the engine ran, or with no job (S0053 verifier F4)."""
+    for reported in (None, 1):
+        state, first = busy_with(user("preview"))
+        assert first == 1
+        state, _ = run(state, JobDone(first, ran_user_code=False))
+        assert state.slot == "idle"
+        state, effects = run(state, EngineDied(reported))
+        assert ends(effects) == ["crashed"]
+        assert state.slot == "ending"
+        state, (second,) = submit(state, user("bql"))
+        assert state.running is None, "a job started on an engine that died"
+        state, effects = run(state, EngineEnded())
+        assert [(e.job.id, e.reuse) for e in effects if isinstance(e, Start)] == [(second, False)]
+
+
+def test_a_death_reported_for_an_earlier_engine_leaves_the_current_one_alone() -> None:
+    """The `EngineDied` contract: `job_id` is the last job started on the engine that died; a report naming a job
+    that engine never ran is about an engine already gone (its end was ours and drained) and changes nothing."""
+    state, first = busy_with(user("preview"))
+    state, _ = run(state, Cancel(first), EngineEnded())
+    state, second = busy_with(user("bql"), state)
+    state, _ = run(state, JobDone(second, ran_user_code=False))
+    state, effects = run(state, EngineDied(first))
+    assert effects == []
+    assert state.slot == "idle"
+    state, effects = run(state, Submit(user("preview")))
+    assert [e.reuse for e in effects if isinstance(e, Start)] == [True]
+
+
 def test_an_engine_that_died_is_drained_before_the_next_one_starts() -> None:
     state, first = busy_with(user("preview"))
     state, (second,) = submit(state, user("bql"))
@@ -269,6 +325,24 @@ def test_an_ask_for_a_fresh_engine_made_before_the_old_one_ended_is_kept() -> No
     state, effects = run(state, EngineNeeded(jid), RetireEngine(jid))
     assert started(effects) == []
     state, effects = run(state, EngineEnded())
+    assert started(effects) == [jid]
+
+
+def test_a_retire_signals_the_engine_once_and_never_after_it_ended() -> None:
+    """§5.2: "After the reap no signal is sent to that group: its id may already belong to another program"; model
+    `FreshEnd` needs `EngOK` (the job's engine busy). A second `RetireEngine`, while the first end drains or after
+    it, signals nothing and does not hold the slot."""
+    state, jid = busy_with(user("save"))
+    state, effects = run(state, RetireEngine(jid))
+    assert ends(effects) == ["retire"]
+    state, effects = run(state, RetireEngine(jid))
+    assert ends(effects) == [], "a second signal to a group already being ended"
+    state, _ = run(state, EngineEnded())
+    assert state.slot == "none"
+    state, effects = run(state, RetireEngine(jid))
+    assert ends(effects) == [], "a signal sent to a group after its reap"
+    assert state.slot == "none"
+    state, effects = run(state, EngineNeeded(jid))
     assert started(effects) == [jid]
 
 
@@ -357,11 +431,25 @@ def test_a_switch_job_with_nothing_ahead_of_it_is_not_the_users_to_cancel() -> N
     assert [j.id for j in state.queued] == [jid]
 
 
-def test_a_closed_workspaces_queued_jobs_never_start() -> None:
+def test_a_closed_workspaces_queued_jobs_do_not_start_while_it_is_closed() -> None:
+    """§3, INV-31: no job of a workspace that is not open starts. Dropping them at the close is the quiesce's
+    (§9.1 step 2, BL-0154), which this table does not do yet: they stay queued (and count against `max_queued`)."""
     state, running = busy_with(user("bql"))
-    state, _ = submit(state, user("preview"))
+    state, (queued,) = submit(state, user("preview"))
     state, effects = run(state, WorkspaceClosed(), JobDone(running, ran_user_code=False))
     assert started(effects) == []
+    assert [j.id for j in state.queued] == [queued]
+
+
+def test_jobs_queued_before_a_close_start_after_a_reopen_until_the_quiesce_drops_them() -> None:
+    """Pinned current behaviour, TODO(BL-0154): §9.1 step 2's quiesce drops a closed workspace's queued reads (their
+    requests get `WORKSPACE_NOT_OPEN {switching}`) before the close; until it is built a read queued before the
+    close starts after a Reopen of that workspace. BL-0154 inverts this test (S0053 verifier F6)."""
+    state, running = busy_with(user("bql"))
+    state, (queued,) = submit(state, user("preview"))
+    state, _ = run(state, WorkspaceClosed(), JobDone(running, ran_user_code=False))
+    state, effects = run(state, WorkspaceOpened(W1))
+    assert started(effects) == [queued]
 
 
 # -- Cancel (§4) ------------------------------------------------------------------------------------------------------
@@ -446,6 +534,35 @@ def test_the_advice_stays_while_the_slot_is_still_held_when_the_lock_frees() -> 
     state, effects = run(state, EngineLockFree())
     assert state.advice
     assert HideAdvice() not in effects
+
+
+def test_recover_all_between_engines_has_no_cancel() -> None:
+    """Model `UserCancelRunning`: `RJ.k = "recover" => eng.st = "busy"`: recover-all waiting for a new engine holds
+    none, so there is nothing to cancel (a stuck slot gets the advice on the timer, §5.2). §8.1's Cancel per
+    journal ends the engine of the journal in hand (BL-0151)."""
+    state, jid = busy_with(switch_job("recover_all"), QueueState(engine_lock="free", exclusive=True))
+    state, _ = run(state, RetireEngine(jid), EngineNeeded(jid))
+    assert state.slot == "ending"
+    state, effects = run(state, Cancel(jid))
+    assert effects == []
+    assert state.running is not None
+    assert state.running.job.id == jid
+    state, effects = run(state, EngineEnded())
+    assert started(effects) == [jid]
+
+
+def test_a_save_between_engines_is_its_requesters_to_cancel_and_nothing_more_is_signalled() -> None:
+    """§4: a running job before its commit point is its requester's to cancel, also while it waits for its next
+    engine; model `UserCancelRunning` (`eng.st = "busy" \\/ ctl.pc \\in SpawnPcs`) and `CancelEng` (a job between two
+    engines holds none, so no second signal)."""
+    state, jid = busy_with(user("save"))
+    state, _ = run(state, RetireEngine(jid), EngineNeeded(jid))
+    assert state.slot == "ending"
+    state, effects = run(state, Cancel(jid))
+    assert effects == [Cancelled(jid)]
+    assert state.running is None
+    state, effects = run(state, EngineEnded())
+    assert started(effects) == [], "the cancelled save got its next engine"
 
 
 def test_a_background_job_has_no_cancel_of_its_own() -> None:
@@ -549,6 +666,36 @@ def test_recover_all_is_never_ended_by_another_jobs_cancel() -> None:
     assert state.running.job.id == recover
 
 
+def test_recover_all_whose_requester_is_gone_is_not_the_waiting_users_to_cancel() -> None:
+    """§4, model `UserCancelQueued`: the waiting user is spared the "cannot be stopped" answer only when the running
+    job is a read, an open or a recover-all *whose own requester is present* (`RJ.req = "present"`). Today no event
+    takes a switch job's requester away (`ClientGone` ignores it); the rule is the model's, for every state."""
+    gone = Job(5, "recover_all", None, True, False, "switch", False)
+    state = QueueState(
+        queued=(Job(6, "create", None, True, True, "user", True),),
+        running=Running(gone),
+        slot="busy",
+        engine_lock="free",
+        exclusive=True,
+        next_id=7,
+    )
+    state, effects = run(state, Cancel(6))
+    assert effects == [Cancelled(6, cannot_stop_ahead=True)]
+
+
+def test_a_switch_job_waiting_for_a_signalled_process_to_end_is_the_users_to_cancel() -> None:
+    """§9.1 step 3: the switch's own job is the user's to cancel "while ... still queued behind other work (a create
+    or copy started earlier, or a process that has not ended)"; model `SwitchJobBehind` (`~SlotFree`)."""
+    state, jid = busy_with(user("preview"))
+    state, _ = run(state, Cancel(jid), WorkspaceClosed(), ExclusiveBegan())
+    assert state.slot == "ending"
+    assert state.running is None
+    state, (recover,) = submit(state, switch_job("recover_all"))
+    state, effects = run(state, Cancel(recover))
+    assert effects == [Cancelled(recover)]
+    assert state.queued == ()
+
+
 def test_a_switch_job_queued_behind_other_work_is_the_users_to_cancel() -> None:
     """§9.1 step 3, §9.2 (fidelity review 2, M4)."""
     state, create = busy_with(user("create", None), ready(None))
@@ -574,6 +721,29 @@ def test_a_client_that_goes_away_cancels_its_read(kind: JobKind) -> None:
     state, effects = run(state, ClientGone(queued))
     assert effects == [Cancelled(queued)]
     assert state.queued == ()
+
+
+def test_the_switchs_open_loses_its_requester_when_its_window_closes() -> None:
+    """§4: another job's Cancel may end "a preview, rebuild, BQL or open build whose requester has gone (its request
+    aborted or its window closed)"; model `UserCloseTab` (`RJ.own \\in {"user","app"} \\/ RJ.k = "open"`)."""
+    state = QueueState(engine_lock="free", exclusive=True)
+    state, open_ = busy_with(switch_job("open", W2), state)
+    state, effects = run(state, ClientGone(open_))
+    assert effects == []
+    assert state.running is not None
+    assert not state.running.job.requester_present
+
+
+def test_a_switch_jobs_queued_job_has_no_tab_to_close() -> None:
+    """Model `UserCloseTab`: a queued job loses its requester only when it is the user's or the app's
+    (`q[i].own \\in {"user","app"}`); the switch's own queued job is ended by its Cancel or the switch (§9.1)."""
+    state, _ = busy_with(user("create", None), ready(None))
+    state, _ = run(state, ExclusiveBegan())
+    state, (open_,) = submit(state, switch_job("open", W2))
+    before = state
+    state, effects = run(state, ClientGone(open_))
+    assert effects == []
+    assert state == before
 
 
 @pytest.mark.parametrize("kind", ["save", "create", "copy"])
@@ -654,8 +824,11 @@ def endable(r: Running) -> bool:
 def slot_at_dispatch(before: QueueState, event: Event) -> str:
     """The engine slot after the event's own work and before any dispatch, written from §5.1 and §5.2: an ended
     engine frees it; a job that ran user code retires its engine; parse-only work leaves it idle for the next job;
-    our end, a retire or a death leaves it ending until the group is drained."""
+    our end, a retire or a death leaves it ending until the group is drained. A death is the engine's in the slot
+    when it names the last job started on it, or no job."""
     r = before.running
+    if isinstance(event, EngineDied) and before.slot in ("busy", "idle") and event.job_id in (None, before.engine_job):
+        return "ending"
     if isinstance(event, EngineEnded) and before.slot == "ending":
         return "none"
     if isinstance(event, JobDone) and r is not None and r.job.id == event.job_id and before.slot == "busy":
@@ -689,6 +862,8 @@ def check_step(policy: QueuePolicy, before: QueueState, event: Event, step: Step
             assert s.job.id == (fg[0] if fg else pool[0]).id
     if after.running is None:
         assert after.slot != "busy"
+    # `engine_job` names the engine in the slot, and only while there is one
+    assert (after.engine_job is None) == (after.slot == "none")
     assert len(after.queued) <= policy.max_queued
     # NoOwnEndAfterCommitPoint: our Cancel never ends a writing job past its commit point
     if any(e == EndEngine("cancel") for e in effects):
@@ -704,6 +879,14 @@ def check_step(policy: QueuePolicy, before: QueueState, event: Event, step: Step
         assert not before.running.past_commit
         assert after.running is not None
         assert after.running.past_commit
+    # §4: the waiting user's own Cancel, when the job ahead is not ended: "cannot be stopped from here" unless the job
+    # ahead is a read, an open or a recover-all its own requester still waits for (theirs to cancel), or none runs
+    if isinstance(event, Cancel) and Cancelled(event.job_id) not in effects:
+        mine = [e for e in effects if isinstance(e, Cancelled) and e.job_id == event.job_id]
+        r = before.running
+        if mine and (r is None or Cancelled(r.job.id) not in effects):
+            theirs = r is not None and r.job.kind in (*READS, "open", "recover_all") and r.job.requester_present
+            assert mine[0].cannot_stop_ahead == (r is not None and not theirs)
     # NoAdviceOnTimerForSlowWork
     if any(isinstance(e, ShowAdvice) for e in effects) or after.advice:
         assert after.slot == "ending" or after.engine_lock == "waiting"
@@ -810,6 +993,7 @@ def abstract_states() -> Iterable[QueueState]:
             advice=advice,
             epoch=3,
             next_id=7,
+            engine_job=None if slot == "none" else (running.job.id if running is not None and slot == "busy" else 4),
         )
 
 
@@ -818,7 +1002,15 @@ def abstract_events(state: QueueState) -> Iterable[Event]:
     for jid in ids:
         yield from (Cancel(jid), ClientGone(jid), Gate(jid), JobDone(jid, True), JobDone(jid, False))
         yield from (EngineDied(jid), EngineNeeded(jid), RetireEngine(jid))
-    yield from (EngineDied(None), EngineEnded(), EngineLockFree(), AdviceTimer(3), AdviceTimer(2), Boot())
+    yield from (
+        EngineDied(None),
+        EngineDied(4),
+        EngineEnded(),
+        EngineLockFree(),
+        AdviceTimer(3),
+        AdviceTimer(2),
+        Boot(),
+    )
     yield from (WorkspaceOpened(W2), WorkspaceClosed(), ExclusiveBegan(), ExclusiveEnded())
     yield from (Submit(user("preview")), Submit(background("r4")), Submit(user("create", None)))
     yield Submit(switch_job("recover_all"))
