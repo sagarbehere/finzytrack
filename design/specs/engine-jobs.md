@@ -151,6 +151,33 @@ Steps 2-11 run in one fresh engine (§5.1); step 1 uses its own engines first (�
 10. **Publish:** the mirror generation is built from the step-5 load result, still in memory, and published if, under the locks, the disk's fingerprint equals the post fingerprint and no `.open` journal exists (§7). The views update when it lands. A refused or failed publish queues a `rebuild` and leaves the save saved. [ADR-0015; ADR-0008 amendment: the 5 s target includes the mirror update]
 11. **Release** the locks (and a held legacy lock), send the final reply, end the engine (`retire`), queue the `r4` as background work. [§5.1]
 
+The order of the steps above (a picture of this list; the list decides):
+
+```mermaid
+flowchart TB
+  r4["1. R4 first, if owed"] --> legacy["2. Legacy-lock detection"]
+  legacy --> locks["3. Ledger-set locks"]
+  locks --> gate{"4. Gate under the locks"}
+  gate --> load["5. Load the candidate"]
+  load --> recheck{"6. Re-check the fingerprint"}
+  recheck --> commit{"7. Commit point: gate, proceed"}
+  commit --> backups["8.1 Backups written, synced"]
+  backups --> journal["8.2 Journal .part, synced, renamed .open"]
+  journal --> swaps["8.3 Per file: temp, swap or exclusive create"]
+  swaps --> readback["8.4 Read-back, temps removed"]
+  readback --> closed["8.5 Journal renamed .closed: landed"]
+  closed --> saved["9. Saved"]
+  saved --> publish["10. Publish the mirror"]
+  publish --> release["11. Release the locks, end the engine, queue R4"]
+  r4 -- "mismatch or not finished" --> refused["Refused, nothing written"]
+  legacy -- "held or error" --> refused
+  gate -- "refused" --> refused
+  recheck -- "moved" --> refused
+  commit -- "engine ended" --> refused
+  swaps -- "failure" --> rollback["Rollback (§6.4): files back, journal .resolved"]
+  readback -- "failure" --> rollback
+```
+
 ### 6.2 `durable_sync`
 
 macOS `fcntl(F_FULLFSYNC)` (it falls back to `fsync` only where the volume refuses it, logged once per volume); Linux `fsync`; Windows `FlushFileBuffers`, and `MOVEFILE_WRITE_THROUGH` on renames. Cost on the owner's Mac: about 4.5 ms per sync, about 11-12 syncs for a one-file save (about 50 ms), 3-4 more per further file (review 4 spike I). A directory sync with nothing to flush costs nothing. [owner, 2026-10-27: "I agree with your recommendations for all three questions" (F_FULLFSYNC among them); `fsync` on macOS does not reach the platter]
@@ -225,6 +252,30 @@ R4 checks that the overlay load's prediction (the adopted digest in the closed r
 2. check every file it names: the path guard (§6.3); the file holds its pre or post bytes (pre "absent" for a created file); a temp beside a file that holds the post bytes holds nothing or the pre or post bytes (§6.4, review 6 P1); a backup needed for a restore holds the pre bytes (ADR-0012 F-1). Any failure, or a file that cannot be reached: the journal stays and counts as unrecoverable;
 3. restore, root first (ADR-0012 F-5): a file holding post bytes gets its pre bytes back from its backup, the same way a save writes (§6.1 step 8.3): the restore temp `.<name>.ft-restore-<job>.tmp` is written from the backup and **its data synced before the swap**, then swapped into place; or the file is removed if the save created it; each hashing what it displaced (§6.4: other bytes are put back and the journal stops); a directory the save created is removed if it is empty; the save's temps and our restore temps are deleted, whatever they hold; then every changed directory is synced (fidelity review 2, H1: without the temp's own sync a power loss could leave a torn file in place under a journal already `.resolved`). An I/O error during a restore stops that journal: it stays `.open`, with each file whole at pre or post, and counts as blocking (reason `failed`);
 4. **only then** rename the journal `.resolved {not_saved}` and sync its directory. A recovery cut before this step runs again from the start and finds the files already at pre: it is idempotent. [review 4 H2; model mutant `resolve_before_restores_synced`]
+
+A journal's life, from §6.1 step 8, §6.4, §6.5, §6.7 and this section (every rename is followed by a sync of the journal directory, §6.5):
+
+```mermaid
+stateDiagram-v2
+  direction TB
+  state ".part" as part
+  state ".open" as open
+  state ".closed" as closed
+  state ".resolved" as resolved
+  state ".kept" as kept
+  state ".mismatch" as mismatch
+  state ".done" as done
+  [*] --> part: save step 8.2 writes it
+  part --> open: synced, then renamed
+  part --> [*]: recover-all deletes it
+  open --> closed: save step 8.5, the save has landed
+  open --> resolved: rollback or recover-all put the files back
+  open --> kept: the user keeps the files as they are now
+  closed --> closed: R4 cancelled or could not run
+  closed --> done: R4 pass, superseded or nondeterministic
+  closed --> mismatch: R4 mismatch, or its third failure to run
+  mismatch --> done: the user chooses Resume saving
+```
 
 **Every journal ends recovered or blocking; none is skipped.** [INV-32: no workspace opens over an unfinished save; review 5 H1 and M5]
 - **Cancel before recover-all has listed the journals** marks nothing: the switch or boot ends on its cancelled screen ("Switch cancelled." / "Opening cancelled.", the same screen as cancelling its queued job, §9.1, §9.2), and Retry runs recover-all again. Restarting it at once instead would let a user who keeps pressing Cancel restart it for ever while a queued create never runs (model interpretation I14).

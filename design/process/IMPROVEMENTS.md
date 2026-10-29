@@ -467,3 +467,11 @@ Format:
 - Why: a superseded decision left in a document's body with an override banner on top reads as current to anyone who skips the banner, and it was the agents' starting documents that carried it.
 - Expected effect: no React-target statement reaches a current-state document again; a new override banner is caught when it names a retired term.
 - Status: kept (tightening after a real escape, agent-approved; S0055).
+
+## IMP-0047: diagrams beside the flows they picture; the architecture explainer refreshed at each milestone end (2026-10-29)
+- Trigger: owner request, 2026-10-29: "Agreed. add the diagrams to th especs and a milestone-end refresh of the explainer"
+- What changed: doc. Mermaid diagrams drawn only from their text: `design/specs/engine-jobs.md` §6.1 (the save's order) and §8.1 (a journal's life), `design/ARCHITECTURE.md` §9.1 (read) and §9.2 (write). `design/README.md` links the architecture explainer; the milestone exit gates (`design/specs/roadmap.md` §3.2) refresh it from the current documents.
+- PROCESS.md section: §7 item 4 (a slice that changes a drawn flow updates its diagram in the same commit).
+- Why: a flow with a dozen ordered steps and renames is read faster as a picture, and the explainer, built from the documents once, drifts unless a fixed point refreshes it.
+- Expected effect: a reader sees the save's order and a journal's states at a glance; the explainer matches the documents at each milestone exit.
+- Status: kept (owner request).

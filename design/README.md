@@ -17,6 +17,8 @@ Everything that explains Finzytrack v0.4 (why it is built this way, what exists,
 
 For a concrete change, use the `orient` skill first: it pulls the relevant rows, ADRs, specs and backlog items for you.
 
+**Architecture explainer:** https://claude.ai/artifact/Joa6rCMCsVVj5KnqfbMKoP (private to the owner): a guide to `design/`, refreshed from the current documents at each milestone end (roadmap §3.2). Where it and these documents differ, the documents decide.
+
 ## Conventions
 
 - **IDs are stable:** `INV-nn`, `EP-nn`, `ADR-nnnn`, `CAP-<AREA>-<NAME>`, backlog IDs (`L4-01`, `I5`, `BL-nnnn`), slice IDs `S<nnnn>-<slug>`. Never renumber.

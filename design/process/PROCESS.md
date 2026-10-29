@@ -109,7 +109,7 @@ Generate it, test it, or keep it to the "why".
 1. **Generated:** API reference and error codes, mirror tables and views, the recipe schema and catalogs, the config reference, the capability map, the invariant index. CI regenerates them and fails on any diff (`scripts/check_generated.py`).
 2. **Tested examples:** every recipe, SQL, BQL and ledger snippet in the user docs runs in CI; screenshots come from the Playwright suite.
 3. **Symbol references:** specs and ADRs cite code as `` `module.symbol` ``; a checker fails on a missing symbol.
-4. **Doc impact:** each brief lists its expected doc changes; the verifier compares them with the diff.
+4. **Doc impact:** each brief lists its expected doc changes; the verifier compares them with the diff. A slice that changes a flow drawn in a spec or in ARCHITECTURE.md updates its diagram in the same commit; a diagram pictures its text and never adds to it (IMP-0047).
 5. **ADRs are append-only:** a new decision supersedes an old one explicitly.
 6. **User docs** (`finzytrack-docs`) change on its `v0.4` branch in the same slice (light lane: at milestone end).
 

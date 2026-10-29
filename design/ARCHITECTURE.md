@@ -702,6 +702,17 @@ Toolchain: TLA+ tools `tla2tools.jar` **1.7.4** (latest stable; 1.8.0 was still 
 4. The envelope carries `meta.ledger_version`. When a response shows a newer version, the client invalidates `['ws', ws, 'ledger']` once.
 5. The focus-time version check (`GET …/version`, ADR-0037) catches edits made in Fava or an editor. A stale mirror sends the workspace to `WARMING`: reads continue from the previous generation, writes are refused, and the rebuild runs as an engine job (ADR-0015, ADR-0064).
 
+```mermaid
+flowchart TB
+  view["View's query composable"] --> api["GET /api/w/ws/…"]
+  api --> ws{"Workspace known, open, ready?"}
+  ws -- "no" --> err["WORKSPACE_UNKNOWN, _NOT_OPEN or _NOT_READY"]
+  ws -- "yes" --> read["mirror.reader or QueryRunner on a worker thread; no ledger load"]
+  read --> env["Envelope with meta.ledger_version"]
+  env -- "newer version" --> inv["Client invalidates the ledger keys once"]
+  focus["Focus-time version check"] -- "stale mirror" --> warm["WARMING: old generation read, rebuild as an engine job"]
+```
+
 ### 9.2 Write (the write-safety contract with the overlay load)
 1. `POST …/<capability>:preview` → `<slice>.usecases.preview_x(ws, request)`.
 2. **Plan (pure):** the shell finds the target spans through the mirror (file, line, `TransactionId`), refusing when the target's `entry_hash` differs from the request's (ADR-0026), reads only those files, and parses them with the parser only (`ledger.parse_files`). The slice core returns an `EditPlan {edits, intent: IntendedChange}`. A transaction edit merges the request against the parsed source entry and never takes a router-built `Transaction` (ADR-0009).
@@ -719,6 +730,21 @@ Toolchain: TLA+ tools `tla2tools.jar` **1.7.4** (latest stable; 1.8.0 was still 
    10. build the mirror generation from the load result still in memory, publish it (a refused publish queues a rebuild and leaves the save saved), release the locks and end the engine. The response carries the old→new `TransactionId` map; the undo journal stores canonical entry text, not ids (ADR-0026).
 5. Right after "saved": the D2 guardrail-3 re-check (R4, ADR-0010) (a real Beancount load through the `LoadPolicy`: Beancount's own loader without its pickle cache, never `load_file`, BL-0118) is queued as background work. It runs in every mode (desktop, dogfooding and a future hosted mode), is never switched off, and gates only the next save of this workspace: the closed record stays on disk until R4 ends (ADR-0010 amendment, ADR-0064 decision 7; spec §6.7).
 6. Every step fails closed. An unpromoted mutator refuses to run on a ledger that isn't a copy (`UNPROMOTED_MUTATOR_ON_REAL_LEDGER`, ADR-0014).
+
+```mermaid
+flowchart TB
+  preview["Preview: plan, apply edits, diff, overlay load"] --> plan["WritePlan in the PlanStore"]
+  plan --> confirm["Confirm: a save job in the engine queue"]
+  confirm --> pre["R4 first if owed; legacy locks; per-file locks"]
+  pre --> gate{"Gate, full load, re-check"}
+  gate -- "refused or moved" --> refused["Refused, nothing written"]
+  gate --> commit["Commit point"]
+  commit --> durable["Backups, journal .open, swaps, read-back"]
+  durable -- "failure" --> rollback["Rollback from the journal"]
+  durable --> closed["Journal .closed: saved"]
+  closed --> publish["Publish the mirror, release the locks"]
+  publish --> r4["R4 queued as background work"]
+```
 
 ### 9.3 Import → reconcile → commit
 1. Upload the file (or paste, or an email fetch) → `importing.usecases.start_session`.
