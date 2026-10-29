@@ -19,4 +19,11 @@ S0049 built the seam (`LoadPolicy` is asked before every file read, every plugin
 ## Recommendation
 Option 1. It keeps the protection ADR-0040 wants and never shows numbers computed without the ledger's own code (finance correctness first). It is also simple: the seam already refuses the whole load on a "no"; the only addition is the trust screen in M2's open flow, and the plugin's config passed to the policy (for ADR-0040's "plugins that evaluate non-literal config"). Built in M2 with the open flow; a backlog row is added once you answer.
 
+## How trust is stored (owner agreed, 2026-10-29, in session: "Yes, that works")
+Whichever option is chosen, a trust answer is kept like this:
+- **Machine-local:** a small JSON record in `app_local_data/` (beside the engine lock), written atomically; never in the ledger, never in the workspace folder, so a downloaded or synced ledger or workspace cannot arrive trusted, and trust on one computer does not carry to another.
+- **Keyed by** the workspace's lineage id plus exactly what code the ledger runs: the plugin module names, whether each plugin's config is a plain literal, and the resolved `insert_pythonpath` folders. If any of these changes (a plugin or code folder added or changed), the ledger asks again. Editing your own plugin's source does not ask again (a changed plugin source already makes the save's re-check "superseded", BL-0124).
+- **Records** which code was trusted and when; forgetting the workspace removes its trust; a setting lets you revoke it.
+- **Never** a global "trust everything" switch, and never trust by folder path (a path can point at different ledgers over time; the lineage id cannot).
+
 ## Answer (owner, verbatim, with date)
