@@ -16,7 +16,6 @@ Written from the spec:
 
 from __future__ import annotations
 
-import errno
 import faulthandler
 import fcntl
 import os
@@ -34,7 +33,7 @@ from app.platform.adapters.engine_group import (
     PosixGroupOps,
     Reaped,
     is_exit_report,
-    live_member_by_probe,
+    live_member_in_group_listing,
     live_member_in_proc,
     proc_stat_group,
 )
@@ -64,21 +63,25 @@ PGID = 4242
 # -- "No live member", per OS, as pure decisions --------------------------------------------------------------------
 
 
-def test_macos_a_group_that_answers_the_probe_has_a_live_member() -> None:
-    assert live_member_by_probe(None) is True
-
-
-@pytest.mark.parametrize("err", [ProcessLookupError(errno.ESRCH, "no such"), PermissionError(errno.EPERM, "zombie")])
-def test_macos_esrch_and_eperm_mean_no_live_member(err: OSError) -> None:
-    """EPERM is the answer for a group whose only member is our zombie leader (review 5 spike, Darwin 25.6); every
-    member is our own descendant under our user, so EPERM cannot mean a live member we may not signal."""
-    assert live_member_by_probe(err) is False
-
-
-def test_macos_any_other_probe_error_counts_as_a_live_member() -> None:
-    """An answer the spec does not name keeps the drain going (the slot stays held, the advice shows): never a
-    reap, and a reused group id, on a guess."""
-    assert live_member_by_probe(OSError(errno.EINVAL, "invalid")) is True
+@pytest.mark.parametrize(
+    ("listing", "live"),
+    [
+        ([PGID], False),  # the leader held as a zombie, nothing else: the drain ends
+        ([], False),
+        ([PGID, PGID + 7], True),  # another member is still in the process table, alive, exiting or a zombie
+        ([PGID + 7], True),
+        (None, True),  # the listing failed: keep draining, never reap on a guess
+    ],
+)
+def test_macos_only_the_held_leader_left_in_the_group_listing_means_no_live_member(
+    listing: list[int] | None, live: bool
+) -> None:
+    """Found in S0057's push: macOS answers `killpg(pgid, 0)` with EPERM not only when the held zombie leader is the
+    group's only member (review 5's spike) but also while a SIGKILLed member is still exiting with its files, and its
+    `flock` locks, open (36 of 40 runs). So "no live member" on macOS is: no process but the held leader is listed in
+    the group (libproc `proc_listpids(PROC_PGRP_ONLY)`): an exiting member, or a zombie its new parent has not reaped
+    yet, is still there."""
+    assert live_member_in_group_listing(listing, PGID) is live
 
 
 @pytest.mark.parametrize(
@@ -334,3 +337,25 @@ def test_a_frozen_leader_is_not_taken_for_an_exited_one() -> None:
     finally:
         os.kill(leader.pid, signal.SIGKILL)
         leader.returncode = ops.reap(leader.pid).returncode
+
+
+def test_after_a_drain_no_member_holds_a_lock_any_more(tmp_path: Path) -> None:
+    """§5.2: once the drain finds no live member, nothing of the group still holds the ledger lock its member
+    inherited. The leader alone is killed first (a crash), so the child is ended by the drain itself; repeated,
+    since the old macOS probe let the lock outlive the drain in most runs."""
+    for i in range(20):
+        lock = tmp_path / f"ledger-{i}.lock"
+        leader = subprocess.Popen(  # noqa: S603 (this interpreter with a fixed script)
+            [sys.executable, "-I", "-c", LEADER, str(lock)], stdout=subprocess.PIPE, text=True, start_new_session=True
+        )
+        assert leader.stdout is not None
+        child = int(leader.stdout.readline())
+        try:
+            os.kill(leader.pid, signal.SIGKILL)
+            reaped = EngineGroup(PosixGroupOps(), leader.pid).drain()
+            leader.returncode = reaped.returncode
+            assert lock_free(lock), f"run {i}: the lock outlived the drain"
+        finally:
+            if not gone(child):
+                os.kill(child, signal.SIGKILL)
+            leader.stdout.close()

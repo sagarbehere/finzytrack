@@ -10,21 +10,23 @@
   drain decides to reap, `signal()` sends nothing: after the reap the group id may belong to another program. A
   leader that exited by itself (a crash) is drained the same way. A member stuck in the kernel keeps the drain going,
   and so the engine slot held (§5.2: "A process that cannot be ended ... keeps the engine slot and its locks").
-- **"No live member"**, zombies not counted: macOS (and other POSIX systems without `/proc`): `killpg(pgid, 0)`
-  fails with `ESRCH` or `EPERM` (with the leader held as a zombie and nothing else left it answers `EPERM`; every
-  member is our own descendant under our user, so `EPERM` cannot mean a live member we may not signal); any other
-  answer counts as a live member, so the drain never reaps on a guess. Linux: no process in `/proc` has that group in
-  a state other than `Z` (a zombie still answers `killpg(pgid, 0)` there).
+- **"No live member"**, so that none of the group's files (its `flock` locks) is still open: macOS: no process but
+  the held leader is listed in the group (libproc `proc_listpids(PROC_PGRP_ONLY)`). Not `killpg(pgid, 0)`'s
+  answer: it says `EPERM` both for the held zombie leader alone and while a SIGKILLed member is still exiting with
+  its files open (found in S0057's push: the lock outlived "no live member" in 36 of 40 runs); a member still being
+  listed (exiting, or a zombie its new parent has not reaped) keeps the drain going, and so does a listing that
+  fails. Linux: no process in `/proc` has that group in a state other than `Z` (a zombie's files are closed before
+  it becomes one; it still answers `killpg(pgid, 0)` there).
 - **Windows** has no process groups: the Job Object nested in the shell's is BL-0087.
 
 `GroupOps` is the port to the OS, so a test can record every signal; `PosixGroupOps` is the real one. The pure
-decisions (`live_member_by_probe`, `live_member_in_proc`, `proc_stat_group`) are tested on their own.
+decisions (`live_member_in_group_listing`, `live_member_in_proc`, `proc_stat_group`) are tested on their own.
 """
 
 from __future__ import annotations
 
 import contextlib
-import errno
+import ctypes
 import os
 import signal
 import sys
@@ -75,12 +77,33 @@ class GroupOps(Protocol):
         ...
 
 
-def live_member_by_probe(error: OSError | None) -> bool:
-    """macOS's answer to `killpg(pgid, 0)`: none (`error` None) means a live member; `ESRCH` or `EPERM` mean none;
-    anything else counts as live (the drain goes on rather than reap on a guess)."""
-    if error is None:
-        return True
-    return error.errno not in (errno.ESRCH, errno.EPERM)
+def live_member_in_group_listing(listing: list[int] | None, leader: int) -> bool:
+    """macOS: a live member is any process listed in the group but the leader we hold (§5.2); a failed listing
+    (None) counts as live, so the drain never reaps on a guess."""
+    return listing is None or any(pid != leader for pid in listing)
+
+
+PROC_PGRP_ONLY = 2  # <sys/proc_info.h>
+
+
+def _group_listing(pgid: int) -> list[int] | None:
+    """macOS: the pids libproc lists in the process group `pgid`, exiting members and zombies included; None if
+    the listing fails."""
+    try:
+        libproc = ctypes.CDLL("/usr/lib/libproc.dylib", use_errno=True)
+    except OSError:
+        return None
+    size = ctypes.sizeof(ctypes.c_int)
+    room = 64
+    while True:
+        buffer = (ctypes.c_int * room)()
+        filled = libproc.proc_listpids(PROC_PGRP_ONLY, pgid, buffer, room * size)
+        if filled < 0:
+            return None
+        count = filled // size
+        if count < room:
+            return [pid for pid in buffer[:count] if pid > 0]
+        room *= 4  # the group may have more members than the buffer held: list again
 
 
 def is_exit_report(si_code: int) -> bool:
@@ -134,13 +157,19 @@ class PosixGroupOps:
         return report is not None and is_exit_report(report.si_code)
 
     def live_member(self, pgid: int) -> bool:
+        """Every member counts until it is gone; the leader (our child, `pgid`) counts until it has exited."""
         if sys.platform.startswith("linux"):
             return live_member_in_proc(_proc_entries(), pgid)
+        listing = _group_listing(pgid)
+        if live_member_in_group_listing(listing, pgid):
+            return True
+        return listing is not None and pgid in listing and not self._exited(pgid)
+
+    def _exited(self, pid: int) -> bool:
         try:
-            os.killpg(pgid, 0)
-        except OSError as e:
-            return live_member_by_probe(e)
-        return live_member_by_probe(None)
+            return self.leader_exited(pid)
+        except ChildProcessError:  # not our child (any more): it cannot be a member we hold
+            return True
 
     def reap(self, pid: int) -> Reaped:
         _, status, usage = os.wait4(pid, 0)
@@ -205,7 +234,7 @@ __all__ = [
     "PosixGroupOps",
     "Reaped",
     "is_exit_report",
-    "live_member_by_probe",
+    "live_member_in_group_listing",
     "live_member_in_proc",
     "proc_stat_group",
 ]
