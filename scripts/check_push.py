@@ -13,7 +13,7 @@ so this script refuses the push unless:
     dependency and build folders of TRUSTED_PATHS, whose content the runners do not collect; inside `__pycache__`
     only bytecode (`.pyc`) is accepted, which Python never imports without its source.
     Stated limit: a forged `.pyc` carrying a tracked source's timestamp and size would run instead of that source;
-    building one is a deliberate act, out of reach like the guard's deliberately built commands (BL-0062).
+    building one is a deliberate act, out of reach like the guard's deliberately built commands (PROCESS.md §11).
   - no replacement object or graft changes what git shows (S0031 verifier F2): with a `refs/replace/*` ref or
     `info/grafts`, every local read (checkout, status, rev-list, cat-file) can see other objects than the ones
     `git push` sends, so either one refuses the push; every git read here also runs with replacements off

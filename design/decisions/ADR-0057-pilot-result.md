@@ -2,7 +2,7 @@
 
 This record closes the process pilot that ADR-0046 set up: what three slices measured, how the rubric and the gates change because of it, and a rough slice count for M1–M12.
 
-- **Status:** Accepted. The PROCESS.md edits are approved by the owner: "I'll go with your recommendation for the PROCESS.md changes" (2026-10-25, in session; `design/inbox/answered/20261025-pilot-process-changes.md`). Adjustment 4 amended by ADR-0058.
+- **Status:** Accepted. The PROCESS.md edits are approved by the owner: "I'll go with your recommendation for the PROCESS.md changes" (2026-10-25, in session; `design/inbox/answered/20261025-pilot-process-changes.md`). Adjustment 4 amended by ADR-0058; item 2 narrowed by IMP-0045 (amendment below).
 - **Date:** 2026-10-25
 - **Deciders:** agent (the tightenings, the estimate); owner (approval of the PROCESS.md edits, 2026-10-25)
 - **Area:** process
@@ -71,3 +71,6 @@ Measured pace so far: about 2–3 hours of agent wall time per slice, verifier r
 ## References
 
 ADR-0001, ADR-0046; review:20 §9, §10, §10a; review:21 §4; review:27 §0.1; EP-29; INV-24; journals S0002, S0003, S0004, S0005.
+
+## Amendment (2026-10-29): self-mutation narrowed (IMP-0045)
+Decision item 2 is narrowed by the periodic reflection of 2026-10-28, proposal 7 (IMP-0045; S0054): self-mutation before hand-off is required only for checks that guard ledger data, finance results, real-data privacy or product security, on any slice that adds or changes one; it is optional on tooling, and the journal no longer records "tried / killed". A survivor still gets a test or a one-line reason when it is equivalent (PROCESS.md §3 step 4). Owner, 2026-10-29: "Yes to Reflection proposals 1, 2, 3, 4, 7, 8, 10 and 12."

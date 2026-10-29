@@ -75,9 +75,98 @@ class GuardTest(unittest.TestCase):
         for cmd in allowed:
             self.assertFalse(self.blocked(cmd), cmd)
 
+    def test_a_kill_is_judged_by_its_words_wherever_they_stand(self) -> None:
+        """S0054 verifier F1: the kill rule reads the words of the whole command, not the first word of each
+        simple command, so xargs flags, shell keywords, groups and wrappers do not hide a kill. pkill, killall,
+        kill-port and fuser -k are refused anywhere; kill is refused beside port 8001 or a process finder."""
+        refused = [
+            # the verifier's 14 (each passed at f66811dd)
+            "lsof -ti:8001 | xargs -r kill", "lsof -ti :8001 | xargs -n1 kill",
+            "lsof -nP -iTCP:8001 -sTCP:LISTEN -t | xargs -r kill -TERM",
+            "for p in $(lsof -ti:8001); do kill $p; done",
+            "if pgrep -f uvicorn >/dev/null; then kill $(pgrep -f uvicorn); fi",
+            'while read p; do kill "$p"; done < <(pgrep -f uvicorn)',
+            "{ kill $(pgrep -f uvicorn); }", "(kill -9 $(lsof -ti:8001))",
+            "pgrep -f uvicorn | xargs -I{} kill -9 {}",
+            "ps aux | grep uvicorn | awk '{print $2}' | xargs -r kill",
+            "timeout 5 pkill -f uvicorn", "nice -n 5 pkill -f uvicorn", "sudo -n pkill -f app.main",
+            "npx kill-port 8001",
+            # more of the same class
+            "npx --yes kill-port 8001", "lsof -ti:8001 | parallel kill", "timeout 5 fuser -k 8001/tcp",
+            "sudo fuser -k 8001/tcp", '"kill" $(lsof -ti:8001)', "/bin/kill $(pgrep -f app.main)",
+            "bash -c 'pkill -f uvicorn'", "pgrep -f uvicorn | xargs -I{} sh -c 'kill {}'",
+            'git commit -m "$(pkill -f uvicorn)"', "echo `pkill -f uvicorn`",
+            "python3 -c \"import os; os.system('pkill -f uvicorn')\"",
+            "launchctl kill TERM gui/501/finzytrack.backend", "kill -9 4242 # the python backend on 8001",
+        ]
+        for cmd in refused:
+            with self.subTest(cmd=cmd):
+                self.assertTrue(self.blocked(cmd), cmd)
+        allowed = [
+            # the approved removal: the word in data (a message, a heredoc written to a file, a search pattern)
+            'git commit -m "kill the old helper"', "cat > notes.md <<'EOF'\nwe kill the process\nEOF",
+            'git commit -m "pkill and killall are refused; so is lsof -ti:8001 | xargs kill"',
+            "git commit -q -F - <<'EOF'\nthe guard refuses pkill -f uvicorn and kill $(lsof -ti:8001)\nEOF",
+            "git commit -m \"$(cat <<'EOF'\nS1: pkill and kill-port are refused\nEOF\n)\"",
+            "grep -rn pkill scripts/", 'rg -n "kill-port" .', "ps aux | grep kill",
+            "python3 -c 'import os; os.kill(pid, 15)'", "kill $PID", "lsof -iTCP -sTCP:LISTEN -nP",
+        ]
+        for cmd in allowed:
+            with self.subTest(cmd=cmd):
+                self.assertFalse(self.blocked(cmd), cmd)
+
+    def test_a_kill_beside_port_8001_needs_no_finder(self) -> None:
+        """S0054 verifier F4: the port clause stands on its own (a mutant that drops it passed every other test)."""
+        for cmd in ("kill -9 $(cat /tmp/app.pid) # whatever holds 8001",
+                    "kill $(ss -ltnp 'sport = :8001' | awk 'NR>1{print $6}')", "kill 4242; echo 8001",
+                    f"kill -TERM $(cat {self.legacy}/backend.pid)"):  # a PID file in the legacy worktree
+            with self.subTest(cmd=cmd):
+                self.assertTrue(self.blocked(cmd), cmd)
+        self.assertFalse(self.blocked("kill 4242; echo 18001"))
+
+    def test_a_heredoc_fed_to_a_shell_or_an_interpreter_is_code(self) -> None:
+        """S0054 verifier F2, F3: a body that a shell or an interpreter reads is parsed as commands (as before
+        S0054); only a body written to a file or another command is data. A here-string (<<<) and a quoted "<<EOF"
+        open no heredoc, so the lines after them are commands."""
+        L = self.legacy
+        refused = [
+            f"bash <<'EOF'\nrm -rf {L}/backend\nEOF", "sh <<EOF\npkill -f uvicorn\nEOF",
+            "bash <<'EOF'\nkill $(lsof -ti:8001)\nEOF", f"cat <<'EOF' | bash\nrm -rf {L}/backend\nEOF",
+            "python3 - <<'EOF'\nimport subprocess; subprocess.run('pkill -f uvicorn', shell=True)\nEOF",
+            f"cat > /tmp/x.sh <<'EOF' && bash /tmp/x.sh\nrm -rf {L}/backend\nEOF",
+            # F3: not heredoc openers
+            f"cat <<<EOF\nrm -rf {L}/backend\nEOF", f'echo "<<EOF"\nrm -rf {L}/backend\nEOF',
+            f"echo '<<EOF'\nrm -rf {L}/backend\nEOF",
+            # a body with no end line is not taken as data
+            f"cat > /tmp/x <<'EOF'\nrm -rf {L}/backend",
+        ]
+        for cmd in refused:
+            with self.subTest(cmd=cmd):
+                self.assertTrue(self.blocked(cmd), cmd)
+        allowed = [
+            f"cat > /tmp/x.sh <<'EOF'\nrm -rf {L}/backend\nEOF", "tee /tmp/x <<EOF\npkill -f uvicorn\nEOF",
+            "cat > /tmp/t.py <<'EOF'\nos.kill(proc.pid, signal.SIGTERM)\nEOF",
+        ]
+        for cmd in allowed:
+            with self.subTest(cmd=cmd):
+                self.assertFalse(self.blocked(cmd), cmd)
+
+    def test_the_owners_app_is_not_started_or_probed(self) -> None:
+        """BL-0140 (S0054 verifier F10): the legacy app's start script run from anywhere, and a loopback host and
+        port 8001 written with a space or as host 0, are refused; reading the script and other ports pass."""
+        L = self.legacy
+        for cmd in (f"bash {L}/run-v0.3.sh", f"{L}/run-v0.3.sh", f"nohup {L}/run-v0.3.sh &", "./run-v0.3.sh",
+                    "nc localhost 8001", "nc -z 127.0.0.1 8001", "curl -s http://0:8001/", "telnet localhost 8001"):
+            with self.subTest(cmd=cmd):
+                self.assertTrue(self.blocked(cmd), cmd)
+        for cmd in (f"cat {L}/run-v0.3.sh", f"grep -n uvicorn {L}/run-v0.3.sh", "nc -z localhost 18950",
+                    "curl -s http://127.0.0.1:18001/", "curl -s http://10:8001/"):
+            with self.subTest(cmd=cmd):
+                self.assertFalse(self.blocked(cmd), cmd)
+
     def test_a_heredoc_body_is_data(self) -> None:
-        """S0054 (BL-0042's false positive): the lines of a heredoc body are not parsed as commands; the opener's
-        line still is. Stated limit (PROCESS.md §11): a body fed to a shell or an interpreter is not parsed."""
+        """S0054 (BL-0042's false positive): the lines of a heredoc body written to a file or a non-shell command
+        are not parsed as commands; the opener's line still is."""
         L = self.legacy
         allowed = [
             f"cat > /tmp/notes.md <<'EOF'\nrm -rf {L}/backend\ngit push --force origin next\nEOF",
@@ -206,9 +295,9 @@ class GuardTest(unittest.TestCase):
         self.assertTrue(guards.path_problem(str(self.repo / ".git" / "hooks" / "pre-push"), self.repo, writing=True))
         self.assertIsNone(guards.path_problem(str(self.repo / ".git" / "config"), self.repo, writing=False))
         self.assertIsNone(guards.path_problem(str(self.repo / ".githooks" / "pre-push"), self.repo, writing=True))
-        # Stated limits (PROCESS.md §11): a command run through `sh -c`, `eval`, an interpreter or a heredoc fed to
-        # one is not parsed; nor are commands built on purpose to slip past the parser (BL-0042, BL-0055, BL-0062
-        # removed by the owner, 2026-10-29).
+        # Stated limits (PROCESS.md §11): code given to `sh -c` or `eval`, or run by an interpreter, is checked for
+        # kill words only, its paths and git flags are not parsed; nor are commands built on purpose to slip past the
+        # parser (BL-0042 and BL-0062 removed, BL-0055's anti-bypass refusals removed; owner, 2026-10-29).
 
     def test_hooks_fail_closed(self) -> None:
         """INV-22's spirit for the guards (S0014 round-2 verifier F2): Claude Code runs a command when the hook
