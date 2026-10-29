@@ -38,6 +38,14 @@ v0.3 pages looked alike but did not behave alike: rules standardized class strin
 - The new app builds these primitives first, pickers before the dialogs that contain them.
 - `frontend/CLAUDE.md` names components, not class strings.
 
+## Amendment (2026-10-29): the frontend is Vue 3
+
+Owner: "Yes, rename to composables everywhere including INV-12. Agreed with the rest. No, ledger that runs code dosen not open before I trust it." (2026-10-29, in session; S0056)
+- The frontend is Vue 3 (ADR-0053); the bracketed Vue names in the Decision apply, as ARCHITECTURE.md §3 and §10 list them: `components/ui/` holds vendored **shadcn-vue on Reka UI** (from the shadcn-vue CLI); toasts use **vue-sonner**; icons **`@lucide/vue`**; tables and forms TanStack **Vue** Table v9 and **Vue** Form.
+- `useConfirm`, `useUnsavedGuard` and `useFieldErrors` are composables; `components/app/` may read the shared catalog query composables.
+- The guards are `eslint-plugin-vue` and **`eslint-plugin-vuejs-accessibility`** recommended rules with typescript-eslint strict type-checked rules and `--max-warnings 0`, and `vue-tsc --noEmit` as the type gate (ARCHITECTURE.md §3.1); the React hooks rules have no Vue counterpart and are not run.
+- Nothing else changes: the two layers, safe focus, pickers, theme, the bans and the accessibility target.
+
 ## References
 
 review:17 §0–§4; review:25 §3.1; ADR-0006, ADR-0036; INV-15, INV-16, INV-18.

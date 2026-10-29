@@ -210,8 +210,9 @@ engine/src/ledger_engine/
                  also each include's glob answer, plain paths too, documents listings with each name's presence, the
                  files of the `document` entries Beancount checks)
     policy.py    LoadPolicy: may_read, may_run_plugin, may_add_pythonpath, may_scan_documents (built: the desktop
-                 body for a trusted ledger, which allows all; the restrictive desktop body of ADR-0040 waits for
-                 design/inbox/20261028-untrusted-ledger-load.md; the hosted body is deferred, ADR-0041) (S0049)
+                 body for a trusted ledger, which allows all; the trust body is BL-0156, M2: on desktop a ledger
+                 that runs code does not open until the user trusts it, ADR-0040 amendment of 2026-10-29; the
+                 hosted body is deferred, ADR-0041) (S0049)
     contract.py  the write-safety contract as a pipeline of steps (ADR-0008), each fail-closed
     writer.py    the single commit path: locks -> fingerprint -> backup -> atomic write -> read-back
     journal.py   the write-intent journal for multi-file commits (ADR-0012)
@@ -373,7 +374,7 @@ frontend/src/
     index.ts        the feature's public surface (routes + anything another feature may use)
     queries.ts      TanStack Vue Query composables over api/ (keys from keys.gen.ts)
     machines/       XState machines for this feature's workflows (*.machine.ts) + their model tests
-    hooks/          the feature's composables: headless logic (useEditBuffer, useImportSession,
+    composables/    the feature's composables: headless logic (useEditBuffer, useImportSession,
                     useBudgetDrafts, ...); forms use TanStack Form
     views/          thin route views, *.vue (compose composables + components; no business rule, INV-12)
     components/     feature-specific components (*.vue)
@@ -408,7 +409,7 @@ The rules come from ADR-0035, ADR-0036 (including the phone principle) and ADR-0
 - Testing against a *running* backend is still required for acceptance flows. Agents start their own isolated backend on its own port and data dir (INV-24). They never restart the owner's backend. The acceptance harness does this per Playwright worker (S0030): `scripts/acceptance/launcher.py` makes a fresh `mkdtemp` root, generates the demo into it, starts the sidecar with `--port 0`, folders it made itself and `--frozen-clock`, starts the LLM stub, and announces the run; `frontend/e2e/harness/fixtures.ts` arms the test's browser context and every context the test opens (all their pages and popups): it freezes the clock, aborts any request to an origin that is not the preview server or the run's sidecar, refuses WebSockets, and fails a test on console errors, page errors, failed or HTTP-error requests, axe violations on the pages left open and unscripted LLM calls. Requests test code sends itself (`page.request`, `context.request`, `fetch`) are not checked yet (BL-0071).
 
 **Codegen choice: `openapi-typescript` 7.13.0 + `openapi-fetch` 0.17.0** (types only, with a small runtime that has native `AbortSignal` and middleware). It replaces `openapi-typescript-codegen`, whose README states that the project is unmaintained and directs users to `@hey-api/openapi-ts` (checked on npm, 2026-10-24). `@hey-api/openapi-ts` 0.99.0 was evaluated and **not chosen**:
-- Its generated TanStack Query hooks build their own query keys (operation id + parameters). Our invalidation model needs keys grouped by *scope class* (`['ws', ws, 'ledger', …]` vs `['ws', ws, 'config', …]`, ADR-0037). With generated hooks we would either lose prefix invalidation or patch generated code, and generated code is never hand-edited (INV-19).
+- Its generated TanStack Query helpers build their own query keys (operation id + parameters). Our invalidation model needs keys grouped by *scope class* (`['ws', ws, 'ledger', …]` vs `['ws', ws, 'config', …]`, ADR-0037). With generated helpers we would either lose prefix invalidation or patch generated code, and generated code is never hand-edited (INV-19).
 - It is still at 0.x with frequent breaking minor releases (0.97 → 0.99 between May and June 2026), and its runtime client is a larger dependency than openapi-fetch.
 - openapi-typescript's `transform` hook covers the one thing we need from codegen: mapping our schema annotations to branded TS types.
 
@@ -1022,7 +1023,7 @@ The three-`scripts/` rule of today's root `CLAUDE.md` survives: backend-internal
 | Dashboards as recipes, budgets (ADR-0029) | `recipes/`, `budgets/`, `mirror/query`, `content/` (widget library), frontend `features/dashboards` (+ `viz/` registry) |
 | Investments, prices, booking methods, broker sync (ADR-0030, ADR-0031, ADR-0032) | `investments/`, `prices/`, `importing` (holdings reconciliation, positions adapters), frontend `features/investments` |
 | AI assistant and stack (ADR-0033, ADR-0034) | `ai/`, `<slice>/capabilities.py`, `platform/PlanStore`, `platform/adapters` LLM, frontend `features/assistant`, `api/chat.ts`, `components/app/SafeMarkdown` |
-| UI layers, frontend structure, phone principle (ADR-0035, ADR-0036) | frontend `components/ui`, `components/app`, theme tokens + pre-paint script, ESLint rules, `features/*` (hooks, machines) |
+| UI layers, frontend structure, phone principle (ADR-0035, ADR-0036) | frontend `components/ui`, `components/app`, theme tokens + pre-paint script, ESLint rules, `features/*` (composables, machines) |
 | Lifecycle, content packs, migrations, demo (ADR-0019, ADR-0022) | `boot/`, `content/` (demo fragments, `SOURCE_DATE_EPOCH` anchor), `workspaces/format` (manifests), frontend `app/machines/boot` |
 | Workspaces and legacy adoption (ADR-0017, ADR-0018, ADR-0020, ADR-0021) | `workspaces/` (format, registry, containers, legacy: detects a v0.2/v0.3 install at the known roots **and** at a folder the user picks), `api` (`/api/w/{ws}`), `mirror` (extended fingerprint, persisted `ledger_version`), frontend `features/workspaces`, `platform/storage.ts`, `ShellPort` |
 | Security foundations and hosted seams (ADR-0040, ADR-0041) | `ledger/policy`, `platform` (`SecretResolver`, state registry), `mirror/query` (hardening), `recipes` (BQL allowlist), `api` (LAN guard), `tests/architecture` (isolation matrix) |

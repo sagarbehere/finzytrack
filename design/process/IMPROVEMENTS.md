@@ -475,3 +475,11 @@ Format:
 - Why: a flow with a dozen ordered steps and renames is read faster as a picture, and the explainer, built from the documents once, drifts unless a fixed point refreshes it.
 - Expected effect: a reader sees the save's order and a journal's states at a glance; the explainer matches the documents at each milestone exit.
 - Status: kept (owner request).
+
+## IMP-0048: INV-12 says "composables"; the retired-terms check refuses a frontend `hooks/` folder (2026-10-29)
+- Trigger: owner decision, 2026-10-29, in session: "Yes, rename to composables everywhere including INV-12. Agreed with the rest. No, ledger that runs code dosen not open before I trust it." (S0055's open items 1 and 2).
+- What changed: invariant wording and gate. INV-12's rule reads "domain modules, composables or machines" (ADR-0066; meaning unchanged); the features' folder is `features/<name>/composables/` in ARCHITECTURE.md §3.1, ENGINEERING.md EP-11, `frontend/tests/unit/boundaries.test.ts` and the planned integrity tests. `scripts/check_retired_terms.py` refuses a `hooks/` path segment that starts a path or sits under `features/` (git's and Claude Code's hook paths pass); meta-tests in `scripts/tests/test_check_retired_terms.py`.
+- PROCESS.md section: none.
+- Why: a `hooks/` folder in a Vue app, beside git and Claude Code hooks, is the React leftover S0055 cleaned up elsewhere.
+- Expected effect: no current-state document names a frontend `hooks/` folder again.
+- Status: kept (invariant wording owner-approved; the term is an agent-approved tightening asked for by the owner's rename; S0056).

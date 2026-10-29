@@ -34,6 +34,13 @@ v0.3 hand-wrote the agent loop, the provider layer, JSON fence-stripping, the SS
 - AI SDK majors arrive about every six months; protocol churn is contained by the one-slice upgrade rule.
 - A frontend contract test re-runs on `@ai-sdk/react` in the first assistant slice.
 
+## Amendment (2026-10-29): the frontend is Vue 3
+
+Owner: "Yes, rename to composables everywhere including INV-12. Agreed with the rest. No, ledger that runs code dosen not open before I trust it." (2026-10-29, in session; S0056)
+- The frontend is Vue 3 (ADR-0053), so the chat state and stream use `ai` + **`@ai-sdk/vue`** (ARCHITECTURE.md §4.3, §10), and `ai`, `@ai-sdk/vue` and Pydantic AI's `sdk_version` are upgraded together in one slice. The frontend contract test of the first assistant slice runs on `@ai-sdk/vue`.
+- The visible components are our own, on the vendored **shadcn-vue on Reka UI** primitives (ADR-0035's amendment); the stick-to-bottom helper is a composable.
+- Nothing else changes: Pydantic AI, the UI message stream protocol v7, our own approval binding, markdown-it + DOMPurify in one `SafeMarkdown` component, the provider scope.
+
 ## References
 
 review:13 §4 (spike result and decisions); review:25 §4.3, §10; ADR-0006, ADR-0033, ADR-0040, ADR-0043; INV-09, INV-13; CAP-AI-MARKDOWN, CAP-AI-PROVIDERS, CAP-AI-FINZYTRACK.

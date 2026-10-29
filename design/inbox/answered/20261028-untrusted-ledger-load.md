@@ -27,3 +27,6 @@ Whichever option is chosen, a trust answer is kept like this:
 - **Never** a global "trust everything" switch, and never trust by folder path (a path can point at different ledgers over time; the lineage id cannot).
 
 ## Answer (owner, verbatim, with date)
+Owner, 2026-10-29, in session: "Yes, rename to composables everywhere including INV-12. Agreed with the rest. No, ledger that runs code dosen not open before I trust it." (the first two sentences answer other questions).
+
+To apply: option 1 (BL-0156, M2, with the open flow): on desktop, a ledger that runs code (a plugin outside Beancount's own `beancount.plugins.*`/`beancount.ops.*`, `insert_pythonpath`, or a plugin that evaluates a non-literal config) does not open until the user trusts it on the trust screen, which lists the code it runs; Beancount's own plugins are trusted; the answer is stored as "How trust is stored" above says. Recorded as the ADR-0040 amendment of 2026-10-29; L11-02, L11-06 and L11.M-1 point at BL-0156 (S0056).

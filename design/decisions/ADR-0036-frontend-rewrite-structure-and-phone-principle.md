@@ -35,6 +35,11 @@ The large v0.3 components mixed four layers: data shaping that belongs on the ba
 - About 2,800–3,000 lines of unit tests port directly.
 - A phone UI (CAP-PHONE-UI) stays possible as a new set of views over the same hooks.
 
+## Amendment (2026-10-29): the folder of headless logic is `composables/`
+
+Owner: "Yes, rename to composables everywhere including INV-12. Agreed with the rest. No, ledger that runs code dosen not open before I trust it." (2026-10-29, in session; S0056)
+- The frontend is Vue 3 (ADR-0053). The "headless hooks" of the structure are composables, and they live in `features/<name>/composables/` (ADR-0066); "a view's JSX" reads as a view's template; "domain, use cases, hooks" in the phone principle reads as domain, use cases, composables.
+
 ## References
 
 review:19 §0–§4; review:17 §5; review:L8 §1 (behaviour spec, private archive); ADR-0002, ADR-0006, ADR-0027, ADR-0035, ADR-0037; INV-12, INV-16; CAP-PHONE-UI, CAP-TXN-CARDS.

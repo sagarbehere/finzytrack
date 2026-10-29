@@ -7,9 +7,9 @@
 // default currency is the ledger's operating currency, served by the Ledger Profile).
 //
 // Interface: the per-widget recipe-run query in `features/dashboards/` (ARCHITECTURE.md §3.1, §3.2). Assumed, not
-// decided: `useWidgetRun({ params, profile, run })` in `features/dashboards/hooks/useWidgetRun`, returning `data`
+// decided: `useWidgetRun({ params, profile, run })` in `features/dashboards/composables/useWidgetRun`, returning `data`
 // and `status` refs, with `run(params, signal)` standing in for the generated `recipes:run` call; the test mounts it
-// in a bare component (the landing slice adds the app's query-client provider if the hook needs one).
+// in a bare component (the landing slice adds the app's query-client provider if the composable needs one).
 import { flushPromises, mount } from '@vue/test-utils'
 import { describe, expect } from 'vitest'
 import { defineComponent, h, ref, type Ref } from 'vue'
@@ -32,7 +32,7 @@ type RunModule = {
   }) => WidgetRun
 }
 
-const PATH = '/src/features/dashboards/hooks/useWidgetRun'
+const PATH = '/src/features/dashboards/composables/useWidgetRun'
 
 function deferred(): { promise: Promise<string>; resolve: (v: string) => void } {
   let resolve: (v: string) => void = () => undefined

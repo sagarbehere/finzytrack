@@ -32,7 +32,7 @@ Every user-visible capability of Finzytrack, with its status: `planned`, `partia
 | CAP-WS-BRING-IN | "Bring the ledger into this folder": copy an externally referenced ledger set in, making the… | new | planned | M3 | yes |
 | CAP-WS-TEST-COPY | Make a test copy: copies files (never an external reference) into a new workspace marked… | new | planned | M3 | yes |
 | CAP-WS-SECRETS | Per-workspace secret scope | new | planned | M3 | yes |
-| CAP-WS-TRUST | Desktop trust prompt for ledgers that run code (plugins, `insert_pythonpath`) | new | planned | M3 | yes |
+| CAP-WS-TRUST | Desktop trust prompt for ledgers that run code (plugins, `insert_pythonpath`) | new | planned | M2 | yes |
 | CAP-WS-SYNC-CONFLICT | Detect sync-client conflicted copies in the ledger set and `.finzytrack/` | new | planned | M2 | yes |
 | CAP-WS-DEMO | "Try the demo": a separate demo workspace (`kind: demo`), replaced on each release without asking… | new | planned | M3 | yes |
 | CAP-WS-REGISTRY | Manage workspaces: recents, pin, rename, reveal, locate, forget (never deletes files) | new | planned | M2 | yes |

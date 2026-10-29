@@ -7,7 +7,7 @@
 // resurrected op1's payee with the row marked modified and the log empty; the fix: per-operation inverse patches),
 // review:L8 §1.1 A10/A12 (the buffer's verbs), ADR-0035 (one `useUnsavedGuard`), INV-16.
 //
-// Interface: `useEditBuffer` in `features/transactions/hooks/` (ARCHITECTURE.md §3.1). Assumed, not decided: the
+// Interface: `useEditBuffer` in `features/transactions/composables/` (ARCHITECTURE.md §3.1). Assumed, not decided: the
 // buffer's method names below (from review:L8 §1.1: `load`, `commitSaved`), the op shape for bulk edits, and
 // `useFilterApply({ buffer, confirmDiscard, run })` as the filter-apply command the view uses.
 import { describe, expect } from 'vitest'
@@ -46,8 +46,8 @@ type FilterModule = {
   }) => FilterApply
 }
 
-const BUFFER = '/src/features/transactions/hooks/useEditBuffer'
-const FILTER = '/src/features/transactions/hooks/useFilterApply'
+const BUFFER = '/src/features/transactions/composables/useEditBuffer'
+const FILTER = '/src/features/transactions/composables/useFilterApply'
 const loaded = (): Row[] => [
   { id: 't1', payee: 'Cafe', narration: 'n1' },
   { id: 't2', payee: 'Grocer', narration: 'n2' },

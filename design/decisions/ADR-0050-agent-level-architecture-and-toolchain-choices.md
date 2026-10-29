@@ -47,6 +47,12 @@ Owner: "I accept your recommendation about the security exception" (2026-10-25, 
 - A release that fixes a published security advisory affecting Finzytrack may be adopted before it is 14 days old, with a one-line reason in the slice journal naming the advisory. Only that package, and what it strictly requires, moves early.
 - Cargo has no release-age setting: `Cargo.lock` is resolved to versions published at least 14 days earlier, and a T1 check of the publish dates is BL-0052.
 
+## Amendment (2026-10-29): the frontend is Vue 3
+
+Owner: "Yes, rename to composables everywhere including INV-12. Agreed with the rest. No, ledger that runs code dosen not open before I trust it." (2026-10-29, in session; S0056)
+- The frontend is Vue 3 (ADR-0053); the items that name React libraries read as their Vue equivalents (ARCHITECTURE.md §3, §10). Item 10: **vue-router**, in plain SPA mode with no data loading in routes (TanStack Vue Query owns server state). Item 5: the generated query keys feed hand-written TanStack Vue Query composables.
+- **Item 11 stays as decided:** a thin own **`useECharts` composable** over `echarts`, not a wrapper library; ADR-0053 also allowed `vue-echarts`, which is not adopted. The rejected "React ECharts wrapper library" reads as any wrapper library, for the same reason.
+
 ## References
 
 review:25 §2.1, §7, §8, §10, §13; review:26 EP-17–EP-19, EP-24; ADR-0006, ADR-0026, ADR-0038, ADR-0039.

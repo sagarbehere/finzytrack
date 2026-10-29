@@ -91,6 +91,8 @@ RETIRED_LINES = {
     "tsc type gate": "`tsc --noEmit` is the type gate.",
     "S13 pending": "React frontend, pending S13; Vue if S13 fails.",
     "Vue fallback": "The pins of the Vue fallback stack.",
+    # S0056: the features' folder of composables was named `hooks/` (owner, 2026-10-29: rename to composables)
+    "hooks/ folder": "    hooks/          the feature's composables; logic in `features/transactions/hooks/useEditBuffer`.",
 }
 # Words the audit says must never be refused, in the senses the current design uses them.
 TRAP_LINES = [
@@ -114,7 +116,9 @@ TRAP_LINES = [
     "Toasts use vue-sonner; icons from `@lucide/vue`; shadcn-vue on Reka UI.",
     "`vue-tsc --noEmit` is the type gate; `@vitejs/plugin-vue` builds `.vue` files.",
     "Reactive state from `@vue/reactivity`; the view should react to a change and reacts once.",
-    "Git hooks run first; Vue Query hooks; the `hooks/` folder holds composables; functional components.",
+    "Git hooks run first; Vue Query hooks; the `composables/` folder; functional components.",
+    # S0056: git and Claude Code hook paths are not the frontend folder
+    "`.githooks/pre-push`, `.claude/hooks/guards.py`, `core.hooksPath`, `scripts/tests/hook_pins/`.",
     "`parseInt` with radix 10.",
     "`useConfirm`, `useUnsavedGuard`, `useTemplateRef`, `useFieldErrors`, `useMutation`.",
     "Spike S13 decided Vue 3 (ADR-0053); the S13 measurements.",
@@ -143,6 +147,12 @@ class Terms(unittest.TestCase):
         for line in ("the per-workspace limiter", "a `WorkspaceLimiter`", "Limiters are gone", "two limiters"):
             with self.subTest(line=line):
                 self.assertEqual(names(hits(line)), ["limiter"], line)
+
+    def test_every_spelling_of_the_hooks_folder_is_refused(self) -> None:  # S0056
+        for line in ("    hooks/          the feature's composables", "the `hooks/` folder", "hooks/useTree.ts",
+                     "`features/accounts/hooks/useTree.ts`", "src/features/transactions/hooks", "(hooks/, machines/)"):
+            with self.subTest(line=line):
+                self.assertEqual(names(hits(line)), ["hooks/ folder"], line)
 
     def test_a_term_split_by_a_line_break_is_refused_on_its_first_line(self) -> None:  # S0047 verifier V6
         found = hits("Saves go through the engine\npool, one slot per workspace.\n")

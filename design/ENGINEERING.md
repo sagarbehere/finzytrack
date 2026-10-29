@@ -204,7 +204,7 @@ created = clock.now(); pid = ids.new_plan_id()   # TransactionIds are derived, n
 - Acceptance runs with `TZ` west of UTC and a frozen clock on both sides.
 
 ### EP-11 Vertical slices over a shared kernel, dependency direction enforced
-**Rule.** Each capability is one slice (ARCHITECTURE §2.2, §3.1) with its own core/usecases/http/capabilities (backend) or queries/machines/hooks/views (frontend). Slices depend on the kernel, never on each other except through declared, ADR-referenced edges. The kernel never depends on slices.
+**Rule.** Each capability is one slice (ARCHITECTURE §2.2, §3.1) with its own core/usecases/http/capabilities (backend) or queries/machines/composables/views (frontend). Slices depend on the kernel, never on each other except through declared, ADR-referenced edges. The kernel never depends on slices.
 **Why.** The rebuild grows one vertical at a time (ADR-0002). Slices keep area reviews bounded (`PROCESS.md` (structural checks)) and stop the package-level cycles the old backend had (`core ↔ services ↔ schemas ↔ ai`).
 
 **Enforcement.**

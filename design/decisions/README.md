@@ -49,13 +49,13 @@ This folder holds the architecture decision records of Finzytrack v0.4: why the 
 | [ADR-0031](ADR-0031-every-beancount-booking-method.md) | Every booking method Beancount books is supported | Accepted | 2026-10-24 | investments, ledger |
 | [ADR-0032](ADR-0032-broker-sanity-check-and-one-upload-sync.md) | Broker sanity check, holdings reconciliation and one-upload sync | Accepted | 2026-10-24 | investments, import |
 | [ADR-0033](ADR-0033-ai-assistant-capabilities-and-proposals.md) | One AI assistant over shared capabilities; changes are proposals, never auto-applied | Accepted | 2026-10-24 | AI |
-| [ADR-0034](ADR-0034-ai-stack.md) | AI stack: Pydantic AI, AI SDK v7, markdown-it + DOMPurify, our own components | Accepted | 2026-10-24 | AI, stack |
-| [ADR-0035](ADR-0035-ui-layers-and-design-system.md) | UI layers and design system: shadcn/ui on Radix plus our own domain primitives | Accepted | 2026-10-24 | frontend, UI, accessibility |
-| [ADR-0036](ADR-0036-frontend-rewrite-structure-and-phone-principle.md) | Frontend rewrite from a behaviour spec; structure; desktop first, phone not precluded | Accepted | 2026-10-24 | frontend |
-| [ADR-0037](ADR-0037-server-state-with-tanstack-query.md) | Server state lives in TanStack Query, scoped by workspace, invalidated by ledger version | Accepted | 2026-10-24 | frontend, API |
+| [ADR-0034](ADR-0034-ai-stack.md) | AI stack: Pydantic AI, AI SDK v7, markdown-it + DOMPurify, our own components | Accepted; amended by S0056 (Vue 3) | 2026-10-24 | AI, stack |
+| [ADR-0035](ADR-0035-ui-layers-and-design-system.md) | UI layers and design system: shadcn/ui on Radix plus our own domain primitives | Accepted; amended by S0056 (Vue 3) | 2026-10-24 | frontend, UI, accessibility |
+| [ADR-0036](ADR-0036-frontend-rewrite-structure-and-phone-principle.md) | Frontend rewrite from a behaviour spec; structure; desktop first, phone not precluded | Accepted; amended by ADR-0066 | 2026-10-24 | frontend |
+| [ADR-0037](ADR-0037-server-state-with-tanstack-query.md) | Server state lives in TanStack Query, scoped by workspace, invalidated by ledger version | Accepted; amended by S0056 (Vue 3) | 2026-10-24 | frontend, API |
 | [ADR-0038](ADR-0038-api-contract-and-code-generation.md) | API contract: one envelope, plans and confirm, offline OpenAPI, openapi-typescript | Accepted | 2026-10-24 | API, codegen |
 | [ADR-0039](ADR-0039-errors-logging-and-diagnostics.md) | Errors, logging and diagnostics | Accepted | 2026-10-24 | backend, frontend, observability, privacy |
-| [ADR-0040](ADR-0040-security-foundations.md) | Security foundations are part of the shell from the first build | Accepted | 2026-10-24 | security, privacy |
+| [ADR-0040](ADR-0040-security-foundations.md) | Security foundations are part of the shell from the first build | Accepted; amended by S0056 (no open before trust) | 2026-10-24 | security, privacy |
 | [ADR-0041](ADR-0041-no-hosted-multi-user-build.md) | Hosted multi-user mode: don't foreclose, don't build | Accepted; amended by ADR-0063, ADR-0064 | 2026-10-24 | architecture, hosting |
 | [ADR-0042](ADR-0042-licence.md) | Licence: owner code GPL-2.0-or-later; notices and licence checks; legal advice before v0.4.0 | Accepted | 2026-10-24 | legal, release |
 | [ADR-0043](ADR-0043-release-scope-and-release-gate.md) | Release scope: exactly four capabilities are deferred; the release gate | Accepted; amended by ADR-0062, ADR-0064 | 2026-10-24 | release, scope |
@@ -65,7 +65,7 @@ This folder holds the architecture decision records of Finzytrack v0.4: why the 
 | [ADR-0047](ADR-0047-product-defaults.md) | Product defaults for v0.4.0 | Accepted | 2026-10-24 | product |
 | [ADR-0048](ADR-0048-v0-2-2-names-kept-through-0-4-x.md) | v0.2.2 mirror tables and compute functions keep their names through 0.4.x | Accepted; the `lots` part awaits the owner's re-confirmation | 2026-10-24 | mirror, recipes, compatibility |
 | [ADR-0049](ADR-0049-account-move-merge-delete.md) | Account rename, merge and delete are built on one move-postings primitive | Accepted | 2026-10-24 | accounts, write path |
-| [ADR-0050](ADR-0050-agent-level-architecture-and-toolchain-choices.md) | Agent-level architecture and toolchain choices | Accepted | 2026-10-24 | architecture, stack, verification |
+| [ADR-0050](ADR-0050-agent-level-architecture-and-toolchain-choices.md) | Agent-level architecture and toolchain choices | Accepted; amended by S0056 (Vue 3) | 2026-10-24 | architecture, stack, verification |
 | [ADR-0051](ADR-0051-working-principles-from-the-review.md) | Working principles carried over from the review | Accepted | 2026-10-24 | process, engineering |
 | [ADR-0052](ADR-0052-default-currency-lives-in-the-ledger.md) | The default currency lives in the ledger; the tool setting is only an override | Accepted | 2026-10-24 | workspaces, settings, ledger |
 | [ADR-0053](ADR-0053-frontend-framework-is-vue.md) | The frontend framework is Vue 3 (spike S13 outcome) | Accepted | 2026-10-25 | frontend, stack |
@@ -81,6 +81,7 @@ This folder holds the architecture decision records of Finzytrack v0.4: why the 
 | [ADR-0063](ADR-0063-one-open-workspace-no-shared-files.md) | One open workspace at a time, and every unfinished save recovered before any workspace opens | Accepted; amended by ADR-0064 and S0047 | 2026-10-27 | workspaces, API, lifecycle, data safety, hosting |
 | [ADR-0064](ADR-0064-one-engine-one-job-at-a-time.md) | One engine, one job at a time | Accepted; amended by S0047 | 2026-10-27 | engine, scheduling, write path, performance |
 | [ADR-0065](ADR-0065-agents-ask-the-owner-to-stop-the-running-app.md) | Agents ask the owner to stop the running app; the guard protects data, not the app | Accepted | 2026-10-29 | process, agents, invariants |
+| [ADR-0066](ADR-0066-frontend-composables-folder-and-inv-12-wording.md) | The features' headless logic lives in `composables/`; INV-12 says "composables" | Accepted | 2026-10-29 | frontend, invariants |
 
 ## Template
 

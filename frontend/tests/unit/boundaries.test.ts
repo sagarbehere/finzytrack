@@ -19,9 +19,9 @@ const TREE = [
   'src/app/router.ts',
   'src/features/accounts/index.ts',
   'src/features/accounts/views/List.vue',
-  'src/features/accounts/hooks/useTree.ts',
+  'src/features/accounts/composables/useTree.ts',
   'src/features/transactions/index.ts',
-  'src/features/transactions/hooks/useGrid.ts',
+  'src/features/transactions/composables/useGrid.ts',
   'src/catalog/accounts.ts',
   'src/components/app/MoneyText.vue',
   'src/components/ui/button.ts',
@@ -96,24 +96,24 @@ describe('[INV-12] frontend dependency direction', () => {
       'src/components/app/MoneyText.vue',
       '<script setup lang="ts">\nimport \'../../api/client\'\n</script>\n',
     ],
-    ['a feature importing app', 'src/features/accounts/hooks/useTree.ts', "import '../../../app/router'\n"],
+    ['a feature importing app', 'src/features/accounts/composables/useTree.ts', "import '../../../app/router'\n"],
     [
       'a feature importing api/generated',
-      'src/features/accounts/hooks/useTree.ts',
+      'src/features/accounts/composables/useTree.ts',
       "import '../../../api/generated/types'\n",
     ],
     [
       'a feature reaching into another feature',
-      'src/features/accounts/hooks/useTree.ts',
-      "import '../../transactions/hooks/useGrid'\n",
+      'src/features/accounts/composables/useTree.ts',
+      "import '../../transactions/composables/useGrid'\n",
     ],
     [
       'a feature importing another feature index without an edge',
-      'src/features/accounts/hooks/useTree.ts',
+      'src/features/accounts/composables/useTree.ts',
       "import '../../transactions'\n",
     ],
     ['@tauri-apps outside platform/shell/tauri.ts', 'src/platform/shell/browser.ts', "import '@tauri-apps/api/core'\n"],
-    ['@tauri-apps in a feature', 'src/features/accounts/hooks/useTree.ts', "import '@tauri-apps/api/core'\n"],
+    ['@tauri-apps in a feature', 'src/features/accounts/composables/useTree.ts', "import '@tauri-apps/api/core'\n"],
     ['a file outside the map', 'src/stray/thing.ts', 'export const x = 1\n'],
     // S0018 verifier F1, F2, F4: unresolved local specifiers, other script kinds, alias-looking names
     ['a domain import written with .js for a .ts file', 'src/domain/money.ts', "import '../platform/clock.js'\n"],
@@ -121,9 +121,9 @@ describe('[INV-12] frontend dependency direction', () => {
     ['a stray .js file', 'src/stray/thing.js', 'export const x = 1\n'],
     ['a stray .mts file', 'src/stray/thing.mts', 'export const x = 1\n'],
     ['an .mts file in domain importing platform', 'src/domain/evil.mts', "import '../platform/clock'\n"],
-    ['an alias-looking @/ import', 'src/features/accounts/hooks/useTree.ts', "import '@/app/router'\n"],
-    ['an alias-looking src/ import', 'src/features/accounts/hooks/useTree.ts', "import 'src/app/router'\n"],
-    ['an alias-looking ~/ import', 'src/features/accounts/hooks/useTree.ts', "import '~/app/router'\n"],
+    ['an alias-looking @/ import', 'src/features/accounts/composables/useTree.ts', "import '@/app/router'\n"],
+    ['an alias-looking src/ import', 'src/features/accounts/composables/useTree.ts', "import 'src/app/router'\n"],
+    ['an alias-looking ~/ import', 'src/features/accounts/composables/useTree.ts', "import '~/app/router'\n"],
     // every script kind under src/ is linted (round-2 F2)
     ...['tsx', 'cts', 'jsx', 'mjs', 'cjs'].map((ext): [string, string, string] => [
       `a .${ext} file in domain importing platform`,
@@ -131,7 +131,7 @@ describe('[INV-12] frontend dependency direction', () => {
       "import '../platform/clock'\n",
     ]),
     // deliberate, until BL-0056: Vite query imports are refused (round-2 F1)
-    ['a Vite ?url import', 'src/features/accounts/hooks/useTree.ts', "import '../views/List.vue?url'\n"],
+    ['a Vite ?url import', 'src/features/accounts/composables/useTree.ts', "import '../views/List.vue?url'\n"],
     ['a Vite ?raw import', 'src/domain/money.ts', "import './dates?raw'\n"],
     // F3: the other forbidden pairs of the map
     ['app deep-importing a feature', 'src/app/router.ts', "import '../features/accounts/views/List.vue'\n"],
@@ -165,7 +165,7 @@ describe('[INV-12] frontend dependency direction', () => {
     ],
     [
       'a feature importing its own files and the kernel layers',
-      'src/features/accounts/hooks/useTree.ts',
+      'src/features/accounts/composables/useTree.ts',
       "import '../views/List.vue'\nimport '../../../catalog/accounts'\nimport '../../../api/client'\nimport '../../../domain/money'\n",
     ],
     [
@@ -186,7 +186,7 @@ describe('[INV-12] frontend dependency direction', () => {
     ['platform/shell/tauri.ts importing @tauri-apps', 'src/platform/shell/tauri.ts', "import '@tauri-apps/api/core'\n"],
     [
       'a feature importing components/app',
-      'src/features/accounts/hooks/useTree.ts',
+      'src/features/accounts/composables/useTree.ts',
       "import '../../../components/app/MoneyText.vue'\n",
     ],
   ])('accepts %s', async (_label, file, code) => {
@@ -199,12 +199,12 @@ describe('[INV-12] frontend dependency direction', () => {
 
   describe('a listed cross-feature edge', () => {
     const edges: [string, string][] = [['accounts', 'transactions']]
-    const from = 'src/features/accounts/hooks/useTree.ts'
+    const from = 'src/features/accounts/composables/useTree.ts'
 
     it('allows the other feature through its index only', async () => {
       await accepted(from, "import '../../transactions'\n", edges)
       expect(
-        (await boundaryErrors(from, "import '../../transactions/hooks/useGrid'\n", edges)).some((e) =>
+        (await boundaryErrors(from, "import '../../transactions/composables/useGrid'\n", edges)).some((e) =>
           e.startsWith('boundaries/'),
         ),
       ).toBe(true)
@@ -212,7 +212,7 @@ describe('[INV-12] frontend dependency direction', () => {
 
     it('does not open the reverse direction', async () => {
       const errors = await boundaryErrors(
-        'src/features/transactions/hooks/useGrid.ts',
+        'src/features/transactions/composables/useGrid.ts',
         "import '../../accounts'\n",
         edges,
       )

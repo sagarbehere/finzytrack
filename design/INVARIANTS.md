@@ -80,7 +80,7 @@ Origin: accepted by the owner as a starting point on 2026-10-24 (review:20 §2),
 - **Status:** enforced
 
 ### INV-12: Layering
-- **Rule:** Routers translate HTTP, use cases orchestrate, the domain is pure. On the frontend, no business rule sits in a template or component render; logic sits in domain modules, hooks or machines.
+- **Rule:** Routers translate HTTP, use cases orchestrate, the domain is pure. On the frontend, no business rule sits in a template or component render; logic sits in domain modules, composables or machines. *(Amended with the owner's approval, 2026-10-29, ADR-0066: "Yes, rename to composables everywhere including INV-12. Agreed with the rest. No, ledger that runs code dosen not open before I trust it."; "hooks" became "composables", the Vue 3 word for the same thing, ADR-0053.)*
 - **Why:** Logic in the wrong layer was the main source of duplicated, drifting rules (review:10, review:19).
 - **Enforced by:** `backend/.importlinter`, `backend/tests/architecture/test_contracts.py` (the backend's layers and purity contracts, S0006); `frontend/eslint.boundaries.js`, `frontend/tests/unit/boundaries.test.ts` (the frontend's layer map, S0018). The rule's second sentence (no business rule in a template or component render) stays with the verifier's review (checklist EP-01, EP-12): import rules cannot see where logic sits inside a file. Also out of a static lint's reach, and so review-only: `import(variable)` and `import.meta.glob(...)`.
 - **Status:** enforced
