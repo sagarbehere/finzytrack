@@ -11,8 +11,9 @@ checked read-only open with `query_only` (`files.open_mirror`), `confine` sets o
   other eponymous virtual table) and the `temp` schema. A read that names no column (`COUNT(*)`, `SELECT 1 FROM x`)
   comes with no schema, and SQLite reports it the same way for a stored table, an eponymous virtual table and a
   CTE of the query. So for such a read of any other name, the guard asks SQLite itself whether the bare name
-  resolves outside the query (`_Resolver`: a statement prepared, never run, on an empty in-memory connection): if
-  it does not, the name can only be a CTE of the query and the read passes. A function call passes unless it is
+  resolves outside the query (`_Resolver`: a statement prepared, never run, on an empty in-memory connection): only
+  when SQLite answers "no such table" can the name be a CTE of the query, and the read passes; any other answer,
+  error or lack of memory refuses it (fail closed). A function call passes unless it is
   `load_extension` or `fts3_tokenizer`, the two core functions that reach outside the query (SQLite's other
   built-ins only compute). Anything else (`PRAGMA`, `ATTACH`, writes, `CREATE`, transactions, `ANALYZE`, `VACUUM`)
   is refused before it runs;
@@ -26,8 +27,10 @@ checked read-only open with `query_only` (`files.open_mirror`), `confine` sets o
 Python's `sqlite3` refuses a second statement before running anything, and binds parameters by name only; the text
 and the parameters are checked first, so input SQLite cannot take is `invalid`, not an exception. Rows are fetched
 one at a time and counted as they arrive (`QueryRows.truncated` says which cap ended them). Expected outcomes are
-values (EP-13): `QueryRows`, `QueryRefused` (the query, not the app, is at fault), `MirrorUnavailable`. Limits are
-configuration values (INV-10 style), not development targets.
+values (EP-13): `QueryRows`, `QueryRefused` (the query, not the app, is at fault), `MirrorUnavailable`. That holds
+when SQLite's process-wide heap is used up by the queries running at the same moment (`QueryLimits`): while the
+query runs (also inside the authorizer) it is `too_large`, before it (the open, the setup) `MirrorUnavailable(
+"out_of_memory")`; neither raises. Limits are configuration values (INV-10 style), not development targets.
 
 TODO(BL-0113): the runner reads the generation file it is given; with the publish it reads the generation the
 request pinned, and the freshness check against the disk is BL-0125's.
@@ -35,7 +38,6 @@ request pinned, and the freshness check against the disk is BL-0125's.
 
 from __future__ import annotations
 
-import contextlib
 import math
 import sqlite3
 import sys
@@ -44,7 +46,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Final, Literal, NewType
 
-from app.mirror.files import MirrorUnavailable, absolute, open_mirror, unavailable
+from app.mirror.files import OUT_OF_MEMORY, MirrorUnavailable, absolute, open_mirror, unavailable
 
 __all__ = [
     "QueryLimits",
@@ -79,6 +81,7 @@ DENIED_FUNCTIONS = frozenset({"load_extension", "fts3_tokenizer"})
 TABLE_FUNCTIONS = frozenset({"json_each", "json_tree"})
 SCHEMA_TABLES = frozenset({"sqlite_schema", "sqlite_master"})
 ONLY_SELECT = "Only a SELECT that reads the mirror can run here."
+NO_MEMORY = "The query needs more memory than queries may use now (the queries running at the same time share it)."
 # The mirror's own objects are read from the file itself, not from a list here, so a new table is readable at once.
 OBJECTS_SQL = "SELECT name FROM sqlite_schema WHERE type IN ('table', 'view')"
 INT64: Final = (-(2**63), 2**63 - 1)  # what SQLite can bind
@@ -104,9 +107,13 @@ class QueryLimits:
     - time: `timeout_s`, checked inside SQLite every `progress_steps` virtual-machine steps;
     - SQLite's memory: `max_sqlite_heap_bytes`, SQLite's hard heap limit. SQLite has no per-connection limit, so it
       is process-wide: it bounds all SQLite memory of the main sidecar (only mirror reads use SQLite there) and the
-      queries running at once share it; a query past it is `too_large`, and the lowest value set in the process
-      wins. With `temp_store = MEMORY` the sorter and every temporary table live under this limit, so a query
-      writes no temp file at all and cannot fill the disk;
+      queries running at once share it, with the app's own reads; the lowest value set in the process wins. A
+      query that meets it while it runs is `too_large` (its own size or the others' at that moment: SQLite cannot
+      tell which); the open or setup of a query and the app's own reads (`reader.Reader`) that meet it are
+      `MirrorUnavailable("out_of_memory")`, for the caller to try again. SQLite cannot keep part of the heap for the
+      app's small reads (no per-connection limit), so nothing is reserved (BL-0128). With `temp_store = MEMORY` the
+      sorter and every temporary table live under this limit, so a query writes no temp file at all and cannot
+      fill the disk;
     - one value: `max_value_bytes` (`SQLITE_LIMIT_LENGTH`), also for a value read from the file and inside the query;
     - one row: `max_columns` (`SQLITE_LIMIT_COLUMN`, also the widest view or join a query may use; the mirror's
       widest view has 29) times `max_value_bytes`; `row_bound` of the two must fit in `max_result_bytes`;
@@ -172,17 +179,31 @@ class _Resolver:
     registers only when first named, which `PRAGMA module_list` does not show). It prepares `SELECT 1 FROM "<name>"`
     on its own in-memory connection under an authorizer that records the read and refuses everything, so nothing
     runs. Every connection of the process gets the same built-in modules, so the answer holds for the mirror's
-    connection too. Opened on first use, once per query at most; `close` ends it."""
+    connection too. Opened on first use, once per query at most; `close` ends it.
 
-    __slots__ = ("_answers", "_con")
+    It fails closed: only SQLite's "no such table" (the name is the query's own CTE) answers False. Any other error,
+    and SQLite out of memory (`out_of_memory` then says so, for the runner's outcome), answers True: the read is
+    refused. SQLite has no result code of its own for "no such table" (it is `SQLITE_ERROR`), so its message is
+    matched; a change of that text could only refuse more."""
+
+    __slots__ = ("_answers", "_con", "out_of_memory")
 
     def __init__(self) -> None:
         self._con: sqlite3.Connection | None = None
         self._answers: dict[str, bool] = {}
+        self.out_of_memory = False
 
     def __call__(self, name: str) -> bool:
-        if (known := self._answers.get(name)) is not None:
-            return known
+        if (known := self._answers.get(name)) is None:
+            try:
+                known = self._ask(name)
+            except MemoryError:  # SQLite's NOMEM in the connect or the prepare
+                self.out_of_memory = True
+                known = True
+            self._answers[name] = known
+        return known
+
+    def _ask(self, name: str) -> bool:
         if self._con is None:
             self._con = sqlite3.connect(":memory:")
         reads: list[str | None] = []
@@ -197,14 +218,19 @@ class _Resolver:
         self._con.set_authorizer(record)
         quoted = name.replace('"', '""')
         # Always refused, so it never runs: "no such table" (a CTE's name) or "not authorized" (it resolves).
-        with contextlib.suppress(sqlite3.Error):
+        try:
             self._con.execute(f'SELECT 1 FROM "{quoted}"')  # noqa: S608 (a quoted name, on an empty in-memory db)
-        self._answers[name] = bool(reads)
-        return self._answers[name]
+        except sqlite3.Error as e:
+            return bool(reads) or not _no_such_table(e)
+        return True  # it ran: it cannot, as every read is refused; if it ever did, the name resolved
 
     def close(self) -> None:
         if self._con is not None:
             self._con.close()
+
+
+def _no_such_table(error: sqlite3.Error) -> bool:
+    return str(error).startswith("no such table: ")  # SQLite gives it only with SQLITE_ERROR
 
 
 class _Guard:
@@ -309,8 +335,11 @@ class QueryRunner:
         con = mirror.con
         resolver = _Resolver()
         try:
-            objects = frozenset(name.lower() for (name,) in con.execute(OBJECTS_SQL))
-            guard = confine(con, limits, objects, resolver)
+            try:
+                objects = frozenset(name.lower() for (name,) in con.execute(OBJECTS_SQL))
+                guard = confine(con, limits, objects, resolver)
+            except MemoryError:  # the shared heap was used up before the query ran: not the query's fault
+                return MirrorUnavailable("out_of_memory", OUT_OF_MEMORY)
             deadline = self._monotonic() + limits.timeout_s
             con.set_progress_handler(lambda: self._monotonic() >= deadline, limits.progress_steps)
             try:
@@ -320,9 +349,11 @@ class QueryRunner:
                 columns = tuple(str(d[0]) for d in cursor.description)
                 return _fetch(cursor, columns, cap, limits.max_result_bytes)
             except sqlite3.Error as e:
+                if resolver.out_of_memory:  # the guard refused a read because it could not ask SQLite
+                    return QueryRefused("too_large", NO_MEMORY)
                 return _refusal(e, guard)
             except MemoryError:  # SQLite reached its hard heap limit (SQLITE_NOMEM; Python raises MemoryError)
-                return QueryRefused("too_large", "The query needs more memory than a query may use.")
+                return QueryRefused("too_large", NO_MEMORY)
         finally:
             con.close()
             resolver.close()

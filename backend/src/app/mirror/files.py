@@ -8,7 +8,9 @@ mirror's own facts (`m_meta`) are read and checked, so no caller answers from a 
 
 A file that cannot be opened, is not an SQLite database, still has a hot journal (its build was stopped) or has no
 well-formed `m_meta` is an expected outcome (the OS may purge the cache, ADR-0015), so it comes back as
-`MirrorUnavailable` (EP-13); the caller decides on a rebuild.
+`MirrorUnavailable` (EP-13); the caller decides on a rebuild. So is SQLite running out of its heap while it opens
+or reads (`out_of_memory`): its hard heap limit is process-wide (`query.QueryLimits`), so the queries running at the
+same moment can use it up; that says nothing about the file, so the caller tries again later and never rebuilds.
 
 TODO(BL-0113): the path is a generation file the caller names; once the publish exists, a request pins the current
 generation and reads that path for its whole life.
@@ -22,17 +24,28 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Final, Literal, LiteralString
 
-__all__ = ["MirrorInfo", "MirrorUnavailable", "NotAMirrorError", "OpenMirror", "absolute", "open_mirror", "unavailable"]
+__all__ = [
+    "OUT_OF_MEMORY",
+    "MirrorInfo",
+    "MirrorUnavailable",
+    "NotAMirrorError",
+    "OpenMirror",
+    "absolute",
+    "open_mirror",
+    "unavailable",
+]
 
 type UnavailableReason = Literal[
     "cannot_open",  # no file there, or the process may not read it
     "not_a_mirror",  # a file, but not an SQLite database in rollback mode, a stopped build, or no well-formed m_meta
+    "out_of_memory",  # SQLite's process-wide heap was used up at that moment (by queries running at once): try again
 ]
 
 HEADER: Final = b"SQLite format 3\x00"
 HEADER_BYTES: Final = 100
 ROLLBACK: Final = 1  # header bytes 18 and 19, the file format's write and read versions: 1 rollback, 2 WAL
 
+OUT_OF_MEMORY: Final = "SQLite's heap limit was reached (shared by every read of the process)"
 TABLE_SQL: Final[LiteralString] = "SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = ?"
 MAX_META_ROWS: Final = 64  # the build writes six keys; a later build may add some, never this many
 META_SQL: Final[LiteralString] = "SELECT key, value FROM m_meta LIMIT 65"  # MAX_META_ROWS + 1: one more says "too many"
@@ -129,13 +142,16 @@ def open_mirror(path: str) -> OpenMirror | MirrorUnavailable:
     """A read-only connection to the mirror file at `path` (absolute), with its `meta` read and checked.
 
     Raises `ValueError` for a relative path (a caller error) and re-raises any SQLite error that is not about the
-    file being unreadable or not a mirror (a disk error, SQLite out of memory).
+    file being unreadable or not a mirror (a disk error). SQLite out of its heap (Python's `MemoryError`) is
+    `MirrorUnavailable("out_of_memory")`.
     """
     uri = file_uri(path)
     if (bad := _check_header(Path(path))) is not None:
         return bad
     try:
         con = sqlite3.connect(uri, uri=True, isolation_level=None)
+    except MemoryError:
+        return MirrorUnavailable("out_of_memory", OUT_OF_MEMORY)
     except sqlite3.Error as e:
         if (outcome := unavailable(e)) is not None:
             return outcome
@@ -147,6 +163,8 @@ def open_mirror(path: str) -> OpenMirror | MirrorUnavailable:
         con.close()
         if isinstance(e, NotAMirrorError):
             return MirrorUnavailable("not_a_mirror", str(e))
+        if isinstance(e, MemoryError):
+            return MirrorUnavailable("out_of_memory", OUT_OF_MEMORY)
         if isinstance(e, sqlite3.Error) and (outcome := app_read_outcome(e)) is not None:
             return outcome
         raise

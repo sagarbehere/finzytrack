@@ -11,9 +11,9 @@ from pathlib import Path
 import pytest
 
 from app.domain.text import UntrustedText
-from app.mirror.files import MirrorUnavailable
+from app.mirror.files import OUT_OF_MEMORY, MirrorUnavailable
 from app.mirror.reader import LedgerError, LedgerErrors, MirrorInfo, Reader
-from tests.mirror.support import META, make_mirror
+from tests.mirror.support import META, make_mirror, starve
 
 
 def info_of(path: Path) -> MirrorInfo | MirrorUnavailable:
@@ -173,3 +173,27 @@ def test_reads_never_change_the_file(tmp_path: Path) -> None:
     reader.ledger_errors(10)
     assert hashlib.sha256(path.read_bytes()).hexdigest() == before
     assert sorted(p.name for p in tmp_path.iterdir()) == ["m.db"]
+
+
+@pytest.mark.parametrize(
+    ("at", "read"),
+    [
+        ("connect", "info"),
+        ("PRAGMA query_only", "info"),
+        ("SELECT key, value FROM m_meta", "info"),
+        ("connect", "errors"),
+        ("SELECT 1 FROM sqlite_schema", "errors"),  # the open's and the errors' table checks
+        ("SELECT COUNT(*) FROM m_ledger_errors", "errors"),
+        ("SELECT id, source_file", "errors"),
+    ],
+)
+def test_memory_used_up_is_unavailable_not_an_exception(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, at: str, read: str
+) -> None:
+    """Verifier S0052 R2-F1 (EP-13): SQLite's heap limit is process-wide, so the queries running at the same moment
+    can use it up under the app's own reads. `info()` feeds every envelope's `ledger_version`: it must come back as
+    an outcome the caller can answer ("try again"), never as an exception."""
+    reader = Reader(str(make_mirror(tmp_path / "m.db")))
+    starve(monkeypatch, at=at)
+    result = reader.info() if read == "info" else reader.ledger_errors(10)
+    assert result == MirrorUnavailable("out_of_memory", OUT_OF_MEMORY)

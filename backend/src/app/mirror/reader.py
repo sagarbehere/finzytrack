@@ -4,7 +4,10 @@ The app's SQL is fixed text over the base tables (`m_*`, `design/specs/mirror/RE
 read-only connection (`files.open_mirror`); user SQL never comes here (`query.QueryRunner`). Each read opens and
 closes its own connection: nothing stays resident (INV-10) and no read loads the ledger (ADR-0011). Text that came
 from the ledger is `UntrustedText` (INV-09: data, never markup). A file that is not a readable mirror, or a row that
-is not of its column's kind, is `MirrorUnavailable` (EP-13).
+is not of its column's kind, is `MirrorUnavailable` (EP-13). So is SQLite out of its heap: SQLite's hard heap limit
+is process-wide and the user queries running at the same moment share it (`query.QueryLimits`), so even `info()`,
+which feeds every envelope's `ledger_version`, can come back `MirrorUnavailable("out_of_memory")`: the caller answers
+"try again" and never rebuilds for it (BL-0128).
 
 The first reads are the ones the open needs: the mirror's own facts (`info`: its `ledger_version` for the envelope,
 §9.1 step 4, and whether the build was complete) and the load's errors (`ledger_errors`: the notice of
@@ -24,6 +27,7 @@ from typing import Final, LiteralString, TypeGuard
 
 from app.domain.text import UntrustedText
 from app.mirror.files import (
+    OUT_OF_MEMORY,
     MirrorInfo,
     MirrorUnavailable,
     NotAMirrorError,
@@ -75,7 +79,8 @@ class Reader:
         self._path = path
 
     def info(self) -> MirrorInfo | MirrorUnavailable:
-        """The mirror's own facts, as checked by the open (`files.read_info`)."""
+        """The mirror's own facts, as checked by the open (`files.read_info`). `MirrorUnavailable("out_of_memory")`
+        when SQLite's shared heap is used up at that moment (module docstring)."""
         return self._read(lambda mirror: mirror.info)
 
     def ledger_errors(self, limit: int) -> LedgerErrors | MirrorUnavailable:
@@ -94,6 +99,8 @@ class Reader:
             return read(mirror)
         except NotAMirrorError as e:
             return MirrorUnavailable("not_a_mirror", str(e))
+        except MemoryError:  # SQLite's NOMEM: the process-wide heap was used up (module docstring)
+            return MirrorUnavailable("out_of_memory", OUT_OF_MEMORY)
         except sqlite3.Error as e:
             if (outcome := app_read_outcome(e)) is not None:
                 return outcome

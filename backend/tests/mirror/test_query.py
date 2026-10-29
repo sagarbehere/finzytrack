@@ -16,6 +16,7 @@ import subprocess
 import sys
 from collections.abc import Callable, Iterator
 from pathlib import Path
+from typing import Any, override
 
 import pytest
 
@@ -30,7 +31,7 @@ from app.mirror.query import (
     confine,
     row_bound,
 )
-from tests.mirror.support import make_mirror
+from tests.mirror.support import heap_sweep, make_mirror, starve
 
 BACKEND = Path(__file__).resolve().parents[2]
 
@@ -207,6 +208,29 @@ def test_the_resolver_asks_sqlite_whether_a_bare_name_resolves() -> None:
         resolves.close()
 
 
+def test_the_resolver_escapes_quotes_in_a_cte_name(mirror: Path) -> None:
+    """Verifier S0052 R2-F2: unescaped, this CTE's name would prepare as `"dbstat" AS x, "dbstat"`, a read of
+    `dbstat`, and the count over the query's own CTE would be refused."""
+    name = 'dbstat" AS x, "dbstat'.replace('"', '""')
+    sql = f'WITH "{name}" AS (SELECT 1) SELECT count(*) FROM "{name}"'  # noqa: S608 (a test's constant name)
+    assert answered(run(mirror, sql)).rows == ((1,),)
+
+
+def test_the_resolver_fails_closed_on_an_error_that_is_not_no_such_table() -> None:
+    """Verifier S0052 R2-F2: only "no such table" makes a name the query's own; SQLite failing to answer for any
+    other reason (here its statement length limit) counts as "resolves", so the read is refused."""
+    resolves = _Resolver()
+    try:
+        assert not resolves("my_cte")  # opens the connection; the near miss
+        con = resolves._con  # pyright: ignore[reportPrivateUsage]
+        assert con is not None
+        con.setlimit(sqlite3.SQLITE_LIMIT_SQL_LENGTH, 10)
+        assert resolves("other_cte")
+        assert not resolves.out_of_memory
+    finally:
+        resolves.close()
+
+
 def test_a_second_statement_never_runs(mirror: Path) -> None:
     folder = mirror.parent
     result = refused(run(mirror, f"SELECT 1; VACUUM INTO '{folder}/copy.db'"), "invalid")
@@ -228,6 +252,81 @@ def test_confine_sets_the_limits_on_the_connection(mirror: Path) -> None:
         assert 0 < heap <= limits.max_sqlite_heap_bytes
     finally:
         con.close()
+
+
+@pytest.mark.parametrize("heap", [0, 256 * 1024 * 1024 + 1])
+def test_confine_refuses_a_heap_limit_it_cannot_read_back(heap: int) -> None:
+    """Verifier S0052 R2-F3: SQLite's limit read back as off (0) or above the configured one stops `confine`. The
+    connection fakes the read-back and skips the set, so this test leaves the process's own limit alone."""
+
+    class ReadBack(sqlite3.Connection):
+        @override
+        def execute(self, sql: str, parameters: Any = (), /) -> sqlite3.Cursor:
+            if sql == "PRAGMA hard_heap_limit":
+                return super().execute("SELECT ?", (heap,))
+            if sql.startswith("PRAGMA hard_heap_limit"):
+                return super().execute("SELECT 1")
+            return super().execute(sql, parameters)
+
+    con = sqlite3.connect(":memory:", factory=ReadBack)
+    try:
+        with pytest.raises(RuntimeError, match="hard heap limit is"):
+            confine(con, QueryLimits(), frozenset(), lambda _: True)
+    finally:
+        con.close()
+
+
+# ---------------------------------------------------------------- SQLite's shared heap used up (R2-F1)
+
+COLUMNLESS_CTE_READ = "WITH c AS (SELECT 1) SELECT count(*) FROM c"
+
+
+@pytest.mark.parametrize(
+    "at",
+    [
+        "connect",  # the mirror file's open
+        "PRAGMA query_only",
+        "SELECT 1 FROM sqlite_schema",  # the open's table check
+        "SELECT key, value FROM m_meta",  # the open's meta
+        "SELECT name FROM sqlite_schema",  # the objects a query may read
+        "PRAGMA temp_store",  # confine
+        "PRAGMA hard_heap_limit",  # confine
+    ],
+)
+def test_memory_used_up_before_the_query_runs_is_unavailable_not_an_exception(
+    mirror: Path, monkeypatch: pytest.MonkeyPatch, at: str
+) -> None:
+    """Verifier S0052 R2-F1 (EP-13): the open and setup of a query are the app's; out of memory there is not the
+    query's fault, so it is `MirrorUnavailable("out_of_memory")`, for the caller to try again."""
+    starve(monkeypatch, at=at)
+    result = run(mirror, "SELECT count(*) FROM postings")
+    assert isinstance(result, MirrorUnavailable), result
+    assert result.reason == "out_of_memory"
+
+
+def test_memory_used_up_in_the_resolver_is_too_large_not_an_exception(
+    mirror: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Verifier S0052 R2-F1: the resolver opens its connection inside the authorizer, while the query is being
+    prepared. Out of memory there refuses the read (fail closed) and the outcome says memory, not "not allowed"."""
+    starve(monkeypatch, at="connect :memory:")
+    result = refused(run(mirror, COLUMNLESS_CTE_READ), "too_large")
+    assert "memory" in result.message
+    monkeypatch.undo()
+    assert answered(run(mirror, COLUMNLESS_CTE_READ)).rows == ((1,),)  # the near miss
+
+
+def test_a_shrinking_shared_heap_gives_outcomes_never_exceptions(tmp_path: Path) -> None:
+    """Verifier S0052 R2-F1, on SQLite's real heap limit: lowered step by step under a query and the two reads (as
+    when other queries hold the shared heap), each call answers, is refused or is unavailable; none raises."""
+    seen = heap_sweep(tmp_path)
+    memory = "MirrorUnavailable:out_of_memory"
+    for call, answer, others in (
+        ("query", "QueryRows:", {"QueryRefused:too_large"}),  # too_large: the heap ran out while it ran
+        ("info", "MirrorInfo:", set[str]()),
+        ("errors", "LedgerErrors:", set[str]()),
+    ):
+        assert {answer, memory} <= set(seen[call]) <= {answer, memory, *others}, seen  # both ends were reached
 
 
 # ---------------------------------------------------------------- the time limit, the size limits
@@ -372,14 +471,14 @@ def test_many_large_rows_stay_within_the_result_cap_while_fetching(tmp_path: Pat
     assert int(out["grew"]) < GROWTH, out  # type: ignore[call-overload]
 
 
-def test_a_sort_that_needs_more_than_the_heap_limit_is_too_large_and_never_spills(tmp_path: Path) -> None:
+def test_a_sort_that_needs_more_than_the_heap_limit_is_too_large(tmp_path: Path) -> None:
     """Verifier S0052 F1: a sort of 90 MB, each record under the 100 kB value limit. With temp files it would spill
     to disk and answer; with `temp_store = MEMORY` under the 16 MiB heap limit it is refused, and the process grew by
-    about the heap limit only."""
+    about the heap limit only. (The outcome is the check: SQLite unlinks a temp file as it opens it, so a look at
+    the folder afterwards finds nothing either way; verifier S0052 R2-F4.)"""
     out = _probe(tmp_path, f"{SERIES} SELECT x FROM n ORDER BY randomblob(90000)")  # noqa: S608 (constant text)
     assert (out["type"], out["reason"]) == ("QueryRefused", "too_large"), out
     assert int(out["grew"]) < GROWTH, out  # type: ignore[call-overload]
-    assert sorted(p.name for p in tmp_path.iterdir()) == ["probe.db"]
 
 
 def test_one_row_wider_than_the_column_limit_is_never_fetched(tmp_path: Path) -> None:
