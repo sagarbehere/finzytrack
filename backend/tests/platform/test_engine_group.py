@@ -16,6 +16,7 @@ Written from the spec:
 
 from __future__ import annotations
 
+import contextlib
 import faulthandler
 import fcntl
 import os
@@ -300,7 +301,9 @@ def test_a_child_holding_a_lock_is_ended_with_the_leader_and_the_lock_is_free(tm
 
 
 def test_a_group_whose_only_member_is_the_held_zombie_leader_has_no_live_member() -> None:
-    """The macOS answer is EPERM (review 5 spike); Linux reads `/proc`. Either way the drain ends."""
+    """macOS: only the held leader left in the group's listing; Linux: no member in `/proc` but zombies. Either way
+    the drain ends. (macOS still answers `killpg(pgid, 0)` with EPERM here, which the spec's §5.2 no longer relies
+    on.)"""
     leader = subprocess.Popen([sys.executable, "-I", "-c", "import time; time.sleep(3600)"], start_new_session=True)
     ops = PosixGroupOps()
     try:
@@ -312,6 +315,8 @@ def test_a_group_whose_only_member_is_the_held_zombie_leader_has_no_live_member(
             with pytest.raises(PermissionError):
                 os.killpg(leader.pid, 0)
     finally:
+        with contextlib.suppress(ProcessLookupError):
+            os.kill(leader.pid, signal.SIGKILL)  # a failed assert ends here at once, not in a reap of a live leader
         leader.returncode = ops.reap(leader.pid).returncode
 
 

@@ -61,7 +61,8 @@ class GroupOps(Protocol):
         ...
 
     def live_member(self, pgid: int) -> bool:
-        """Whether the group has a member that is not a zombie."""
+        """Whether the group still has a member that may hold a file: on macOS any process listed in the group but
+        the exited leader we hold (a zombie member included, BL-0158), on Linux any member not in state `Z`."""
         ...
 
     def leader_exited(self, pid: int) -> bool:
