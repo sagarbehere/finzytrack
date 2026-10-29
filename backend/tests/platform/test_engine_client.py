@@ -555,6 +555,14 @@ def test_the_engine_command_runs_the_venv_interpreter_isolated() -> None:
     assert EngineCommand.for_venv(ENGINE_VENV, environ={}, test_ops=True).argv[-1] == "--test-ops"
 
 
+def test_the_spawned_engine_is_told_its_engine_lock() -> None:
+    """S0053, engine-jobs §5.1: every engine the product starts holds the engine lock, so the spawn names it."""
+    lock = Path("/data/locks/engine.lock")
+    with_lock = EngineCommand(argv=("python",), env=None, engine_lock=lock)
+    assert with_lock.spawn_argv(7) == ["python", "--parent-pid", "7", "--engine-lock", str(lock)]
+    assert EngineCommand(argv=("python",), env=None).spawn_argv(7) == ["python", "--parent-pid", "7"]
+
+
 # -- The statechart in the client (S0040; ARCHITECTURE.md §7) ------------------------------------------------------
 
 

@@ -5289,6 +5289,23 @@ code = ["engine/src/ledger_engine/ledger/fingerprint.py"]
 tests = ["engine/tests/ledger/test_fingerprint.py"]
 
 [[capability]]
+id = "CAP-DATA-ENGINE-JOBS"
+area = "Data and lifecycle"
+capability = "Ledger work runs one job at a time: work the user waits for goes first, a long job shows its phase and \"Still working…\" with Cancel, a save past its commit point finishes, and a stuck process gets \"Quit and reopen Finzytrack\""
+v04 = "new"
+v04_note = "replaces v0.3's in-process loads and the per-request time limits; no engine job has a time limit (ADR-0064; `design/specs/engine-jobs.md` §3-§5; S0053 built the queue's decision table and the engine lock)"
+status = "planned"
+milestone = "M1"
+release_blocking = "yes"
+doc = "—"
+legacy_entry = "—"
+demo = "no"
+backlog = ["BL-0109", "BL-0150", "BL-0151", "BL-0152", "BL-0153", "BL-0154"]
+adrs = ["ADR-0064"]
+code = ["backend/src/app/platform/engine_jobs/queue.py", "backend/src/app/platform/adapters/engine_lock.py"]
+tests = ["backend/tests/platform/test_engine_queue.py", "backend/tests/platform/test_engine_lock.py", "engine/tests/test_engine_lock.py"]
+
+[[capability]]
 id = "CAP-DATA-UNDO"
 area = "Data and lifecycle"
 capability = "Undo for the app's ledger writes (delete, edits, proposals)"

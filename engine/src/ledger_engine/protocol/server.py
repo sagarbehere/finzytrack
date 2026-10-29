@@ -1,6 +1,6 @@
 """The engine's protocol server: one request line in, one reply line out (ADR-0054 decisions 2 and 4).
 
-    python -I -m ledger_engine [--parent-pid PID] [--test-ops]
+    python -I -m ledger_engine [--parent-pid PID] [--engine-lock PATH] [--test-ops]
 
 - **Channel.** At start the engine keeps private copies of its stdin and stdout for the protocol, points fd 1 at
   stderr and fd 0 at the null device. A `print` or a raw write to fd 1 from code running inside the engine (a
@@ -20,6 +20,14 @@
   stdin EOF applies (S0035 independent verifier F6).
   On Windows the engine ends on stdin EOF when the sidecar is gone (its pipe closes), and the shell's Job Object
   (ARCHITECTURE.md §5) covers the sidecar and the engine.
+- **The engine lock** (S0053; `design/specs/engine-jobs.md` §5.1; ADR-0064 amendment of 2026-10-28): started with
+  `--engine-lock PATH` (the main sidecar always passes `app_local_data/locks/engine.lock`), the engine takes a
+  whole-file `flock` on it right after its handshake reply and before it reads any other request, waiting, and holds
+  it for its whole life (the descriptor is never closed; the OS releases it when the process and every process that
+  inherited it have ended). So an engine of an earlier session (left by a crash, Quit anyway or a quit) keeps a new
+  session's engines from doing any ledger work until it has ended, and the new session's recovery never runs beside
+  it. Opened like every later ledger-set lock (`os.open`, so a forked child holds it as it holds those). POSIX only;
+  Windows is BL-0087.
 - **No resident ledger (INV-10).** The engine holds no ledger between requests; today it has no ledger operations
   at all. The overlay load arrives with its slice (WS-WRITE, BL-0003); the main sidecar's engine job queue runs one
   job at a time (ADR-0064, BL-0109).
@@ -148,6 +156,11 @@ class Engine:
         self._handlers = {**PRODUCTION, **(TEST_OPS if test_ops else {})}
         self._ready = False
 
+    @property
+    def ready(self) -> bool:
+        """Whether the handshake happened."""
+        return self._ready
+
     def handle(self, line: bytes) -> bytes:
         return self._reply(line) + b"\n"
 
@@ -264,8 +277,23 @@ def _discard_rest_of_line(channel: IO[bytes]) -> None:
             return
 
 
-def serve(channel_in: IO[bytes], channel_out: IO[bytes], engine: Engine) -> None:
-    """Answer requests until stdin reaches EOF or the reader goes away."""
+def hold_engine_lock(path: str) -> None:
+    """Take the engine lock, waiting, and keep it for the life of the process (§5.1): the descriptor is never
+    closed."""
+    if os.name != "posix":  # pragma: no cover (Windows)
+        return  # TODO(BL-0087): the Windows lock (LockFileEx), with the engine's nested Job Object.
+    import fcntl  # POSIX only
+
+    fd = os.open(path, os.O_RDWR | os.O_CREAT, 0o600)
+    fcntl.flock(fd, fcntl.LOCK_EX)
+
+
+def serve(
+    channel_in: IO[bytes], channel_out: IO[bytes], engine: Engine, after_handshake: Callable[[], None] | None = None
+) -> None:
+    """Answer requests until stdin reaches EOF or the reader goes away. `after_handshake` runs once, right after the
+    reply that completed the handshake is written and before the next request is read (the engine lock)."""
+    pending = after_handshake
     while True:
         line = channel_in.readline(MAX_LINE_BYTES + 2)  # a full line has at most MAX_LINE_BYTES + 1 bytes
         if not line:
@@ -282,6 +310,9 @@ def serve(channel_in: IO[bytes], channel_out: IO[bytes], engine: Engine) -> None
             channel_out.flush()
         except OSError:  # the reader is gone (EPIPE): nobody is left to answer
             return
+        if pending is not None and engine.ready:
+            pending, run_once = None, pending
+            run_once()
 
 
 def watch_parent(parent: int, exit_now: Callable[[int], None] = os._exit) -> threading.Thread:
@@ -322,6 +353,9 @@ def main(argv: list[str] | None = None) -> int:
         type=_pid,
         help="the spawning process; the engine exits when it is no longer its parent (default: the parent at start)",
     )
+    parser.add_argument(
+        "--engine-lock", help="hold this lock file from the handshake on, for the engine's life (engine-jobs §5.1)"
+    )
     parser.add_argument("--test-ops", action="store_true", help="test only: add the test.* ops")
     args = parser.parse_args(argv)
     parent = args.parent_pid if args.parent_pid is not None else os.getppid()
@@ -330,5 +364,7 @@ def main(argv: list[str] | None = None) -> int:
         watch_parent(parent)
     else:
         _log(f"the parent is pid {parent}; the engine ends on stdin EOF only")
-    serve(channel_in, channel_out, Engine(test_ops=args.test_ops))
+    lock: str | None = args.engine_lock
+    hold = None if lock is None else (lambda: hold_engine_lock(lock))
+    serve(channel_in, channel_out, Engine(test_ops=args.test_ops), after_handshake=hold)
     return 0

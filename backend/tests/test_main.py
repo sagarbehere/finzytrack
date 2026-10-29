@@ -42,6 +42,22 @@ from app.workspaces.access import Unknown
 from tests.api.support import Counted, FakeContainer, FixedAccess
 
 
+def lock_held(path: Path) -> bool:
+    """Whether another process holds this `flock` (POSIX; a fresh open file description, never blocking)."""
+    import fcntl  # POSIX only: the tests that call it skip elsewhere
+
+    fd = os.open(path, os.O_RDWR)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        return True
+    else:
+        fcntl.flock(fd, fcntl.LOCK_UN)
+        return False
+    finally:
+        os.close(fd)
+
+
 def no_log(event: Event, /, **fields: object) -> None:
     """An `EventSink` that drops every event."""
 
@@ -196,13 +212,17 @@ DEADLINE = 30.0
 def test_engine_venv_selects_the_venv_engine(dirs: tuple[Path, Path]) -> None:
     args = main.parse_args(argv(*dirs, "--engine-venv", str(ENGINE_VENV)))
     assert args.engine_venv == ENGINE_VENV
-    assert main.engine_command(args) == EngineCommand.for_venv(ENGINE_VENV)
+    lock = dirs[0] / "locks" / "engine.lock"
+    assert main.engine_command(args) == EngineCommand.for_venv(ENGINE_VENV, engine_lock=lock)
 
 
 def test_without_engine_venv_the_engine_is_the_packaged_one_beside_this_interpreter(dirs: tuple[Path, Path]) -> None:
     args = main.parse_args(argv(*dirs))
     assert args.engine_venv is None
-    expected = EngineCommand.for_packaged(Path(sys.executable), packaged_engine_site(Path(sys.prefix)))
+    lock = dirs[0] / "locks" / "engine.lock"
+    expected = EngineCommand.for_packaged(
+        Path(sys.executable), packaged_engine_site(Path(sys.prefix)), engine_lock=lock
+    )
     assert main.engine_command(args) == expected
 
 
@@ -321,6 +341,49 @@ def test_the_sidecar_starts_a_real_engine_and_closes_it_on_sigterm(dirs: tuple[P
     assert names.count("engine.ready") == 1
     assert names.count("engine.closed") == 1
     assert code == 0, "".join(sidecar.raw)
+
+
+@pytest.mark.skipif(os.name != "posix", reason="flock is POSIX; Windows is BL-0087 (M1b)")
+def test_an_earlier_sessions_engine_holding_the_engine_lock_keeps_the_first_engine_from_starting(
+    dirs: tuple[Path, Path],
+) -> None:
+    """engine-jobs §5.1, §14 "Engine" (simplification B; ADR-0064 amendment of 2026-10-28): a process of an earlier
+    session holding the engine lock keeps the new start's sidecar waiting before its first engine; the sidecar still
+    answers; once that process ends, the engine starts and holds the lock itself."""
+    lock = dirs[0] / "locks" / "engine.lock"
+    lock.parent.mkdir()
+    holder = subprocess.Popen(  # noqa: S603 (this interpreter running a fixed test helper)
+        [sys.executable, "-I", str(Path(__file__).parent / "platform" / "lock_holder.py"), str(lock)],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        text=True,
+    )
+    sidecar = None
+    try:
+        assert holder.stdout is not None
+        assert holder.stdout.readline() == "held\n"
+        sidecar = Sidecar(dirs, "--engine-venv", str(ENGINE_VENV))
+        port = sidecar.handshake()
+        assert health_status(port) == 200
+        tick = threading.Event()
+        tick.wait(1.0)  # long enough for an engine that did not wait to log engine.ready (it takes ~0.1 s)
+        assert "engine.ready" not in [e.get("event") for e in sidecar.events()], "an engine started beside the lock"
+        assert holder.stdin is not None
+        holder.stdin.close()  # the earlier engine ends
+        holder.wait(DEADLINE)
+        pid = sidecar.event("engine.ready")["pid"]
+        assert isinstance(pid, int)
+        assert pid_alive(pid)
+        end = time.monotonic() + DEADLINE
+        while not lock_held(lock) and time.monotonic() < end:
+            tick.wait(0.05)
+        assert lock_held(lock), "the product's engine does not hold the engine lock after its handshake"
+    finally:
+        if holder.poll() is None:
+            holder.terminate()
+            holder.wait(DEADLINE)
+        if sidecar is not None:
+            sidecar.stop()
 
 
 @pytest.mark.skipif(os.name != "posix", reason="the parent-death watchdog is POSIX; Windows is the manual CI run")

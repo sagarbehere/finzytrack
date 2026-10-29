@@ -7,6 +7,12 @@ supervision table logs every start and stop (`engine.ready`, `engine.start_faile
 included, so this module logs nothing. A later request restarts a stopped engine through that table
 (`app.platform.engine_supervision`); this module only reports the first start, and the client's `state` is the
 current one.
+
+**The engine lock** (S0053; engine-jobs §5.1, simplification B): before the first start the boot waits for the engine
+lock (`wait_engine_lock`, the composition root's `app.platform.adapters.engine_lock.wait_engine_lock`), so no engine
+of this session starts while an engine of an earlier session still holds it. The wait has no time limit; the state
+stays `EngineStarting` meanwhile and the sidecar keeps answering. The quit advice while it waits (spec §5.1) comes
+with the job queue's shell (BL-0150).
 """
 
 from __future__ import annotations
@@ -40,9 +46,15 @@ type EngineState = EngineStarting | EngineReady | EngineDown
 class EngineBoot:
     """The engine's first start and its reported state. Owned by the user container (`state_registry`)."""
 
-    def __init__(self, engine: EnginePort, pid: Callable[[], int | None] = lambda: None) -> None:
+    def __init__(
+        self,
+        engine: EnginePort,
+        pid: Callable[[], int | None] = lambda: None,
+        wait_engine_lock: Callable[[], object] = lambda: None,
+    ) -> None:
         self._engine = engine
         self._pid = pid
+        self._wait_engine_lock = wait_engine_lock
         self._lock = threading.Lock()
         self._state: EngineState = EngineStarting()
 
@@ -52,7 +64,8 @@ class EngineBoot:
             return self._state
 
     def run(self) -> EngineState:
-        """Start the engine and record the outcome."""
+        """Wait out the engine lock, then start the engine and record the outcome."""
+        self._wait_engine_lock()
         out = self._engine.start()
         state: EngineState = EngineDown(out) if isinstance(out, EngineFailure) else EngineReady(out, self._pid())
         with self._lock:

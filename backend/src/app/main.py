@@ -57,6 +57,7 @@ from app.api import ApiContainer, create_app
 from app.domain.text import UntrustedText
 from app.platform.adapters.clock import SystemClock
 from app.platform.adapters.engine_client import EngineClient, EngineCommand, packaged_engine_site
+from app.platform.adapters.engine_lock import engine_lock_path, wait_engine_lock
 from app.platform.adapters.ids import Uuid7Ids
 from app.platform.clock import Clock, FrozenClock
 from app.platform.engine_boot import EngineBoot
@@ -163,10 +164,12 @@ def parse_args(argv: list[str] | None) -> Args:
 
 
 def engine_command(args: Args) -> EngineCommand:
-    """The venv engine when one is named, else the packaged engine beside this interpreter (ADR-0056 layout)."""
+    """The venv engine when one is named, else the packaged engine beside this interpreter (ADR-0056 layout); every
+    engine holds the engine lock in this app-local-data folder (engine-jobs §5.1, S0053)."""
+    lock = engine_lock_path(args.app_local_data)
     if args.engine_venv is not None:
-        return EngineCommand.for_venv(args.engine_venv)
-    return EngineCommand.for_packaged(Path(sys.executable), packaged_engine_site(Path(sys.prefix)))
+        return EngineCommand.for_venv(args.engine_venv, engine_lock=lock)
+    return EngineCommand.for_packaged(Path(sys.executable), packaged_engine_site(Path(sys.prefix)), engine_lock=lock)
 
 
 def wire(args: Args, log: EventSink, app_version: str) -> Wiring:
@@ -179,7 +182,11 @@ def wire(args: Args, log: EventSink, app_version: str) -> Wiring:
     return Wiring(
         clock=FrozenClock(args.frozen_clock) if args.frozen_clock else SystemClock(),
         engine=engine,
-        boot=EngineBoot(engine, pid=lambda: engine.pid),
+        boot=EngineBoot(
+            engine,
+            pid=lambda: engine.pid,
+            wait_engine_lock=lambda: wait_engine_lock(engine_lock_path(args.app_local_data)),
+        ),
         # TODO(BL-0102): the registry's gate replaces NoWorkspaces (every key is WORKSPACE_UNKNOWN until then).
         api=SidecarContainer(app_version=app_version, ids=Uuid7Ids(), workspaces=NoWorkspaces(), log=log),
     )

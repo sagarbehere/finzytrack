@@ -6,7 +6,9 @@ an exception. The outcome is logged by the client's supervision table, once per 
 
 from __future__ import annotations
 
+import threading
 from collections.abc import Mapping
+from typing import override
 
 from app.platform.engine import EngineFailure, EngineInfo, EngineRefusal, Pong
 from app.platform.engine_boot import EngineBoot, EngineDown, EngineReady, EngineStarting
@@ -53,5 +55,33 @@ def test_the_background_start_runs_once_and_sets_the_state() -> None:
     engine = FakeEngine(INFO)
     boot = EngineBoot(engine)
     boot.start_in_background().join(10)
+    assert engine.starts == 1
+    assert isinstance(boot.state, EngineReady)
+
+
+def test_the_boot_waits_for_the_engine_lock_before_the_first_start() -> None:
+    """engine-jobs §5.1: "At start, before its first engine, the sidecar takes the lock itself, waiting"."""
+    order: list[str] = []
+
+    class Recording(FakeEngine):
+        @override
+        def start(self) -> EngineInfo | EngineFailure:
+            order.append("start")
+            return super().start()
+
+    boot = EngineBoot(Recording(INFO), wait_engine_lock=lambda: order.append("lock"))
+    boot.run()
+    assert order == ["lock", "start"]
+
+
+def test_while_the_lock_is_waited_for_the_engine_is_starting_and_not_started() -> None:
+    release = threading.Event()
+    engine = FakeEngine(INFO)
+    boot = EngineBoot(engine, wait_engine_lock=lambda: release.wait(15))
+    thread = boot.start_in_background()
+    assert isinstance(boot.state, EngineStarting)
+    assert engine.starts == 0
+    release.set()
+    thread.join(15)
     assert engine.starts == 1
     assert isinstance(boot.state, EngineReady)

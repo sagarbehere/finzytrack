@@ -13,7 +13,8 @@ ARCHITECTURE.md §2.0, §5, §7).
   site-packages (ADR-0056): the engine runs `python -I -S -B -c <bootstrap> <engine site>`, so the interpreter's own
   site-packages, which hold the main sidecar, are never on the engine's path, and the bootstrap adds only the
   engine's site (ADR-0054 decision 5: neither closure reaches the other process). The engine runs isolated (`-I`),
-  told the client's pid (`--parent-pid`) for its parent-death watchdog, with the client's environment minus `FT_*`
+  told the client's pid (`--parent-pid`) for its parent-death watchdog and, when the command names one, the engine
+  lock it must hold for its life (`--engine-lock`, S0053; engine-jobs §5.1), with the client's environment minus `FT_*`
   (the shell token and our own settings) and `PYTHON*` (interpreter overrides). On POSIX it stays in the client's
   process group, so the shell's group kill reaches it; on Windows it opens no console window (`CREATE_NO_WINDOW`),
   stays in the sidecar's job (the shell's Job Object arrives with M2's sidecar supervisor), and ends on stdin EOF
@@ -161,26 +162,47 @@ def engine_env(environ: Mapping[str, str]) -> dict[str, str]:
 
 @dataclass(frozen=True, slots=True)
 class EngineCommand:
-    """How to start the engine: the argv (without `--parent-pid`, which the client adds) and the environment
-    (None: inherit unchanged, for stand-in engines in tests)."""
+    """How to start the engine: the argv (without `--parent-pid`, which the client adds), the environment (None:
+    inherit unchanged, for stand-in engines in tests) and the engine lock every engine holds for its life (S0053;
+    engine-jobs §5.1: the composition root names `app_local_data/locks/engine.lock`; None for the packaged
+    self-check, which does no ledger work, and for stand-ins)."""
 
     argv: tuple[str, ...]
     env: Mapping[str, str] | None
+    engine_lock: Path | None = None
 
     @classmethod
-    def for_venv(cls, venv: Path, *, test_ops: bool = False, environ: Mapping[str, str] | None = None) -> EngineCommand:
+    def for_venv(
+        cls,
+        venv: Path,
+        *,
+        test_ops: bool = False,
+        environ: Mapping[str, str] | None = None,
+        engine_lock: Path | None = None,
+    ) -> EngineCommand:
         """The engine installed in a virtual environment (development and tests)."""
         python = venv / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
         argv = (str(python), "-I", "-m", "ledger_engine", *(("--test-ops",) if test_ops else ()))
-        return cls(argv=argv, env=engine_env(os.environ if environ is None else environ))
+        return cls(argv=argv, env=engine_env(os.environ if environ is None else environ), engine_lock=engine_lock)
 
     @classmethod
     def for_packaged(
-        cls, python: Path, site: Path, *, test_ops: bool = False, environ: Mapping[str, str] | None = None
+        cls,
+        python: Path,
+        site: Path,
+        *,
+        test_ops: bool = False,
+        environ: Mapping[str, str] | None = None,
+        engine_lock: Path | None = None,
     ) -> EngineCommand:
         """The engine in the bundle: the shared interpreter `python` with only the engine's `site` (S0038)."""
         argv = (*packaged_argv(python, site, PACKAGED_RUN), *(("--test-ops",) if test_ops else ()))
-        return cls(argv=argv, env=engine_env(os.environ if environ is None else environ))
+        return cls(argv=argv, env=engine_env(os.environ if environ is None else environ), engine_lock=engine_lock)
+
+    def spawn_argv(self, parent_pid: int) -> list[str]:
+        """The argv the client spawns: the command, the parent's pid for the engine's watchdog, and the engine lock."""
+        lock = ["--engine-lock", str(self.engine_lock)] if self.engine_lock is not None else []
+        return [*self.argv, "--parent-pid", str(parent_pid), *lock]
 
 
 def _check_timeout(timeout: float) -> None:
@@ -534,7 +556,7 @@ class EngineClient:
         return reply
 
     def _spawn(self) -> Spawned | SpawnFailed:
-        argv = [*self._command.argv, "--parent-pid", str(os.getpid())]
+        argv = self._command.spawn_argv(os.getpid())
         env = dict(self._command.env) if self._command.env is not None else None
         try:
             proc = subprocess.Popen(  # noqa: S603 (argv from EngineCommand, built by the composition root)
