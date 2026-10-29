@@ -44,8 +44,8 @@
   at all. The overlay load arrives with its slice (WS-WRITE, BL-0003); the main sidecar's engine job queue runs one
   job at a time (ADR-0064, BL-0109).
 - `--test-ops` adds ops for the process tests (`test.stall`, `test.noise`, `test.fail`, `test.read_stdin`,
-  `test.gate`, `test.child`, `test.interpreter`). They are not part of the protocol schema and the main sidecar
-  never passes the flag outside tests.
+  `test.gate`, `test.child`, `test.interpreter`, `test.import_plugin`). They are not part of the protocol schema
+  and the main sidecar never passes the flag outside tests.
 """
 
 from __future__ import annotations
@@ -237,6 +237,14 @@ class ChildResult(Message):
     pid: int
 
 
+class FolderParams(Message):
+    folder: str
+
+
+class ValueResult(Message):
+    value: int
+
+
 class InterpreterResult(BaseModel):
     """What the engine's interpreter runs with (S0057; engine-jobs §5.1)."""
 
@@ -283,6 +291,18 @@ def _child(params: Message, _: JobContext) -> Message:
     return ChildResult(pid=child.pid)
 
 
+def _import_plugin(params: Message, _: JobContext) -> Message:
+    """A stand-in for a user's plugin: `ft_test_plugin` imported from a user's folder (S0057 verifier R1-F5). A
+    fixed name in a plain import statement, as a ledger's plugin import is by name only in the gateway."""
+    assert isinstance(params, FolderParams)  # noqa: S101 (the handler's own params model)
+    sys.path.insert(0, params.folder)
+    try:
+        import ft_test_plugin  # pyright: ignore[reportMissingImports]
+    finally:
+        sys.path.remove(params.folder)
+    return ValueResult(value=int(ft_test_plugin.VALUE))  # pyright: ignore[reportUnknownMemberType, reportUnknownArgumentType]
+
+
 def _interpreter(_: Message, __: JobContext) -> Message:
     flags = sys.flags
     return InterpreterResult(  # pyright: ignore[reportReturnType] (a test op's result is any model)
@@ -307,6 +327,7 @@ TEST_OPS: dict[str, Handler] = {
     "test.gate": Handler(PathParams, _gate),
     "test.child": Handler(LockParams, _child),
     "test.interpreter": Handler(NoParams, _interpreter),
+    "test.import_plugin": Handler(FolderParams, _import_plugin),
 }
 assert set(PRODUCTION) == set(OPS), "every op of the protocol has a handler"  # noqa: S101 (import-time invariant)
 

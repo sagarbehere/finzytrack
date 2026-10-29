@@ -38,7 +38,7 @@ The ledger engine's lifecycle as the main sidecar supervises it: `app.platform.e
 | `ViolatedPastCommit` | The reply broke the protocol after `proceed` was sent: the engine may be in the middle of a replace. |
 | `Exited` | The engine was found exited between requests (noticed at the next request). |
 | `Interrupted` | An exception in the client itself during a start, a backoff or a wait (it goes on to the caller). |
-| `Cancelled` | We ended the engine with this reason (the user's Cancel, or Quit anyway), recorded before the signal: no stop (§5.3). Observed by the call it ended, or of an idle engine. |
+| `Cancelled` | We ended the engine with this reason (the user's Cancel, or Quit anyway), recorded before the signal: no stop (§5.3). Observed by the call it ended, or of an idle engine. `past_commit`: the request in flight was past its commit point (`proceed` was sent), where only Quit anyway ends it (§4). |
 | `Retired` | We ended an idle engine after a job that ran user code (§5.1): no stop. |
 | `Reset` | The user's "try again": forget the stops and an incompatible verdict. |
 | `Close` | Stop the engine for good (`close()`): at rest, or observed by the call in flight that it ended. |
@@ -86,13 +86,15 @@ stateDiagram-v2
     Busy --> Crashed: Interrupted
     Busy --> Unavailable: Interrupted
     Busy --> Idle: Cancelled
+    Busy --> Busy: Cancelled
     Busy --> Closed: Close
     Finishing --> Crashed: Ended
     Finishing --> Unavailable: Ended
     Finishing --> Crashed: Interrupted
     Finishing --> Unavailable: Interrupted
     Finishing --> Idle: Cancelled
-    Finishing --> Closed: Close
+    Finishing --> Finishing: Cancelled
+    Finishing --> Finishing: Close
     Crashed --> Starting: Request
     Crashed --> Restarting: Request
     Crashed --> Idle: Reset
@@ -145,12 +147,12 @@ stateDiagram-v2
 | `Busy` | `Violated` | `Crashed`, `Unavailable` | `End`, `Log`, `Fail` | a stop; protocol_violation |
 | `Busy` | `ViolatedPastCommit` | `Finishing` | `CloseInput` | nothing signalled |
 | `Busy` | `Interrupted` | `Crashed`, `Unavailable` | `End`, `Log` | a stop (crashed); the exception goes on |
-| `Busy` | `Cancelled` | `Idle` | `End`, `Log`, `Fail` | no stop |
+| `Busy` | `Cancelled` | `Idle`, `Busy` | `End`, `Log`, `Fail` | no stop; past the commit point a Cancel changes nothing |
 | `Busy` | `Close` | `Closed` | `End`, `Log`, `Fail` |  |
 | `Finishing` | `Ended` | `Crashed`, `Unavailable` | `End`, `Log`, `Fail` | a stop at the exit; protocol_violation |
 | `Finishing` | `Interrupted` | `Crashed`, `Unavailable` | `End`, `Log` | a stop (crashed); the exception goes on |
-| `Finishing` | `Cancelled` | `Idle` | `End`, `Log`, `Fail` | Quit anyway |
-| `Finishing` | `Close` | `Closed` | `End`, `Log`, `Fail` |  |
+| `Finishing` | `Cancelled` | `Idle`, `Finishing` | `End`, `Log`, `Fail` | Quit anyway ends it; a Cancel changes nothing |
+| `Finishing` | `Close` | `Finishing` | none | past the commit point: waits for the exit |
 | `Crashed` | `Request` | `Starting`, `Restarting` | `Spawn`, `Pause` | backoff if still due |
 | `Crashed` | `Reset` | `Idle` | none |  |
 | `Crashed` | `Close` | `Closed` | `Log` |  |

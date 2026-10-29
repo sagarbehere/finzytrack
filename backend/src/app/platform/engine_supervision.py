@@ -296,10 +296,12 @@ class Interrupted:
 @dataclass(frozen=True, slots=True)
 class Cancelled:
     """We ended the engine with this reason (the user's Cancel, or Quit anyway), recorded before the signal: no stop
-    (§5.3). Observed by the call it ended, or of an idle engine."""
+    (§5.3). Observed by the call it ended, or of an idle engine. `past_commit`: the request in flight was past its
+    commit point (`proceed` was sent), where only Quit anyway ends it (§4)."""
 
     reason: CancelReason
     now: float
+    past_commit: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -479,7 +481,11 @@ def _stops_of(s: SupervisionState) -> Stops:
 
 def _cancelled(p: RestartPolicy, s: SupervisionState, e: Cancelled) -> Step:
     """Our end with reason `cancel` or `quit_anyway` (§5.3: outcome `cancelled`, not a stop): the engine is gone, the
-    stops stay as they were, and a waiting caller fails `cancelled`. During a backoff nothing runs to end."""
+    stops stay as they were, and a waiting caller fails `cancelled`. During a backoff nothing runs to end. Past the
+    commit point (`Finishing`, or a request after `proceed`) a Cancel changes nothing: the job finishes; only Quit
+    anyway ends it (§4; INV-01)."""
+    if e.reason == "cancel" and (isinstance(s, Finishing) or (isinstance(s, Busy) and e.past_commit)):
+        return Step(s)
     ends: tuple[Effect, ...] = () if isinstance(s, Restarting) else (End(),)
     logged = Log(ENGINE_ENDED, {"reason": e.reason})
     if isinstance(s, Ready):  # no call in flight: nobody to fail
@@ -494,7 +500,10 @@ def _retired(p: RestartPolicy, s: Ready, e: Retired) -> Step:
 
 
 def _close_in_flight(p: RestartPolicy, s: SupervisionState, e: Close) -> Step:
-    """`close()` ended the engine while a call was under way: that call fails `closed`."""
+    """`close()` ended the engine while a call was under way: that call fails `closed`. Past the commit point
+    (`Finishing`) the close waits for the engine's exit (§4, §9.3: the quit cuts a save only by Quit anyway)."""
+    if isinstance(s, Finishing):
+        return Step(s)
     ends: tuple[Effect, ...] = () if isinstance(s, Restarting) else (End(),)
     return Step(Closed(), (*ends, Log(ENGINE_CLOSED, {}), Fail(_closed_failure())))
 
@@ -691,12 +700,12 @@ ROWS: tuple[tuple[type, type, Handler, tuple[type, ...], tuple[type, ...], str],
     (Busy, Violated, _violated, STOP, LOGGED_STOP, "a stop; protocol_violation"),
     (Busy, ViolatedPastCommit, _violated_past_commit, (Finishing,), (CloseInput,), "nothing signalled"),
     (Busy, Interrupted, _busy_interrupted, STOP, (End, Log), "a stop (crashed); the exception goes on"),
-    (Busy, Cancelled, _cancelled, (Idle,), OURS, "no stop"),
+    (Busy, Cancelled, _cancelled, (Idle, Busy), OURS, "no stop; past the commit point a Cancel changes nothing"),
     (Busy, Close, _close_in_flight, (Closed,), OURS, ""),
     (Finishing, Ended, _finished, STOP, LOGGED_STOP, "a stop at the exit; protocol_violation"),
     (Finishing, Interrupted, _busy_interrupted, STOP, (End, Log), "a stop (crashed); the exception goes on"),
-    (Finishing, Cancelled, _cancelled, (Idle,), OURS, "Quit anyway"),
-    (Finishing, Close, _close_in_flight, (Closed,), OURS, ""),
+    (Finishing, Cancelled, _cancelled, (Idle, Finishing), OURS, "Quit anyway ends it; a Cancel changes nothing"),
+    (Finishing, Close, _close_in_flight, (Finishing,), (), "past the commit point: waits for the exit"),
     (Crashed, Request, _crashed_request, (Starting, Restarting), (Spawn, Pause), "backoff if still due"),
     (Crashed, Reset, _to_idle, (Idle,), (), ""),
     (Crashed, Close, _close_at_rest, (Closed,), (Log,), ""),

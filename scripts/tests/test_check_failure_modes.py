@@ -236,7 +236,7 @@ class Sources(unittest.TestCase):
         real = cfm.statechart_transitions(cfm.STATECHART.read_text(encoding="utf-8"))
         self.assertEqual(len(real), 48)  # S0040: 34 rows in ROWS; S0057: 48 (no TimedOut; our ends, Finishing)
         self.assertNotIn(("Busy", "TimedOut"), real)
-        self.assertEqual(real[("Busy", "Cancelled")], frozenset({"Idle"}))
+        self.assertEqual(real[("Busy", "Cancelled")], frozenset({"Idle", "Busy"}))  # Busy: past the commit point
         self.assertEqual(real[("Busy", "Ended")], frozenset({"Crashed", "Unavailable"}))
 
 

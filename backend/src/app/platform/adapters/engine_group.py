@@ -62,6 +62,10 @@ class GroupOps(Protocol):
         """Whether the group has a member that is not a zombie."""
         ...
 
+    def leader_exited(self, pid: int) -> bool:
+        """Whether the leader has exited (not reaped), without waiting."""
+        ...
+
     def reap(self, pid: int) -> Reaped:
         """Reap the exited leader."""
         ...
@@ -125,6 +129,10 @@ class PosixGroupOps:
             # that report without reaping, so the next wait blocks until the real exit.
             os.waitid(os.P_PID, pid, os.WSTOPPED | os.WCONTINUED | os.WNOHANG)
 
+    def leader_exited(self, pid: int) -> bool:
+        report = os.waitid(os.P_PID, pid, os.WEXITED | os.WNOWAIT | os.WNOHANG)
+        return report is not None and is_exit_report(report.si_code)
+
     def live_member(self, pgid: int) -> bool:
         if sys.platform.startswith("linux"):
             return live_member_in_proc(_proc_entries(), pgid)
@@ -159,6 +167,13 @@ class EngineGroup:
         """The drain has found no live member and reaps, or has reaped: no signal goes out any more."""
         with self._lock:
             return self._reaping
+
+    def leader_exited(self) -> bool:
+        """The leader has exited by now (asked without waiting; False once reaped: `exited` says it then)."""
+        with self._lock:
+            if self._reaping:
+                return True
+            return self._ops.leader_exited(self._pid)
 
     def signal(self) -> bool:
         """Signal the whole group once; False (nothing sent) once the drain reaps or has reaped."""

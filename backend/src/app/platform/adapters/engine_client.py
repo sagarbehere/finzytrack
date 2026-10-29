@@ -66,6 +66,7 @@ import contextlib
 import hashlib
 import os
 import queue
+import select
 import shutil
 import subprocess
 import threading
@@ -323,6 +324,9 @@ class _AloneProcess:
         with self._lock:
             return self._reaping
 
+    def leader_exited(self) -> bool:
+        return self.exited.is_set()
+
     def signal(self) -> bool:
         with self._lock:
             if self._reaping:
@@ -349,7 +353,10 @@ class _Running:
     stderr: deque[str] = field(default_factory=lambda: deque[str](maxlen=STDERR_LINES))
     threads: list[threading.Thread] = field(default_factory=lambda: list[threading.Thread]())
     drained: threading.Event = field(default_factory=threading.Event)
+    wake: int | None = None  # POSIX: the write end the reaper uses to end the reply stream once the engine is reaped
     reason: _Ours | None = None
+    cause: Literal["stop", "input_closed"] | None = None  # an end we caused without a reason of the caller's (§5.2)
+    past_commit: bool = False
     in_flight: tuple[int, str] | None = None
     gate: Literal["none", "pending", "proceeded"] = "none"
     committed: bool = False
@@ -398,6 +405,73 @@ def _pump_lines(pipe: IO[bytes], replies: queue.Queue[_Reply]) -> None:
                 replies.put(None)
                 return
             replies.put(line)
+
+
+DRAIN_AFTER_REAP_BYTES = 4 * 1024 * 1024
+"""After the engine is reaped, at most this much is still read from its output: all a dead engine can have left in
+the pipe (a pipe's buffer is 16 KiB to 1 MiB), so a child that escaped the group and keeps writing cannot hold us."""
+
+
+class _Lines:
+    """Splits the output into reply lines as `readline(MAX_LINE_BYTES + 2)` would: a line longer than the limit is
+    passed on cut, without its newline, so the decoder refuses it."""
+
+    def __init__(self, replies: queue.Queue[_Reply]) -> None:
+        self._replies = replies
+        self._buf = b""
+
+    def feed(self, chunk: bytes) -> None:
+        self._buf += chunk
+        limit = MAX_LINE_BYTES + 2
+        while True:
+            end = self._buf.find(b"\n", 0, limit)
+            if end >= 0:
+                self._replies.put(self._buf[: end + 1])
+                self._buf = self._buf[end + 1 :]
+            elif len(self._buf) >= limit:
+                self._replies.put(self._buf[:limit])
+                self._buf = self._buf[limit:]
+            else:
+                return
+
+    def end(self) -> None:
+        if self._buf:
+            self._replies.put(self._buf)  # a last line without its newline: the decoder calls it cut off
+            self._buf = b""
+        self._replies.put(None)
+
+
+def _pump_lines_until_reaped(pipe: IO[bytes], replies: queue.Queue[_Reply], wake: int) -> None:
+    """POSIX: reply lines into the queue; None at the end of the stream, or once the engine is reaped (the reaper
+    writes to `wake`): then what the dead engine left in the pipe is read first, so its last reply is never lost
+    behind the end, and a child that left the group (`setsid`, §15) holding the output open cannot hold the call
+    (S0057 verifier R1-F2). Raw reads on the descriptor; the buffered `pipe` object is never read."""
+    fd = pipe.fileno()
+    lines = _Lines(replies)
+    try:
+        while True:
+            ready, _, _ = select.select([fd, wake], [], [])
+            if wake in ready:  # the engine is reaped: read what it left, without waiting, then end the stream
+                left = DRAIN_AFTER_REAP_BYTES
+                while left > 0 and select.select([fd], [], [], 0)[0]:
+                    chunk = os.read(fd, 65536)
+                    if not chunk:
+                        break
+                    left -= len(chunk)
+                    lines.feed(chunk)
+                break
+            chunk = os.read(fd, 65536)
+            if not chunk:
+                break
+            lines.feed(chunk)
+    except (OSError, ValueError):
+        pass
+    finally:
+        lines.end()
+        with contextlib.suppress(OSError):
+            os.close(wake)
+        with contextlib.suppress(OSError, ValueError):
+            pipe.close()
 
 
 def _pump_stderr(pipe: IO[bytes], tail: deque[str], sink: Callable[[str], None] | None) -> None:
@@ -504,6 +578,7 @@ class EngineClient:
         self._in_call = False
         self._pending: _Ours | None = None
         self._closing = False
+        self._needs_settle = False
         self._serial = 0
         self._next_id = 0
         self._last_stderr: deque[str] = deque[str]()
@@ -536,6 +611,7 @@ class EngineClient:
                 return False
             rid, op = run.in_flight
             run.gate = "proceeded"
+            run.past_commit = True  # until the next request: only Quit anyway ends this engine now (§4)
             run.requests.put(encode_proceed(rid, op))
             return True
 
@@ -546,15 +622,15 @@ class EngineClient:
                 msg = "retire ends an idle engine after its job's final reply, never a call in flight"
                 raise RuntimeError(msg)
             self._mark_ended(reason)
-            idle = not self._in_call
-        if idle:
-            self._settle_if_idle()
+            self._needs_settle = True
+        self._settle_if_idle()
 
     def close(self) -> None:
         """Record `close`, signal the engine's group once and return, without waiting for a call or the reap."""
         with self._signals:
             self._closing = True
             self._mark_ended("close")
+            self._needs_settle = True
             filler = self._filler
         if filler is not None:
             filler.stop()
@@ -602,9 +678,14 @@ class EngineClient:
 
     def _mark_ended(self, reason: _Ours) -> None:
         """Under `_signals`: record the reason on the running engine and signal its group once; a call in flight
-        that has no engine to signal (a start, a backoff) sees `_pending` and ends there."""
+        that has no engine to signal (a start, a backoff) sees `_pending` and ends there. **Past the commit point**
+        (`proceed` sent for the call in flight) only Quit anyway ends the engine (§4: "a writing job past its commit
+        point: nothing: the job finishes"; INV-01): a Cancel or a close changes nothing, and the close is settled
+        when the job has finished."""
         run = self._run
-        if run is not None and run.reason is None and not run.group.exited.is_set():
+        if reason != "quit_anyway" and self._in_call and run is not None and run.past_commit:
+            return
+        if run is not None and run.reason is None and not (run.group.exited.is_set() or run.group.leader_exited()):
             run.reason = reason  # an engine that already ended by itself keeps that truth: it is no end of ours
             run.group.signal()
         if self._in_call and self._pending is None:
@@ -613,32 +694,42 @@ class EngineClient:
 
     def _settle_if_idle(self) -> None:
         """With no call in flight, feed our end of the idle engine (and a close) to the table at once, so `state` is
-        current. A call in flight, or one that starts meanwhile, settles it itself."""
-        if not self._lock.acquire(blocking=False):
-            return
-        try:
-            if not self._in_call:
+        current. `end` and `close` set `_needs_settle` before they try the call lock; whoever holds the lock then
+        runs this again after releasing it, so a request to settle is never lost between the two (S0057 verifier
+        R1-F4). A call in flight settles at its own end."""
+        while True:
+            with self._signals:
+                if not self._needs_settle:
+                    return
+            if not self._lock.acquire(blocking=False):
+                return  # its holder settles once it has released the lock
+            try:
+                if self._in_call:
+                    return  # the call in flight (this thread's, from its on_event) settles at its end
+                with self._signals:
+                    self._needs_settle = False
                 self._settle()
-        finally:
-            self._lock.release()
+            finally:
+                self._lock.release()
 
     def _settle(self) -> None:
         """At rest: an engine we ended, or one that died by itself, is fed to the table; then a pending close."""
         run = self._run
         if run is not None and isinstance(self._state, Ready):
             if run.reason is not None:
-                self._drive(self._ours(run.reason))
-            elif run.group.exited.is_set():  # it died since the last request: a stop
+                self._drive(self._ours(run.reason, run))
+            elif run.group.exited.is_set() or run.group.leader_exited():  # it died since the last request: a stop
                 self._drive(Exited("the engine exited between requests", self._monotonic()))
         if self._closing and not isinstance(self._state, Closed):
             self._drive(Close())
 
-    def _ours(self, reason: _Ours) -> SupervisionEvent:
+    def _ours(self, reason: _Ours, run: _Running | None = None) -> SupervisionEvent:
         if reason == "close":
             return Close()
         if reason == "retire":
             return Retired()
-        return Cancelled(reason, self._monotonic())
+        past = run is not None and run.past_commit
+        return Cancelled(reason, self._monotonic(), past_commit=past)
 
     def _wait_unless_ended(self, seconds: float) -> None:
         """The real backoff pause: it ends early when the waiting call is ended (`end`, `close`)."""
@@ -653,25 +744,28 @@ class EngineClient:
         backoff or a request under way) is fed in as `Interrupted` before it goes on, so the next call finds the table
         at rest, wherever the exception landed (a signal's included). For a request that is out, the table stops the
         engine: its reply may still come and would be handed to the next request (S0035 verifier F4c)."""
-        with self._lock:
-            if self._in_call:
-                msg = "an engine call from inside a call's on_event"
-                raise RuntimeError(msg)
-            with self._signals:
-                self._in_call = True
-                self._pending = None
-            try:
-                self._settle()
-                yield
-            except BaseException as e:
-                if not isinstance(self._state, RESTING):
-                    self._feed(Interrupted(f"the client failed: {type(e).__name__}", self._monotonic()))
-                raise
-            finally:
+        try:
+            with self._lock:
+                if self._in_call:
+                    msg = "an engine call from inside a call's on_event"
+                    raise RuntimeError(msg)
                 with self._signals:
-                    self._in_call = False
+                    self._in_call = True
                     self._pending = None
-                self._settle()
+                try:
+                    self._settle()
+                    yield
+                except BaseException as e:
+                    if not isinstance(self._state, RESTING):
+                        self._feed(Interrupted(f"the client failed: {type(e).__name__}", self._monotonic()))
+                    raise
+                finally:
+                    with self._signals:
+                        self._in_call = False
+                        self._pending = None
+                    self._settle()
+        finally:
+            self._settle_if_idle()  # an end or close that came while this call held the lock (R1-F4)
 
     def _drive(self, event: SupervisionEvent) -> EngineFailure | None:
         """Feed `event`, then carry out each follow-up (spawn, handshake, pause) and feed its outcome, until the table
@@ -697,6 +791,7 @@ class EngineClient:
             case CloseInput():
                 run = self._run
                 if run is not None:
+                    run.cause = "input_closed"  # its end at the end of this input is ours (R1-F3)
                     run.requests.put(None)  # the writer closes stdin: the engine finishes the request in hand
             case DiscardBytecode():
                 if self._command.bytecode is not None:
@@ -721,6 +816,8 @@ class EngineClient:
             if run is None:
                 return
             if run.reason is None:
+                if run.cause is None and not (run.group.exited.is_set() or run.group.leader_exited()):
+                    run.cause = "stop"  # the table ends a live engine after a failure: our kill, not the OS's
                 run.group.signal()
             self._previous = run
         run.requests.put(None)  # an idle writer ends; one inside a write ends when the write fails
@@ -786,7 +883,7 @@ class EngineClient:
 
     def _observed_end(self, run: _Running) -> SupervisionEvent | None:
         """Our end of this engine, if we recorded one: it wins over what the output did (§5.2)."""
-        return None if run.reason is None else self._ours(run.reason)
+        return None if run.reason is None else self._ours(run.reason, run)
 
     def _lost(self, run: _Running, out: _Lost) -> SupervisionEvent:
         ours = self._observed_end(run)
@@ -838,7 +935,7 @@ class EngineClient:
         handed to the writer thread and the caller waits for the reply queue only, with no time limit (§5.4)."""
         rid, op, line = request
         with self._signals:
-            run.in_flight, run.gate, run.committed = (rid, op), "none", False
+            run.in_flight, run.gate, run.committed, run.past_commit = (rid, op), "none", False, False
         run.requests.put(line)
         try:
             while True:
@@ -919,12 +1016,24 @@ class EngineClient:
             self._run = run  # at once, so an interrupted start ends it (the table's `End`)
         if proc.stdin is None or proc.stdout is None or proc.stderr is None:  # pragma: no cover (pipes were requested)
             return SpawnFailed("the engine has no pipes", self._monotonic())
+        if os.name == "posix":
+            wake_read, run.wake = os.pipe()
+            replies = threading.Thread(
+                target=_pump_lines_until_reaped,
+                args=(proc.stdout, run.replies, wake_read),
+                name="engine-replies",
+                daemon=True,
+            )
+        else:  # TODO(BL-0087): Windows pipes cannot be selected; the replies end only at the end of the output
+            replies = threading.Thread(
+                target=_pump_lines, args=(proc.stdout, run.replies), name="engine-replies", daemon=True
+            )
         threads = (
             threading.Thread(target=self._reap, args=(run,), name="engine-reaper", daemon=True),
             threading.Thread(
                 target=_pump_requests, args=(proc.stdin, run.requests, run.replies), name="engine-requests", daemon=True
             ),
-            threading.Thread(target=_pump_lines, args=(proc.stdout, run.replies), name="engine-replies", daemon=True),
+            replies,
             threading.Thread(
                 target=_pump_stderr, args=(proc.stderr, run.stderr, self._on_stderr), name="engine-stderr", daemon=True
             ),
@@ -950,15 +1059,18 @@ class EngineClient:
         """The engine's reaper thread: drain its group, reap it, then report its end (§5.2)."""
         reaped = run.group.drain()
         run.proc.returncode = reaped.returncode  # reaped here: `Popen` must never wait for it again
+        if run.wake is not None:
+            # Reaped and drained: nothing more can come from the engine. The reply pump reads what it left and ends
+            # the stream, so a child that left the group holding the output cannot hold the call (R1-F2).
+            with contextlib.suppress(OSError):
+                os.write(run.wake, b"x")
+            with contextlib.suppress(OSError):
+                os.close(run.wake)
         with self._signals:
             run.drained.set()
-            if run.reason is not None:
-                # We ended it, and its group is drained: nothing more can come. A child that left the group
-                # (`setsid`, §15) may still hold the output open; the call waiting for its end must not wait for it.
-                run.replies.put(None)
             self._signals.notify_all()
         if self._on_engine_ended is not None:
-            end = EngineEnd(run.serial, run.proc.pid, run.reason, reaped.returncode, reaped.max_rss_kib)
+            end = EngineEnd(run.serial, run.proc.pid, run.reason or run.cause, reaped.returncode, reaped.max_rss_kib)
             with contextlib.suppress(Exception):  # the report's receiver must not take the reaper down
                 self._on_engine_ended(end)
 

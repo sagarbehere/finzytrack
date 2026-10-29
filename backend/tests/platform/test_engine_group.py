@@ -119,15 +119,18 @@ class FakeOps:
         self._live = live
         self._stuck = stuck
         self._reap = reap
-        self.leader_exited = threading.Event()
-        self.leader_exited.set()
+        self.leader_exited_event = threading.Event()
+        self.leader_exited_event.set()
 
     def kill_group(self, pgid: int) -> None:
         self.calls.append(f"kill {pgid}")
 
     def wait_leader(self, pid: int) -> None:
-        self.leader_exited.wait()
+        self.leader_exited_event.wait()
         self.calls.append(f"wait_leader {pid}")
+
+    def leader_exited(self, pid: int) -> bool:
+        return self.leader_exited_event.is_set() and "wait_leader" in " ".join(self.calls)
 
     def live_member(self, pgid: int) -> bool:
         self.calls.append(f"probe {pgid}")
@@ -214,7 +217,7 @@ def test_a_member_that_never_ends_keeps_the_drain_going_and_the_leader_unreaped(
 
 def test_our_signal_before_the_leader_exited_reaches_the_group_once() -> None:
     ops = FakeOps()
-    ops.leader_exited.clear()
+    ops.leader_exited_event.clear()
     group = EngineGroup(ops, PGID)
     assert group.signal() is True
     assert ops.calls == [f"kill {PGID}"]

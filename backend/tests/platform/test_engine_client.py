@@ -18,6 +18,7 @@ import faulthandler
 import fcntl
 import inspect
 import os
+import queue
 import signal
 import subprocess
 import sys
@@ -30,7 +31,12 @@ from typing import Any, override
 
 import pytest
 
-from app.platform.adapters.engine_client import EngineClient, EngineCommand, next_request_id
+from app.platform.adapters.engine_client import (
+    EngineClient,
+    EngineCommand,
+    _pump_lines_until_reaped,  # pyright: ignore[reportPrivateUsage]
+    next_request_id,
+)
 from app.platform.adapters.engine_group import PosixGroupOps, Reaped
 from app.platform.engine import (
     Committed,
@@ -767,11 +773,21 @@ def test_an_exception_while_waiting_for_a_reply_stops_the_engine_and_leaves_the_
     signal handler); where exactly it lands does not matter, every such place must end the same way."""
     c = EngineClient(stand_in(STALLS), monotonic=fake_time.monotonic, pause=fake_time.pause)
     waiting = threading.get_ident()
+    done = threading.Event()
 
     def interrupt() -> None:
         if wait_until(lambda: "marker: request read" in c.stderr_tail()):
             signal.pthread_kill(waiting, signal.SIGINT)
+        # The test's own watchdog: the call has no time limit, so a SIGINT that does not reach it would leave it
+        # waiting for ever; end the stand-in instead and let the test fail.
+        if not done.wait(DEADLINE):
+            pid = c.pid
+            if pid is not None:
+                with contextlib.suppress(OSError):
+                    os.killpg(pid, signal.SIGKILL)
 
+    # A shell starts a background job with SIGINT ignored; this test needs Python's own handler (found in S0057).
+    previous = signal.signal(signal.SIGINT, signal.default_int_handler)
     try:
         assert isinstance(c.start(), EngineInfo)
         pid = c.pid
@@ -780,6 +796,7 @@ def test_an_exception_while_waiting_for_a_reply_stops_the_engine_and_leaves_the_
         began = time.monotonic()
         with pytest.raises(KeyboardInterrupt):
             c.call("anything", {})
+        done.set()
         assert time.monotonic() - began < 30.0, "the signal did not reach the wait (the test proves nothing then)"
         assert stopped(pid)
         state = c.state
@@ -787,12 +804,14 @@ def test_an_exception_while_waiting_for_a_reply_stops_the_engine_and_leaves_the_
         assert state.last == "crashed"
         assert isinstance(c.start(), EngineInfo)  # usable: a new engine starts
     finally:
+        done.set()
+        signal.signal(signal.SIGINT, previous)
         c.close()
 
 
 def test_the_state_is_readable_at_once_while_a_request_is_in_flight(fake_time: FakeTime) -> None:
     """S0040 verifier F1: `state` is what /health and /api/boot will read, so it never waits behind a call in flight
-    (that wait can be `longest_start` plus the call's timeout), and it shows the passing state `Busy`."""
+    (which has no time limit since S0057), and it shows the passing state `Busy`."""
     c = EngineClient(stand_in(STALLS), monotonic=fake_time.monotonic, pause=fake_time.pause)
     try:
         assert isinstance(c.start(), EngineInfo)
@@ -1790,3 +1809,350 @@ def test_close_returns_while_a_call_waits_on_an_engine_our_signal_cannot_end() -
     finally:
         os.killpg(pid, signal.SIGKILL)  # the test ends what the fake could not
         t.join(DEADLINE)
+
+
+# -- S0057 verifier round 1 --------------------------------------------------------------------------------------------
+
+SLOW_WRITE = r"""
+import json, sys, time
+def send(o):
+    sys.stdout.write(json.dumps(o) + "\n")
+    sys.stdout.flush()
+req = json.loads(sys.stdin.readline())
+send({"v": 2, "id": req["id"], "op": "handshake", "ok": True,
+      "result": {"protocol": 2, "engine_version": "0", "beancount_version": "3.2.0"}})
+req = json.loads(sys.stdin.readline())
+rid, op = req["id"], req["op"]
+send({"v": 2, "id": rid, "op": op, "event": "gate"})
+assert json.loads(sys.stdin.readline())["control"] == "proceed"
+open(sys.argv[1] + ".half", "w").write("first file replaced")
+time.sleep(1)  # in the middle of the replace
+open(sys.argv[1], "w").write("second file replaced")
+send({"v": 2, "id": rid, "op": op, "event": "committed"})
+send({"v": 2, "id": rid, "op": op, "ok": True, "result": {}})
+sys.stdin.read()
+"""
+
+
+@pytest.mark.parametrize("how", ["cancel", "close"])
+def test_a_cancel_or_close_past_the_commit_point_lets_the_job_finish(tmp_path: Path, how: str) -> None:
+    """R1-F1 (INV-01; §4: "a writing job past its commit point: nothing: the job finishes"; "Quit anyway is the one
+    case where we end a writing job past its commit point"). After `proceed()` neither the user's Cancel nor a close
+    may cut the replace."""
+    marker = tmp_path / "m"
+    c = EngineClient(EngineCommand(argv=(sys.executable, "-I", "-c", SLOW_WRITE, str(marker)), env=None))
+    try:
+        assert isinstance(c.start(), EngineInfo)
+        events: list[EngineEvent] = []
+
+        def on_event(event: EngineEvent) -> None:
+            events.append(event)
+            if isinstance(event, GateReached):
+                assert c.proceed()
+
+        t, out = in_thread(lambda: c.call("save", {}, on_event=on_event))
+        assert wait_until(lambda: (tmp_path / "m.half").exists())
+        if how == "cancel":
+            c.end("cancel")
+        else:
+            closer = threading.Thread(target=c.close, daemon=True)
+            closer.start()
+            closer.join(DEADLINE)
+            assert not closer.is_alive(), "close() waited for the job"
+        t.join(DEADLINE)
+        assert not t.is_alive()
+        assert out == [{}], "the job past its commit point did not finish"
+        assert marker.read_text() == "second file replaced"
+        assert Committed() in events
+        if how == "close":
+            assert wait_until(lambda: isinstance(c.state, Closed))
+    finally:
+        c.close()
+
+
+def test_quit_anyway_ends_a_job_past_its_commit_point(tmp_path: Path) -> None:
+    """§4, §9.3: Quit anyway ends a running job "before or after its commit point" (its journal covers the cut)."""
+    marker = tmp_path / "m"
+    c = EngineClient(EngineCommand(argv=(sys.executable, "-I", "-c", SLOW_WRITE, str(marker)), env=None))
+    try:
+        assert isinstance(c.start(), EngineInfo)
+        t, out = in_thread(lambda: c.call("save", {}, on_event=Job(c)))
+        assert wait_until(lambda: (tmp_path / "m.half").exists())
+        c.end("quit_anyway")
+        t.join(DEADLINE)
+        assert out == [EngineFailure("cancelled", "the engine was ended by us (quit_anyway)")]
+        assert not marker.exists()
+    finally:
+        c.close()
+
+
+CRASHES_WITH_ESCAPED_CHILD = r"""
+import json, os, subprocess, sys
+req = json.loads(sys.stdin.readline())
+sys.stdout.write(json.dumps({"v": 2, "id": req["id"], "op": "handshake", "ok": True,
+    "result": {"protocol": 2, "engine_version": "0", "beancount_version": "3.2.0"}}) + "\n")
+sys.stdout.flush()
+req = json.loads(sys.stdin.readline())
+child = subprocess.Popen([sys.executable, "-I", "-c", "import threading; threading.Event().wait()"],
+                         stdin=subprocess.DEVNULL, start_new_session=True)  # leaves the group, keeps our stdout
+sys.stderr.write(f"marker: escaped {child.pid}\n")
+sys.stderr.flush()
+MODE
+"""
+DIES = "os._exit(1)  # the engine ends by itself in the middle of the request"
+ANSWERS_THEN_DIES = """sys.stdout.write(json.dumps({"v": 2, "id": req["id"], "op": req["op"], "ok": True,
+    "result": {"answered": True}}) + "\\n")
+sys.stdout.flush()
+os._exit(0)"""
+
+
+def escaped_pid(c: EngineClient) -> int:
+    assert wait_until(lambda: "marker: escaped " in c.stderr_tail())
+    return int(c.stderr_tail().split("marker: escaped ")[1].split()[0])
+
+
+@pytest.mark.skipif(os.name != "posix", reason="process groups are POSIX; Windows is BL-0087")
+def test_an_engine_that_ends_by_itself_while_an_escaped_child_holds_its_output_ends_the_call() -> None:
+    """R1-F2 (§5.3: "A crash is noticed by the engine's exit"; ADR-0063 decision 1: every wait has an exit): the end of
+    output never comes while a child that left the group holds it, so the reaped engine must end the call itself."""
+    c = EngineClient(stand_in(CRASHES_WITH_ESCAPED_CHILD.replace("MODE", DIES)))
+    escaped: int | None = None
+    try:
+        assert isinstance(c.start(), EngineInfo)
+        t, out = in_thread(lambda: c.call("anything", {}))
+        escaped = escaped_pid(c)
+        t.join(DEADLINE)
+        assert not t.is_alive(), "the crash of an engine whose output an escaped child holds was never noticed"
+        assert isinstance(out[0], EngineFailure)
+        assert out[0].kind == "crashed"
+    finally:
+        if escaped is not None and not gone(escaped):
+            kill(escaped)
+        c.close()
+
+
+@pytest.mark.skipif(os.name != "posix", reason="process groups are POSIX; Windows is BL-0087")
+def test_a_reply_written_just_before_the_engine_ends_reaches_the_caller() -> None:
+    """@regression-guard (S0057 verifier R1 note): the reaped engine ends the stream only after everything it
+    wrote, so its last reply is never lost behind the end (the ordering the reaper relies on), also with an escaped
+    child holding the output."""
+    for _ in range(5):  # a race would show up across runs
+        c = EngineClient(stand_in(CRASHES_WITH_ESCAPED_CHILD.replace("MODE", ANSWERS_THEN_DIES)))
+        escaped: int | None = None
+        try:
+            assert isinstance(c.start(), EngineInfo)
+            t, out = in_thread(lambda c=c: c.call("anything", {}))
+            escaped = escaped_pid(c)
+            t.join(DEADLINE)
+            assert not t.is_alive()
+            assert out == [{"answered": True}]
+        finally:
+            if escaped is not None and not gone(escaped):
+                kill(escaped)
+            c.close()
+
+
+GARBAGE_AFTER_HANDSHAKE = r"""
+import json, sys
+req = json.loads(sys.stdin.readline())
+sys.stdout.write(json.dumps({"v": 2, "id": req["id"], "op": "handshake", "ok": True,
+    "result": {"protocol": 2, "engine_version": "0", "beancount_version": "3.2.0"}}) + "\n")
+sys.stdout.flush()
+req = json.loads(sys.stdin.readline())
+sys.stdout.write('"not a reply"\n')
+sys.stdout.flush()
+sys.stdin.read()
+"""
+
+
+@pytest.mark.skipif(os.name != "posix", reason="process groups are POSIX; Windows is BL-0087")
+def test_every_end_we_cause_is_reported_with_its_reason() -> None:
+    """R1-F3 (§5.2: "The reason is recorded before the signal"; §5.3: a SIGKILL we did not cause is
+    `killed_by_system`): the end report tells our kills from the OS's. A violation before the commit point is ended
+    by the table (`stop`); a crash is the engine's own (None)."""
+    ends = Ends()
+    c = EngineClient(stand_in(GARBAGE_AFTER_HANDSHAKE), on_engine_ended=ends)
+    try:
+        assert isinstance(c.start(), EngineInfo)
+        out = c.call("x", {})
+        assert isinstance(out, EngineFailure)
+        assert out.kind == "protocol_violation"
+        assert ends.wait(1)
+        assert ends.reports[0].reason == "stop"
+    finally:
+        c.close()
+    ends = Ends()
+    c = EngineClient(engine_command(), on_engine_ended=ends)
+    try:
+        assert isinstance(c.start(), EngineInfo)
+        pid = c.pid
+        assert pid is not None
+        kill(pid)  # not us
+        assert ends.wait(1)
+        assert ends.reports[0].reason is None
+        assert ends.reports[0].returncode == -signal.SIGKILL
+    finally:
+        c.close()
+
+
+BREAKS_AFTER_PROCEED_THEN_ENDS = MISBEHAVES_AT_THE_GATE.replace(
+    "MODE",
+    """send({"v": 2, "id": rid, "op": op, "event": "gate"})
+json.loads(sys.stdin.readline())
+sys.stdout.write("garbage\\n")
+sys.stdout.flush()
+sys.stdin.read()""",
+)
+
+
+def test_the_end_after_a_violation_past_the_commit_point_is_reported_as_our_closed_input() -> None:
+    """R1-F3: the engine that ends at the end of the input we closed (§5.3) ends by our doing: `input_closed`."""
+    ends = Ends()
+    c = EngineClient(stand_in(BREAKS_AFTER_PROCEED_THEN_ENDS), on_engine_ended=ends)
+    try:
+        assert isinstance(c.start(), EngineInfo)
+        out = bounded_call(c, "save", {}, Job(c))
+        assert isinstance(out, EngineFailure)
+        assert ends.wait(1)
+        assert ends.reports[0].reason == "input_closed"
+    finally:
+        c.close()
+
+
+def test_a_close_while_a_call_is_leaving_still_reaches_closed() -> None:
+    """R1-F4: `close()` cannot take the call lock while a call is leaving (its exit settles the table holding the
+    lock); the close must still be settled once that call has left."""
+    events = Events()
+    c = EngineClient(engine_command(), log=events)
+    real = c._settle  # pyright: ignore[reportPrivateUsage] (the interleaving is forced at this one point)
+    in_window, closed = threading.Event(), threading.Event()
+    armed = [False]
+
+    def settle() -> None:
+        real()
+        if armed[0] and threading.current_thread().name == "caller" and not c._in_call:  # pyright: ignore[reportPrivateUsage]
+            armed[0] = False
+            in_window.set()
+            closed.wait(DEADLINE)  # the leaving call still holds the lock
+
+    c._settle = settle  # type: ignore[method-assign]
+    try:
+        assert isinstance(c.start(), EngineInfo)
+        armed[0] = True
+        t = threading.Thread(target=c.ping, name="caller")
+        t.start()
+        assert in_window.wait(DEADLINE)
+        c.close()
+        closed.set()
+        t.join(DEADLINE)
+        assert isinstance(c.state, Closed)
+        assert "engine.closed" in events.names
+    finally:
+        closed.set()
+
+
+PLUGIN = "VALUE = 42\n"
+
+
+@pytest.mark.skipif(os.name != "posix", reason="the bytecode check reads folders; Windows is the manual CI run")
+def test_a_plugin_imported_from_a_user_folder_writes_no_pycache(tmp_path: Path) -> None:
+    """R1-F5 (INV-30; §5.1: `-B`, "A user's plugin is compiled from its source on every load and never cached"): an
+    import from a user's folder through the real spawn leaves no `__pycache__` there, and nothing in the bytecode
+    directory either."""
+    folder = tmp_path / "ledger"
+    folder.mkdir()
+    (folder / "ft_test_plugin.py").write_text(PLUGIN, encoding="utf-8")
+    bytecode = tmp_path / "bytecode"
+    c = EngineClient(EngineCommand.for_venv(ENGINE_VENV, test_ops=True, bytecode_dir=bytecode))
+    try:
+        assert c.call("test.import_plugin", {"folder": str(folder)}) == {"value": 42}
+        assert not list(folder.rglob("__pycache__")), "the engine wrote bytecode into the user's folder"
+        assert not list(folder.rglob("*.pyc"))
+        assert not [p for p in bytecode.rglob("*.pyc") if "ft_test_plugin" in p.name]
+    finally:
+        c.close()
+
+
+def test_a_failed_bytecode_fill_is_logged_and_never_marked_complete(tmp_path: Path) -> None:
+    """@regression-guard (S0057 verifier R1-F6; §5.1: "marked complete last"): a fill that fails leaves no
+    `.complete`, so no engine uses a half-filled directory."""
+    directory = tmp_path / "bytecode"
+    command = EngineCommand.for_venv(ENGINE_VENV, test_ops=True, bytecode_dir=directory)
+    assert command.bytecode is not None
+    failing = dataclasses.replace(
+        command, bytecode=dataclasses.replace(command.bytecode, fill_argv=(sys.executable, "-c", "raise SystemExit(3)"))
+    )
+    events = Events()
+    c = EngineClient(failing, log=events)
+    try:
+        assert interpreter(c)["pycache_prefix"] is None
+        assert wait_until(lambda: "engine.bytecode" in events.names)
+        assert [f["outcome"] for e, f in events.seen if e.name == "engine.bytecode"] == ["fill_failed"]
+        assert not (directory / ".complete").exists()
+        c.end("retire")
+        assert interpreter(c)["pycache_prefix"] is None
+    finally:
+        c.close()
+
+
+@pytest.mark.skipif(os.name != "posix", reason="the reply pump selects on pipes; Windows is BL-0087")
+def test_once_reaped_the_reply_pump_hands_on_what_the_engine_left_before_it_ends_the_stream() -> None:
+    """The ordering the reaper relies on (S0057 verifier R1 note), pinned without a race: the engine's last reply is
+    already in the pipe when the reaper wakes the pump; the pump hands it on, then ends the stream, although the
+    pipe is still held open (by an escaped child, here by the test)."""
+    out_read, out_write = os.pipe()
+    wake_read, wake_write = os.pipe()
+    os.write(out_write, b'{"v":2,"id":1,"op":"x","ok":true,"result":{}}\n{"partial"')
+    os.write(wake_write, b"x")  # reaped before the pump ran: both are ready at once
+    replies: queue.Queue[object] = queue.Queue()
+    try:
+        t = threading.Thread(
+            target=_pump_lines_until_reaped,
+            args=(os.fdopen(out_read, "rb"), replies, wake_read),
+            daemon=True,
+        )
+        t.start()
+        t.join(DEADLINE)
+        assert not t.is_alive(), "the pump waited for an end of output that the held pipe never gives"
+        got = [replies.get_nowait() for _ in range(replies.qsize())]
+        assert got == [b'{"v":2,"id":1,"op":"x","ok":true,"result":{}}\n', b'{"partial"', None]
+    finally:
+        os.close(out_write)
+        os.close(wake_write)
+
+
+class SlowToNotice(PosixGroupOps):
+    """The reaper is late: it does not see the leader's exit until released."""
+
+    def __init__(self) -> None:
+        self.release = threading.Event()
+
+    @override
+    def wait_leader(self, pid: int) -> None:
+        self.release.wait()
+        super().wait_leader(pid)
+
+
+@pytest.mark.skipif(os.name != "posix", reason="process groups are POSIX; Windows is BL-0087")
+def test_an_engine_dead_between_requests_is_noticed_before_its_reaper_sees_it(fake_time: FakeTime) -> None:
+    """Found under load in S0057's fix round: the next call took a dead idle engine for a live one when its reaper
+    had not yet seen the exit, and failed `crashed` instead of starting a new engine (S0035: "an engine found dead
+    between requests ... the request goes on"). The client asks the OS itself, without waiting."""
+    ops = SlowToNotice()
+    events = Events()
+    c = EngineClient(engine_command(), monotonic=fake_time.monotonic, pause=fake_time.pause, group_ops=ops, log=events)
+    try:
+        assert isinstance(c.start(), EngineInfo)
+        pid = c.pid
+        assert pid is not None
+        kill(pid)
+        assert wait_until(lambda: not alive(pid))  # a zombie: dead, not reaped
+        t, out = in_thread(c.ping)
+        assert wait_until(lambda: not isinstance(c.state, Ready)), "the dead engine was taken for a live one"
+        ops.release.set()
+        t.join(DEADLINE)
+        assert out == [Pong()]
+        assert [f["kind"] for e, f in events.seen if e.name == "engine.stopped"] == ["crashed"]
+    finally:
+        ops.release.set()
+        c.close()

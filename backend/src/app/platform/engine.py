@@ -95,12 +95,16 @@ type EngineEvent = Progress | GateReached | Committed | Decision
 @dataclass(frozen=True, slots=True)
 class EngineEnd:
     """One engine's end, reported once its process group has no live member and it is reaped (§5.2): `serial` is
-    its spawn's number in this client, `reason` ours if we ended it (None: it ended by itself), `returncode` as
-    `subprocess` gives it (a negative number is the signal), `max_rss_kib` its peak memory."""
+    its spawn's number in this client; `reason` says who ended it: a caller's end (`cancel`, `retire`,
+    `quit_anyway`), `close`, `stop` (the supervision ended a live engine after a failure: a violation before the
+    commit point, a failed or interrupted start, an interrupted wait), `input_closed` (it ended at the end of the
+    input we closed after a violation past the commit point), or None: it ended by itself, and a SIGKILL then was
+    not ours (§5.3: `killed_by_system`); `returncode` as `subprocess` gives it (a negative number is the signal);
+    `max_rss_kib` its peak memory."""
 
     serial: int
     pid: int
-    reason: EndReason | Literal["close"] | None
+    reason: EndReason | Literal["close", "stop", "input_closed"] | None
     returncode: int
     max_rss_kib: int
 

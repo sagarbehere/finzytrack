@@ -162,13 +162,13 @@ EXPECTED: dict[tuple[type, type], frozenset[type]] = {
     (Busy, Violated): STOPPED,
     (Busy, ViolatedPastCommit): frozenset({Finishing}),
     (Busy, Interrupted): STOPPED,
-    (Busy, Cancelled): frozenset({Idle}),
+    (Busy, Cancelled): frozenset({Idle, Busy}),  # Busy: a Cancel past the commit point changes nothing (§4)
     (Busy, Close): frozenset({Closed}),
     # A reply broke the protocol after the commit point: the input is closed, the output discarded until the exit.
     (Finishing, Ended): STOPPED,
     (Finishing, Interrupted): STOPPED,
-    (Finishing, Cancelled): frozenset({Idle}),  # Quit anyway
-    (Finishing, Close): frozenset({Closed}),
+    (Finishing, Cancelled): frozenset({Idle, Finishing}),  # Idle: Quit anyway; a Cancel changes nothing (§4)
+    (Finishing, Close): frozenset({Finishing}),  # past the commit point: the close waits for the exit (§4, §9.3)
     # Stopped below the bound: the next request restarts it, after its backoff when one is due.
     (Crashed, Request): frozenset({Starting, Restarting}),
     (Crashed, Reset): frozenset({Idle}),
@@ -228,7 +228,12 @@ def event_samples(cls: type) -> list[SupervisionEvent]:
         ViolatedPastCommit: [ViolatedPastCommit("not a reply")],
         Exited: [Exited("the engine exited", T)],
         Interrupted: [Interrupted("the client failed", T)],
-        Cancelled: [Cancelled("cancel", T), Cancelled("quit_anyway", T)],
+        Cancelled: [
+            Cancelled("cancel", T),
+            Cancelled("quit_anyway", T),
+            Cancelled("cancel", T, past_commit=True),
+            Cancelled("quit_anyway", T, past_commit=True),
+        ],
         Retired: [Retired()],
         Reset: [Reset()],
         Close: [Close()],
@@ -291,9 +296,9 @@ def test_there_is_no_time_limit_left_in_the_table() -> None:
 
 def test_a_request_is_never_resent_because_only_a_send_enters_busy() -> None:
     """No request is ever resent (S0035): the only way into `Busy` is the caller's own `Send` from `Ready`."""
-    into_busy = {key for key, targets in EXPECTED.items() if Busy in targets}
+    into_busy = {key for key, targets in EXPECTED.items() if Busy in targets and key[0] is not Busy}
     assert into_busy == {(Ready, Send)}
-    assert {(r.state, r.event) for r in rules() if Busy in r.targets} == {(Ready, Send)}
+    assert {(r.state, r.event) for r in rules() if Busy in r.targets and r.state is not Busy} == {(Ready, Send)}
 
 
 # -- Starting and the backoff -------------------------------------------------------------------------------------
@@ -477,8 +482,9 @@ PASSING_WITH_A_CALLER = [
     Starting((T - 1.0,)),
     Handshaking((T - 1.0,), PID, False),
     Busy((T - 1.0,), PID, INFO),
-    Finishing((T - 1.0,), PID, INFO, "bad reply"),
 ]
+"""The passing states before any commit point. `Finishing` is past it by definition (a violation after `proceed`):
+§4's row "a writing job past its commit point: nothing: the job finishes" (S0057 verifier R1-F1)."""
 
 
 @pytest.mark.parametrize("state", PASSING_WITH_A_CALLER)
@@ -524,6 +530,33 @@ def test_three_cancels_in_a_row_leave_the_engine_startable_at_once() -> None:
         assert state == Idle(())
         now += 0.01
     assert transition(POLICY, state, Request(now)) == Step(Starting(()), (Spawn(),))
+
+
+@pytest.mark.parametrize(
+    ("state", "event"),
+    [
+        (Busy((T - 1.0,), PID, INFO), Cancelled("cancel", T, past_commit=True)),
+        (Finishing((T - 1.0,), PID, INFO, "bad reply"), Cancelled("cancel", T, past_commit=True)),
+        (Finishing((T - 1.0,), PID, INFO, "bad reply"), Cancelled("cancel", T)),
+        (Finishing((T - 1.0,), PID, INFO, "bad reply"), Close()),
+    ],
+)
+def test_past_the_commit_point_a_cancel_or_close_changes_nothing(
+    state: SupervisionState, event: SupervisionEvent
+) -> None:
+    """§4: "a writing job past its commit point: nothing: the job finishes"; "Quit anyway is the one case where we
+    end a writing job past its commit point" (INV-01; Orientation, Traps). No `End`, no failure: the call goes on."""
+    step = transition(POLICY, state, event)
+    assert step == Step(state, ())
+
+
+@pytest.mark.parametrize("state", [Busy((T - 1.0,), PID, INFO), Finishing((T - 1.0,), PID, INFO, "bad reply")])
+def test_quit_anyway_ends_a_job_past_its_commit_point(state: SupervisionState) -> None:
+    """§4, §9.3: Quit anyway ends a running job "before or after its commit point" (the journal covers it)."""
+    step = transition(POLICY, state, Cancelled("quit_anyway", T, past_commit=True))
+    assert step.state == Idle((T - 1.0,))
+    assert End() in step.effects
+    assert Fail(EngineFailure("cancelled", "the engine was ended by us (quit_anyway)")) in step.effects
 
 
 @pytest.mark.parametrize("state", PASSING_WITH_A_CALLER)
@@ -772,9 +805,14 @@ def check_step(
             assert isinstance(step.state, expected_state), step
     if isinstance(event, OURS) and not isinstance(step.state, Closed):  # §5.3: our ends are never stops
         assert getattr(step.state, "stops", ()) == getattr(before, "stops", ()), (before, event, step)
-    if isinstance(before, Finishing) and any(isinstance(e, End) for e in step.effects):
-        # past the commit point only the exit, Quit anyway, close or our own exception end the engine
-        assert isinstance(event, (Ended, Cancelled, Close, Interrupted)), (before, event, step)
+    # past the commit point: `Finishing`, or a request after `proceed` (only `Busy` has a request in flight)
+    past = isinstance(before, Finishing) or (
+        isinstance(before, Busy) and isinstance(event, Cancelled) and event.past_commit
+    )
+    if past and any(isinstance(e, End) for e in step.effects):
+        # §4: past the commit point only the exit, Quit anyway or our own exception end the engine (INV-01)
+        quit_anyway = isinstance(event, Cancelled) and event.reason == "quit_anyway"
+        assert quit_anyway or isinstance(event, (Ended, Interrupted)), (before, event, step)
     if any(isinstance(e, Spawn) for e in step.effects):
         assert isinstance(step.state, Starting)
         assert not isinstance(before, (Incompatible, Closed))
@@ -816,7 +854,13 @@ def test_random_walks_keep_the_supervision_invariants(policy: RestartPolicy, dat
     worth of stops; Closed is final; our own ends never add a stop; past the commit point nothing but the exit, Quit
     anyway, close or our own exception ends the engine; every state and effect is one its table row declares."""
     world = World(policy)
-    ours: list[SupervisionEvent] = [Cancelled("cancel", T), Cancelled("quit_anyway", T), Close()]
+    ours: list[SupervisionEvent] = [
+        Cancelled("cancel", T),
+        Cancelled("quit_anyway", T),
+        Close(),
+        Cancelled("cancel", T, past_commit=True),
+        Cancelled("quit_anyway", T, past_commit=True),
+    ]
     for _ in range(data.draw(st.integers(1, 60))):
         world.now += data.draw(st.sampled_from([0.0, 0.1, 1.0, 5.0, 100.0, 301.0]))
         state, pending = world.state, world.pending
