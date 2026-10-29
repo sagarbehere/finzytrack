@@ -2314,3 +2314,100 @@ def test_the_reply_pump_reads_a_descriptor_above_fd_setsize() -> None:
         os.close(out_write)
         os.close(wake_write)
         resource.setrlimit(resource.RLIMIT_NOFILE, (soft, hard))
+
+
+# -- the scheduler's seams (S0058; engine-jobs §5.1, §5.3) -------------------------------------------------------
+
+
+class Spawns:
+    """`on_engine_spawned`: each spawn's serial, and whether its end was already reported when it arrived."""
+
+    def __init__(self, ends: Ends) -> None:
+        self.serials: list[int] = []
+        self.reported_before: list[bool] = []
+        self._ends = ends
+
+    def __call__(self, serial: int) -> None:
+        self.serials.append(serial)
+        self.reported_before.append(any(r.serial == serial for r in self._ends.reports))
+
+
+def test_each_spawn_is_reported_before_its_end() -> None:
+    """S0058: the scheduler names each engine by the queue's number of the `Start` it serves (§5.3), so it must learn
+    every engine the client spawns, and before that engine's end can be reported."""
+    ends = Ends()
+    spawns = Spawns(ends)
+    c = EngineClient(engine_command(), on_engine_spawned=spawns, on_engine_ended=ends)
+    try:
+        assert isinstance(c.start(), EngineInfo)
+        first = c.serial
+        c.end("retire")
+        assert isinstance(c.start(), EngineInfo)
+        assert ends.wait(1)
+        assert spawns.serials == [first, c.serial]
+        assert spawns.reported_before == [False, False]
+    finally:
+        c.close()
+
+
+def test_the_bytecode_retry_reports_both_spawns(tmp_path: Path) -> None:
+    """§5.1: one start that fails with the directory and starts once without it is two engines; both are reported."""
+    directory = tmp_path / "bytecode"
+    ends = Ends()
+    spawns = Spawns(ends)
+    c = EngineClient(bytecode_command(directory), on_engine_spawned=spawns, on_engine_ended=ends)
+    try:
+        c.start()
+        assert wait_until(lambda: (directory / ".complete").is_file(), 120.0), "the fill never completed"
+        c.end("retire")
+        (damaged,) = [p for p in directory.rglob("server.cpython-*.pyc") if "ledger_engine" in str(p)]
+        damaged.write_bytes(damaged.read_bytes()[:16] + b"\x00garbage")
+        before = len(spawns.serials)
+        assert isinstance(c.start(), EngineInfo)
+        assert len(spawns.serials) == before + 2
+        assert spawns.serials[-1] == c.serial
+    finally:
+        c.close()
+
+
+@pytest.mark.parametrize("how", ["died", "cancelled", "retired", "never started", "closed"])
+def test_a_call_that_may_not_spawn_fails_when_no_engine_is_ready(how: str) -> None:
+    """S0058: `call(..., spawn=False)` is the scheduler's call inside a job: the job's engine is the one its `Start`
+    gave it (§5.1, §5.3: "The crashed job is not run again by itself"), so with no ready engine the call fails and
+    starts nothing; only the queue decides about a new engine."""
+    ends = Ends()
+    spawns = Spawns(ends)
+    c = EngineClient(engine_command(), on_engine_spawned=spawns, on_engine_ended=ends)
+    try:
+        expected = {"died": "crashed", "cancelled": "cancelled", "retired": "cancelled", "never started": "cancelled"}
+        if how != "never started":
+            assert isinstance(c.start(), EngineInfo)
+        if how == "died":
+            pid = c.pid
+            assert pid is not None
+            kill(pid)
+            assert ends.wait(1)
+        elif how == "cancelled":
+            c.end("cancel")
+        elif how == "retired":
+            c.end("retire")
+        elif how == "closed":
+            c.close()
+        count = len(spawns.serials)
+        out = c.call("ping", {}, spawn=False)
+        assert isinstance(out, EngineFailure)
+        assert out.kind == expected.get(how, "closed")
+        assert len(spawns.serials) == count, "a call that may not spawn started an engine"
+    finally:
+        c.close()
+
+
+def test_a_call_that_may_not_spawn_uses_the_ready_engine() -> None:
+    c = EngineClient(engine_command())
+    try:
+        assert isinstance(c.start(), EngineInfo)
+        pid = c.pid
+        assert c.call("ping", {}, spawn=False) == {"status": "ok"}
+        assert c.pid == pid
+    finally:
+        c.close()

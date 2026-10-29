@@ -1,0 +1,166 @@
+"""What the user reads about a job (`app.platform.engine_jobs.text`; S0058; `design/specs/engine-jobs.md` §4, §5.2,
+§5.4, §11; failure-modes E2, E3).
+
+Pure: a job's text from the scheduler's published status and the time. The texts are the spec's, row by row:
+§5.4 ("at once, the job's phase with Cancel where §4 allows it ...; when it is queued, 'Waiting for: <the running
+job's phase>'. After a short display delay ... the text becomes 'Still working…' with the same actions"), §4 ("a
+writing job past its commit point ... 'Finishing your change…'"), §5.2 and §11 (the quit advice "in the waiting job's
+place, or as a notice"). The UI that shows them is BL-0092.
+"""
+
+from __future__ import annotations
+
+import pytest
+
+from app.platform.engine_jobs.queue import Job, QueuePolicy, QueueState, Running
+from app.platform.engine_jobs.scheduler import JobsStatus, Shown
+from app.platform.engine_jobs.text import (
+    ADVICE,
+    CANNOT_STOP_FROM_HERE,
+    FINISHING,
+    PHASES,
+    STILL_WORKING,
+    cancelled_text,
+    describe,
+    notice,
+)
+from app.platform.errors import JobCancelledDetails
+
+POLICY = QueuePolicy()
+NOW = 100.0
+DELAY = 2.0
+
+PREVIEW = Job(1, "preview", "ws-1", True, False, "user", True)
+SAVE = Job(2, "save", "ws-1", True, True, "user", True)
+R4 = Job(3, "r4", "ws-1", False, False, "app", True)
+WAITING = Job(4, "bql", "ws-1", True, False, "user", True)
+
+
+def status(
+    *,
+    running: Running | None = None,
+    queued: tuple[Job, ...] = (),
+    shown: dict[int, Shown] | None = None,
+    slot: str = "busy",
+    advice: bool = False,
+) -> JobsStatus:
+    state = QueueState(
+        queued=queued,
+        running=running,
+        slot=slot,  # type: ignore[arg-type]
+        engine_lock="unchecked",
+        open_workspace="ws-1",
+        advice=advice,
+        engine=None if slot == "none" else 1,
+        next_engine=2,
+    )
+    return JobsStatus(queue=state, policy=POLICY, shown=shown or {})
+
+
+def test_the_phases_are_the_specs() -> None:
+    assert dict(PHASES) == {
+        "starting": "Starting the ledger engine…",
+        "reading": "Reading your ledger…",
+        "checking_change": "Checking your change…",
+        "waiting_for_files": "Waiting for your ledger files…",
+        "saving": "Saving…",
+        "updating_views": "Updating your views…",
+        "checking_last_change": "Checking your last change…",
+    }
+
+
+@pytest.mark.parametrize("phase", sorted(dict(PHASES)))
+def test_a_running_job_shows_its_phase_at_once_then_still_working(phase: str) -> None:
+    s = status(running=Running(PREVIEW), shown={1: Shown(phase, NOW)})  # type: ignore[arg-type]
+    at_once = describe(s, 1, NOW + DELAY / 2, DELAY)
+    assert at_once is not None
+    assert at_once.text == dict(PHASES)[phase]
+    assert at_once.cancel
+    later = describe(s, 1, NOW + DELAY, DELAY)
+    assert later is not None
+    assert later.text == STILL_WORKING
+    assert later.cancel, "the same actions after the delay"
+
+
+def test_a_phase_change_is_shown_at_once() -> None:
+    """§5.4: "a phase change is shown, never judged": the delay counts from the last change."""
+    s = status(running=Running(PREVIEW), shown={1: Shown("saving", NOW + 10)})
+    shown = describe(s, 1, NOW + 10.5, DELAY)
+    assert shown is not None
+    assert shown.text == "Saving…"
+
+
+def test_before_its_first_phase_a_job_on_its_engine_shows_working() -> None:
+    s = status(running=Running(PREVIEW), shown={1: Shown(None, NOW)})
+    shown = describe(s, 1, NOW, DELAY)
+    assert shown is not None
+    assert shown.text == "Working…"
+
+
+def test_a_queued_job_shows_what_it_waits_for() -> None:
+    s = status(running=Running(PREVIEW), queued=(WAITING,), shown={1: Shown("reading", NOW), 4: Shown(None, NOW)})
+    shown = describe(s, 4, NOW, DELAY)
+    assert shown is not None
+    assert shown.text == "Waiting for: Reading your ledger…"
+    assert shown.cancel
+    later = describe(s, 4, NOW + DELAY, DELAY)
+    assert later is not None
+    assert later.text == STILL_WORKING
+
+
+def test_a_queued_job_with_nothing_running_waits_for_the_engine() -> None:
+    s = status(queued=(WAITING,), shown={4: Shown(None, NOW)}, slot="none")
+    shown = describe(s, 4, NOW, DELAY)
+    assert shown is not None
+    assert shown.text == "Waiting for: Starting the ledger engine…"
+
+
+def test_past_the_commit_point_the_job_is_finishing_with_no_cancel() -> None:
+    """§4: "a writing job past its commit point: nothing: the job finishes ... 'Finishing your change…'"."""
+    s = status(running=Running(SAVE, past_commit=True), shown={2: Shown("saving", NOW)})
+    shown = describe(s, 2, NOW + 10 * DELAY, DELAY)
+    assert shown is not None
+    assert shown.text == FINISHING
+    assert not shown.cancel
+
+
+def test_a_background_job_has_no_cancel() -> None:
+    s = status(running=Running(R4), shown={3: Shown("checking_last_change", NOW)})
+    shown = describe(s, 3, NOW, DELAY)
+    assert shown is not None
+    assert not shown.cancel
+
+
+def test_the_advice_shows_in_the_waiting_jobs_place_or_else_as_a_notice() -> None:
+    """§5.2: "in the waiting job's place if there is one, otherwise as a notice in the window, which stays until the
+    process ends" (N3)."""
+    with_job = status(queued=(WAITING,), shown={4: Shown(None, NOW)}, slot="ending", advice=True)
+    shown = describe(with_job, 4, NOW, DELAY)
+    assert shown is not None
+    assert shown.text == ADVICE
+    assert shown.cancel
+    assert notice(with_job) is None
+    alone = status(slot="ending", advice=True)
+    assert notice(alone) == ADVICE
+    assert notice(status(slot="ending")) is None
+
+
+def test_a_job_the_queue_does_not_hold_has_no_text() -> None:
+    assert describe(status(), 9, NOW, DELAY) is None
+
+
+def test_the_answer_to_a_cancel_behind_work_that_cannot_be_stopped() -> None:
+    """§4, §11: "Your request is cancelled. The earlier ledger work cannot be stopped from here; if it never
+    finishes, quit and reopen Finzytrack."."""
+    assert cancelled_text(JobCancelledDetails(cannot_stop_ahead=True)) == CANNOT_STOP_FROM_HERE
+    assert CANNOT_STOP_FROM_HERE == (
+        "Your request is cancelled. The earlier ledger work cannot be stopped from here; if it never finishes, "
+        "quit and reopen Finzytrack."
+    )
+    assert cancelled_text(JobCancelledDetails(cannot_stop_ahead=False)) == "Cancelled."
+
+
+def test_the_advice_and_still_working_are_the_specs() -> None:
+    assert ADVICE == "Finzytrack cannot stop the earlier ledger work. Quit and reopen Finzytrack."
+    assert STILL_WORKING == "Still working…"
+    assert FINISHING == "Finishing your change…"

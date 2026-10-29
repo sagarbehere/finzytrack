@@ -14,10 +14,13 @@ exists, BL-0102, and the structured log). uvicorn's own logging setup, access lo
 websockets and server header are off: library records reach the structured log, the composition root starts and
 stops the engine itself, and nothing proxies a loopback app.
 
-The ledger engine (ADR-0054; S0038) starts at boot on its own thread, in parallel with the bind and the handshake;
-its outcome is a state (`app.platform.engine_boot`) and an event, never a crash, and the sidecar answers either way.
-The engine is the packaged one beside this interpreter (`<prefix>/../engine/site-packages`, ADR-0056) unless
-`--engine-venv` (development and tests) names a virtual environment that has it. Events go to the structured log,
+Ledger work runs through the engine job scheduler (`app.platform.engine_jobs.scheduler.EngineJobs`, S0058;
+engine-jobs §3-§5): one queue and one engine, spawned when a job needs one. Its start, before the bind, waits for the
+engine lock on a thread of its own and queues the boot's `recover_all`, whose engine is the session's first (§5.1,
+§5.5), so the engine still starts in parallel with the bind and the handshake; its outcome is the job's and an event,
+never a crash, and the sidecar answers either way. The engine is the packaged one beside this interpreter
+(`<prefix>/../engine/site-packages`, ADR-0056) unless `--engine-venv` (development and tests) names a virtual
+environment that has it. Events go to the structured log,
 `<app-local-data>/logs/finzytrack.jsonl` (`app.platform.observability`; ARCHITECTURE.md §6A), the engine's own
 stderr lines among them, redacted; other libraries' records, warnings and uncaught exceptions too. Every line carries
 the launch's `--session-id` (the shell's), or one made here. A log path that leads outside the app-local-data folder
@@ -67,7 +70,9 @@ from app.platform.adapters.engine_client import (
 from app.platform.adapters.engine_lock import engine_lock_path, wait_engine_lock
 from app.platform.adapters.ids import Uuid7Ids
 from app.platform.clock import Clock, FrozenClock
-from app.platform.engine_boot import EngineBoot
+from app.platform.engine import EngineEnd
+from app.platform.engine_jobs.scheduler import EngineJobs
+from app.platform.engine_supervision import RestartPolicy
 from app.platform.ids import Ids
 from app.platform.observability import (
     EventLog,
@@ -114,7 +119,7 @@ class Wiring:
 
     clock: Clock
     engine: EngineClient
-    boot: EngineBoot
+    jobs: EngineJobs
     api: ApiContainer
 
 
@@ -185,21 +190,39 @@ def engine_command(args: Args, app_version: str) -> EngineCommand:
 
 
 def wire(args: Args, log: EventSink, app_version: str) -> Wiring:
-    """Build, never start: the engine starts in `main` (S0038)."""
+    """Build, never start: the scheduler starts in `main` (S0038, S0058)."""
 
     def engine_stderr(line: str) -> None:
         log(ENGINE_STDERR, line=UntrustedText(line))  # the engine's stderr can carry ledger text (BL-0088)
 
-    engine = EngineClient(engine_command(args, app_version), on_stderr=engine_stderr, log=log)  # logs its lifecycle
+    restart = RestartPolicy()
+
+    # The client reports each engine it spawns and each end to the scheduler (S0058); it spawns only inside the
+    # scheduler's jobs, so `jobs` is bound before the first report.
+    def spawned(serial: int) -> None:
+        jobs.engine_spawned(serial)
+
+    def ended(end: EngineEnd) -> None:
+        jobs.engine_ended(end)
+
+    engine = EngineClient(
+        engine_command(args, app_version),
+        restart,
+        on_stderr=engine_stderr,
+        log=log,  # the client logs the engine's lifecycle
+        on_engine_spawned=spawned,
+        on_engine_ended=ended,
+    )
+    jobs = EngineJobs(
+        engine,
+        wait_engine_lock=lambda: wait_engine_lock(engine_lock_path(args.app_local_data)),
+        restart=restart,
+        log=log,
+    )
     return Wiring(
         clock=FrozenClock(args.frozen_clock) if args.frozen_clock else SystemClock(),
         engine=engine,
-        boot=EngineBoot(
-            engine,
-            pid=lambda: engine.pid,
-            wait_engine_lock=lambda: wait_engine_lock(engine_lock_path(args.app_local_data)),
-            log=log,
-        ),
+        jobs=jobs,
         # TODO(BL-0102): the registry's gate replaces NoWorkspaces (every key is WORKSPACE_UNKNOWN until then).
         api=SidecarContainer(app_version=app_version, ids=Uuid7Ids(), workspaces=NoWorkspaces(), log=log),
     )
@@ -358,7 +381,7 @@ def main(argv: list[str] | None = None) -> int:
     install_stop_handler(stop)  # before the engine can start, so every later stop reaches the close below
     wiring = wire(args, log, app_version)  # nothing reads the clock yet; the first use case receives it from here
     try:
-        wiring.boot.start_in_background()
+        wiring.jobs.start()  # never waits: the lock wait and the boot's recover-all run on their own threads
         with bind(args.port) as sock:
             config = server_config(create_app(lambda: wiring.api), sock)
             config.load()  # a configuration uvicorn refuses fails here, before the handshake
@@ -370,7 +393,10 @@ def main(argv: list[str] | None = None) -> int:
     finally:
         # Signals the engine's group once and returns without waiting for a call in flight or the reap (engine-jobs
         # §5.5, §9.3 step 4; S0057). TODO(BL-0154): the quiesce of §9.3 runs before it.
-        wiring.engine.close()  # logs engine.closed
+        try:
+            wiring.jobs.close()  # answers the waiting jobs; never waits for one
+        finally:
+            wiring.engine.close()  # logs engine.closed
     return 0
 
 

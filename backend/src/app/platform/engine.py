@@ -46,6 +46,10 @@ type FailureKind = Literal[
 type EndReason = Literal["cancel", "retire", "quit_anyway"]
 """Why we end an engine (§5.2; `close` is `close()`'s own): recorded before the signal, it wins over the exit status."""
 
+type EndCause = Literal["cancel", "retire", "quit_anyway", "close", "stop", "input_closed"]
+"""Who ended an engine, as its end report says (`EngineEnd.reason`): a caller's `EndReason`, `close`, `stop` or
+`input_closed`."""
+
 type Phase = Literal[
     "reading",
     "checking_change",
@@ -104,7 +108,7 @@ class EngineEnd:
 
     serial: int
     pid: int
-    reason: EndReason | Literal["close", "stop", "input_closed"] | None
+    reason: EndCause | None
     returncode: int
     max_rss_kib: int
 
@@ -151,10 +155,17 @@ class EnginePort(Protocol):
         ...
 
     def call(
-        self, op: str, params: Mapping[str, object], *, on_event: Callable[[EngineEvent], None] | None = None
+        self,
+        op: str,
+        params: Mapping[str, object],
+        *,
+        on_event: Callable[[EngineEvent], None] | None = None,
+        spawn: bool = True,
     ) -> Mapping[str, object] | EngineRefusal | EngineFailure:
         """Send one request and return its `result` object as plain data. No time limit: it waits until the engine
-        answers or ends, or `end` ends it. `on_event` receives the job's messages, in order, on this thread."""
+        answers or ends, or `end` ends it. `on_event` receives the job's messages, in order, on this thread. Without
+        `spawn` the request goes only to an engine that is ready, and fails otherwise: nothing is started (the
+        scheduler's call inside a job, whose engine the queue chose; S0058)."""
         ...
 
     def proceed(self) -> bool:

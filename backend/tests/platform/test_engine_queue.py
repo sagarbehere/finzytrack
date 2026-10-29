@@ -36,8 +36,11 @@ from app.platform.engine_jobs.queue import (
     ClientGone,
     Effect,
     EndEngine,
+    EngineAvailability,
     EngineDied,
     EngineEnded,
+    EngineLock,
+    EngineLockFailed,
     EngineLockFree,
     EngineLost,
     EngineNeeded,
@@ -51,6 +54,7 @@ from app.platform.engine_jobs.queue import (
     JobDone,
     JobKind,
     JobSpec,
+    NoEngine,
     Owner,
     Proceed,
     Queued,
@@ -67,6 +71,7 @@ from app.platform.engine_jobs.queue import (
     WaitEngineLock,
     WorkspaceClosed,
     WorkspaceOpened,
+    cancel_offered,
     transition,
 )
 
@@ -98,12 +103,27 @@ def ready(open_ws: str | None = W1) -> QueueState:
     return QueueState(engine_lock="free", open_workspace=open_ws)
 
 
+def through(state: QueueState, event: Event) -> tuple[QueueState, list[Effect]]:
+    """One event, with the engine lock free within the session (§5.1: "Within a session the lock is free whenever an
+    engine starts"): a wait the dispatch asks for before a fresh engine (S0058) is answered at once, as the shell's
+    would be, and the wait's two effects are left out. The boot's own wait is never answered here: the tests of the
+    lock feed `EngineLockFree`, `EngineLockFailed` or nothing themselves."""
+    step = transition(POLICY, state, event)
+    state, effects = step.state, list(step.effects)
+    if not isinstance(event, Boot) and WaitEngineLock() in effects:
+        at = effects.index(WaitEngineLock())
+        assert effects[at + 1] == ArmAdviceTimer(state.epoch), effects
+        del effects[at : at + 2]
+        state, more = through(state, EngineLockFree())
+        effects += more
+    return state, effects
+
+
 def run(state: QueueState, *events: Event) -> tuple[QueueState, list[Effect]]:
     effects: list[Effect] = []
     for event in events:
-        step = transition(POLICY, state, event)
-        state = step.state
-        effects.extend(step.effects)
+        state, more = through(state, event)
+        effects.extend(more)
     return state, effects
 
 
@@ -111,10 +131,9 @@ def submit(state: QueueState, *specs: JobSpec) -> tuple[QueueState, list[int]]:
     """Submit each spec; returns the ids the queue gave them."""
     ids: list[int] = []
     for spec in specs:
-        step = transition(POLICY, state, Submit(spec))
-        state = step.state
-        queued = [e for e in step.effects if isinstance(e, Queued)]
-        assert len(queued) == 1, step.effects
+        state, effects = through(state, Submit(spec))
+        queued = [e for e in effects if isinstance(e, Queued)]
+        assert len(queued) == 1, effects
         ids.append(queued[0].job_id)
     return state, ids
 
@@ -850,6 +869,233 @@ def test_an_old_timer_does_not_show_the_advice_for_a_later_process() -> None:
     assert effects == []
 
 
+# -- the engine lock before every spawn (§5.1, §15; S0053 verifier round 2; S0058) ----------------------------------
+
+
+def test_after_the_first_engine_a_fresh_one_waits_for_the_engine_lock_again() -> None:
+    """§15: "A plugin child that leaves the engine's process group (`setsid`) ... can keep the engine lock ... the
+    next engine then waits for it, with the advice (§5.1)": the sidecar waits for the lock before every fresh engine,
+    not only at boot (S0053 verifier round 2)."""
+    state, first = busy_with(user("preview"))
+    assert state.engine_lock == "unchecked", "a fresh start used up the wait"
+    state, _ = run(state, JobDone(first, ran_user_code=True), EngineEnded())
+    step = transition(POLICY, state, Submit(user("bql")))
+    assert [type(e) for e in step.effects] == [Queued, WaitEngineLock, ArmAdviceTimer]
+    assert step.state.engine_lock == "waiting"
+    assert step.state.running is None, "an engine started before the lock was waited for"
+    step = transition(POLICY, step.state, EngineLockFree())
+    assert [type(e) for e in step.effects] == [Start]
+
+
+def test_a_reused_engine_needs_no_wait() -> None:
+    state, first = busy_with(user("preview"))
+    state, _ = run(state, JobDone(first, ran_user_code=False))
+    step = transition(POLICY, state, Submit(user("bql")))
+    assert [type(e) for e in step.effects] == [Queued, Start]
+    (start,) = [e for e in step.effects if isinstance(e, Start)]
+    assert start.reuse
+
+
+def test_one_wait_at_a_time_and_jobs_wait_behind_it() -> None:
+    state, first = busy_with(user("preview"))
+    state, _ = run(state, Cancel(first), EngineEnded())
+    step = transition(POLICY, state, Submit(user("bql")))
+    step = transition(POLICY, step.state, Submit(user("preview")))
+    assert [type(e) for e in step.effects] == [Queued], "a second wait while one is under way"
+    step = transition(POLICY, step.state, EngineLockFree())
+    assert [e.job.kind for e in step.effects if isinstance(e, Start)] == ["bql"]
+
+
+def test_a_mid_job_fresh_engine_waits_for_the_lock_too() -> None:
+    state, jid = busy_with(user("save"))
+    state, _ = run(state, RetireEngine(jid), EngineNeeded(jid))
+    step = transition(POLICY, state, EngineEnded())
+    assert WaitEngineLock() in step.effects
+    assert started(step.effects) == []
+    step = transition(POLICY, step.state, EngineLockFree())
+    assert started(step.effects) == [jid]
+
+
+def test_the_advice_shows_while_a_wait_within_the_session_lasts() -> None:
+    """§15 "with the advice (§5.1)"; §11: "an engine of an earlier session still holds the engine lock" and the
+    held slot share one text; a wait that lasts past the display delay is either."""
+    state, first = busy_with(user("preview"))
+    state, _ = run(state, Cancel(first), EngineEnded())
+    step = transition(POLICY, state, Submit(user("bql")))
+    (timer,) = [e for e in step.effects if isinstance(e, ArmAdviceTimer)]
+    step = transition(POLICY, step.state, AdviceTimer(timer.epoch))
+    assert step.effects == (ShowAdvice(),)
+    step = transition(POLICY, step.state, EngineLockFree())
+    assert step.effects[0] == HideAdvice()
+    assert started(step.effects) != []
+
+
+def test_a_failed_wait_ends_the_jobs_that_need_an_engine_and_starts_none() -> None:
+    """S0053 verifier round 2: "wait for the engine lock before every spawn, also after a failed wait at boot" (an
+    `OSError`: a file where `locks/` belongs). An earlier session's engine may still run, so no engine starts; the
+    waiting jobs end at once with the engine unavailable rather than waiting for ever."""
+    state, _ = run(QueueState(open_workspace=W1), Boot())
+    state, (recover,) = submit(state, switch_job("recover_all"))
+    state, (create,) = submit(state, user("create", None))
+    step = transition(POLICY, state, EngineLockFailed())
+    assert step.effects == (NoEngine(recover, "lock_failed"),)
+    assert [j.id for j in step.state.queued] == [create], "a job that could not start yet was ended"
+    assert step.state.engine_lock == "unchecked"
+    assert step.state.running is None
+
+
+def test_after_a_failed_wait_the_next_job_that_needs_an_engine_waits_again() -> None:
+    state, _ = run(QueueState(open_workspace=W1), Boot())
+    state, _ = run(state, ExclusiveEnded(), EngineLockFailed())
+    step = transition(POLICY, state, Submit(user("preview")))
+    assert [type(e) for e in step.effects] == [Queued, WaitEngineLock, ArmAdviceTimer]
+    assert step.state.running is None
+    step = transition(POLICY, step.state, EngineLockFree())
+    assert len(started(step.effects)) == 1
+
+
+def test_a_failed_wait_ends_a_running_job_that_asked_for_an_engine() -> None:
+    state, jid = busy_with(user("save"))
+    state, _ = run(state, RetireEngine(jid), EngineNeeded(jid))
+    step = transition(POLICY, state, EngineEnded())
+    step = transition(POLICY, step.state, EngineLockFailed())
+    assert NoEngine(jid, "lock_failed") in step.effects
+    assert step.state.running is None
+
+
+def test_a_lock_answer_with_no_wait_under_way_changes_nothing() -> None:
+    state, jid = busy_with(user("preview"))
+    for event in (EngineLockFailed(), EngineLockFree()):
+        step = transition(POLICY, state, event)
+        assert step.effects == ()
+        assert step.state.running is not None
+        assert step.state.running.job.id == jid
+
+
+# -- the engine unavailable (§5.3; model `DispatchUnavail`, `SpawnStep`; S0058) -------------------------------------
+
+
+def unavailable(state: QueueState) -> QueueState:
+    state, effects = run(state, EngineAvailability(available=False))
+    assert started(effects) == []
+    assert state.unavailable
+    return state
+
+
+def test_while_the_engine_is_unavailable_a_queued_job_ends_without_an_engine() -> None:
+    """§5.3: "three stops in 300 s make the engine `Unavailable` until the oldest leaves the window, or Try again";
+    §11: "bound reached ... `ENGINE_UNAVAILABLE`"; model `DispatchUnavail`: the job is taken from the queue and
+    refused, waited-for jobs first, and no engine starts."""
+    state = unavailable(ready())
+    step = transition(POLICY, state, Submit(background("r4")))
+    assert [type(e) for e in step.effects] == [Queued, NoEngine]
+    step2 = transition(POLICY, step.state, Submit(user("preview")))
+    (queued,) = [e for e in step2.effects if isinstance(e, Queued)]
+    assert NoEngine(queued.job_id, "unavailable") in step2.effects
+    assert started(step2.effects) == []
+    assert step2.state.queued == ()
+    assert step2.state.running is None
+
+
+def test_the_refusals_go_waited_for_first() -> None:
+    state, running = busy_with(user("bql"))
+    state, (bg, fg) = submit(state, background("r4"), user("preview"))
+    state = unavailable(state)
+    step = transition(POLICY, state, JobDone(running, ran_user_code=True))
+    assert [e.job_id for e in step.effects if isinstance(e, NoEngine)] == [fg, bg]
+
+
+def test_refusals_do_not_wait_for_the_slot() -> None:
+    """Model `DispatchUnavail` needs no `SlotFree`: nothing will start, so the jobs need not wait for a drain."""
+    state, jid = busy_with(user("preview"))
+    state, _ = run(state, Cancel(jid))
+    assert state.slot == "ending"
+    state = unavailable(state)
+    step = transition(POLICY, state, Submit(user("bql")))
+    assert len([e for e in step.effects if isinstance(e, NoEngine)]) == 1
+
+
+def test_a_job_the_window_does_not_reach_is_kept() -> None:
+    """Only eligible jobs are refused: a create during the boot's window waits for the window, as it would for an
+    engine (§3)."""
+    state = unavailable(QueueState(engine_lock="free", exclusive=True))
+    step = transition(POLICY, state, Submit(user("create", None)))
+    assert [type(e) for e in step.effects] == [Queued]
+    step = transition(POLICY, step.state, ExclusiveEnded())
+    assert [type(e) for e in step.effects] == [NoEngine]
+
+
+def test_a_running_job_that_asks_for_a_fresh_engine_while_unavailable_ends_without_one() -> None:
+    """Model `SpawnStep`'s unavailable branch: "the save (or its R4) could not get an engine: refused, nothing
+    written" (recover-all's `not_tried` marks are BL-0151's)."""
+    state, jid = busy_with(user("save"))
+    state, _ = run(state, RetireEngine(jid), EngineNeeded(jid))
+    state = unavailable(state)
+    step = transition(POLICY, state, EngineEnded())
+    assert NoEngine(jid, "unavailable") in step.effects
+    assert started(step.effects) == []
+    assert step.state.running is None
+
+
+def test_a_running_job_is_never_ended_by_the_engine_becoming_unavailable() -> None:
+    state, jid = busy_with(user("preview"))
+    state = unavailable(state)
+    assert state.running is not None
+    assert state.running.job.id == jid
+    assert state.slot == "busy"
+
+
+def test_an_idle_engine_is_not_reused_while_unavailable() -> None:
+    """Model `Dispatch` needs `~Unavail` for every start, a reuse included."""
+    state, jid = busy_with(user("preview"))
+    state, _ = run(state, JobDone(jid, ran_user_code=False))
+    state = unavailable(state)
+    step = transition(POLICY, state, Submit(user("bql")))
+    assert started(step.effects) == []
+    assert NoEngine(2, "unavailable") in step.effects
+
+
+def test_once_available_again_queued_jobs_start() -> None:
+    state = unavailable(QueueState(engine_lock="free", exclusive=True))
+    state, (create,) = submit(state, user("create", None))
+    state, effects = run(state, EngineAvailability(available=True))
+    assert not state.unavailable
+    assert started(effects) == []
+    state, effects = run(state, ExclusiveEnded())
+    assert started(effects) == [create]
+
+
+# -- Cancel offered (§4, §5.4: "Cancel where §4 allows"; S0053 verifier round 2) -----------------------------------
+
+
+def test_cancel_is_offered_exactly_where_it_would_do_something() -> None:
+    state, jid = busy_with(user("preview"))
+    assert cancel_offered(POLICY, state, jid)
+    state, (bg,) = submit(state, background("r4"))
+    assert not cancel_offered(POLICY, state, bg), "a background job has no requester to cancel it"
+    assert not cancel_offered(POLICY, state, 999)
+
+
+def test_no_cancel_is_offered_for_a_recover_all_between_engines() -> None:
+    """S0053 verifier round 2: the table answers a recover-all's Cancel between engines with nothing (model
+    `UserCancelRunning`: `RJ.k = "recover" => eng.st = "busy"`), so no Cancel is shown there."""
+    state, jid = busy_with(switch_job("recover_all"), QueueState(engine_lock="free", exclusive=True))
+    assert cancel_offered(POLICY, state, jid)
+    state, _ = run(state, RetireEngine(jid), EngineNeeded(jid))
+    assert not cancel_offered(POLICY, state, jid)
+
+
+def test_no_cancel_is_offered_past_the_commit_point() -> None:
+    state, jid = busy_with(user("save"))
+    state = past_commit(state, jid)
+    assert not cancel_offered(POLICY, state, jid), 'past the commit point a Cancel is only "too late"'
+
+
+def test_a_waiting_users_cancel_behind_work_they_cannot_end_is_offered() -> None:
+    state, _, waiting = waiting_behind(user("save"))
+    assert cancel_offered(POLICY, state, waiting)
+
+
 # -- the model's properties, after every step (MAPPING.md §1.4) ------------------------------------------------------
 
 KINDS: tuple[JobKind, ...] = ("open", "rebuild", "preview", "save", "r4", "bql", "recover_all", "create", "copy")
@@ -893,11 +1139,19 @@ def check_step(policy: QueuePolicy, before: QueueState, event: Event, step: Step
     after, effects = step.state, step.effects
     starts = [e for e in effects if isinstance(e, Start)]
     cancelled = {e.job_id for e in effects if isinstance(e, Cancelled)}
+    no_engine = [e for e in effects if isinstance(e, NoEngine)]
     # AtMostOneJobRunning, AtMostOneEngine (also across a restart: none before the engine lock was waited out)
     assert len(starts) <= 1
     if starts:
         s = starts[0]
-        assert after.engine_lock == "free"
+        assert not after.unavailable, "an engine started while the engine was unavailable"
+        if not s.reuse:
+            # S0058: every fresh engine only after its own wait for the engine lock (§5.1, §15)
+            lock_free = before.engine_lock == "free" or (
+                isinstance(event, EngineLockFree) and before.engine_lock == "waiting"
+            )
+            assert lock_free, "a fresh engine without a wait for the engine lock"
+            assert after.engine_lock == "unchecked"
         slot = slot_at_dispatch(before, event)
         assert slot in ("none", "idle"), f"an engine started while the slot was {slot}"
         assert s.reuse == (slot == "idle")
@@ -917,7 +1171,8 @@ def check_step(policy: QueuePolicy, before: QueueState, event: Event, step: Step
             assert before.running is None or (
                 before.running.job.id in cancelled or isinstance(event, (JobDone, EngineDied))
             )
-            pool = [j for j in _queue_seen(before, effects) if j.id not in cancelled and eligible(after, j)]
+            gone = cancelled | {e.job_id for e in no_engine}
+            pool = [j for j in _queue_seen(before, effects) if j.id not in gone and eligible(after, j)]
             fg = [j for j in pool if j.waited_for]
             assert s.job.id == (fg[0] if fg else pool[0]).id
     if after.running is None:
@@ -954,9 +1209,31 @@ def check_step(policy: QueuePolicy, before: QueueState, event: Event, step: Step
     # NoAdviceOnTimerForSlowWork
     if any(isinstance(e, ShowAdvice) for e in effects) or after.advice:
         assert after.slot == "ending" or after.engine_lock == "waiting"
+    # S0058: a job ends without an engine only while the engine is unavailable (model `DispatchUnavail`, `SpawnStep`)
+    # or when the wait for the engine lock failed; it was eligible, or the running job that asked for an engine
+    for e in no_engine:
+        if e.why == "unavailable":
+            assert after.unavailable
+        else:
+            assert isinstance(event, EngineLockFailed)
+            assert before.engine_lock == "waiting"
+        r = before.running
+        mine = r is not None and r.job.id == e.job_id
+        assert mine or any(j.id == e.job_id and eligible(after, j) for j in _queue_seen(before, effects))
+        if mine:
+            assert r is not None
+            assert r.wants_engine or event == EngineNeeded(r.job.id), "a running job ended that asked for no engine"
+    if after.unavailable and after.running is None:
+        assert not any(eligible(after, j) for j in after.queued), "an eligible job kept while nothing can start"
+    # one wait for the engine lock at a time, asked for at boot or when a fresh engine is needed
+    waits = [e for e in effects if isinstance(e, WaitEngineLock)]
+    assert len(waits) <= 1
+    if waits and not isinstance(event, Boot):
+        assert before.engine_lock != "waiting"
+        assert after.engine_lock == "waiting"
     # a waited-for job that leaves the queue without starting is answered (EveryWaitedForJobEnds, safety half)
     left = {j.id for j in before.queued} - {j.id for j in after.queued} - {s.job.id for s in starts}
-    assert left <= cancelled
+    assert left <= cancelled | {e.job_id for e in no_engine}
 
 
 def _queue_seen(before: QueueState, effects: Sequence[Effect]) -> list[Job]:
@@ -997,6 +1274,8 @@ def events_for(state: QueueState) -> st.SearchStrategy[Event]:
         jid.map(RetireEngine),
         st.just(EngineEnded()),
         st.just(EngineLockFree()),
+        st.just(EngineLockFailed()),
+        st.booleans().map(EngineAvailability),
         st.sampled_from([state.epoch, state.epoch - 1]).map(AdviceTimer),
         st.sampled_from([W1, W2]).map(WorkspaceOpened),
         st.just(WorkspaceClosed()),
@@ -1040,8 +1319,9 @@ def abstract_states() -> Iterable[QueueState]:
     queues: list[tuple[Job, ...]] = [()]
     queues += [(Job(6, "preview", W1, True, False, "user", True),), (Job(6, "r4", W1, False, False, "app", True),)]
     queues += [(Job(6, "recover_all", None, True, False, "switch", True),)]
-    for running, slot, lock, excl, queued, advice in itertools.product(
-        runnings, ("none", "idle", "busy", "ending"), ("waiting", "free"), (False, True), queues, (False, True)
+    locks: tuple[EngineLock, ...] = ("unchecked", "waiting", "free")
+    for running, slot, lock, excl, queued, advice, unavail in itertools.product(
+        runnings, ("none", "idle", "busy", "ending"), locks, (False, True), queues, (False, True), (False, True)
     ):
         if running is None and slot == "busy":
             continue
@@ -1055,6 +1335,7 @@ def abstract_states() -> Iterable[QueueState]:
             open_workspace=W1,
             exclusive=excl,
             advice=advice,
+            unavailable=unavail,
             epoch=3,
             next_id=7,
             engine=None if slot == "none" else 4,
@@ -1072,6 +1353,9 @@ def abstract_events(state: QueueState) -> Iterable[Event]:
         EngineDied(4),
         EngineEnded(),
         EngineLockFree(),
+        EngineLockFailed(),
+        EngineAvailability(available=True),
+        EngineAvailability(available=False),
         AdviceTimer(3),
         AdviceTimer(2),
         Boot(),

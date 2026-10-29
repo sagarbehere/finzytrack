@@ -46,6 +46,10 @@ describe('[S0046] the generated API types', () => {
       | 'WORKSPACE_UNKNOWN'
       | 'WORKSPACE_NOT_OPEN'
       | 'WORKSPACE_NOT_READY'
+      | 'ENGINE_QUEUE_FULL'
+      | 'JOB_CANCELLED'
+      | 'ENGINE_STOPPED'
+      | 'ENGINE_UNAVAILABLE'
       | 'INTERNAL'
     >()
   })
@@ -57,6 +61,16 @@ describe('[S0046] the generated API types', () => {
     }>()
     expectTypeOf<Extract<ApiError, { code: 'WORKSPACE_NOT_READY' }>['details']>().toEqualTypeOf<{
       phase: 'WARMING'
+    }>()
+    // S0058: the engine-job codes (engine-jobs §11)
+    expectTypeOf<Extract<ApiError, { code: 'JOB_CANCELLED' }>['details']>().toEqualTypeOf<{
+      cannot_stop_ahead: boolean
+    }>()
+    expectTypeOf<Extract<ApiError, { code: 'ENGINE_STOPPED' }>['details']>().toEqualTypeOf<{
+      reason: 'crashed' | 'killed_by_system'
+    }>()
+    expectTypeOf<Extract<ApiError, { code: 'ENGINE_UNAVAILABLE' }>['details']>().toEqualTypeOf<{
+      reason: 'stopped_often' | 'cannot_start' | 'closing'
     }>()
     expectTypeOf<Extract<ApiError, { code: 'WORKSPACE_UNKNOWN' }>['details']>().toEqualTypeOf<null>()
   })

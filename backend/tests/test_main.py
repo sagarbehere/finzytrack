@@ -42,7 +42,7 @@ from app.platform.adapters.engine_client import (
     venv_site,
 )
 from app.platform.clock import FrozenClock
-from app.platform.engine_boot import EngineBoot, EngineStarting
+from app.platform.engine_jobs.scheduler import Done, EngineJobs, JobTicket
 from app.platform.observability import Event, EventLog
 from app.workspaces.access import Unknown
 from tests.api.support import Counted, FakeContainer, FixedAccess
@@ -257,8 +257,28 @@ def test_wire_builds_the_engine_client_without_starting_it(dirs: tuple[Path, Pat
     try:
         assert isinstance(wiring.engine, EngineClient)
         assert wiring.engine.pid is None
-        assert isinstance(wiring.boot.state, EngineStarting)
+        assert isinstance(wiring.jobs, EngineJobs)
+        assert wiring.jobs.status().queue.running is None
     finally:
+        wiring.jobs.close()
+        wiring.engine.close()
+
+
+@pytest.mark.skipif(os.name != "posix", reason="flock is POSIX; Windows is BL-0087 (M1b)")
+def test_the_boots_recover_all_starts_the_first_engine_through_the_scheduler(dirs: tuple[Path, Path]) -> None:
+    """engine-jobs §5.1, §5.5: "The engine is spawned when a job needs one ..., not at boot ... At start the first job
+    is the boot's `recover_all`, so an engine still starts early". The scheduler waits for the engine lock first
+    (§5.1) and the boot's window ends with its job (§3, §9.2)."""
+    wiring = main.wire(main.parse_args(argv(*dirs, "--engine-venv", str(ENGINE_VENV))), no_log, VERSION)
+    try:
+        boot = wiring.jobs.start()
+        assert isinstance(boot, JobTicket)
+        assert boot.wait(DEADLINE) == Done(None)
+        assert wiring.engine.pid is not None
+        assert (dirs[0] / "locks" / "engine.lock").exists(), "the boot did not wait for the engine lock"
+        wait_until(lambda: not wiring.jobs.status().queue.exclusive)
+    finally:
+        wiring.jobs.close()
         wiring.engine.close()
 
 
@@ -858,15 +878,16 @@ def test_the_stop_handler_is_in_place_before_the_engine_can_start(
 ) -> None:
     """Failure-modes M7, ARCHITECTURE.md §2.0: a stop that comes once the engine may be starting reaches its close. The
     storm tests only storm once a handler is installed, so they cannot see where it is installed (S0048 verifier F2:
-    installing it after the engine's start passed them). The engine starts only through `start_in_background`
-    (`wire` builds and never starts it, as tested above), so the handlers are read at that call."""
+    installing it after the engine's start passed them). The engine starts only through `EngineJobs.start`
+    (`wire` builds and never starts it, as tested above; since S0058 the scheduler's start, whose boot job starts
+    the first engine), so the handlers are read at that call."""
     seen: dict[int, object] = {}
 
-    def start(self: EngineBoot) -> None:
+    def start(self: EngineJobs) -> None:
         seen.update({s: signal.getsignal(s) for s in main.stop_signals()})
         raise EngineStartAsked
 
-    monkeypatch.setattr(EngineBoot, "start_in_background", start)
+    monkeypatch.setattr(EngineJobs, "start", start)
     logs: list[EventLog] = []
 
     def capture_process(self: EventLog) -> Callable[[], None]:  # keep pytest's own hooks; close the log after

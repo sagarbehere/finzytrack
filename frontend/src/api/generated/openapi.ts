@@ -21,6 +21,116 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** EngineQueueFullError */
+        EngineQueueFullError: {
+            /**
+             * Class
+             * @constant
+             */
+            class: "unavailable";
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            code: "ENGINE_QUEUE_FULL";
+            /** Correlation Id */
+            correlation_id: string;
+            /** Data Safe */
+            data_safe: boolean;
+            /** Details */
+            details: null;
+            /** Issues */
+            issues: components["schemas"]["Issue"][];
+            /** Message */
+            message: string;
+            /** Next Step */
+            next_step: string;
+            /** Retry After Ms */
+            retry_after_ms: number | null;
+            /** Retryable */
+            retryable: boolean;
+        };
+        /**
+         * EngineStoppedDetails
+         * @description The engine stopped while it worked on this job (engine-jobs §5.3, §11). `killed_by_system` (failure-modes E4)
+         *     needs the end report's cause, which BL-0094 decides; until then every stop is `crashed`.
+         */
+        EngineStoppedDetails: {
+            /**
+             * Reason
+             * @enum {string}
+             */
+            reason: "crashed" | "killed_by_system";
+        };
+        /** EngineStoppedError */
+        EngineStoppedError: {
+            /**
+             * Class
+             * @constant
+             */
+            class: "unavailable";
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            code: "ENGINE_STOPPED";
+            /** Correlation Id */
+            correlation_id: string;
+            /** Data Safe */
+            data_safe: boolean;
+            details: components["schemas"]["EngineStoppedDetails"];
+            /** Issues */
+            issues: components["schemas"]["Issue"][];
+            /** Message */
+            message: string;
+            /** Next Step */
+            next_step: string;
+            /** Retry After Ms */
+            retry_after_ms: number | null;
+            /** Retryable */
+            retryable: boolean;
+        };
+        /**
+         * EngineUnavailableDetails
+         * @description No engine could be started for this job (engine-jobs §5.3, §11). `stopped_often`: the restart bound is
+         *     reached (failure-modes E1); `cannot_start`: the engine is incompatible or the wait for the engine lock failed
+         *     (E6); `closing`: Finzytrack is closing.
+         */
+        EngineUnavailableDetails: {
+            /**
+             * Reason
+             * @enum {string}
+             */
+            reason: "stopped_often" | "cannot_start" | "closing";
+        };
+        /** EngineUnavailableError */
+        EngineUnavailableError: {
+            /**
+             * Class
+             * @constant
+             */
+            class: "unavailable";
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            code: "ENGINE_UNAVAILABLE";
+            /** Correlation Id */
+            correlation_id: string;
+            /** Data Safe */
+            data_safe: boolean;
+            details: components["schemas"]["EngineUnavailableDetails"];
+            /** Issues */
+            issues: components["schemas"]["Issue"][];
+            /** Message */
+            message: string;
+            /** Next Step */
+            next_step: string;
+            /** Retry After Ms */
+            retry_after_ms: number | null;
+            /** Retryable */
+            retryable: boolean;
+        };
         /** Envelope[HealthData] */
         Envelope_HealthData_: {
             data: components["schemas"]["HealthData"];
@@ -29,7 +139,7 @@ export interface components {
         /** ErrorEnvelope */
         ErrorEnvelope: {
             /** Error */
-            error: components["schemas"]["ValidationFailedError"] | components["schemas"]["RouteNotFoundError"] | components["schemas"]["WorkspaceUnknownError"] | components["schemas"]["WorkspaceNotOpenError"] | components["schemas"]["WorkspaceNotReadyError"] | components["schemas"]["InternalError"];
+            error: components["schemas"]["ValidationFailedError"] | components["schemas"]["RouteNotFoundError"] | components["schemas"]["WorkspaceUnknownError"] | components["schemas"]["WorkspaceNotOpenError"] | components["schemas"]["WorkspaceNotReadyError"] | components["schemas"]["EngineQueueFullError"] | components["schemas"]["JobCancelledError"] | components["schemas"]["EngineStoppedError"] | components["schemas"]["EngineUnavailableError"] | components["schemas"]["InternalError"];
             meta: components["schemas"]["Meta"];
         };
         /** HealthData */
@@ -80,6 +190,44 @@ export interface components {
             message: string;
             /** Path */
             path: string;
+        };
+        /**
+         * JobCancelledDetails
+         * @description The job ended by a Cancel (engine-jobs §4, §11). `cannot_stop_ahead`: the user's own waiting request was
+         *     cancelled, and the earlier ledger work it waited behind cannot be stopped from here (the UI adds §4's sentence
+         *     and offers Quit anyway).
+         */
+        JobCancelledDetails: {
+            /** Cannot Stop Ahead */
+            cannot_stop_ahead: boolean;
+        };
+        /** JobCancelledError */
+        JobCancelledError: {
+            /**
+             * Class
+             * @constant
+             */
+            class: "conflict";
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            code: "JOB_CANCELLED";
+            /** Correlation Id */
+            correlation_id: string;
+            /** Data Safe */
+            data_safe: boolean;
+            details: components["schemas"]["JobCancelledDetails"];
+            /** Issues */
+            issues: components["schemas"]["Issue"][];
+            /** Message */
+            message: string;
+            /** Next Step */
+            next_step: string;
+            /** Retry After Ms */
+            retry_after_ms: number | null;
+            /** Retryable */
+            retryable: boolean;
         };
         /** Meta */
         Meta: {

@@ -122,6 +122,7 @@ from app.platform.engine_supervision import (
     HandshakeForeign,
     HandshakeOk,
     Idle,
+    Incompatible,
     Interrupted,
     Log,
     Pause,
@@ -572,6 +573,7 @@ class EngineClient:
         log: EventSink | None = None,
         group_ops: GroupOps | None = None,
         on_engine_ended: Callable[[EngineEnd], None] | None = None,
+        on_engine_spawned: Callable[[int], None] | None = None,
     ) -> None:
         self._command = command
         self._on_stderr = on_stderr
@@ -581,6 +583,7 @@ class EngineClient:
         self._pause = pause or self._wait_unless_ended
         self._ops: GroupOps = group_ops or PosixGroupOps()
         self._on_engine_ended = on_engine_ended
+        self._on_engine_spawned = on_engine_spawned
         self._lock = threading.RLock()  # serializes the public calls
         self._signals = threading.Condition(threading.Lock())  # guards what `end`, `proceed` and `close` touch
         self._state: SupervisionState = Idle()
@@ -608,10 +611,15 @@ class EngineClient:
             return Pong() if isinstance(out, Accepted) else out
 
     def call(
-        self, op: str, params: Mapping[str, object], *, on_event: Callable[[EngineEvent], None] | None = None
+        self,
+        op: str,
+        params: Mapping[str, object],
+        *,
+        on_event: Callable[[EngineEvent], None] | None = None,
+        spawn: bool = True,
     ) -> Mapping[str, object] | EngineRefusal | EngineFailure:
         with self._call():
-            out = self._request(op, params, None, on_event)
+            out = self._request(op, params, None, on_event, spawn=spawn)
             return out.result if isinstance(out, Accepted) else out
 
     def proceed(self) -> bool:
@@ -869,13 +877,16 @@ class EngineClient:
         params: Mapping[str, object],
         validate: Callable[[Mapping[str, object]], object] | None,
         on_event: Callable[[EngineEvent], None] | None,
+        *,
+        spawn: bool = True,
     ) -> Accepted | EngineRefusal | EngineFailure:
         """One request through the table: `Send`, then the answer or its absence. `validate` checks a result's
-        shape (a `Violation` stops the engine like any invalid reply)."""
+        shape (a `Violation` stops the engine like any invalid reply). Without `spawn` the request goes only to a
+        ready engine (S0058)."""
         line = self._encode(op, params)
         if isinstance(line, EngineFailure):
             return line
-        ready = self._ensure_running()
+        ready = self._ensure_running() if spawn else self._ready_only()
         if isinstance(ready, EngineFailure):
             return ready
         run, _ = ready
@@ -897,6 +908,21 @@ class EngineClient:
             return failure
         self._feed(Answered())
         return out
+
+    def _ready_only(self) -> tuple[_Running, EngineInfo] | EngineFailure:
+        """The running engine, if it is ready; else a failure, and nothing is started (S0058: the scheduler's call
+        inside a job, whose engine is the one the queue's `Start` gave it, engine-jobs §5.1, §5.3). An engine that
+        died since the last request was settled by `_call` already (a stop, as at any next request)."""
+        state, run = self._state, self._run
+        if isinstance(state, Ready) and run is not None:
+            return run, state.info
+        if isinstance(state, Closed):
+            return EngineFailure("closed", "the client was closed")
+        if isinstance(state, Incompatible):
+            return state.failure
+        if isinstance(state, Idle):
+            return EngineFailure("cancelled", "the job's engine was ended by us; no other engine is started for it")
+        return EngineFailure("crashed", "the job's engine is no longer running; no other engine is started for it")
 
     def _observed_end(self, run: _Running) -> SupervisionEvent | None:
         """Our end of this engine, if we recorded one: it wins over what the output did (§5.2)."""
@@ -1031,6 +1057,11 @@ class EngineClient:
             group = EngineGroup(self._ops, proc.pid) if os.name == "posix" else _AloneProcess(proc)
             run = _Running(proc, self._serial, group)
             self._run = run  # at once, so an interrupted start ends it (the table's `End`)
+        if self._on_engine_spawned is not None:
+            # Before the engine's threads start, so before its reaper can report its end (S0058). A receiver that
+            # raises must not take the start down; an interrupt still reaches the `_call` guard.
+            with contextlib.suppress(Exception):
+                self._on_engine_spawned(run.serial)
         if proc.stdin is None or proc.stdout is None or proc.stderr is None:  # pragma: no cover (pipes were requested)
             return SpawnFailed("the engine has no pipes", self._monotonic())
         if os.name == "posix":

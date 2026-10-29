@@ -45,6 +45,10 @@ class ErrorCode(StrEnum):
     WORKSPACE_UNKNOWN = "WORKSPACE_UNKNOWN"
     WORKSPACE_NOT_OPEN = "WORKSPACE_NOT_OPEN"
     WORKSPACE_NOT_READY = "WORKSPACE_NOT_READY"
+    ENGINE_QUEUE_FULL = "ENGINE_QUEUE_FULL"
+    JOB_CANCELLED = "JOB_CANCELLED"
+    ENGINE_STOPPED = "ENGINE_STOPPED"
+    ENGINE_UNAVAILABLE = "ENGINE_UNAVAILABLE"
     INTERNAL = "INTERNAL"
 
 
@@ -63,6 +67,32 @@ class WorkspaceNotReadyDetails:
     """The workspace named is the open one, but it cannot serve yet (ADR-0018)."""
 
     phase: NotReadyPhase
+
+
+@dataclass(frozen=True, slots=True)
+class JobCancelledDetails:
+    """The job ended by a Cancel (engine-jobs §4, §11). `cannot_stop_ahead`: the user's own waiting request was
+    cancelled, and the earlier ledger work it waited behind cannot be stopped from here (the UI adds §4's sentence
+    and offers Quit anyway)."""
+
+    cannot_stop_ahead: bool
+
+
+@dataclass(frozen=True, slots=True)
+class EngineStoppedDetails:
+    """The engine stopped while it worked on this job (engine-jobs §5.3, §11). `killed_by_system` (failure-modes E4)
+    needs the end report's cause, which BL-0094 decides; until then every stop is `crashed`."""
+
+    reason: Literal["crashed", "killed_by_system"]
+
+
+@dataclass(frozen=True, slots=True)
+class EngineUnavailableDetails:
+    """No engine could be started for this job (engine-jobs §5.3, §11). `stopped_often`: the restart bound is
+    reached (failure-modes E1); `cannot_start`: the engine is incompatible or the wait for the engine lock failed
+    (E6); `closing`: Finzytrack is closing."""
+
+    reason: Literal["stopped_often", "cannot_start", "closing"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -122,6 +152,42 @@ def specs() -> tuple[ErrorSpec, ...]:
             data_safe=True,
             next_step="Wait a moment and try again.",
             details=WorkspaceNotReadyDetails,
+        ),
+        ErrorSpec(
+            ErrorCode.ENGINE_QUEUE_FULL,
+            ErrorClass.UNAVAILABLE,
+            retryable=True,
+            message="Finzytrack is busy with other ledger work.",
+            data_safe=True,
+            next_step="Please try again in a moment.",
+            details=None,
+        ),
+        ErrorSpec(
+            ErrorCode.JOB_CANCELLED,
+            ErrorClass.CONFLICT,
+            retryable=False,
+            message="Your request is cancelled.",
+            data_safe=False,  # a cancelled save says "unchanged" only after its files are hashed again (§11)
+            next_step="Start it again when you need it.",
+            details=JobCancelledDetails,
+        ),
+        ErrorSpec(
+            ErrorCode.ENGINE_STOPPED,
+            ErrorClass.UNAVAILABLE,
+            retryable=True,
+            message="The ledger engine stopped while working on this.",
+            data_safe=True,  # a read job's; a save's engine death is resolved from disk instead (§6.6)
+            next_step="Try again. If it happens again, copy the diagnostics and report a problem.",
+            details=EngineStoppedDetails,
+        ),
+        ErrorSpec(
+            ErrorCode.ENGINE_UNAVAILABLE,
+            ErrorClass.UNAVAILABLE,
+            retryable=True,
+            message="The ledger engine is not working right now, so Finzytrack did not do this.",
+            data_safe=True,  # nothing ran
+            next_step="Try again in a moment. If it happens again, copy the diagnostics and report a problem.",
+            details=EngineUnavailableDetails,
         ),
         ErrorSpec(
             ErrorCode.INTERNAL,

@@ -9,11 +9,20 @@ product calls it. Each rule names its spec line.
 
 - **One engine, one job** (§5.1; ADR-0064 decision 1). `running` holds at most one job; `slot` is the engine:
   `none`, `idle` (alive, ran only parse-only work, may serve the next job), `busy` (the running job's engine) or
-  `ending` (we signalled it, or it died, and its group is not drained yet). A new engine starts only from `none` or
-  `idle`, and only once the sidecar has waited out the engine lock (`engine_lock == "free"`): an engine of an earlier
-  session must have ended before this session's first ledger work (simplification B). Each spawn gets its own
-  number, carried in `Start` and named by `EngineDied`; a reused engine keeps its number, so a death report is never
-  taken for an earlier engine's, and one about an earlier engine changes nothing (§5.3).
+  `ending` (we signalled it, or it died, and its group is not drained yet). A job starts only from `none` or `idle`.
+  Each spawn gets its own number, carried in `Start` and named by `EngineDied`; a reused engine keeps its number, so
+  a death report is never taken for an earlier engine's, and one about an earlier engine changes nothing (§5.3).
+- **The engine lock before every fresh engine** (§5.1, §15; simplification B; S0053 verifier round 2, S0058): a
+  fresh engine starts only once the sidecar has waited out the engine lock since the last fresh start
+  (`engine_lock == "free"`; a fresh start makes it `unchecked` again). The boot waits at once (an engine of an
+  earlier session must have ended before this session's first ledger work); later the dispatch asks for a wait when a
+  fresh engine is needed, so a plugin's child that left the group holding the lock delays the next engine, with the
+  advice, instead of an engine waiting at the lock unseen. A failed wait starts nothing: the jobs that need an engine
+  end without one (`NoEngine`), and the next one waits again. A reuse needs no wait.
+- **The engine unavailable** (§5.3; model `DispatchUnavail`, `SpawnStep`): the shell feeds `EngineAvailability`
+  (the client's bound reached, or an incompatible engine; Try again or the restart window lifts it). Meanwhile no
+  job starts; every eligible queued job, waited-for first, and a running job that asks for a fresh engine end without
+  one (`NoEngine`), without waiting for the slot.
 - **The ordering rule** (§3): when the engine is free, the oldest eligible queued waited-for job starts, else the
   oldest eligible background job. A running job is never interrupted to start another. Eligible: during a switch's,
   a Reopen's or the boot's window (`exclusive`; the boot's opens with `Boot`, "from the start") only its own jobs
@@ -41,8 +50,8 @@ product calls it. Each rule names its spec line.
   ledger work. Quit and reopen Finzytrack."), whether or not a job waits. Never for a running job the user merely
   cannot end: that answer comes only to a Cancel.
 
-Not here yet (BL-0109's later pieces): the engine's `Unavailable` (BL-0150), recover-all's Cancel per journal
-(BL-0151), the quiesce, the quit and their screens (BL-0154). The code map's planned list names each
+Not here yet (BL-0109's later pieces): recover-all's Cancel per journal and its `not_tried` marks (BL-0151), the
+quiesce, the quit and their screens (BL-0154). The code map's planned list names each
 (`backend/tests/architecture/test_tla_mapping.py`).
 """
 
@@ -54,15 +63,16 @@ from typing import Any, Final, Literal
 
 from app.platform.tla import tla_action
 
-TABLE_VERSION: Final = 1
+TABLE_VERSION: Final = 2  # 2 (S0058): the lock before every fresh engine; the engine unavailable
 """Raised whenever a decision changes, so the decision log (§12) replays each recording with its own table."""
 
 type JobKind = Literal["open", "rebuild", "preview", "save", "r4", "bql", "recover_all", "create", "copy"]
 type Owner = Literal["user", "app", "switch"]
 type Slot = Literal["none", "idle", "busy", "ending"]
-type EngineLock = Literal["waiting", "free"]
+type EngineLock = Literal["unchecked", "waiting", "free"]
 type EndReason = Literal["cancel", "retire", "crashed"]
 type RefusalCode = Literal["WORKSPACE_NOT_OPEN", "ENGINE_QUEUE_FULL"]
+type NoEngineWhy = Literal["unavailable", "lock_failed"]
 
 WRITING: frozenset[JobKind] = frozenset({"save", "create", "copy"})
 """Jobs that write and have a commit point (§1, §4)."""
@@ -122,7 +132,9 @@ class Running:
 class QueueState:
     """`engine`: the spawn number of the engine in the slot (None when the slot is `none`); `next_engine`: the number
     the next fresh engine gets. Every spawn gets a new number and a reused engine keeps its own, so an `EngineDied`
-    names one engine and never an earlier one (§5.3)."""
+    names one engine and never an earlier one (§5.3). `engine_lock`: `waiting` while the sidecar waits for it, `free`
+    once waited out, `unchecked` after a fresh start or a failed wait (the next fresh engine waits again).
+    `unavailable`: the engine cannot be started (§5.3)."""
 
     queued: tuple[Job, ...] = ()
     running: Running | None = None
@@ -135,6 +147,7 @@ class QueueState:
     next_id: int = 1
     engine: int | None = None
     next_engine: int = 1
+    unavailable: bool = False
 
 
 # -- Events -----------------------------------------------------------------------------------------------------------
@@ -148,6 +161,20 @@ class Boot:
 @dataclass(frozen=True, slots=True)
 class EngineLockFree:
     """The sidecar took the engine lock and released it: no engine of an earlier session holds it (§5.1)."""
+
+
+@dataclass(frozen=True, slots=True)
+class EngineLockFailed:
+    """The sidecar's wait for the engine lock failed (an `OSError`): an earlier session's engine may still run, so no
+    engine starts on it (S0053 verifier F2 and round 2)."""
+
+
+@dataclass(frozen=True, slots=True)
+class EngineAvailability:
+    """Whether the engine can be started (§5.3): False once the restart bound is reached or the engine is
+    incompatible; True when the restart window lets a stop go, or after Try again."""
+
+    available: bool
 
 
 @dataclass(frozen=True, slots=True)
@@ -243,6 +270,8 @@ class ExclusiveEnded:
 type Event = (
     Boot
     | EngineLockFree
+    | EngineLockFailed
+    | EngineAvailability
     | Submit
     | Cancel
     | ClientGone
@@ -262,6 +291,8 @@ type Event = (
 EVENTS: tuple[type, ...] = (
     Boot,
     EngineLockFree,
+    EngineLockFailed,
+    EngineAvailability,
     Submit,
     Cancel,
     ClientGone,
@@ -376,6 +407,15 @@ class Finished:
     job_id: int
 
 
+@dataclass(frozen=True, slots=True)
+class NoEngine:
+    """The job ends without an engine (§5.3, §11 `ENGINE_UNAVAILABLE`): the engine is unavailable, or the wait for the
+    engine lock failed. Nothing of it ran (a running job between engines keeps what its earlier parts did)."""
+
+    job_id: int
+    why: NoEngineWhy
+
+
 type Effect = (
     WaitEngineLock
     | ArmAdviceTimer
@@ -391,6 +431,7 @@ type Effect = (
     | TooLate
     | EngineLost
     | Finished
+    | NoEngine
 )
 
 
@@ -437,38 +478,88 @@ def _end_running(state: QueueState) -> tuple[QueueState, tuple[Effect, ...]]:
     return state, ()
 
 
-@tla_action("Dispatch")
 def _dispatch(state: QueueState) -> tuple[QueueState, tuple[Effect, ...]]:
-    """§3, §5.1: when the engine is free (none, or idle after parse-only work) and the engine lock was waited out,
-    the running job gets the fresh engine it asked for; with no running job, the oldest eligible waited-for job
-    starts, else the oldest eligible background job."""
-    if state.engine_lock != "free" or state.slot not in ("none", "idle"):
-        return state, ()
-    running = state.running
-    if running is not None:
-        if not running.wants_engine:
-            return state, ()
-        state, start = _start(state, running.job)
-        return replace(state, running=replace(running, wants_engine=False)), (start,)
+    """After every event: the running job's ask for a fresh engine (`SpawnStep`); with no running job, the next
+    queued job (`Dispatch`), or, while the engine is unavailable, the queued jobs end without one (`DispatchUnavail`).
+    A running job is never interrupted (§3)."""
+    effects: tuple[Effect, ...] = ()
+    if state.running is not None:
+        state, effects = _spawn_step(state)
+    if state.running is not None:
+        return state, effects
+    state, more = _dispatch_unavailable(state) if state.unavailable else _dispatch_queued(state)
+    return state, (*effects, *more)
+
+
+def _pick(state: QueueState) -> Job | None:
+    """§3: the oldest eligible waited-for job, else the oldest eligible background job."""
     pool = [j for j in state.queued if eligible(state, j)]
-    if not pool:
-        return state, ()
     waited = [j for j in pool if j.waited_for]
-    job = waited[0] if waited else pool[0]
-    state, start = _start(replace(state, queued=tuple(j for j in state.queued if j.id != job.id)), job)
-    return replace(state, running=Running(job)), (start,)
+    return waited[0] if waited else (pool[0] if pool else None)
 
 
-def _start(state: QueueState, job: Job) -> tuple[QueueState, Start]:
-    """§5.1, §5.3: called with the slot `none` or `idle`; an idle engine (the slot holds a number) serves the job and
-    keeps its number; otherwise a fresh one is spawned with the next number (each spawn its own)."""
-    if state.engine is not None:
-        return replace(state, slot="busy"), Start(job, reuse=True, engine=state.engine)
-    number = state.next_engine
-    return replace(state, slot="busy", engine=number, next_engine=number + 1), Start(job, reuse=False, engine=number)
+@tla_action("Dispatch")
+def _dispatch_queued(state: QueueState) -> tuple[QueueState, tuple[Effect, ...]]:
+    """§3, §5.1: with the engine free (none, or idle after parse-only work), the oldest eligible waited-for job
+    starts, else the oldest eligible background job; a fresh engine waits for the engine lock first."""
+    if state.slot not in ("none", "idle"):
+        return state, ()
+    job = _pick(state)
+    if job is None:
+        return state, ()
+    state, effects = _engine_for(state, job)
+    if not any(isinstance(e, Start) for e in effects):
+        return state, effects
+    return replace(state, queued=tuple(j for j in state.queued if j.id != job.id), running=Running(job)), effects
+
+
+@tla_action("DispatchUnavail")
+def _dispatch_unavailable(state: QueueState) -> tuple[QueueState, tuple[Effect, ...]]:
+    """§5.3, §11; model `DispatchUnavail` (no `SlotFree`: nothing will start, so nothing waits for a drain): while the
+    engine is unavailable, every eligible queued job ends without one, in the order it would have started."""
+    effects: list[Effect] = []
+    while (job := _pick(state)) is not None:
+        state = replace(state, queued=tuple(j for j in state.queued if j.id != job.id))
+        effects.append(NoEngine(job.id, "unavailable"))
+    return state, tuple(effects)
 
 
 @tla_action("SpawnStep")
+def _spawn_step(state: QueueState) -> tuple[QueueState, tuple[Effect, ...]]:
+    """§5.1: the running job that asked for a fresh engine gets one once the slot is free (after the lock's wait);
+    model `SpawnStep`'s unavailable branch: while the engine is unavailable it ends without one ("the save (or its R4)
+    could not get an engine: refused, nothing written")."""
+    running = state.running
+    if running is None or not running.wants_engine or state.slot not in ("none", "idle"):
+        return state, ()
+    if state.unavailable:
+        return replace(state, running=None), (NoEngine(running.job.id, "unavailable"),)
+    state, effects = _engine_for(state, running.job)
+    if any(isinstance(e, Start) for e in effects):
+        state = replace(state, running=replace(running, wants_engine=False))
+    return state, effects
+
+
+def _engine_for(state: QueueState, job: Job) -> tuple[QueueState, tuple[Effect, ...]]:
+    """§5.1: called with the slot `none` or `idle`. An idle engine serves the job at once; a fresh one starts only
+    once the engine lock was waited out since the last fresh start, else a wait is asked for (one at a time)."""
+    if state.engine is not None:
+        return replace(state, slot="busy"), (Start(job, reuse=True, engine=state.engine),)
+    if state.engine_lock == "free":
+        number = state.next_engine
+        state = replace(state, slot="busy", engine=number, next_engine=number + 1, engine_lock="unchecked")
+        return state, (Start(job, reuse=False, engine=number),)
+    if state.engine_lock == "waiting":
+        return state, ()
+    return _wait_lock(state)
+
+
+def _wait_lock(state: QueueState) -> tuple[QueueState, tuple[Effect, ...]]:
+    """§5.1: wait for the engine lock; the advice shows after the display delay while the wait lasts."""
+    epoch = state.epoch + 1
+    return replace(state, engine_lock="waiting", epoch=epoch), (WaitEngineLock(), ArmAdviceTimer(epoch))
+
+
 def _engine_needed(p: QueuePolicy, s: QueueState, e: EngineNeeded) -> Step:
     """§5.1: a job's next part gets a fresh engine only once the one before it has ended: the ask is kept, and the
     dispatch starts the engine when the slot is free (an ask made while the old engine still runs is not lost)."""
@@ -492,9 +583,8 @@ def _boot(p: QueuePolicy, s: QueueState, e: Boot) -> Step:
     """§5.1: at start, before its first engine, the sidecar waits for the engine lock; the advice shows after the
     display delay while it waits. §3: the boot's window is open "from the start" (model `SwitchExclusive` holds from
     `Init`): only its own jobs start until the shell feeds `ExclusiveEnded` when the boot ends (BL-0154)."""
-    epoch = s.epoch + 1
-    state = replace(s, engine_lock="waiting", exclusive=True, epoch=epoch)
-    return Step(state, (WaitEngineLock(), ArmAdviceTimer(epoch)))
+    state, effects = _wait_lock(replace(s, exclusive=True))
+    return Step(state, effects)
 
 
 def _clear_advice(state: QueueState) -> tuple[QueueState, tuple[Effect, ...]]:
@@ -508,8 +598,37 @@ def _clear_advice(state: QueueState) -> tuple[QueueState, tuple[Effect, ...]]:
 
 
 def _engine_lock_free(p: QueuePolicy, s: QueueState, e: EngineLockFree) -> Step:
+    """The wait ended: a fresh engine may start (the dispatch after this step starts it). An answer with no wait under
+    way changes nothing."""
+    if s.engine_lock != "waiting":
+        return Step(s)
     state, effects = _clear_advice(replace(s, engine_lock="free"))
     return Step(state, effects)
+
+
+def _engine_lock_failed(p: QueuePolicy, s: QueueState, e: EngineLockFailed) -> Step:
+    """S0053 verifier F2 and round 2: a failed wait starts no engine (an earlier session's engine may still run). The
+    jobs that need one now end without one: the eligible queued jobs and a running job that asked for an engine;
+    a job that could not start yet stays queued, and the next need waits again."""
+    if s.engine_lock != "waiting":
+        return Step(s)
+    state = replace(s, engine_lock="unchecked")
+    effects: list[Effect] = []
+    r = state.running
+    if r is not None and r.wants_engine and state.slot != "busy":  # a job still on its engine keeps it and its ask
+        state = replace(state, running=None)
+        effects.append(NoEngine(r.job.id, "lock_failed"))
+    if state.running is None:
+        while (job := _pick(state)) is not None:
+            state = replace(state, queued=tuple(j for j in state.queued if j.id != job.id))
+            effects.append(NoEngine(job.id, "lock_failed"))
+    state, cleared = _clear_advice(state)
+    return Step(state, (*effects, *cleared))
+
+
+def _engine_availability(p: QueuePolicy, s: QueueState, e: EngineAvailability) -> Step:
+    """§5.3: the engine's bound reached or lifted; the dispatch after this step ends or starts the waiting jobs."""
+    return Step(replace(s, unavailable=not e.available))
 
 
 def _submit(p: QueuePolicy, s: QueueState, e: Submit) -> Step:
@@ -674,6 +793,8 @@ type Handler = Callable[[QueuePolicy, QueueState, Any], Step]
 HANDLERS: tuple[tuple[type, Handler], ...] = (
     (Boot, _boot),
     (EngineLockFree, _engine_lock_free),
+    (EngineLockFailed, _engine_lock_failed),
+    (EngineAvailability, _engine_availability),
     (Submit, _submit),
     (Cancel, _cancel),
     (ClientGone, _client_gone),
@@ -689,6 +810,14 @@ HANDLERS: tuple[tuple[type, Handler], ...] = (
     (ExclusiveBegan, _exclusive),
     (ExclusiveEnded, _shared),
 )
+
+
+def cancel_offered(policy: QueuePolicy, state: QueueState, job_id: int) -> bool:
+    """§4, §5.4 ("Cancel where §4 allows it"): whether the job's own Cancel would end it or its own wait, read from
+    the table itself, so the UI never shows a Cancel the table answers with nothing (a background job, a switch job
+    with nothing ahead, a recover-all between engines: S0053 verifier round 2) or with "too late"."""
+    step = transition(policy, state, Cancel(job_id))
+    return any(isinstance(e, Cancelled) and e.job_id == job_id for e in step.effects)
 
 
 def transition(policy: QueuePolicy, state: QueueState, event: Event) -> Step:

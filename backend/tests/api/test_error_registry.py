@@ -92,6 +92,12 @@ def test_the_codes_of_architecture_6_1_this_slice_raises_have_their_classes() ->
         "WORKSPACE_UNKNOWN": ErrorClass.NOT_FOUND,
         "WORKSPACE_NOT_OPEN": ErrorClass.CONFLICT,
         "WORKSPACE_NOT_READY": ErrorClass.CONFLICT,
+        # S0058 (engine-jobs §11; ARCHITECTURE §6.1 "their class ... join with the engine-jobs slice"): a full queue
+        # and an engine that is down are a dependency busy or down; a Cancel is the user's own end of the request.
+        "ENGINE_QUEUE_FULL": ErrorClass.UNAVAILABLE,
+        "JOB_CANCELLED": ErrorClass.CONFLICT,
+        "ENGINE_STOPPED": ErrorClass.UNAVAILABLE,
+        "ENGINE_UNAVAILABLE": ErrorClass.UNAVAILABLE,
         "INTERNAL": ErrorClass.INTERNAL,
     }
     assert {s.code: s.error_class for s in specs()} == expected
@@ -119,7 +125,10 @@ def test_internal_does_not_claim_the_data_is_safe() -> None:
 
 
 def test_not_ready_is_retryable_and_the_others_are_not() -> None:
-    assert {s.code for s in specs() if s.retryable} == {"WORKSPACE_NOT_READY"}
+    """S0058: §11 offers Try again for a full queue, a stopped engine and an unavailable one; a Cancel is not retried
+    for the user."""
+    retryable = {"WORKSPACE_NOT_READY", "ENGINE_QUEUE_FULL", "ENGINE_STOPPED", "ENGINE_UNAVAILABLE"}
+    assert {s.code for s in specs() if s.retryable} == retryable
 
 
 def test_error_builds_the_class_the_registry_gives() -> None:

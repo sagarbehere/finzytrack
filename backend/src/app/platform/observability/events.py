@@ -147,6 +147,28 @@ ENGINE_BYTECODE = Event(
         Field("detail", Kind.DEBUG_DETAIL),  # free text: the failed start's detail, the fill's exit
     ),
 )
+ENGINE_EXIT = Event(
+    "engine.exit",
+    "info",
+    "platform",
+    # Each engine's end report, logged by the job scheduler with its job (S0058; engine-jobs §5.2): content-free.
+    (
+        Field("engine", Kind.ID),  # the queue's engine number (the one its `Start` carried)
+        Field(
+            "job",
+            Kind.ENUM,  # `app.platform.engine_jobs.queue.JobKind`, held equal by a test
+            frozenset({"open", "rebuild", "preview", "save", "r4", "bql", "recover_all", "create", "copy"}),
+        ),
+        Field(
+            "reason",
+            Kind.ENUM,  # who ended it (`app.platform.engine.EngineEnd.reason`); `none`: it ended by itself
+            frozenset({"cancel", "retire", "quit_anyway", "close", "stop", "input_closed", "none"}),
+        ),
+        Field("exit_code", Kind.COUNT),  # its exit status, if it exited
+        Field("signal", Kind.COUNT),  # the signal that ended it, if one did
+        Field("max_rss_kib", Kind.COUNT),  # its peak memory
+    ),
+)
 ENGINE_STDERR = Event("engine.stderr", "info", "platform", (Field("line", Kind.DEBUG_DETAIL),), source="engine")
 ENGINE_CLOSED = Event("engine.closed", "info", "platform", ())
 
@@ -163,6 +185,20 @@ API_INTERNAL_ERROR = Event(
 )
 """A request ended in `INTERNAL`: an exception nothing expected, or a malformed `DomainError`. The line carries the
 request's id as `correlation_id`, which the error envelope shows to the user (§6.6)."""
+
+# -- The engine job scheduler (S0058; ARCHITECTURE.md §6.3: the job runner is one of the three catch-all places) -----
+
+JOB_INTERNAL_ERROR = Event(
+    "jobs.internal_error",
+    "error",
+    "platform",
+    (
+        Field("job", Kind.ID),  # the job's id in the queue
+        Field("exception_type", Kind.ID),  # the exception's class name
+        Field("exception", Kind.DEBUG_DETAIL),  # its text and traceback: free text that can carry ledger data
+    ),
+)
+"""A job's own code raised: the job ends `INTERNAL` and its engine is not reused."""
 
 # -- Lines the log writes for what is not a registered event -------------------------------------------------------
 
@@ -190,9 +226,11 @@ EVENTS = (
     ENGINE_UNAVAILABLE,
     ENGINE_ENDED,
     ENGINE_BYTECODE,
+    ENGINE_EXIT,
     ENGINE_STDERR,
     ENGINE_CLOSED,
     API_INTERNAL_ERROR,
+    JOB_INTERNAL_ERROR,
     LIB_RECORD,
     UNCAUGHT,
     UNREGISTERED,

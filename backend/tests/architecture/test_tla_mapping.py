@@ -16,9 +16,9 @@ the pieces land. The markers are read from the source (AST), never by importing 
 reader refuses a disjunct it cannot read rather than dropping it (S0053 verifier F9).
 
 Limit: the check sees which actions are marked, not whether the marked function is the one that carries the action
-out. A marker on the wrong function (today `SpawnStep` sits on `_engine_needed`, which records the ask, while the
-start itself happens in `_dispatch`) passes; the conformance tests of BL-0150 replay the model's traces through the
-code and catch a wrong function by behaviour.
+out. A marker on the wrong function passes; the conformance tests of BL-0150 (S0059) replay the model's traces through
+the code and catch a wrong function by behaviour. (Until S0058 `SpawnStep` sat on `_engine_needed`, which records the
+ask; it is now on `_spawn_step`, which starts the fresh engine or, while the engine is unavailable, ends the job.)
 """
 
 from __future__ import annotations
@@ -45,10 +45,8 @@ SAVE = "BL-0151"  # the save, rollback and recover-all over the fake file system
 R4_READS = "BL-0152"  # R4, the reads and the open
 CREATE_COPY = "BL-0153"  # create and copy
 SWITCH = "BL-0154"  # the switch, Reopen, quit, boot and update
-SHELL = "BL-0150"  # the client's §5.5 changes and the scheduler shell
 
 PLANNED: Mapping[str, str] = {
-    **{a: SHELL for a in ("DispatchUnavail", "AppBgSave")},
     **{
         a: SAVE
         for a in [
@@ -127,12 +125,11 @@ PLANNED: Mapping[str, str] = {
 }
 
 PARTIAL: Mapping[str, str] = {
-    "Dispatch": SHELL,  # the engine's Unavailable, fed in by the shell (the guard `~Unavail`)
-    "SpawnStep": SHELL,  # its Unavailable branch; recover-all's `not_tried` marks with BL-0151
-    "AdviceTimer": SHELL,  # the shell arms the timer and shows the text
-    "S_Commit": SHELL,  # the engine's `gate` and its wait for `proceed` (protocol)
-    "CR_Commit": SHELL,
-    "CP_Commit": SHELL,
+    "SpawnStep": SAVE,  # recover-all's `not_tried` marks in its unavailable branch (§8.1)
+    "DispatchUnavail": SAVE,  # recover-all's `not_tried` marks and the quit notes it answers (§8.1, §9.3)
+    "S_Commit": SAVE,  # the save's own gate in the engine (§6.1 step 7); the table's step and `proceed` are built
+    "CR_Commit": CREATE_COPY,
+    "CP_Commit": CREATE_COPY,
     "FreshEnd": SAVE,  # the save's and R4's own engine changes call it
     "UserCancelRunning": SAVE,  # recover-all's Cancel per journal (§8.1)
     "UserCancelQueued": SWITCH,  # the switch's or boot's cancelled screen (§9.1 step 3, §9.2)

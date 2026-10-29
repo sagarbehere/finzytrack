@@ -3,10 +3,10 @@
 State that outlives a request lives only in the places listed here, each with its owner, bound and eviction.
 Every entry is owned by a container: a `UserContainer` or `WorkspaceContainer` entry names the class or factory
 whose instances the container holds. There is no process-wide state (ADR-0064 retired the heavy-load semaphore,
-the one process-wide entry ADR-0041 allowed; the engine job queue hangs off `UserContainer`, INV-11).
+the one process-wide entry ADR-0041 allowed; the engine job queue hangs off `UserContainer`, INV-11, since S0058).
 `tests/architecture/test_globals.py` scans every module and fails on module-level or class-level state,
 `global` writes or memoizing decorators, and on a process-wide, duplicate, incomplete or stale entry. The slices
-that add the engine job queue and the stores register them here.
+that add the stores register them here.
 """
 
 from dataclasses import dataclass
@@ -39,11 +39,14 @@ REGISTRY: tuple[StateEntry, ...] = (
         "stopped engine is restarted by the next request, bounded by RestartPolicy",
     ),
     StateEntry(
-        "app.platform.engine_boot",
-        "EngineBoot",
-        "UserContainer",  # S0038: the engine's first start, with the EngineClient it reports on
-        "one EngineState value (starting, ready with its handshake facts and pid, or down with its failure)",
-        "replaced once when the first start ends; dropped with the user container",
+        "app.platform.engine_jobs.scheduler",
+        "EngineJobs",
+        "UserContainer",  # ADR-0064, INV-11: one queue, one scheduler thread and one engine per user container
+        "at most max_queued queued jobs (QueuePolicy) and one running, one QueueState, one worker thread per job "
+        "(a cancelled job's worker ends once its engine has ended), one engine-lock wait at a time, at most two "
+        "engines in its books (the previous one until its end report, the current one), two timers",
+        "close() when the user container closes: every waiting job is answered and the scheduler thread stops; a "
+        "job's record goes once it has ended and been answered",
     ),
     StateEntry(
         "app.platform.observability.log",

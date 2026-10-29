@@ -11,9 +11,16 @@ from typing import get_args
 
 import pytest
 
-from app.platform.engine import FailureKind
+from app.platform.engine import EndCause, FailureKind
+from app.platform.engine_jobs.queue import JobKind
 from app.platform.observability import COMMON, EVENTS, Event, Field, Kind, registry_problems
-from app.platform.observability.events import ENGINE_START_FAILED, ENGINE_STOPPED, ENGINE_UNAVAILABLE
+from app.platform.observability.events import (
+    ENGINE_EXIT,
+    ENGINE_START_FAILED,
+    ENGINE_STOPPED,
+    ENGINE_UNAVAILABLE,
+    JOB_INTERNAL_ERROR,
+)
 
 GOOD = Event("engine.ready", "info", "platform", (Field("pid", Kind.ID), Field("protocol", Kind.ID)))
 
@@ -99,3 +106,28 @@ def test_unavailable_is_logged_with_the_count_of_stops_only() -> None:
     start; its one field is the number of stops."""
     assert {f.name: f.kind for f in ENGINE_UNAVAILABLE.fields} == {"stops": Kind.COUNT}
     assert ENGINE_UNAVAILABLE.level == "error"
+
+
+def test_an_engines_end_is_logged_with_content_free_fields_only() -> None:
+    """S0058 (BL-0150: "log each engine's end report (exit, peak memory) with its job"): the job's kind and the
+    end's cause are closed sets held equal to their types; every other field is a number, safe outside debug mode."""
+    fields = {f.name: f for f in ENGINE_EXIT.fields}
+    assert {n: f.kind for n, f in fields.items()} == {
+        "engine": Kind.ID,
+        "job": Kind.ENUM,
+        "reason": Kind.ENUM,
+        "exit_code": Kind.COUNT,
+        "signal": Kind.COUNT,
+        "max_rss_kib": Kind.COUNT,
+    }
+    assert fields["job"].values == frozenset(get_args(JobKind.__value__))
+    assert fields["reason"].values == frozenset(get_args(EndCause.__value__)) | {"none"}
+
+
+def test_a_jobs_internal_error_carries_its_text_only_in_debug_mode() -> None:
+    assert {f.name: f.kind for f in JOB_INTERNAL_ERROR.fields} == {
+        "job": Kind.ID,
+        "exception_type": Kind.ID,
+        "exception": Kind.DEBUG_DETAIL,
+    }
+    assert JOB_INTERNAL_ERROR.level == "error"

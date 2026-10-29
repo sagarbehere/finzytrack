@@ -1,8 +1,11 @@
 """Error codes: the registry, the single source for codes (ARCHITECTURE.md §6.1; EP-13)."""
 
 from app.platform.errors.registry import (
+    EngineStoppedDetails,
+    EngineUnavailableDetails,
     ErrorCode,
     ErrorSpec,
+    JobCancelledDetails,
     NotReadyPhase,
     WorkspaceNotOpenDetails,
     WorkspaceNotReadyDetails,
@@ -14,8 +17,11 @@ from app.platform.errors.registry import (
 )
 
 __all__ = [
+    "EngineStoppedDetails",
+    "EngineUnavailableDetails",
     "ErrorCode",
     "ErrorSpec",
+    "JobCancelledDetails",
     "NotReadyPhase",
     "WorkspaceNotOpenDetails",
     "WorkspaceNotReadyDetails",

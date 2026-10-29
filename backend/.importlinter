@@ -138,3 +138,27 @@ forbidden_modules =
     random
     secrets
     uuid
+
+[importlinter:contract:engine-queue-pure]
+# The engine job queue's table decides; the scheduler shell does the I/O (S0053, S0058; engine-jobs §12: "no clock,
+# random value, environment or global"; EP-01, EP-17).
+name = The engine job queue table is pure (engine-jobs §12, EP-01)
+type = forbidden
+source_modules =
+    app.platform.engine_jobs.queue
+forbidden_modules =
+    app.platform.adapters
+    app.platform.engine_jobs.scheduler
+    app.platform.observability
+    os
+    pathlib
+    subprocess
+    threading
+    queue
+    socket
+    signal
+    time
+    random
+    secrets
+    uuid
+    datetime
