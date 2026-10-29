@@ -34,7 +34,13 @@ from app.api.envelope import Envelope
 from app.api.health import health_router
 from app.api.routes import declare
 from app.platform.adapters.clock import SystemClock
-from app.platform.adapters.engine_client import EngineClient, EngineCommand, packaged_engine_site
+from app.platform.adapters.engine_client import (
+    EngineClient,
+    EngineCommand,
+    bytecode_build_dir,
+    packaged_engine_site,
+    venv_site,
+)
 from app.platform.clock import FrozenClock
 from app.platform.engine_boot import EngineBoot, EngineStarting
 from app.platform.observability import Event, EventLog
@@ -213,17 +219,32 @@ def test_engine_venv_selects_the_venv_engine(dirs: tuple[Path, Path]) -> None:
     args = main.parse_args(argv(*dirs, "--engine-venv", str(ENGINE_VENV)))
     assert args.engine_venv == ENGINE_VENV
     lock = dirs[0] / "locks" / "engine.lock"
-    assert main.engine_command(args) == EngineCommand.for_venv(ENGINE_VENV, engine_lock=lock)
+    python = ENGINE_VENV / "bin" / "python"
+    bytecode = bytecode_build_dir(dirs[0], python, venv_site(ENGINE_VENV), VERSION)
+    expected = EngineCommand.for_venv(ENGINE_VENV, engine_lock=lock, bytecode_dir=bytecode)
+    assert main.engine_command(args, VERSION) == expected
 
 
 def test_without_engine_venv_the_engine_is_the_packaged_one_beside_this_interpreter(dirs: tuple[Path, Path]) -> None:
     args = main.parse_args(argv(*dirs))
     assert args.engine_venv is None
     lock = dirs[0] / "locks" / "engine.lock"
-    expected = EngineCommand.for_packaged(
-        Path(sys.executable), packaged_engine_site(Path(sys.prefix)), engine_lock=lock
-    )
-    assert main.engine_command(args) == expected
+    site = packaged_engine_site(Path(sys.prefix))
+    bytecode = bytecode_build_dir(dirs[0], Path(sys.executable), site, VERSION)
+    expected = EngineCommand.for_packaged(Path(sys.executable), site, engine_lock=lock, bytecode_dir=bytecode)
+    assert main.engine_command(args, VERSION) == expected
+
+
+def test_the_bytecode_directory_is_per_build_in_app_local_data(dirs: tuple[Path, Path]) -> None:
+    """engine-jobs §5.1: "always in app-local data (`app_local_data/engine/bytecode/<build>/`, never inside the
+    packaged install, which may be read-only)"; another app version is another build."""
+    args = main.parse_args(argv(*dirs))
+    command = main.engine_command(args, VERSION)
+    assert command.bytecode is not None
+    assert command.bytecode.directory.parent == dirs[0] / "engine" / "bytecode"
+    other = main.engine_command(args, VERSION + ".1")
+    assert other.bytecode is not None
+    assert other.bytecode.directory != command.bytecode.directory
 
 
 def test_engine_venv_must_be_a_folder(tmp_path: Path, dirs: tuple[Path, Path]) -> None:
@@ -324,7 +345,7 @@ def test_the_sidecar_starts_a_real_engine_and_closes_it_on_sigterm(dirs: tuple[P
         assert ready["level"] == "info"
         assert ready["source"] == "backend"
         assert ready["beancount_version"] == "3.2.0"
-        assert ready["protocol"] == 1
+        assert ready["protocol"] == 2
         pid = ready["pid"]
         assert isinstance(pid, int)
         assert pid_alive(pid)
@@ -433,6 +454,7 @@ def test_the_handshake_does_not_wait_for_the_engine(tmp_path: Path, dirs: tuple[
     script = slow / "bin" / "python"
     script.write_text(f'#!/bin/sh\necho "slow stand-in: waiting" >&2\nsleep 3\nexec "{ENGINE_VENV}/bin/python" "$@"\n')
     script.chmod(0o755)
+    (slow / "lib").symlink_to(ENGINE_VENV / "lib")  # the engine runs under -S with the venv's own site (S0057)
     began = time.monotonic()
     sidecar = Sidecar(dirs, "--engine-venv", str(slow))
     try:

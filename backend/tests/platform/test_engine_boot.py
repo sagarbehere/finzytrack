@@ -8,19 +8,19 @@ failed wait for the engine lock (S0053).
 from __future__ import annotations
 
 import threading
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import override
 
 import pytest
 
 from app.platform.adapters.engine_lock import engine_lock_path, wait_engine_lock
-from app.platform.engine import EngineFailure, EngineInfo, EngineRefusal, Pong
+from app.platform.engine import EndReason, EngineEvent, EngineFailure, EngineInfo, EngineRefusal, Pong
 from app.platform.engine_boot import EngineBoot, EngineDown, EngineReady, EngineStarting
 from app.platform.observability import Event
 from app.platform.observability.events import ENGINE_START_FAILED
 
-INFO = EngineInfo(protocol=1, engine_version="0.4.0.dev0", beancount_version="3.2.0")
+INFO = EngineInfo(protocol=2, engine_version="0.4.0.dev0", beancount_version="3.2.0")
 
 
 class FakeEngine:
@@ -32,13 +32,19 @@ class FakeEngine:
         self.starts += 1
         return self._start
 
-    def ping(self, timeout: float) -> Pong | EngineRefusal | EngineFailure:
+    def ping(self) -> Pong | EngineRefusal | EngineFailure:
         return Pong()
 
     def call(
-        self, op: str, params: Mapping[str, object], timeout: float
+        self, op: str, params: Mapping[str, object], *, on_event: Callable[[EngineEvent], None] | None = None
     ) -> Mapping[str, object] | EngineRefusal | EngineFailure:
         return {}
+
+    def proceed(self) -> bool:
+        return False
+
+    def end(self, reason: EndReason) -> None:
+        pass
 
     def close(self) -> None:
         pass

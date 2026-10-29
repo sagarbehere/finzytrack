@@ -55,7 +55,8 @@ from zoneinfo import ZoneInfo
 REPO = Path(__file__).resolve().parents[2]
 BACKEND = REPO / "backend"
 ENGINE_VENV = REPO / "engine" / ".venv"
-# Above the engine client's longest start (RestartPolicy.longest_start: 8 s backoff + 15 s handshake).
+# The harness's hang detector for the engine's first start, far above it (an engine starts in well under a second;
+# the client itself has no time limit since S0057, engine-jobs §5.4).
 ENGINE_TIMEOUT_S = 60.0
 LOG_FILE = Path("logs") / "finzytrack.jsonl"  # the sidecar's structured log, under its --app-local-data
 sys.path.insert(0, str(REPO / "scripts" / "oracle"))

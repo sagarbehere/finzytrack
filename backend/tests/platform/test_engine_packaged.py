@@ -23,11 +23,11 @@ import pytest
 
 from app.platform.adapters.engine_client import (
     CREATE_NO_WINDOW,
-    PACKAGED_PATH_SETUP,
+    PATH_SETUP,
     EngineClient,
     EngineCommand,
+    bootstrap_argv,
     creation_flags,
-    packaged_argv,
     packaged_engine_site,
 )
 from app.platform.engine import EngineFailure, EngineInfo, Pong
@@ -57,7 +57,7 @@ def engine_view(site_dir: Path) -> dict[str, object]:
         "'ledger_engine': u.find_spec('ledger_engine') is not None}))"
     )
     out = subprocess.run(  # noqa: S603 (fixed argv: this interpreter under the packaged bootstrap)
-        packaged_argv(Path(sys.executable), site_dir, code),
+        bootstrap_argv(Path(sys.executable), site_dir, code),
         capture_output=True,
         text=True,
         timeout=DEADLINE,
@@ -72,11 +72,12 @@ def test_the_packaged_command_is_one_interpreter_without_its_own_site_and_with_t
     cmd = EngineCommand.for_packaged(
         python, site_dir, environ={"PATH": "/bin", "FT_SHELL_TOKEN": "t", "PYTHONPATH": "x"}
     )
-    assert cmd.argv[:5] == (str(python), "-I", "-S", "-B", "-c")
-    assert cmd.argv[5].startswith(PACKAGED_PATH_SETUP)
-    assert "ledger_engine" in cmd.argv[5]
-    assert cmd.argv[6:] == (str(site_dir),)
-    assert cmd.env == {"PATH": "/bin"}
+    # engine-jobs §5.1 (S0057): `-s -S -B -P`, never `-I` (it would ignore PYTHONHASHSEED)
+    assert cmd.argv[:6] == (str(python), "-s", "-S", "-B", "-P", "-c")
+    assert cmd.argv[6].startswith(PATH_SETUP)
+    assert "ledger_engine" in cmd.argv[6]
+    assert cmd.argv[7:] == (str(site_dir),)
+    assert cmd.env == {"PATH": "/bin", "PYTHONHASHSEED": "0"}
     assert EngineCommand.for_packaged(python, site_dir, test_ops=True).argv[-1] == "--test-ops"
 
 
@@ -91,7 +92,7 @@ def test_a_real_engine_answers_through_the_packaged_bootstrap() -> None:
         info = client.start()
         assert isinstance(info, EngineInfo), info
         assert info.beancount_version == "3.2.0"
-        assert client.ping(timeout=DEADLINE) == Pong()
+        assert client.ping() == Pong()
     finally:
         client.close()
 
@@ -136,8 +137,8 @@ def test_the_engine_stderr_reaches_the_callback() -> None:
     )
     try:
         assert isinstance(client.start(), EngineInfo)
-        client.call("test.noise", {}, timeout=DEADLINE)
-        client.call("test.fail", {}, timeout=DEADLINE)
+        client.call("test.noise", {})
+        client.call("test.fail", {})
     finally:
         client.close()
     assert "noise via print" in lines
@@ -153,9 +154,9 @@ def test_a_failing_stderr_callback_does_not_stop_the_engine_or_the_tail() -> Non
     )
     try:
         assert isinstance(client.start(), EngineInfo)
-        client.call("test.noise", {}, timeout=DEADLINE)
-        assert client.ping(timeout=DEADLINE) == Pong()
-        client.call("test.noise", {}, timeout=DEADLINE)
+        client.call("test.noise", {})
+        assert client.ping() == Pong()
+        client.call("test.noise", {})
         assert client.stderr_tail().count("noise via print") == 2
     finally:
         client.close()
@@ -167,6 +168,10 @@ def test_on_windows_the_engine_gets_no_console_window() -> None:
 
 
 @pytest.mark.skipif(os.name != "posix", reason="the venv layout of this check is POSIX")
-def test_the_venv_command_is_unchanged() -> None:
+def test_the_venv_command_is_the_packaged_bootstrap_with_the_venvs_site() -> None:
+    """engine-jobs §5.1 (S0057): "the development form uses the same bootstrap with the virtual environment's
+    site-packages, since `-S` keeps a venv's packages off the path"."""
     cmd = EngineCommand.for_venv(ENGINE_VENV, environ={})
-    assert cmd.argv == (str(ENGINE_VENV / "bin" / "python"), "-I", "-m", "ledger_engine")
+    packaged = EngineCommand.for_packaged(ENGINE_VENV / "bin" / "python", engine_site(), environ={})
+    assert cmd.argv == packaged.argv
+    assert cmd.argv[1:5] == ("-s", "-S", "-B", "-P")

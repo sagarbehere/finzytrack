@@ -234,8 +234,10 @@ class Sources(unittest.TestCase):
 
     def test_the_real_statechart_has_its_transitions(self) -> None:
         real = cfm.statechart_transitions(cfm.STATECHART.read_text(encoding="utf-8"))
-        self.assertEqual(len(real), 34)  # S0040: 34 rows in ROWS
-        self.assertEqual(real[("Busy", "TimedOut")], frozenset({"Crashed", "Unavailable"}))
+        self.assertEqual(len(real), 48)  # S0040: 34 rows in ROWS; S0057: 48 (no TimedOut; our ends, Finishing)
+        self.assertNotIn(("Busy", "TimedOut"), real)
+        self.assertEqual(real[("Busy", "Cancelled")], frozenset({"Idle"}))
+        self.assertEqual(real[("Busy", "Ended")], frozenset({"Crashed", "Unavailable"}))
 
 
 if __name__ == "__main__":

@@ -25,14 +25,15 @@ from pathlib import Path
 from app.platform.adapters.engine_client import (
     EngineClient,
     EngineCommand,
-    packaged_argv,
+    bootstrap_argv,
     packaged_engine_site,
 )
 from app.platform.engine import EngineFailure, EngineRefusal
-from app.platform.engine_supervision import RestartPolicy
 
 ENGINE_ONLY = ("beancount", "beanquery", "ledger_engine")
-PING_TIMEOUT = 15.0
+# The probe below is a build-time check, not the engine: its hang detector stays (the engine has no time limit since
+# S0057; a hung packaged engine is stopped by the smoke test's own runner).
+VIEW_HANG_SECONDS = 30.0
 ENGINE_VIEW = (
     "import importlib.util as u, json; print(json.dumps({'path': sys.path, 'app': u.find_spec('app') is not None}))"
 )
@@ -42,10 +43,10 @@ def _engine_view(python: Path, engine_site: Path) -> tuple[list[str] | None, boo
     """(sys.path, finds app, error) of a process started as the packaged engine is."""
     try:
         out = subprocess.run(  # noqa: S603 (the packaged bootstrap with a fixed probe)
-            packaged_argv(python, engine_site, ENGINE_VIEW),
+            bootstrap_argv(python, engine_site, ENGINE_VIEW),
             capture_output=True,
             text=True,
-            timeout=RestartPolicy().longest_start,
+            timeout=VIEW_HANG_SECONDS,
             check=True,
         )
         view = json.loads(out.stdout)
@@ -70,7 +71,7 @@ def report(python: Path, engine_site: Path) -> dict[str, object]:
                 "engine_version": info.engine_version,
                 "beancount_version": info.beancount_version,
             }
-            answer = client.ping(PING_TIMEOUT)
+            answer = client.ping()
             if isinstance(answer, EngineFailure):
                 error = f"ping: {answer.kind}: {answer.detail}"
             elif isinstance(answer, EngineRefusal):

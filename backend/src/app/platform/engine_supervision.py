@@ -1,23 +1,35 @@
-"""The ledger engine's supervision as a statechart: a pure transition table (S0040; EP-17, EP-01; ARCHITECTURE.md §7).
+"""The ledger engine's supervision as a statechart: a pure transition table (S0040, amended by S0057; EP-17, EP-01;
+ARCHITECTURE.md §7; `design/specs/engine-jobs.md` §5.1-§5.5).
 
 `transition(policy, state, event) -> Step(state, effects)` decides everything about the engine's lifecycle: when to
 start it, how long to wait before a restart, when it is `Unavailable`, that another protocol is `Incompatible`, that
-`Closed` is final, and what each start and stop is called in the log. `EngineClient`
+`Closed` is final, which ends are stops, and what each start and stop is called in the log. `EngineClient`
 (`app.platform.adapters.engine_client`) is the shell: it observes the process (spawned, the handshake's answer, a
-reply, a timeout, end of stream, an exit), feeds each observation in as an event and carries out the effects
-(spawn, handshake, pause, kill, shut down, log, fail the caller). The generated reference of this table is
-`design/generated/statecharts/engine-supervision.md`.
+reply, end of stream, an exit, our own end), feeds each observation in as an event and carries out the effects
+(spawn, handshake, pause, end, close the input, discard the bytecode directory, log, fail the caller). The generated
+reference of this table is `design/generated/statecharts/engine-supervision.md`.
 
-- **States.** At rest: `Idle` (none started, or after a reset), `Ready` (running, waiting for a request),
-  `Crashed` (stopped, below the bound), `Unavailable` (the bound is reached), `Incompatible`, `Closed`. Passing,
-  inside one call: `Starting` (the process is being made), `Handshaking`, `Busy` (one request in flight),
-  `Restarting` (waiting out the backoff). The client's lock serializes its public calls, so `Request`, `Reset` and
-  `Close` arrive only in a resting state; in a passing state they are `IllegalTransition`.
-- **Stops.** A failed start, a request without a valid answer (timeout, end of stream, invalid reply), an exit
-  noticed between requests and an interrupted start or wait are stops: each is recorded with its time. Only the
-  stops of the last `window` seconds count; a stop exactly one window old has left it. The stop that makes
-  `max_crashes` enters `Unavailable` at once; a request then refuses until the window has let a stop go, or
-  `Reset`. An incompatible engine, an answer and a refusal are no stop.
+- **States.** At rest: `Idle` (no engine: none started, after a reset, or after our own end, its stops kept),
+  `Ready` (running, waiting for a request), `Crashed` (stopped, below the bound), `Unavailable` (the bound is
+  reached), `Incompatible`, `Closed`. Passing, inside one call: `Starting` (the process is being made),
+  `Handshaking`, `Busy` (one request in flight), `Finishing` (a reply broke the protocol after the commit point: the
+  input is closed and the output read until the exit), `Restarting` (waiting out the backoff). The client's lock
+  serializes `start`, `ping`, `call` and `reset`, so `Request` and `Reset` arrive only at rest. `close()` does not
+  wait for that lock (engine-jobs §5.5): its `Close` arrives at rest, or in a passing state through the call that
+  observes the end `close()` signalled.
+- **No time limits** (§5.4): nothing in the policy times a start, a handshake, a request or an end.
+- **Stops.** A failed start, a request without a valid answer (end of stream we did not cause, an invalid reply), an
+  exit noticed between requests and an interrupted start or wait are stops: each is recorded with its time. Only
+  the stops of the last `window` seconds count; a stop exactly one window old has left it. The stop that makes
+  `max_crashes` enters `Unavailable` at once; a request then refuses until the window has let a stop go, or `Reset`.
+  An incompatible engine, an answer and a refusal are no stop, and **neither is our own end** (§5.3): `Cancelled`
+  (the user's Cancel or Quit anyway, in a start, a handshake, a backoff, a request, or of an idle engine; the caller
+  of an ended call fails `cancelled`), `Retired` (an idle engine after a job that ran user code), `Close`.
+- **After the commit point** (§5.3 table): a reply that breaks the protocol once `proceed` was sent is
+  `ViolatedPastCommit`: the engine is not signalled (it may be in the middle of a replace); its input is closed
+  (`CloseInput`), its output read and discarded until it ends, and then the stop is counted.
+- **The bytecode directory** (§5.1): a `Spawn` may use it; a handshake that fails while it was used deletes it
+  (`DiscardBytecode`) and spawns once without it, not counted as a stop.
 - **Backoff.** A restart after n counted stops waits `delays[n-1]` from the last stop (the last delay repeats); time
   already passed counts. There is no "window passed" event: nothing observes time between calls, so every
   `Request` carries the time and the table prunes the stops itself.
@@ -34,7 +46,9 @@ from typing import Any, Literal
 from app.platform.engine import EngineFailure, EngineInfo
 from app.platform.engine_protocol import PROTOCOL_VERSION
 from app.platform.observability.events import (
+    ENGINE_BYTECODE,
     ENGINE_CLOSED,
+    ENGINE_ENDED,
     ENGINE_READY,
     ENGINE_START_FAILED,
     ENGINE_STOPPED,
@@ -44,54 +58,30 @@ from app.platform.observability.events import (
 
 type Stops = tuple[float, ...]
 """The monotonic times of the counted stops, oldest first; at most `max_crashes`."""
-type StopKind = Literal["crashed", "timeout", "protocol_violation", "start_failed"]
+type StopKind = Literal["crashed", "protocol_violation", "start_failed"]
+type CancelReason = Literal["cancel", "quit_anyway"]
 
 
 @dataclass(frozen=True, slots=True)
 class RestartPolicy:
     """Backoff and bound for restarts. `delays[n-1]` is the wait before a start that follows n recent stops (the
-    last delay repeats); `max_crashes` stops within `window` seconds make the engine `unavailable`."""
+    last delay repeats); `max_crashes` stops within `window` seconds make the engine `unavailable`. No time limit on
+    anything else (engine-jobs §5.4)."""
 
     max_crashes: int = 3
     window: float = 300.0
     delays: tuple[float, ...] = (0.5, 2.0, 8.0)
-    start_timeout: float = 15.0
-    close_timeout: float = 5.0
 
     def __post_init__(self) -> None:
-        """Every time is finite, so every start and stop is bounded (S0035 independent verifier F3)."""
-        positive = {"window": self.window, "start_timeout": self.start_timeout, "close_timeout": self.close_timeout}
-        bad = [f"{k}={v!r}" for k, v in positive.items() if not (v > 0 and math.isfinite(v))]
+        """The backoff and its window are waits; each must be finite (S0035 independent verifier F3)."""
+        bad = [] if self.window > 0 and math.isfinite(self.window) else [f"window={self.window!r}"]
         if not all(d >= 0 and math.isfinite(d) for d in self.delays):
             bad.append(f"delays={self.delays!r}")
         if self.max_crashes < 1:
             bad.append(f"max_crashes={self.max_crashes!r}")
         if bad:
-            msg = f"RestartPolicy needs positive, finite times and at least one crash: {', '.join(bad)}"
+            msg = f"RestartPolicy needs finite waits and at least one crash: {', '.join(bad)}"
             raise ValueError(msg)
-
-    @property
-    def longest_start(self) -> float:
-        """The longest a start can take before the request goes out: the largest backoff plus the handshake."""
-        return max(self.delays, default=0.0) + self.start_timeout
-
-    @property
-    def longest_stop(self) -> float:
-        """The longest the client's ending of one engine can wait (S0042): a shutdown waits `close_timeout` for the
-        engine to exit at the end of its input, `close_timeout` after SIGTERM, and `close_timeout` for the reap (the
-        exit and the pipe threads under one deadline); a kill waits less (the exit it reports, then the reap)."""
-        return 3 * self.close_timeout
-
-    def longest_call(self, timeout: float) -> float:
-        """An upper bound on one call with `timeout`, once it holds the client's lock (S0042): a call carries out at
-        most two stops (an engine found dead first, then the stop of its own start or request), at most one start,
-        and its own wait. `Popen` itself (fork and exec) is the OS's and not counted."""
-        return self.longest_start + timeout + 2 * self.longest_stop
-
-    @property
-    def longest_close(self) -> float:
-        """An upper bound on `close()` once it holds the lock: an engine found dead first, then the shutdown."""
-        return 2 * self.longest_stop
 
 
 # -- States ---------------------------------------------------------------------------------------------------------
@@ -99,7 +89,10 @@ class RestartPolicy:
 
 @dataclass(frozen=True, slots=True)
 class Idle:
-    """No engine and no counted stop: none was started yet, or a reset forgot them. The next request starts one."""
+    """No engine: none was started yet, a reset forgot the stops, or we ended the last one (its stops kept). The
+    next request starts one, after the backoff still due."""
+
+    stops: Stops = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -111,10 +104,11 @@ class Starting:
 
 @dataclass(frozen=True, slots=True)
 class Handshaking:
-    """The process runs and the handshake is out."""
+    """The process runs and the handshake is out; `bytecode`: the engine was started with the bytecode directory."""
 
     stops: Stops
     pid: int
+    bytecode: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -136,6 +130,17 @@ class Busy:
 
 
 @dataclass(frozen=True, slots=True)
+class Finishing:
+    """A reply broke the protocol after the commit point (`detail`): the engine's input is closed and its output
+    read and discarded until it ends; the stop is counted then (§5.3)."""
+
+    stops: Stops
+    pid: int
+    info: EngineInfo
+    detail: str
+
+
+@dataclass(frozen=True, slots=True)
 class Crashed:
     """The engine stopped (`last` says how) and the bound is not reached: the next request restarts it."""
 
@@ -145,10 +150,10 @@ class Crashed:
 
 @dataclass(frozen=True, slots=True)
 class Restarting:
-    """Waiting out the backoff before a restart."""
+    """Waiting out the backoff before a restart (`last`: the last engine's stop, None when we ended it)."""
 
     stops: Stops
-    last: StopKind
+    last: StopKind | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -172,7 +177,17 @@ class Closed:
 
 
 type SupervisionState = (
-    Idle | Starting | Handshaking | Ready | Busy | Crashed | Restarting | Unavailable | Incompatible | Closed
+    Idle
+    | Starting
+    | Handshaking
+    | Ready
+    | Busy
+    | Finishing
+    | Crashed
+    | Restarting
+    | Unavailable
+    | Incompatible
+    | Closed
 )
 
 # -- Events -----------------------------------------------------------------------------------------------------------
@@ -187,9 +202,10 @@ class Request:
 
 @dataclass(frozen=True, slots=True)
 class Spawned:
-    """The engine process exists, with its pipes."""
+    """The engine process exists, with its pipes; `bytecode`: it was started with the bytecode directory."""
 
     pid: int
+    bytecode: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -216,7 +232,7 @@ class HandshakeForeign:
 
 @dataclass(frozen=True, slots=True)
 class HandshakeFailed:
-    """No valid handshake in our protocol: a timeout, end of stream, an invalid reply, or another refusal."""
+    """No valid handshake in our protocol: end of stream we did not cause, an invalid reply, or another refusal."""
 
     detail: str
     now: float
@@ -238,16 +254,9 @@ class Answered:
 
 
 @dataclass(frozen=True, slots=True)
-class TimedOut:
-    """No reply within the caller's timeout."""
-
-    detail: str
-    now: float
-
-
-@dataclass(frozen=True, slots=True)
 class Ended:
-    """The engine's output ended (it exited) or its input broke while the request was in flight."""
+    """The engine's output ended (it exited) or its input broke while the request was in flight, and we did not end
+    it; in `Finishing`, the end awaited after a violation past the commit point."""
 
     detail: str
     now: float
@@ -255,10 +264,17 @@ class Ended:
 
 @dataclass(frozen=True, slots=True)
 class Violated:
-    """The reply is not a valid reply to this request."""
+    """The reply is not a valid message for this request, before its commit point."""
 
     detail: str
     now: float
+
+
+@dataclass(frozen=True, slots=True)
+class ViolatedPastCommit:
+    """The reply broke the protocol after `proceed` was sent: the engine may be in the middle of a replace."""
+
+    detail: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -278,13 +294,27 @@ class Interrupted:
 
 
 @dataclass(frozen=True, slots=True)
+class Cancelled:
+    """We ended the engine with this reason (the user's Cancel, or Quit anyway), recorded before the signal: no stop
+    (§5.3). Observed by the call it ended, or of an idle engine."""
+
+    reason: CancelReason
+    now: float
+
+
+@dataclass(frozen=True, slots=True)
+class Retired:
+    """We ended an idle engine after a job that ran user code (§5.1): no stop."""
+
+
+@dataclass(frozen=True, slots=True)
 class Reset:
     """The user's "try again": forget the stops and an incompatible verdict."""
 
 
 @dataclass(frozen=True, slots=True)
 class Close:
-    """Stop the engine for good."""
+    """Stop the engine for good (`close()`): at rest, or observed by the call in flight that it ended."""
 
 
 type SupervisionEvent = (
@@ -297,11 +327,13 @@ type SupervisionEvent = (
     | BackoffElapsed
     | Send
     | Answered
-    | TimedOut
     | Ended
     | Violated
+    | ViolatedPastCommit
     | Exited
     | Interrupted
+    | Cancelled
+    | Retired
     | Reset
     | Close
 )
@@ -311,7 +343,10 @@ type SupervisionEvent = (
 
 @dataclass(frozen=True, slots=True)
 class Spawn:
-    """Create the engine process; answer with `Spawned` or `SpawnFailed`."""
+    """Create the engine process, once the previous engine's group is drained (§5.1); answer with `Spawned` or
+    `SpawnFailed`. `bytecode`: the bytecode directory may be used, if it is complete."""
+
+    bytecode: bool = True
 
 
 @dataclass(frozen=True, slots=True)
@@ -327,13 +362,19 @@ class Pause:
 
 
 @dataclass(frozen=True, slots=True)
-class Kill:
-    """Kill the engine process if it still runs, and reap it (its state is unknown)."""
+class End:
+    """End the engine: signal its process group once (unless it was signalled already or is reaped) and let it go;
+    its reaper drains the group and reaps it (§5.2). Never waits."""
 
 
 @dataclass(frozen=True, slots=True)
-class Shutdown:
-    """End the engine gracefully: close its stdin, then terminate, then kill."""
+class CloseInput:
+    """Close the engine's input and read its output to the end, discarding it; answer with `Ended` (§5.3)."""
+
+
+@dataclass(frozen=True, slots=True)
+class DiscardBytecode:
+    """Delete the bytecode directory (§5.1); the next fill rebuilds it."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -351,7 +392,7 @@ class Fail:
     failure: EngineFailure
 
 
-type Effect = Spawn | Handshake | Pause | Kill | Shutdown | Log | Fail
+type Effect = Spawn | Handshake | Pause | End | CloseInput | DiscardBytecode | Log | Fail
 
 
 @dataclass(frozen=True, slots=True)
@@ -385,8 +426,8 @@ def backoff(policy: RestartPolicy, stops: Stops, now: float) -> float:
     return max(0.0, stops[-1] + delay - now)
 
 
-def _start(policy: RestartPolicy, stops: Stops, last: StopKind, now: float) -> Step:
-    """A restart below the bound: at once, or after the backoff still due."""
+def _start(policy: RestartPolicy, stops: Stops, last: StopKind | None, now: float) -> Step:
+    """A start below the bound: at once, or after the backoff still due."""
     wait = backoff(policy, stops, now)
     if wait > 0:
         return Step(Restarting(stops, last), (Pause(wait),))
@@ -394,7 +435,7 @@ def _start(policy: RestartPolicy, stops: Stops, last: StopKind, now: float) -> S
 
 
 def _stopped(
-    policy: RestartPolicy, stops: Stops, now: float, kind: StopKind, detail: str, *, kill: bool, fail: bool
+    policy: RestartPolicy, stops: Stops, now: float, kind: StopKind, detail: str, *, end: bool, fail: bool
 ) -> Step:
     """Record a stop; at the bound the engine is `Unavailable` from this stop on."""
     kept = (*counted(policy, stops, now), now)[-policy.max_crashes :]
@@ -402,7 +443,7 @@ def _stopped(
         logged = Log(ENGINE_START_FAILED, {"kind": kind, "detail": detail})
     else:
         logged = Log(ENGINE_STOPPED, {"kind": kind, "detail": detail})
-    effects: list[Effect] = [Kill()] if kill else []
+    effects: list[Effect] = [End()] if end else []
     effects.append(logged)
     state: SupervisionState
     if len(kept) >= policy.max_crashes:
@@ -419,28 +460,59 @@ def _incompatible(what: str) -> Step:
     failure = EngineFailure("incompatible", f"{what}; this sidecar speaks {PROTOCOL_VERSION}")
     return Step(
         Incompatible(failure),
-        (Shutdown(), Log(ENGINE_START_FAILED, {"kind": "incompatible", "detail": failure.detail}), Fail(failure)),
+        (End(), Log(ENGINE_START_FAILED, {"kind": "incompatible", "detail": failure.detail}), Fail(failure)),
     )
 
 
+def _closed_failure() -> EngineFailure:
+    return EngineFailure("closed", "the engine client was closed")
+
+
 def _closed(*, running: bool) -> Step:
-    return Step(Closed(), (*((Shutdown(),) if running else ()), Log(ENGINE_CLOSED, {})))
+    return Step(Closed(), (*((End(),) if running else ()), Log(ENGINE_CLOSED, {})))
+
+
+def _stops_of(s: SupervisionState) -> Stops:
+    stops: Stops = getattr(s, "stops", ())
+    return stops
+
+
+def _cancelled(p: RestartPolicy, s: SupervisionState, e: Cancelled) -> Step:
+    """Our end with reason `cancel` or `quit_anyway` (§5.3: outcome `cancelled`, not a stop): the engine is gone, the
+    stops stay as they were, and a waiting caller fails `cancelled`. During a backoff nothing runs to end."""
+    ends: tuple[Effect, ...] = () if isinstance(s, Restarting) else (End(),)
+    logged = Log(ENGINE_ENDED, {"reason": e.reason})
+    if isinstance(s, Ready):  # no call in flight: nobody to fail
+        return Step(Idle(s.stops), (*ends, logged))
+    failure = EngineFailure("cancelled", f"the engine was ended by us ({e.reason})")
+    return Step(Idle(_stops_of(s)), (*ends, logged, Fail(failure)))
+
+
+def _retired(p: RestartPolicy, s: Ready, e: Retired) -> Step:
+    """§5.1: an engine that ran user code is ended after its final reply; §5.3: not a stop."""
+    return Step(Idle(s.stops), (End(), Log(ENGINE_ENDED, {"reason": "retire"})))
+
+
+def _close_in_flight(p: RestartPolicy, s: SupervisionState, e: Close) -> Step:
+    """`close()` ended the engine while a call was under way: that call fails `closed`."""
+    ends: tuple[Effect, ...] = () if isinstance(s, Restarting) else (End(),)
+    return Step(Closed(), (*ends, Log(ENGINE_CLOSED, {}), Fail(_closed_failure())))
 
 
 def _idle_request(p: RestartPolicy, s: Idle, e: Request) -> Step:
-    return Step(Starting(()), (Spawn(),))
+    return _start(p, counted(p, s.stops, e.now), None, e.now)
 
 
 def _spawned(p: RestartPolicy, s: Starting, e: Spawned) -> Step:
-    return Step(Handshaking(s.stops, e.pid), (Handshake(),))
+    return Step(Handshaking(s.stops, e.pid, e.bytecode), (Handshake(),))
 
 
 def _spawn_failed(p: RestartPolicy, s: Starting, e: SpawnFailed) -> Step:
-    return _stopped(p, s.stops, e.now, "start_failed", e.detail, kill=False, fail=True)
+    return _stopped(p, s.stops, e.now, "start_failed", e.detail, end=False, fail=True)
 
 
 def _start_interrupted(p: RestartPolicy, s: Starting | Handshaking, e: Interrupted) -> Step:
-    return _stopped(p, s.stops, e.now, "start_failed", e.detail, kill=True, fail=False)
+    return _stopped(p, s.stops, e.now, "start_failed", e.detail, end=True, fail=False)
 
 
 def _handshake_ok(p: RestartPolicy, s: Handshaking, e: HandshakeOk) -> Step:
@@ -461,7 +533,10 @@ def _handshake_foreign(p: RestartPolicy, s: Handshaking, e: HandshakeForeign) ->
 
 
 def _handshake_failed(p: RestartPolicy, s: Handshaking, e: HandshakeFailed) -> Step:
-    return _stopped(p, s.stops, e.now, "start_failed", e.detail, kill=True, fail=True)
+    if s.bytecode:  # §5.1: a damaged `.pyc` raises instead of falling back; delete the directory, start once without
+        discarded = Log(ENGINE_BYTECODE, {"outcome": "discarded", "detail": e.detail})
+        return Step(Starting(s.stops), (End(), discarded, DiscardBytecode(), Spawn(bytecode=False)))
+    return _stopped(p, s.stops, e.now, "start_failed", e.detail, end=True, fail=True)
 
 
 def _ready_request(p: RestartPolicy, s: Ready, e: Request) -> Step:
@@ -473,7 +548,7 @@ def _send(p: RestartPolicy, s: Ready, e: Send) -> Step:
 
 
 def _exited(p: RestartPolicy, s: Ready, e: Exited) -> Step:
-    return _stopped(p, s.stops, e.now, "crashed", e.detail, kill=True, fail=False)
+    return _stopped(p, s.stops, e.now, "crashed", e.detail, end=True, fail=False)
 
 
 def _ready_reset(p: RestartPolicy, s: Ready, e: Reset) -> Step:
@@ -488,20 +563,27 @@ def _answered(p: RestartPolicy, s: Busy, e: Answered) -> Step:
     return Step(Ready(s.stops, s.pid, s.info))
 
 
-def _timed_out(p: RestartPolicy, s: Busy, e: TimedOut) -> Step:
-    return _stopped(p, s.stops, e.now, "timeout", e.detail, kill=True, fail=True)
-
-
 def _ended(p: RestartPolicy, s: Busy, e: Ended) -> Step:
-    return _stopped(p, s.stops, e.now, "crashed", e.detail, kill=True, fail=True)
+    return _stopped(p, s.stops, e.now, "crashed", e.detail, end=True, fail=True)
 
 
 def _violated(p: RestartPolicy, s: Busy, e: Violated) -> Step:
-    return _stopped(p, s.stops, e.now, "protocol_violation", e.detail, kill=True, fail=True)
+    return _stopped(p, s.stops, e.now, "protocol_violation", e.detail, end=True, fail=True)
 
 
-def _busy_interrupted(p: RestartPolicy, s: Busy, e: Interrupted) -> Step:
-    return _stopped(p, s.stops, e.now, "crashed", e.detail, kill=True, fail=False)
+def _violated_past_commit(p: RestartPolicy, s: Busy, e: ViolatedPastCommit) -> Step:
+    """§5.3: never signal an engine that may be in the middle of a replace; close its input and wait for its exit."""
+    return Step(Finishing(s.stops, s.pid, s.info, e.detail), (CloseInput(),))
+
+
+def _finished(p: RestartPolicy, s: Finishing, e: Ended) -> Step:
+    """The engine ended after a violation past the commit point: the stop is counted now (§5.3)."""
+    detail = f"{s.detail} (after the commit point); the engine exited"
+    return _stopped(p, s.stops, e.now, "protocol_violation", detail, end=True, fail=True)
+
+
+def _busy_interrupted(p: RestartPolicy, s: Busy | Finishing, e: Interrupted) -> Step:
+    return _stopped(p, s.stops, e.now, "crashed", e.detail, end=True, fail=False)
 
 
 def _crashed_request(p: RestartPolicy, s: Crashed, e: Request) -> Step:
@@ -513,7 +595,7 @@ def _backoff_elapsed(p: RestartPolicy, s: Restarting, e: BackoffElapsed) -> Step
 
 
 def _backoff_interrupted(p: RestartPolicy, s: Restarting, e: Interrupted) -> Step:
-    return Step(Crashed(s.stops, s.last))
+    return Step(Idle(s.stops) if s.last is None else Crashed(s.stops, s.last))
 
 
 def _unavailable_request(p: RestartPolicy, s: Unavailable, e: Request) -> Step:
@@ -537,7 +619,7 @@ def _close_at_rest(p: RestartPolicy, s: SupervisionState, e: Close) -> Step:
 
 
 def _closed_request(p: RestartPolicy, s: Closed, e: Request) -> Step:
-    return Step(s, (Fail(EngineFailure("closed", "the engine client was closed")),))
+    return Step(s, (Fail(_closed_failure()),))
 
 
 def _stay(p: RestartPolicy, s: SupervisionState, e: SupervisionEvent) -> Step:
@@ -563,43 +645,65 @@ class Rule:
 
 
 STOP = (Crashed, Unavailable)
-LOGGED_STOP = (Kill, Log, Fail)
+LOGGED_STOP = (End, Log, Fail)
+OURS = (End, Log, Fail)  # our own end of a call in flight: the engine ended, logged, the caller failed
 
 # (state, event, handler, the states it may lead to, the effects it may emit, a note). A tuple of plain rows, not a
 # dict, so the table is module state that cannot change (INV-11; `tests/architecture/test_globals.py`).
 ROWS: tuple[tuple[type, type, Handler, tuple[type, ...], tuple[type, ...], str], ...] = (
-    (Idle, Request, _idle_request, (Starting,), (Spawn,), "lazy start"),
+    (Idle, Request, _idle_request, (Starting, Restarting), (Spawn, Pause), "lazy start; backoff of kept stops"),
     (Idle, Reset, _to_idle, (Idle,), (), ""),
     (Idle, Close, _close_at_rest, (Closed,), (Log,), ""),
     (Starting, Spawned, _spawned, (Handshaking,), (Handshake,), ""),
     (Starting, SpawnFailed, _spawn_failed, STOP, (Log, Fail), "a stop; start_failed"),
-    (Starting, Interrupted, _start_interrupted, STOP, (Kill, Log), "a stop; the exception goes on"),
+    (Starting, Interrupted, _start_interrupted, STOP, (End, Log), "a stop; the exception goes on"),
+    (Starting, Cancelled, _cancelled, (Idle,), OURS, "no stop; nothing was spawned"),
+    (Starting, Close, _close_in_flight, (Closed,), OURS, ""),
     (
         Handshaking,
         HandshakeOk,
         _handshake_ok,
         (Ready, Incompatible),
-        (Log, Shutdown, Fail),
+        (Log, End, Fail),
         "another number: incompatible",
     ),
-    (Handshaking, HandshakeForeign, _handshake_foreign, (Incompatible,), (Shutdown, Log, Fail), "no stop"),
-    (Handshaking, HandshakeFailed, _handshake_failed, STOP, LOGGED_STOP, "a stop; start_failed"),
-    (Handshaking, Interrupted, _start_interrupted, STOP, (Kill, Log), "a stop; the exception goes on"),
+    (Handshaking, HandshakeForeign, _handshake_foreign, (Incompatible,), (End, Log, Fail), "no stop"),
+    (
+        Handshaking,
+        HandshakeFailed,
+        _handshake_failed,
+        (Crashed, Unavailable, Starting),
+        (End, Log, Fail, DiscardBytecode, Spawn),
+        "a stop; start_failed; with the bytecode directory: discard it, start once without it, no stop",
+    ),
+    (Handshaking, Interrupted, _start_interrupted, STOP, (End, Log), "a stop; the exception goes on"),
+    (Handshaking, Cancelled, _cancelled, (Idle,), OURS, "no stop: a start that never completes"),
+    (Handshaking, Close, _close_in_flight, (Closed,), OURS, ""),
     (Ready, Request, _ready_request, (Ready,), (), ""),
     (Ready, Send, _send, (Busy,), (), "the only way into Busy: never resent"),
-    (Ready, Exited, _exited, STOP, (Kill, Log), "a stop (crashed); the request goes on"),
+    (Ready, Exited, _exited, STOP, (End, Log), "a stop (crashed); the request goes on"),
+    (Ready, Cancelled, _cancelled, (Idle,), (End, Log), "no stop"),
+    (Ready, Retired, _retired, (Idle,), (End, Log), "no stop: after a job that ran user code"),
     (Ready, Reset, _ready_reset, (Ready,), (), "stops forgotten; the engine keeps running"),
-    (Ready, Close, _ready_close, (Closed,), (Shutdown, Log), ""),
+    (Ready, Close, _ready_close, (Closed,), (End, Log), ""),
     (Busy, Answered, _answered, (Ready,), (), "a result or a refusal"),
-    (Busy, TimedOut, _timed_out, STOP, LOGGED_STOP, "a stop; timeout"),
     (Busy, Ended, _ended, STOP, LOGGED_STOP, "a stop; crashed"),
     (Busy, Violated, _violated, STOP, LOGGED_STOP, "a stop; protocol_violation"),
-    (Busy, Interrupted, _busy_interrupted, STOP, (Kill, Log), "a stop (crashed); the exception goes on"),
+    (Busy, ViolatedPastCommit, _violated_past_commit, (Finishing,), (CloseInput,), "nothing signalled"),
+    (Busy, Interrupted, _busy_interrupted, STOP, (End, Log), "a stop (crashed); the exception goes on"),
+    (Busy, Cancelled, _cancelled, (Idle,), OURS, "no stop"),
+    (Busy, Close, _close_in_flight, (Closed,), OURS, ""),
+    (Finishing, Ended, _finished, STOP, LOGGED_STOP, "a stop at the exit; protocol_violation"),
+    (Finishing, Interrupted, _busy_interrupted, STOP, (End, Log), "a stop (crashed); the exception goes on"),
+    (Finishing, Cancelled, _cancelled, (Idle,), OURS, "Quit anyway"),
+    (Finishing, Close, _close_in_flight, (Closed,), OURS, ""),
     (Crashed, Request, _crashed_request, (Starting, Restarting), (Spawn, Pause), "backoff if still due"),
     (Crashed, Reset, _to_idle, (Idle,), (), ""),
     (Crashed, Close, _close_at_rest, (Closed,), (Log,), ""),
     (Restarting, BackoffElapsed, _backoff_elapsed, (Starting,), (Spawn,), ""),
-    (Restarting, Interrupted, _backoff_interrupted, (Crashed,), (), "no stop: nothing was started"),
+    (Restarting, Interrupted, _backoff_interrupted, (Crashed, Idle), (), "no stop: nothing was started"),
+    (Restarting, Cancelled, _cancelled, (Idle,), (Log, Fail), "no stop: nothing was started"),
+    (Restarting, Close, _close_in_flight, (Closed,), (Log, Fail), ""),
     (
         Unavailable,
         Request,
@@ -624,6 +728,7 @@ STATES: tuple[type, ...] = (
     Handshaking,
     Ready,
     Busy,
+    Finishing,
     Crashed,
     Restarting,
     Unavailable,
@@ -631,7 +736,7 @@ STATES: tuple[type, ...] = (
     Closed,
 )
 RESTING: tuple[type, ...] = (Idle, Ready, Crashed, Unavailable, Incompatible, Closed)
-"""Where a public call (`Request`, `Reset`, `Close`) can find the table; the other states pass within one call."""
+"""Where `Request` and `Reset` can find the table; the other states pass within one call."""
 EVENTS: tuple[type, ...] = (
     Request,
     Spawned,
@@ -642,11 +747,13 @@ EVENTS: tuple[type, ...] = (
     BackoffElapsed,
     Send,
     Answered,
-    TimedOut,
     Ended,
     Violated,
+    ViolatedPastCommit,
     Exited,
     Interrupted,
+    Cancelled,
+    Retired,
     Reset,
     Close,
 )

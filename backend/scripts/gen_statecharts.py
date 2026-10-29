@@ -39,7 +39,8 @@ def render() -> str:
         "The ledger engine's lifecycle as the main sidecar supervises it: `app.platform.engine_supervision.transition`"
         " over `ROWS`, driven by `app.platform.adapters.engine_client.EngineClient` (ARCHITECTURE.md §2.0, §7)."
         " A pair that is not listed raises `IllegalTransition`. Resting states (" + ", ".join(resting) + ") are"
-        " where a public call can find the client; the others pass within one call.",
+        " where a request or a reset can find the client; the others pass within one call. Our own ends (`Cancelled`,"
+        " `Retired`, `Close`) may come from another thread at any time and are never stops (engine-jobs spec §5.3).",
         "",
         "## States",
         "",

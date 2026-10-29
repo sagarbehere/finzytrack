@@ -6,6 +6,7 @@ engine's side and checks that the engine's real replies and the schema's example
 from __future__ import annotations
 
 import copy
+import io
 import json
 from pathlib import Path
 from typing import Any
@@ -15,7 +16,7 @@ from jsonschema import Draft202012Validator
 
 from ledger_engine.protocol.messages import PROTOCOL_VERSION
 from ledger_engine.protocol.schema import render
-from ledger_engine.protocol.server import Engine
+from ledger_engine.protocol.server import Engine, serve
 
 REPO = Path(__file__).resolve().parents[2]
 COMMITTED = REPO / "contracts" / "engine-protocol.schema.json"
@@ -72,13 +73,13 @@ def engine_replies() -> list[tuple[str, dict[str, Any]]]:
         return json.loads(engine.handle(raw))
 
     def req(op: str, params: object = None, rid: int = 1) -> bytes:
-        return json.dumps({"v": 1, "id": rid, "op": op, "params": {} if params is None else params}).encode()
+        return json.dumps({"v": 2, "id": rid, "op": op, "params": {} if params is None else params}).encode()
 
     out.append(("Refusal", send(req("ping"))))  # handshake_required
     out.append(("HandshakeReply", send(req("handshake"))))
     out.append(("PingReply", send(req("ping"))))
     out.append(("Refusal", send(b"{")))  # malformed
-    out.append(("Refusal", send(json.dumps({"v": 2, "id": 1, "op": "ping", "params": {}}).encode())))
+    out.append(("Refusal", send(json.dumps({"v": 3, "id": 1, "op": "ping", "params": {}}).encode())))
     out.append(("Refusal", send(req("nope"))))
     out.append(("Refusal", send(req("ping", {"x": 1}))))
     out.append(("Refusal", send(req("test.fail"))))
@@ -121,4 +122,65 @@ def test_a_mutated_example_is_refused_by_the_schema(definition: str) -> None:
         del broken[key]
         assert not valid(definition, broken), f"{definition} without {key} passed"
     assert not valid(definition, {**example, "unknown": 1})
-    assert not valid(definition, {**example, "v": 2})
+    assert not valid(definition, {**example, "v": 3})
+
+
+# -- Version 2 (S0057; engine-jobs §5.5 bullet 5): a job's messages and the sidecar's proceed ------------------------
+
+JOB_MESSAGES = ["ProgressEvent", "GateEvent", "CommittedEvent", "ProceedControl"]
+
+
+def test_the_job_messages_and_the_decision_are_in_the_contract() -> None:
+    defs = committed()["$defs"]
+    for name in [*JOB_MESSAGES, "Decision", "Phase"]:
+        assert name in defs, name
+    assert set(defs["Phase"]["enum"]) == {
+        "reading",
+        "checking_change",
+        "waiting_for_files",
+        "saving",
+        "updating_views",
+        "checking_last_change",
+    }
+
+
+@pytest.mark.parametrize("definition", JOB_MESSAGES)
+def test_job_message_examples_validate_and_a_mutation_is_refused(definition: str) -> None:
+    example = committed()["$defs"][definition]["examples"][0]
+    assert valid(definition, example)
+    for key in example:
+        broken = copy.deepcopy(example)
+        del broken[key]
+        assert not valid(definition, broken), f"{definition} without {key} passed"
+    assert not valid(definition, {**example, "unknown": 1})
+    assert not valid(definition, {**example, "v": 1})
+
+
+def test_a_reply_may_carry_a_decision_of_flat_scalars_only() -> None:
+    reply = {"v": 2, "id": 1, "op": "ping", "ok": True, "result": {"status": "ok"}}
+    decision = {"table": "gate", "version": 1, "inputs": {"n": 2, "equal": True, "which": "post", "none": None}}
+    assert valid("PingReply", {**reply, "decision": {**decision, "output": "pass"}})
+    assert not valid("PingReply", {**reply, "decision": {**decision, "inputs": {"x": {"y": 1}}, "output": "pass"}})
+    assert not valid("PingReply", {**reply, "decision": {**decision, "inputs": {"x": [1]}, "output": "pass"}})
+    assert not valid("PingReply", {**reply, "decision": {**decision, "output": "pass", "extra": 1}})
+    assert not valid("PingReply", {**reply, "decision": decision})  # no output
+
+
+def test_the_engines_real_job_messages_validate(tmp_path: Path) -> None:
+    out = io.BytesIO()
+    lines = [
+        json.dumps({"v": 2, "id": 1, "op": "handshake", "params": {}}),
+        json.dumps({"v": 2, "id": 2, "op": "test.gate", "params": {"path": str(tmp_path / "x")}}),
+        json.dumps({"v": 2, "id": 2, "op": "test.gate", "control": "proceed"}),
+    ]
+    serve(io.BytesIO("\n".join(lines).encode() + b"\n"), out, Engine(test_ops=True))
+    msgs = [json.loads(x) for x in out.getvalue().splitlines()]
+    by_event = {"progress": "ProgressEvent", "gate": "GateEvent", "committed": "CommittedEvent"}
+    events = [m for m in msgs if "event" in m]
+    assert len(events) == 4
+    for m in events:
+        assert valid(by_event[m["event"]], m), m
+    reply = msgs[-1]
+    assert "decision" in reply
+    assert valid("Decision", reply["decision"])
+    assert valid("ProceedControl", json.loads(lines[2]))

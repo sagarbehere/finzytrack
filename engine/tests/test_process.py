@@ -1,11 +1,13 @@
 """The engine as a real process (S0035 brief; ADR-0054 decision 4; spike S1's watchdog, S0001 journal).
 
-The engine is spawned the way the main sidecar spawns it: `python -I -m ledger_engine`, pipes on stdin, stdout and
+The engine is spawned as a module (`python -I -m ledger_engine`; the sidecar's own bootstrap, `-s -S -B -P`, is tested
+by the backend's client tests), pipes on stdin, stdout and
 stderr. Waits are explicit waits on a condition with a deadline (EP-28), never fixed sleeps.
 """
 
 from __future__ import annotations
 
+import fcntl
 import json
 import os
 import signal
@@ -14,6 +16,7 @@ import sys
 import threading
 import time
 from collections.abc import Callable, Iterator
+from pathlib import Path
 from typing import IO, Any
 
 import pytest
@@ -80,13 +83,13 @@ def _readline(pipe: IO[bytes] | None) -> bytes:
 
 
 def call(proc: subprocess.Popen[bytes], op: str, rid: int, params: dict[str, Any] | None = None) -> dict[str, Any]:
-    send(proc, {"v": 1, "id": rid, "op": op, "params": params or {}})
+    send(proc, {"v": 2, "id": rid, "op": op, "params": params or {}})
     return receive(proc)
 
 
 def test_handshake_and_ping_over_pipes(engine: subprocess.Popen[bytes]) -> None:
-    assert call(engine, "handshake", 1)["result"]["protocol"] == 1
-    assert call(engine, "ping", 2) == {"v": 1, "id": 2, "op": "ping", "ok": True, "result": {"status": "ok"}}
+    assert call(engine, "handshake", 1)["result"]["protocol"] == 2
+    assert call(engine, "ping", 2) == {"v": 2, "id": 2, "op": "ping", "ok": True, "result": {"status": "ok"}}
 
 
 def test_stdout_noise_inside_the_engine_never_reaches_the_channel(engine: subprocess.Popen[bytes]) -> None:
@@ -122,13 +125,13 @@ def test_a_malformed_line_does_not_end_the_engine(engine: subprocess.Popen[bytes
 def test_an_over_long_line_is_refused_and_skipped(engine: subprocess.Popen[bytes]) -> None:
     call(engine, "handshake", 1)
     assert engine.stdin is not None
-    payload = b'{"v":1,"id":5,"op":"ping","params":{"pad":"' + b"x" * (MAX_LINE_BYTES + 10) + b'"}}\n'
+    payload = b'{"v":2,"id":5,"op":"ping","params":{"pad":"' + b"x" * (MAX_LINE_BYTES + 10) + b'"}}\n'
     writer = threading.Thread(target=lambda: (engine.stdin.write(payload), engine.stdin.flush()), daemon=True)  # type: ignore[union-attr]
     writer.start()
     assert receive(engine)["error"]["key"] == "protocol.malformed"
     writer.join(DEADLINE)
     # The rest of the long line is discarded, so the next request is read as a request of its own.
-    assert call(engine, "ping", 6) == {"v": 1, "id": 6, "op": "ping", "ok": True, "result": {"status": "ok"}}
+    assert call(engine, "ping", 6) == {"v": 2, "id": 6, "op": "ping", "ok": True, "result": {"status": "ok"}}
 
 
 def test_the_engine_exits_when_its_stdin_closes(engine: subprocess.Popen[bytes]) -> None:
@@ -154,10 +157,18 @@ if mode == "held-stdin":
     # The engine's stdin is a pipe whose write end the test (the grandparent) also holds: no EOF on parent death.
     fd = int(sys.argv[3])
     proc = subprocess.Popen(engine_argv, stdin=fd, stdout=subprocess.DEVNULL, pass_fds=(fd,))
+elif mode == "group":
+    # As the sidecar spawns it since S0057: the leader of its own group. Its stdin is the test's pipe (held open, so
+    # only the watchdog can end it); the test writes the handshake and a test.child, whose child holds a lock.
+    fd = int(sys.argv[3])
+    proc = subprocess.Popen(engine_argv, stdin=fd, stdout=subprocess.PIPE, pass_fds=(fd,), start_new_session=True)
+    proc.stdout.readline()  # the handshake reply
+    print(json.loads(proc.stdout.readline())["result"]["pid"], flush=True)
+    sys.stdin.read()  # block until killed
 else:
     proc = subprocess.Popen(engine_argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE)
     for rid, op in ((1, "handshake"), (2, "test.stall")):
-        proc.stdin.write(json.dumps({"v": 1, "id": rid, "op": op, "params": {}}).encode() + b"\n")
+        proc.stdin.write(json.dumps({"v": 2, "id": rid, "op": op, "params": {}}).encode() + b"\n")
         proc.stdin.flush()
     proc.stdout.readline()  # the handshake reply; the stall never replies
 print(proc.pid, flush=True)
@@ -235,3 +246,85 @@ def test_a_busy_engine_exits_when_its_parent_dies() -> None:
     finally:
         if not gone(pid):
             os.kill(pid, signal.SIGKILL)
+
+
+# -- The engine's own group (S0057; engine-jobs §5.2: "On POSIX the parent-death watchdog and the end-of-input exit
+# therefore signal the engine's whole group (`killpg(0, SIGKILL)`, the engine included) instead of only exiting the
+# engine"). A plugin's child shares a `flock` lock with the engine (it inherited the descriptor); it must not outlive
+# the engine holding a ledger lock.
+
+
+def lock_free(path: Path) -> bool:
+    fd = os.open(path, os.O_RDWR | os.O_CREAT, 0o600)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        return False
+    else:
+        fcntl.flock(fd, fcntl.LOCK_UN)
+        return True
+    finally:
+        os.close(fd)
+
+
+def start_child(proc: subprocess.Popen[bytes], lock: Path) -> int:
+    call(proc, "handshake", 1)
+    reply = call(proc, "test.child", 2, {"lock": str(lock)})
+    assert reply["ok"] is True, reply
+    child = reply["result"]["pid"]
+    assert not gone(child)
+    assert not lock_free(lock), "the child does not hold the lock"
+    return child
+
+
+@pytest.mark.skipif(not POSIX, reason="process groups are POSIX; Windows is the Job Object (BL-0087)")
+def test_the_end_of_input_exit_ends_the_engines_whole_group(tmp_path: Path) -> None:
+    lock = tmp_path / "ledger.lock"
+    with subprocess.Popen(  # noqa: S603
+        ENGINE, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True
+    ) as proc:
+        child = start_child(proc, lock)
+        try:
+            assert proc.stdin is not None
+            proc.stdin.close()
+            proc.wait(DEADLINE)
+            assert wait_until(lambda: gone(child)), "a plugin's child outlived the engine's end of input"
+            assert wait_until(lambda: lock_free(lock)), "the ledger lock outlived the engine"
+        finally:
+            if not gone(child):
+                os.kill(child, signal.SIGKILL)
+
+
+@pytest.mark.skipif(not POSIX, reason="process groups are POSIX; Windows is the Job Object (BL-0087)")
+def test_an_engine_that_does_not_lead_its_group_ends_only_itself(tmp_path: Path) -> None:
+    """Run by hand or by a test, the engine shares its group with its spawner: it must never signal that group."""
+    lock = tmp_path / "ledger.lock"
+    with subprocess.Popen(ENGINE, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE) as proc:  # noqa: S603
+        child = start_child(proc, lock)
+        try:
+            assert proc.stdin is not None
+            proc.stdin.close()
+            assert proc.wait(DEADLINE) == 0
+            assert not gone(child), "the engine signalled a group it does not lead"
+        finally:
+            os.kill(child, signal.SIGKILL)
+
+
+@pytest.mark.skipif(not POSIX, reason="the parent-pid poll is POSIX; Windows relies on stdin EOF and the Job Object")
+def test_the_parent_death_watchdog_ends_the_engines_whole_group(tmp_path: Path) -> None:
+    lock = tmp_path / "ledger.lock"
+    read_end, write_end = os.pipe()
+    for rid, op, params in ((1, "handshake", {}), (2, "test.child", {"lock": str(lock)})):
+        os.write(write_end, json.dumps({"v": 2, "id": rid, "op": op, "params": params}).encode() + b"\n")
+    middle, child = spawn_middle("group", str(read_end), pass_fds=(read_end,))
+    os.close(read_end)
+    try:
+        assert not lock_free(lock)
+        middle.send_signal(signal.SIGKILL)
+        middle.wait(DEADLINE)
+        assert wait_until(lambda: gone(child)), "a plugin's child outlived the sidecar"
+        assert wait_until(lambda: lock_free(lock)), "the ledger lock outlived the sidecar"
+    finally:
+        os.close(write_end)
+        if not gone(child):
+            os.kill(child, signal.SIGKILL)

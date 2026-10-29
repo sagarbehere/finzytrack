@@ -1,79 +1,94 @@
 """The ledger-engine client: the `EnginePort` adapter that runs the engine as a child process (ADR-0054 decision 4;
-ARCHITECTURE.md §2.0, §5, §7).
+ARCHITECTURE.md §2.0, §5, §7; `design/specs/engine-jobs.md` §5.1-§5.5 since S0057).
 
-- **Supervision is a statechart** (S0040). Every lifecycle decision is the pure table's
+- **Supervision is a statechart** (S0040, amended by S0057). Every lifecycle decision is the pure table's
   (`app.platform.engine_supervision`): when to start the engine, the backoff before a restart, the bound after
-  which it is `unavailable`, `incompatible`, `closed`, and what is logged. This client is its shell: it observes the
-  process, feeds each observation to `transition` as an event, and carries out the effects (spawn, handshake,
-  pause, kill, shut down, log, fail the caller). `state` is the table's current state, a read that never waits for
-  a call in flight. An exception that reaches a public call while a start, a backoff or a request is under way is
-  fed in as `Interrupted` before it goes on, so the table always rests in a state the next call can use.
-- **Spawn.** `EngineCommand` names the interpreter and environment: `for_venv` in development and tests,
+  which it is `unavailable`, `incompatible`, `closed`, which ends are stops, and what is logged. This client is its
+  shell: it observes the process, feeds each observation to `transition` as an event, and carries out the effects.
+  `state` is the table's current state, a read that never waits for a call in flight. An exception that reaches a
+  public call while a start, a backoff or a request is under way is fed in as `Interrupted` before it goes on, so the
+  table always rests in a state the next call can use.
+- **No time limits** (§5.4). A start, a handshake and a request wait until the engine answers, ends, or is ended by
+  us. A slow job and a hung one look the same from outside; ending either is the user's decision.
+- **Our ends** (§5.2, §5.3). `end(reason)` (`cancel`, `retire`, `quit_anyway`) records the reason, then signals the
+  engine's group once, and never waits; it may come from any thread, also while a call waits for a start, a
+  handshake, a backoff pause or a reply. The call then observes the end and the table calls it `Cancelled` (the call
+  fails `cancelled`) or `Retired`, never a stop: a recorded reason wins over the exit status. A retire is for an idle
+  engine (after the job's final reply); during a call it is a bug and raises.
+- **The engine's process group** (§5.2). The engine is spawned as the leader of its own group (`start_new_session`).
+  Each engine has a reaper thread that holds its leader unreaped once it exits, signals the group until it has no
+  live member, then reaps it (`app.platform.adapters.engine_group`); after that no signal goes to the group. Once
+  drained, the end is reported to `on_engine_ended` (its spawn serial, pid, our reason, exit, peak memory). A new
+  engine is spawned only after the previous one is drained (§5.1). Windows has no groups: the engine is ended and
+  waited for alone until its nested Job Object (BL-0087).
+- **`close()`** (§5.5, §9.3 step 4) records `close`, signals the group once and returns: it takes no call lock (a call
+  to a hung engine cannot hold it) and never waits for the reap. The call in flight fails `closed`.
+- **Spawn** (§5.1). `EngineCommand` names the interpreter and environment: `for_venv` in development and tests,
   `for_packaged` in the bundle (S0038), where one interpreter serves both processes with two separate
-  site-packages (ADR-0056): the engine runs `python -I -S -B -c <bootstrap> <engine site>`, so the interpreter's own
-  site-packages, which hold the main sidecar, are never on the engine's path, and the bootstrap adds only the
-  engine's site (ADR-0054 decision 5: neither closure reaches the other process). The engine runs isolated (`-I`),
-  told the client's pid (`--parent-pid`) for its parent-death watchdog and, when the command names one, the engine
-  lock it must hold for its life (`--engine-lock`, S0053; engine-jobs §5.1), with the client's environment minus `FT_*`
-  (the shell token and our own settings) and `PYTHON*` (interpreter overrides). On POSIX it stays in the client's
-  process group, so the shell's group kill reaches it; on Windows it opens no console window (`CREATE_NO_WINDOW`),
-  stays in the sidecar's job (the shell's Job Object arrives with M2's sidecar supervisor), and ends on stdin EOF
-  when the sidecar is gone.
+  site-packages (ADR-0056). Both run `python -s -S -B -P -c <bootstrap> <engine site>`: `-S` keeps the interpreter's
+  own site-packages off the path and the bootstrap adds only the engine's site (ADR-0054 decision 5); never `-I`,
+  which implies `-E` and so ignores `PYTHONHASHSEED`. The environment is the client's minus `FT_*` (the shell token,
+  our settings) and every `PYTHON*` variable, plus `PYTHONHASHSEED=0` (R4's digests must not depend on hash order).
+  The engine is told the client's pid (`--parent-pid`) and, when the command names one, the engine lock
+  (`--engine-lock`, S0053). On Windows it opens no console window (`CREATE_NO_WINDOW`).
+- **The bytecode directory** (§5.1). When the command names one (the composition root: `app_local_data/engine/
+  bytecode/<build>/`), it is filled once in the background by `compileall` under `-X pycache_prefix` (the engine's
+  interpreter library, site-packages and code), marked complete last, and then used read-only by every engine with
+  `-X pycache_prefix`. The table discards it when an engine fails to start while using it, and starts once without.
 - **Handshake.** Every start sends `handshake` first; another protocol version is `incompatible` and is never
   retried (until `reset`).
-- **Requests** are serialized, one in flight. The caller's timeout covers sending the request and waiting for its
-  reply, as one wait (S0042): a writer thread owns the engine's stdin and writes each request, a reader thread turns
-  the engine's stdout into lines, and the caller only waits for the reply queue, so a wait always ends: by a reply,
-  by the timeout, by a failed write, or by end of stream when the engine dies. An engine that stops reading (frozen,
-  stuck) cannot hold the caller in a write, however large the request (area review 2026-10-26 F3). A start the call
-  needs first is bounded by the policy (`RestartPolicy.longest_start`: the largest backoff delay plus the handshake
-  timeout), not by the caller's timeout, so a short timeout cannot cut a cold start short and count a healthy
-  engine as a stop (S0035 independent verifier F3). A timeout or an invalid reply stops the engine (its state is
-  unknown); a request is never resent.
-- **Bounds.** Every wait in the client is bounded. Ending one engine waits at most `RestartPolicy.longest_stop`
-  (3 x `close_timeout`: a shutdown's wait for the exit at the end of input, its wait after SIGTERM, and the reap,
-  which waits for the exit and the reader and writer threads under one deadline; a kill waits less). A call carries
-  out at most two stops (an engine found dead first, then the stop of its own start or request), so it returns
-  within `RestartPolicy.longest_call(timeout)` = `longest_start` + its timeout + 2 x `longest_stop`, after any call
-  ahead of it on the lock; `close()` within `RestartPolicy.longest_close` (2 x `longest_stop`) after the call in
-  flight. The bounds are conservative, read off the code's worst paths (S0042 verifier F2: an exact per-path sum
-  was wrong once). The one wait left to the OS is `Popen` (fork and exec). A thread that cannot end
-  (a pipe that a child of the engine still holds open) is left behind with its pipe, never waited for: closing a pipe
-  while its thread is inside a read or write would wait for that thread (S0042).
-- **Encoding** happens before anything is started or sent: params that are not JSON data raise `ValueError` (a
-  caller error, like a bad timeout); a request longer than the line limit is `EngineFailure("too_large")`, which
-  leaves the engine untouched and is no stop (S0035 independent verifier F7). Neither reaches the table.
-- **Shutdown.** `close()` has the writer close the engine's stdin (it finishes the request in hand and exits), then
-  terminates and finally kills it if it does not exit in time.
-- **Log.** The table's `Log` effects go to the `log` sink (the structured log, S0039): `engine.ready` and
-  `engine.start_failed` on every start, `engine.stopped`, `engine.unavailable`, `engine.closed`. A sink that raises
-  loses that line and changes nothing else: the remaining effects run and the caller gets its own outcome (S0041;
-  before, the exception reached the caller after the state had moved).
+- **Requests** are serialized, one in flight. A writer thread owns the engine's stdin (S0042), so an engine that
+  stops reading cannot hold the caller in a write: the caller only waits for the reply queue, and `end` ends that
+  wait. A request is never resent.
+- **A job's messages** (protocol version 2). `call(..., on_event=...)` delivers the engine's progress, its `gate`,
+  `committed` and the reply's `decision`, in order, on the calling thread. `proceed()` answers a pending gate (from
+  any thread); with no gate pending it sends nothing and returns False, since a stray `proceed` would be read as a
+  request. A second gate, `committed` before `proceed`, or a reply while the gate waits, is a protocol violation.
+  **After `proceed`** (the commit point) a violation does not signal the engine: its input is closed and its output
+  read to the end, then the stop is counted (§5.3).
+- **Encoding** happens before anything is started or sent: params that are not JSON data raise `ValueError`; a
+  request longer than the line limit is `EngineFailure("too_large")`, which leaves the engine untouched and is no
+  stop (S0035 independent verifier F7). Neither reaches the table.
+- **Log.** The table's `Log` effects go to the `log` sink (S0039): `engine.ready`, `engine.start_failed`,
+  `engine.stopped`, `engine.unavailable`, `engine.ended`, `engine.bytecode`, `engine.closed`. A sink that raises
+  loses that line and changes nothing else (S0041).
 - **Stderr.** Each line the engine writes to stderr is kept in a bounded tail and handed to `on_stderr` if given
-  (the composition root forwards it to the log, S0038). A callback that raises is dropped for the rest of that
-  engine's run; the tail goes on.
-- **Bounded state** (INV-10, INV-11): one engine process with three threads (writer, reader, stderr), one request in
-  flight, the last `STDERR_LINES` lines of the engine's stderr (of the running engine, else of the last one that
-  stopped: the only diagnosis of a crash), one supervision state holding at most `max_crashes` stop times. The
-  client is owned by the user container (`platform/state_registry.py`).
+  (S0038). A callback that raises is dropped for the rest of that engine's run; the tail goes on.
+- **Bounded state** (INV-10, INV-11): one engine process with four threads (writer, reader, stderr, reaper), the
+  previous engine until it is drained, one request in flight, the last `STDERR_LINES` stderr lines, one bytecode fill,
+  one supervision state holding at most `max_crashes` stop times. The client is owned by the user container
+  (`platform/state_registry.py`).
 """
 
 from __future__ import annotations
 
 import contextlib
-import math
+import hashlib
 import os
 import queue
+import shutil
 import subprocess
 import threading
 import time
 from collections import deque
-from collections.abc import Callable, Generator, Iterable, Mapping
+from collections.abc import Callable, Generator, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import IO, Literal
 
-from app.platform.engine import EngineFailure, EngineInfo, EngineRefusal, Pong
+from app.platform.adapters.engine_group import EngineGroup, GroupOps, PosixGroupOps, Reaped
+from app.platform.engine import (
+    Committed,
+    EndReason,
+    EngineEnd,
+    EngineEvent,
+    EngineFailure,
+    EngineInfo,
+    EngineRefusal,
+    GateReached,
+    Pong,
+    Progress,
+)
 from app.platform.engine_protocol import (
     MAX_ID,
     MAX_LINE_BYTES,
@@ -82,6 +97,7 @@ from app.platform.engine_protocol import (
     decode_info,
     decode_pong,
     decode_reply,
+    encode_proceed,
     encode_request,
     foreign_version,
 )
@@ -90,8 +106,13 @@ from app.platform.engine_supervision import (
     Answered,
     BackoffElapsed,
     Busy,
+    Cancelled,
     Close,
+    Closed,
+    CloseInput,
+    DiscardBytecode,
     Effect,
+    End,
     Ended,
     Exited,
     Fail,
@@ -101,36 +122,47 @@ from app.platform.engine_supervision import (
     HandshakeOk,
     Idle,
     Interrupted,
-    Kill,
     Log,
     Pause,
     Ready,
     Request,
     Reset,
     RestartPolicy,
+    Retired,
     Send,
-    Shutdown,
     Spawn,
     Spawned,
     SpawnFailed,
     SupervisionEvent,
     SupervisionState,
-    TimedOut,
     Violated,
+    ViolatedPastCommit,
     transition,
 )
 from app.platform.observability import Event, EventSink
+from app.platform.observability.events import ENGINE_BYTECODE
 
 STDERR_LINES = 200
 STDERR_LINE_BYTES = 64 * 1024
 DROPPED_ENV_PREFIXES = ("FT_", "PYTHON")
+HASH_SEED = "0"
 # The packaged layout (ADR-0056; `shell/sidecar/build_sidecar.py` builds it): `<sidecar>/python` is the interpreter's
 # prefix, and the engine's own site-packages sit beside it at `<sidecar>/engine/site-packages`.
 ENGINE_SITE_PARTS = ("engine", "site-packages")
-# The packaged bootstrap: `-S` left the interpreter's own site-packages out; this adds the engine's site (the first
-# argument after the code), processing its .pth files, and nothing else.
-PACKAGED_PATH_SETUP = "import site, sys; site.addsitedir(sys.argv.pop(1))"
-PACKAGED_RUN = "import runpy; runpy.run_module('ledger_engine', run_name='__main__', alter_sys=True)"
+# The engine's flags (§5.1): no user site, no `site` import, no bytecode written, no unsafe path first. Never `-I`.
+ENGINE_FLAGS = ("-s", "-S", "-B", "-P")
+FILL_FLAGS = ("-s", "-S", "-P")  # the bytecode fill writes bytecode (under `-X pycache_prefix` only)
+# The bootstrap: `-S` left the interpreter's own site-packages out; this adds the engine's site (the first argument
+# after the code), processing its .pth files, and nothing else.
+PATH_SETUP = "import site, sys; site.addsitedir(sys.argv.pop(1))"
+ENGINE_RUN = "import runpy; runpy.run_module('ledger_engine', run_name='__main__', alter_sys=True)"
+# The fill compiles every folder on the engine's path (the interpreter's library, the engine's site-packages and, in
+# development, its source through the venv's .pth); a file that does not compile is left to its source.
+BYTECODE_FILL = (
+    "import compileall, os, sys; "
+    "[compileall.compile_dir(p, quiet=2, workers=0) for p in list(sys.path) if os.path.isdir(p)]"
+)
+BYTECODE_COMPLETE = ".complete"
 CREATE_NO_WINDOW = 0x08000000  # Windows process creation flag: a console program opens no window
 
 
@@ -139,10 +171,24 @@ def packaged_engine_site(prefix: Path) -> Path:
     return prefix.parent.joinpath(*ENGINE_SITE_PARTS)
 
 
-def packaged_argv(python: Path, site: Path, code: str) -> tuple[str, ...]:
-    """`python` without its own site-packages (`-S`), isolated and writing no bytecode (the bundle is read-only),
-    running `code` after the path setup has added `site`."""
-    return (str(python), "-I", "-S", "-B", "-c", f"{PACKAGED_PATH_SETUP}; {code}", str(site))
+def venv_site(venv: Path) -> Path:
+    """A virtual environment's site-packages (the engine's, in development); a path that does not exist when there is
+    none, so the start fails as a start, never by finding the engine elsewhere."""
+    if os.name == "nt":
+        return venv / "Lib" / "site-packages"
+    found = sorted(venv.glob("lib/python*/site-packages"))
+    return found[0] if len(found) == 1 else venv / "lib" / "site-packages"
+
+
+def bootstrap_argv(python: Path, site: Path, code: str, flags: tuple[str, ...] = ENGINE_FLAGS) -> tuple[str, ...]:
+    """`python` with `flags`, running `code` after the path setup has added `site` (and nothing else)."""
+    return (str(python), *flags, "-c", f"{PATH_SETUP}; {code}", str(site))
+
+
+def bytecode_build_dir(app_local_data: Path, python: Path, site: Path, version: str) -> Path:
+    """`app_local_data/engine/bytecode/<build>/` (§5.1): one folder per interpreter, engine site and app version."""
+    build = hashlib.sha256(f"{python}\0{site}\0{version}".encode()).hexdigest()[:16]
+    return app_local_data / "engine" / "bytecode" / build
 
 
 def creation_flags(os_name: str) -> int:
@@ -156,20 +202,40 @@ def next_request_id(previous: int) -> int:
 
 
 def engine_env(environ: Mapping[str, str]) -> dict[str, str]:
-    """The engine's environment: the parent's, without `FT_*` and `PYTHON*` variables."""
-    return {k: v for k, v in environ.items() if not k.upper().startswith(DROPPED_ENV_PREFIXES)}
+    """The engine's environment: the parent's, without `FT_*` and `PYTHON*` variables, with `PYTHONHASHSEED=0`."""
+    kept = {k: v for k, v in environ.items() if not k.upper().startswith(DROPPED_ENV_PREFIXES)}
+    return {**kept, "PYTHONHASHSEED": HASH_SEED}
+
+
+@dataclass(frozen=True, slots=True)
+class EngineBytecode:
+    """The bytecode directory of one engine build and the command that fills it (§5.1)."""
+
+    directory: Path
+    fill_argv: tuple[str, ...]
+
+    def ready(self) -> bool:
+        """Filled completely: the fill marks it last."""
+        return (self.directory / BYTECODE_COMPLETE).is_file()
+
+    def discard(self) -> None:
+        """Delete it, the mark first, so a half-deleted folder is never taken as filled."""
+        with contextlib.suppress(OSError):
+            (self.directory / BYTECODE_COMPLETE).unlink(missing_ok=True)
+        shutil.rmtree(self.directory, ignore_errors=True)
 
 
 @dataclass(frozen=True, slots=True)
 class EngineCommand:
     """How to start the engine: the argv (without `--parent-pid`, which the client adds), the environment (None:
-    inherit unchanged, for stand-in engines in tests) and the engine lock every engine holds for its life (S0053;
+    inherit unchanged, for stand-in engines in tests), the engine lock every engine holds for its life (S0053;
     engine-jobs §5.1: the composition root names `app_local_data/locks/engine.lock`; None for the packaged
-    self-check, which does no ledger work, and for stand-ins)."""
+    self-check, which does no ledger work, and for stand-ins), and the bytecode directory (None: none used)."""
 
     argv: tuple[str, ...]
     env: Mapping[str, str] | None
     engine_lock: Path | None = None
+    bytecode: EngineBytecode | None = None
 
     @classmethod
     def for_venv(
@@ -179,11 +245,12 @@ class EngineCommand:
         test_ops: bool = False,
         environ: Mapping[str, str] | None = None,
         engine_lock: Path | None = None,
+        bytecode_dir: Path | None = None,
     ) -> EngineCommand:
-        """The engine installed in a virtual environment (development and tests)."""
+        """The engine installed in a virtual environment (development and tests), under the same bootstrap as the
+        bundle's, with the venv's site-packages."""
         python = venv / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
-        argv = (str(python), "-I", "-m", "ledger_engine", *(("--test-ops",) if test_ops else ()))
-        return cls(argv=argv, env=engine_env(os.environ if environ is None else environ), engine_lock=engine_lock)
+        return cls._bootstrapped(python, venv_site(venv), test_ops, environ, engine_lock, bytecode_dir)
 
     @classmethod
     def for_packaged(
@@ -194,27 +261,36 @@ class EngineCommand:
         test_ops: bool = False,
         environ: Mapping[str, str] | None = None,
         engine_lock: Path | None = None,
+        bytecode_dir: Path | None = None,
     ) -> EngineCommand:
         """The engine in the bundle: the shared interpreter `python` with only the engine's `site` (S0038)."""
-        argv = (*packaged_argv(python, site, PACKAGED_RUN), *(("--test-ops",) if test_ops else ()))
-        return cls(argv=argv, env=engine_env(os.environ if environ is None else environ), engine_lock=engine_lock)
+        return cls._bootstrapped(python, site, test_ops, environ, engine_lock, bytecode_dir)
 
-    def spawn_argv(self, parent_pid: int) -> list[str]:
-        """The argv the client spawns: the command, the parent's pid for the engine's watchdog, and the engine lock."""
+    @classmethod
+    def _bootstrapped(
+        cls,
+        python: Path,
+        site: Path,
+        test_ops: bool,
+        environ: Mapping[str, str] | None,
+        engine_lock: Path | None,
+        bytecode_dir: Path | None,
+    ) -> EngineCommand:
+        argv = (*bootstrap_argv(python, site, ENGINE_RUN), *(("--test-ops",) if test_ops else ()))
+        bytecode = (
+            None
+            if bytecode_dir is None
+            else EngineBytecode(bytecode_dir, bootstrap_argv(python, site, BYTECODE_FILL, FILL_FLAGS))
+        )
+        env = engine_env(os.environ if environ is None else environ)
+        return cls(argv=argv, env=env, engine_lock=engine_lock, bytecode=bytecode)
+
+    def spawn_argv(self, parent_pid: int, pycache: Path | None = None) -> list[str]:
+        """The argv the client spawns: the interpreter (reading bytecode from `pycache` when given), the command,
+        the parent's pid for the engine's watchdog, and the engine lock."""
+        prefix = ["-X", f"pycache_prefix={pycache}"] if pycache is not None else []
         lock = ["--engine-lock", str(self.engine_lock)] if self.engine_lock is not None else []
-        return [*self.argv, "--parent-pid", str(parent_pid), *lock]
-
-
-def _check_timeout(timeout: float) -> None:
-    """A timeout is a positive, finite number of seconds: an infinite one could wait forever on a stuck engine.
-    Checked before anything is sent, so a bad value never leaves a request in flight."""
-    if not (timeout > 0 and math.isfinite(timeout)):
-        msg = f"timeout must be a positive, finite number of seconds, not {timeout!r}"
-        raise ValueError(msg)
-
-
-def _real_pause(seconds: float) -> None:
-    threading.Event().wait(seconds)
+        return [self.argv[0], *prefix, *self.argv[1:], "--parent-pid", str(parent_pid), *lock]
 
 
 def _no_log(event: Event, /, **fields: object) -> None:
@@ -228,22 +304,62 @@ class WriteFailed:
 
 type _Reply = bytes | type[WriteFailed] | None
 """A reply line, a failed write, or None at the end of the engine's output."""
+type _Ours = EndReason | Literal["close"]
+"""Why we ended an engine: recorded before its group is signalled (§5.2)."""
 
 
-@dataclass
+class _AloneProcess:
+    """Windows: no process group; the engine alone is ended and waited for. TODO(BL-0087): the engine's Job Object
+    nested in the shell's, with kill-on-close (engine-jobs §5.2)."""
+
+    def __init__(self, proc: subprocess.Popen[bytes]) -> None:
+        self._proc = proc
+        self._lock = threading.Lock()
+        self._reaping = False
+        self.exited = threading.Event()
+
+    @property
+    def reaped(self) -> bool:
+        with self._lock:
+            return self._reaping
+
+    def signal(self) -> bool:
+        with self._lock:
+            if self._reaping:
+                return False
+            with contextlib.suppress(OSError):
+                self._proc.kill()
+            return True
+
+    def drain(self) -> Reaped:
+        code = self._proc.wait()
+        with self._lock:
+            self._reaping = True
+        self.exited.set()
+        return Reaped(code, 0)
+
+
+@dataclass(eq=False)
 class _Running:
     proc: subprocess.Popen[bytes]
+    serial: int
+    group: EngineGroup | _AloneProcess
     replies: queue.Queue[_Reply] = field(default_factory=lambda: queue.Queue[_Reply]())
     requests: queue.Queue[bytes | None] = field(default_factory=lambda: queue.Queue[bytes | None]())
     stderr: deque[str] = field(default_factory=lambda: deque[str](maxlen=STDERR_LINES))
     threads: list[threading.Thread] = field(default_factory=lambda: list[threading.Thread]())
+    drained: threading.Event = field(default_factory=threading.Event)
+    reason: _Ours | None = None
+    in_flight: tuple[int, str] | None = None
+    gate: Literal["none", "pending", "proceeded"] = "none"
+    committed: bool = False
 
 
 @dataclass(frozen=True, slots=True)
 class _Lost:
     """No valid answer to a request that went out (an observation; the table decides what it means)."""
 
-    kind: Literal["timeout", "crashed", "protocol_violation"]
+    kind: Literal["crashed", "protocol_violation"]
     detail: str
 
 
@@ -254,19 +370,11 @@ class _Foreign:
     what: str
 
 
-def join_all(threads: Iterable[threading.Thread], timeout: float, clock: Callable[[], float] = time.monotonic) -> None:
-    """Join `threads` under one shared deadline of `timeout` seconds, not `timeout` each (S0042): a reap waits at
-    most `close_timeout` however many threads its run has."""
-    deadline = clock() + timeout
-    for thread in threads:
-        thread.join(max(0.0, deadline - clock()))
-
-
 def _pump_requests(pipe: IO[bytes], requests: queue.Queue[bytes | None], replies: queue.Queue[_Reply]) -> None:
-    """Each request line to the engine's stdin, until None (close stdin: the engine finishes and exits) or a failed
-    write (reported as `WriteFailed` beside the replies). The only user of stdin: the caller waits for the reply
-    queue, never for this write, so an engine that does not read cannot hold the caller (S0042). The pipe is closed
-    here, when the thread ends, because closing it from another thread would wait for a write in progress."""
+    """Each line to the engine's stdin, until None (close stdin: the engine finishes and exits) or a failed write
+    (reported as `WriteFailed` beside the replies). The only user of stdin: the caller waits for the reply queue,
+    never for this write, so an engine that does not read cannot hold the caller (S0042). The pipe is closed here,
+    when the thread ends, because closing it from another thread would wait for a write in progress."""
     try:
         while (line := requests.get()) is not None:
             try:
@@ -307,9 +415,66 @@ def _pump_stderr(pipe: IO[bytes], tail: deque[str], sink: Callable[[str], None] 
                     sink = None
 
 
+class _Filler:
+    """The one background fill of the bytecode directory (§5.1); ended with the client."""
+
+    def __init__(self, bytecode: EngineBytecode, env: Mapping[str, str] | None, ops: GroupOps, log: EventSink) -> None:
+        self._bytecode = bytecode
+        self._env = dict(env) if env is not None else None
+        self._ops = ops
+        self._log = log
+        self._lock = threading.Lock()
+        self._stopped = False
+        self._group: EngineGroup | _AloneProcess | None = None
+
+    def start(self) -> None:
+        threading.Thread(target=self._run, name="engine-bytecode-fill", daemon=True).start()
+
+    def stop(self) -> None:
+        with self._lock:
+            self._stopped = True
+            if self._group is not None:
+                self._group.signal()
+
+    def _run(self) -> None:
+        directory = self._bytecode.directory
+        failure: str | None = None
+        try:
+            if directory.exists():  # a folder left by a fill that did not finish
+                shutil.rmtree(directory)
+            directory.mkdir(parents=True)
+            argv = self._bytecode.fill_argv
+            with self._lock:
+                if self._stopped:
+                    return
+                proc = subprocess.Popen(  # noqa: S603 (argv from EngineCommand, built by the composition root)
+                    [argv[0], "-X", f"pycache_prefix={directory}", *argv[1:]],
+                    stdin=subprocess.DEVNULL,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    env=self._env,
+                    close_fds=True,
+                    start_new_session=os.name == "posix",
+                    creationflags=creation_flags(os.name),
+                )
+                group = EngineGroup(self._ops, proc.pid) if os.name == "posix" else _AloneProcess(proc)
+                self._group = group
+            reaped = group.drain()
+            proc.returncode = reaped.returncode
+            if reaped.returncode == 0 and not self._stopped:
+                (directory / BYTECODE_COMPLETE).write_bytes(b"")
+            elif not self._stopped:
+                failure = f"the fill exited with code {reaped.returncode}"
+        except OSError as e:
+            failure = f"the fill failed: {type(e).__name__}: {e}"
+        if failure is not None:
+            with contextlib.suppress(Exception):
+                self._log(ENGINE_BYTECODE, outcome="fill_failed", detail=failure)
+
+
 class EngineClient:
     """`EnginePort` over a child process, supervised by the table in `app.platform.engine_supervision`.
-    Thread-safe: calls are serialized."""
+    Thread-safe: calls are serialized; `end`, `proceed` and `close` never wait for a call."""
 
     def __init__(
         self,
@@ -317,21 +482,32 @@ class EngineClient:
         policy: RestartPolicy | None = None,
         *,
         monotonic: Callable[[], float] = time.monotonic,
-        pause: Callable[[float], None] = _real_pause,
+        pause: Callable[[float], None] | None = None,
         on_stderr: Callable[[str], None] | None = None,
         log: EventSink | None = None,
+        group_ops: GroupOps | None = None,
+        on_engine_ended: Callable[[EngineEnd], None] | None = None,
     ) -> None:
         self._command = command
         self._on_stderr = on_stderr
         self._log: EventSink = log or _no_log
         self._policy = policy or RestartPolicy()
         self._monotonic = monotonic
-        self._pause = pause
-        self._lock = threading.RLock()
+        self._pause = pause or self._wait_unless_ended
+        self._ops: GroupOps = group_ops or PosixGroupOps()
+        self._on_engine_ended = on_engine_ended
+        self._lock = threading.RLock()  # serializes the public calls
+        self._signals = threading.Condition(threading.Lock())  # guards what `end`, `proceed` and `close` touch
         self._state: SupervisionState = Idle()
         self._run: _Running | None = None
+        self._previous: _Running | None = None
+        self._in_call = False
+        self._pending: _Ours | None = None
+        self._closing = False
+        self._serial = 0
         self._next_id = 0
         self._last_stderr: deque[str] = deque[str]()
+        self._filler: _Filler | None = None
 
     # -- the port ---------------------------------------------------------------------------------------------
 
@@ -340,24 +516,49 @@ class EngineClient:
             ready = self._ensure_running()
             return ready if isinstance(ready, EngineFailure) else ready[1]
 
-    def ping(self, timeout: float) -> Pong | EngineRefusal | EngineFailure:
-        _check_timeout(timeout)
+    def ping(self) -> Pong | EngineRefusal | EngineFailure:
         with self._call():
-            out = self._request("ping", {}, timeout, decode_pong)
+            out = self._request("ping", {}, decode_pong, None)
             return Pong() if isinstance(out, Accepted) else out
 
     def call(
-        self, op: str, params: Mapping[str, object], timeout: float
+        self, op: str, params: Mapping[str, object], *, on_event: Callable[[EngineEvent], None] | None = None
     ) -> Mapping[str, object] | EngineRefusal | EngineFailure:
-        _check_timeout(timeout)
         with self._call():
-            out = self._request(op, params, timeout, None)
+            out = self._request(op, params, None, on_event)
             return out.result if isinstance(out, Accepted) else out
 
+    def proceed(self) -> bool:
+        """`proceed` for the gate of the request in flight; False, and nothing sent, if no gate is pending."""
+        with self._signals:
+            run = self._run
+            if run is None or run.reason is not None or run.gate != "pending" or run.in_flight is None:
+                return False
+            rid, op = run.in_flight
+            run.gate = "proceeded"
+            run.requests.put(encode_proceed(rid, op))
+            return True
+
+    def end(self, reason: EndReason) -> None:
+        """Record `reason` and signal the engine's group once (§5.2). Never waits."""
+        with self._signals:
+            if reason == "retire" and self._in_call:
+                msg = "retire ends an idle engine after its job's final reply, never a call in flight"
+                raise RuntimeError(msg)
+            self._mark_ended(reason)
+            idle = not self._in_call
+        if idle:
+            self._settle_if_idle()
+
     def close(self) -> None:
-        with self._call():
-            self._notice_exit()  # an engine that died since the last request is a stop, logged before the close
-            self._drive(Close())
+        """Record `close`, signal the engine's group once and return, without waiting for a call or the reap."""
+        with self._signals:
+            self._closing = True
+            self._mark_ended("close")
+            filler = self._filler
+        if filler is not None:
+            filler.stop()
+        self._settle_if_idle()
 
     # -- diagnostics ------------------------------------------------------------------------------------------
 
@@ -376,6 +577,12 @@ class EngineClient:
         return run.proc.pid if run is not None else None
 
     @property
+    def serial(self) -> int | None:
+        """The running engine's spawn number in this client (its `EngineEnd` carries the same), if one is running."""
+        run = self._run
+        return run.serial if run is not None else None
+
+    @property
     def info(self) -> EngineInfo | None:
         state = self._state
         return state.info if isinstance(state, (Ready, Busy)) else None
@@ -391,6 +598,53 @@ class EngineClient:
         with self._call():
             self._drive(Reset())
 
+    # -- our ends ---------------------------------------------------------------------------------------------
+
+    def _mark_ended(self, reason: _Ours) -> None:
+        """Under `_signals`: record the reason on the running engine and signal its group once; a call in flight
+        that has no engine to signal (a start, a backoff) sees `_pending` and ends there."""
+        run = self._run
+        if run is not None and run.reason is None and not run.group.exited.is_set():
+            run.reason = reason  # an engine that already ended by itself keeps that truth: it is no end of ours
+            run.group.signal()
+        if self._in_call and self._pending is None:
+            self._pending = reason
+        self._signals.notify_all()
+
+    def _settle_if_idle(self) -> None:
+        """With no call in flight, feed our end of the idle engine (and a close) to the table at once, so `state` is
+        current. A call in flight, or one that starts meanwhile, settles it itself."""
+        if not self._lock.acquire(blocking=False):
+            return
+        try:
+            if not self._in_call:
+                self._settle()
+        finally:
+            self._lock.release()
+
+    def _settle(self) -> None:
+        """At rest: an engine we ended, or one that died by itself, is fed to the table; then a pending close."""
+        run = self._run
+        if run is not None and isinstance(self._state, Ready):
+            if run.reason is not None:
+                self._drive(self._ours(run.reason))
+            elif run.group.exited.is_set():  # it died since the last request: a stop
+                self._drive(Exited("the engine exited between requests", self._monotonic()))
+        if self._closing and not isinstance(self._state, Closed):
+            self._drive(Close())
+
+    def _ours(self, reason: _Ours) -> SupervisionEvent:
+        if reason == "close":
+            return Close()
+        if reason == "retire":
+            return Retired()
+        return Cancelled(reason, self._monotonic())
+
+    def _wait_unless_ended(self, seconds: float) -> None:
+        """The real backoff pause: it ends early when the waiting call is ended (`end`, `close`)."""
+        with self._signals:
+            self._signals.wait_for(lambda: self._pending is not None, timeout=seconds)
+
     # -- the shell around the table ---------------------------------------------------------------------------
 
     @contextlib.contextmanager
@@ -400,12 +654,24 @@ class EngineClient:
         at rest, wherever the exception landed (a signal's included). For a request that is out, the table stops the
         engine: its reply may still come and would be handed to the next request (S0035 verifier F4c)."""
         with self._lock:
+            if self._in_call:
+                msg = "an engine call from inside a call's on_event"
+                raise RuntimeError(msg)
+            with self._signals:
+                self._in_call = True
+                self._pending = None
             try:
+                self._settle()
                 yield
             except BaseException as e:
                 if not isinstance(self._state, RESTING):
                     self._feed(Interrupted(f"the client failed: {type(e).__name__}", self._monotonic()))
                 raise
+            finally:
+                with self._signals:
+                    self._in_call = False
+                    self._pending = None
+                self._settle()
 
     def _drive(self, event: SupervisionEvent) -> EngineFailure | None:
         """Feed `event`, then carry out each follow-up (spawn, handshake, pause) and feed its outcome, until the table
@@ -426,14 +692,16 @@ class EngineClient:
 
     def _effect(self, effect: Effect) -> EngineFailure | Spawn | Handshake | Pause | None:
         match effect:
-            case Kill():
-                run, self._run = self._run, None
+            case End():
+                self._end_run()
+            case CloseInput():
+                run = self._run
                 if run is not None:
-                    self._kill(run)
-            case Shutdown():
-                run, self._run = self._run, None
-                if run is not None:
-                    self._shutdown(run)
+                    run.requests.put(None)  # the writer closes stdin: the engine finishes the request in hand
+            case DiscardBytecode():
+                if self._command.bytecode is not None:
+                    self._command.bytecode.discard()
+                self._filler = None  # the next spawn that may use it fills it again
             case Log(event=event, fields=fields):
                 # The log is diagnostics: a failing sink loses this line, never the supervision (S0041). Interrupts
                 # (`BaseException`) still go on, to the `_call` guard.
@@ -445,24 +713,33 @@ class EngineClient:
                 return effect
         return None
 
+    def _end_run(self) -> None:
+        """The table's `End`: signal the engine's group once (unless already signalled or reaped) and let it go; its
+        reaper drains and reaps it. The next spawn waits for that drain."""
+        with self._signals:
+            run, self._run = self._run, None
+            if run is None:
+                return
+            if run.reason is None:
+                run.group.signal()
+            self._previous = run
+        run.requests.put(None)  # an idle writer ends; one inside a write ends when the write fails
+        self._last_stderr = run.stderr
+
     def _perform(self, effect: Spawn | Handshake | Pause) -> SupervisionEvent:
         match effect:
-            case Spawn():
-                return self._spawn()
+            case Spawn(bytecode=bytecode):
+                return self._spawn(bytecode)
             case Handshake():
                 return self._handshake()
             case Pause(seconds=seconds):
                 self._pause(seconds)
-                return BackoffElapsed()
-
-    def _notice_exit(self) -> None:
-        """An engine found dead while `Ready` (it stopped since the last request) is fed in as `Exited`: a stop."""
-        run = self._run
-        if isinstance(self._state, Ready) and run is not None and run.proc.poll() is not None:
-            self._drive(Exited(self._exit_detail(run), self._monotonic()))
+                with self._signals:
+                    pending = self._pending
+                return BackoffElapsed() if pending is None else self._ours(pending)
 
     def _ensure_running(self) -> tuple[_Running, EngineInfo] | EngineFailure:
-        self._notice_exit()
+        self._settle()
         failure = self._drive(Request(self._monotonic()))
         if failure is not None:
             return failure
@@ -476,8 +753,8 @@ class EngineClient:
         self,
         op: str,
         params: Mapping[str, object],
-        timeout: float,
         validate: Callable[[Mapping[str, object]], object] | None,
+        on_event: Callable[[EngineEvent], None] | None,
     ) -> Accepted | EngineRefusal | EngineFailure:
         """One request through the table: `Send`, then the answer or its absence. `validate` checks a result's
         shape (a `Violation` stops the engine like any invalid reply)."""
@@ -489,27 +766,44 @@ class EngineClient:
             return ready
         run, _ = ready
         self._feed(Send())
-        out = self._exchange(run, line, timeout)  # an exception from here on is fed in as `Interrupted` (`_call`)
+        out = self._exchange(run, line, on_event)  # an exception from here on is fed in as `Interrupted` (`_call`)
         if isinstance(out, Accepted) and validate is not None:
             checked = validate(out.result)
             if isinstance(checked, Violation):
                 out = _Lost("protocol_violation", f"{checked.detail}; the engine was stopped")
         if isinstance(out, _Lost):
-            failure = self._feed(self._lost(out))
-            if not isinstance(failure, EngineFailure):  # pragma: no cover (every stop in Busy fails the caller)
-                msg = "the supervision table stopped a request without failing it"
+            event = self._lost(run, out)
+            failure = self._feed(event)
+            if isinstance(event, ViolatedPastCommit):  # `Finishing`: the input is closed; read to the end
+                self._discard_until_end(run)
+                failure = self._feed(self._observed_end(run) or Ended("the engine's output ended", self._monotonic()))
+            if not isinstance(failure, EngineFailure):  # pragma: no cover (every end in Busy fails the caller)
+                msg = "the supervision table ended a request without failing it"
                 raise RuntimeError(msg)  # noqa: TRY004 (a broken table, not a wrong argument)
             return failure
         self._feed(Answered())
         return out
 
-    def _lost(self, out: _Lost) -> TimedOut | Ended | Violated:
-        now = self._monotonic()
-        if out.kind == "timeout":
-            return TimedOut(out.detail, now)
+    def _observed_end(self, run: _Running) -> SupervisionEvent | None:
+        """Our end of this engine, if we recorded one: it wins over what the output did (§5.2)."""
+        return None if run.reason is None else self._ours(run.reason)
+
+    def _lost(self, run: _Running, out: _Lost) -> SupervisionEvent:
+        ours = self._observed_end(run)
+        if ours is not None:
+            return ours
         if out.kind == "crashed":
-            return Ended(out.detail, now)
-        return Violated(out.detail, now)
+            return Ended(out.detail, self._monotonic())
+        if self._gate_of(run) == "proceeded":  # §5.3: past the commit point, never signal; close the input, wait
+            return ViolatedPastCommit(out.detail)
+        return Violated(out.detail, self._monotonic())
+
+    @staticmethod
+    def _discard_until_end(run: _Running) -> None:
+        """Read and discard the engine's output until it ends (§5.3: discarding keeps the pipe from filling and
+        blocking the engine)."""
+        while run.replies.get() is not None:
+            pass
 
     def _encode(self, op: str, params: Mapping[str, object]) -> tuple[int, str, bytes] | EngineFailure:
         """The next request line, made before anything is started or sent (S0035 independent verifier F7)."""
@@ -524,59 +818,109 @@ class EngineClient:
         return self._next_id, op, line
 
     def _exchange(
-        self, run: _Running, request: tuple[int, str, bytes], timeout: float
+        self, run: _Running, request: tuple[int, str, bytes], on_event: Callable[[EngineEvent], None] | None
     ) -> Accepted | EngineRefusal | _Lost:
-        """Write the request and read its answer: an observation only; the table decides what follows."""
-        out = self._exchange_any(run, request, timeout, handshake=False)
+        """Write the request and read its job messages and its answer: an observation only; the table decides."""
+        out = self._exchange_any(run, request, on_event, handshake=False)
         if isinstance(out, _Foreign):  # pragma: no cover (read only for our own handshake)
             return _Lost("protocol_violation", out.what)
         return out
 
     def _exchange_any(
-        self, run: _Running, request: tuple[int, str, bytes], timeout: float, *, handshake: bool
+        self,
+        run: _Running,
+        request: tuple[int, str, bytes],
+        on_event: Callable[[EngineEvent], None] | None,
+        *,
+        handshake: bool,
     ) -> Accepted | EngineRefusal | _Lost | _Foreign:
         """`_exchange`; for our own handshake (`handshake`), a reply in another protocol is `_Foreign`. The request is
-        handed to the writer thread and the timeout covers its write and the reply together: one wait (S0042)."""
+        handed to the writer thread and the caller waits for the reply queue only, with no time limit (§5.4)."""
         rid, op, line = request
+        with self._signals:
+            run.in_flight, run.gate, run.committed = (rid, op), "none", False
         run.requests.put(line)
         try:
-            raw = run.replies.get(timeout=timeout)
-        except queue.Empty:
-            return _Lost("timeout", f"no reply to {op} within {timeout} s; the engine was stopped")
-        if raw is None:
-            return _Lost("crashed", self._exit_detail(run))
-        if not isinstance(raw, bytes):  # WriteFailed: the request never reached the engine
-            return _Lost("crashed", self._exit_detail(run, "input"))
-        reply = decode_reply(raw, rid, op)
-        if isinstance(reply, Violation):
-            foreign = foreign_version(raw) if handshake else None
-            if foreign is not None:  # another protocol: incompatible, never retried (S0035 verifier F2)
-                return _Foreign(f"the engine speaks protocol {foreign}")
-            return _Lost("protocol_violation", f"{reply.detail}; the engine was stopped")
-        return reply
+            while True:
+                raw = run.replies.get()
+                if raw is None:
+                    return _Lost("crashed", "the engine's output ended")
+                if not isinstance(raw, bytes):  # WriteFailed: the request never reached the engine
+                    return _Lost("crashed", "the engine's input closed")
+                message = decode_reply(raw, rid, op)
+                if isinstance(message, Violation):
+                    foreign = foreign_version(raw) if handshake else None
+                    if foreign is not None:  # another protocol: incompatible, never retried (S0035 verifier F2)
+                        return _Foreign(f"the engine speaks protocol {foreign}")
+                    return _Lost("protocol_violation", f"{message.detail}; the engine was stopped")
+                if isinstance(message, (Progress, GateReached, Committed)):
+                    wrong = "a job message during the handshake" if handshake else self._out_of_order(run, message)
+                    if wrong is not None:
+                        return _Lost("protocol_violation", f"{wrong}; the engine was stopped")
+                    if on_event is not None:
+                        on_event(message)
+                    continue
+                if self._gate_of(run) == "pending":
+                    return _Lost("protocol_violation", "a reply while the gate waited for proceed")
+                decision = message.decision
+                if decision is not None and on_event is not None:
+                    on_event(decision)
+                return message
+        finally:
+            with self._signals:
+                run.in_flight = None
 
-    def _spawn(self) -> Spawned | SpawnFailed:
-        argv = self._command.spawn_argv(os.getpid())
-        env = dict(self._command.env) if self._command.env is not None else None
-        try:
-            proc = subprocess.Popen(  # noqa: S603 (argv from EngineCommand, built by the composition root)
-                argv,
-                stdin=subprocess.PIPE,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                env=env,
-                close_fds=True,
-                creationflags=creation_flags(os.name),
-            )
-        except OSError as e:
-            return SpawnFailed(f"the engine could not be started: {e}", self._monotonic())
-        run = _Running(proc)
-        self._run = run  # at once, so an interrupted start kills it (the table's `Kill`)
+    def _gate_of(self, run: _Running) -> Literal["none", "pending", "proceeded"]:
+        """Where the request in flight stands at its gate (`proceed()` moves it from another thread)."""
+        with self._signals:
+            return run.gate
+
+    def _out_of_order(self, run: _Running, message: Progress | GateReached | Committed) -> str | None:
+        """A job message's place (§4, §6.1): one gate; `committed` once, only after `proceed`."""
+        with self._signals:
+            if isinstance(message, GateReached):
+                if run.gate != "none":
+                    return "a second gate in one request"
+                run.gate = "pending"
+            elif isinstance(message, Committed):
+                if run.gate != "proceeded" or run.committed:
+                    return "committed before proceed" if run.gate != "proceeded" else "committed twice"
+                run.committed = True
+        return None
+
+    def _spawn(self, use_bytecode: bool) -> SupervisionEvent:
+        """Start the engine once the previous one is drained (§5.1), unless the waiting call was ended meanwhile."""
+        command = self._command
+        with self._signals:
+            previous = self._previous
+            self._signals.wait_for(lambda: self._pending is not None or previous is None or previous.drained.is_set())
+            if self._pending is not None:
+                return self._ours(self._pending)
+            self._previous = None
+            pycache = self._bytecode_for_spawn(use_bytecode)
+            argv = command.spawn_argv(os.getpid(), pycache)
+            env = dict(command.env) if command.env is not None else None
+            try:
+                proc = subprocess.Popen(  # noqa: S603 (argv from EngineCommand, built by the composition root)
+                    argv,
+                    stdin=subprocess.PIPE,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    env=env,
+                    close_fds=True,
+                    start_new_session=os.name == "posix",
+                    creationflags=creation_flags(os.name),
+                )
+            except OSError as e:
+                return SpawnFailed(f"the engine could not be started: {e}", self._monotonic())
+            self._serial += 1
+            group = EngineGroup(self._ops, proc.pid) if os.name == "posix" else _AloneProcess(proc)
+            run = _Running(proc, self._serial, group)
+            self._run = run  # at once, so an interrupted start ends it (the table's `End`)
         if proc.stdin is None or proc.stdout is None or proc.stderr is None:  # pragma: no cover (pipes were requested)
-            self._run = None
-            self._kill(run)
             return SpawnFailed("the engine has no pipes", self._monotonic())
-        pumps = (
+        threads = (
+            threading.Thread(target=self._reap, args=(run,), name="engine-reaper", daemon=True),
             threading.Thread(
                 target=_pump_requests, args=(proc.stdin, run.requests, run.replies), name="engine-requests", daemon=True
             ),
@@ -585,19 +929,50 @@ class EngineClient:
                 target=_pump_stderr, args=(proc.stderr, run.stderr, self._on_stderr), name="engine-stderr", daemon=True
             ),
         )
-        for thread in pumps:
+        for thread in threads:
             thread.start()
             run.threads.append(thread)
-        return Spawned(proc.pid)
+        return Spawned(proc.pid, bytecode=pycache is not None)
 
-    def _handshake(self) -> HandshakeOk | HandshakeForeign | HandshakeFailed:
+    def _bytecode_for_spawn(self, allowed: bool) -> Path | None:
+        """The bytecode directory to start with, if allowed and complete; else None, and a fill begins (once)."""
+        bytecode = self._command.bytecode
+        if not allowed or bytecode is None:
+            return None
+        if bytecode.ready():
+            return bytecode.directory
+        if self._filler is None and not self._closing:
+            self._filler = _Filler(bytecode, self._command.env, self._ops, self._log)
+            self._filler.start()
+        return None
+
+    def _reap(self, run: _Running) -> None:
+        """The engine's reaper thread: drain its group, reap it, then report its end (§5.2)."""
+        reaped = run.group.drain()
+        run.proc.returncode = reaped.returncode  # reaped here: `Popen` must never wait for it again
+        with self._signals:
+            run.drained.set()
+            if run.reason is not None:
+                # We ended it, and its group is drained: nothing more can come. A child that left the group
+                # (`setsid`, §15) may still hold the output open; the call waiting for its end must not wait for it.
+                run.replies.put(None)
+            self._signals.notify_all()
+        if self._on_engine_ended is not None:
+            end = EngineEnd(run.serial, run.proc.pid, run.reason, reaped.returncode, reaped.max_rss_kib)
+            with contextlib.suppress(Exception):  # the report's receiver must not take the reaper down
+                self._on_engine_ended(end)
+
+    def _handshake(self) -> SupervisionEvent:
         run = self._run
         if run is None:  # pragma: no cover (the table sends a handshake only right after a spawn)
             return HandshakeFailed("handshake: no engine process", self._monotonic())
         request = self._encode("handshake", {})
         if isinstance(request, EngineFailure):  # pragma: no cover (a handshake is a few bytes)
             return HandshakeFailed(f"handshake: {request.detail}", self._monotonic())
-        out = self._exchange_any(run, request, self._policy.start_timeout, handshake=True)
+        out = self._exchange_any(run, request, None, handshake=True)
+        ours = self._observed_end(run)
+        if ours is not None and not isinstance(out, (Accepted, EngineRefusal)):
+            return ours
         if isinstance(out, _Foreign):
             return HandshakeForeign(out.what)
         if isinstance(out, _Lost):
@@ -611,43 +986,18 @@ class EngineClient:
             return HandshakeFailed(f"handshake: {info.detail}; the engine was stopped", self._monotonic())
         return HandshakeOk(info)
 
-    def _keep_stderr(self, run: _Running) -> None:
-        """After the run's threads are joined: its stderr tail outlives it (S0035 independent verifier F4)."""
-        self._last_stderr = run.stderr
 
-    def _exit_detail(self, run: _Running, closed: Literal["input", "output"] = "output") -> str:
-        try:
-            code = run.proc.wait(self._policy.close_timeout)
-        except subprocess.TimeoutExpired:
-            return f"the engine closed its {closed} but did not exit"
-        return f"the engine exited with code {code}"
-
-    def _kill(self, run: _Running) -> None:
-        if run.proc.poll() is None:
-            run.proc.kill()
-        self._reap(run)
-
-    def _shutdown(self, run: _Running) -> None:
-        run.requests.put(None)  # the writer closes stdin: the engine finishes the request in hand and exits
-        try:
-            run.proc.wait(self._policy.close_timeout)
-        except subprocess.TimeoutExpired:
-            run.proc.terminate()
-            try:
-                run.proc.wait(self._policy.close_timeout)
-            except subprocess.TimeoutExpired:
-                run.proc.kill()
-        self._reap(run)
-
-    def _reap(self, run: _Running) -> None:
-        """Wait for the exit and the run's threads under one deadline of `close_timeout` (real time: these are real
-        waits). Each thread closes its own pipe when it ends; a thread still running (a child of the engine holds its
-        pipe open) is left with its pipe, never waited for again (S0042)."""
-        deadline = time.monotonic() + self._policy.close_timeout
-        run.requests.put(None)  # an idle writer ends; one inside a write ends when the write fails
-        try:
-            run.proc.wait(self._policy.close_timeout)
-        except subprocess.TimeoutExpired:  # pragma: no cover (after SIGKILL the OS ends it)
-            return
-        join_all(run.threads, max(0.0, deadline - time.monotonic()))
-        self._keep_stderr(run)
+__all__ = [
+    "BYTECODE_COMPLETE",
+    "ENGINE_FLAGS",
+    "EngineBytecode",
+    "EngineClient",
+    "EngineCommand",
+    "bootstrap_argv",
+    "bytecode_build_dir",
+    "creation_flags",
+    "engine_env",
+    "next_request_id",
+    "packaged_engine_site",
+    "venv_site",
+]

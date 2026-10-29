@@ -1,12 +1,20 @@
 """The engine's protocol server: one request line in, one reply line out (ADR-0054 decisions 2 and 4).
 
-    python -I -m ledger_engine [--parent-pid PID] [--engine-lock PATH] [--test-ops]
+    python -s -S -B -P -c <bootstrap> <site> [--parent-pid PID] [--engine-lock PATH] [--test-ops]
+
+(the main sidecar's bootstrap adds only the engine's site-packages, then runs this module; engine-jobs §5.1. Never
+`-I`: it implies `-E`, which ignores `PYTHONHASHSEED`. Tests may run `python -I -m ledger_engine`.)
 
 - **Channel.** At start the engine keeps private copies of its stdin and stdout for the protocol, points fd 1 at
   stderr and fd 0 at the null device. A `print` or a raw write to fd 1 from code running inside the engine (a
   user's Beancount plugin, later) lands on stderr and can never corrupt a reply; nothing inside can read requests.
   The private copies are not inherited by child processes.
 - **Order.** Requests are handled one at a time, in order; each gets exactly one reply.
+- **A job's messages** (S0057; protocol version 2; engine-jobs §4, §5.4, §6.1 steps 7 and 9, §12): a handler gets a
+  `JobContext`: `progress(phase)` sends a progress message; `gate()` sends `gate` and reads the next line, which must
+  be `proceed` for this request: on end of input it raises `InputEnded` (the read loop ends, and so the engine; it
+  never proceeds), on any other line `GateRefused` (the request is refused `protocol.malformed`, nothing past the
+  gate runs); `committed()` only after `proceed`; `decide(...)` sets the one `decision` its reply carries.
 - **Refusals** carry a stable key and a plain message (`messages.RefusalKey`); the engine keeps serving after any
   refusal. A handler that raises, or returns a result that is not its op's, is `engine.internal`: the traceback
   goes to stderr, never into the reply. The engine never dies on input (S0035 independent verifier F1): a refusal
@@ -17,7 +25,11 @@
   hand), and on POSIX also when its parent is no longer `--parent-pid` (polled from the start, so a parent that
   died while the engine was starting is caught), even mid-request and with stdin still open. A parent that is pid 1
   (a main sidecar running as a container's first process) cannot be told apart from re-parenting, so then only
-  stdin EOF applies (S0035 independent verifier F6).
+  stdin EOF applies (S0035 independent verifier F6). **Both end the engine's whole group** (S0057; engine-jobs §5.2):
+  the sidecar spawns the engine as the leader of its own process group, so on POSIX the watchdog and the
+  end-of-input exit send `killpg(0, SIGKILL)`, the engine included, and a plugin's child cannot outlive the engine
+  holding a ledger lock. An engine that does not lead its group (run by hand or by a test) only exits: it never
+  signals a group that is not its own (`end_own_group`).
   On Windows the engine ends on stdin EOF when the sidecar is gone (its pipe closes), and the shell's Job Object
   (ARCHITECTURE.md §5) covers the sidecar and the engine.
 - **The engine lock** (S0053; `design/specs/engine-jobs.md` §5.1; ADR-0064 amendment of 2026-10-28): started with
@@ -31,8 +43,9 @@
 - **No resident ledger (INV-10).** The engine holds no ledger between requests; today it has no ledger operations
   at all. The overlay load arrives with its slice (WS-WRITE, BL-0003); the main sidecar's engine job queue runs one
   job at a time (ADR-0064, BL-0109).
-- `--test-ops` adds ops for the process tests (`test.stall`, `test.noise`, `test.fail`, `test.read_stdin`). They
-  are not part of the protocol schema and the main sidecar never passes the flag outside tests.
+- `--test-ops` adds ops for the process tests (`test.stall`, `test.noise`, `test.fail`, `test.read_stdin`,
+  `test.gate`, `test.child`, `test.interpreter`). They are not part of the protocol schema and the main sidecar
+  never passes the flag outside tests.
 """
 
 from __future__ import annotations
@@ -40,15 +53,17 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import signal
+import subprocess
 import sys
 import threading
 import traceback
 from collections.abc import Callable
 from dataclasses import dataclass
 from importlib.metadata import version
-from typing import IO, Any
+from typing import IO, Any, Protocol
 
-from pydantic import ValidationError
+from pydantic import BaseModel, ConfigDict, ValidationError
 
 from ledger_engine.protocol.messages import (
     MAX_ECHO_CHARS,
@@ -57,10 +72,17 @@ from ledger_engine.protocol.messages import (
     OPS,
     PROTOCOL_VERSION,
     REPLY_MODELS,
+    CommittedEvent,
+    Decision,
+    DecisionScalar,
+    GateEvent,
     HandshakeResult,
     Message,
     NoParams,
+    Phase,
     PingResult,
+    ProceedControl,
+    ProgressEvent,
     Refusal,
     RefusalBody,
     RefusalKey,
@@ -73,13 +95,99 @@ INIT_PID = 1
 MAX_MESSAGE_CHARS = 1000
 
 
+class JobChannel(Protocol):
+    """Where a job's messages go and where its `proceed` comes from: the protocol channel."""
+
+    def send(self, raw: bytes) -> None: ...
+
+    def read_line(self) -> bytes: ...
+
+
+class InputEnded(Exception):
+    """The engine's input ended while a job waited at its gate: the sidecar is gone or closed our input. The job
+    never proceeds; the read loop ends, and with it the engine (its end-of-input exit)."""
+
+
+class GateRefused(Exception):
+    """The line read at the gate was not `proceed` for this request: the request is refused, nothing past the gate
+    runs."""
+
+
+class _NoChannel:
+    """The channel of a request handled outside a read loop (`Engine.handle` called directly): no input, so a gate
+    never proceeds."""
+
+    def send(self, raw: bytes) -> None:
+        pass
+
+    def read_line(self) -> bytes:
+        return b""
+
+
+class JobContext:
+    """One request's job messages (engine-jobs §4, §5.4, §6.1 steps 7 and 9, §12)."""
+
+    def __init__(self, rid: int, op: str, channel: JobChannel) -> None:
+        self._rid = rid
+        self._op = op
+        self._channel = channel
+        self._gated = False
+        self._proceeded = False
+        self.decision: Decision | None = None
+
+    def _send(self, message: BaseModel) -> None:
+        self._channel.send(message.model_dump_json().encode() + b"\n")
+
+    def progress(self, phase: Phase) -> None:
+        self._send(ProgressEvent(v=2, id=self._rid, op=self._op, event="progress", phase=phase))
+
+    def gate(self) -> None:
+        """Send `gate` and wait for `proceed` (§4: "The engine sends `gate` and waits"). Returns only on `proceed`
+        for this request."""
+        if self._gated:
+            msg = "a second gate in one request"
+            raise RuntimeError(msg)
+        self._gated = True
+        self._send(GateEvent(v=2, id=self._rid, op=self._op, event="gate"))
+        line = self._channel.read_line()
+        if not line:
+            raise InputEnded
+        if not _is_proceed(line, self._rid, self._op):
+            msg = "Expected proceed for this request at its commit point; nothing was done past it."
+            raise GateRefused(msg)
+        self._proceeded = True
+
+    def committed(self) -> None:
+        """The save landed (§6.1 step 9); only after `proceed`."""
+        if not self._proceeded:
+            msg = "committed before proceed"
+            raise RuntimeError(msg)
+        self._send(CommittedEvent(v=2, id=self._rid, op=self._op, event="committed"))
+
+    def decide(self, table: str, version: int, inputs: dict[str, DecisionScalar], output: str) -> None:
+        """The decision this request's reply carries (§12); one per reply."""
+        if self.decision is not None:
+            msg = "one decision per reply"
+            raise RuntimeError(msg)
+        self.decision = Decision(table=table, version=version, inputs=inputs, output=output)
+
+
+def _is_proceed(line: bytes, rid: int, op: str) -> bool:
+    """The line is exactly `proceed` for this request (strict: no coercion, no other key, this version)."""
+    try:
+        control = ProceedControl.model_validate_json(line.rstrip(b"\n"), strict=True)
+    except (ValueError, RecursionError):
+        return False
+    return control.id == rid and control.op == op
+
+
 @dataclass(frozen=True, slots=True)
 class Handler:
     params: type[Message]
-    run: Callable[[Message], Message]
+    run: Callable[[Message, JobContext], Message]
 
 
-def _handshake(_: Message) -> Message:
+def _handshake(_: Message, __: JobContext) -> Message:
     return HandshakeResult(
         protocol=PROTOCOL_VERSION,
         engine_version=version("finzytrack-engine"),
@@ -87,34 +195,107 @@ def _handshake(_: Message) -> Message:
     )
 
 
-def _ping(_: Message) -> Message:
+def _ping(_: Message, __: JobContext) -> Message:
     return PingResult(status="ok")
 
 
-def _stall(_: Message) -> Message:
+def _stall(_: Message, __: JobContext) -> Message:
     _log("test.stall: stalling until killed")
     threading.Event().wait()
     raise AssertionError("unreachable")
 
 
-def _noise(_: Message) -> Message:
+def _noise(_: Message, __: JobContext) -> Message:
     print("noise via print")  # noqa: T201 (the point of this test op)
     sys.stdout.flush()
     os.write(1, b"noise via fd 1\n")
     return PingResult(status="ok")
 
 
-def _fail(_: Message) -> Message:
+def _fail(_: Message, __: JobContext) -> Message:
     msg = "boom (test.fail)"
     raise RuntimeError(msg)
 
 
-def _read_stdin(_: Message) -> Message:
+def _read_stdin(_: Message, __: JobContext) -> Message:
     """Code inside the engine reading fd 0 gets end of file, never the next request."""
     if os.read(0, 65536):
         msg = "fd 0 still carries the request stream"
         raise RuntimeError(msg)
     return PingResult(status="ok")
+
+
+class PathParams(Message):
+    path: str
+
+
+class LockParams(Message):
+    lock: str
+
+
+class ChildResult(Message):
+    pid: int
+
+
+class InterpreterResult(BaseModel):
+    """What the engine's interpreter runs with (S0057; engine-jobs §5.1)."""
+
+    model_config = ConfigDict(strict=True, extra="forbid", frozen=True)
+    hash_abc: int
+    hash_seed: str | None
+    no_site: int
+    no_user_site: int
+    safe_path: bool
+    isolated: int
+    ignore_environment: int
+    dont_write_bytecode: bool
+    pycache_prefix: str | None
+
+
+def _gate(params: Message, ctx: JobContext) -> Message:
+    """A stand-in for a save: its first durable write (the file at `path`) only after `proceed`."""
+    assert isinstance(params, PathParams)  # noqa: S101 (the handler's own params model)
+    ctx.progress("checking_change")
+    ctx.gate()
+    with open(params.path, "w", encoding="utf-8") as fh:
+        fh.write("post")
+    ctx.committed()
+    ctx.progress("updating_views")
+    ctx.decide("test.gate", 1, {"wrote": True}, "committed")
+    return PingResult(status="ok")
+
+
+def _child(params: Message, _: JobContext) -> Message:
+    """A stand-in for a plugin's child process holding a ledger lock: the engine takes a `flock` on `lock` and starts
+    a child that inherits the descriptor (so it holds the lock too) and sleeps."""
+    assert isinstance(params, LockParams)  # noqa: S101 (the handler's own params model)
+    import fcntl  # POSIX only (test op)
+
+    fd = os.open(params.lock, os.O_RDWR | os.O_CREAT, 0o600)
+    fcntl.flock(fd, fcntl.LOCK_EX)
+    child = subprocess.Popen(
+        [sys.executable, "-c", "import time; time.sleep(3600)"],
+        pass_fds=(fd,),
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    return ChildResult(pid=child.pid)
+
+
+def _interpreter(_: Message, __: JobContext) -> Message:
+    flags = sys.flags
+    return InterpreterResult(  # pyright: ignore[reportReturnType] (a test op's result is any model)
+        hash_abc=hash("abc"),
+        hash_seed=os.environ.get("PYTHONHASHSEED"),
+        no_site=flags.no_site,
+        no_user_site=flags.no_user_site,
+        safe_path=flags.safe_path,
+        isolated=flags.isolated,
+        ignore_environment=flags.ignore_environment,
+        dont_write_bytecode=sys.dont_write_bytecode,
+        pycache_prefix=sys.pycache_prefix,
+    )
 
 
 PRODUCTION: dict[str, Handler] = {"handshake": Handler(NoParams, _handshake), "ping": Handler(NoParams, _ping)}
@@ -123,6 +304,9 @@ TEST_OPS: dict[str, Handler] = {
     "test.noise": Handler(NoParams, _noise),
     "test.fail": Handler(NoParams, _fail),
     "test.read_stdin": Handler(NoParams, _read_stdin),
+    "test.gate": Handler(PathParams, _gate),
+    "test.child": Handler(LockParams, _child),
+    "test.interpreter": Handler(NoParams, _interpreter),
 }
 assert set(PRODUCTION) == set(OPS), "every op of the protocol has a handler"  # noqa: S101 (import-time invariant)
 
@@ -161,10 +345,12 @@ class Engine:
         """Whether the handshake happened."""
         return self._ready
 
-    def handle(self, line: bytes) -> bytes:
-        return self._reply(line) + b"\n"
+    def handle(self, line: bytes, channel: JobChannel | None = None) -> bytes:
+        """The reply to one request line. A job's messages go to `channel` before it; without a channel a gate never
+        proceeds. Raises `InputEnded` when the input ends at a gate."""
+        return self._reply(line, channel or _NoChannel()) + b"\n"
 
-    def _reply(self, line: bytes) -> bytes:
+    def _reply(self, line: bytes, channel: JobChannel) -> bytes:
         content = line[:-1] if line.endswith(b"\n") else line
         if len(content) > MAX_LINE_BYTES:
             return _refusal(None, None, "protocol.malformed", f"The line is longer than {MAX_LINE_BYTES} bytes.")
@@ -206,8 +392,13 @@ class Engine:
         except ValidationError as e:
             where = "; ".join(f"params.{'.'.join(map(str, err['loc']))}: {err['msg']}" for err in e.errors())
             return _refusal(rid, op, "protocol.invalid_params", where or "Invalid params.")
+        ctx = JobContext(rid, op, channel)
         try:
-            reply = _accepted(rid, op, handler.run(params))
+            reply = _accepted(rid, op, handler.run(params, ctx), ctx.decision)
+        except InputEnded:
+            raise  # not a failure of the request: the read loop ends, and the job never proceeds
+        except GateRefused as e:
+            return _refusal(rid, op, "protocol.malformed", str(e))
         except Exception:  # noqa: BLE001 (the engine's request boundary, EP-13: logged, then a typed refusal)
             _log(f"internal error in {op}:\n{traceback.format_exc()}")
             return _refusal(rid, op, "engine.internal", INTERNAL_MESSAGE)
@@ -219,17 +410,24 @@ class Engine:
 INTERNAL_MESSAGE = "The engine failed on this request; details are in its log."
 
 
-def _accepted(rid: int, op: str, result: Message) -> bytes:
+def _accepted(rid: int, op: str, result: BaseModel, decision: Decision | None) -> bytes:
     """The accepted reply, validated against the op's reply model (a wrong result raises here, inside the request
-    boundary)."""
+    boundary). The `decision` key is present only when the job made one."""
     model = REPLY_MODELS.get(op)
     if model is None:  # a test op: not in the schema, same envelope
-        return json.dumps(
-            {"v": PROTOCOL_VERSION, "id": rid, "op": op, "ok": True, "result": result.model_dump(mode="json")},
-            separators=(",", ":"),
-        ).encode()
-    reply = {"v": PROTOCOL_VERSION, "id": rid, "op": op, "ok": True, "result": result}
-    return model.model_validate(reply).model_dump_json().encode()
+        reply_obj: dict[str, Any] = {
+            "v": PROTOCOL_VERSION,
+            "id": rid,
+            "op": op,
+            "ok": True,
+            "result": result.model_dump(mode="json"),
+        }
+        if decision is not None:
+            reply_obj["decision"] = decision.model_dump(mode="json")
+        return json.dumps(reply_obj, separators=(",", ":")).encode()
+    reply = {"v": PROTOCOL_VERSION, "id": rid, "op": op, "ok": True, "result": result, "decision": decision}
+    validated = model.model_validate(reply)
+    return validated.model_dump_json(exclude={"decision"} if decision is None else None).encode()
 
 
 def _echo(op: str | None) -> str | None:
@@ -250,7 +448,8 @@ def _text(message: str) -> str:
 
 def _refusal(rid: int | None, op: str | None, key: RefusalKey, message: str) -> bytes:
     body = RefusalBody(key=key, message=_text(message))
-    return Refusal(v=PROTOCOL_VERSION, id=rid, op=_echo(op), ok=False, error=body).model_dump_json().encode()
+    refusal = Refusal(v=PROTOCOL_VERSION, id=rid, op=_echo(op), ok=False, error=body)
+    return refusal.model_dump_json(exclude={"decision"}).encode()
 
 
 # The read loop's last resort: fixed bytes, so answering cannot fail too.
@@ -290,20 +489,47 @@ def hold_engine_lock(path: str) -> None:
     fcntl.flock(fd, fcntl.LOCK_EX)
 
 
+class _Channel:
+    """The protocol channel as a job sees it: a job message is written and flushed at once; a line read at a gate is
+    read like a request line (an over-long one cut and the rest discarded)."""
+
+    def __init__(self, channel_in: IO[bytes], channel_out: IO[bytes]) -> None:
+        self._in = channel_in
+        self._out = channel_out
+
+    def send(self, raw: bytes) -> None:
+        self._out.write(raw)
+        self._out.flush()
+
+    def read_line(self) -> bytes:
+        return _read_line(self._in)
+
+
+def _read_line(channel_in: IO[bytes]) -> bytes:
+    line = channel_in.readline(MAX_LINE_BYTES + 2)  # a full line has at most MAX_LINE_BYTES + 1 bytes
+    if len(line) > MAX_LINE_BYTES + 1 and not line.endswith(b"\n"):  # over-long and cut: skip to its end
+        _discard_rest_of_line(channel_in)
+    return line
+
+
 def serve(
     channel_in: IO[bytes], channel_out: IO[bytes], engine: Engine, after_handshake: Callable[[], None] | None = None
 ) -> None:
-    """Answer requests until stdin reaches EOF or the reader goes away. `after_handshake` runs once, right after the
-    reply that completed the handshake is written and before the next request is read (the engine lock)."""
+    """Answer requests until stdin reaches EOF (also at a job's gate) or the reader goes away. `after_handshake` runs
+    once, right after the reply that completed the handshake is written and before the next request is read (the
+    engine lock)."""
     pending = after_handshake
+    channel = _Channel(channel_in, channel_out)
     while True:
-        line = channel_in.readline(MAX_LINE_BYTES + 2)  # a full line has at most MAX_LINE_BYTES + 1 bytes
+        line = _read_line(channel_in)
         if not line:
             return
-        if len(line) > MAX_LINE_BYTES + 1 and not line.endswith(b"\n"):  # over-long and cut: skip to its end
-            _discard_rest_of_line(channel_in)
         try:
-            reply = engine.handle(line)
+            reply = engine.handle(line, channel)
+        except InputEnded:
+            return  # the input ended at a gate: the job never proceeds
+        except OSError:  # a job message could not be written: the reader is gone
+            return
         except Exception:  # noqa: BLE001 (the read loop's last resort, EP-13: every line gets one reply)
             _log(f"internal error outside the request boundary:\n{traceback.format_exc()}")
             reply = LAST_RESORT
@@ -317,7 +543,21 @@ def serve(
             run_once()
 
 
-def watch_parent(parent: int, exit_now: Callable[[int], None] = os._exit) -> threading.Thread:
+def leads_own_group() -> bool:
+    """POSIX: this process leads its process group (the sidecar spawns it with `start_new_session`)."""
+    return os.name == "posix" and os.getpgrp() == os.getpid()
+
+
+def end_own_group(code: int) -> None:
+    """End the engine: its whole process group when it leads one (engine-jobs §5.2: `killpg(0, SIGKILL)`, the engine
+    included, so a plugin's child cannot outlive it holding a ledger lock), else only itself. Never returns."""
+    sys.stderr.flush()
+    if leads_own_group():
+        os.killpg(0, signal.SIGKILL)
+    os._exit(code)
+
+
+def watch_parent(parent: int, exit_now: Callable[[int], None] = end_own_group) -> threading.Thread:
     """POSIX: end the process when its parent is not `parent` (the parent died and the engine was re-parented).
     The first check runs at once: a parent that died while the engine was starting is caught too."""
 
@@ -369,4 +609,6 @@ def main(argv: list[str] | None = None) -> int:
     lock: str | None = args.engine_lock
     hold = None if lock is None else (lambda: hold_engine_lock(lock))
     serve(channel_in, channel_out, Engine(test_ops=args.test_ops), after_handshake=hold)
+    if leads_own_group():  # the end-of-input exit ends the whole group (engine-jobs §5.2)
+        end_own_group(0)
     return 0

@@ -84,11 +84,12 @@ def test_free_text_fields_of_the_engine_events_are_debug_detail_only() -> None:
 
 
 def test_a_stop_is_logged_with_exactly_the_kinds_a_running_engine_can_stop_with() -> None:
-    """S0040 brief: a running engine stops by crashing, by timing out or by breaking the protocol; a failed start is
-    `engine.start_failed`, and the other failure kinds never stop a running engine."""
+    """S0040 brief, as S0057 amends it (engine-jobs §5.3, §5.4: no time limit, our own ends are no stops): a running
+    engine stops by crashing or by breaking the protocol; a failed start is `engine.start_failed`, and the other
+    failure kinds never stop a running engine."""
     (kind,) = (f for f in ENGINE_STOPPED.fields if f.name == "kind")
     assert kind.kind is Kind.ENUM
-    assert kind.values == frozenset({"crashed", "timeout", "protocol_violation"})
+    assert kind.values == frozenset({"crashed", "protocol_violation"})
     assert {f.name: f.kind for f in ENGINE_STOPPED.fields} == {"kind": Kind.ENUM, "detail": Kind.DEBUG_DETAIL}
     assert ENGINE_STOPPED.level == "warning"
 

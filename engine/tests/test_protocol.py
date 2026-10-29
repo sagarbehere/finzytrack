@@ -22,7 +22,7 @@ def line(obj: object) -> bytes:
 
 
 def request(op: str, params: dict[str, Any] | None = None, *, rid: int = 1) -> bytes:
-    return line({"v": 1, "id": rid, "op": op, "params": params or {}})
+    return line({"v": 2, "id": rid, "op": op, "params": params or {}})
 
 
 def answer(engine: Engine, raw: bytes) -> dict[str, Any]:
@@ -48,19 +48,20 @@ def refusal(reply: dict[str, Any]) -> str:
     return reply["error"]["key"]
 
 
-def test_protocol_version_is_one() -> None:
-    assert PROTOCOL_VERSION == 1
+def test_protocol_version_is_two() -> None:
+    """Version 2 (S0057; engine-jobs §5.5): progress, gate/proceed, committed and decision messages."""
+    assert PROTOCOL_VERSION == 2
 
 
 def test_handshake_reports_versions() -> None:
     reply = answer(Engine(), request("handshake", rid=7))
     assert reply == {
-        "v": 1,
+        "v": 2,
         "id": 7,
         "op": "handshake",
         "ok": True,
         "result": {
-            "protocol": 1,
+            "protocol": 2,
             "engine_version": version("finzytrack-engine"),
             "beancount_version": "3.2.0",  # ADR-0004
         },
@@ -69,7 +70,7 @@ def test_handshake_reports_versions() -> None:
 
 def test_ping_after_handshake() -> None:
     assert answer(ready(), request("ping", rid=2)) == {
-        "v": 1,
+        "v": 2,
         "id": 2,
         "op": "ping",
         "ok": True,
@@ -100,9 +101,9 @@ def test_any_op_before_the_handshake_is_refused() -> None:
         b"[1, 2]\n",  # not an object
         b'"text"\n',
         b"\n",  # empty line
-        b'{"v": 1, "v": 1, "id": 1, "op": "ping", "params": {}}\n',  # duplicate key
-        b'{"v": 1, "id": 1, "op": "ping", "params": {"x": NaN}}\n',  # not JSON (NaN)
-        b'{"v": 1, "id": 1, "op": "ping", "params": {"x": Infinity}}\n',
+        b'{"v": 2, "v": 2, "id": 1, "op": "ping", "params": {}}\n',  # duplicate key
+        b'{"v": 2, "id": 1, "op": "ping", "params": {"x": NaN}}\n',  # not JSON (NaN)
+        b'{"v": 2, "id": 1, "op": "ping", "params": {"x": Infinity}}\n',
     ],
 )
 def test_malformed_lines_are_refused_with_no_id(raw: bytes) -> None:
@@ -110,14 +111,14 @@ def test_malformed_lines_are_refused_with_no_id(raw: bytes) -> None:
     assert refusal(reply) == "protocol.malformed"
     assert reply["id"] is None
     assert reply["op"] is None
-    assert reply["v"] == 1
+    assert reply["v"] == 2
 
 
 @pytest.mark.parametrize("depth", [10_000, 200_000])
 def test_deeply_nested_json_is_refused_and_the_engine_keeps_serving(depth: int) -> None:
     """S0035 verifier F3: nesting deep enough to exhaust the parser is malformed, not a crash."""
     engine = ready()
-    raw = b'{"v": 1, "id": 4, "op": "ping", "params": {"x": ' + b"[" * depth + b"]" * depth + b"}}\n"
+    raw = b'{"v": 2, "id": 4, "op": "ping", "params": {"x": ' + b"[" * depth + b"]" * depth + b"}}\n"
     assert len(raw) < MAX_LINE_BYTES
     assert refusal(answer(engine, raw)) == "protocol.malformed"
     assert answer(engine, request("ping", rid=5))["ok"] is True
@@ -125,7 +126,7 @@ def test_deeply_nested_json_is_refused_and_the_engine_keeps_serving(depth: int) 
 
 def test_an_over_long_line_is_refused() -> None:
     padding = "x" * MAX_LINE_BYTES
-    raw = line({"v": 1, "id": 1, "op": "ping", "params": {"pad": padding}})
+    raw = line({"v": 2, "id": 1, "op": "ping", "params": {"pad": padding}})
     assert len(raw) > MAX_LINE_BYTES
     assert refusal(answer(ready(), raw)) == "protocol.malformed"
 
@@ -134,7 +135,7 @@ def test_the_line_limit_is_16_mib() -> None:
     assert MAX_LINE_BYTES == 16 * 1024 * 1024
 
 
-@pytest.mark.parametrize("v", [0, 2, "1", 1.0, None, True])
+@pytest.mark.parametrize("v", [0, 1, 3, "2", 2.0, None, True])
 def test_another_protocol_version_is_refused(v: object) -> None:
     reply = answer(ready(), line({"v": v, "id": 9, "op": "ping", "params": {}}))
     assert refusal(reply) == "protocol.version_mismatch"
@@ -146,19 +147,19 @@ def test_a_missing_version_is_a_version_mismatch() -> None:
 
 
 def test_a_handshake_with_another_version_is_refused() -> None:
-    reply = answer(Engine(), line({"v": 2, "id": 1, "op": "handshake", "params": {}}))
+    reply = answer(Engine(), line({"v": 3, "id": 1, "op": "handshake", "params": {}}))
     assert refusal(reply) == "protocol.version_mismatch"
 
 
 @pytest.mark.parametrize(
     "envelope",
     [
-        {"v": 1, "op": "ping", "params": {}},  # no id
-        {"v": 1, "id": -1, "op": "ping", "params": {}},
-        {"v": 1, "id": 2**31, "op": "ping", "params": {}},
-        {"v": 1, "id": "1", "op": "ping", "params": {}},
-        {"v": 1, "id": 1.5, "op": "ping", "params": {}},
-        {"v": 1, "id": True, "op": "ping", "params": {}},
+        {"v": 2, "op": "ping", "params": {}},  # no id
+        {"v": 2, "id": -1, "op": "ping", "params": {}},
+        {"v": 2, "id": 2**31, "op": "ping", "params": {}},
+        {"v": 2, "id": "1", "op": "ping", "params": {}},
+        {"v": 2, "id": 1.5, "op": "ping", "params": {}},
+        {"v": 2, "id": True, "op": "ping", "params": {}},
     ],
 )
 def test_a_bad_id_is_malformed(envelope: dict[str, Any]) -> None:
@@ -170,11 +171,11 @@ def test_a_bad_id_is_malformed(envelope: dict[str, Any]) -> None:
 @pytest.mark.parametrize(
     "envelope",
     [
-        {"v": 1, "id": 3, "params": {}},  # no op
-        {"v": 1, "id": 3, "op": "ping"},  # no params
-        {"v": 1, "id": 3, "op": 5, "params": {}},
-        {"v": 1, "id": 3, "op": "ping", "params": []},
-        {"v": 1, "id": 3, "op": "ping", "params": {}, "extra": 1},
+        {"v": 2, "id": 3, "params": {}},  # no op
+        {"v": 2, "id": 3, "op": "ping"},  # no params
+        {"v": 2, "id": 3, "op": 5, "params": {}},
+        {"v": 2, "id": 3, "op": "ping", "params": []},
+        {"v": 2, "id": 3, "op": "ping", "params": {}, "extra": 1},
     ],
 )
 def test_a_bad_envelope_is_malformed_and_echoes_the_id(envelope: dict[str, Any]) -> None:
@@ -217,4 +218,4 @@ def test_test_ops_exist_only_when_enabled() -> None:
 
 def test_a_reply_is_compact_json_on_one_line() -> None:
     out = ready().handle(request("ping"))
-    assert out == b'{"v":1,"id":1,"op":"ping","ok":true,"result":{"status":"ok"}}\n'
+    assert out == b'{"v":2,"id":1,"op":"ping","ok":true,"result":{"status":"ok"}}\n'

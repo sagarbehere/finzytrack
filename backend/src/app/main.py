@@ -39,6 +39,7 @@ import argparse
 import asyncio
 import contextlib
 import json
+import os
 import signal
 import socket
 import sys
@@ -56,7 +57,13 @@ from fastapi import FastAPI
 from app.api import ApiContainer, create_app
 from app.domain.text import UntrustedText
 from app.platform.adapters.clock import SystemClock
-from app.platform.adapters.engine_client import EngineClient, EngineCommand, packaged_engine_site
+from app.platform.adapters.engine_client import (
+    EngineClient,
+    EngineCommand,
+    bytecode_build_dir,
+    packaged_engine_site,
+    venv_site,
+)
 from app.platform.adapters.engine_lock import engine_lock_path, wait_engine_lock
 from app.platform.adapters.ids import Uuid7Ids
 from app.platform.clock import Clock, FrozenClock
@@ -163,13 +170,18 @@ def parse_args(argv: list[str] | None) -> Args:
     return Args(ns.app_local_data, ns.app_cache, ns.port, ns.workspace, ns.frozen_clock, ns.engine_venv, ns.session_id)
 
 
-def engine_command(args: Args) -> EngineCommand:
+def engine_command(args: Args, app_version: str) -> EngineCommand:
     """The venv engine when one is named, else the packaged engine beside this interpreter (ADR-0056 layout); every
-    engine holds the engine lock in this app-local-data folder (engine-jobs §5.1, S0053)."""
+    engine holds the engine lock in this app-local-data folder (engine-jobs §5.1, S0053) and reads the bytecode of
+    its build from `app_local_data/engine/bytecode/<build>/` (§5.1, S0057)."""
     lock = engine_lock_path(args.app_local_data)
     if args.engine_venv is not None:
-        return EngineCommand.for_venv(args.engine_venv, engine_lock=lock)
-    return EngineCommand.for_packaged(Path(sys.executable), packaged_engine_site(Path(sys.prefix)), engine_lock=lock)
+        python = args.engine_venv / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
+        bytecode = bytecode_build_dir(args.app_local_data, python, venv_site(args.engine_venv), app_version)
+        return EngineCommand.for_venv(args.engine_venv, engine_lock=lock, bytecode_dir=bytecode)
+    python, site = Path(sys.executable), packaged_engine_site(Path(sys.prefix))
+    bytecode = bytecode_build_dir(args.app_local_data, python, site, app_version)
+    return EngineCommand.for_packaged(python, site, engine_lock=lock, bytecode_dir=bytecode)
 
 
 def wire(args: Args, log: EventSink, app_version: str) -> Wiring:
@@ -178,7 +190,7 @@ def wire(args: Args, log: EventSink, app_version: str) -> Wiring:
     def engine_stderr(line: str) -> None:
         log(ENGINE_STDERR, line=UntrustedText(line))  # the engine's stderr can carry ledger text (BL-0088)
 
-    engine = EngineClient(engine_command(args), on_stderr=engine_stderr, log=log)  # it logs its lifecycle (S0040)
+    engine = EngineClient(engine_command(args, app_version), on_stderr=engine_stderr, log=log)  # logs its lifecycle
     return Wiring(
         clock=FrozenClock(args.frozen_clock) if args.frozen_clock else SystemClock(),
         engine=engine,
@@ -356,8 +368,8 @@ def main(argv: list[str] | None = None) -> int:
             sys.stdout.flush()
             server.run(sockets=[sock])
     finally:
-        # Bounded today (RestartPolicy.longest_close after a call in flight). TODO(BL-0109): close() signals the
-        # engine's group once and returns without waiting for the reap (engine-jobs §5.5, §9.3).
+        # Signals the engine's group once and returns without waiting for a call in flight or the reap (engine-jobs
+        # §5.5, §9.3 step 4; S0057). TODO(BL-0154): the quiesce of §9.3 runs before it.
         wiring.engine.close()  # logs engine.closed
     return 0
 

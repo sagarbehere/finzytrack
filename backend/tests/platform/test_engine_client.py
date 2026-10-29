@@ -1,13 +1,22 @@
-"""The engine client against the real engine process (ADR-0054 decision 4; S0035 brief; EP-07, EP-13).
+"""The engine client against the real engine process (ADR-0054 decision 4; S0035 brief; EP-07, EP-13; since S0057
+`design/specs/engine-jobs.md` §5.1-§5.5).
 
 The real engine runs from `engine/.venv` (sync it with `uv sync --locked` in `engine/`). A few cases need an engine
 that misbehaves in one exact way; those run a small stand-in script instead. Backoff is checked with an injected
-monotonic clock and pause, so no test waits for real backoff time (EP-28).
+monotonic clock and pause, so no test waits for real backoff time (EP-28). Since S0057 nothing in the client has a
+time limit: a call waits until the engine answers, ends, or is ended by us (`end`, `close`). Where a test must show
+that something did *not* happen (a call still waiting, no second engine), it looks once after `ABSENCE` seconds, far
+above the time the event would take (an engine starts in about 0.1 s): an absence cannot be awaited (EP-28
+deviation, as in S0053).
 """
 
 from __future__ import annotations
 
 import contextlib
+import dataclasses
+import faulthandler
+import fcntl
+import inspect
 import os
 import signal
 import subprocess
@@ -17,19 +26,58 @@ import time
 import tomllib
 from collections.abc import Callable, Iterator
 from pathlib import Path
-from typing import Any
+from typing import Any, override
 
 import pytest
 
-from app.platform.adapters.engine_client import EngineClient, EngineCommand, join_all, next_request_id
-from app.platform.engine import EngineFailure, EngineInfo, EnginePort, EngineRefusal, Pong
+from app.platform.adapters.engine_client import EngineClient, EngineCommand, next_request_id
+from app.platform.adapters.engine_group import PosixGroupOps, Reaped
+from app.platform.engine import (
+    Committed,
+    Decision,
+    EngineEnd,
+    EngineEvent,
+    EngineFailure,
+    EngineInfo,
+    EnginePort,
+    EngineRefusal,
+    GateReached,
+    Pong,
+    Progress,
+)
 from app.platform.engine_protocol import MAX_ID
-from app.platform.engine_supervision import Busy, Closed, Crashed, Idle, Ready, RestartPolicy, Unavailable
+from app.platform.engine_supervision import (
+    Busy,
+    Closed,
+    Crashed,
+    Handshaking,
+    Idle,
+    Ready,
+    RestartPolicy,
+    Unavailable,
+)
 from app.platform.observability import Event
 
 REPO = Path(__file__).resolve().parents[3]
 ENGINE_VENV = REPO / "engine" / ".venv"
 DEADLINE = 20.0
+HANG_GUARD = 15 * DEADLINE  # the test's own hang detector (below), far above its longest wait (a bytecode fill)
+
+
+@pytest.fixture(autouse=True)
+def hang_guard() -> Iterator[None]:
+    """Since S0057 the client has no time limits (engine-jobs §5.4), so a check that misses what it should catch (a
+    violation, an end) would leave its test waiting for ever. This guard is the test's, not the product's: after
+    `HANG_GUARD` seconds it ends the test process with every thread's traceback, which names the hung test (with
+    xdist, the worker's crash names it too)."""
+    faulthandler.dump_traceback_later(HANG_GUARD, exit=True)
+    try:
+        yield
+    finally:
+        faulthandler.cancel_dump_traceback_later()
+
+
+ABSENCE = 0.5
 
 
 def engine_command(*, test_ops: bool = True) -> EngineCommand:
@@ -112,29 +160,29 @@ def test_the_client_is_an_engine_port(client: EngineClient) -> None:
 
 def test_start_handshakes(client: EngineClient) -> None:
     info = client.start()
-    assert info == EngineInfo(protocol=1, engine_version=engine_version(), beancount_version="3.2.0")
+    assert info == EngineInfo(protocol=2, engine_version=engine_version(), beancount_version="3.2.0")
     assert client.pid is not None
     assert alive(client.pid)
 
 
 def test_ping_starts_the_engine_when_needed(client: EngineClient) -> None:
     assert client.pid is None
-    assert client.ping(timeout=DEADLINE) == Pong()
+    assert client.ping() == Pong()
     assert client.pid is not None
 
 
 def test_a_refusal_comes_back_as_a_refusal(client: EngineClient) -> None:
-    out = client.call("no.such.op", {}, timeout=DEADLINE)
+    out = client.call("no.such.op", {})
     assert isinstance(out, EngineRefusal)
     assert out.key == "protocol.unknown_op"
-    assert client.ping(timeout=DEADLINE) == Pong()  # a refusal does not end the engine
+    assert client.ping() == Pong()  # a refusal does not end the engine
 
 
 def test_an_engine_killed_mid_request_is_a_failure_not_a_hang(client: EngineClient, fake_time: FakeTime) -> None:
     client.start()
     first = client.pid
     assert first is not None
-    t, out = in_thread(lambda: client.call("test.stall", {}, timeout=60.0))
+    t, out = in_thread(lambda: client.call("test.stall", {}))
     assert wait_until(lambda: "stalling" in client.stderr_tail()), "the engine never started the request"
     kill(first)
     t.join(DEADLINE)
@@ -144,7 +192,7 @@ def test_an_engine_killed_mid_request_is_a_failure_not_a_hang(client: EngineClie
     assert isinstance(failure, EngineFailure)
     assert failure.kind == "crashed"
     # The next request restarts the engine, after the first backoff delay.
-    assert client.ping(timeout=DEADLINE) == Pong()
+    assert client.ping() == Pong()
     assert client.pid not in (None, first)
     assert fake_time.pauses == [0.5]
 
@@ -154,25 +202,12 @@ def test_a_request_is_never_retried_after_a_crash(client: EngineClient) -> None:
     client.start()
     pid = client.pid
     assert pid is not None
-    t, out = in_thread(lambda: client.call("test.stall", {}, timeout=60.0))
+    t, out = in_thread(lambda: client.call("test.stall", {}))
     assert wait_until(lambda: "stalling" in client.stderr_tail())
     kill(pid)
     t.join(DEADLINE)
     assert isinstance(out[0], EngineFailure)
     assert client.pid is None  # no new engine was started, so nothing was resent on the caller's behalf
-
-
-def test_a_stalled_request_times_out_and_the_engine_is_killed(client: EngineClient) -> None:
-    client.start()
-    pid = client.pid
-    assert pid is not None
-    began = time.monotonic()
-    out = client.call("test.stall", {}, timeout=0.5)
-    assert time.monotonic() - began < 10.0, "the caller's timeout was not honoured"  # S0035 mutant C13
-    assert isinstance(out, EngineFailure)
-    assert out.kind == "timeout"
-    assert stopped(pid), "the stalled engine was left running"
-    assert client.ping(timeout=DEADLINE) == Pong()
 
 
 def test_an_engine_that_died_between_requests_is_restarted(client: EngineClient, fake_time: FakeTime) -> None:
@@ -181,37 +216,37 @@ def test_an_engine_that_died_between_requests_is_restarted(client: EngineClient,
     assert pid is not None
     kill(pid)
     assert stopped(pid)
-    assert client.ping(timeout=DEADLINE) == Pong()
+    assert client.ping() == Pong()
     assert fake_time.pauses == [0.5]
 
 
 def test_restarts_are_bounded_then_allowed_again_after_the_window(client: EngineClient, fake_time: FakeTime) -> None:
     for _ in range(3):
-        assert client.ping(timeout=DEADLINE) == Pong()
+        assert client.ping() == Pong()
         pid = client.pid
         assert pid is not None
         kill(pid)
         assert stopped(pid)
-    out = client.ping(timeout=DEADLINE)
+    out = client.ping()
     assert isinstance(out, EngineFailure)
     assert out.kind == "unavailable"
     now = client.pid
     assert now is None or not alive(now)
     assert fake_time.pauses == [0.5, 2.0]
     fake_time.now += RestartPolicy().window
-    assert client.ping(timeout=DEADLINE) == Pong()
+    assert client.ping() == Pong()
 
 
 def test_reset_allows_a_restart_at_once(client: EngineClient) -> None:
     for _ in range(3):
-        client.ping(timeout=DEADLINE)
+        client.ping()
         pid = client.pid
         assert pid is not None
         kill(pid)
         assert stopped(pid)
-    assert isinstance(client.ping(timeout=DEADLINE), EngineFailure)
+    assert isinstance(client.ping(), EngineFailure)
     client.reset()
-    assert client.ping(timeout=DEADLINE) == Pong()
+    assert client.ping() == Pong()
 
 
 def stand_in(script: str) -> EngineCommand:
@@ -243,16 +278,16 @@ sys.stdout.write(json.dumps(reply) + "\n")
 sys.stdout.flush()
 sys.stdin.read()
 """
-MISMATCH = """{"v": 1, "id": req["id"], "op": "handshake", "ok": False,
+MISMATCH = """{"v": 2, "id": req["id"], "op": "handshake", "ok": False,
          "error": {"key": "protocol.version_mismatch", "message": "this engine speaks protocol 2"}}"""
-NEWER = """{"v": 1, "id": req["id"], "op": "handshake", "ok": True,
-         "result": {"protocol": 2, "engine_version": "9", "beancount_version": "3.2.0"}}"""
+NEWER = """{"v": 2, "id": req["id"], "op": "handshake", "ok": True,
+         "result": {"protocol": 3, "engine_version": "9", "beancount_version": "3.2.0"}}"""
 # S0035 verifier F2: a real protocol-2 engine stamps its own version on every reply, in a shape this side cannot
 # know; the client must still recognise it by `v` and call it incompatible.
-V2_REFUSAL = """{"v": 2, "id": req["id"], "op": "handshake", "ok": False,
+V2_REFUSAL = """{"v": 3, "id": req["id"], "op": "handshake", "ok": False,
          "error": {"key": "protocol.version_mismatch", "message": "this engine speaks protocol 2"}}"""
-V2_REPLY = """{"v": 2, "id": req["id"], "op": "handshake", "ok": True, "result": {"protocol": 2, "new": True}}"""
-V2_OTHER_SHAPE = """{"v": 2, "kind": "hello", "speaks": [2]}"""
+V2_REPLY = """{"v": 3, "id": req["id"], "op": "handshake", "ok": True, "result": {"protocol": 2, "new": True}}"""
+V2_OTHER_SHAPE = """{"v": 3, "kind": "hello", "speaks": [2]}"""
 
 
 @pytest.mark.parametrize("mode", [MISMATCH, NEWER, V2_REFUSAL, V2_REPLY, V2_OTHER_SHAPE])
@@ -277,8 +312,8 @@ def test_an_incompatible_engine_is_never_retried(tmp_path: Path, fake_time: Fake
 GARBAGE = r"""
 import json, sys
 req = json.loads(sys.stdin.readline())
-sys.stdout.write(json.dumps({"v": 1, "id": req["id"], "op": "handshake", "ok": True,
-    "result": {"protocol": 1, "engine_version": "0", "beancount_version": "3.2.0"}}) + "\n")
+sys.stdout.write(json.dumps({"v": 2, "id": req["id"], "op": "handshake", "ok": True,
+    "result": {"protocol": 2, "engine_version": "0", "beancount_version": "3.2.0"}}) + "\n")
 sys.stdout.flush()
 req = json.loads(sys.stdin.readline())
 sys.stdout.write(BAD + "\n")
@@ -286,7 +321,7 @@ sys.stdout.flush()
 sys.stdin.read()
 """
 NOT_A_REPLY = '"this is not a reply"'
-DEEP_REPLY = '\'{"v":1,"id":%d,"op":"ping","ok":true,"result":{"x":%s%s}}\' % (req["id"], "[" * 200000, "]" * 200000)'
+DEEP_REPLY = '\'{"v":2,"id":%d,"op":"ping","ok":true,"result":{"x":%s%s}}\' % (req["id"], "[" * 200000, "]" * 200000)'
 
 
 @pytest.mark.parametrize("bad", [NOT_A_REPLY, DEEP_REPLY])
@@ -298,7 +333,7 @@ def test_a_reply_that_breaks_the_protocol_is_a_failure_and_ends_the_engine(fake_
         assert isinstance(c.start(), EngineInfo)
         pid = c.pid
         assert pid is not None
-        out = c.ping(timeout=DEADLINE)
+        out = c.ping()
         assert isinstance(out, EngineFailure)
         assert out.kind == "protocol_violation"
         assert stopped(pid)
@@ -311,7 +346,7 @@ def test_a_broken_handshake_in_our_own_protocol_is_a_failed_start_not_incompatib
 ) -> None:
     """Only another `v` makes an engine incompatible; a malformed protocol-1 reply is a failed start, retried."""
     starts = tmp_path / "starts"
-    broken = """{"v": 1, "id": req["id"], "ok": True}"""
+    broken = """{"v": 2, "id": req["id"], "ok": True}"""
     command = EngineCommand(
         argv=(sys.executable, "-I", "-c", COUNTING.replace("{MODE}", broken), str(starts)), env=None
     )
@@ -350,8 +385,8 @@ def test_a_request_that_is_not_json_data_raises_before_sending(
     client.start()
     pid = client.pid
     with pytest.raises(ValueError, match="not JSON data"):
-        client.call(op, params, timeout=DEADLINE)
-    assert client.ping(timeout=DEADLINE) == Pong()
+        client.call(op, params)
+    assert client.ping() == Pong()
     assert client.pid == pid
 
 
@@ -362,37 +397,16 @@ def test_a_request_longer_than_the_line_limit_is_not_sent_and_is_no_stop(client:
     pid = client.pid
     big = {"x": "a" * (16 * 1024 * 1024)}
     for _ in range(RestartPolicy().max_crashes + 1):
-        out = client.call("ping", big, timeout=DEADLINE)
+        out = client.call("ping", big)
         assert isinstance(out, EngineFailure)
         assert out.kind == "too_large"
-    assert client.ping(timeout=DEADLINE) == Pong()
-    assert client.pid == pid
-
-
-@pytest.mark.parametrize("timeout", [0.0, -1.0, float("nan"), float("inf")])
-def test_a_timeout_that_is_not_a_positive_number_is_refused_before_sending(
-    client: EngineClient, timeout: float
-) -> None:
-    """S0035 verifier F4(c): a bad timeout raises before anything is written, so no reply is left queued to be
-    mistaken for the next request's."""
-    client.start()
-    pid = client.pid
-    with pytest.raises(ValueError, match="timeout"):
-        client.call("ping", {}, timeout=timeout)
-    with pytest.raises(ValueError, match="timeout"):
-        client.ping(timeout=timeout)
-    assert client.ping(timeout=DEADLINE) == Pong()
+    assert client.ping() == Pong()
     assert client.pid == pid
 
 
 @pytest.mark.parametrize(
     "policy",
     [
-        {"start_timeout": float("inf")},
-        {"start_timeout": 0.0},
-        {"start_timeout": float("nan")},
-        {"close_timeout": float("inf")},
-        {"close_timeout": -1.0},
         {"delays": (0.5, float("inf"))},
         {"delays": (-1.0,)},
         {"delays": (float("nan"),)},
@@ -402,35 +416,9 @@ def test_a_timeout_that_is_not_a_positive_number_is_refused_before_sending(
     ],
 )
 def test_a_restart_policy_without_finite_bounds_is_refused(policy: dict[str, Any]) -> None:
-    """S0035 independent verifier F3: starting is bounded by the policy, not by the caller's timeout, so every
-    time in the policy must be finite."""
+    """The backoff and its window are times the client waits; each must be finite (S0035 independent verifier F3)."""
     with pytest.raises(ValueError, match="RestartPolicy"):
         RestartPolicy(**policy)
-
-
-def test_the_longest_start_is_the_largest_backoff_plus_the_start_timeout() -> None:
-    assert RestartPolicy().longest_start == 8.0 + 15.0
-    assert RestartPolicy(delays=(), start_timeout=2.0).longest_start == 2.0
-
-
-SILENT = "import sys; sys.stdin.read()"  # starts, never answers the handshake
-
-
-def test_a_start_is_bounded_by_the_policy_not_by_the_callers_timeout(fake_time: FakeTime) -> None:
-    """S0035 independent verifier F3 (decided: the caller's timeout covers the wait for its reply; a start that the
-    call needs is bounded by `RestartPolicy.longest_start`). A short timeout must not cut a cold start short: that
-    would stop a healthy engine that is still importing and count it towards `unavailable`."""
-    policy = RestartPolicy(start_timeout=1.0)
-    c = EngineClient(stand_in(SILENT), policy, monotonic=fake_time.monotonic, pause=fake_time.pause)
-    try:
-        began = time.monotonic()
-        out = c.ping(timeout=0.2)
-        took = time.monotonic() - began
-        assert isinstance(out, EngineFailure)
-        assert out.kind == "start_failed"
-        assert 1.0 <= took < policy.longest_start + 5.0
-    finally:
-        c.close()
 
 
 def test_the_stderr_of_an_engine_that_failed_to_start_is_kept(fake_time: FakeTime) -> None:
@@ -449,8 +437,8 @@ def test_the_stderr_of_an_engine_that_failed_to_start_is_kept(fake_time: FakeTim
 DIES_ON_PING = r"""
 import json, sys
 req = json.loads(sys.stdin.readline())
-sys.stdout.write(json.dumps({"v": 1, "id": req["id"], "op": "handshake", "ok": True,
-    "result": {"protocol": 1, "engine_version": "0", "beancount_version": "3.2.0"}}) + "\n")
+sys.stdout.write(json.dumps({"v": 2, "id": req["id"], "op": "handshake", "ok": True,
+    "result": {"protocol": 2, "engine_version": "0", "beancount_version": "3.2.0"}}) + "\n")
 sys.stdout.flush()
 sys.stdin.readline()
 sys.stderr.write("marker: died on ping\n")
@@ -463,7 +451,7 @@ def test_the_stderr_of_an_engine_that_crashed_mid_request_is_kept_until_the_next
     c = EngineClient(stand_in(DIES_ON_PING), monotonic=fake_time.monotonic, pause=fake_time.pause)
     try:
         assert isinstance(c.start(), EngineInfo)
-        out = c.ping(timeout=DEADLINE)
+        out = c.ping()
         assert isinstance(out, EngineFailure)
         assert out.kind == "crashed"
         assert "marker: died on ping" in c.stderr_tail()
@@ -514,7 +502,7 @@ def test_close_ends_the_engine_and_later_calls_fail(client: EngineClient) -> Non
     assert pid is not None
     client.close()
     assert stopped(pid)
-    out = client.ping(timeout=DEADLINE)
+    out = client.ping()
     assert isinstance(out, EngineFailure)
     assert out.kind == "closed"
     client.close()  # closing twice is harmless
@@ -534,7 +522,13 @@ def test_the_engine_environment_drops_the_shell_token_and_python_overrides() -> 
         "LANG": "C.UTF-8",
     }
     command = EngineCommand.for_venv(ENGINE_VENV, environ=environ)
-    assert command.env == {"HOME": "/var/empty", "PATH": "/bin", "TZ": "Asia/Kolkata", "LANG": "C.UTF-8"}
+    assert command.env == {
+        "HOME": "/var/empty",
+        "PATH": "/bin",
+        "TZ": "Asia/Kolkata",
+        "LANG": "C.UTF-8",
+        "PYTHONHASHSEED": "0",  # S0057: the one PYTHON* variable, set by us (engine-jobs §5.1)
+    }
 
 
 def test_the_engine_is_told_its_parent(client: EngineClient) -> None:
@@ -546,13 +540,6 @@ def test_the_engine_is_told_its_parent(client: EngineClient) -> None:
     # 2026-10-26 saw "... -m ledger_eng" with the flag cut off. macOS ps takes -ww too.
     args = subprocess.run(["ps", "-ww", "-o", "args=", "-p", str(pid)], capture_output=True, text=True, check=False)  # noqa: S603, S607
     assert f"--parent-pid {os.getpid()}" in args.stdout
-
-
-def test_the_engine_command_runs_the_venv_interpreter_isolated() -> None:
-    command = EngineCommand.for_venv(ENGINE_VENV, environ={})
-    assert Path(command.argv[0]).parent.parent == ENGINE_VENV
-    assert command.argv[1:] == ("-I", "-m", "ledger_engine")
-    assert EngineCommand.for_venv(ENGINE_VENV, environ={}, test_ops=True).argv[-1] == "--test-ops"
 
 
 def test_the_spawned_engine_is_told_its_engine_lock() -> None:
@@ -603,7 +590,7 @@ def test_the_lifecycle_is_logged_on_every_start_and_stop(fake_time: FakeTime) ->
         assert first is not None
         kill(first)
         assert stopped(first)
-        assert c.ping(timeout=DEADLINE) == Pong()
+        assert c.ping() == Pong()
         second = c.pid
     finally:
         c.close()
@@ -611,20 +598,7 @@ def test_the_lifecycle_is_logged_on_every_start_and_stop(fake_time: FakeTime) ->
     assert events.seen[0][1]["pid"] == first
     assert events.seen[1][1]["kind"] == "crashed"
     assert events.seen[2][1]["pid"] == second
-    assert events.seen[2][1]["protocol"] == 1
-
-
-def test_a_timeout_is_logged_as_a_stop_of_kind_timeout(fake_time: FakeTime) -> None:
-    events = Events()
-    c = EngineClient(engine_command(), monotonic=fake_time.monotonic, pause=fake_time.pause, log=events)
-    try:
-        out = c.call("test.stall", {}, timeout=0.5)
-        assert isinstance(out, EngineFailure)
-        assert out.kind == "timeout"
-    finally:
-        c.close()
-    assert events.names == ["engine.ready", "engine.stopped", "engine.closed"]
-    assert events.seen[1][1]["kind"] == "timeout"
+    assert events.seen[2][1]["protocol"] == 2
 
 
 def test_the_stop_that_reaches_the_bound_makes_the_client_unavailable_at_once(fake_time: FakeTime) -> None:
@@ -692,9 +666,9 @@ def test_an_interrupted_backoff_leaves_the_client_usable(fake_time: FakeTime) ->
         kill(pid)
         assert stopped(pid)
         with pytest.raises(KeyboardInterrupt):
-            c.ping(timeout=DEADLINE)
+            c.ping()
         assert isinstance(c.state, Crashed)
-        assert c.ping(timeout=DEADLINE) == Pong()
+        assert c.ping() == Pong()
     finally:
         c.close()
 
@@ -721,11 +695,11 @@ def test_an_exception_while_spawning_counts_as_a_failed_start_and_leaves_the_cli
 WRONG_PONG = r"""
 import json, sys
 req = json.loads(sys.stdin.readline())
-sys.stdout.write(json.dumps({"v": 1, "id": req["id"], "op": "handshake", "ok": True,
-    "result": {"protocol": 1, "engine_version": "0", "beancount_version": "3.2.0"}}) + "\n")
+sys.stdout.write(json.dumps({"v": 2, "id": req["id"], "op": "handshake", "ok": True,
+    "result": {"protocol": 2, "engine_version": "0", "beancount_version": "3.2.0"}}) + "\n")
 sys.stdout.flush()
 req = json.loads(sys.stdin.readline())
-sys.stdout.write(json.dumps({"v": 1, "id": req["id"], "op": "ping", "ok": True, "result": {"status": "no"}}) + "\n")
+sys.stdout.write(json.dumps({"v": 2, "id": req["id"], "op": "ping", "ok": True, "result": {"status": "no"}}) + "\n")
 sys.stdout.flush()
 sys.stdin.read()
 """
@@ -739,7 +713,7 @@ def test_a_ping_answered_with_the_wrong_result_is_a_violation_and_ends_the_engin
         assert isinstance(c.start(), EngineInfo)
         pid = c.pid
         assert pid is not None
-        out = c.ping(timeout=DEADLINE)
+        out = c.ping()
         assert isinstance(out, EngineFailure)
         assert out.kind == "protocol_violation"
         assert stopped(pid)
@@ -748,7 +722,7 @@ def test_a_ping_answered_with_the_wrong_result_is_a_violation_and_ends_the_engin
         c.close()
 
 
-WRONG_INFO = """{"v": 1, "id": req["id"], "op": "handshake", "ok": True, "result": {"protocol": "one"}}"""
+WRONG_INFO = """{"v": 2, "id": req["id"], "op": "handshake", "ok": True, "result": {"protocol": "one"}}"""
 
 
 def test_a_handshake_with_the_wrong_result_is_a_failed_start_and_is_retried(
@@ -773,8 +747,8 @@ def test_a_handshake_with_the_wrong_result_is_a_failed_start_and_is_retried(
 STALLS = r"""
 import json, sys
 req = json.loads(sys.stdin.readline())
-sys.stdout.write(json.dumps({"v": 1, "id": req["id"], "op": "handshake", "ok": True,
-    "result": {"protocol": 1, "engine_version": "0", "beancount_version": "3.2.0"}}) + "\n")
+sys.stdout.write(json.dumps({"v": 2, "id": req["id"], "op": "handshake", "ok": True,
+    "result": {"protocol": 2, "engine_version": "0", "beancount_version": "3.2.0"}}) + "\n")
 sys.stdout.flush()
 sys.stdin.readline()
 sys.stderr.write("marker: request read\n")
@@ -805,7 +779,7 @@ def test_an_exception_while_waiting_for_a_reply_stops_the_engine_and_leaves_the_
         threading.Thread(target=interrupt, daemon=True).start()
         began = time.monotonic()
         with pytest.raises(KeyboardInterrupt):
-            c.call("anything", {}, timeout=60.0)
+            c.call("anything", {})
         assert time.monotonic() - began < 30.0, "the signal did not reach the wait (the test proves nothing then)"
         assert stopped(pid)
         state = c.state
@@ -822,7 +796,7 @@ def test_the_state_is_readable_at_once_while_a_request_is_in_flight(fake_time: F
     c = EngineClient(stand_in(STALLS), monotonic=fake_time.monotonic, pause=fake_time.pause)
     try:
         assert isinstance(c.start(), EngineInfo)
-        t, out = in_thread(lambda: c.call("anything", {}, timeout=DEADLINE))
+        t, out = in_thread(lambda: c.call("anything", {}))
         assert wait_until(lambda: "marker: request read" in c.stderr_tail())
         began = time.monotonic()
         state = c.state
@@ -890,7 +864,7 @@ def test_a_log_sink_that_raises_changes_nothing_in_the_supervision(fake_time: Fa
         assert isinstance(c.start(), EngineInfo)  # engine.ready failed to log
         first = c.pid
         assert first is not None
-        t, out = in_thread(lambda: c.call("test.stall", {}, timeout=60.0))
+        t, out = in_thread(lambda: c.call("test.stall", {}))
         assert wait_until(lambda: "stalling" in c.stderr_tail()), "the engine never started the request"
         kill(first)
         t.join(DEADLINE)
@@ -901,7 +875,7 @@ def test_a_log_sink_that_raises_changes_nothing_in_the_supervision(fake_time: Fa
         assert failure.kind == "crashed"
         assert stopped(first)
         assert isinstance(c.state, Crashed)
-        assert c.ping(timeout=DEADLINE) == Pong()  # restarted
+        assert c.ping() == Pong()  # restarted
         assert c.pid not in (None, first)
     finally:
         c.close()  # engine.closed failed to log; close still returns
@@ -925,29 +899,12 @@ def test_an_interrupt_inside_the_log_sink_still_reaches_the_caller(fake_time: Fa
         with pytest.raises(KeyboardInterrupt):
             c.start()
         assert isinstance(c.state, Ready)
-        assert c.ping(timeout=DEADLINE) == Pong()
+        assert c.ping() == Pong()
     finally:
         c.close()
 
 
-@pytest.mark.skipif(os.name != "posix", reason="SIGSTOP is POSIX; Windows is the manual CI run")
-def test_a_frozen_engine_times_out_is_ended_and_replaced(client: EngineClient) -> None:
-    """@regression-guard (S0041, failure-modes row E2): an engine frozen by the OS (SIGSTOP: its own watchdog is frozen
-    too) is a hang. The caller's timeout notices it, the client ends the frozen process (SIGKILL reaches a stopped
-    process), and the next request starts a new engine."""
-    client.start()
-    pid = client.pid
-    assert pid is not None
-    os.kill(pid, signal.SIGSTOP)
-    out = client.ping(timeout=0.5)
-    assert isinstance(out, EngineFailure)
-    assert out.kind == "timeout"
-    assert stopped(pid), "the frozen engine was left behind"
-    assert client.ping(timeout=DEADLINE) == Pong()
-    assert client.pid not in (None, pid)
-
-
-# -- Sending a request has a time limit too (S0042; area review 2026-10-26 F3) --------------------------------------
+# -- A large request (S0042; area review 2026-10-26 F3): the writer thread owns stdin, so Cancel can end it --------
 
 LARGE = {"blob": "x" * (1 << 20)}  # 1 MiB: far beyond a pipe's buffer (16-64 KiB), well under the line limit
 
@@ -965,89 +922,21 @@ def frozen_until_released(pid: int, *threads: threading.Thread) -> list[threadin
     return hung
 
 
-@pytest.mark.skipif(os.name != "posix", reason="SIGSTOP is POSIX; Windows is the manual CI run")
-def test_a_large_request_to_a_frozen_engine_ends_within_its_limit_and_ends_the_engine(fake_time: FakeTime) -> None:
-    """Area review 2026-10-26 F3 (failure-modes row E2): the request was written with no time limit, so a request
-    larger than the pipe's buffer to an engine that does not read never returned, holding the lock. The caller's
-    limit covers the write: the call returns its timeout while the engine is still frozen, and the engine is ended."""
-    events = Events()
-    c = EngineClient(engine_command(), monotonic=fake_time.monotonic, pause=fake_time.pause, log=events)
-    try:
-        assert isinstance(c.start(), EngineInfo)
-        pid = c.pid
-        assert pid is not None
-        os.kill(pid, signal.SIGSTOP)
-        t, out = in_thread(lambda: c.call("no.such.op", LARGE, timeout=0.5))
-        assert frozen_until_released(pid, t) == [], "the call did not return while the engine was frozen"
-        failure = out[0]
-        assert isinstance(failure, EngineFailure)
-        assert failure.kind == "timeout"
-        assert stopped(pid), "the frozen engine was left behind"
-        assert [f.get("kind") for e, f in events.seen if e.name == "engine.stopped"] == ["timeout"]
-        assert c.ping(timeout=DEADLINE) == Pong()
-        assert c.pid not in (None, pid)
-    finally:
-        c.close()
-
-
 STOPS_READING = r"""
 import json, sys, threading
 req = json.loads(sys.stdin.readline())
-sys.stdout.write(json.dumps({"v": 1, "id": req["id"], "op": "handshake", "ok": True,
-    "result": {"protocol": 1, "engine_version": "0", "beancount_version": "3.2.0"}}) + "\n")
+sys.stdout.write(json.dumps({"v": 2, "id": req["id"], "op": "handshake", "ok": True,
+    "result": {"protocol": 2, "engine_version": "0", "beancount_version": "3.2.0"}}) + "\n")
 sys.stdout.flush()
 threading.Event().wait()
 """
 
 
-def test_a_large_request_to_an_engine_that_stops_reading_times_out(fake_time: FakeTime) -> None:
-    """The same hang without a signal (every OS): an engine stuck after its handshake reads nothing more."""
-    c = EngineClient(stand_in(STOPS_READING), monotonic=fake_time.monotonic, pause=fake_time.pause)
-    try:
-        assert isinstance(c.start(), EngineInfo)
-        pid = c.pid
-        assert pid is not None
-        t, out = in_thread(lambda: c.call("anything", LARGE, timeout=0.5))
-        t.join(DEADLINE)
-        if t.is_alive():
-            kill(pid)  # release the hung call, so the test ends
-            t.join(DEADLINE)
-            pytest.fail("the call did not return while the engine was not reading")
-        failure = out[0]
-        assert isinstance(failure, EngineFailure)
-        assert failure.kind == "timeout"
-        assert stopped(pid)
-        assert isinstance(c.state, Crashed)
-    finally:
-        c.close()
-
-
-@pytest.mark.skipif(os.name != "posix", reason="SIGSTOP is POSIX; Windows is the manual CI run")
-def test_close_returns_while_a_large_request_to_a_frozen_engine_is_out(fake_time: FakeTime) -> None:
-    """Area review F3: quit (close) waited behind the hung call's lock forever. Now it waits at most for that call's
-    limit and its stop."""
-    c = EngineClient(engine_command(), monotonic=fake_time.monotonic, pause=fake_time.pause)
-    assert isinstance(c.start(), EngineInfo)
-    pid = c.pid
-    assert pid is not None
-    os.kill(pid, signal.SIGSTOP)
-    t, out = in_thread(lambda: c.call("no.such.op", LARGE, timeout=0.5))
-    assert wait_until(lambda: isinstance(c.state, Busy))
-    closer = threading.Thread(target=c.close, daemon=True)
-    closer.start()
-    assert frozen_until_released(pid, t, closer) == [], "close() or the call hung on the frozen engine"
-    failure = out[0]
-    assert isinstance(failure, EngineFailure)
-    assert failure.kind == "timeout"
-    assert isinstance(c.state, Closed)
-    assert stopped(pid)
-
-
 HOLDS_OUTPUT = r"""
 import json, subprocess, sys
 req = json.loads(sys.stdin.readline())
-sys.stdout.write(json.dumps({"v": 1, "id": req["id"], "op": "handshake", "ok": True,
-    "result": {"protocol": 1, "engine_version": "0", "beancount_version": "3.2.0"}}) + "\n")
+sys.stdout.write(json.dumps({"v": 2, "id": req["id"], "op": "handshake", "ok": True,
+    "result": {"protocol": 2, "engine_version": "0", "beancount_version": "3.2.0"}}) + "\n")
 sys.stdout.flush()
 child = subprocess.Popen([sys.executable, "-I", "-c", "import threading; threading.Event().wait()"],
                          stdin=subprocess.DEVNULL)  # inherits the engine's stdout and stderr
@@ -1057,52 +946,22 @@ sys.stdin.read()
 """
 
 
-@pytest.mark.skipif(os.name != "posix", reason="ends a grandchild by pid; Windows is the manual CI run")
-def test_close_returns_when_a_child_of_the_engine_holds_its_output() -> None:
-    """S0042 (same class as F3): a process the engine started (a user's plugin, say) keeps the engine's output pipes
-    open after the engine exits, so the client's readers never see their end. Closing a pipe while its reader is
-    inside `readline` waits for that reader, so close() hung after the joins timed out. Each reader now closes its own
-    pipe when it ends; close() leaves a pipe that is still being read alone."""
-    c = EngineClient(stand_in(HOLDS_OUTPUT), RestartPolicy(close_timeout=0.5))
-    grandchild: int | None = None
-    try:
-        assert isinstance(c.start(), EngineInfo)
-        pid = c.pid
-        assert pid is not None
-        assert wait_until(lambda: "marker: child " in c.stderr_tail())
-        grandchild = int(c.stderr_tail().split("marker: child ")[1].split()[0])
-        closer = threading.Thread(target=c.close, daemon=True)
-        closer.start()
-        closer.join(DEADLINE)
-        hung = closer.is_alive()
-        if hung:
-            kill(grandchild)  # releases the readers, so the test ends
-            grandchild = None
-            closer.join(DEADLINE)
-        assert not hung, "close() hung on a pipe held open by the engine's child"
-        assert isinstance(c.state, Closed)
-        assert stopped(pid)
-    finally:
-        if grandchild is not None:
-            kill(grandchild)
-
-
 def test_a_large_request_to_a_reading_engine_is_answered(client: EngineClient) -> None:
     """@regression-guard (S0042): the must-not-pass beside the time limit on the write: a large request to an engine
     that reads is delivered whole and answered, and is no stop."""
-    out = client.call("no.such.op", LARGE, timeout=DEADLINE)
+    out = client.call("no.such.op", LARGE)
     assert isinstance(out, EngineRefusal)
     assert out.key == "protocol.unknown_op"
     pid = client.pid
-    assert client.ping(timeout=DEADLINE) == Pong()
+    assert client.ping() == Pong()
     assert client.pid == pid
 
 
 CLOSES_ITS_INPUT = r"""
 import json, os, sys, threading
 req = json.loads(sys.stdin.readline())
-sys.stdout.write(json.dumps({"v": 1, "id": req["id"], "op": "handshake", "ok": True,
-    "result": {"protocol": 1, "engine_version": "0", "beancount_version": "3.2.0"}}) + "\n")
+sys.stdout.write(json.dumps({"v": 2, "id": req["id"], "op": "handshake", "ok": True,
+    "result": {"protocol": 2, "engine_version": "0", "beancount_version": "3.2.0"}}) + "\n")
 sys.stdout.flush()
 os.close(0)
 sys.stderr.write("marker: input closed\n")
@@ -1114,13 +973,13 @@ threading.Event().wait()
 def test_a_request_the_engine_cannot_take_is_a_crash_at_once_not_a_timeout(fake_time: FakeTime) -> None:
     """@regression-guard (S0042): a write that fails (the engine closed its input but runs on, its output open) is
     reported by the writer at once as a crash; the caller does not wait out its limit for a reply that cannot come."""
-    c = EngineClient(stand_in(CLOSES_ITS_INPUT), RestartPolicy(close_timeout=0.5), monotonic=fake_time.monotonic)
+    c = EngineClient(stand_in(CLOSES_ITS_INPUT), monotonic=fake_time.monotonic)
     try:
         assert isinstance(c.start(), EngineInfo)
         pid = c.pid
         assert pid is not None
         assert wait_until(lambda: "marker: input closed" in c.stderr_tail())
-        t, out = in_thread(lambda: c.call("anything", {}, timeout=600.0))
+        t, out = in_thread(lambda: c.call("anything", {}))
         t.join(DEADLINE)
         if t.is_alive():
             kill(pid)
@@ -1134,172 +993,800 @@ def test_a_request_the_engine_cannot_take_is_a_crash_at_once_not_a_timeout(fake_
         c.close()
 
 
-MARKS_ITS_END = r"""
-import json, signal, sys
-signal.signal(signal.SIGTERM, lambda *_: (open(sys.argv[1], "w").write("terminated"), sys.exit(0)))
-req = json.loads(sys.stdin.readline())
-sys.stdout.write(json.dumps({"v": 1, "id": req["id"], "op": "handshake", "ok": True,
-    "result": {"protocol": 1, "engine_version": "0", "beancount_version": "3.2.0"}}) + "\n")
-sys.stdout.flush()
-sys.stdin.read()
-open(sys.argv[1], "w").write("end of input")
-"""
-
-
-@pytest.mark.skipif(os.name != "posix", reason="a SIGTERM handler; Windows is the manual CI run")
-def test_close_ends_the_engine_by_closing_its_input(tmp_path: Path) -> None:
-    """@regression-guard (S0042: the writer thread now closes stdin): close() lets the engine see the end of its input
-    and exit by itself, which lets it finish the request in hand; it is not terminated."""
-    end = tmp_path / "end"
-    command = EngineCommand(argv=(sys.executable, "-I", "-c", MARKS_ITS_END, str(end)), env=None)
-    c = EngineClient(command)
-    assert isinstance(c.start(), EngineInfo)
-    c.close()
-    assert end.read_text() == "end of input"
-
-
-class Joinable:
-    """A stand-in thread that records how long it was asked to wait and takes that long on the given clock."""
-
-    def __init__(self, clock: FakeTime) -> None:
-        self.clock = clock
-        self.waits: list[float] = []
-
-    def join(self, timeout: float | None = None) -> None:
-        assert timeout is not None
-        self.waits.append(timeout)
-        self.clock.now += timeout  # as if the thread never ended
-
-
-def test_threads_are_joined_under_one_deadline_not_one_each() -> None:
-    """S0042: a reap waits at most `close_timeout` in all, however many threads its run has."""
-    clock = FakeTime()
-    threads = [Joinable(clock) for _ in range(3)]
-    began = clock.now
-    join_all(threads, 2.0, clock.monotonic)  # pyright: ignore[reportArgumentType] (duck-typed threads)
-    assert clock.now - began == 2.0
-    assert [t.waits for t in threads] == [[2.0], [0.0], [0.0]]
-
-
 def engine_threads(before: set[threading.Thread]) -> list[str]:
     """The engine threads started since `before` that still run (another test's leftovers do not count)."""
     return sorted(t.name for t in threading.enumerate() if t.name.startswith("engine-") and t not in before)
 
 
-def test_a_stopped_engine_leaves_no_thread_behind(client: EngineClient) -> None:
-    """S0042: the reap ends the writer as well as the readers, after a stop (here a timeout) and at close: no engine
-    thread or pipe outlives its engine, so restarts do not pile them up (INV-10, INV-11)."""
-    before = set(threading.enumerate())
-    client.start()
-    assert engine_threads(before) == ["engine-replies", "engine-requests", "engine-stderr"]
-    out = client.call("test.stall", {}, timeout=0.5)
-    assert isinstance(out, EngineFailure)
-    assert out.kind == "timeout"
-    assert engine_threads(before) == []
-    assert client.ping(timeout=DEADLINE) == Pong()
-    client.close()
-    assert engine_threads(before) == []
+# -- No time limits, our own ends, the process group (S0057; engine-jobs §5.1-§5.5) ---------------------------------
+
+STALLS_ON_READ = STALLS
 
 
-# -- S0042 verifier round 1 (F1-F3) ---------------------------------------------------------------------------------
+def test_the_port_takes_no_time_limit() -> None:
+    """§5.5: "`EngineClient.call` takes no timeout"; a slow job and a hung one look the same (§5.4)."""
+    for fn in (EngineClient.call, EngineClient.ping, EngineClient.start, EnginePort.call, EnginePort.ping):
+        assert "timeout" not in inspect.signature(fn).parameters, fn
+    assert {f.name for f in dataclasses.fields(RestartPolicy)} == {"max_crashes", "window", "delays"}
 
 
-class NeverEnds:
-    """A stand-in for a pipe thread whose pipe a child of the engine holds: each join waits out its whole timeout."""
-
-    def __init__(self, waits: list[float]) -> None:
-        self.waits = waits
-
-    def join(self, timeout: float | None = None) -> None:
-        assert timeout is not None, "a reap must never join without a limit"
-        self.waits.append(timeout)
-        threading.Event().wait(timeout)
+def stall(c: EngineClient) -> tuple[threading.Thread, list[Any]]:
+    t, out = in_thread(lambda: c.call("test.stall", {}))
+    assert wait_until(lambda: "stalling" in c.stderr_tail()), "the engine never started the request"
+    return t, out
 
 
-def test_the_reap_waits_close_timeout_in_all_for_threads_that_do_not_end(fake_time: FakeTime) -> None:
-    """S0042 verifier F1: the reap itself, not only `join_all`, waits `close_timeout` in all for threads that never
-    end (before the fix to the test gap, `_reap` joining each thread for `close_timeout` passed every test)."""
-    policy = RestartPolicy(close_timeout=0.5)
-    c = EngineClient(engine_command(), policy, monotonic=fake_time.monotonic, pause=fake_time.pause)
-    assert isinstance(c.start(), EngineInfo)
-    run = c._run  # pyright: ignore[reportPrivateUsage] (the reap's threads have no public handle)
-    assert run is not None
-    real = list(run.threads)
-    waits: list[float] = []
-    run.threads[:] = [NeverEnds(waits) for _ in real]  # pyright: ignore[reportArgumentType, reportCallIssue]
-    c.close()
-    for t in real:
-        t.join(DEADLINE)
-    assert len(waits) == len(real)
-    assert sum(waits) <= policy.close_timeout, f"the reap waited {waits}: close_timeout each, not in all"
-
-
-def test_every_pipe_of_a_stopped_engine_is_closed(client: EngineClient) -> None:
-    """S0042 verifier F3: each pipe thread closes its own pipe when it ends (the reap closes none), so a stopped
-    engine leaves no open pipe behind, whatever the garbage collector does."""
-    client.start()
-    run = client._run  # pyright: ignore[reportPrivateUsage] (the pipes have no public handle)
-    assert run is not None
-    pipes = (run.proc.stdin, run.proc.stdout, run.proc.stderr)
-    out = client.call("test.stall", {}, timeout=0.5)
-    assert isinstance(out, EngineFailure)
-    assert out.kind == "timeout"
-    assert [p is not None and p.closed for p in pipes] == [True, True, True]
-
-
-def test_the_longest_call_and_close_are_derived_from_the_policy() -> None:
-    """S0042 verifier F2: the stated bounds, as code: a stop is three waits of `close_timeout`, a call at most two
-    stops plus a start plus its own wait, a close at most two stops."""
-    policy = RestartPolicy()
-    assert policy.longest_stop == 3 * 5.0
-    assert policy.longest_call(2.0) == 8.0 + 15.0 + 2.0 + 2 * 15.0
-    assert policy.longest_close == 2 * 15.0
-
-
-WORST_PATH = r"""
-import json, os, signal, subprocess, sys, threading
-work = sys.argv[1]
-runs = os.path.join(work, "runs")
-n = int(open(runs).read()) + 1 if os.path.exists(runs) else 1
-open(runs, "w").write(str(n))
-signal.signal(signal.SIGTERM, signal.SIG_IGN)
-req = json.loads(sys.stdin.readline())
-child = subprocess.Popen([sys.executable, "-I", "-c", "import threading; threading.Event().wait()"],
-                         stdin=subprocess.DEVNULL)  # holds this engine's stdout and stderr
-open(os.path.join(work, "children"), "a").write(f"{child.pid}\n")
-sys.stdout.write(json.dumps({"v": 1, "id": req["id"], "op": "handshake", "ok": True,
-    "result": {"protocol": 1 if n == 1 else 2, "engine_version": "0", "beancount_version": "3.2.0"}}) + "\n")
-sys.stdout.flush()
-if n == 1:
-    sys.exit(0)
-threading.Event().wait()
-"""
-
-
-@pytest.mark.skipif(os.name != "posix", reason="SIGTERM ignored, grandchildren; Windows is the manual CI run")
-def test_a_call_on_the_slowest_path_stays_within_the_stated_bound(tmp_path: Path) -> None:
-    """S0042 verifier F2: the path that waits longest today: an engine found dead first whose output a child holds
-    (its reap waits out `close_timeout`), then a new engine that speaks another protocol and ignores both the end of
-    its input and SIGTERM (a shutdown: three waits). The call ends within `RestartPolicy.longest_call`, an upper
-    bound by design, so this checks the stated bound, not a time budget."""
-    policy = RestartPolicy(delays=(0.0,), start_timeout=5.0, close_timeout=1.0)
-    command = EngineCommand(argv=(sys.executable, "-I", "-c", WORST_PATH, str(tmp_path)), env=None)
-    c = EngineClient(command, policy)
-    children = tmp_path / "children"
+def test_a_stalled_request_waits_until_it_is_cancelled(fake_time: FakeTime) -> None:
+    events = Events()
+    c = EngineClient(engine_command(), monotonic=fake_time.monotonic, pause=fake_time.pause, log=events)
     try:
         assert isinstance(c.start(), EngineInfo)
         pid = c.pid
         assert pid is not None
-        assert stopped(pid), "the first engine did not exit"
-        began = time.monotonic()
-        out = c.call("anything", {}, timeout=0.01)
-        took = time.monotonic() - began
-        assert isinstance(out, EngineFailure)
-        assert out.kind == "incompatible"
-        assert took >= 4 * policy.close_timeout, "the path did not wait as expected: the test proves nothing then"
-        assert took <= policy.longest_call(0.01)
+        t, out = stall(c)
+        t.join(ABSENCE)
+        assert t.is_alive(), "a request ended without a Cancel: there is no time limit"
+        assert isinstance(c.state, Busy)
+        assert c.proceed() is False  # a request in flight with no gate pending: nothing is sent
+        c.end("cancel")
+        t.join(DEADLINE)
+        assert not t.is_alive(), "Cancel did not end the call"
+        assert out == [EngineFailure("cancelled", "the engine was ended by us (cancel)")]
+        assert stopped(pid)
+        assert c.state == Idle(())
+        assert c.ping() == Pong()  # at once: our end is no stop
+        assert fake_time.pauses == []
     finally:
         c.close()
-        for line in children.read_text().split() if children.exists() else []:
-            with contextlib.suppress(ProcessLookupError):
-                kill(int(line))
+    assert "engine.stopped" not in events.names
+    assert ("engine.ended", {"reason": "cancel"}) in [(e.name, f) for e, f in events.seen]
+
+
+def test_three_cancels_in_a_row_leave_the_engine_startable_at_once(fake_time: FakeTime) -> None:
+    """§14: "three Cancels in a row leave the engine `Ready`, not `Unavailable`"."""
+    c = EngineClient(engine_command(), monotonic=fake_time.monotonic, pause=fake_time.pause)
+    try:
+        for _ in range(3):
+            t, out = stall(c)
+            c.end("cancel")
+            t.join(DEADLINE)
+            assert isinstance(out[0], EngineFailure)
+            assert out[0].kind == "cancelled"
+        assert c.ping() == Pong()
+        assert isinstance(c.state, Ready)
+        assert c.state.stops == ()
+        assert fake_time.pauses == []
+    finally:
+        c.close()
+
+
+SILENT = "import sys; sys.stdin.read()"  # starts, never answers the handshake
+
+
+def test_a_start_that_never_completes_is_ended_by_cancel(fake_time: FakeTime) -> None:
+    """§5.5: "A start that never completes is ended by the waiting job's Cancel." No handshake time limit."""
+    c = EngineClient(stand_in(SILENT), monotonic=fake_time.monotonic, pause=fake_time.pause)
+    try:
+        t, out = in_thread(c.start)
+        assert wait_until(lambda: isinstance(c.state, Handshaking))
+        t.join(ABSENCE)
+        assert t.is_alive(), "the handshake was given up without a Cancel"
+        pid = c.pid
+        assert pid is not None
+        c.end("cancel")
+        t.join(DEADLINE)
+        assert out == [EngineFailure("cancelled", "the engine was ended by us (cancel)")]
+        assert stopped(pid)
+        assert c.state == Idle(())
+    finally:
+        c.close()
+
+
+class CancelsInPause:
+    """A backoff pause during which the waiting job's Cancel arrives."""
+
+    def __init__(self, time: FakeTime) -> None:
+        self.time = time
+        self.client: EngineClient | None = None
+        self.cancel = True
+
+    def __call__(self, seconds: float) -> None:
+        self.time.pause(seconds)
+        if self.cancel and self.client is not None:
+            self.client.end("cancel")
+
+
+def test_a_cancel_during_the_backoff_ends_the_wait_and_starts_nothing(fake_time: FakeTime) -> None:
+    pause = CancelsInPause(fake_time)
+    c = EngineClient(engine_command(), monotonic=fake_time.monotonic, pause=pause)
+    pause.client = c
+    try:
+        assert isinstance(c.start(), EngineInfo)
+        pid = c.pid
+        assert pid is not None
+        kill(pid)
+        assert stopped(pid)
+        out = c.ping()  # found dead (a stop), then the backoff, then the Cancel
+        assert out == EngineFailure("cancelled", "the engine was ended by us (cancel)")
+        assert c.pid is None, "an engine was started after the Cancel"
+        assert fake_time.pauses == [0.5]
+        pause.cancel = False
+        assert c.ping() == Pong()
+    finally:
+        c.close()
+
+
+def test_a_cancel_of_an_idle_engine_ends_it_and_is_no_stop(fake_time: FakeTime) -> None:
+    events = Events()
+    c = EngineClient(engine_command(), monotonic=fake_time.monotonic, pause=fake_time.pause, log=events)
+    try:
+        assert isinstance(c.start(), EngineInfo)
+        pid = c.pid
+        assert pid is not None
+        c.end("cancel")
+        assert stopped(pid)
+        assert c.ping() == Pong()
+        assert c.pid not in (None, pid)
+        assert fake_time.pauses == []
+    finally:
+        c.close()
+    assert events.names == ["engine.ready", "engine.ended", "engine.ready", "engine.closed"]
+
+
+def test_a_retire_ends_the_idle_engine_and_the_next_call_gets_a_fresh_one(fake_time: FakeTime) -> None:
+    """§5.1: "An engine that ran user code is ended after its job, after its final reply; the next job gets a fresh
+    engine"; §5.3: no stop."""
+    events = Events()
+    c = EngineClient(engine_command(), monotonic=fake_time.monotonic, pause=fake_time.pause, log=events)
+    try:
+        assert c.ping() == Pong()
+        pid = c.pid
+        assert pid is not None
+        c.end("retire")
+        assert c.state == Idle(())  # at once: no call was in flight
+        assert stopped(pid)
+        assert c.ping() == Pong()
+        assert c.pid not in (None, pid)
+        assert fake_time.pauses == []
+    finally:
+        c.close()
+    assert [(e.name, f) for e, f in events.seen if e.name == "engine.ended"] == [("engine.ended", {"reason": "retire"})]
+
+
+def test_a_retire_while_a_call_is_in_flight_is_refused() -> None:
+    """A retire follows the final reply (§5.1); during a call it is a bug in the caller, never a silent Cancel."""
+    c = EngineClient(engine_command())
+    try:
+        t, _ = stall(c)
+        with pytest.raises(RuntimeError, match="retire"):
+            c.end("retire")
+        assert t.is_alive()
+        c.end("cancel")
+        t.join(DEADLINE)
+    finally:
+        c.close()
+
+
+def test_the_engine_leads_its_own_process_group(client: EngineClient) -> None:
+    """§5.2: "Each engine leads its own process group", so our end can signal its plugin's children with it."""
+    client.start()
+    pid = client.pid
+    assert pid is not None
+    assert os.getpgid(pid) == pid
+    assert os.getpgid(pid) != os.getpgrp()
+
+
+def venv_site() -> Path:
+    (site,) = (
+        ENGINE_VENV.glob("lib/python*/site-packages") if os.name == "posix" else [ENGINE_VENV / "Lib/site-packages"]
+    )
+    return site
+
+
+def test_the_development_command_is_s_S_B_P_with_the_venvs_site_and_never_I() -> None:
+    """§5.1: "flags `-s -S -B -P ...`, never `-I`"; "the development form uses the same bootstrap with the virtual
+    environment's site-packages, since `-S` keeps a venv's packages off the path"."""
+    command = EngineCommand.for_venv(ENGINE_VENV, environ={})
+    python = Path(command.argv[0])
+    assert python.parent.parent == ENGINE_VENV
+    assert command.argv[1:5] == ("-s", "-S", "-B", "-P")
+    assert command.argv[5] == "-c"
+    assert command.argv[7] == str(venv_site())
+    assert "-I" not in command.argv
+    assert "-E" not in command.argv
+    assert EngineCommand.for_venv(ENGINE_VENV, environ={}, test_ops=True).argv[-1] == "--test-ops"
+
+
+def test_the_engine_environment_sets_the_hash_seed() -> None:
+    """§5.1: "Environment: the parent's, minus `FT_*` and every `PYTHON*` variable, plus `PYTHONHASHSEED=0`"."""
+    command = EngineCommand.for_venv(ENGINE_VENV, environ={"PYTHONHASHSEED": "random", "HOME": "/h"})
+    assert command.env == {"HOME": "/h", "PYTHONHASHSEED": "0"}
+
+
+def interpreter(c: EngineClient) -> dict[str, Any]:
+    out = c.call("test.interpreter", {})
+    assert isinstance(out, dict), out
+    return dict(out)
+
+
+def test_two_engines_hash_a_string_alike_and_run_with_the_specs_flags() -> None:
+    """§5.1: R4's digests must not depend on hash order: "two runs under `-s -S -B -P` [with PYTHONHASHSEED=0] the
+    same"; `-B`: no `__pycache__` written into a user's folder (INV-30); `-I` would ignore the seed."""
+    seen: list[dict[str, Any]] = []
+    for _ in range(2):
+        c = EngineClient(engine_command())
+        try:
+            seen.append(interpreter(c))
+        finally:
+            c.close()
+    assert seen[0]["hash_abc"] == seen[1]["hash_abc"]
+    for flags in seen:
+        assert flags["no_site"] == 1
+        assert flags["no_user_site"] == 1
+        assert flags["safe_path"] is True
+        assert flags["dont_write_bytecode"] is True
+        assert flags["isolated"] == 0
+        assert flags["ignore_environment"] == 0
+        assert flags["hash_seed"] == "0"
+
+
+class Ends:
+    """`on_engine_ended`: each engine's end report, and what the test sees at the moment it arrives."""
+
+    def __init__(self, probe: Callable[[], object] = lambda: None) -> None:
+        self.reports: list[EngineEnd] = []
+        self.seen_at_report: list[object] = []
+        self._probe = probe
+        self._got = threading.Condition()
+
+    def __call__(self, end: EngineEnd) -> None:
+        with self._got:
+            self.seen_at_report.append(self._probe())
+            self.reports.append(end)
+            self._got.notify_all()
+
+    def wait(self, n: int) -> bool:
+        with self._got:
+            return self._got.wait_for(lambda: len(self.reports) >= n, DEADLINE)
+
+
+def lock_free(path: Path) -> bool:
+    fd = os.open(path, os.O_RDWR | os.O_CREAT, 0o600)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        return False
+    else:
+        fcntl.flock(fd, fcntl.LOCK_UN)
+        return True
+    finally:
+        os.close(fd)
+
+
+def gone(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except (ProcessLookupError, PermissionError):
+        return True
+    return not alive(pid)
+
+
+@pytest.mark.skipif(os.name != "posix", reason="process groups and flock are POSIX; Windows is BL-0087")
+@pytest.mark.parametrize("how", ["cancel", "crash of the leader alone"])
+def test_a_plugins_child_holding_a_lock_is_ended_with_the_engine(tmp_path: Path, how: str) -> None:
+    """§5.2: "a plugin's child processes go too and cannot keep the ledger-set locks"; the end is reported only once
+    the group has no live member, so a next engine never starts beside a lock holder (§5.1)."""
+    lock = tmp_path / "ledger.lock"
+    child: list[int] = []
+    ends = Ends(lambda: (lock_free(lock), bool(child) and gone(child[0])))
+    c = EngineClient(engine_command(), on_engine_ended=ends)
+    try:
+        out = c.call("test.child", {"lock": str(lock)})
+        assert isinstance(out, dict)
+        child.append(int(out["pid"]))  # pyright: ignore[reportArgumentType]
+        pid, serial = c.pid, c.serial
+        assert pid is not None
+        assert not lock_free(lock)
+        if how == "cancel":
+            c.end("cancel")
+        else:
+            kill(pid)
+        assert ends.wait(1)
+        assert ends.seen_at_report == [(True, True)], "the end was reported while the group still held the lock"
+        (report,) = ends.reports
+        assert (report.pid, report.serial) == (pid, serial)
+        assert report.reason == ("cancel" if how == "cancel" else None)
+        assert report.returncode == -signal.SIGKILL
+    finally:
+        c.close()
+        if child and not gone(child[0]):
+            kill(child[0])
+
+
+class RecordingOps(PosixGroupOps):
+    """The real group operations, recorded; `hold_reap` keeps the reap from returning until released."""
+
+    def __init__(self, *, hold_reap: bool = False) -> None:
+        self.calls: list[str] = []
+        self.release = threading.Event()
+        if not hold_reap:
+            self.release.set()
+
+    @override
+    def kill_group(self, pgid: int) -> None:
+        self.calls.append("kill")
+        super().kill_group(pgid)
+
+    @override
+    def reap(self, pid: int) -> Reaped:
+        self.calls.append("reap")
+        self.release.wait()
+        return super().reap(pid)
+
+
+@pytest.mark.skipif(os.name != "posix", reason="process groups are POSIX; Windows is BL-0087")
+def test_no_signal_reaches_the_group_after_the_reap() -> None:
+    """§5.2: "After the reap no signal is sent to that group: its id may already belong to another program." A later
+    Cancel, retire or close of the same engine sends nothing."""
+    ops = RecordingOps()
+    ends = Ends()
+    c = EngineClient(engine_command(), group_ops=ops, on_engine_ended=ends)
+    assert isinstance(c.start(), EngineInfo)
+    c.end("cancel")
+    assert ends.wait(1)
+    after = ops.calls[ops.calls.index("reap") + 1 :]
+    c.end("cancel")
+    c.close()
+    assert ops.calls[ops.calls.index("reap") + 1 :] == after == []
+
+
+@pytest.mark.skipif(os.name != "posix", reason="process groups are POSIX; Windows is BL-0087")
+def test_close_returns_without_waiting_for_the_reap() -> None:
+    """§5.5: "`close()` ... signals the engine's group once and returns without waiting for the reap" (§14: "`close()`
+    and Quit anyway return while a fake port's reap never returns")."""
+    ops = RecordingOps(hold_reap=True)
+    c = EngineClient(engine_command(), group_ops=ops)
+    try:
+        assert isinstance(c.start(), EngineInfo)
+        pid = c.pid
+        assert pid is not None
+        closer = threading.Thread(target=c.close, daemon=True)
+        closer.start()
+        closer.join(DEADLINE)
+        assert not closer.is_alive(), "close() waited for the reap"
+        assert isinstance(c.state, Closed)
+        assert wait_until(lambda: "reap" in ops.calls)
+        assert ops.calls.count("kill") >= 1
+    finally:
+        ops.release.set()
+
+
+@pytest.mark.skipif(os.name != "posix", reason="process groups are POSIX; Windows is BL-0087")
+def test_quit_anyway_returns_while_the_reap_never_returns() -> None:
+    ops = RecordingOps(hold_reap=True)
+    c = EngineClient(engine_command(), group_ops=ops)
+    try:
+        t, out = stall(c)
+        c.end("quit_anyway")
+        t.join(DEADLINE)
+        assert not t.is_alive(), "Quit anyway waited for the reap"
+        assert out == [EngineFailure("cancelled", "the engine was ended by us (quit_anyway)")]
+    finally:
+        ops.release.set()
+        c.close()
+
+
+@pytest.mark.skipif(os.name != "posix", reason="process groups are POSIX; Windows is BL-0087")
+def test_a_new_engine_starts_only_after_the_previous_ones_group_is_drained() -> None:
+    """§5.1: "A new engine is spawned when a job needs one, only after the previous one is reaped and its process
+    group has no live member" (`AtMostOneEngine`)."""
+    ops = RecordingOps(hold_reap=True)
+    c = EngineClient(engine_command(), group_ops=ops)
+    try:
+        assert isinstance(c.start(), EngineInfo)
+        first = c.pid
+        c.end("cancel")
+        t, out = in_thread(c.ping)
+        t.join(ABSENCE)
+        assert t.is_alive(), "a second engine started before the first was reaped"
+        assert c.pid is None
+        ops.release.set()
+        t.join(DEADLINE)
+        assert out == [Pong()]
+        assert c.pid not in (None, first)
+    finally:
+        ops.release.set()
+        c.close()
+
+
+def test_close_returns_at_once_while_a_call_to_a_hung_engine_is_in_flight() -> None:
+    """§9.3 step 4: an engine stuck on a dead disk cannot hold the quit. Before S0057 close() waited behind the call
+    lock for the call's time limit; now there is no limit, so it must not take that lock."""
+    c = EngineClient(engine_command())
+    t, out = stall(c)
+    closer = threading.Thread(target=c.close, daemon=True)
+    closer.start()
+    closer.join(DEADLINE)
+    assert not closer.is_alive(), "close() waited for the call in flight"
+    t.join(DEADLINE)
+    assert out == [EngineFailure("closed", "the engine client was closed")]
+    assert isinstance(c.state, Closed)
+    later = c.ping()
+    assert isinstance(later, EngineFailure)
+    assert later.kind == "closed"
+
+
+@pytest.mark.skipif(os.name != "posix", reason="SIGSTOP is POSIX; Windows is the manual CI run")
+def test_cancel_ends_a_large_request_to_a_frozen_engine(fake_time: FakeTime) -> None:
+    """S0042's writer thread stays (§5.5 bullet 5): "it lets Cancel end an engine in the middle of a large request".
+    A frozen engine (SIGSTOP: its own watchdog frozen too) reads nothing; the Cancel's SIGKILL reaches it."""
+    c = EngineClient(engine_command(), monotonic=fake_time.monotonic, pause=fake_time.pause)
+    try:
+        assert isinstance(c.start(), EngineInfo)
+        pid = c.pid
+        assert pid is not None
+        os.kill(pid, signal.SIGSTOP)
+        t, out = in_thread(lambda: c.call("no.such.op", LARGE))
+        assert wait_until(lambda: isinstance(c.state, Busy))
+        c.end("cancel")
+        assert frozen_until_released(pid, t) == [], "the call did not end while the engine was frozen"
+        assert out == [EngineFailure("cancelled", "the engine was ended by us (cancel)")]
+        assert stopped(pid)
+        assert c.ping() == Pong()
+    finally:
+        c.close()
+
+
+def test_cancel_ends_a_large_request_to_an_engine_that_stops_reading(fake_time: FakeTime) -> None:
+    c = EngineClient(stand_in(STOPS_READING), monotonic=fake_time.monotonic, pause=fake_time.pause)
+    try:
+        assert isinstance(c.start(), EngineInfo)
+        pid = c.pid
+        assert pid is not None
+        t, out = in_thread(lambda: c.call("anything", LARGE))
+        t.join(ABSENCE)
+        assert t.is_alive()
+        c.end("cancel")
+        t.join(DEADLINE)
+        assert not t.is_alive(), "Cancel did not end a call blocked in its write"
+        assert out == [EngineFailure("cancelled", "the engine was ended by us (cancel)")]
+        assert stopped(pid)
+    finally:
+        c.close()
+
+
+@pytest.mark.skipif(os.name != "posix", reason="process groups are POSIX; Windows is BL-0087")
+def test_close_ends_a_child_of_the_engine_that_holds_its_output() -> None:
+    """S0042 left such a child (and its pipe threads) behind; it is in the engine's group now, so the close's group
+    signal ends it, and with it the pipes."""
+    ends = Ends()
+    c = EngineClient(stand_in(HOLDS_OUTPUT), on_engine_ended=ends)
+    assert isinstance(c.start(), EngineInfo)
+    assert wait_until(lambda: "marker: child " in c.stderr_tail())
+    grandchild = int(c.stderr_tail().split("marker: child ")[1].split()[0])
+    try:
+        c.close()
+        assert ends.wait(1)
+        assert gone(grandchild), "the engine's child outlived the close"
+    finally:
+        if not gone(grandchild):
+            kill(grandchild)
+
+
+def test_a_stopped_engine_leaves_no_thread_behind() -> None:
+    """S0042, kept: no engine thread or pipe outlives its engine once it is drained, so restarts do not pile them up
+    (INV-10, INV-11). Since S0057 the drain runs on the engine's own reaper thread."""
+    before = set(threading.enumerate())
+    ends = Ends()
+    c = EngineClient(engine_command(), on_engine_ended=ends)
+    c.start()
+    assert engine_threads(before) == ["engine-reaper", "engine-replies", "engine-requests", "engine-stderr"]
+    run = c._run  # pyright: ignore[reportPrivateUsage] (the pipes have no public handle)
+    assert run is not None
+    pipes = (run.proc.stdin, run.proc.stdout, run.proc.stderr)
+    t, _ = stall(c)
+    c.end("cancel")
+    t.join(DEADLINE)
+    assert ends.wait(1)
+    assert wait_until(lambda: engine_threads(before) == [])
+    assert wait_until(lambda: all(p is not None and p.closed for p in pipes))
+    assert c.ping() == Pong()
+    c.close()
+    assert ends.wait(2)
+    assert wait_until(lambda: engine_threads(before) == [])
+
+
+# -- The protocol's job messages (S0057; engine-jobs §4, §5.4, §6.1 steps 7 and 9, §12) --------------------------------
+
+
+def bounded_call(c: EngineClient, op: str, params: dict[str, Any], on_event: Callable[[EngineEvent], None]) -> object:
+    """`c.call` with the test's own watchdog: the client waits without a time limit, so a check it misses (a message
+    out of order, a violation) would leave the call waiting for ever. After `DEADLINE` the engine's group is ended and
+    the test fails, naming what hung."""
+    t, out = in_thread(lambda: c.call(op, params, on_event=on_event))
+    t.join(DEADLINE)
+    if t.is_alive():
+        pid = c.pid
+        if pid is not None:
+            with contextlib.suppress(OSError):
+                os.killpg(pid, signal.SIGKILL)
+        t.join(DEADLINE)
+        pytest.fail(f"the call to {op} was still waiting after {DEADLINE} s: the client missed what should end it")
+    return out[0]
+
+
+class Job:
+    """`on_event` for one call: records every event; at the gate it proceeds, cancels, or does nothing."""
+
+    def __init__(self, c: EngineClient, at_gate: str = "proceed") -> None:
+        self.c = c
+        self.at_gate = at_gate
+        self.events: list[EngineEvent] = []
+        self.proceeded: list[bool] = []
+
+    def __call__(self, event: EngineEvent) -> None:
+        self.events.append(event)
+        if isinstance(event, GateReached):
+            if self.at_gate == "proceed":
+                self.proceeded.append(self.c.proceed())
+                self.proceeded.append(self.c.proceed())  # a second proceed for one gate sends nothing
+            elif self.at_gate == "cancel":
+                self.c.end("cancel")
+                self.proceeded.append(self.c.proceed())  # the Cancel won the commit-point step: nothing to proceed
+
+
+def test_progress_gate_proceed_committed_and_the_decision_reach_the_caller(tmp_path: Path) -> None:
+    target = tmp_path / "written"
+    c = EngineClient(engine_command())
+    try:
+        job = Job(c)
+        out = bounded_call(c, "test.gate", {"path": str(target)}, job)
+        assert out == {"status": "ok"}
+        assert job.events == [
+            Progress("checking_change"),
+            GateReached(),
+            Committed(),
+            Progress("updating_views"),
+            Decision("test.gate", 1, {"wrote": True}, "committed"),
+        ]
+        assert job.proceeded == [True, False]
+        assert target.read_text(encoding="utf-8") == "post"
+        assert c.ping() == Pong()  # the engine and the stream are in step afterwards
+    finally:
+        c.close()
+
+
+def test_a_cancel_at_the_gate_ends_the_engine_before_anything_is_written(tmp_path: Path) -> None:
+    """§4: "In one step the scheduler either ends the engine (a Cancel is pending: outcome `cancelled`, disk
+    unchanged) or ... sends `proceed`."""
+    target = tmp_path / "written"
+    ends = Ends()
+    c = EngineClient(engine_command(), on_engine_ended=ends)
+    try:
+        job = Job(c, at_gate="cancel")
+        out = bounded_call(c, "test.gate", {"path": str(target)}, job)
+        assert out == EngineFailure("cancelled", "the engine was ended by us (cancel)")
+        assert GateReached() in job.events
+        assert Committed() not in job.events
+        assert job.proceeded == [False]
+        assert ends.wait(1)
+        assert not target.exists(), "the engine passed its gate without proceed"
+    finally:
+        c.close()
+
+
+def test_proceed_with_no_gate_pending_sends_nothing(client: EngineClient) -> None:
+    """A `proceed` the engine is not waiting for would be read as a request and answered, putting the stream out of
+    step: it is never sent."""
+    assert client.proceed() is False  # no engine
+    assert client.ping() == Pong()
+    assert client.proceed() is False  # an idle engine
+    assert client.ping() == Pong()
+
+
+MISBEHAVES_AT_THE_GATE = r"""
+import json, sys
+def send(obj):
+    sys.stdout.write(json.dumps(obj) + "\n")
+    sys.stdout.flush()
+req = json.loads(sys.stdin.readline())
+send({"v": 2, "id": req["id"], "op": "handshake", "ok": True,
+      "result": {"protocol": 2, "engine_version": "0", "beancount_version": "3.2.0"}})
+req = json.loads(sys.stdin.readline())
+rid, op = req["id"], req["op"]
+MODE
+"""
+COMMITTED_FIRST = """send({"v": 2, "id": rid, "op": op, "event": "committed"})
+sys.stdin.read()"""
+GATE_TWICE_BEFORE_PROCEED = """send({"v": 2, "id": rid, "op": op, "event": "gate"})
+send({"v": 2, "id": rid, "op": op, "event": "gate"})
+sys.stdin.read()"""
+
+
+REPLY_WITHOUT_PROCEED = """send({"v": 2, "id": rid, "op": op, "event": "gate"})
+send({"v": 2, "id": rid, "op": op, "ok": True, "result": {}})
+sys.stdin.read()"""
+
+
+@pytest.mark.parametrize(
+    "mode",
+    [COMMITTED_FIRST, GATE_TWICE_BEFORE_PROCEED, REPLY_WITHOUT_PROCEED],
+    ids=["committed-first", "gate-twice", "reply-while-the-gate-waits"],
+)
+def test_a_job_message_out_of_order_before_the_commit_point_is_a_violation(fake_time: FakeTime, mode: str) -> None:
+    """`committed` says the save landed (§6.1 step 9): before `proceed` it cannot be true. Before the commit point a
+    violation ends the engine like any invalid reply (§5.3)."""
+    c = EngineClient(
+        stand_in(MISBEHAVES_AT_THE_GATE.replace("MODE", mode)), monotonic=fake_time.monotonic, pause=fake_time.pause
+    )
+    try:
+        assert isinstance(c.start(), EngineInfo)
+        pid = c.pid
+        assert pid is not None
+        out = bounded_call(c, "save", {}, Job(c, at_gate="nothing"))
+        assert isinstance(out, EngineFailure)
+        assert out.kind == "protocol_violation"
+        assert stopped(pid)
+        assert isinstance(c.state, Crashed)
+    finally:
+        c.close()
+
+
+BREAKS_AFTER_PROCEED = r"""send({"v": 2, "id": rid, "op": op, "event": "gate"})
+assert json.loads(sys.stdin.readline())["control"] == "proceed"
+sys.stdout.write(BAD + "\n")
+sys.stdout.flush()
+for _ in range(1000):
+    sys.stdout.write("more garbage after the violation\n")
+sys.stdout.flush()
+sys.stdin.read()  # returns at the end of input
+open(sys.argv[1], "w").write("finished")
+"""
+
+
+@pytest.mark.parametrize(
+    "bad",
+    ['"not a reply"', 'json.dumps({"v": 2, "id": rid, "op": op, "event": "gate"})'],
+    ids=["garbage", "a-second-gate"],
+)
+def test_a_violation_after_the_commit_point_closes_the_input_and_never_signals_the_engine(
+    tmp_path: Path, fake_time: FakeTime, bad: str
+) -> None:
+    """§5.3: "a reply that breaks the protocol after the commit point: close the engine's input, read and discard every
+    further byte, wait for the exit ...; counted as a stop at the exit". The stand-in finishes its request (it marks
+    the end) only because nothing signalled it."""
+    marker = tmp_path / "finished"
+    script = MISBEHAVES_AT_THE_GATE.replace("MODE", BREAKS_AFTER_PROCEED.replace("BAD", bad))
+    events = Events()
+    c = EngineClient(
+        EngineCommand(argv=(sys.executable, "-I", "-c", script, str(marker)), env=None),
+        monotonic=fake_time.monotonic,
+        pause=fake_time.pause,
+        log=events,
+    )
+    try:
+        assert isinstance(c.start(), EngineInfo)
+        out = bounded_call(c, "save", {}, Job(c))
+        assert isinstance(out, EngineFailure)
+        assert out.kind == "protocol_violation"
+        assert "after the commit point" in out.detail
+        assert marker.read_text() == "finished", "the engine was ended past its commit point"
+        state = c.state
+        assert isinstance(state, Crashed)
+        assert len(state.stops) == 1
+    finally:
+        c.close()
+    assert [f["kind"] for e, f in events.seen if e.name == "engine.stopped"] == ["protocol_violation"]
+
+
+# -- The bytecode directory (§5.1) ------------------------------------------------------------------------------------
+
+
+def bytecode_command(directory: Path) -> EngineCommand:
+    return EngineCommand.for_venv(ENGINE_VENV, test_ops=True, bytecode_dir=directory)
+
+
+def test_the_bytecode_directory_is_filled_once_then_used(tmp_path: Path) -> None:
+    """§5.1: "filled once per build with the bytecode of the engine's interpreter library, site-packages and code,
+    read-only afterwards"; engines use it with `-X pycache_prefix`."""
+    directory = tmp_path / "engine" / "bytecode" / "build"
+    c = EngineClient(bytecode_command(directory))
+    try:
+        assert interpreter(c)["pycache_prefix"] is None  # not filled yet: started without it, the fill begun
+        assert wait_until(lambda: (directory / ".complete").is_file(), 120.0), "the fill never completed"
+        assert list(directory.rglob("server.cpython-*.pyc")), "the engine's own code was not compiled"
+        c.end("retire")
+        assert interpreter(c)["pycache_prefix"] == str(directory)
+    finally:
+        c.close()
+
+
+def test_an_engine_that_fails_to_start_with_the_directory_gets_it_deleted_and_starts_once_without_it(
+    tmp_path: Path,
+) -> None:
+    """§5.1: "A damaged `.pyc` under `pycache_prefix` raises instead of falling back to the source ... If an engine
+    fails to start while using the directory, the directory is deleted and the engine is started once without it".
+    Not a stop: the engine is fine."""
+    directory = tmp_path / "bytecode"
+    events = Events()
+    c = EngineClient(bytecode_command(directory), log=events)
+    try:
+        c.start()
+        assert wait_until(lambda: (directory / ".complete").is_file(), 120.0), "the fill never completed"
+        c.end("retire")
+        (damaged,) = [p for p in directory.rglob("server.cpython-*.pyc") if "ledger_engine" in str(p)]
+        damaged.write_bytes(damaged.read_bytes()[:16] + b"\x00garbage")
+        assert isinstance(c.start(), EngineInfo)
+        state = c.state
+        assert isinstance(state, Ready)
+        assert state.stops == ()
+        assert not (directory / ".complete").exists()
+        assert interpreter(c)["pycache_prefix"] is None
+    finally:
+        c.close()
+    assert ("engine.bytecode", "discarded") in [(e.name, f.get("outcome")) for e, f in events.seen]
+    assert "engine.start_failed" not in events.names
+
+
+ESCAPES_WITH_OUTPUT = r"""
+import json, subprocess, sys
+req = json.loads(sys.stdin.readline())
+sys.stdout.write(json.dumps({"v": 2, "id": req["id"], "op": "handshake", "ok": True,
+    "result": {"protocol": 2, "engine_version": "0", "beancount_version": "3.2.0"}}) + "\n")
+sys.stdout.flush()
+sys.stdin.readline()
+child = subprocess.Popen([sys.executable, "-I", "-c", "import threading; threading.Event().wait()"],
+                         stdin=subprocess.DEVNULL, start_new_session=True)  # leaves the group, keeps our stdout
+sys.stderr.write(f"marker: escaped {child.pid}\n")
+sys.stderr.flush()
+sys.stdin.read()
+"""
+
+
+@pytest.mark.skipif(os.name != "posix", reason="process groups are POSIX; Windows is BL-0087")
+def test_a_cancel_ends_the_call_even_when_an_escaped_child_keeps_the_output_open() -> None:
+    """§15: "A plugin child that leaves the engine's process group (`setsid`) is not ended with the engine". It must
+    still not hold the user's Cancel: once the engine is drained, the call ends (it would wait for an end of output
+    that the escaped child never gives)."""
+    c = EngineClient(stand_in(ESCAPES_WITH_OUTPUT))
+    escaped: int | None = None
+    try:
+        assert isinstance(c.start(), EngineInfo)
+        t, out = in_thread(lambda: c.call("anything", {}))
+        assert wait_until(lambda: "marker: escaped " in c.stderr_tail())
+        escaped = int(c.stderr_tail().split("marker: escaped ")[1].split()[0])
+        c.end("cancel")
+        t.join(DEADLINE)
+        assert not t.is_alive(), "a Cancel waited for an output an escaped child holds open"
+        assert out == [EngineFailure("cancelled", "the engine was ended by us (cancel)")]
+    finally:
+        if escaped is not None and not gone(escaped):
+            kill(escaped)
+        c.close()
+
+
+class Unendable(PosixGroupOps):
+    """A process our signal cannot end (stuck in the kernel on a dead disk, §5.2): the group signal does nothing."""
+
+    @override
+    def kill_group(self, pgid: int) -> None:
+        pass
+
+
+@pytest.mark.skipif(os.name != "posix", reason="process groups are POSIX; Windows is BL-0087")
+def test_close_returns_while_a_call_waits_on_an_engine_our_signal_cannot_end() -> None:
+    """§9.3 step 4: "an engine stuck on a dead disk cannot hold the quit". Here the call in flight never ends, so a
+    `close()` that waited for the call (its lock) would never return."""
+    c = EngineClient(engine_command(), group_ops=Unendable())
+    t, _ = stall(c)
+    pid = c.pid
+    assert pid is not None
+    try:
+        closer = threading.Thread(target=c.close, daemon=True)
+        closer.start()
+        closer.join(DEADLINE)
+        assert not closer.is_alive(), "close() waited for a call that cannot end"
+        assert t.is_alive()  # the stuck call is still there: nothing could end it
+    finally:
+        os.killpg(pid, signal.SIGKILL)  # the test ends what the fake could not
+        t.join(DEADLINE)

@@ -1,4 +1,5 @@
-"""`python -I -m ledger_engine`: the engine process (ADR-0054). See `ledger_engine.protocol.server`."""
+"""The engine process (ADR-0054), run by the sidecar's bootstrap under `-s -S -B -P` (S0057). See
+`ledger_engine.protocol.server`."""
 
 from ledger_engine.protocol.server import main
 

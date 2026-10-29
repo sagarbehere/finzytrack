@@ -16,7 +16,17 @@ from typing import Any, get_args
 import pytest
 from jsonschema import Draft202012Validator
 
-from app.platform.engine import EngineInfo, EngineRefusal, Pong, RefusalKey
+from app.platform.engine import (
+    PHASES,
+    Committed,
+    Decision,
+    EngineInfo,
+    EngineRefusal,
+    GateReached,
+    Pong,
+    Progress,
+    RefusalKey,
+)
 from app.platform.engine_protocol import (
     MAX_ID,
     MAX_LINE_BYTES,
@@ -28,6 +38,7 @@ from app.platform.engine_protocol import (
     decode_info,
     decode_pong,
     decode_reply,
+    encode_proceed,
     encode_request,
 )
 
@@ -54,7 +65,7 @@ def examples(definition: str) -> list[dict[str, Any]]:
 
 def test_version_ops_keys_and_limit_agree_with_the_schema() -> None:
     s = schema()
-    assert s["x-protocol-version"] == PROTOCOL_VERSION == 1
+    assert s["x-protocol-version"] == PROTOCOL_VERSION == 2
     assert s["x-max-line-bytes"] == MAX_LINE_BYTES
     assert tuple(s["x-ops"]) == OPS
     assert s["$defs"]["PingRequest"]["properties"]["id"]["maximum"] == MAX_ID
@@ -70,7 +81,7 @@ def test_every_encoded_request_is_valid(op: str) -> None:
 
 
 def test_an_encoded_request_is_compact() -> None:
-    assert encode_request(3, "ping", {}) == b'{"v":1,"id":3,"op":"ping","params":{}}\n'
+    assert encode_request(3, "ping", {}) == b'{"v":2,"id":3,"op":"ping","params":{}}\n'
 
 
 def decoded(reply: dict[str, Any], op: str) -> object:
@@ -110,7 +121,7 @@ def mutations(example: dict[str, Any]) -> list[dict[str, Any]]:
         out.append(broken)
     out += [
         {**example, "unknown": 1},
-        {**example, "v": 2},
+        {**example, "v": 3},
         {**example, "v": "1"},
         {**example, "ok": not example["ok"]},
         {**example, "ok": 1},
@@ -162,7 +173,7 @@ def test_a_reply_to_another_request_is_a_violation() -> None:
 
 
 def test_a_refusal_of_an_unreadable_request_has_no_id_and_still_decodes() -> None:
-    raw = b'{"v":1,"id":null,"op":null,"ok":false,"error":{"key":"protocol.malformed","message":"not JSON"}}\n'
+    raw = b'{"v":2,"id":null,"op":null,"ok":false,"error":{"key":"protocol.malformed","message":"not JSON"}}\n'
     assert decode_reply(raw, 4, "ping") == EngineRefusal("protocol.malformed", "not JSON")
 
 
@@ -174,9 +185,9 @@ def test_a_refusal_of_an_unreadable_request_has_no_id_and_still_decodes() -> Non
         b"not json\n",
         b"\xff\n",
         b"[]\n",
-        b'{"v":1,"id":1,"op":"ping","ok":true,"result":{"status":"ok"}}',  # no newline: the line was cut
-        b'{"v":1,"id":1,"op":"ping","ok":true,"result":{"status":"ok"},"ok":true}\n',  # duplicate key
-        b'{"v":1,"id":1,"op":"ping","ok":true,"result":{"status":NaN}}\n',
+        b'{"v":2,"id":1,"op":"ping","ok":true,"result":{"status":"ok"}}',  # no newline: the line was cut
+        b'{"v":2,"id":1,"op":"ping","ok":true,"result":{"status":"ok"},"ok":true}\n',  # duplicate key
+        b'{"v":2,"id":1,"op":"ping","ok":true,"result":{"status":NaN}}\n',
     ],
 )
 def test_unreadable_replies_are_violations(raw: bytes) -> None:
@@ -186,10 +197,112 @@ def test_unreadable_replies_are_violations(raw: bytes) -> None:
 def test_a_deeply_nested_reply_is_a_violation_not_a_crash() -> None:
     """S0035 verifier F4(a): nesting that exhausts the parser is an invalid reply."""
     depth = 200_000
-    raw = b'{"v":1,"id":1,"op":"ping","ok":true,"result":{"x":' + b"[" * depth + b"]" * depth + b"}}\n"
+    raw = b'{"v":2,"id":1,"op":"ping","ok":true,"result":{"x":' + b"[" * depth + b"]" * depth + b"}}\n"
     assert isinstance(decode_reply(raw, 1, "ping"), Violation)
 
 
 def test_an_over_long_reply_is_a_violation() -> None:
-    raw = b'{"v":1,"id":1,"op":"ping","ok":true,"result":{"status":"' + b"o" * MAX_LINE_BYTES + b'"}}\n'
+    raw = b'{"v":2,"id":1,"op":"ping","ok":true,"result":{"status":"' + b"o" * MAX_LINE_BYTES + b'"}}\n'
     assert isinstance(decode_reply(raw, 1, "ping"), Violation)
+
+
+# -- Version 2 (S0057; engine-jobs §5.5 bullet 5): a job's messages, the sidecar's proceed, the decision ------------
+
+JOB_MESSAGES = {"ProgressEvent": "progress", "GateEvent": "gate", "CommittedEvent": "committed"}
+
+
+def test_the_phases_agree_with_the_schema() -> None:
+    assert set(schema()["$defs"]["Phase"]["enum"]) == set(PHASES)
+
+
+def test_an_encoded_proceed_is_valid_and_compact() -> None:
+    raw = encode_proceed(7, "save")
+    assert raw == b'{"v":2,"id":7,"op":"save","control":"proceed"}\n'
+    assert valid("ProceedControl", json.loads(raw))
+
+
+def decoded_line(msg: dict[str, Any], rid: int, op: str) -> object:
+    return decode_reply(json.dumps(msg).encode() + b"\n", rid, op)
+
+
+@pytest.mark.parametrize("definition", list(JOB_MESSAGES))
+def test_job_message_examples_decode(definition: str) -> None:
+    for ex in examples(definition):
+        out = decoded_line(ex, ex["id"], ex["op"])
+        expected = {"progress": Progress(ex.get("phase", "")), "gate": GateReached(), "committed": Committed()}
+        assert out == expected[JOB_MESSAGES[definition]], out
+
+
+def job_mutations(example: dict[str, Any]) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    for key in example:
+        broken = copy.deepcopy(example)
+        del broken[key]
+        out.append(broken)
+    out += [
+        {**example, "unknown": 1},
+        {**example, "v": 1},
+        {**example, "event": "other"},
+        {**example, "event": 1},
+        {**example, "ok": True},
+        {**example, "id": True},
+    ]
+    if "phase" in example:
+        out += [{**example, "phase": "thinking"}, {**example, "phase": 1}]
+    else:
+        out.append({**example, "phase": "reading"})
+    return out
+
+
+@pytest.mark.parametrize("definition", list(JOB_MESSAGES))
+def test_the_decoder_refuses_exactly_what_the_schema_refuses_for_job_messages(definition: str) -> None:
+    for ex in examples(definition):
+        for variant in job_mutations(ex):
+            schema_ok = valid(definition, variant)
+            verdict = decoded_line(variant, ex["id"], ex["op"])
+            assert schema_ok == (not isinstance(verdict, Violation)), (variant, verdict)
+
+
+def test_a_job_message_for_another_request_is_a_violation() -> None:
+    ex = examples("GateEvent")[0]
+    assert isinstance(decoded_line(ex, ex["id"] + 1, ex["op"]), Violation)
+    assert isinstance(decoded_line(ex, ex["id"], "other"), Violation)
+
+
+INPUTS: dict[str, Any] = {"n": 2, "equal": True, "which": "post", "none": None}
+DECISION: dict[str, Any] = {"table": "gate", "version": 1, "inputs": INPUTS}
+
+
+def test_a_decision_on_a_reply_is_decoded() -> None:
+    reply: dict[str, Any] = {**examples("PingReply")[0], "decision": {**DECISION, "output": "pass"}}
+    out = decoded_line(reply, reply["id"], "ping")
+    assert isinstance(out, Accepted)
+    assert out.decision == Decision("gate", 1, {"n": 2, "equal": True, "which": "post", "none": None}, "pass")
+    refused: dict[str, Any] = {**examples("Refusal")[0], "decision": {**DECISION, "output": "refused"}}
+    verdict = decoded_line(refused, refused["id"], refused["op"])
+    assert isinstance(verdict, EngineRefusal)
+    assert verdict.decision == Decision("gate", 1, INPUTS, "refused")
+
+
+@pytest.mark.parametrize(
+    "decision",
+    [
+        {**DECISION, "output": "pass", "extra": 1},
+        {**DECISION, "inputs": {"x": {"y": 1}}, "output": "pass"},
+        {**DECISION, "inputs": {"x": [1]}, "output": "pass"},
+        {**DECISION, "inputs": {"x": 1.5}, "output": "pass"},
+        {**DECISION, "inputs": [], "output": "pass"},
+        {**DECISION, "version": 0, "output": "pass"},
+        {**DECISION, "version": True, "output": "pass"},
+        {**DECISION, "table": "", "output": "pass"},
+        {**DECISION, "output": ""},
+        {**DECISION, "output": 1},
+        DECISION,
+    ],
+)
+def test_the_decoder_refuses_exactly_what_the_schema_refuses_for_a_decision(decision: dict[str, Any]) -> None:
+    reply: dict[str, Any] = {**examples("PingReply")[0], "decision": decision}
+    schema_ok = valid("PingReply", reply)
+    verdict = decoded_line(reply, reply["id"], "ping")
+    assert schema_ok == (not isinstance(verdict, Violation)), (decision, verdict)
+    assert not schema_ok

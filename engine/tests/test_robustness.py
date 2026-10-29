@@ -20,12 +20,12 @@ from jsonschema import Draft202012Validator
 
 from ledger_engine.protocol import server
 from ledger_engine.protocol.messages import MAX_ID, HandshakeResult, NoParams
-from ledger_engine.protocol.server import Engine, Handler, serve
+from ledger_engine.protocol.server import Engine, Handler, JobChannel, serve
 
 REPO = Path(__file__).resolve().parents[2]
 SCHEMA = json.loads((REPO / "contracts" / "engine-protocol.schema.json").read_text(encoding="utf-8"))
-PING = b'{"v":1,"id":2,"op":"ping","params":{}}\n'
-HANDSHAKE = b'{"v":1,"id":0,"op":"handshake","params":{}}\n'
+PING = b'{"v":2,"id":2,"op":"ping","params":{}}\n'
+HANDSHAKE = b'{"v":2,"id":0,"op":"handshake","params":{}}\n'
 
 
 def any_message() -> Draft202012Validator:
@@ -60,11 +60,11 @@ def still_serving(engine: Engine) -> None:
 @pytest.mark.parametrize(
     "raw",
     [
-        rb'{"v":1,"id":1,"op":"\ud800","params":{}}',  # unknown op, lone surrogate escape
-        rb'{"v":2,"id":1,"op":"\udfff","params":{}}',  # version mismatch echoing the op
-        rb'{"v":1,"id":1,"op":"x\udbff","params":[]}',  # params not an object, op echoed
-        rb'{"v":1,"id":1,"op":"ping","params":{"\ud800":1}}',  # the bad key named in the params message
-        rb'{"v":1,"id":1,"op":"ping","params":{"x\udc00y":[]}}',
+        rb'{"v":2,"id":1,"op":"\ud800","params":{}}',  # unknown op, lone surrogate escape
+        rb'{"v":3,"id":1,"op":"\udfff","params":{}}',  # version mismatch echoing the op
+        rb'{"v":2,"id":1,"op":"x\udbff","params":[]}',  # params not an object, op echoed
+        rb'{"v":2,"id":1,"op":"ping","params":{"\ud800":1}}',  # the bad key named in the params message
+        rb'{"v":2,"id":1,"op":"ping","params":{"x\udc00y":[]}}',
     ],
 )
 def test_text_that_is_not_valid_unicode_is_refused_and_the_engine_keeps_serving(raw: bytes) -> None:
@@ -76,23 +76,23 @@ def test_text_that_is_not_valid_unicode_is_refused_and_the_engine_keeps_serving(
 def test_an_op_that_cannot_be_echoed_exactly_is_answered_with_op_null() -> None:
     """The client matches a refusal by `op` or accepts null; an altered echo would read as another request's."""
     engine = ready()
-    reply = one_reply(engine.handle(rb'{"v":1,"id":5,"op":"x\ud800","params":{}}'))
+    reply = one_reply(engine.handle(rb'{"v":2,"id":5,"op":"x\ud800","params":{}}'))
     assert (reply["id"], reply["op"], reply["error"]["key"]) == (5, None, "protocol.unknown_op")
 
 
 def test_a_long_unknown_op_is_not_echoed() -> None:
     """Echoing an op close to the line limit would make the reply longer than the limit."""
     engine = ready()
-    reply = one_reply(engine.handle(json.dumps({"v": 1, "id": 5, "op": "x" * 100_000, "params": {}}).encode()))
+    reply = one_reply(engine.handle(json.dumps({"v": 2, "id": 5, "op": "x" * 100_000, "params": {}}).encode()))
     assert (reply["id"], reply["op"], reply["error"]["key"]) == (5, None, "protocol.unknown_op")
-    short = one_reply(engine.handle(b'{"v":1,"id":6,"op":"no.such.op","params":{}}'))
+    short = one_reply(engine.handle(b'{"v":2,"id":6,"op":"no.such.op","params":{}}'))
     assert short["op"] == "no.such.op"  # an ordinary unknown op is still echoed
 
 
 def test_a_huge_params_key_gives_a_short_message() -> None:
     engine = ready()
     reply = one_reply(
-        engine.handle(json.dumps({"v": 1, "id": 5, "op": "ping", "params": {"k" * 1_000_000: 1}}).encode())
+        engine.handle(json.dumps({"v": 2, "id": 5, "op": "ping", "params": {"k" * 1_000_000: 1}}).encode())
     )
     assert reply["error"]["key"] == "protocol.invalid_params"
     assert len(reply["error"]["message"]) <= 1000
@@ -102,7 +102,7 @@ def test_a_handler_that_returns_the_wrong_result_is_internal_and_the_engine_keep
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     wrong = HandshakeResult(protocol=1, engine_version="x", beancount_version="y")
-    monkeypatch.setitem(server.PRODUCTION, "ping", Handler(NoParams, lambda _: wrong))
+    monkeypatch.setitem(server.PRODUCTION, "ping", Handler(NoParams, lambda _, __: wrong))
     engine = ready()
     reply = one_reply(engine.handle(PING))
     assert (reply["id"], reply["op"], reply["error"]["key"]) == (2, "ping", "engine.internal")
@@ -116,12 +116,12 @@ def test_serve_answers_even_when_the_handler_itself_fails(monkeypatch: pytest.Mo
     real = engine.handle
     calls = {"n": 0}
 
-    def flaky(line: bytes) -> bytes:
+    def flaky(line: bytes, channel: JobChannel | None = None) -> bytes:
         calls["n"] += 1
         if calls["n"] == 1:
             msg = "a bug below the request boundary"
             raise RuntimeError(msg)
-        return real(line)
+        return real(line, channel)
 
     monkeypatch.setattr(engine, "handle", flaky)
     out = io.BytesIO()
@@ -167,7 +167,7 @@ def _mangle(rng: random.Random, raw: bytes) -> bytes:
         case 1:
             return b" \t\r" + raw + b" \r"
         case 2:
-            return raw.replace(b"{", b'{"v":1,', 1)  # a duplicate key (when `v` is there)
+            return raw.replace(b"{", b'{"v":2,', 1)  # a duplicate key (when `v` is there)
         case 3:
             return raw[: rng.randrange(len(raw) + 1)]  # cut
         case 4:

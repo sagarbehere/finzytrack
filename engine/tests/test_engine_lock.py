@@ -38,7 +38,7 @@ def engine(*extra: str) -> subprocess.Popen[bytes]:
 
 def send(proc: subprocess.Popen[bytes], op: str, rid: int) -> None:
     assert proc.stdin is not None
-    proc.stdin.write(json.dumps({"v": 1, "id": rid, "op": op, "params": {}}).encode() + b"\n")
+    proc.stdin.write(json.dumps({"v": 2, "id": rid, "op": op, "params": {}}).encode() + b"\n")
     proc.stdin.flush()
 
 

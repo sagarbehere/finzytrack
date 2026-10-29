@@ -42,7 +42,7 @@ def test_a_working_engine_is_reported_with_both_views() -> None:
     handshake = report["handshake"]
     assert isinstance(handshake, dict)
     assert handshake["beancount_version"] == "3.2.0"
-    assert handshake["protocol"] == 1
+    assert handshake["protocol"] == 2
     assert report["pong"] is True
     assert report["site"] == str(engine_site())
     assert report["main_finds"] == {"beancount": False, "beanquery": False, "ledger_engine": False}

@@ -38,8 +38,9 @@ Exceptions inside the checked documents:
 The terms are chosen so that the current design's own words pass: a bare slot, lane, gate, admit, warm, window,
 share, territory ("tax territory"), stall, heartbeat, timeout or Busy is never refused, and `RECOVERING` is a
 question of meaning that the verifier, not a word list, judges. Each checked line is also read joined with the next
-checked line, so a multi-word term split by a line break is still found (reported on its first line). `AFTER_ENGINE_JOBS` lists the terms that the
-engine-jobs slice retires (the per-request time limits and their bounds); it is inactive until that slice lands.
+checked line, so a multi-word term split by a line break is still found (reported on its first line). Since S0057
+the terms the engine-jobs slice retires (the per-request and handshake time limits and their bounds, the `-I`
+engine command) are refused too; until then they waited in a second, inactive list.
 
 Exit 0 = nothing refused, 1 = refused or a problem with the check's own lists, 2 = the root cannot be read.
 """
@@ -153,11 +154,8 @@ ACTIVE: tuple[Term, ...] = (
     # (S0056 verifier round 1, F4). Stated limit: a bare `hooks/useX.ts` with no `src/` or `features/` before it passes.
     Term("hooks/ folder", r"\bsrc/hooks\b|\bfeatures/[^\s/`'\"]+/hooks\b|(?<![\w./~-])hooks/(?![\w.*-])"
                           r"|`hooks`\s+(?:folders?|director(?:y|ies))\b"),
-)
-
-# TODO(BL-0109): the engine-jobs slice removes the per-request time limits (spec §5.5); it moves these into ACTIVE
-# in the same commit, with the documents brought in line.
-AFTER_ENGINE_JOBS: tuple[Term, ...] = (
+    # S0057 (BL-0150): the engine client has no time limits and no bounds derived from them (engine-jobs spec
+    # §5.4, §5.5), and the engine is never started with `-I` (§5.1); these were `AFTER_ENGINE_JOBS` until then.
     Term("per-request time limit", r"\bper-request (?:time ?limits?|timeouts?)\b"),
     Term("handshake time limit", r"\bhandshake (?:time ?limits?|timeouts?)\b"),
     code("start_timeout"),
@@ -170,6 +168,9 @@ AFTER_ENGINE_JOBS: tuple[Term, ...] = (
     Term("quit grace", r"\bquit grace\b"),
 )
 
+# TODO(BL-0109): the engine-jobs slice removes the per-request time limits (spec §5.5); it moves these into ACTIVE
+# in the same commit, with the documents brought in line.
+
 
 @dataclass(frozen=True)
 class Allow:
@@ -181,6 +182,10 @@ class Allow:
 
 # One entry per allowed line: the line must contain `fragment`, and only `term` is allowed there.
 ALLOW: tuple[Allow, ...] = (
+    Allow("engine/CLAUDE.md", "-I -m ledger_engine", "ledger_engine.mirror.core.schema > ../contracts/mirror-ddl.sql",
+          "a generator run under -I, not the engine process (S0057: the engine itself never runs under -I)"),
+    Allow("engine/CLAUDE.md", "-I -m ledger_engine", "ledger_engine.protocol.schema > ../contracts/engine-protocol",
+          "a generator run under -I, not the engine process (S0057: the engine itself never runs under -I)"),
     Allow("design/specs/engine-jobs.md", "admission", "There is no admission or memory check",
           "the spec states that the abandoned mechanism is absent (ADR-0064 decision 6)"),
     Allow("design/specs/engine-jobs.md", "semaphore", "ADR-0011's purpose for the semaphore",

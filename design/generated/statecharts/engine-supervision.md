@@ -2,19 +2,20 @@
 
 # Engine supervision statechart
 
-The ledger engine's lifecycle as the main sidecar supervises it: `app.platform.engine_supervision.transition` over `ROWS`, driven by `app.platform.adapters.engine_client.EngineClient` (ARCHITECTURE.md §2.0, §7). A pair that is not listed raises `IllegalTransition`. Resting states (Idle, Ready, Crashed, Unavailable, Incompatible, Closed) are where a public call can find the client; the others pass within one call.
+The ledger engine's lifecycle as the main sidecar supervises it: `app.platform.engine_supervision.transition` over `ROWS`, driven by `app.platform.adapters.engine_client.EngineClient` (ARCHITECTURE.md §2.0, §7). A pair that is not listed raises `IllegalTransition`. Resting states (Idle, Ready, Crashed, Unavailable, Incompatible, Closed) are where a request or a reset can find the client; the others pass within one call. Our own ends (`Cancelled`, `Retired`, `Close`) may come from another thread at any time and are never stops (engine-jobs spec §5.3).
 
 ## States
 
 | State | Meaning |
 |---|---|
-| `Idle` | No engine and no counted stop: none was started yet, or a reset forgot them. The next request starts one. |
+| `Idle` | No engine: none was started yet, a reset forgot the stops, or we ended the last one (its stops kept). The next request starts one, after the backoff still due. |
 | `Starting` | The engine process is being created. |
-| `Handshaking` | The process runs and the handshake is out. |
+| `Handshaking` | The process runs and the handshake is out; `bytecode`: the engine was started with the bytecode directory. |
 | `Ready` | The engine runs, answered the handshake in our protocol, and waits for a request. |
 | `Busy` | One request is in flight. |
+| `Finishing` | A reply broke the protocol after the commit point (`detail`): the engine's input is closed and its output read and discarded until it ends; the stop is counted then (§5.3). |
 | `Crashed` | The engine stopped (`last` says how) and the bound is not reached: the next request restarts it. |
-| `Restarting` | Waiting out the backoff before a restart. |
+| `Restarting` | Waiting out the backoff before a restart (`last`: the last engine's stop, None when we ended it). |
 | `Unavailable` | `max_crashes` stops in the window: requests are refused until the window lets one go, or a reset. |
 | `Incompatible` | The engine speaks another protocol: refused, and never started again until a reset. |
 | `Closed` | The client was closed; final. |
@@ -24,21 +25,23 @@ The ledger engine's lifecycle as the main sidecar supervises it: `app.platform.e
 | Event | Meaning |
 |---|---|
 | `Request` | A caller needs a running engine (`start`, `ping`, `call`); `now` is the monotonic time. |
-| `Spawned` | The engine process exists, with its pipes. |
+| `Spawned` | The engine process exists, with its pipes; `bytecode`: it was started with the bytecode directory. |
 | `SpawnFailed` | The process could not be created (an `OSError`, or no pipes). |
 | `HandshakeOk` | A valid handshake reply; `info.protocol` may still be another protocol. |
 | `HandshakeForeign` | The handshake reply is another protocol's (another `v`, or a `protocol.version_mismatch` refusal). |
-| `HandshakeFailed` | No valid handshake in our protocol: a timeout, end of stream, an invalid reply, or another refusal. |
+| `HandshakeFailed` | No valid handshake in our protocol: end of stream we did not cause, an invalid reply, or another refusal. |
 | `BackoffElapsed` | The backoff pause is over. |
 | `Send` | The caller's request is written to the engine. |
 | `Answered` | A valid reply to the request in flight: a result or a refusal. The engine is fine. |
-| `TimedOut` | No reply within the caller's timeout. |
-| `Ended` | The engine's output ended (it exited) or its input broke while the request was in flight. |
-| `Violated` | The reply is not a valid reply to this request. |
+| `Ended` | The engine's output ended (it exited) or its input broke while the request was in flight, and we did not end it; in `Finishing`, the end awaited after a violation past the commit point. |
+| `Violated` | The reply is not a valid message for this request, before its commit point. |
+| `ViolatedPastCommit` | The reply broke the protocol after `proceed` was sent: the engine may be in the middle of a replace. |
 | `Exited` | The engine was found exited between requests (noticed at the next request). |
 | `Interrupted` | An exception in the client itself during a start, a backoff or a wait (it goes on to the caller). |
+| `Cancelled` | We ended the engine with this reason (the user's Cancel, or Quit anyway), recorded before the signal: no stop (§5.3). Observed by the call it ended, or of an idle engine. |
+| `Retired` | We ended an idle engine after a job that ran user code (§5.1): no stop. |
 | `Reset` | The user's "try again": forget the stops and an incompatible verdict. |
-| `Close` | Stop the engine for good. |
+| `Close` | Stop the engine for good (`close()`): at rest, or observed by the call in flight that it ended. |
 
 ## Diagram
 
@@ -46,6 +49,7 @@ The ledger engine's lifecycle as the main sidecar supervises it: `app.platform.e
 stateDiagram-v2
     [*] --> Idle
     Idle --> Starting: Request
+    Idle --> Restarting: Request
     Idle --> Idle: Reset
     Idle --> Closed: Close
     Starting --> Handshaking: Spawned
@@ -53,34 +57,51 @@ stateDiagram-v2
     Starting --> Unavailable: SpawnFailed
     Starting --> Crashed: Interrupted
     Starting --> Unavailable: Interrupted
+    Starting --> Idle: Cancelled
+    Starting --> Closed: Close
     Handshaking --> Ready: HandshakeOk
     Handshaking --> Incompatible: HandshakeOk
     Handshaking --> Incompatible: HandshakeForeign
     Handshaking --> Crashed: HandshakeFailed
     Handshaking --> Unavailable: HandshakeFailed
+    Handshaking --> Starting: HandshakeFailed
     Handshaking --> Crashed: Interrupted
     Handshaking --> Unavailable: Interrupted
+    Handshaking --> Idle: Cancelled
+    Handshaking --> Closed: Close
     Ready --> Ready: Request
     Ready --> Busy: Send
     Ready --> Crashed: Exited
     Ready --> Unavailable: Exited
+    Ready --> Idle: Cancelled
+    Ready --> Idle: Retired
     Ready --> Ready: Reset
     Ready --> Closed: Close
     Busy --> Ready: Answered
-    Busy --> Crashed: TimedOut
-    Busy --> Unavailable: TimedOut
     Busy --> Crashed: Ended
     Busy --> Unavailable: Ended
     Busy --> Crashed: Violated
     Busy --> Unavailable: Violated
+    Busy --> Finishing: ViolatedPastCommit
     Busy --> Crashed: Interrupted
     Busy --> Unavailable: Interrupted
+    Busy --> Idle: Cancelled
+    Busy --> Closed: Close
+    Finishing --> Crashed: Ended
+    Finishing --> Unavailable: Ended
+    Finishing --> Crashed: Interrupted
+    Finishing --> Unavailable: Interrupted
+    Finishing --> Idle: Cancelled
+    Finishing --> Closed: Close
     Crashed --> Starting: Request
     Crashed --> Restarting: Request
     Crashed --> Idle: Reset
     Crashed --> Closed: Close
     Restarting --> Starting: BackoffElapsed
     Restarting --> Crashed: Interrupted
+    Restarting --> Idle: Interrupted
+    Restarting --> Idle: Cancelled
+    Restarting --> Closed: Close
     Unavailable --> Unavailable: Request
     Unavailable --> Starting: Request
     Unavailable --> Restarting: Request
@@ -98,31 +119,45 @@ stateDiagram-v2
 
 | From | Event | To | Effects | Note |
 |---|---|---|---|---|
-| `Idle` | `Request` | `Starting` | `Spawn` | lazy start |
+| `Idle` | `Request` | `Starting`, `Restarting` | `Spawn`, `Pause` | lazy start; backoff of kept stops |
 | `Idle` | `Reset` | `Idle` | none |  |
 | `Idle` | `Close` | `Closed` | `Log` |  |
 | `Starting` | `Spawned` | `Handshaking` | `Handshake` |  |
 | `Starting` | `SpawnFailed` | `Crashed`, `Unavailable` | `Log`, `Fail` | a stop; start_failed |
-| `Starting` | `Interrupted` | `Crashed`, `Unavailable` | `Kill`, `Log` | a stop; the exception goes on |
-| `Handshaking` | `HandshakeOk` | `Ready`, `Incompatible` | `Log`, `Shutdown`, `Fail` | another number: incompatible |
-| `Handshaking` | `HandshakeForeign` | `Incompatible` | `Shutdown`, `Log`, `Fail` | no stop |
-| `Handshaking` | `HandshakeFailed` | `Crashed`, `Unavailable` | `Kill`, `Log`, `Fail` | a stop; start_failed |
-| `Handshaking` | `Interrupted` | `Crashed`, `Unavailable` | `Kill`, `Log` | a stop; the exception goes on |
+| `Starting` | `Interrupted` | `Crashed`, `Unavailable` | `End`, `Log` | a stop; the exception goes on |
+| `Starting` | `Cancelled` | `Idle` | `End`, `Log`, `Fail` | no stop; nothing was spawned |
+| `Starting` | `Close` | `Closed` | `End`, `Log`, `Fail` |  |
+| `Handshaking` | `HandshakeOk` | `Ready`, `Incompatible` | `Log`, `End`, `Fail` | another number: incompatible |
+| `Handshaking` | `HandshakeForeign` | `Incompatible` | `End`, `Log`, `Fail` | no stop |
+| `Handshaking` | `HandshakeFailed` | `Crashed`, `Unavailable`, `Starting` | `End`, `Log`, `Fail`, `DiscardBytecode`, `Spawn` | a stop; start_failed; with the bytecode directory: discard it, start once without it, no stop |
+| `Handshaking` | `Interrupted` | `Crashed`, `Unavailable` | `End`, `Log` | a stop; the exception goes on |
+| `Handshaking` | `Cancelled` | `Idle` | `End`, `Log`, `Fail` | no stop: a start that never completes |
+| `Handshaking` | `Close` | `Closed` | `End`, `Log`, `Fail` |  |
 | `Ready` | `Request` | `Ready` | none |  |
 | `Ready` | `Send` | `Busy` | none | the only way into Busy: never resent |
-| `Ready` | `Exited` | `Crashed`, `Unavailable` | `Kill`, `Log` | a stop (crashed); the request goes on |
+| `Ready` | `Exited` | `Crashed`, `Unavailable` | `End`, `Log` | a stop (crashed); the request goes on |
+| `Ready` | `Cancelled` | `Idle` | `End`, `Log` | no stop |
+| `Ready` | `Retired` | `Idle` | `End`, `Log` | no stop: after a job that ran user code |
 | `Ready` | `Reset` | `Ready` | none | stops forgotten; the engine keeps running |
-| `Ready` | `Close` | `Closed` | `Shutdown`, `Log` |  |
+| `Ready` | `Close` | `Closed` | `End`, `Log` |  |
 | `Busy` | `Answered` | `Ready` | none | a result or a refusal |
-| `Busy` | `TimedOut` | `Crashed`, `Unavailable` | `Kill`, `Log`, `Fail` | a stop; timeout |
-| `Busy` | `Ended` | `Crashed`, `Unavailable` | `Kill`, `Log`, `Fail` | a stop; crashed |
-| `Busy` | `Violated` | `Crashed`, `Unavailable` | `Kill`, `Log`, `Fail` | a stop; protocol_violation |
-| `Busy` | `Interrupted` | `Crashed`, `Unavailable` | `Kill`, `Log` | a stop (crashed); the exception goes on |
+| `Busy` | `Ended` | `Crashed`, `Unavailable` | `End`, `Log`, `Fail` | a stop; crashed |
+| `Busy` | `Violated` | `Crashed`, `Unavailable` | `End`, `Log`, `Fail` | a stop; protocol_violation |
+| `Busy` | `ViolatedPastCommit` | `Finishing` | `CloseInput` | nothing signalled |
+| `Busy` | `Interrupted` | `Crashed`, `Unavailable` | `End`, `Log` | a stop (crashed); the exception goes on |
+| `Busy` | `Cancelled` | `Idle` | `End`, `Log`, `Fail` | no stop |
+| `Busy` | `Close` | `Closed` | `End`, `Log`, `Fail` |  |
+| `Finishing` | `Ended` | `Crashed`, `Unavailable` | `End`, `Log`, `Fail` | a stop at the exit; protocol_violation |
+| `Finishing` | `Interrupted` | `Crashed`, `Unavailable` | `End`, `Log` | a stop (crashed); the exception goes on |
+| `Finishing` | `Cancelled` | `Idle` | `End`, `Log`, `Fail` | Quit anyway |
+| `Finishing` | `Close` | `Closed` | `End`, `Log`, `Fail` |  |
 | `Crashed` | `Request` | `Starting`, `Restarting` | `Spawn`, `Pause` | backoff if still due |
 | `Crashed` | `Reset` | `Idle` | none |  |
 | `Crashed` | `Close` | `Closed` | `Log` |  |
 | `Restarting` | `BackoffElapsed` | `Starting` | `Spawn` |  |
-| `Restarting` | `Interrupted` | `Crashed` | none | no stop: nothing was started |
+| `Restarting` | `Interrupted` | `Crashed`, `Idle` | none | no stop: nothing was started |
+| `Restarting` | `Cancelled` | `Idle` | `Log`, `Fail` | no stop: nothing was started |
+| `Restarting` | `Close` | `Closed` | `Log`, `Fail` |  |
 | `Unavailable` | `Request` | `Unavailable`, `Starting`, `Restarting` | `Fail`, `Spawn`, `Pause` | refused while the bound holds in the window |
 | `Unavailable` | `Reset` | `Idle` | none |  |
 | `Unavailable` | `Close` | `Closed` | `Log` |  |

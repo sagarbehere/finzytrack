@@ -1,7 +1,7 @@
 """The retired-terms check (S0047; scripts/check_retired_terms.py; ARCHITECTURE.md §0).
 
 One must-not-pass test per rule: each retired term in each kind of current-state document, each exception and how
-narrow it is, the allowlist's own rules, and the second list staying inactive until the engine-jobs slice (BL-0109).
+narrow it is, the allowlist's own rules, and the engine-jobs slice's terms active since S0057 (BL-0150).
 The trap words of the convergence audit (bare slot, lane, gate, admit, warm, window, share, territory, stall,
 heartbeat, timeout, Busy; RECOVERING) must pass. The last test runs the check over this repository, which is how it
 runs at every push and every Stop (through `scripts/run_meta_tests.py`, as `check_failure_modes.py` does).
@@ -93,6 +93,17 @@ RETIRED_LINES = {
     "Vue fallback": "The pins of the Vue fallback stack.",
     # S0056: the features' folder of composables was named `hooks/` (owner, 2026-10-29: rename to composables)
     "hooks/ folder": "    hooks/          the feature's composables; logic in `features/transactions/hooks/useEditBuffer`.",
+    # S0057: the engine client's time limits and bounds are gone (engine-jobs spec §5.4, §5.5)
+    "per-request time limit": "Each call has a per-request time limit.",
+    "handshake time limit": "A start waits at most the handshake timeout.",
+    "start_timeout": "The policy's `start_timeout` bounds the handshake.",
+    "close_timeout": "The reap waits `close_timeout`.",
+    "longest_call": "A call returns within `RestartPolicy.longest_call(timeout)`.",
+    "longest_start": "A start is bounded by `RestartPolicy.longest_start`.",
+    "TimedOut": "`Busy` -> `Crashed` on `TimedOut`.",
+    "-I -m ledger_engine": "The engine runs as `python -I -m ledger_engine`.",
+    "outcome unknown": "A write past its limit is outcome unknown, checking.",
+    "quit grace": "The shell waits out its quit grace.",
 }
 # Words the audit says must never be refused, in the senses the current design uses them.
 TRAP_LINES = [
@@ -197,8 +208,10 @@ class Terms(unittest.TestCase):
             with self.subTest(line=line):
                 self.assertEqual(hits(line), [], line)
 
-    def test_the_second_list_is_inactive_until_the_engine_jobs_slice(self) -> None:
-        later = {
+    def test_the_engine_jobs_terms_are_active_since_s0057(self) -> None:
+        """S0057 (BL-0150) built the client without time limits: the terms its slice retires are refused now, in
+        the same list as the others (the former `AFTER_ENGINE_JOBS`)."""
+        retired = {
             "per-request time limit": "the per-request time limit",
             "handshake time limit": "the handshake timeout",
             "start_timeout": "`start_timeout`",
@@ -210,12 +223,11 @@ class Terms(unittest.TestCase):
             "outcome unknown": "the outcome unknown state",
             "quit grace": "the shell's quit grace",
         }
-        self.assertEqual({t.name for t in crt.AFTER_ENGINE_JOBS}, set(later))
-        self.assertFalse({t.name for t in crt.AFTER_ENGINE_JOBS} & {t.name for t in crt.ACTIVE})
-        for term, line in later.items():
+        self.assertFalse(hasattr(crt, "AFTER_ENGINE_JOBS"), "the engine-jobs list is merged into ACTIVE")
+        self.assertLessEqual(set(retired), {t.name for t in crt.ACTIVE})
+        for term, line in retired.items():
             with self.subTest(term=term):
-                self.assertEqual(hits(line), [], "active before the engine-jobs slice")
-                self.assertIn(term, names(crt.scan_text("design/specs/x.md", line, crt.AFTER_ENGINE_JOBS)))
+                self.assertIn(term, names(hits(line)))
 
 
 class Exceptions(unittest.TestCase):

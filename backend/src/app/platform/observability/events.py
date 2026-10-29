@@ -101,7 +101,7 @@ ENGINE_START_FAILED = Event(
             frozenset(
                 {
                     "crashed",
-                    "timeout",
+                    "cancelled",
                     "protocol_violation",
                     "incompatible",
                     "start_failed",
@@ -121,8 +121,8 @@ ENGINE_STOPPED = Event(
     (
         # The ways a running engine stops (`app.platform.engine_supervision`, S0040); a failed start is
         # `engine.start_failed`.
-        Field("kind", Kind.ENUM, frozenset({"crashed", "timeout", "protocol_violation"})),
-        Field("detail", Kind.DEBUG_DETAIL),  # free text: an exit code, the op and timeout, a decoder's complaint
+        Field("kind", Kind.ENUM, frozenset({"crashed", "protocol_violation"})),
+        Field("detail", Kind.DEBUG_DETAIL),  # free text: how the output ended, a decoder's complaint
     ),
 )
 ENGINE_UNAVAILABLE = Event(
@@ -130,6 +130,22 @@ ENGINE_UNAVAILABLE = Event(
     "error",  # the engine of every write and BQL query is down until the restart window lets a stop go
     "platform",
     (Field("stops", Kind.COUNT),),
+)
+ENGINE_ENDED = Event(
+    "engine.ended",
+    "info",
+    "platform",
+    # Our own end of an engine (S0057; engine-jobs §5.2, §5.3): a Cancel, Quit anyway or a retire, never a stop.
+    (Field("reason", Kind.ENUM, frozenset({"cancel", "retire", "quit_anyway"})),),
+)
+ENGINE_BYTECODE = Event(
+    "engine.bytecode",
+    "warning",  # only its trouble is logged: a fill that failed, a directory discarded after a failed start
+    "platform",
+    (
+        Field("outcome", Kind.ENUM, frozenset({"fill_failed", "discarded"})),
+        Field("detail", Kind.DEBUG_DETAIL),  # free text: the failed start's detail, the fill's exit
+    ),
 )
 ENGINE_STDERR = Event("engine.stderr", "info", "platform", (Field("line", Kind.DEBUG_DETAIL),), source="engine")
 ENGINE_CLOSED = Event("engine.closed", "info", "platform", ())
@@ -172,6 +188,8 @@ EVENTS = (
     ENGINE_START_FAILED,
     ENGINE_STOPPED,
     ENGINE_UNAVAILABLE,
+    ENGINE_ENDED,
+    ENGINE_BYTECODE,
     ENGINE_STDERR,
     ENGINE_CLOSED,
     API_INTERNAL_ERROR,

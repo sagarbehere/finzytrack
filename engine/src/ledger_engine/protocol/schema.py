@@ -15,6 +15,7 @@ from pydantic import BaseModel
 from pydantic.json_schema import models_json_schema
 
 from ledger_engine.protocol.messages import (
+    JOB_MESSAGES,
     MAX_LINE_BYTES,
     OPS,
     PROTOCOL_VERSION,
@@ -32,13 +33,15 @@ DESCRIPTION = (
     "The plain-data protocol between the main sidecar and the ledger engine. JSON Lines: one request per line on "
     "the engine's stdin, one reply per line on its protocol channel (its original stdout; stray output inside the "
     "engine goes to stderr). UTF-8, at most x-max-line-bytes per line without the newline. Every message carries "
-    "`v` (x-protocol-version), `id` and `op`; a reply adds `ok` and `result` or `error`. `handshake` comes first. "
-    "One request is answered before the next is read."
+    "`v` (x-protocol-version), `id` and `op`; a reply adds `ok` and `result` or `error`, and may carry the engine's "
+    "`decision`. `handshake` comes first. One request is answered before the next is read. Before its reply a "
+    "request may send job messages with its `id` and `op`: progress (any number), `gate` (at most once; the engine "
+    "then reads nothing but the sidecar's `proceed` for this request) and `committed` (only after `proceed`)."
 )
 
 
 def build() -> dict[str, Any]:
-    models: list[type[BaseModel]] = [*REQUEST_MODELS.values(), *REPLY_MODELS.values(), Refusal]
+    models: list[type[BaseModel]] = [*REQUEST_MODELS.values(), *REPLY_MODELS.values(), Refusal, *JOB_MESSAGES]
     _, top = models_json_schema([(m, "validation") for m in models], ref_template="#/$defs/{model}")
     defs: dict[str, Any] = dict(top["$defs"])
     defs["Request"] = {
@@ -49,6 +52,16 @@ def build() -> dict[str, Any]:
         "description": "Any reply the engine sends.",
         "oneOf": [{"$ref": f"#/$defs/{m.__name__}"} for m in [*REPLY_MODELS.values(), Refusal]],
     }
+    events = [m for m in JOB_MESSAGES if "event" in m.model_fields]
+    controls = [m for m in JOB_MESSAGES if "control" in m.model_fields]
+    defs["JobEvent"] = {
+        "description": "A job message the engine sends before its reply.",
+        "oneOf": [{"$ref": f"#/$defs/{m.__name__}"} for m in events],
+    }
+    defs["Control"] = {
+        "description": "A line the sidecar sends that is not a request (it gets no reply).",
+        "oneOf": [{"$ref": f"#/$defs/{m.__name__}"} for m in controls],
+    }
     return {
         "$comment": HEADER,
         "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -57,7 +70,12 @@ def build() -> dict[str, Any]:
         "x-protocol-version": PROTOCOL_VERSION,
         "x-max-line-bytes": MAX_LINE_BYTES,
         "x-ops": list(OPS),
-        "oneOf": [{"$ref": "#/$defs/Request"}, {"$ref": "#/$defs/Reply"}],
+        "oneOf": [
+            {"$ref": "#/$defs/Request"},
+            {"$ref": "#/$defs/Reply"},
+            {"$ref": "#/$defs/JobEvent"},
+            {"$ref": "#/$defs/Control"},
+        ],
         "$defs": dict(sorted(defs.items())),
     }
 
