@@ -459,3 +459,11 @@ Format:
 - Expected effect: product source per day back to at least the 2026-10-26 level; gate tooling grows under 5% to G1; no tooling slice over two verifier rounds; BL-0113 reaches code with at most three review or model runs.
 - Status: kept (loosenings 1, 2, 3, 4, 7, 8, 10, 12 owner-approved, 8 widened by ADR-0065; 5, 6, 9, 11 and the template part of 10 agent-approved tightenings or scheduling; S0054).
 - Owner approval: "Yes to Reflection proposals 1, 2, 3, 4, 7, 8, 10 and 12." (2026-10-29, in session; S0054).
+
+## IMP-0046: the retired-terms check refuses the React frontend target (2026-10-29)
+- Trigger: escape, found by the owner on 2026-10-29: "WHY does the page you produced say React for the frontend ... We had selected Vue3. This is exactly the kind of vestigial remanants I was worried about. I thought we had updated everything to reflect our choices?" ADR-0053 (2026-10-25) replaced the React target of ADR-0006 by Vue 3, but ARCHITECTURE.md and ENGINEERING.md kept describing React in their body under a "read the Vue equivalents" banner; the retired-terms check (IMP-0041) did not list them.
+- What changed: gate and doc. `scripts/check_retired_terms.py` also refuses the React target's terms (`React`, `react` joined to a package or rule name, JSX/TSX, Radix, shadcn/ui, bare sonner, React's hook API names, `QueryClientProvider`, custom hooks, function or class components, `tsc --noEmit` as the type gate, "pending S13" and its conditionals, "Vue fallback"), and checks more documents: `design/README.md`, `design/process/PROCESS.md`, the four `CLAUDE.md` files, `.claude/agents/*.md` and `.claude/skills/*/SKILL.md`; meta-tests in `scripts/tests/test_check_retired_terms.py`. ARCHITECTURE.md §0 names the frontend (Vue 3, ADR-0053) and lists the React target as abandoned. The documents were rewritten for Vue in the same change (S0055).
+- PROCESS.md section: none (the §6 pre-push row already runs the check).
+- Why: a superseded decision left in a document's body with an override banner on top reads as current to anyone who skips the banner, and it was the agents' starting documents that carried it.
+- Expected effect: no React-target statement reaches a current-state document again; a new override banner is caught when it names a retired term.
+- Status: kept (tightening after a real escape, agent-approved; S0055).

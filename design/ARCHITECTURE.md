@@ -1,13 +1,11 @@
 # Architecture of Finzytrack v0.4
 
-> **Frontend framework (2026-10-25): Vue 3, per ADR-0053** (spike S13). Where this document describes the React target, read the Vue equivalents: hooks → composables, `.tsx` → `.vue`, TanStack Vue Query/Table/Virtual, shadcn-vue on Reka UI, `@xstate/vue`, `@ai-sdk/vue`, `eslint-plugin-vue` + `eslint-plugin-vuejs-accessibility`, `vue-tsc`; pins in ARCHITECTURE.md §10 (Vue fallback rows).
-
 This file is the target system picture of the v0.4.0 rebuild: components, package map, API shape, flows, the stack pins and the repository layout.
 
 - **Status:** current as of 2026-10-27: §0 states where the design converged, and the convergence audit's findings were fixed in S0047. First written from the owner decisions of 2026-10-24 (including the final review's decisions: ad-hoc-signed macOS without notarization, M1 split into M1a/M1b, replace by atomic swap, the write-intent journal, the workspace invariants INV-28–31). Migrated from the review's architecture overview (review:25).
 - **It decides nothing new about the product.** Decisions live in `design/decisions/` (ADRs); this file points to them. Where it states an agent-level choice within the decided stack, that choice is recorded in ADR-0050.
 - **Rules it follows:** the engineering principles in `design/ENGINEERING.md` (EP-nn) and the owner-owned invariants in `design/INVARIANTS.md` (INV-nn).
-- **Frontend:** the frontend parts describe the React target, marked **React (ADR-0006, pending S13)**. If spike S13 keeps Vue, the structure stays the same (hooks → composables, `.tsx` → `.vue`) and the fallback pins in §10 apply.
+- **Frontend:** Vue 3 (ADR-0053, which superseded ADR-0006 after spike S13); §3 describes it and §10 lists its pins.
 - **Generated sections** (the package diagram, the API reference, the statechart diagrams) live in `design/generated/` and are never hand-edited.
 - Private review evidence is cited as `review:<doc> §<section>`; finding IDs (`I4`, `L5-07`, `M-1`, …) are kept as they are.
 
@@ -17,7 +15,7 @@ This file is the target system picture of the v0.4.0 rebuild: components, packag
 - the mirror as an atomically published cache; SQLite only (ADR-0015, ADR-0016);
 - portable workspace folders, workspace-addressed API, lifecycle, legacy adoption (ADR-0017 to ADR-0021); one open workspace at a time, and every unfinished save recovered before any workspace opens (ADR-0063);
 - Tauri 2 shell with a Python sidecar, identifier `com.finzytrack.desktop`, Apple-silicon macOS (ad-hoc signed), Windows x64, Linux x64 (ADR-0007);
-- React frontend, pending S13 (ADR-0006);
+- Vue 3 frontend, a Vite single-page app in the system webview (ADR-0053, superseding ADR-0006);
 - licence GPL-2.0-or-later for the owner's code, notices and licence checks (ADR-0042);
 - agents run locally; CI runs deterministic gates only (ADR-0045);
 - v0.2.2 table and function names keep working through 0.4.x (ADR-0048);
@@ -32,8 +30,9 @@ Between 2026-10-26 and 2026-10-27 the design grew (parallel engines, Share works
 - **Every unfinished save is recovered before any workspace opens** (ADR-0063 decision 2, INV-32): journals name files by canonical path; a journal that cannot be recovered blocks only the workspaces that use its files, with "Keep the files as they are now" as the way out. Two workspaces sharing a file is not supported, and harmless. Owner: "Yes, write both into the hand-off and give me the prompt" (the recovery rule).
 - **One engine doing one job at a time** (ADR-0064, `design/specs/engine-jobs.md`): a FIFO queue in the sidecar where a job the user waits for goes ahead of background work; Cancel ends that job's engine and is not a crash; a crash is noticed by the process exiting, with S0040's bounded restart; no automatic killing of slow jobs ("Still working…" with Cancel); one load at a time bounds memory. Owner: "we go back to one engine doing one job at a time and massively simplify everything."
 - **"Saved" after commit and read-back; the re-check (R4) runs right after and gates only the next save**, in every mode, never switched off (ADR-0008 amendment, ADR-0010 amendment, ADR-0064).
+- **The frontend is Vue 3** (ADR-0053, decided 2026-10-25 by spike S13 under ADR-0006's rule): a Vite single-page app with composables, `.vue` files, vue-router, TanStack Vue Query, shadcn-vue on Reka UI and `vue-tsc` as the type gate (§3, pins in §10).
 
-**Abandoned, so stale wherever it is stated as current:** Share workspaces and the legacy-lock waits; an engine pool, slots, admission, lanes, memory-pressure levels, Run anyway, learned "usual" values, automatic runaway or stall stops; the heavy-load semaphore and the per-workspace write limiter; territories, `LEDGER_SHARED`, `LEDGER_OUTSIDE_FOLDER`, `FOLDER_IN_OTHER_WORKSPACE`, the cross-workspace journal index and recovery of another workspace's journal from an open one; several open workspaces, several native windows, a warm idle container.
+**Abandoned, so stale wherever it is stated as current:** Share workspaces and the legacy-lock waits; an engine pool, slots, admission, lanes, memory-pressure levels, Run anyway, learned "usual" values, automatic runaway or stall stops; the heavy-load semaphore and the per-workspace write limiter; territories, `LEDGER_SHARED`, `LEDGER_OUTSIDE_FOLDER`, `FOLDER_IN_OTHER_WORKSPACE`, the cross-workspace journal index and recovery of another workspace's journal from an open one; several open workspaces, several native windows, a warm idle container; the React frontend target of ADR-0006 (React 19, the React Compiler, shadcn/ui on Radix, `@tanstack/react-*`, `@ai-sdk/react`, `tsc --noEmit` as the type gate), replaced by Vue 3 (ADR-0053).
 
 ---
 
@@ -44,7 +43,7 @@ flowchart LR
   user([User])
   subgraph Desktop["Finzytrack 0.4 (one install)"]
     shell["Tauri 2 shell (Rust)\nwindow, menus, file association,\nsingle instance, updater,\nsidecar supervisor"]
-    web["Web UI (React 19 + TS;\nVue 3 if spike S13 fails)\nin the system webview"]
+    web["Web UI (Vue 3 + TS, ADR-0053)\nin the system webview"]
     side["Main sidecar (Python 3.13, FastAPI)\nloopback only; never imports Beancount\n(ADR-0054)"]
     eng["Ledger engine (Python 3.13)\nBeancount, overlay load, write contract,\nmirror build, BQL (ADR-0054)"]
   end
@@ -332,16 +331,17 @@ Execution rule: every `async def` handler only `await`s. Sync work runs on a wor
 
 ---
 
-## 3. Frontend — React (ADR-0006, pending S13)
+## 3. Frontend — Vue 3 (ADR-0053)
 
-**Framework: React, conditional on spike S13 (owner, 2026-10-24; ADR-0006).** The target is a React + Vite single-page app (no Next.js, no server rendering): React 19 with the React Compiler, shadcn/ui on Radix, TanStack Query/Table/Form for React, `@ai-sdk/react`, `@xstate/react`, and the eslint-plugin-react-hooks strict rules (recommended-latest, including the compiler rules, as errors). The M0 spike S13 (review:27 M0) decides it: if React is measurably worse than an equivalent Vue prototype in WebKit by more than the spike brief's margin (default 20%) on scroll frame time, edit latency, initial render or memory, the frontend stays on Vue 3 with the same structure (hooks → composables, `.tsx` → `.vue`) and the fallback pins in §10. Everything below except the framework bindings is framework-neutral.
+**Framework: Vue 3 (ADR-0053).** The frontend is a Vue 3 + Vite single-page app (no Nuxt, no server rendering), in TypeScript with `<script setup>` single-file components. Spike S13 decided it on 2026-10-25 under ADR-0006's rule: in WebKit, timing was a tie and the Vue prototype's webview process used less memory (the other one used 22–64% more by RSS). The stack is the one ADR-0006 named for Vue and ADR-0053 adopted: vue-router, TanStack Vue Query / Table / Virtual, TanStack Form, shadcn-vue on Reka UI, `@lucide/vue`, `vue-sonner`, `@xstate/vue`, `@ai-sdk/vue`, `eslint-plugin-vue` + `eslint-plugin-vuejs-accessibility`, and `vue-tsc` as the type gate. Logic sits in domain modules, composables (Vue's `use…` functions) and machines, never in components (INV-12). Everything below except these bindings is framework-neutral. Built today (M0): the empty shell (`main.ts`, `App.vue`), the lint, type and test gates, the layer map, the generated API types and the acceptance harness; the folders below arrive with the slices that need them.
 
-### 3.1 Structure — React (ADR-0006, pending S13)
+### 3.1 Structure
 
 ```
 frontend/src/
-  app/              shell: main.tsx, App.tsx, router (/w/:ws/... routes, react-router declarative mode),
-                    QueryClientProvider, providers, app-level machines (boot, workspace switch, updater), error host
+  main.ts, App.vue  entry: createApp, plugins, global error handlers (§6A.2), mount
+  app/              shell: router (/w/:ws/... routes, vue-router), the Vue Query plugin,
+                    app-level machines (boot, workspace switch, updater), error host
   api/              the only module that talks HTTP
     generated/      openapi-typescript output (types only; never hand-edited)
     client.ts       openapi-fetch instance: envelope unwrap, AppError, AbortSignal, request id
@@ -349,47 +349,47 @@ frontend/src/
     keys.gen.ts     generated query-key factories from x-ft-scope (['app'], ['ws', ws, 'config'|'ledger', ...])
     errors.gen.ts   generated ErrorCode union, presentation table, client-side messages
     sse.ts          typed reader for the non-chat event streams
-    chat.ts         AI SDK transport for useChat (@ai-sdk/react; Vercel AI UI message stream, v7 protocol)
+    chat.ts         AI SDK chat transport (@ai-sdk/vue; Vercel AI UI message stream, v7 protocol)
   domain/           pure kernel: money.ts, format.ts, dates.ts (Temporal), accounts.ts, commodities.ts,
                     metadata.ts, tolerance.ts, parse.ts, brands.ts, untrusted.ts (SafeHtml)
   platform/         clock.ts, ids.ts, storage.ts (scoped keys ft/v1/app|ws/...), logger.ts,
                     shell/ (ShellPort + tauri.ts + browser.ts)
-  catalog/          shared catalog query hooks: Ledger Profile, accounts catalog, commodities
+  catalog/          shared catalog query composables: Ledger Profile, accounts catalog, commodities
                     (components/app may read these, ADR-0035)
   components/
-    ui/             vendored shadcn/ui on Radix (unedited copies, from the shadcn CLI)
+    ui/             vendored shadcn-vue on Reka UI (unedited copies, from the shadcn-vue CLI)
     app/            domain primitives: AccountCombobox, CommodityCombobox, MoneyText/Cell/Input,
                     DateField/DateRangeField, ConfirmHost + useConfirm, DialogShell/SheetShell,
                     useUnsavedGuard, Field + useFieldErrors, QueryState/EmptyState/ErrorState,
                     PageHeader/PageTabs, IconButton, FileDropZone/ServerFilePicker, DataTable,
-                    SafeMarkdown, useECharts (thin own hook over echarts; no wrapper library)
+                    SafeMarkdown, useECharts (a thin own composable over echarts, ADR-0050 item 11)
   features/<name>/  workspaces, boot, accounts, transactions, importing, dashboards, investments,
                     assistant, settings:
     index.ts        the feature's public surface (routes + anything another feature may use)
-    queries.ts      TanStack Query hooks over api/ (keys from keys.gen.ts)
+    queries.ts      TanStack Vue Query composables over api/ (keys from keys.gen.ts)
     machines/       XState machines for this feature's workflows (*.machine.ts) + their model tests
-    hooks/          headless logic as custom hooks (useEditBuffer, useImportSession, useBudgetDrafts, ...);
-                    forms use TanStack Form
-    views/          thin route views, *.tsx (compose hooks + components; no business rule, INV-12)
-    components/     feature-specific components (*.tsx)
+    hooks/          the feature's composables: headless logic (useEditBuffer, useImportSession,
+                    useBudgetDrafts, ...); forms use TanStack Form
+    views/          thin route views, *.vue (compose composables + components; no business rule, INV-12)
+    components/     feature-specific components (*.vue)
   features/dashboards/viz/   the viz registry (the GUI-builder extension point; lint exemption, ADR-0035)
 ```
 
 The rules come from ADR-0035, ADR-0036 (including the phone principle) and ADR-0037:
-- **Server state lives in TanStack Query only** (ADR-0037). Keys are workspace-scoped (ADR-0037) and generated (§4.1), and are never hand-built.
-- **Client state** lives in side-effect-free module stores keyed by workspace, read through `useSyncExternalStore`. There is no Redux, Zustand or Pinia.
-- **Workflows with real states** use XState machines (§7). A hook owns a machine instance (`useMachine` / `useActorRef` + `useSelector` from `@xstate/react`) and exposes a small interface. Views never send raw machine events they don't own.
-- **Views are thin.** A business rule lives in `domain/`, a hook or a machine, never only in JSX. This is the phone principle, and INV-12.
-- **React Compiler on, hooks rules strict.** `babel-plugin-react-compiler` runs through `@vitejs/plugin-react`; eslint-plugin-react-hooks' recommended-latest rules (including the compiler diagnostics) are errors. No hand-written `useMemo`/`useCallback` unless a compiler bail-out is documented next to it.
-- **eslint-plugin-boundaries** enforces the dependency direction: `app` → `features` → (`catalog`, `components/app`, `api`, `platform`) → `domain`. `components/ui` imports nothing app-specific. `components/app` may import `catalog` and `domain`. A feature imports another feature only through its `index.ts`, and only along edges listed in the ESLint config. `api/generated` is imported only by `api/`.
+- **Server state lives in TanStack Vue Query only** (ADR-0037). Keys are workspace-scoped (ADR-0037) and generated (§4.1), and are never hand-built.
+- **Client state** lives in side-effect-free module stores keyed by workspace (ADR-0037), read by components through composables. Module-level `ref`/`reactive` is allowed only in `catalog/` and the listed stores (EP-04). There is no Pinia, Redux or Zustand.
+- **Workflows with real states** use XState machines (§7). A composable owns a machine instance (`useMachine` / `useActorRef` + `useSelector` from `@xstate/vue`) and exposes a small interface. Views never send raw machine events they don't own.
+- **Views are thin.** A business rule lives in `domain/`, a composable or a machine, never only in a template. This is the phone principle, and INV-12.
+- **Lint and types are strict.** `frontend/eslint.config.js` runs typescript-eslint's strict type-checked rules and the recommended rules of `eslint-plugin-vue` and `eslint-plugin-vuejs-accessibility`, with `--max-warnings 0`; `vue-tsc --noEmit` is the type gate over `.ts` and `.vue` files, templates included (`strictTemplates`; `frontend/tsconfig.json`, pinned by `tests/unit/gates.test.ts`).
+- **eslint-plugin-boundaries** enforces the dependency direction: `app` → `features` → (`catalog`, `components/app`, `api`, `platform`) → `domain`. `components/ui` imports nothing app-specific. `components/app` may import `catalog` and `domain`. A feature imports another feature only through its `index.ts`, and only along edges listed in the ESLint config. `api/generated` is imported only by `api/`. Built: `frontend/eslint.boundaries.js` (INV-12, S0018).
 
-### 3.2 TanStack Query and the API binding — React (ADR-0006, pending S13)
+### 3.2 TanStack Vue Query and the API binding
 
 - **`ws` comes from the route** and flows into the query key and the request together. The generated client takes `ws` as an explicit path parameter (ADR-0018). No interceptor reads a global "current workspace".
 - `staleTime: Infinity` for ledger-derived data. Invalidation is driven by domain events: the response `meta.ledger_version` (monotonic) or `meta.writes_ledger`, the focus-time version check (`GET /api/w/{ws}/version`) and config writes. These rules come from ADR-0037.
 - **Every `queryFn` consumes `signal`**, so a workspace switch aborts its queries. The server stops recipe runs between steps.
-- Large results skip structural sharing (`structuralSharing: false`) and are shaped with `select` (the Vue fallback uses `shallowRef`). Recipe widgets are one query per widget (`['ws', ws, 'ledger', 'recipe-run', widgetHash, params]`), with a run token (I7).
-- The transaction grid is TanStack Table + TanStack Virtual (54k rows), the shape S13 measures.
+- Large results skip structural sharing (`structuralSharing: false`), are held in `shallowRef` (no deep reactivity over 54k rows, ADR-0053) and are shaped with `select`. Recipe widgets are one query per widget (`['ws', ws, 'ledger', 'recipe-run', widgetHash, params]`), with a run token (I7).
+- The transaction grid is TanStack Vue Table + TanStack Vue Virtual (54k rows), the shape S13 measured.
 
 ---
 
@@ -403,11 +403,11 @@ The rules come from ADR-0035, ADR-0036 (including the phone principle) and ADR-0
 - Testing against a *running* backend is still required for acceptance flows. Agents start their own isolated backend on its own port and data dir (INV-24). They never restart the owner's backend. The acceptance harness does this per Playwright worker (S0030): `scripts/acceptance/launcher.py` makes a fresh `mkdtemp` root, generates the demo into it, starts the sidecar with `--port 0`, folders it made itself and `--frozen-clock`, starts the LLM stub, and announces the run; `frontend/e2e/harness/fixtures.ts` arms the test's browser context and every context the test opens (all their pages and popups): it freezes the clock, aborts any request to an origin that is not the preview server or the run's sidecar, refuses WebSockets, and fails a test on console errors, page errors, failed or HTTP-error requests, axe violations on the pages left open and unscripted LLM calls. Requests test code sends itself (`page.request`, `context.request`, `fetch`) are not checked yet (BL-0071).
 
 **Codegen choice: `openapi-typescript` 7.13.0 + `openapi-fetch` 0.17.0** (types only, with a small runtime that has native `AbortSignal` and middleware). It replaces `openapi-typescript-codegen`, whose README states that the project is unmaintained and directs users to `@hey-api/openapi-ts` (checked on npm, 2026-10-24). `@hey-api/openapi-ts` 0.99.0 was evaluated and **not chosen**:
-- Its generated TanStack Query hooks (React or Vue) build their own query keys (operation id + parameters). Our invalidation model needs keys grouped by *scope class* (`['ws', ws, 'ledger', …]` vs `['ws', ws, 'config', …]`, ADR-0037). With generated hooks we would either lose prefix invalidation or patch generated code, and generated code is never hand-edited (INV-19).
+- Its generated TanStack Query hooks build their own query keys (operation id + parameters). Our invalidation model needs keys grouped by *scope class* (`['ws', ws, 'ledger', …]` vs `['ws', ws, 'config', …]`, ADR-0037). With generated hooks we would either lose prefix invalidation or patch generated code, and generated code is never hand-edited (INV-19).
 - It is still at 0.x with frequent breaking minor releases (0.97 → 0.99 between May and June 2026), and its runtime client is a larger dependency than openapi-fetch.
 - openapi-typescript's `transform` hook covers the one thing we need from codegen: mapping our schema annotations to branded TS types.
 
-Hand-written TanStack Query hooks live in `features/*/queries.ts`. They are thin (one `useQuery` per operation), and their keys come from **`keys.gen.ts`**, which a small generator (`frontend/scripts/gen-api-extras.mjs`) emits from the vendor extensions in the spec:
+Hand-written TanStack Vue Query composables live in `features/*/queries.ts`. They are thin (one `useQuery` per operation), and their keys come from **`keys.gen.ts`**, which a small generator (`frontend/scripts/gen-api-extras.mjs`) emits from the vendor extensions in the spec:
 - `x-ft-scope: app | config | ledger` on every operation, so the route-scope test (INV-28) and the key factory read the same declaration;
 - `x-ft-writes: ledger | config | none` on mutations, which drives invalidation.
 
@@ -449,8 +449,8 @@ Hand-written TanStack Query hooks live in `features/*/queries.ts`. They are thin
 
 - **Chat** (`POST /api/w/{ws}/chat`) speaks the **Vercel AI UI message stream protocol, v7**, produced by Pydantic AI's `VercelAIAdapter(sdk_version=7)`. The installed `pydantic-ai-slim` 2.55.0 source supports `Literal[5, 6, 7]`; checked 2026-10-24. Keeping the types in sync works in three parts:
   1. The protocol types are the `ai` package's own (`UIMessage`, `UIMessageChunk`). We do not regenerate them.
-  2. Our custom parts (`data-proposal`, `data-plan-status`, `data-citation`) and the message metadata are Pydantic models exported into `contracts/openapi.json` `components.schemas` (via `x-ft-stream-parts`), so they reach TS through the normal codegen. They are declared to `useChat` as `UIMessage<ChatMetadata, ChatDataParts>`.
-  3. A contract test records a backend stream from the stub-LLM run and parses it in vitest with the AI SDK's own stream reader, asserting the expected parts. `ai` / `@ai-sdk/react` (`@ai-sdk/vue` if S13 keeps Vue) and pydantic-ai's `sdk_version` are upgraded together in one dependency slice.
+  2. Our custom parts (`data-proposal`, `data-plan-status`, `data-citation`) and the message metadata are Pydantic models exported into `contracts/openapi.json` `components.schemas` (via `x-ft-stream-parts`), so they reach TS through the normal codegen. They are declared to the AI SDK's chat binding (`@ai-sdk/vue`) as `UIMessage<ChatMetadata, ChatDataParts>`.
+  3. A contract test records a backend stream from the stub-LLM run and parses it in vitest with the AI SDK's own stream reader, asserting the expected parts. `ai` / `@ai-sdk/vue` and pydantic-ai's `sdk_version` are upgraded together in one dependency slice.
 - **Other streams** (email fetch progress, mirror rebuild progress) are typed SSE event unions (Pydantic discriminated unions exported into the spec) read by `api/sse.ts`. They carry the envelope's `error` shape in their terminal error event.
 
 ---
@@ -574,8 +574,8 @@ The target makes the log good enough to analyse a user's report and safe enough 
   - Batches go to `POST /api/app/client-log`, which tags them `source: ui` and writes them through the same backend redaction and handler.
   - While the backend is unreachable, events wait in a bounded in-memory ring and are replayed when the backend comes back. In development builds they also go to the console.
 - **Tauri's log plugin, evaluated as the frontend's channel: not chosen.** It would put UI events in a second file outside the backend's typed redaction, and it doesn't exist in browser or headless mode. It is kept only for the shell's own lines (§6A.1).
-- **Global handlers**, installed in `app/main.ts` before mount, route every uncaught error to the log **and** to the user through `presentError` (§6.4, ADR-0039: an `INTERNAL` modal with the correlation id, or a toast for a minor client fault):
-  - a root React error boundary (`app.config.errorHandler` on the Vue fallback);
+- **Global handlers**, installed in `src/main.ts` before mount, route every uncaught error to the log **and** to the user through `presentError` (§6.4, ADR-0039: an `INTERNAL` modal with the correlation id, or a toast for a minor client fault):
+  - Vue's `app.config.errorHandler` (errors in components, watchers and lifecycle hooks);
   - `window.onerror`;
   - `window.onunhandledrejection`;
   - TanStack Query's `QueryCache` / `MutationCache` `onError`;
@@ -691,7 +691,7 @@ Toolchain: TLA+ tools `tla2tools.jar` **1.7.4** (latest stable; 1.8.0 was still 
 ## 9. Key data flows
 
 ### 9.1 Read (dashboards, lists, balances)
-1. The view's query hook calls `GET /api/w/{ws}/…`, with the key from `keys.gen.ts` and `signal`.
+1. The view's query composable calls `GET /api/w/{ws}/…`, with the key from `keys.gen.ts` and `signal`.
 2. `api` resolves `{ws}` in the caller's registry to a `WorkspaceContainer`. An unknown key returns `WORKSPACE_UNKNOWN`; a registered workspace that is not the open one returns `WORKSPACE_NOT_OPEN` (ADR-0063); a not-ready one returns `WORKSPACE_NOT_READY {phase}` (INV-28).
 3. The use case reads through `mirror.reader`, or `QueryRunner` for user SQL, on a worker thread. **No ledger load** (INV-10, ADR-0011).
 4. The envelope carries `meta.ledger_version`. When a response shows a newer version, the client invalidates `['ws', ws, 'ledger']` once.
@@ -835,47 +835,45 @@ The versions below are the newest stable releases published on or before **2026-
 | detect-secrets | 1.5.0 | part of the T0 privacy scanner (rule `secret-entropy`), in its own pinned environment `scripts/secrets-scan/` (S0016) |
 | oasdiff (Go binary) | pinned by checksum | API breaking-change check |
 
-**Frontend libraries — React (ADR-0006, pending S13)** — newest stable published on or before 2026-10-10, checked on registry.npmjs.org on 2026-10-24.
+**Frontend libraries — Vue 3 (ADR-0053).** The pin of an installed library is the exact version in `frontend/package.json` and `frontend/pnpm-lock.yaml`. A library not installed yet is **pinned when first used**, under the dependency policy (ADR-0050 item 12: an exact pin, at least 14 days old); its candidate is the newest stable release published on or before 2026-10-10 (checked on registry.npmjs.org on 2026-10-24), and the slice that installs it checks it again.
 
 | Library | Pin | Notes |
 |---|---|---|
-| react / react-dom | 19.3.0 | 19.3.1 (2026-10-14) is under 14 days old; @types/react / @types/react-dom 19.3.0 |
-| babel-plugin-react-compiler | 1.0.0 | the React Compiler, via `@vitejs/plugin-react` (its peer, with @rolldown/plugin-babel 0.2.4) |
-| react-router | 8.4.0 | declarative mode only, SPA (ADR-0050 item 10); `/w/:ws/…` routes |
-| @tanstack/react-query | 5.104.1 | ADR-0037 |
-| @tanstack/react-table | 9.2.8 | ADR-0035 (v9 for the grid) |
-| @tanstack/react-virtual | 3.14.14 | |
-| @tanstack/react-form | 1.33.5 | forms with `useFieldErrors` (the `Field` primitive, ADR-0035) |
-| radix-ui | 1.7.0 | via the shadcn 4.21.4 CLI (vendored shadcn/ui, unedited copies) |
-| tailwindcss + @tailwindcss/vite | 4.3.3 | |
-| lucide-react | 1.55.0 | ADR-0035 |
-| sonner | 2.0.8 | toasts outside inert regions |
-| xstate / @xstate/react / @xstate/graph | 5.33.2 / 6.1.0 / 3.0.4 | §7 |
-| temporal-polyfill | 1.0.5 | ADR-0023 |
-| decimal.js | 10.6.0 | behind `Money` |
-| echarts | 6.1.0 | behind the own `useECharts` hook (ADR-0050 item 11) |
-| markdown-it / dompurify | 14.3.2 / 3.4.16 | html off + sanitize; markdown-it 15 is under 14 days old |
-| ai / @ai-sdk/react | 7.0.137 / 4.0.140 | AI SDK v7, matched to pydantic-ai `sdk_version=7`; @ai-sdk/react 4.0.140 depends on ai 7.0.137 exactly |
-| openapi-typescript / openapi-fetch | 7.13.0 / 0.17.0 | §4.1 |
-| zod | 4.6.4 | parsing non-API edges only: localStorage, route params, shell messages (EP-06) |
+| vue | 3.5.43 | ADR-0053; `<script setup>` single-file components |
+| vue-router | pinned when first used (candidate 5.4.0) | SPA routes `/w/:ws/…`; no data loading in routes (ADR-0050 item 10) |
+| @tanstack/vue-query | pinned when first used (candidate 5.104.1) | ADR-0037 |
+| @tanstack/vue-table | pinned when first used (candidate 9.2.8) | ADR-0035 (v9 for the grid) |
+| @tanstack/vue-virtual | pinned when first used (candidate 3.13.40) | |
+| @tanstack/vue-form | pinned when first used | forms with `useFieldErrors` (the `Field` primitive, ADR-0035) |
+| reka-ui | pinned when first used (candidate 2.11.0) | via the shadcn-vue CLI (candidate 2.8.2): vendored shadcn-vue, unedited copies (ADR-0035) |
+| tailwindcss + @tailwindcss/vite | pinned when first used (candidate 4.3.3) | |
+| @lucide/vue | pinned when first used (candidate 1.55.0) | ADR-0035 |
+| vue-sonner | pinned when first used (candidate 2.0.9) | toasts outside inert regions (ADR-0035) |
+| xstate / @xstate/vue / @xstate/graph | pinned when first used (candidates 5.33.2 / 5.0.1 / 3.0.4) | §7 |
+| temporal-polyfill | pinned when first used (candidate 1.0.5) | ADR-0023 |
+| decimal.js | pinned when first used (candidate 10.6.0) | behind `Money` |
+| echarts | pinned when first used (candidate 6.1.0) | behind the own `useECharts` composable (ADR-0050 item 11); ADR-0053 also allows `vue-echarts` (candidate 8.3.2), not adopted |
+| markdown-it / dompurify | pinned when first used (candidates 14.3.2 / 3.4.16) | html off + sanitize |
+| ai / @ai-sdk/vue | pinned when first used (candidates 7.0.136 / 4.0.136) | AI SDK v7, matched to pydantic-ai `sdk_version=7`; upgraded together (§4.3) |
+| openapi-typescript / openapi-fetch | 7.13.0 / pinned when first used (candidate 0.17.0) | §4.1; openapi-typescript is a dev dependency (S0046) |
+| zod | pinned when first used (candidate 4.6.4) | parsing non-API edges only: localStorage, route params, shell messages (EP-06) |
 
 **Frontend dev and verification tools**
 
 | Tool | Pin | Notes |
 |---|---|---|
-| typescript | **6.0.3** | `tsc --noEmit` is the type gate. **TS 7.0.2 is excluded:** typescript-eslint 8.71.1 declares `typescript >=4.8.4 <6.1.0` |
-| vite / @vitejs/plugin-react | 8.3.4 / 6.1.2 | |
-| vitest | 5.0.3 | with happy-dom 20.14.6, @testing-library/react 16.3.3, @testing-library/user-event 14.6.7 |
-| eslint | 10.12.0 | + typescript-eslint 8.71.1, eslint-plugin-react-hooks 7.1.1 (recommended-latest incl. compiler rules, as errors), eslint-plugin-boundaries 7.2.0, eslint-plugin-jsx-a11y 6.10.2 |
+| typescript | **6.0.3** | **TS 7.0.2 is excluded:** typescript-eslint 8.71.1 declares `typescript >=4.8.4 <6.1.0` |
+| vue-tsc | 3.3.13 | `vue-tsc --noEmit` is the type gate (`.ts` and `.vue`) |
+| vite / @vitejs/plugin-vue | 8.3.4 / 6.0.10 | |
+| vitest | 5.0.3 | with happy-dom 20.14.6 and @vue/test-utils 2.5.1; @testing-library/user-event pinned when first used (candidate 14.6.7) |
+| eslint | 10.12.0 | + typescript-eslint 8.71.1 (strict type-checked), eslint-plugin-vue 10.11.1 with vue-eslint-parser 10.4.1, eslint-plugin-vuejs-accessibility 2.6.1 (INV-18), eslint-plugin-boundaries 7.2.0 (INV-12), globals 17.13.0 |
 | prettier | 3.9.10 | + eslint-config-prettier 10.1.8 (S0032): turns off the ESLint layout rules that fight prettier (8.10.1, 9.1.1, 10.1.6 and 10.1.7 were the compromised releases of 2025-07; never adopt them) |
-| @playwright/test / @axe-core/playwright | 1.64.0 / 4.13.0 | Chromium and WebKit (S13 measures in WebKit) |
-| fast-check | 4.10.2 | FE property tests (parsers, money, format) |
-| jscpd | 5.4.1 | duplicate detection (also run on Python) |
+| @playwright/test / @axe-core/playwright | 1.64.0 / 4.13.0 | Chromium and WebKit (S13 measured in WebKit) |
 | knip | 6.41.0 | unused files and exports |
-| @stryker-mutator/core | 10.0.0 | T2 mutation on `src/domain` |
-| json-schema-to-typescript | 16.0.0 | recipe schema → TS |
-
-**Fallback if S13 fails (stay on Vue).** The earlier Vue pins stay valid as the fallback stack: vue 3.5.43, vue-router 5.4.0, @tanstack/vue-query 5.104.1, @tanstack/vue-table 9.2.8, @tanstack/vue-virtual 3.13.40, reka-ui 2.11.0 via shadcn-vue 2.8.2, @lucide/vue 1.55.0, vue-sonner 2.0.9, @xstate/vue 5.0.1, vue-echarts 8.3.2, ai / @ai-sdk/vue 7.0.136 / 4.0.136; dev: vue-tsc 3.3.13, @vitejs/plugin-vue 6.0.10, @vue/test-utils 2.5.1, eslint-plugin-vue 10.11.1, eslint-plugin-vuejs-accessibility 2.6.1. The framework-neutral rows above are shared.
+| fast-check | pinned when first used (candidate 4.10.2) | FE property tests (parsers, money, format) |
+| jscpd | pinned when first used (candidate 5.4.1) | duplicate detection (also run on Python) |
+| @stryker-mutator/core | pinned when first used (candidate 10.0.0) | T2 mutation on `src/domain` |
+| json-schema-to-typescript | pinned when first used (candidate 16.0.0) | recipe schema → TS |
 
 **Licence checks (T1) (owner, 2026-10-24; ADR-0042).** A `THIRD_PARTY_NOTICES` file at the repo root is generated from the lockfiles, and T1 fails on a dependency whose licence is not on the allowlist: pip-licenses 5.5.5 (Python), license-checker-rseidelsohn 5.0.1 (JS), `cargo metadata` judged by the same allowlist (Rust; cargo-about 0.9.2 collects the licence texts at bundling; ADR-0042 amendment). Two lists (ADR-0054 decision 5; S0035): the ledger engine is judged by `[engine]` in `licences.allow.toml` (GPL-2.0-compatible licences, plus Beancount's reviewed dependencies `regex` and `python-dateutil`, which warn while pending legal advice); everything else by the shared list. Where pip-licenses reports a trove-classifier name, `[mapping]` gives the reviewed SPDX id for one exact version (BL-0050). For both Python processes the check also reads every licence and notice file each bundled distribution declares or lists, in that venv, and refuses a licence clause that asks for an acknowledgment the notices do not carry (`[acknowledgment]`, S0037) and a package that ships no licence text, unless `[no_licence_text]` names its exact version and where its licence was read. The owner's own code is declared GPL-2.0-or-later; Beancount is GPL-2.0-only, and the bundle question goes to legal advice before v0.4.0.
 
@@ -918,7 +916,7 @@ The versions below are the newest stable releases published on or before **2026-
   frontend/
     package.json  pnpm-lock.yaml  pnpm-workspace.yaml  tsconfig.json  eslint.config.js  vite.config.ts
     playwright.config.ts  knip.json  .prettierrc.json                (S0009)
-    src/…                                       §3.1 (*.tsx; *.vue only if S13 keeps Vue)
+    src/…                                       §3.1 (*.vue and *.ts)
     tests/  unit/ · machines/ (model-based) · contract/ (stream fixtures)
     e2e/                                        Playwright acceptance flows + exploratory charters; harness/ (fixtures.ts,
                                                 policy.ts, selftest/: the acceptance harness's browser side, S0030)
@@ -970,7 +968,7 @@ The three-`scripts/` rule of today's root `CLAUDE.md` survives: backend-internal
 **`CLAUDE.md` files.** At `next` setup, every `CLAUDE.md` (root, backend, frontend) is rewritten to a short set of pointers into `design/` plus a few working rules (`PROCESS.md`). From then on, the doc auditor's no-drift rule (`PROCESS.md`) covers them like any other doc. Several of today's rules change or disappear:
 - "restart the backend and regenerate the API" (§4.1);
 - the Tailwind Plus class-string rules (ADR-0035: components, not class strings);
-- the module-singleton composables (ADR-0037); `frontend/CLAUDE.md` is rewritten for React (or Vue, if S13 fails) at `next` setup anyway;
+- the module-singleton composables (ADR-0037); `frontend/CLAUDE.md` was rewritten for Vue 3 at `next` setup (ADR-0053);
 - the hand-written SSE rule (ADR-0034);
 - the raw-JSON recipe exception (§4.1).
 
@@ -1005,7 +1003,7 @@ The three-`scripts/` rule of today's root `CLAUDE.md` survives: backend-internal
 
 ## 13. Choices this document makes
 
-The agent-level choices within the decided stack (vertical slices with per-slice core/shell; `integrations/` dissolved; `app/boot`; pyright strict as the only type gate; openapi-typescript + openapi-fetch with generated keys; pnpm; one `PlanStore` and confirm endpoint; `contracts/` at the root; TypeScript 6.0.3; react-router declarative mode; a thin own `useECharts` hook) are recorded in **ADR-0050**. Each is reversible by a later ADR. The framework itself is an owner decision (ADR-0006).
+The agent-level choices within the decided stack (vertical slices with per-slice core/shell; `integrations/` dissolved; `app/boot`; pyright strict as the only type gate; openapi-typescript + openapi-fetch with generated keys; pnpm; one `PlanStore` and confirm endpoint; `contracts/` at the root; TypeScript 6.0.3; vue-router without data loading in routes, since TanStack Query owns server state (item 10, written before ADR-0053 and carried to vue-router by it); a thin own `useECharts` composable) are recorded in **ADR-0050**. Each is reversible by a later ADR. The framework itself is an owner decision: Vue 3, by ADR-0006's rule applied in ADR-0053.
 
 ## 14. Resolved items and open questions
 
@@ -1022,8 +1020,8 @@ Resolved (were questions in the review's architecture draft):
 10. Finzytrack AI mode is out of v0.4.0; the `Llm` port needs no cloud adapter → ADR-0034, ADR-0043.
 11. The owner keeps using v0.3.0 until v0.4.0; the oracle uses copies only → ADR-0002, ADR-0014.
 12. No ledger is shared with a running legacy app (Share removed, Copy only); one v0.4 instance per app root → ADR-0062.
+13. The frontend framework → Vue 3, from spike S13's measurements → ADR-0053 (superseding ADR-0006).
 
 Open:
 - **`lots`:** under ADR-0048 the v0.2.2 `lots` table keeps working; the owner is asked to re-confirm (ADR-0048).
 - **Documented mirror columns** `postings.transaction_content_hash` and `postings.source_account`/`source_account_type`: DECIDED (owner, 2026-10-25), ADR-0055: kept through 0.4.x, both computed by the mirror.
-- **Frontend framework:** ADR-0006 is Proposed until S13 reports.

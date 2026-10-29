@@ -1,5 +1,5 @@
-// INV-12 for the frontend (BL-0012): the dependency direction of ARCHITECTURE.md §3.1, read with the Vue
-// substitutions at its top. app -> features -> (catalog, components/app, api, platform) -> domain;
+// INV-12 for the frontend (BL-0012): the dependency direction of ARCHITECTURE.md §3.1.
+// app -> features -> (catalog, components/app, api, platform) -> domain;
 // components/ui imports nothing of ours; api/generated is read only by api; app and other features reach a
 // feature only through its index.ts, and a feature reaches another only along an edge in FEATURE_EDGES;
 // src/domain imports only domain, decimal.js and temporal-polyfill; only platform/shell/tauri.ts imports

@@ -8,8 +8,15 @@ an engine pool and its admission, the heavy-load semaphore and the write limiter
 workspaces, ...). The convergence audit of that day found those words left in documents that state the current
 design; this check refuses them there, so the old designs cannot come back by copy and paste.
 
+Since S0055 it also refuses the React target of ADR-0006, which ADR-0053 replaced by Vue 3 on 2026-10-25: the
+documents described React in their body for four days under a "read the Vue equivalents" banner, until the owner
+found it (2026-10-29). The Vue stack's own names (vue-sonner, `vue-tsc --noEmit`, shadcn-vue on Reka UI) pass, and so
+do bare "hooks" (git hooks, Vue Query's own word) and the verb "react".
+
 Checked (the current-state documents): `design/ARCHITECTURE.md`, `design/INVARIANTS.md`, `design/ENGINEERING.md`,
-`design/glossary.md`, every Markdown file under `design/specs/`, `design/capabilities.toml` and `design/backlog.md`.
+`design/glossary.md`, every Markdown file under `design/specs/`, `design/capabilities.toml` and `design/backlog.md`;
+since S0055 also the files agents read first: `design/README.md`, `design/process/PROCESS.md`, the `CLAUDE.md` files
+(root, `backend/`, `engine/`, `frontend/`), every `.claude/agents/*.md` and every `.claude/skills/*/SKILL.md`.
 Not checked, because they are history: journals, the inbox, `IMPROVEMENTS.md`, and the ADRs (append-only: a
 superseded decision stays in an ADR's body, with its amendment section saying what replaced it).
 
@@ -50,8 +57,15 @@ FIXED_FILES = (
     "design/glossary.md",
     "design/capabilities.toml",
     "design/backlog.md",
+    "design/README.md",
+    "design/process/PROCESS.md",
+    "CLAUDE.md",
+    "backend/CLAUDE.md",
+    "engine/CLAUDE.md",
+    "frontend/CLAUDE.md",
 )
 SPECS = "design/specs"
+GLOBS = (".claude/agents/*.md", ".claude/skills/*/SKILL.md")  # each must match at least one file
 ABANDONED = "**Abandoned, so stale wherever it is stated as current:**"
 HISTORY_STATUSES = frozenset({"done", "removed", "post-v0.4"})
 KNOWN_STATUSES = HISTORY_STATUSES | {"open", "in-progress", "parked"}
@@ -113,6 +127,23 @@ ACTIVE: tuple[Term, ...] = (
     Term("engine-scheduler.md", r"\bengine-scheduler\.md\b"),
     Term("engine scheduler", r"(?<![\w-])engine[- ]scheduler(?![\w-])(?!\.md)"),
     Term("scheduler spec or slice", r"\bscheduler(?:'s)?\s+(?:spec|slice|design)\b"),
+    # S0055: the React target of ADR-0006, superseded by ADR-0053 (Vue 3). The capitalised name, and `react` joined to
+    # a package or rule name (react-router, @xstate/react, lucide-react, react/no-danger); the verb "react" passes.
+    Term("React", r"\bReact\b", case=True),
+    Term("react package or rule", r"[@/-]react\b|\breact[-/@]", case=True),
+    Term("JSX or TSX", r"\b(?:jsx|tsx)\b"),
+    Term("Radix", r"\bRadix\b|\bradix-ui\b", case=True),
+    Term("shadcn/ui", r"\bshadcn/ui\b"),
+    Term("sonner", r"(?<![\w-])sonner\b"),  # vue-sonner passes
+    Term("React hook API", r"\buse(?:State|Effect|LayoutEffect|InsertionEffect|Memo|Callback|Reducer|Context|Ref"
+                           r"|SyncExternalStore|Transition|DeferredValue|ImperativeHandle|ActionState|Optimistic)\b",
+         case=True),
+    code("QueryClientProvider"),
+    Term("custom hook", r"\bcustom hooks?\b"),
+    Term("function or class component", r"\b(?:function|class) components?\b"),
+    Term("tsc type gate", r"(?<![\w-])tsc --noEmit\b", case=True),  # vue-tsc --noEmit passes
+    Term("S13 pending", r"\bpending S13\b|\b(?:if|until) (?:spike )?S13\b|\bS13 (?:keeps|fails)\b"),
+    Term("Vue fallback", r"\bVue fallback\b"),
 )
 
 # TODO(BL-0109): the engine-jobs slice removes the per-request time limits (spec §5.5); it moves these into ACTIVE
@@ -269,7 +300,13 @@ def documents(root: Path) -> tuple[list[str], list[str]]:
         else []
     if not specs:
         problems.append(f"{SPECS}: no specs found")
-    return paths + specs, problems
+    globbed: list[str] = []
+    for pattern in GLOBS:
+        found = sorted(q.relative_to(root).as_posix() for q in root.glob(pattern) if q.is_file())
+        if not found:
+            problems.append(f"{pattern}: no files found")
+        globbed += found
+    return paths + specs + globbed, problems
 
 
 def check(root: Path, terms: tuple[Term, ...] = ACTIVE, allow: tuple[Allow, ...] = ALLOW) -> list[str]:

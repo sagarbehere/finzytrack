@@ -99,5 +99,5 @@ Terms are grouped by area and sorted inside each group. Where a term is decided 
 - **Risk class.** High, Medium or Low, named in a slice brief; the verifier may raise it, never lower it.
 - **Seeded defect.** A known bug planted on a throwaway branch to measure whether the verifiers catch it.
 - **Slice.** The smallest change that delivers one verifiable behaviour, with a brief, tests first, a verifier pass and docs in the same change.
-- **Spike.** A timeboxed experiment with a pass/fail verdict (for example S13, React vs Vue in WebKit).
+- **Spike.** A timeboxed experiment with a pass/fail verdict (for example S13, which measured two frontend frameworks in WebKit and decided Vue 3, ADR-0053).
 - **Verifier.** A fresh-context agent that tries to break a slice and reports findings with IDs and repros.

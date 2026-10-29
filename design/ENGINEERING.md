@@ -1,13 +1,11 @@
 # Engineering principles (EP-nn)
 
-> **Frontend framework (2026-10-25): Vue 3, per ADR-0053** (spike S13). Where this document describes the React target, read the Vue equivalents: hooks → composables, `.tsx` → `.vue`, TanStack Vue Query/Table/Virtual, shadcn-vue on Reka UI, `@xstate/vue`, `@ai-sdk/vue`, `eslint-plugin-vue` + `eslint-plugin-vuejs-accessibility`, `vue-tsc`; pins in ARCHITECTURE.md §10 (Vue fallback rows).
-
 This file holds the engineering principles that shape Finzytrack v0.4's code, how each is enforced, and the verifier checklist.
 
 - **Status:** current. Migrated on 2026-10-24 from the review's engineering-principles document (review:26), with the final review's corrections applied (review:F §3.11): size thresholds are report-only (EP-02); the account grammar and tolerance live in `ledger` behind the port (EP-03); concept counters are bans with one allowed home (EP-23); a test-design principle is added (EP-28); findings cite one of the listed ID forms (§3).
 - **Owner:** the process. Agents propose changes; the owner approves (§4). EP IDs are stable and never renumbered.
 - **Read with:** `design/INVARIANTS.md` (the "musts"), `design/ARCHITECTURE.md` (the system these principles shape), `design/process/PROCESS.md` (how slices, gates and reviews work) and `design/decisions/` (ADRs).
-- **Frontend examples** use React, the target stack (ADR-0006, pending S13). If S13 keeps Vue, the Vue equivalents named next to each check apply.
+- **Frontend examples** use Vue 3, the decided stack (ADR-0053): composables, `.vue` single-file components, TanStack Vue Query, `@xstate/vue`, `vue-tsc`.
 
 ## 0. Invariants versus principles
 
@@ -215,7 +213,7 @@ created = clock.now(); pid = ids.new_plan_id()   # TransactionIds are derived, n
 - Generated package diagram, diffed in review.
 
 ### EP-12 Idiomatic code; no heavy FP libraries
-**Rule.** Write plain, idiomatic Python and TypeScript: dataclasses, `match`, comprehensions, `Protocol`s; in TS, discriminated unions, `switch` with `never` checks, hooks and plain function components (no class components). Do not add `returns`, `toolz`, fp-ts, Effect or similar. Functional style means pure functions and immutable values, not a library.
+**Rule.** Write plain, idiomatic Python and TypeScript: dataclasses, `match`, comprehensions, `Protocol`s; in TS, discriminated unions, `switch` with `never` checks, composables and `<script setup>` single-file components. Do not add `returns`, `toolz`, fp-ts, Effect or similar. Functional style means pure functions and immutable values, not a library.
 **Why.** The code must stay readable by any contributor and by agents with a typical prior. A second programming model inside the language costs more than it returns here.
 
 **Enforcement.**
@@ -302,7 +300,7 @@ Generated files carry a header and are never hand-edited. Generated code keeps d
 
 ### EP-17 Statecharts for stateful workflows
 **Rule.** A workflow with real states is a statechart:
-- **frontend:** an XState v5 machine (used via `useMachine` from `@xstate/react`), covered by model-based tests (`@xstate/graph` paths) that hit 100% of states and transitions;
+- **frontend:** an XState v5 machine (used via `useMachine` from `@xstate/vue`), covered by model-based tests (`@xstate/graph` paths) that hit 100% of states and transitions;
 - **backend:** a pure `transition(state, event) -> (state, effects)` over an explicit table, with an exhaustive (state × event) test and Hypothesis random walks.
 
 Required for: boot, workspace open/switch, the import session, the edit buffer and save, the AI proposal, the updater, the sidecar and lifecycle runs (ARCHITECTURE §7). Where the backend is authoritative, the frontend machine models only UI states over the backend state.
@@ -355,16 +353,16 @@ def run_internal(sql: LiteralString, params: Params) -> Frame: ...
 def run_user_sql(sql: UserSql, params: Params, limits: QueryLimits) -> Frame: ...
 ```
 
-```ts
-// bad
-<div dangerouslySetInnerHTML={{ __html: renderMarkdown(msg.text) }} />
-// good: SafeHtml can only come from the sanitizing renderer; <SafeMarkdown> is the one raw-HTML site
-<SafeMarkdown source={msg.text /* UntrustedText */} />
+```vue
+<!-- bad -->
+<div v-html="renderMarkdown(msg.text)" />
+<!-- good: SafeHtml can only come from the sanitizing renderer; <SafeMarkdown> is the one raw-HTML site -->
+<SafeMarkdown :source="msg.text" /> <!-- msg.text is UntrustedText -->
 ```
 
 **Enforcement.**
 - pyright strict (`LiteralString`, `NewType`).
-- `react/no-danger` (via `@eslint-react` or a `no-restricted-syntax` rule on `dangerouslySetInnerHTML`) everywhere except `components/app/SafeMarkdown.tsx` (`vue/no-v-html` except `SafeMarkdown.vue` if spike S13 keeps Vue).
+- `vue/no-v-html` everywhere except `components/app/SafeMarkdown.vue`.
 - ESLint ban on `as <Brand>` casts outside the parser modules.
 - Schema check: every field named `*amount*`, `*account*`, `*date*`, `*commodity*` in `contracts/openapi.json` carries an `x-ft-type` (T1). The name match is a **heuristic**: an allowlist file (`contracts/x-ft-type-allowlist.txt`) lists fields such as `amount_count` or `date_format` that match but are not domain values, each with a reason.
 - Checklist `[EP-21]`: is a new brand justified by a named confusion? Is a costly confusion left unbranded?
@@ -372,7 +370,7 @@ def run_user_sql(sql: UserSql, params: Params, limits: QueryLimits) -> Frame: ..
 ### EP-22 The strictest type checking
 **Rule.**
 - **Python:** pyright `strict` is the single gate, with `reportMissingTypeStubs` on (local stubs in `backend/typings/beancount/`), `reportUnnecessaryTypeIgnoreComment`, `reportMatchNotExhaustive` and `reportImplicitOverride`. Every `# type: ignore` / `# pyright: ignore` carries a rule code and a reason.
-- **TypeScript:** `strict` (checked by `tsc --noEmit`), `noUncheckedIndexedAccess`, `exactOptionalPropertyTypes`, `noImplicitOverride`, `noPropertyAccessFromIndexSignature`, `noFallthroughCasesInSwitch`, `verbatimModuleSyntax`. No `any`.
+- **TypeScript:** `strict` (checked by `vue-tsc --noEmit`, over `.ts` and `.vue` files), `noUncheckedIndexedAccess`, `exactOptionalPropertyTypes`, `noImplicitOverride`, `noPropertyAccessFromIndexSignature`, `noFallthroughCasesInSwitch`, `verbatimModuleSyntax`. No `any`.
 
 **Why.** Types are the cheapest verifier, and they carry the domain types of EP-21.
 

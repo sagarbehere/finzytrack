@@ -118,7 +118,7 @@ Origin: accepted by the owner as a starting point on 2026-10-24 (review:20 §2),
 ### INV-18: Accessibility
 - **Rule:** Accessibility meets WCAG 2.2 AA.
 - **Why:** The app must work with a keyboard and a screen reader (review:17).
-- **Enforced by:** planned: eslint-plugin-jsx-a11y (eslint-plugin-vuejs-accessibility if spike S13 keeps Vue); axe in acceptance tests; a token contrast test.
+- **Enforced by:** planned: eslint-plugin-vuejs-accessibility (ADR-0053; its recommended rules already run in `frontend/eslint.config.js`, S0009); axe in acceptance tests; a token contrast test.
 - **Status:** pending (BL-0018, by M11)
 
 ### INV-19: Docs do not drift

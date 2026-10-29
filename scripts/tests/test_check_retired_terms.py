@@ -32,7 +32,16 @@ EXPECTED_FIXED = (
     "design/glossary.md",
     "design/capabilities.toml",
     "design/backlog.md",
+    # S0055: the files agents read first, which the frontend sweep covered
+    "design/README.md",
+    "design/process/PROCESS.md",
+    "CLAUDE.md",
+    "backend/CLAUDE.md",
+    "engine/CLAUDE.md",
+    "frontend/CLAUDE.md",
 )
+# S0055: every agent definition and every skill, found by these patterns (one sample file each in a scratch root).
+EXPECTED_GLOB_SAMPLES = (".claude/agents/a.md", ".claude/skills/x/SKILL.md")
 
 # One line per refuse-now term, as an abandoned design would have written it.
 RETIRED_LINES = {
@@ -68,6 +77,20 @@ RETIRED_LINES = {
     "engine-scheduler.md": "See `design/specs/engine-scheduler.md` §6.",
     "engine scheduler": "The engine scheduler spec decides it.",
     "scheduler spec or slice": "With the scheduler slice the engine leads its group.",
+    # S0055: the React target of ADR-0006, superseded by ADR-0053 (Vue 3)
+    "React": "The UI is React 19 with the compiler.",
+    "react package or rule": "Routes use react-router; machines use `@xstate/react`; `react/no-danger` is on.",
+    "JSX or TSX": "Views are `*.tsx` files; a rule never lives only in JSX.",
+    "Radix": "Pickers are built on Radix primitives.",
+    "shadcn/ui": "Vendored shadcn/ui components.",
+    "sonner": "Toasts use sonner, outside inert regions.",
+    "React hook API": "Stores are read through `useSyncExternalStore`; no `useMemo`.",
+    "QueryClientProvider": "The shell mounts `QueryClientProvider`.",
+    "custom hook": "Headless logic as custom hooks.",
+    "function or class component": "Hooks and plain function components (no class components).",
+    "tsc type gate": "`tsc --noEmit` is the type gate.",
+    "S13 pending": "React frontend, pending S13; Vue if S13 fails.",
+    "Vue fallback": "The pins of the Vue fallback stack.",
 }
 # Words the audit says must never be refused, in the senses the current design uses them.
 TRAP_LINES = [
@@ -87,6 +110,15 @@ TRAP_LINES = [
     "A rate limiter on the price source.",
     "The CSV importer guesses the delimiter from the first line; delimiters per bank.",  # S0047 verifier V4
     "Engine-jobs spec §6; the engine-jobs slice.",
+    # S0055: the Vue stack's own words, and words that only look like the React target
+    "Toasts use vue-sonner; icons from `@lucide/vue`; shadcn-vue on Reka UI.",
+    "`vue-tsc --noEmit` is the type gate; `@vitejs/plugin-vue` builds `.vue` files.",
+    "Reactive state from `@vue/reactivity`; the view should react to a change and reacts once.",
+    "Git hooks run first; Vue Query hooks; the `hooks/` folder holds composables; functional components.",
+    "`parseInt` with radix 10.",
+    "`useConfirm`, `useUnsavedGuard`, `useTemplateRef`, `useFieldErrors`, `useMutation`.",
+    "Spike S13 decided Vue 3 (ADR-0053); the S13 measurements.",
+    "`app.config.errorHandler` catches render errors.",
 ]
 
 
@@ -285,6 +317,7 @@ def make_root(case: unittest.TestCase, files: dict[str, str]) -> Path:
     case.addCleanup(shutil.rmtree, tmp, True)
     base = {path: "nothing retired\n" for path in EXPECTED_FIXED}
     base["design/specs/a.md"] = "nothing retired\n"
+    base.update({path: "nothing retired\n" for path in EXPECTED_GLOB_SAMPLES})
     for path, text in {**base, **files}.items():
         (tmp / path).parent.mkdir(parents=True, exist_ok=True)
         (tmp / path).write_text(text, encoding="utf-8")
@@ -296,7 +329,8 @@ class Scope(unittest.TestCase):
         return make_root(self, files)
 
     def test_each_current_state_document_is_checked(self) -> None:
-        for path in (*EXPECTED_FIXED, "design/specs/a.md", "design/specs/write-path/deep/b.md"):
+        for path in (*EXPECTED_FIXED, *EXPECTED_GLOB_SAMPLES, "design/specs/a.md", "design/specs/write-path/deep/b.md",
+                     ".claude/agents/verifier.md", ".claude/skills/slice/SKILL.md"):
             with self.subTest(path=path):
                 root = self.make({path: "a semaphore\n"})
                 self.assertEqual([p.split(":")[0] for p in crt.check(root, allow=())], [path])
@@ -308,6 +342,9 @@ class Scope(unittest.TestCase):
             "design/process/IMPROVEMENTS.md": "a semaphore",
             "design/decisions/ADR-0001-x.md": "a semaphore",
             "design/specs/notes.txt": "a semaphore",  # specs are Markdown
+            ".claude/worktrees/w/CLAUDE.md": "a semaphore",  # S0055: another checkout, not this one's documents
+            ".claude/skills/x/notes.md": "a semaphore",  # only a skill's SKILL.md
+            ".claude/agents/old/a.md": "a semaphore",  # only the agent files themselves
         })
         self.assertEqual(crt.check(root, allow=()), [])
 
@@ -315,6 +352,13 @@ class Scope(unittest.TestCase):
         root = self.make({})
         (root / "design/glossary.md").unlink()
         self.assertTrue(any("design/glossary.md" in p and "missing" in p for p in crt.check(root, allow=())))
+
+    def test_no_agent_or_skill_files_is_a_problem(self) -> None:  # S0055
+        for sample, folder in zip(EXPECTED_GLOB_SAMPLES, (".claude/agents", ".claude/skills")):
+            with self.subTest(folder=folder):
+                root = self.make({})
+                (root / sample).unlink()
+                self.assertTrue(any(folder in p for p in crt.check(root, allow=())), folder)
 
     def test_no_specs_is_a_problem(self) -> None:
         root = self.make({})
@@ -367,7 +411,10 @@ class RealRepository(unittest.TestCase):
         self.assertIn("0 refused", r.stdout)
         # every current-state document was read: the fixed ones and every Markdown file under design/specs/
         specs = [f for _, _, files in os.walk(ROOT / "design/specs") for f in files if f.endswith(".md")]
-        self.assertIn(f"retired terms: {len(EXPECTED_FIXED) + len(specs)} documents,", r.stdout)
+        agents = [f for f in os.listdir(ROOT / ".claude/agents") if f.endswith(".md")]
+        skills = [d for d in os.listdir(ROOT / ".claude/skills") if (ROOT / ".claude/skills" / d / "SKILL.md").is_file()]
+        self.assertIn(f"retired terms: {len(EXPECTED_FIXED) + len(specs) + len(agents) + len(skills)} documents,",
+                      r.stdout)
 
     def test_a_retired_term_in_the_repository_fails_the_script(self) -> None:
         root = make_root(self, {"design/glossary.md": "- **Semaphore.** retired\n"})
