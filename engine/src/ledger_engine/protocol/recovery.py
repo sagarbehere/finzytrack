@@ -8,8 +8,13 @@ engine that holds the engine lock (`Engine.took_engine_lock`).
   record, so the blocked screen can show both versions or the file at a created path without another request.
 - `recover_act`: `keep`, `delete_kept` or `delete_created`.
 
-A `journal_dir` must be `<app_local_data>/local/<key>/journal` as the listing named it (its canonical path): any
-other folder is refused `protocol.invalid_params` (`BadParamsError`), so no op writes outside the journals.
+`app_local_data` must be the folder the engine's engine lock lives under (`<app_local_data>/locks/engine.lock`),
+both resolved (red team r1 R1-2), and a `journal_dir` must be `<app_local_data>/local/<key>/journal` as the listing
+named it (its canonical path): anything else is refused `protocol.invalid_params` (`BadParamsError`), so no op
+writes outside the app's own journals. A try (and its inspection) opens the journal folder through the path guard:
+one reached through a link stops `path_moved`, touching nothing (red team r1 R1-1); the actions do the same
+(`recover_all`'s `Handles`). Between that check and the try's own open of the folder, a link swapped in stays
+possible (only a process writing inside app-local data could; spec §15).
 """
 
 from __future__ import annotations
@@ -19,12 +24,13 @@ from collections.abc import Callable
 from typing import Final, Protocol
 
 from ledger_engine.fs.darwin import DarwinLocks, for_this_os
-from ledger_engine.fs.port import FileSystem, Kind
+from ledger_engine.fs.port import FileSystem, Kind, same_path
 from ledger_engine.ledger import recover_all as ra
 from ledger_engine.ledger.core import journal
 from ledger_engine.ledger.core import paths as core_paths
 from ledger_engine.ledger.core.journal import Record, State
-from ledger_engine.ledger.handles import join
+from ledger_engine.ledger.core.recovery import Cause
+from ledger_engine.ledger.handles import Handles, PathMovedError, join
 from ledger_engine.ledger.restore import Failed, Resolved, Stopped, recover_journal
 from ledger_engine.protocol.messages import (
     DecisionScalar,
@@ -53,7 +59,11 @@ class BadParamsError(ValueError):
 
 
 class Decider(Protocol):
-    """What a handler needs of the request's job context (`server.JobContext`)."""
+    """What a handler needs of the request's job context (`server.JobContext`): the engine lock this engine holds
+    (None: none; the server refuses these ops before they run then) and the decision record."""
+
+    @property
+    def engine_lock(self) -> str | None: ...
 
     def decide(self, table: str, version: int, inputs: dict[str, DecisionScalar], output: str) -> None: ...
 
@@ -68,6 +78,28 @@ def _locks(app_local_data: str) -> DarwinLocks:
     folder = join(app_local_data.rstrip("/") or "/", "locks")
     os.makedirs(folder, exist_ok=True)
     return DarwinLocks(folder)
+
+
+def _canonical(fs: FileSystem, path: str) -> str | None:
+    """`path`'s canonical path when every component of it exists (None otherwise)."""
+    try:
+        r = fs.resolve(path)
+    except ValueError:  # a relative path, or a `.` or `..` component
+        return None
+    return None if r.rest else core_paths.canonical_path(r)
+
+
+def _app_local_data(fs: FileSystem, app_local_data: str, ctx: Decider) -> str:
+    """`app_local_data` only when it is the folder this engine's engine lock lives under
+    (`<app_local_data>/locks/engine.lock`, as the main sidecar names it), both resolved: any other tree, laid out as
+    the app's or not, is refused before anything in it is read, made or removed (red team r1 R1-2)."""
+    lock = ctx.engine_lock
+    mine = None if lock is None else _canonical(fs, os.path.dirname(os.path.dirname(os.path.abspath(lock))))
+    given = _canonical(fs, app_local_data)
+    if mine is None or given is None or not same_path(given, mine):
+        msg = "params.app_local_data: not the folder of this engine's engine lock"
+        raise BadParamsError(msg)
+    return app_local_data
 
 
 def _journal_dir(fs: FileSystem, app_local_data: str, journal_dir: str) -> str:
@@ -110,7 +142,8 @@ def _listed(j: ra.Listed) -> ListedJournal:
 
 def recover_list(params: Message, ctx: Decider) -> Message:
     assert isinstance(params, RecoverListParams)  # noqa: S101 (the handler's own params model)
-    listing = ra.list_journals(_fs(), params.app_local_data)
+    fs = _fs()
+    listing = ra.list_journals(fs, _app_local_data(fs, params.app_local_data, ctx))
     return RecoverListResult(
         journals=[_listed(j) for j in listing.journals],
         unlisted=[UnlistedFolder(folder=u.folder, errno=u.errno) for u in listing.unlisted],
@@ -118,12 +151,29 @@ def recover_list(params: Message, ctx: Decider) -> Message:
     )
 
 
-def _record(fs: FileSystem, journal_dir: str, name: str) -> Record | None:
+def _guarded(fs: FileSystem, journal_dir: str) -> bool:
+    """The journal folder is at its path: no link on the way leads elsewhere (§6.3's path guard; red team r1
+    R1-1: a key or journal folder in `local/` that is a link to another key's journal)."""
+    handles = Handles(fs)
     try:
-        with fs.open_dir(journal_dir) as jd:
-            data = jd.read(journal.file_name(name, State.OPEN))
+        handles.at(journal_dir)
+    except PathMovedError:
+        return False
     except OSError:
+        return True  # not there, or unreadable: the try itself answers that (`unreachable`, an error)
+    finally:
+        handles.close()
+    return True
+
+
+def _record(fs: FileSystem, journal_dir: str, name: str) -> Record | None:
+    handles = Handles(fs)
+    try:
+        data = handles.at(journal_dir).read(journal.file_name(name, State.OPEN))
+    except (OSError, PathMovedError):
         return None
+    finally:
+        handles.close()
     r = journal.decode(data or b"")
     return r if isinstance(r, Record) and r.name == name else None
 
@@ -148,8 +198,9 @@ def _inspection(fs: FileSystem, journal_dir: str, name: str) -> list[InspectedFi
 def recover_try(params: Message, ctx: Decider) -> Message:
     assert isinstance(params, RecoverTryParams)  # noqa: S101 (the handler's own params model)
     fs = _fs()
-    jd = _journal_dir(fs, params.app_local_data, params.journal_dir)
-    out = recover_journal(fs, _locks(params.app_local_data), jd, params.name)
+    ald = _app_local_data(fs, params.app_local_data, ctx)
+    jd = _journal_dir(fs, ald, params.journal_dir)
+    out = recover_journal(fs, _locks(ald), jd, params.name) if _guarded(fs, jd) else Stopped(Cause.PATH_MOVED, None, jd)
     if isinstance(out, Resolved):
         result = RecoverTryResult(
             outcome="resolved", cause=None, path=None, entry=None, detail=None, errno=None, inspection=None
@@ -182,8 +233,9 @@ def recover_try(params: Message, ctx: Decider) -> Message:
 def recover_act(params: Message, ctx: Decider) -> Message:
     assert isinstance(params, RecoverActParams)  # noqa: S101 (the handler's own params model)
     fs = _fs()
-    jd = _journal_dir(fs, params.app_local_data, params.journal_dir)
-    locks = _locks(params.app_local_data)
+    ald = _app_local_data(fs, params.app_local_data, ctx)
+    jd = _journal_dir(fs, ald, params.journal_dir)
+    locks = _locks(ald)
     if params.action == "keep":
         out = ra.keep(fs, locks, jd, params.name)
     elif params.file is None or params.sha256 is None or (params.action == "delete_kept" and params.kept is None):

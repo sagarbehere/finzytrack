@@ -19,10 +19,11 @@ earlier session caught between its handshake and its `flock` can never run besid
   locks of every file the record names, without waiting; every file the record names that is there as a regular file
   `durable_sync`ed, and every folder it names that is there synced, so "now" is what a power loss keeps (a restore cut
   by an error may have left an exchange unsynced); then `.open` renamed `.kept` and the journal folder synced. A
-  folder that is not there (an unplugged disk, a moved folder) has nothing to sync; a sync that answers `EROFS` has
-  nothing pending (a read-only volume: probed on APFS, S0062, `F_FULLFSYNC` answers `EROFS` there); any other error
-  renames nothing (`ActFailed`). A record that cannot be read is kept by its rename alone (ADR-0063: Keep resolves
-  "one that cannot be read").
+  folder that is not there (an unplugged disk, a moved folder: `ENOENT`, `ENOTDIR`) has nothing to sync, and one no
+  longer at its recorded path (a link in its place, a rename in case only) refuses Keep (`path_moved`: red team r1
+  R1-3); a sync that answers `EROFS` has nothing pending (a read-only volume: probed on APFS, S0062, `F_FULLFSYNC`
+  answers `EROFS` there); any other error renames nothing (`ActFailed`). A record that cannot be read is kept by its
+  rename alone (ADR-0063: Keep resolves "one that cannot be read").
 - **`delete_kept`** (owner, 2026-10-29: "Offer to delete it (Recommended)") and **`delete_created`** (owner,
   2026-10-30: "Never remove it (Recommended)": the user deletes it, here at their request): each removes one regular
   file and nothing else, only from an `.open` record that names it: a kept name this journal derives for one of its
@@ -330,6 +331,8 @@ def keep(fs: FileSystem, locks: Locks, journal_dir: str, name: str) -> ActOutcom
                 at = journal_dir
                 jd.rename_excl(journal.file_name(name, State.OPEN), journal.file_name(name, State.KEPT))
                 jd.sync()
+            except PathMovedError as e:  # red team r1 R1-3: what stands there now may not be synced
+                return Refused("path_moved", e.canonical)
             except OSError as e:
                 return ActFailed(at, e.errno)
         return Done()
@@ -338,10 +341,11 @@ def keep(fs: FileSystem, locks: Locks, journal_dir: str, name: str) -> ActOutcom
 
 
 def _present(handles: Handles, folder: str) -> DirHandle | None:
-    """The folder's handle, or None when it is not there or no longer at its recorded path (nothing to sync)."""
+    """The folder's handle, or None when it is not there (`ENOENT`, `ENOTDIR`: nothing to sync). A folder no longer
+    at its recorded path raises `PathMovedError`: something stands there whose bytes Keep cannot sync."""
     try:
         return handles.at(folder)
-    except (PathMovedError, FileNotFoundError, NotADirectoryError):
+    except (FileNotFoundError, NotADirectoryError):
         return None
 
 

@@ -20,7 +20,7 @@ from dataclasses import replace
 
 import pytest
 
-from ledger_engine.fs.port import Kind
+from ledger_engine.fs.port import AclEntry, Kind
 from ledger_engine.ledger.core import journal
 from ledger_engine.ledger.core.journal import Record, State
 from ledger_engine.ledger.core.recovery import Cause
@@ -37,7 +37,7 @@ from ledger_engine.ledger.recover_all import (
 from ledger_engine.ledger.restore import Failed, Resolved, Stopped, recover_journal
 from ledger_engine.ledger.writer import durable_commit, sha256
 from tests.fakes.memfs import Crash, MemFS, MemLocks
-from tests.ledger.worlds import JD, NAME, World, world
+from tests.ledger.worlds import BD, JD, NAME, Target, World, commit_for, world
 
 pytestmark = [pytest.mark.inv("INV-32"), pytest.mark.inv("INV-22"), pytest.mark.inv("INV-01")]
 
@@ -304,6 +304,67 @@ def test_keep_skips_a_folder_that_is_not_there() -> None:
     w = crashed_at(AFTER_CREATE)
     w.fs.outside_move("/w/L/inc", "/w/elsewhere")
     assert keep(w.fs, MemLocks(), JD, NAME) == Done()
+
+
+def test_keep_refuses_a_folder_no_longer_at_its_path_and_renames_nothing() -> None:
+    """Red team r1 R1-3: a folder replaced by a link to where it went resolves elsewhere; what stands there may not be
+    synced, so Keep refuses (`path_moved`) rather than say "kept" over bytes a power loss can take back."""
+    w = crashed_at(AFTER_CREATE)
+    w.fs.outside_move("/w/L", "/w/moved")
+    w.fs.outside_symlink("/w/L", "/w/moved")
+    snap = w.fs.snapshot()
+    assert keep(w.fs, MemLocks(), JD, NAME) == Refused("path_moved", "/w/L/inc")  # the first folder it syncs
+    assert w.fs.snapshot() == snap
+    assert f"{NAME}.open" in w.fs.names_in(JD)
+
+
+def _deny(perms: str, flags: str = "") -> AclEntry:
+    return AclEntry(True, frozenset(perms.split(",")), frozenset(f for f in flags.split(",") if f))
+
+
+@pytest.mark.parametrize("action", ["keep", "delete_kept", "delete_created"])
+def test_an_action_refuses_a_journal_folder_the_folder_rule_refuses_and_writes_nothing(action: str) -> None:
+    """Verifier r1 O2: the journal folder is judged by the save's folder rule before its record is read (S0061 r7):
+    an ACL deny entry there refuses every action, naming the folder, and nothing is written."""
+    w = with_kept()
+    w.fs.outside_acl(JD, _deny("delete_child"))
+    snap = w.fs.snapshot()
+    if action == "keep":
+        out = keep(w.fs, MemLocks(), JD, NAME)
+    elif action == "delete_kept":
+        out = delete_kept(w.fs, MemLocks(), JD, NAME, "/w/L/main.bean", KEPT, sha256(KEPT_BYTES))
+    else:
+        out = delete_created(w.fs, MemLocks(), JD, NAME, "/w/L/prices.bean", sha256(POST))
+    assert isinstance(out, Refused), out
+    assert (out.reason, out.path) == ("permission", JD)
+    assert w.fs.snapshot() == snap
+
+
+def test_keep_syncs_a_folder_the_save_made_that_holds_no_file_of_the_record() -> None:
+    """Verifier r1 O3: a save into `y/q/` made two folders; `y` holds no file the record names, only `q`, so only
+    the record's `created_dirs` lead Keep to sync it ("every file and folder the journal names")."""
+
+    def deep() -> World:
+        fs = MemFS()
+        for d in (JD, BD, "/w/L"):
+            fs.outside_mkdirs(d)
+        fs.outside_write("/w/L/main.bean", b"pre\n")
+        targets = (Target("/w/L/y/q/prices.bean", None, POST), Target("/w/L/main.bean", b"pre\n", b"post\n"))
+        return World(fs, commit_for(targets), targets, fs.snapshot(), ("/w/L/y", "/w/L/y/q"))
+
+    clean = deep()
+    durable_commit(clean.fs, clean.commit)
+    at = next(i for i, e in enumerate(clean.fs.effects) if e.startswith("create /w/L:"))  # prices.bean placed
+    w = deep()
+    w.fs.inject(at, crash=True)
+    with pytest.raises(Crash):
+        durable_commit(w.fs, w.commit)
+    assert {d.canonical_path for d in record_of(w.fs).created_dirs} == {"/w/L/y", "/w/L/y/q"}
+    n = len(w.fs.effects)
+    assert keep(w.fs, MemLocks(), JD, NAME) == Done()
+    synced = [e for e in w.fs.effects[n:] if e.startswith("sync ")]
+    assert "sync /w/L/y:" in synced, synced
+    assert "sync /w/L/y/q:" in synced, synced
 
 
 # -- Delete the kept copy ---------------------------------------------------------------------------------------------

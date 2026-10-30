@@ -9,14 +9,17 @@ answered only by an engine that holds the engine lock, so the sidecar never read
    records removed. An engine's death before it: a fresh engine lists again (model `rc_spawn` then `rc_init`). Then
    `JobContext.listed()`: from now on a Cancel ends only the engine (§4).
 2. **The actions** the blocked screen asked for (Keep the files as they are now, Delete the kept copy, Delete it), in
-   order, each on a journal the listing found `.open`; a kept journal is not tried.
+   order, each on a journal the listing found `.open` (any other is refused `not_open`, or `unlisted` when its folder
+   could not be listed, without a call); a kept journal is not tried.
 3. **Each journal still `.open` is tried** (`recover_try`), in the listing's order, in the same engine (it runs no
    user code). A record that cannot be read is not tried: it blocks (`stopped`, cause `unreadable`).
 
 How each step can end, and what the journal in hand counts as (§8.1): the try's own answer (`resolved`, `stopped`,
 `failed`); our Cancel (`cancelled`: the call fails, the work asks a fresh engine for the next one); an engine's death
-or a reply that is not of the op's shape (`failed`, cause `engine_stopped`); no engine to be had (the stop bound, an
-incompatible engine, a failed lock wait: `fresh_engine` fails, and every journal not yet tried is `not_tried`). So
+or a reply that is not of the op's shape (`failed`, cause `engine_stopped`; the next step gets a fresh engine); no
+engine to be had (the stop bound, an incompatible engine, a start that failed, a failed lock wait: `fresh_engine`
+fails, and every journal not yet tried is `not_tried`, its cause the failure's kind). A job whose first engine did
+not start runs its work all the same: its listing call answers that failure and the run reports nothing listed. So
 **every listed `.open` journal ends the run resolved, kept by an action of this run, or blocking with exactly one
 reason**; none is skipped (INV-32; model mutants `crash_unmarked`, `untried_unmarked`, `cancel_stops_all`).
 
@@ -37,7 +40,7 @@ from __future__ import annotations
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal
+from typing import Final, Literal
 
 from app.platform.engine import (
     ActOutcome,
@@ -57,6 +60,10 @@ from app.platform.engine_protocol import Violation, decode_recover_act, decode_r
 type Reason = Literal["stopped", "failed", "cancelled", "not_tried"]
 """Why a journal blocks (§11): its try stopped on a cause found on disk; the try failed (an error the system
 answered, the engine died); the user cancelled it; it was not tried because no engine could run."""
+
+NO_ENGINE: Final[frozenset[str]] = frozenset({"cancelled", "start_failed", "unavailable", "incompatible"})
+"""A failed listing call after which no engine is asked for: our Cancel, or a start that failed (the job's first
+engine did not start, S0062 verifier r1 V1; a fresh engine that does not start ends the run the same way)."""
 
 ENGINE_STOPPED = "engine_stopped"
 """The cause of a `failed` journal whose try ended without an answer (the engine died, or broke the protocol)."""
@@ -160,7 +167,8 @@ class Blocking:
 @dataclass(frozen=True, slots=True)
 class ActionResult:
     """What an action of this run did: the engine's answer, or `not_open` when the listing did not find its journal
-    `.open`, or `cancelled`/`failed` when its call ended without an answer."""
+    `.open` (`unlisted` when its journal folder could not be listed: red team r1 R1-4), or `cancelled`/`failed` when
+    its call ended without an answer."""
 
     action: Action
     outcome: ActOutcome
@@ -267,8 +275,8 @@ class _Run:
         while True:
             out = self._call("recover_list", {})
             if isinstance(out, EngineFailure):
-                if out.kind == "cancelled":
-                    return Report(listed=False, why_not_listed="cancelled")
+                if out.kind in NO_ENGINE:  # our Cancel, or the job's engine never started: no engine to list in
+                    return Report(listed=False, why_not_listed=out.kind)
                 try:
                     self._fresh()  # model `rc_spawn`, then `rc_init`: list again in a fresh engine
                 except _NoEngine as e:
@@ -288,6 +296,7 @@ class _Run:
         self._ctx.listed()
         journals = [_journal(j) for j in listing.journals]
         by_name = {(j.journal_dir, j.name): j for j in journals}
+        unlisted = {u.folder for u in listing.unlisted}
         settled: dict[tuple[str, str], Journal | Blocking] = {}
         undone: list[Journal] = []
         kept: list[Journal] = []
@@ -297,7 +306,8 @@ class _Run:
                 where = (action.journal_dir, action.name)
                 j = by_name.get(where)
                 if j is None or where in settled:
-                    results.append(ActionResult(action, ActOutcome("refused", "not_open", None, None, None)))
+                    why = "unlisted" if action.journal_dir in unlisted else "not_open"  # red team r1 R1-4
+                    results.append(ActionResult(action, ActOutcome("refused", why, None, None, None)))
                     continue
                 out = self._call("recover_act", action_params(action))
                 if isinstance(out, EngineFailure | EngineRefusal) or isinstance(
@@ -306,7 +316,7 @@ class _Run:
                     blocking = self._lost(j, out)
                     results.append(ActionResult(action, ActOutcome("failed", blocking.cause, None, None, None)))
                     settled[where] = blocking
-                    if isinstance(out, EngineFailure):
+                    if not isinstance(out, EngineRefusal):  # died, cancelled, or broke the protocol (verifier r1 O6)
                         self._fresh()
                     continue
                 results.append(ActionResult(action, act))
@@ -325,7 +335,7 @@ class _Run:
                     tried := decode_recover_try(out), Violation
                 ):
                     settled[where] = self._lost(j, out)
-                    if isinstance(out, EngineFailure):
+                    if not isinstance(out, EngineRefusal):  # died, cancelled, or broke the protocol (verifier r1 O6)
                         self._fresh()
                     continue
                 if tried.outcome == "resolved":
@@ -334,9 +344,8 @@ class _Run:
                 else:
                     settled[where] = _blocking(j, tried)
         except _NoEngine as e:
-            why = "lock_failed" if e.failure.kind == "start_failed" else e.failure.kind
             for j in journals:
-                settled.setdefault((j.journal_dir, j.name), Blocking(j, "not_tried", why))
+                settled.setdefault((j.journal_dir, j.name), Blocking(j, "not_tried", e.failure.kind))
         blocking = tuple(b for b in settled.values() if isinstance(b, Blocking))
         assert len(settled) == len(journals), "a listed journal ended neither recovered, kept nor blocking"  # noqa: S101
         return Report(

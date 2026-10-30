@@ -130,10 +130,11 @@ class _NoChannel:
 class JobContext:
     """One request's job messages (engine-jobs §4, §5.4, §6.1 steps 7 and 9, §12)."""
 
-    def __init__(self, rid: int, op: str, channel: JobChannel) -> None:
+    def __init__(self, rid: int, op: str, channel: JobChannel, *, engine_lock: str | None = None) -> None:
         self._rid = rid
         self._op = op
         self._channel = channel
+        self.engine_lock = engine_lock  # the engine lock this engine holds (recover-all's ops check their folder)
         self._gated = False
         self._proceeded = False
         self.decision: Decision | None = None
@@ -365,18 +366,19 @@ def _valid_id(value: object) -> bool:
 
 class Engine:
     """The request handler. Its state: whether the handshake happened, and whether this engine holds the engine
-    lock (`took_engine_lock`, called once `hold_engine_lock` returned). An op that reads or writes ledger or journal
+    lock and which (`took_engine_lock`, called once `hold_engine_lock` returned; recover-all's ops act only in the
+    app folder that lock lives under, red team r1 R1-2). An op that reads or writes ledger or journal
     files (`OpSpec.needs_engine_lock`: recover-all's) is refused `engine.no_engine_lock` by an engine that does not
     hold it (S0062; engine-jobs §5.1): so no such work ever runs beside an engine of an earlier session, which may
     have answered its handshake and not yet taken its `flock` when the sidecar waited (BL-0151's gap)."""
 
-    def __init__(self, *, test_ops: bool = False, engine_lock_held: bool = False) -> None:
+    def __init__(self, *, test_ops: bool = False, engine_lock_held: str | None = None) -> None:
         self._handlers = {**PRODUCTION, **(TEST_OPS if test_ops else {})}
         self._ready = False
-        self._locked = engine_lock_held
+        self._locked = engine_lock_held  # the path of the engine lock this engine holds
 
-    def took_engine_lock(self) -> None:
-        self._locked = True
+    def took_engine_lock(self, path: str) -> None:
+        self._locked = path
 
     @property
     def ready(self) -> bool:
@@ -430,9 +432,9 @@ class Engine:
         except ValidationError as e:
             where = "; ".join(f"params.{'.'.join(map(str, err['loc']))}: {err['msg']}" for err in e.errors())
             return _refusal(rid, op, "protocol.invalid_params", where or "Invalid params.")
-        if handler.needs_engine_lock and not self._locked:
+        if handler.needs_engine_lock and self._locked is None:
             return _refusal(rid, op, "engine.no_engine_lock", "This engine does not hold the engine lock.")
-        ctx = JobContext(rid, op, channel)
+        ctx = JobContext(rid, op, channel, engine_lock=self._locked)
         try:
             reply = _accepted(rid, op, handler.run(params, ctx), ctx.decision)
         except InputEnded:
@@ -654,7 +656,7 @@ def main(argv: list[str] | None = None) -> int:
     def hold() -> None:
         assert lock is not None  # noqa: S101 (only passed with a lock)
         hold_engine_lock(lock)
-        engine.took_engine_lock()
+        engine.took_engine_lock(lock)
 
     serve(channel_in, channel_out, engine, after_handshake=None if lock is None else hold)
     if leads_own_group():  # the end-of-input exit ends the whole group (engine-jobs §5.2)

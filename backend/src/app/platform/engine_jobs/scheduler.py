@@ -867,8 +867,11 @@ class EngineJobs:
     # -- the job's worker thread --------------------------------------------------------------------------------
 
     def _run(self, worker: _Worker, work: Work, start: Start) -> None:
-        if worker.begin(start) is not None:
-            return  # the failed start was reported by the context
+        if worker.begin(start) is not None and worker.kind != "recover_all":
+            return  # the failed start was reported by the context (the table ends the job: `EngineLost`)
+        # A recover-all whose first engine did not start still runs its work (§8.1 "When the engine cannot run"):
+        # the table keeps the job (its death is the engine's alone), and the work's first call answers the start's
+        # failure, so the work ends with its report (S0062 verifier r1 V1).
         try:
             result: WorkResult | None = work(JobContext(worker))
         except Exception as exc:  # noqa: BLE001 (the job runner: ARCHITECTURE §6.3; logged, the job ends INTERNAL)

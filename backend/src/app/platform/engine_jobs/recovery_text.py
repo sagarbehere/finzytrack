@@ -120,7 +120,7 @@ def _stopped(b: Blocking, workspace: str) -> Screen:
         return Screen(
             "Finzytrack cannot read the record of an unfinished save, so it cannot tell which files it changed. "
             "No workspace opens until you press Retry or choose Keep the files as they are now.",
-            ("retry", "keep"),
+            BASE,
         )
     return Screen(
         f"{_name(_file_of(b))} has an unfinished save from {workspace} that could not be undone.",
@@ -157,6 +157,8 @@ def _not_undone(b: Blocking, workspace: str) -> Screen:
         message += " The ledger engine is not working. Press Retry when it works again."
     elif b.reason == "cancelled":
         message += " You cancelled it. Press Retry to undo it."
+    elif b.reason == "failed":
+        message += " Press Retry to try again."  # a step the engine refused (red team r1 O3)
     return Screen(message, BASE)
 
 
@@ -221,6 +223,7 @@ ACTION_REFUSED: Final[tuple[tuple[str, str], ...]] = (
     ("changed", "The file changed after you looked at it, so Finzytrack did not delete it. Look at it again."),
     ("absent", "The file is no longer there."),
     ("not_open", "This unfinished save was already resolved."),
+    ("unlisted", "Finzytrack could not read the folder of this unfinished save, so it did not do this. Press Retry."),
     ("lock_held", "Another program is using this ledger file. Try again in a moment."),
     ("path_moved", "The folder moved. Press Retry."),
     ("permission", "Your Mac does not allow Finzytrack to change this folder."),

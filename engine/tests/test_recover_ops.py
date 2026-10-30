@@ -82,6 +82,11 @@ class Rig:
         return json.loads(self.engine.handle(line))
 
 
+def held(ald: Path) -> Engine:
+    """An engine that took the engine lock `<ald>/locks/engine.lock` (as `--engine-lock` names it)."""
+    return Engine(engine_lock_held=str(ald / "locks" / "engine.lock"))
+
+
 @pytest.fixture
 def ald(tmp_path: Path) -> Path:
     path = tmp_path / "app"
@@ -107,7 +112,7 @@ def test_no_recovery_op_runs_in_an_engine_without_the_engine_lock(ald: Path) -> 
 def test_the_listing_removes_a_part_and_names_each_open_journal(ald: Path) -> None:
     ledger, jd, name = journalled(ald)
     (jd / "s0-j1.part").write_bytes(b"torn")
-    reply = Rig(Engine(engine_lock_held=True)).send("recover_list", {"app_local_data": str(ald)})
+    reply = Rig(held(ald)).send("recover_list", {"app_local_data": str(ald)})
     assert reply["ok"], reply
     result = reply["result"]
     assert result["parts_removed"] == 1
@@ -130,7 +135,7 @@ def test_the_listing_removes_a_part_and_names_each_open_journal(ald: Path) -> No
 
 def test_a_try_stops_at_the_created_path_with_what_stands_there_then_delete_it_and_retry_resolves(ald: Path) -> None:
     ledger, jd, name = journalled(ald)
-    rig = Rig(Engine(engine_lock_held=True))
+    rig = Rig(held(ald))
     base = {"app_local_data": str(ald), "journal_dir": str(jd), "name": name}
     first = rig.send("recover_try", base)
     assert first["ok"], first
@@ -161,7 +166,7 @@ def test_keep_and_delete_the_kept_copy_on_the_real_disk(ald: Path) -> None:
     ledger, jd, name = journalled(ald)
     kept = ledger / "main.bean.kept-s1-j7"
     kept.write_bytes(b"the editor's\n")
-    rig = Rig(Engine(engine_lock_held=True))
+    rig = Rig(held(ald))
     base = {"app_local_data": str(ald), "journal_dir": str(jd), "name": name}
     out = rig.send("recover_try", base)["result"]
     assert (out["outcome"], out["cause"]) == ("stopped", "kept_copy")
@@ -186,7 +191,7 @@ def test_keep_and_delete_the_kept_copy_on_the_real_disk(ald: Path) -> None:
 )
 def test_an_action_without_what_it_needs_is_refused(ald: Path, params: dict[str, Any]) -> None:
     _, jd, name = journalled(ald)
-    reply = Rig(Engine(engine_lock_held=True)).send(
+    reply = Rig(held(ald)).send(
         "recover_act", {"app_local_data": str(ald), "journal_dir": str(jd), "name": name, **params}
     )
     assert not reply["ok"]
@@ -205,7 +210,7 @@ def test_no_op_works_in_a_folder_that_is_not_one_of_the_apps_journals(ald: Path,
         "key": str(jd.parent),
         "other_app": str(other),
     }[where]
-    rig = Rig(Engine(engine_lock_held=True))
+    rig = Rig(held(ald))
     for op, extra in (("recover_try", {}), ("recover_act", {"action": "keep"})):
         reply = rig.send(op, {"app_local_data": str(ald), "journal_dir": folder, "name": name, **extra})
         assert not reply["ok"], reply
@@ -213,6 +218,78 @@ def test_no_op_works_in_a_folder_that_is_not_one_of_the_apps_journals(ald: Path,
     assert (other / f"{name}.open").exists()
     assert (jd / f"{name}.open").exists()
     assert (ledger / "main.bean").read_bytes() == POST
+
+
+def test_no_op_works_in_an_app_folder_other_than_the_engine_locks(ald: Path, tmp_path: Path) -> None:
+    """Red team r1 R1-2: the app's machine-local folder is the one the engine lock lives under, whatever the request
+    names: another tree laid out as the app's is refused before anything there is read, made or removed."""
+    other = tmp_path / "elsewhere" / "app"
+    other.mkdir(parents=True)
+    ledger, jd, name = journalled(other)
+    (jd / "s0-j1.part").write_bytes(b"torn")
+    rig = Rig(held(ald))
+    base = {"app_local_data": str(other), "journal_dir": str(jd), "name": name}
+    for op, params in (
+        ("recover_list", {"app_local_data": str(other)}),
+        ("recover_try", base),
+        ("recover_act", {**base, "action": "keep"}),
+        (
+            "recover_act",
+            {**base, "action": "delete_created", "file": str(ledger / "prices.bean"), "sha256": sha(b"p\n")},
+        ),
+    ):
+        reply = rig.send(op, params)
+        assert not reply["ok"], reply
+        assert reply["error"]["key"] == "protocol.invalid_params", reply
+    assert sorted(p.name for p in jd.iterdir()) == ["s0-j1.part", "s1-j7.open"]
+    assert (ledger / "prices.bean").read_bytes() == b"p\n"
+    assert not (other / "locks").exists(), "a lock folder was made in the other tree"
+
+
+@pytest.mark.parametrize("spelling", ["missing", "dot_dot", "relative"])
+def test_an_app_folder_that_does_not_resolve_is_refused(ald: Path, spelling: str) -> None:
+    """Mutant `e-ald-unresolved-accepted`: a folder that is not there, or a spelling that cannot be resolved, is not
+    the engine lock's folder."""
+    journalled(ald)
+    given = {"missing": str(ald / "gone"), "dot_dot": f"{ald}/../{ald.name}", "relative": "app"}[spelling]
+    reply = Rig(held(ald)).send("recover_list", {"app_local_data": given})
+    assert not reply["ok"], reply
+    assert reply["error"]["key"] == "protocol.invalid_params", reply
+
+
+def test_the_app_folder_named_through_a_link_is_the_engine_locks(ald: Path, tmp_path: Path) -> None:
+    """Both are resolved before they are compared: the same folder by another spelling is accepted."""
+    _, jd, _ = journalled(ald)
+    (jd / "s0-j1.part").write_bytes(b"torn")
+    link = tmp_path / "app-link"
+    link.symlink_to(ald)
+    reply = Rig(held(ald)).send("recover_list", {"app_local_data": str(link)})
+    assert reply["ok"], reply
+    assert reply["result"]["parts_removed"] == 1
+
+
+@pytest.mark.parametrize("link", ["key", "journal"])
+def test_a_try_through_a_linked_key_or_journal_folder_is_refused_path_moved(ald: Path, link: str) -> None:
+    """Red team r1 R1-1: a key folder (or a journal folder) in `local/` that is a link to another key's journal
+    resolves elsewhere; the try and its inspection open the folder through the path guard, so they stop
+    (`path_moved`) and touch nothing there."""
+    ledger, jd, name = journalled(ald)
+    local = jd.parent.parent
+    if link == "key":
+        (local / "evil").symlink_to(local / "k1")
+    else:
+        (local / "evil").mkdir()
+        (local / "evil" / "journal").symlink_to(jd)
+    rig = Rig(held(ald))
+    out = rig.send(
+        "recover_try", {"app_local_data": str(ald), "journal_dir": str(local / "evil" / "journal"), "name": name}
+    )
+    assert out["ok"], out
+    result = out["result"]
+    assert (result["outcome"], result["cause"], result["inspection"]) == ("stopped", "path_moved", None), result
+    assert sorted(p.name for p in jd.iterdir()) == ["s1-j7.open"]
+    assert (ledger / "main.bean").read_bytes() == POST, "a try through a link undid the other key's save"
+    assert (ledger / "prices.bean").exists()
 
 
 # -- the gap: an engine whose lock another process holds ---------------------------------------------------------

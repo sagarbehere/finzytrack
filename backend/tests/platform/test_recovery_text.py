@@ -113,7 +113,21 @@ def test_a_record_that_cannot_be_read_blocks_every_open_and_says_so() -> None:
     screen = blocked_screen(b, WS)
     assert "cannot read the record" in screen.message
     assert "No workspace opens" in screen.message
-    assert "keep" in screen.actions
+    assert screen.actions == ("retry", "stay_or_back", "keep"), "§11: Retry, Stay or Back, Keep (verifier r1 O4)"
+
+
+def test_failed_on_a_refusal_has_a_next_step() -> None:
+    """Red team r1 O3: a `failed` journal whose step the engine refused (no errno, not a stop) still says what to do."""
+    message = blocked_screen(Blocking(J, "failed", "engine.internal"), WS).message
+    assert message.endswith("Press Retry to try again.")
+
+
+def test_an_action_on_a_folder_that_could_not_be_listed_is_not_called_resolved() -> None:
+    """Red team r1 R1-4."""
+    text = action_text(ActOutcome("refused", "unlisted", None, None, None))
+    assert text is not None
+    assert "resolved" not in text
+    assert "could not read" in text
 
 
 @pytest.mark.parametrize("reason", ["cancelled", "failed", "not_tried"])

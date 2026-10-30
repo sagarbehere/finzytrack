@@ -255,11 +255,62 @@ def test_a_record_that_cannot_be_read_blocks_without_a_try() -> None:
     assert (b.journal.name, b.reason, b.cause) == ("s9-j9", "stopped", "unreadable")
 
 
-def test_a_try_reply_of_another_shape_marks_the_journal_failed() -> None:
-    s = Script({"recover_list": [listing(listed("s1-j1"))], "recover_try": [{"outcome": "resolved"}]})
+def test_a_try_reply_of_another_shape_marks_the_journal_failed_and_the_next_one_gets_a_fresh_engine() -> None:
+    """Verifier r1 O6: an engine that broke the protocol is not trusted with the next journal (§5.3)."""
+    s = Script(
+        {
+            "recover_list": [listing(listed("s1-j1"), listed("s1-j2"))],
+            "recover_try": [{"outcome": "resolved"}, tried("resolved")],
+        }
+    )
     report = run(s)
     [b] = report.blocking
-    assert (b.reason, b.cause) == ("failed", ENGINE_STOPPED)
+    assert (b.journal.name, b.reason, b.cause) == ("s1-j1", "failed", ENGINE_STOPPED)
+    assert s.ops() == ["recover_list", "listed", "recover_try", "fresh", "recover_try"]
+    assert [j.name for j in report.undone] == ["s1-j2"]
+
+
+def test_an_action_reply_of_another_shape_gets_a_fresh_engine_for_the_next_step() -> None:
+    s = Script(
+        {
+            "recover_list": [listing(listed("s1-j1"), listed("s1-j2"))],
+            "recover_act": [{"outcome": "done"}],
+            "recover_try": [tried("resolved")],
+        }
+    )
+    report = run(s, Keep(JD1, "s1-j1"))
+    assert reasons(report) == {"s1-j1": "failed"}
+    assert s.ops() == ["recover_list", "listed", "recover_act", "fresh", "recover_try"]
+
+
+@pytest.mark.parametrize(
+    ("failure", "cause"),
+    [
+        (EngineFailure("start_failed", "the engine could not start"), "start_failed"),
+        (UNAVAILABLE, "unavailable"),
+        (EngineFailure("incompatible", "the engine speaks protocol 3"), "incompatible"),
+    ],
+)
+def test_a_journal_not_tried_names_why_no_engine_came(failure: EngineFailure, cause: str) -> None:
+    """Verifier r1 O1: a start that failed is `start_failed`, not `lock_failed`."""
+    s = Script(
+        {"recover_list": [listing(listed("s1-j1"), listed("s1-j2"))], "recover_try": [CRASHED]},
+        fresh=[failure],
+    )
+    report = run(s)
+    assert reasons(report) == {"s1-j1": "failed", "s1-j2": "not_tried"}
+    assert next(b for b in report.blocking if b.journal.name == "s1-j2").cause == cause
+
+
+@pytest.mark.parametrize("kind", ["start_failed", "unavailable", "incompatible"])
+def test_a_listing_whose_engine_never_started_reports_nothing_listed_without_another_start(kind: str) -> None:
+    """Verifier r1 V1: the job's first engine did not start, so its first call answers that failure. No engine came:
+    the listing ends there (as when a fresh engine does not start), it is not a death to list again after."""
+    s = Script({"recover_list": [EngineFailure(kind, "no engine")]})  # type: ignore[arg-type]
+    report = run(s)
+    assert not report.listed
+    assert report.why_not_listed == kind
+    assert s.ops() == ["recover_list"]
 
 
 def test_keep_first_then_the_others_are_tried_and_the_kept_one_is_not() -> None:
@@ -302,6 +353,14 @@ def test_an_action_on_a_journal_the_listing_did_not_find_open_is_not_sent() -> N
     report = run(s, DeleteCreated(JD1, "s7-j7", "/L/p", "0" * 64))
     assert "recover_act" not in s.ops()
     assert [(a.outcome.outcome, a.outcome.reason) for a in report.actions] == [("refused", "not_open")]
+
+
+def test_an_action_on_a_journal_in_a_folder_the_listing_could_not_read_is_not_sent_and_says_so() -> None:
+    """Red team r1 R1-4: not "already resolved": the folder could not be listed, so nothing is known of it."""
+    s = Script({"recover_list": [listing(listed("s1-j1"), unlisted=((JD2, 5),))], "recover_try": [tried("resolved")]})
+    report = run(s, Keep(JD2, "s2-j2"))
+    assert "recover_act" not in s.ops()
+    assert [(a.outcome.outcome, a.outcome.reason) for a in report.actions] == [("refused", "unlisted")]
 
 
 def test_a_refused_delete_leaves_the_journal_to_its_try() -> None:
@@ -534,3 +593,100 @@ def test_the_scripts_context_is_the_jobs(make: Callable[[dict[str, list[object]]
     """The scripted context above has the job context's methods (a guard on the duck type)."""
     for name in ("call", "fresh_engine", "listed"):
         assert callable(getattr(JobContext, name))
+
+
+# -- an engine that cannot start (verifier r1 V1: the job must still end, with its report) --------------------------
+
+
+@pytest.mark.parametrize("kind", ["incompatible", "start_failed", "unavailable"])
+@pytest.mark.parametrize("real_work", [True, False])
+def test_a_boot_whose_first_engine_cannot_start_still_ends(kind: str, real_work: bool) -> None:
+    """§8.1 "When the engine cannot run", §5.3, §9.2: the boot's recover-all whose first engine does not start ends
+    (base e39cee44 ended it `ENGINE_UNAVAILABLE`/`ENGINE_STOPPED`; at 7220052e it never ended and the boot's window
+    stayed exclusive). With the product's work it ends with its report, which has listed nothing and so blocks every
+    open; with the queue's own stand-in it ends with no report, which blocks every open too."""
+    engine = FakeEngine(scripted={"recover_list": [listing()]})
+    engine.start_failure = EngineFailure(kind, "no engine")  # type: ignore[arg-type]
+    jobs = EngineJobs(engine, wait_engine_lock=LockWait(), recover_all=recover_all_work(ALD) if real_work else None)
+    engine.spawned = jobs.engine_spawned
+    engine.ended = jobs.engine_ended
+    try:
+        ticket = jobs.start()
+        assert isinstance(ticket, JobTicket)
+        out = ticket.wait(DEADLINE)
+        assert isinstance(out, Done), out
+        if real_work:
+            assert isinstance(out.value, Report)
+            assert (out.value.listed, out.value.why_not_listed) == (False, kind)
+        else:
+            assert out.value is None
+        report = out.value if isinstance(out.value, Report) else None
+        assert blocking_for(report, workspace_key="k1", lineage="lin1", ledger_keys={"/l/a"}) != ()
+        assert engine.starts == 1, "a start that failed was tried again by the listing"
+        assert engine.params == [], "a recovery op reached an engine"
+        wait_until(lambda: not jobs.status().queue.exclusive)
+        assert jobs.status().queue.running is None
+    finally:
+        jobs.close()
+
+
+def test_an_incompatible_engine_at_boot_shows_the_unavailable_state_and_the_boot_ends(
+    make: Callable[[dict[str, list[object]]], Rig],
+) -> None:
+    rig = make({})
+    rig.engine.incompatible()
+    out = report_of(rig.boot())
+    assert (out.listed, out.why_not_listed) == (False, "incompatible")
+    wait_until(lambda: rig.jobs.status().queue.unavailable)
+
+
+@pytest.mark.parametrize("kind", ["start_failed", "incompatible"])
+def test_a_later_start_that_fails_marks_the_rest_not_tried_and_the_report_comes(
+    make: Callable[[dict[str, list[object]]], Rig], kind: str
+) -> None:
+    """The same path serves Retry and the next journal: a fresh engine that does not start ends the run with its
+    report; the journal in hand is `failed`, the rest `not_tried`, named by why no engine came (verifier r1 O1)."""
+    rig = make({"recover_list": [listing(listed("s1-j1"), listed("s1-j2"), listed("s1-j3"))], "recover_try": [CRASH]})
+    failure = EngineFailure(kind, "no engine")  # type: ignore[arg-type]
+
+    def second_start_fails() -> None:
+        if rig.engine.starts >= 1:
+            rig.engine.start_failure = failure
+
+    rig.engine.before_start = second_start_fails
+    report = report_of(rig.boot())
+    assert reasons(report) == {"s1-j1": "failed", "s1-j2": "not_tried", "s1-j3": "not_tried"}
+    assert {b.cause for b in report.blocking if b.reason == "not_tried"} == {kind}
+    every_journal_ends_once(report, {"s1-j1", "s1-j2", "s1-j3"})
+    wait_until(lambda: not rig.jobs.status().queue.exclusive)
+
+
+def test_a_start_that_fails_after_a_death_before_the_listing_ends_with_nothing_listed(
+    make: Callable[[dict[str, list[object]]], Rig],
+) -> None:
+    rig = make({"recover_list": [CRASH]})
+    rig.engine.before_start = lambda: (
+        setattr(rig.engine, "start_failure", EngineFailure("start_failed", "no engine")) if rig.engine.starts else None
+    )
+    report = report_of(rig.boot())
+    assert (report.listed, report.why_not_listed) == (False, "start_failed")
+
+
+def test_a_retry_after_a_boot_whose_engine_could_not_start_lists_once_the_engine_starts(
+    make: Callable[[dict[str, list[object]]], Rig],
+) -> None:
+    """§9.1 step 6: Retry is recover-all again; once the engine starts, it lists and tries."""
+    rig = make({"recover_list": [listing(listed("s1-j1"))], "recover_try": [tried("resolved")]})
+    rig.engine.start_failure = EngineFailure("start_failed", "no engine")
+    assert report_of(rig.boot()).listed is False
+    wait_until(lambda: not rig.jobs.status().queue.exclusive)
+    rig.jobs.exclusive_began()
+    failing = rig.jobs.submit(recover_all_spec(), recover_all_work(ALD))
+    assert isinstance(failing, JobTicket)
+    assert report_of(failing).why_not_listed == "start_failed"
+    wait_until(lambda: rig.jobs.status().queue.running is None)
+    rig.engine.available()
+    ticket = rig.jobs.submit(recover_all_spec(), recover_all_work(ALD))
+    assert isinstance(ticket, JobTicket)
+    retry = report_of(ticket)
+    assert [j.name for j in retry.undone] == ["s1-j1"]
