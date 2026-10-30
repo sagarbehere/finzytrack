@@ -18,8 +18,8 @@
   with `COPYFILE_XATTR` only: the ACL is not kept, owner, 2026-10-29; not `COPYFILE_STAT`, which would copy the old
   modification time). `allowed` is `access(2)` with the extended bits (`_DELETE_OK`, `_REXT_OK`), which apply ACLs;
   `can_swap` reads the volume's `VOL_CAP_INT_RENAME_SWAP` and `_EXCL` (`fgetattrlist`; exFAT and FAT have neither).
-  `inheritable_denial` reads the folder's extended ACL (`acl_get_fd_np`) for an inherited `deny read` or `deny delete`
-  that applies to us (our UUID, or a group we are in by `mbr_check_membership`; S0061 r5, probed on APFS).
+  `acl` reads the folder's extended ACL (`acl_get_fd_np`), each entry with whether it applies to us (our UUID, or a
+  group we are in by `mbr_check_membership`; S0061 r5) and every permission and flag bit (S0061 r6, probed on APFS).
 
 - `rmdir`: `unlinkat(AT_REMOVEDIR)` on the folder's descriptor (`ENOTEMPTY` for a folder holding a `.DS_Store`,
   `ENOTDIR` for a link, probed S0061). `DarwinLocks`: the ledger-set locks, a `flock(LOCK_EX | LOCK_NB)` on
@@ -42,6 +42,7 @@ from collections.abc import Callable
 from typing import Final, Self
 
 from ledger_engine.fs.port import (
+    AclEntry,
     EntryStat,
     FileSystem,
     FoldRule,
@@ -70,11 +71,32 @@ MAXPATHLEN: Final = 1024
 ACL_TYPE_EXTENDED: Final = 0x100  # <sys/acl.h>, checked against the macOS 26 SDK and probed on APFS (S0061 r5)
 ACL_FIRST_ENTRY: Final = 0
 ACL_NEXT_ENTRY: Final = -1
-ACL_EXTENDED_DENY: Final = 2
-ACL_READ_DATA: Final = 1 << 1
-ACL_DELETE: Final = 1 << 4
-ACL_ENTRY_FILE_INHERIT: Final = 1 << 5
-ACL_ENTRY_DIRECTORY_INHERIT: Final = 1 << 6
+ACL_EXTENDED_ALLOW: Final = 1
+ACCESS_RMFILE: Final = 1 << 14  # <sys/unistd.h> _RMFILE_OK: entries of the folder may be removed (delete_child)
+# <sys/acl.h> acl_perm_t, in chmod's words for a folder (checked against the macOS 26 SDK, S0061 r6)
+ACL_PERMS: Final = (
+    ("list", 1 << 1),
+    ("add_file", 1 << 2),
+    ("search", 1 << 3),
+    ("delete", 1 << 4),
+    ("add_subdirectory", 1 << 5),
+    ("delete_child", 1 << 6),
+    ("readattr", 1 << 7),
+    ("writeattr", 1 << 8),
+    ("readextattr", 1 << 9),
+    ("writeextattr", 1 << 10),
+    ("readsecurity", 1 << 11),
+    ("writesecurity", 1 << 12),
+    ("chown", 1 << 13),
+    ("synchronize", 1 << 20),
+)
+ACL_FLAGS: Final = (  # <sys/acl.h> acl_flag_t, the entry flags
+    ("inherited", 1 << 4),
+    ("file_inherit", 1 << 5),
+    ("directory_inherit", 1 << 6),
+    ("limit_inherit", 1 << 7),
+    ("only_inherit", 1 << 8),
+)
 
 
 class UnsupportedPlatform(OSError):
@@ -150,6 +172,21 @@ def _entry(st: os.stat_result) -> EntryStat:
         mode=stat.S_IMODE(m),
         locked=bool(getattr(st, "st_flags", 0) & LOCK_FLAGS),
     )
+
+
+def _named(
+    word: ctypes.c_void_p, bits: tuple[tuple[str, int], ...], get: Callable[[ctypes.c_void_p, int], int]
+) -> frozenset[str]:
+    """The names of the bits set in a permset or flagset, by libc's own getter, plus `unknown` when the word it points
+    at holds a bit libc does not name or disagrees with the getter (fails closed)."""
+    named = {n for n, b in bits if get(word, b) == 1}
+    raw = ctypes.c_uint32.from_address(word.value).value if word.value else None
+    known = 0
+    for _, b in bits:
+        known |= b
+    if raw is None or raw & ~known or {n for n, b in bits if raw & b} != named:
+        named.add("unknown")
+    return frozenset(named)
 
 
 def _getpath(fd: int) -> str:
@@ -247,6 +284,7 @@ class DarwinDir:
     def allowed(self, name: str, right: Right) -> bool:
         mode = {
             Right.CHANGE_ENTRIES: os.W_OK | os.X_OK,
+            Right.REMOVE_ENTRIES: ACCESS_RMFILE,
             Right.DELETE: ACCESS_DELETE,
             Right.READ_XATTRS: ACCESS_READ_XATTRS,
         }[right]
@@ -263,40 +301,44 @@ class DarwinDir:
         need = VOL_CAP_INT_RENAME_SWAP | VOL_CAP_INT_RENAME_EXCL
         return interfaces & need == need and valid & need == need
 
-    def inheritable_denial(self) -> bool:
-        """`acl_get_fd_np(ACL_TYPE_EXTENDED)` on the folder's descriptor: any `deny` entry with file or folder
-        inheritance, denying `read` or `delete`, whose qualifier is us (our user's UUID) or a group we are in
-        (`mbr_check_membership`; `everyone` included). A membership the system cannot answer counts as ours (fails
-        closed). No ACL at all (`ENOENT`) is False; any other error is raised."""
+    def acl(self) -> tuple[AclEntry, ...]:
+        """`acl_get_fd_np(ACL_TYPE_EXTENDED)` on the folder's descriptor, each entry read in full: its kind, whether
+        it applies to us (`_applies_to_us`), its permission and flag bits by name. A bit libc does not name is
+        `unknown`: the permission word and the flag word are also read whole where the permset and flagset point
+        (probed on macOS 26: they point at the entry's own words) and must agree with the named bits, else `unknown`
+        (fails closed). No ACL at all (`ENOENT`) is empty; any other error is raised."""
         lib = self._fs.libc
         acl = lib.acl_get_fd_np(self.fd, ACL_TYPE_EXTENDED)
         if not acl:
             e = ctypes.get_errno()
             if e == errno.ENOENT:
-                return False
+                return ()
             raise OSError(e, os.strerror(e))
         try:
             me = ctypes.create_string_buffer(16)
             if lib.mbr_uid_to_uuid(os.geteuid(), me) != 0:
                 _errno_raise()
+            out: list[AclEntry] = []
             entry = ctypes.c_void_p()
             which = ACL_FIRST_ENTRY
             while lib.acl_get_entry(acl, which, ctypes.byref(entry)) == 0:
                 which = ACL_NEXT_ENTRY
                 tag, flags, perms = ctypes.c_int(), ctypes.c_void_p(), ctypes.c_void_p()
-                if lib.acl_get_tag_type(entry, ctypes.byref(tag)) != 0 or tag.value != ACL_EXTENDED_DENY:
-                    continue
-                if lib.acl_get_flagset_np(entry, ctypes.byref(flags)) != 0 or lib.acl_get_permset(
-                    entry, ctypes.byref(perms)
+                if (
+                    lib.acl_get_tag_type(entry, ctypes.byref(tag)) != 0
+                    or lib.acl_get_flagset_np(entry, ctypes.byref(flags)) != 0
+                    or lib.acl_get_permset(entry, ctypes.byref(perms)) != 0
                 ):
                     _errno_raise()
-                inherits = any(
-                    lib.acl_get_flag_np(flags, f) == 1 for f in (ACL_ENTRY_FILE_INHERIT, ACL_ENTRY_DIRECTORY_INHERIT)
+                out.append(
+                    AclEntry(
+                        deny=tag.value != ACL_EXTENDED_ALLOW,
+                        ours=self._applies_to_us(entry, me),
+                        perms=_named(perms, ACL_PERMS, lib.acl_get_perm_np),
+                        flags=_named(flags, ACL_FLAGS, lib.acl_get_flag_np),
+                    )
                 )
-                denies = any(lib.acl_get_perm_np(perms, p) == 1 for p in (ACL_READ_DATA, ACL_DELETE))
-                if inherits and denies and self._applies_to_us(entry, me):
-                    return True
-            return False
+            return tuple(out)
         finally:
             lib.acl_free(acl)
 

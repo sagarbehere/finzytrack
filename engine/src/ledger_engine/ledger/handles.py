@@ -1,7 +1,7 @@
 """What the save (`ledger.writer`) and the restore (`ledger.restore`) share: one handle per folder with the path guard,
-and the owner's two refusal rules (`design/specs/engine-jobs.md` §6.3, §6.4, §8.1; ADR-0013 amendment of 2026-10-29;
-S0060, S0061). Every write goes through these handles: the check of where a folder is and the write that follows use
-one descriptor.
+and the owner's refusal rules (`design/specs/engine-jobs.md` §6.3, §6.4, §8.1; ADR-0013 amendments of 2026-10-29
+and 2026-10-30; S0060, S0061). Every write goes through these handles: the check of where a folder is and the write
+that follows use one descriptor.
 """
 
 from __future__ import annotations
@@ -9,8 +9,9 @@ from __future__ import annotations
 import hashlib
 from dataclasses import dataclass, field
 from enum import StrEnum
+from typing import Final
 
-from ledger_engine.fs.port import DirHandle, EntryStat, FileSystem, Kind, same_path
+from ledger_engine.fs.port import AclEntry, DirHandle, EntryStat, FileSystem, Kind, same_path
 from ledger_engine.ledger.core.journal import MAX_KEPT, kept_name
 
 
@@ -39,6 +40,8 @@ class Handles:
     fs: FileSystem
     open: dict[str, DirHandle] = field(default_factory=lambda: {})
     on: str | None = None  # the canonical path of the file being worked on, for the outcome
+    entry: str | None = None  # the entry being checked or written when it is not that file (a name of ours, the
+    # backup, a folder), for the outcome (S0061 verifier r6 F3)
 
     def at(self, canonical: str) -> DirHandle:
         h = self.open.get(canonical)
@@ -69,6 +72,45 @@ def volume_without_swap(h: DirHandle) -> bool:
     "Agreed, fallback as its own slice after slice 4" (ADR-0013 amendment of 2026-10-29). The one place this rule
     lives. TODO(BL-0160): the fallback write path for such volumes replaces this refusal."""
     return not h.can_swap()
+
+
+FOLDER_SELF: Final = frozenset({"delete", "writeattr", "writeextattr", "writesecurity", "chown"})
+"""What a deny entry may deny us on a folder the save writes in: only what protects the folder itself (its own
+deletion, its attributes, its ACL, its owner), never anything about the entries in it (S0061 r6)."""
+NOT_INHERITED: Final = frozenset({"inherited", "limit_inherit"})
+"""The flags a deny entry may carry there: none that passes it on to new entries (`file_inherit`,
+`directory_inherit`, `only_inherit`, or a flag the adapter cannot name)."""
+
+
+UNREADABLE_ACL: Final = "an ACL we may not read"
+
+
+def blocking_entry(entries: tuple[AclEntry, ...]) -> AclEntry | None:
+    """The first ACL entry that refuses a folder the save or the undo writes in, or makes or removes a folder in
+    (owner, 2026-10-30: "Allowlist (Recommended)"; ADR-0013 amendment of that date): a deny entry that applies to us,
+    unless new entries do not inherit it and it denies only what protects the folder itself (`FOLDER_SELF`: macOS puts
+    `group:everyone deny delete` and `deny writeextattr` on the home folder, Desktop, Documents and Downloads). Every
+    other deny that applies to us is refused, an inheritable one of any bit and an unknown bit included; allow entries
+    are not weighed (an allow before a deny still refuses: fails closed). The one place this rule lives."""
+    for e in entries:
+        if e.deny and e.ours and (not e.flags <= NOT_INHERITED or not e.perms <= FOLDER_SELF):
+            return e
+    return None
+
+
+def acl_denial(h: DirHandle) -> str | None:
+    """`blocking_entry` of the folder `h`, told in `chmod`'s words without its subject (`deny
+    delete_child,directory_inherit`), for the `permission` refusal's text (§11); None when nothing blocks it. An ACL
+    the system will not let us read (`EACCES`: a `deny readsecurity` or `deny readattr` on the folder itself, probed
+    on APFS) cannot be judged, so it blocks too (fails closed)."""
+    try:
+        entries = h.acl()
+    except PermissionError:
+        return UNREADABLE_ACL
+    e = blocking_entry(entries)
+    if e is None:
+        return None
+    return "deny " + ",".join([*sorted(e.perms), *sorted(e.flags - {"inherited"})])
 
 
 class Displaced(StrEnum):

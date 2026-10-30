@@ -24,12 +24,17 @@ next try can resolve.
    `core.recovery.classify_staging`; a temp name is ours only when it equals the pre or the post bytes,
    `classify_temp`). **Any error a check answers** (a read or a `stat` of the file, a name of ours or the backup, a
    listing, a folder's open; "no such entry" means absent) fails the try, `Failed(io_error)`, with nothing written
-   (owner, 2026-10-30: "Yes to both (Recommended)"; red team r4 O1, r5 F3). Anything at a created path is `taken`
-   and never touched (owner, 2026-10-30: "Never remove it (Recommended)"). Every name of ours that
-   step 3 would remove must be removable (its deletion allowed, no lock flag: red team r5 F2); a file to restore must
-   be a regular file with one link (the owner's rule, `handles.hard_links`), not locked, its extended attributes
-   readable, allowed to be moved away, on a volume with the swap; a folder written in must allow entry changes;
-   every folder the save made that would be removed must be removable from its parent. Any stop: `Stopped(cause)`
+   (owner, 2026-10-30: "Yes to both (Recommended)"; red team r4 O1, r5 F3), naming the entry that failed when it is
+   not the file (verifier r6 F3). Anything at a created path is `taken`
+   and never touched (owner, 2026-10-30: "Never remove it (Recommended)"); its `stat` alone decides that, its bytes
+   are never read (verifier r6 F4). Every folder step 3 writes in (names of ours to remove, a restore temp to make, a
+   folder the save made to remove) must let us remove entries (`_RMFILE_OK`) and carry no ACL deny entry the
+   allowlist refuses (`handles.acl_denial`; owner, 2026-10-30: "Allowlist (Recommended)"; verifier r6 F2: one may
+   have appeared since the save). Every name of ours that step 3 would remove must be removable (its deletion
+   allowed, no lock flag: red team r5 F2); a file to restore must be a regular file with one link (the owner's rule,
+   `handles.hard_links`), not locked, its extended attributes readable, allowed to be moved away, on a volume with
+   the swap; a folder it makes the restore temp in must allow entry changes; every folder the save made that would be
+   removed must have no lock flag (red team r6 overflow 3) and be removable from its parent. Any stop: `Stopped(cause)`
    with nothing written, with one exception: a temp that is not ours is moved to its kept name first, out of reach of
    every deletion.
 3. Every folder the record names synced first (a swap a crashed save or try left unsynced is then durable before
@@ -46,8 +51,9 @@ next try can resolve.
    in the moment between the check and the swap: moved to the kept name, `Stopped(displaced)`; the file keeps what
    now stands there. Every folder the record names synced. A created path that is `taken` ends the try here:
    `Stopped(created_path_taken)`, the other files durably at pre, nothing of ours left beside them, the journal
-   `.open` (§11: the user deletes the file and presses Retry, or keeps the files as they are now). Otherwise each
-   folder the save made is removed if it is empty, deepest first, and their parents synced.
+   `.open` (§11: the user deletes the file and presses Retry, or keeps the files as they are now); unless that path
+   is empty again by now (the user deleted it meanwhile: verifier r6 F5), when the try checks once more from step 2.
+   Otherwise each folder the save made is removed if it is empty, deepest first, and their parents synced.
 4. **Only then** `.open` renamed `.resolved` and the journal folder synced: `Resolved`.
 
 **The step rule.** Every port operation may raise `OSError`, and the process may die at any effect. In steps 0-2 an
@@ -89,12 +95,14 @@ from ledger_engine.ledger.handles import (
     Displaced,
     Handles,
     PathMovedError,
+    acl_denial,
     displaced,
     hard_links,
     keep,
     sha256,
     volume_without_swap,
 )
+from ledger_engine.ledger.handles import join as _join
 
 
 @dataclass(frozen=True, slots=True)
@@ -114,10 +122,14 @@ class Stopped:
     (cause `displaced`, `outside_save_in_temp`), and while a kept copy exists every try stops (`kept_copy`); each file
     is whole at pre or post, or holds the outside bytes found. `created_path_taken`: something stands at a path the
     save was creating, left as it is; every other file is durably at pre. `path`: the canonical path of the file it
-    stopped at, if any."""
+    stopped at, if any. `entry`, for a `permission` stop: the entry the system would not let us change when it is
+    not that file (a name of ours, a folder), and `detail` the ACL entry that blocks a folder, in `chmod`'s words
+    (`handles.acl_denial`; S0061 r6)."""
 
     cause: Cause
     path: str | None
+    entry: str | None = None
+    detail: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -127,21 +139,25 @@ class Failed:
     journal stays `.open` (or `.resolved` when only the last sync failed), each file whole at pre or post; nothing
     was moved by the check that failed; blocking reason `failed` (§8.1 step 1, step 3; Retry may still undo it).
     `path` and `errno`: the file and the error, when known, so a permanent cause (a file nobody may read) is visible
-    on the blocked screen (§11)."""
+    on the blocked screen (§11). `entry`: the entry the error came from when it is not that file (a name of ours,
+    the backup, a folder, the record), so the screen can name it too (S0061 verifier r6 F3)."""
 
     cause: Cause
     path: str | None
     errno: int | None = None
+    entry: str | None = None
 
 
 RestoreOutcome = Resolved | Stopped | Failed
 
 
 class _Halt(Exception):
-    def __init__(self, cause: Cause, path: str | None) -> None:
+    def __init__(self, cause: Cause, path: str | None, entry: str | None = None, detail: str | None = None) -> None:
         super().__init__(cause.value)
         self.cause = cause
         self.path = path
+        self.entry = entry
+        self.detail = detail
 
 
 class _Fail(_Halt):
@@ -149,8 +165,8 @@ class _Fail(_Halt):
     between its `stat` and its read: `Failed(io_error)`, nothing written by the check that met it, so the next try
     reads it again (S0061 red team r4 O1, r5 F3)."""
 
-    def __init__(self, cause: Cause, path: str | None, err: int | None = None) -> None:
-        super().__init__(cause, path)
+    def __init__(self, cause: Cause, path: str | None, err: int | None = None, entry: str | None = None) -> None:
+        super().__init__(cause, path, entry)
         self.errno = err
 
 
@@ -179,17 +195,19 @@ def _read(h: DirHandle, name: str, path: str) -> bytes | None:
         raise _Fail(Cause.IO_ERROR, path, e.errno) from None
 
 
-def _look(h: DirHandle, name: str, path: str) -> tuple[Seen, EntryStat | None]:
-    """What stands at `name`: one `stat` for its kind, then its bytes; a file that vanished between the two is foreign
-    (S0061 red team L3); one whose bytes cannot be read fails the try (`_Fail`)."""
+def _look(h: DirHandle, name: str, path: str, *, read: bool = True) -> tuple[Seen, EntryStat | None]:
+    """What stands at `name`: one `stat` for its kind, then its bytes (S0061 red team L3). A file gone between the two
+    is absent ("no such entry" keeps its meaning, verifier r6 F5): the judgement then takes a replaced file as foreign
+    and a backup as bad. A read error fails the try (`_Fail`). Without `read` (a created path, where anything is
+    `taken` whatever it holds: verifier r6 F4), the `stat` alone."""
     st = h.stat(name)
     if st is None:
         return ABSENT, None
-    if st.kind is not Kind.FILE:
+    if st.kind is not Kind.FILE or not read:
         return Seen(st.kind), st
     data = _read(h, name, path)
     if data is None:
-        raise _Halt(Cause.FOREIGN, path)
+        return ABSENT, None  # vanished since its `stat`
     return seen_file(data), st
 
 
@@ -222,48 +240,75 @@ def _folder(handles: Handles, folder: str, created: frozenset[str]) -> DirHandle
     return None
 
 
+def _writable(handles: Handles, h: DirHandle, folder: str, path: str) -> None:
+    """A folder step 3 writes in (it removes names of ours there, makes the restore temp, or removes a folder the save
+    made): entries may be removed there (`_RMFILE_OK`: S0061 red team r6 F1), and no ACL deny entry that applies to
+    us blocks it (`handles.acl_denial`; owner, 2026-10-30: "Allowlist (Recommended)"; one may have appeared since the
+    save, verifier r6 F2: what the restore makes there would inherit it, and every later try would stop on our own
+    leftover even after the entry is gone). Else `permission`, nothing written."""
+    handles.entry = folder
+    if not h.allowed(".", Right.REMOVE_ENTRIES):
+        raise _Halt(Cause.PERMISSION, path, folder)
+    detail = acl_denial(h)
+    if detail is not None:
+        raise _Halt(Cause.PERMISSION, path, folder, detail)
+    handles.entry = None
+
+
 def _check(handles: Handles, record: Record, f: FileEntry, *, created: frozenset[str]) -> _Checked:
     """Step 2 for one file (the module's docstring)."""
     path = f.canonical_path
     handles.on = path
     parent, base = _parent(path)
+    handles.entry = parent
     h = _folder(handles, parent, created)
     if h is None:
+        handles.entry = None
         v = judge(f, ABSENT, Temps(), None)
         if isinstance(v, Stop):
             raise _Halt(v.cause, path)
         return _Checked(f, parent, base, v, 0, True)
     if any(journal.is_kept_name(n, base, record.name) for n in h.names()):
         raise _Halt(Cause.KEPT_COPY, path)  # the user has not dealt with the kept copy yet (§11)
-    file, st = _look(h, base, path)
+    handles.entry = None
+    file, st = _look(h, base, path, read=f.pre is not None)
     names = journal.scratch_names(base, record.name)
-    looked = [_temp_state(h, n, (f.pre, f.post), path, staged=s) for n, s in zip(names, _STAGED, strict=True)]
+    looked: list[tuple[TempState, EntryStat | None]] = []
+    for n, staged in zip(names, _STAGED, strict=True):
+        handles.entry = _join(parent, n)
+        looked.append(_temp_state(h, n, (f.pre, f.post), path, staged=staged))
+    handles.entry = None
     temps = Temps(*(state for state, _ in looked))
     backup: Seen | None = None
     if f.pre is not None and f.backup is not None and file == Seen(Kind.FILE, f.post):
+        handles.entry = _join(record.backup_dir, f.backup)
         try:
             backup, _ = _look(handles.at(record.backup_dir), f.backup, path)
         except PathMovedError:
             raise _Halt(Cause.BACKUP_BAD, path) from None
         except (FileNotFoundError, NotADirectoryError):
             backup = Seen(Kind.OTHER)  # its folder is not there: the backup is missing (any other error: `Failed`)
+        handles.entry = None
     v = judge(f, file, temps, backup)
     if isinstance(v, Stop) and v.cause is Cause.IO_ERROR:
-        raise _Fail(v.cause, path)  # a name of ours vanished between its stat and its read: nothing written
+        gone = next(n for n, state in zip(names, temps.states(), strict=True) if state is TempState.UNREADABLE)
+        raise _Fail(v.cause, path, None, _join(parent, gone))  # vanished between its stat and its read: nothing written
     if isinstance(v, Stop):
         for n, state in zip(names, temps.states(), strict=True):
             if state is TempState.FOREIGN:
                 keep(h, n, base, record.name)  # out of reach of every deletion (owner, 2026-10-29)
         raise _Halt(v.cause, path)
     ours = [(n, nst) for n, (state, nst) in zip(names, looked, strict=True) if state is TempState.OURS]
+    if ours or v is Verdict.AT_POST:
+        _writable(handles, h, parent, path)
     for n, nst in ours:  # each removal of step 3 allowed (red team r5 F2: an inherited `deny delete`, a lock flag;
         # `DELETE` answers for the folder's side too: a mode 0555 or `deny delete_child`, probed on APFS)
         if (nst is not None and nst.locked) or not h.allowed(n, Right.DELETE):
-            raise _Halt(Cause.PERMISSION, path)
+            raise _Halt(Cause.PERMISSION, path, _join(parent, n))
     if v is not Verdict.AT_POST:
         return _Checked(f, parent, base, v, 0, False)
     if not h.allowed(".", Right.CHANGE_ENTRIES):
-        raise _Halt(Cause.PERMISSION, path)  # the restore temp is made here (`deny add_file` allows removals only)
+        raise _Halt(Cause.PERMISSION, path, parent)  # the restore temp is made here (`deny add_file` allows removals)
     assert st is not None  # noqa: S101 (a file at post was seen by `_look`)
     if hard_links(st):
         raise _Halt(Cause.HARD_LINKED, path)
@@ -273,8 +318,10 @@ def _check(handles: Handles, record: Record, f: FileEntry, *, created: frozenset
         raise _Halt(Cause.PERMISSION, path)
     if not h.allowed(base, Right.READ_XATTRS):
         raise _Halt(Cause.PERMISSION, path)  # the restore temp copies them (S0061 red team L1)
+    handles.entry = parent
     if volume_without_swap(h):
         raise _Halt(Cause.VOLUME_NO_SWAP, path)
+    handles.entry = None
     return _Checked(f, parent, base, v, st.mode, False)
 
 
@@ -296,23 +343,30 @@ def _ours_in(record: Record, folder: str) -> set[str]:
 def _check_folders(handles: Handles, record: Record, removable: frozenset[str]) -> None:
     """Step 2 for the folders the save made that are there and would be removed (they hold nothing but names this
     restore removes): each must be removable from its parent (entry changes in the parent, and its own deletion),
-    else nothing is written (S0061 verifier V1; a folder holding other entries is never removed: red team r2 L5)."""
+    else nothing is written (S0061 verifier V1; a folder holding other entries is never removed: red team r2 L5): no
+    lock flag on it (red team r6 overflow 3: its `rmdir` would answer `EPERM` on every try), its deletion allowed,
+    and its parent a folder step 3 may write in (`_writable`)."""
     for d in record.created_dirs:
         if d.canonical_path not in removable:
             continue
         parent, name = _parent(d.canonical_path)
         handles.on = d.canonical_path
+        handles.entry = parent
         try:
             ph = handles.at(parent)
         except (FileNotFoundError, NotADirectoryError):
             continue  # its parent is a folder the save made that is not there
+        handles.entry = None
         st = ph.stat(name)
         if st is None or st.kind is not Kind.DIR:
             continue  # not there, or not a folder of ours any more: never removed
         if not set(handles.at(d.canonical_path).names()) <= _ours_in(record, d.canonical_path):
             continue  # it holds another entry: it stays
-        if not ph.allowed(".", Right.CHANGE_ENTRIES) or not ph.allowed(name, Right.DELETE):
+        if st.locked or not ph.allowed(name, Right.DELETE):
             raise _Halt(Cause.PERMISSION, d.canonical_path)
+        if not ph.allowed(".", Right.CHANGE_ENTRIES):
+            raise _Halt(Cause.PERMISSION, d.canonical_path, parent)
+        _writable(handles, ph, parent, d.canonical_path)
 
 
 def _settle(h: DirHandle, name: str, x: _Checked, record: Record, ours: tuple[str | None, ...]) -> None:
@@ -334,15 +388,19 @@ def _put_back(handles: Handles, record: Record, x: _Checked) -> None:
     h = handles.at(x.parent)
     _, _, rt, rs = journal.scratch_names(x.base, record.name)
     assert f.backup is not None  # noqa: S101 (decode: a backup exactly when there is a pre hash; a file at post)
+    handles.entry = _join(record.backup_dir, f.backup)
     data = handles.at(record.backup_dir).read(f.backup)
     if data is None or sha256(data) != f.pre:
         raise _Halt(Cause.BACKUP_BAD, f.canonical_path)
+    handles.entry = _join(x.parent, rs)
     h.create(rs, data, x.mode, like=x.base)  # its data synced before the swap (fidelity review 2, H1)
+    handles.entry = _join(x.parent, rt)
     h.rename_excl(rs, rt)  # exclusive: an entry that appeared there since its clean-up is never replaced (`Failed`)
     h.sync()  # the restore temp's name durable before its swap (S0061 r3: verifier F1, red team F1)
     h.swap(rt, x.base)
     h.sync()  # the swap durable before what it displaced is removed (S0061 r4: an in-place write, then a power loss)
     _settle(h, rt, x, record, (f.post, f.pre))
+    handles.entry = None
 
 
 def _clean(h: DirHandle, name: str, x: _Checked, record: Record, *, staged: bool) -> None:
@@ -363,11 +421,13 @@ def _clean(h: DirHandle, name: str, x: _Checked, record: Record, *, staged: bool
 def _sync_folders(handles: Handles, folders: list[str]) -> None:
     """A `durable_sync` of every folder in `folders` that is there (path-guarded), each once."""
     for folder in dict.fromkeys(folders):
+        handles.entry = folder
         try:
             h = handles.at(folder)
         except (FileNotFoundError, NotADirectoryError):
             continue  # a folder the save made, not there (checked at step 2)
         h.sync()
+    handles.entry = None
 
 
 def _restore_all(handles: Handles, record: Record, checked: list[_Checked], removable: frozenset[str]) -> str | None:
@@ -387,11 +447,16 @@ def _restore_all(handles: Handles, record: Record, checked: list[_Checked], remo
         for k, (n, staged) in enumerate(zip(journal.scratch_names(x.base, record.name), _STAGED, strict=True)):
             if k == 0 and x.verdict is Verdict.AT_POST:
                 continue  # the old object at the pre bytes: removed only once they are back (below)
+            handles.entry = _join(x.parent, n)
             _clean(h, n, x, record, staged=staged)
+        handles.entry = None
     for x in reversed(checked):
         if x.verdict is Verdict.AT_POST:
             _put_back(handles, record, x)
-            _clean(handles.at(x.parent), journal.scratch_names(x.base, record.name)[0], x, record, staged=False)
+            temp = journal.scratch_names(x.base, record.name)[0]
+            handles.entry = _join(x.parent, temp)
+            _clean(handles.at(x.parent), temp, x, record, staged=False)
+            handles.entry = None
     handles.on = None
     _sync_folders(handles, [x.parent for x in checked])
     taken = next((x.entry.canonical_path for x in checked if x.verdict is Verdict.TAKEN), None)
@@ -402,6 +467,7 @@ def _restore_all(handles: Handles, record: Record, checked: list[_Checked], remo
         if d.canonical_path not in removable:
             continue
         parent, name = _parent(d.canonical_path)
+        handles.entry = d.canonical_path
         try:
             handles.at(parent).rmdir(name)
         except (FileNotFoundError, NotADirectoryError):
@@ -410,8 +476,20 @@ def _restore_all(handles: Handles, record: Record, checked: list[_Checked], remo
             if e.errno == errno.ENOTEMPTY:
                 continue  # it holds another entry: kept
             raise
+    handles.entry = None
     _sync_folders(handles, parents)  # every removal of a folder durable, this try's and an earlier one's
     return None
+
+
+def _vanished(handles: Handles, checked: list[_Checked]) -> bool:
+    """Some created path judged `taken` holds nothing now: the user deleted it while the try ran (S0061 verifier r6
+    F5). "No such entry" keeps its meaning: the try checks again from step 2 (once), and may then resolve."""
+    for x in checked:
+        if x.verdict is Verdict.TAKEN:
+            handles.on, handles.entry = x.entry.canonical_path, None
+            if handles.at(x.parent).stat(x.base) is None:
+                return True
+    return False
 
 
 def restore(
@@ -441,33 +519,38 @@ def restore(
             return Stopped(Cause.PATH_MOVED, None)
         except OSError as e:
             return Failed(Cause.IO_ERROR, None, e.errno)
-        try:
-            checked = [_check(handles, record, f, created=created) for f in record.files]
-            _check_folders(handles, record, removable)
-        except _Fail as e:
-            return Failed(e.cause, e.path, e.errno)
-        except _Halt as e:
-            return Stopped(e.cause, e.path)
-        except PathMovedError:
-            return Stopped(Cause.PATH_MOVED, handles.on)
-        except OSError as e:  # a check that answered an error (a stat, a listing, an open): Retry may undo it
-            return Failed(Cause.IO_ERROR, handles.on, e.errno)
-        try:
-            taken = _restore_all(handles, record, checked, removable)
-            if taken is not None:
-                return Stopped(Cause.CREATED_PATH_TAKEN, taken)  # owner, 2026-10-30: "Never remove it (Recommended)"
-            handles.on = None
-            jd = handles.at(journal_dir)
-            jd.rename_excl(journal.file_name(name, State.OPEN), journal.file_name(name, State.RESOLVED))
-            jd.sync()
-        except _Fail as e:
-            return Failed(e.cause, e.path, e.errno)
-        except _Halt as e:
-            return Stopped(e.cause, e.path)
-        except PathMovedError:
-            return Stopped(Cause.PATH_MOVED, handles.on)
-        except OSError as e:
-            return Failed(Cause.IO_ERROR, handles.on, e.errno)
+        for again in (False, True):
+            try:
+                checked = [_check(handles, record, f, created=created) for f in record.files]
+                _check_folders(handles, record, removable)
+            except _Fail as e:
+                return Failed(e.cause, e.path, e.errno, e.entry or handles.entry)
+            except _Halt as e:
+                return Stopped(e.cause, e.path, e.entry, e.detail)
+            except PathMovedError:
+                return Stopped(Cause.PATH_MOVED, handles.on)
+            except OSError as e:  # a check that answered an error (a stat, a listing, an open): Retry may undo it
+                return Failed(Cause.IO_ERROR, handles.on, e.errno, handles.entry)
+            try:
+                taken = _restore_all(handles, record, checked, removable)
+                if taken is not None and not again and _vanished(handles, checked):
+                    continue  # a taken path is empty now (S0061 verifier r6 F5): checked again from step 2
+                if taken is not None:
+                    return Stopped(Cause.CREATED_PATH_TAKEN, taken)  # owner, 2026-10-30: "Never remove it"
+                handles.on = None
+                handles.entry = journal_dir
+                jd = handles.at(journal_dir)
+                jd.rename_excl(journal.file_name(name, State.OPEN), journal.file_name(name, State.RESOLVED))
+                jd.sync()
+            except _Fail as e:
+                return Failed(e.cause, e.path, e.errno, e.entry or handles.entry)
+            except _Halt as e:
+                return Stopped(e.cause, e.path, e.entry, e.detail)
+            except PathMovedError:
+                return Stopped(Cause.PATH_MOVED, handles.on)
+            except OSError as e:
+                return Failed(Cause.IO_ERROR, handles.on, e.errno, handles.entry)
+            break
         return Resolved(name)
     finally:
         handles.close()

@@ -5,8 +5,10 @@ S0060): what a save does after its commit point (§6.1 step 7), through the file
    checked to be the file the plan meant: a replaced file a regular file (never a link, a FIFO or a folder), not
    locked (`uchg`), not hard-linked (`handles.hard_links`, the owner's decision point), the same object its
    canonical path names (`st_dev`, `st_ino`); a created path free of any entry (a dangling link included) under an
-   existing folder; every folder written in on a volume with the swap, allowing entry changes, and with no
-   inheritable ACL entry that denies us delete or read (`DirHandle.inheritable_denial`). The plan as a whole: one
+   existing folder; every folder written in (or a folder made in) on a volume with the swap, allowing entries to be
+   added and removed (`access(2)`: write and search, `_RMFILE_OK`), and with no ACL deny entry that applies to us
+   other than one that new entries do not inherit and that protects only the folder itself (`handles.acl_denial`;
+   owner, 2026-10-30: "Allowlist (Recommended)"). The plan as a whole: one
    entry per `path_key`, no target inside another target's path, no target at or under another's temp, staging,
    restore-temp or restore-staging name (`journal.scratch_names`) or kept name and no entry standing at one, the
    folders the save makes once each and never two that differ only in case, no target in the journal or backup
@@ -68,6 +70,7 @@ from ledger_engine.ledger.handles import (
     Displaced,
     Handles,
     PathMovedError,
+    acl_denial,
     displaced,
     hard_links,
     keep,
@@ -153,13 +156,17 @@ class NotSaved:
     save kept holds that outside save). `unchanged`: every target was hashed again and equals its pre bytes.
     `open_journal`: the journal may have been left `.open` (its rename was asked for and the rollback did not resolve
     it), which pauses writes until recovery resolves it. `path`: the canonical path of the file the refusal is about,
-    if any (the message names it: a hard-linked file, a locked one, one that changed)."""
+    if any (the message names it: a hard-linked file, a locked one, one that changed). `entry`: the folder a
+    `permission` refusal is about, when it is the folder's (its mode, a lock flag or an ACL entry: §11 names it), and
+    `detail` the ACL entry that blocks it in `chmod`'s words (`handles.acl_denial`; S0061 r6)."""
 
     step: Step
     reason: Reason
     unchanged: bool
     open_journal: bool = False
     path: str | None = None
+    entry: str | None = None
+    detail: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -210,10 +217,14 @@ class _Plan:
 
 
 class _Stop(Exception):
-    def __init__(self, reason: Reason, path: str | None = None) -> None:
+    def __init__(
+        self, reason: Reason, path: str | None = None, entry: str | None = None, detail: str | None = None
+    ) -> None:
         super().__init__(reason.value)
         self.reason = reason
         self.path = path
+        self.entry = entry
+        self.detail = detail
 
 
 def _within(key: str, folder: str) -> bool:
@@ -291,16 +302,19 @@ def _target(fs: FileSystem, handles: Handles, index: int, c: Commit, ch: Change)
     return _Target(index, ch, canonical, key, parent, parent_key, base, *names, None, new_dirs, r.rest, tag)
 
 
-def _check_folder(h: DirHandle, canonical: str) -> None:
-    """A folder the save writes in: on a volume with the swap, the save may add and remove entries there, and no
-    inheritable ACL entry denies us the deletion or the reading of what the save makes there (its staging file could
-    not be renamed or removed, its new file not read back: S0061 red team r5 F2)."""
+def _check_folder(h: DirHandle, canonical: str, folder: str) -> None:
+    """The folder `folder` the save writes in (or makes a folder in), for the file `canonical`: on a volume with the
+    swap; the save may add entries there and remove them (`deny delete_child` answers yes to write and search: S0061
+    red team r6 F1, probed); and no ACL deny entry that applies to us blocks it (`handles.acl_denial`: owner,
+    2026-10-30, "Allowlist (Recommended)"; what new entries inherit, a folder the save makes included, is then never
+    a deny that applies to us: red team r5 F2, r6 F1-F3)."""
     if volume_without_swap(h):
         raise _Stop(Reason.VOLUME_NO_SWAP, canonical)
-    if not h.allowed(".", Right.CHANGE_ENTRIES):
-        raise _Stop(Reason.PERMISSION, canonical)
-    if h.inheritable_denial():
-        raise _Stop(Reason.PERMISSION, canonical)
+    if not h.allowed(".", Right.CHANGE_ENTRIES) or not h.allowed(".", Right.REMOVE_ENTRIES):
+        raise _Stop(Reason.PERMISSION, canonical, folder)  # a mode, a lock flag (probed: `uchg`), an ACL
+    detail = acl_denial(h)
+    if detail is not None:
+        raise _Stop(Reason.PERMISSION, canonical, folder, detail)
 
 
 def _check_target(handles: Handles, t: _Target) -> None:
@@ -311,7 +325,7 @@ def _check_target(handles: Handles, t: _Target) -> None:
             raise _Stop(Reason.CHANGED, t.canonical)  # a file the save creates already exists
         h = handles.at(t.parent)
         _check_replaced(h.stat(t.base), t.identity, t.canonical)
-        _check_folder(h, t.canonical)
+        _check_folder(h, t.canonical, t.parent)
         if not h.allowed(t.base, Right.DELETE):
             raise _Stop(Reason.PERMISSION, t.canonical)  # the swap moves it away; an ACL denies that (deny delete)
         if not h.allowed(t.base, Right.READ_XATTRS):
@@ -329,7 +343,7 @@ def _check_target(handles: Handles, t: _Target) -> None:
         raise _Stop(Reason.CHANGED, t.canonical) from None  # the deepest existing component is not a folder
     if holder.stat(t.rest[0]) is not None:
         raise _Stop(Reason.CHANGED, t.canonical)  # an entry stands at the path (a dangling link, S0060 verifier F3)
-    _check_folder(holder, t.canonical)
+    _check_folder(holder, t.canonical, existing)
     if len(t.rest) == 1 and (any(holder.stat(n) is not None for n in t.scratch) or not t.kept_free(holder)):
         raise _Stop(Reason.CHANGED, t.canonical)  # an entry stands at our temp name
 
@@ -560,6 +574,11 @@ def _why(e: Exception, handles: Handles) -> tuple[Reason, str | None]:
     return Reason.IO_ERROR, handles.on
 
 
+def _where(e: Exception) -> tuple[str | None, str | None]:
+    """The folder and the ACL entry of a `permission` refusal (`NotSaved.entry`, `detail`)."""
+    return (e.entry, e.detail) if isinstance(e, _Stop) else (None, None)
+
+
 def _rollback(fs: FileSystem, jd: DirHandle, record: Record, plan: _Plan, step: Step, progress: _Progress) -> bool:
     """§6.4: the restore (`ledger.restore.restore`) of this save's own record, at once; True when it resolved the
     journal, or when no `.open` (or `.closed`) record was ever made. Anything at a created path is left as it is (the
@@ -602,7 +621,8 @@ def durable_commit(fs: FileSystem, c: Commit) -> Outcome:
             jd.create(journal.file_name(name, State.PART), data, JOURNAL_MODE)
         except (OSError, _Stop, PathMovedError) as e:
             reason, path = _why(e, handles)
-            return NotSaved(step, reason, _unchanged(handles, targets), path=path)
+            entry, detail = _where(e)
+            return NotSaved(step, reason, _unchanged(handles, targets), path=path, entry=entry, detail=detail)
         progress = _Progress()
         try:
             progress.open_journal = True  # set before the call: a rename that fails may still have happened

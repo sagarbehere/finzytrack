@@ -6,11 +6,12 @@ state a power loss may leave)."""
 from __future__ import annotations
 
 import errno
+from collections.abc import Callable
 
 import pytest
 
-from ledger_engine.fs.port import Right
-from tests.fakes.memfs import Crash, MemFS, MemLocks
+from ledger_engine.fs.port import AclEntry, Right
+from tests.fakes.memfs import Crash, MemDir, MemFS, MemLocks
 
 
 def fs_with(*dirs: str, ci: bool = True) -> MemFS:
@@ -372,21 +373,177 @@ def test_sync_file_makes_an_unsynced_in_place_write_durable_and_refuses_what_is_
     assert outcomes(fs, "/d/f") == {(b"new bytes",)}
 
 
-def test_an_inheritable_denial_is_reported_and_files_made_there_cannot_be_removed() -> None:
-    """S0061 r5 (red team F2): `outside_deny_inherit` models `chmod +a "everyone deny delete,file_inherit"`: the
-    folder reports it (`inheritable_denial`), and a file made there after it refuses its rename away and removal."""
+def _deny(perms: str, flags: str = "", *, ours: bool = True) -> AclEntry:
+    return AclEntry(True, ours, frozenset(perms.split(",")), frozenset(f for f in flags.split(",") if f))
+
+
+def test_an_acl_entry_is_reported_and_new_entries_inherit_it_as_apfs_does() -> None:
+    """S0061 r6 (red team overflow 4; probed on APFS): `acl()` answers the folder's entries; a new file gets the
+    `file_inherit` ones (acting on it, passing nothing on), a new folder the `directory_inherit` ones (acting on it,
+    `only_inherit` dropped); a `file_inherit`-only entry does not reach a subfolder; what existed before is
+    untouched."""
     fs = MemFS()
     fs.outside_mkdirs("/d")
     fs.outside_write("/d/old", b"before\n")
+    f_entry, d_entry = _deny("delete", "file_inherit"), _deny("search", "directory_inherit,only_inherit")
     with fs.open_dir("/d") as d:
-        assert not d.inheritable_denial()
-        fs.outside_deny_inherit("/d")
-        assert d.inheritable_denial()
+        assert d.acl() == ()
+        fs.outside_acl("/d", f_entry)
+        fs.outside_acl("/d", d_entry)
+        assert d.acl() == (f_entry, d_entry)
         d.create("new", b"x", 0o644)
+        d.mkdir("sub")
         assert not d.allowed("new", Right.DELETE)
         assert d.allowed("old", Right.DELETE), "only what is made after it inherits it"
         with pytest.raises(PermissionError):
             d.remove("new")
+    with fs.open_dir("/d/sub") as sub:
+        assert sub.acl() == (
+            AclEntry(True, True, frozenset({"search"}), frozenset({"directory_inherit", "inherited"})),
+        )
+        with pytest.raises(PermissionError):
+            sub.create("x", b"x", 0o644)  # `deny search` acts on the subfolder: nothing can be looked up in it
+    with pytest.raises(PermissionError):
+        fs.resolve("/d/sub/x")
+    fs.outside_acl_clear("/d")
+    with fs.open_dir("/d") as d:
+        assert d.acl() == ()
+
+
+@pytest.mark.parametrize(
+    ("perms", "flags", "ours", "refused", "rights"),
+    [
+        ("delete_child", "", True, ("remove", "rename", "rmdir"), (True, False)),
+        ("add_file", "", True, ("create", "rename"), (False, True)),
+        ("add_subdirectory", "", True, ("mkdir",), (False, True)),
+        ("search", "", True, ("stat", "read", "create", "remove", "rename", "rmdir", "mkdir"), (False, False)),
+        ("delete_child", "directory_inherit,only_inherit", True, (), (True, True)),  # only for what is made in it
+        ("delete_child", "", False, (), (True, True)),  # another user's
+    ],
+)
+def test_a_folders_deny_entry_refuses_what_it_names_and_nothing_else(
+    perms: str, flags: str, ours: bool, refused: tuple[str, ...], rights: tuple[bool, bool]
+) -> None:
+    """The operations a folder's own deny entry refuses (the module's docstring), and the rights `allowed` answers
+    as `access(2)` does on APFS (probed, S0061 r6; `rights`: write and search, `_RMFILE_OK`): `deny delete_child`
+    leaves write and search allowed but not `_RMFILE_OK`; `deny add_file` the reverse; `deny search` both no."""
+    actions: dict[str, Callable[[MemDir], object]] = {
+        "remove": lambda d: d.remove("f"),
+        "rename": lambda d: d.rename_excl("f", "f2"),
+        "rmdir": lambda d: d.rmdir("e"),
+        "create": lambda d: d.create("n", b"x", 0o644),
+        "mkdir": lambda d: d.mkdir("m"),
+        "names": lambda d: d.names(),
+        "stat": lambda d: d.stat("f"),
+        "read": lambda d: d.read("f"),
+    }
+    for action, do in actions.items():
+        fs = MemFS()
+        fs.outside_mkdirs("/d/e")
+        fs.outside_write("/d/f", b"x")
+        fs.outside_acl("/d", _deny(perms, flags, ours=ours))
+        with fs.open_dir("/d") as d:
+            if action in refused:
+                with pytest.raises(PermissionError):
+                    do(d)
+            else:
+                do(d)
+    fs = MemFS()
+    fs.outside_mkdirs("/d")
+    fs.outside_acl("/d", _deny(perms, flags, ours=ours))
+    with fs.open_dir("/d") as d:
+        assert (d.allowed(".", Right.CHANGE_ENTRIES), d.allowed(".", Right.REMOVE_ENTRIES)) == rights
+
+
+def test_a_folder_that_denies_us_list_cannot_be_opened() -> None:
+    """Probed on APFS (S0061 r6): `open(O_RDONLY | O_DIRECTORY)` of a folder under `deny list` answers `EACCES`."""
+    fs = MemFS()
+    fs.outside_mkdirs("/d")
+    fs.outside_acl("/d", _deny("list"))
+    with pytest.raises(PermissionError):
+        fs.open_dir("/d")
+
+
+@pytest.mark.parametrize("perms", ["readattr", "readsecurity", "read", "readextattr", "delete"])
+def test_an_entrys_own_deny_refuses_what_it_names(perms: str) -> None:
+    """On a file (inherited from its folder, as red team r6 and verifier r6 F1 met it): `readattr` and `readsecurity`
+    make its `stat` answer `EACCES` (probed on APFS), `read` its bytes, `readextattr` the copy of its extended
+    attributes, `delete` its removal."""
+    fs = MemFS()
+    fs.outside_mkdirs("/d")
+    fs.outside_write("/d/f", b"x")
+    fs.outside_acl("/d/f", _deny(perms))
+    with fs.open_dir("/d") as d:
+        checks: dict[str, Callable[[], object]] = {
+            "stat": lambda: d.stat("f"),
+            "read": lambda: d.read("f"),
+            "copy": lambda: d.create("g", b"y", 0o644, like="f"),
+            "remove": lambda: d.remove("f"),
+        }
+        refused = {
+            "readattr": {"stat"},
+            "readsecurity": {"stat"},
+            "read": {"read"},
+            "readextattr": {"copy"},
+            "delete": {"remove"},
+        }[perms]
+        assert d.allowed("f", Right.READ_XATTRS) is (perms != "readextattr")
+        for name, check in checks.items():
+            if name in refused:
+                with pytest.raises(PermissionError):
+                    check()
+            elif name != "remove":
+                check()
+
+
+def test_a_new_file_that_inherits_deny_writeextattr_refuses_the_copy_of_extended_attributes() -> None:
+    """Red team r6 overflow 2: `fcopyfile(COPYFILE_XATTR)` into a file whose inherited entry denies `writeextattr`."""
+    fs = MemFS()
+    fs.outside_mkdirs("/d")
+    fs.outside_write("/d/f", b"x")
+    fs.outside_acl("/d", _deny("writeextattr", "file_inherit"))
+    with fs.open_dir("/d") as d, pytest.raises(PermissionError):
+        d.create("g", b"y", 0o644, like="f")
+
+
+def test_a_locked_folder_refuses_changes_in_it_and_its_own_removal() -> None:
+    """`chflags uchg` on a folder (probed on APFS, S0061 r6): write and `_RMFILE_OK` answer no, every change in it
+    `EPERM`, and its parent may not remove it."""
+    fs = MemFS()
+    fs.outside_mkdirs("/d/e")
+    fs.outside_write("/d/e/f", b"x")
+    fs.outside_mkdirs("/d/empty")
+    fs.outside_lock("/d/e")
+    fs.outside_lock("/d/empty")
+    with fs.open_dir("/d/e") as e:
+        assert not e.allowed(".", Right.CHANGE_ENTRIES)
+        assert not e.allowed(".", Right.REMOVE_ENTRIES)
+        for do in (lambda: e.remove("f"), lambda: e.create("g", b"y", 0o644), lambda: e.mkdir("m")):
+            with pytest.raises(PermissionError):
+                do()
+    with fs.open_dir("/d") as d:
+        st = d.stat("empty")
+        assert st is not None
+        assert st.locked
+        assert not d.allowed("empty", Right.DELETE)
+        with pytest.raises(PermissionError):
+            d.rmdir("empty")
+    fs.outside_unlock("/d/empty")
+    with fs.open_dir("/d") as d:
+        d.rmdir("empty")
+
+
+def test_acl_entries_and_lock_flags_survive_a_power_loss() -> None:
+    fs = MemFS()
+    fs.outside_mkdirs("/d/e")
+    fs.outside_acl("/d", _deny("delete_child"))
+    fs.outside_lock("/d/e")
+    for state in fs.power_loss_states():
+        with state.open_dir("/d") as d:
+            assert d.acl() == (_deny("delete_child"),)
+            st = d.stat("e")
+            assert st is not None
+            assert st.locked
 
 
 def test_the_user_removing_a_file_is_durable() -> None:

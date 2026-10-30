@@ -17,7 +17,7 @@ from collections.abc import Callable
 
 import pytest
 
-from ledger_engine.fs.port import Right
+from ledger_engine.fs.port import AclEntry, Right
 from ledger_engine.ledger.core import journal
 from ledger_engine.ledger.core.journal import State
 from ledger_engine.ledger.core.recovery import Cause
@@ -321,11 +321,13 @@ def test_a_leftover_restore_temp_is_deleted_only_when_it_holds_the_pre_or_the_po
 # ---- step 2: every cause stops the journal before anything is written ---------------------------------------------
 
 
-def _stops_with_nothing_written(w: World, cause: Cause, path: str | None) -> None:
+def _stops_with_nothing_written(
+    w: World, cause: Cause, path: str | None, entry: str | None = None, detail: str | None = None
+) -> None:
     n = len(w.fs.effects)
     before = w.fs.snapshot()
     out = recover(w.fs, listed=False)
-    assert out == Stopped(cause, path), out
+    assert out == Stopped(cause, path, entry, detail), out
     assert w.fs.effects[n:] == [], "a stop at the checks writes nothing"
     assert w.fs.snapshot() == before
     assert set(journals(w.fs)) == {State.OPEN}
@@ -399,19 +401,19 @@ def test_a_locked_file_at_post_stops_the_journal() -> None:
 
 
 @pytest.mark.parametrize(
-    ("where", "right", "path"),
+    ("where", "right", "path", "entry"),
     [
-        ("/w/L", Right.CHANGE_ENTRIES, "/w/L/main.bean"),  # prices.bean, created, is never written: not checked
-        ("/w/L/main.bean", Right.DELETE, "/w/L/main.bean"),
-        ("/w/L", Right.DELETE, "/w/L/main.bean"),
+        ("/w/L", Right.CHANGE_ENTRIES, "/w/L/main.bean", "/w/L"),  # prices.bean, created, is never written
+        ("/w/L/main.bean", Right.DELETE, "/w/L/main.bean", None),
+        ("/w/L", Right.DELETE, "/w/L/main.bean", "/w/L"),  # the folder's `delete_child`: `_RMFILE_OK` says no
     ],
 )
 def test_permissions_that_would_block_the_restore_stop_the_journal_before_anything_is_written(
-    where: str, right: Right, path: str
+    where: str, right: Right, path: str, entry: str | None
 ) -> None:
     w = crashed(CLOSE)
     w.fs.outside_deny(where, right)
-    _stops_with_nothing_written(w, Cause.PERMISSION, path)
+    _stops_with_nothing_written(w, Cause.PERMISSION, path, entry)
 
 
 @pytest.mark.parametrize("bad", [b"", b"{}\n", b"garbage", "newer"])
@@ -513,7 +515,7 @@ def test_a_read_only_folder_beside_a_cut_temp_stops_before_anything_is_written()
     write = EFFECTS.index("write /w/L/inc:.a.bean.ft-s1-j7.new")  # the first file: every file still at pre
     w = crashed(write, cut=3)
     w.fs.outside_deny("/w/L/inc", Right.CHANGE_ENTRIES)
-    _stops_with_nothing_written(w, Cause.PERMISSION, "/w/L/inc/a.bean")
+    _stops_with_nothing_written(w, Cause.PERMISSION, "/w/L/inc/a.bean", "/w/L/inc")
 
 
 def test_a_backup_folder_moved_or_replaced_by_a_link_stops_before_anything_is_written() -> None:
@@ -546,15 +548,21 @@ def test_a_backup_changed_after_the_checks_is_hashed_again_and_stops_the_restore
 # undo's checks ends that try as 'failed' with nothing moved ... wherever it happens"): a `stat`, a listing, a
 # folder's open or the volume's capabilities failing at the checks is `Failed(io_error, path, errno)` too.
 STEP2_SITES = {
-    # site: (method of MemDir or MemFS, the name or path it fails on, the file the outcome names)
-    "file_stat": ("stat", "main.bean", "/w/L/main.bean"),
-    "temp_stat": ("stat", ".main.bean.ft-s1-j7.tmp", "/w/L/main.bean"),
-    "staging_stat": ("stat", ".main.bean.ft-s1-j7.new", "/w/L/main.bean"),
-    "rtemp_stat": ("stat", ".main.bean.ft-restore-s1-j7.tmp", "/w/L/main.bean"),
-    "backup_stat": ("stat", "2-main.bean", "/w/L/main.bean"),
-    "kept_listing": ("names", "/w/L/inc", "/w/L/inc/a.bean"),
-    "folder_open": ("open_dir", "/w/L/inc", "/w/L/inc/a.bean"),
-    "volume_caps": ("can_swap", "/w/L/inc", "/w/L/inc/a.bean"),
+    # site: (method of MemDir or MemFS, the name or path it fails on, the file the outcome names, and the entry it
+    # names when that is not the file: verifier r6 F3)
+    "file_stat": ("stat", "main.bean", "/w/L/main.bean", None),
+    "temp_stat": ("stat", ".main.bean.ft-s1-j7.tmp", "/w/L/main.bean", "/w/L/.main.bean.ft-s1-j7.tmp"),
+    "staging_stat": ("stat", ".main.bean.ft-s1-j7.new", "/w/L/main.bean", "/w/L/.main.bean.ft-s1-j7.new"),
+    "rtemp_stat": (
+        "stat",
+        ".main.bean.ft-restore-s1-j7.tmp",
+        "/w/L/main.bean",
+        "/w/L/.main.bean.ft-restore-s1-j7.tmp",
+    ),
+    "backup_stat": ("stat", "2-main.bean", "/w/L/main.bean", "/w/local/backups/s1-j7/2-main.bean"),
+    "kept_listing": ("names", "/w/L/inc", "/w/L/inc/a.bean", "/w/L/inc"),
+    "folder_open": ("open_dir", "/w/L/inc", "/w/L/inc/a.bean", "/w/L/inc"),
+    "volume_caps": ("can_swap", "/w/L/inc", "/w/L/inc/a.bean", "/w/L/inc"),
 }
 
 
@@ -572,7 +580,7 @@ def test_R5b_an_io_error_at_any_check_fails_the_try_with_nothing_written(
     w.fs.outside_write(t.rtemp, t.post)  # a leftover restore temp of ours, so its name is checked too
     with w.fs.open_dir(JD) as d:
         d.sync()
-    method, key, path = STEP2_SITES[site]
+    method, key, path, entry = STEP2_SITES[site]
     fired = [False]
     if method == "open_dir":
         real_open = MemFS.open_dir
@@ -600,7 +608,7 @@ def test_R5b_an_io_error_at_any_check_fails_the_try_with_nothing_written(
     out = recover(w.fs, listed=False)
     monkeypatch.undo()
     assert fired[0], site
-    assert out == Failed(Cause.IO_ERROR, path, errno.EIO), (site, out)
+    assert out == Failed(Cause.IO_ERROR, path, errno.EIO, entry), (site, out)
     assert w.fs.effects[n:] == [], "a failed check wrote something"
     assert w.fs.snapshot() == before
     out = recover(w.fs)
@@ -661,7 +669,7 @@ def test_R5b_an_io_error_at_a_restore_swaps_displaced_stat_fails_the_try_and_mov
     out = recover(w.fs)
     monkeypatch.undo()
     assert fired[0]
-    assert out == Failed(Cause.IO_ERROR, t.path, errno.EIO), out
+    assert out == Failed(Cause.IO_ERROR, t.path, errno.EIO, t.rtemp), out
     assert w.fs.file(t.kept) is None
     assert recover(w.fs) == TAKEN
 
@@ -838,7 +846,7 @@ def test_a_leftover_restore_temp_beside_a_file_at_pre_in_a_read_only_folder_stop
     w = crashed(EFFECTS.index("create /w/L/inc:.a.bean.ft-s1-j7.new"))  # no temp of the save there
     w.fs.outside_write("/w/L/inc/.a.bean.ft-restore-s1-j7.new", b"2026-01")  # a cut copy at its staging name: ours
     w.fs.outside_deny("/w/L/inc", Right.CHANGE_ENTRIES)
-    _stops_with_nothing_written(w, Cause.PERMISSION, "/w/L/inc/a.bean")
+    _stops_with_nothing_written(w, Cause.PERMISSION, "/w/L/inc/a.bean", "/w/L/inc")
 
 
 def test_a_file_at_post_whose_extended_attributes_cannot_be_read_stops_before_anything_is_written() -> None:
@@ -883,6 +891,24 @@ def test_a_file_that_vanishes_between_its_stat_and_its_read_is_foreign(monkeypat
     assert w.fs.effects[n:] == []
 
 
+def test_R6_a_backup_that_vanishes_between_its_stat_and_its_read_is_a_bad_backup(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Mutant `restore_look_none_ok` (re-run in round 6): an entry gone between its `stat` and its read is absent
+    ("no such entry keeps its meaning", verifier r6 F5): for the backup that is a missing backup (`backup_bad`, it
+    was told `foreign`), nothing written."""
+    from tests.fakes.memfs import MemDir
+
+    w = crashed(CLOSE)
+    real = MemDir.read
+
+    def vanishing(self: MemDir, name: str) -> bytes | None:
+        return None if name == "2-main.bean" else real(self, name)
+
+    monkeypatch.setattr(MemDir, "read", vanishing)
+    _stops_with_nothing_written(w, Cause.BACKUP_BAD, "/w/L/main.bean")
+
+
 def test_a_folder_the_save_made_whose_own_deletion_is_denied_stops_before_anything_is_written() -> None:
     """Verifier V1, second half: an ACL denying the folder's deletion (the created file not written yet)."""
     w = crashed(NEW_DIR_EFFECTS.index("create /w/L/y2026:.prices.bean.ft-s1-j7.new"), new_dir=True)
@@ -891,21 +917,68 @@ def test_a_folder_the_save_made_whose_own_deletion_is_denied_stops_before_anythi
     _stops_with_nothing_written(w, Cause.PERMISSION, "/w/L/y2026")
 
 
-def test_a_created_file_that_vanishes_between_its_stat_and_its_read_is_foreign_not_absent(
+def test_V6_F4_an_unreadable_file_at_a_created_path_is_taken_and_its_bytes_are_never_read(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Red team L3 for a created file: "absent" would be its pre state, and the try would resolve over a file that is
-    there."""
+    """Verifier r6 F4 (owner, 2026-10-30, option 1: anything at a created path is `taken` "whatever it holds"): the
+    bytes there never decide anything, so they are never read. An outside file we may not read (mode 000) made every
+    try `failed`, and the user never saw the created-path row of §11; a huge one was read whole."""
     from tests.fakes.memfs import MemDir
 
     w = crashed(CLOSE)
     real = MemDir.read
+    read: list[str] = []
 
-    def vanishing(self: MemDir, name: str) -> bytes | None:
-        return None if name == "prices.bean" else real(self, name)
+    def denied(self: MemDir, n: str) -> bytes | None:
+        read.append(n)
+        if n == "prices.bean":
+            raise PermissionError(errno.EACCES, "Permission denied")
+        return real(self, n)
 
-    monkeypatch.setattr(MemDir, "read", vanishing)
-    assert recover(w.fs, listed=False) == Stopped(Cause.FOREIGN, "/w/L/prices.bean")
+    monkeypatch.setattr(MemDir, "read", denied)
+    out = recover(w.fs)
+    assert out == TAKEN, out
+    assert "prices.bean" not in read
+
+
+def test_V6_F5_a_created_file_deleted_while_the_try_runs_is_absent_and_the_try_resolves(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Verifier r6 F5 ("no such entry keeps its meaning", owner, 2026-10-30, batched point): the user deletes the
+    file at the created path after its `stat` and before the end of step 2 (here: at the `stat` of its first name
+    of ours). Nothing stands there now: the try checks again and resolves; it never stops as `foreign` or `taken`
+    over an empty path. (It replaced round 1's red team L3 test for a created file, which expected `foreign`: the
+    bytes there are no longer read, verifier r6 F4.)"""
+    from tests.fakes.memfs import MemDir
+
+    w = crashed(CLOSE)
+    t = w.targets[1]
+    real = MemDir.stat
+    fired = [False]
+
+    def vanish(self: MemDir, n: str) -> object:
+        if n == f".{t.base}.ft-s1-j7.tmp" and not fired[0]:
+            fired[0] = True
+            w.fs.outside_remove(t.path)
+        return real(self, n)
+
+    monkeypatch.setattr(MemDir, "stat", vanish)
+    out = recover(w.fs)
+    monkeypatch.undo()
+    assert fired[0]
+    assert out == Resolved(NAME), out
+    check_recovered(w.fs, w, out)
+
+
+def test_V6_F5_a_created_file_that_stays_is_still_taken_after_the_check_again() -> None:
+    """@regression-guard (it already held at e6ab8627): the check again (F5) happens once and changes nothing when the
+    file is still there: `taken`, never touched."""
+    w = crashed(CLOSE)
+    t = w.targets[1]
+    n = len(w.fs.effects)
+    assert recover(w.fs) == TAKEN
+    assert not [x for x in w.fs.effects[n:] if touches(x, t.path)]
+    assert w.fs.file(t.path) == t.post
 
 
 # ---- S0061 round 2 (owner, 2026-10-29: "Refine the rule"; the red team's High; verifier F1, F3) ------------------
@@ -1296,8 +1369,8 @@ def test_a_folder_the_save_made_holding_only_our_staging_file_is_checked_for_rem
     w = crashed(_first(NEW_DIR_EFFECTS, f"fsync {t.folder}:.{t.base}.ft-s1-j7.new"), new_dir=True)
     assert w.fs.names_in(t.folder) == [f".{t.base}.ft-s1-j7.new"]
     w.fs.outside_deny(t.folder, Right.DELETE)
-    # S0061 r5 (red team F2): the staging file's own removal is checked first, and is denied by the same right
-    _stops_with_nothing_written(w, Cause.PERMISSION, t.path)
+    # S0061 r6: the folder's own `_RMFILE_OK` is checked first (red team r6 F1), and is denied by the same right
+    _stops_with_nothing_written(w, Cause.PERMISSION, t.path, t.folder)
 
 
 # ---- S0061 round 4 (red team F1, O1; verifier attack 3) -------------------------------------------------------------
@@ -1390,7 +1463,7 @@ def test_R4_O1_a_read_error_on_a_name_of_ours_at_the_checks_fails_the_try_and_wr
     n = len(w.fs.effects)
     before = w.fs.snapshot()
     out = recover(w.fs, listed=False)
-    assert out == Failed(Cause.IO_ERROR, root.path, errno.EIO), out
+    assert out == Failed(Cause.IO_ERROR, root.path, errno.EIO, root.temp if which == "temp" else root.rtemp), out
     assert w.fs.effects[n:] == [], "a failed read wrote something"
     assert w.fs.snapshot() == before
     assert w.fs.file(root.kept) is None
@@ -1422,7 +1495,7 @@ def test_R4_O1_a_read_error_on_a_temp_at_its_removal_fails_the_try_and_keeps_not
 
     monkeypatch.setattr(MemDir, "read", flaky)
     out = recover(w.fs)
-    assert out == Failed(Cause.IO_ERROR, root.path, errno.EIO), out
+    assert out == Failed(Cause.IO_ERROR, root.path, errno.EIO, root.temp), out
     assert (w.fs.file(root.temp), w.fs.file(root.kept)) == (root.pre, None)
     assert set(journals(w.fs)) == {State.OPEN}
     check_disk(w.fs, w)
@@ -1639,7 +1712,7 @@ def test_R5_F3_a_read_error_at_a_restore_swaps_displaced_check_fails_the_try_and
     monkeypatch.setattr(MemDir, "read", flaky)
     out = recover(w.fs)
     monkeypatch.undo()
-    assert out == Failed(Cause.IO_ERROR, t.path, errno.EIO), out
+    assert out == Failed(Cause.IO_ERROR, t.path, errno.EIO, t.rtemp), out
     assert w.fs.file(t.kept) is None, "our own bytes moved to a kept name"
     assert w.fs.file(t.rtemp) == t.post, "what the swap displaced is left where it is"
     check_disk(w.fs, w)
@@ -1673,19 +1746,21 @@ def test_R5_O1_a_read_error_on_the_file_or_its_backup_fails_the_try_with_nothing
         before = w.fs.snapshot()
         out = recover(w.fs, listed=False)
         monkeypatch.undo()
-        assert out == Failed(Cause.IO_ERROR, "/w/L/main.bean", errno.EIO), (name, out)
+        entry = None if name == "main.bean" else "/w/local/backups/s1-j7/2-main.bean"
+        assert out == Failed(Cause.IO_ERROR, "/w/L/main.bean", errno.EIO, entry), (name, out)
         assert w.fs.effects[n:] == [], "a failed read wrote something"
         assert w.fs.snapshot() == before
         assert recover(w.fs) == TAKEN
 
 
-def test_R5_vF3_a_temp_nobody_may_read_fails_every_try_naming_the_file_and_the_error(
+def test_R5_vF3_a_temp_nobody_may_read_fails_every_try_naming_the_file_the_entry_and_the_error(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Verifier r5 F3: an entry at our temp name that is never readable (mode 000: EACCES on every open) fails every
     try with nothing written (owner, 2026-10-30: "Yes to both (Recommended)": any read error fails the try); the
     outcome carries the file and the error, so §11's `failed` screen can show a permanent cause instead of an
-    endless Retry (the screen: BL-0151 slice 3)."""
+    endless Retry (the screen: BL-0151 slice 3). Verifier r6 F3: it names the entry that failed too, the hidden temp,
+    not only the ledger file beside it (which is readable)."""
     from tests.fakes.memfs import MemDir
 
     w = crashed(CLOSE)
@@ -1705,7 +1780,7 @@ def test_R5_vF3_a_temp_nobody_may_read_fails_every_try_naming_the_file_and_the_e
     before = w.fs.snapshot()
     for _ in range(3):
         n = len(w.fs.effects)
-        assert recover(w.fs, listed=False) == Failed(Cause.IO_ERROR, root.path, errno.EACCES)
+        assert recover(w.fs, listed=False) == Failed(Cause.IO_ERROR, root.path, errno.EACCES, root.temp)
         assert w.fs.effects[n:] == []
     assert w.fs.snapshot() == before
 
@@ -1754,7 +1829,7 @@ def test_R5_F2_a_name_of_ours_that_could_not_be_removed_stops_the_try_before_any
         w.fs.outside_lock(name)
     else:
         w.fs.outside_deny(name, Right.DELETE)
-    _stops_with_nothing_written(w, Cause.PERMISSION, t.path)
+    _stops_with_nothing_written(w, Cause.PERMISSION, t.path, name)
 
 
 @pytest.mark.parametrize("victim", [0, 2])
@@ -1823,7 +1898,7 @@ def test_R5_a_name_of_ours_that_vanishes_between_its_stat_and_its_read_fails_the
         d.sync()
     n = len(w.fs.effects)
     before = w.fs.snapshot()
-    assert recover(w.fs, listed=False) == Failed(Cause.IO_ERROR, root.path)
+    assert recover(w.fs, listed=False) == Failed(Cause.IO_ERROR, root.path, None, root.temp)
     assert w.fs.effects[n:] == []
     assert w.fs.snapshot() == before
 
@@ -1878,3 +1953,100 @@ def test_R5b_a_backup_folder_that_is_gone_stops_the_journal_as_a_bad_backup_not_
     w.fs.outside_mkdirs("/w/elsewhere")
     w.fs.outside_move(SAVE_DIR, "/w/elsewhere/backups")
     _stops_with_nothing_written(w, Cause.BACKUP_BAD, "/w/L/inc/a.bean")  # the first file at post checked
+
+
+# ---- S0061 round 6: the restore's own folder checks (owner, 2026-10-30: "Allowlist (Recommended)"; verifier r6 F2,
+# red team r6 F1 and overflow 3) ------------------------------------------------------------------------------------
+
+
+def _deny(perms: str, flags: str = "") -> AclEntry:
+    return AclEntry(True, True, frozenset(perms.split(",")), frozenset(f for f in flags.split(",") if f))
+
+
+@pytest.mark.parametrize(
+    ("perms", "flags"), [("delete", "file_inherit"), ("readattr", "file_inherit,only_inherit"), ("add_file", "")]
+)
+def test_V6_F2_an_acl_entry_that_appeared_after_the_crash_stops_the_try_before_anything_is_written(
+    perms: str, flags: str
+) -> None:
+    """Verifier r6 F2: the restore never asked the folder's ACL, so after an inheritable deny appeared on a folder
+    (the user, a management profile, a sync client), the try wrote its restore staging file, which inherited it, and
+    failed; every later try stopped on that leftover of ours, even after the folder's entry was removed. Step 2 now
+    applies the same allowlist: `permission`, naming the folder and the entry, nothing written; once the entry is
+    removed, the next try goes on (nothing of ours inherited it)."""
+    w = crashed(FIRST_REMOVE)  # every file at post, the save's temps still there
+    with w.fs.open_dir(JD) as d:
+        d.sync()
+    w.fs.outside_acl("/w/L/inc", _deny(perms, flags))
+    detail = "deny " + ",".join([perms, *sorted(f for f in flags.split(",") if f)])
+    _stops_with_nothing_written(w, Cause.PERMISSION, "/w/L/inc/a.bean", "/w/L/inc", detail)
+    w.fs.outside_acl_clear("/w/L/inc")
+    out = recover(w.fs)
+    assert out == TAKEN, out
+    check_recovered(w.fs, w, out)
+
+
+def test_V6_F2_a_folder_that_denies_us_search_fails_the_try_with_nothing_written_and_retry_then_resolves() -> None:
+    """@regression-guard (it already held at e6ab8627: the `stat` error fails the try). A direct `deny search` on the
+    folder: nothing in it can even be looked up, so the file's own `stat` answers
+    `EACCES` before any folder check: `failed` (Retry may undo it), nothing written; once the entry is removed, the
+    next try goes on."""
+    w = crashed(FIRST_REMOVE)
+    with w.fs.open_dir(JD) as d:
+        d.sync()
+    w.fs.outside_acl("/w/L/inc", _deny("search"))
+    n = len(w.fs.effects)
+    before = w.fs.snapshot()
+    assert recover(w.fs, listed=False) == Failed(Cause.IO_ERROR, "/w/L/inc/a.bean", errno.EACCES)
+    assert w.fs.effects[n:] == []
+    assert w.fs.snapshot() == before
+    w.fs.outside_acl_clear("/w/L/inc")
+    out = recover(w.fs)
+    assert out == TAKEN, out
+    check_recovered(w.fs, w, out)
+
+
+def test_R6_a_folder_that_denies_removing_its_entries_stops_the_try_before_anything_is_written() -> None:
+    """Red team r6 F1, the restore's half: `deny delete_child` on a folder where step 3 removes names of ours
+    (`_RMFILE_OK` says no; write and search still say yes): `permission` at the checks, never `failed` half-way."""
+    w = crashed(FIRST_REMOVE)
+    w.fs.outside_acl("/w/L/inc", _deny("delete_child"))
+    _stops_with_nothing_written(w, Cause.PERMISSION, "/w/L/inc/a.bean", "/w/L/inc")
+
+
+def test_R6_an_acl_entry_on_the_parent_of_a_folder_the_save_made_stops_its_removal_before_anything_is_written() -> None:
+    """`_check_folders` applies the allowlist to the folder it removes a folder from: y2026 holds only our temp (the
+    save died before the exclusive rename), main.bean is at pre with nothing of ours beside it, so /w/L is written in
+    only by the `rmdir`."""
+    w = crashed(NEW_DIR_EXCL, new_dir=True)
+    with w.fs.open_dir(JD) as d:
+        d.sync()
+    w.fs.outside_acl("/w/L", _deny("readattr", "file_inherit,only_inherit"))
+    _stops_with_nothing_written(w, Cause.PERMISSION, "/w/L/y2026", "/w/L", "deny readattr,file_inherit,only_inherit")
+    w.fs.outside_acl_clear("/w/L")
+    out = recover(w.fs)
+    assert out == Resolved(NAME), out
+    check_recovered(w.fs, w, out)
+
+
+@pytest.mark.parametrize("ours_inside", [False, True])
+def test_R6_O3_a_lock_flag_on_a_folder_the_save_made_stops_the_try_before_anything_is_written(
+    ours_inside: bool,
+) -> None:
+    """Red team r6 overflow 3: `chflags uchg` on the folder the save made: its `rmdir` (and the removal of our temp
+    in it) would answer `EPERM` on every try. Step 2 sees the flag (on the empty folder, `_check_folders`; with our
+    temp inside, the folder's own `_RMFILE_OK`): `permission`, nothing written; once cleared, the next try resolves."""
+    at = NEW_DIR_EXCL if ours_inside else NEW_DIR_EFFECTS.index("create /w/L/y2026:.prices.bean.ft-s1-j7.new")
+    w = crashed(at, new_dir=True)
+    with w.fs.open_dir(JD) as d:
+        d.sync()
+    assert bool(w.fs.names_in("/w/L/y2026")) is ours_inside
+    w.fs.outside_lock("/w/L/y2026")
+    if ours_inside:
+        _stops_with_nothing_written(w, Cause.PERMISSION, "/w/L/y2026/prices.bean", "/w/L/y2026")
+    else:
+        _stops_with_nothing_written(w, Cause.PERMISSION, "/w/L/y2026")
+    w.fs.outside_unlock("/w/L/y2026")
+    out = recover(w.fs)
+    assert out == Resolved(NAME), out
+    check_recovered(w.fs, w, out)

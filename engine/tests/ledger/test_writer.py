@@ -19,7 +19,7 @@ from dataclasses import replace
 
 import pytest
 
-from ledger_engine.fs.port import Right
+from ledger_engine.fs.port import AclEntry, Right
 from ledger_engine.ledger.core import journal
 from ledger_engine.ledger.core.journal import Record, State
 from ledger_engine.ledger.core.recovery import Cause
@@ -955,7 +955,7 @@ def test_a_file_created_in_a_read_only_folder_refuses_before_the_first_effect() 
     w.fs.outside_mkdirs("/w/RO")
     w.fs.outside_deny("/w/RO", Right.CHANGE_ENTRIES)
     out = durable_commit(w.fs, replace(w.commit, changes=(Change("/w/RO/new.bean", None, b"x\n"),)))
-    assert out == NotSaved(Step.BACKUP, Reason.PERMISSION, True, path="/w/RO/new.bean")
+    assert out == NotSaved(Step.BACKUP, Reason.PERMISSION, True, path="/w/RO/new.bean", entry="/w/RO")
     assert w.fs.effects == []
 
 
@@ -1540,21 +1540,105 @@ def test_R5_F3_a_read_error_at_the_saves_displaced_check_moves_nothing_and_rolls
     check_recovered(w.fs, w, out2)
 
 
+def _deny(perms: str, flags: str = "", *, ours: bool = True) -> AclEntry:
+    """An ACL entry as `chmod +a "<who> deny <perms>,<flags>"` writes it."""
+    return AclEntry(True, ours, frozenset(perms.split(",")), frozenset(f for f in flags.split(",") if f))
+
+
+def _refused_before_anything_is_written(w: World, folder: str, detail: str | None) -> None:
+    before = w.fs.snapshot()
+    out = durable_commit(w.fs, w.commit)
+    assert isinstance(out, NotSaved), out
+    assert (out.reason, out.unchanged, out.open_journal) == (Reason.PERMISSION, True, False), out
+    assert (out.entry, out.detail) == (folder, detail), out
+    assert w.fs.effects == [], "refused before the first effect"
+    assert w.fs.snapshot() == before
+
+
 @pytest.mark.parametrize("where", ["/w/L", "/w/L/inc"])
 def test_R5_F2_a_ledger_folder_whose_acl_denies_us_what_the_save_makes_there_is_refused_before_anything_is_written(
     where: str,
 ) -> None:
     """Red team r5 F2 (the fake's half; on APFS in `tests/fs/test_darwin.py`): an inheritable `deny delete` (or
     `deny read`) on a folder the save writes in would make its own staging file unremovable, or its new file
-    unreadable. The save refuses with `permission` before anything is written."""
+    unreadable. The save refuses with `permission` before anything is written, naming the folder and the entry."""
     w = world()
-    w.fs.outside_deny_inherit(where)
-    before = w.fs.snapshot()
+    w.fs.outside_acl(where, _deny("delete", "file_inherit"))
+    _refused_before_anything_is_written(w, where, "deny delete,file_inherit")
+
+
+# ---- S0061 round 6: the ACL allowlist (owner, 2026-10-30: "Allowlist (Recommended)"), red team r6 F1-F3 and
+# overflow 2-4, verifier r6 F1, in the fake (each shape also on APFS in `tests/fs/test_darwin.py`) -----------------
+
+R6_REFUSED = {
+    # case: (new_dir, the folder the entry is on, the entry); a direct `deny delete_child` is met first by the
+    # system's own check (`_RMFILE_OK`), so its refusal names the folder without an entry
+    "rt_F1_delete_child_direct": (False, "/w/L", _deny("delete_child")),
+    "rt_F1_delete_child_into_made_folder": (True, "/w/L", _deny("delete_child", "directory_inherit,only_inherit")),
+    "rt_F2_search_into_made_folder": (True, "/w/L", _deny("search", "directory_inherit,only_inherit")),
+    "rt_F3_delete_child_beside_made_folder": (True, "/w/L", _deny("delete_child")),
+    "v_F1_readattr_inherited": (False, "/w/L", _deny("readattr", "file_inherit,only_inherit")),
+    "v_F1_readsecurity_inherited": (False, "/w/L", _deny("readsecurity", "file_inherit,only_inherit")),
+    "rt_O2_readextattr_inherited": (False, "/w/L/inc", _deny("readextattr", "file_inherit")),
+    "rt_O2_writeextattr_inherited": (False, "/w/L/inc", _deny("writeextattr", "file_inherit")),
+    "add_file_into_made_folder": (True, "/w/L", _deny("add_file", "directory_inherit,only_inherit")),
+}
+
+
+@pytest.mark.parametrize("case", sorted(R6_REFUSED))
+def test_R6_a_folder_whose_acl_denies_us_anything_the_save_or_its_undo_needs_is_refused_before_anything_is_written(
+    case: str,
+) -> None:
+    """Red team r6 F1 (High), F2, F3, overflow 2 and verifier r6 F1: each entry got past round 5's check (it looked
+    only for an inherited `deny read` or `deny delete`); the save then wrote, failed, and every undo stopped on our
+    own leftovers, which kept the inherited entry after the user removed the folder's. Every such entry is now
+    refused before the first effect, naming the folder and the entry (§11)."""
+    new_dir, where, entry = R6_REFUSED[case]
+    w = world(new_dir=new_dir)
+    w.fs.outside_acl(where, entry)
+    flags = sorted(entry.flags)
+    detail = None if not flags and "delete_child" in entry.perms else "deny " + ",".join([*sorted(entry.perms), *flags])
+    _refused_before_anything_is_written(w, where, detail)
+
+
+@pytest.mark.parametrize(
+    "entry",
+    [
+        _deny("delete"),
+        _deny("writeextattr"),
+        _deny("delete,writeextattr"),  # macOS's own pair, as `chmod` merges it
+        _deny("writeattr,writesecurity,chown"),
+        _deny("delete_child,search,list", "file_inherit,directory_inherit", ours=False),  # another user's
+    ],
+)
+def test_R6_a_folder_with_only_entries_the_allowlist_passes_is_saved(entry: AclEntry) -> None:
+    """Owner, 2026-10-30: "Allowlist (Recommended)": macOS's own entries (`group:everyone deny delete`, `deny
+    writeextattr`, not inherited) and another user's deny entries do not stop a save."""
+    for where in ("/w/L", "/w/L/inc"):
+        w = world()
+        w.fs.outside_acl(where, entry)
+        out = durable_commit(w.fs, w.commit)
+        assert isinstance(out, Landed), (where, out)
+
+
+def test_R6_the_fake_reproduces_red_team_F1_when_the_save_does_not_refuse(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Red team r6 overflow 4 (fake fidelity): with the allowlist bypassed, the fake shows the F1 shape APFS showed:
+    `deny delete_child,directory_inherit,only_inherit` on the folder the save makes its folder in, inc/a.bean already
+    swapped, the staging file's rename to its temp name refused in the new folder (which inherited the entry), the
+    rollback stopped on our own staging file, the save unfinished and the journal left `.open`."""
+    import ledger_engine.ledger.writer as writer_module
+
+    def no_denial(_h: object) -> None:
+        return None
+
+    monkeypatch.setattr(writer_module, "acl_denial", no_denial)
+    w = world(new_dir=True)
+    w.fs.outside_acl("/w/L", _deny("delete_child", "directory_inherit,only_inherit"))
     out = durable_commit(w.fs, w.commit)
-    assert isinstance(out, NotSaved), out
-    assert (out.reason, out.unchanged, out.open_journal) == (Reason.PERMISSION, True, False), out
-    assert w.fs.effects == [], "refused before the first effect"
-    assert w.fs.snapshot() == before
+    assert isinstance(out, Unfinished), out
+    assert set(journals(w.fs)) == {State.OPEN}
+    assert w.fs.file(w.targets[0].path) == w.targets[0].post
+    assert w.fs.file(w.targets[1].staging) == w.targets[1].post, "our own staging file, never removable there"
 
 
 def test_R5b_a_stat_error_at_the_saves_displaced_check_moves_nothing_and_rolls_back_as_an_io_error(
@@ -1585,3 +1669,23 @@ def test_R5b_a_stat_error_at_the_saves_displaced_check_moves_nothing_and_rolls_b
     assert w.fs.file(t.kept) is None
     check_told(w.fs, w, out)
     check_recovered(w.fs, w, recover(w.fs))
+
+
+def test_R6_a_folder_whose_acl_we_may_not_read_is_refused_before_anything_is_written(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Mutant `unreadable_acl_passes`: an ACL the system will not let us read (probed on APFS: `acl_get_fd_np` answers
+    `EACCES` under `deny readattr,file_inherit` acting on the folder itself) cannot be judged by the allowlist, so it
+    refuses like a blocking entry (fails closed), naming the folder."""
+    from ledger_engine.ledger.handles import UNREADABLE_ACL
+    from tests.fakes.memfs import MemDir
+
+    real = MemDir.acl
+
+    def unreadable(self: MemDir) -> tuple[AclEntry, ...]:
+        if self.path() == "/w/L/inc":
+            raise PermissionError(errno.EACCES, "Permission denied")
+        return real(self)
+
+    monkeypatch.setattr(MemDir, "acl", unreadable)
+    _refused_before_anything_is_written(world(), "/w/L/inc", UNREADABLE_ACL)

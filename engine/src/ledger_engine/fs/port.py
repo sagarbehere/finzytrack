@@ -54,8 +54,22 @@ class Right(StrEnum):
     """What the save needs to be allowed, as the system would decide it (permissions and ACLs, `access(2)`)."""
 
     CHANGE_ENTRIES = "change_entries"  # in a folder: add, rename and remove entries (write and search)
+    REMOVE_ENTRIES = "remove_entries"  # in a folder: remove and rename away entries (`delete_child`; `_RMFILE_OK`)
     DELETE = "delete"  # an entry may be renamed away or removed (its own ACL, or the folder's delete_child)
     READ_XATTRS = "read_xattrs"  # a file's extended attributes may be read (to copy them to the temp)
+
+
+@dataclass(frozen=True, slots=True)
+class AclEntry:
+    """One entry of a folder's extended ACL, as the system stores it (S0061 r6). `deny`: a deny entry (an allow entry,
+    False; a kind the adapter does not know counts as a deny). `ours`: it names us, a group we are in or everyone (a
+    subject the system cannot answer for counts as ours). `perms` and `flags` in `chmod`'s words (`delete_child`,
+    `file_inherit`, ...); a bit the adapter cannot name is `unknown`."""
+
+    deny: bool
+    ours: bool
+    perms: frozenset[str]
+    flags: frozenset[str] = frozenset()
 
 
 class Kind(StrEnum):
@@ -119,10 +133,9 @@ class DirHandle(Protocol):
         """Whether this folder's volume supports the swap and the exclusive rename (`RENAME_SWAP`, `RENAME_EXCL`)."""
         ...
 
-    def inheritable_denial(self) -> bool:
-        """Whether this folder carries an inheritable ACL entry (file or folder inheritance) that denies us the
-        deletion or the reading of an entry: every file the save made here would inherit it, so its staging file
-        could not be renamed or removed, or its new file read back (S0061 red team r5 F2). Asking writes nothing."""
+    def acl(self) -> tuple[AclEntry, ...]:
+        """This folder's extended ACL entries, in order (none: empty). Asking writes nothing. The rule that judges them
+        is `ledger.handles.acl_denial`."""
         ...
 
     def swap(self, a: str, b: str) -> None:

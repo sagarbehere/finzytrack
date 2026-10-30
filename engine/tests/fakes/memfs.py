@@ -31,8 +31,16 @@ the first missing component), and `Resolved.identity` is `(1, inode)`. Files may
 (`outside_link`); `stat` gives the link count, and a locked file (`outside_lock`, `uchg`) refuses a swap, a rename
 and a remove. `create(..., like=...)` copies `like`'s extended attributes (`outside_setxattr`). With `stores_nfd`
 the volume keeps every name in NFD, as HFS+ does (S0061 probe). `MemLocks` stands for the ledger-set locks of one
-process (`outside_hold`: another process holds one). `outside_deny_inherit` gives a folder an inheritable
-`deny delete` (its `inheritable_denial` answers yes, and files made there after it refuse their removal);
+process (`outside_hold`: another process holds one). `outside_acl` adds an ACL entry (`AclEntry`: whether it
+denies, whether it applies to us, its permissions and flags, in `chmod`'s words) to a file or a folder, and
+`outside_acl_clear` removes them all (`chmod -N`). A deny entry that applies to us and is not `only_inherit` acts as
+on APFS (probed, S0061 r6): on a folder, `add_file` refuses a create or a rename into it, `add_subdirectory` a
+`mkdir`, `delete_child` every removal or rename away, `search` every lookup in it (`stat`, `read`, a path through
+it), `list` its opening and listing; on an entry, `delete` its removal or rename away, `readattr` and `readsecurity`
+its `stat`, `read` its bytes, `readextattr` the copy of its extended attributes, `writeextattr` the copy into it.
+A new file inherits a folder's `file_inherit` entries, a new folder its `directory_inherit` ones (as APFS does: a
+`file_inherit`-only entry is not passed to a subfolder). Allow entries are not weighed (a deny always denies: the
+fake fails closed where APFS would let an earlier allow win). `outside_lock` locks a file or a folder (`uchg`);
 `outside_remove` is the user deleting an entry, durably.
 """
 
@@ -51,6 +59,7 @@ from typing import Self
 import pytest
 
 from ledger_engine.fs.port import (
+    AclEntry,
     EntryStat,
     FoldRule,
     Kind,
@@ -82,6 +91,7 @@ class _File:
     xattrs: dict[str, bytes] = field(default_factory=lambda: {})
     locked: bool = False
     deny: set[Right] = field(default_factory=lambda: set())
+    acl: list[AclEntry] = field(default_factory=lambda: [])
 
 
 @dataclass
@@ -104,10 +114,33 @@ class _Dir:
     mode: int = 0o755
     deny: set[Right] = field(default_factory=lambda: set())  # CHANGE_ENTRIES: read-only; DELETE: deny delete_child
     no_swap: bool = False  # a volume without RENAME_SWAP and RENAME_EXCL (exFAT, FAT)
-    inherit_deny: bool = False  # an inheritable ACL entry denying us delete (and read) of what is made in it
+    acl: list[AclEntry] = field(default_factory=lambda: [])
+    locked: bool = False  # `uchg`: no entry may be added, removed or renamed in it, and it may not be removed
 
 
 _Node = _File | _Dir | _Link | _Other
+
+
+def _denies(node: _Node, perm: str) -> bool:
+    """A deny entry of `node` that applies to us and acts on it (not `only_inherit`) denies `perm`."""
+    acl: list[AclEntry] = node.acl if isinstance(node, _File | _Dir) else []
+    return any(e.deny and e.ours and "only_inherit" not in e.flags and perm in e.perms for e in acl)
+
+
+def _no_search(d: _Dir) -> None:
+    if _denies(d, "search"):
+        raise PermissionError(errno.EACCES, "search denied")
+
+
+def _inherited(parent: _Dir, flag: str) -> list[AclEntry]:
+    """The entries a new file (`file_inherit`) or folder (`directory_inherit`) made in `parent` gets: a file's act on
+    it and pass nothing on; a folder's keep their flags but `only_inherit` (probed on APFS, S0061 r6)."""
+    out: list[AclEntry] = []
+    for e in parent.acl:
+        if flag in e.flags:
+            kept = frozenset({"inherited"}) if flag == "file_inherit" else (e.flags - {"only_inherit"}) | {"inherited"}
+            out.append(AclEntry(e.deny, e.ours, e.perms, kept))
+    return out
 
 
 @dataclass(frozen=True, slots=True)
@@ -201,9 +234,10 @@ class MemFS:
     def _find(self, d: _Dir, name: str) -> tuple[str, int] | None:
         return d.entries.get(_key(name, d.ci))
 
-    def _walk(self, path: str, depth: int = 0) -> tuple[list[str], int, list[str], list[bool]]:
+    def _walk(self, path: str, depth: int = 0, *, search: bool = False) -> tuple[list[str], int, list[str], list[bool]]:
         """Resolve `path` as far as it exists, following links: the stored names of the existing part, its inode, the
-        rest as written, and per component whether its directory is case-insensitive."""
+        rest as written, and per component whether its directory is case-insensitive. With `search` (the port's
+        calls), a folder whose ACL denies us `search` refuses the lookup (`EACCES`)."""
         todo = list(split_absolute(path))
         names: list[str] = []
         cis: list[bool] = []
@@ -213,6 +247,8 @@ class MemFS:
             node = self.nodes[ino]
             if not isinstance(node, _Dir):
                 break
+            if search:
+                _no_search(node)
             hit = self._find(node, todo[0])
             if hit is None:
                 break
@@ -222,7 +258,7 @@ class MemFS:
                 hops += 1
                 if hops + depth > 40:
                     raise OSError(errno.ELOOP, "too many links")
-                if self._walk(target.target, depth + hops)[2]:
+                if self._walk(target.target, depth + hops, search=search)[2]:
                     break  # a dangling link is absent, as `stat` (macOS) sees it: its own name is missing
                 todo = list(split_absolute(target.target)) + todo[1:]
                 names, cis, ino = [], [], ROOT
@@ -253,15 +289,16 @@ class MemFS:
 
     # -- the port ----------------------------------------------------------------------------------------------
     def resolve(self, path: str) -> Resolved:
-        names, ino, rest, cis = self._walk(path)
+        names, ino, rest, cis = self._walk(path, search=True)
         rules = tuple(FoldRule(nfd=True, casefold=ci) for ci in cis)
         return Resolved(existing=tuple(names), rest=tuple(rest), rules=rules, identity=(1, ino))
 
     def open_dir(self, path: str) -> MemDir:
-        _, ino, rest, _ = self._walk(path)
+        _, ino, rest, _ = self._walk(path, search=True)
         if rest:
             raise FileNotFoundError(errno.ENOENT, "no such directory")
-        self._dir(ino)
+        if _denies(self._dir(ino), "list"):
+            raise PermissionError(errno.EACCES, "list denied")  # `open(O_RDONLY)` of the folder (probed on APFS)
         return MemDir(self, ino)
 
     # -- outside programs (durable, not effects) -----------------------------------------------------------------
@@ -345,10 +382,16 @@ class MemFS:
         d.pending = []
 
     def outside_lock(self, path: str) -> None:
-        """`chflags uchg`: the file cannot be swapped, renamed or removed."""
+        """`chflags uchg`: the file cannot be swapped, renamed or removed; a folder cannot be removed, nor any entry
+        added, renamed or removed in it (probed on APFS, S0061 r6)."""
         node = self._at(path)
-        assert isinstance(node, _File)
+        assert isinstance(node, _File | _Dir)
         node.locked = True
+
+    def outside_unlock(self, path: str) -> None:
+        node = self._at(path)
+        assert isinstance(node, _File | _Dir)
+        node.locked = False
 
     def outside_setxattr(self, path: str, key: str, value: bytes) -> None:
         node = self._at(path)
@@ -366,13 +409,17 @@ class MemFS:
         assert isinstance(node, _File | _Dir)
         node.deny.add(right)
 
-    def outside_deny_inherit(self, path: str) -> None:
-        """An inheritable ACL entry on the folder at `path` that denies us the deletion (and the reading) of every
-        entry made in it from now on (`chmod +a "everyone deny delete,file_inherit"`; S0061 red team r5 F2): files made
-        there then refuse their rename away and their removal."""
+    def outside_acl(self, path: str, entry: AclEntry) -> None:
+        """`chmod +a` on the file or folder at `path` (the module's docstring)."""
         node = self._at(path)
-        assert isinstance(node, _Dir)
-        node.inherit_deny = True
+        assert isinstance(node, _File | _Dir)
+        node.acl.append(entry)
+
+    def outside_acl_clear(self, path: str) -> None:
+        """`chmod -N`: every ACL entry of the file or folder at `path` removed."""
+        node = self._at(path)
+        assert isinstance(node, _File | _Dir)
+        node.acl.clear()
 
     def outside_remove(self, path: str) -> None:
         """The user deletes the file (or empty folder, or link) at `path` (Finder, the shell), durably."""
@@ -504,7 +551,15 @@ class MemFS:
             d = self.nodes[ino]
             assert isinstance(d, _Dir)
             out.nodes[ino] = _Dir(
-                ci=d.ci, parent=ROOT, entries=dict(tables[ino]), durable=dict(tables[ino]), mode=d.mode
+                ci=d.ci,
+                parent=ROOT,
+                entries=dict(tables[ino]),
+                durable=dict(tables[ino]),
+                mode=d.mode,
+                deny=set(d.deny),
+                no_swap=d.no_swap,
+                acl=list(d.acl),
+                locked=d.locked,
             )
         for ino in reach:
             for _, child in tables[ino].values():
@@ -520,6 +575,8 @@ class MemFS:
                         mode=node.mode,
                         xattrs=dict(node.xattrs),
                         locked=node.locked,
+                        deny=set(node.deny),
+                        acl=list(node.acl),
                     )
                 elif isinstance(node, _Link):
                     out.nodes[child] = _Link(target=node.target)
@@ -566,7 +623,9 @@ class MemDir:
         return self._last
 
     def _entry(self, name: str) -> tuple[str, int] | None:
-        return self._fs._find(self._d, check_name(name))
+        d = self._d
+        _no_search(d)
+        return self._fs._find(d, check_name(name))
 
     def read(self, name: str) -> bytes | None:
         hit = self._entry(name)
@@ -579,6 +638,8 @@ class MemDir:
             raise IsADirectoryError(errno.EISDIR, "a directory")
         if isinstance(node, _Other):
             raise OSError(errno.EINVAL, "not a regular file")
+        if _denies(node, "read"):
+            raise PermissionError(errno.EACCES, "read denied")
         return node.data
 
     def sync_file(self, name: str) -> None:
@@ -604,9 +665,11 @@ class MemDir:
         if hit is None:
             return None
         node = self._fs.nodes[hit[1]]
+        if _denies(node, "readattr") or _denies(node, "readsecurity"):
+            raise PermissionError(errno.EACCES, "stat denied")  # `lstat` answers EACCES (probed on APFS, S0061 r6)
         kind = {_File: Kind.FILE, _Dir: Kind.DIR, _Link: Kind.LINK, _Other: Kind.OTHER}[type(node)]
         mode = node.mode if isinstance(node, _File | _Dir) else 0o777
-        locked = isinstance(node, _File) and node.locked
+        locked = isinstance(node, _File | _Dir) and node.locked
         return EntryStat(kind=kind, dev=1, ino=hit[1], nlink=self._fs.nlink(hit[1]), mode=mode, locked=locked)
 
     def _unlocked(self, key: str) -> None:
@@ -614,19 +677,42 @@ class MemDir:
         hit = self._d.entries.get(key)
         if hit is not None:
             node = self._fs.nodes[hit[1]]
-            if isinstance(node, _File) and node.locked:
+            if isinstance(node, _File | _Dir) and node.locked:
                 raise PermissionError(errno.EPERM, "locked")
             if not self._may_delete(node):
                 raise PermissionError(errno.EACCES, "delete denied")
 
     def _may_delete(self, node: _Node) -> bool:
-        d = self._d
         own: set[Right] = node.deny if isinstance(node, _File | _Dir) else set()
-        return Right.CHANGE_ENTRIES not in d.deny and Right.DELETE not in d.deny and Right.DELETE not in own
+        return (
+            self._may_remove()
+            and Right.DELETE not in own
+            and not _denies(node, "delete")
+            and not (isinstance(node, _Dir) and node.locked)
+        )
+
+    def _may_remove(self) -> bool:
+        """Entries of this folder may be removed or renamed away (`_RMFILE_OK`)."""
+        d = self._d
+        return (
+            Right.CHANGE_ENTRIES not in d.deny
+            and Right.DELETE not in d.deny
+            and not _denies(d, "delete_child")
+            and not _denies(d, "search")  # probed on APFS: `_RMFILE_OK` answers no under `deny search`
+            and not d.locked
+        )
 
     def _writable(self) -> None:
-        if Right.CHANGE_ENTRIES in self._d.deny:
+        d = self._d
+        _no_search(d)  # every operation by name looks the name up first
+        if d.locked:
+            raise PermissionError(errno.EPERM, "folder locked")
+        if Right.CHANGE_ENTRIES in d.deny:
             raise PermissionError(errno.EACCES, "folder not writable")
+
+    def _may_add(self, perm: str = "add_file") -> None:
+        if _denies(self._d, perm):
+            raise PermissionError(errno.EACCES, f"{perm} denied")
 
     def _swappable(self) -> None:
         if self._d.no_swap:
@@ -635,21 +721,31 @@ class MemDir:
     def allowed(self, name: str, right: Right) -> bool:
         d = self._d
         if name == ".":
+            if right is Right.REMOVE_ENTRIES:
+                return self._may_remove()
+            if right is Right.CHANGE_ENTRIES and (
+                d.locked or any(_denies(d, p) for p in ("add_file", "add_subdirectory", "search"))
+            ):
+                return False  # write and search, as `access(W_OK | X_OK)` answers (probed on APFS, S0061 r6)
             return right not in d.deny
+        if _denies(d, "search"):
+            return False
         hit = self._entry(name)
         if hit is None:
             return False
         node = self._fs.nodes[hit[1]]
         if right is Right.DELETE:
             return self._may_delete(node)
+        if right is Right.READ_XATTRS and _denies(node, "readextattr"):
+            return False
         own: set[Right] = node.deny if isinstance(node, _File | _Dir) else set()
         return right not in own
 
     def can_swap(self) -> bool:
         return not self._d.no_swap
 
-    def inheritable_denial(self) -> bool:
-        return self._d.inherit_deny
+    def acl(self) -> tuple[AclEntry, ...]:
+        return tuple(self._d.acl)
 
     def create(self, name: str, data: bytes, mode: int, like: str | None = None) -> None:
         d = self._d
@@ -662,9 +758,8 @@ class MemDir:
                 raise OSError(errno.EINVAL, "not a regular file")
             source = node
         self._writable()
-        f = _File(data=b"", synced=b"", mode=mode & 0o7777)
-        if d.inherit_deny:
-            f.deny.add(Right.DELETE)  # what an inherited `deny delete` does to a file made here
+        self._may_add()
+        f = _File(data=b"", synced=b"", mode=mode & 0o7777, acl=_inherited(d, "file_inherit"))
 
         def link() -> None:
             if key in d.entries:
@@ -677,8 +772,10 @@ class MemDir:
         def write() -> None:
             f.data = data
             if source is not None:
-                if Right.READ_XATTRS in source.deny:
+                if Right.READ_XATTRS in source.deny or _denies(source, "readextattr"):
                     raise PermissionError(errno.EACCES, "extended attributes not readable")
+                if _denies(f, "writeextattr"):
+                    raise PermissionError(errno.EACCES, "extended attributes not writable")
                 f.xattrs = dict(source.xattrs)
 
         def cut(n: int) -> None:
@@ -718,6 +815,7 @@ class MemDir:
                 raise FileNotFoundError(errno.ENOENT, "no entry")
             if kd in d.entries:
                 raise FileExistsError(errno.EEXIST, "exists")
+            self._may_add()
             self._unlocked(ks)
             stored = self._fs.stored(dst)
             _apply(d.entries, ("rename", ks, kd, stored))
@@ -750,7 +848,10 @@ class MemDir:
             self._writable()
             if key in d.entries:
                 raise FileExistsError(errno.EEXIST, "exists")
-            ino = self._fs._new(_Dir(ci=d.ci, parent=self._ino, no_swap=d.no_swap))
+            self._may_add("add_subdirectory")
+            ino = self._fs._new(
+                _Dir(ci=d.ci, parent=self._ino, no_swap=d.no_swap, acl=_inherited(d, "directory_inherit"))
+            )
             stored = self._fs.stored(name)
             d.entries[key] = (stored, ino)
             d.pending.append(("link", key, stored, str(ino)))
@@ -779,7 +880,10 @@ class MemDir:
         self._fs._effect(self._label("rmdir", name), do)
 
     def names(self) -> list[str]:
-        return sorted(s for s, _ in self._d.entries.values())
+        d = self._d
+        if _denies(d, "list"):
+            raise PermissionError(errno.EACCES, "list denied")
+        return sorted(s for s, _ in d.entries.values())
 
     def sync(self) -> None:
         d = self._d
