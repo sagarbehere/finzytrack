@@ -5,10 +5,12 @@ S0060): what a save does after its commit point (§6.1 step 7), through the file
    checked to be the file the plan meant: a replaced file a regular file (never a link, a FIFO or a folder), not
    locked (`uchg`), not hard-linked (`handles.hard_links`, the owner's decision point), the same object its
    canonical path names (`st_dev`, `st_ino`); a created path free of any entry (a dangling link included) under an
-   existing folder. The plan as a whole: one entry per `path_key`, no target inside another target's path, no target
-   at or under another's temp, staging, restore-temp or restore-staging name (`journal.scratch_names`) or kept name
-   and no entry standing at one, the folders the save makes once each and never two that differ only in case, no
-   target in the journal or backup folder, and neither of those folders inside a folder the save writes in.
+   existing folder; every folder written in on a volume with the swap, allowing entry changes, and with no
+   inheritable ACL entry that denies us delete or read (`DirHandle.inheritable_denial`). The plan as a whole: one
+   entry per `path_key`, no target inside another target's path, no target at or under another's temp, staging,
+   restore-temp or restore-staging name (`journal.scratch_names`) or kept name and no entry standing at one, the
+   folders the save makes once each and never two that differ only in case, no target in the journal or backup
+   folder, and neither of those folders inside a folder the save writes in.
 1. **Backups:** this save's backup folder `<backups_dir>/<session>-<job>/` made and its parent synced; each file the
    save replaces synced through a handle on its folder (`sync_file`: what an editor wrote into it without a sync is
    then durable, so the old object the swap displaces can never be torn by a power loss: S0061 red team r4 F2), read
@@ -37,9 +39,10 @@ before the journal's rename to `.open` is not a rollback (§6.4: nothing was rep
 true only after every target was hashed again and equals its pre bytes (§11); backups and a `.part` may be left
 (recover-all removes a `.part`, §6.1 step 8.2). **Any failure from that rename on rolls back at once** (§6.4,
 S0061): the restore of `ledger.restore` on this save's own record, which first applies recovery's checks (the temp
-rule included), leaves a file that appeared at a created path as it is, removes only the folders this save made,
-and after a failed close renames a `.closed` record back to `.open` first, so no power loss shows "saved" over
-restored files. The outcome then:
+rule included), never touches anything at a created path (whether the save's own file or another program's: owner,
+2026-10-30, "Never remove it (Recommended)"; the journal then stops), removes only the folders this save made, and
+after a failed close renames a `.closed` record back to `.open` first, so no power loss shows "saved" over restored
+files. The outcome then:
 - the rollback resolved the journal (or no `.open` record was ever made): `NotSaved`, `open_journal` false;
 - it did not (a cause found, an I/O error), before the first replace (the first swap or exclusive rename of a ledger
   file): `NotSaved` with `open_journal` true, which pauses the workspace's writes until recovery resolves it;
@@ -289,10 +292,14 @@ def _target(fs: FileSystem, handles: Handles, index: int, c: Commit, ch: Change)
 
 
 def _check_folder(h: DirHandle, canonical: str) -> None:
-    """A folder the save writes in: on a volume with the swap, and the save may add and remove entries there."""
+    """A folder the save writes in: on a volume with the swap, the save may add and remove entries there, and no
+    inheritable ACL entry denies us the deletion or the reading of what the save makes there (its staging file could
+    not be renamed or removed, its new file not read back: S0061 red team r5 F2)."""
     if volume_without_swap(h):
         raise _Stop(Reason.VOLUME_NO_SWAP, canonical)
     if not h.allowed(".", Right.CHANGE_ENTRIES):
+        raise _Stop(Reason.PERMISSION, canonical)
+    if h.inheritable_denial():
         raise _Stop(Reason.PERMISSION, canonical)
 
 
@@ -444,7 +451,6 @@ class _Progress:
     open_journal: bool = False
     replaced: bool = False  # a ledger file's swap or exclusive rename was asked for, and may have happened
     made: set[str] = field(default_factory=lambda: set())  # keys of the folders made so far (or that may have been)
-    skip: str | None = None  # the key of a created path an outside file took first: the rollback leaves it alone
 
 
 def _check_displaced(h: DirHandle, name: str, t: _Target) -> None:
@@ -452,7 +458,8 @@ def _check_displaced(h: DirHandle, name: str, t: _Target) -> None:
     (owner: "Yes" to the kept-name design; ADR-0013 amendment): a file byte-identical to the pre bytes (the backup
     holds them) or to our post bytes is ours; with a second hard link the save stops (the owner's hard-link rule, S0060
     red team r2 M2; nothing is lost, the rollback puts the pre bytes back); anything else is an outside save, moved at
-    once to the file's kept name beside it, never swapped back, and the save stops."""
+    once to the file's kept name beside it, never swapped back, and the save stops. A read error is raised by
+    `displaced`: the save fails and rolls back like any I/O error, with nothing moved to a kept name (S0061 r5)."""
     d = displaced(h, name, (t.change.pre, sha256(t.change.post)))
     if d is Displaced.OURS:
         return
@@ -496,14 +503,14 @@ def _replace(handles: Handles, t: _Target, progress: _Progress) -> None:
         h.sync()
     h = handles.at(t.parent)
     if t.change.pre is None:
-        _stage(h, t, CREATED_MODE, None)  # durable first: while it stands there, recovery takes the path for another's
+        _stage(h, t, CREATED_MODE, None)
         before = progress.replaced
         progress.replaced = True  # an exclusive rename that answers an error may still have happened...
         try:
             h.rename_excl(t.temp, t.base)
         except FileExistsError:
-            progress.replaced = before  # ...except this one: a file stood there, nothing was replaced
-            progress.skip = t.key  # that file is an outside program's: the rollback leaves it as it is
+            progress.replaced = before  # ...except this one: a file stood there, nothing was replaced (the
+            # rollback never touches it: anything at a created path is left alone, owner, 2026-10-30)
             raise _Stop(Reason.CHANGED, t.canonical) from None
         h.sync()
         return
@@ -555,8 +562,9 @@ def _why(e: Exception, handles: Handles) -> tuple[Reason, str | None]:
 
 def _rollback(fs: FileSystem, jd: DirHandle, record: Record, plan: _Plan, step: Step, progress: _Progress) -> bool:
     """§6.4: the restore (`ledger.restore.restore`) of this save's own record, at once; True when it resolved the
-    journal, or when no `.open` (or `.closed`) record was ever made. The file whose outside save the save kept is left
-    as it is; only the folders this save made may be removed; after a failed close the record may be `.closed`."""
+    journal, or when no `.open` (or `.closed`) record was ever made. Anything at a created path is left as it is (the
+    restore then stops, `created_path_taken`); only the folders this save made may be removed; after a failed close
+    the record may be `.closed`."""
     try:
         present = jd.stat(journal.file_name(record.name, State.OPEN)) is not None
         present = present or (step is Step.CLOSE and jd.stat(journal.file_name(record.name, State.CLOSED)) is not None)
@@ -569,7 +577,6 @@ def _rollback(fs: FileSystem, jd: DirHandle, record: Record, plan: _Plan, step: 
         record,
         plan.journal_dir,
         closed=step is Step.CLOSE,
-        skip=progress.skip,
         made=frozenset(progress.made),
     )
     return isinstance(out, _restore.Resolved)

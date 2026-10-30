@@ -9,6 +9,7 @@ import errno
 
 import pytest
 
+from ledger_engine.fs.port import Right
 from tests.fakes.memfs import Crash, MemFS, MemLocks
 
 
@@ -369,3 +370,29 @@ def test_sync_file_makes_an_unsynced_in_place_write_durable_and_refuses_what_is_
         with pytest.raises(FileNotFoundError):
             d.sync_file("missing")
     assert outcomes(fs, "/d/f") == {(b"new bytes",)}
+
+
+def test_an_inheritable_denial_is_reported_and_files_made_there_cannot_be_removed() -> None:
+    """S0061 r5 (red team F2): `outside_deny_inherit` models `chmod +a "everyone deny delete,file_inherit"`: the
+    folder reports it (`inheritable_denial`), and a file made there after it refuses its rename away and removal."""
+    fs = MemFS()
+    fs.outside_mkdirs("/d")
+    fs.outside_write("/d/old", b"before\n")
+    with fs.open_dir("/d") as d:
+        assert not d.inheritable_denial()
+        fs.outside_deny_inherit("/d")
+        assert d.inheritable_denial()
+        d.create("new", b"x", 0o644)
+        assert not d.allowed("new", Right.DELETE)
+        assert d.allowed("old", Right.DELETE), "only what is made after it inherits it"
+        with pytest.raises(PermissionError):
+            d.remove("new")
+
+
+def test_the_user_removing_a_file_is_durable() -> None:
+    fs = MemFS()
+    fs.outside_mkdirs("/d")
+    fs.outside_write("/d/f", b"x")
+    fs.outside_remove("/d/f")
+    assert fs.file("/d/f") is None
+    assert all(state.file("/d/f") is None for state in fs.power_loss_states())

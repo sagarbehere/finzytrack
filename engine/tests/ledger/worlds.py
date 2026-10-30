@@ -8,18 +8,18 @@ save, a rollback or a recovery, written from §10's rows and §13's write-protoc
 - a target at its post bytes only under a readable `.open` or `.closed` journal whose backups hold the pre bytes:
   `BackupDurableBeforeReplace`, `JournalDurableBeforeFirstReplace`; a `.part` may be torn, an `.open` never;
 - a `.closed` journal only with every target at post, a `.resolved` one only with every target at pre, and with
-  either no temp, staging file, restore temp or restore staging file of ours left and no folder the save made
-  (`temps_after_close`, `resolve_before_restores_synced`, `CutTempNeverBlocks`'s "no temp of a save outlives its
-  journal"), with one exception beside `.resolved` (S0061 r4, red team F1): a created file's names of ours stay
-  until the journal is durably resolved, as the proof that a file at its path is not ours, so a crash or an error
-  right after the resolve may leave them, holding only our own bytes (its temp or restore temp the post bytes, its
-  staging file any bytes of a write of ours), and the folders the save made, holding nothing else (§15);
+  either no temp, staging file, restore temp or restore staging file of ours left (`temps_after_close`,
+  `resolve_before_restores_synced`, `CutTempNeverBlocks`'s "no temp of a save outlives its journal"); beside
+  `.resolved`, a folder the save made only when it is empty (an `rmdir` that answered `ENOENT` or `ENOTEMPTY`, §15);
 - nothing changed outside the recorded paths, the save's temps and staging names, restore temps and their staging
   names, kept names, its backups and its journal (INV-32, `RecoveryWritesOnlyRecordedPaths`), and nothing that was
   there before removed; `.resolved` never beside a kept copy.
 `check_recovered` adds what recovery must end with when no outside program acts: no `.open` journal, every target at
 pre or (only under `.closed`) at post, in the disk as it is and in every power-loss state of it; after a try that
-answered `Resolved`, nothing of ours left at all (`leftovers`).
+answered `Resolved`, nothing of ours left at all (`leftovers`). A try that stops because something stands at a created
+path (`created_path_taken`, owner, 2026-10-30: "Never remove it (Recommended)") must have left that entry as it was,
+every replaced file durably at pre and no name of ours anywhere (`check_taken`); then the user deletes the file and
+presses Retry, which must resolve.
 """
 
 from __future__ import annotations
@@ -28,6 +28,7 @@ from dataclasses import dataclass
 
 from ledger_engine.ledger.core import journal
 from ledger_engine.ledger.core.journal import Record, State
+from ledger_engine.ledger.core.recovery import Cause
 from ledger_engine.ledger.restore import Failed, Resolved, RestoreOutcome, Stopped, recover_journal
 from ledger_engine.ledger.writer import Change, Commit, sha256
 from tests.fakes.memfs import MemFS, MemLocks
@@ -136,26 +137,10 @@ def journals(fs: MemFS) -> dict[State, bytes]:
 
 
 def leftovers(fs: MemFS, w: World) -> list[str]:
-    """What a crash or an error right after a resolve may leave of ours (the module's docstring), as found now; it
-    raises when anything else of ours is there beside the record."""
+    """Every name of ours beside the files and every folder the save made, as found now."""
     snap = fs.snapshot()
-    out: list[str] = []
-    for t in w.targets:
-        for name in t.scratch:
-            if name not in snap:
-                continue
-            entry = snap[name]
-            assert t.pre is None, f"a temp of ours left beside a resolved journal: {name}"
-            assert name != t.rstaging, f"a restore staging file beside a created file: {name}"
-            assert entry[0] == "file", f"not a file of ours: {name}"
-            assert name == t.staging or entry[1] == t.post, f"not our own bytes: {name}"
-            out.append(name)
-    for d in w.new_dirs:
-        if d in snap:
-            inside = [p for p in snap if p.startswith(d + "/")]
-            assert set(inside) <= set(out) | set(w.new_dirs), f"resolved, but the folder the save made is left: {d}"
-            out.append(d)
-    return out
+    out = [name for t in w.targets for name in t.scratch if name in snap]
+    return out + [d for d in w.new_dirs if d in snap]
 
 
 def check_disk(fs: MemFS, w: World) -> None:
@@ -192,7 +177,9 @@ def check_disk(fs: MemFS, w: World) -> None:
             if state is State.RESOLVED:
                 assert t.kept not in snap, f"resolved while a kept copy exists: {t.kept}"
     if state is State.RESOLVED:
-        leftovers(fs, w)
+        for name in leftovers(fs, w):
+            assert name in w.new_dirs, f"a name of ours left beside a resolved journal: {name}"
+            assert not any(p.startswith(name + "/") for p in snap), f"resolved, but the save's folder holds: {name}"
     ours = {t.path for t in w.targets} | {n for t in w.targets for n in t.scratch}
     ours |= {t.kept for t in w.targets}
     ours |= set(w.new_dirs) | {SAVE_DIR, JD, BD}
@@ -224,9 +211,52 @@ def recover(fs: MemFS, locks: MemLocks | None = None, *, listed: bool = True) ->
     return recover_journal(fs, locks or MemLocks(), JD, NAME)
 
 
+def created(w: World) -> tuple[Target, ...]:
+    return tuple(t for t in w.targets if t.pre is None)
+
+
+def check_taken(fs: MemFS, w: World, out: RestoreOutcome | None) -> None:
+    """After `Stopped(created_path_taken)` (the module's docstring), in the disk now and in every power-loss state:
+    the journal `.open`, something at that created path, every replaced file at pre, no name of ours left."""
+    assert isinstance(out, Stopped), out
+    assert out.cause is Cause.CREATED_PATH_TAKEN, out
+    assert out.path in {t.path for t in created(w)}, out
+    for state in (fs, *fs.power_loss_states()):
+        check_disk(state, w)
+        assert set(journals(state)) == {State.OPEN}, "the journal stops: it stays .open"
+        assert out.path in state.snapshot(), "the entry at the created path was removed"
+        for t in w.targets:
+            if t.pre is not None:
+                assert state.file(t.path) == t.pre, f"{t.path} not at pre beside the taken path"
+            for name in t.scratch:
+                assert name not in state.snapshot(), f"a name of ours left: {name}"
+
+
+def undo(fs: MemFS, w: World, locks: MemLocks | None = None) -> RestoreOutcome | None:
+    """`recover`; when it stops at a created path holding our own file (owner, 2026-10-30: "Never remove it
+    (Recommended)"), `check_taken`, then the user deletes that file and presses Retry: the outcome of that Retry."""
+    out = recover(fs, locks)
+    if isinstance(out, Stopped) and out.cause is Cause.CREATED_PATH_TAKEN:
+        check_taken(fs, w, out)
+        assert out.path is not None
+        assert fs.file(out.path) == next(t.post for t in created(w) if t.path == out.path), "not our own file"
+        fs.outside_remove(out.path)
+        out = recover(fs, locks)
+    return out
+
+
 def check_recovered(fs: MemFS, w: World, out: RestoreOutcome | None) -> None:
     """What recovery ends with when no outside program acts (§8.1, §10): resolved, files at pre; or no `.open`
-    journal to resolve, files at pre (or, under `.closed`, at post); in the disk now and in every power-loss state."""
+    journal to resolve, files at pre (or, under `.closed`, at post); in the disk now and in every power-loss state.
+    A stop at a created path that holds our own file (the save placed it before it was cut) is the owner's choice:
+    checked by `check_taken`, then the user deletes it and presses Retry."""
+    if isinstance(out, Stopped) and out.cause is Cause.CREATED_PATH_TAKEN:
+        check_taken(fs, w, out)
+        assert out.path is not None
+        assert fs.file(out.path) == next(t.post for t in created(w) if t.path == out.path), "not our own file"
+        fs.outside_remove(out.path)
+        out = recover(fs)
+        assert isinstance(out, Resolved), f"the user deleted the file and pressed Retry: {out}"
     assert not isinstance(out, Stopped | Failed), f"recovery with no outside program could not finish: {out}"
     for state in (fs, *fs.power_loss_states()):
         check_disk(state, w)

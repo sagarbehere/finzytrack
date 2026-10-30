@@ -31,7 +31,9 @@ the first missing component), and `Resolved.identity` is `(1, inode)`. Files may
 (`outside_link`); `stat` gives the link count, and a locked file (`outside_lock`, `uchg`) refuses a swap, a rename
 and a remove. `create(..., like=...)` copies `like`'s extended attributes (`outside_setxattr`). With `stores_nfd`
 the volume keeps every name in NFD, as HFS+ does (S0061 probe). `MemLocks` stands for the ledger-set locks of one
-process (`outside_hold`: another process holds one).
+process (`outside_hold`: another process holds one). `outside_deny_inherit` gives a folder an inheritable
+`deny delete` (its `inheritable_denial` answers yes, and files made there after it refuse their removal);
+`outside_remove` is the user deleting an entry, durably.
 """
 
 # pyright: reportPrivateUsage=false
@@ -102,6 +104,7 @@ class _Dir:
     mode: int = 0o755
     deny: set[Right] = field(default_factory=lambda: set())  # CHANGE_ENTRIES: read-only; DELETE: deny delete_child
     no_swap: bool = False  # a volume without RENAME_SWAP and RENAME_EXCL (exFAT, FAT)
+    inherit_deny: bool = False  # an inheritable ACL entry denying us delete (and read) of what is made in it
 
 
 _Node = _File | _Dir | _Link | _Other
@@ -362,6 +365,26 @@ class MemFS:
         node = self._at(path)
         assert isinstance(node, _File | _Dir)
         node.deny.add(right)
+
+    def outside_deny_inherit(self, path: str) -> None:
+        """An inheritable ACL entry on the folder at `path` that denies us the deletion (and the reading) of every
+        entry made in it from now on (`chmod +a "everyone deny delete,file_inherit"`; S0061 red team r5 F2): files made
+        there then refuse their rename away and their removal."""
+        node = self._at(path)
+        assert isinstance(node, _Dir)
+        node.inherit_deny = True
+
+    def outside_remove(self, path: str) -> None:
+        """The user deletes the file (or empty folder, or link) at `path` (Finder, the shell), durably."""
+        d, name = self._parent_and_name(path)
+        hit = self._find(d, name)
+        if hit is None:
+            raise FileNotFoundError(errno.ENOENT, "no entry")
+        node = self.nodes[hit[1]]
+        assert not isinstance(node, _Dir) or not node.entries
+        del d.entries[_key(name, d.ci)]
+        d.durable = dict(d.entries)
+        d.pending = []
 
     def outside_fifo(self, path: str) -> None:
         d, name = self._parent_and_name(path)
@@ -625,6 +648,9 @@ class MemDir:
     def can_swap(self) -> bool:
         return not self._d.no_swap
 
+    def inheritable_denial(self) -> bool:
+        return self._d.inherit_deny
+
     def create(self, name: str, data: bytes, mode: int, like: str | None = None) -> None:
         d = self._d
         key = _key(check_name(name), d.ci)
@@ -637,6 +663,8 @@ class MemDir:
             source = node
         self._writable()
         f = _File(data=b"", synced=b"", mode=mode & 0o7777)
+        if d.inherit_deny:
+            f.deny.add(Right.DELETE)  # what an inherited `deny delete` does to a file made here
 
         def link() -> None:
             if key in d.entries:

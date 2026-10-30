@@ -241,10 +241,12 @@ engine/src/ledger_engine/
   fs/            the file-system port for writes (S0060): port.py (FileSystem.resolve with the object's identity,
                  open_dir -> DirHandle: read, stat, sync_file, create exclusively with the xattrs of the file it replaces and
                  sync, swap, exclusive rename, remove, mkdir, rmdir, sync, path by F_GETPATH, allowed (access(2)
-                 with ACLs), can_swap (the volume's RENAME_SWAP/EXCL); Locks.try_lock, the ledger-set locks without
+                 with ACLs), can_swap (the volume's RENAME_SWAP/EXCL), inheritable_denial (an inherited ACL deny of
+                 delete or read that applies to us, S0061 r5); Locks.try_lock, the ledger-set locks without
                  waiting; same_path, the path guard's comparison), darwin.py (F_FULLFSYNC, renameatx_np on the folder's
                  descriptor, a file resolved through its folder and stored name, never F_GETPATH on a hard-linked
-                 file; fcopyfile for xattrs only, no ACL; DarwinLocks, flock on locks/<sha256(path_key)>; other OSes
+                 file; fcopyfile for xattrs only, no ACL; acl_get_fd_np and mbr_check_membership for
+                 inheritable_denial; DarwinLocks, flock on locks/<sha256(path_key)>; other OSes
                  refuse, BL-0087); the
                  in-memory fake with a durable layer and crash/power-loss injection is engine/tests/fakes/memfs.py
   mirror/        the build half: projection of a LoadResult into SQLite.

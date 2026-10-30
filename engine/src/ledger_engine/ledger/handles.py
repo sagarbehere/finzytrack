@@ -10,7 +10,7 @@ import hashlib
 from dataclasses import dataclass, field
 from enum import StrEnum
 
-from ledger_engine.fs.port import DirHandle, EntryStat, FileSystem, same_path
+from ledger_engine.fs.port import DirHandle, EntryStat, FileSystem, Kind, same_path
 from ledger_engine.ledger.core.journal import MAX_KEPT, kept_name
 
 
@@ -72,7 +72,7 @@ def volume_without_swap(h: DirHandle) -> bool:
 
 
 class Displaced(StrEnum):
-    """What a swap, an exclusive rename aside or a temp's clean-up found at a name of ours (§6.4)."""
+    """What a swap or a temp's clean-up found at a name of ours (§6.4)."""
 
     OURS = "ours"  # a regular file with one link, byte-identical to bytes we hold (deleting it loses nothing)
     LINKED = "linked"  # the same, but with a second hard link (the owner's hard-link rule: the save stops)
@@ -83,14 +83,17 @@ class Displaced(StrEnum):
 def displaced(h: DirHandle, name: str, ours: tuple[str | None, ...]) -> Displaced:
     """Classify the entry `name` by its bytes (owner, 2026-10-29, the kept-name design, step 2: "If it is ours, or
     byte-identical to something we already hold (the pre bytes, which the backup has; or the post bytes we wrote),
-    treat it as ours (deleting it loses nothing)"). `ours`: the SHA-256 of the bytes we hold."""
+    treat it as ours (deleting it loses nothing)"). `ours`: the SHA-256 of the bytes we hold. Anything that is not a
+    regular file (by its `stat`) is foreign. A regular file whose bytes cannot be read is neither ours nor foreign:
+    the read's `OSError` is raised, so the caller fails with nothing moved and the next try reads it again (owner,
+    2026-10-30: "Yes to both (Recommended)"; S0061 r5, red team F3, verifier F3: it was taken for an outside save, and
+    one transient error made a kept copy of our own bytes that stopped every later try)."""
     st = h.stat(name)
     if st is None:
         return Displaced.GONE
-    try:
-        data = h.read(name)  # refuses a folder, a link or a FIFO (the port's contract): never ours
-    except OSError:
+    if st.kind is not Kind.FILE:
         return Displaced.FOREIGN
+    data = h.read(name)  # an OSError here is raised, never taken for an outside save
     if data is None:
         return Displaced.GONE
     if sha256(data) not in ours:

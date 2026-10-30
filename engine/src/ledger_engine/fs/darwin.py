@@ -18,6 +18,8 @@
   with `COPYFILE_XATTR` only: the ACL is not kept, owner, 2026-10-29; not `COPYFILE_STAT`, which would copy the old
   modification time). `allowed` is `access(2)` with the extended bits (`_DELETE_OK`, `_REXT_OK`), which apply ACLs;
   `can_swap` reads the volume's `VOL_CAP_INT_RENAME_SWAP` and `_EXCL` (`fgetattrlist`; exFAT and FAT have neither).
+  `inheritable_denial` reads the folder's extended ACL (`acl_get_fd_np`) for an inherited `deny read` or `deny delete`
+  that applies to us (our UUID, or a group we are in by `mbr_check_membership`; S0061 r5, probed on APFS).
 
 - `rmdir`: `unlinkat(AT_REMOVEDIR)` on the folder's descriptor (`ENOTEMPTY` for a folder holding a `.DS_Store`,
   `ENOTDIR` for a link, probed S0061). `DarwinLocks`: the ledger-set locks, a `flock(LOCK_EX | LOCK_NB)` on
@@ -65,6 +67,14 @@ RENAME_SWAP: Final = 0x2
 RENAME_EXCL: Final = 0x4
 PC_CASE_SENSITIVE: Final = 11  # <sys/unistd.h> _PC_CASE_SENSITIVE (absent from os.pathconf_names)
 MAXPATHLEN: Final = 1024
+ACL_TYPE_EXTENDED: Final = 0x100  # <sys/acl.h>, checked against the macOS 26 SDK and probed on APFS (S0061 r5)
+ACL_FIRST_ENTRY: Final = 0
+ACL_NEXT_ENTRY: Final = -1
+ACL_EXTENDED_DENY: Final = 2
+ACL_READ_DATA: Final = 1 << 1
+ACL_DELETE: Final = 1 << 4
+ACL_ENTRY_FILE_INHERIT: Final = 1 << 5
+ACL_ENTRY_DIRECTORY_INHERIT: Final = 1 << 6
 
 
 class UnsupportedPlatform(OSError):
@@ -85,6 +95,28 @@ def _libc() -> ctypes.CDLL:
     ga = lib.fgetattrlist
     ga.argtypes = [ctypes.c_int, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_size_t, ctypes.c_uint32]
     ga.restype = ctypes.c_int
+    lib.acl_get_fd_np.argtypes = [ctypes.c_int, ctypes.c_int]
+    lib.acl_get_fd_np.restype = ctypes.c_void_p
+    lib.acl_get_entry.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.POINTER(ctypes.c_void_p)]
+    lib.acl_get_entry.restype = ctypes.c_int
+    lib.acl_get_tag_type.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_int)]
+    lib.acl_get_tag_type.restype = ctypes.c_int
+    lib.acl_get_flagset_np.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_void_p)]
+    lib.acl_get_flagset_np.restype = ctypes.c_int
+    lib.acl_get_flag_np.argtypes = [ctypes.c_void_p, ctypes.c_int]
+    lib.acl_get_flag_np.restype = ctypes.c_int
+    lib.acl_get_permset.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_void_p)]
+    lib.acl_get_permset.restype = ctypes.c_int
+    lib.acl_get_perm_np.argtypes = [ctypes.c_void_p, ctypes.c_int]
+    lib.acl_get_perm_np.restype = ctypes.c_int
+    lib.acl_get_qualifier.argtypes = [ctypes.c_void_p]
+    lib.acl_get_qualifier.restype = ctypes.c_void_p
+    lib.acl_free.argtypes = [ctypes.c_void_p]
+    lib.acl_free.restype = ctypes.c_int
+    lib.mbr_uid_to_uuid.argtypes = [ctypes.c_uint, ctypes.c_char_p]
+    lib.mbr_uid_to_uuid.restype = ctypes.c_int
+    lib.mbr_check_membership.argtypes = [ctypes.c_char_p, ctypes.c_void_p, ctypes.POINTER(ctypes.c_int)]
+    lib.mbr_check_membership.restype = ctypes.c_int
     return lib
 
 
@@ -230,6 +262,56 @@ class DarwinDir:
         _, _, interfaces, _, _, _, valid, _, _ = struct.unpack("<9I", buf.raw[:36])
         need = VOL_CAP_INT_RENAME_SWAP | VOL_CAP_INT_RENAME_EXCL
         return interfaces & need == need and valid & need == need
+
+    def inheritable_denial(self) -> bool:
+        """`acl_get_fd_np(ACL_TYPE_EXTENDED)` on the folder's descriptor: any `deny` entry with file or folder
+        inheritance, denying `read` or `delete`, whose qualifier is us (our user's UUID) or a group we are in
+        (`mbr_check_membership`; `everyone` included). A membership the system cannot answer counts as ours (fails
+        closed). No ACL at all (`ENOENT`) is False; any other error is raised."""
+        lib = self._fs.libc
+        acl = lib.acl_get_fd_np(self.fd, ACL_TYPE_EXTENDED)
+        if not acl:
+            e = ctypes.get_errno()
+            if e == errno.ENOENT:
+                return False
+            raise OSError(e, os.strerror(e))
+        try:
+            me = ctypes.create_string_buffer(16)
+            if lib.mbr_uid_to_uuid(os.geteuid(), me) != 0:
+                _errno_raise()
+            entry = ctypes.c_void_p()
+            which = ACL_FIRST_ENTRY
+            while lib.acl_get_entry(acl, which, ctypes.byref(entry)) == 0:
+                which = ACL_NEXT_ENTRY
+                tag, flags, perms = ctypes.c_int(), ctypes.c_void_p(), ctypes.c_void_p()
+                if lib.acl_get_tag_type(entry, ctypes.byref(tag)) != 0 or tag.value != ACL_EXTENDED_DENY:
+                    continue
+                if lib.acl_get_flagset_np(entry, ctypes.byref(flags)) != 0 or lib.acl_get_permset(
+                    entry, ctypes.byref(perms)
+                ):
+                    _errno_raise()
+                inherits = any(
+                    lib.acl_get_flag_np(flags, f) == 1 for f in (ACL_ENTRY_FILE_INHERIT, ACL_ENTRY_DIRECTORY_INHERIT)
+                )
+                denies = any(lib.acl_get_perm_np(perms, p) == 1 for p in (ACL_READ_DATA, ACL_DELETE))
+                if inherits and denies and self._applies_to_us(entry, me):
+                    return True
+            return False
+        finally:
+            lib.acl_free(acl)
+
+    def _applies_to_us(self, entry: ctypes.c_void_p, me: ctypes.Array[ctypes.c_char]) -> bool:
+        lib = self._fs.libc
+        who = lib.acl_get_qualifier(entry)
+        if not who:
+            return True  # cannot tell whom it names: fails closed
+        try:
+            if ctypes.string_at(who, 16) == me.raw:
+                return True  # our user (membership answers 0 for a user's own UUID: probed)
+            member = ctypes.c_int(0)
+            return lib.mbr_check_membership(me, who, ctypes.byref(member)) != 0 or member.value == 1
+        finally:
+            lib.acl_free(who)
 
     def _renamex(self, a: str, b: str, flags: int) -> None:
         rc = self._fs.libc.renameatx_np(self.fd, os.fsencode(check_name(a)), self.fd, os.fsencode(check_name(b)), flags)

@@ -18,15 +18,15 @@ read error made a kept copy of our own bytes). These two functions are the rule'
 
 The file the temps sit beside, then:
 - at its pre bytes (a created file: absent): **at pre**;
-- at its post bytes: **at post** when, for a replaced file, the backup holds the pre bytes (ADR-0012 F-1), else stop;
-  for a created file, only while none of its four names of ours is there (the **created-path proof**): the save's
-  temp or staging file means the exclusive rename never happened (S0061 red team r2 H1), a restore temp means a try
-  already renamed our file aside (red team r4 F1), and a restore staging file is never written beside a created file;
-  so the file at the path is another program's, whatever it holds. The restore keeps those names until the journal is
-  durably resolved (`ledger.restore`);
-- anything else (other bytes, a folder, a link, a FIFO): stop.
-The rollback's skipped file (`skip`: a created path an outside file took before the save's exclusive rename, §6.4) is
-**kept** whatever it holds.
+- a replaced file at its post bytes: **at post** when the backup holds the pre bytes (ADR-0012 F-1), else stop;
+- anything at all at a created path (a file of any kind, whatever it holds, our post bytes included): **taken**
+  (owner, 2026-10-30: "Never remove it (Recommended)"). Nothing on disk tells our unfinished file from another
+  program's (a sync client, a re-run import), so the undo never removes, renames or moves it: it undoes the other
+  files, and the journal stops (`created_path_taken`) until the user deletes the file or keeps the files as they are.
+  It replaced the created-path proof of S0061 red team r2 H1 and r4 F1 (our names beside the path), which r5 F1
+  showed could not be made whole;
+- anything else (other bytes, a folder, a link, a FIFO at a replaced file): stop.
+The temp rule comes first: an outside save at a name of ours stops the journal at the checks, a created path or not.
 """
 
 from __future__ import annotations
@@ -96,8 +96,8 @@ class Temps:
 
 class Verdict(StrEnum):
     AT_PRE = "at_pre"  # nothing to restore
-    AT_POST = "at_post"  # restore it from its backup, or remove it if the save created it
-    KEEP = "keep"  # the rollback's skipped file (an outside file took a created path first): left as it is
+    AT_POST = "at_post"  # a replaced file: restore it from its backup
+    TAKEN = "taken"  # something stands at a created path: never touched; the others undone, then the journal stops
 
 
 class Cause(StrEnum):
@@ -115,6 +115,7 @@ class Cause(StrEnum):
     DISPLACED = "displaced"  # an outside save met at a restore swap, a removal or a temp check: moved to a kept name
     KEPT_COPY = "kept_copy"  # a kept copy of this journal's (an outside save we moved aside) is still there
     UNREADABLE = "unreadable"  # the record cannot be read: torn, foreign, newer, or not this name's
+    CREATED_PATH_TAKEN = "created_path_taken"  # something stands at a path the save was creating: left alone (§11)
     LOCK_HELD = "lock_held"  # a ledger-set lock is held by another process (`Failed`)
     IO_ERROR = "io_error"  # an operation failed while restoring (`Failed`)
 
@@ -124,7 +125,7 @@ class Stop:
     cause: Cause
 
 
-def judge(entry: FileEntry, file: Seen, temps: Temps, backup: Seen | None, *, skip: bool = False) -> Verdict | Stop:
+def judge(entry: FileEntry, file: Seen, temps: Temps, backup: Seen | None) -> Verdict | Stop:
     """The verdict for one file (the module's docstring). `temps`: the names of ours beside it, by the temp rule.
     `backup`: what the backup holds, None when not read. `Stop(io_error)`: a name of ours could not be read, which the
     restore tells as `Failed` and writes nothing for."""
@@ -132,16 +133,11 @@ def judge(entry: FileEntry, file: Seen, temps: Temps, backup: Seen | None, *, sk
         return Stop(Cause.IO_ERROR)
     if TempState.FOREIGN in temps.states():
         return Stop(Cause.OUTSIDE_SAVE_IN_TEMP)
-    if skip:
-        return Verdict.KEEP
-    post = Seen(Kind.FILE, entry.post)
     pre = ABSENT if entry.pre is None else Seen(Kind.FILE, entry.pre)
     if file == pre:
         return Verdict.AT_PRE
-    if file == post:
-        if entry.pre is None and any(t is not TempState.ABSENT for t in temps.states()):
-            return Stop(Cause.FOREIGN)  # the created-path proof: the file is another program's
-        if entry.pre is not None and backup != pre:
-            return Stop(Cause.BACKUP_BAD)
-        return Verdict.AT_POST
+    if entry.pre is None:
+        return Verdict.TAKEN  # never removed, whatever stands there (owner, 2026-10-30: "Never remove it")
+    if file == Seen(Kind.FILE, entry.post):
+        return Verdict.AT_POST if backup == pre else Stop(Cause.BACKUP_BAD)
     return Stop(Cause.FOREIGN)

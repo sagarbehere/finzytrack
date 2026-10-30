@@ -119,6 +119,12 @@ class DirHandle(Protocol):
         """Whether this folder's volume supports the swap and the exclusive rename (`RENAME_SWAP`, `RENAME_EXCL`)."""
         ...
 
+    def inheritable_denial(self) -> bool:
+        """Whether this folder carries an inheritable ACL entry (file or folder inheritance) that denies us the
+        deletion or the reading of an entry: every file the save made here would inherit it, so its staging file
+        could not be renamed or removed, or its new file read back (S0061 red team r5 F2). Asking writes nothing."""
+        ...
+
     def swap(self, a: str, b: str) -> None:
         """Exchange the entries `a` and `b` in one operation (`RENAME_SWAP`); both must exist."""
         ...

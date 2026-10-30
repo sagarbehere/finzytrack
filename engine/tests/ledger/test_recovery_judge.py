@@ -7,9 +7,9 @@ The temp rule: what stands at a **staging name** (`classify_staging`) is our own
 (a regular file; anything else is not ours); what stands at a **temp name** (`classify_temp`) is ours only when it
 equals the pre or the post bytes; anything else is an outside save, kept, and the journal stops, whatever the file
 beside it holds; a regular file whose bytes could not be read at a temp name is neither (`unreadable`: the try fails,
-writes nothing and reads again next time; S0061 red team r4 O1). The file (`judge`): at pre → at pre; at post → at
-post when the backup holds pre (a created file: only while none of its four names of ours is there, red team r2 H1 and
-r4 F1); anything else → stop.
+writes nothing and reads again next time; S0061 red team r4 O1). The file (`judge`): at pre → at pre (a created
+file: absent); a replaced file at post → at post when the backup holds pre; anything at all at a created path →
+`taken`, never removed (owner, 2026-10-30: "Never remove it (Recommended)"); anything else → stop.
 """
 
 from __future__ import annotations
@@ -96,7 +96,7 @@ def test_a_foreign_entry_at_any_name_of_ours_stops_the_journal_whatever_the_file
                 states[where] = F
                 temps = Temps(*states)
                 assert judge(REPLACED, file, temps, GOOD_BACKUP) == Stop(Cause.OUTSIDE_SAVE_IN_TEMP)
-                assert judge(REPLACED, file, temps, None, skip=True) == Stop(Cause.OUTSIDE_SAVE_IN_TEMP)
+                assert judge(CREATED, file, temps, None) == Stop(Cause.OUTSIDE_SAVE_IN_TEMP)  # before `taken`
 
 
 def test_an_unreadable_name_of_ours_fails_the_try_whatever_else_stands_beside_it() -> None:
@@ -110,7 +110,6 @@ def test_an_unreadable_name_of_ours_fails_the_try_whatever_else_stands_beside_it
                     states[where] = U
                     temps = Temps(*states)
                     assert judge(entry, file, temps, GOOD_BACKUP) == Stop(Cause.IO_ERROR)
-                    assert judge(entry, file, temps, None, skip=True) == Stop(Cause.IO_ERROR)
 
 
 OURS_BESIDE = [Temps(*c) for c in itertools.product((A, OK), repeat=4)]
@@ -129,30 +128,22 @@ def test_a_replaced_file_at_post_is_at_post_only_with_a_backup_at_pre() -> None:
         assert judge(REPLACED, seen_file(POST), Temps(), backup) == Stop(Cause.BACKUP_BAD)
 
 
-def test_a_created_file_at_post_is_at_post_only_while_none_of_its_names_of_ours_is_there() -> None:
-    """Red team r2 H1: a temp still there means the exclusive rename never happened, so the file at the path is
-    another program's, whatever it holds: never deleted. A staging file still there means the same (its rename to the
-    temp name, synced, comes before the exclusive rename). Red team r4 F1: a restore temp there means a try already
-    renamed our created file aside, so a file at the path again is another program's too; a restore staging file is
-    never ours beside a created file, and counts the same (fails closed)."""
-    assert judge(CREATED, seen_file(POST), Temps(), None) is Verdict.AT_POST
-    for where in range(4):
-        states = [A] * 4
-        states[where] = OK
-        assert judge(CREATED, seen_file(POST), Temps(*states), None) == Stop(Cause.FOREIGN), where
+def test_anything_at_a_created_path_is_taken_whatever_it_holds_and_whatever_names_of_ours_stand_beside_it() -> None:
+    """Owner, 2026-10-30: "Never remove it (Recommended)": when anything stands at a path the save was creating (a
+    file of any kind, whatever it holds, our post bytes included), the undo never removes, renames or moves it; the
+    other files are undone and the journal stops (`created_path_taken`). Names of ours beside it change nothing (the
+    created-path proof of red team r2 H1 and r4 F1 is gone)."""
+    for file in (seen_file(POST), seen_file(PRE), seen_file(FOREIGN), seen_file(b""), OTHER, DIR, LINK):
+        for temps in OURS_BESIDE:
+            assert judge(CREATED, file, temps, None) is Verdict.TAKEN, (file, temps)
+            assert judge(CREATED, file, temps, GOOD_BACKUP) is Verdict.TAKEN
 
 
 def test_a_file_at_neither_pre_nor_post_stops() -> None:
     for file in (seen_file(FOREIGN), seen_file(POST[:2]), ABSENT, OTHER, DIR, LINK):
         assert judge(REPLACED, file, Temps(), GOOD_BACKUP) == Stop(Cause.FOREIGN)
     for file in (seen_file(FOREIGN), seen_file(PRE), OTHER, DIR, LINK):
-        assert judge(CREATED, file, Temps(), None) == Stop(Cause.FOREIGN)
-
-
-def test_the_rollbacks_skipped_file_is_kept_beside_temps_of_ours() -> None:
-    for file in (seen_file(FOREIGN), seen_file(PRE), seen_file(POST), ABSENT):
-        for temps in OURS_BESIDE:
-            assert judge(CREATED, file, temps, None, skip=True) is Verdict.KEEP
+        assert judge(CREATED, file, Temps(), None) is Verdict.TAKEN  # never a stop that could lead to a removal
 
 
 FILES = (ABSENT, seen_file(PRE), seen_file(POST), seen_file(FOREIGN), OTHER, DIR, LINK)
@@ -160,10 +151,11 @@ FILES = (ABSENT, seen_file(PRE), seen_file(POST), seen_file(FOREIGN), OTHER, DIR
 
 @pytest.mark.parametrize("entry", [REPLACED, CREATED])
 def test_exhaustively_a_verdict_never_loses_outside_bytes_and_never_blocks_for_temps_of_ours(entry: FileEntry) -> None:
-    """Over every combination: (a) at post only with the file at post, no foreign entry at a name of ours, a good
-    backup (a replaced file) or none of its four names of ours (a created file); (b) at pre only with the file
-    at its pre state and nothing foreign beside it; (c) a stop only for a cause: never for a file at pre beside names
-    of ours that hold our own writes (`CutTempNeverBlocks`)."""
+    """Over every combination: (a) at post only for a replaced file at post with no foreign entry at a name of ours
+    and a good backup; (b) at pre only with the file at its pre state and nothing foreign beside it; (c) `taken`
+    exactly for a created path where anything stands, with nothing foreign or unreadable beside it (owner, 2026-10-30:
+    "Never remove it (Recommended)"); (d) a stop only for a cause: never for a file at pre beside names of ours that
+    hold our own writes (`CutTempNeverBlocks`)."""
     pre_state = ABSENT if entry.pre is None else seen_file(PRE)
     for file, states, backup in itertools.product(FILES, itertools.product((A, OK, F, U), repeat=4), (*FILES, None)):
         temps = Temps(*states)
@@ -172,7 +164,13 @@ def test_exhaustively_a_verdict_never_loses_outside_bytes_and_never_blocks_for_t
             assert file == seen_file(POST)
             assert F not in states
             assert U not in states
-            assert (entry.pre is None and set(states) == {A}) or (entry.pre is not None and backup == seen_file(PRE))
+            assert entry.pre is not None
+            assert backup == seen_file(PRE)
+        elif v is Verdict.TAKEN:
+            assert entry.pre is None
+            assert file != ABSENT
+            assert F not in states
+            assert U not in states
         elif v is Verdict.AT_PRE:
             assert file == pre_state
             assert F not in states
@@ -181,3 +179,4 @@ def test_exhaustively_a_verdict_never_loses_outside_bytes_and_never_blocks_for_t
             assert isinstance(v, Stop)
             assert (v.cause is Cause.IO_ERROR) == (U in states)
             assert not (file == pre_state and F not in states and U not in states)
+            assert entry.pre is not None or F in states or U in states, "a created path never stops by itself"

@@ -22,6 +22,8 @@ import pytest
 from ledger_engine.fs.port import Right
 from ledger_engine.ledger.core import journal
 from ledger_engine.ledger.core.journal import Record, State
+from ledger_engine.ledger.core.recovery import Cause
+from ledger_engine.ledger.restore import Stopped
 from ledger_engine.ledger.writer import (
     Change,
     Commit,
@@ -44,12 +46,17 @@ from tests.ledger.worlds import (
     check_disk,
     check_every_power_loss,
     check_recovered,
+    check_taken,
     journals,
     recover,
+    undo,
     world,
 )
 
 pytestmark = [pytest.mark.inv("INV-01"), pytest.mark.inv("INV-22")]
+
+PRICES = "/w/L/prices.bean"  # the world's created file: anything there is never removed (owner, 2026-10-30)
+TAKEN = Stopped(Cause.CREATED_PATH_TAKEN, PRICES)
 
 
 def clean_run() -> tuple[World, Outcome]:
@@ -191,12 +198,20 @@ def check_told(fs: MemFS, w: World, out: Outcome, *, kept: str | None = None) ->
 def test_an_io_error_at_every_effect_is_rolled_back_and_told_not_saved_in_every_power_loss(at: int) -> None:
     """§6.4: any failure from the `.open` journal on rolls back at once (before it, nothing was replaced: not a
     rollback); with the rollback resolving, every single I/O error is "not saved", the ledger unchanged after the
-    re-hash, no `.open` journal and nothing of ours left (§6.4 last bullet, fidelity review 3 L10)."""
+    re-hash, no `.open` journal and nothing of ours left (§6.4 last bullet, fidelity review 3 L10). Once the save has
+    placed its created file, the rollback leaves it and stops (owner, 2026-10-30: "Never remove it (Recommended)"):
+    unfinished, every other file at pre, until the user deletes it and recovery resolves."""
     w = world()
     w.fs.inject(at, crash=False, err=errno.ENOSPC)
     out = durable_commit(w.fs, w.commit)
     check_disk(w.fs, w)
     check_every_power_loss(w.fs, w)
+    if at > PLACED:
+        assert isinstance(out, Unfinished), (at, w.fs.effects[at], out)
+        assert out.reason is Reason.IO_ERROR
+        check_told(w.fs, w, out)
+        check_recovered(w.fs, w, recover(w.fs))
+        return
     assert isinstance(out, NotSaved), (at, w.fs.effects[at], out)
     assert out.reason is Reason.IO_ERROR
     assert (out.unchanged, out.open_journal) == (True, False), out
@@ -213,6 +228,7 @@ def _is_replace(label: str) -> bool:
 
 
 FIRST_REPLACE = min(i for i, x in enumerate(clean_run()[0].fs.effects) if _is_replace(x))
+PLACED = clean_run()[0].fs.effects.index("rename /w/L:.prices.bean.ft-s1-j7.tmp,prices.bean")  # the created file's
 OPEN_RENAME = clean_run()[0].fs.effects.index(f"rename {JD}:{NAME}.part,{NAME}.open")
 
 
@@ -239,13 +255,7 @@ def test_an_io_error_in_the_rollback_at_every_effect_is_told_truthfully_and_reco
     check_disk(w.fs, w)
     check_every_power_loss(w.fs, w)
     assert not isinstance(out, Landed)
-    resolve = next((i for i in range(at, j) if w.fs.effects[i] == f"rename {JD}:{NAME}.open,{NAME}.resolved"), None)
-    if resolve is not None and j > resolve + 1:
-        # S0061 r4: an error after the rollback's resolve is durable (dropping a created file's names of ours,
-        # removing the save's folders) leaves only those beside the resolved journal: not saved, as resolved
-        assert isinstance(out, NotSaved), (at, j, out)
-        assert not out.open_journal, (at, j, out)
-    elif at < FIRST_REPLACE:
+    if at < FIRST_REPLACE:
         assert isinstance(out, NotSaved), (at, j, out)
         assert out.open_journal
     else:
@@ -277,19 +287,15 @@ def test_the_rollback_is_the_restore_root_first_and_resolves_after_its_syncs() -
     w = world()
     w.fs.inject(at, crash=False)
     out = durable_commit(w.fs, w.commit)
-    assert out == NotSaved(Step.READ_BACK, Reason.IO_ERROR, True, path="/w/L/inc/a.bean")
+    assert out == Unfinished(Step.READ_BACK, Reason.IO_ERROR, "/w/L/inc/a.bean")  # the created file is left (r5)
     e = w.fs.effects[at + 1 :]
     assert [x for x in e if x.startswith("swap ")] == [
         "swap /w/L:.main.bean.ft-restore-s1-j7.tmp,main.bean",
         "swap /w/L/inc:.a.bean.ft-restore-s1-j7.tmp,a.bean",
     ]
-    assert e[-4:] == [  # S0061 r4 (red team F1): the created file's restore temp dropped only after the resolve
-        f"rename {JD}:{NAME}.open,{NAME}.resolved",
-        f"sync {JD}:",
-        "remove /w/L:.prices.bean.ft-restore-s1-j7.tmp",
-        "sync /w/L:",
-    ]
-    check_recovered(w.fs, w, None)
+    assert not [x for x in e if x.startswith(f"rename {JD}:")], "stopped at the created path: never resolved"
+    assert sorted(e[-2:]) == ["sync /w/L/inc:", "sync /w/L:"], "every folder synced before the stop"
+    check_recovered(w.fs, w, recover(w.fs))
 
 
 @pytest.mark.parametrize("after", [False, True])
@@ -303,13 +309,16 @@ def test_a_failed_close_is_rolled_back_and_never_leaves_a_closed_record_over_res
         w = world()
         w.fs.inject(at, crash=False, err=errno.EIO, after=after)
         out = durable_commit(w.fs, w.commit)
-        assert out == NotSaved(Step.CLOSE, Reason.IO_ERROR, True), (label, out)
+        end = len(w.fs.effects)
+        assert out == Unfinished(Step.CLOSE, Reason.IO_ERROR, None), (label, out)  # the created file is left (r5)
+        if after:
+            assert set(journals(w.fs)) == {State.OPEN}, "the .closed record reopened before any file was restored"
         check_told(w.fs, w, out)
-        check_recovered(w.fs, w, None)
+        check_recovered(w.fs, w, recover(w.fs))
         e = w.fs.effects[at + 1 :]
         if after:
             assert e[:2] == [f"rename {JD}:{NAME}.closed,{NAME}.open", f"sync {JD}:"], e[:3]
-        for k in range(at + 1, len(w.fs.effects)):  # a crash anywhere in that rollback, then every power loss
+        for k in range(at + 1, end):  # a crash anywhere in that rollback, then every power loss
             v = world()
             v.fs.inject(at, crash=False, err=errno.EIO, after=after)
             v.fs.inject(k, crash=True)
@@ -361,10 +370,14 @@ def test_an_exclusive_create_refuses_a_file_that_appeared_and_keeps_it() -> None
         w.fs, "rename /w/L:.prices.bean.ft-s1-j7.tmp,prices.bean", lambda: w.fs.outside_write("/w/L/prices.bean", b"x")
     )
     out = durable_commit(w.fs, w.commit)
-    assert out == NotSaved(Step.REPLACE, Reason.CHANGED, False, path="/w/L/prices.bean")
+    assert out == Unfinished(Step.REPLACE, Reason.CHANGED, "/w/L/prices.bean")  # a.bean was replaced first
     assert w.fs.file("/w/L/prices.bean") == b"x"
-    assert set(journals(w.fs)) == {State.RESOLVED}, "the other files rolled back (§6.4)"
-    check_told(w.fs, w, out, kept="/w/L/prices.bean")
+    assert w.fs.file("/w/L/inc/a.bean") == w.targets[0].pre, "the other files rolled back (§6.4)"
+    assert set(journals(w.fs)) == {State.OPEN}, "the journal stops at the created path (owner, 2026-10-30)"
+    check_told(w.fs, w, out)
+    out2 = recover(w.fs)
+    assert out2 == TAKEN
+    assert w.fs.file("/w/L/prices.bean") == b"x"
 
 
 def _swap_folder_for_link(w: World) -> Callable[[], None]:
@@ -671,9 +684,12 @@ def test_a_failed_exclusive_rename_with_nothing_replaced_is_not_saved() -> None:
         w.fs, "rename /w/L:.prices.bean.ft-s1-j7.tmp,prices.bean", lambda: w.fs.outside_write("/w/L/prices.bean", b"x")
     )
     out = durable_commit(w.fs, c)
-    assert out == NotSaved(Step.REPLACE, Reason.CHANGED, False, path="/w/L/prices.bean")
-    assert set(journals(w.fs)) == {State.RESOLVED}
+    # owner, 2026-10-30 ("Never remove it (Recommended)"): the rollback leaves the file and stops; before the first
+    # replace, so not saved with the journal open (writes paused until recovery resolves it)
+    assert out == NotSaved(Step.REPLACE, Reason.CHANGED, False, True, "/w/L/prices.bean")
+    assert set(journals(w.fs)) == {State.OPEN}
     assert w.fs.file("/w/L/prices.bean") == b"x"
+    assert w.fs.file("/w/L/.prices.bean.ft-s1-j7.tmp") is None, "our own temp removed by the temp rule"
 
 
 def test_empty_record_fields_are_refused_before_the_first_effect() -> None:
@@ -807,9 +823,10 @@ def test_a_hard_link_made_between_the_pre_swap_check_and_the_swap_is_never_told_
         w.fs, "create /w/L:.main.bean.ft-s1-j7.new", lambda: w.fs.outside_link("/w/L/main.bean", "/w/Backup/copy.bean")
     )
     out = durable_commit(w.fs, w.commit)
-    assert out == NotSaved(Step.REPLACE, Reason.HARD_LINKED, True, path="/w/L/main.bean")
+    assert out == Unfinished(Step.REPLACE, Reason.HARD_LINKED, "/w/L/main.bean")  # prices.bean placed: left (r5)
     assert w.fs.file("/w/L/main.bean") == w.fs.file("/w/Backup/copy.bean") == w.targets[2].pre
-    assert set(journals(w.fs)) == {State.RESOLVED}
+    assert set(journals(w.fs)) == {State.OPEN}
+    assert recover(w.fs) == TAKEN
 
 
 def test_a_hard_link_made_to_the_displaced_file_before_its_temp_is_removed_stops_the_save() -> None:
@@ -824,10 +841,11 @@ def test_a_hard_link_made_to_the_displaced_file_before_its_temp_is_removed_stops
 
     w.fs.on_effect = link_late
     out = durable_commit(w.fs, w.commit)
-    assert out == NotSaved(Step.READ_BACK, Reason.HARD_LINKED, True, path="/w/L/main.bean")
+    assert out == Unfinished(Step.READ_BACK, Reason.HARD_LINKED, "/w/L/main.bean")  # prices.bean placed: left (r5)
     # rolled back: the temp holds the pre bytes (§8.1 step 2 allows it); its other name keeps them
     assert w.fs.file("/w/Backup/copy.bean") == w.targets[2].pre
-    assert set(journals(w.fs)) == {State.RESOLVED}
+    assert w.fs.file("/w/L/main.bean") == w.targets[2].pre
+    assert set(journals(w.fs)) == {State.OPEN}
 
 
 @pytest.mark.parametrize(
@@ -962,10 +980,17 @@ def test_the_rollback_of_a_save_that_made_a_folder_removes_it_and_leaves_nothing
     and the folder the save made."""
     probe = world(new_dir=True)
     durable_commit(probe.fs, probe.commit)
+    placed = probe.fs.effects.index("rename /w/L/y2026:.prices.bean.ft-s1-j7.tmp,prices.bean")
     for at in range(probe.fs.effects.index(f"rename {JD}:{NAME}.part,{NAME}.open"), len(probe.fs.effects)):
         w = world(new_dir=True)
         w.fs.inject(at, crash=False, err=errno.EIO, after=True)
         out = durable_commit(w.fs, w.commit)
+        if at >= placed:  # the created file is in the folder: left with it, the journal stops (owner, 2026-10-30)
+            assert isinstance(out, Unfinished), (at, probe.fs.effects[at], out)
+            assert w.fs.file("/w/L/y2026/prices.bean") == w.targets[1].post
+            check_recovered(w.fs, w, recover(w.fs))
+            assert "/w/L/y2026" not in w.fs.snapshot(), "removed once the user deleted the file and retried"
+            continue
         assert isinstance(out, NotSaved), (at, probe.fs.effects[at], out)
         assert (out.unchanged, out.open_journal) == (True, False)
         assert "/w/L/y2026" not in w.fs.snapshot(), probe.fs.effects[at]
@@ -1011,7 +1036,7 @@ def _delete_kept_and_recover(w: World, *paths: str) -> None:
     for p in paths:
         d, name = w.fs._parent_and_name(p)  # pyright: ignore[reportPrivateUsage]
         del d.entries[name.lower()]
-    out = recover(w.fs)
+    out = undo(w.fs, w)  # a created file the save had placed: the user deletes it too (owner, 2026-10-30)
     assert type(out).__name__ == "Resolved", out
     check_recovered(w.fs, w, out)
 
@@ -1379,24 +1404,154 @@ def test_R4_F2_each_replaced_file_is_synced_before_it_is_read_for_its_backup() -
     assert not any(x.startswith("sync_file /w/L:prices.bean") for x in e), "a created file is never synced first"
 
 
-def test_R4_vF1_an_outside_write_into_the_skipped_paths_temp_after_the_checks_is_never_deleted() -> None:
-    """@regression-guard (S0061 verifier r4 F1: the code already held; it kills the mutant `drop_skipped_no_check`):
-    the rollback removes the temp of a created path an outside file took only by the temp rule, after the resolve; an
-    outside write into it after the checks is never deleted."""
+def test_R4_vF1_an_outside_write_into_our_temp_beside_a_taken_created_path_after_the_checks_is_never_deleted() -> None:
+    """S0061 verifier r4 F1, under the round-5 design (owner, 2026-10-30: "Never remove it (Recommended)"): our temp
+    beside a created path another program took is removed by the temp rule at step 3, so an outside write into it
+    after the checks is moved to the kept name, never deleted."""
     w = world()
     temp = "/w/L/.prices.bean.ft-s1-j7.tmp"
     foreign = b"; another program's bytes at our temp name\n"
     acts: dict[str, Callable[[], None]] = {
-        "rename /w/L:.prices.bean.ft-s1-j7.tmp,prices.bean": lambda: w.fs.outside_write("/w/L/prices.bean", b"x"),
-        f"rename {JD}:{NAME}.open,{NAME}.resolved": lambda: w.fs.outside_write(temp, foreign),
+        "rename /w/L:.prices.bean.ft-s1-j7.tmp,prices.bean": lambda: w.fs.outside_write(PRICES, b"x"),
+        "sync /w/L/inc:": lambda: w.fs.outside_write(temp, foreign),  # the rollback's first sync, after its checks
     }
+    rolled = [False]
 
     def hook(_: int, seen: str) -> None:
-        act = acts.pop(seen, None)
+        if seen == "rename /w/L:.prices.bean.ft-s1-j7.tmp,prices.bean":
+            rolled[0] = True
+        act = acts.pop(seen, None) if rolled[0] else None
         if act is not None:
             act()
 
     w.fs.on_effect = hook
     out = durable_commit(w.fs, w.commit)
+    w.fs.on_effect = None
+    assert isinstance(out, Unfinished), out
+    assert foreign in (w.fs.file(temp), w.fs.file("/w/L/prices.bean.kept-s1-j7")), "the outside bytes were deleted"
+    assert w.fs.file(PRICES) == b"x"
+
+
+# ---- S0061 round 5 (owner, 2026-10-30: "Never remove it (Recommended)", "Yes to both (Recommended)"; red team r5 F1,
+# F2, F3; verifier r5 F3) --------------------------------------------------------------------------------------------
+
+A_SWAP_SYNC = clean_run()[0].fs.effects.index("swap /w/L/inc:.a.bean.ft-s1-j7.tmp,a.bean") + 1
+
+
+def test_R5_after_a_read_back_mismatch_the_rollback_leaves_our_own_created_file_and_stops() -> None:
+    """Spec §6.4 (the created-path bullet): the user put a.bean back to its old version right after the save's swaps;
+    the read-back fails; the rollback undoes main.bean, finds a.bean at pre, and leaves prices.bean (our own post
+    bytes, placed by this save) as it is: it cannot tell it from another program's. Unfinished, the journal `.open`;
+    recovery stops the same way until the user deletes it."""
+    w = world()
+
+    def revert(_: int, label: str) -> None:
+        if label == "sync /w/L:" and w.fs.file("/w/L/main.bean") == w.targets[2].post:
+            w.fs.on_effect = None
+            w.fs.outside_write("/w/L/inc/a.bean", w.targets[0].pre or b"")
+
+    w.fs.on_effect = revert
+    out = durable_commit(w.fs, w.commit)
+    assert out == Unfinished(Step.READ_BACK, Reason.READ_BACK, "/w/L/inc/a.bean")
+    assert w.fs.file(PRICES) == w.targets[1].post
+    check_told(w.fs, w, out)
+    out2 = recover(w.fs)
+    assert out2 == TAKEN
+    check_recovered(w.fs, w, out2)
+
+
+def test_R5_F1_the_rollback_never_deletes_another_programs_file_at_a_created_path_before_the_staging() -> None:
+    """Red team r5 F1 (a), the High, ported: another program's prices.bean (exactly our post bytes: a sync client
+    restoring a file this save re-creates) appears after the checks and before the save stages that file; the save
+    fails right then (EIO on the sync after a.bean's swap). The rollback deleted it and told "not saved, unchanged".
+    Now it is never touched: the other files undone, the journal stopped, the save told unfinished."""
+    w = world()
+    t = w.targets[1]
+    w.fs.on_effect = lambda i, _: w.fs.outside_write(t.path, t.post) if i == A_SWAP_SYNC else None
+    w.fs.inject(A_SWAP_SYNC, crash=False, err=errno.EIO)
+    out = durable_commit(w.fs, w.commit)
+    w.fs.on_effect = None
+    assert w.fs.file(t.path) == t.post, f"the other program's prices.bean was deleted; told {out}"
+    assert out == Unfinished(Step.REPLACE, Reason.IO_ERROR, "/w/L/inc/a.bean"), out
+    check_told(w.fs, w, out)
+    check_taken(w.fs, w, TAKEN)
+    assert recover(w.fs) == TAKEN
+    assert w.fs.file(t.path) == t.post
+
+
+def test_R5_F1_another_programs_folder_and_file_at_a_created_folder_are_never_touched_by_the_rollback() -> None:
+    """Red team r5 F1, the created-folder variant: another program makes y2026/ and y2026/prices.bean (our post
+    bytes) after the checks; the save's mkdir answers EEXIST; the rollback leaves both (a folder it did not make is
+    never removed) and stops."""
+    probe = world(new_dir=True)
+    durable_commit(probe.fs, probe.commit)
+    mkdir = probe.fs.effects.index("mkdir /w/L:y2026")
+    t = probe.targets[1]
+    w = world(new_dir=True)
+
+    def arrive(i: int, _: str) -> None:
+        if i == mkdir:
+            w.fs.outside_mkdirs("/w/L/y2026")
+            w.fs.outside_write(t.path, t.post)
+
+    w.fs.on_effect = arrive
+    out = durable_commit(w.fs, w.commit)
+    w.fs.on_effect = None
+    assert w.fs.file(t.path) == t.post, f"deleted; told {out}"
+    assert isinstance(out, Unfinished), out
+    assert recover(w.fs) == Stopped(Cause.CREATED_PATH_TAKEN, t.path)
+    assert w.fs.file(t.path) == t.post
+
+
+def _flaky_read(monkeypatch: pytest.MonkeyPatch, name: str, nth: int) -> None:
+    from tests.fakes.memfs import MemDir
+
+    real = MemDir.read
+    seen = [0]
+
+    def read(self: MemDir, n: str) -> bytes | None:
+        if n == name:
+            seen[0] += 1
+            if seen[0] == nth:
+                raise OSError(errno.EIO, "transient")
+        return real(self, n)
+
+    monkeypatch.setattr(MemDir, "read", read)
+
+
+@pytest.mark.parametrize("nth", [1, 2])  # 1: the check of what the swap displaced; 2: the temp's check at its removal
+def test_R5_F3_a_read_error_at_the_saves_displaced_check_moves_nothing_and_rolls_back_as_an_io_error(
+    monkeypatch: pytest.MonkeyPatch, nth: int
+) -> None:
+    """Red team r5 F3 (`_check_displaced`, `_remove_temps`), ported: one transient EIO while hashing what main.bean's
+    swap displaced (the pre bytes) moved our own bytes to a kept name, and every later try stopped on it. Now the save
+    fails like any I/O error and rolls back, and no kept copy is ever made (owner, 2026-10-30: "Yes to both")."""
+    w = world()
+    t = w.targets[2]
+    _flaky_read(monkeypatch, t.temp.rpartition("/")[2], nth)
+    out = durable_commit(w.fs, w.commit)
+    monkeypatch.undo()
+    assert isinstance(out, Unfinished), out
+    assert out.reason is Reason.IO_ERROR, out
+    assert w.fs.file(t.kept) is None, "our own bytes moved to a kept name"
+    check_told(w.fs, w, out)
+    out2 = recover(w.fs)
+    assert out2 == TAKEN, out2
+    check_recovered(w.fs, w, out2)
+
+
+@pytest.mark.parametrize("where", ["/w/L", "/w/L/inc"])
+def test_R5_F2_a_ledger_folder_whose_acl_denies_us_what_the_save_makes_there_is_refused_before_anything_is_written(
+    where: str,
+) -> None:
+    """Red team r5 F2 (the fake's half; on APFS in `tests/fs/test_darwin.py`): an inheritable `deny delete` (or
+    `deny read`) on a folder the save writes in would make its own staging file unremovable, or its new file
+    unreadable. The save refuses with `permission` before anything is written."""
+    w = world()
+    w.fs.outside_deny_inherit(where)
+    before = w.fs.snapshot()
+    out = durable_commit(w.fs, w.commit)
     assert isinstance(out, NotSaved), out
-    assert w.fs.file(temp) == foreign, "the outside bytes at our temp name were deleted after the resolve"
+    assert (out.reason, out.unchanged, out.open_journal) == (Reason.PERMISSION, True, False), out
+    assert w.fs.effects == [], "refused before the first effect"
+    assert w.fs.snapshot() == before
