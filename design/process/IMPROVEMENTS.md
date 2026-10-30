@@ -484,3 +484,11 @@ Format:
 - Expected effect: no current-state document names a frontend `hooks/` folder again.
 - Status: kept (invariant wording owner-approved; the term is an agent-approved tightening asked for by the owner's rename; S0056).
 - Fix (S0056 verifier round 1, F4, 2026-10-29): the term now matches exactly a frontend `hooks/` folder: `src/hooks` (so `frontend/src/hooks/`), `features/<x>/hooks`, a bare `hooks/` that names the folder alone, and "`hooks` folder"; prose such as "hooks/guards", "hooks/skills" and Claude Code's `hooks/guards.py` passes (ADR-0066 note).
+
+## IMP-0049: the data-safety red team scoped to new write paths; one round by default; the High bar (2026-10-30)
+- Trigger: owner question, 2026-10-30: "We did a red team round pretty recently, right? What happened that we need another red team round? Are we being efficient with the red team rounds and verifiers?"; the orchestrator's answer: S0061 took 8 verifier and 8 red-team rounds (rounds 5-7 chasing ACL corners that lost no data), S0062 one of each; the waste was re-attacking reviewed code. Owner: "Yes, apply all three".
+- What changed: process (a loosening of when the red team runs, owner-approved). PROCESS.md §4: a data-safety red team runs on a slice that adds a new way to write or delete ledger or user data or to tell a write's outcome, scoped to that new part; none on a test-only slice or one with no new write path (the verifier still runs); one round by default, a second only after a High fix; High means bytes lost, torn or overwritten, or a false "saved", "undone" or "unchanged" (owner, 2026-10-30, after S0061: "Yes. And don't got digging yourself into holes like this one").
+- PROCESS.md section: §4 (the red-team cadence sentence).
+- Why: each red-team round costs about 150-230k tokens and 10-25 minutes; re-reading a whole slice re-attacks code earlier rounds covered, and a block that loses nothing was being treated as a reason for another round.
+- Expected effect: one verifier and at most one scoped red team per slice; the planned order: BL-0151 slice 4 (S0063) verifier and red team scoped to the gate, locks, load, re-check and outcomes; slice 5 verifier only; BL-0160 and BL-0153 red team; BL-0152 verifier plus a red team scoped to the check-failed pause.
+- Status: kept (owner-approved loosening).
