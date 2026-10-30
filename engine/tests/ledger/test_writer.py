@@ -1555,3 +1555,33 @@ def test_R5_F2_a_ledger_folder_whose_acl_denies_us_what_the_save_makes_there_is_
     assert (out.reason, out.unchanged, out.open_journal) == (Reason.PERMISSION, True, False), out
     assert w.fs.effects == [], "refused before the first effect"
     assert w.fs.snapshot() == before
+
+
+def test_R5b_a_stat_error_at_the_saves_displaced_check_moves_nothing_and_rolls_back_as_an_io_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """@regression-guard (it already held at d6c04734: `displaced` raises a `stat` error, which the save treats as any
+    I/O error): what main.bean's swap displaced cannot be `stat`ed: the save rolls back, no kept copy is made."""
+    from tests.fakes.memfs import MemDir
+
+    w = world()
+    t = w.targets[2]
+    name = t.temp.rpartition("/")[2]
+    real = MemDir.stat
+    fired = [False]
+
+    def failing(self: MemDir, n: str) -> object:
+        if n == name and w.fs.file(t.path) == t.post and not fired[0]:
+            fired[0] = True
+            raise OSError(errno.EIO, "injected")
+        return real(self, n)
+
+    monkeypatch.setattr(MemDir, "stat", failing)
+    out = durable_commit(w.fs, w.commit)
+    monkeypatch.undo()
+    assert fired[0]
+    assert isinstance(out, Unfinished), out
+    assert out.reason is Reason.IO_ERROR
+    assert w.fs.file(t.kept) is None
+    check_told(w.fs, w, out)
+    check_recovered(w.fs, w, recover(w.fs))

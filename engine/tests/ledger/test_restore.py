@@ -542,24 +542,128 @@ def test_a_backup_changed_after_the_checks_is_hashed_again_and_stops_the_restore
     assert set(journals(w.fs)) == {State.OPEN}
 
 
-def test_an_io_error_while_checking_stops_the_journal_with_nothing_written(monkeypatch: pytest.MonkeyPatch) -> None:
-    """§8.1 step 2: "Any failure ... the journal stays and counts as unrecoverable"."""
+# The round-5 follow-up (orchestrator, applying the owner's "Yes to both (Recommended)": "A read error during an
+# undo's checks ends that try as 'failed' with nothing moved ... wherever it happens"): a `stat`, a listing, a
+# folder's open or the volume's capabilities failing at the checks is `Failed(io_error, path, errno)` too.
+STEP2_SITES = {
+    # site: (method of MemDir or MemFS, the name or path it fails on, the file the outcome names)
+    "file_stat": ("stat", "main.bean", "/w/L/main.bean"),
+    "temp_stat": ("stat", ".main.bean.ft-s1-j7.tmp", "/w/L/main.bean"),
+    "staging_stat": ("stat", ".main.bean.ft-s1-j7.new", "/w/L/main.bean"),
+    "rtemp_stat": ("stat", ".main.bean.ft-restore-s1-j7.tmp", "/w/L/main.bean"),
+    "backup_stat": ("stat", "2-main.bean", "/w/L/main.bean"),
+    "kept_listing": ("names", "/w/L/inc", "/w/L/inc/a.bean"),
+    "folder_open": ("open_dir", "/w/L/inc", "/w/L/inc/a.bean"),
+    "volume_caps": ("can_swap", "/w/L/inc", "/w/L/inc/a.bean"),
+}
+
+
+@pytest.mark.parametrize("site", sorted(STEP2_SITES))
+def test_R5b_an_io_error_at_any_check_fails_the_try_with_nothing_written(
+    monkeypatch: pytest.MonkeyPatch, site: str
+) -> None:
+    """Every check of step 2 that answers an error (not "no such entry", which is absent) ends the try `failed`,
+    naming the file and the error, with nothing written (it was `Stopped(io_error)`: §8.1 step 2's "Any failure ...
+    counts as unrecoverable", replaced); once the error is gone, the next try goes on."""
     from tests.fakes.memfs import MemDir
 
-    w = crashed(CLOSE)
+    w = crashed(FIRST_REMOVE)  # every file at post, the save's temps still there
+    t = w.targets[2]
+    w.fs.outside_write(t.rtemp, t.post)  # a leftover restore temp of ours, so its name is checked too
+    with w.fs.open_dir(JD) as d:
+        d.sync()
+    method, key, path = STEP2_SITES[site]
+    fired = [False]
+    if method == "open_dir":
+        real_open = MemFS.open_dir
+
+        def open_dir(self: MemFS, p: str) -> MemDir:
+            if p == key and not fired[0]:
+                fired[0] = True
+                raise OSError(errno.EIO, "injected")
+            return real_open(self, p)
+
+        monkeypatch.setattr(MemFS, "open_dir", open_dir)
+    else:
+        real = getattr(MemDir, method)
+
+        def failing(self: MemDir, *args: str) -> object:
+            here = args[0] if args else self.path()
+            if here == key and not fired[0]:
+                fired[0] = True
+                raise OSError(errno.EIO, "injected")
+            return real(self, *args)
+
+        monkeypatch.setattr(MemDir, method, failing)
+    n = len(w.fs.effects)
+    before = w.fs.snapshot()
+    out = recover(w.fs, listed=False)
+    monkeypatch.undo()
+    assert fired[0], site
+    assert out == Failed(Cause.IO_ERROR, path, errno.EIO), (site, out)
+    assert w.fs.effects[n:] == [], "a failed check wrote something"
+    assert w.fs.snapshot() == before
+    out = recover(w.fs)
+    assert out == TAKEN, out
+    check_recovered(w.fs, w, out)
+
+
+def test_R5b_an_io_error_at_a_created_folders_removal_check_fails_the_try_with_nothing_written(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`_check_folders`: the folder the save made holds only our temp (the save died before its exclusive rename),
+    so it would be removed; its `stat` in its parent answers an error: `failed`, nothing written."""
+    from tests.fakes.memfs import MemDir
+
+    w = crashed(NEW_DIR_EXCL, new_dir=True)
     real = MemDir.stat
+    fired = [False]
 
     def failing(self: MemDir, name: str) -> object:
-        if name == "main.bean":
-            raise OSError(errno.EIO, "injected stat error")
+        if name == "y2026" and not fired[0]:
+            fired[0] = True
+            raise OSError(errno.EIO, "injected")
         return real(self, name)
 
+    with w.fs.open_dir(JD) as d:
+        d.sync()
     monkeypatch.setattr(MemDir, "stat", failing)
     n = len(w.fs.effects)
     out = recover(w.fs, listed=False)
-    assert out == Stopped(Cause.IO_ERROR, "/w/L/main.bean")
+    monkeypatch.undo()
+    assert out == Failed(Cause.IO_ERROR, "/w/L/y2026", errno.EIO), out
     assert w.fs.effects[n:] == []
-    assert set(journals(w.fs)) == {State.OPEN}
+    out = recover(w.fs)
+    assert out == Resolved(NAME)
+    check_recovered(w.fs, w, out)
+
+
+def test_R5b_an_io_error_at_a_restore_swaps_displaced_stat_fails_the_try_and_moves_nothing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """@regression-guard (it already held at d6c04734: an `OSError` from step 3 on is `Failed`): what main.bean's
+    restore swap displaced cannot be `stat`ed: `failed` with the errno, nothing moved to a kept name."""
+    from tests.fakes.memfs import MemDir
+
+    w = crashed(CLOSE)
+    t = w.targets[2]
+    name = t.rtemp.rpartition("/")[2]
+    real = MemDir.stat
+    fired = [False]
+
+    def failing(self: MemDir, n: str) -> object:
+        if n == name and self.path() == "/w/L" and w.fs.file(t.path) == t.pre and not fired[0]:
+            fired[0] = True
+            raise OSError(errno.EIO, "injected")
+        return real(self, n)
+
+    monkeypatch.setattr(MemDir, "stat", failing)
+    out = recover(w.fs)
+    monkeypatch.undo()
+    assert fired[0]
+    assert out == Failed(Cause.IO_ERROR, t.path, errno.EIO), out
+    assert w.fs.file(t.kept) is None
+    assert recover(w.fs) == TAKEN
 
 
 def test_a_folder_renamed_in_case_only_counts_as_moved() -> None:
@@ -1764,3 +1868,13 @@ def test_R5_an_in_place_write_after_a_crashed_tries_unsynced_restore_swap_surviv
             for state in (w.fs, *w.fs.power_loss_states()):
                 assert FOREIGN in _all_bytes(state), (label, crash2, "the editor's save was lost")
     assert tried >= 3, tried
+
+
+def test_R5b_a_backup_folder_that_is_gone_stops_the_journal_as_a_bad_backup_not_a_failed_try() -> None:
+    """@regression-guard (it held at d6c04734; it kills the mutant `r5b_backup_missing_fails`): "no such entry"
+    keeps its meaning at the backup too: a backup folder that is gone is a missing backup (`backup_bad`, stopped:
+    Retry cannot bring it back), never an error to retry."""
+    w = crashed(CLOSE)
+    w.fs.outside_mkdirs("/w/elsewhere")
+    w.fs.outside_move(SAVE_DIR, "/w/elsewhere/backups")
+    _stops_with_nothing_written(w, Cause.BACKUP_BAD, "/w/L/inc/a.bean")  # the first file at post checked

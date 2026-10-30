@@ -22,9 +22,10 @@ next try can resolve.
    at post, its backup hold, judged by `core.recovery.judge`; the names by the temp rule (owner, 2026-10-30:
    "Staging name (Recommended)": a regular file at a staging name is ours whatever it holds,
    `core.recovery.classify_staging`; a temp name is ours only when it equals the pre or the post bytes,
-   `classify_temp`). **Any read error** (the file, a name of ours, the backup) fails the try, `Failed(io_error)`, with
-   nothing written (owner, 2026-10-30: "Yes to both (Recommended)"; red team r4 O1, r5 F3). Anything at a created
-   path is `taken` and never touched (owner, 2026-10-30: "Never remove it (Recommended)"). Every name of ours that
+   `classify_temp`). **Any error a check answers** (a read or a `stat` of the file, a name of ours or the backup, a
+   listing, a folder's open; "no such entry" means absent) fails the try, `Failed(io_error)`, with nothing written
+   (owner, 2026-10-30: "Yes to both (Recommended)"; red team r4 O1, r5 F3). Anything at a created path is `taken`
+   and never touched (owner, 2026-10-30: "Never remove it (Recommended)"). Every name of ours that
    step 3 would remove must be removable (its deletion allowed, no lock flag: red team r5 F2); a file to restore must
    be a regular file with one link (the owner's rule, `handles.hard_links`), not locked, its extended attributes
    readable, allowed to be moved away, on a volume with the swap; a folder written in must allow entry changes;
@@ -50,13 +51,14 @@ next try can resolve.
 4. **Only then** `.open` renamed `.resolved` and the journal folder synced: `Resolved`.
 
 **The step rule.** Every port operation may raise `OSError`, and the process may die at any effect. In steps 0-2 an
-`OSError` or a cause found writes nothing to a ledger folder but a kept copy's rename (`Stopped`; a read error, or
-step 0's own rename failing: `Failed`). From step 3 on, an `OSError` stops at once: `Failed(io_error)`, every file
-whole at pre or post (each swap and rename is whole), the journal `.open`, or `.resolved` when only the last sync
-failed (every file is then durably at pre). A crash leaves the journal `.open` (it was durable before the first
-write) with each file whole, and the next try is idempotent. An outside save displaced into a restore temp and left
-there by a crash, or by an I/O error on its move to the kept name, is kept by the next try (the temp rule), never
-deleted; a write of ours cut off at a staging name is deleted by it, whatever shape a power loss tore it into.
+`OSError` writes nothing to a ledger folder and is `Failed` (a check that answered an error, step 0's own rename, a
+kept copy's rename); a cause found is `Stopped`, writing nothing but a kept copy's rename. From step 3 on, an
+`OSError` stops at once: `Failed(io_error)`, every file whole at pre or post (each swap and rename is whole), the
+journal `.open`, or `.resolved` when only the last sync failed (every file is then durably at pre). A crash leaves
+the journal `.open` (it was durable before the first write) with each file whole, and the next try is idempotent. An
+outside save displaced into a restore temp and left there by a crash, or by an I/O error on its move to the kept
+name, is kept by the next try (the temp rule), never deleted; a write of ours cut off at a staging name is deleted by
+it, whatever shape a power loss tore it into.
 """
 
 from __future__ import annotations
@@ -107,8 +109,7 @@ class Resolved:
 
 @dataclass(frozen=True, slots=True)
 class Stopped:
-    """A cause found on disk, or a failure other than a read while checking (§8.1 step 2: "Any failure ... counts as
-    unrecoverable", cause `io_error`): the journal stays `.open` and counts as unrecoverable (blocking reason
+    """A cause found on disk: the journal stays `.open` and counts as unrecoverable (blocking reason
     `stopped`, §11); no outside byte was deleted: an outside save met at one of our names is in the file's kept copy
     (cause `displaced`, `outside_save_in_temp`), and while a kept copy exists every try stops (`kept_copy`); each file
     is whole at pre or post, or holds the outside bytes found. `created_path_taken`: something stands at a path the
@@ -121,7 +122,8 @@ class Stopped:
 
 @dataclass(frozen=True, slots=True)
 class Failed:
-    """An I/O error while restoring, any read error while checking, or a ledger-set lock held by another process: the
+    """An I/O error while restoring, any error a check answered (a read, a `stat`, a listing, a folder's open: owner,
+    2026-10-30, "Yes to both (Recommended)"), or a ledger-set lock held by another process: the
     journal stays `.open` (or `.resolved` when only the last sync failed), each file whole at pre or post; nothing
     was moved by the check that failed; blocking reason `failed` (§8.1 step 1, step 3; Retry may still undo it).
     `path` and `errno`: the file and the error, when known, so a permanent cause (a file nobody may read) is visible
@@ -243,8 +245,8 @@ def _check(handles: Handles, record: Record, f: FileEntry, *, created: frozenset
             backup, _ = _look(handles.at(record.backup_dir), f.backup, path)
         except PathMovedError:
             raise _Halt(Cause.BACKUP_BAD, path) from None
-        except OSError:
-            backup = Seen(Kind.OTHER)  # its folder or its entry cannot be reached
+        except (FileNotFoundError, NotADirectoryError):
+            backup = Seen(Kind.OTHER)  # its folder is not there: the backup is missing (any other error: `Failed`)
     v = judge(f, file, temps, backup)
     if isinstance(v, Stop) and v.cause is Cause.IO_ERROR:
         raise _Fail(v.cause, path)  # a name of ours vanished between its stat and its read: nothing written
@@ -448,8 +450,8 @@ def restore(
             return Stopped(e.cause, e.path)
         except PathMovedError:
             return Stopped(Cause.PATH_MOVED, handles.on)
-        except OSError:
-            return Stopped(Cause.IO_ERROR, handles.on)  # §8.1 step 2: "Any failure ... counts as unrecoverable"
+        except OSError as e:  # a check that answered an error (a stat, a listing, an open): Retry may undo it
+            return Failed(Cause.IO_ERROR, handles.on, e.errno)
         try:
             taken = _restore_all(handles, record, checked, removable)
             if taken is not None:
