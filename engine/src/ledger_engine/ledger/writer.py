@@ -6,13 +6,14 @@ S0060): what a save does after its commit point (§6.1 step 7), through the file
    locked (`uchg`), not hard-linked (`handles.hard_links`, the owner's decision point), the same object its
    canonical path names (`st_dev`, `st_ino`); a created path free of any entry (a dangling link included) under an
    existing folder; every folder written in (or a folder made in) on a volume with the swap, allowing entries to be
-   added and removed (`access(2)`: write and search, `_RMFILE_OK`), and with no ACL deny entry that applies to us
+   added and removed (`access(2)`: write and search, `_RMFILE_OK`), and with no ACL deny entry, whoever it names,
    other than one that new entries do not inherit and that protects only the folder itself (`handles.acl_denial`;
-   owner, 2026-10-30: "Allowlist (Recommended)"). The plan as a whole: one
+   owner, 2026-10-30: "Allowlist (Recommended)", "Any subject (Recommended)"). The plan as a whole: one
    entry per `path_key`, no target inside another target's path, no target at or under another's temp, staging,
    restore-temp or restore-staging name (`journal.scratch_names`) or kept name and no entry standing at one, the
    folders the save makes once each and never two that differ only in case, no target in the journal or backup
-   folder, and neither of those folders inside a folder the save writes in.
+   folder, and neither of those folders inside a folder the save writes in. The journal and backups folders pass
+   the same folder rule as a ledger folder (S0061 r7).
 1. **Backups:** this save's backup folder `<backups_dir>/<session>-<job>/` made and its parent synced; each file the
    save replaces synced through a handle on its folder (`sync_file`: what an editor wrote into it without a sync is
    then durable, so the old object the swap displaces can never be torn by a power loss: S0061 red team r4 F2), read
@@ -70,8 +71,8 @@ from ledger_engine.ledger.handles import (
     Displaced,
     Handles,
     PathMovedError,
-    acl_denial,
     displaced,
+    folder_blocked,
     hard_links,
     keep,
     sha256,
@@ -305,16 +306,26 @@ def _target(fs: FileSystem, handles: Handles, index: int, c: Commit, ch: Change)
 def _check_folder(h: DirHandle, canonical: str, folder: str) -> None:
     """The folder `folder` the save writes in (or makes a folder in), for the file `canonical`: on a volume with the
     swap; the save may add entries there and remove them (`deny delete_child` answers yes to write and search: S0061
-    red team r6 F1, probed); and no ACL deny entry that applies to us blocks it (`handles.acl_denial`: owner,
-    2026-10-30, "Allowlist (Recommended)"; what new entries inherit, a folder the save makes included, is then never
-    a deny that applies to us: red team r5 F2, r6 F1-F3)."""
+    red team r6 F1, probed); and no ACL deny entry, whoever it names, blocks it (`handles.acl_denial`: owner,
+    2026-10-30, "Allowlist (Recommended)", "Any subject (Recommended)"; what new entries inherit, a folder the save
+    makes included, is then never a deny: red team r5 F2, r6 F1-F3, r7 F1)."""
     if volume_without_swap(h):
         raise _Stop(Reason.VOLUME_NO_SWAP, canonical)
-    if not h.allowed(".", Right.CHANGE_ENTRIES) or not h.allowed(".", Right.REMOVE_ENTRIES):
-        raise _Stop(Reason.PERMISSION, canonical, folder)  # a mode, a lock flag (probed: `uchg`), an ACL
-    detail = acl_denial(h)
-    if detail is not None:
-        raise _Stop(Reason.PERMISSION, canonical, folder, detail)
+    blocked = folder_blocked(h)  # a mode, a lock flag (probed: `uchg`), an ACL entry
+    if blocked is not None:
+        raise _Stop(Reason.PERMISSION, canonical, folder, blocked.detail)
+
+
+def _check_app_folder(h: DirHandle, folder: str) -> None:
+    """The journal folder or the backups folder, before the save writes anything in it (the backups, the `.part`):
+    the same rule as a ledger folder's (`handles.folder_blocked`: write and search, `_RMFILE_OK`, the ACL rule;
+    owner, 2026-10-30: "Any subject (Recommended)", whose option checks "the journal and backup folders too"; S0061
+    verifier r7 F1, red team r7 F3: an inheritable deny there was inherited by the record or the backups, and every
+    recovery failed on them).
+    Else `permission`, naming the folder; no ledger file is named."""
+    blocked = folder_blocked(h)
+    if blocked is not None:
+        raise _Stop(Reason.PERMISSION, None, folder, blocked.detail)
 
 
 def _check_target(handles: Handles, t: _Target) -> None:
@@ -382,6 +393,8 @@ def _prepare(fs: FileSystem, handles: Handles, c: Commit, targets: tuple[_Target
         for t in targets:
             if _within(t.key, folder) or _within(folder, t.parent_key):
                 raise BadPlanError("app_folder_and_ledger_folder_overlap")  # INV-27, INV-30
+    for folder in (journal_dir, backups_dir):
+        _check_app_folder(handles.at(folder), folder)
     return _Plan(targets, tuple((cn, k) for k, cn in dirs.items()), journal_dir, backups_dir)
 
 

@@ -242,11 +242,11 @@ engine/src/ledger_engine/
                  open_dir -> DirHandle: read, stat, sync_file, create exclusively with the xattrs of the file it replaces and
                  sync, swap, exclusive rename, remove, mkdir, rmdir, sync, path by F_GETPATH, allowed (access(2)
                  with ACLs), can_swap (the volume's RENAME_SWAP/EXCL), acl (the folder's ACL entries, each
-                 with its subject, bits and flags, S0061 r6; judged by ledger/handles.blocking_entry); Locks.try_lock, the ledger-set locks without
+                 with its kind, bits and flags, never its subject, S0061 r6-r7; judged by ledger/handles.blocking_entry); Locks.try_lock, the ledger-set locks without
                  waiting; same_path, the path guard's comparison), darwin.py (F_FULLFSYNC, renameatx_np on the folder's
                  descriptor, a file resolved through its folder and stored name, never F_GETPATH on a hard-linked
-                 file; fcopyfile for xattrs only, no ACL; acl_get_fd_np and mbr_check_membership for
-                 acl, _RMFILE_OK for REMOVE_ENTRIES; DarwinLocks, flock on locks/<sha256(path_key)>; other OSes
+                 file; fcopyfile for xattrs only, no ACL; acl_get_fd_np for acl, _RMFILE_OK for
+                 REMOVE_ENTRIES, X_OK for SEARCH; DarwinLocks, flock on locks/<sha256(path_key)>; other OSes
                  refuse, BL-0087); the
                  in-memory fake with a durable layer and crash/power-loss injection is engine/tests/fakes/memfs.py
   mirror/        the build half: projection of a LoadResult into SQLite.

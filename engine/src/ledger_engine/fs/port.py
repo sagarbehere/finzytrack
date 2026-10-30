@@ -55,6 +55,7 @@ class Right(StrEnum):
 
     CHANGE_ENTRIES = "change_entries"  # in a folder: add, rename and remove entries (write and search)
     REMOVE_ENTRIES = "remove_entries"  # in a folder: remove and rename away entries (`delete_child`; `_RMFILE_OK`)
+    SEARCH = "search"  # in a folder: look names up in it (`X_OK`; only to name the folder when a lookup fails)
     DELETE = "delete"  # an entry may be renamed away or removed (its own ACL, or the folder's delete_child)
     READ_XATTRS = "read_xattrs"  # a file's extended attributes may be read (to copy them to the temp)
 
@@ -62,12 +63,11 @@ class Right(StrEnum):
 @dataclass(frozen=True, slots=True)
 class AclEntry:
     """One entry of a folder's extended ACL, as the system stores it (S0061 r6). `deny`: a deny entry (an allow entry,
-    False; a kind the adapter does not know counts as a deny). `ours`: it names us, a group we are in or everyone (a
-    subject the system cannot answer for counts as ours). `perms` and `flags` in `chmod`'s words (`delete_child`,
-    `file_inherit`, ...); a bit the adapter cannot name is `unknown`."""
+    False; a kind the adapter does not know counts as a deny). `perms` and `flags` in `chmod`'s words (`delete_child`,
+    `file_inherit`, ...); a bit the adapter cannot name is `unknown`. Whom the entry names is not read: every deny
+    entry is judged whatever its subject (owner, 2026-10-30: "Any subject (Recommended)"; S0061 r7)."""
 
     deny: bool
-    ours: bool
     perms: frozenset[str]
     flags: frozenset[str] = frozenset()
 

@@ -18,8 +18,9 @@
   with `COPYFILE_XATTR` only: the ACL is not kept, owner, 2026-10-29; not `COPYFILE_STAT`, which would copy the old
   modification time). `allowed` is `access(2)` with the extended bits (`_DELETE_OK`, `_REXT_OK`), which apply ACLs;
   `can_swap` reads the volume's `VOL_CAP_INT_RENAME_SWAP` and `_EXCL` (`fgetattrlist`; exFAT and FAT have neither).
-  `acl` reads the folder's extended ACL (`acl_get_fd_np`), each entry with whether it applies to us (our UUID, or a
-  group we are in by `mbr_check_membership`; S0061 r5) and every permission and flag bit (S0061 r6, probed on APFS).
+  `acl` reads the folder's extended ACL (`acl_get_fd_np`), each entry's kind and every permission and flag bit
+  (S0061 r6, probed on APFS); never whom it names (owner, 2026-10-30: "Any subject (Recommended)", S0061 r7: the
+  membership lookup answered "not a member" for macOS's `owner` and `group` subjects, which the kernel applies).
 
 - `rmdir`: `unlinkat(AT_REMOVEDIR)` on the folder's descriptor (`ENOTEMPTY` for a folder holding a `.DS_Store`,
   `ENOTDIR` for a link, probed S0061). `DarwinLocks`: the ledger-set locks, a `flock(LOCK_EX | LOCK_NB)` on
@@ -131,14 +132,8 @@ def _libc() -> ctypes.CDLL:
     lib.acl_get_permset.restype = ctypes.c_int
     lib.acl_get_perm_np.argtypes = [ctypes.c_void_p, ctypes.c_int]
     lib.acl_get_perm_np.restype = ctypes.c_int
-    lib.acl_get_qualifier.argtypes = [ctypes.c_void_p]
-    lib.acl_get_qualifier.restype = ctypes.c_void_p
     lib.acl_free.argtypes = [ctypes.c_void_p]
     lib.acl_free.restype = ctypes.c_int
-    lib.mbr_uid_to_uuid.argtypes = [ctypes.c_uint, ctypes.c_char_p]
-    lib.mbr_uid_to_uuid.restype = ctypes.c_int
-    lib.mbr_check_membership.argtypes = [ctypes.c_char_p, ctypes.c_void_p, ctypes.POINTER(ctypes.c_int)]
-    lib.mbr_check_membership.restype = ctypes.c_int
     return lib
 
 
@@ -285,6 +280,7 @@ class DarwinDir:
         mode = {
             Right.CHANGE_ENTRIES: os.W_OK | os.X_OK,
             Right.REMOVE_ENTRIES: ACCESS_RMFILE,
+            Right.SEARCH: os.X_OK,
             Right.DELETE: ACCESS_DELETE,
             Right.READ_XATTRS: ACCESS_READ_XATTRS,
         }[right]
@@ -302,8 +298,8 @@ class DarwinDir:
         return interfaces & need == need and valid & need == need
 
     def acl(self) -> tuple[AclEntry, ...]:
-        """`acl_get_fd_np(ACL_TYPE_EXTENDED)` on the folder's descriptor, each entry read in full: its kind, whether
-        it applies to us (`_applies_to_us`), its permission and flag bits by name. A bit libc does not name is
+        """`acl_get_fd_np(ACL_TYPE_EXTENDED)` on the folder's descriptor, each entry read in full: its kind and its
+        permission and flag bits by name (not its subject: S0061 r7). A bit libc does not name is
         `unknown`: the permission word and the flag word are also read whole where the permset and flagset point
         (probed on macOS 26: they point at the entry's own words) and must agree with the named bits, else `unknown`
         (fails closed). No ACL at all (`ENOENT`) is empty; any other error is raised."""
@@ -315,9 +311,6 @@ class DarwinDir:
                 return ()
             raise OSError(e, os.strerror(e))
         try:
-            me = ctypes.create_string_buffer(16)
-            if lib.mbr_uid_to_uuid(os.geteuid(), me) != 0:
-                _errno_raise()
             out: list[AclEntry] = []
             entry = ctypes.c_void_p()
             which = ACL_FIRST_ENTRY
@@ -333,7 +326,6 @@ class DarwinDir:
                 out.append(
                     AclEntry(
                         deny=tag.value != ACL_EXTENDED_ALLOW,
-                        ours=self._applies_to_us(entry, me),
                         perms=_named(perms, ACL_PERMS, lib.acl_get_perm_np),
                         flags=_named(flags, ACL_FLAGS, lib.acl_get_flag_np),
                     )
@@ -341,19 +333,6 @@ class DarwinDir:
             return tuple(out)
         finally:
             lib.acl_free(acl)
-
-    def _applies_to_us(self, entry: ctypes.c_void_p, me: ctypes.Array[ctypes.c_char]) -> bool:
-        lib = self._fs.libc
-        who = lib.acl_get_qualifier(entry)
-        if not who:
-            return True  # cannot tell whom it names: fails closed
-        try:
-            if ctypes.string_at(who, 16) == me.raw:
-                return True  # our user (membership answers 0 for a user's own UUID: probed)
-            member = ctypes.c_int(0)
-            return lib.mbr_check_membership(me, who, ctypes.byref(member)) != 0 or member.value == 1
-        finally:
-            lib.acl_free(who)
 
     def _renamex(self, a: str, b: str, flags: int) -> None:
         rc = self._fs.libc.renameatx_np(self.fd, os.fsencode(check_name(a)), self.fd, os.fsencode(check_name(b)), flags)

@@ -11,7 +11,8 @@ this journal exists beside any of its files, every try stops (`Stopped(kept_copy
 next try can resolve.
 
 **The order.**
-0. The journal folder's path guard; for the rollback after a close that may have happened (`closed=True`), a
+0. The journal folder's path guard and its folder rule (`_journal_folder`: write and search, `_RMFILE_OK`, the ACL
+   rule; S0061 r7); for the rollback after a close that may have happened (`closed=True`), a
    `.closed` record is renamed back to `.open` and the folder synced before anything else, so no power loss can
    leave a `.closed` record over files this restore put back (S0060 verifier Q1).
 1. (`recover_journal` only) the ledger-set locks of every file the record names, without waiting, in `path_key`
@@ -28,15 +29,16 @@ next try can resolve.
    not the file (verifier r6 F3). Anything at a created path is `taken`
    and never touched (owner, 2026-10-30: "Never remove it (Recommended)"); its `stat` alone decides that, its bytes
    are never read (verifier r6 F4). Every folder step 3 writes in (names of ours to remove, a restore temp to make, a
-   folder the save made to remove) must let us remove entries (`_RMFILE_OK`) and carry no ACL deny entry the
-   allowlist refuses (`handles.acl_denial`; owner, 2026-10-30: "Allowlist (Recommended)"; verifier r6 F2: one may
-   have appeared since the save). Every name of ours that step 3 would remove must be removable (its deletion
-   allowed, no lock flag: red team r5 F2); a file to restore must be a regular file with one link (the owner's rule,
-   `handles.hard_links`), not locked, its extended attributes readable, allowed to be moved away, on a volume with
-   the swap; a folder it makes the restore temp in must allow entry changes; every folder the save made that would be
-   removed must have no lock flag (red team r6 overflow 3) and be removable from its parent. Any stop: `Stopped(cause)`
-   with nothing written, with one exception: a temp that is not ours is moved to its kept name first, out of reach of
-   every deletion.
+   folder the save made to remove) must let us remove entries (`_RMFILE_OK`) and carry no ACL deny entry the allowlist
+   refuses, whoever it names (`handles.acl_denial`; owner, 2026-10-30: "Allowlist (Recommended)", "Any subject
+   (Recommended)"; verifier r6 F2: one may have appeared since the save). A file whose `stat` fails because its folder
+   denies us looking names up in it names that folder (`entry`; verifier r7 F2). Every name of ours that step 3 would
+   remove must be removable (its deletion allowed, no lock flag: red team r5 F2); a file to restore must be a regular
+   file with one link (the owner's rule, `handles.hard_links`), not locked, its extended attributes readable, allowed to
+   be moved away, on a volume with the swap; a folder it makes the restore temp in must allow entry changes; every
+   folder the save made that would be removed must have no lock flag (red team r6 overflow 3) and be removable from its
+   parent. Any stop: `Stopped(cause)` with nothing written, with one exception: a temp that is not ours is moved to its
+   kept name first, out of reach of every deletion.
 3. Every folder the record names synced first (a swap a crashed save or try left unsynced is then durable before
    anything it displaced is removed: S0061 r4). Each name of ours checked again by the temp rule right before its
    removal (not ours: kept, stop; unreadable: `Failed`), beside a file at pre and beside a created path alike; beside
@@ -97,6 +99,7 @@ from ledger_engine.ledger.handles import (
     PathMovedError,
     acl_denial,
     displaced,
+    folder_blocked,
     hard_links,
     keep,
     sha256,
@@ -242,8 +245,9 @@ def _folder(handles: Handles, folder: str, created: frozenset[str]) -> DirHandle
 
 def _writable(handles: Handles, h: DirHandle, folder: str, path: str) -> None:
     """A folder step 3 writes in (it removes names of ours there, makes the restore temp, or removes a folder the save
-    made): entries may be removed there (`_RMFILE_OK`: S0061 red team r6 F1), and no ACL deny entry that applies to
-    us blocks it (`handles.acl_denial`; owner, 2026-10-30: "Allowlist (Recommended)"; one may have appeared since the
+    made): entries may be removed there (`_RMFILE_OK`: S0061 red team r6 F1), and no ACL deny entry, whoever it names,
+    blocks it (`handles.acl_denial`; owner, 2026-10-30: "Allowlist (Recommended)", then "Any subject (Recommended)",
+    S0061 r7; one may have appeared since the
     save, verifier r6 F2: what the restore makes there would inherit it, and every later try would stop on our own
     leftover even after the entry is gone). Else `permission`, nothing written."""
     handles.entry = folder
@@ -253,6 +257,29 @@ def _writable(handles: Handles, h: DirHandle, folder: str, path: str) -> None:
     if detail is not None:
         raise _Halt(Cause.PERMISSION, path, folder, detail)
     handles.entry = None
+
+
+def _journal_folder(h: DirHandle, journal_dir: str) -> None:
+    """The journal folder, before a record in it is read or renamed: the save's own folder rule
+    (`handles.folder_blocked`: write and search, `_RMFILE_OK`, the ACL rule; owner, 2026-10-30: "Any subject
+    (Recommended)", which checks the journal folder too; S0061 verifier r7 F1, red team r7 F3). Else
+    `Stopped(permission)` naming the folder, nothing written."""
+    blocked = folder_blocked(h)
+    if blocked is not None:
+        raise _Halt(Cause.PERMISSION, None, journal_dir, blocked.detail)
+
+
+def _look_file(
+    handles: Handles, h: DirHandle, base: str, path: str, parent: str, *, read: bool
+) -> tuple[Seen, EntryStat | None]:
+    """`_look` at the file itself; when that fails because its folder denies us looking names up in it (a direct
+    `deny search`), the error names the folder (`entry`; S0061 verifier r7 F2), not the file."""
+    try:
+        return _look(h, base, path, read=read)
+    except (OSError, _Fail):
+        if not h.allowed(".", Right.SEARCH):
+            handles.entry = parent
+        raise
 
 
 def _check(handles: Handles, record: Record, f: FileEntry, *, created: frozenset[str]) -> _Checked:
@@ -271,7 +298,7 @@ def _check(handles: Handles, record: Record, f: FileEntry, *, created: frozenset
     if any(journal.is_kept_name(n, base, record.name) for n in h.names()):
         raise _Halt(Cause.KEPT_COPY, path)  # the user has not dealt with the kept copy yet (§11)
     handles.entry = None
-    file, st = _look(h, base, path, read=f.pre is not None)
+    file, st = _look_file(handles, h, base, path, parent, read=f.pre is not None)
     names = journal.scratch_names(base, record.name)
     looked: list[tuple[TempState, EntryStat | None]] = []
     for n, staged in zip(names, _STAGED, strict=True):
@@ -512,13 +539,16 @@ def restore(
     try:
         try:
             jd = handles.at(journal_dir)
+            _journal_folder(jd, journal_dir)
             if closed and jd.stat(journal.file_name(name, State.CLOSED)) is not None:
                 jd.rename_excl(journal.file_name(name, State.CLOSED), journal.file_name(name, State.OPEN))
                 jd.sync()
+        except _Halt as e:
+            return Stopped(e.cause, e.path, e.entry, e.detail)
         except PathMovedError:
             return Stopped(Cause.PATH_MOVED, None)
         except OSError as e:
-            return Failed(Cause.IO_ERROR, None, e.errno)
+            return Failed(Cause.IO_ERROR, None, e.errno, journal_dir)
         for again in (False, True):
             try:
                 checked = [_check(handles, record, f, created=created) for f in record.files]
@@ -579,21 +609,29 @@ def _locks(locks: Locks, record: Record) -> Generator[str | None]:
 def recover_journal(fs: FileSystem, locks: Locks, journal_dir: str, name: str) -> RestoreOutcome:
     """Recovery's try of one `.open` journal (§8.1 steps 1-4): the record `<name>.open` in `journal_dir` read and
     decoded strictly (a torn, foreign or newer record, or one of another name, is `Stopped(unreadable)`), its locks
-    taken without waiting, then `restore`."""
+    taken without waiting, then `restore`. The journal folder is checked first, before the record is read
+    (`_journal_folder`: `Stopped(permission)` naming it); an error names the journal folder, or the record once the
+    folder is open (`entry`; S0061 verifier r7 F2)."""
+    entry = journal_dir
     try:
         r = fs.resolve(journal_dir)
         if r.rest or not r.existing:
             return Stopped(Cause.UNREACHABLE, None)
         canonical = core_paths.canonical_path(r)
+        entry = canonical
         with fs.open_dir(canonical) as jd:
+            _journal_folder(jd, canonical)
+            entry = _join(canonical, journal.file_name(name, State.OPEN))
             st = jd.stat(journal.file_name(name, State.OPEN))
             if st is None:
-                return Failed(Cause.IO_ERROR, None)  # listed, but gone: never expected under the engine lock
+                return Failed(Cause.IO_ERROR, None, None, entry)  # listed, but gone: not expected under the engine lock
             if st.kind is not Kind.FILE:
                 return Stopped(Cause.UNREADABLE, None)
             data = jd.read(journal.file_name(name, State.OPEN))
+    except _Halt as e:
+        return Stopped(e.cause, e.path, e.entry, e.detail)
     except OSError as e:
-        return Failed(Cause.IO_ERROR, None, e.errno)
+        return Failed(Cause.IO_ERROR, None, e.errno, entry)
     record = journal.decode(data or b"")
     if not isinstance(record, Record) or record.name != name:
         return Stopped(Cause.UNREADABLE, None)

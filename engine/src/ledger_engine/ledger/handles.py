@@ -11,7 +11,7 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Final
 
-from ledger_engine.fs.port import AclEntry, DirHandle, EntryStat, FileSystem, Kind, same_path
+from ledger_engine.fs.port import AclEntry, DirHandle, EntryStat, FileSystem, Kind, Right, same_path
 from ledger_engine.ledger.core.journal import MAX_KEPT, kept_name
 
 
@@ -75,7 +75,7 @@ def volume_without_swap(h: DirHandle) -> bool:
 
 
 FOLDER_SELF: Final = frozenset({"delete", "writeattr", "writeextattr", "writesecurity", "chown"})
-"""What a deny entry may deny us on a folder the save writes in: only what protects the folder itself (its own
+"""What a deny entry may deny on a folder the save writes in: only what protects the folder itself (its own
 deletion, its attributes, its ACL, its owner), never anything about the entries in it (S0061 r6)."""
 NOT_INHERITED: Final = frozenset({"inherited", "limit_inherit"})
 """The flags a deny entry may carry there: none that passes it on to new entries (`file_inherit`,
@@ -87,13 +87,16 @@ UNREADABLE_ACL: Final = "an ACL we may not read"
 
 def blocking_entry(entries: tuple[AclEntry, ...]) -> AclEntry | None:
     """The first ACL entry that refuses a folder the save or the undo writes in, or makes or removes a folder in
-    (owner, 2026-10-30: "Allowlist (Recommended)"; ADR-0013 amendment of that date): a deny entry that applies to us,
-    unless new entries do not inherit it and it denies only what protects the folder itself (`FOLDER_SELF`: macOS puts
-    `group:everyone deny delete` and `deny writeextattr` on the home folder, Desktop, Documents and Downloads). Every
-    other deny that applies to us is refused, an inheritable one of any bit and an unknown bit included; allow entries
-    are not weighed (an allow before a deny still refuses: fails closed). The one place this rule lives."""
+    (owner, 2026-10-30: "Allowlist (Recommended)", then "Any subject (Recommended)"; ADR-0013 amendments of that
+    date): **any deny entry, whoever it names** (a user, a group, everyone, macOS's `owner` and `group` subjects,
+    another user, a subject the system cannot resolve), unless new entries do not inherit it and it denies only what
+    protects the folder itself (`FOLDER_SELF`: macOS puts `group:everyone deny delete` and `deny writeextattr` on the
+    home folder, Desktop, Documents and Downloads). An inheritable one of any bit and an unknown bit or flag included;
+    allow entries are not weighed (an allow before a deny still refuses: fails closed). Whom an entry names is never
+    asked: S0061 r7 found the membership lookup answering "not a member" for subjects the kernel applies to us. The
+    one place this rule lives."""
     for e in entries:
-        if e.deny and e.ours and (not e.flags <= NOT_INHERITED or not e.perms <= FOLDER_SELF):
+        if e.deny and (not e.flags <= NOT_INHERITED or not e.perms <= FOLDER_SELF):
             return e
     return None
 
@@ -111,6 +114,25 @@ def acl_denial(h: DirHandle) -> str | None:
     if e is None:
         return None
     return "deny " + ",".join([*sorted(e.perms), *sorted(e.flags - {"inherited"})])
+
+
+@dataclass(frozen=True, slots=True)
+class Blocked:
+    """A folder the save or the undo may not write in (`folder_blocked`); `detail`: the ACL entry that blocks it, in
+    `chmod`'s words, when an entry does (None: the system's own answer, a mode, a lock flag, an ACL the access check
+    met first)."""
+
+    detail: str | None
+
+
+def folder_blocked(h: DirHandle) -> Blocked | None:
+    """The folder rule for a folder the save writes in or makes a folder in, and for the journal and backups folders
+    (S0061 r6, r7): entries may be added and removed there (`access(2)`: write and search, `_RMFILE_OK`), and no ACL
+    entry blocks it (`acl_denial`, whoever it names). None when it may be written. The one place this rule lives."""
+    if not h.allowed(".", Right.CHANGE_ENTRIES) or not h.allowed(".", Right.REMOVE_ENTRIES):
+        return Blocked(None)
+    detail = acl_denial(h)
+    return None if detail is None else Blocked(detail)
 
 
 class Displaced(StrEnum):

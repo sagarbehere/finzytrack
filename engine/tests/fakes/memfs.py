@@ -32,7 +32,8 @@ the first missing component), and `Resolved.identity` is `(1, inode)`. Files may
 and a remove. `create(..., like=...)` copies `like`'s extended attributes (`outside_setxattr`). With `stores_nfd`
 the volume keeps every name in NFD, as HFS+ does (S0061 probe). `MemLocks` stands for the ledger-set locks of one
 process (`outside_hold`: another process holds one). `outside_acl` adds an ACL entry (`AclEntry`: whether it
-denies, whether it applies to us, its permissions and flags, in `chmod`'s words) to a file or a folder, and
+denies, its permissions and flags, in `chmod`'s words) to a file or a folder, with whether the kernel applies it to
+us (`applies`: the fake's own knowledge, as the kernel's; the port never reports it, S0061 r7), and
 `outside_acl_clear` removes them all (`chmod -N`). A deny entry that applies to us and is not `only_inherit` acts as
 on APFS (probed, S0061 r6): on a folder, `add_file` refuses a create or a rename into it, `add_subdirectory` a
 `mkdir`, `delete_child` every removal or rename away, `search` every lookup in it (`stat`, `read`, a path through
@@ -91,7 +92,7 @@ class _File:
     xattrs: dict[str, bytes] = field(default_factory=lambda: {})
     locked: bool = False
     deny: set[Right] = field(default_factory=lambda: set())
-    acl: list[AclEntry] = field(default_factory=lambda: [])
+    acl: list[_Ace] = field(default_factory=lambda: [])
 
 
 @dataclass
@@ -114,17 +115,27 @@ class _Dir:
     mode: int = 0o755
     deny: set[Right] = field(default_factory=lambda: set())  # CHANGE_ENTRIES: read-only; DELETE: deny delete_child
     no_swap: bool = False  # a volume without RENAME_SWAP and RENAME_EXCL (exFAT, FAT)
-    acl: list[AclEntry] = field(default_factory=lambda: [])
+    acl: list[_Ace] = field(default_factory=lambda: [])
     locked: bool = False  # `uchg`: no entry may be added, removed or renamed in it, and it may not be removed
 
 
 _Node = _File | _Dir | _Link | _Other
 
 
+@dataclass(frozen=True, slots=True)
+class _Ace:
+    """An ACL entry as the fake's kernel holds it: the entry and whether it applies to us."""
+
+    entry: AclEntry
+    applies: bool
+
+
 def _denies(node: _Node, perm: str) -> bool:
     """A deny entry of `node` that applies to us and acts on it (not `only_inherit`) denies `perm`."""
-    acl: list[AclEntry] = node.acl if isinstance(node, _File | _Dir) else []
-    return any(e.deny and e.ours and "only_inherit" not in e.flags and perm in e.perms for e in acl)
+    acl: list[_Ace] = node.acl if isinstance(node, _File | _Dir) else []
+    return any(
+        a.applies and a.entry.deny and "only_inherit" not in a.entry.flags and perm in a.entry.perms for a in acl
+    )
 
 
 def _no_search(d: _Dir) -> None:
@@ -132,14 +143,15 @@ def _no_search(d: _Dir) -> None:
         raise PermissionError(errno.EACCES, "search denied")
 
 
-def _inherited(parent: _Dir, flag: str) -> list[AclEntry]:
+def _inherited(parent: _Dir, flag: str) -> list[_Ace]:
     """The entries a new file (`file_inherit`) or folder (`directory_inherit`) made in `parent` gets: a file's act on
     it and pass nothing on; a folder's keep their flags but `only_inherit` (probed on APFS, S0061 r6)."""
-    out: list[AclEntry] = []
-    for e in parent.acl:
+    out: list[_Ace] = []
+    for a in parent.acl:
+        e = a.entry
         if flag in e.flags:
             kept = frozenset({"inherited"}) if flag == "file_inherit" else (e.flags - {"only_inherit"}) | {"inherited"}
-            out.append(AclEntry(e.deny, e.ours, e.perms, kept))
+            out.append(_Ace(AclEntry(e.deny, e.perms, kept), a.applies))
     return out
 
 
@@ -409,11 +421,12 @@ class MemFS:
         assert isinstance(node, _File | _Dir)
         node.deny.add(right)
 
-    def outside_acl(self, path: str, entry: AclEntry) -> None:
-        """`chmod +a` on the file or folder at `path` (the module's docstring)."""
+    def outside_acl(self, path: str, entry: AclEntry, *, applies: bool = True) -> None:
+        """`chmod +a` on the file or folder at `path` (the module's docstring); `applies`: the kernel applies it to us
+        (False: an entry for another user or a group we are not in)."""
         node = self._at(path)
         assert isinstance(node, _File | _Dir)
-        node.acl.append(entry)
+        node.acl.append(_Ace(entry, applies))
 
     def outside_acl_clear(self, path: str) -> None:
         """`chmod -N`: every ACL entry of the file or folder at `path` removed."""
@@ -723,6 +736,8 @@ class MemDir:
         if name == ".":
             if right is Right.REMOVE_ENTRIES:
                 return self._may_remove()
+            if right is Right.SEARCH:
+                return not _denies(d, "search")
             if right is Right.CHANGE_ENTRIES and (
                 d.locked or any(_denies(d, p) for p in ("add_file", "add_subdirectory", "search"))
             ):
@@ -745,7 +760,7 @@ class MemDir:
         return not self._d.no_swap
 
     def acl(self) -> tuple[AclEntry, ...]:
-        return tuple(self._d.acl)
+        return tuple(a.entry for a in self._d.acl)
 
     def create(self, name: str, data: bytes, mode: int, like: str | None = None) -> None:
         d = self._d
@@ -759,11 +774,12 @@ class MemDir:
             source = node
         self._writable()
         self._may_add()
-        f = _File(data=b"", synced=b"", mode=mode & 0o7777, acl=_inherited(d, "file_inherit"))
+        f = _File(data=b"", synced=b"", mode=mode & 0o7777)
 
         def link() -> None:
             if key in d.entries:
                 raise FileExistsError(errno.EEXIST, "exists")
+            f.acl = _inherited(d, "file_inherit")  # what the folder holds when the entry is made (S0061 r7)
             ino = self._fs._new(f)
             stored = self._fs.stored(name)
             d.entries[key] = (stored, ino)

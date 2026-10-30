@@ -373,8 +373,8 @@ def test_sync_file_makes_an_unsynced_in_place_write_durable_and_refuses_what_is_
     assert outcomes(fs, "/d/f") == {(b"new bytes",)}
 
 
-def _deny(perms: str, flags: str = "", *, ours: bool = True) -> AclEntry:
-    return AclEntry(True, ours, frozenset(perms.split(",")), frozenset(f for f in flags.split(",") if f))
+def _deny(perms: str, flags: str = "") -> AclEntry:
+    return AclEntry(True, frozenset(perms.split(",")), frozenset(f for f in flags.split(",") if f))
 
 
 def test_an_acl_entry_is_reported_and_new_entries_inherit_it_as_apfs_does() -> None:
@@ -398,9 +398,7 @@ def test_an_acl_entry_is_reported_and_new_entries_inherit_it_as_apfs_does() -> N
         with pytest.raises(PermissionError):
             d.remove("new")
     with fs.open_dir("/d/sub") as sub:
-        assert sub.acl() == (
-            AclEntry(True, True, frozenset({"search"}), frozenset({"directory_inherit", "inherited"})),
-        )
+        assert sub.acl() == (AclEntry(True, frozenset({"search"}), frozenset({"directory_inherit", "inherited"})),)
         with pytest.raises(PermissionError):
             sub.create("x", b"x", 0o644)  # `deny search` acts on the subfolder: nothing can be looked up in it
     with pytest.raises(PermissionError):
@@ -418,7 +416,7 @@ def test_an_acl_entry_is_reported_and_new_entries_inherit_it_as_apfs_does() -> N
         ("add_subdirectory", "", True, ("mkdir",), (False, True)),
         ("search", "", True, ("stat", "read", "create", "remove", "rename", "rmdir", "mkdir"), (False, False)),
         ("delete_child", "directory_inherit,only_inherit", True, (), (True, True)),  # only for what is made in it
-        ("delete_child", "", False, (), (True, True)),  # another user's
+        ("delete_child", "", False, (), (True, True)),  # another user's: the kernel does not apply it to us
     ],
 )
 def test_a_folders_deny_entry_refuses_what_it_names_and_nothing_else(
@@ -441,7 +439,7 @@ def test_a_folders_deny_entry_refuses_what_it_names_and_nothing_else(
         fs = MemFS()
         fs.outside_mkdirs("/d/e")
         fs.outside_write("/d/f", b"x")
-        fs.outside_acl("/d", _deny(perms, flags, ours=ours))
+        fs.outside_acl("/d", _deny(perms, flags), applies=ours)
         with fs.open_dir("/d") as d:
             if action in refused:
                 with pytest.raises(PermissionError):
@@ -450,7 +448,7 @@ def test_a_folders_deny_entry_refuses_what_it_names_and_nothing_else(
                 do(d)
     fs = MemFS()
     fs.outside_mkdirs("/d")
-    fs.outside_acl("/d", _deny(perms, flags, ours=ours))
+    fs.outside_acl("/d", _deny(perms, flags), applies=ours)
     with fs.open_dir("/d") as d:
         assert (d.allowed(".", Right.CHANGE_ENTRIES), d.allowed(".", Right.REMOVE_ENTRIES)) == rights
 
@@ -553,3 +551,21 @@ def test_the_user_removing_a_file_is_durable() -> None:
     fs.outside_remove("/d/f")
     assert fs.file("/d/f") is None
     assert all(state.file("/d/f") is None for state in fs.power_loss_states())
+
+
+def test_a_new_file_inherits_what_the_folder_holds_when_its_entry_is_made() -> None:
+    """S0061 r7 (found by porting red team r7 F3): an entry put on the folder right before a create's own effect is
+    inherited, as on APFS (inheritance happens when the file is made, not when the call starts)."""
+    fs = MemFS()
+    fs.outside_mkdirs("/d")
+
+    def hook(i: int, label: str) -> None:
+        if label == "create /d:new":
+            fs.on_effect = None
+            fs.outside_acl("/d", _deny("read", "file_inherit"))
+
+    fs.on_effect = hook
+    with fs.open_dir("/d") as d:
+        d.create("new", b"x", 0o644)
+        with pytest.raises(PermissionError):
+            d.read("new")

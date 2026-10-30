@@ -21,9 +21,9 @@ from ledger_engine.fs.port import AclEntry, Right
 from ledger_engine.ledger.core import journal
 from ledger_engine.ledger.core.journal import State
 from ledger_engine.ledger.core.recovery import Cause
-from ledger_engine.ledger.restore import Failed, Resolved, Stopped
+from ledger_engine.ledger.restore import Failed, Resolved, Stopped, recover_journal
 from ledger_engine.ledger.writer import durable_commit
-from tests.fakes.memfs import Crash, MemFS, MemLocks
+from tests.fakes.memfs import Crash, MemDir, MemFS, MemLocks
 from tests.ledger.worlds import (
     JD,
     NAME,
@@ -1960,7 +1960,7 @@ def test_R5b_a_backup_folder_that_is_gone_stops_the_journal_as_a_bad_backup_not_
 
 
 def _deny(perms: str, flags: str = "") -> AclEntry:
-    return AclEntry(True, True, frozenset(perms.split(",")), frozenset(f for f in flags.split(",") if f))
+    return AclEntry(True, frozenset(perms.split(",")), frozenset(f for f in flags.split(",") if f))
 
 
 @pytest.mark.parametrize(
@@ -1987,17 +1987,16 @@ def test_V6_F2_an_acl_entry_that_appeared_after_the_crash_stops_the_try_before_a
 
 
 def test_V6_F2_a_folder_that_denies_us_search_fails_the_try_with_nothing_written_and_retry_then_resolves() -> None:
-    """@regression-guard (it already held at e6ab8627: the `stat` error fails the try). A direct `deny search` on the
-    folder: nothing in it can even be looked up, so the file's own `stat` answers
-    `EACCES` before any folder check: `failed` (Retry may undo it), nothing written; once the entry is removed, the
-    next try goes on."""
+    """A direct `deny search` on the folder: nothing in it can even be looked up, so the file's own `stat` answers
+    `EACCES` before any folder check: `failed` (Retry may undo it), nothing written, naming the folder as the entry
+    that failed (S0061 verifier r7 F2; it named nothing); once the entry is removed, the next try goes on."""
     w = crashed(FIRST_REMOVE)
     with w.fs.open_dir(JD) as d:
         d.sync()
     w.fs.outside_acl("/w/L/inc", _deny("search"))
     n = len(w.fs.effects)
     before = w.fs.snapshot()
-    assert recover(w.fs, listed=False) == Failed(Cause.IO_ERROR, "/w/L/inc/a.bean", errno.EACCES)
+    assert recover(w.fs, listed=False) == Failed(Cause.IO_ERROR, "/w/L/inc/a.bean", errno.EACCES, "/w/L/inc")
     assert w.fs.effects[n:] == []
     assert w.fs.snapshot() == before
     w.fs.outside_acl_clear("/w/L/inc")
@@ -2050,3 +2049,160 @@ def test_R6_O3_a_lock_flag_on_a_folder_the_save_made_stops_the_try_before_anythi
     out = recover(w.fs)
     assert out == Resolved(NAME), out
     check_recovered(w.fs, w, out)
+
+
+# ---- S0061 round 7 (owner, 2026-10-30: "Any subject (Recommended)"; then "Yes. And don't got digging yourself into
+# holes like this one": unusual ACLs by policy, the leftover case a §15 limit), in the fake --------------------------
+
+
+@pytest.mark.parametrize("applies", [True, False], ids=["applies_to_us", "another_users"])
+def test_R7_F1_an_entry_added_after_a_crash_stops_the_try_whoever_it_names(applies: bool) -> None:
+    """Red team r7 F1's third shape: the save crashed with every file at post; then an inheritable deny is put on
+    the ledger folder. Whatever it names (one the kernel applies to us, as macOS's `owner` subject, or another
+    user's), step 2 stops with `permission`, naming the folder and the entry, nothing written; once it is removed,
+    Retry goes on (nothing of ours inherited it)."""
+    w = crashed(FIRST_REMOVE)
+    with w.fs.open_dir(JD) as d:
+        d.sync()
+    w.fs.outside_acl("/w/L/inc", _deny("delete", "file_inherit"), applies=applies)
+    _stops_with_nothing_written(w, Cause.PERMISSION, "/w/L/inc/a.bean", "/w/L/inc", "deny delete,file_inherit")
+    w.fs.outside_acl_clear("/w/L/inc")
+    out = recover(w.fs)
+    assert out == TAKEN, out
+    check_recovered(w.fs, w, out)
+
+
+@pytest.mark.parametrize(
+    "entry",
+    [_deny("read", "file_inherit,only_inherit"), _deny("delete", "file_inherit"), _deny("delete_child")],
+    ids=["read_inherited", "delete_inherited", "delete_child_direct"],
+)
+def test_R7_F3_recovery_checks_the_journal_folder_before_it_reads_the_record(entry: AclEntry) -> None:
+    """Red team r7 F3, verifier r7 F1 (a): recovery's try checks the journal folder by the folder rule before it
+    reads or renames the record: an entry there that appeared after the crash stops it with `permission`, naming the
+    journal folder (no ledger file), nothing written; once it is removed, Retry goes on."""
+    w = crashed(FIRST_REMOVE)
+    with w.fs.open_dir(JD) as d:
+        d.sync()
+    w.fs.outside_acl(JD, entry)
+    flags = sorted(entry.flags)
+    detail = "deny " + ",".join([*sorted(entry.perms), *flags]) if flags else None  # `_RMFILE_OK` meets it first
+    n = len(w.fs.effects)
+    before = w.fs.snapshot()
+    reads: list[str] = []
+    real = MemDir.read
+
+    def watched(self: MemDir, name: str) -> bytes | None:
+        reads.append(name)
+        return real(self, name)
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(MemDir, "read", watched)
+        out = recover(w.fs, listed=False)
+    assert out == Stopped(Cause.PERMISSION, None, JD, detail), out
+    assert reads == [], "the record was read before the journal folder was checked"
+    assert w.fs.effects[n:] == []
+    assert w.fs.snapshot() == before
+    w.fs.outside_acl_clear(JD)
+    out = recover(w.fs)
+    assert out == TAKEN, out
+    check_recovered(w.fs, w, out)
+
+
+def test_R7_F3_the_rollbacks_restore_checks_the_journal_folder_before_it_renames_the_record() -> None:
+    """The restore's step 0 (the rollback calls `restore` directly, without `recover_journal`'s check): an entry on
+    the journal folder stops it with `permission` naming the folder, before any rename or write."""
+    from ledger_engine.ledger.restore import restore
+
+    w = crashed(FIRST_REMOVE)
+    with w.fs.open_dir(JD) as d:
+        d.sync()
+    record = journal.decode(journals(w.fs)[State.OPEN])
+    assert isinstance(record, journal.Record)
+    w.fs.outside_acl(JD, _deny("readextattr", "file_inherit"))
+    n = len(w.fs.effects)
+    before = w.fs.snapshot()
+    out = restore(w.fs, record, JD, closed=True)
+    assert out == Stopped(Cause.PERMISSION, None, JD, "deny readextattr,file_inherit"), out
+    assert w.fs.effects[n:] == []
+    assert w.fs.snapshot() == before
+
+
+def test_R7_vF2_a_record_that_cannot_be_read_fails_the_try_naming_the_record() -> None:
+    """Verifier r7 F2: `Failed` from the record's read named nothing; it now names the record (`entry`)."""
+    w = crashed(FIRST_REMOVE)
+    record = f"{JD}/{NAME}.open"
+    w.fs.outside_acl(record, _deny("read"))
+    assert recover(w.fs) == Failed(Cause.IO_ERROR, None, errno.EACCES, record)
+    w.fs.outside_acl_clear(record)
+    out = recover(w.fs)
+    assert out == TAKEN, out
+    check_recovered(w.fs, w, out)
+
+
+def test_R7_an_entry_added_to_the_journal_folder_during_a_save_leaves_a_record_recovery_names() -> None:
+    """The §15 limit (owner, 2026-10-30: "Yes. And don't got digging yourself into holes like this one"): an
+    inheritable `deny read` added to the journal folder after the save's check and before its `.part`: the record
+    inherits it. After a crash, and once the user removed the folder's entry, every try fails naming the record;
+    nothing is lost (every file whole); once the entry is removed from the record too, Retry undoes the save."""
+    w = world()
+    part = EFFECTS.index(f"create {JD}:{NAME}.part")
+
+    def hook(i: int, label: str) -> None:
+        if i == part:
+            w.fs.outside_acl(JD, _deny("read", "file_inherit,only_inherit"))
+
+    w.fs.on_effect = hook
+    w.fs.inject(FIRST_REMOVE, crash=True)
+    with pytest.raises(Crash):
+        durable_commit(w.fs, w.commit)
+    w.fs.on_effect = None
+    w.fs.outside_acl_clear(JD)
+    record = f"{JD}/{NAME}.open"
+    for _ in range(2):
+        assert recover(w.fs) == Failed(Cause.IO_ERROR, None, errno.EACCES, record)
+        check_disk(w.fs, w)
+    w.fs.outside_acl_clear(record)
+    out = recover(w.fs)
+    assert out == TAKEN, out
+    check_recovered(w.fs, w, out)
+
+
+def test_R7_vF2_a_file_whose_own_entry_fails_its_stat_in_a_read_only_folder_names_no_folder() -> None:
+    """@regression-guard (71c84897 never named the folder; it guards the new naming's other side). Mutant
+    `r7_search_right_change`: the folder is named only when it denies looking names up in it (`search`),
+    not when it is merely read-only: here search is allowed and the file's own `deny readattr` fails its `stat`, so the
+    outcome names the file alone."""
+    w = crashed(FIRST_REMOVE)
+    with w.fs.open_dir(JD) as d:
+        d.sync()
+    w.fs.outside_deny("/w/L/inc", Right.CHANGE_ENTRIES)
+    w.fs.outside_acl("/w/L/inc/a.bean", _deny("readattr"))
+    assert recover(w.fs, listed=False) == Failed(Cause.IO_ERROR, "/w/L/inc/a.bean", errno.EACCES)
+
+
+def test_R7_vF2_an_io_error_at_the_restores_step_0_names_the_journal_folder(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Mutant `r7_step0_oserror_entry_dropped`: the rollback's step 0 (`.closed` looked up in the journal folder)
+    answering an error fails the try naming the journal folder, with nothing written."""
+    from ledger_engine.ledger.restore import restore
+
+    w = crashed(FIRST_REMOVE)
+    record = journal.decode(journals(w.fs)[State.OPEN])
+    assert isinstance(record, journal.Record)
+    real = MemDir.stat
+
+    def failing(self: MemDir, name: str) -> object:
+        if name.endswith(".closed"):
+            raise OSError(errno.EIO, "injected")
+        return real(self, name)
+
+    monkeypatch.setattr(MemDir, "stat", failing)
+    n = len(w.fs.effects)
+    assert restore(w.fs, record, JD, closed=True) == Failed(Cause.IO_ERROR, None, errno.EIO, JD)
+    assert w.fs.effects[n:] == []
+
+
+def test_R7_vF2_a_listed_record_that_is_gone_fails_naming_the_record() -> None:
+    """Mutant `r7_gone_record_entry_none`: a record listed but gone by the time it is looked up names that record."""
+    w = crashed(FIRST_REMOVE)
+    assert recover_journal(w.fs, MemLocks(), JD, "s1-j8") == Failed(Cause.IO_ERROR, None, None, f"{JD}/s1-j8.open")

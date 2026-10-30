@@ -706,7 +706,7 @@ def test_sync_file_syncs_a_regular_file_through_a_read_only_descriptor_and_refus
         ("everyone deny read,file_inherit,only_inherit", True),
         (f"user:{os.environ.get('USER', 'nobody')} deny delete,file_inherit", True),
         ("everyone deny delete,directory_inherit", True),
-        ("user:nobody deny delete,file_inherit", False),  # another user's: not ours
+        ("user:nobody deny delete,file_inherit", True),  # another user's: refused too (S0061 r7, "Any subject")
         ("everyone deny delete", False),  # not inherited: the folder's own (its own deletion)
         ("everyone deny write,file_inherit", True),  # S0061 r6: any inheritable deny is refused (the allowlist)
     ],
@@ -718,7 +718,8 @@ def test_an_inheritable_acl_entry_denying_us_delete_or_read_refuses_the_save_bef
     is inherited by the save's staging file, so its rename to the temp name answered EACCES and nothing of ours could
     ever remove it (every recovery `failed`); `deny read,file_inherit,only_inherit` made our new file unreadable (read
     back failed, every recovery stopped on our own post object). The save now refuses such a folder with `permission`
-    before anything is written; an entry for another user, or one that is not inherited, does not refuse it."""
+    before anything is written, whoever the entry names (owner, 2026-10-30: "Any subject (Recommended)"); one that is
+    not inherited and protects only the folder itself does not refuse it."""
     folder = tmp_path / "L"
     folder.mkdir()
     main = folder / "main.bean"
@@ -988,8 +989,8 @@ def test_R6_the_allowlist_from_the_rule_on_apfs(fs: DarwinFS, tmp_path: Path, ac
     ("aces", "allowed"),
     [
         (("group:everyone deny delete", "group:everyone deny writeextattr"), True),  # macOS's own pair
-        (("user:nobody deny delete_child,search,list,file_inherit,directory_inherit",), True),  # another user's
-        (("group:wheel deny delete_child,file_inherit",), True),  # a group we are not in
+        (("user:nobody deny delete_child,search,list,file_inherit,directory_inherit",), False),  # another user's
+        (("group:wheel deny delete_child,file_inherit",), False),  # a group we are not in
         (("group:staff deny delete_child,file_inherit",), False),  # a group we are in
         (("group:everyone deny delete_child",), False),
     ],
@@ -998,8 +999,9 @@ def test_R6_whose_entry_it_is_decides_on_apfs(
     fs: DarwinFS, tmp_path: Path, aces: tuple[str, ...], allowed: bool
 ) -> None:
     """macOS's own entries on the home folder, Desktop, Documents and Downloads (`group:everyone deny delete`,
-    `deny writeextattr`, checked on this Mac on 2026-10-30) must pass; an entry for another user or a group we are
-    not in does not apply to us; one for a group we are in, or everyone, does."""
+    `deny writeextattr`, checked on this Mac on 2026-10-30) must pass; any other deny entry refuses, whoever it
+    names: another user, a group we are not in, a group we are in, everyone (owner, 2026-10-30: "Any subject
+    (Recommended)"; S0061 r7: round 6 let the first two pass)."""
     ledger = tmp_path / "L"
     ledger.mkdir()
     main = ledger / "main.bean"
@@ -1151,4 +1153,336 @@ def test_R6_O3_a_locked_ledger_folder_is_refused_and_a_locked_folder_the_save_ma
         assert recover_journal(fs, locks, c.journal_dir, "s1-j1") == Resolved("s1-j1")
         assert not made.exists()
     finally:
+        _clean_acls(tmp_path)
+
+
+# ---- S0061 round 7: any deny entry refuses the folder, whoever it names (owner, 2026-10-30: "Any subject
+# (Recommended)"); the journal and backups folders judged too; the leftover limit (owner: "Yes. And don't got digging
+# yourself into holes like this one") --------------------------------------------------------------------------------
+
+
+def _own_group_folder(path: Path) -> None:
+    """`path` made with a group we are in (folders under the home folder have group staff), so macOS's `group`
+    subject applies to us as it would there."""
+    path.mkdir(parents=True)
+    os.chown(path, -1, os.getgid())
+
+
+R7_REFUSED_SUBJECTS = (
+    "group:owner deny add_file",  # red team r7 F1: the kernel applies `owner` to anything we own
+    "group:owner deny delete,file_inherit",
+    "group:owner deny read,file_inherit,only_inherit",
+    "group:group deny add_file",  # `group`: applies when we are in the entry's group (the folder's)
+    "group:group deny delete,file_inherit,only_inherit",
+    "user:nobody deny delete,file_inherit",  # another user's: refused too
+    "group:wheel deny delete_child",  # a group we are not in: refused too
+)
+
+
+@pytest.mark.parametrize("ace", R7_REFUSED_SUBJECTS)
+def test_R7_F1_a_deny_entry_refuses_the_folder_whoever_it_names_on_apfs(fs: DarwinFS, tmp_path: Path, ace: str) -> None:
+    """Red team r7 F1 (High), ported: round 6 asked macOS whether we belong to an entry's subject, and the answer was
+    "no" for `owner` and `group`, which the kernel applies to us; the save then broke half-way and every undo stopped
+    on our own leftover. Now no subject is asked: every one of these entries refuses the folder before anything is
+    written, naming the folder."""
+    ledger = tmp_path / "L"
+    _own_group_folder(ledger)
+    main = ledger / "main.bean"
+    main.write_bytes(b"pre\n")
+    try:
+        _run("/bin/chmod", "+a", ace, str(ledger))
+        with fs.open_dir(str(ledger)) as h:
+            assert [e.deny for e in h.acl()] == [True]
+            assert acl_denial(h) is not None, ace
+        out = durable_commit(fs, _commit(tmp_path, Change(str(main), sha256(b"pre\n"), b"post\n")))
+        assert isinstance(out, NotSaved), (ace, out)
+        assert (out.reason, out.unchanged, out.open_journal, out.entry) == (
+            Reason.PERMISSION,
+            True,
+            False,
+            str(ledger),
+        ), (ace, out)
+        _nothing_written(tmp_path, ledger, ["main.bean"])
+        assert main.read_bytes() == b"pre\n"
+    finally:
+        _clean_acls(tmp_path)
+
+
+def test_R7_F1_the_kernel_applies_macos_owner_and_group_subjects_to_us_on_apfs(tmp_path: Path) -> None:
+    """@regression-guard (a probe of the kernel; it held at 71c84897). Why the subject is not asked:
+    `group:owner deny add_file` and `group:group deny add_file` on a folder we own whose group we are in stop us
+    adding a file there."""
+    for ace in ("group:owner deny add_file", "group:group deny add_file"):
+        d = tmp_path / ace.split()[0].replace(":", "_")
+        _own_group_folder(d)
+        try:
+            _run("/bin/chmod", "+a", ace, str(d))
+            with pytest.raises(PermissionError):
+                (d / "x").write_bytes(b"x")
+        finally:
+            _clean_acls(tmp_path)
+
+
+@pytest.mark.parametrize(
+    "aces",
+    [
+        ("group:everyone deny delete", "group:everyone deny writeextattr"),  # macOS's own pair
+        ("group:owner deny delete,writeextattr",),  # the same bits, any subject
+        ("user:nobody deny delete", "group:group deny writesecurity,chown,writeattr"),
+    ],
+)
+def test_R7_macos_own_pair_and_any_folder_self_entry_still_lands_on_apfs(
+    fs: DarwinFS, tmp_path: Path, aces: tuple[str, ...]
+) -> None:
+    """@regression-guard (unchanged behaviour; it held at 71c84897). The rule's one exception is unchanged, whoever
+    the entry names: a deny of folder-self bits only, not
+    inherited, on the ledger folder, the journal folder and the backups folder: the save lands."""
+    ledger = tmp_path / "L"
+    _own_group_folder(ledger)
+    main = ledger / "main.bean"
+    main.write_bytes(b"pre\n")
+    c = _commit(tmp_path, Change(str(main), sha256(b"pre\n"), b"post\n"))
+    try:
+        for folder in (ledger, Path(c.journal_dir), Path(c.backups_dir)):
+            for ace in aces:
+                _run("/bin/chmod", "+a", ace, str(folder))
+        out = durable_commit(fs, c)
+        assert isinstance(out, Landed), out
+        assert main.read_bytes() == b"post\n"
+    finally:
+        _clean_acls(tmp_path)
+
+
+@pytest.mark.parametrize("ace", ["group:owner deny delete,file_inherit", "group:group deny delete,file_inherit"])
+def test_R7_F1_an_owner_or_group_entry_added_after_a_crash_stops_recovery_and_retry_works_once_removed_on_apfs(
+    fs: DarwinFS, tmp_path: Path, ace: str
+) -> None:
+    """Red team r7 F1's third shape, ported: the save crashed with main.bean at post; then the entry is put on the
+    ledger folder. Round 6 passed it, and the try's restore staging file inherited it (every later try stopped on
+    it). Now the try stops with `permission` naming the folder, nothing written; once the entry is removed, Retry
+    undoes main.bean (then stops at the created file, which is never removed)."""
+    from ledger_engine.fs.darwin import DarwinLocks
+    from ledger_engine.ledger.core.recovery import Cause
+    from ledger_engine.ledger.restore import Stopped, recover_journal
+
+    c, main, created = _crashed_save_on_apfs(fs, tmp_path)
+    ledger = tmp_path / "L"
+    os.chown(ledger, -1, os.getgid())
+    (tmp_path / "locks").mkdir()
+    locks = DarwinLocks(str(tmp_path / "locks"))
+    before = sorted(str(p.relative_to(ledger)) for p in ledger.rglob("*"))
+    try:
+        _run("/bin/chmod", "+a", ace, str(ledger))
+        out = recover_journal(fs, locks, c.journal_dir, "s1-j1")
+        assert out == Stopped(Cause.PERMISSION, str(main), str(ledger), "deny delete,file_inherit"), out
+        assert sorted(str(p.relative_to(ledger)) for p in ledger.rglob("*")) == before
+        _run("/bin/chmod", "-N", str(ledger))
+        out = recover_journal(fs, locks, c.journal_dir, "s1-j1")
+        assert out == Stopped(Cause.CREATED_PATH_TAKEN, str(created)), out
+        assert main.read_bytes() == b"pre\n"
+    finally:
+        _clean_acls(tmp_path)
+
+
+R7_APP_FOLDERS = {
+    # case: (which folder, the entry without its subject): verifier r7 F1 (a)-(c), red team r7 F3
+    "v_F1a_journal_deny_read_inherited": ("journal", "deny read,file_inherit,only_inherit"),
+    "v_F1b_journal_deny_delete_inherited": ("journal", "deny delete,file_inherit,only_inherit"),
+    "v_F1c_backups_deny_delete_inherited": ("backups", "deny delete,file_inherit,directory_inherit"),
+}
+
+
+@pytest.mark.parametrize("case", sorted(R7_APP_FOLDERS))
+def test_R7_F3_the_journal_and_backups_folders_are_refused_before_anything_is_written_on_apfs(
+    fs: DarwinFS, tmp_path: Path, case: str
+) -> None:
+    """Verifier r7 F1 (a)-(c), red team r7 F3, ported: the save wrote its record or backups into a folder whose
+    inheritable entry they then carried (a record nothing could read, a `.part` nothing could remove, backups nothing
+    could delete). Now the save refuses with `permission` before anything is written, naming the folder."""
+    which, ace = R7_APP_FOLDERS[case]
+    ledger = tmp_path / "L"
+    ledger.mkdir()
+    main = ledger / "main.bean"
+    main.write_bytes(b"pre\n")
+    c = _commit(tmp_path, Change(str(main), sha256(b"pre\n"), b"post\n"))
+    folder = c.journal_dir if which == "journal" else c.backups_dir
+    try:
+        _run("/bin/chmod", "+a", f"user:{_me()} {ace}", folder)
+        out = durable_commit(fs, c)
+        assert isinstance(out, NotSaved), out
+        assert (out.step, out.reason, out.unchanged, out.open_journal, out.path) == (
+            Step.BACKUP,
+            Reason.PERMISSION,
+            True,
+            False,
+            None,
+        ), out
+        assert out.entry is not None, out
+        assert os.path.samefile(out.entry, folder), out
+        assert out.detail is not None, out
+        _nothing_written(tmp_path, ledger, ["main.bean"])
+    finally:
+        _clean_acls(tmp_path)
+
+
+def test_R7_F3_an_entry_on_the_journal_folder_after_a_crash_stops_recovery_before_the_record_is_read_on_apfs(
+    fs: DarwinFS, tmp_path: Path
+) -> None:
+    """Red team r7 F3's recovery half, ported: after a crash, `deny read,file_inherit,only_inherit` is put on the
+    journal folder. Recovery checks that folder first: `permission`, naming it, nothing written; once the entry is
+    removed, Retry goes on."""
+    from ledger_engine.fs.darwin import DarwinLocks
+    from ledger_engine.ledger.core.recovery import Cause
+    from ledger_engine.ledger.restore import Stopped, recover_journal
+
+    c, main, created = _crashed_save_on_apfs(fs, tmp_path)
+    (tmp_path / "locks").mkdir()
+    locks = DarwinLocks(str(tmp_path / "locks"))
+    jd = os.path.realpath(c.journal_dir)
+    try:
+        _run("/bin/chmod", "+a", f"user:{_me()} deny read,file_inherit,only_inherit", c.journal_dir)
+        out = recover_journal(fs, locks, c.journal_dir, "s1-j1")
+        assert isinstance(out, Stopped), out
+        assert (out.cause, out.path, out.entry) == (Cause.PERMISSION, None, jd), out
+        assert out.detail is not None
+        assert os.listdir(c.journal_dir) == ["s1-j1.open"]
+        assert main.read_bytes() == b"post\n"
+        _run("/bin/chmod", "-N", c.journal_dir)
+        assert recover_journal(fs, locks, c.journal_dir, "s1-j1") == Stopped(Cause.CREATED_PATH_TAKEN, str(created))
+        assert main.read_bytes() == b"pre\n"
+    finally:
+        _clean_acls(tmp_path)
+
+
+class _AclAtStaging(_DyingDir):
+    """Another program puts an inheritable entry on the ledger folder right before the save's staging create: after
+    every check (red team r7 F2's window), on the real file system."""
+
+    def __init__(self, inner: object, folder: str, ace: str) -> None:
+        super().__init__(inner, "<none>")
+        self._folder, self._ace = folder, ace
+
+    def create(self, name: str, data: bytes, mode: int, like: str | None = None) -> None:
+        if name.endswith(".new") and self._inner.path() == self._folder:  # type: ignore[attr-defined]
+            _run("/bin/chmod", "+a", self._ace, self._folder)
+        self._inner.create(name, data, mode, like=like)  # type: ignore[attr-defined]
+
+
+class _AclAtStagingFS(_DyingFS):
+    def __init__(self, inner: DarwinFS, folder: str, ace: str) -> None:
+        super().__init__(inner, "<none>")
+        self._folder, self._ace = folder, ace
+
+    @override
+    def open_dir(self, path: str) -> _DyingDir:
+        return _AclAtStaging(self._inner.open_dir(path), self._folder, self._ace)
+
+
+@pytest.mark.parametrize(
+    "ace",
+    ["group:owner deny delete,file_inherit,only_inherit", "group:everyone deny delete,writesecurity,file_inherit"],
+)
+def test_R7_F2_an_entry_added_during_the_save_leaves_a_named_leftover_and_chmod_n_on_it_lets_retry_work_on_apfs(
+    fs: DarwinFS, tmp_path: Path, ace: str
+) -> None:
+    """@regression-guard (it already failed closed at 71c84897; it pins the accepted limit). The §15 limit, on APFS
+    (owner, 2026-10-30: "Yes. And don't got digging yourself into holes like this one"):
+    an inheritable `deny delete` added to the ledger folder after the save's checks is inherited by our staging file;
+    its rename fails, the save is not saved and the journal stays open. Nothing is lost: main.bean holds its old
+    bytes. After the user removes the folder's entry, every Retry stops with `permission`, naming that hidden file;
+    once the entry is removed from it too (`chmod -N`; probed: works even under an inherited `deny writesecurity`),
+    Retry resolves."""
+    from ledger_engine.fs.darwin import DarwinLocks
+    from ledger_engine.ledger.core.recovery import Cause
+    from ledger_engine.ledger.restore import Resolved, Stopped, recover_journal
+
+    ledger = tmp_path / "L"
+    _own_group_folder(ledger)
+    main = ledger / "main.bean"
+    main.write_bytes(b"pre\n")
+    c = _commit(tmp_path, Change(str(main), sha256(b"pre\n"), b"post\n"))
+    canonical = os.path.realpath(ledger)
+    staging = f"{canonical}/.main.bean.ft-s1-j1.new"
+    (tmp_path / "locks").mkdir()
+    locks = DarwinLocks(str(tmp_path / "locks"))
+    try:
+        out = durable_commit(_AclAtStagingFS(fs, canonical, ace), c)  # type: ignore[arg-type]
+        assert isinstance(out, NotSaved), out
+        assert out.open_journal is True, out
+        assert main.read_bytes() == b"pre\n"
+        assert os.listdir(c.journal_dir) == ["s1-j1.open"]
+        _run("/bin/chmod", "-N", str(ledger))
+        for _ in range(2):
+            got = recover_journal(fs, locks, c.journal_dir, "s1-j1")
+            assert got == Stopped(Cause.PERMISSION, f"{canonical}/main.bean", staging), got
+            assert main.read_bytes() == b"pre\n"
+        _run("/bin/chmod", "-N", staging)
+        assert recover_journal(fs, locks, c.journal_dir, "s1-j1") == Resolved("s1-j1")
+        assert sorted(os.listdir(ledger)) == ["main.bean"]
+        assert main.read_bytes() == b"pre\n"
+    finally:
+        _clean_acls(tmp_path)
+
+
+@pytest.mark.parametrize("bit", ["search", "list"])
+def test_R7_vF2_a_direct_deny_search_or_list_after_a_crash_fails_the_try_naming_the_folder_on_apfs(
+    fs: DarwinFS, tmp_path: Path, bit: str
+) -> None:
+    """Verifier r7 F2 (its A5 shape), ported: after a crash, a direct `deny search` or `deny list` on the ledger
+    folder makes the try fail before anything is written (`EACCES`); the outcome now names the folder (`entry`),
+    not only the file (the `list` row held at 71c84897: the kept-copy listing already named it). Once the entry is
+    removed, Retry undoes main.bean."""
+    from ledger_engine.fs.darwin import DarwinLocks
+    from ledger_engine.ledger.core.recovery import Cause
+    from ledger_engine.ledger.restore import Failed, Resolved, recover_journal
+
+    ledger = tmp_path / "L"
+    ledger.mkdir()
+    main = ledger / "main.bean"
+    main.write_bytes(b"pre\n")
+    c = _commit(tmp_path, Change(str(main), sha256(b"pre\n"), b"post\n"))
+    with pytest.raises(_Died):
+        durable_commit(_DyingFS(fs, ".closed"), c)  # type: ignore[arg-type]
+    canonical = os.path.realpath(ledger)
+    (tmp_path / "locks").mkdir()
+    locks = DarwinLocks(str(tmp_path / "locks"))
+    try:
+        _run("/bin/chmod", "+a", f"user:{_me()} deny {bit}", str(ledger))
+        out = recover_journal(fs, locks, c.journal_dir, "s1-j1")
+        assert out == Failed(Cause.IO_ERROR, f"{canonical}/main.bean", errno.EACCES, canonical), out
+        _run("/bin/chmod", "-N", str(ledger))
+        assert main.read_bytes() == b"post\n"
+        assert recover_journal(fs, locks, c.journal_dir, "s1-j1") == Resolved("s1-j1")
+        assert main.read_bytes() == b"pre\n"
+    finally:
+        _clean_acls(tmp_path)
+
+
+def test_R7_vF2_a_files_own_entry_failing_its_stat_in_a_read_only_folder_names_no_folder_on_apfs(
+    fs: DarwinFS, tmp_path: Path
+) -> None:
+    """@regression-guard (71c84897 never named the folder; it guards the new naming's other side). Mutant
+    `r7_darwin_search_as_write`: the adapter asks `X_OK` for `Right.SEARCH`. In a read-only folder (mode
+    0555: search allowed, write not; probed) where main.bean's own `deny readattr` fails its `stat`, the try fails
+    naming main.bean alone, not its folder."""
+    from ledger_engine.fs.darwin import DarwinLocks
+    from ledger_engine.ledger.core.recovery import Cause
+    from ledger_engine.ledger.restore import Failed, recover_journal
+
+    ledger = tmp_path / "L"
+    ledger.mkdir()
+    main = ledger / "main.bean"
+    main.write_bytes(b"pre\n")
+    c = _commit(tmp_path, Change(str(main), sha256(b"pre\n"), b"post\n"))
+    with pytest.raises(_Died):
+        durable_commit(_DyingFS(fs, ".closed"), c)  # type: ignore[arg-type]
+    canonical = os.path.realpath(ledger)
+    (tmp_path / "locks").mkdir()
+    try:
+        _run("/bin/chmod", "+a", f"user:{_me()} deny readattr", str(main))
+        ledger.chmod(0o555)
+        out = recover_journal(fs, DarwinLocks(str(tmp_path / "locks")), c.journal_dir, "s1-j1")
+        assert out == Failed(Cause.IO_ERROR, f"{canonical}/main.bean", errno.EACCES), out
+    finally:
+        ledger.chmod(0o755)
         _clean_acls(tmp_path)

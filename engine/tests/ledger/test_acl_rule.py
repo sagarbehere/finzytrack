@@ -1,10 +1,13 @@
-"""The ACL allowlist (`ledger.handles.blocking_entry`; owner, 2026-10-30: "Allowlist (Recommended)"; ADR-0013
-amendment of that date; S0061 r6), tested from the rule as written, not from the code's answers: a folder the save or
-the undo writes in is refused when it carries a deny entry that applies to us, unless new entries do not inherit it
-(no `file_inherit`, `directory_inherit` or `only_inherit`) and every bit it denies protects only the folder itself
-(`delete`, `writeextattr`, `writeattr`, `writesecurity`, `chown`). Unknown bits fail closed."""
+"""The ACL allowlist (`ledger.handles.blocking_entry`; owner, 2026-10-30: "Allowlist (Recommended)", then "Any
+subject (Recommended)"; ADR-0013 amendments of that date; S0061 r6, r7), tested from the rule as written, not from the
+code's answers: a folder the save or the undo writes in is refused when it carries **any** deny entry, whoever it
+names, unless new entries do not inherit it (no `file_inherit`, `directory_inherit` or `only_inherit`) and every bit
+it denies protects only the folder itself (`delete`, `writeextattr`, `writeattr`, `writesecurity`, `chown`). Unknown
+bits and flags fail closed. The rule never sees a subject: an `AclEntry` carries none."""
 
 from __future__ import annotations
+
+import dataclasses
 
 import pytest
 
@@ -41,8 +44,8 @@ INHERITING = (
 NOT_INHERITING: tuple[frozenset[str], ...] = (frozenset(), frozenset({"inherited"}), frozenset({"limit_inherit"}))
 
 
-def deny(*perms: str, flags: frozenset[str] = frozenset(), ours: bool = True) -> AclEntry:
-    return AclEntry(deny=True, ours=ours, perms=frozenset(perms), flags=flags)
+def deny(*perms: str, flags: frozenset[str] = frozenset()) -> AclEntry:
+    return AclEntry(deny=True, perms=frozenset(perms), flags=flags)
 
 
 @pytest.mark.parametrize("flags", NOT_INHERITING)
@@ -75,20 +78,38 @@ def test_every_other_deny_bit_is_refused_direct_and_inherited(bit: str, flags: f
 
 def test_an_allow_entry_before_a_deny_still_refuses() -> None:
     """The red team saw APFS honour the earlier allow; the rule does not weigh allows, so it fails closed."""
-    allow = AclEntry(deny=False, ours=True, perms=frozenset({"delete_child"}), flags=frozenset({"file_inherit"}))
+    allow = AclEntry(deny=False, perms=frozenset({"delete_child"}), flags=frozenset({"file_inherit"}))
     d = deny("delete_child", flags=frozenset({"file_inherit"}))
     assert blocking_entry((allow, d)) == d
 
 
 @pytest.mark.parametrize("flags", NOT_INHERITING + INHERITING)
 def test_allow_entries_never_refuse(flags: frozenset[str]) -> None:
-    allow = AclEntry(deny=False, ours=True, perms=frozenset(SELF_BITS + OTHER_BITS), flags=flags)
+    allow = AclEntry(deny=False, perms=frozenset(SELF_BITS + OTHER_BITS), flags=flags)
     assert blocking_entry((allow,)) is None
 
 
+def test_an_entry_carries_no_subject_so_whom_it_names_cannot_change_the_answer() -> None:
+    """Owner, 2026-10-30: "Any subject (Recommended)": a deny for another user, a group we are not in, macOS's `owner`
+    or `group` subject or an unresolvable one is judged like one for us (S0061 r7: a membership lookup misjudged
+    `owner` and `group`). The entry the rule sees has only its kind, bits and flags."""
+    assert [f.name for f in dataclasses.fields(AclEntry)] == ["deny", "perms", "flags"]
+
+
 @pytest.mark.parametrize("flags", NOT_INHERITING + INHERITING)
-def test_another_users_deny_entry_does_not_apply_to_us_and_is_allowed(flags: frozenset[str]) -> None:
-    assert blocking_entry((deny(*SELF_BITS, *OTHER_BITS, flags=flags, ours=False),)) is None
+def test_every_deny_of_every_bit_at_once_is_refused(flags: frozenset[str]) -> None:
+    """What round 6 allowed for another user's entry (every bit, every flag set) is now refused. (At 71c84897 it
+    passes only for an entry that applies to us; its other half is the subject test above, which fails there.)"""
+    e = deny(*SELF_BITS, *OTHER_BITS, flags=flags)
+    assert blocking_entry((e,)) == e
+
+
+@pytest.mark.parametrize("flags", NOT_INHERITING + INHERITING)
+def test_a_deny_of_no_bit_is_judged_by_its_flags_alone(flags: frozenset[str]) -> None:
+    """@regression-guard (the rule's bits and flags did not change). An empty permission set is a subset of the
+    folder-self bits: allowed unless new entries inherit it (verifier r7: the rule's one row with no case)."""
+    e = deny(flags=flags)
+    assert blocking_entry((e,)) == (None if flags in NOT_INHERITING else e)
 
 
 def test_macos_own_entries_on_the_home_folder_desktop_documents_and_downloads_pass() -> None:

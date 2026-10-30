@@ -1540,9 +1540,9 @@ def test_R5_F3_a_read_error_at_the_saves_displaced_check_moves_nothing_and_rolls
     check_recovered(w.fs, w, out2)
 
 
-def _deny(perms: str, flags: str = "", *, ours: bool = True) -> AclEntry:
-    """An ACL entry as `chmod +a "<who> deny <perms>,<flags>"` writes it."""
-    return AclEntry(True, ours, frozenset(perms.split(",")), frozenset(f for f in flags.split(",") if f))
+def _deny(perms: str, flags: str = "") -> AclEntry:
+    """An ACL entry as `chmod +a "<who> deny <perms>,<flags>"` writes it (whom it names is the fake's `applies`)."""
+    return AclEntry(True, frozenset(perms.split(",")), frozenset(f for f in flags.split(",") if f))
 
 
 def _refused_before_anything_is_written(w: World, folder: str, detail: str | None) -> None:
@@ -1608,12 +1608,11 @@ def test_R6_a_folder_whose_acl_denies_us_anything_the_save_or_its_undo_needs_is_
         _deny("writeextattr"),
         _deny("delete,writeextattr"),  # macOS's own pair, as `chmod` merges it
         _deny("writeattr,writesecurity,chown"),
-        _deny("delete_child,search,list", "file_inherit,directory_inherit", ours=False),  # another user's
     ],
 )
 def test_R6_a_folder_with_only_entries_the_allowlist_passes_is_saved(entry: AclEntry) -> None:
     """Owner, 2026-10-30: "Allowlist (Recommended)": macOS's own entries (`group:everyone deny delete`, `deny
-    writeextattr`, not inherited) and another user's deny entries do not stop a save."""
+    writeextattr`, not inherited) do not stop a save."""
     for where in ("/w/L", "/w/L/inc"):
         w = world()
         w.fs.outside_acl(where, entry)
@@ -1626,12 +1625,12 @@ def test_R6_the_fake_reproduces_red_team_F1_when_the_save_does_not_refuse(monkey
     `deny delete_child,directory_inherit,only_inherit` on the folder the save makes its folder in, inc/a.bean already
     swapped, the staging file's rename to its temp name refused in the new folder (which inherited the entry), the
     rollback stopped on our own staging file, the save unfinished and the journal left `.open`."""
-    import ledger_engine.ledger.writer as writer_module
+    import ledger_engine.ledger.handles as handles_module
 
     def no_denial(_h: object) -> None:
         return None
 
-    monkeypatch.setattr(writer_module, "acl_denial", no_denial)
+    monkeypatch.setattr(handles_module, "acl_denial", no_denial)  # the save's folder rule (`folder_blocked`) only
     w = world(new_dir=True)
     w.fs.outside_acl("/w/L", _deny("delete_child", "directory_inherit,only_inherit"))
     out = durable_commit(w.fs, w.commit)
@@ -1689,3 +1688,105 @@ def test_R6_a_folder_whose_acl_we_may_not_read_is_refused_before_anything_is_wri
 
     monkeypatch.setattr(MemDir, "acl", unreadable)
     _refused_before_anything_is_written(world(), "/w/L/inc", UNREADABLE_ACL)
+
+
+# ---- S0061 round 7 (owner, 2026-10-30: "Any subject (Recommended)", then "Yes. And don't got digging yourself into
+# holes like this one": unusual ACLs handled by policy; red team r7 F1-F3, verifier r7 F1-F2), in the fake (each
+# shape also on APFS in `tests/fs/test_darwin.py`) ------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("applies", [True, False], ids=["applies_to_us", "another_users"])
+@pytest.mark.parametrize("where", ["/w/L", "/w/L/inc"])
+def test_R7_F1_an_inheritable_deny_entry_is_refused_whoever_it_names(where: str, applies: bool) -> None:
+    """Red team r7 F1 (High): the rule asked whom an entry names, and the membership lookup answered "not a member"
+    for macOS's `owner` and `group` subjects, which the kernel applies to us; the save then broke half-way and every
+    undo stopped on our own leftover. The owner chose to judge every deny entry whatever its subject: an entry the
+    kernel applies to us (us, everyone, a group we are in, `owner`, `group`) and one it does not (another user) are
+    both refused before the first effect, naming the folder and the entry."""
+    w = world()
+    w.fs.outside_acl(where, _deny("delete", "file_inherit"), applies=applies)
+    _refused_before_anything_is_written(w, where, "deny delete,file_inherit")
+
+
+R7_APP_FOLDER_REFUSED = {
+    # case: (the folder, the entry): verifier r7 F1 (a)-(c), red team r7 F3, and a direct `deny delete_child`
+    "v_F1a_journal_deny_read_inherited": (JD, _deny("read", "file_inherit,only_inherit")),
+    "v_F1b_journal_deny_delete_inherited": (JD, _deny("delete", "file_inherit,only_inherit")),
+    "v_F1c_backups_deny_delete_inherited": (BD, _deny("delete", "file_inherit,directory_inherit")),
+    "backups_deny_search_into_the_save_folder": (BD, _deny("search", "directory_inherit,only_inherit")),
+    "journal_delete_child_direct": (JD, _deny("delete_child")),
+}
+
+
+@pytest.mark.parametrize("case", sorted(R7_APP_FOLDER_REFUSED))
+def test_R7_F3_the_journal_and_backups_folders_pass_the_folder_rule_before_anything_is_written(case: str) -> None:
+    """Verifier r7 F1, red team r7 F3: the journal and backups folders were never judged (round 6's agent choice
+    (g)); an inheritable deny there was inherited by the record or the backups (every recovery failed on the record,
+    a `.part` or a backup nothing could remove). The owner's option checks "the journal and backup folders too":
+    the save refuses with `permission` before its first effect, naming the folder (no ledger file); `_RMFILE_OK`
+    meets a direct `deny delete_child` first, so that refusal names no entry."""
+    where, entry = R7_APP_FOLDER_REFUSED[case]
+    w = world()
+    w.fs.outside_acl(where, entry)
+    before = w.fs.snapshot()
+    out = durable_commit(w.fs, w.commit)
+    detail = None if not entry.flags else "deny " + ",".join([*sorted(entry.perms), *sorted(entry.flags)])
+    assert out == NotSaved(Step.BACKUP, Reason.PERMISSION, True, False, None, where, detail), out
+    assert w.fs.effects == []
+    assert w.fs.snapshot() == before
+
+
+def test_R7_macos_own_pair_on_the_journal_and_backups_folders_is_saved() -> None:
+    """@regression-guard (those folders were not judged at 71c84897, so it held). The folder rule's one exception
+    holds there too: macOS's own `deny delete,writeextattr`, not inherited."""
+    for where in (JD, BD):
+        w = world()
+        w.fs.outside_acl(where, _deny("delete,writeextattr"))
+        assert isinstance(durable_commit(w.fs, w.commit), Landed), where
+
+
+def _clean_save_effects() -> list[str]:
+    w = world()
+    durable_commit(w.fs, w.commit)
+    return list(w.fs.effects)
+
+
+R7_SAVE_EFFECTS = _clean_save_effects()
+
+
+@pytest.mark.parametrize("j", range(len(R7_SAVE_EFFECTS)))
+def test_R7_F2_an_entry_added_to_a_ledger_folder_during_the_save_loses_nothing_and_names_the_file_it_leaves(
+    j: int,
+) -> None:
+    """@regression-guard (the outcome already failed closed at 71c84897; the test pins it as the §15 limit the owner
+    accepted: "Yes. And don't got digging yourself into holes like this one", 2026-10-30). Red team r7 F2: an
+    inheritable `deny delete` appears on a ledger folder after the save's check, before effect `j`, and the user
+    then removes it from the folder. Whatever the save told matches the disk; no byte is lost; while a hidden file
+    of ours that inherited the entry is left, every Retry stops with `permission`, the journal `.open`, naming that
+    file (`entry`); once the user removes the entry from that file too, Retry undoes the save."""
+    w = world()
+    fs = w.fs
+    entry = _deny("delete", "file_inherit,only_inherit")
+
+    def hook(i: int, label: str) -> None:
+        if i == j:
+            fs.on_effect = None
+            fs.outside_acl("/w/L/inc", entry)
+
+    fs.on_effect = hook
+    out = durable_commit(fs, w.commit)
+    check_told(fs, w, out)
+    fs.outside_acl_clear("/w/L/inc")
+    if isinstance(out, Landed):
+        return  # landed: the saved file may carry the inherited entry (spec §15), nothing is undone
+    got = recover(fs)
+    for _ in range(4):
+        if not (isinstance(got, Stopped) and got.cause is Cause.PERMISSION):
+            break
+        assert got.entry is not None, got
+        assert got.entry.startswith("/w/L/inc/.a.bean.ft-"), got  # a hidden file of ours
+        assert State.OPEN in journals(fs), "a stopped try leaves the journal open"
+        check_disk(fs, w)
+        fs.outside_acl_clear(got.entry)  # the way out (§15): `chmod -N` on that file, then Retry
+        got = recover(fs)
+    check_recovered(fs, w, got)
