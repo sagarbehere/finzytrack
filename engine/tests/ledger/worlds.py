@@ -8,11 +8,12 @@ save, a rollback or a recovery, written from §10's rows and §13's write-protoc
 - a target at its post bytes only under a readable `.open` or `.closed` journal whose backups hold the pre bytes:
   `BackupDurableBeforeReplace`, `JournalDurableBeforeFirstReplace`; a `.part` may be torn, an `.open` never;
 - a `.closed` journal only with every target at post, a `.resolved` one only with every target at pre, and with
-  either no temp or restore temp of ours left and no folder the save made (`temps_after_close`,
-  `resolve_before_restores_synced`, `CutTempNeverBlocks`'s "no temp of a save outlives its journal");
-- nothing changed outside the recorded paths, the save's temps, restore temps and kept names, its backups and its
-  journal (INV-32, `RecoveryWritesOnlyRecordedPaths`), and nothing that was there before removed; `.resolved` never
-  beside a kept copy.
+  either no temp, staging file, restore temp or restore staging file of ours left and no folder the save made
+  (`temps_after_close`, `resolve_before_restores_synced`, `CutTempNeverBlocks`'s "no temp of a save outlives its
+  journal");
+- nothing changed outside the recorded paths, the save's temps and staging names, restore temps and their staging
+  names, kept names, its backups and its journal (INV-32, `RecoveryWritesOnlyRecordedPaths`), and nothing that was
+  there before removed; `.resolved` never beside a kept copy.
 `check_recovered` adds what recovery must end with when no outside program acts: no `.open` journal, every target at
 pre or (only under `.closed`) at post, in the disk as it is and in every power-loss state of it.
 """
@@ -52,8 +53,22 @@ class Target:
         return f"{self.folder}/.{self.base}.ft-s1-j7.tmp"
 
     @property
+    def staging(self) -> str:
+        """Where the save writes the new bytes before they get the temp name (owner, 2026-10-30: "Staging name")."""
+        return f"{self.folder}/.{self.base}.ft-s1-j7.new"
+
+    @property
     def rtemp(self) -> str:
         return f"{self.folder}/.{self.base}.ft-restore-s1-j7.tmp"
+
+    @property
+    def rstaging(self) -> str:
+        return f"{self.folder}/.{self.base}.ft-restore-s1-j7.new"
+
+    @property
+    def scratch(self) -> tuple[str, ...]:
+        """Every name of ours beside the file that holds bytes only while a save or a try runs."""
+        return (self.temp, self.staging, self.rtemp, self.rstaging)
 
     @property
     def kept(self) -> str:
@@ -144,14 +159,14 @@ def check_disk(fs: MemFS, w: World) -> None:
         for t in w.targets:
             want = t.post if state is State.CLOSED else t.pre
             assert fs.file(t.path) == want, f"{state}, but {t.path} is not at {'post' if want == t.post else 'pre'}"
-            assert t.temp not in snap, f"{state} with a temp of ours left: {t.temp}"
-            assert t.rtemp not in snap, f"{state} with a restore temp of ours left: {t.rtemp}"
+            for name in t.scratch:
+                assert name not in snap, f"{state} with a temp of ours left: {name}"
             if state is State.RESOLVED:
                 assert t.kept not in snap, f"resolved while a kept copy exists: {t.kept}"
     if state is State.RESOLVED:
         for d in w.new_dirs:
             assert d not in snap, f"resolved, but the folder the save made is left: {d}"
-    ours = {t.path for t in w.targets} | {t.temp for t in w.targets} | {t.rtemp for t in w.targets}
+    ours = {t.path for t in w.targets} | {n for t in w.targets for n in t.scratch}
     ours |= {t.kept for t in w.targets}
     ours |= set(w.new_dirs) | {SAVE_DIR, JD, BD}
     for path, entry in snap.items():

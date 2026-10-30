@@ -14,6 +14,7 @@ import sys
 import threading
 from collections.abc import Callable
 from pathlib import Path
+from typing import override
 
 import pytest
 
@@ -492,6 +493,11 @@ class _DyingDir:
             raise _Died
         self._inner.rename_excl(src, dst)  # type: ignore[attr-defined]
 
+    def remove(self, name: str) -> None:
+        if self._die_at == "<remove>":
+            raise _Died
+        self._inner.remove(name)  # type: ignore[attr-defined]
+
     def __getattr__(self, name: str) -> object:
         return getattr(self._inner, name)
 
@@ -582,3 +588,68 @@ def test_a_folder_the_save_made_in_a_read_only_parent_stops_the_restore_before_a
         assert os.listdir(tmp_path / "local" / "journal") == ["s1-j1.open"]
     finally:
         os.chmod(tmp_path / "L", 0o755)  # noqa: S103 (the temp folder back to its default)
+
+
+def test_an_outside_program_shortening_the_file_through_a_descriptor_held_from_before_the_save_is_kept_on_apfs(
+    fs: DarwinFS, tmp_path: Path
+) -> None:
+    """S0061 red team r3 F2a, on the real adapter: the save dies after its swap, before removing its temp; a program
+    that opened main.bean before the save shortens it in place through its descriptor, so its bytes land in the
+    displaced old object at our temp name, a prefix of both pre and post (the save appended). Recovery keeps them in
+    the kept copy and stops (owner, 2026-10-30: "Staging name (Recommended)": a temp name is ours only when equal to
+    the pre or post bytes)."""
+    from ledger_engine.fs.darwin import DarwinLocks
+    from ledger_engine.ledger.core.recovery import Cause
+    from ledger_engine.ledger.restore import Stopped, recover_journal
+
+    ledger = tmp_path / "L"
+    ledger.mkdir()
+    main = ledger / "main.bean"
+    pre = b'include "a.bean"\n'
+    post = pre + b'include "prices.bean"\n'
+    main.write_bytes(pre)
+    held = os.open(main, os.O_RDWR)  # the other program's descriptor, opened before the save
+    try:
+        c = _commit(tmp_path, Change(str(main), sha256(pre), post))
+        with pytest.raises(_Died):
+            durable_commit(_DyingFS(fs, "<remove>"), c)  # type: ignore[arg-type]
+        assert main.read_bytes() == post
+        shortened = b'include "a'
+        os.ftruncate(held, 0)
+        os.pwrite(held, shortened, 0)
+        os.fsync(held)
+    finally:
+        os.close(held)
+    (tmp_path / "locks").mkdir()
+    out = recover_journal(fs, DarwinLocks(str(tmp_path / "locks")), c.journal_dir, "s1-j1")
+    assert out == Stopped(Cause.OUTSIDE_SAVE_IN_TEMP, os.path.realpath(main))
+    assert (ledger / "main.bean.kept-s1-j1").read_bytes() == shortened
+    assert os.listdir(tmp_path / "local" / "journal") == ["s1-j1.open"]
+
+
+def test_a_save_on_apfs_writes_its_new_bytes_under_the_staging_name_first(fs: DarwinFS, tmp_path: Path) -> None:
+    """Owner, 2026-10-30: "Staging name (Recommended)": the save dies right after its staging file's rename to the
+    temp name: the temp holds the full new bytes, no staging file is left, the file is untouched."""
+    ledger = tmp_path / "L"
+    ledger.mkdir()
+    main = ledger / "main.bean"
+    main.write_bytes(b"pre\n")
+    c = _commit(tmp_path, Change(str(main), sha256(b"pre\n"), b"post\n"))
+
+    class _AfterStaging(_DyingDir):
+        @override
+        def rename_excl(self, src: str, dst: str) -> None:
+            self._inner.rename_excl(src, dst)  # type: ignore[attr-defined]
+            if src.endswith(".new"):
+                raise _Died
+
+    class _FS(_DyingFS):
+        @override
+        def open_dir(self, path: str) -> _DyingDir:
+            return _AfterStaging(self._inner.open_dir(path), "")
+
+    with pytest.raises(_Died):
+        durable_commit(_FS(fs, ""), c)  # type: ignore[arg-type]
+    assert sorted(p.name for p in ledger.iterdir()) == [".main.bean.ft-s1-j1.tmp", "main.bean"]
+    assert (ledger / ".main.bean.ft-s1-j1.tmp").read_bytes() == b"post\n"
+    assert main.read_bytes() == b"pre\n"

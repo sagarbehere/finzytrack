@@ -58,6 +58,10 @@ An editor, Fava or a sync client may save a ledger file between our final finger
 - **Details (agent, S0061):** the kept name is `<name>.kept-<job>`, then `-2` to `-999` when taken, exclusive (`RENAME_EXCL`), a hash standing in for a name past 255 bytes (`ledger_engine.ledger.core.journal.kept_name`); the save refuses before its first effect an entry already standing at one of a file's kept names and a target at another's; a displaced file with a second hard link still stops the save (the hard-link amendment above). Code: `ledger_engine.ledger.handles.displaced` and `keep`.
 - **Unchanged:** the swap itself, the hard-link and no-swap amendments above, and the review-6 temp rule (ADR-0012's amendment of 2026-10-27).
 
+## Amendment (2026-10-30): forward pointer (S0061 round 3)
+
+- The line "**Unchanged:** ... the review-6 temp rule (ADR-0012's amendment of 2026-10-27)" in the amendment above no longer holds: the temp rule was refined on 2026-10-29 and replaced on 2026-10-30 (owner: "Staging name (Recommended)"; ADR-0012's amendment of that date). The swap itself is unchanged; what reaches it changed: the new bytes are written under a staging name, synced, renamed exclusively to the temp name and that rename synced before the swap, in the save and in the restore alike.
+
 ## References
 
 review:D1 §13.2; review:25 §8.3, §14 item 5; review:27 M1 risks; ADR-0008, ADR-0012; INV-01; CAP-DATA-EXTERNAL-EDIT.

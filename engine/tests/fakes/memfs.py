@@ -11,7 +11,10 @@ mkdir, remove, swap, exclusive rename) is durable after its directory's sync, wh
 directory before it durable. `power_loss_states()` gives every state a power loss may leave: each pending entry
 operation kept or dropped on its own (applied in order; one whose precondition no longer holds does nothing), a swap
 or a rename kept or dropped whole, and each file whose data is not synced at its synced bytes (empty if never synced:
-an entry kept before its data), its current bytes, or cut off (the first half of its current bytes).
+an entry kept before its data), its current bytes, or torn (`_tears`): cut off (the first half of its current
+bytes), its length kept with none of its blocks written (zeros), or its later blocks written before its earlier ones
+(zeros, then the second half). A real volume can tear an unsynced file in any of these shapes (delayed allocation,
+a drive that reorders writes; S0061 red team r3 F3), so nothing may count on a torn file being a prefix.
 
 **Injection.** Every effect of the port's operations is numbered from 0 (`effects` lists their labels):
 `create` is three effects (the entry, the write, the data sync), every other write one (`rmdir` included).
@@ -130,6 +133,12 @@ def _apply(entries: dict[str, tuple[str, int]], op: tuple[str, ...]) -> None:
         _, ks, kd, stored = op
         if ks in entries and kd not in entries:
             entries[kd] = (stored, entries.pop(ks)[1])
+
+
+def _tears(data: bytes) -> tuple[bytes, ...]:
+    """The torn shapes an unsynced file may take after a power loss (the module's docstring)."""
+    half = len(data) // 2
+    return data[:half], bytes(len(data)), bytes(half) + data[half:]
 
 
 class MemFS:
@@ -444,7 +453,7 @@ class MemFS:
             for i in files:
                 f = self.nodes[i]
                 assert isinstance(f, _File)
-                opts = [f.synced] if f.data == f.synced else [f.synced, f.data, f.data[: len(f.data) // 2]]
+                opts = [f.synced] if f.data == f.synced else [f.synced, f.data, *_tears(f.data)]
                 options.append(list(dict.fromkeys(opts)))
             for datas in itertools.product(*options):
                 sig = (tuple(sorted((k, tuple(sorted(v.items()))) for k, v in tables.items())), tuple(datas))

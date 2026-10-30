@@ -38,7 +38,20 @@ def test_an_entry_can_be_kept_before_its_data() -> None:
     fs.inject(2, crash=True)  # create's effects: 0 entry, 1 write, 2 data sync
     with fs.open_dir("/d") as d, pytest.raises(Crash):
         d.create("f", b"data", 0o644)
-    assert outcomes(fs, "/d/f") == {(None,), (b"",), (b"data",), (b"da",)}
+    assert outcomes(fs, "/d/f") == {(None,), (b"",), (b"data",), (b"da",), (b"\0\0\0\0",), (b"\0\0ta",)}
+
+
+def test_a_power_loss_can_tear_an_unsynced_file_other_than_as_a_prefix() -> None:
+    """S0061 red team r3 F3: a real volume can keep an unsynced file's length with none of its blocks written (zeros,
+    a hole), or its later blocks before its earlier ones; the fake reaches both, beside a cut-off prefix."""
+    fs = fs_with("/d")
+    fs.inject(2, crash=True)
+    with fs.open_dir("/d") as d, pytest.raises(Crash):
+        d.create("f", b"0123456789", 0o644)
+    torn = {s.file("/d/f") for s in fs.power_loss_states()}
+    assert b"\0" * 10 in torn  # the length, no data
+    assert b"\0" * 5 + b"56789" in torn  # the tail before the head
+    assert b"01234" in torn  # cut off
 
 
 def test_a_folders_sync_makes_every_earlier_operation_in_it_durable_and_none_in_another_folder() -> None:
@@ -111,7 +124,7 @@ def test_a_file_written_in_place_unsynced_may_be_old_new_or_cut() -> None:
     with fs.open_dir("/d") as d, pytest.raises(Crash):
         d.create("f", b"abcdef", 0o644)
     assert fs.file("/d/f") == b"ab"  # the write cut at the offset
-    assert outcomes(fs, "/d/f") == {(None,), (b"",), (b"ab",), (b"a",)}
+    assert outcomes(fs, "/d/f") == {(None,), (b"",), (b"ab",), (b"a",), (b"\0\0",), (b"\0b",)}
 
 
 def test_an_io_error_happens_before_its_effect_or_after_a_cut_write() -> None:

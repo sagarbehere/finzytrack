@@ -157,6 +157,15 @@ def temp_name(name: str, tag: str) -> str:
     return full if _fits(full) else f".{_short(name)}.ft-{tag}.tmp"
 
 
+def staging_name(name: str, tag: str) -> str:
+    """Where the save writes a file's new bytes first (§6.1 step 8.3; owner, 2026-10-30: "Staging name
+    (Recommended)"): `.<name>.ft-<session>-<job>.new`, synced, then renamed exclusively to the temp name. No swap ever
+    touches it, so whatever stands there is a write of ours, cut or torn in any shape, and recovery deletes it.
+    `.<sha16>.ft-...new` past NAME_MAX."""
+    full = f".{name}.ft-{check_tag(tag)}.new"
+    return full if _fits(full) else f".{_short(name)}.ft-{tag}.new"
+
+
 def restore_temp_name(name: str, tag: str) -> str:
     """The restore temp beside a file (§6.4, §8.1 step 3): `.<name>.ft-restore-<session>-<job>.tmp`, named after the
     save (not the try), so every try (the rollback and each recovery) uses one name per file that the record alone
@@ -164,6 +173,21 @@ def restore_temp_name(name: str, tag: str) -> str:
     NAME_MAX."""
     full = f".{name}.ft-restore-{check_tag(tag)}.tmp"
     return full if _fits(full) else f".{_short(name)}.ft-restore-{tag}.tmp"
+
+
+def restore_staging_name(name: str, tag: str) -> str:
+    """The restore's staging name (§6.4, §8.1 step 3), as `staging_name` is the save's:
+    `.<name>.ft-restore-<session>-<job>.new`, written from the backup and synced, then renamed to the restore temp
+    name; `.<sha16>.ft-restore-...new` past NAME_MAX."""
+    full = f".{name}.ft-restore-{check_tag(tag)}.new"
+    return full if _fits(full) else f".{_short(name)}.ft-restore-{tag}.new"
+
+
+def scratch_names(name: str, tag: str) -> tuple[str, str, str, str]:
+    """Every name beside the file `name` that holds bytes of ours only while a save or a try runs: the temp, the
+    staging name, the restore temp and the restore staging name (in that order). The save refuses a target at or under
+    one and an entry standing at one before its first effect; decode refuses a record naming one as a path."""
+    return temp_name(name, tag), staging_name(name, tag), restore_temp_name(name, tag), restore_staging_name(name, tag)
 
 
 MAX_KEPT: Final = 999  # numbered kept names tried before the save or the try stops without one
@@ -194,15 +218,6 @@ def is_kept_name(entry: str, name: str, tag: str) -> bool:
         if e.startswith(head) and _KEPT_TAIL.fullmatch(e[len(head) :]):
             return True
     return False
-
-
-def post_copy_name(index: int, name: str) -> str:
-    """The copy of the post bytes of the file at `index`, in the save's backup folder (§6.1 step 8.1, S0061 r2): what
-    recovery compares a save temp with to tell a cut write of ours (a prefix) from anything else, even when the file
-    is back at pre. `<index>.post-<name>`, or `<index>.post-<sha16>` past NAME_MAX; never a backup's name (those are
-    `<index>-<name>`)."""
-    full = f"{index}.post-{name}"
-    return full if _fits(full) else f"{index}.post-{_short(name)}"
 
 
 def backup_name(index: int, name: str) -> str:
@@ -277,13 +292,16 @@ def _check(record: Record) -> None:
         dir_keys.add(d.path_key)
     if not record.files:
         raise BadRecordError("no_files")
-    # every temp is its own name, never a file's or a created folder's path, nor inside one (S0060 red team r2 L1);
+    # every temp, staging name and restore temp is its own name, never a file's or a created folder's path, nor inside
+    # one (S0060 red team r2 L1; the staging names, S0061 r3);
     # compared folded the widest way, so two names a volume may treat as one count as one
     wide = FoldRule(nfd=True, casefold=True)
     taken = [tuple(fold(c, wide) for c in fc) for fc, _ in files]
     taken += [tuple(fold(c, wide) for c in _parts(d.canonical_path)) for d in record.created_dirs]
     temps = [tuple(fold(c, wide) for c in (*fc[:-1], f.temp)) for (fc, _), f in zip(files, record.files, strict=True)]
-    temps += [tuple(fold(c, wide) for c in (*fc[:-1], restore_temp_name(fc[-1], record.name))) for fc, _ in files]
+    temps += [
+        tuple(fold(c, wide) for c in (*fc[:-1], n)) for fc, _ in files for n in scratch_names(fc[-1], record.name)[1:]
+    ]
     # no file of the record at a file's kept name, nor under one (a created folder at it is always an ancestor of a
     # file: red team r2 L2): recovery would stop on it for ever
     for fc, _ in files:

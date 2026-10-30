@@ -1,18 +1,24 @@
 """The per-file judgement of recovery and the rollback (`design/specs/engine-jobs.md` §8.1 step 2, §6.4 "The save's
 temp paths in recovery"; §12: "the recovery check per file" is one of the engine's pure decisions; ADR-0012's per-file
-rule as amended by ADR-0064, and the temp rule as refined on 2026-10-29; S0061). Pure.
+rule as amended by ADR-0064, and the temp rule as decided on 2026-10-30; S0061). Pure.
 
-**The temp rule** (owner, 2026-10-29: "Refine the rule"; it replaced review 6 P1's "otherwise recovery deletes it,
-whatever it holds"): a save temp, or a restore temp, is **ours** only when it is empty, a prefix of the bytes being
-written into it (the post bytes for a save temp, the pre bytes for a restore temp: a write cut off at any point), or
-equal to the pre or the post bytes; anything else (other bytes, a folder, a link, a FIFO) is an outside save, moved to
-its kept name, and the journal stops, whatever the file beside it holds. `classify_temp` is that rule's one place.
+**The temp rule** (owner, 2026-10-30: "Staging name (Recommended)"; it replaced the refined rule of 2026-10-29,
+"empty, a prefix of what we wrote, or equal to the old or new bytes is ours"). Every write of ours goes first to a
+**staging name** (`journal.staging_name`, `journal.restore_staging_name`), is synced, and only then renamed
+exclusively to the temp name, the rename synced before any swap. So:
+- a staging name is touched by no swap: a regular file there is our own write, cut or torn in any shape, and is
+  **ours** whatever bytes it holds (`classify_staging`); anything else there is not ours;
+- a temp name (the save's temp, the restore temp) only ever holds our fully synced bytes or the old object a swap
+  displaced, into which a program holding it open may have written: it is **ours** only when equal to the pre or the
+  post bytes (`classify_temp`).
+Anything not ours (other bytes, a folder, a link, a FIFO) is an outside save, moved to its kept name, and the journal
+stops, whatever the file beside it holds. These two functions are the rule's one place.
 
-The file the temp sits beside, then:
+The file the temps sit beside, then:
 - at its pre bytes (a created file: absent): **at pre**;
 - at its post bytes: **at post** when, for a replaced file, the backup holds the pre bytes (ADR-0012 F-1), else stop;
-  for a created file, only while the save's temp is gone: a temp still there means the exclusive rename never
-  happened, so the file at the path is another program's, whatever it holds (S0061 red team r2 H1);
+  for a created file, only while neither the save's temp nor its staging file is there: either means the exclusive
+  rename never happened, so the file at the path is another program's, whatever it holds (S0061 red team r2 H1);
 - anything else (other bytes, a folder, a link, a FIFO): stop.
 The rollback's skipped file (`skip`: a created path an outside file took before the save's exclusive rename, §6.4) is
 **kept** whatever it holds.
@@ -49,21 +55,34 @@ class TempState(StrEnum):
     FOREIGN = "foreign"  # moved to its kept name, never deleted
 
 
-def classify_temp(
-    kind: Kind | None, data: bytes | None, held: tuple[str | None, ...], cut_of: bytes | None
-) -> TempState:
-    """The temp rule (the module's docstring). `kind`/`data`: what stands at the temp name (`data` for a regular
-    file). `held`: the SHA-256 of the bytes we hold (pre and post). `cut_of`: the bytes a cut write would be a prefix
-    of, None when they are not known (then only empty and equal-to-held count as ours)."""
+def classify_temp(kind: Kind | None, data: bytes | None, held: tuple[str | None, ...]) -> TempState:
+    """The temp rule at a temp name (the module's docstring). `kind`/`data`: what stands there (`data` for a regular
+    file, None when it could not be read). `held`: the SHA-256 of the bytes we hold (pre and post)."""
     if kind is None:
         return TempState.ABSENT
-    if kind is not Kind.FILE or data is None:
-        return TempState.FOREIGN
-    if not data or hashlib.sha256(data).hexdigest() in held:
-        return TempState.OURS
-    if cut_of is not None and cut_of.startswith(data):
+    if kind is Kind.FILE and data is not None and hashlib.sha256(data).hexdigest() in held:
         return TempState.OURS
     return TempState.FOREIGN
+
+
+def classify_staging(kind: Kind | None) -> TempState:
+    """The temp rule at a staging name (the module's docstring): a regular file there is ours whatever it holds."""
+    if kind is None:
+        return TempState.ABSENT
+    return TempState.OURS if kind is Kind.FILE else TempState.FOREIGN
+
+
+@dataclass(frozen=True, slots=True)
+class Temps:
+    """What the temp rule found at each name of ours beside one file."""
+
+    temp: TempState = TempState.ABSENT  # the save's temp
+    staging: TempState = TempState.ABSENT  # the save's staging name
+    rtemp: TempState = TempState.ABSENT  # the restore temp
+    rstaging: TempState = TempState.ABSENT  # the restore's staging name
+
+    def states(self) -> tuple[TempState, ...]:
+        return self.temp, self.staging, self.rtemp, self.rstaging
 
 
 class Verdict(StrEnum):
@@ -96,18 +115,10 @@ class Stop:
     cause: Cause
 
 
-def judge(
-    entry: FileEntry,
-    file: Seen,
-    temp: TempState,
-    rtemp: TempState,
-    backup: Seen | None,
-    *,
-    skip: bool = False,
-) -> Verdict | Stop:
-    """The verdict for one file (the module's docstring). `temp`, `rtemp`: the save temp and the restore temp beside
-    it, by `classify_temp`. `backup`: what the backup holds, None when not read."""
-    if TempState.FOREIGN in (temp, rtemp):
+def judge(entry: FileEntry, file: Seen, temps: Temps, backup: Seen | None, *, skip: bool = False) -> Verdict | Stop:
+    """The verdict for one file (the module's docstring). `temps`: the names of ours beside it, by the temp rule.
+    `backup`: what the backup holds, None when not read."""
+    if TempState.FOREIGN in temps.states():
         return Stop(Cause.OUTSIDE_SAVE_IN_TEMP)
     if skip:
         return Verdict.KEEP
@@ -116,7 +127,7 @@ def judge(
     if file == pre:
         return Verdict.AT_PRE
     if file == post:
-        if entry.pre is None and temp is not TempState.ABSENT:
+        if entry.pre is None and (temps.temp is not TempState.ABSENT or temps.staging is not TempState.ABSENT):
             return Stop(Cause.FOREIGN)  # the exclusive rename never happened: the file is another program's
         if entry.pre is not None and backup != pre:
             return Stop(Cause.BACKUP_BAD)

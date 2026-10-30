@@ -65,7 +65,7 @@ def crashed(at: int, *, cut: int | None = None, new_dir: bool = False) -> World:
 def _cuts(label: str) -> list[int | None]:
     if not label.startswith("write "):
         return [None]
-    if ".ft-s1-j7.tmp" in label:
+    if ".ft-s1-j7.new" in label:  # the staging write (owner, 2026-10-30: "Staging name")
         return [None, *range(64)]
     return [None, 0, 1, 2, 7, 64, 200, 500]
 
@@ -192,8 +192,9 @@ def test_an_outside_write_before_every_effect_of_recovery_is_never_deleted(at: i
             assert set(journals(w.fs)) == {State.OPEN}
 
 
-def test_a_journal_at_post_is_restored_root_first_with_the_restore_temp_synced_before_its_swap() -> None:
-    """§8.1 step 3 (ADR-0012 F-5, fidelity review 2 H1), step 4 (`resolve_before_restores_synced`)."""
+def test_a_journal_at_post_is_restored_root_first_with_the_restore_temp_staged_and_synced_before_its_swap() -> None:
+    """§8.1 step 3 (ADR-0012 F-5, fidelity review 2 H1; the staging name, owner, 2026-10-30), step 4
+    (`resolve_before_restores_synced`)."""
     w = crashed(CLOSE)
     n = len(w.fs.effects)
     out = recover(w.fs)
@@ -205,8 +206,13 @@ def test_a_journal_at_post_is_restored_root_first_with_the_restore_temp_synced_b
         "swap /w/L/inc:.a.bean.ft-restore-s1-j7.tmp,a.bean",
     ], "the root first"
     for folder, base in (("/w/L", "main.bean"), ("/w/L/inc", "a.bean")):
-        rt = f".{base}.ft-restore-s1-j7.tmp"
-        assert e.index(f"fsync {folder}:{rt}") < e.index(f"swap {folder}:{rt},{base}")
+        rt, rn = f".{base}.ft-restore-s1-j7.tmp", f".{base}.ft-restore-s1-j7.new"
+        named = e.index(f"rename {folder}:{rn},{rt}")
+        swap = e.index(f"swap {folder}:{rt},{base}")
+        # S0061 r3 (verifier F1, red team F1): staged, synced, renamed to the restore temp name, that rename synced,
+        # then swapped; an editor's in-place write after the swap then always keeps a durable name
+        assert e.index(f"fsync {folder}:{rn}") < named < e.index(f"sync {folder}:", named) < swap
+        assert f"create {folder}:{rt}" not in e
     assert e.index("rename /w/L:prices.bean,.prices.bean.ft-restore-s1-j7.tmp") < e.index(
         "remove /w/L:.prices.bean.ft-restore-s1-j7.tmp"
     )
@@ -262,19 +268,23 @@ def test_a_second_try_after_a_resolved_one_finds_nothing_to_do() -> None:
     assert len(w.fs.effects) == n
 
 
-def test_a_leftover_restore_temp_is_deleted_only_when_it_is_ours() -> None:
-    """The refined temp rule (owner, 2026-10-29: "Refine the rule"): a restore temp cut off while it was copied from
-    the backup (a prefix of the pre bytes) is deleted; anything else is kept and the journal stops."""
-    w = crashed(CLOSE)
-    t = w.targets[2]
-    w.fs.outside_write(t.rtemp, (t.pre or b"")[:5])
-    out = recover(w.fs)
-    assert out == Resolved(NAME)
-    check_recovered(w.fs, w, out)
-    w = crashed(CLOSE)
-    w.fs.outside_write(t.rtemp, FOREIGN)
-    assert recover(w.fs) == Stopped(Cause.OUTSIDE_SAVE_IN_TEMP, t.path)
-    assert (w.fs.file(t.rtemp), w.fs.file(t.kept)) == (None, FOREIGN)
+def test_a_leftover_restore_temp_is_deleted_only_when_it_holds_the_pre_or_the_post_bytes() -> None:
+    """The temp rule at a temp name (owner, 2026-10-30: "Staging name (Recommended)"): a restore temp only ever
+    holds our synced copy of the pre bytes or the displaced post object, so those are deleted; anything else, a cut
+    copy of the pre bytes included (no cut write of ours stands there any more), is kept and the journal stops."""
+    for ours in ("pre", "post"):
+        w = crashed(CLOSE)
+        t = w.targets[2]
+        w.fs.outside_write(t.rtemp, (t.pre or b"") if ours == "pre" else t.post)
+        out = recover(w.fs)
+        assert out == Resolved(NAME), ours
+        check_recovered(w.fs, w, out)
+    for other in ((w.targets[2].pre or b"")[:5], b"", FOREIGN):
+        w = crashed(CLOSE)
+        t = w.targets[2]
+        w.fs.outside_write(t.rtemp, other)
+        assert recover(w.fs) == Stopped(Cause.OUTSIDE_SAVE_IN_TEMP, t.path), other
+        assert (w.fs.file(t.rtemp), w.fs.file(t.kept)) == (None, other)
 
 
 # ---- the displaced check at every restore swap and removal (§6.4; §14 "an outside write between a recovery's check
@@ -303,7 +313,7 @@ def test_a_file_holding_neither_pre_nor_post_stops_the_journal() -> None:
 def test_a_temp_cut_off_beside_a_file_at_pre_is_deleted_and_blocks_nothing() -> None:
     """`CutTempNeverBlocks`: §14 "a temp cut off at every offset while being written ... is deleted by recovery and
     blocks nothing"."""
-    write = EFFECTS.index("write /w/L:.main.bean.ft-s1-j7.tmp")
+    write = EFFECTS.index("write /w/L:.main.bean.ft-s1-j7.new")
     for cut in range(len(world().targets[2].post)):
         w = crashed(write, cut=cut)
         out = recover(w.fs)
@@ -338,7 +348,7 @@ def test_a_folder_moved_between_the_checks_and_the_restore_stops_and_writes_noth
         w.fs.outside_move("/w/L", "/w/L-moved")
         w.fs.outside_symlink("/w/L", "/w/elsewhere")
 
-    _hook(w.fs, "create /w/L:.main.bean.ft-restore-s1-j7.tmp", swap_folder)
+    _hook(w.fs, "create /w/L:.main.bean.ft-restore-s1-j7.new", swap_folder)
     out = recover(w.fs)
     assert isinstance(out, Stopped)
     assert out.cause is Cause.PATH_MOVED
@@ -470,7 +480,7 @@ def test_a_crash_at_every_effect_of_an_nfc_save_on_a_volume_storing_nfd_is_recov
 
 def test_a_read_only_folder_beside_a_cut_temp_stops_before_anything_is_written() -> None:
     """The temp must be removed, so its folder must allow it: stopped at the checks, not failed half-way."""
-    write = EFFECTS.index("write /w/L/inc:.a.bean.ft-s1-j7.tmp")  # the first file: every file still at pre
+    write = EFFECTS.index("write /w/L/inc:.a.bean.ft-s1-j7.new")  # the first file: every file still at pre
     w = crashed(write, cut=3)
     w.fs.outside_deny("/w/L/inc", Right.CHANGE_ENTRIES)
     _stops_with_nothing_written(w, Cause.PERMISSION, "/w/L/inc/a.bean")
@@ -688,8 +698,8 @@ def test_a_non_file_at_the_restore_temp_name_is_kept_and_stops_before_anything_e
 
 def test_a_leftover_restore_temp_beside_a_file_at_pre_in_a_read_only_folder_stops_before_anything_is_written() -> None:
     """Red team L4: its removal needs the folder's entry-change right."""
-    w = crashed(EFFECTS.index("create /w/L/inc:.a.bean.ft-s1-j7.tmp"))  # no temp of the save there
-    w.fs.outside_write("/w/L/inc/.a.bean.ft-restore-s1-j7.tmp", b"2026-01")  # a cut copy of the pre bytes: ours
+    w = crashed(EFFECTS.index("create /w/L/inc:.a.bean.ft-s1-j7.new"))  # no temp of the save there
+    w.fs.outside_write("/w/L/inc/.a.bean.ft-restore-s1-j7.new", b"2026-01")  # a cut copy at its staging name: ours
     w.fs.outside_deny("/w/L/inc", Right.CHANGE_ENTRIES)
     _stops_with_nothing_written(w, Cause.PERMISSION, "/w/L/inc/a.bean")
 
@@ -738,7 +748,7 @@ def test_a_file_that_vanishes_between_its_stat_and_its_read_is_foreign(monkeypat
 
 def test_a_folder_the_save_made_whose_own_deletion_is_denied_stops_before_anything_is_written() -> None:
     """Verifier V1, second half: an ACL denying the folder's deletion (the created file not written yet)."""
-    w = crashed(NEW_DIR_EFFECTS.index("create /w/L/y2026:.prices.bean.ft-s1-j7.tmp"), new_dir=True)
+    w = crashed(NEW_DIR_EFFECTS.index("create /w/L/y2026:.prices.bean.ft-s1-j7.new"), new_dir=True)
     assert "/w/L/y2026" in w.fs.snapshot()
     w.fs.outside_deny("/w/L/y2026", Right.DELETE)
     _stops_with_nothing_written(w, Cause.PERMISSION, "/w/L/y2026")
@@ -894,7 +904,7 @@ def test_a_created_folder_holding_another_entry_is_not_checked_for_removal() -> 
     w.fs.outside_deny("/w/L/y2026/prices.bean", Right.DELETE)
     # the created file itself cannot be removed either: that is a real stop, at the file
     assert recover(w.fs) == Stopped(Cause.PERMISSION, "/w/L/y2026/prices.bean")
-    w = crashed(NEW_DIR_EFFECTS.index("create /w/L/y2026:.prices.bean.ft-s1-j7.tmp"), new_dir=True)
+    w = crashed(NEW_DIR_EFFECTS.index("create /w/L/y2026:.prices.bean.ft-s1-j7.new"), new_dir=True)
     w.fs.outside_write("/w/L/y2026/notes.txt", b"the user's\n")
     w.fs.outside_deny("/w/L/y2026", Right.DELETE)
     out = recover(w.fs)
@@ -908,7 +918,7 @@ def test_an_outside_file_at_a_created_path_made_before_our_temp_is_never_deleted
     without the temp that says it is not ours."""
     probe = world()
     durable_commit(probe.fs, probe.commit)
-    create = probe.fs.effects.index("create /w/L:.prices.bean.ft-s1-j7.tmp")
+    create = probe.fs.effects.index("create /w/L:.prices.bean.ft-s1-j7.new")
     rename = probe.fs.effects.index("rename /w/L:.prices.bean.ft-s1-j7.tmp,prices.bean")
     t = probe.targets[1]
     w = world()
@@ -922,11 +932,225 @@ def test_an_outside_file_at_a_created_path_made_before_our_temp_is_never_deleted
         assert state.file(t.path) == t.post, "the other program's prices.bean was deleted"
 
 
-def test_a_post_copy_that_does_not_hash_to_the_post_bytes_is_never_used_for_the_temp_rule() -> None:
-    """A damaged post copy cannot make an outside save look like a cut write of ours."""
-    w = crashed(EFFECTS.index("create /w/L/inc:.a.bean.ft-s1-j7.tmp"))  # a.bean at pre, no temp
-    t = w.targets[0]
-    w.fs.outside_write(f"{SAVE_DIR}/0.post-a.bean", FOREIGN + b"and more\n")  # damaged
-    w.fs.outside_write(t.temp, FOREIGN)  # a prefix of the damaged copy, not of the post bytes
+# ---- S0061 round 3 (owner, 2026-10-30: "Staging name (Recommended)"; verifier r3 F1-F3, red team r3 F1-F3) -------
+
+
+def _first(effects: list[str], prefix: str, start: int = 0) -> int:
+    """The first effect at or after `start` whose label starts with `prefix` (found by prefix, so the same test runs
+    against the code before the staging name, for the base check)."""
+    return next(i for i in range(start, len(effects)) if effects[i].startswith(prefix))
+
+
+def _restore_swap(at: int) -> int:
+    """The effect index of the restore swap of main.bean in a recovery of the save crashed at `at`."""
+    probe = crashed(at)
+    n = len(probe.fs.effects)
+    recover(probe.fs)
+    return n + probe.fs.effects[n:].index("swap /w/L:.main.bean.ft-restore-s1-j7.tmp,main.bean")
+
+
+def test_R3_F1_an_in_place_write_right_after_the_restore_swap_survives_every_power_loss() -> None:
+    """Verifier r3 F1 (High), red team r3 F1: an editor writes main.bean in place right after our restore swap (into
+    the object our restore temp held); a power loss then drops whatever was not synced. The restore temp's name is
+    durable before its swap, so the editor's bytes keep a name in every state, and recovery never resolves past them."""
+    swap = _restore_swap(CLOSE)
+    w = crashed(CLOSE)
+    w.fs.inject(swap + 1, crash=True)  # recovery dies at the effect right after the restore swap
+    with pytest.raises(Crash):
+        recover(w.fs)
+    t = w.targets[2]
+    assert w.fs.file(t.path) == t.pre
+    w.fs.outside_write(t.path, FOREIGN)  # the editor's durable in-place save through the name
+    for state in w.fs.power_loss_states():
+        assert FOREIGN in _all_bytes(state), "the editor's bytes lost their only name"
+        out = recover(state)
+        assert FOREIGN in _all_bytes(state), f"the editor's bytes were deleted ({out})"
+        if isinstance(out, Resolved):
+            assert state.file(t.path) == FOREIGN
+
+
+def test_R3_F2a_an_outside_truncation_of_the_displaced_pre_object_beside_a_file_at_post_is_kept() -> None:
+    """Red team r3 F2a (reproduced on APFS): a program holding a descriptor on main.bean from before the save
+    shortens it in place after the save died past its swaps: its bytes land in the displaced pre object at our temp
+    name, a prefix of pre (and of post, since the save appended). Not ours: kept, the journal stops."""
+    w = crashed(FIRST_REMOVE)
+    t = w.targets[2]
+    assert t.pre is not None
+    assert (w.fs.file(t.path), w.fs.file(t.temp)) == (t.post, t.pre)
+    assert t.post.startswith(t.pre)
+    shortened = t.pre[:14]
+    w.fs.outside_write(t.temp, shortened)
     assert recover(w.fs) == Stopped(Cause.OUTSIDE_SAVE_IN_TEMP, t.path)
-    assert w.fs.file(t.kept) == FOREIGN
+    assert w.fs.file(t.kept) == shortened
+
+
+def test_R3_F2b_an_outside_truncation_of_the_displaced_post_object_beside_a_file_at_pre_is_kept() -> None:
+    """Red team r3 F2b: the mirror at the restore temp, after a crash right after a restore swap."""
+    swap = _restore_swap(CLOSE)
+    w = crashed(CLOSE)
+    w.fs.inject(swap + 1, crash=True)
+    with pytest.raises(Crash):
+        recover(w.fs)
+    t = w.targets[2]
+    assert (w.fs.file(t.path), w.fs.file(t.rtemp)) == (t.pre, t.post)
+    shortened = t.post[:12]  # a prefix of pre too
+    assert (t.pre or b"").startswith(shortened)
+    w.fs.outside_write(t.rtemp, shortened)
+    assert recover(w.fs) == Stopped(Cause.OUTSIDE_SAVE_IN_TEMP, t.path)
+    assert w.fs.file(t.kept) == shortened
+
+
+def test_R3_vF3_an_editors_truncating_save_left_at_our_temp_beside_a_file_at_pre_is_kept_in_every_power_loss() -> None:
+    """Verifier r3 F3: the F5 setting (an editor writes a.bean in place while our swap is unsynced) with an editor's
+    save that deletes the file's last characters: a prefix of our post bytes. A power loss that drops the swap leaves
+    it at our temp name beside a file at pre: kept, never deleted."""
+    swap = EFFECTS.index("swap /w/L/inc:.a.bean.ft-s1-j7.tmp,a.bean")
+    w = crashed(EFFECTS.index("sync /w/L/inc:", swap))
+    t = w.targets[0]
+    assert t.pre is not None
+    assert t.post.startswith(t.pre)
+    edited = t.pre[:11]
+    w.fs.outside_write(t.path, edited)  # in place, through the name our unsynced swap made
+    hit = 0
+    for state in w.fs.power_loss_states():
+        hit += state.file(t.temp) == edited
+        recover(state)
+        assert edited in _all_bytes(state), "the editor's save was deleted as a cut write of ours"
+    assert hit >= 1, "the power-loss state the attack needs was not reached"
+
+
+@pytest.mark.parametrize("target", [0, 1, 2])
+def test_R3_F3_a_staging_write_torn_in_any_shape_by_a_power_loss_blocks_nothing(target: int) -> None:
+    """Red team r3 F3, verifier r3 question: a real volume can tear an unsynced file with zeros or its tail before its
+    head, not only as a prefix (the fake now does both). The new bytes are written under the staging name, which no
+    swap touches, so whatever a power loss leaves there is ours and deleted: `CutTempNeverBlocks`."""
+    t = world().targets[target]
+    w = crashed(_first(EFFECTS, f"fsync {t.folder}:.{t.base}.ft-s1-j7."))  # written, its data not synced
+    states = list(w.fs.power_loss_states())
+    shapes = {s.file(n) for s in states for n in t.scratch} - {None}
+    assert bytes(len(t.post)) in shapes, "the zero-filled tear was reached"
+    for state in states:
+        out = recover(state)
+        check_recovered(state, w, out)
+
+
+def test_R3_F3_a_restore_staging_write_torn_in_any_shape_by_a_power_loss_blocks_nothing() -> None:
+    probe = crashed(CLOSE)
+    n = len(probe.fs.effects)
+    recover(probe.fs)
+    fsync = _first(probe.fs.effects, "fsync /w/L:.main.bean.ft-restore-s1-j7.", n)
+    w = crashed(CLOSE)
+    w.fs.inject(fsync, crash=True)  # recovery dies with the restore copy written but not synced
+    with pytest.raises(Crash):
+        recover(w.fs)
+    for state in w.fs.power_loss_states():
+        out = recover(state)
+        check_recovered(state, w, out)
+
+
+def test_a_leftover_staging_file_holding_any_bytes_is_deleted_and_blocks_nothing() -> None:
+    """Owner, 2026-10-30: "No swap ever touches the staging name, so whatever it holds is our own write and recovery
+    deletes it whatever it holds"."""
+    for data in (FOREIGN, b"", bytes(40)):
+        w = crashed(CLOSE)
+        t = w.targets[2]
+        w.fs.outside_write(t.staging, data)
+        w.fs.outside_write(t.rstaging, data)
+        out = recover(w.fs)
+        assert out == Resolved(NAME), data
+        assert (w.fs.file(t.staging), w.fs.file(t.rstaging)) == (None, None)
+        check_recovered(w.fs, w, out)
+
+
+@pytest.mark.parametrize("which", ["staging", "rstaging"])
+def test_a_non_file_at_a_staging_name_is_not_ours_kept_and_stops(which: str) -> None:
+    """Our staging write is always a regular file: a folder there is someone else's, moved to the kept name."""
+    w = crashed(CLOSE)
+    t = w.targets[2]
+    w.fs.outside_mkdirs(getattr(t, which))
+    assert recover(w.fs, listed=False) == Stopped(Cause.OUTSIDE_SAVE_IN_TEMP, t.path)
+    assert w.fs.snapshot()[t.kept] == ("dir",)
+
+
+def test_a_file_at_a_created_path_beside_our_staging_file_is_never_ours() -> None:
+    """@regression-guard (the created-path rule, red team r2 H1, held before with the temp name; this pins its staging
+    half): while our staging file is there, its rename to the temp name, and so the exclusive rename after it, never
+    happened; a file standing at the path is another program's, even with our post bytes."""
+    t = world().targets[1]
+    create = _first(EFFECTS, f"create {t.folder}:.{t.base}.ft-s1-j7.")
+    w = crashed(create + 3)  # the staging file written and synced, not yet renamed
+    w.fs.outside_write(t.path, t.post)
+    for state in (w.fs, *w.fs.power_loss_states()):
+        recover(state)
+        assert state.file(t.path) == t.post, "the other program's prices.bean was deleted"
+
+
+# The verifier's r3 F2 world: a save that rewrites inside the file (post differs from pre at byte 23), where every
+# other world appends (post = pre + more), so a prefix of pre is not a prefix of post.
+RW_PRE = b"2026-01-01 open Assets:A\n"
+RW_POST = b"2026-01-01 open Assets:B\n2026-01-02 *\n"
+
+
+def _rewrite_world() -> World:
+    from tests.ledger.worlds import BD, Target, commit_for
+
+    fs = MemFS()
+    for d in (JD, BD, "/w/L/inc"):
+        fs.outside_mkdirs(d)
+    fs.outside_write("/w/L/main.bean", b'include "inc/a.bean"\n')
+    fs.outside_write("/w/L/inc/a.bean", RW_PRE)
+    targets = (Target("/w/L/inc/a.bean", RW_PRE, RW_POST),)
+    return World(fs, commit_for(targets), targets, fs.snapshot())
+
+
+def test_R3_vF2_in_a_world_that_rewrites_inside_the_file_every_crash_of_the_save_and_of_recovery_resolves() -> None:
+    """Verifier r3 F2: the sweep of the save and of recovery in the rewrite world: a crash at every effect of the save
+    (the staging write cut at every offset), every power loss, recovery; and a crash at every effect of the recovery
+    of a save cut before its close (writes cut at 0, 24 and 25: past where pre and post differ), then every power
+    loss and recovery again."""
+    probe = _rewrite_world()
+    durable_commit(probe.fs, probe.commit)
+    save = probe.fs.effects
+    for at, label in enumerate(save):
+        for cut in (
+            [None, *range(len(RW_POST) + 1)] if ".ft-s1-j7.new" in label and label.startswith("write ") else [None]
+        ):
+            w = _rewrite_world()
+            w.fs.inject(at, crash=True, cut=cut)
+            with pytest.raises(Crash):
+                durable_commit(w.fs, w.commit)
+            for state in (w.fs, *w.fs.power_loss_states()):
+                check_recovered(state, w, recover(state))
+    close = save.index(f"rename {JD}:{NAME}.open,{NAME}.closed")
+
+    def crashed_rw() -> World:
+        w = _rewrite_world()
+        w.fs.inject(close, crash=True)
+        with pytest.raises(Crash):
+            durable_commit(w.fs, w.commit)
+        return w
+
+    r = crashed_rw()
+    n = len(r.fs.effects)
+    recover(r.fs)
+    for k, label in enumerate(r.fs.effects[n:]):
+        for cut in [None, 0, 24, 25] if label.startswith("write ") else [None]:
+            w = crashed_rw()
+            w.fs.inject(len(w.fs.effects) + k, crash=True, cut=cut)
+            with pytest.raises(Crash):
+                recover(w.fs)
+            for state in (w.fs, *w.fs.power_loss_states()):
+                check_disk(state, w)
+                check_recovered(state, w, recover(state))
+
+
+def test_a_folder_the_save_made_holding_only_our_staging_file_is_checked_for_removal_before_anything_is_written() -> (
+    None
+):
+    """Mutant `ours_in_without_staging`: a staging file is a name of ours the restore removes, so a folder the save
+    made that holds only it would be removed; its denied deletion stops the try at the checks, not half-way."""
+    t = world(new_dir=True).targets[1]
+    w = crashed(_first(NEW_DIR_EFFECTS, f"fsync {t.folder}:.{t.base}.ft-s1-j7.new"), new_dir=True)
+    assert w.fs.names_in(t.folder) == [f".{t.base}.ft-s1-j7.new"]
+    w.fs.outside_deny(t.folder, Right.DELETE)
+    _stops_with_nothing_written(w, Cause.PERMISSION, t.folder)

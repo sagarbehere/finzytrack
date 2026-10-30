@@ -17,21 +17,24 @@ next try can resolve.
 1. (`recover_journal` only) the ledger-set locks of every file the record names, without waiting, in `path_key`
    order (§8.1 step 1); one held: the journal is untouched, `Failed(lock_held)`.
 2. Every file checked: its folder's path guard (a folder the save made may be absent: its files are then absent);
-   no kept copy of this journal beside it; what the file (one `stat`, then its bytes), its save temp, its restore temp
-   and, for a file at post, its backup hold, judged by `core.recovery.judge`; both temps by the temp rule
-   (`core.recovery.classify_temp`, its one place: ours only when empty, a prefix of the bytes written into it, or
-   equal to the pre or post bytes; owner, 2026-10-29: "Refine the rule"), with the post copy of the save's backup
-   folder and the backup as the bytes a cut write is a prefix of; a created file at post is ours only while the
-   save's temp is gone (red team r2 H1); a file to restore must be a regular file with one link (the owner's rule,
+   no kept copy of this journal beside it; what the file (one `stat`, then its bytes), its four names of ours (the
+   save's temp and staging name, the restore temp and restore staging name: `journal.scratch_names`) and, for a file
+   at post, its backup hold, judged by `core.recovery.judge`; the names by the temp rule (owner, 2026-10-30:
+   "Staging name (Recommended)": a regular file at a staging name is ours whatever it holds,
+   `core.recovery.classify_staging`; a temp name is ours only when it equals the pre or the post bytes,
+   `classify_temp`); a created file at post is ours only while the save's temp and staging file are gone (red team
+   r2 H1); a file to restore must be a regular file with one link (the owner's rule,
    `handles.hard_links`), not locked, its extended attributes readable, allowed to be moved away, on a volume with
    the swap; a folder written in must allow entry changes; every folder the save made that would be removed must be
    removable from its parent. Any stop: `Stopped(cause)` with nothing written, with one exception: a temp that is not
    ours is moved to its kept name first, out of reach of every deletion.
-3. Each temp checked again by the temp rule right before its removal (not ours: kept, stop); the rollback's skipped
-   file keeps its temp until the journal is resolved (`_drop_skipped_temps`). Then root first (the record lists
-   children first, the root last; ADR-0012 F-5): the restore temp `.<name>.ft-restore-<session>-<job>.tmp` written
-   from the backup (hashed again) with the file's mode and extended attributes and synced, **swapped** in; for a
-   created file, **renamed aside** to the restore temp. What was displaced is ours when it is a regular file
+3. Each name of ours checked again by the temp rule right before its removal (not ours: kept, stop); the rollback's
+   skipped file keeps its temp until the journal is resolved (`_drop_skipped_temps`). Then root first (the record
+   lists children first, the root last; ADR-0012 F-5): the pre bytes (the backup, hashed again) written with the
+   file's mode and extended attributes under the restore staging name `.<name>.ft-restore-<session>-<job>.new` and
+   synced, renamed exclusively to the restore temp `.<name>.ft-restore-<session>-<job>.tmp`, that rename made durable
+   by the folder's sync (S0061 r3: verifier F1, red team F1), then **swapped** in; for a created file, **renamed
+   aside** to the restore temp. What was displaced is ours when it is a regular file
    byte-identical to the post (or pre) bytes (deleting it loses nothing) and is removed; anything else is an outside
    save in the moment between the check and the swap: moved to the kept name, `Stopped(displaced)`; the file keeps
    what now stands there. Every folder the record names synced; each folder the save made removed if it is empty,
@@ -44,7 +47,8 @@ rename failing: `Failed`). From step 3 on, an `OSError` stops at once: `Failed(i
 post (each swap and rename is whole), the journal `.open`, or `.resolved` when only the last sync failed (every file
 is then durably at pre). A crash leaves the journal `.open` (it was durable before the first write) with each file
 whole, and the next try is idempotent. An outside save displaced into a restore temp and left there by a crash, or by
-an I/O error on its move to the kept name, is kept by the next try (the temp rule), never deleted.
+an I/O error on its move to the kept name, is kept by the next try (the temp rule), never deleted; a write of ours
+cut off at a staging name is deleted by it, whatever shape a power loss tore it into.
 """
 
 from __future__ import annotations
@@ -63,8 +67,10 @@ from ledger_engine.ledger.core.recovery import (
     Cause,
     Seen,
     Stop,
+    Temps,
     TempState,
     Verdict,
+    classify_staging,
     classify_temp,
     judge,
     seen_file,
@@ -127,14 +133,11 @@ class _Checked:
     """What step 2 found for one file of the record."""
 
     entry: FileEntry
-    index: int
     parent: str
     base: str
     verdict: Verdict
     mode: int
     folder_absent: bool  # its folder is one the save made, and it is not there
-    post: bytes | None  # the post bytes (the post copy, or the file at post), when known
-    pre: bytes | None  # the pre bytes (the backup), when known
 
 
 def _parent(canonical: str) -> tuple[str, str]:
@@ -159,18 +162,28 @@ def _look(h: DirHandle, name: str, path: str) -> tuple[Seen, EntryStat | None, b
     return seen_file(data), st, data
 
 
-def _temp_state(h: DirHandle, name: str, held: tuple[str | None, ...], cut_of: bytes | None) -> TempState:
-    """The temp rule (`core.recovery.classify_temp`) for what stands at `name` now."""
+def _temp_state(h: DirHandle, name: str, held: tuple[str | None, ...], *, staged: bool) -> TempState:
+    """The temp rule for what stands at `name` now: a staging name (`staged`) by `classify_staging`, a temp name by
+    `classify_temp` (the module's docstring)."""
     st = h.stat(name)
     if st is None:
         return TempState.ABSENT
+    if staged:
+        return classify_staging(st.kind)
     data: bytes | None = None
     if st.kind is Kind.FILE:
         try:
             data = h.read(name)
         except OSError:
             data = None
-    return classify_temp(st.kind, data, held, cut_of)
+    return classify_temp(st.kind, data, held)
+
+
+_STAGED: tuple[bool, ...] = (False, True, False, True)  # which of `journal.scratch_names` are staging names
+
+
+def _temps(h: DirHandle, names: tuple[str, ...], held: tuple[str | None, ...]) -> Temps:
+    return Temps(*(_temp_state(h, n, held, staged=s) for n, s in zip(names, _STAGED, strict=True)))
 
 
 def _folder(handles: Handles, folder: str, created: frozenset[str]) -> DirHandle | None:
@@ -185,41 +198,22 @@ def _folder(handles: Handles, folder: str, created: frozenset[str]) -> DirHandle
     return None
 
 
-def _held_bytes(handles: Handles, record: Record, name: str | None, sha: str | None) -> bytes | None:
-    """The bytes of `name` in the save's backup folder when they hash to `sha`, else None (unknown)."""
-    if name is None or sha is None:
-        return None
-    try:
-        data = handles.at(record.backup_dir).read(name)
-    except (OSError, PathMovedError):
-        return None
-    return data if data is not None and sha256(data) == sha else None
-
-
-def _check(handles: Handles, record: Record, i: int, f: FileEntry, *, skip: bool, created: frozenset[str]) -> _Checked:
+def _check(handles: Handles, record: Record, f: FileEntry, *, skip: bool, created: frozenset[str]) -> _Checked:
     """Step 2 for one file (the module's docstring)."""
     path = f.canonical_path
     handles.on = path
     parent, base = _parent(path)
     h = _folder(handles, parent, created)
     if h is None:
-        v = judge(f, ABSENT, TempState.ABSENT, TempState.ABSENT, None, skip=skip)
+        v = judge(f, ABSENT, Temps(), None, skip=skip)
         if isinstance(v, Stop):
             raise _Halt(v.cause, path)
-        return _Checked(f, i, parent, base, v, 0, True, None, None)
+        return _Checked(f, parent, base, v, 0, True)
     if any(journal.is_kept_name(n, base, record.name) for n in h.names()):
         raise _Halt(Cause.KEPT_COPY, path)  # the user has not dealt with the kept copy yet (§11)
-    file, st, data = _look(h, base, path)
-    post = (
-        data
-        if file == Seen(Kind.FILE, f.post)
-        else _held_bytes(handles, record, journal.post_copy_name(i, base), f.post)
-    )
-    pre = _held_bytes(handles, record, f.backup, f.pre)
-    held = (f.pre, f.post)
-    rt = journal.restore_temp_name(base, record.name)
-    temp = _temp_state(h, f.temp, held, post)
-    rtemp = _temp_state(h, rt, held, pre)
+    file, st, _ = _look(h, base, path)
+    names = journal.scratch_names(base, record.name)
+    temps = _temps(h, names, (f.pre, f.post))
     backup: Seen | None = None
     if f.pre is not None and f.backup is not None and file == Seen(Kind.FILE, f.post) and not skip:
         try:
@@ -228,18 +222,17 @@ def _check(handles: Handles, record: Record, i: int, f: FileEntry, *, skip: bool
             raise _Halt(Cause.BACKUP_BAD, path) from None
         except OSError:
             backup = Seen(Kind.OTHER)
-    v = judge(f, file, temp, rtemp, backup, skip=skip)
+    v = judge(f, file, temps, backup, skip=skip)
     if isinstance(v, Stop):
-        if temp is TempState.FOREIGN:
-            keep(h, f.temp, base, record.name)  # out of reach of every deletion (owner, 2026-10-29)
-        if rtemp is TempState.FOREIGN:
-            keep(h, rt, base, record.name)
+        for n, state in zip(names, temps.states(), strict=True):
+            if state is TempState.FOREIGN:
+                keep(h, n, base, record.name)  # out of reach of every deletion (owner, 2026-10-29)
         raise _Halt(v.cause, path)
-    writes_here = v is Verdict.AT_POST or TempState.OURS in (temp, rtemp)
+    writes_here = v is Verdict.AT_POST or TempState.OURS in temps.states()
     if writes_here and not h.allowed(".", Right.CHANGE_ENTRIES):
         raise _Halt(Cause.PERMISSION, path)
     if v is not Verdict.AT_POST:
-        return _Checked(f, i, parent, base, v, 0, False, post, pre)
+        return _Checked(f, parent, base, v, 0, False)
     assert st is not None  # noqa: S101 (a file at post was seen by `_look`)
     if hard_links(st):
         raise _Halt(Cause.HARD_LINKED, path)
@@ -251,17 +244,17 @@ def _check(handles: Handles, record: Record, i: int, f: FileEntry, *, skip: bool
         raise _Halt(Cause.PERMISSION, path)  # the restore temp copies them (S0061 red team L1)
     if volume_without_swap(h):
         raise _Halt(Cause.VOLUME_NO_SWAP, path)
-    return _Checked(f, i, parent, base, v, st.mode, False, post, pre)
+    return _Checked(f, parent, base, v, st.mode, False)
 
 
 def _ours_in(record: Record, folder: str) -> set[str]:
-    """The names this restore may remove from `folder`: the record's files there (a created one at post), their
-    temps and restore temps, and the folders the save made in it."""
+    """The names this restore may remove from `folder`: the record's files there (a created one at post), their names
+    of ours (`journal.scratch_names`), and the folders the save made in it."""
     out: set[str] = set()
     for f in record.files:
         parent, base = _parent(f.canonical_path)
         if parent == folder:
-            out |= {base, f.temp, journal.restore_temp_name(base, record.name)}
+            out |= {base, *journal.scratch_names(base, record.name)}
     for d in record.created_dirs:
         parent, base = _parent(d.canonical_path)
         if parent == folder:
@@ -308,7 +301,7 @@ def _put_back(handles: Handles, record: Record, x: _Checked) -> None:
     f = x.entry
     handles.on = f.canonical_path
     h = handles.at(x.parent)
-    rt = journal.restore_temp_name(x.base, record.name)
+    _, _, rt, rs = journal.scratch_names(x.base, record.name)
     if f.pre is None:
         h.rename_excl(x.base, rt)  # aside first, then hashed (§6.4)
         _settle(h, rt, x, record, (f.post,))
@@ -317,15 +310,18 @@ def _put_back(handles: Handles, record: Record, x: _Checked) -> None:
     data = handles.at(record.backup_dir).read(f.backup)
     if data is None or sha256(data) != f.pre:
         raise _Halt(Cause.BACKUP_BAD, f.canonical_path)
-    h.create(rt, data, x.mode, like=x.base)  # its data synced before the swap (fidelity review 2, H1)
+    h.create(rs, data, x.mode, like=x.base)  # its data synced before the swap (fidelity review 2, H1)
+    h.rename_excl(rs, rt)  # exclusive: an entry that appeared there since its clean-up is never replaced (`Failed`)
+    h.sync()  # the restore temp's name durable before its swap (S0061 r3: verifier F1, red team F1)
     h.swap(rt, x.base)
     _settle(h, rt, x, record, (f.post, f.pre))
 
 
-def _clean(h: DirHandle, name: str, x: _Checked, record: Record, cut_of: bytes | None) -> None:
-    """A save temp or a restore temp, checked again by the temp rule right before its removal: ours is removed; an
-    outside save (written into it since step 2) is moved to the kept name, and the journal stops."""
-    state = _temp_state(h, name, (x.entry.pre, x.entry.post), cut_of)
+def _clean(h: DirHandle, name: str, x: _Checked, record: Record, *, staged: bool) -> None:
+    """A name of ours, checked again by the temp rule right before its removal: ours is removed; an outside save
+    (written into a temp since step 2, or anything not a regular file) is moved to the kept name, and the journal
+    stops."""
+    state = _temp_state(h, name, (x.entry.pre, x.entry.post), staged=staged)
     if state is TempState.FOREIGN:
         keep(h, name, x.base, record.name)
         raise _Halt(Cause.OUTSIDE_SAVE_IN_TEMP, x.entry.canonical_path)
@@ -352,8 +348,8 @@ def _restore_all(handles: Handles, record: Record, checked: list[_Checked], remo
             continue  # the skipped file's temp stays until the journal is resolved (`restore`)
         handles.on = x.entry.canonical_path
         h = handles.at(x.parent)
-        _clean(h, x.entry.temp, x, record, x.post)
-        _clean(h, journal.restore_temp_name(x.base, record.name), x, record, x.pre)
+        for n, staged in zip(journal.scratch_names(x.base, record.name), _STAGED, strict=True):
+            _clean(h, n, x, record, staged=staged)
     for x in reversed(checked):
         if x.verdict is Verdict.AT_POST:
             _put_back(handles, record, x)
@@ -385,7 +381,7 @@ def _drop_skipped_temps(handles: Handles, record: Record, checked: list[_Checked
             continue
         try:
             h = handles.at(x.parent)
-            if _temp_state(h, x.entry.temp, (x.entry.pre, x.entry.post), x.post) is TempState.OURS:
+            if _temp_state(h, x.entry.temp, (x.entry.pre, x.entry.post), staged=False) is TempState.OURS:
                 h.remove(x.entry.temp)
                 h.sync()
         except (OSError, PathMovedError):
@@ -422,10 +418,7 @@ def restore(
         except OSError:
             return Failed(Cause.IO_ERROR, None)
         try:
-            checked = [
-                _check(handles, record, i, f, skip=f.path_key == skip, created=created)
-                for i, f in enumerate(record.files)
-            ]
+            checked = [_check(handles, record, f, skip=f.path_key == skip, created=created) for f in record.files]
             _check_folders(handles, record, removable)
         except _Halt as e:
             return Stopped(e.cause, e.path)

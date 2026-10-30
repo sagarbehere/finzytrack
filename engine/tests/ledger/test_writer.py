@@ -104,17 +104,22 @@ def test_the_effects_come_in_the_durable_order_of_step_8() -> None:
     assert bsync < part  # 8.1 before 8.2
     assert _index(e, f"fsync {JD}:{NAME}.part") < _index(e, f"rename {JD}:{NAME}.part,{NAME}.open")
     jsync = _index(e, f"sync {JD}:", _index(e, f"rename {JD}:{NAME}.part,{NAME}.open"))
-    first_replace = min(i for i, x in enumerate(e) if x.startswith(("swap ", "rename /w/L")))
+    first_replace = min(i for i, x in enumerate(e) if _is_replace(x))
     assert jsync < first_replace  # the .open journal durable before the first replace
     order: list[int] = []
     for t in w.targets:
         base = t.path.rpartition("/")[2]
-        tmp = f".{base}.ft-s1-j7.tmp"
-        fsync = _index(e, f"fsync {t.folder}:{tmp}")
+        tmp, new = f".{base}.ft-s1-j7.tmp", f".{base}.ft-s1-j7.new"
+        fsync = _index(e, f"fsync {t.folder}:{new}")
+        named = _index(e, f"rename {t.folder}:{new},{tmp}", fsync)
+        nsync = _index(e, f"sync {t.folder}:", named)
         act = _index(e, f"swap {t.folder}:{tmp},{base}" if t.pre else f"rename {t.folder}:{tmp},{base}", fsync)
         dsync = _index(e, f"sync {t.folder}:", act)
         order.append(act)
-        assert fsync < act < dsync  # temp synced before its replace; the folder synced after it
+        # the new bytes written and synced under the staging name, renamed to the temp name, that rename made durable
+        # by the folder's sync, and only then the replace (owner, 2026-10-30: "Staging name"); the folder synced after
+        assert fsync < named < nsync < act < dsync
+        assert not any(x.startswith(f"create {t.folder}:{tmp}") for x in e), "nothing is ever written at a temp name"
     assert order == sorted(order)  # the plan's order: children first, the root last
     removes = [i for i, x in enumerate(e) if x.startswith("remove ")]
     assert len(removes) == 2
@@ -138,7 +143,7 @@ def _cuts(label: str) -> list[int | None]:
     """A write is cut at every offset for a temp (§14: "a temp cut off at every offset"), at a stride for the rest."""
     if not label.startswith("write "):
         return [None]
-    if ".ft-s1-j7.tmp" in label:
+    if ".ft-s1-j7.new" in label:  # the staging write (owner, 2026-10-30: "Staging name")
         return [None, *range(64)]
     return [None, 0, 1, 2, 7, 64, 200, 500]
 
@@ -201,7 +206,13 @@ def test_an_io_error_at_every_effect_is_rolled_back_and_told_not_saved_in_every_
         check_recovered(w.fs, w, None)
 
 
-FIRST_REPLACE = min(i for i, x in enumerate(clean_run()[0].fs.effects) if x.startswith(("swap /w/L", "rename /w/L")))
+def _is_replace(label: str) -> bool:
+    """A swap with a ledger file, or the exclusive rename of a temp onto one (not a staging file's rename to its temp
+    name, which replaces nothing)."""
+    return label.startswith("swap /w/L") or (label.startswith("rename /w/L") and not label.endswith(".tmp"))
+
+
+FIRST_REPLACE = min(i for i, x in enumerate(clean_run()[0].fs.effects) if _is_replace(x))
 OPEN_RENAME = clean_run()[0].fs.effects.index(f"rename {JD}:{NAME}.part,{NAME}.open")
 
 
@@ -301,13 +312,13 @@ def test_a_failed_close_is_rolled_back_and_never_leaves_a_closed_record_over_res
 def test_a_full_disk_after_the_journal_is_durable_and_before_the_first_replace_is_resolved_and_not_saved() -> None:
     """§14 model finding L10, §6.4 last bullet: every file at pre, the journal `.resolved`, the temps deleted."""
     base, _ = clean_run()
-    at = _index(base.fs.effects, "write /w/L/inc:.a.bean.ft-s1-j7.tmp")
+    at = _index(base.fs.effects, "write /w/L/inc:.a.bean.ft-s1-j7.new")
     w = world()
     w.fs.inject(at, crash=False, err=errno.ENOSPC, cut=5)
     out = durable_commit(w.fs, w.commit)
     assert out == NotSaved(Step.REPLACE, Reason.IO_ERROR, True, path="/w/L/inc/a.bean")
     assert set(journals(w.fs)) == {State.RESOLVED}
-    assert w.fs.file(w.targets[0].temp) is None
+    assert all(w.fs.file(n) is None for n in w.targets[0].scratch)
     check_recovered(w.fs, w, None)
 
 
@@ -373,7 +384,7 @@ def test_a_folder_swapped_for_a_link_between_the_check_and_the_write_is_still_wr
     """§6.3: the check and the write use one descriptor, so a link put in the folder's place after the check is never
     followed: the write lands in the folder that was checked (now moved), and the next check stops the save."""
     w = world()
-    _hook(w.fs, "create /w/L/inc:.a.bean.ft-s1-j7.tmp", _swap_folder_for_link(w))
+    _hook(w.fs, "create /w/L/inc:.a.bean.ft-s1-j7.new", _swap_folder_for_link(w))
     out = durable_commit(w.fs, w.commit)
     assert isinstance(out, Unfinished)
     assert out.reason is Reason.PATH_MOVED
@@ -442,7 +453,7 @@ def test_a_created_file_in_a_created_folder_lands_and_its_folder_is_recorded() -
     assert [d.path_key for d in out.record.created_dirs] == ["/w/l/y2026"]
     assert w.fs.file("/w/L/y2026/prices.bean") == w.targets[1].post
     mk = _index(w.fs.effects, "mkdir /w/L:y2026")
-    assert _index(w.fs.effects, "sync /w/L:", mk) < _index(w.fs.effects, "create /w/L/y2026:.prices.bean.ft-s1-j7.tmp")
+    assert _index(w.fs.effects, "sync /w/L:", mk) < _index(w.fs.effects, "create /w/L/y2026:.prices.bean.ft-s1-j7.new")
 
 
 def _effect_count(w: World) -> int:
@@ -782,7 +793,7 @@ def test_a_hard_link_made_between_the_pre_swap_check_and_the_swap_is_never_told_
     w = world()
     w.fs.outside_mkdirs("/w/Backup")
     _hook(
-        w.fs, "create /w/L:.main.bean.ft-s1-j7.tmp", lambda: w.fs.outside_link("/w/L/main.bean", "/w/Backup/copy.bean")
+        w.fs, "create /w/L:.main.bean.ft-s1-j7.new", lambda: w.fs.outside_link("/w/L/main.bean", "/w/Backup/copy.bean")
     )
     out = durable_commit(w.fs, w.commit)
     assert out == NotSaved(Step.REPLACE, Reason.HARD_LINKED, True, path="/w/L/main.bean")
@@ -887,7 +898,7 @@ def test_an_io_error_names_the_file_the_writer_was_on() -> None:
     base, _ = clean_run()
     for label, path in (
         (f"fsync {SAVE_DIR}:2-main.bean", "/w/L/main.bean"),
-        ("fsync /w/L/inc:.a.bean.ft-s1-j7.tmp", "/w/L/inc/a.bean"),
+        ("fsync /w/L/inc:.a.bean.ft-s1-j7.new", "/w/L/inc/a.bean"),
         ("swap /w/L:.main.bean.ft-s1-j7.tmp,main.bean", "/w/L/main.bean"),
         (f"rename {JD}:{NAME}.part,{NAME}.open", None),
     ):
@@ -1093,7 +1104,7 @@ def test_A2_an_outside_save_with_the_pre_bytes_at_the_swap_is_ours_and_a_second_
     second = b"; outside 2: the user's real edit\n"
 
     def on(_: int, label: str) -> None:
-        if label == "create /w/L:.main.bean.ft-s1-j7.tmp":
+        if label == "create /w/L:.main.bean.ft-s1-j7.new":
             w.fs.outside_write(t.path, t.pre or b"", new_inode=True)
         if label == "sync /w/L:" and w.fs.file(t.path) == t.post:
             w.fs.on_effect = None
@@ -1118,7 +1129,7 @@ def test_a_file_replaced_by_another_with_the_same_bytes_before_the_swap_loses_no
 
     def hook(_: int, label: str) -> None:
         nonlocal replaced
-        if label == "create /w/L:.main.bean.ft-s1-j7.tmp" and not replaced:
+        if label == "create /w/L:.main.bean.ft-s1-j7.new" and not replaced:
             replaced = True
             w.fs.outside_write("/w/L/main.bean", pre, new_inode=True)
 
@@ -1136,7 +1147,7 @@ def test_a_second_outside_save_after_the_first_was_kept_is_kept_too() -> None:
     t = w.targets[2]
 
     def on(_: int, label: str) -> None:
-        if label == "create /w/L:.main.bean.ft-s1-j7.tmp":
+        if label == "create /w/L:.main.bean.ft-s1-j7.new":
             w.fs.outside_write(t.path, first, new_inode=True)
         if label == "rename /w/L:.main.bean.ft-s1-j7.tmp,main.bean.kept-s1-j7":
             w.fs.outside_write(t.path, second, new_inode=True)
@@ -1192,7 +1203,7 @@ def test_the_save_keeps_an_outside_save_itself_when_its_rollback_stops_on_anothe
     second = b"; another outside save\n"
 
     def on(_: int, label: str) -> None:
-        if label == "create /w/L:.main.bean.ft-s1-j7.tmp":
+        if label == "create /w/L:.main.bean.ft-s1-j7.new":
             w.fs.outside_write(a.path, FOREIGN)  # a.bean, already replaced, changed in place
         if label == "swap /w/L:.main.bean.ft-s1-j7.tmp,main.bean":
             w.fs.outside_write(t.path, second)
@@ -1243,3 +1254,73 @@ def test_a_created_folder_at_a_files_kept_name_is_refused_before_the_first_effec
     with pytest.raises(ValueError, match="temp_name_taken"):
         durable_commit(w.fs, c)
     assert w.fs.effects == []
+
+
+# ---- S0061 round 3 (owner, 2026-10-30: "Staging name (Recommended)") ---------------------------------------------
+
+
+@pytest.mark.parametrize("staged", [".main.bean.ft-s1-j7.new", ".main.bean.ft-restore-s1-j7.new"])
+def test_a_target_at_a_staging_name_or_an_entry_standing_at_one_is_refused_before_the_first_effect(staged: str) -> None:
+    """Recovery deletes whatever stands at a staging name (§6.4), so no ledger file may sit at one, nor inside one,
+    and a save never starts while a stranger stands at one of its staging names (it would be deleted)."""
+    w = world()
+    for path in (f"/w/L/{staged}", f"/w/L/{staged}/x.bean"):
+        c = replace(w.commit, changes=(Change(path, None, b"x\n"), w.commit.changes[2]))
+        with pytest.raises(ValueError, match="temp_name_taken"):
+            durable_commit(w.fs, c)
+    w.fs.outside_write(f"/w/L/{staged}", b"someone else's\n")
+    out = durable_commit(w.fs, w.commit)
+    assert out == NotSaved(Step.BACKUP, Reason.CHANGED, True, path="/w/L/main.bean")
+    assert w.fs.effects == []
+    assert w.fs.file(f"/w/L/{staged}") == b"someone else's\n"
+    w2 = world()
+    created = staged.replace("main.bean", "prices.bean")
+    w2.fs.outside_write(f"/w/L/{created}", b"someone else's\n")
+    assert durable_commit(w2.fs, w2.commit) == NotSaved(Step.BACKUP, Reason.CHANGED, True, path="/w/L/prices.bean")
+
+
+def test_an_in_place_write_right_after_the_rollbacks_restore_swap_survives_every_power_loss() -> None:
+    """Verifier r3 F1 for the rollback (it runs the same restore): the save fails after its swaps, its rollback dies
+    right after putting main.bean back, an editor writes main.bean in place, and a power loss drops what was not
+    synced: the editor's bytes keep a name in every state, and recovery never deletes them."""
+    base, _ = clean_run()
+    at = _index(base.fs.effects, "remove /w/L/inc:.a.bean.ft-s1-j7.tmp")  # every file at post
+    probe = world()
+    probe.fs.inject(at, crash=False)
+    durable_commit(probe.fs, probe.commit)
+    swap = _index(probe.fs.effects, "swap /w/L:.main.bean.ft-restore-s1-j7.tmp,main.bean", at + 1)
+    w = world()
+    w.fs.inject(at, crash=False)
+    w.fs.inject(swap + 1, crash=True)
+    with pytest.raises(Crash):
+        durable_commit(w.fs, w.commit)
+    t = w.targets[2]
+    assert w.fs.file(t.path) == t.pre
+    foreign = b"; an editor's save in place after the rollback's swap\n"
+    w.fs.outside_write(t.path, foreign)
+    for state in w.fs.power_loss_states():
+        files = {e[1] for e in state.snapshot().values() if e[0] == "file"}
+        assert foreign in files, "the editor's bytes lost their only name"
+        recover(state)
+        files = {e[1] for e in state.snapshot().values() if e[0] == "file"}
+        assert foreign in files, "the editor's bytes were deleted"
+
+
+def test_an_entry_that_appears_at_the_temp_name_before_the_staging_rename_stops_the_save_and_is_kept() -> None:
+    """The rename from the staging name to the temp name is exclusive: an entry that appeared there after the plan's
+    checks is never replaced; the save stops (`changed`), and the rollback moves it to the kept name."""
+    w = world()
+    t = w.targets[0]
+    stranger = b"; someone else's file at our temp name\n"
+    _hook(
+        w.fs,
+        f"rename {t.folder}:.{t.base}.ft-s1-j7.new,.{t.base}.ft-s1-j7.tmp",
+        lambda: w.fs.outside_write(t.temp, stranger),
+    )
+    out = durable_commit(w.fs, w.commit)
+    assert isinstance(out, NotSaved), out
+    assert (out.reason, out.open_journal) == (Reason.CHANGED, True)
+    assert w.fs.file(t.kept) == stranger
+    assert w.fs.file(t.path) == t.pre
+    for state in w.fs.power_loss_states():
+        assert stranger in {state.file(t.temp), state.file(t.kept)}

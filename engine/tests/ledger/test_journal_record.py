@@ -30,9 +30,11 @@ from ledger_engine.ledger.core.journal import (
     is_kept_name,
     kept_name,
     parse_file_name,
-    post_copy_name,
     record_name,
+    restore_staging_name,
     restore_temp_name,
+    scratch_names,
+    staging_name,
     temp_name,
 )
 
@@ -242,7 +244,7 @@ def test_a_record_whose_temps_collide_is_unreadable() -> None:
 
 
 def test_a_record_with_a_file_at_another_files_restore_temp_is_unreadable() -> None:
-    """S0061: recovery deletes restore temps without a check (§6.4), so no file or folder of a record may sit at one."""
+    """S0061: recovery deletes our restore temps (§6.4), so no file or folder of a record may sit at one."""
     a = RECORD.files[0]
     rtemp = restore_temp_name("a.bean", RECORD.name)
     assert rtemp == ".a.bean.ft-restore-s1-j7.tmp"
@@ -312,9 +314,52 @@ def test_every_derived_name_carries_the_session_and_the_job() -> None:
     for bad in ("j7", "s1-j-7", "-j7", "s1-"):
         with pytest.raises(ValueError, match="tag"):
             temp_name("main.bean", bad)
-    assert post_copy_name(0, "main.bean") == "0.post-main.bean"
-    assert post_copy_name(0, "main.bean") != backup_name(0, "main.bean")
-    assert len(post_copy_name(3, "a" * 254).encode()) <= 255
+    for name in (staging_name("main.bean", "s1-j7"), restore_staging_name("main.bean", "s1-j7")):
+        assert "s1-j7" in name
+
+
+def test_staging_names_are_stable_within_name_max_and_distinct_from_every_other_derived_name() -> None:
+    """Owner, 2026-10-30: "Staging name (Recommended)": the new bytes are written first under `.<name>.ft-<session>-
+    <job>.new` (a restore's under `.<name>.ft-restore-<session>-<job>.new`), never under a name a swap touches."""
+    assert staging_name("main.bean", "s1-j7") == ".main.bean.ft-s1-j7.new"
+    assert restore_staging_name("main.bean", "s1-j7") == ".main.bean.ft-restore-s1-j7.new"
+    assert scratch_names("main.bean", "s1-j7") == (
+        ".main.bean.ft-s1-j7.tmp",
+        ".main.bean.ft-s1-j7.new",
+        ".main.bean.ft-restore-s1-j7.tmp",
+        ".main.bean.ft-restore-s1-j7.new",
+    )
+    for name in ("main.bean", "a" * 250, "a" * 255):
+        names = scratch_names(name, "s1-j7")
+        assert len(set(names)) == 4, name
+        assert all(len(n.encode()) <= 255 for n in names), name
+        assert kept_name(name, "s1-j7") not in names
+        assert scratch_names(name, "s1-j7") == names
+
+
+@pytest.mark.parametrize("which", [staging_name, restore_staging_name])
+def test_a_record_with_a_file_at_another_files_staging_name_is_unreadable(which: Callable[[str, str], str]) -> None:
+    """Recovery deletes what stands at a staging name whatever it holds (§6.4), so no file or folder of a record may
+    sit at one."""
+    a = RECORD.files[0]
+    sn = which("a.bean", RECORD.name)
+    at_sn = FileEntry(f"/w/L/inc/{sn}", f"/w/l/inc/{sn}", None, "4" * 64, None, temp_name(sn, "s1-j7"))
+    bad = replace(RECORD, files=(a, at_sn), created_dirs=())
+    with pytest.raises(ValueError, match="temp_is_a_path"):
+        encode(bad)
+    obj = json.loads(encode(replace(bad, files=bad.files[:1])))
+    f = bad.files[1]
+    obj["files"].append(
+        {"canonical_path": f.canonical_path, "path_key": f.path_key, "pre": f.pre, "post": f.post, "backup": None}
+        | {"temp": f.temp}
+    )
+    data = (json.dumps(obj, sort_keys=True, separators=(",", ":"), ensure_ascii=False) + "\n").encode()
+    assert isinstance(decode(data), Unreadable)
+    inside = FileEntry(
+        f"/w/L/inc/{sn}/x.bean", f"/w/l/inc/{sn}/x.bean", None, "5" * 64, None, temp_name("x.bean", "s1-j7")
+    )
+    with pytest.raises(ValueError, match="temp_is_a_path"):
+        encode(replace(RECORD, files=(a, inside), created_dirs=(DirEntry(f"/w/L/inc/{sn}", f"/w/l/inc/{sn}"),)))
 
 
 def test_a_record_with_a_created_folder_at_a_files_kept_name_is_unreadable() -> None:

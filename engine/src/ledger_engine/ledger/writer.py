@@ -6,28 +6,28 @@ S0060): what a save does after its commit point (§6.1 step 7), through the file
    locked (`uchg`), not hard-linked (`handles.hard_links`, the owner's decision point), the same object its
    canonical path names (`st_dev`, `st_ino`); a created path free of any entry (a dangling link included) under an
    existing folder. The plan as a whole: one entry per `path_key`, no target inside another target's path, no target
-   at another's temp or restore-temp name and no entry standing at one, the folders the save makes once each and never
-   two that differ only in case, no target in the journal or backup folder, and neither of those folders inside a
-   folder the save writes in.
+   at or under another's temp, staging, restore-temp or restore-staging name (`journal.scratch_names`) or kept name
+   and no entry standing at one, the folders the save makes once each and never two that differ only in case, no
+   target in the journal or backup folder, and neither of those folders inside a folder the save writes in.
 1. **Backups:** this save's backup folder `<backups_dir>/<session>-<job>/` made and its parent synced; each file the
    save replaces read through a handle on its folder (checked to be the same object again), hashed against the
    planned pre hash (a file not at its pre bytes refuses: nothing was replaced), written as `<n>-<name>` and synced,
-   read back and hashed again (ADR-0012 F-1); with them a post copy of every file (`journal.post_copy_name`, for
-   recovery's temp rule: S0061 round 2); the backup folder synced.
+   read back and hashed again (ADR-0012 F-1); the backup folder synced.
 2. **Journal:** the record (`ledger.core.journal`) written as `<session>-<job>.part` and synced, renamed `.open`, the
    journal folder synced. It names every file by `canonical_path` and `path_key`, resolved at step 1.
 3. **Per file, in the plan's order** (the caller orders children first and the root last): each directory the save
    creates made and its parent synced; the path guard (the folder's handle is still at the recorded canonical path,
-   checked through the descriptor the write uses, §6.3); the temp `.<name>.ft-<session>-<job>.tmp` written with the
-   file's mode and extended attributes (not its ACL: owner, 2026-10-29), synced, and its entry made durable by the
-   folder's sync; a **swap** with the file, and the
-   displaced entry checked to be the planned object holding the pre bytes (§6.4: anything else is an outside save:
-   swapped back at once and the folder synced, so it is kept); for a file the save creates, an **exclusive rename**
-   that fails if a file appeared; the folder synced. Each folder the save creates is made once, before the first
-   file in it.
-4. **Read-back:** every written file equals its post bytes; then each temp, checked to still be the displaced object
-   holding the pre bytes (an outside program may write through a descriptor it held: those bytes are kept, and the
-   save stops unfinished, §6.4), removed, and the folders synced.
+   checked through the descriptor the write uses, §6.3); the new bytes written under the **staging name**
+   `.<name>.ft-<session>-<job>.new` with the file's mode and extended attributes (not its ACL: owner, 2026-10-29) and
+   synced, renamed exclusively to the temp name `.<name>.ft-<session>-<job>.tmp`, and that rename made durable by the
+   folder's sync (owner, 2026-10-30: "Staging name (Recommended)": the temp name then only ever holds our synced bytes
+   or the displaced old object); a **swap** with the file, and what it displaced checked (§6.4: the pre or the post
+   bytes are ours; anything else is an outside save, moved at once to its kept name, and the save stops); for a file
+   the save creates, an **exclusive rename** of the temp to the path that fails if a file appeared; the folder synced.
+   Each folder the save creates is made once, before the first file in it.
+4. **Read-back:** every written file equals its post bytes; then each temp, checked to still hold the pre (or post)
+   bytes (an outside program may write through a descriptor it held: those bytes go to the kept name, and the save
+   stops, §6.4), removed, and the folders synced.
 5. **Close:** `.open` renamed `.closed` and the journal folder synced. `Landed` is returned exactly then.
 
 **The step rule.** Every port operation may raise `OSError`, and the process may die at any of them. A failure
@@ -35,9 +35,9 @@ before the journal's rename to `.open` is not a rollback (§6.4: nothing was rep
 true only after every target was hashed again and equals its pre bytes (§11); backups and a `.part` may be left
 (recover-all removes a `.part`, §6.1 step 8.2). **Any failure from that rename on rolls back at once** (§6.4,
 S0061): the restore of `ledger.restore` on this save's own record, which first applies recovery's checks (the temp
-rule included), leaves the file whose outside save the save kept as it is (a displaced outside save swapped back, a
-file that appeared at a created path), removes only the folders this save made, and after a failed close renames a
-`.closed` record back to `.open` first, so no power loss shows "saved" over restored files. The outcome then:
+rule included), leaves a file that appeared at a created path as it is, removes only the folders this save made,
+and after a failed close renames a `.closed` record back to `.open` first, so no power loss shows "saved" over
+restored files. The outcome then:
 - the rollback resolved the journal (or no `.open` record was ever made): `NotSaved`, `open_journal` false;
 - it did not (a cause found, an I/O error), before the first replace (the first swap or exclusive rename of a ledger
   file): `NotSaved` with `open_journal` true, which pauses the workspace's writes until recovery resolves it;
@@ -183,9 +183,9 @@ class _Target:
     parent_key: str
     base: str
     temp: str
-    temp_key: str
-    rtemp: str  # the restore temp's name (§6.4), never taken either
-    rtemp_key: str
+    staging: str  # where the new bytes are written first (owner, 2026-10-30: "Staging name (Recommended)")
+    scratch: tuple[str, ...]  # every name of ours beside the file (`journal.scratch_names`), never taken by another
+    scratch_keys: tuple[str, ...]
     identity: tuple[int, int] | None  # the replaced file's (st_dev, st_ino); None for a created file
     new_dirs: tuple[tuple[str, str], ...]  # (canonical, key) of the folders the save makes for it, parents first
     rest: tuple[str, ...]  # the components that did not exist at resolution
@@ -276,11 +276,9 @@ def _target(fs: FileSystem, handles: Handles, index: int, c: Commit, ch: Change)
     base = check_name(parts[-1])
     parent, parent_key = "/" + "/".join(parts[:-1]), "/" + "/".join(kparts[:-1])
     tag = journal.record_name(c.session, c.job)
-    temp = journal.temp_name(base, tag)
-    temp_key = _join(parent_key, fold(temp, r.rules[-1]))
-    rtemp = journal.restore_temp_name(base, tag)
-    rtemp_key = _join(parent_key, fold(rtemp, r.rules[-1]))
-    names = (temp, temp_key, rtemp, rtemp_key)
+    scratch = journal.scratch_names(base, tag)
+    keys = tuple(_join(parent_key, fold(n, r.rules[-1])) for n in scratch)
+    names = (scratch[0], scratch[1], scratch, keys)
     if not r.rest:
         return _Target(index, ch, canonical, key, parent, parent_key, base, *names, r.identity, (), (), tag)
     n = len(r.existing)
@@ -309,7 +307,7 @@ def _check_target(handles: Handles, t: _Target) -> None:
             raise _Stop(Reason.PERMISSION, t.canonical)  # the swap moves it away; an ACL denies that (deny delete)
         if not h.allowed(t.base, Right.READ_XATTRS):
             raise _Stop(Reason.PERMISSION, t.canonical)  # its extended attributes could not be copied to the temp
-        if h.stat(t.temp) is not None or h.stat(t.rtemp) is not None or not t.kept_free(h):
+        if any(h.stat(n) is not None for n in t.scratch) or not t.kept_free(h):
             raise _Stop(Reason.CHANGED, t.canonical)  # an entry stands at our temp name (S0060 red team r2 L2)
         return
     if t.change.pre is not None:
@@ -323,9 +321,7 @@ def _check_target(handles: Handles, t: _Target) -> None:
     if holder.stat(t.rest[0]) is not None:
         raise _Stop(Reason.CHANGED, t.canonical)  # an entry stands at the path (a dangling link, S0060 verifier F3)
     _check_folder(holder, t.canonical)
-    if len(t.rest) == 1 and (
-        holder.stat(t.temp) is not None or holder.stat(t.rtemp) is not None or not t.kept_free(holder)
-    ):
+    if len(t.rest) == 1 and (any(holder.stat(n) is not None for n in t.scratch) or not t.kept_free(holder)):
         raise _Stop(Reason.CHANGED, t.canonical)  # an entry stands at our temp name
 
 
@@ -342,14 +338,13 @@ def _prepare(fs: FileSystem, handles: Handles, c: Commit, targets: tuple[_Target
             if a is not b and _within(b.key, a.key):
                 raise BadPlanError("file_inside_file")  # a target is a folder another target is in
             if a is not b and (
-                _within(b.key, a.temp_key)
-                or _within(b.key, a.rtemp_key)
+                any(_within(b.key, k) for k in a.scratch_keys)
                 or (b.parent_key == a.parent_key and journal.is_kept_name(b.base, a.base, a.tag))
                 or any(  # a folder the save makes at a kept name (S0061 red team r2 L2)
                     dk.rpartition("/")[0] == a.parent_key and journal.is_kept_name(dc.rpartition("/")[2], a.base, a.tag)
                     for dc, dk in b.new_dirs
                 )
-                or {b.temp_key, b.rtemp_key} & {a.temp_key, a.rtemp_key}
+                or set(b.scratch_keys) & set(a.scratch_keys)
             ):
                 raise BadPlanError("temp_name_taken")  # recovery deletes temps (S0060 red team 7, r2 L1); a folder the
                 # save makes at a temp name is covered too: a target file is inside it
@@ -410,12 +405,6 @@ def _backups(handles: Handles, plan: _Plan, name: str) -> dict[str, str]:
         if back is None or sha256(back) != t.change.pre:
             raise _Stop(Reason.IO_ERROR, t.canonical)  # ADR-0012 F-1
         names[t.key] = bname
-    for t in plan.targets:
-        handles.on = t.canonical
-        # the post bytes, for recovery to tell a temp cut off while written (a prefix of them) from an outside
-        # save, even when the file is back at pre (S0061 r2; owner, 2026-10-29: "Refine the rule"); read only when
-        # they hash to the recorded post hash, so no read-back is needed here
-        folder.create(journal.post_copy_name(t.index, t.base), t.change.post, BACKUP_MODE)
     handles.on = None
     folder.sync()
     return names
@@ -471,6 +460,22 @@ def _check_displaced(h: DirHandle, name: str, t: _Target) -> None:
     raise _Stop(Reason.CHANGED, t.canonical)
 
 
+def _stage(h: DirHandle, t: _Target, mode: int, like: str | None) -> None:
+    """The new bytes at the temp name, by way of the staging name (owner, 2026-10-30: "Staging name (Recommended)"):
+    written and synced under the staging name, renamed exclusively to the temp name, and that rename made durable by
+    the folder's sync before the swap or the exclusive rename that follows. A cut or torn write is then only ever at
+    the staging name, which recovery deletes whatever it holds; and if a power loss drops the swap, whatever an editor
+    wrote in place through the file's name meanwhile is in an object with a durable name, our temp's, which the temp
+    rule keeps (S0061 verifier r2 F2, red team r2 M1). An entry that appeared at the temp name is never replaced: the
+    save stops (`changed`), and the rollback's temp rule keeps it."""
+    h.create(t.staging, t.change.post, mode, like=like)
+    try:
+        h.rename_excl(t.staging, t.temp)
+    except FileExistsError:
+        raise _Stop(Reason.CHANGED, t.canonical) from None
+    h.sync()
+
+
 def _replace(handles: Handles, t: _Target, progress: _Progress) -> None:
     """Step 8.3 for one file."""
     handles.on = t.canonical
@@ -488,8 +493,7 @@ def _replace(handles: Handles, t: _Target, progress: _Progress) -> None:
         h.sync()
     h = handles.at(t.parent)
     if t.change.pre is None:
-        h.create(t.temp, t.change.post, CREATED_MODE)
-        h.sync()  # the temp durable first: while it stands there, recovery takes the path for another program's
+        _stage(h, t, CREATED_MODE, None)  # durable first: while it stands there, recovery takes the path for another's
         before = progress.replaced
         progress.replaced = True  # an exclusive rename that answers an error may still have happened...
         try:
@@ -501,13 +505,9 @@ def _replace(handles: Handles, t: _Target, progress: _Progress) -> None:
         h.sync()
         return
     st = _check_replaced(h.stat(t.base), t.identity, t.canonical)
-    h.create(t.temp, t.change.post, st.mode, like=t.base)
+    _stage(h, t, st.mode, t.base)
     if h.stat(t.temp) is None:
         raise _Stop(Reason.CHANGED, t.canonical)  # our temp vanished before the swap
-    # the temp's entry durable before the swap: if a power loss then drops the swap, whatever an editor wrote in place
-    # through the file's name meanwhile is in an object that still has a durable name, our temp's, which the temp rule
-    # keeps (S0061 verifier r2 F2, red team r2 M1)
-    h.sync()
     progress.replaced = True
     h.swap(t.temp, t.base)
     _check_displaced(h, t.temp, t)
