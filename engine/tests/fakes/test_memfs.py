@@ -347,3 +347,25 @@ def test_a_removed_folders_handle_answers_its_old_path_as_apfs_does() -> None:
         d.rmdir("gone")
     assert h.path() == "/d/gone"
     h.sync()
+
+
+def test_sync_file_makes_an_unsynced_in_place_write_durable_and_refuses_what_is_not_a_regular_file() -> None:
+    """S0061 r4 (red team F2): an editor's in-place save not yet synced may be old, new or torn after a power loss;
+    `sync_file` (`F_FULLFSYNC` on a read-only descriptor in the real adapter) makes it durable. It is one effect,
+    never follows a link, and refuses a folder or a FIFO as `read` does."""
+    fs = fs_with("/d", "/d/sub")
+    fs.outside_write("/d/f", b"old bytes")
+    fs.outside_write("/d/f", b"new bytes")
+    fs.outside_unsynced("/d/f")
+    assert len(outcomes(fs, "/d/f")) > 1
+    fs.outside_symlink("/d/l", "/d/f")
+    fs.outside_fifo("/d/p")
+    with fs.open_dir("/d") as d:
+        d.sync_file("f")
+        assert fs.effects[-1] == "sync_file /d:f"
+        for name in ("l", "sub", "p"):
+            with pytest.raises(OSError, match=r"."):
+                d.sync_file(name)
+        with pytest.raises(FileNotFoundError):
+            d.sync_file("missing")
+    assert outcomes(fs, "/d/f") == {(b"new bytes",)}

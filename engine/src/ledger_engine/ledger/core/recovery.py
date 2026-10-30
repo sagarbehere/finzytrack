@@ -12,13 +12,18 @@ exclusively to the temp name, the rename synced before any swap. So:
   displaced, into which a program holding it open may have written: it is **ours** only when equal to the pre or the
   post bytes (`classify_temp`).
 Anything not ours (other bytes, a folder, a link, a FIFO) is an outside save, moved to its kept name, and the journal
-stops, whatever the file beside it holds. These two functions are the rule's one place.
+stops, whatever the file beside it holds. A regular file at a temp name whose bytes could not be read is neither
+(`unreadable`): the try fails with nothing written, and the next one reads it again (S0061 red team r4 O1: a transient
+read error made a kept copy of our own bytes). These two functions are the rule's one place.
 
 The file the temps sit beside, then:
 - at its pre bytes (a created file: absent): **at pre**;
 - at its post bytes: **at post** when, for a replaced file, the backup holds the pre bytes (ADR-0012 F-1), else stop;
-  for a created file, only while neither the save's temp nor its staging file is there: either means the exclusive
-  rename never happened, so the file at the path is another program's, whatever it holds (S0061 red team r2 H1);
+  for a created file, only while none of its four names of ours is there (the **created-path proof**): the save's
+  temp or staging file means the exclusive rename never happened (S0061 red team r2 H1), a restore temp means a try
+  already renamed our file aside (red team r4 F1), and a restore staging file is never written beside a created file;
+  so the file at the path is another program's, whatever it holds. The restore keeps those names until the journal is
+  durably resolved (`ledger.restore`);
 - anything else (other bytes, a folder, a link, a FIFO): stop.
 The rollback's skipped file (`skip`: a created path an outside file took before the save's exclusive rename, §6.4) is
 **kept** whatever it holds.
@@ -53,6 +58,7 @@ class TempState(StrEnum):
     ABSENT = "absent"
     OURS = "ours"  # deleting it loses nothing
     FOREIGN = "foreign"  # moved to its kept name, never deleted
+    UNREADABLE = "unreadable"  # a regular file whose bytes could not be read: the try fails, nothing written
 
 
 def classify_temp(kind: Kind | None, data: bytes | None, held: tuple[str | None, ...]) -> TempState:
@@ -60,13 +66,16 @@ def classify_temp(kind: Kind | None, data: bytes | None, held: tuple[str | None,
     file, None when it could not be read). `held`: the SHA-256 of the bytes we hold (pre and post)."""
     if kind is None:
         return TempState.ABSENT
-    if kind is Kind.FILE and data is not None and hashlib.sha256(data).hexdigest() in held:
-        return TempState.OURS
-    return TempState.FOREIGN
+    if kind is not Kind.FILE:
+        return TempState.FOREIGN
+    if data is None:
+        return TempState.UNREADABLE
+    return TempState.OURS if hashlib.sha256(data).hexdigest() in held else TempState.FOREIGN
 
 
 def classify_staging(kind: Kind | None) -> TempState:
-    """The temp rule at a staging name (the module's docstring): a regular file there is ours whatever it holds."""
+    """The temp rule at a staging name (the module's docstring): a regular file there is ours whatever it holds (its
+    bytes are never read, so it is never `unreadable`)."""
     if kind is None:
         return TempState.ABSENT
     return TempState.OURS if kind is Kind.FILE else TempState.FOREIGN
@@ -117,7 +126,10 @@ class Stop:
 
 def judge(entry: FileEntry, file: Seen, temps: Temps, backup: Seen | None, *, skip: bool = False) -> Verdict | Stop:
     """The verdict for one file (the module's docstring). `temps`: the names of ours beside it, by the temp rule.
-    `backup`: what the backup holds, None when not read."""
+    `backup`: what the backup holds, None when not read. `Stop(io_error)`: a name of ours could not be read, which the
+    restore tells as `Failed` and writes nothing for."""
+    if TempState.UNREADABLE in temps.states():
+        return Stop(Cause.IO_ERROR)
     if TempState.FOREIGN in temps.states():
         return Stop(Cause.OUTSIDE_SAVE_IN_TEMP)
     if skip:
@@ -127,8 +139,8 @@ def judge(entry: FileEntry, file: Seen, temps: Temps, backup: Seen | None, *, sk
     if file == pre:
         return Verdict.AT_PRE
     if file == post:
-        if entry.pre is None and (temps.temp is not TempState.ABSENT or temps.staging is not TempState.ABSENT):
-            return Stop(Cause.FOREIGN)  # the exclusive rename never happened: the file is another program's
+        if entry.pre is None and any(t is not TempState.ABSENT for t in temps.states()):
+            return Stop(Cause.FOREIGN)  # the created-path proof: the file is another program's
         if entry.pre is not None and backup != pre:
             return Stop(Cause.BACKUP_BAD)
         return Verdict.AT_POST

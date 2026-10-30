@@ -22,24 +22,33 @@ next try can resolve.
    at post, its backup hold, judged by `core.recovery.judge`; the names by the temp rule (owner, 2026-10-30:
    "Staging name (Recommended)": a regular file at a staging name is ours whatever it holds,
    `core.recovery.classify_staging`; a temp name is ours only when it equals the pre or the post bytes,
-   `classify_temp`); a created file at post is ours only while the save's temp and staging file are gone (red team
-   r2 H1); a file to restore must be a regular file with one link (the owner's rule,
+   `classify_temp`; a regular file there whose bytes cannot be read fails the try, `Failed(io_error)`, with nothing
+   written: red team r4 O1); a created file at post is ours only while none of its four names of ours is there (the
+   created-path proof: red team r2 H1, r4 F1); a file to restore must be a regular file with one link (the owner's rule,
    `handles.hard_links`), not locked, its extended attributes readable, allowed to be moved away, on a volume with
    the swap; a folder written in must allow entry changes; every folder the save made that would be removed must be
    removable from its parent. Any stop: `Stopped(cause)` with nothing written, with one exception: a temp that is not
    ours is moved to its kept name first, out of reach of every deletion.
-3. Each name of ours checked again by the temp rule right before its removal (not ours: kept, stop); the rollback's
-   skipped file keeps its temp until the journal is resolved (`_drop_skipped_temps`). Then root first (the record
+3. Each name of ours beside a replaced file checked again by the temp rule right before its removal (not ours: kept,
+   stop; unreadable: `Failed`); a created file's names of ours stay until the journal is resolved (step 5). Then root
+   first (the record
    lists children first, the root last; ADR-0012 F-5): the pre bytes (the backup, hashed again) written with the
    file's mode and extended attributes under the restore staging name `.<name>.ft-restore-<session>-<job>.new` and
    synced, renamed exclusively to the restore temp `.<name>.ft-restore-<session>-<job>.tmp`, that rename made durable
-   by the folder's sync (S0061 r3: verifier F1, red team F1), then **swapped** in; for a created file, **renamed
-   aside** to the restore temp. What was displaced is ours when it is a regular file
-   byte-identical to the post (or pre) bytes (deleting it loses nothing) and is removed; anything else is an outside
-   save in the moment between the check and the swap: moved to the kept name, `Stopped(displaced)`; the file keeps
-   what now stands there. Every folder the record names synced; each folder the save made removed if it is empty,
-   deepest first, then their parents synced.
+   by the folder's sync (S0061 r3: verifier F1, red team F1), then **swapped** in and the folder synced (no removal of
+   ours is ever durable before the swap it follows; every folder the record names is also synced before step 3's
+   first removal, for a swap a crashed save or try left unsynced: S0061 r4); for a created file, **renamed
+   aside** to the restore temp. What was displaced is ours when it is a regular file byte-identical to the post (or
+   pre) bytes (deleting it loses nothing): removed, except a created file's, which stays at the restore temp as the
+   proof; anything else is an outside save in the moment between the check and the swap: moved to the kept name,
+   `Stopped(displaced)`; the file keeps what now stands there. Every folder the record names synced.
 4. **Only then** `.open` renamed `.resolved` and the journal folder synced: `Resolved`.
+5. After that, the created files' names of ours removed by the temp rule and their folders synced, then each folder
+   the save made removed if it is empty, deepest first, and their parents synced (`_after_resolve`). Until the journal
+   is durably resolved those names are the proof that a file another program puts at a created path is not ours
+   (S0061 red team r4 F1: a try cut off after removing them, then a sync client bringing the file back, lost it), and
+   a folder holding them cannot be removed before. A crash or an error here leaves only our own bytes at those names
+   and the save's emptied folders beside a resolved journal (spec §15); the outcome stays `Resolved`.
 
 **The step rule.** Every port operation may raise `OSError`, and the process may die at any effect. In steps 0-2 an
 `OSError` or a cause found writes nothing to a ledger folder but a kept copy's rename (`Stopped`; step 0's own
@@ -53,7 +62,7 @@ cut off at a staging name is deleted by it, whatever shape a power loss tore it 
 
 from __future__ import annotations
 
-import errno
+import contextlib
 from collections.abc import Generator
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -90,8 +99,10 @@ from ledger_engine.ledger.handles import (
 @dataclass(frozen=True, slots=True)
 class Resolved:
     """The record is `.resolved` and durable; every file it names durably holds its pre bytes (a created file is
-    absent), except the rollback's skipped file; no temp or restore temp of the save is left, and no kept copy of
-    this journal; each folder the save made is gone unless it holds other entries (§8.1 step 4)."""
+    absent), except the rollback's skipped file; no kept copy of this journal; no temp or restore temp of the save is
+    left and each folder the save made is gone unless it holds other entries (§8.1 step 4), except what an error
+    after the resolve left (step 5 of the module's docstring: our own bytes at a created file's names, the save's
+    emptied folders, and an outside entry met there, never deleted)."""
 
     name: str
 
@@ -126,6 +137,11 @@ class _Halt(Exception):
         super().__init__(cause.value)
         self.cause = cause
         self.path = path
+
+
+class _Fail(_Halt):
+    """A name of ours whose bytes could not be read (`TempState.UNREADABLE`): `Failed(io_error)`, nothing written by
+    the check that met it, so the next try reads it again (S0061 red team r4 O1)."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -223,6 +239,8 @@ def _check(handles: Handles, record: Record, f: FileEntry, *, skip: bool, create
         except OSError:
             backup = Seen(Kind.OTHER)
     v = judge(f, file, temps, backup, skip=skip)
+    if isinstance(v, Stop) and v.cause is Cause.IO_ERROR:
+        raise _Fail(v.cause, path)  # a name of ours could not be read: nothing written, not even a kept copy
     if isinstance(v, Stop):
         for n, state in zip(names, temps.states(), strict=True):
             if state is TempState.FOREIGN:
@@ -304,8 +322,10 @@ def _put_back(handles: Handles, record: Record, x: _Checked) -> None:
     _, _, rt, rs = journal.scratch_names(x.base, record.name)
     if f.pre is None:
         h.rename_excl(x.base, rt)  # aside first, then hashed (§6.4)
-        _settle(h, rt, x, record, (f.post,))
-        return
+        if displaced(h, rt, (f.post,)) is Displaced.FOREIGN:
+            keep(h, rt, x.base, record.name)
+            raise _Halt(Cause.DISPLACED, f.canonical_path)
+        return  # ours: it stays at the restore temp, the created-path proof, until the resolve (`_after_resolve`)
     assert f.backup is not None  # noqa: S101 (decode: a backup exactly when there is a pre hash)
     data = handles.at(record.backup_dir).read(f.backup)
     if data is None or sha256(data) != f.pre:
@@ -314,6 +334,7 @@ def _put_back(handles: Handles, record: Record, x: _Checked) -> None:
     h.rename_excl(rs, rt)  # exclusive: an entry that appeared there since its clean-up is never replaced (`Failed`)
     h.sync()  # the restore temp's name durable before its swap (S0061 r3: verifier F1, red team F1)
     h.swap(rt, x.base)
+    h.sync()  # the swap durable before what it displaced is removed (S0061 r4: an in-place write, then a power loss)
     _settle(h, rt, x, record, (f.post, f.pre))
 
 
@@ -322,6 +343,8 @@ def _clean(h: DirHandle, name: str, x: _Checked, record: Record, *, staged: bool
     (written into a temp since step 2, or anything not a regular file) is moved to the kept name, and the journal
     stops."""
     state = _temp_state(h, name, (x.entry.pre, x.entry.post), staged=staged)
+    if state is TempState.UNREADABLE:
+        raise _Fail(Cause.IO_ERROR, x.entry.canonical_path)  # left where it is: the next try reads it again
     if state is TempState.FOREIGN:
         keep(h, name, x.base, record.name)
         raise _Halt(Cause.OUTSIDE_SAVE_IN_TEMP, x.entry.canonical_path)
@@ -342,10 +365,14 @@ def _sync_folders(handles: Handles, folders: list[str]) -> None:
 def _restore_all(handles: Handles, record: Record, checked: list[_Checked], removable: frozenset[str]) -> None:
     """Step 3 (the module's docstring). The folders synced are every folder the record names, not only those this
     try changed: an earlier try cut off by a crash may have left its swaps and removals unsynced, and `.resolved`
-    must never be durable before them (found by the crash-during-recovery sweep, S0061)."""
+    must never be durable before them (found by the crash-during-recovery sweep, S0061). They are synced first too,
+    before the first removal: a swap a crashed save or try left unsynced must be durable before we remove what it
+    displaced, or a power loss could drop the swap and keep the removal, deleting what an editor wrote in place
+    through the file's name meanwhile (S0061 r4, found by re-running the red team's restore probe)."""
+    _sync_folders(handles, [x.parent for x in checked if not x.folder_absent])
     for x in checked:
-        if x.folder_absent or x.verdict is Verdict.KEEP:
-            continue  # the skipped file's temp stays until the journal is resolved (`restore`)
+        if x.folder_absent or x.entry.pre is None:
+            continue  # a created file's names of ours stay until the journal is resolved (`_after_resolve`)
         handles.on = x.entry.canonical_path
         h = handles.at(x.parent)
         for n, staged in zip(journal.scratch_names(x.base, record.name), _STAGED, strict=True):
@@ -354,38 +381,43 @@ def _restore_all(handles: Handles, record: Record, checked: list[_Checked], remo
         if x.verdict is Verdict.AT_POST:
             _put_back(handles, record, x)
     handles.on = None
-    _sync_folders(handles, [x.parent for x in checked])  # children before the folders that hold them go
-    parents = [_parent(d.canonical_path)[0] for d in record.created_dirs]
+    _sync_folders(handles, [x.parent for x in checked])
+
+
+def _after_resolve(handles: Handles, record: Record, checked: list[_Checked], removable: frozenset[str]) -> None:
+    """Step 5 (the module's docstring), once `.resolved` is durable: each created file's names of ours removed by the
+    temp rule (anything not ours, or unreadable, stays where it is), its folder synced; then each folder the save made
+    removed if it is empty, deepest first, and their parents synced. Any failure leaves the rest as it is: only our
+    own bytes and the save's emptied folders, beside a resolved journal (spec §15)."""
+    handles.on = None
+    for x in checked:
+        if x.entry.pre is not None or x.folder_absent:
+            continue
+        try:
+            h = handles.at(x.parent)
+            ours = [
+                n
+                for n, staged in zip(journal.scratch_names(x.base, record.name), _STAGED, strict=True)
+                if _temp_state(h, n, (x.entry.pre, x.entry.post), staged=staged) is TempState.OURS
+            ]
+            for n in ours:
+                h.remove(n)
+            if ours:
+                h.sync()
+        except (OSError, PathMovedError):
+            continue  # left behind: only our own bytes, beside a resolved journal
+    parents: list[str] = []
     for d in reversed(record.created_dirs):
         if d.canonical_path not in removable:
             continue
         parent, name = _parent(d.canonical_path)
         try:
-            ph = handles.at(parent)
-            ph.rmdir(name)
-        except (FileNotFoundError, NotADirectoryError):
-            continue  # never made, already removed, or not a folder of ours any more
-        except OSError as e:
-            if e.errno == errno.ENOTEMPTY:
-                continue  # it holds another entry: kept
-            raise
-    _sync_folders(handles, parents)  # every removal of a folder durable, this try's and an earlier one's
-
-
-def _drop_skipped_temps(handles: Handles, record: Record, checked: list[_Checked]) -> None:
-    """After `.resolved` is durable: the save temp of a created path an outside file took (the rollback's `skip`).
-    Until then it stands there as the durable sign that the file at the path is not ours (red team r2 H1); a crash
-    before this removal leaves our temp beside a resolved journal (spec §15)."""
-    for x in checked:
-        if x.verdict is not Verdict.KEEP:
-            continue
-        try:
-            h = handles.at(x.parent)
-            if _temp_state(h, x.entry.temp, (x.entry.pre, x.entry.post), staged=False) is TempState.OURS:
-                h.remove(x.entry.temp)
-                h.sync()
+            handles.at(parent).rmdir(name)
         except (OSError, PathMovedError):
-            continue  # left behind: only our own bytes, beside a resolved journal
+            continue  # never made, already removed, holding another entry, not a folder of ours, or an error: kept
+        parents.append(parent)
+    with contextlib.suppress(OSError, PathMovedError):  # an empty folder may come back after a power loss
+        _sync_folders(handles, parents)
 
 
 def restore(
@@ -420,6 +452,8 @@ def restore(
         try:
             checked = [_check(handles, record, f, skip=f.path_key == skip, created=created) for f in record.files]
             _check_folders(handles, record, removable)
+        except _Fail as e:
+            return Failed(e.cause, e.path)
         except _Halt as e:
             return Stopped(e.cause, e.path)
         except PathMovedError:
@@ -432,13 +466,15 @@ def restore(
             jd = handles.at(journal_dir)
             jd.rename_excl(journal.file_name(name, State.OPEN), journal.file_name(name, State.RESOLVED))
             jd.sync()
+        except _Fail as e:
+            return Failed(e.cause, e.path)
         except _Halt as e:
             return Stopped(e.cause, e.path)
         except PathMovedError:
             return Stopped(Cause.PATH_MOVED, handles.on)
         except OSError:
             return Failed(Cause.IO_ERROR, handles.on)
-        _drop_skipped_temps(handles, record, checked)
+        _after_resolve(handles, record, checked, removable)
         return Resolved(name)
     finally:
         handles.close()

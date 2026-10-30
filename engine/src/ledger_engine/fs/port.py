@@ -7,8 +7,9 @@ between them (§6.3 "Path guard"; `renameatx_np` on macOS). Names given to a han
 never `.` or `..`); a name is never followed through a link.
 
 Durability (§6.2, §13 "File-system assumptions"): a file's data is durable after `DirHandle.create` returns (it
-syncs the data before it returns); an entry made by `create`, `swap`, `rename_excl`, `remove` or `mkdir` is durable
-only after the directory's `sync`, which makes everything done before it in that directory durable. A swap and an
+syncs the data before it returns), and an existing file's after `DirHandle.sync_file`; an entry made by `create`,
+`swap`, `rename_excl`, `remove` or `mkdir` is durable only after the directory's `sync`, which makes everything done
+before it in that directory durable. A swap and an
 exclusive rename are one operation: a power loss keeps or drops each whole. Nothing is assumed about the order in
 which unsynced operations reach the disk. Every sync is `durable_sync`: `F_FULLFSYNC` on macOS.
 
@@ -95,6 +96,12 @@ class DirHandle(Protocol):
 
     def stat(self, name: str) -> EntryStat | None:
         """The entry `name`, not followed through a link, or None when there is none."""
+        ...
+
+    def sync_file(self, name: str) -> None:
+        """`durable_sync` of the data of the regular file `name`, through a read-only descriptor (it writes nothing):
+        what another program wrote into it without a sync is durable after it returns. Refused as `read` refuses (a
+        link, a folder, a FIFO: `OSError`; no entry: `FileNotFoundError`)."""
         ...
 
     def create(self, name: str, data: bytes, mode: int, like: str | None = None) -> None:

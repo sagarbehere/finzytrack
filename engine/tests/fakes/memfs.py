@@ -17,7 +17,8 @@ bytes), its length kept with none of its blocks written (zeros), or its later bl
 a drive that reorders writes; S0061 red team r3 F3), so nothing may count on a torn file being a prefix.
 
 **Injection.** Every effect of the port's operations is numbered from 0 (`effects` lists their labels):
-`create` is three effects (the entry, the write, the data sync), every other write one (`rmdir` included).
+`create` is three effects (the entry, the write, the data sync), every other write one (`rmdir` included), and so is
+a file's own sync (`sync_file`).
 `inject(at, ...)` makes effect `at` raise (several faults may wait at once, each fires once: a save's and then its
 rollback's, S0061): `Crash` (a `BaseException`, as a process death that no `except Exception` sees) or `OSError`
 (`ENOSPC` by default), before the effect, or for a write after writing only its first `cut` bytes, or with
@@ -303,6 +304,14 @@ class MemFS:
             raise FileNotFoundError(errno.ENOENT, "no entry")
         return self.nodes[ino]
 
+    def outside_unsynced(self, path: str, synced: bytes = b"") -> None:
+        """The file at `path` was last written in place by a program that did not sync it (many editors do not): its
+        bytes are in the page cache, and a power loss may leave it at `synced` (empty: an entry kept before its data),
+        at its bytes, or torn (S0061 red team r4 F2)."""
+        node = self._at(path)
+        assert isinstance(node, _File)
+        node.synced = synced
+
     def outside_link(self, path: str, new: str) -> None:
         """A second hard link `new` to the file at `path`, durably."""
         _, ino, rest, _ = self._walk(path)
@@ -548,6 +557,24 @@ class MemDir:
         if isinstance(node, _Other):
             raise OSError(errno.EINVAL, "not a regular file")
         return node.data
+
+    def sync_file(self, name: str) -> None:
+        """`durable_sync` of the regular file `name`'s data, refused as `read` refuses (one effect)."""
+        hit = self._entry(name)
+        if hit is None:
+            raise FileNotFoundError(errno.ENOENT, "no entry")
+        node = self._fs.nodes[hit[1]]
+
+        def do() -> None:
+            if isinstance(node, _Link):
+                raise OSError(errno.ELOOP, "a link")
+            if isinstance(node, _Dir):
+                raise IsADirectoryError(errno.EISDIR, "a directory")
+            if isinstance(node, _Other):
+                raise OSError(errno.EINVAL, "not a regular file")
+            node.synced = node.data
+
+        self._fs._effect(self._label("sync_file", name), do)
 
     def stat(self, name: str) -> EntryStat | None:
         hit = self._entry(name)

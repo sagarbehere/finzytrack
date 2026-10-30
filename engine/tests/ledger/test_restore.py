@@ -11,6 +11,7 @@ followed by a second try; an outside write before every effect of recovery. The 
 
 from __future__ import annotations
 
+import contextlib
 import errno
 from collections.abc import Callable
 
@@ -131,15 +132,23 @@ def test_an_io_error_at_every_effect_of_recovery_fails_with_every_file_whole_and
             n = len(w.fs.effects)
             w.fs.inject(n + k, crash=False, err=errno.EIO, after=after)
             out = recover(w.fs, listed=False)
-            assert isinstance(out, Failed), (k, w.fs.effects[n + k], out)
-            assert out.cause is Cause.IO_ERROR
-            js = journals(w.fs)
             label = w.fs.effects[n + k]
+            resolved = f"rename {JD}:{NAME}.open,{NAME}.resolved"
+            resolve = next((i for i in range(n, len(w.fs.effects)) if w.fs.effects[i] == resolved), len(w.fs.effects))
+            js = journals(w.fs)
+            if n + k > resolve + 1:
+                # S0061 r4: after the resolve is durable, an error while dropping a created file's names of ours or
+                # removing the save's folders leaves only those (our own bytes, empty folders): still resolved
+                assert out == Resolved(NAME), (k, label, out)
+                assert set(js) == {State.RESOLVED}
+                check_disk(w.fs, w)
+                check_every_power_loss(w.fs, w)
+                continue
+            assert isinstance(out, Failed), (k, label, out)
+            assert out.cause is Cause.IO_ERROR
             # `.resolved` only when the resolve's own rename took place (it answered the error after it) or its sync
             # failed: every file is then durably at pre already
-            late = (label == f"rename {JD}:{NAME}.open,{NAME}.resolved" and after) or (
-                label == f"sync {JD}:" and n + k == len(w.fs.effects) - 1
-            )
+            late = (n + k == resolve and after) or n + k == resolve + 1
             assert set(js) == ({State.RESOLVED} if late else {State.OPEN}), (k, label, js)
             check_disk(w.fs, w)
             check_every_power_loss(w.fs, w)
@@ -217,10 +226,12 @@ def test_a_journal_at_post_is_restored_root_first_with_the_restore_temp_staged_a
         "remove /w/L:.prices.bean.ft-restore-s1-j7.tmp"
     )
     resolve = e.index(f"rename {JD}:{NAME}.open,{NAME}.resolved")
-    last_ledger_sync = max(i for i, x in enumerate(e) if x.startswith("sync /w/L"))
-    assert last_ledger_sync < resolve, "resolved only after every restore was synced"
-    assert e[-1] == f"sync {JD}:"
-    assert len(e) - 1 > resolve
+    last_swap = max(i for i, x in enumerate(e) if x.startswith(("swap ", "rename /w/L")))
+    assert any(x.startswith("sync /w/L:") for x in e[last_swap:resolve]), "resolved only after every restore was synced"
+    assert any(x.startswith("sync /w/L/inc:") for x in e[last_swap:resolve])
+    assert e[resolve + 1] == f"sync {JD}:"
+    # S0061 r4 (red team F1): after the resolve is durable, only the created file's restore temp is dropped
+    assert e[resolve + 2 :] == ["remove /w/L:.prices.bean.ft-restore-s1-j7.tmp", "sync /w/L:"]
     check_recovered(w.fs, w, out)
 
 
@@ -1154,3 +1165,287 @@ def test_a_folder_the_save_made_holding_only_our_staging_file_is_checked_for_rem
     assert w.fs.names_in(t.folder) == [f".{t.base}.ft-s1-j7.new"]
     w.fs.outside_deny(t.folder, Right.DELETE)
     _stops_with_nothing_written(w, Cause.PERMISSION, t.folder)
+
+
+# ---- S0061 round 4 (red team F1, O1; verifier attack 3) -------------------------------------------------------------
+
+EXCL_RENAME = EFFECTS.index("rename /w/L:.prices.bean.ft-s1-j7.tmp,prices.bean")  # the created file's, not yet done
+ASIDE = "rename /w/L:prices.bean,.prices.bean.ft-restore-s1-j7.tmp"  # a try's rename of our created file aside
+
+
+def _recovery_effect(at: int, label: str, *, after: int = 0) -> int:
+    """The absolute index of the effect `after` places past `label` in a listed recovery of the save crashed at
+    `at`, counted from that save's crash."""
+    probe = crashed(at)
+    n = len(probe.fs.effects)
+    recover(probe.fs, listed=False)
+    return n + probe.fs.effects[n:].index(label) + after
+
+
+def _survivors(fs: MemFS, data: bytes) -> list[str]:
+    return [p for p, e in fs.snapshot().items() if e[0] == "file" and e[1] == data]
+
+
+def test_R4_F1a_a_file_another_program_puts_at_a_created_path_beside_our_restore_temp_is_never_deleted() -> None:
+    """Red team r4 F1 (a): a try renames our created prices.bean aside to its restore temp and dies right after;
+    another program (a sync client bringing the file back) writes the path again with the same bytes. The restore
+    temp proves the rename aside happened, so the file at the path is not ours: the next try stops and deletes
+    nothing."""
+    w = crashed(CLOSE)
+    t = w.targets[1]
+    w.fs.inject(_recovery_effect(CLOSE, ASIDE, after=1), crash=True)
+    with pytest.raises(Crash):
+        recover(w.fs, listed=False)
+    assert (w.fs.file(t.path), w.fs.file(t.rtemp)) == (None, t.post)
+    w.fs.outside_write(t.path, t.post)
+    out = recover(w.fs)
+    assert out == Stopped(Cause.FOREIGN, t.path), out
+    assert w.fs.file(t.path) == t.post, "the other program's prices.bean was deleted"
+
+
+def test_R4_F1b_the_proof_beside_a_created_path_outlives_a_try_cut_before_its_resolve() -> None:
+    """Red team r4 F1 (b): the save died before its exclusive rename (our temp beside an absent created path); a try
+    dies after its clean-up and before `.resolved`; another program then writes the path with our post bytes. Our temp
+    is still there (a created file's names of ours go only after the resolve), so the next try stops."""
+    w = crashed(EXCL_RENAME)
+    t = w.targets[1]
+    assert (w.fs.file(t.temp), w.fs.file(t.path)) == (t.post, None)
+    w.fs.inject(_recovery_effect(EXCL_RENAME, f"rename {JD}:{NAME}.open,{NAME}.resolved"), crash=True)
+    with pytest.raises(Crash):
+        recover(w.fs, listed=False)
+    assert w.fs.file(t.temp) == t.post, "a created file's proof removed before the resolve"
+    w.fs.outside_write(t.path, t.post)
+    out = recover(w.fs)
+    assert out == Stopped(Cause.FOREIGN, t.path), out
+    assert _survivors(w.fs, t.post), "the other program's prices.bean was deleted"
+
+
+@pytest.mark.parametrize(("at", "new_dir"), [(EXCL_RENAME, False), (CLOSE, False), (NEW_DIR_CLOSE, True)])
+def test_R4_F1_after_a_crash_at_every_effect_of_recovery_a_file_another_program_puts_at_a_created_path_survives(
+    at: int, new_dir: bool
+) -> None:
+    """The sweep behind F1: a crash at every effect of a try, then, in the disk as kept and in every power-loss state
+    where the created path is free, another program writes it with our post bytes, and recovery runs twice: those
+    bytes are never deleted (at the path, or in a kept copy)."""
+    for k in range(len(_recovery_effects(at, new_dir))):
+        w = crashed(at, new_dir=new_dir)
+        t = w.targets[1]
+        w.fs.inject(len(w.fs.effects) + k, crash=True)
+        with pytest.raises(Crash):
+            recover(w.fs)
+        for state in (w.fs, *w.fs.power_loss_states()):
+            if state.file(t.path) is not None:
+                continue  # our own file still there: bytes another program writes over it in place are ours too
+            try:
+                state.outside_write(t.path, t.post)
+            except FileNotFoundError:
+                state.outside_mkdirs(t.folder)
+                state.outside_write(t.path, t.post)
+            for _ in range(2):
+                recover(state)
+                assert state.file(t.path) == t.post or state.file(t.kept) == t.post, (k, "deleted")
+
+
+def test_R4_F1_a_created_files_names_of_ours_go_only_after_the_resolve_is_durable() -> None:
+    """Red team r4 F1, the order: the save's temp, staging file and restore temp of a created file are removed (by
+    the temp rule) only after `.resolved` and its folder's sync; then the folders the save made."""
+    for at, new_dir in ((EXCL_RENAME, False), (CLOSE, False), (NEW_DIR_CLOSE, True)):
+        w = crashed(at, new_dir=new_dir)
+        t = w.targets[1]
+        n = len(w.fs.effects)
+        out = recover(w.fs)
+        assert out == Resolved(NAME)
+        e = w.fs.effects[n:]
+        durable = e.index(f"sync {JD}:", e.index(f"rename {JD}:{NAME}.open,{NAME}.resolved"))
+        mine = [i for i, x in enumerate(e) if x.startswith(f"remove {t.folder}:.{t.base}.")]
+        assert mine, (at, "nothing of the created file's removed")
+        assert min(mine) > durable, (at, e)
+        rmdirs = [i for i, x in enumerate(e) if x.startswith("rmdir ")]
+        assert all(i > max(mine) for i in rmdirs), e
+        assert bool(rmdirs) == new_dir
+        check_recovered(w.fs, w, out)
+
+
+@pytest.mark.parametrize("which", ["temp", "rtemp"])
+def test_R4_O1_a_read_error_on_a_name_of_ours_at_the_checks_fails_the_try_and_writes_nothing(
+    monkeypatch: pytest.MonkeyPatch, which: str
+) -> None:
+    """Red team r4 O1: one transient read error on our own temp (holding the pre bytes) made it an outside save,
+    moved to a kept name: every later try stopped on a copy of our own bytes. It now fails the try (`failed`: Retry
+    may undo it) with nothing written, and the next try reads it again and resolves."""
+    from tests.fakes.memfs import MemDir
+
+    swap = EFFECTS.index("swap /w/L:.main.bean.ft-s1-j7.tmp,main.bean")
+    w = crashed(swap + 1) if which == "temp" else crashed(CLOSE)
+    root = w.targets[2]
+    if which == "rtemp":
+        w.fs.outside_write(root.rtemp, root.pre or b"")  # a leftover restore temp holding our copy of the pre bytes
+    name = (root.temp if which == "temp" else root.rtemp).rpartition("/")[2]
+    assert w.fs.file(root.temp if which == "temp" else root.rtemp) == root.pre
+    real = MemDir.read
+    fired = [False]
+
+    def flaky(self: MemDir, n: str) -> bytes | None:
+        if n == name and not fired[0]:
+            fired[0] = True
+            raise OSError(errno.EIO, "transient")
+        return real(self, n)
+
+    monkeypatch.setattr(MemDir, "read", flaky)
+    with w.fs.open_dir(JD) as d:
+        d.sync()
+    n = len(w.fs.effects)
+    before = w.fs.snapshot()
+    out = recover(w.fs, listed=False)
+    assert out == Failed(Cause.IO_ERROR, root.path), out
+    assert w.fs.effects[n:] == [], "a failed read wrote something"
+    assert w.fs.snapshot() == before
+    assert w.fs.file(root.kept) is None
+    out = recover(w.fs)
+    assert out == Resolved(NAME), out
+    check_recovered(w.fs, w, out)
+
+
+def test_R4_O1_a_read_error_on_a_temp_at_its_removal_fails_the_try_and_keeps_nothing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Red team r4 O1, at step 3: the temp read again right before its removal answers an error: `Failed`, the temp
+    left where it is (no kept copy of our own bytes), the journal `.open`; the next try resolves."""
+    from tests.fakes.memfs import MemDir
+
+    swap = EFFECTS.index("swap /w/L:.main.bean.ft-s1-j7.tmp,main.bean")
+    w = crashed(swap + 1)
+    root = w.targets[2]
+    name = root.temp.rpartition("/")[2]
+    real = MemDir.read
+    reads = [0]
+
+    def flaky(self: MemDir, n: str) -> bytes | None:
+        if n == name:
+            reads[0] += 1
+            if reads[0] == 2:  # the first at the checks, the second at its removal
+                raise OSError(errno.EIO, "transient")
+        return real(self, n)
+
+    monkeypatch.setattr(MemDir, "read", flaky)
+    out = recover(w.fs)
+    assert out == Failed(Cause.IO_ERROR, root.path), out
+    assert (w.fs.file(root.temp), w.fs.file(root.kept)) == (root.pre, None)
+    assert set(journals(w.fs)) == {State.OPEN}
+    check_disk(w.fs, w)
+    out = recover(w.fs)
+    assert out == Resolved(NAME), out
+    check_recovered(w.fs, w, out)
+
+
+SHRINK_MAIN = b'include "inc/a.bean"\n'
+SHRINK_CASES = {
+    "shrink": (b"2026-01-01 open Assets:A\n2026-01-02 *\n", b"2026-01-01 open Assets:A\n"),
+    "empty_post": (b"2026-01-01 open Assets:A\n", b""),
+    "empty_pre": (b"", b"2026-01-01 open Assets:A\n"),
+    "created_empty": (None, b""),
+}
+
+
+def _shrink_world(case: str) -> World:
+    from tests.ledger.worlds import BD, commit_for
+
+    pre, post = SHRINK_CASES[case]
+    fs = MemFS()
+    for d in (JD, BD, "/w/L/inc"):
+        fs.outside_mkdirs(d)
+    fs.outside_write("/w/L/main.bean", SHRINK_MAIN)
+    if pre is not None:
+        fs.outside_write("/w/L/inc/a.bean", pre)
+    targets = (Target("/w/L/inc/a.bean", pre, post),)
+    return World(fs, commit_for(targets), targets, fs.snapshot())
+
+
+@pytest.mark.parametrize("case", sorted(SHRINK_CASES))
+def test_R4_in_worlds_that_shorten_empty_or_fill_a_file_every_crash_of_the_save_and_of_recovery_resolves(
+    case: str,
+) -> None:
+    """@regression-guard (S0061 verifier r4, attack 3: the code already held): the save/recovery sweep in worlds the
+    other sweeps do not use: post a prefix of pre, post empty, pre empty, a created empty file. A crash at every save
+    effect (writes cut at 0, 1, 5, 13), every power loss, recovery; a crash at every effect of recovery of a save cut
+    before its close, every power loss, recovery again."""
+    probe = _shrink_world(case)
+    durable_commit(probe.fs, probe.commit)
+    save = probe.fs.effects
+    for at, label in enumerate(save):
+        for cut in [None, 0, 1, 5, 13] if label.startswith("write ") else [None]:
+            w = _shrink_world(case)
+            w.fs.inject(at, crash=True, cut=cut)
+            with pytest.raises(Crash):
+                durable_commit(w.fs, w.commit)
+            for state in (w.fs, *w.fs.power_loss_states()):
+                check_recovered(state, w, recover(state))
+    close = save.index(f"rename {JD}:{NAME}.open,{NAME}.closed")
+
+    def crashed_here() -> World:
+        w = _shrink_world(case)
+        w.fs.inject(close, crash=True)
+        with pytest.raises(Crash):
+            durable_commit(w.fs, w.commit)
+        return w
+
+    r = crashed_here()
+    n = len(r.fs.effects)
+    recover(r.fs)
+    for k, label in enumerate(r.fs.effects[n:]):
+        for cut in [None, 0, 3] if label.startswith("write ") else [None]:
+            w = crashed_here()
+            w.fs.inject(len(w.fs.effects) + k, crash=True, cut=cut)
+            with pytest.raises(Crash):
+                recover(w.fs)
+            for state in (w.fs, *w.fs.power_loss_states()):
+                check_disk(state, w)
+                check_recovered(state, w, recover(state))
+
+
+FIRST_SWAP = next(i for i, e in enumerate(EFFECTS) if e.startswith("swap "))
+
+
+@pytest.mark.parametrize("at", range(FIRST_SWAP + 1, CLOSE + 1))
+def test_R4_an_in_place_write_through_a_name_during_recovery_then_a_crash_and_a_power_loss_is_never_lost(
+    at: int,
+) -> None:
+    """Found by re-running the red team r4 probe `sweep_outside_restore.py crash x` (S0061 r4 fix; it held at
+    6c423b23 too): the save crashed with a swap not yet durable, or a try's own restore swap is not yet durable; an
+    editor saves in place through the file's name (into the object that swap put there); the try then removes the
+    object the swap displaced, and dies. A power loss that drops the swap but keeps the removal deleted the editor's
+    bytes. The try now syncs every folder the record names before its first removal, and each folder right after its
+    restore swap, so no removal of ours is ever durable before the swap it follows. A crash at the effect the write
+    came before, or at one of the two after it; the editor's bytes survive in every power-loss state."""
+    k_max = len(_recovery_effects(at, False))
+    for m in range(k_max):
+        for victim in range(3):
+            for crash2 in (0, 1, 2):
+                w = crashed(at)
+                t = w.targets[victim]
+                n = len(w.fs.effects)
+                fired: list[bool] = [False]
+
+                def edit(
+                    i: int,
+                    _: str,
+                    w: World = w,
+                    t: Target = t,
+                    at_effect: int = n + m,
+                    c2: int = crash2,
+                    fired: list[bool] = fired,
+                ) -> None:
+                    if i != at_effect or w.fs.file(t.path) is None:
+                        return
+                    w.fs.outside_write(t.path, FOREIGN)  # in place, synced: an editor's save through the name
+                    fired[0] = True
+                    w.fs.inject(i + c2, crash=True)
+
+                w.fs.on_effect = edit
+                with contextlib.suppress(Crash):
+                    recover(w.fs)
+                w.fs.on_effect = None
+                if not fired[0]:
+                    continue
+                for state in (w.fs, *w.fs.power_loss_states()):
+                    assert FOREIGN in _all_bytes(state), (m, t.path, crash2, "the editor's save was lost")

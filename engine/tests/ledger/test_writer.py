@@ -239,7 +239,13 @@ def test_an_io_error_in_the_rollback_at_every_effect_is_told_truthfully_and_reco
     check_disk(w.fs, w)
     check_every_power_loss(w.fs, w)
     assert not isinstance(out, Landed)
-    if at < FIRST_REPLACE:
+    resolve = next((i for i in range(at, j) if w.fs.effects[i] == f"rename {JD}:{NAME}.open,{NAME}.resolved"), None)
+    if resolve is not None and j > resolve + 1:
+        # S0061 r4: an error after the rollback's resolve is durable (dropping a created file's names of ours,
+        # removing the save's folders) leaves only those beside the resolved journal: not saved, as resolved
+        assert isinstance(out, NotSaved), (at, j, out)
+        assert not out.open_journal, (at, j, out)
+    elif at < FIRST_REPLACE:
         assert isinstance(out, NotSaved), (at, j, out)
         assert out.open_journal
     else:
@@ -277,7 +283,12 @@ def test_the_rollback_is_the_restore_root_first_and_resolves_after_its_syncs() -
         "swap /w/L:.main.bean.ft-restore-s1-j7.tmp,main.bean",
         "swap /w/L/inc:.a.bean.ft-restore-s1-j7.tmp,a.bean",
     ]
-    assert e[-2:] == [f"rename {JD}:{NAME}.open,{NAME}.resolved", f"sync {JD}:"]
+    assert e[-4:] == [  # S0061 r4 (red team F1): the created file's restore temp dropped only after the resolve
+        f"rename {JD}:{NAME}.open,{NAME}.resolved",
+        f"sync {JD}:",
+        "remove /w/L:.prices.bean.ft-restore-s1-j7.tmp",
+        "sync /w/L:",
+    ]
     check_recovered(w.fs, w, None)
 
 
@@ -1324,3 +1335,68 @@ def test_an_entry_that_appears_at_the_temp_name_before_the_staging_rename_stops_
     assert w.fs.file(t.path) == t.pre
     for state in w.fs.power_loss_states():
         assert stranger in {state.file(t.temp), state.file(t.kept)}
+
+
+# ---- S0061 round 4 (red team F2; verifier F1) ---------------------------------------------------------------------
+
+
+def test_R4_F2_a_power_loss_after_a_save_over_an_editors_unsynced_write_never_stops_on_bytes_nobody_wrote() -> None:
+    """Red team r4 F2: an editor saved main.bean in place without a sync just before the save (many editors do not
+    sync); the save read it for its backup, swapped it to the temp name and synced the folder. Unsynced, the displaced
+    old object could be torn by a power loss, and recovery stopped on a kept copy "another program" never wrote. The
+    save now syncs each file it replaces before it reads it for the backup (§6.1 step 8.1), so the old object is
+    durable before the swap: every power-loss state recovers."""
+    clean = world()
+    durable_commit(clean.fs, clean.commit)
+    swap = clean.fs.effects.index("swap /w/L:.main.bean.ft-s1-j7.tmp,main.bean")
+    assert clean.fs.effects[swap + 1] == "sync /w/L:"
+    w = world()
+    root = w.targets[2]
+    for t in w.targets:
+        if t.pre is not None:
+            w.fs.outside_unsynced(t.path)  # the data in the page cache only
+    w.fs.inject(swap + 2, crash=True)  # the swap durable, then the process dies
+    with pytest.raises(Crash):
+        durable_commit(w.fs, w.commit)
+    seen = 0
+    for state in w.fs.power_loss_states():
+        if state.file(root.path) != root.post:
+            continue  # only the states in which the durable swap put our post bytes in place
+        seen += 1
+        out = recover(state)
+        check_recovered(state, w, out)
+    assert seen
+
+
+def test_R4_F2_each_replaced_file_is_synced_before_it_is_read_for_its_backup() -> None:
+    """Red team r4 F2, the order: `sync_file` on each file the save replaces, before the backup's create."""
+    w, out = clean_run()
+    assert isinstance(out, Landed)
+    e = w.fs.effects
+    for folder, base, index in (("/w/L/inc", "a.bean", 0), ("/w/L", "main.bean", 2)):
+        synced = e.index(f"sync_file {folder}:{base}")
+        assert synced < e.index(f"create {SAVE_DIR}:{index}-{base}")
+    assert not any(x.startswith("sync_file /w/L:prices.bean") for x in e), "a created file is never synced first"
+
+
+def test_R4_vF1_an_outside_write_into_the_skipped_paths_temp_after_the_checks_is_never_deleted() -> None:
+    """@regression-guard (S0061 verifier r4 F1: the code already held; it kills the mutant `drop_skipped_no_check`):
+    the rollback removes the temp of a created path an outside file took only by the temp rule, after the resolve; an
+    outside write into it after the checks is never deleted."""
+    w = world()
+    temp = "/w/L/.prices.bean.ft-s1-j7.tmp"
+    foreign = b"; another program's bytes at our temp name\n"
+    acts: dict[str, Callable[[], None]] = {
+        "rename /w/L:.prices.bean.ft-s1-j7.tmp,prices.bean": lambda: w.fs.outside_write("/w/L/prices.bean", b"x"),
+        f"rename {JD}:{NAME}.open,{NAME}.resolved": lambda: w.fs.outside_write(temp, foreign),
+    }
+
+    def hook(_: int, seen: str) -> None:
+        act = acts.pop(seen, None)
+        if act is not None:
+            act()
+
+    w.fs.on_effect = hook
+    out = durable_commit(w.fs, w.commit)
+    assert isinstance(out, NotSaved), out
+    assert w.fs.file(temp) == foreign, "the outside bytes at our temp name were deleted after the resolve"

@@ -653,3 +653,34 @@ def test_a_save_on_apfs_writes_its_new_bytes_under_the_staging_name_first(fs: Da
     assert sorted(p.name for p in ledger.iterdir()) == [".main.bean.ft-s1-j1.tmp", "main.bean"]
     assert (ledger / ".main.bean.ft-s1-j1.tmp").read_bytes() == b"post\n"
     assert main.read_bytes() == b"pre\n"
+
+
+def test_sync_file_syncs_a_regular_file_through_a_read_only_descriptor_and_refuses_anything_else(
+    fs: DarwinFS, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """S0061 r4 (red team F2; probed on APFS: `F_FULLFSYNC` works on a read-only descriptor, a mode-0400 file too):
+    the save syncs each file it replaces before it reads it for the backup. A link, a folder, a FIFO and no entry are
+    refused, never followed or opened."""
+    (tmp_path / "f").write_bytes(b"data")
+    (tmp_path / "f").chmod(0o400)
+    (tmp_path / "sub").mkdir()
+    (tmp_path / "l").symlink_to(tmp_path / "f")
+    os.mkfifo(tmp_path / "p")
+    real_fcntl = fcntl.fcntl
+    seen: list[int] = []
+
+    def recording(fd: int, cmd: int, *args: object) -> object:
+        seen.append(cmd)
+        return real_fcntl(fd, cmd, *args)  # type: ignore[arg-type]
+
+    monkeypatch.setattr("ledger_engine.fs.darwin.fcntl.fcntl", recording)
+    with fs.open_dir(str(tmp_path)) as d:
+        d.sync_file("f")
+        assert seen.count(fcntl.F_FULLFSYNC) == 1
+        for name in ("l", "sub", "p"):
+            with pytest.raises(OSError, match=r"."):
+                d.sync_file(name)
+        with pytest.raises(FileNotFoundError):
+            d.sync_file("missing")
+    assert seen.count(fcntl.F_FULLFSYNC) == 1
+    assert (tmp_path / "f").read_bytes() == b"data"

@@ -186,6 +186,13 @@ class DarwinDir:
         finally:
             os.close(fd)
 
+    def sync_file(self, name: str) -> None:
+        fd = self._open_regular(check_name(name))  # read-only: F_FULLFSYNC works on it (S0061 r4 probe, APFS)
+        try:
+            self._fs.durable_sync(fd)
+        finally:
+            os.close(fd)
+
     def create(self, name: str, data: bytes, mode: int, like: str | None = None) -> None:
         flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC
         fd = os.open(check_name(name), flags, mode & 0o7777, dir_fd=self.fd)

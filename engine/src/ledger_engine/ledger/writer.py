@@ -10,7 +10,9 @@ S0060): what a save does after its commit point (§6.1 step 7), through the file
    and no entry standing at one, the folders the save makes once each and never two that differ only in case, no
    target in the journal or backup folder, and neither of those folders inside a folder the save writes in.
 1. **Backups:** this save's backup folder `<backups_dir>/<session>-<job>/` made and its parent synced; each file the
-   save replaces read through a handle on its folder (checked to be the same object again), hashed against the
+   save replaces synced through a handle on its folder (`sync_file`: what an editor wrote into it without a sync is
+   then durable, so the old object the swap displaces can never be torn by a power loss: S0061 red team r4 F2), read
+   (checked to be the same object again), hashed against the
    planned pre hash (a file not at its pre bytes refuses: nothing was replaced), written as `<n>-<name>` and synced,
    read back and hashed again (ADR-0012 F-1); the backup folder synced.
 2. **Journal:** the record (`ledger.core.journal`) written as `<session>-<job>.part` and synced, renamed `.open`, the
@@ -396,6 +398,7 @@ def _backups(handles: Handles, plan: _Plan, name: str) -> dict[str, str]:
         handles.on = t.canonical
         h = handles.at(t.parent)
         _check_replaced(h.stat(t.base), t.identity, t.canonical)
+        h.sync_file(t.base)  # the displaced old object durable before the swap (S0061 red team r4 F2)
         data = h.read(t.base)
         if data is None or sha256(data) != t.change.pre:
             raise _Stop(Reason.CHANGED, t.canonical)

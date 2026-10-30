@@ -10,12 +10,16 @@ save, a rollback or a recovery, written from §10's rows and §13's write-protoc
 - a `.closed` journal only with every target at post, a `.resolved` one only with every target at pre, and with
   either no temp, staging file, restore temp or restore staging file of ours left and no folder the save made
   (`temps_after_close`, `resolve_before_restores_synced`, `CutTempNeverBlocks`'s "no temp of a save outlives its
-  journal");
+  journal"), with one exception beside `.resolved` (S0061 r4, red team F1): a created file's names of ours stay
+  until the journal is durably resolved, as the proof that a file at its path is not ours, so a crash or an error
+  right after the resolve may leave them, holding only our own bytes (its temp or restore temp the post bytes, its
+  staging file any bytes of a write of ours), and the folders the save made, holding nothing else (§15);
 - nothing changed outside the recorded paths, the save's temps and staging names, restore temps and their staging
   names, kept names, its backups and its journal (INV-32, `RecoveryWritesOnlyRecordedPaths`), and nothing that was
   there before removed; `.resolved` never beside a kept copy.
 `check_recovered` adds what recovery must end with when no outside program acts: no `.open` journal, every target at
-pre or (only under `.closed`) at post, in the disk as it is and in every power-loss state of it.
+pre or (only under `.closed`) at post, in the disk as it is and in every power-loss state of it; after a try that
+answered `Resolved`, nothing of ours left at all (`leftovers`).
 """
 
 from __future__ import annotations
@@ -131,6 +135,29 @@ def journals(fs: MemFS) -> dict[State, bytes]:
     return out
 
 
+def leftovers(fs: MemFS, w: World) -> list[str]:
+    """What a crash or an error right after a resolve may leave of ours (the module's docstring), as found now; it
+    raises when anything else of ours is there beside the record."""
+    snap = fs.snapshot()
+    out: list[str] = []
+    for t in w.targets:
+        for name in t.scratch:
+            if name not in snap:
+                continue
+            entry = snap[name]
+            assert t.pre is None, f"a temp of ours left beside a resolved journal: {name}"
+            assert name != t.rstaging, f"a restore staging file beside a created file: {name}"
+            assert entry[0] == "file", f"not a file of ours: {name}"
+            assert name == t.staging or entry[1] == t.post, f"not our own bytes: {name}"
+            out.append(name)
+    for d in w.new_dirs:
+        if d in snap:
+            inside = [p for p in snap if p.startswith(d + "/")]
+            assert set(inside) <= set(out) | set(w.new_dirs), f"resolved, but the folder the save made is left: {d}"
+            out.append(d)
+    return out
+
+
 def check_disk(fs: MemFS, w: World) -> None:
     """The oracle (the module's docstring)."""
     snap = fs.snapshot()
@@ -159,13 +186,13 @@ def check_disk(fs: MemFS, w: World) -> None:
         for t in w.targets:
             want = t.post if state is State.CLOSED else t.pre
             assert fs.file(t.path) == want, f"{state}, but {t.path} is not at {'post' if want == t.post else 'pre'}"
-            for name in t.scratch:
-                assert name not in snap, f"{state} with a temp of ours left: {name}"
+            if state is State.CLOSED:
+                for name in t.scratch:
+                    assert name not in snap, f"{state} with a temp of ours left: {name}"
             if state is State.RESOLVED:
                 assert t.kept not in snap, f"resolved while a kept copy exists: {t.kept}"
     if state is State.RESOLVED:
-        for d in w.new_dirs:
-            assert d not in snap, f"resolved, but the folder the save made is left: {d}"
+        leftovers(fs, w)
     ours = {t.path for t in w.targets} | {n for t in w.targets for n in t.scratch}
     ours |= {t.kept for t in w.targets}
     ours |= set(w.new_dirs) | {SAVE_DIR, JD, BD}
@@ -207,6 +234,7 @@ def check_recovered(fs: MemFS, w: World, out: RestoreOutcome | None) -> None:
         assert State.OPEN not in js, "recovery left an .open journal"
         if isinstance(out, Resolved):
             assert set(js) == {State.RESOLVED}, f"told resolved, the disk has {sorted(js)}"
+            assert leftovers(state, w) == [], "told resolved, but something of ours is left"
         if State.CLOSED not in js:
             for t in w.targets:
                 assert state.file(t.path) == t.pre, f"{t.path} not at pre after recovery"

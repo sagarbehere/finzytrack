@@ -102,3 +102,7 @@ Owner, on the process (PROCESS.md §3 "Golden specs"): "We'll then produce the m
 ## Amendment (2026-10-30): decision 11 P1 after S0061 round 3
 
 - **Decision 11, P1, superseded further:** this record's amendment of 2026-10-29 pointed P1 at ADR-0012's refined rule ("empty, a prefix of our new bytes, or the old bytes"). Owner, 2026-10-30: "Staging name (Recommended)" (the option as quoted in ADR-0012's amendment of 2026-10-30). The rule now reads as in that amendment: every write of ours goes first to a staging name, deleted whatever it holds; a temp name is ours only when it equals the pre or the post bytes; anything else is moved to its kept name and the journal stops. "Temps cut off mid-write never block" holds, now for writes torn in any shape too: a cut or torn write is only ever at a staging name.
+
+## Amendment (2026-10-30): a pointer after S0061 round 4
+
+- **Pointer, no change of decision:** the amendment above says a cut or torn write is "only ever at a staging name". That holds on volumes that honour `F_FULLFSYNC`. On a volume that refuses it, the save falls back to `fsync`, and a power loss can then tear a temp the save had already synced; recovery keeps those bytes as a kept copy and stops (fails closed). See `design/specs/engine-jobs.md` §15, "Volumes that refuse `F_FULLFSYNC`" (S0061 verifier round 4, F3).
