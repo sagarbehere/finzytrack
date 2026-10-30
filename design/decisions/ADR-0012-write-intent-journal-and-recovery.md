@@ -100,6 +100,7 @@ Owner, on the second golden review of the engine-scheduler spec (review 6): "I a
 ## Amendment (2026-10-30): pointer, the ACL refusal widened (S0061 round 6)
 
 - The round-5 amendment's Details line ("the save refuses ... a folder it writes in whose ACL has an inheritable `deny` of `delete` or `read` that applies to us", code `DirHandle.inheritable_denial`) is superseded by ADR-0013's amendment of 2026-10-30 (owner: "Allowlist (Recommended)"): every ACL deny entry that applies to us is refused except a non-inherited one that protects only the folder itself, and the undo applies the same rule at step 2 before it writes anything. Code: `ledger_engine.ledger.handles.blocking_entry`, `DirHandle.acl`. Also from S0061 round 6 (agent, verifier r6 F3-F5): `Failed` and `Stopped` name the entry that failed when it is not the ledger file (`entry`); recovery no longer reads the bytes at a created path (a `stat` showing an entry is `taken`); a created path found empty again after the undo's other work is checked once more from step 2 and may resolve. Nothing else in this record changes.
+- Pointer (2026-10-30, S0061 verifier round 8 F1): the line above's "every ACL deny entry that applies to us is refused" is itself superseded by ADR-0013's amendment of 2026-10-30, round 7 (owner: "Any subject (Recommended)"): every deny entry refuses the folder, whoever it names, except a non-inherited one protecting only the folder itself; the journal and backup folders are judged too.
 
 ## References
 
