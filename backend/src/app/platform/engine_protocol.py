@@ -15,28 +15,41 @@ the client's to check: it knows what it sent. `encode_proceed` is the sidecar's 
 from __future__ import annotations
 
 import json
-from collections.abc import Mapping
+import re
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any, cast
 
 from app.platform.engine import (
     PHASES,
+    ActOutcome,
+    ActOutcomeKind,
     Committed,
     Decision,
     DecisionScalar,
     EngineInfo,
     EngineRefusal,
+    EntryKind,
+    EntrySeen,
     GateReached,
+    InspectedFile,
+    JournalFile,
+    JournalListing,
+    KeptCopySeen,
+    ListedJournal,
     Phase,
     Pong,
     Progress,
     RefusalKey,
+    TryOutcome,
+    TryOutcomeKind,
+    UnlistedFolder,
 )
 
 PROTOCOL_VERSION = 2
 MAX_LINE_BYTES = 16 * 1024 * 1024
 MAX_ID = 2**31 - 1
-OPS = ("handshake", "ping")
+OPS = ("handshake", "ping", "recover_list", "recover_try", "recover_act")
 # The members of `RefusalKey` (the contract test checks both against the schema).
 REFUSAL_KEYS = frozenset(
     {
@@ -46,6 +59,7 @@ REFUSAL_KEYS = frozenset(
         "protocol.invalid_params",
         "protocol.handshake_required",
         "engine.internal",
+        "engine.no_engine_lock",
     }
 )
 OK_KEYS = frozenset({"v", "id", "op", "ok", "result"})
@@ -246,3 +260,201 @@ def decode_pong(result: Mapping[str, object]) -> Pong | Violation:
     if dict(result) != {"status": "ok"}:
         return Violation("the ping result is not {status: ok}")
     return Pong()
+
+
+# -- Recover-all's results (S0062): strict, by hand, held to the schema by the contract test ----------------------
+
+_SHA256 = re.compile(r"[0-9a-f]{64}")
+_KINDS: frozenset[str] = frozenset({"file", "dir", "link", "other"})
+
+
+class _Bad(Exception):
+    """A result that is not of its op's shape (becomes a `Violation`)."""
+
+
+def _keys(value: object, keys: frozenset[str], what: str) -> dict[str, object]:
+    if not isinstance(value, dict) or frozenset(cast("dict[str, object]", value)) != keys:
+        msg = f"{what} must be an object with exactly {sorted(keys)}"
+        raise _Bad(msg)
+    return cast("dict[str, object]", value)
+
+
+def _text(value: object, what: str, *, nullable: bool = False) -> str | None:
+    if value is None and nullable:
+        return None
+    if not isinstance(value, str):
+        msg = f"{what} must be a string"
+        raise _Bad(msg)
+    return value
+
+
+def _name(value: object, what: str) -> str:
+    if not isinstance(value, str) or not value:
+        msg = f"{what} must be a non-empty string"
+        raise _Bad(msg)
+    return value
+
+
+def _path(value: object, what: str, *, nullable: bool = False) -> str | None:
+    if value is None and nullable:
+        return None
+    if not isinstance(value, str) or not value.startswith("/"):
+        msg = f"{what} must be an absolute path"
+        raise _Bad(msg)
+    return value
+
+
+def _int(value: object, what: str, *, nullable: bool = False, low: int | None = None) -> int | None:
+    if value is None and nullable:
+        return None
+    if not _is_int(value) or (low is not None and cast("int", value) < low):
+        msg = f"{what} must be an integer" + ("" if low is None else f" of at least {low}")
+        raise _Bad(msg)
+    return cast("int", value)
+
+
+def _bool(value: object, what: str) -> bool:
+    if type(value) is not bool:
+        msg = f"{what} must be true or false"
+        raise _Bad(msg)
+    return value
+
+
+def _list(value: object, what: str) -> list[object]:
+    if not isinstance(value, list):
+        msg = f"{what} must be a list"
+        raise _Bad(msg)
+    return cast("list[object]", value)
+
+
+def _choice(value: object, allowed: frozenset[str], what: str) -> str:
+    if not isinstance(value, str) or value not in allowed:
+        msg = f"{what} must be one of {sorted(allowed)}"
+        raise _Bad(msg)
+    return value
+
+
+def _decoded[T](decode: Callable[[Mapping[str, object]], T], result: Mapping[str, object]) -> T | Violation:
+    try:
+        return decode(result)
+    except _Bad as e:
+        return Violation(str(e))
+
+
+def _journal_file(value: object) -> JournalFile:
+    o = _keys(value, frozenset({"path", "path_key", "created"}), "a journal file")
+    return JournalFile(
+        cast("str", _path(o["path"], "path")),
+        cast("str", _path(o["path_key"], "path_key")),
+        _bool(o["created"], "created"),
+    )
+
+
+_LISTED = frozenset({"journal_dir", "name", "readable", "workspace_key", "lineage", "files", "errno"})
+
+
+def _listed(value: object) -> ListedJournal:
+    o = _keys(value, _LISTED, "a listed journal")
+    return ListedJournal(
+        journal_dir=cast("str", _path(o["journal_dir"], "journal_dir")),
+        name=_name(o["name"], "name"),
+        readable=_bool(o["readable"], "readable"),
+        workspace_key=_text(o["workspace_key"], "workspace_key", nullable=True),
+        lineage=_text(o["lineage"], "lineage", nullable=True),
+        files=tuple(_journal_file(f) for f in _list(o["files"], "files")),
+        errno=_int(o["errno"], "errno", nullable=True),
+    )
+
+
+def _unlisted(value: object) -> UnlistedFolder:
+    o = _keys(value, frozenset({"folder", "errno"}), "an unlisted folder")
+    return UnlistedFolder(cast("str", _path(o["folder"], "folder")), _int(o["errno"], "errno", nullable=True))
+
+
+def _listing(result: Mapping[str, object]) -> JournalListing:
+    o = _keys(dict(result), frozenset({"journals", "unlisted", "parts_removed"}), "the recover_list result")
+    return JournalListing(
+        journals=tuple(_listed(j) for j in _list(o["journals"], "journals")),
+        unlisted=tuple(_unlisted(u) for u in _list(o["unlisted"], "unlisted")),
+        parts_removed=cast("int", _int(o["parts_removed"], "parts_removed", low=0)),
+    )
+
+
+def decode_recover_list(result: Mapping[str, object]) -> JournalListing | Violation:
+    """The `recover_list` result."""
+    return _decoded(_listing, result)
+
+
+def _seen(value: object) -> EntrySeen:
+    o = _keys(value, frozenset({"kind", "sha256", "size"}), "an entry seen")
+    sha = _text(o["sha256"], "sha256", nullable=True)
+    if sha is not None and not _SHA256.fullmatch(sha):
+        msg = "sha256 must be 64 lowercase hex digits"
+        raise _Bad(msg)
+    kind = cast("EntryKind", _choice(o["kind"], _KINDS, "kind"))
+    return EntrySeen(kind, sha, _int(o["size"], "size", nullable=True, low=0))
+
+
+def _kept(value: object) -> KeptCopySeen:
+    o = _keys(value, frozenset({"name", "path", "seen"}), "a kept copy")
+    return KeptCopySeen(_name(o["name"], "name"), cast("str", _path(o["path"], "path")), _seen(o["seen"]))
+
+
+_INSPECTED = frozenset({"path", "created", "reachable", "now", "kept", "errno"})
+
+
+def _inspected(value: object) -> InspectedFile:
+    o = _keys(value, _INSPECTED, "an inspected file")
+    return InspectedFile(
+        path=cast("str", _path(o["path"], "path")),
+        created=_bool(o["created"], "created"),
+        reachable=_bool(o["reachable"], "reachable"),
+        now=None if o["now"] is None else _seen(o["now"]),
+        kept=tuple(_kept(k) for k in _list(o["kept"], "kept")),
+        errno=_int(o["errno"], "errno", nullable=True),
+    )
+
+
+_TRY = frozenset({"outcome", "cause", "path", "entry", "detail", "errno", "inspection"})
+_TRY_OUTCOMES: frozenset[str] = frozenset({"resolved", "stopped", "failed"})
+
+
+def _try(result: Mapping[str, object]) -> TryOutcome:
+    o = _keys(dict(result), _TRY, "the recover_try result")
+    inspection = o["inspection"]
+    outcome = cast("TryOutcomeKind", _choice(o["outcome"], _TRY_OUTCOMES, "outcome"))
+    return TryOutcome(
+        outcome=outcome,
+        cause=_text(o["cause"], "cause", nullable=True),
+        path=_path(o["path"], "path", nullable=True),
+        entry=_path(o["entry"], "entry", nullable=True),
+        detail=_text(o["detail"], "detail", nullable=True),
+        errno=_int(o["errno"], "errno", nullable=True),
+        inspection=None if inspection is None else tuple(_inspected(i) for i in _list(inspection, "inspection")),
+    )
+
+
+def decode_recover_try(result: Mapping[str, object]) -> TryOutcome | Violation:
+    """The `recover_try` result."""
+    return _decoded(_try, result)
+
+
+_ACT = frozenset({"outcome", "reason", "path", "detail", "errno"})
+_ACT_OUTCOMES: frozenset[str] = frozenset({"done", "refused", "failed"})
+
+
+def _act(result: Mapping[str, object]) -> ActOutcome:
+    o = _keys(dict(result), _ACT, "the recover_act result")
+    outcome = cast("ActOutcomeKind", _choice(o["outcome"], _ACT_OUTCOMES, "outcome"))
+    return ActOutcome(
+        outcome=outcome,
+        reason=_text(o["reason"], "reason", nullable=True),
+        path=_path(o["path"], "path", nullable=True),
+        detail=_text(o["detail"], "detail", nullable=True),
+        errno=_int(o["errno"], "errno", nullable=True),
+    )
+
+
+def decode_recover_act(result: Mapping[str, object]) -> ActOutcome | Violation:
+    """The `recover_act` result."""
+    return _decoded(_act, result)

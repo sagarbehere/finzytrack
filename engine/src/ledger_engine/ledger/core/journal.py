@@ -17,6 +17,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import unicodedata
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import Final, cast
@@ -218,6 +219,17 @@ def is_kept_name(entry: str, name: str, tag: str) -> bool:
         if e.startswith(head) and _KEPT_TAIL.fullmatch(e[len(head) :]):
             return True
     return False
+
+
+def derives_kept_name(entry: str, name: str, tag: str) -> bool:
+    """`entry` is exactly one of the kept names this save derives for the file `name` (`kept_name`, any number),
+    compared as the volume compares names (after NFD; case exact). The strict form of `is_kept_name`, for the one
+    operation that removes a kept copy (the blocked screen's Delete the kept copy, S0062): a wider match there could
+    remove a file that is not one of ours, so a spelling the volume did not keep as ours refuses instead."""
+    e = unicodedata.normalize("NFD", entry)
+    if not is_kept_name(entry, name, tag):
+        return False
+    return any(e == unicodedata.normalize("NFD", kept_name(name, tag, n)) for n in range(1, MAX_KEPT + 1))
 
 
 def backup_name(index: int, name: str) -> str:

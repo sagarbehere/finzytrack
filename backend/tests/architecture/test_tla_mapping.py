@@ -127,13 +127,12 @@ PLANNED: Mapping[str, str] = {
 }
 
 PARTIAL: Mapping[str, str] = {
-    "SpawnStep": SAVE,  # recover-all's `not_tried` marks in its unavailable branch (§8.1)
-    "DispatchUnavail": SAVE,  # recover-all's `not_tried` marks and the quit notes it answers (§8.1, §9.3)
+    "DispatchUnavail": SWITCH,  # the quit notes a recover-all that never ran answers (§9.3); its `not_tried` marks
+    # are the sidecar's "nothing listed: every open blocked" since S0062 (`recovery.blocking_for`)
     "S_Commit": SAVE,  # the save's own gate in the engine (§6.1 step 7); the table's step and `proceed` are built
     "CR_Commit": CREATE_COPY,
     "CP_Commit": CREATE_COPY,
     "FreshEnd": SAVE,  # the save's and R4's own engine changes call it
-    "UserCancelRunning": SAVE,  # recover-all's Cancel per journal (§8.1)
     "UserCancelQueued": SWITCH,  # the switch's or boot's cancelled screen (§9.1 step 3, §9.2)
 }
 

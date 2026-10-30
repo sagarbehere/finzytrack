@@ -9,7 +9,10 @@ engine; past `proceed` only Quit anyway ends the engine (engine-jobs §4; S0057 
 - `block`: waits until `release()` or until the engine is ended (then `cancelled`);
 - `gate`: reports `GateReached`, waits for `proceed()` (then answers `{"wrote": True}`) or for its end;
 - `crash`: the engine dies by itself mid-request (`crashed`; its end is reported with no reason of ours);
-- `gate_die`: as `gate`, but the engine dies right after `proceed` (a save cut mid-write).
+- `gate_die`: as `gate`, but the engine dies right after `proceed` (a save cut mid-write);
+- any op in `scripted` (S0062: recover-all's): its next answer, in order: a result mapping, `CRASH` (the engine
+  dies mid-request), `CRASH_TO_BOUND` (it dies and that stop reaches the bound) or `BLOCK` (waits as `block` does,
+  released by `release(op)`); every such call's params are kept in `params`.
 
 Each end report's peak memory names its engine (1000, 2000 or 4000 plus the serial), so a test can tell them apart.
 
@@ -19,6 +22,7 @@ Every wait is on a condition (EP-28) and ends when the engine ends, so a test ne
 from __future__ import annotations
 
 import threading
+import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 
@@ -26,6 +30,9 @@ from app.platform.engine import EndReason, EngineEnd, EngineEvent, EngineFailure
 from app.platform.engine_supervision import Closed, Idle, Incompatible, Ready, SupervisionState, Unavailable
 
 INFO = EngineInfo(protocol=2, engine_version="0.4.0.dev0", beancount_version="3.2.0")
+CRASH = "crash"
+CRASH_TO_BOUND = "crash_to_bound"  # the engine dies and that stop reaches the bound (the client is `Unavailable`)
+BLOCK = "block"
 DEADLINE = 20.0
 
 
@@ -48,6 +55,8 @@ class FakeEngine:
     hold_start: bool = False  # `start()` waits for an `end()` that finds no engine, which waits for the job's decision
     ended: Callable[[EngineEnd], None] | None = None
     calls: list[tuple[int, str]] = field(default_factory=lambda: [])
+    scripted: dict[str, list[object]] = field(default_factory=lambda: {})
+    params: list[tuple[int, str, dict[str, object]]] = field(default_factory=lambda: [])
     ends: list[tuple[int, str]] = field(default_factory=lambda: [])
     starts: int = 0
     resets: int = 0
@@ -112,6 +121,27 @@ class FakeEngine:
             self.calls.append((eng.serial, op))
             self._decided = True
             self._cond.notify_all()
+            if op in self.scripted:
+                self.params.append((eng.serial, op, dict(params)))
+                answer = self.scripted[op].pop(0)
+                if answer in (CRASH, CRASH_TO_BOUND):
+                    if answer == CRASH_TO_BOUND:
+                        now = time.monotonic()  # three stops just now: the restart window does not lift them yet
+                        self.state_now = Unavailable((now, now, now), "crashed")
+                        self.start_failure = EngineFailure("unavailable", "the engine stopped 3 times in 300 s")
+                    self._die(eng)
+                    return EngineFailure("crashed", "the engine's output ended")
+                if answer == BLOCK:
+                    self._in_call += 1
+                    self._cond.wait_for(lambda: op in self._released or eng.ended is not None)
+                    self._in_call -= 1
+                    self._cond.notify_all()
+                    if eng.ended is not None:
+                        return EngineFailure("cancelled", "ended by us")
+                    self._released.discard(op)
+                    answer = self.scripted[op].pop(0)
+                assert isinstance(answer, dict), answer
+                return answer  # pyright: ignore[reportUnknownVariableType]
             if op == "ok":
                 return {"op": op}
             if op == "crash":

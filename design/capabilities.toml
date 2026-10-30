@@ -254,8 +254,8 @@ legacy_entry = "—"
 demo = "no"
 backlog = ["BL-0103", "BL-0151"]
 adrs = ["ADR-0063", "ADR-0012"]
-code = ["engine/src/ledger_engine/ledger/restore.py", "engine/src/ledger_engine/ledger/core/recovery.py"]
-tests = ["engine/tests/ledger/test_restore.py", "engine/tests/ledger/test_recovery_judge.py", "engine/tests/ledger/test_acl_rule.py"]
+code = ["engine/src/ledger_engine/ledger/restore.py", "engine/src/ledger_engine/ledger/core/recovery.py", "engine/src/ledger_engine/ledger/recover_all.py", "engine/src/ledger_engine/protocol/recovery.py", "backend/src/app/platform/engine_jobs/recovery.py", "backend/src/app/platform/engine_jobs/recovery_text.py"]
+tests = ["engine/tests/ledger/test_restore.py", "engine/tests/ledger/test_recovery_judge.py", "engine/tests/ledger/test_acl_rule.py", "engine/tests/ledger/test_recover_all.py", "engine/tests/test_recover_ops.py", "backend/tests/platform/test_recover_all.py", "backend/tests/platform/test_recovery_text.py"]
 [[capability]]
 id = "CAP-WS-PORTABLE"
 area = "Setup and workspaces"

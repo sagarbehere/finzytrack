@@ -19,7 +19,7 @@ import pytest
 from jsonschema import Draft202012Validator
 
 from ledger_engine.protocol import server
-from ledger_engine.protocol.messages import MAX_ID, HandshakeResult, NoParams
+from ledger_engine.protocol.messages import MAX_ID, HandshakeResult, NoParams, model_stem
 from ledger_engine.protocol.server import Engine, Handler, JobChannel, serve
 
 REPO = Path(__file__).resolve().parents[2]
@@ -29,7 +29,7 @@ HANDSHAKE = b'{"v":2,"id":0,"op":"handshake","params":{}}\n'
 
 
 def any_message() -> Draft202012Validator:
-    names = ["Refusal", *(f"{op.capitalize()}Reply" for op in SCHEMA["x-ops"])]
+    names = ["Refusal", *(f"{model_stem(op)}Reply" for op in SCHEMA["x-ops"])]
     return Draft202012Validator({"anyOf": [{"$ref": f"#/$defs/{n}"} for n in names], "$defs": SCHEMA["$defs"]})
 
 

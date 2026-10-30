@@ -50,9 +50,17 @@ product calls it. Each rule names its spec line.
   ledger work. Quit and reopen Finzytrack."), whether or not a job waits. Never for a running job the user merely
   cannot end: that answer comes only to a Cancel.
 
-Not here yet (BL-0109's later pieces): recover-all's Cancel per journal and its `not_tried` marks (BL-0151), the
-quiesce, the quit and their screens (BL-0154). The code map's planned list names each
-(`backend/tests/architecture/test_tla_mapping.py`).
+- **Recover-all goes on per journal** (§4's `recover_all` row, §8.1; S0062; model `UserCancelRunning`, `EngineCrash`,
+  `SpawnStep`'s `rc_spawn` branch): the job reports its listing (`RecoveryListed`); after it, its own Cancel ends only
+  its engine (`JournalCancelled`: the journal in hand counts `cancelled`, and the job asks for a fresh engine for the
+  next one), before it the Cancel ends the job as for any job (nothing is marked; model I14). An engine's death
+  during recover-all ends only that engine: the job is not lost, it asks for a fresh engine (the journal in hand
+  counts `failed`; before the listing it lists again), after the client's backoff. When no engine can be had for it
+  (the engine unavailable, the lock's wait failed), the job is not ended without its report: `EngineRefused` tells
+  its work, which marks every journal not yet tried `not_tried` and returns.
+
+Not here yet (BL-0109's later pieces): the quiesce, the quit and their screens (BL-0154). The code map's planned list
+names each (`backend/tests/architecture/test_tla_mapping.py`).
 """
 
 from __future__ import annotations
@@ -63,7 +71,8 @@ from typing import Any, Final, Literal
 
 from app.platform.tla import tla_action
 
-TABLE_VERSION: Final = 3  # 2 (S0058): the lock before every fresh engine, the engine unavailable; 3: Try again
+TABLE_VERSION: Final = 4  # 2 (S0058): the lock before every fresh engine, the engine unavailable; 3: Try again;
+# 4 (S0062): recover-all goes on per journal (Cancel after its listing, a death, no engine)
 """Raised whenever a decision changes, so the decision log (§12) replays each recording with its own table."""
 
 type JobKind = Literal["open", "rebuild", "preview", "save", "r4", "bql", "recover_all", "create", "copy"]
@@ -121,11 +130,13 @@ class Job:
 
 @dataclass(frozen=True, slots=True)
 class Running:
-    """The running job: past its commit point or not, and waiting for a fresh engine mid-job or not."""
+    """The running job: past its commit point or not, waiting for a fresh engine mid-job or not, and for a
+    recover-all whether it has listed the journals (§8.1)."""
 
     job: Job
     past_commit: bool = False
     wants_engine: bool = False
+    listed: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -240,6 +251,13 @@ class EngineNeeded:
 
 
 @dataclass(frozen=True, slots=True)
+class RecoveryListed:
+    """The running recover-all has listed the journals (§8.1): from now on its Cancel ends only its engine."""
+
+    job_id: int
+
+
+@dataclass(frozen=True, slots=True)
 class RetireEngine:
     """The running job's engine ran user code and must end before the job's next part (§5.1)."""
 
@@ -287,6 +305,7 @@ type Event = (
     | EngineDied
     | EngineEnded
     | EngineNeeded
+    | RecoveryListed
     | RetireEngine
     | AdviceTimer
     | WorkspaceOpened
@@ -309,6 +328,7 @@ EVENTS: tuple[type, ...] = (
     EngineDied,
     EngineEnded,
     EngineNeeded,
+    RecoveryListed,
     RetireEngine,
     AdviceTimer,
     WorkspaceOpened,
@@ -429,6 +449,23 @@ class NoEngine:
     why: NoEngineWhy
 
 
+@dataclass(frozen=True, slots=True)
+class JournalCancelled:
+    """A recover-all's Cancel after its listing (§4, §8.1): its engine is ended, the job goes on; the journal in hand
+    counts `cancelled` (its work learns it from its call)."""
+
+    job_id: int
+
+
+@dataclass(frozen=True, slots=True)
+class EngineRefused:
+    """The running recover-all asked for an engine and none can be had (§8.1 "When the engine cannot run"): the job
+    is not ended; its work marks every journal not yet tried `not_tried` and returns its report."""
+
+    job_id: int
+    why: NoEngineWhy
+
+
 type Effect = (
     WaitEngineLock
     | ResetEngine
@@ -446,6 +483,8 @@ type Effect = (
     | EngineLost
     | Finished
     | NoEngine
+    | JournalCancelled
+    | EngineRefused
 )
 
 
@@ -546,6 +585,10 @@ def _spawn_step(state: QueueState) -> tuple[QueueState, tuple[Effect, ...]]:
     running = state.running
     if running is None or not running.wants_engine or state.slot not in ("none", "idle"):
         return state, ()
+    if state.unavailable and running.job.kind == "recover_all":
+        return replace(state, running=replace(running, wants_engine=False)), (
+            EngineRefused(running.job.id, "unavailable"),
+        )
     if state.unavailable:
         return replace(state, running=None), (NoEngine(running.job.id, "unavailable"),)
     state, effects = _engine_for(state, running.job)
@@ -593,6 +636,14 @@ def _retire_engine(p: QueuePolicy, s: QueueState, e: RetireEngine) -> Step:
     return Step(state, effects)
 
 
+def _recovery_listed(p: QueuePolicy, s: QueueState, e: RecoveryListed) -> Step:
+    """§8.1: the running recover-all has listed the journals."""
+    r = s.running
+    if r is None or r.job.id != e.job_id or r.job.kind != "recover_all":
+        return Step(s)
+    return Step(replace(s, running=replace(r, listed=True)))
+
+
 def _boot(p: QueuePolicy, s: QueueState, e: Boot) -> Step:
     """§5.1: at start, before its first engine, the sidecar waits for the engine lock; the advice shows after the
     display delay while it waits. §3: the boot's window is open "from the start" (model `SwitchExclusive` holds from
@@ -629,7 +680,10 @@ def _engine_lock_failed(p: QueuePolicy, s: QueueState, e: EngineLockFailed) -> S
     state = replace(s, engine_lock="unchecked")
     effects: list[Effect] = []
     r = state.running
-    if r is not None and r.wants_engine and state.slot != "busy":  # a job still on its engine keeps it and its ask
+    if r is not None and r.wants_engine and state.slot != "busy" and r.job.kind == "recover_all":
+        state = replace(state, running=replace(r, wants_engine=False))  # its report still comes (§8.1)
+        effects.append(EngineRefused(r.job.id, "lock_failed"))
+    elif r is not None and r.wants_engine and state.slot != "busy":  # a job still on its engine keeps it and its ask
         state = replace(state, running=None)
         effects.append(NoEngine(r.job.id, "lock_failed"))
     if state.running is None:
@@ -704,7 +758,9 @@ def _cancel_running(s: QueueState, r: Running) -> Step:
         return Step(s, (TooLate(r.job.id),))
     if r.job.kind == "recover_all" and s.slot != "busy":
         return Step(s)  # model: between engines it holds none, nothing to cancel; a stuck slot gets the advice (§5.2)
-    # TODO(BL-0151): a Cancel of recover-all after its listing ends only its engine and goes on with the next journal.
+    if r.job.kind == "recover_all" and r.listed:
+        state, ended = _ending(s, "cancel")  # §8.1: the journal in hand counts `cancelled`; the job goes on
+        return Step(state, (*ended, JournalCancelled(r.job.id)))
     state, ended = _end_running(s)
     return Step(state, (*ended, Cancelled(r.job.id)))
 
@@ -771,6 +827,9 @@ def _engine_died(p: QueuePolicy, s: QueueState, e: EngineDied) -> Step:
     r = s.running
     if s.slot not in ("busy", "idle") or e.engine != s.engine:
         return Step(s)
+    if s.slot == "busy" and r is not None and r.job.kind == "recover_all":
+        state, ended = _ending(s, "crashed")  # §8.1: the journal in hand counts `failed`; the job goes on
+        return Step(state, ended)
     if s.slot == "busy" and r is not None:
         state, ended = _ending(replace(s, running=None), "crashed")
         return Step(state, (EngineLost(r.job.id), *ended))
@@ -829,6 +888,7 @@ HANDLERS: tuple[tuple[type, Handler], ...] = (
     (EngineDied, _engine_died),
     (EngineEnded, _engine_ended),
     (EngineNeeded, _engine_needed),
+    (RecoveryListed, _recovery_listed),
     (RetireEngine, _retire_engine),
     (AdviceTimer, _advice_timer),
     (WorkspaceOpened, _opened),
@@ -843,7 +903,7 @@ def cancel_offered(policy: QueuePolicy, state: QueueState, job_id: int) -> bool:
     the table itself, so the UI never shows a Cancel the table answers with nothing (a background job, a switch job
     with nothing ahead, a recover-all between engines: S0053 verifier round 2) or with "too late"."""
     step = transition(policy, state, Cancel(job_id))
-    return any(isinstance(e, Cancelled) and e.job_id == job_id for e in step.effects)
+    return any(isinstance(e, Cancelled | JournalCancelled) and e.job_id == job_id for e in step.effects)
 
 
 def transition(policy: QueuePolicy, state: QueueState, event: Event) -> Step:

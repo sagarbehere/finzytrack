@@ -71,6 +71,7 @@ from app.platform.adapters.engine_lock import engine_lock_path, wait_engine_lock
 from app.platform.adapters.ids import Uuid7Ids
 from app.platform.clock import Clock, FrozenClock
 from app.platform.engine import EngineEnd
+from app.platform.engine_jobs.recovery import recover_all_work
 from app.platform.engine_jobs.scheduler import EngineJobs
 from app.platform.engine_supervision import RestartPolicy
 from app.platform.ids import Ids
@@ -218,6 +219,7 @@ def wire(args: Args, log: EventSink, app_version: str) -> Wiring:
         wait_engine_lock=lambda: wait_engine_lock(engine_lock_path(args.app_local_data)),
         restart=restart,
         log=log,
+        recover_all=recover_all_work(args.app_local_data.resolve()),  # §8.1: the boot's recover-all, in an engine
     )
     return Wiring(
         clock=FrozenClock(args.frozen_clock) if args.frozen_clock else SystemClock(),

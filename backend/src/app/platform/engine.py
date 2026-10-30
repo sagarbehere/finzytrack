@@ -29,6 +29,7 @@ type RefusalKey = Literal[
     "protocol.invalid_params",
     "protocol.handshake_required",
     "engine.internal",
+    "engine.no_engine_lock",
 ]
 
 type FailureKind = Literal[
@@ -143,6 +144,104 @@ class EngineFailure:
 
     kind: FailureKind
     detail: str
+
+
+# -- Recover-all's ops (S0062; engine-jobs §8.1, §11), as the sidecar decodes them -----------------------------------
+
+type EntryKind = Literal["file", "dir", "link", "other"]
+
+
+@dataclass(frozen=True, slots=True)
+class JournalFile:
+    """One file a journal names: canonical path, `path_key`, and whether the save was creating it."""
+
+    path: str
+    path_key: str
+    created: bool
+
+
+@dataclass(frozen=True, slots=True)
+class ListedJournal:
+    """An `.open` record the listing found. `readable` False: it names nothing to match on (blocks every open)."""
+
+    journal_dir: str
+    name: str
+    readable: bool
+    workspace_key: str | None
+    lineage: str | None
+    files: tuple[JournalFile, ...]
+    errno: int | None
+
+
+@dataclass(frozen=True, slots=True)
+class UnlistedFolder:
+    """A journal folder that could not be synced, opened or listed (blocks every open)."""
+
+    folder: str
+    errno: int | None
+
+
+@dataclass(frozen=True, slots=True)
+class JournalListing:
+    journals: tuple[ListedJournal, ...]
+    unlisted: tuple[UnlistedFolder, ...]
+    parts_removed: int
+
+
+@dataclass(frozen=True, slots=True)
+class EntrySeen:
+    kind: EntryKind
+    sha256: str | None
+    size: int | None
+
+
+@dataclass(frozen=True, slots=True)
+class KeptCopySeen:
+    name: str
+    path: str
+    seen: EntrySeen
+
+
+@dataclass(frozen=True, slots=True)
+class InspectedFile:
+    """What stands at one file of a stopped journal now, and its kept copies (§11: Show both, Show it)."""
+
+    path: str
+    created: bool
+    reachable: bool
+    now: EntrySeen | None
+    kept: tuple[KeptCopySeen, ...]
+    errno: int | None
+
+
+type TryOutcomeKind = Literal["resolved", "stopped", "failed"]
+
+
+@dataclass(frozen=True, slots=True)
+class TryOutcome:
+    """One journal's try (§8.1 steps 1-4)."""
+
+    outcome: TryOutcomeKind
+    cause: str | None
+    path: str | None
+    entry: str | None
+    detail: str | None
+    errno: int | None
+    inspection: tuple[InspectedFile, ...] | None
+
+
+type ActOutcomeKind = Literal["done", "refused", "failed"]
+
+
+@dataclass(frozen=True, slots=True)
+class ActOutcome:
+    """A blocked-screen action's answer: `done`, `refused` (nothing written; `reason`), `failed` (`errno`)."""
+
+    outcome: ActOutcomeKind
+    reason: str | None
+    path: str | None
+    detail: str | None
+    errno: int | None
 
 
 class EnginePort(Protocol):

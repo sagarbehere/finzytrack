@@ -39,6 +39,7 @@ type RefusalKey = Literal[
     "protocol.invalid_params",
     "protocol.handshake_required",
     "engine.internal",
+    "engine.no_engine_lock",
 ]
 REFUSAL_KEYS: frozenset[str] = frozenset(get_args(RefusalKey.__value__))
 
@@ -158,13 +159,139 @@ class ProceedControl(Message):
     control: Literal["proceed"]
 
 
+# -- Recover-all (S0062; engine-jobs §8.1, §11; ADR-0063 decision 2) --------------------------------------------------
+
+AbsPath = Annotated[str, Field(min_length=1, pattern=r"^/")]
+Sha256 = Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
+type EntryKind = Literal["file", "dir", "link", "other"]
+
+
+class RecoverListParams(Message):
+    """`app_local_data`: the app's machine-local folder; the journals are in its `local/<key>/journal/`."""
+
+    app_local_data: AbsPath
+
+
+class JournalFile(Message):
+    """One file a journal names: its canonical path, its `path_key`, and whether the save was creating it."""
+
+    path: AbsPath
+    path_key: AbsPath
+    created: bool
+
+
+class ListedJournal(Message):
+    """An `.open` record found by the listing. `readable` False: it names nothing it can be matched on (torn,
+    foreign, newer, of another name, or a read error: `errno`), so it blocks every open (ADR-0063)."""
+
+    journal_dir: AbsPath
+    name: str = Field(min_length=1)
+    readable: bool
+    workspace_key: str | None
+    lineage: str | None
+    files: list[JournalFile]
+    errno: int | None
+
+
+class UnlistedFolder(Message):
+    """A journal folder that could not be synced, opened or listed: it blocks every open."""
+
+    folder: AbsPath
+    errno: int | None
+
+
+class RecoverListResult(Message):
+    """§8.1: every `.open` journal after a `durable_sync` of each journal folder; `.part` records removed."""
+
+    journals: list[ListedJournal]
+    unlisted: list[UnlistedFolder]
+    parts_removed: int = Field(ge=0)
+
+
+class RecoverTryParams(Message):
+    app_local_data: AbsPath
+    journal_dir: AbsPath
+    name: str = Field(min_length=1)
+
+
+class EntrySeen(Message):
+    """An entry as it stands: its kind, and for a regular file its SHA-256 and size."""
+
+    kind: EntryKind
+    sha256: Sha256 | None
+    size: int | None = Field(ge=0)
+
+
+class KeptCopySeen(Message):
+    name: str = Field(min_length=1)
+    path: AbsPath
+    seen: EntrySeen
+
+
+class InspectedFile(Message):
+    """What stands at one file of a stopped journal now, and its kept copies (§11: Show both, Show it)."""
+
+    path: AbsPath
+    created: bool
+    reachable: bool
+    now: EntrySeen | None
+    kept: list[KeptCopySeen]
+    errno: int | None
+
+
+class RecoverTryResult(Message):
+    """One journal's try (§8.1 steps 1-4): `resolved`, `stopped` (blocking reason `stopped`) or `failed` (reason
+    `failed`), with the cause, the file (`path`), the entry that failed or blocked when it is not the file, the
+    blocking ACL entry (`detail`) and the error number; for `stopped`, what stands there now (`inspection`)."""
+
+    outcome: Literal["resolved", "stopped", "failed"]
+    cause: str | None
+    path: AbsPath | None
+    entry: AbsPath | None
+    detail: str | None
+    errno: int | None
+    inspection: list[InspectedFile] | None
+
+
+class RecoverActParams(Message):
+    """A blocked-screen action on one `.open` journal (§8.1 "Afterwards", §11): `keep`; `delete_kept` (`file`, the
+    kept copy's entry name `kept`, and the `sha256` the user was shown); `delete_created` (`file`, `sha256`)."""
+
+    app_local_data: AbsPath
+    journal_dir: AbsPath
+    name: str = Field(min_length=1)
+    action: Literal["keep", "delete_kept", "delete_created"]
+    file: AbsPath | None = None
+    kept: str | None = None
+    sha256: Sha256 | None = None
+
+
+class RecoverActResult(Message):
+    """`done`; `refused` (nothing written: `reason`, `path`, `detail`); `failed` (an error the system answered)."""
+
+    outcome: Literal["done", "refused", "failed"]
+    reason: str | None
+    path: AbsPath | None
+    detail: str | None
+    errno: int | None
+
+
 @dataclass(frozen=True, slots=True)
 class OpSpec:
-    """One op: its params and result models, and the example result its reply carries in the schema."""
+    """One op: its params and result models, the example result its reply carries in the schema, the example params
+    of its request, and whether it needs the engine lock (engine-jobs §5.1: every op that reads or writes ledger or
+    journal files runs only in an engine that holds it; S0062)."""
 
     params: type[Message]
     result: type[Message]
     example_result: dict[str, Any]
+    example_params: dict[str, Any] | None = None
+    needs_engine_lock: bool = False
+
+
+_ALD = "/app-data/com.finzytrack.desktop"
+_JD = f"{_ALD}/local/k1/journal"
+_SEEN = {"kind": "file", "sha256": "0" * 64, "size": 21}
 
 
 OPS: dict[str, OpSpec] = {
@@ -172,6 +299,64 @@ OPS: dict[str, OpSpec] = {
         NoParams, HandshakeResult, {"protocol": 2, "engine_version": "0.4.0", "beancount_version": "3.2.0"}
     ),
     "ping": OpSpec(NoParams, PingResult, {"status": "ok"}),
+    "recover_list": OpSpec(
+        RecoverListParams,
+        RecoverListResult,
+        {
+            "journals": [
+                {
+                    "journal_dir": _JD,
+                    "name": "s1-j7",
+                    "readable": True,
+                    "workspace_key": "k1",
+                    "lineage": "lin1",
+                    "files": [{"path": "/ledgers/L/main.bean", "path_key": "/ledgers/l/main.bean", "created": False}],
+                    "errno": None,
+                }
+            ],
+            "unlisted": [],
+            "parts_removed": 0,
+        },
+        {"app_local_data": _ALD},
+        needs_engine_lock=True,
+    ),
+    "recover_try": OpSpec(
+        RecoverTryParams,
+        RecoverTryResult,
+        {
+            "outcome": "stopped",
+            "cause": "kept_copy",
+            "path": "/ledgers/L/main.bean",
+            "entry": None,
+            "detail": None,
+            "errno": None,
+            "inspection": [
+                {
+                    "path": "/ledgers/L/main.bean",
+                    "created": False,
+                    "reachable": True,
+                    "now": _SEEN,
+                    "kept": [
+                        {
+                            "name": "main.bean.kept-s1-j7",
+                            "path": "/ledgers/L/main.bean.kept-s1-j7",
+                            "seen": _SEEN,
+                        }
+                    ],
+                    "errno": None,
+                }
+            ],
+        },
+        {"app_local_data": _ALD, "journal_dir": _JD, "name": "s1-j7"},
+        needs_engine_lock=True,
+    ),
+    "recover_act": OpSpec(
+        RecoverActParams,
+        RecoverActResult,
+        {"outcome": "done", "reason": None, "path": None, "detail": None, "errno": None},
+        {"app_local_data": _ALD, "journal_dir": _JD, "name": "s1-j7", "action": "keep"},
+        needs_engine_lock=True,
+    ),
 }
 
 
@@ -189,10 +374,16 @@ def _model(name: str, doc: str, fields: dict[str, Any], example: dict[str, Any])
     return type(name, (Message,), namespace)
 
 
+def model_stem(op: str) -> str:
+    """The name the schema gives an op's messages: `recover_list` -> `RecoverList` (`RecoverListRequest`, ...)."""
+    return "".join(part.capitalize() for part in op.split("_"))
+
+
 def _request_model(op: str, spec: OpSpec) -> type[Message]:
     fields = {"v": Literal[2], "id": RequestId, "op": Literal[op], "params": spec.params}
-    example: dict[str, Any] = {"v": PROTOCOL_VERSION, "id": 1, "op": op, "params": {}}
-    return _model(f"{op.capitalize()}Request", f"The `{op}` request.", fields, example)
+    params = spec.example_params or {}
+    example: dict[str, Any] = {"v": PROTOCOL_VERSION, "id": 1, "op": op, "params": params}
+    return _model(f"{model_stem(op)}Request", f"The `{op}` request.", fields, example)
 
 
 def _reply_model(op: str, spec: OpSpec) -> type[Message]:
@@ -205,7 +396,7 @@ def _reply_model(op: str, spec: OpSpec) -> type[Message]:
         "decision": Decision | None,
     }
     example: dict[str, Any] = {"v": PROTOCOL_VERSION, "id": 1, "op": op, "ok": True, "result": spec.example_result}
-    return _model(f"{op.capitalize()}Reply", f"The accepted reply to `{op}`.", fields, example)
+    return _model(f"{model_stem(op)}Reply", f"The accepted reply to `{op}`.", fields, example)
 
 
 class Refusal(Message):

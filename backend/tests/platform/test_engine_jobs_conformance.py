@@ -502,13 +502,16 @@ type Op = SubmitOp | CancelOp | GoneOp | WorkOp | SimpleOp | OpenedOp
 
 
 STOPS: Mapping[str, str] = {
-    "recover_spawn": f"recover-all goes on with the next journal in a fresh engine ({SAVE})",
-    "recover_cancel": f"a Cancel of recover-all after its listing ends only its engine ({SAVE})",
-    "recover_crash": f"recover-all goes on with the next journal after its engine's death ({SAVE})",
+    # Built in S0062 (the queue's `RecoveryListed`, `JournalCancelled`, `EngineRefused`), but not walked by this
+    # corpus yet: `gen_traces.GUARDS` still leaves them out; widening it is the save path's replay (BL-0151 slice 5).
+    "recover_spawn": f"recover-all goes on with the next journal in a fresh engine ({SAVE}, slice 5's replay)",
+    "recover_cancel": f"a Cancel of recover-all after its listing ends only its engine ({SAVE}, slice 5's replay)",
+    "recover_crash": f"recover-all goes on with the next journal after its engine's death ({SAVE}, slice 5's replay)",
     "open_crash": f"the open's engine death ends the switch on its failed screen ({R4_READS})",
     "open_job": f"the boot's open of a workspace whose mirror is out of date runs an open job ({R4_READS})",
 }
-"""Steps that stop their trace: behaviour of a later piece that the code does not have yet. `gen_traces.GUARDS`
+"""Steps that stop their trace: behaviour of a later piece that the code does not have yet, or (the three `recover_`
+ones, since S0062) that the corpus does not walk yet. `gen_traces.GUARDS`
 leaves four of them out of the walk (`recover_cancel`, `recover_crash`, `open_crash`, `open_job`). `recover_spawn` is
 not guarded: guarding `SpawnStep` would deadlock the walk (the trace module takes the dispatch whenever it is enabled),
 so it is only absent from this corpus, its seed and its worlds (it follows only from `recover_crash` or

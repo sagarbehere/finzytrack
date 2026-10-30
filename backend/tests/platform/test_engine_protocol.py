@@ -11,7 +11,7 @@ from __future__ import annotations
 import copy
 import json
 from pathlib import Path
-from typing import Any, get_args
+from typing import Any, cast, get_args
 
 import pytest
 from jsonschema import Draft202012Validator
@@ -23,9 +23,11 @@ from app.platform.engine import (
     EngineInfo,
     EngineRefusal,
     GateReached,
+    JournalListing,
     Pong,
     Progress,
     RefusalKey,
+    TryOutcome,
 )
 from app.platform.engine_protocol import (
     MAX_ID,
@@ -37,6 +39,9 @@ from app.platform.engine_protocol import (
     Violation,
     decode_info,
     decode_pong,
+    decode_recover_act,
+    decode_recover_list,
+    decode_recover_try,
     decode_reply,
     encode_proceed,
     encode_request,
@@ -72,12 +77,18 @@ def test_version_ops_keys_and_limit_agree_with_the_schema() -> None:
     assert set(s["$defs"]["RefusalKey"]["enum"]) == set(get_args(RefusalKey.__value__)) == REFUSAL_KEYS
 
 
+def stem(op: str) -> str:
+    """The schema's name for an op's messages (the engine's `messages.model_stem`)."""
+    return "".join(part.capitalize() for part in op.split("_"))
+
+
 @pytest.mark.parametrize("op", OPS)
 def test_every_encoded_request_is_valid(op: str) -> None:
-    raw = encode_request(42, op, {})
+    params = examples(f"{stem(op)}Request")[0]["params"]
+    raw = encode_request(42, op, params)
     assert raw.endswith(b"\n")
     assert raw.count(b"\n") == 1
-    assert valid(f"{op.capitalize()}Request", json.loads(raw))
+    assert valid(f"{stem(op)}Request", json.loads(raw))
 
 
 def test_an_encoded_request_is_compact() -> None:
@@ -90,7 +101,16 @@ def decoded(reply: dict[str, Any], op: str) -> object:
     out = decode_reply(json.dumps(reply).encode() + b"\n", rid, op)  # type: ignore[arg-type]
     if not isinstance(out, Accepted):
         return out
-    return decode_info(out.result) if op == "handshake" else decode_pong(out.result)
+    return DECODERS[op](out.result)
+
+
+DECODERS: dict[str, Any] = {
+    "handshake": decode_info,
+    "ping": decode_pong,
+    "recover_list": decode_recover_list,
+    "recover_try": decode_recover_try,
+    "recover_act": decode_recover_act,
+}
 
 
 def test_handshake_examples_decode() -> None:
@@ -154,7 +174,15 @@ def mutations(example: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 @pytest.mark.parametrize(
-    ("definition", "op"), [("HandshakeReply", "handshake"), ("PingReply", "ping"), ("Refusal", None)]
+    ("definition", "op"),
+    [
+        ("HandshakeReply", "handshake"),
+        ("PingReply", "ping"),
+        ("Refusal", None),
+        ("RecoverListReply", "recover_list"),
+        ("RecoverTryReply", "recover_try"),
+        ("RecoverActReply", "recover_act"),
+    ],
 )
 def test_the_decoder_refuses_exactly_what_the_schema_refuses(definition: str, op: str | None) -> None:
     for ex in examples(definition):
@@ -306,3 +334,73 @@ def test_the_decoder_refuses_exactly_what_the_schema_refuses_for_a_decision(deci
     verdict = decoded_line(reply, reply["id"], "ping")
     assert schema_ok == (not isinstance(verdict, Violation)), (decision, verdict)
     assert not schema_ok
+
+
+# -- Recover-all's ops (S0062) --------------------------------------------------------------------------------------
+
+RECOVER_OPS = ("recover_list", "recover_try", "recover_act")
+
+
+def nested_mutations(value: object) -> list[object]:
+    """Every variant of `value` with one change at one place inside it: a key dropped, an unknown key, a value made
+    a list, a string, null, a negative number, a relative path, or an empty string; a list emptied or given a bad
+    item. The decoder must refuse exactly the variants the schema refuses."""
+    out: list[object] = []
+    replacements: tuple[object, ...] = ([], "x", None, -1, "relative/path", "", True, {"k": 1}, "/abs")
+    if isinstance(value, dict):
+        obj = cast("dict[str, object]", value)
+        for key in obj:
+            out.append({k: v for k, v in obj.items() if k != key})
+            out += [{**obj, key: repl} for repl in replacements]
+            out += [{**obj, key: m} for m in nested_mutations(obj[key])]
+        out.append({**obj, "unknown": 1})
+    elif isinstance(value, list):
+        items = cast("list[object]", value)
+        out.append([])
+        out.append([*items, "x"])
+        for i, item in enumerate(items):
+            out += [[*items[:i], m, *items[i + 1 :]] for m in nested_mutations(item)]
+    return out
+
+
+@pytest.mark.parametrize("op", RECOVER_OPS)
+def test_recover_examples_decode(op: str) -> None:
+    for ex in examples(f"{stem(op)}Reply"):
+        out = decoded(ex, op)
+        assert not isinstance(out, Violation), out
+
+
+@pytest.mark.parametrize("op", RECOVER_OPS)
+def test_the_decoder_refuses_exactly_what_the_schema_refuses_inside_a_recover_result(op: str) -> None:
+    definition = f"{stem(op)}Reply"
+    for ex in examples(definition):
+        variants = nested_mutations(ex["result"])
+        assert len(variants) > 20
+        for result in variants:
+            variant = {**ex, "result": result}
+            schema_ok = valid(definition, variant)
+            verdict = decoded(variant, op)
+            assert schema_ok == (not isinstance(verdict, Violation)), (result, verdict)
+
+
+def test_the_try_result_decodes_to_its_fields() -> None:
+    ex = examples("RecoverTryReply")[0]
+    out = decoded(ex, "recover_try")
+    assert isinstance(out, TryOutcome)
+    assert (out.outcome, out.cause, out.path) == ("stopped", "kept_copy", ex["result"]["path"])
+    assert out.inspection is not None
+    [main] = out.inspection
+    assert main.kept[0].name == "main.bean.kept-s1-j7"
+    assert main.kept[0].seen.sha256 == "0" * 64
+
+
+def test_the_listing_decodes_to_its_fields() -> None:
+    out = decoded(examples("RecoverListReply")[0], "recover_list")
+    assert isinstance(out, JournalListing)
+    [j] = out.journals
+    assert (j.name, j.readable, j.workspace_key, j.lineage) == ("s1-j7", True, "k1", "lin1")
+    assert j.files[0].created is False
+
+
+def test_no_engine_lock_is_a_refusal_key() -> None:
+    assert "engine.no_engine_lock" in REFUSAL_KEYS

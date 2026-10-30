@@ -17,6 +17,7 @@ SRC = Path(__file__).resolve().parents[2] / "src" / "ledger_engine"
 WRITE_PATH = (
     "ledger/writer.py",
     "ledger/restore.py",
+    "ledger/recover_all.py",
     "ledger/handles.py",
     "ledger/paths.py",
     "ledger/core/journal.py",

@@ -36,8 +36,14 @@ What the user reads is `app.platform.engine_jobs.text`, from `status()`. Bounded
 queued jobs and one running, one worker per job (a cancelled job's worker ends once its engine has ended), one lock
 wait, at most two engines in the books (the previous one until its end report, and the current one).
 
+- **Recover-all** (S0062; §8.1): the boot's job runs the work the composition root gives
+  (`app.platform.engine_jobs.recovery.recover_all_work`); its context reports the listing (`JobContext.listed`), and
+  after it a Cancel or an engine's death ends only the job's engine: the work's call fails, it asks for a fresh engine
+  (`fresh_engine`) and goes on with the next journal; when none can be had, `fresh_engine` answers the failure
+  (`EngineRefused`) and the work returns its report.
+
 Not here yet: the decision log and the flight recorder (§12; BL-0154), the quiesce, the switch and the quit (BL-0154;
-`exclusive_began`/`exclusive_ended` are their seams), recover-all's own work (BL-0151), the job's CPU (BL-0082).
+`exclusive_began`/`exclusive_ended` are their seams), the job's CPU (BL-0082).
 """
 
 from __future__ import annotations
@@ -80,6 +86,7 @@ from app.platform.engine_jobs.queue import (
     EngineLockFree,
     EngineLost,
     EngineNeeded,
+    EngineRefused,
     Event,
     ExclusiveBegan,
     ExclusiveEnded,
@@ -88,11 +95,13 @@ from app.platform.engine_jobs.queue import (
     JobDone,
     JobKind,
     JobSpec,
+    JournalCancelled,
     NoEngine,
     Proceed,
     Queued,
     QueuePolicy,
     QueueState,
+    RecoveryListed,
     Refused,
     ResetEngine,
     RetireEngine,
@@ -258,6 +267,10 @@ class JobContext:
         none came (the job was cancelled, or no engine could be started)."""
         return self._worker.fresh_engine()
 
+    def listed(self) -> None:
+        """A recover-all has listed the journals (§8.1): from now on its Cancel ends only its engine (S0062)."""
+        self._worker.listed()
+
 
 class _Worker:
     """The running job's side of the scheduler: its engine calls, its `Start`s and its end."""
@@ -272,6 +285,7 @@ class _Worker:
         self._books = books
         self._cond = threading.Condition()
         self._grant: Start | None = None
+        self._refused: EngineFailure | None = None
         self._over = False
         self._lost: EngineFailure | None = None
 
@@ -302,11 +316,25 @@ class _Worker:
         self._post(_Feed(RetireEngine(self.job_id)))
         self._post(_Feed(EngineNeeded(self.job_id)))
         with self._cond:
-            self._cond.wait_for(lambda: self._grant is not None or self._over)
+            self._cond.wait_for(lambda: self._grant is not None or self._over or self._refused is not None)
             grant, self._grant = self._grant, None
+            refused, self._refused = self._refused, None
+        if refused is not None:
+            return refused
         if grant is None:
             return EngineFailure("cancelled", "the job has ended")
+        with self._cond:
+            self._lost = None  # the lost engine was the one before (a recover-all goes on: §8.1, S0062)
         return self.begin(grant)
+
+    def listed(self) -> None:
+        self._post(_Feed(RecoveryListed(self.job_id)))
+
+    def refuse(self, failure: EngineFailure) -> None:
+        """No engine can be had for the job's next part (`EngineRefused`): its `fresh_engine` returns `failure`."""
+        with self._cond:
+            self._refused = failure
+            self._cond.notify_all()
 
     def begin(self, start: Start) -> EngineFailure | None:
         """A `Start`: a fresh engine is started first; a reused one is ready. A job ended while its engine was being
@@ -447,8 +475,10 @@ class EngineJobs:
         display_delay: float = DISPLAY_DELAY,
         monotonic: Callable[[], float] = time.monotonic,
         log: EventSink | None = None,
+        recover_all: Work | None = None,
     ) -> None:
         self._engine = engine
+        self._recover_all = recover_all
         self._wait_engine_lock = wait_engine_lock
         self._policy = policy or QueuePolicy()
         self._restart = restart or RestartPolicy()
@@ -699,8 +729,7 @@ class EngineJobs:
     def _boot(self) -> JobTicket | Failed:
         self._step(Boot())
         spec = JobSpec(kind="recover_all", workspace=None, waited_for=True, confirmed=False, owner="switch")
-        # TODO(BL-0151): recover-all lists `local/*/journal/*.open` after syncing their folders and recovers each.
-        return self._submit(spec, _recover_nothing, boot=True)
+        return self._submit(spec, self._recover_all or _recover_nothing, boot=True)
 
     def _submit(self, spec: JobSpec, work: Work, *, boot: bool) -> JobTicket | Failed:
         self._submitting = (spec, work, boot)
@@ -726,7 +755,7 @@ class EngineJobs:
 
     def _cancel(self, job_id: int) -> CancelAnswer:
         effects = self._step(Cancel(job_id))
-        if any(isinstance(e, Cancelled) and e.job_id == job_id for e in effects):
+        if any(isinstance(e, Cancelled | JournalCancelled) and e.job_id == job_id for e in effects):
             return "cancelled"
         if TooLate(job_id) in effects:
             return "too_late"
@@ -778,6 +807,11 @@ class EngineJobs:
             case NoEngine(job_id=job_id, why=why):
                 reason = "cannot_start" if why == "lock_failed" else self._unavailable_reason
                 self._finish(job_id, Failed(error(ErrorCode.ENGINE_UNAVAILABLE, EngineUnavailableDetails(reason))))
+            case EngineRefused(job_id=job_id, why=why):
+                job = self._jobs.get(job_id)
+                if job is not None and job.worker is not None:
+                    kind: FailureKind = "start_failed" if why == "lock_failed" else "unavailable"
+                    job.worker.refuse(EngineFailure(kind, f"no engine for the job's next part ({why})"))
             case Finished(job_id=job_id):
                 job = self._jobs.get(job_id)
                 if job is not None:
@@ -936,6 +970,7 @@ class EngineJobs:
 
 
 def _recover_nothing(ctx: JobContext) -> WorkResult:
-    """The boot's recover-all until BL-0151: no journal format exists yet, so there is nothing to list; its engine
-    (the session's first) ran no user code and serves the next job (§5.1)."""
+    """The boot's recover-all when the composition root gives none (tests of the queue alone): nothing to list; its
+    engine (the session's first) ran no user code and serves the next job (§5.1). The product's is
+    `app.platform.engine_jobs.recovery.recover_all_work` (S0062)."""
     return WorkResult(None, ran_user_code=False)

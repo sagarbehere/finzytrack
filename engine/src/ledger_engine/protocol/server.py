@@ -40,9 +40,11 @@
   session's engines from doing any ledger work until it has ended, and the new session's recovery never runs beside
   it. Opened like every later ledger-set lock (`os.open`, so a forked child holds it as it holds those). POSIX only;
   Windows is BL-0087.
-- **No resident ledger (INV-10).** The engine holds no ledger between requests; today it has no ledger operations
-  at all. The overlay load arrives with its slice (WS-WRITE, BL-0003); the main sidecar's engine job queue runs one
-  job at a time (ADR-0064, BL-0109).
+- **Recover-all's ops** (S0062; `ledger_engine.protocol.recovery`): `recover_list`, `recover_try` and `recover_act`
+  are answered only by an engine that holds the engine lock (`engine.no_engine_lock` otherwise), so the listing,
+  each try and the blocked screen's actions never run beside an engine of an earlier session.
+- **No resident ledger (INV-10).** The engine holds no ledger between requests. The overlay load arrives with its
+  slice (WS-WRITE, BL-0003); the main sidecar's engine job queue runs one job at a time (ADR-0064, BL-0109).
 - `--test-ops` adds ops for the process tests (`test.stall`, `test.noise`, `test.fail`, `test.read_stdin`,
   `test.gate`, `test.child`, `test.interpreter`, `test.import_plugin`). They are not part of the protocol schema
   and the main sidecar never passes the flag outside tests.
@@ -87,6 +89,7 @@ from ledger_engine.protocol.messages import (
     RefusalBody,
     RefusalKey,
 )
+from ledger_engine.protocol.recovery import RECOVERY_HANDLERS, BadParamsError
 
 ENVELOPE = frozenset({"v", "id", "op", "params"})
 PARENT_POLL_SECONDS = 0.25
@@ -185,6 +188,7 @@ def _is_proceed(line: bytes, rid: int, op: str) -> bool:
 class Handler:
     params: type[Message]
     run: Callable[[Message, JobContext], Message]
+    needs_engine_lock: bool = False
 
 
 def _handshake(_: Message, __: JobContext) -> Message:
@@ -318,7 +322,11 @@ def _interpreter(_: Message, __: JobContext) -> Message:
     )
 
 
-PRODUCTION: dict[str, Handler] = {"handshake": Handler(NoParams, _handshake), "ping": Handler(NoParams, _ping)}
+PRODUCTION: dict[str, Handler] = {
+    "handshake": Handler(NoParams, _handshake),
+    "ping": Handler(NoParams, _ping),
+    **{op: Handler(OPS[op].params, run, needs_engine_lock=True) for op, run in RECOVERY_HANDLERS.items()},
+}
 TEST_OPS: dict[str, Handler] = {
     "test.stall": Handler(NoParams, _stall),
     "test.noise": Handler(NoParams, _noise),
@@ -330,6 +338,7 @@ TEST_OPS: dict[str, Handler] = {
     "test.import_plugin": Handler(FolderParams, _import_plugin),
 }
 assert set(PRODUCTION) == set(OPS), "every op of the protocol has a handler"  # noqa: S101 (import-time invariant)
+assert all(PRODUCTION[op].needs_engine_lock == OPS[op].needs_engine_lock for op in OPS)  # noqa: S101
 
 
 def _log(text: str) -> None:
@@ -355,11 +364,19 @@ def _valid_id(value: object) -> bool:
 
 
 class Engine:
-    """The request handler. Its only state is whether the handshake happened."""
+    """The request handler. Its state: whether the handshake happened, and whether this engine holds the engine
+    lock (`took_engine_lock`, called once `hold_engine_lock` returned). An op that reads or writes ledger or journal
+    files (`OpSpec.needs_engine_lock`: recover-all's) is refused `engine.no_engine_lock` by an engine that does not
+    hold it (S0062; engine-jobs §5.1): so no such work ever runs beside an engine of an earlier session, which may
+    have answered its handshake and not yet taken its `flock` when the sidecar waited (BL-0151's gap)."""
 
-    def __init__(self, *, test_ops: bool = False) -> None:
+    def __init__(self, *, test_ops: bool = False, engine_lock_held: bool = False) -> None:
         self._handlers = {**PRODUCTION, **(TEST_OPS if test_ops else {})}
         self._ready = False
+        self._locked = engine_lock_held
+
+    def took_engine_lock(self) -> None:
+        self._locked = True
 
     @property
     def ready(self) -> bool:
@@ -413,6 +430,8 @@ class Engine:
         except ValidationError as e:
             where = "; ".join(f"params.{'.'.join(map(str, err['loc']))}: {err['msg']}" for err in e.errors())
             return _refusal(rid, op, "protocol.invalid_params", where or "Invalid params.")
+        if handler.needs_engine_lock and not self._locked:
+            return _refusal(rid, op, "engine.no_engine_lock", "This engine does not hold the engine lock.")
         ctx = JobContext(rid, op, channel)
         try:
             reply = _accepted(rid, op, handler.run(params, ctx), ctx.decision)
@@ -420,6 +439,8 @@ class Engine:
             raise  # not a failure of the request: the read loop ends, and the job never proceeds
         except GateRefused as e:
             return _refusal(rid, op, "protocol.malformed", str(e))
+        except BadParamsError as e:
+            return _refusal(rid, op, "protocol.invalid_params", str(e))
         except Exception:  # noqa: BLE001 (the engine's request boundary, EP-13: logged, then a typed refusal)
             _log(f"internal error in {op}:\n{traceback.format_exc()}")
             return _refusal(rid, op, "engine.internal", INTERNAL_MESSAGE)
@@ -628,8 +649,14 @@ def main(argv: list[str] | None = None) -> int:
     else:
         _log(f"the parent is pid {parent}; the engine ends on stdin EOF only")
     lock: str | None = args.engine_lock
-    hold = None if lock is None else (lambda: hold_engine_lock(lock))
-    serve(channel_in, channel_out, Engine(test_ops=args.test_ops), after_handshake=hold)
+    engine = Engine(test_ops=args.test_ops)
+
+    def hold() -> None:
+        assert lock is not None  # noqa: S101 (only passed with a lock)
+        hold_engine_lock(lock)
+        engine.took_engine_lock()
+
+    serve(channel_in, channel_out, engine, after_handshake=None if lock is None else hold)
     if leads_own_group():  # the end-of-input exit ends the whole group (engine-jobs §5.2)
         end_own_group(0)
     return 0

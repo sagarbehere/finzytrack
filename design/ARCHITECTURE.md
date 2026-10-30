@@ -107,7 +107,8 @@ The Python backend is two programs. Where this document names `ledger.*` or the 
 - **Built in the engine, not yet reachable over the protocol** (S0049): `ledger/beancount_port.py`, `ledger/overlay.py`, `ledger/policy.py`, `ledger/grammar.py` (§2.2, §2.4 rule 4). The mirror build (S0050): `mirror/build.py` writes the rows of one load into a fresh SQLite file (`mirror/core/schema.py`, `mirror/core/rows.py`); every table but `commodities` has its rows (BL-0120), and nothing calls it yet: an engine job will, after the overlay load (BL-0109), and the generation publish will wrap it (BL-0113).
 - **The engine lock** (S0053; engine-jobs spec §5.1; ADR-0064 amendment of 2026-10-28): the composition root names `app_local_data/locks/engine.lock` (`EngineCommand.engine_lock`), the client passes it as `--engine-lock`, and every such engine takes a whole-file `flock` on it right after its handshake reply and holds it for its life; the scheduler waits for it (`app.platform.adapters.engine_lock.wait_engine_lock`, on a thread of its own) and releases it at once **before every fresh engine** (S0058; the queue table asks for the wait at boot and whenever a fresh engine is needed, §5.1, §15), so an engine of an earlier session has ended before this session's first engine does any work, and a plugin's child that left an engine's group holding the lock delays the next engine with the advice; while a wait lasts past the display delay the advice "Finzytrack cannot stop the earlier ledger work. Quit and reopen Finzytrack." shows. A wait that fails (an `OSError`) starts no engine: it is logged `engine.start_failed`, the jobs that need an engine end `ENGINE_UNAVAILABLE {cannot_start}`, and the next job that needs one waits again. Both sides create `locks/` if it is missing. POSIX only until BL-0087.
 - **The scheduler** (S0058; engine-jobs §3-§5, §11; ADR-0064): `EngineJobs` runs the queue table (`app.platform.engine_jobs.queue`) on one scheduler thread and the running job on a worker thread; requests (submit, Cancel, a client that goes away, Try again) are table steps; a job's requests go only to the engine its `Start` gave it (`EngineClient.call(..., spawn=False)`); the client reports each engine it spawns (`on_engine_spawned`) and each end (`on_engine_ended`), and the scheduler names the engine by the queue's number of its `Start` (§5.3); after a job's failed call it reads the client's state, so the restart bound and an incompatible engine make the queue's engine unavailable (`ENGINE_UNAVAILABLE` for every job meanwhile) until the window lets a stop go or Try again (a table step whose reset of the client runs on its own thread; the caller never waits for the engine); every effect of a step is carried out even if one raises (a bug, logged `jobs.internal_error`), and the status is published before a request is answered; each engine's end is logged with its job (`engine.exit`). What a job shows (its phase, "Still working…", Cancel where it would do something, the advice) is `app.platform.engine_jobs.text`, for the UI of BL-0092.
-- **Not built yet:** the engine's operations over the protocol (mirror build, writes, facts) and the protocol-overhead measurement (BL-0082); the rest of §6A (BL-0093); the decision log of engine-jobs §12 (BL-0154); the engine's nested Job Object on Windows (BL-0087).
+- **Recover-all's ops** (S0062; engine-jobs §8.1): `recover_list`, `recover_try`, `recover_act` (`ledger_engine.protocol.recovery`), refused `engine.no_engine_lock` by an engine that has not taken the engine lock, so the listing, every try and the blocked screen's actions run only in an engine that excludes every engine of an earlier session; the sidecar decodes them strictly (`engine_protocol.decode_recover_*`) and orders them in the boot's `recover_all` (`app.platform.engine_jobs.recovery`).
+- **Not built yet:** the engine's other operations over the protocol (mirror build, writes, facts) and the protocol-overhead measurement (BL-0082); the rest of §6A (BL-0093); the decision log of engine-jobs §12 (BL-0154); the engine's nested Job Object on Windows (BL-0087).
 
 ### 2.1 Shape: vertical feature slices over a shared kernel, functional core and imperative shell
 
@@ -147,6 +148,11 @@ backend/src/app/
     engine_jobs/scheduler.py  the scheduler shell: runs the table on one thread against the engine client; jobs,
                  tickets, the engine's books, the lock wait, the timers (S0058)
     engine_jobs/text.py  what the user reads about a job: its phase, Still working, Cancel, the advice (S0058)
+    engine_jobs/recovery.py  recover-all's work: the listing, the blocked screen's actions, each journal's try,
+                 all as engine ops; Cancel per journal, a death, `not_tried`; the report and its match to a workspace
+                 by registry key, lineage and `path_key` (engine-jobs §8.1, S0062)
+    engine_jobs/recovery_text.py  §11's blocked-screen texts and confirmations, the undo notice, the Reopen
+                 texts for the save (S0062)
     tla.py       the no-op `@tla_action` marker of the TLA+ model's code map (§8.3, S0053)
     adapters/    the only place that does real I/O: real fs (atomic replace, fsync_dir), portalocker
                  locks (incl. the legacy-lock detection, ADR-0062), httpx, imaplib+TLS,
@@ -231,6 +237,9 @@ engine/src/ledger_engine/
                  restore, recover_journal (S0061); handles.py the per-folder handles with the path guard, the
                  owner's hard-link and no-swap rules, and displaced/keep: an outside save a swap or a clean-up
                  meets goes to a kept name beside the file, never swapped back (ADR-0013 amendment, S0061 r1)
+    recover_all.py  recover-all on disk inside an engine that holds the engine lock: list_journals (each journal
+                 folder synced first, `.part` removed), inspect, keep, delete_kept, delete_created (engine-jobs
+                 §8.1 "Afterwards", S0062); protocol/recovery.py its ops recover_list, recover_try, recover_act
     core/recovery.py  the per-file judgement of recovery (pre, post or a stop; the temp rule) (S0061)
     paths.py     canonical_path, path_key over `fs.port` (engine-jobs §6.3; S0060); core/paths.py the folding
     core/journal.py  the write-intent journal's record: fields, versioned encoding, names (ADR-0012; S0060)

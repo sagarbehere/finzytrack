@@ -44,6 +44,7 @@ from app.platform.engine_jobs.queue import (
     EngineLockFree,
     EngineLost,
     EngineNeeded,
+    EngineRefused,
     Event,
     ExclusiveBegan,
     ExclusiveEnded,
@@ -54,12 +55,14 @@ from app.platform.engine_jobs.queue import (
     JobDone,
     JobKind,
     JobSpec,
+    JournalCancelled,
     NoEngine,
     Owner,
     Proceed,
     Queued,
     QueuePolicy,
     QueueState,
+    RecoveryListed,
     Refused,
     ResetEngine,
     RetireEngine,
@@ -1171,6 +1174,7 @@ def check_step(policy: QueuePolicy, before: QueueState, event: Event, step: Step
     starts = [e for e in effects if isinstance(e, Start)]
     cancelled = {e.job_id for e in effects if isinstance(e, Cancelled)}
     no_engine = [e for e in effects if isinstance(e, NoEngine)]
+    _check_recover_all(before, event, after, effects)
     # AtMostOneJobRunning, AtMostOneEngine (also across a restart: none before the engine lock was waited out)
     assert len(starts) <= 1
     if starts:
@@ -1274,6 +1278,54 @@ def check_step(policy: QueuePolicy, before: QueueState, event: Event, step: Step
     assert left <= cancelled | {e.job_id for e in no_engine}
 
 
+def _check_recover_all(before: QueueState, event: Event, after: QueueState, effects: Sequence[Effect]) -> None:
+    """§4's `recover_all` row and §8.1 (S0062), written from the spec: a running recover-all is never lost to its
+    engine's death and never ended without an engine while it may still report (its journals must each end recovered
+    or blocking: INV-32); after its listing its own Cancel ends only its engine; before it the Cancel ends the job."""
+    r = before.running
+    rec = r is not None and r.job.kind == "recover_all"
+    for e in effects:
+        if isinstance(e, EngineLost | NoEngine) and r is not None and e.job_id == r.job.id:
+            assert not rec, f"a running recover-all ended by {type(e).__name__}"
+        if isinstance(e, JournalCancelled):
+            assert r is not None
+            assert rec
+            assert r.listed
+            assert event == Cancel(r.job.id)
+            assert before.slot == "busy"
+            assert EndEngine("cancel") in effects
+            assert after.running is not None
+            assert after.running.job.id == r.job.id, "Cancel per journal ended the job"
+        if isinstance(e, EngineRefused):
+            assert r is not None
+            assert rec
+            assert e.job_id == r.job.id
+            assert after.running is not None
+            assert after.running.job.id == r.job.id
+            assert not after.running.wants_engine
+            assert after.unavailable or isinstance(event, EngineLockFailed)
+    if rec and isinstance(event, Cancel) and r is not None and event.job_id == r.job.id:
+        own = r.job.waited_for and r.job.requester_present and before.slot == "busy"
+        if own and r.listed:
+            assert JournalCancelled(r.job.id) in effects
+            assert Cancelled(r.job.id) not in effects
+        elif own:
+            assert Cancelled(r.job.id) in effects, "a recover-all before its listing not cancelled"
+            assert after.running is None
+    if (
+        rec
+        and isinstance(event, EngineDied)
+        and r is not None
+        and before.slot == "busy"
+        and event.engine == before.engine
+    ):
+        assert after.running is not None
+        assert after.running.job.id == r.job.id, "a recover-all lost to its engine's death"
+        assert after.slot == "ending"
+    if after.running is not None and after.running.listed:
+        assert after.running.job.kind == "recover_all"
+
+
 def _queue_seen(before: QueueState, effects: Sequence[Effect]) -> list[Job]:
     """The queue the dispatch picked from: the queue before the event plus a job the event queued."""
     jobs = list(before.queued)
@@ -1309,6 +1361,7 @@ def events_for(state: QueueState) -> st.SearchStrategy[Event]:
         st.builds(JobDone, jid, st.booleans()),
         st.builds(EngineDied, st.integers(min_value=0, max_value=state.next_engine)),
         jid.map(EngineNeeded),
+        jid.map(RecoveryListed),
         jid.map(RetireEngine),
         st.just(EngineEnded()),
         st.just(EngineLockFree()),
@@ -1351,10 +1404,12 @@ def abstract_states() -> Iterable[QueueState]:
     before or past its commit point, holding its engine or waiting for a new one; no queued job, or one."""
     runnings: list[Running | None] = [None]
     for job in job_variants(5):
-        for past, wants in itertools.product((False, True), (False, True)):
+        for past, wants, listed in itertools.product((False, True), (False, True), (False, True)):
             if past and job.kind not in WRITING:
                 continue
-            runnings.append(Running(job, past_commit=past, wants_engine=wants))
+            if listed and job.kind != "recover_all":
+                continue
+            runnings.append(Running(job, past_commit=past, wants_engine=wants, listed=listed))
     queues: list[tuple[Job, ...]] = [()]
     queues += [(Job(6, "preview", W1, True, False, "user", True),), (Job(6, "r4", W1, False, False, "app", True),)]
     queues += [(Job(6, "recover_all", None, True, False, "switch", True),)]
@@ -1396,7 +1451,7 @@ def abstract_events(state: QueueState) -> Iterable[Event]:
     ids = (5, 6, 999)
     for jid in ids:
         yield from (Cancel(jid), ClientGone(jid), Gate(jid), JobDone(jid, True), JobDone(jid, False))
-        yield from (EngineNeeded(jid), RetireEngine(jid))
+        yield from (EngineNeeded(jid), RetireEngine(jid), RecoveryListed(jid))
     yield from (
         EngineDied(3),
         EngineDied(4),
@@ -1440,3 +1495,102 @@ def test_states_and_effects_are_immutable_values() -> None:
     state = QueueState()
     with pytest.raises(dataclasses.FrozenInstanceError):
         state.slot = "busy"  # type: ignore[misc]
+
+
+# -- recover-all per journal (S0062; §4's `recover_all` row, §8.1) ---------------------------------------------------
+
+
+def listed_recover_all() -> tuple[QueueState, int]:
+    state, jid = busy_with(switch_job("recover_all"), QueueState(engine_lock="free", exclusive=True))
+    state, effects = run(state, RecoveryListed(jid))
+    assert effects == []
+    assert state.running is not None
+    assert state.running.listed
+    return state, jid
+
+
+def test_a_cancel_after_the_listing_ends_only_the_engine_and_the_job_goes_on() -> None:
+    state, jid = listed_recover_all()
+    state, effects = run(state, Cancel(jid))
+    assert EndEngine("cancel") in effects
+    assert JournalCancelled(jid) in effects
+    assert Cancelled(jid) not in effects
+    assert state.running is not None
+    assert state.running.job.id == jid
+    assert state.slot == "ending"
+    # the job asks for a fresh engine for its next journal and gets one once the old one has ended
+    state, effects = run(state, EngineNeeded(jid))
+    assert started(effects) == []
+    state, effects = run(state, EngineEnded())
+    assert started(effects) == [jid]
+    assert state.running is not None
+    assert state.running.listed, "the listing is not done again after a Cancel per journal"
+
+
+def test_a_cancel_before_the_listing_ends_the_job() -> None:
+    """Model I14: before its listing, nothing is in hand and nothing is marked; the boot or switch ends on its
+    cancelled screen and Retry runs recover-all again."""
+    state, jid = busy_with(switch_job("recover_all"), QueueState(engine_lock="free", exclusive=True))
+    state, effects = run(state, Cancel(jid))
+    assert Cancelled(jid) in effects
+    assert state.running is None
+
+
+def test_the_cancel_per_journal_is_offered_and_answered_as_cancelled() -> None:
+    state, jid = listed_recover_all()
+    assert cancel_offered(POLICY, state, jid)
+
+
+@pytest.mark.parametrize("listed", [False, True])
+def test_an_engine_death_during_recover_all_ends_only_its_engine(listed: bool) -> None:
+    """§8.1: "An engine crash during a journal makes that journal blocking (reason `failed`) ... recovery goes on with
+    the next journal after the backoff"; model `EngineCrash`'s `rc_spawn` (before the listing: it lists again)."""
+    state, jid = busy_with(switch_job("recover_all"), QueueState(engine_lock="free", exclusive=True))
+    if listed:
+        state, _ = run(state, RecoveryListed(jid))
+    assert state.engine is not None
+    state, effects = run(state, EngineDied(state.engine))
+    assert not any(isinstance(e, EngineLost) for e in effects)
+    assert EndEngine("crashed") in effects
+    assert state.running is not None
+    assert state.running.job.id == jid
+    assert state.running.listed == listed
+
+
+@pytest.mark.parametrize("why", ["unavailable", "lock_failed"])
+def test_no_engine_for_recover_all_lets_its_work_report(why: str) -> None:
+    """§8.1 "When the engine cannot run ... every journal not yet tried counts as blocking (`not_tried`)": the job is
+    told (`EngineRefused`), not ended, so its report of what it did and did not try still comes."""
+    state, jid = listed_recover_all()
+    assert state.engine is not None
+    state, _ = run(state, EngineDied(state.engine))
+    state, _ = run(state, EngineEnded())
+    if why == "unavailable":
+        state, _ = run(state, EngineAvailability(available=False))
+        state, effects = run(state, EngineNeeded(jid))
+    else:
+        step = transition(POLICY, state, EngineNeeded(jid))
+        assert WaitEngineLock() in step.effects
+        step = transition(POLICY, step.state, EngineLockFailed())
+        state, effects = step.state, list(step.effects)
+    assert EngineRefused(jid, why) in effects  # type: ignore[arg-type]
+    assert not any(isinstance(e, NoEngine) for e in effects)
+    assert state.running is not None
+    state, effects = run(state, JobDone(jid, ran_user_code=False))
+    assert Finished(jid) in effects
+    assert state.running is None
+
+
+def test_a_queued_recover_all_with_no_engine_still_ends_without_one() -> None:
+    """Before it starts it has listed nothing: it ends `ENGINE_UNAVAILABLE` as any job (the sidecar's report then says
+    nothing was listed, which blocks every open: S0062, fail closed)."""
+    state = QueueState(engine_lock="free", exclusive=True, unavailable=True)
+    state, effects = run(state, Submit(switch_job("recover_all")))
+    assert any(isinstance(e, NoEngine) for e in effects)
+
+
+def test_the_listing_mark_is_only_for_the_running_recover_all() -> None:
+    state, jid = busy_with(user("preview"), ready(W1))
+    after, effects = run(state, RecoveryListed(jid))
+    assert after == state
+    assert effects == []

@@ -14,7 +14,7 @@ from typing import Any
 import pytest
 from jsonschema import Draft202012Validator
 
-from ledger_engine.protocol.messages import PROTOCOL_VERSION
+from ledger_engine.protocol.messages import PROTOCOL_VERSION, model_stem
 from ledger_engine.protocol.schema import render
 from ledger_engine.protocol.server import Engine, serve
 
@@ -52,9 +52,9 @@ def test_the_schema_says_it_is_generated_and_versioned() -> None:
 
 def test_every_op_has_a_request_and_a_reply_definition() -> None:
     schema = committed()
-    assert schema["x-ops"] == ["handshake", "ping"]
+    assert schema["x-ops"] == ["handshake", "ping", "recover_list", "recover_try", "recover_act"]
     for op in schema["x-ops"]:
-        name = op.capitalize()
+        name = model_stem(op)
         assert f"{name}Request" in schema["$defs"]
         assert f"{name}Reply" in schema["$defs"]
     assert "Refusal" in schema["$defs"]
@@ -83,6 +83,7 @@ def engine_replies() -> list[tuple[str, dict[str, Any]]]:
     out.append(("Refusal", send(req("nope"))))
     out.append(("Refusal", send(req("ping", {"x": 1}))))
     out.append(("Refusal", send(req("test.fail"))))
+    out.append(("Refusal", send(req("recover_list", {"app_local_data": "/nowhere"}))))  # no engine lock
     return out
 
 
@@ -102,10 +103,25 @@ def test_every_refusal_key_the_engine_gives_is_in_the_schema() -> None:
         "protocol.invalid_params",
         "protocol.handshake_required",
         "engine.internal",
+        "engine.no_engine_lock",
     }
 
 
-@pytest.mark.parametrize("definition", ["HandshakeReply", "PingReply", "Refusal", "HandshakeRequest", "PingRequest"])
+DEFINITIONS = [
+    "HandshakeReply",
+    "PingReply",
+    "Refusal",
+    "HandshakeRequest",
+    "PingRequest",
+    *(
+        f"{model_stem(op)}{kind}"
+        for op in ("recover_list", "recover_try", "recover_act")
+        for kind in ("Request", "Reply")
+    ),
+]
+
+
+@pytest.mark.parametrize("definition", DEFINITIONS)
 def test_examples_validate(definition: str) -> None:
     examples = committed()["$defs"][definition].get("examples", [])
     assert examples, f"{definition} has no example"
@@ -113,7 +129,7 @@ def test_examples_validate(definition: str) -> None:
         assert valid(definition, example), example
 
 
-@pytest.mark.parametrize("definition", ["HandshakeReply", "PingReply", "Refusal", "HandshakeRequest", "PingRequest"])
+@pytest.mark.parametrize("definition", DEFINITIONS)
 def test_a_mutated_example_is_refused_by_the_schema(definition: str) -> None:
     """Must not pass: a message with a required field missing, an unknown key, or another version."""
     example = committed()["$defs"][definition]["examples"][0]

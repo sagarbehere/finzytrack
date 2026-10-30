@@ -587,11 +587,12 @@ def restore(
 
 
 @contextmanager
-def _locks(locks: Locks, record: Record) -> Generator[str | None]:
-    """§8.1 step 1: every lock the record names, without waiting, in `path_key` order; yields the canonical path of a
-    file whose lock is held (None: all taken). Released at the end."""
+def ledger_locks(locks: Locks, files: tuple[FileEntry, ...]) -> Generator[str | None]:
+    """§8.1 step 1: the lock of every file in `files`, without waiting, in `path_key` order; yields the canonical
+    path of a file whose lock is held (None: all taken). Released at the end. Recovery's try, Keep and the blocked
+    screen's deletes take them the same way (S0062)."""
     taken: list[Lock] = []
-    by_key = {f.path_key: f.canonical_path for f in record.files}
+    by_key = {f.path_key: f.canonical_path for f in files}
     try:
         held: str | None = None
         for key in sorted(by_key):
@@ -636,7 +637,7 @@ def recover_journal(fs: FileSystem, locks: Locks, journal_dir: str, name: str) -
     if not isinstance(record, Record) or record.name != name:
         return Stopped(Cause.UNREADABLE, None)
     try:
-        with _locks(locks, record) as held:
+        with ledger_locks(locks, record.files) as held:
             if held is not None:
                 return Failed(Cause.LOCK_HELD, held)
             return restore(fs, record, canonical)

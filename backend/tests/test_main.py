@@ -42,6 +42,7 @@ from app.platform.adapters.engine_client import (
     venv_site,
 )
 from app.platform.clock import FrozenClock
+from app.platform.engine_jobs.recovery import Report, blocking_for
 from app.platform.engine_jobs.scheduler import Done, EngineJobs, JobTicket
 from app.platform.observability import Event, EventLog
 from app.workspaces.access import Unknown
@@ -273,10 +274,37 @@ def test_the_boots_recover_all_starts_the_first_engine_through_the_scheduler(dir
     try:
         boot = wiring.jobs.start()
         assert isinstance(boot, JobTicket)
-        assert boot.wait(DEADLINE) == Done(None)
+        assert boot.wait(DEADLINE) == Done(Report(listed=True))  # no journal yet: nothing to recover (S0062)
         assert wiring.engine.pid is not None
         assert (dirs[0] / "locks" / "engine.lock").exists(), "the boot did not wait for the engine lock"
         wait_until(lambda: not wiring.jobs.status().queue.exclusive)
+    finally:
+        wiring.jobs.close()
+        wiring.engine.close()
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="the write path's port is macOS-only until BL-0087")
+def test_the_boots_recover_all_lists_the_journals_in_its_engine(dirs: tuple[Path, Path]) -> None:
+    """engine-jobs §8.1 (S0062), end to end through the composition root and a real engine: the boot's recover-all
+    removes a `.part` record and reports an `.open` record it cannot read as blocking every open."""
+    journal = dirs[0] / "local" / "k1" / "journal"
+    journal.mkdir(parents=True)
+    (journal / "s0-j1.part").write_bytes(b"torn")
+    (journal / "s0-j2.open").write_bytes(b"torn {")
+    wiring = main.wire(main.parse_args(argv(*dirs, "--engine-venv", str(ENGINE_VENV))), no_log, VERSION)
+    try:
+        boot = wiring.jobs.start()
+        assert isinstance(boot, JobTicket)
+        out = boot.wait(DEADLINE)
+        assert isinstance(out, Done), out
+        report = out.value
+        assert isinstance(report, Report)
+        assert report.parts_removed == 1
+        assert not (journal / "s0-j1.part").exists()
+        [b] = report.blocking
+        assert (b.journal.name, b.reason, b.cause, b.journal.readable) == ("s0-j2", "stopped", "unreadable", False)
+        assert blocking_for(report, workspace_key="k9", lineage="lin9", ledger_keys=set()) == (b,)
+        assert (journal / "s0-j2.open").read_bytes() == b"torn {", "recovery changed a record it cannot read"
     finally:
         wiring.jobs.close()
         wiring.engine.close()

@@ -7,7 +7,10 @@
   "x-max-line-bytes": 16777216,
   "x-ops": [
     "handshake",
-    "ping"
+    "ping",
+    "recover_list",
+    "recover_try",
+    "recover_act"
   ],
   "oneOf": [
     {
@@ -134,6 +137,55 @@
         "output"
       ],
       "title": "Decision",
+      "type": "object"
+    },
+    "EntryKind": {
+      "enum": [
+        "file",
+        "dir",
+        "link",
+        "other"
+      ],
+      "type": "string"
+    },
+    "EntrySeen": {
+      "additionalProperties": false,
+      "description": "An entry as it stands: its kind, and for a regular file its SHA-256 and size.",
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/EntryKind"
+        },
+        "sha256": {
+          "anyOf": [
+            {
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Sha256"
+        },
+        "size": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Size"
+        }
+      },
+      "required": [
+        "kind",
+        "sha256",
+        "size"
+      ],
+      "title": "EntrySeen",
       "type": "object"
     },
     "GateEvent": {
@@ -308,6 +360,64 @@
       "title": "HandshakeResult",
       "type": "object"
     },
+    "InspectedFile": {
+      "additionalProperties": false,
+      "description": "What stands at one file of a stopped journal now, and its kept copies (§11: Show both, Show it).",
+      "properties": {
+        "path": {
+          "minLength": 1,
+          "pattern": "^/",
+          "title": "Path",
+          "type": "string"
+        },
+        "created": {
+          "title": "Created",
+          "type": "boolean"
+        },
+        "reachable": {
+          "title": "Reachable",
+          "type": "boolean"
+        },
+        "now": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/EntrySeen"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "kept": {
+          "items": {
+            "$ref": "#/$defs/KeptCopySeen"
+          },
+          "title": "Kept",
+          "type": "array"
+        },
+        "errno": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Errno"
+        }
+      },
+      "required": [
+        "path",
+        "created",
+        "reachable",
+        "now",
+        "kept",
+        "errno"
+      ],
+      "title": "InspectedFile",
+      "type": "object"
+    },
     "JobEvent": {
       "description": "A job message the engine sends before its reply.",
       "oneOf": [
@@ -321,6 +431,133 @@
           "$ref": "#/$defs/CommittedEvent"
         }
       ]
+    },
+    "JournalFile": {
+      "additionalProperties": false,
+      "description": "One file a journal names: its canonical path, its `path_key`, and whether the save was creating it.",
+      "properties": {
+        "path": {
+          "minLength": 1,
+          "pattern": "^/",
+          "title": "Path",
+          "type": "string"
+        },
+        "path_key": {
+          "minLength": 1,
+          "pattern": "^/",
+          "title": "Path Key",
+          "type": "string"
+        },
+        "created": {
+          "title": "Created",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "path",
+        "path_key",
+        "created"
+      ],
+      "title": "JournalFile",
+      "type": "object"
+    },
+    "KeptCopySeen": {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "minLength": 1,
+          "title": "Name",
+          "type": "string"
+        },
+        "path": {
+          "minLength": 1,
+          "pattern": "^/",
+          "title": "Path",
+          "type": "string"
+        },
+        "seen": {
+          "$ref": "#/$defs/EntrySeen"
+        }
+      },
+      "required": [
+        "name",
+        "path",
+        "seen"
+      ],
+      "title": "KeptCopySeen",
+      "type": "object"
+    },
+    "ListedJournal": {
+      "additionalProperties": false,
+      "description": "An `.open` record found by the listing. `readable` False: it names nothing it can be matched on (torn,\nforeign, newer, of another name, or a read error: `errno`), so it blocks every open (ADR-0063).",
+      "properties": {
+        "journal_dir": {
+          "minLength": 1,
+          "pattern": "^/",
+          "title": "Journal Dir",
+          "type": "string"
+        },
+        "name": {
+          "minLength": 1,
+          "title": "Name",
+          "type": "string"
+        },
+        "readable": {
+          "title": "Readable",
+          "type": "boolean"
+        },
+        "workspace_key": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Workspace Key"
+        },
+        "lineage": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Lineage"
+        },
+        "files": {
+          "items": {
+            "$ref": "#/$defs/JournalFile"
+          },
+          "title": "Files",
+          "type": "array"
+        },
+        "errno": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Errno"
+        }
+      },
+      "required": [
+        "journal_dir",
+        "name",
+        "readable",
+        "workspace_key",
+        "lineage",
+        "files",
+        "errno"
+      ],
+      "title": "ListedJournal",
+      "type": "object"
     },
     "NoParams": {
       "additionalProperties": false,
@@ -547,6 +784,700 @@
       "title": "ProgressEvent",
       "type": "object"
     },
+    "RecoverActParams": {
+      "additionalProperties": false,
+      "description": "A blocked-screen action on one `.open` journal (§8.1 \"Afterwards\", §11): `keep`; `delete_kept` (`file`, the\nkept copy's entry name `kept`, and the `sha256` the user was shown); `delete_created` (`file`, `sha256`).",
+      "properties": {
+        "app_local_data": {
+          "minLength": 1,
+          "pattern": "^/",
+          "title": "App Local Data",
+          "type": "string"
+        },
+        "journal_dir": {
+          "minLength": 1,
+          "pattern": "^/",
+          "title": "Journal Dir",
+          "type": "string"
+        },
+        "name": {
+          "minLength": 1,
+          "title": "Name",
+          "type": "string"
+        },
+        "action": {
+          "enum": [
+            "keep",
+            "delete_kept",
+            "delete_created"
+          ],
+          "title": "Action",
+          "type": "string"
+        },
+        "file": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "pattern": "^/",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "File"
+        },
+        "kept": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Kept"
+        },
+        "sha256": {
+          "anyOf": [
+            {
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Sha256"
+        }
+      },
+      "required": [
+        "app_local_data",
+        "journal_dir",
+        "name",
+        "action"
+      ],
+      "title": "RecoverActParams",
+      "type": "object"
+    },
+    "RecoverActReply": {
+      "additionalProperties": false,
+      "description": "The accepted reply to `recover_act`.",
+      "examples": [
+        {
+          "id": 1,
+          "ok": true,
+          "op": "recover_act",
+          "result": {
+            "detail": null,
+            "errno": null,
+            "outcome": "done",
+            "path": null,
+            "reason": null
+          },
+          "v": 2
+        }
+      ],
+      "properties": {
+        "v": {
+          "const": 2,
+          "title": "V",
+          "type": "integer"
+        },
+        "id": {
+          "maximum": 2147483647,
+          "minimum": 0,
+          "title": "Id",
+          "type": "integer"
+        },
+        "op": {
+          "const": "recover_act",
+          "title": "Op",
+          "type": "string"
+        },
+        "ok": {
+          "const": true,
+          "title": "Ok",
+          "type": "boolean"
+        },
+        "result": {
+          "$ref": "#/$defs/RecoverActResult"
+        },
+        "decision": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Decision"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "v",
+        "id",
+        "op",
+        "ok",
+        "result"
+      ],
+      "title": "RecoverActReply",
+      "type": "object"
+    },
+    "RecoverActRequest": {
+      "additionalProperties": false,
+      "description": "The `recover_act` request.",
+      "examples": [
+        {
+          "id": 1,
+          "op": "recover_act",
+          "params": {
+            "action": "keep",
+            "app_local_data": "/app-data/com.finzytrack.desktop",
+            "journal_dir": "/app-data/com.finzytrack.desktop/local/k1/journal",
+            "name": "s1-j7"
+          },
+          "v": 2
+        }
+      ],
+      "properties": {
+        "v": {
+          "const": 2,
+          "title": "V",
+          "type": "integer"
+        },
+        "id": {
+          "maximum": 2147483647,
+          "minimum": 0,
+          "title": "Id",
+          "type": "integer"
+        },
+        "op": {
+          "const": "recover_act",
+          "title": "Op",
+          "type": "string"
+        },
+        "params": {
+          "$ref": "#/$defs/RecoverActParams"
+        }
+      },
+      "required": [
+        "v",
+        "id",
+        "op",
+        "params"
+      ],
+      "title": "RecoverActRequest",
+      "type": "object"
+    },
+    "RecoverActResult": {
+      "additionalProperties": false,
+      "description": "`done`; `refused` (nothing written: `reason`, `path`, `detail`); `failed` (an error the system answered).",
+      "properties": {
+        "outcome": {
+          "enum": [
+            "done",
+            "refused",
+            "failed"
+          ],
+          "title": "Outcome",
+          "type": "string"
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Reason"
+        },
+        "path": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "pattern": "^/",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Path"
+        },
+        "detail": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Detail"
+        },
+        "errno": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Errno"
+        }
+      },
+      "required": [
+        "outcome",
+        "reason",
+        "path",
+        "detail",
+        "errno"
+      ],
+      "title": "RecoverActResult",
+      "type": "object"
+    },
+    "RecoverListParams": {
+      "additionalProperties": false,
+      "description": "`app_local_data`: the app's machine-local folder; the journals are in its `local/<key>/journal/`.",
+      "properties": {
+        "app_local_data": {
+          "minLength": 1,
+          "pattern": "^/",
+          "title": "App Local Data",
+          "type": "string"
+        }
+      },
+      "required": [
+        "app_local_data"
+      ],
+      "title": "RecoverListParams",
+      "type": "object"
+    },
+    "RecoverListReply": {
+      "additionalProperties": false,
+      "description": "The accepted reply to `recover_list`.",
+      "examples": [
+        {
+          "id": 1,
+          "ok": true,
+          "op": "recover_list",
+          "result": {
+            "journals": [
+              {
+                "errno": null,
+                "files": [
+                  {
+                    "created": false,
+                    "path": "/ledgers/L/main.bean",
+                    "path_key": "/ledgers/l/main.bean"
+                  }
+                ],
+                "journal_dir": "/app-data/com.finzytrack.desktop/local/k1/journal",
+                "lineage": "lin1",
+                "name": "s1-j7",
+                "readable": true,
+                "workspace_key": "k1"
+              }
+            ],
+            "parts_removed": 0,
+            "unlisted": []
+          },
+          "v": 2
+        }
+      ],
+      "properties": {
+        "v": {
+          "const": 2,
+          "title": "V",
+          "type": "integer"
+        },
+        "id": {
+          "maximum": 2147483647,
+          "minimum": 0,
+          "title": "Id",
+          "type": "integer"
+        },
+        "op": {
+          "const": "recover_list",
+          "title": "Op",
+          "type": "string"
+        },
+        "ok": {
+          "const": true,
+          "title": "Ok",
+          "type": "boolean"
+        },
+        "result": {
+          "$ref": "#/$defs/RecoverListResult"
+        },
+        "decision": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Decision"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "v",
+        "id",
+        "op",
+        "ok",
+        "result"
+      ],
+      "title": "RecoverListReply",
+      "type": "object"
+    },
+    "RecoverListRequest": {
+      "additionalProperties": false,
+      "description": "The `recover_list` request.",
+      "examples": [
+        {
+          "id": 1,
+          "op": "recover_list",
+          "params": {
+            "app_local_data": "/app-data/com.finzytrack.desktop"
+          },
+          "v": 2
+        }
+      ],
+      "properties": {
+        "v": {
+          "const": 2,
+          "title": "V",
+          "type": "integer"
+        },
+        "id": {
+          "maximum": 2147483647,
+          "minimum": 0,
+          "title": "Id",
+          "type": "integer"
+        },
+        "op": {
+          "const": "recover_list",
+          "title": "Op",
+          "type": "string"
+        },
+        "params": {
+          "$ref": "#/$defs/RecoverListParams"
+        }
+      },
+      "required": [
+        "v",
+        "id",
+        "op",
+        "params"
+      ],
+      "title": "RecoverListRequest",
+      "type": "object"
+    },
+    "RecoverListResult": {
+      "additionalProperties": false,
+      "description": "§8.1: every `.open` journal after a `durable_sync` of each journal folder; `.part` records removed.",
+      "properties": {
+        "journals": {
+          "items": {
+            "$ref": "#/$defs/ListedJournal"
+          },
+          "title": "Journals",
+          "type": "array"
+        },
+        "unlisted": {
+          "items": {
+            "$ref": "#/$defs/UnlistedFolder"
+          },
+          "title": "Unlisted",
+          "type": "array"
+        },
+        "parts_removed": {
+          "minimum": 0,
+          "title": "Parts Removed",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "journals",
+        "unlisted",
+        "parts_removed"
+      ],
+      "title": "RecoverListResult",
+      "type": "object"
+    },
+    "RecoverTryParams": {
+      "additionalProperties": false,
+      "properties": {
+        "app_local_data": {
+          "minLength": 1,
+          "pattern": "^/",
+          "title": "App Local Data",
+          "type": "string"
+        },
+        "journal_dir": {
+          "minLength": 1,
+          "pattern": "^/",
+          "title": "Journal Dir",
+          "type": "string"
+        },
+        "name": {
+          "minLength": 1,
+          "title": "Name",
+          "type": "string"
+        }
+      },
+      "required": [
+        "app_local_data",
+        "journal_dir",
+        "name"
+      ],
+      "title": "RecoverTryParams",
+      "type": "object"
+    },
+    "RecoverTryReply": {
+      "additionalProperties": false,
+      "description": "The accepted reply to `recover_try`.",
+      "examples": [
+        {
+          "id": 1,
+          "ok": true,
+          "op": "recover_try",
+          "result": {
+            "cause": "kept_copy",
+            "detail": null,
+            "entry": null,
+            "errno": null,
+            "inspection": [
+              {
+                "created": false,
+                "errno": null,
+                "kept": [
+                  {
+                    "name": "main.bean.kept-s1-j7",
+                    "path": "/ledgers/L/main.bean.kept-s1-j7",
+                    "seen": {
+                      "kind": "file",
+                      "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+                      "size": 21
+                    }
+                  }
+                ],
+                "now": {
+                  "kind": "file",
+                  "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+                  "size": 21
+                },
+                "path": "/ledgers/L/main.bean",
+                "reachable": true
+              }
+            ],
+            "outcome": "stopped",
+            "path": "/ledgers/L/main.bean"
+          },
+          "v": 2
+        }
+      ],
+      "properties": {
+        "v": {
+          "const": 2,
+          "title": "V",
+          "type": "integer"
+        },
+        "id": {
+          "maximum": 2147483647,
+          "minimum": 0,
+          "title": "Id",
+          "type": "integer"
+        },
+        "op": {
+          "const": "recover_try",
+          "title": "Op",
+          "type": "string"
+        },
+        "ok": {
+          "const": true,
+          "title": "Ok",
+          "type": "boolean"
+        },
+        "result": {
+          "$ref": "#/$defs/RecoverTryResult"
+        },
+        "decision": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Decision"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "v",
+        "id",
+        "op",
+        "ok",
+        "result"
+      ],
+      "title": "RecoverTryReply",
+      "type": "object"
+    },
+    "RecoverTryRequest": {
+      "additionalProperties": false,
+      "description": "The `recover_try` request.",
+      "examples": [
+        {
+          "id": 1,
+          "op": "recover_try",
+          "params": {
+            "app_local_data": "/app-data/com.finzytrack.desktop",
+            "journal_dir": "/app-data/com.finzytrack.desktop/local/k1/journal",
+            "name": "s1-j7"
+          },
+          "v": 2
+        }
+      ],
+      "properties": {
+        "v": {
+          "const": 2,
+          "title": "V",
+          "type": "integer"
+        },
+        "id": {
+          "maximum": 2147483647,
+          "minimum": 0,
+          "title": "Id",
+          "type": "integer"
+        },
+        "op": {
+          "const": "recover_try",
+          "title": "Op",
+          "type": "string"
+        },
+        "params": {
+          "$ref": "#/$defs/RecoverTryParams"
+        }
+      },
+      "required": [
+        "v",
+        "id",
+        "op",
+        "params"
+      ],
+      "title": "RecoverTryRequest",
+      "type": "object"
+    },
+    "RecoverTryResult": {
+      "additionalProperties": false,
+      "description": "One journal's try (§8.1 steps 1-4): `resolved`, `stopped` (blocking reason `stopped`) or `failed` (reason\n`failed`), with the cause, the file (`path`), the entry that failed or blocked when it is not the file, the\nblocking ACL entry (`detail`) and the error number; for `stopped`, what stands there now (`inspection`).",
+      "properties": {
+        "outcome": {
+          "enum": [
+            "resolved",
+            "stopped",
+            "failed"
+          ],
+          "title": "Outcome",
+          "type": "string"
+        },
+        "cause": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Cause"
+        },
+        "path": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "pattern": "^/",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Path"
+        },
+        "entry": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "pattern": "^/",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Entry"
+        },
+        "detail": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Detail"
+        },
+        "errno": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Errno"
+        },
+        "inspection": {
+          "anyOf": [
+            {
+              "items": {
+                "$ref": "#/$defs/InspectedFile"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Inspection"
+        }
+      },
+      "required": [
+        "outcome",
+        "cause",
+        "path",
+        "entry",
+        "detail",
+        "errno",
+        "inspection"
+      ],
+      "title": "RecoverTryResult",
+      "type": "object"
+    },
     "Refusal": {
       "additionalProperties": false,
       "description": "A refused request, or a line that was not a request. `id` and `op` are those of the request when it could\nbe read that far, else null; `op` is null too when it cannot be echoed exactly (not valid Unicode, or longer\nthan 128 characters).",
@@ -658,7 +1589,8 @@
         "protocol.unknown_op",
         "protocol.invalid_params",
         "protocol.handshake_required",
-        "engine.internal"
+        "engine.internal",
+        "engine.no_engine_lock"
       ],
       "type": "string"
     },
@@ -670,6 +1602,15 @@
         },
         {
           "$ref": "#/$defs/PingReply"
+        },
+        {
+          "$ref": "#/$defs/RecoverListReply"
+        },
+        {
+          "$ref": "#/$defs/RecoverTryReply"
+        },
+        {
+          "$ref": "#/$defs/RecoverActReply"
         },
         {
           "$ref": "#/$defs/Refusal"
@@ -684,8 +1625,46 @@
         },
         {
           "$ref": "#/$defs/PingRequest"
+        },
+        {
+          "$ref": "#/$defs/RecoverListRequest"
+        },
+        {
+          "$ref": "#/$defs/RecoverTryRequest"
+        },
+        {
+          "$ref": "#/$defs/RecoverActRequest"
         }
       ]
+    },
+    "UnlistedFolder": {
+      "additionalProperties": false,
+      "description": "A journal folder that could not be synced, opened or listed: it blocks every open.",
+      "properties": {
+        "folder": {
+          "minLength": 1,
+          "pattern": "^/",
+          "title": "Folder",
+          "type": "string"
+        },
+        "errno": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Errno"
+        }
+      },
+      "required": [
+        "folder",
+        "errno"
+      ],
+      "title": "UnlistedFolder",
+      "type": "object"
     }
   }
 }
