@@ -52,7 +52,15 @@ def test_the_schema_says_it_is_generated_and_versioned() -> None:
 
 def test_every_op_has_a_request_and_a_reply_definition() -> None:
     schema = committed()
-    assert schema["x-ops"] == ["handshake", "ping", "recover_list", "recover_try", "recover_act"]
+    assert schema["x-ops"] == [
+        "handshake",
+        "ping",
+        "recover_list",
+        "recover_try",
+        "recover_act",
+        "save",
+        "save_outcome",
+    ]
     for op in schema["x-ops"]:
         name = model_stem(op)
         assert f"{name}Request" in schema["$defs"]

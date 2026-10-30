@@ -435,7 +435,9 @@ def ends_of(s: StateJ, t: StateJ, classes: Mapping[str, Class]) -> dict[int, End
     run = s["run"]
     out: dict[int, End] = {}
     for mid in left:
-        if a == "EngineCrash" and run is not None and mid == run["id"]:
+        if a == "EngineCrash" and run is not None and mid == run["id"] and run["k"] == "save":
+            out[mid] = End("finished")  # §6.6: the save is told its outcome from disk (S0063), never "lost"
+        elif a == "EngineCrash" and run is not None and mid == run["id"]:
             out[mid] = End("lost", past_commit=s["ctl"]["past"])  # only a writing job has a commit point
         elif classes[a] == "job_step":
             out[mid] = End("finished")
@@ -705,7 +707,13 @@ class TableReplay:
                 if reached:
                     self.feed(EngineAvailability(False))
                 assert self.state.engine is not None
+                running = self.state.running
                 self.feed(EngineDied(self.state.engine))
+                if running is not None and running.job.kind == "save":
+                    # S0063: the table keeps a save whose engine died; its work reads the outcome from disk and
+                    # answers (the model tells `DiskOutcome` at the crash; the disk read itself is the work's,
+                    # `test_save_job.py`), so here it answers at once, as the model's job ends at once
+                    self.feed(JobDone(running.job.id, ran_user_code=True))
                 self.feed(EngineEnded())
             case SimpleOp(what="drain"):
                 self.feed(EngineEnded())

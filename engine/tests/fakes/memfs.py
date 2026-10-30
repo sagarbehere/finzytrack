@@ -943,3 +943,11 @@ class MemLocks:
             return None
         self.held.add(key)
         return MemLock(self, key)
+
+    def lock(self, key: str) -> MemLock:
+        """The waiting form: a fake has nobody to wait for, so a lock that is not free is a test's mistake."""
+        lock = self.try_lock(key)
+        if lock is None:
+            msg = f"the fake's lock of {key!r} is held: a real one would wait for ever"
+            raise RuntimeError(msg)
+        return lock

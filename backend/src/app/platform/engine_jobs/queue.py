@@ -59,6 +59,12 @@ product calls it. Each rule names its spec line.
   (the engine unavailable, the lock's wait failed), the job is not ended without its report: `EngineRefused` tells
   its work, which marks every journal not yet tried `not_tried` and returns.
 
+- **A save whose engine died is not lost** (§5.3 "a save's outcome is resolved from disk (§6.6)"; S0063): its
+  engine ends as `crashed` (a stop) and the job asks for a fresh engine that reads the outcome from disk; when none
+  can be had, `EngineRefused` tells its work, which answers without one. The model ends the job at the crash and tells
+  the disk's outcome at once (`EngineCrash`'s save branch); the code needs an engine to read the disk (the sidecar
+  never reads ledger or journal files), so the replay stops at a save's crash until BL-0151 slice 5 maps it.
+
 Not here yet (BL-0109's later pieces): the quiesce, the quit and their screens (BL-0154). The code map's planned list
 names each (`backend/tests/architecture/test_tla_mapping.py`).
 """
@@ -71,8 +77,9 @@ from typing import Any, Final, Literal
 
 from app.platform.tla import tla_action
 
-TABLE_VERSION: Final = 4  # 2 (S0058): the lock before every fresh engine, the engine unavailable; 3: Try again;
-# 4 (S0062): recover-all goes on per journal (Cancel after its listing, a death, no engine)
+TABLE_VERSION: Final = 5  # 2 (S0058): the lock before every fresh engine, the engine unavailable; 3: Try again;
+# 4 (S0062): recover-all goes on per journal (Cancel after its listing, a death, no engine); 5 (S0063): a save whose
+# engine died reads its outcome from disk in a fresh engine
 """Raised whenever a decision changes, so the decision log (§12) replays each recording with its own table."""
 
 type JobKind = Literal["open", "rebuild", "preview", "save", "r4", "bql", "recover_all", "create", "copy"]
@@ -130,13 +137,15 @@ class Job:
 
 @dataclass(frozen=True, slots=True)
 class Running:
-    """The running job: past its commit point or not, waiting for a fresh engine mid-job or not, and for a
-    recover-all whether it has listed the journals (§8.1)."""
+    """The running job: past its commit point or not, waiting for a fresh engine mid-job or not, for a recover-all
+    whether it has listed the journals (§8.1), and for a save whether its engine died, so that its outcome is read
+    from disk next (§6.6; S0063)."""
 
     job: Job
     past_commit: bool = False
     wants_engine: bool = False
     listed: bool = False
+    outcome_owed: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -516,6 +525,12 @@ def endable_by_another(running: Running) -> bool:
     return job.kind in (*READS, "open") and not job.requester_present
 
 
+def _reports_itself(running: Running) -> bool:
+    """A running job that ends with its own answer when no engine can be had for its next part (`EngineRefused`):
+    a recover-all (its report, §8.1) and a save whose engine died (its outcome, §6.6)."""
+    return running.job.kind == "recover_all" or running.outcome_owed
+
+
 def _ending(state: QueueState, reason: EndReason) -> tuple[QueueState, tuple[Effect, ...]]:
     """The engine is signalled (or found dead) and drained: the slot is held until `EngineEnded` (§5.1, §5.2)."""
     epoch = state.epoch + 1
@@ -585,7 +600,7 @@ def _spawn_step(state: QueueState) -> tuple[QueueState, tuple[Effect, ...]]:
     running = state.running
     if running is None or not running.wants_engine or state.slot not in ("none", "idle"):
         return state, ()
-    if state.unavailable and running.job.kind == "recover_all":
+    if state.unavailable and _reports_itself(running):
         return replace(state, running=replace(running, wants_engine=False)), (
             EngineRefused(running.job.id, "unavailable"),
         )
@@ -680,8 +695,8 @@ def _engine_lock_failed(p: QueuePolicy, s: QueueState, e: EngineLockFailed) -> S
     state = replace(s, engine_lock="unchecked")
     effects: list[Effect] = []
     r = state.running
-    if r is not None and r.wants_engine and state.slot != "busy" and r.job.kind == "recover_all":
-        state = replace(state, running=replace(r, wants_engine=False))  # its report still comes (§8.1)
+    if r is not None and r.wants_engine and state.slot != "busy" and _reports_itself(r):
+        state = replace(state, running=replace(r, wants_engine=False))  # its report (§8.1) or its answer (§6.6) comes
         effects.append(EngineRefused(r.job.id, "lock_failed"))
     elif r is not None and r.wants_engine and state.slot != "busy":  # a job still on its engine keeps it and its ask
         state = replace(state, running=None)
@@ -829,6 +844,11 @@ def _engine_died(p: QueuePolicy, s: QueueState, e: EngineDied) -> Step:
         return Step(s)
     if s.slot == "busy" and r is not None and r.job.kind == "recover_all":
         state, ended = _ending(s, "crashed")  # §8.1: the journal in hand counts `failed`; the job goes on
+        return Step(state, ended)
+    if s.slot == "busy" and r is not None and r.job.kind == "save":
+        # §6.6: the outcome is read from disk in a fresh engine (the job asks for it); a Cancel before the commit
+        # point still ends the job (nothing was written), one past it is "too late" (S0063)
+        state, ended = _ending(replace(s, running=replace(r, outcome_owed=True)), "crashed")
         return Step(state, ended)
     if s.slot == "busy" and r is not None:
         state, ended = _ending(replace(s, running=None), "crashed")

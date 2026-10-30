@@ -21,6 +21,53 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /**
+         * ChangeNotSavedDetails
+         * @description A save that did not happen, and why (engine-jobs §6.1 step 8's refusals, §6.4, §6.6, §11; S0063). `path`: the
+         *     file it is about; `folder` and `acl_entry`: for `permission`, the folder and the ACL entry (in `chmod`'s words, no
+         *     subject) that stop it; `unchanged`: every file the save would write was hashed again and equals its bytes before
+         *     the save (only then may the user read "Your ledger is unchanged"). The UI words each reason
+         *     (`app.platform.engine_jobs.save_text.not_saved_text`).
+         */
+        ChangeNotSavedDetails: {
+            /** Acl Entry */
+            acl_entry: string | null;
+            /** Folder */
+            folder: string | null;
+            /** Path */
+            path: string | null;
+            reason: components["schemas"]["NotSavedReason"];
+            /** Unchanged */
+            unchanged: boolean;
+        };
+        /** ChangeNotSavedError */
+        ChangeNotSavedError: {
+            /**
+             * Class
+             * @constant
+             */
+            class: "conflict";
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            code: "CHANGE_NOT_SAVED";
+            /** Correlation Id */
+            correlation_id: string;
+            /** Data Safe */
+            data_safe: boolean;
+            details: components["schemas"]["ChangeNotSavedDetails"];
+            /** Issues */
+            issues: components["schemas"]["Issue"][];
+            /** Message */
+            message: string;
+            /** Next Step */
+            next_step: string;
+            /** Retry After Ms */
+            retry_after_ms: number | null;
+            /** Retryable */
+            retryable: boolean;
+        };
         /** ChangeOutcomeUnknownError */
         ChangeOutcomeUnknownError: {
             /**
@@ -168,7 +215,7 @@ export interface components {
         /** ErrorEnvelope */
         ErrorEnvelope: {
             /** Error */
-            error: components["schemas"]["ValidationFailedError"] | components["schemas"]["RouteNotFoundError"] | components["schemas"]["WorkspaceUnknownError"] | components["schemas"]["WorkspaceNotOpenError"] | components["schemas"]["WorkspaceNotReadyError"] | components["schemas"]["EngineQueueFullError"] | components["schemas"]["JobCancelledError"] | components["schemas"]["EngineStoppedError"] | components["schemas"]["EngineUnavailableError"] | components["schemas"]["ChangeOutcomeUnknownError"] | components["schemas"]["InternalError"];
+            error: components["schemas"]["ValidationFailedError"] | components["schemas"]["RouteNotFoundError"] | components["schemas"]["WorkspaceUnknownError"] | components["schemas"]["WorkspaceNotOpenError"] | components["schemas"]["WorkspaceNotReadyError"] | components["schemas"]["EngineQueueFullError"] | components["schemas"]["JobCancelledError"] | components["schemas"]["EngineStoppedError"] | components["schemas"]["EngineUnavailableError"] | components["schemas"]["ChangeOutcomeUnknownError"] | components["schemas"]["LedgerExternallyChangedError"] | components["schemas"]["WritesPausedError"] | components["schemas"]["LegacyAppSavingError"] | components["schemas"]["ChangeNotSavedError"] | components["schemas"]["InternalError"];
             meta: components["schemas"]["Meta"];
         };
         /** HealthData */
@@ -258,6 +305,64 @@ export interface components {
             /** Retryable */
             retryable: boolean;
         };
+        /** LedgerExternallyChangedError */
+        LedgerExternallyChangedError: {
+            /**
+             * Class
+             * @constant
+             */
+            class: "conflict";
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            code: "LEDGER_EXTERNALLY_CHANGED";
+            /** Correlation Id */
+            correlation_id: string;
+            /** Data Safe */
+            data_safe: boolean;
+            /** Details */
+            details: null;
+            /** Issues */
+            issues: components["schemas"]["Issue"][];
+            /** Message */
+            message: string;
+            /** Next Step */
+            next_step: string;
+            /** Retry After Ms */
+            retry_after_ms: number | null;
+            /** Retryable */
+            retryable: boolean;
+        };
+        /** LegacyAppSavingError */
+        LegacyAppSavingError: {
+            /**
+             * Class
+             * @constant
+             */
+            class: "conflict";
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            code: "LEGACY_APP_SAVING";
+            /** Correlation Id */
+            correlation_id: string;
+            /** Data Safe */
+            data_safe: boolean;
+            /** Details */
+            details: null;
+            /** Issues */
+            issues: components["schemas"]["Issue"][];
+            /** Message */
+            message: string;
+            /** Next Step */
+            next_step: string;
+            /** Retry After Ms */
+            retry_after_ms: number | null;
+            /** Retryable */
+            retryable: boolean;
+        };
         /** Meta */
         Meta: {
             /** Config Version */
@@ -271,6 +376,10 @@ export interface components {
         };
         /** @constant */
         NotReadyPhase: "WARMING";
+        /** @enum {string} */
+        NotSavedReason: "hard_linked" | "locked" | "not_a_file" | "permission" | "volume_no_swap" | "io_error" | "read_back" | "name_not_utf8" | "engine_stopped";
+        /** @enum {string} */
+        PausedReason: "unfinished_save" | "check_pending" | "check_failed";
         /** RouteNotFoundError */
         RouteNotFoundError: {
             /**
@@ -422,6 +531,47 @@ export interface components {
             data_safe: boolean;
             /** Details */
             details: null;
+            /** Issues */
+            issues: components["schemas"]["Issue"][];
+            /** Message */
+            message: string;
+            /** Next Step */
+            next_step: string;
+            /** Retry After Ms */
+            retry_after_ms: number | null;
+            /** Retryable */
+            retryable: boolean;
+        };
+        /**
+         * WritesPausedDetails
+         * @description This workspace's saves are paused (engine-jobs §6.1 steps 1 and 4, §6.4, §6.6, §11; S0063). `unfinished_save`:
+         *     an unfinished save's journal is open (Reopen recovers it); `check_pending`: the check of the last save (R4) is owed
+         *     and could not run first; `check_failed`: that check found a difference, or could not run three times (Resume
+         *     saving). `file`: for `unfinished_save`, the file the save was creating that the undo will ask about (its Reopen
+         *     text then promises no undo: S0061 red team r8 overflow 1), else None.
+         */
+        WritesPausedDetails: {
+            /** File */
+            file: string | null;
+            reason: components["schemas"]["PausedReason"];
+        };
+        /** WritesPausedError */
+        WritesPausedError: {
+            /**
+             * Class
+             * @constant
+             */
+            class: "conflict";
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            code: "WRITES_PAUSED";
+            /** Correlation Id */
+            correlation_id: string;
+            /** Data Safe */
+            data_safe: boolean;
+            details: components["schemas"]["WritesPausedDetails"];
             /** Issues */
             issues: components["schemas"]["Issue"][];
             /** Message */

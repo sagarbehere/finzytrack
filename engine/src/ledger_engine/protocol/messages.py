@@ -276,6 +276,95 @@ class RecoverActResult(Message):
     errno: int | None
 
 
+# -- The save (S0063; engine-jobs §6.1, §6.6, §11) ---------------------------------------------------------------------
+
+SessionId = Annotated[str, Field(pattern=r"^[a-z0-9_]{1,64}$")]  # lower case only: never two that differ in case
+JobName = Annotated[str, Field(pattern=r"^[a-z0-9_]{1,64}$")]
+Component = Annotated[
+    str, Field(min_length=1, max_length=255, pattern=r"^[^/\x00]+$")
+]  # one name; not . or .. (the handler)
+
+
+class SaveChange(Message):
+    """One file the save writes: its path as the ledger names it, the SHA-256 of its bytes in the plan (null: the save
+    creates it), and its new text (a ledger file is UTF-8 text; whole files until the contract's edits, BL-0106)."""
+
+    path: AbsPath
+    pre: Sha256 | None
+    post: str
+
+
+class SaveParams(Message):
+    """A confirmed plan (§2's `save`): who saves (`session`, `job`, the workspace's registry key and lineage id), the
+    ledger's root, the changes, the plan's fingerprint (`ledger_set.encode`'s text), the published mirror's
+    fingerprint digest (null: none), the legacy locks to try (ADR-0062) and the app's machine-local folder."""
+
+    session: SessionId
+    job: JobName
+    workspace_key: Component
+    lineage: str = Field(min_length=1, max_length=128)
+    root: AbsPath
+    changes: list[SaveChange] = Field(min_length=1)
+    fingerprint: str = Field(min_length=1)
+    mirror: str | None
+    legacy_locks: list[AbsPath]
+    app_local_data: AbsPath
+
+
+type SaveOutcomeKind = Literal["saved", "refused", "not_saved", "unfinished"]
+
+
+class SaveResult(Message):
+    """How the save ended (§6.1, §11). `saved`: the closed record is durable (`published`: the mirror was published,
+    never yet, BL-0113). `refused`: before the commit point, nothing written (`reason`: `unfinished_save`,
+    `check_pending`, `check_failed`, `legacy_app_saving`, `ledger_changed`, `mirror_stale`, `load_refused`).
+    `not_saved`: the writer's `NotSaved` (`reason` its own: `hard_linked`, `locked`, `not_a_file`, `permission`,
+    `volume_no_swap`, `changed`, `path_moved`, `read_back`, `io_error`, `name_not_utf8`; `open_journal`: writes are
+    paused until recovery). `unfinished`: a file may have been replaced and the rollback stopped (`cause`, and
+    `cause_path` its file: after `created_path_taken` the undo will ask about that file). `unchanged`: every file the
+    save would write was hashed again and equals its pre bytes. `path`: the file it is about; `entry`: the folder a
+    `permission` refusal is about, `detail`: the ACL entry that blocks it."""
+
+    outcome: SaveOutcomeKind
+    reason: str | None
+    path: AbsPath | None
+    entry: AbsPath | None
+    detail: str | None
+    unchanged: bool
+    open_journal: bool
+    cause: str | None
+    cause_path: AbsPath | None
+    published: bool
+
+
+class SaveTarget(Message):
+    path: AbsPath
+    pre: Sha256 | None
+
+
+class SaveOutcomeParams(Message):
+    """§6.6: the save `session`-`job` of workspace `workspace_key`, whose engine ended without its final reply."""
+
+    app_local_data: AbsPath
+    workspace_key: Component
+    session: SessionId
+    job: JobName
+    targets: list[SaveTarget] = Field(min_length=1)
+
+
+type RecordSeen = Literal["none", "part", "open", "closed", "done", "mismatch", "resolved", "kept", "unknown"]
+
+
+class SaveOutcomeResult(Message):
+    """The record's state after its folder's sync (`unknown`: it could not be read; `errno`), and with no record, a
+    `.part` or `.resolved`, whether every target equals its pre bytes (`unchanged`; `path`: the first that does not)."""
+
+    record: RecordSeen
+    unchanged: bool | None
+    path: AbsPath | None
+    errno: int | None
+
+
 @dataclass(frozen=True, slots=True)
 class OpSpec:
     """One op: its params and result models, the example result its reply carries in the schema, the example params
@@ -355,6 +444,50 @@ OPS: dict[str, OpSpec] = {
         RecoverActResult,
         {"outcome": "done", "reason": None, "path": None, "detail": None, "errno": None},
         {"app_local_data": _ALD, "journal_dir": _JD, "name": "s1-j7", "action": "keep"},
+        needs_engine_lock=True,
+    ),
+    "save": OpSpec(
+        SaveParams,
+        SaveResult,
+        {
+            "outcome": "saved",
+            "reason": None,
+            "path": None,
+            "entry": None,
+            "detail": None,
+            "unchanged": False,
+            "open_journal": False,
+            "cause": None,
+            "cause_path": None,
+            "published": False,
+        },
+        {
+            "session": "s1",
+            "job": "j7",
+            "workspace_key": "k1",
+            "lineage": "lin1",
+            "root": "/ledgers/L/main.bean",
+            "changes": [{"path": "/ledgers/L/main.bean", "pre": "0" * 64, "post": "2026-01-01 open Assets:Cash\n"}],
+            "fingerprint": (
+                '{"document_files":[],"documents":[],"files":[],"globs":[],"root":"/ledgers/L/main.bean","v":1}'
+            ),
+            "mirror": None,
+            "legacy_locks": [],
+            "app_local_data": _ALD,
+        },
+        needs_engine_lock=True,
+    ),
+    "save_outcome": OpSpec(
+        SaveOutcomeParams,
+        SaveOutcomeResult,
+        {"record": "closed", "unchanged": None, "path": None, "errno": None},
+        {
+            "app_local_data": _ALD,
+            "workspace_key": "k1",
+            "session": "s1",
+            "job": "j7",
+            "targets": [{"path": "/ledgers/L/main.bean", "pre": "0" * 64}],
+        },
         needs_engine_lock=True,
     ),
 }

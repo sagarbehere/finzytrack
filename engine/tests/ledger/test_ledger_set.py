@@ -24,7 +24,15 @@ import pytest
 
 from ledger_engine.ledger import beancount_port as port
 from ledger_engine.ledger import fingerprint as fp_module
-from ledger_engine.ledger.core.ledger_set import Absent, Content, Fingerprint
+from ledger_engine.ledger.core.ledger_set import (
+    Absent,
+    Content,
+    Fingerprint,
+    UndecodableError,
+    as_before,
+    decode,
+    encode,
+)
 from ledger_engine.ledger.fingerprint import observe
 from ledger_engine.ledger.overlay import Loaded, load
 from ledger_engine.ledger.policy import DESKTOP
@@ -546,3 +554,48 @@ def test_a_path_found_absent_and_then_read_in_one_load_keeps_the_first_answer(
     assert str(x) in result.options["include"]
     assert dict(result.fingerprint.globs)[str(x)] == ()  # the first answer stays
     assert observe(result.fingerprint.ledger_set) != result.fingerprint
+
+
+# -- the encoding's inverse and the re-check's expected disk (S0063) ---------------------------------------------------
+
+
+@pytest.mark.parametrize("name", LOAD_CASES)
+def test_every_corpus_fingerprint_decodes_to_itself(name: str, tmp_path: Path) -> None:
+    fp = loaded(copy_case(name, tmp_path)).fingerprint
+    assert decode(encode(fp)) == fp
+
+
+@pytest.mark.parametrize(
+    "data",
+    [
+        b"",
+        b"[]",
+        b'{"v":1}',
+        b'{"document_files":[],"documents":[],"files":[],"globs":[],"root":"/r","v":2}',  # another version
+        b'{"document_files":[],"documents":[],"files":[],"globs":[],"root":"/r","v":1,"x":0}',  # an extra key
+        b'{"document_files":[],"documents":[],"files":[["/b",["absent"]],["/a",["absent"]]],"globs":[],"root":"/r","v":1}',
+        b'{"document_files":[],"documents":[],"files":[["/a",["sha256","XX"]]],"globs":[],"root":"/r","v":1}',
+        b'{"document_files":[],"documents":[],"files":[["/a",["gone"]]],"globs":[],"root":"/r","v":1}',
+        b'{"documents":[],"document_files":[],"files":[],"globs":[],"root":"/r","v":1}',  # not canonical key order
+        b'{"document_files":[["/d",1]],"documents":[],"files":[],"globs":[],"root":"/r","v":1}',
+        b'{"document_files":[],"documents":[],"files":[],"globs":[["/g",[1]]],"root":"/r","v":1}',
+        b'{"document_files":[],"documents":[],"files":[],"globs":[],"root":"/r","v":1} ',
+    ],
+)
+def test_anything_encode_would_not_make_is_refused(data: bytes) -> None:
+    with pytest.raises(UndecodableError):
+        decode(data)
+
+
+def test_as_before_puts_each_candidate_back_at_its_pre_state_and_keeps_every_other_read(tmp_path: Path) -> None:
+    main = write(tmp_path / "main.bean", 'include "inc.bean"\ninclude "new.bean"\n')
+    inc = write(tmp_path / "inc.bean", "")
+    new = str(tmp_path / "new.bean")
+    post = b'include "inc.bean"\ninclude "new.bean"\n; edited\n'
+    fp = loaded(main, {str(main): post, new: b"; created\n"}).fingerprint
+    states = dict(fp.files)
+    assert states[str(main)] == sha(post)
+    before = as_before(fp, {str(main): hashlib.sha256(main.read_bytes()).hexdigest(), new: None})
+    assert dict(before.files) == {str(main): sha(main.read_bytes()), str(inc): sha(b""), new: Absent()}
+    assert dict(before.globs)[new] == ()  # the disk's glob finds nothing there yet
+    assert observe(before.ledger_set) == before  # the disk as the load read it

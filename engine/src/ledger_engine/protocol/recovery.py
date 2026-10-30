@@ -72,7 +72,7 @@ def _fs() -> FileSystem:
     return for_this_os()
 
 
-def _locks(app_local_data: str) -> DarwinLocks:
+def ledger_locks_in(app_local_data: str) -> DarwinLocks:
     """The ledger-set locks in `<app_local_data>/locks/` (the engine lock's folder: made if missing, as the engine lock
     makes it)."""
     folder = join(app_local_data.rstrip("/") or "/", "locks")
@@ -89,7 +89,7 @@ def _canonical(fs: FileSystem, path: str) -> str | None:
     return None if r.rest else core_paths.canonical_path(r)
 
 
-def _app_local_data(fs: FileSystem, app_local_data: str, ctx: Decider) -> str:
+def app_local_data_of(fs: FileSystem, app_local_data: str, ctx: Decider) -> str:
     """`app_local_data` only when it is the folder this engine's engine lock lives under
     (`<app_local_data>/locks/engine.lock`, as the main sidecar names it), both resolved: any other tree, laid out as
     the app's or not, is refused before anything in it is read, made or removed (red team r1 R1-2)."""
@@ -143,7 +143,7 @@ def _listed(j: ra.Listed) -> ListedJournal:
 def recover_list(params: Message, ctx: Decider) -> Message:
     assert isinstance(params, RecoverListParams)  # noqa: S101 (the handler's own params model)
     fs = _fs()
-    listing = ra.list_journals(fs, _app_local_data(fs, params.app_local_data, ctx))
+    listing = ra.list_journals(fs, app_local_data_of(fs, params.app_local_data, ctx))
     return RecoverListResult(
         journals=[_listed(j) for j in listing.journals],
         unlisted=[UnlistedFolder(folder=u.folder, errno=u.errno) for u in listing.unlisted],
@@ -198,9 +198,13 @@ def _inspection(fs: FileSystem, journal_dir: str, name: str) -> list[InspectedFi
 def recover_try(params: Message, ctx: Decider) -> Message:
     assert isinstance(params, RecoverTryParams)  # noqa: S101 (the handler's own params model)
     fs = _fs()
-    ald = _app_local_data(fs, params.app_local_data, ctx)
+    ald = app_local_data_of(fs, params.app_local_data, ctx)
     jd = _journal_dir(fs, ald, params.journal_dir)
-    out = recover_journal(fs, _locks(ald), jd, params.name) if _guarded(fs, jd) else Stopped(Cause.PATH_MOVED, None, jd)
+    out = (
+        recover_journal(fs, ledger_locks_in(ald), jd, params.name)
+        if _guarded(fs, jd)
+        else Stopped(Cause.PATH_MOVED, None, jd)
+    )
     if isinstance(out, Resolved):
         result = RecoverTryResult(
             outcome="resolved", cause=None, path=None, entry=None, detail=None, errno=None, inspection=None
@@ -233,9 +237,9 @@ def recover_try(params: Message, ctx: Decider) -> Message:
 def recover_act(params: Message, ctx: Decider) -> Message:
     assert isinstance(params, RecoverActParams)  # noqa: S101 (the handler's own params model)
     fs = _fs()
-    ald = _app_local_data(fs, params.app_local_data, ctx)
+    ald = app_local_data_of(fs, params.app_local_data, ctx)
     jd = _journal_dir(fs, ald, params.journal_dir)
-    locks = _locks(ald)
+    locks = ledger_locks_in(ald)
     if params.action == "keep":
         out = ra.keep(fs, locks, jd, params.name)
     elif params.file is None or params.sha256 is None or (params.action == "delete_kept" and params.kept is None):

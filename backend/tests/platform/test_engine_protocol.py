@@ -43,6 +43,8 @@ from app.platform.engine_protocol import (
     decode_recover_list,
     decode_recover_try,
     decode_reply,
+    decode_save,
+    decode_save_outcome,
     encode_proceed,
     encode_request,
 )
@@ -110,6 +112,8 @@ DECODERS: dict[str, Any] = {
     "recover_list": decode_recover_list,
     "recover_try": decode_recover_try,
     "recover_act": decode_recover_act,
+    "save": decode_save,
+    "save_outcome": decode_save_outcome,
 }
 
 
@@ -182,6 +186,8 @@ def mutations(example: dict[str, Any]) -> list[dict[str, Any]]:
         ("RecoverListReply", "recover_list"),
         ("RecoverTryReply", "recover_try"),
         ("RecoverActReply", "recover_act"),
+        ("SaveReply", "save"),
+        ("SaveOutcomeReply", "save_outcome"),
     ],
 )
 def test_the_decoder_refuses_exactly_what_the_schema_refuses(definition: str, op: str | None) -> None:
@@ -338,7 +344,7 @@ def test_the_decoder_refuses_exactly_what_the_schema_refuses_for_a_decision(deci
 
 # -- Recover-all's ops (S0062) --------------------------------------------------------------------------------------
 
-RECOVER_OPS = ("recover_list", "recover_try", "recover_act")
+RECOVER_OPS = ("recover_list", "recover_try", "recover_act", "save", "save_outcome")  # and the save's (S0063)
 
 
 def nested_mutations(value: object) -> list[object]:

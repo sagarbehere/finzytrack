@@ -287,7 +287,9 @@ def test_the_rollback_is_the_restore_root_first_and_resolves_after_its_syncs() -
     w = world()
     w.fs.inject(at, crash=False)
     out = durable_commit(w.fs, w.commit)
-    assert out == Unfinished(Step.READ_BACK, Reason.IO_ERROR, "/w/L/inc/a.bean")  # the created file is left (r5)
+    assert out == Unfinished(
+        Step.READ_BACK, Reason.IO_ERROR, "/w/L/inc/a.bean", "created_path_taken", "/w/L/prices.bean"
+    )  # the created file is left (r5)
     e = w.fs.effects[at + 1 :]
     assert [x for x in e if x.startswith("swap ")] == [
         "swap /w/L:.main.bean.ft-restore-s1-j7.tmp,main.bean",
@@ -310,7 +312,10 @@ def test_a_failed_close_is_rolled_back_and_never_leaves_a_closed_record_over_res
         w.fs.inject(at, crash=False, err=errno.EIO, after=after)
         out = durable_commit(w.fs, w.commit)
         end = len(w.fs.effects)
-        assert out == Unfinished(Step.CLOSE, Reason.IO_ERROR, None), (label, out)  # the created file is left (r5)
+        assert out == Unfinished(Step.CLOSE, Reason.IO_ERROR, None, "created_path_taken", "/w/L/prices.bean"), (
+            label,
+            out,
+        )  # the created file is left (r5)
         if after:
             assert set(journals(w.fs)) == {State.OPEN}, "the .closed record reopened before any file was restored"
         check_told(w.fs, w, out)
@@ -370,7 +375,9 @@ def test_an_exclusive_create_refuses_a_file_that_appeared_and_keeps_it() -> None
         w.fs, "rename /w/L:.prices.bean.ft-s1-j7.tmp,prices.bean", lambda: w.fs.outside_write("/w/L/prices.bean", b"x")
     )
     out = durable_commit(w.fs, w.commit)
-    assert out == Unfinished(Step.REPLACE, Reason.CHANGED, "/w/L/prices.bean")  # a.bean was replaced first
+    assert out == Unfinished(
+        Step.REPLACE, Reason.CHANGED, "/w/L/prices.bean", "created_path_taken", "/w/L/prices.bean"
+    )  # a.bean was replaced first
     assert w.fs.file("/w/L/prices.bean") == b"x"
     assert w.fs.file("/w/L/inc/a.bean") == w.targets[0].pre, "the other files rolled back (§6.4)"
     assert set(journals(w.fs)) == {State.OPEN}, "the journal stops at the created path (owner, 2026-10-30)"
@@ -555,7 +562,7 @@ def test_a_read_back_mismatch_stops_the_save_unfinished() -> None:
 
     w.fs.on_effect = late
     out = durable_commit(w.fs, w.commit)
-    assert out == Unfinished(Step.READ_BACK, Reason.READ_BACK, "/w/L/inc/a.bean")
+    assert out == Unfinished(Step.READ_BACK, Reason.READ_BACK, "/w/L/inc/a.bean", "foreign", "/w/L/inc/a.bean")
     assert set(journals(w.fs)) == {State.OPEN}
 
 
@@ -823,7 +830,9 @@ def test_a_hard_link_made_between_the_pre_swap_check_and_the_swap_is_never_told_
         w.fs, "create /w/L:.main.bean.ft-s1-j7.new", lambda: w.fs.outside_link("/w/L/main.bean", "/w/Backup/copy.bean")
     )
     out = durable_commit(w.fs, w.commit)
-    assert out == Unfinished(Step.REPLACE, Reason.HARD_LINKED, "/w/L/main.bean")  # prices.bean placed: left (r5)
+    assert out == Unfinished(
+        Step.REPLACE, Reason.HARD_LINKED, "/w/L/main.bean", "created_path_taken", "/w/L/prices.bean"
+    )  # prices.bean placed: left (r5)
     assert w.fs.file("/w/L/main.bean") == w.fs.file("/w/Backup/copy.bean") == w.targets[2].pre
     assert set(journals(w.fs)) == {State.OPEN}
     assert recover(w.fs) == TAKEN
@@ -841,7 +850,9 @@ def test_a_hard_link_made_to_the_displaced_file_before_its_temp_is_removed_stops
 
     w.fs.on_effect = link_late
     out = durable_commit(w.fs, w.commit)
-    assert out == Unfinished(Step.READ_BACK, Reason.HARD_LINKED, "/w/L/main.bean")  # prices.bean placed: left (r5)
+    assert out == Unfinished(
+        Step.READ_BACK, Reason.HARD_LINKED, "/w/L/main.bean", "created_path_taken", "/w/L/prices.bean"
+    )  # prices.bean placed: left (r5)
     # rolled back: the temp holds the pre bytes (§8.1 step 2 allows it); its other name keeps them
     assert w.fs.file("/w/Backup/copy.bean") == w.targets[2].pre
     assert w.fs.file("/w/L/main.bean") == w.targets[2].pre
@@ -1048,7 +1059,7 @@ def test_a_displaced_outside_save_at_a_swap_is_moved_to_the_kept_name_and_the_sa
     w = world()
     _hook(w.fs, "swap /w/L:.main.bean.ft-s1-j7.tmp,main.bean", lambda: w.fs.outside_write("/w/L/main.bean", FOREIGN))
     out = durable_commit(w.fs, w.commit)
-    assert out == Unfinished(Step.REPLACE, Reason.CHANGED, "/w/L/main.bean")
+    assert out == Unfinished(Step.REPLACE, Reason.CHANGED, "/w/L/main.bean", "kept_copy", "/w/L/main.bean")
     t = w.targets[2]
     assert (w.fs.file(t.path), w.fs.file(t.kept), w.fs.file(t.temp)) == (t.post, FOREIGN, None)
     swap = w.fs.effects.index("swap /w/L:.main.bean.ft-s1-j7.tmp,main.bean")
@@ -1099,7 +1110,7 @@ def test_an_outside_write_into_the_displaced_file_after_the_swap_goes_to_the_kep
 
     fs.on_effect = hook
     out = durable_commit(fs, w.commit)
-    assert out == Unfinished(Step.READ_BACK, Reason.CHANGED, "/w/L/main.bean")
+    assert out == Unfinished(Step.READ_BACK, Reason.CHANGED, "/w/L/main.bean", "kept_copy", "/w/L/main.bean")
     assert fs.file(w.targets[2].kept) == FOREIGN
     assert fs.file(w.targets[2].temp) is None
     assert set(journals(fs)) == {State.OPEN}
@@ -1190,7 +1201,7 @@ def test_a_second_outside_save_after_the_first_was_kept_is_kept_too() -> None:
 
     w.fs.on_effect = on
     out = durable_commit(w.fs, w.commit)
-    assert out == Unfinished(Step.REPLACE, Reason.CHANGED, t.path)
+    assert out == Unfinished(Step.REPLACE, Reason.CHANGED, t.path, "kept_copy", t.path)
     assert (w.fs.file(t.path), w.fs.file(t.kept)) == (second, first)
     for state in w.fs.power_loss_states():
         assert {first, second} <= {state.file(t.path), state.file(t.temp), state.file(t.kept)}
@@ -1221,7 +1232,7 @@ def test_a_folder_put_where_the_swap_displaces_the_file_is_moved_to_the_kept_nam
 
     _hook(w.fs, "swap /w/L:.main.bean.ft-s1-j7.tmp,main.bean", to_folder)
     out = durable_commit(w.fs, w.commit)
-    assert out == Unfinished(Step.REPLACE, Reason.CHANGED, t.path)
+    assert out == Unfinished(Step.REPLACE, Reason.CHANGED, t.path, "foreign", w.targets[0].path)
     assert w.fs.snapshot()[t.kept] == ("dir",)
     assert w.fs.file(t.path) == t.post
     swap = w.fs.effects.index("swap /w/L:.main.bean.ft-s1-j7.tmp,main.bean")
@@ -1452,7 +1463,9 @@ def test_R5_after_a_read_back_mismatch_the_rollback_leaves_our_own_created_file_
 
     w.fs.on_effect = revert
     out = durable_commit(w.fs, w.commit)
-    assert out == Unfinished(Step.READ_BACK, Reason.READ_BACK, "/w/L/inc/a.bean")
+    assert out == Unfinished(
+        Step.READ_BACK, Reason.READ_BACK, "/w/L/inc/a.bean", "created_path_taken", "/w/L/prices.bean"
+    )
     assert w.fs.file(PRICES) == w.targets[1].post
     check_told(w.fs, w, out)
     out2 = recover(w.fs)
@@ -1472,7 +1485,9 @@ def test_R5_F1_the_rollback_never_deletes_another_programs_file_at_a_created_pat
     out = durable_commit(w.fs, w.commit)
     w.fs.on_effect = None
     assert w.fs.file(t.path) == t.post, f"the other program's prices.bean was deleted; told {out}"
-    assert out == Unfinished(Step.REPLACE, Reason.IO_ERROR, "/w/L/inc/a.bean"), out
+    assert out == Unfinished(
+        Step.REPLACE, Reason.IO_ERROR, "/w/L/inc/a.bean", "created_path_taken", "/w/L/prices.bean"
+    ), out
     check_told(w.fs, w, out)
     check_taken(w.fs, w, TAKEN)
     assert recover(w.fs) == TAKEN

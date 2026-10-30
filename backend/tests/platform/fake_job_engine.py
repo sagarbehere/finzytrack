@@ -33,6 +33,16 @@ INFO = EngineInfo(protocol=2, engine_version="0.4.0.dev0", beancount_version="3.
 CRASH = "crash"
 CRASH_TO_BOUND = "crash_to_bound"  # the engine dies and that stop reaches the bound (the client is `Unavailable`)
 BLOCK = "block"
+GATE_DIE = "gate_die"  # a scripted save: `gate`, then after `proceed` the engine dies (S0063)
+
+
+@dataclass(frozen=True)
+class Gated:
+    """A scripted save: `gate`, then after `proceed` this result (S0063)."""
+
+    result: dict[str, object]
+
+
 DEADLINE = 20.0
 
 
@@ -111,6 +121,7 @@ class FakeEngine:
         on_event: Callable[[EngineEvent], None] | None = None,
         spawn: bool = True,
     ) -> Mapping[str, object] | EngineFailure:
+        gated: object = None
         with self._cond:
             eng = self._live
             if eng is None or eng.ended is not None:
@@ -124,6 +135,9 @@ class FakeEngine:
             if op in self.scripted:
                 self.params.append((eng.serial, op, dict(params)))
                 answer = self.scripted[op].pop(0)
+                if answer == GATE_DIE or isinstance(answer, Gated):
+                    eng.gate = "pending"
+                    gated = answer
                 if answer in (CRASH, CRASH_TO_BOUND):
                     if answer == CRASH_TO_BOUND:
                         now = time.monotonic()  # three stops just now: the restart window does not lift them yet
@@ -140,14 +154,15 @@ class FakeEngine:
                         return EngineFailure("cancelled", "ended by us")
                     self._released.discard(op)
                     answer = self.scripted[op].pop(0)
-                assert isinstance(answer, dict), answer
-                return answer  # pyright: ignore[reportUnknownVariableType]
-            if op == "ok":
+                if gated is None:
+                    assert isinstance(answer, dict), answer
+                    return answer  # pyright: ignore[reportUnknownVariableType]
+            elif op == "ok":
                 return {"op": op}
-            if op == "crash":
+            elif op == "crash":
                 self._die(eng)
                 return EngineFailure("crashed", "the engine's output ended")
-            if op == "block":
+            elif op == "block":
                 self._in_call += 1
                 self._cond.wait_for(lambda: op in self._released or eng.ended is not None)
                 self._in_call -= 1
@@ -156,7 +171,7 @@ class FakeEngine:
                     return EngineFailure("cancelled", "ended by us")
                 self._released.discard(op)
                 return {"op": op}
-            if op in ("gate", "gate_die"):  # `gate_die`: a save cut mid-write, after `proceed` (S0058 verifier F5)
+            elif op in ("gate", "gate_die"):  # `gate_die`: a save cut mid-write, after `proceed` (S0058 verifier F5)
                 eng.gate = "pending"
             else:
                 msg = f"the fake has no op {op!r}"
@@ -167,9 +182,12 @@ class FakeEngine:
             self._cond.wait_for(lambda: eng.gate == "proceeded" or eng.ended is not None)
             if eng.ended is not None:
                 return EngineFailure("cancelled", "ended by us")
-            if op == "gate_die":
+            if op == "gate_die" or gated == GATE_DIE:
                 self._die(eng)
                 return EngineFailure("crashed", "the engine's output ended")
+            if isinstance(gated, Gated):
+                eng.past_commit = False
+                return gated.result
             self._cond.wait_for(lambda: "gate" in self._released or eng.ended is not None)
             self._released.discard("gate")
             eng.past_commit = False

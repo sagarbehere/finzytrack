@@ -18,6 +18,7 @@ WRITE_PATH = (
     "ledger/writer.py",
     "ledger/restore.py",
     "ledger/recover_all.py",
+    "ledger/save.py",  # S0063: its writes go through the port; it reads only through the load and the fingerprint
     "ledger/handles.py",
     "ledger/paths.py",
     "ledger/core/journal.py",

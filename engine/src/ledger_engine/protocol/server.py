@@ -90,6 +90,7 @@ from ledger_engine.protocol.messages import (
     RefusalKey,
 )
 from ledger_engine.protocol.recovery import RECOVERY_HANDLERS, BadParamsError
+from ledger_engine.protocol.save import OUTCOME_HANDLERS, SAVE_HANDLERS
 
 ENVELOPE = frozenset({"v", "id", "op", "params"})
 PARENT_POLL_SECONDS = 0.25
@@ -327,6 +328,8 @@ PRODUCTION: dict[str, Handler] = {
     "handshake": Handler(NoParams, _handshake),
     "ping": Handler(NoParams, _ping),
     **{op: Handler(OPS[op].params, run, needs_engine_lock=True) for op, run in RECOVERY_HANDLERS.items()},
+    **{op: Handler(OPS[op].params, run, needs_engine_lock=True) for op, run in OUTCOME_HANDLERS.items()},
+    **{op: Handler(OPS[op].params, run, needs_engine_lock=True) for op, run in SAVE_HANDLERS.items()},
 }
 TEST_OPS: dict[str, Handler] = {
     "test.stall": Handler(NoParams, _stall),

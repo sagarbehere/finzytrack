@@ -1594,3 +1594,76 @@ def test_the_listing_mark_is_only_for_the_running_recover_all() -> None:
     after, effects = run(state, RecoveryListed(jid))
     assert after == state
     assert effects == []
+
+
+# -- a save whose engine died (S0063; §5.3 "a save's outcome is resolved from disk (§6.6)") ----------------------------
+
+
+@pytest.mark.parametrize("past_commit", [False, True])
+def test_a_save_whose_engine_died_is_kept_to_read_its_outcome(past_commit: bool) -> None:
+    """The model ends the job at the crash and tells `DiskOutcome`; the code needs a fresh engine to read the disk,
+    so the job is kept (`outcome_owed`), its engine ends as a stop, and it gets the next engine first."""
+    state, jid = busy_with(user("save"), ready(W1))
+    if past_commit:
+        state, effects = run(state, Gate(jid))
+        assert Proceed(jid) in effects
+    state, _ = run(state, Submit(user("preview")))
+    assert state.engine is not None
+    state, effects = run(state, EngineDied(state.engine))
+    assert not any(isinstance(e, EngineLost) for e in effects)
+    assert EndEngine("crashed") in effects
+    assert state.running is not None
+    assert state.running.job.id == jid
+    assert state.running.outcome_owed
+    assert state.running.past_commit == past_commit
+    state, _ = run(state, EngineNeeded(jid))
+    state, effects = run(state, EngineEnded())
+    assert started(effects) == [jid], "the outcome is read before any queued job runs"
+    state, effects = run(state, JobDone(jid, ran_user_code=False))
+    assert Finished(jid) in effects
+
+
+@pytest.mark.parametrize(("past_commit", "cancelled"), [(False, True), (True, False)])
+def test_a_cancel_after_the_death_ends_the_save_only_before_its_commit_point(
+    past_commit: bool, cancelled: bool
+) -> None:
+    """Before the commit point nothing was written, so the user's Cancel ends the job; past it, "too late" (§4)."""
+    state, jid = busy_with(user("save"), ready(W1))
+    if past_commit:
+        state, _ = run(state, Gate(jid))
+    assert state.engine is not None
+    state, _ = run(state, EngineDied(state.engine))
+    state, effects = run(state, Cancel(jid))
+    assert (Cancelled(jid) in effects) == cancelled
+    assert (TooLate(jid) in effects) == (not cancelled)
+
+
+@pytest.mark.parametrize("why", ["unavailable", "lock_failed"])
+def test_no_engine_for_a_saves_outcome_lets_its_work_answer(why: str) -> None:
+    state, jid = busy_with(user("save"), ready(W1))
+    state, _ = run(state, Gate(jid))
+    assert state.engine is not None
+    state, _ = run(state, EngineDied(state.engine))
+    state, _ = run(state, EngineEnded())
+    if why == "unavailable":
+        state, _ = run(state, EngineAvailability(available=False))
+        state, effects = run(state, EngineNeeded(jid))
+    else:
+        step = transition(POLICY, state, EngineNeeded(jid))
+        assert WaitEngineLock() in step.effects
+        step = transition(POLICY, step.state, EngineLockFailed())
+        state, effects = step.state, list(step.effects)
+    assert EngineRefused(jid, why) in effects  # type: ignore[arg-type]
+    assert not any(isinstance(e, NoEngine) for e in effects)
+    assert state.running is not None
+
+
+def test_a_save_that_did_not_die_still_ends_without_an_engine_when_none_can_be_had() -> None:
+    """The model's `SpawnStep` unavailable branch for a save asking an engine mid-job (its own R4 first): refused,
+    nothing written (`NoEngine`); only a save whose engine died reports itself."""
+    state, jid = busy_with(user("save"), ready(W1))
+    state, _ = run(state, RetireEngine(jid))
+    state, _ = run(state, EngineNeeded(jid))
+    state, _ = run(state, EngineAvailability(available=False))
+    state, effects = run(state, EngineEnded())
+    assert NoEngine(jid, "unavailable") in effects

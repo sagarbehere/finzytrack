@@ -48,6 +48,8 @@ from ledger_engine.fs.port import (
     FileSystem,
     FoldRule,
     Kind,
+    LegacyAbsent,
+    LegacyHeld,
     MalformedPathError,
     Resolved,
     Right,
@@ -498,6 +500,52 @@ class DarwinLocks:
             os.close(fd)
             raise
         return DarwinLock(fd)
+
+    def lock(self, key: str) -> DarwinLock:
+        name = hashlib.sha256(key.encode()).hexdigest()
+        flags = os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_CLOEXEC
+        fd = os.open(_join(self._folder, name), flags, 0o600)
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX)  # waiting (§6.1 step 3); Cancel ends the engine, and with it the wait
+        except BaseException:
+            os.close(fd)
+            raise
+        return DarwinLock(fd)
+
+
+class DarwinLegacyLocks:
+    """The legacy write lock (`ledger_engine.fs.port.LegacyLocks`; ADR-0062 decisions 2 and 5): the file opened
+    read-only, never through a link and without blocking on a FIFO, only if it exists (v0.4 never creates it), then
+    `flock(LOCK_EX | LOCK_NB)`: the call portalocker 3.2.0 makes on POSIX for `lock(fh, LOCK_EX | LOCK_NB)` (its
+    `PosixLocker` calls `fcntl.flock`; `EAGAIN` or `EACCES` is its `AlreadyLocked`, any other error its
+    `LockException`), so the detection sees the legacy app's lock and is tested against a holder that takes it with
+    portalocker 3.2.0 itself (`tests/ledger/test_save.py`). TODO(BL-0026): whether the engine calls portalocker
+    itself (it brings pywin32 on Windows) is the owner's question, `design/inbox/20261030-legacy-lock-primitive.md`;
+    Windows (`msvcrt.locking` over the first 64 KiB) is BL-0087's."""
+
+    def try_lock(self, path: str) -> DarwinLock | LegacyAbsent | LegacyHeld:
+        split_absolute(path)
+        flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC
+        try:
+            fd = os.open(path, flags)
+        except FileNotFoundError:
+            return LegacyAbsent()
+        try:
+            regular = stat.S_ISREG(os.fstat(fd).st_mode)
+            if regular:
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError as e:
+            os.close(fd)
+            if e.errno in (errno.EAGAIN, errno.EACCES):
+                return LegacyHeld()
+            raise
+        except BaseException:
+            os.close(fd)
+            raise
+        if not regular:
+            os.close(fd)
+            raise OSError(errno.EINVAL, "the legacy lock is not a regular file")
+        return DarwinLock(fd)  # closing the descriptor releases the lock; nothing is written or removed
 
 
 def _identity(st: os.stat_result) -> tuple[int, int]:

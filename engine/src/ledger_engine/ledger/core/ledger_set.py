@@ -21,20 +21,26 @@ resolution, or a tool that restores the mtime, would pass a stat (ADR-0064's spe
 encoding means bumps `v`; the price of any change is one mirror rebuild per workspace (a cache, ADR-0015).
 
 Paths are keyed as the load named them. The spec keys them by `path_key` (§6.3), which exists since S0060
-(`ledger_engine.ledger.paths`) and keys the fingerprint with the save's gate (TODO(BL-0151)); for equality this is
-safe: the same ledger set is always observed under the same names, and two names for one file only make two entries
-that change together.
+(`ledger_engine.ledger.paths`); for equality this is safe: the same ledger set is always observed under the same names,
+and two names for one file only make two entries that change together. The save's gate and re-check (S0063) compare
+observations of one ledger set under its own names, and lock by `path_key`; keying the stored fingerprint itself by
+`path_key` comes with the published generation that carries it (TODO(BL-0125)).
+
+`decode` is `encode`'s strict inverse (the plan's fingerprint crosses the engine protocol as its encoding, S0063);
+`as_before` is what the disk must hold for a load of a save's candidate to have read it (the re-check, §6.1 step 6).
 """
 
 from __future__ import annotations
 
+import glob
 import hashlib
 import json
+import posixpath
 import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from itertools import pairwise
-from typing import Final
+from typing import Final, cast
 
 ENCODING_VERSION: Final = 1
 _SHA256_HEX: Final = re.compile(r"[0-9a-f]{64}")
@@ -170,3 +176,105 @@ def encode(fp: Fingerprint) -> bytes:
 def digest(fp: Fingerprint) -> str:
     """The fingerprint as one string: what the mirror's stamp and `ledger_version` will carry (TODO(BL-0125))."""
     return "sha256:" + hashlib.sha256(encode(fp)).hexdigest()
+
+
+class UndecodableError(ValueError):
+    """Bytes that are not an encoding `encode` makes (`what` is content-free)."""
+
+    def __init__(self, what: str) -> None:
+        super().__init__(f"not an encoded fingerprint: {what}")
+
+
+def _items(value: object, what: str) -> list[object]:
+    if not isinstance(value, list):
+        raise UndecodableError(what)
+    return cast(list[object], value)
+
+
+def _pair(value: object, what: str) -> tuple[str, object]:
+    items = _items(value, what)
+    if len(items) != 2 or not isinstance(items[0], str):
+        raise UndecodableError(what)
+    return items[0], items[1]
+
+
+def _decode_state(value: object) -> FileState:
+    items = _items(value, "state")
+    match items:
+        case ["sha256", str(h)]:
+            return Content(h)
+        case ["absent"]:
+            return Absent()
+        case ["unreadable", str(e)]:
+            return Unreadable(e)
+        case _:
+            raise UndecodableError("state")
+
+
+def _strings(value: object, what: str) -> tuple[str, ...]:
+    items = _items(value, what)
+    if not all(isinstance(i, str) for i in items):
+        raise UndecodableError(what)
+    return tuple(cast(list[str], items))
+
+
+def _listing(value: object) -> Listing:
+    if value is None:
+        return None
+    out: list[tuple[str, bool]] = []
+    for item in _items(value, "listing"):
+        name, exists = _pair(item, "listing")
+        if not isinstance(exists, bool):
+            raise UndecodableError("listing")
+        out.append((name, exists))
+    return tuple(out)
+
+
+def decode(data: bytes) -> Fingerprint:
+    """The strict inverse of `encode` (S0063: the plan's fingerprint crosses the engine protocol as its encoding):
+    exactly the bytes `encode` would make for the value, or `UndecodableError`."""
+    try:
+        value = json.loads(data.decode("ascii"))
+    except (UnicodeDecodeError, ValueError, RecursionError):
+        raise UndecodableError("json") from None
+    if not isinstance(value, dict):
+        raise UndecodableError("object")
+    obj = cast(dict[str, object], value)
+    if set(obj) != {"v", "root", "files", "globs", "documents", "document_files"} or obj["v"] != ENCODING_VERSION:
+        raise UndecodableError("keys_or_version")
+    root = obj["root"]
+    if not isinstance(root, str):
+        raise UndecodableError("root")
+    try:
+        files = tuple((p, _decode_state(s)) for p, s in (_pair(i, "files") for i in _items(obj["files"], "files")))
+        globs = tuple((p, _strings(m, "globs")) for p, m in (_pair(i, "globs") for i in _items(obj["globs"], "globs")))
+        documents = tuple(
+            (p, _listing(m)) for p, m in (_pair(i, "documents") for i in _items(obj["documents"], "documents"))
+        )
+        document_files: list[tuple[str, bool]] = []
+        for item in _items(obj["document_files"], "document_files"):
+            p, e = _pair(item, "document_files")
+            if not isinstance(e, bool):
+                raise UndecodableError("document_files")
+            document_files.append((p, e))
+        fp = Fingerprint(root, files, globs, documents, tuple(document_files))
+    except NotCanonicalError:
+        raise UndecodableError("not_canonical") from None
+    if encode(fp) != data:
+        raise UndecodableError("not_canonical")
+    return fp
+
+
+def as_before(loaded: Fingerprint, pre: Mapping[str, str | None]) -> Fingerprint:
+    """What the disk must hold now for a load of a save's candidate to have read it (`design/specs/engine-jobs.md`
+    §6.1 step 6, S0063): the load's own record `loaded` (`Loaded.fingerprint`), with each candidate file (`pre`: its
+    path as the load named it, and the SHA-256 of its bytes before the save, None for a file the save creates) at its
+    pre state instead of the candidate's bytes the load parsed, and a plain-path include of a file the save creates
+    matching nothing (the load answered it with the candidate, `overlay.load`; the disk has no file there yet).
+    Everything else the load read from the disk, so it must be on the disk as the load read it."""
+    files = tuple(
+        (p, (Absent() if pre[p] is None else Content(cast(str, pre[p]))) if p in pre else s) for p, s in loaded.files
+    )
+    created = {p for p, h in pre.items() if h is None}
+    globs = tuple((g, () if not glob.has_magic(g) and posixpath.normpath(g) in created else m) for g, m in loaded.globs)
+    return Fingerprint(loaded.root, files, globs, loaded.documents, loaded.document_files)

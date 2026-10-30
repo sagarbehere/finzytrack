@@ -100,6 +100,12 @@ def test_the_codes_of_architecture_6_1_this_slice_raises_have_their_classes() ->
         "ENGINE_UNAVAILABLE": ErrorClass.UNAVAILABLE,
         # S0058 round 1 (verifier F5): a writing job cut past its commit point, until BL-0151 resolves it from disk
         "CHANGE_OUTCOME_UNKNOWN": ErrorClass.UNAVAILABLE,
+        # S0063 (engine-jobs §11, ARCHITECTURE §6.1's `Conflict` row: state moved underneath, or a pause to clear):
+        # the save's refusals and its "not saved"
+        "LEDGER_EXTERNALLY_CHANGED": ErrorClass.CONFLICT,
+        "WRITES_PAUSED": ErrorClass.CONFLICT,
+        "LEGACY_APP_SAVING": ErrorClass.CONFLICT,
+        "CHANGE_NOT_SAVED": ErrorClass.CONFLICT,
         "INTERNAL": ErrorClass.INTERNAL,
     }
     assert {s.code: s.error_class for s in specs()} == expected
@@ -129,7 +135,13 @@ def test_internal_does_not_claim_the_data_is_safe() -> None:
 def test_not_ready_is_retryable_and_the_others_are_not() -> None:
     """S0058: §11 offers Try again for a full queue, a stopped engine and an unavailable one; a Cancel is not retried
     for the user."""
-    retryable = {"WORKSPACE_NOT_READY", "ENGINE_QUEUE_FULL", "ENGINE_STOPPED", "ENGINE_UNAVAILABLE"}
+    retryable = {
+        "WORKSPACE_NOT_READY",
+        "ENGINE_QUEUE_FULL",
+        "ENGINE_STOPPED",
+        "ENGINE_UNAVAILABLE",
+        "LEGACY_APP_SAVING",  # §11: Try again once the old app has quit (S0063)
+    }
     assert {s.code for s in specs() if s.retryable} == retryable
 
 

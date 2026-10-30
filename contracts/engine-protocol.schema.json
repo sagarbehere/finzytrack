@@ -10,7 +10,9 @@
     "ping",
     "recover_list",
     "recover_try",
-    "recover_act"
+    "recover_act",
+    "save",
+    "save_outcome"
   ],
   "oneOf": [
     {
@@ -783,6 +785,20 @@
       ],
       "title": "ProgressEvent",
       "type": "object"
+    },
+    "RecordSeen": {
+      "enum": [
+        "none",
+        "part",
+        "open",
+        "closed",
+        "done",
+        "mismatch",
+        "resolved",
+        "kept",
+        "unknown"
+      ],
+      "type": "string"
     },
     "RecoverActParams": {
       "additionalProperties": false,
@@ -1613,6 +1629,12 @@
           "$ref": "#/$defs/RecoverActReply"
         },
         {
+          "$ref": "#/$defs/SaveReply"
+        },
+        {
+          "$ref": "#/$defs/SaveOutcomeReply"
+        },
+        {
           "$ref": "#/$defs/Refusal"
         }
       ]
@@ -1634,8 +1656,624 @@
         },
         {
           "$ref": "#/$defs/RecoverActRequest"
+        },
+        {
+          "$ref": "#/$defs/SaveRequest"
+        },
+        {
+          "$ref": "#/$defs/SaveOutcomeRequest"
         }
       ]
+    },
+    "SaveChange": {
+      "additionalProperties": false,
+      "description": "One file the save writes: its path as the ledger names it, the SHA-256 of its bytes in the plan (null: the save\ncreates it), and its new text (a ledger file is UTF-8 text; whole files until the contract's edits, BL-0106).",
+      "properties": {
+        "path": {
+          "minLength": 1,
+          "pattern": "^/",
+          "title": "Path",
+          "type": "string"
+        },
+        "pre": {
+          "anyOf": [
+            {
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Pre"
+        },
+        "post": {
+          "title": "Post",
+          "type": "string"
+        }
+      },
+      "required": [
+        "path",
+        "pre",
+        "post"
+      ],
+      "title": "SaveChange",
+      "type": "object"
+    },
+    "SaveOutcomeKind": {
+      "enum": [
+        "saved",
+        "refused",
+        "not_saved",
+        "unfinished"
+      ],
+      "type": "string"
+    },
+    "SaveOutcomeParams": {
+      "additionalProperties": false,
+      "description": "§6.6: the save `session`-`job` of workspace `workspace_key`, whose engine ended without its final reply.",
+      "properties": {
+        "app_local_data": {
+          "minLength": 1,
+          "pattern": "^/",
+          "title": "App Local Data",
+          "type": "string"
+        },
+        "workspace_key": {
+          "maxLength": 255,
+          "minLength": 1,
+          "pattern": "^[^/\\x00]+$",
+          "title": "Workspace Key",
+          "type": "string"
+        },
+        "session": {
+          "pattern": "^[a-z0-9_]{1,64}$",
+          "title": "Session",
+          "type": "string"
+        },
+        "job": {
+          "pattern": "^[a-z0-9_]{1,64}$",
+          "title": "Job",
+          "type": "string"
+        },
+        "targets": {
+          "items": {
+            "$ref": "#/$defs/SaveTarget"
+          },
+          "minItems": 1,
+          "title": "Targets",
+          "type": "array"
+        }
+      },
+      "required": [
+        "app_local_data",
+        "workspace_key",
+        "session",
+        "job",
+        "targets"
+      ],
+      "title": "SaveOutcomeParams",
+      "type": "object"
+    },
+    "SaveOutcomeReply": {
+      "additionalProperties": false,
+      "description": "The accepted reply to `save_outcome`.",
+      "examples": [
+        {
+          "id": 1,
+          "ok": true,
+          "op": "save_outcome",
+          "result": {
+            "errno": null,
+            "path": null,
+            "record": "closed",
+            "unchanged": null
+          },
+          "v": 2
+        }
+      ],
+      "properties": {
+        "v": {
+          "const": 2,
+          "title": "V",
+          "type": "integer"
+        },
+        "id": {
+          "maximum": 2147483647,
+          "minimum": 0,
+          "title": "Id",
+          "type": "integer"
+        },
+        "op": {
+          "const": "save_outcome",
+          "title": "Op",
+          "type": "string"
+        },
+        "ok": {
+          "const": true,
+          "title": "Ok",
+          "type": "boolean"
+        },
+        "result": {
+          "$ref": "#/$defs/SaveOutcomeResult"
+        },
+        "decision": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Decision"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "v",
+        "id",
+        "op",
+        "ok",
+        "result"
+      ],
+      "title": "SaveOutcomeReply",
+      "type": "object"
+    },
+    "SaveOutcomeRequest": {
+      "additionalProperties": false,
+      "description": "The `save_outcome` request.",
+      "examples": [
+        {
+          "id": 1,
+          "op": "save_outcome",
+          "params": {
+            "app_local_data": "/app-data/com.finzytrack.desktop",
+            "job": "j7",
+            "session": "s1",
+            "targets": [
+              {
+                "path": "/ledgers/L/main.bean",
+                "pre": "0000000000000000000000000000000000000000000000000000000000000000"
+              }
+            ],
+            "workspace_key": "k1"
+          },
+          "v": 2
+        }
+      ],
+      "properties": {
+        "v": {
+          "const": 2,
+          "title": "V",
+          "type": "integer"
+        },
+        "id": {
+          "maximum": 2147483647,
+          "minimum": 0,
+          "title": "Id",
+          "type": "integer"
+        },
+        "op": {
+          "const": "save_outcome",
+          "title": "Op",
+          "type": "string"
+        },
+        "params": {
+          "$ref": "#/$defs/SaveOutcomeParams"
+        }
+      },
+      "required": [
+        "v",
+        "id",
+        "op",
+        "params"
+      ],
+      "title": "SaveOutcomeRequest",
+      "type": "object"
+    },
+    "SaveOutcomeResult": {
+      "additionalProperties": false,
+      "description": "The record's state after its folder's sync (`unknown`: it could not be read; `errno`), and with no record, a\n`.part` or `.resolved`, whether every target equals its pre bytes (`unchanged`; `path`: the first that does not).",
+      "properties": {
+        "record": {
+          "$ref": "#/$defs/RecordSeen"
+        },
+        "unchanged": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Unchanged"
+        },
+        "path": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "pattern": "^/",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Path"
+        },
+        "errno": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Errno"
+        }
+      },
+      "required": [
+        "record",
+        "unchanged",
+        "path",
+        "errno"
+      ],
+      "title": "SaveOutcomeResult",
+      "type": "object"
+    },
+    "SaveParams": {
+      "additionalProperties": false,
+      "description": "A confirmed plan (§2's `save`): who saves (`session`, `job`, the workspace's registry key and lineage id), the\nledger's root, the changes, the plan's fingerprint (`ledger_set.encode`'s text), the published mirror's\nfingerprint digest (null: none), the legacy locks to try (ADR-0062) and the app's machine-local folder.",
+      "properties": {
+        "session": {
+          "pattern": "^[a-z0-9_]{1,64}$",
+          "title": "Session",
+          "type": "string"
+        },
+        "job": {
+          "pattern": "^[a-z0-9_]{1,64}$",
+          "title": "Job",
+          "type": "string"
+        },
+        "workspace_key": {
+          "maxLength": 255,
+          "minLength": 1,
+          "pattern": "^[^/\\x00]+$",
+          "title": "Workspace Key",
+          "type": "string"
+        },
+        "lineage": {
+          "maxLength": 128,
+          "minLength": 1,
+          "title": "Lineage",
+          "type": "string"
+        },
+        "root": {
+          "minLength": 1,
+          "pattern": "^/",
+          "title": "Root",
+          "type": "string"
+        },
+        "changes": {
+          "items": {
+            "$ref": "#/$defs/SaveChange"
+          },
+          "minItems": 1,
+          "title": "Changes",
+          "type": "array"
+        },
+        "fingerprint": {
+          "minLength": 1,
+          "title": "Fingerprint",
+          "type": "string"
+        },
+        "mirror": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Mirror"
+        },
+        "legacy_locks": {
+          "items": {
+            "minLength": 1,
+            "pattern": "^/",
+            "type": "string"
+          },
+          "title": "Legacy Locks",
+          "type": "array"
+        },
+        "app_local_data": {
+          "minLength": 1,
+          "pattern": "^/",
+          "title": "App Local Data",
+          "type": "string"
+        }
+      },
+      "required": [
+        "session",
+        "job",
+        "workspace_key",
+        "lineage",
+        "root",
+        "changes",
+        "fingerprint",
+        "mirror",
+        "legacy_locks",
+        "app_local_data"
+      ],
+      "title": "SaveParams",
+      "type": "object"
+    },
+    "SaveReply": {
+      "additionalProperties": false,
+      "description": "The accepted reply to `save`.",
+      "examples": [
+        {
+          "id": 1,
+          "ok": true,
+          "op": "save",
+          "result": {
+            "cause": null,
+            "cause_path": null,
+            "detail": null,
+            "entry": null,
+            "open_journal": false,
+            "outcome": "saved",
+            "path": null,
+            "published": false,
+            "reason": null,
+            "unchanged": false
+          },
+          "v": 2
+        }
+      ],
+      "properties": {
+        "v": {
+          "const": 2,
+          "title": "V",
+          "type": "integer"
+        },
+        "id": {
+          "maximum": 2147483647,
+          "minimum": 0,
+          "title": "Id",
+          "type": "integer"
+        },
+        "op": {
+          "const": "save",
+          "title": "Op",
+          "type": "string"
+        },
+        "ok": {
+          "const": true,
+          "title": "Ok",
+          "type": "boolean"
+        },
+        "result": {
+          "$ref": "#/$defs/SaveResult"
+        },
+        "decision": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Decision"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "v",
+        "id",
+        "op",
+        "ok",
+        "result"
+      ],
+      "title": "SaveReply",
+      "type": "object"
+    },
+    "SaveRequest": {
+      "additionalProperties": false,
+      "description": "The `save` request.",
+      "examples": [
+        {
+          "id": 1,
+          "op": "save",
+          "params": {
+            "app_local_data": "/app-data/com.finzytrack.desktop",
+            "changes": [
+              {
+                "path": "/ledgers/L/main.bean",
+                "post": "2026-01-01 open Assets:Cash\n",
+                "pre": "0000000000000000000000000000000000000000000000000000000000000000"
+              }
+            ],
+            "fingerprint": "{\"document_files\":[],\"documents\":[],\"files\":[],\"globs\":[],\"root\":\"/ledgers/L/main.bean\",\"v\":1}",
+            "job": "j7",
+            "legacy_locks": [],
+            "lineage": "lin1",
+            "mirror": null,
+            "root": "/ledgers/L/main.bean",
+            "session": "s1",
+            "workspace_key": "k1"
+          },
+          "v": 2
+        }
+      ],
+      "properties": {
+        "v": {
+          "const": 2,
+          "title": "V",
+          "type": "integer"
+        },
+        "id": {
+          "maximum": 2147483647,
+          "minimum": 0,
+          "title": "Id",
+          "type": "integer"
+        },
+        "op": {
+          "const": "save",
+          "title": "Op",
+          "type": "string"
+        },
+        "params": {
+          "$ref": "#/$defs/SaveParams"
+        }
+      },
+      "required": [
+        "v",
+        "id",
+        "op",
+        "params"
+      ],
+      "title": "SaveRequest",
+      "type": "object"
+    },
+    "SaveResult": {
+      "additionalProperties": false,
+      "description": "How the save ended (§6.1, §11). `saved`: the closed record is durable (`published`: the mirror was published,\nnever yet, BL-0113). `refused`: before the commit point, nothing written (`reason`: `unfinished_save`,\n`check_pending`, `check_failed`, `legacy_app_saving`, `ledger_changed`, `mirror_stale`, `load_refused`).\n`not_saved`: the writer's `NotSaved` (`reason` its own: `hard_linked`, `locked`, `not_a_file`, `permission`,\n`volume_no_swap`, `changed`, `path_moved`, `read_back`, `io_error`, `name_not_utf8`; `open_journal`: writes are\npaused until recovery). `unfinished`: a file may have been replaced and the rollback stopped (`cause`, and\n`cause_path` its file: after `created_path_taken` the undo will ask about that file). `unchanged`: every file the\nsave would write was hashed again and equals its pre bytes. `path`: the file it is about; `entry`: the folder a\n`permission` refusal is about, `detail`: the ACL entry that blocks it.",
+      "properties": {
+        "outcome": {
+          "$ref": "#/$defs/SaveOutcomeKind"
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Reason"
+        },
+        "path": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "pattern": "^/",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Path"
+        },
+        "entry": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "pattern": "^/",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Entry"
+        },
+        "detail": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Detail"
+        },
+        "unchanged": {
+          "title": "Unchanged",
+          "type": "boolean"
+        },
+        "open_journal": {
+          "title": "Open Journal",
+          "type": "boolean"
+        },
+        "cause": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Cause"
+        },
+        "cause_path": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "pattern": "^/",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Cause Path"
+        },
+        "published": {
+          "title": "Published",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "outcome",
+        "reason",
+        "path",
+        "entry",
+        "detail",
+        "unchanged",
+        "open_journal",
+        "cause",
+        "cause_path",
+        "published"
+      ],
+      "title": "SaveResult",
+      "type": "object"
+    },
+    "SaveTarget": {
+      "additionalProperties": false,
+      "properties": {
+        "path": {
+          "minLength": 1,
+          "pattern": "^/",
+          "title": "Path",
+          "type": "string"
+        },
+        "pre": {
+          "anyOf": [
+            {
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Pre"
+        }
+      },
+      "required": [
+        "path",
+        "pre"
+      ],
+      "title": "SaveTarget",
+      "type": "object"
     },
     "UnlistedFolder": {
       "additionalProperties": false,

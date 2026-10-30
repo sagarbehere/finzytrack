@@ -244,6 +244,43 @@ class ActOutcome:
     errno: int | None
 
 
+type SaveOutcomeKind = Literal["saved", "refused", "not_saved", "unfinished"]
+
+
+@dataclass(frozen=True, slots=True)
+class SaveAnswer:
+    """The engine's `save` result (engine-jobs §6.1, §11; S0063): `saved`; `refused` before the commit point (nothing
+    written); `not_saved` (the writer's refusal or failure; `open_journal`: writes paused until recovery);
+    `unfinished` (a file may have been replaced, the rollback stopped: `cause`, `cause_path`). `unchanged`: every file
+    the save would write was hashed again and equals its pre bytes. `entry`, `detail`: the folder and the ACL entry of
+    a `permission` refusal."""
+
+    outcome: SaveOutcomeKind
+    reason: str | None
+    path: str | None
+    entry: str | None
+    detail: str | None
+    unchanged: bool
+    open_journal: bool
+    cause: str | None
+    cause_path: str | None
+    published: bool
+
+
+type RecordSeen = Literal["none", "part", "open", "closed", "done", "mismatch", "resolved", "kept", "unknown"]
+
+
+@dataclass(frozen=True, slots=True)
+class OutcomeFacts:
+    """The engine's `save_outcome` result (§6.6): the record's state after its folder's sync, and with no record, a
+    `.part` or `.resolved`, whether every target equals its pre bytes (`path`: the first that does not)."""
+
+    record: RecordSeen
+    unchanged: bool | None
+    path: str | None
+    errno: int | None
+
+
 class EnginePort(Protocol):
     def start(self) -> EngineInfo | EngineFailure:
         """Start the engine if it is not running and complete the handshake (no time limit)."""

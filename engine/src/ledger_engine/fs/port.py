@@ -201,6 +201,33 @@ class Locks(Protocol):
         `OSError` when the lock file cannot be opened."""
         ...
 
+    def lock(self, key: str) -> Lock:
+        """The lock of `key`, waiting for any holder to release it (§6.1 step 3: the save waits, with Cancel; with the
+        engine lock nothing of ours holds one, so the wait ends at once). An `OSError` when the lock file cannot be
+        opened or locked."""
+        ...
+
+
+@dataclass(frozen=True, slots=True)
+class LegacyAbsent:
+    """No lock file: the legacy app never saved there (ADR-0062 decision 2: v0.4 never creates it)."""
+
+
+@dataclass(frozen=True, slots=True)
+class LegacyHeld:
+    """Another process holds the legacy app's write lock: the old app is saving."""
+
+
+class LegacyLocks(Protocol):
+    """A legacy install's write lock, `<legacy root>/data/.write.lock` (ADR-0062 decisions 2 and 5; INV-26): tried
+    once, without waiting, with the legacy app's own primitive (portalocker 3.2.0, `LOCK_EX | LOCK_NB`), on the file
+    opened read-only and only if it exists; nothing is ever created, written or removed there."""
+
+    def try_lock(self, path: str) -> Lock | LegacyAbsent | LegacyHeld:
+        """Free: the lock, held until released. Any other outcome than these three (the file cannot be opened, is not
+        a regular file, or the lock call fails otherwise) raises `OSError`: the save refuses (fail closed)."""
+        ...
+
 
 def same_path(now: str, recorded: str) -> bool:
     """The path guard's comparison (§6.3): a folder's path now names the recorded canonical path, compared as the

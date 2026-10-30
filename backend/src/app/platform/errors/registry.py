@@ -50,6 +50,10 @@ class ErrorCode(StrEnum):
     ENGINE_STOPPED = "ENGINE_STOPPED"
     ENGINE_UNAVAILABLE = "ENGINE_UNAVAILABLE"
     CHANGE_OUTCOME_UNKNOWN = "CHANGE_OUTCOME_UNKNOWN"
+    LEDGER_EXTERNALLY_CHANGED = "LEDGER_EXTERNALLY_CHANGED"
+    WRITES_PAUSED = "WRITES_PAUSED"
+    LEGACY_APP_SAVING = "LEGACY_APP_SAVING"
+    CHANGE_NOT_SAVED = "CHANGE_NOT_SAVED"
     INTERNAL = "INTERNAL"
 
 
@@ -94,6 +98,49 @@ class EngineUnavailableDetails:
     `cannot_start`: the wait for the engine lock failed (E6); `closing`: Finzytrack is closing."""
 
     reason: Literal["stopped_often", "incompatible", "cannot_start", "closing"]
+
+
+type PausedReason = Literal["unfinished_save", "check_pending", "check_failed"]
+
+
+@dataclass(frozen=True, slots=True)
+class WritesPausedDetails:
+    """This workspace's saves are paused (engine-jobs §6.1 steps 1 and 4, §6.4, §6.6, §11; S0063). `unfinished_save`:
+    an unfinished save's journal is open (Reopen recovers it); `check_pending`: the check of the last save (R4) is owed
+    and could not run first; `check_failed`: that check found a difference, or could not run three times (Resume
+    saving). `file`: for `unfinished_save`, the file the save was creating that the undo will ask about (its Reopen
+    text then promises no undo: S0061 red team r8 overflow 1), else None."""
+
+    reason: PausedReason
+    file: str | None
+
+
+type NotSavedReason = Literal[
+    "hard_linked",  # a file has a second name on disk (ADR-0013 amendment of 2026-10-29)
+    "locked",  # a file is locked (`uchg`)
+    "not_a_file",  # a ledger path is a folder, a FIFO, a device
+    "permission",  # the system would not allow the save: a mode, an ACL, unreadable extended attributes
+    "volume_no_swap",  # the drive has no safe swap (BL-0160)
+    "io_error",  # the disk answered an error (a full disk, an I/O error)
+    "read_back",  # a written file did not read back as written (the save was rolled back)
+    "name_not_utf8",  # a path is not valid UTF-8
+    "engine_stopped",  # the save's engine stopped, and the disk shows the change was not saved (§6.6)
+]
+
+
+@dataclass(frozen=True, slots=True)
+class ChangeNotSavedDetails:
+    """A save that did not happen, and why (engine-jobs §6.1 step 8's refusals, §6.4, §6.6, §11; S0063). `path`: the
+    file it is about; `folder` and `acl_entry`: for `permission`, the folder and the ACL entry (in `chmod`'s words, no
+    subject) that stop it; `unchanged`: every file the save would write was hashed again and equals its bytes before
+    the save (only then may the user read "Your ledger is unchanged"). The UI words each reason
+    (`app.platform.engine_jobs.save_text.not_saved_text`)."""
+
+    reason: NotSavedReason
+    path: str | None
+    folder: str | None
+    acl_entry: str | None
+    unchanged: bool
 
 
 @dataclass(frozen=True, slots=True)
@@ -177,8 +224,8 @@ def specs() -> tuple[ErrorSpec, ...]:
             ErrorClass.UNAVAILABLE,
             retryable=True,
             message="The ledger engine stopped while working on this.",
-            data_safe=True,  # nothing was written: a read job, or a writing job before its commit point (§4); past it
-            # the answer is CHANGE_OUTCOME_UNKNOWN until the outcome check of §6.6 (BL-0151) reads the disk
+            data_safe=True,  # nothing was written: a read job, or a save whose engine stopped before its commit point
+            # with no engine left to read its outcome (§4; S0063); past the gate that is CHANGE_OUTCOME_UNKNOWN
             next_step="Try again. If it happens again, copy the diagnostics and report a problem.",
             details=EngineStoppedDetails,
         ),
@@ -199,7 +246,43 @@ def specs() -> tuple[ErrorSpec, ...]:
             "whether it was saved.",
             data_safe=False,
             next_step="Do not make the change again until you have checked whether it is in your ledger.",
-            details=None,  # TODO(BL-0151): replaced by the outcome check of §6.6 (saved, not saved, or unfinished)
+            details=None,  # only when no engine could read the outcome from disk (§6.6; S0063)
+        ),
+        ErrorSpec(
+            ErrorCode.LEDGER_EXTERNALLY_CHANGED,
+            ErrorClass.CONFLICT,
+            retryable=False,  # the change must be reviewed against the ledger as it is now (ADR-0026: re-plan)
+            message="Your ledger changed after this preview, so Finzytrack did not save your change.",
+            data_safe=True,  # nothing of this change was written; the other change is the other program's
+            next_step="Review it again.",
+            details=None,
+        ),
+        ErrorSpec(
+            ErrorCode.WRITES_PAUSED,
+            ErrorClass.CONFLICT,
+            retryable=False,
+            message="Saving is paused in this workspace, so Finzytrack did not save your change.",
+            data_safe=False,  # an unfinished save may be half-applied until Reopen undoes it (§6.6)
+            next_step="Follow the steps shown to resume saving.",
+            details=WritesPausedDetails,
+        ),
+        ErrorSpec(
+            ErrorCode.LEGACY_APP_SAVING,
+            ErrorClass.CONFLICT,
+            retryable=True,
+            message="The old Finzytrack app is saving.",
+            data_safe=True,  # refused before anything was written (ADR-0062)
+            next_step="Quit the old Finzytrack first, then try again.",
+            details=None,
+        ),
+        ErrorSpec(
+            ErrorCode.CHANGE_NOT_SAVED,
+            ErrorClass.CONFLICT,
+            retryable=False,  # most reasons need the user to change something first; the text says what
+            message="Finzytrack did not save your change.",
+            data_safe=False,  # "unchanged" is said only after a re-hash (`details.unchanged`, §11)
+            next_step="Follow the steps shown, then try again.",
+            details=ChangeNotSavedDetails,
         ),
         ErrorSpec(
             ErrorCode.INTERNAL,

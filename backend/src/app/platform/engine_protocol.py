@@ -37,10 +37,14 @@ from app.platform.engine import (
     JournalListing,
     KeptCopySeen,
     ListedJournal,
+    OutcomeFacts,
     Phase,
     Pong,
     Progress,
+    RecordSeen,
     RefusalKey,
+    SaveAnswer,
+    SaveOutcomeKind,
     TryOutcome,
     TryOutcomeKind,
     UnlistedFolder,
@@ -49,7 +53,7 @@ from app.platform.engine import (
 PROTOCOL_VERSION = 2
 MAX_LINE_BYTES = 16 * 1024 * 1024
 MAX_ID = 2**31 - 1
-OPS = ("handshake", "ping", "recover_list", "recover_try", "recover_act")
+OPS = ("handshake", "ping", "recover_list", "recover_try", "recover_act", "save", "save_outcome")
 # The members of `RefusalKey` (the contract test checks both against the schema).
 REFUSAL_KEYS = frozenset(
     {
@@ -458,3 +462,52 @@ def _act(result: Mapping[str, object]) -> ActOutcome:
 def decode_recover_act(result: Mapping[str, object]) -> ActOutcome | Violation:
     """The `recover_act` result."""
     return _decoded(_act, result)
+
+
+_SAVE = frozenset(
+    {"outcome", "reason", "path", "entry", "detail", "unchanged", "open_journal", "cause", "cause_path", "published"}
+)
+_SAVE_OUTCOMES: frozenset[str] = frozenset({"saved", "refused", "not_saved", "unfinished"})
+
+
+def _save(result: Mapping[str, object]) -> SaveAnswer:
+    o = _keys(dict(result), _SAVE, "the save result")
+    return SaveAnswer(
+        outcome=cast("SaveOutcomeKind", _choice(o["outcome"], _SAVE_OUTCOMES, "outcome")),
+        reason=_text(o["reason"], "reason", nullable=True),
+        path=_path(o["path"], "path", nullable=True),
+        entry=_path(o["entry"], "entry", nullable=True),
+        detail=_text(o["detail"], "detail", nullable=True),
+        unchanged=_bool(o["unchanged"], "unchanged"),
+        open_journal=_bool(o["open_journal"], "open_journal"),
+        cause=_text(o["cause"], "cause", nullable=True),
+        cause_path=_path(o["cause_path"], "cause_path", nullable=True),
+        published=_bool(o["published"], "published"),
+    )
+
+
+def decode_save(result: Mapping[str, object]) -> SaveAnswer | Violation:
+    """The `save` result."""
+    return _decoded(_save, result)
+
+
+_FACTS = frozenset({"record", "unchanged", "path", "errno"})
+_RECORDS: frozenset[str] = frozenset(
+    {"none", "part", "open", "closed", "done", "mismatch", "resolved", "kept", "unknown"}
+)
+
+
+def _facts(result: Mapping[str, object]) -> OutcomeFacts:
+    o = _keys(dict(result), _FACTS, "the save_outcome result")
+    unchanged = o["unchanged"]
+    return OutcomeFacts(
+        record=cast("RecordSeen", _choice(o["record"], _RECORDS, "record")),
+        unchanged=None if unchanged is None else _bool(unchanged, "unchanged"),
+        path=_path(o["path"], "path", nullable=True),
+        errno=_int(o["errno"], "errno", nullable=True),
+    )
+
+
+def decode_save_outcome(result: Mapping[str, object]) -> OutcomeFacts | Violation:
+    """The `save_outcome` result."""
+    return _decoded(_facts, result)

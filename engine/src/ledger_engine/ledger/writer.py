@@ -176,11 +176,15 @@ class Unfinished:
     journal: the journal is `.open` (or `.resolved` when only the rollback's last sync failed, or `.closed` when the
     close's own sync and then the record's reopening failed: never "saved"), the files are each whole at pre or post,
     or an outside save is kept in the file or in our temp, and recovery must resolve it. `path`: the canonical path of
-    the file it stopped at, if known."""
+    the file it stopped at, if known. `cause` and `cause_path`: why the rollback did not resolve the journal, and the
+    file it stopped at (`restore.Stopped`, `restore.Failed`; None when it was not tried): after `created_path_taken`
+    the undo will ask the user about that file, so what the user is told must not promise an undo (S0063; spec §11)."""
 
     step: Step
     reason: Reason
     path: str | None
+    cause: str | None = None
+    cause_path: str | None = None
 
 
 Outcome = Landed | NotSaved | Unfinished
@@ -592,9 +596,11 @@ def _where(e: Exception) -> tuple[str | None, str | None]:
     return (e.entry, e.detail) if isinstance(e, _Stop) else (None, None)
 
 
-def _rollback(fs: FileSystem, jd: DirHandle, record: Record, plan: _Plan, step: Step, progress: _Progress) -> bool:
-    """§6.4: the restore (`ledger.restore.restore`) of this save's own record, at once; True when it resolved the
-    journal, or when no `.open` (or `.closed`) record was ever made. Anything at a created path is left as it is (the
+def _rollback(
+    fs: FileSystem, jd: DirHandle, record: Record, plan: _Plan, step: Step, progress: _Progress
+) -> _restore.RestoreOutcome | None:
+    """§6.4: the restore (`ledger.restore.restore`) of this save's own record, at once; its outcome, or None when no
+    `.open` (or `.closed`) record was ever made (nothing to undo). Anything at a created path is left as it is (the
     restore then stops, `created_path_taken`); only the folders this save made may be removed; after a failed close
     the record may be `.closed`."""
     try:
@@ -603,15 +609,14 @@ def _rollback(fs: FileSystem, jd: DirHandle, record: Record, plan: _Plan, step: 
     except OSError:
         present = True  # cannot tell: try the restore, which fails closed
     if not present:
-        return True  # the rename to `.open` did not happen: the `.part` is recover-all's (§6.1 step 8.2)
-    out = _restore.restore(
+        return None  # the rename to `.open` did not happen: the `.part` is recover-all's (§6.1 step 8.2)
+    return _restore.restore(
         fs,
         record,
         plan.journal_dir,
         closed=step is Step.CLOSE,
         made=frozenset(progress.made),
     )
-    return isinstance(out, _restore.Resolved)
 
 
 def durable_commit(fs: FileSystem, c: Commit) -> Outcome:
@@ -652,11 +657,12 @@ def durable_commit(fs: FileSystem, c: Commit) -> Outcome:
             jd.sync()
         except (OSError, _Stop, PathMovedError) as e:
             reason, path = _why(e, handles)
-            if _rollback(fs, jd, record, plan, step, progress):
+            undo = _rollback(fs, jd, record, plan, step, progress)
+            if undo is None or isinstance(undo, _restore.Resolved):
                 return NotSaved(step, reason, _unchanged(handles, plan.targets), path=path)
             if not progress.replaced:
                 return NotSaved(step, reason, _unchanged(handles, plan.targets), True, path)
-            return Unfinished(step, reason, path)
+            return Unfinished(step, reason, path, undo.cause.value, undo.path)
         return Landed(record)
     finally:
         handles.close()

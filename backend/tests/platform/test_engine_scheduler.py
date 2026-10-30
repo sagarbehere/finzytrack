@@ -1005,11 +1005,12 @@ def test_the_status_read_after_an_answer_shows_that_answer(rig: Rig, monkeypatch
     assert isinstance(outcome(first), Done)
 
 
-def test_a_save_whose_engine_died_past_its_commit_point_is_not_told_its_files_are_safe(rig: Rig) -> None:
-    """§5.3: "a save's outcome is resolved from disk (§6.6)"; OutcomeTruthful (S0058 verifier F5). Until BL-0151
-    reads the disk, the answer is that the outcome is not known, never "Your ledger files are safe"."""
-    save = submit(rig, user("save"), calls("gate_die"))
-    out = outcome(save)
+def test_a_create_whose_engine_died_past_its_commit_point_is_not_told_its_files_are_safe(rig: Rig) -> None:
+    """§5.3; OutcomeTruthful (S0058 verifier F5): past its commit point a writing job may have written, so it is never
+    told "Your ledger files are safe". A save reads its outcome from disk since S0063 (`test_save_job.py`); a `create`
+    or `copy` is told that the outcome is not known until BL-0153 reads its target."""
+    create = submit(rig, user("create", None), calls("gate_die"))
+    out = outcome(create)
     assert rig.engine.proceeded == 1
     assert code_of(out) == ErrorCode.CHANGE_OUTCOME_UNKNOWN
     unknown = spec_for(ErrorCode.CHANGE_OUTCOME_UNKNOWN)
@@ -1018,9 +1019,9 @@ def test_a_save_whose_engine_died_past_its_commit_point_is_not_told_its_files_ar
     assert not unknown.retryable, "a change that may have landed must not be repeated by a Retry"
 
 
-def test_a_save_whose_engine_died_before_its_commit_point_is_engine_stopped(rig: Rig) -> None:
-    save = submit(rig, user("save"), calls("crash"))
-    assert code_of(outcome(save)) == ErrorCode.ENGINE_STOPPED
+def test_a_create_whose_engine_died_before_its_commit_point_is_engine_stopped(rig: Rig) -> None:
+    create = submit(rig, user("create", None), calls("crash"))
+    assert code_of(outcome(create)) == ErrorCode.ENGINE_STOPPED
 
 
 def test_close_answers_every_waiting_job(rig: Rig) -> None:
