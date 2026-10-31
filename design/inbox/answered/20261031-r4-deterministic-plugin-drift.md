@@ -20,3 +20,4 @@ What a wrong prediction costs: the views show the predicted result until R4 publ
 Option 1. The ledger is safe either way; option 2 makes a rare setup unusable without fixing anything for it, and the views are corrected once R4 publishes.
 
 ## Answer (owner, verbatim, with date)
+2026-10-31, in session, choosing the option labelled "Keep your rule (Recommended)". (Orchestrator's note, from S0066 verifier r2 F1, found after the question was put: one cause was missing from the list above: Finzytrack's own prediction of Beancount's built-in documents step, which a file-creating save into a documents root makes differ with no plugin at all. That is a Finzytrack defect, not a plugin behaviour, so the owner's rule does not cover it: BL-0172.)

@@ -21,3 +21,4 @@ The first version said the options "behave the same" with the desktop policy. Th
 Option 1, with option 3's note: with the encrypted refusal added it gives the same protection as option 2 today, costs nothing, and the only case it would differ (a policy that refuses something) does not exist in any planned build.
 
 ## Answer (owner, verbatim, with date)
+2026-10-31, in session: "for the r4 load policy inbox item, I agree with the recommendation of option 1 with option 3's note". (Orchestrator's note, from S0066 verifier r2: the window in which R4's load meets files, plugins and documents roots without the policy is the whole load, about 1.2-1.7 s at 54k, not only the parse; spec §15 corrected. ADR-0010 amendment of 2026-10-31.)

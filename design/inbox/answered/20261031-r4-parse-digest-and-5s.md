@@ -28,3 +28,4 @@ The second and third rows happen only when you save again within a few seconds o
 Option 2. It makes every save cheaper at no loss of checking, and it states honestly what the target covers. The third row needs a ledger whose plugins vary run to run and two saves within seconds; it is rare and the screen says what Finzytrack is doing.
 
 ## Answer (owner, verbatim, with date)
+2026-10-31, in session, choosing the option labelled "Drop digest; 2 jobs (Recommended)". To be built: BL-0173.
