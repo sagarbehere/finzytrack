@@ -456,6 +456,60 @@ def test_a_plugin_that_decrypts_a_side_file_passes_r4(w: World, monkeypatch: pyt
         sys.path[:] = [p for p in sys.path if p != str(w.root)]
 
 
+CHECKDIRS = b"""
+import os
+from beancount.core import getters
+from beancount.scripts.directories import validate_directory
+__plugins__ = ["checkdirs"]
+def checkdirs(entries, options_map):
+    root = os.path.join(os.path.dirname(options_map["filename"]), "docs")
+    return entries, validate_directory(getters.get_accounts(entries), root)
+"""
+
+WALKS = b"""
+import datetime, os
+from beancount.core import account, data
+__plugins__ = ["walks"]
+def walks(entries, options_map):
+    root = os.path.join(os.path.dirname(options_map["filename"]), "docs")
+    seen = [f"{name}:{len(dirs)}" for _, name, dirs, _ in account.walk(root, followlinks=FOLLOW)]
+    meta = data.new_metadata("<walks>", 0)
+    return entries + [data.Note(meta, datetime.date(2026, 1, 1), "Assets:Cash", ",".join(seen), None, None)], []
+"""
+
+
+@pytest.mark.parametrize(
+    "case", ["validate_directory_empty_folder", "walk_empty_account_folder", "walk_not_following_links"]
+)
+def test_a_users_plugin_walking_a_documents_root_sees_the_disk_in_the_prediction(w: World, case: str) -> None:
+    """S0067 red team r1 F1 (High): only Beancount's own documents step reads the overlay's listing of a documents
+    root; a user plugin that walks the root (`account.walk`, Beancount's `validate_directory`) sees the disk, empty
+    folders, their `dirs` and `followlinks` included, as Beancount's real load does: R4 `pass` (before the fix: the
+    prediction differed, the parse-only confirm said `nondeterministic`, and saving went on unchecked)."""
+    module = f"r4_{case}_plugin"
+    if case == "validate_directory_empty_folder":
+        (w.root / "docs" / "Assets" / "Old").mkdir(parents=True)  # no `open Assets:Old`: Beancount reports it
+        source = CHECKDIRS
+    else:
+        (w.root / "docs" / "Assets" / "Cash").mkdir(parents=True)  # empty
+        follow = b"True"
+        if case == "walk_not_following_links":
+            follow = b"False"
+            (w.root / "real").mkdir()
+            (w.root / "real" / "2026-01-01.pdf").write_bytes(b"x")
+            (w.root / "docs" / "Assets" / "Bank").symlink_to(w.root / "real")
+        source = WALKS.replace(b"FOLLOW", follow)
+    (w.root / f"{module}.py").write_bytes(source)
+    main = f'option "insert_pythonpath" "TRUE"\noption "documents" "docs"\nplugin "{module}"\n'.encode() + MAIN
+    w.main.write_bytes(main)
+    try:
+        save(w, (Change(str(w.main), sha256(main), main + TXN),))
+        assert check(w).outcome == "pass"
+    finally:
+        sys.modules.pop(module, None)
+        sys.path[:] = [p for p in sys.path if p != str(w.root)]
+
+
 def test_an_outside_edit_before_the_check_supersedes_it_without_loading(w: World) -> None:
     save(w)
     w.inc.write_bytes(EDIT)

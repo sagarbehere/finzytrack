@@ -282,6 +282,34 @@ def test_the_documents_step_reads_the_listing_the_load_recorded(
     same(load(str(root), {}, DESKTOP), load_file(root))  # read again: the file is an entry, as for Beancount
 
 
+def test_the_documents_step_orders_documents_as_beancount_does(tmp_path: Path) -> None:
+    """@regression-guard (S0067 verifier r1 F1: the order was right, nothing pinned it). The walk of a listing visits
+    folders and files as Beancount's `account.walk` does (top-down, each sorted), so `document` entries of one date
+    come in Beancount's order (R4's digest breaks such ties by text and cannot see it; the mirror will)."""
+    root = tmp_path / "main.beancount"
+    root.write_bytes(
+        b'option "documents" "docs"\n2026-01-01 open Assets:Cash\n2026-01-01 open Assets:Cash-Old\n'
+        b"2026-01-01 open Assets:Cash:Sub\n"
+    )
+    for folder, name in (
+        ("Cash-Old", "2026-01-02.z.pdf"),
+        ("Cash/Sub", "2026-01-02.y.pdf"),
+        ("Cash", "2026-01-02.x.pdf"),
+        ("Cash", "2026-01-02.w.pdf"),
+    ):
+        (tmp_path / "docs" / "Assets" / folder).mkdir(parents=True, exist_ok=True)
+        (tmp_path / "docs" / "Assets" / folder / name).write_bytes(b"x")
+    loaded = load(str(root), {}, DESKTOP)
+    assert isinstance(loaded, Loaded), loaded
+    entries, _, _ = port.reconcile_load(str(root))
+
+    def documents(es: list[Any]) -> list[str]:
+        return [e.filename for e in es if isinstance(e, port.Document)]
+
+    assert len(documents(loaded.entries)) == 4
+    assert documents(loaded.entries) == documents(entries)
+
+
 @pytest.mark.parametrize(
     ("documents", "created"),
     [

@@ -270,10 +270,11 @@ def run_transformations(
       `EncryptedFileMet` here as it does in R4's load, so the prediction and R4 agree (Beancount turns an exception in
       a plugin into an error; one raised while a plugin is imported escapes, and the overlay refuses the load).
     - **`documents`**: Beancount's documents step (`ops.documents`: `find_documents`, `verify_document_files_exist`)
-      walks these listings for these roots instead of the disk: its own code runs, and only its `os.walk` (through
-      `account.walk`) and `path.exists` are answered from them. The overlay gives the listings it recorded, with the
-      files the save creates added, so the step sees the disk as it will be after the write. Any other directory or
-      file is asked of the disk."""
+      walks these listings for these roots instead of the disk: its own code runs, and only the two questions it asks
+      of the disk through its own module's names (`account.walk`, `path.exists`) are answered from them. The overlay
+      gives the listings it recorded, with the files the save creates added, so the step sees the disk as it will be
+      after the write. Any other directory or file is asked of the disk, and a user plugin's own `account`, `os` and
+      `os.path` are never touched: it sees the disk exactly as Beancount's real load does (S0067 red team r1 F1)."""
     saved = list(sys.path)
     try:
         if "pythonpath" in options:
@@ -317,36 +318,59 @@ class _PathAnswers:
 
 
 class _OsAnswers:
-    """`os`, with `walk` of a listed root answered from its listing."""
+    """`os` for one call of Beancount's `account.walk(top)`: `walk` of `top` answered from its listing."""
 
-    def __init__(self, documents: Listings) -> None:
-        self._documents = documents
+    def __init__(self, top: str, names: Mapping[str, bool] | None) -> None:
+        self._top = top
+        self._names = names
 
     def walk(
         self, top: str, topdown: bool = True, onerror: Any = None, followlinks: bool = False
     ) -> Iterator[tuple[str, list[str], list[str]]]:
-        if top in self._documents:
-            names = self._documents[top]
-            return iter(()) if names is None else _walk_listing(top, names)
+        if top == self._top:
+            return iter(()) if self._names is None else _walk_listing(top, self._names)
         return os.walk(top, topdown, onerror, followlinks)
 
     def __getattr__(self, name: str) -> Any:
         return getattr(os, name)
 
 
+class _AccountAnswers:
+    """`beancount.core.account` as `ops.documents` names it (its own module attribute, nobody else's): `walk` of a
+    listed root is Beancount's own `account.walk` run over the listing, collected while `account`'s `os` answers from
+    it (no user code runs inside that call); `walk` of any other folder, and every other name, are the real module's."""
+
+    def __init__(self, documents: Listings) -> None:
+        self._documents = documents
+
+    def walk(self, root_directory: str, followlinks: bool = True) -> Iterator[tuple[str, str, list[str], list[str]]]:
+        if root_directory not in self._documents:
+            return _account.walk(root_directory, followlinks)
+        real_os = getattr(_account, "os")  # noqa: B009 (a module's own import, not exported)
+        setattr(_account, "os", _OsAnswers(root_directory, self._documents[root_directory]))  # noqa: B010
+        try:
+            return iter(list(_account.walk(root_directory, followlinks)))
+        finally:
+            setattr(_account, "os", real_os)  # noqa: B010
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(_account, name)
+
+
 @contextmanager
 def _documents_from(documents: Listings) -> Generator[None]:
-    """Beancount's documents step reads `documents` for those roots (`run_transformations`). The engine runs one op at
-    a time on one thread, so swapping the two modules' attributes for the call is safe."""
+    """Beancount's documents step reads `documents` for those roots (`run_transformations`): only the `path` and
+    `account` names of `ops.documents` itself are swapped, so a user plugin's own modules see the disk. The engine
+    runs one op at a time on one thread, so swapping them for the call is safe."""
     real_path = getattr(_documents, "path")  # noqa: B009 (a module's own import, not exported)
-    real_os = getattr(_account, "os")  # noqa: B009
+    real_account = getattr(_documents, "account")  # noqa: B009
     setattr(_documents, "path", _PathAnswers(documents))  # noqa: B010 (the module's attribute, for this call only)
-    setattr(_account, "os", _OsAnswers(documents))  # noqa: B010
+    setattr(_documents, "account", _AccountAnswers(documents))  # noqa: B010
     try:
         yield
     finally:
         setattr(_documents, "path", real_path)  # noqa: B010
-        setattr(_account, "os", real_os)  # noqa: B010
+        setattr(_documents, "account", real_account)  # noqa: B010
 
 
 def validate(entries: list[Directive], options: OptionsMap) -> list[BeancountError]:
