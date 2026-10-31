@@ -33,17 +33,9 @@ Where it differs from Beancount, on purpose (each refuses the whole load, EP-13;
   and before Beancount scans it, and the file of each `document` directive is checked before Beancount checks it,
   so a change during the load makes the next observation differ. The `document` entries a plugin adds are only
   known after the plugins ran; their record comes from Beancount's own check (`_plugin_documents`).
-- **The documents step walks the listing this module took** of each root (`beancount_port.run_transformations`'s
-  `documents`), not the disk again, with each candidate the save creates under a root added (matched by `path_key`
-  through `identify`; `ledger_set.name_under`): Beancount's step sees the folder as it will be after the write, so a
-  save that creates a dated file in an account folder, or creates the root, is predicted as Beancount will load it
-  (S0067, BL-0172 a). What was added is `Loaded.created_documents`, from which the closed record's post fingerprint
-  is made (`ledger_set.as_after`), so the record and the prediction agree.
-
-**For R4** (`design/specs/engine-jobs.md` §6.7; S0066): `parse` is the parse alone, of the disk: R4's confirm compares
-it with Beancount's own parse of the same files; it also says which bytes it parsed (`Parsed.files`), so an edit made
-and reverted while it read is seen, and a parse of other bytes than the closed record's is never taken for the save's
-(BL-0173: the save no longer stores a parse digest; the replica's parse of the record's own bytes stands in for it).
+- **The documents step reads the disk**, as in Beancount's own load. A file a save creates under a documents root
+  is not in the prediction: the preview may miss the `document` entry it makes, and R4 then finds a difference and
+  shows its notice (S0068 removed S0067's listing swap, whose names a user plugin could see; spec §15).
 
 A load holds `sys.path` and the plugin modules of the process while it runs; engine jobs run one at a time
 (ADR-0064). The save runs it inside its engine job (S0063); the mirror build will (TODO(BL-0113)).
@@ -53,16 +45,14 @@ from __future__ import annotations
 
 import glob
 import os
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from os import path
 from typing import Literal, cast
 
 from ledger_engine.ledger import beancount_port as port
-from ledger_engine.ledger import digest as _digest
 from ledger_engine.ledger import fingerprint as fp
-from ledger_engine.ledger.core.ledger_set import Absent, FileState, Fingerprint, listing_after, name_under
-from ledger_engine.ledger.paths import PathId
+from ledger_engine.ledger.core.ledger_set import Absent, FileState, Fingerprint
 from ledger_engine.ledger.policy import LoadPolicy
 
 type RefusalReason = Literal[
@@ -77,36 +67,16 @@ type RefusalReason = Literal[
 ENCRYPTED_SUFFIXES = (".gpg", ".asc")
 DOCUMENTS_PLUGIN = "beancount.ops.documents"
 
-type Identify = Callable[[str], PathId]
-"""A path's canonical path and `path_key` (§6.3; `ledger.paths.identify` on the save's file system)."""
-
-
-def _by_name(p: str) -> PathId:
-    """Without a file system: the path as written is both (a created file matches a root only as spelled)."""
-    return PathId(p, p)
-
 
 @dataclass(frozen=True, slots=True)
 class Loaded:
     """Beancount's result: the booked, transformed and validated entries, every error, and the options map; and
-    what the load read (`fingerprint`: observe its `ledger_set` again to learn whether the next load would differ);
-    `created_documents`: each documents root with the names of the candidates the documents step counted under it
-    that its listing did not have (files the save creates; `ledger_set.as_after`)."""
+    what the load read (`fingerprint`: observe its `ledger_set` again to learn whether the next load would differ)."""
 
     entries: list[port.Directive]
     errors: list[port.BeancountError]
     options: port.OptionsMap
     fingerprint: Fingerprint
-    created_documents: tuple[tuple[str, tuple[str, ...]], ...] = ()
-
-
-@dataclass(frozen=True, slots=True)
-class Parsed:
-    """The parse alone (`parse`): the digest of the parser's output, and each file it read with the state of the
-    bytes it parsed (a file it found missing: `Absent`)."""
-
-    digest: str
-    files: Mapping[str, FileState]
 
 
 @dataclass(frozen=True, slots=True)
@@ -127,9 +97,9 @@ class NotAbsoluteError(ValueError):
         super().__init__(f"a ledger path must be absolute: {given!r}")
 
 
-def load(root: str, overlay: Mapping[str, bytes], policy: LoadPolicy, *, identify: Identify = _by_name) -> LoadResult:
+def load(root: str, overlay: Mapping[str, bytes], policy: LoadPolicy) -> LoadResult:
     """Load the ledger set rooted at `root` (an absolute path) with `overlay`'s bytes in place of the files they
-    name (absolute paths), under `policy`. `identify` matches the candidates to the documents roots (`path_key`)."""
+    name (absolute paths), under `policy`."""
     if not path.isabs(root):
         raise NotAbsoluteError(root)
     candidates: dict[str, bytes] = {}
@@ -153,8 +123,6 @@ def load(root: str, overlay: Mapping[str, bytes], policy: LoadPolicy, *, identif
     if refused is not None:
         return refused
     documents = {d: fp.listing(d) for d in _documents_roots(options)}
-    created = _created_under(documents, candidates, identify)
-    after = {d: listing_after(names, created.get(d, ())) for d, names in documents.items()}
     document_files = {e.filename: fp.document_file(e.filename) for e in entries if isinstance(e, port.Document)}
 
     # loader._load, after _parse_recursive.
@@ -162,55 +130,15 @@ def load(root: str, overlay: Mapping[str, bytes], policy: LoadPolicy, *, identif
     entries, balance_errors = port.book(entries, options)
     parse_errors.extend(balance_errors)
     try:
-        entries, errors = port.run_transformations(entries, parse_errors, options, after)
+        entries, errors = port.run_transformations(entries, parse_errors, options)
     except port.EncryptedFileMet as e:  # raised while a plugin was imported (its calls' errors are Beancount's)
         return LoadRefused("encrypted", e.path)
-    listed = {path.join(d, name) for d, names in after.items() if names is not None for name in names}
+    listed = {path.join(d, name) for d, names in documents.items() if names is not None for name in names}
     document_files.update(_plugin_documents(entries, errors, options, listed | set(document_files)))
     errors.extend(port.validate(entries, options))
     options["input_hash"] = port.input_hash(options["include"])
     fingerprint = Fingerprint.of(path.normpath(root), seen.files, seen.globs, documents, document_files)
-    return Loaded(entries, errors, options, fingerprint, tuple(sorted(created.items())))
-
-
-def _created_under(
-    documents: Mapping[str, Mapping[str, bool] | None], candidates: Mapping[str, bytes], identify: Identify
-) -> dict[str, tuple[str, ...]]:
-    """Each documents root with the names (`ledger_set.name_under`) of the candidates under it that its listing does
-    not have: the files the save creates there. A path that cannot be identified matches nothing (R4 then finds the
-    listing moved: `superseded`, never a false `pass`)."""
-    if not candidates or not documents:
-        return {}
-    ids: list[PathId] = []
-    for c in sorted(candidates):
-        try:
-            ids.append(identify(c))
-        except (OSError, ValueError):
-            continue
-    out: dict[str, tuple[str, ...]] = {}
-    for d, listing in documents.items():
-        try:
-            r = identify(d)
-        except (OSError, ValueError):
-            continue
-        names = {n for i in ids if (n := name_under(r.key, i.key, i.canonical)) is not None}
-        new = tuple(sorted(names - set(listing or ())))
-        if new:
-            out[d] = new
-    return out
-
-
-def parse(root: str, policy: LoadPolicy, key_of: _digest.KeyOf) -> Parsed | LoadRefused:
-    """The parse of the disk's ledger set rooted at `root`, as `load` parses it (the policy asked about each file, an
-    encrypted file refused), and nothing more: no plugin runs."""
-    if not path.isabs(root):
-        raise NotAbsoluteError(root)
-    seen = _Seen()
-    parsed = _parse_recursive(path.normpath(root), {}, policy, seen)
-    if isinstance(parsed, LoadRefused):
-        return parsed
-    entries, errors, options = parsed
-    return Parsed(_digest.of_result(entries, errors, options, key_of), dict(seen.files))
+    return Loaded(entries, errors, options, fingerprint)
 
 
 @dataclass(slots=True)

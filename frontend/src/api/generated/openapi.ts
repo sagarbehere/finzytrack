@@ -378,8 +378,8 @@ export interface components {
         NotReadyPhase: "WARMING";
         /** @enum {string} */
         NotSavedReason: "hard_linked" | "locked" | "not_a_file" | "permission" | "io_error" | "read_back" | "name_not_utf8" | "engine_stopped";
-        /** @enum {string} */
-        PausedReason: "unfinished_save" | "check_pending" | "check_failed";
+        /** @constant */
+        PausedReason: "unfinished_save";
         /** RouteNotFoundError */
         RouteNotFoundError: {
             /**
@@ -545,24 +545,14 @@ export interface components {
         /**
          * WritesPausedDetails
          * @description This workspace's saves are paused (engine-jobs §6.1 steps 1 and 4, §6.4, §6.6, §11; S0063). `unfinished_save`:
-         *     an unfinished save's journal is open (Reopen recovers it); `check_pending`: the check of the last save (R4) is owed
-         *     and could not run first; `check_failed`: that check found a difference, or could not run three times (Resume
-         *     saving). `file`: for `unfinished_save`, the file the save was creating that the undo will ask about (its Reopen
-         *     text then promises no undo: S0061 red team r8 overflow 1), else None. For `check_failed` (S0066): `record`, the
-         *     paused save's record, which Resume saving names; `backup`, that save's backup folder ("Your backup is here"; None
-         *     when its record cannot be read); `could_not_check`, the check could not run three times rather than finding a
-         *     difference.
+         *     an unfinished save's journal is open (Reopen recovers it); the only reason since S0068 (ADR-0067: the check after
+         *     a save, R4, never pauses saving). `file`: the file the save was creating that the undo will ask about (its Reopen
+         *     text then promises no undo: S0061 red team r8 overflow 1), else None.
          */
         WritesPausedDetails: {
-            /** Backup */
-            backup: string | null;
-            /** Could Not Check */
-            could_not_check: boolean;
             /** File */
             file: string | null;
             reason: components["schemas"]["PausedReason"];
-            /** Record */
-            record: string | null;
         };
         /** WritesPausedError */
         WritesPausedError: {

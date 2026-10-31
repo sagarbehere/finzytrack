@@ -2,23 +2,22 @@
 §6.5, §6.6; ADR-0008 steps 4-6, ADR-0012 Q29, ADR-0013, ADR-0062 decisions 2 and 5; S0063).
 
 `run(plan, ports, job)`, in one engine (§5.1: it runs the ledger's plugins, so its engine is retired after it):
-1. **R4 first, if owed** (§6.1 step 1): this workspace's records re-read from disk (`records`): a `.closed` record
-   means an R4 is owed: the save refuses `check_pending` naming that record, writing nothing, and the sidecar runs
-   that record's R4 in the same job, then asks again in a fresh engine (`app.platform.engine_jobs.save`, S0066); a
-   `.mismatch` refuses `check_failed` (with the save's backup folder and whether R4 could not run three times); an
-   `.open` journal `unfinished_save`.
+1. **The records** (§6.1 step 1): an `.open` journal of this workspace, re-read from disk (`records`), refuses
+   `unfinished_save`, writing nothing. A `.closed` record gates nothing (ADR-0067: R4 compares after the save and
+   never pauses saving; S0068); no other record state is read.
 2. **Legacy-lock detection** (ADR-0062 decision 2; INV-26): every legacy `.write.lock` the plan names, deduplicated by
    `path_key`, tried once each without waiting (`LegacyLocks`); free: held to the end; absent: go on; held, or any
    error: `legacy_app_saving`, before any ledger-set lock.
 3. **Ledger-set locks** (ADR-0012 Q29): every file of the plan's ledger set (the absent paths included) and every file
    the save writes, in `path_key` order, each waiting; `waiting_for_files` is shown only when one is not free at once.
 4. **The gate, under the locks** (ADR-0008 step 4): the disk's fingerprint equals the plan's (else `ledger_changed`);
-   the published mirror's equals the plan's (else `mirror_stale`, `WORKSPACE_NOT_READY {WARMING}`); the records again.
+   the published mirror's equals the plan's (else `mirror_stale`, `WORKSPACE_NOT_READY {WARMING}`); the `.open` check
+   again.
 5. **The load** of the candidate (`overlay.load`, the contract's step 3; ADR-0011's one full load). A refused load is
    `load_refused`; judging its errors against the plan's is the contract's (TODO(BL-0106)). Then the prediction R4
    checks (§6.7, S0066): the adopted digest of the load's result (`ledger.digest`), before step 6, so the re-check
-   stays right before the commit point (no parse digest since S0067: BL-0173). The load matches the files the save
-   creates to the documents roots by `path_key` (`ledger.paths.identify` on the save's file system; BL-0172).
+   stays right before the commit point (no parse digest since S0067: BL-0173). The load is the save's preview of
+   Beancount's result (ADR-0067 decision 2): its errors are advice, never a refusal here.
 6. **The re-check, under the locks** (§6.1 step 6; ADR-0013; the owner's TLC run `L_save_deep`): the disk's
    fingerprint equals the plan's **and** the disk equals what the load itself parsed (`ledger_set.as_before` of
    `Loaded.fingerprint`). So an include the load read in an edited form, reverted before this step, refuses; one
@@ -27,8 +26,7 @@
 8. `writer.durable_commit` (§6.1 step 8), after the workspace's journal and backups folders exist and every folder
    from `app_local_data` down to them has a durable entry (its parent synced, whether it was made now or not). The
    closed record carries the load's post fingerprint as its canonical encoding (R4 observes that ledger set; the
-   created files the load counted under each documents root added to its listing, `ledger_set.as_after` of
-   `Loaded.created_documents`) and the adopted digest.
+   created files added to the documents listings they fall in, `ledger_set.as_after`) and the adopted digest.
 9. `job.committed()` once it `Landed`.
 10. The publish (§6.1 step 10) is not built: `Saved.published` is False (TODO(BL-0113)); the rebuild a failed
     publish queues is BL-0152 part 2's. The sidecar queues the record's R4 (S0066).
@@ -62,7 +60,6 @@ from ledger_engine.fs.port import FileSystem, LegacyAbsent, LegacyHeld, LegacyLo
 from ledger_engine.ledger import digest as _digest
 from ledger_engine.ledger import fingerprint as _fingerprint
 from ledger_engine.ledger import overlay
-from ledger_engine.ledger import paths as ledger_paths
 from ledger_engine.ledger.core import journal
 from ledger_engine.ledger.core import paths as core_paths
 from ledger_engine.ledger.core.journal import Record, State
@@ -91,17 +88,13 @@ SESSION: Final = re.compile(r"[a-z0-9_]{1,64}")
 are compared case-folded on a case-insensitive volume; S0061 red team r3 overflow 4)."""
 
 type Phase = Literal["waiting_for_files", "checking_change", "saving"]
-type Paused = Literal["unfinished_save", "check_pending", "check_failed"]
 type RefusedReason = Literal[
     "unfinished_save",  # an `.open` journal of this workspace (WRITES_PAUSED)
-    "check_pending",  # an R4 is owed: the sidecar runs it and asks again (WRITES_PAUSED when it could not)
-    "check_failed",  # a `.mismatch` record (WRITES_PAUSED)
     "legacy_app_saving",  # a legacy install's write lock is held, or could not be tried (LEGACY_APP_SAVING)
     "ledger_changed",  # the disk moved since the plan, or during the load (LEDGER_EXTERNALLY_CHANGED)
     "mirror_stale",  # the published mirror is not the plan's (WORKSPACE_NOT_READY {WARMING})
     "load_refused",  # the commit's load refused the candidate (TODO(BL-0106): the contract's refusal)
 ]
-GATING: Final = frozenset({State.OPEN, State.CLOSED, State.MISMATCH})
 
 
 @dataclass(frozen=True, slots=True)
@@ -157,15 +150,11 @@ class Ports:
     observe: Observe = _observe
 
 
-def desktop_load(policy: LoadPolicy, fs: FileSystem) -> Load:
-    """The commit's load: the overlay under `policy`, matching the files the save creates to the documents roots by
-    `path_key` on `fs` (BL-0172)."""
-
-    def identify(p: str) -> ledger_paths.PathId:
-        return ledger_paths.identify(fs, p)
+def desktop_load(policy: LoadPolicy) -> Load:
+    """The commit's load: the overlay under `policy`."""
 
     def load(root: str, candidates: Mapping[str, bytes]) -> overlay.LoadResult:
-        return overlay.load(root, candidates, policy, identify=identify)
+        return overlay.load(root, candidates, policy)
 
     return load
 
@@ -183,15 +172,11 @@ class Saved:
 class Refused:
     """Refused before the commit point: nothing was written in a ledger folder, the journal or the backups. `unchanged`:
     every file the save would write was hashed again and equals its pre bytes (a created one: absent). `path`: the
-    file the refusal is about, when there is one (the legacy lock, the record, the refused load's subject). For
-    `check_failed`: `backup`, the paused save's backup folder (None when its record cannot be read), and
-    `could_not_check`, whether its R4 failed to run three times (§6.7) rather than finding a difference."""
+    file the refusal is about, when there is one (the legacy lock, the `.open` journal, the refused load's subject)."""
 
     reason: RefusedReason
     unchanged: bool
     path: str | None = None
-    backup: str | None = None
-    could_not_check: bool = False
 
 
 type SaveOutcome = Saved | Refused | NotSaved | Unfinished
@@ -229,13 +214,12 @@ def journal_dir(plan: SavePlan) -> str:
 # -- step 1 and the gate's records (§6.5) ------------------------------------------------------------------------------
 
 
-def records(fs: FileSystem, app_local_data: str, workspace_key: str, lineage: str) -> tuple[Paused, str | None] | None:
-    """This workspace's gating records, re-read from disk (§6.5): `.open`, `.closed` and `.mismatch` in any
-    `local/*/journal/` whose record names this registry key or lineage id (a record in this key's own folder is this
-    workspace's). The worst of them (`.open`, then `.mismatch`, then `.closed`) with its path, or None. Fail closed: a
-    gating record that cannot be read counts as this workspace's; a journal folder that cannot be listed (other than
-    absent) raises `OSError`, which the caller refuses as `unfinished_save` (it may hold an `.open` record)."""
-    found: dict[State, str] = {}
+def records(fs: FileSystem, app_local_data: str, workspace_key: str, lineage: str) -> str | None:
+    """This workspace's `.open` journal, re-read from disk (§6.5): one in any `local/*/journal/` whose record names
+    this registry key or lineage id (one in this key's own folder is this workspace's); its path, or None. Fail closed:
+    an `.open` journal that cannot be read counts as this workspace's; a journal folder that cannot be listed (other
+    than absent) raises `OSError`, which the caller refuses as `unfinished_save` (it may hold an `.open` record). No
+    other state gates a save (ADR-0067; S0068)."""
     local = join(app_local_data, LOCAL)
     try:
         keys = fs.open_dir(local)
@@ -251,66 +235,24 @@ def records(fs: FileSystem, app_local_data: str, workspace_key: str, lineage: st
             with jd:
                 for name in jd.names():
                     parsed = journal.parse_file_name(name)
-                    if parsed is None or parsed[1] not in GATING:
+                    if parsed is None or parsed[1] is not State.OPEN:
                         continue
                     if key != workspace_key:
                         data = jd.read(name)
                         rec = journal.Unreadable("gone") if data is None else journal.decode(data)
                         if isinstance(rec, Record) and workspace_key != rec.workspace_key and lineage != rec.lineage:
-                            continue  # another workspace's record
-                    found.setdefault(parsed[1], join(folder, name))
-    order: tuple[tuple[State, Paused], ...] = (
-        (State.OPEN, "unfinished_save"),
-        (State.MISMATCH, "check_failed"),
-        (State.CLOSED, "check_pending"),
-    )
-    for state, paused in order:
-        if state in found:
-            return paused, found[state]
+                            continue  # another workspace's journal
+                    return join(folder, name)
     return None
 
 
-@dataclass(frozen=True, slots=True)
-class _Owed:
-    reason: Paused
-    path: str | None
-    backup: str | None = None
-    could_not_check: bool = False
-
-
-def paused_by(fs: FileSystem, path: str) -> tuple[str | None, bool]:
-    """For a `.mismatch` record at `path`: the paused save's backup folder (None when the record cannot be read) and
-    whether its R4 failed to run three times (`journal.attempt_name(name, 3)` beside it). Fail closed toward the
-    pause: an error reading either says nothing more (the save is refused all the same)."""
-    folder, _, file = path.rpartition("/")
-    parsed = journal.parse_file_name(file)
-    if parsed is None:
-        return None, False
+def _open_journal(fs: FileSystem, plan: SavePlan) -> str | None:
+    """§6.1 steps 1 and 4: the path of this workspace's `.open` journal (the journal folder itself when it cannot be
+    listed: fail closed), or None."""
     try:
-        with fs.open_dir(folder or "/") as jd:
-            data = jd.read(file)
-            third = jd.stat(journal.attempt_name(parsed[0], journal.ATTEMPTS)) is not None
+        return records(fs, plan.app_local_data, plan.workspace_key, plan.lineage)
     except OSError:
-        return None, False
-    rec = journal.Unreadable("gone") if data is None else journal.decode(data)
-    return (rec.backup_dir if isinstance(rec, Record) else None), third
-
-
-@tla_action("S_R4Check")
-def _records_refusal(fs: FileSystem, plan: SavePlan) -> _Owed | None:
-    """§6.1 step 1 (and step 4's re-read): the worst gating record of this workspace. A `.closed` record refuses
-    `check_pending` naming it: the sidecar runs its R4 and asks again (S0066)."""
-    try:
-        out = records(fs, plan.app_local_data, plan.workspace_key, plan.lineage)
-    except OSError:
-        return _Owed("unfinished_save", journal_dir(plan))
-    if out is None:
-        return None
-    reason, path = out
-    if reason == "check_failed" and path is not None:
-        backup, third = paused_by(fs, path)
-        return _Owed(reason, path, backup, third)
-    return _Owed(reason, path)
+        return journal_dir(plan)
 
 
 # -- steps 2 and 3: the locks -------------------------------------------------------------------------------------
@@ -432,9 +374,8 @@ def _name_taken(fs: FileSystem, plan: SavePlan) -> bool:
         return False
 
 
-def _refused_by(owed: _Owed, ports: Ports, plan: SavePlan) -> Refused:
-    unchanged = _unchanged(ports.fs, plan.changes)
-    return Refused(owed.reason, unchanged, owed.path, owed.backup, owed.could_not_check)
+def _paused(path: str, ports: Ports, plan: SavePlan) -> Refused:
+    return Refused("unfinished_save", _unchanged(ports.fs, plan.changes), path)
 
 
 def run(plan: SavePlan, ports: Ports, job: Job) -> SaveOutcome:
@@ -456,9 +397,9 @@ def _run(plan: SavePlan, ports: Ports, job: Job, pre: Mapping[str, str | None]) 
     def refused(reason: RefusedReason, path: str | None = None) -> Refused:
         return Refused(reason, _unchanged(ports.fs, plan.changes), path)
 
-    owed = _records_refusal(ports.fs, plan)  # step 1
-    if owed is not None:
-        return _refused_by(owed, ports, plan)
+    open_journal = _open_journal(ports.fs, plan)  # step 1
+    if open_journal is not None:
+        return _paused(open_journal, ports, plan)
 
     def io_error(path: str | None) -> NotSaved:
         return NotSaved(Step.BACKUP, Reason.IO_ERROR, _unchanged(ports.fs, plan.changes), path=path)
@@ -493,9 +434,9 @@ def _under_locks(
     # (BL-0113) this compares two values of the plan, both sent before the locks were taken (verifier r1 Q1).
     if plan.mirror != digest(plan.fingerprint):
         return refused("mirror_stale")
-    owed = _records_refusal(ports.fs, plan)
-    if owed is not None:
-        return _refused_by(owed, ports, plan)
+    open_journal = _open_journal(ports.fs, plan)
+    if open_journal is not None:
+        return _paused(open_journal, ports, plan)
     job.progress("checking_change")
     try:
         loaded = ports.load(plan.root, {c.path: c.post for c in plan.changes})  # step 5
@@ -527,7 +468,7 @@ def _under_locks(
         workspace_key=plan.workspace_key,
         lineage=plan.lineage,
         engine_build=plan.engine_build,
-        post_fingerprint=encode(as_after(loaded.fingerprint, dict(loaded.created_documents))).decode("ascii"),
+        post_fingerprint=encode(as_after(loaded.fingerprint, pre)).decode("ascii"),
         adopted_digest=adopted,
         changes=plan.changes,
         journal_dir=jd,
@@ -543,7 +484,7 @@ def _under_locks(
 
 # -- §6.6: the outcome after an engine death ---------------------------------------------------------------------------
 
-type RecordSeen = Literal["none", "part", "open", "closed", "done", "mismatch", "resolved", "kept", "unknown"]
+type RecordSeen = Literal["none", "part", "open", "closed", "resolved", "kept", "unknown"]
 
 
 @dataclass(frozen=True, slots=True)

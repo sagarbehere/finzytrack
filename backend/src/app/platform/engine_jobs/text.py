@@ -2,8 +2,7 @@
 E2, E3).
 
 Pure: a job's text and whether Cancel is offered, from the scheduler's published status (`EngineJobs.status()`) and
-the time. At once a job shows its phase (a save that runs the previous save's R4 first, "Checking your last change
-first…": §11; BL-0173); queued, "Waiting for: <the running job's phase>"; after the display delay,
+the time. At once a job shows its phase; queued, "Waiting for: <the running job's phase>"; after the display delay,
 counted from the last change of what it shows, "Still working…" with the same actions (§5.4: the delay only changes
 the text). Cancel is offered exactly where the table's Cancel would end the job or its wait (`queue.cancel_offered`).
 Past its commit point a writing job is "Finishing your change…", with no Cancel (§4). While the slot is held by a
@@ -17,7 +16,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Final
 
-from app.platform.engine_jobs.queue import JobKind, cancel_offered
+from app.platform.engine_jobs.queue import cancel_offered
 from app.platform.engine_jobs.scheduler import DISPLAY_DELAY, JobsStatus, ShownPhase
 from app.platform.errors import EngineUnavailableDetails, JobCancelledDetails
 
@@ -31,10 +30,6 @@ PHASES: Final[tuple[tuple[str, str], ...]] = (
     ("checking_last_change", "Checking your last change…"),
 )
 """§5.4's phases ("starting" is the shell's own, while it starts the job's engine)."""
-CHECKING_LAST_CHANGE_FIRST: Final = "Checking your last change first…"
-"""§11 "a save waits for R4": a save in R4's phase runs the previous save's R4 before its own work (§6.1 step 1). The
-owner counts such a save as two jobs for ADR-0008's 5 s (2026-10-31: "Drop digest; 2 jobs (Recommended)"), and the
-screen says what it is doing."""
 WORKING: Final = "Working…"
 """A job on its engine before the engine reports its first phase (agent's text; §5.4 names no phase for it)."""
 STILL_WORKING: Final = "Still working…"
@@ -53,14 +48,9 @@ class JobText:
     cancel: bool
 
 
-def phase_text(phase: ShownPhase, kind: JobKind | None = None) -> str:
-    """A phase's words (§5.4); before the first phase, `WORKING`; R4's phase inside a save, `CHECKING_LAST_CHANGE_FIRST`
-    (§11)."""
-    if phase is None:
-        return WORKING
-    if phase == "checking_last_change" and kind == "save":
-        return CHECKING_LAST_CHANGE_FIRST
-    return next(text for name, text in PHASES if name == phase)
+def phase_text(phase: ShownPhase) -> str:
+    """A phase's words (§5.4); before the first phase, `WORKING`."""
+    return WORKING if phase is None else next(text for name, text in PHASES if name == phase)
 
 
 def describe(status: JobsStatus, job_id: int, now: float, delay: float = DISPLAY_DELAY) -> JobText | None:
@@ -80,12 +70,11 @@ def describe(status: JobsStatus, job_id: int, now: float, delay: float = DISPLAY
         return JobText(ADVICE, cancel)
     if shown is not None and now - shown.since >= delay:
         return JobText(STILL_WORKING, cancel)
-    if mine and running is not None:
-        return JobText(phase_text(shown.phase if shown is not None else None, running.job.kind), cancel)
+    if mine:
+        return JobText(phase_text(shown.phase if shown is not None else None), cancel)
     if running is not None:
         ahead = status.shown.get(running.job.id)
-        phase = phase_text(ahead.phase if ahead is not None else None, running.job.kind)
-        return JobText(f"Waiting for: {phase}", cancel)
+        return JobText(f"Waiting for: {phase_text(ahead.phase if ahead is not None else None)}", cancel)
     return JobText(f"Waiting for: {phase_text('starting')}", cancel)
 
 

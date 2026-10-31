@@ -15,8 +15,8 @@ replay walks the model's save up to the step the code is at: the model's outside
 the fake (as an editor would, durably), an engine death is raised there (`Crash`), an I/O error is raised there
 (`OSError`, before the effect), and the fake is compared with the model's state just before the model's step
 (`view`): the three files, this save's journal record, its temps (the save's and the restore's) and its backup. A
-model step the code carries out without an effect (the displaced check, the read-back, the save's own R4 check when
-none is owed) is passed only when it changed nothing the view shows; the save's syncs (`SYNC_STEPS`) are never passed:
+model step the code carries out without an effect (the displaced check, the read-back)
+is passed only when it changed nothing the view shows; the save's syncs (`SYNC_STEPS`) are never passed:
 each must be one of the code's effects. A step counts as walked only when the code carried it out at one of its hooks
 (`WALKED`; the rest, with their reasons, `NOT_WALKED`). After the save, what the code answered is
 compared with what the model told (`gh.told`): `Saved` is "saved", `Refused` "notsaved", a `NotSaved` before the
@@ -33,8 +33,6 @@ the replay stops that trace there, counted by reason in `STOPS`, and never compa
 - the model's rollback removes a file the save created, and its temp rule passes or stops by the old rule
   (`RB_Check`); the code never touches anything at a created path and stops `created_path_taken` (ADR-0012
   amendment of 2026-10-30, round 5), with the staging-name temp rule;
-- the model runs an owed R4 inside the save (`S_R4Check`); the engine's save refuses `check_pending` naming the record
-  and the sidecar runs that R4 between two `save` requests (S0066), which this replay does not walk yet (BL-0168);
 - the model's gate refuses a stale mirror; the code compares two values of the plan until a mirror is published
   (BL-0125).
 
@@ -109,11 +107,10 @@ STOPS: Mapping[str, str] = {
         "(BL-0161)"
     ),
     "backup_check": (
-        "an outside edit of a replaced file after the re-check: the code's backup step reads the file and stops "
-        "`changed` at once; the model copies the plan's bytes unread and finds the edit at the displaced check "
-        "(BL-0161)"
+        "an outside edit of a file the save writes after the re-check: the code's backup step reads a replaced file "
+        "(and checks a created path is still free) and stops `changed` at once; the model copies the plan's bytes "
+        "unread and finds the edit later (BL-0161)"
     ),
-    "r4_in_save": "the model runs an owed R4 inside the save; the sidecar runs it between two requests (BL-0168)",
     "mirror": "the model's gate refuses a stale mirror; the code compares two values of the plan (BL-0125)",
     "cut": "the walk ended before the save did (not a difference)",
     "after_stop": "a later save of a trace stopped before it (the fake no longer follows the model)",
@@ -121,7 +118,7 @@ STOPS: Mapping[str, str] = {
 """Why a save of the corpus is not replayed (the module's docstring), each counted by `test_the_stops_are_counted`."""
 
 DISK: Mapping[str, str] = {
-    "closed": "saved", "done": "saved", "mismatch": "saved", "resolved": "notsaved", "open": "unfinished",
+    "closed": "saved", "resolved": "notsaved", "open": "unfinished",
     "kept": "unfinished",
 }  # fmt: skip
 """The model's `DiskOutcome` over the engine's facts (§6.6); no record or a `.part` is the re-hash."""
@@ -295,7 +292,7 @@ def _saving(st: State, job: int | None = None) -> bool:
     return r is not None and r["k"] == "save" and (job is None or r["id"] == job)
 
 
-JOB_STEP = re.compile(r"^(S_|RB_|RS_|R4_)|^(FreshEnd|SpawnStep)$")
+JOB_STEP = re.compile(r"^(S_|RB_|RS_)|^SpawnStep$")
 
 
 def _stop(s: State, t: State) -> str:
@@ -303,11 +300,9 @@ def _stop(s: State, t: State) -> str:
     a = t["act"]["a"]
     sv_, fs = s["sv"], s["fs"]
     into_rollback = t["run"] is not None and t["ctl"]["pc"] == "rb_chk" and s["ctl"]["pc"] != "rb_chk"
-    if a == "S_R4Check" and t["ctl"]["pc"] != "s_locks":
-        return "r4_in_save"
     if a == "S_Gate" and t["run"] is None:
         disk = all(fs["cur"][f] == sv_["plan"][f] for f in FILES)
-        gating = any(s["jr"][j] in ("open", "closed", "mismatch") for j in SAVES)
+        gating = any(s["jr"][j] == "open" for j in SAVES)
         if disk and not gating:
             return "mirror"
     if a == "S_Compare" and into_rollback:
@@ -318,8 +313,7 @@ def _stop(s: State, t: State) -> str:
         return "temp_rule"
     if into_rollback and sv_["plan"]["N"] == ABS and fs["cur"]["N"] != ABS:
         return "created_path"  # the save placed the file it creates, or an editor did: the code stops there
-    replaced = [f for f in WORD if sv_["plan"][f] != ABS]
-    if a == "Editor" and t["act"]["p"] in replaced and s["ctl"]["pc"] in ("s_commit", "s_bk"):
+    if a == "Editor" and t["act"]["p"] in WORD and s["ctl"]["pc"] in ("s_commit", "s_bk"):
         return "backup_check"
     return ""
 
@@ -646,9 +640,8 @@ def world() -> MemFS:
 
 
 def sync_world(fs: MemFS, st: State, where: str) -> None:
-    """The fake made to hold what the model holds between two saves: the files (an outside edit while no save ran)
-    and each record's state after R4 (`.closed` to `.done` or `.mismatch`: R4 is not walked here, BL-0168, so its
-    rename is projected); anything else that differs is a divergence."""
+    """The fake made to hold what the model holds between two saves: the files (an outside edit while no save ran);
+    a record that differs is a divergence (S0068: R4 renames nothing)."""
     for f in FILES:
         v = st["fs"]["cur"][f]
         if value(f, fs.file(PATH[f])) != v:
@@ -658,14 +651,15 @@ def sync_world(fs: MemFS, st: State, where: str) -> None:
         want, got = st["jr"][s], journal_state(fs, s)
         if want == got:
             continue
-        if got == "closed" and want in ("done", "mismatch"):
-            data = fs.file(f"{JD}/{record(s)}.closed")
-            assert data is not None
-            fs.outside_remove(f"{JD}/{record(s)}.closed")
-            fs.outside_write(f"{JD}/{record(s)}.{want}", data)
-            continue
         msg = f"{where}: between saves the model's record of {s} is {want}, the fake's {got}"
         raise Divergence(msg)
+
+
+def end_pc(ep: Episode) -> str:
+    """Where the save's end is compared: at the model's step where its engine died (an engine death inside the
+    rollback before the model's `RS_Temps` may find a save temp the code already removed, `EARLY_RESTORE`; S0068's
+    corpus reached it: an I/O error in a temp write, then a death), else nowhere special."""
+    return ep.points[-1].pc if ep.killed else ""
 
 
 def replay_save(fs: MemFS, ep: Episode, where: str, tally: Tally) -> None:
@@ -690,7 +684,9 @@ def replay_save(fs: MemFS, ep: Episode, where: str, tally: Tally) -> None:
         told = told_of(None, fs, plan)
     assert told == ep.told, f"{where}: the code tells {told!r} ({out}), the model {ep.told!r}"
     want, got = model_view(ep.end, ep.s), code_view(fs, ep.s)
-    assert want == got, f"{where}: after the save the fake holds\n  {got}\nwhere the model has\n  {want}"
+    assert same(want, got, end_pc(ep)), (
+        f"{where}: after the save the fake holds\n  {got}\nwhere the model has\n  {want}"
+    )
     tally.saves += 1
     tally.compared += driver.compared + 1
     tally.walked.update(driver.walked)
@@ -830,8 +826,6 @@ code that carries out one of these (a folder's sync, say) fails `test_the_replay
 `@tla_action` on that code (`backend/tests/architecture/test_tla_mapping.py`)."""
 
 NOT_WALKED: Mapping[str, str] = {
-    "S_R4Check": "a read of the records, with no hook; an owed R4 is the sidecar's (S0066; a stop, BL-0168)",
-    "S_WaitR4": "a seeded bug's action only",
     "S_Compare": (
         "a read of what the swap displaced, with no hook; the replay sees only that the code went on when the model "
         "found its own bytes (the other branch is a stop, BL-0161); `test_writer.py` checks the kept-name branch"
@@ -855,7 +849,7 @@ def test_the_save_steps_are_the_models() -> None:
 
 
 STOP_COUNTS: Mapping[str, int] = {
-    "r4_in_save": 17, "backup_check": 3, "created_path": 2, "swap_back": 1, "cut": 3, "after_stop": 1,
+    "backup_check": 6, "created_path": 1, "swap_back": 1, "cut": 3, "after_stop": 1,
 }  # fmt: skip
 """The saves of the corpus the replay does not follow, by reason (`STOPS`); pinned, so a regenerated corpus or a
 changed stop rule shows here what it stops."""
@@ -980,13 +974,13 @@ def test_a_wrong_answer_is_caught(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_the_disk_outcome_table_is_the_models() -> None:
-    """`DISK` restates the model's `DiskOutcome` (a `.closed`, `.done` or `.mismatch` record is saved, `.resolved` not
+    """`DISK` restates the model's `DiskOutcome` (a `.closed` record is saved, `.resolved` not
     saved, `.open` unfinished); the engine's `kept` is an `.open` journal whose kept copy stops it (§6.4)."""
     model = (REPO / "formal" / "tla" / "engine-jobs" / "EngineJobs.tla").read_text(encoding="utf-8")
     assert 'DiskOutcome(s) == CASE jr[s].st \\in CL -> "saved"' in model
-    assert 'CL       == {"closed","done","mismatch"}' in model
+    assert 'CL       == {"closed"}' in model
     assert '[] jr[s].st = "resolved" -> "notsaved"' in model
-    assert {k for k, v in DISK.items() if v == "saved"} == {"closed", "done", "mismatch"}
+    assert {k for k, v in DISK.items() if v == "saved"} == {"closed"}
     assert DISK["resolved"] == "notsaved"
     assert DISK["open"] == DISK["kept"] == "unfinished"
 
@@ -1011,8 +1005,6 @@ def _pair(a: str, pc: str, next_pc: str | None, **over: Any) -> tuple[State, Sta
 @pytest.mark.parametrize(
     ("step", "want"),
     [
-        (_pair("S_R4Check", "s_r4chk", "r4_a"), "r4_in_save"),
-        (_pair("S_R4Check", "s_r4chk", "s_locks"), ""),
         (_pair("S_Gate", "s_gate", None), "mirror"),
         (_pair("S_Gate", "s_gate", None, cur={"I": 11}), ""),  # the disk moved: the code refuses too
         (_pair("S_Gate", "s_gate", None, jr={"s2": "open"}), ""),  # an `.open` journal: the code refuses too
@@ -1025,6 +1017,7 @@ def _pair(a: str, pc: str, next_pc: str | None, **over: Any) -> tuple[State, Sta
         (_pair("IOFail", "s_tw1", "rb_chk", cur={"N": 3}), "created_path"),
         (_pair("IOFail", "s_tw1", "rb_chk"), ""),  # nothing at the created path yet: the code resolves too
         (_pair("Editor", "s_bk", "s_bk", p="R"), "backup_check"),
+        (_pair("Editor", "s_bk", "s_bk", p="N"), "backup_check"),  # S0068's corpus: a created path taken
         (_pair("Editor", "s_bk", "s_bk", p="I"), ""),  # not a file the save replaces
         (_pair("Editor", "s_jp", "s_jp", p="R"), ""),  # after the backup: the displaced check's (or a stop of its own)
     ],
@@ -1033,6 +1026,19 @@ def test_a_stop_rule_fires_on_its_case_only(step: tuple[State, State], want: str
     """Each rule of `_stop` must name only the model behaviour the code does not have; a broader rule would hide a
     real difference from the replay (must not pass: each rule's neighbour is replayed)."""
     assert _stop(*step) == want
+
+
+def test_a_missing_save_temp_at_the_end_is_allowed_only_after_a_death_in_the_early_rollback() -> None:
+    """S0068: the end comparison takes `EARLY_RESTORE`'s allowance only where the model's engine died in it."""
+    model = View((1, 0, 1), "open", (0, 2), 1, (0, 0))
+    code = View((1, 0, 1), "open", (0, ABS), 1, (0, 0))
+    st: State = {"ctl": {"pc": "rb_chk"}}
+    in_rollback = Episode("s1", {}, [Point("rb_chk", 1, st)], "unfinished", st, True, Counter(), st)
+    in_write = Episode("s1", {}, [Point("s_tw2", 1, st)], "unfinished", st, True, Counter(), st)
+    finished = Episode("s1", {}, [Point("rb_chk", 1, st)], "unfinished", st, False, Counter(), st)
+    assert same(model, code, end_pc(in_rollback))
+    assert not same(model, code, end_pc(in_write))
+    assert not same(model, code, end_pc(finished))
 
 
 def test_a_model_value_round_trips() -> None:

@@ -387,8 +387,8 @@ def test_an_engine_that_died_is_drained_before_the_next_one_starts() -> None:
 
 
 def test_a_job_that_needs_a_fresh_engine_mid_job_gets_one_only_after_the_old_one_ended() -> None:
-    """§5.1 and §6.1: a save runs its owed R4 in its own engines, then the save in a fresh one (`FreshEnd`, then
-    `SpawnStep`)."""
+    """§5.1: a job whose engine ran user code asks a fresh one for its next part (a save reading its outcome from disk
+    after a refusal past its gate, §6.6): `RetireEngine`, then `EngineNeeded`."""
     state, jid = busy_with(user("save"))
     state, effects = run(state, RetireEngine(jid))
     assert ends(effects) == ["retire"]
@@ -408,7 +408,7 @@ def test_an_ask_for_a_fresh_engine_made_before_the_old_one_ended_is_kept() -> No
 
 def test_a_retire_signals_the_engine_once_and_never_after_it_ended() -> None:
     """§5.2: "After the reap no signal is sent to that group: its id may already belong to another program"; model
-    `FreshEnd` needs `EngOK` (the job's engine busy). A second `RetireEngine`, while the first end drains or after
+    a retire needs the job's engine busy. A second `RetireEngine`, while the first end drains or after
     it, signals nothing and does not hold the slot."""
     state, jid = busy_with(user("save"))
     state, effects = run(state, RetireEngine(jid))
@@ -1149,7 +1149,7 @@ def endable(r: Running) -> bool:
     its commit point."""
     j = r.job
     if j.kind == "r4":
-        return not j.waited_for and not j.confirmed  # the background R4; Resume saving is waited for and confirmed
+        return not j.waited_for and not j.confirmed  # the background R4 (S0068: Resume saving is gone)
     if j.kind == "save":
         return not j.confirmed and not r.past_commit
     return j.kind in (*READS, "open") and not j.requester_present
@@ -1397,7 +1397,8 @@ def job_variants(jid: int) -> Iterable[Job]:
             owner = "switch" if kind == "recover_all" else "user"
             yield Job(jid, kind, ws, kind != "r4", kind in WRITING, owner, present)
         yield Job(jid, "save", W1, False, False, "app", present)
-        yield Job(jid, "r4", W1, True, True, "user", present)  # Resume saving (S0066 verifier r1 F7)
+        yield Job(jid, "r4", W1, True, True, "user", present)  # an R4 someone waits for: none since S0068, kept as a
+        # probe of the one rule (§4: nobody waits for it and nobody confirmed it)
         yield Job(jid, "open", W2, True, False, "switch", present)
 
 
@@ -1625,52 +1626,27 @@ def test_a_save_whose_engine_died_is_kept_to_read_its_outcome(past_commit: bool)
     assert Finished(jid) in effects
 
 
-@pytest.mark.parametrize("spec", [background("r4"), user("r4")], ids=["background", "resume_saving"])
-def test_an_r4_whose_engine_died_is_kept_to_count_its_failure(spec: JobSpec) -> None:
-    """§6.7 (S0066): "A failure to run (its engine crashed or failed to start) also leaves it `.closed` and adds one to
-    its `.r4-attempts` count (written and synced)": the count is written by an engine, so the job is kept
-    (`outcome_owed`), its engine ends as a stop, and it gets the next engine before any queued job."""
-    state, jid = busy_with(spec, ready(W1))
-    state, (waiting,) = submit(state, user("preview"))
-    assert state.engine is not None
-    state, effects = run(state, EngineDied(state.engine))
-    assert not any(isinstance(e, EngineLost) for e in effects)
-    assert EndEngine("crashed") in effects
-    assert state.running is not None
-    assert (state.running.job.id, state.running.outcome_owed) == (jid, True)
-    state, _ = run(state, EngineNeeded(jid))
-    state, effects = run(state, EngineEnded())
-    assert started(effects) == [jid], "the failure is counted before any queued job runs"
-    state, effects = run(state, JobDone(jid, ran_user_code=False))
-    assert Finished(jid) in effects
-    assert started(effects) == [waiting]
-
-
-def test_resume_saving_is_never_ended_by_another_jobs_cancel() -> None:
-    """S0066 verifier r1 F7 = red team r1 overflow 1: §4 "Another job's Cancel ends the running job only when nobody
-    waits for it, the user did not confirm it": Resume saving is both (its rename may land, and the user would be told
-    cancelled although saving resumed)."""
-    from app.platform.engine_jobs.r4 import resume_spec
-
-    state, jid = busy_with(resume_spec(W1), ready(W1))
-    state, (waiting,) = submit(state, user("preview"))
-    state, effects = run(state, Cancel(waiting))
-    assert Cancelled(waiting, cannot_stop_ahead=True) in effects  # the waiting job ends; the one ahead goes on
-    assert ends(effects) == []
-    assert state.running is not None
-    assert state.running.job.id == jid
-
-
-def test_an_r4_whose_engine_died_is_still_ended_by_another_jobs_cancel() -> None:
-    """§4: an R4 is ended by a waiting user's Cancel also while it waits for the engine that counts its failure: a
-    Cancel counts nothing, and the record stays `.closed` for the next save."""
+def test_an_r4_whose_engine_died_is_lost_like_a_read() -> None:
+    """S0068 (ADR-0067): nothing is counted on disk for an R4 that could not run, so the queue keeps no R4 whose
+    engine died (until S0068: `outcome_owed`, to count its failure in a fresh engine before any queued job)."""
     state, jid = busy_with(background("r4"), ready(W1))
     state, (waiting,) = submit(state, user("preview"))
     assert state.engine is not None
-    state, _ = run(state, EngineDied(state.engine), EngineNeeded(jid), EngineEnded())
-    assert state.running is not None
-    assert state.running.job.id == jid  # the R4 runs again, to count its failure, before the waiting job
+    state, effects = run(state, EngineDied(state.engine))
+    assert EngineLost(jid) in effects
+    assert EndEngine("crashed") in effects
+    assert state.running is None
+    state, effects = run(state, EngineEnded())
+    assert started(effects) == [waiting]
+
+
+def test_the_background_r4_is_ended_by_another_jobs_cancel() -> None:
+    """@regression-guard. §4's one rule: nobody waits for the background R4 and nobody confirmed it (S0068: the
+    one R4 job the user confirmed is gone)."""
+    state, jid = busy_with(background("r4"), ready(W1))
+    state, (waiting,) = submit(state, user("preview"))
     state, effects = run(state, Cancel(waiting))
+    assert Cancelled(jid) in effects
     assert Cancelled(waiting) in effects
     assert ends(effects) == ["cancel"]
 
@@ -1711,7 +1687,7 @@ def test_no_engine_for_a_saves_outcome_lets_its_work_answer(why: str) -> None:
 
 
 def test_a_save_that_did_not_die_still_ends_without_an_engine_when_none_can_be_had() -> None:
-    """The model's `SpawnStep` unavailable branch for a save asking an engine mid-job (its own R4 first): refused,
+    """A save asking an engine mid-job (its outcome read from disk after a refusal past its gate) while none can be had:
     nothing written (`NoEngine`); only a save whose engine died reports itself."""
     state, jid = busy_with(user("save"), ready(W1))
     state, _ = run(state, RetireEngine(jid))

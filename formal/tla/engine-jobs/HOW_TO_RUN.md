@@ -14,9 +14,9 @@ no AI is involved. MAPPING.md says what the model checks and how it maps to the 
 From the repository root (estimates for this Mac, measured or derived below):
 
 ```sh
-formal/tla/engine-jobs/run_all.sh --tier S                 # small worlds and every mutant: about 45 min
+formal/tla/engine-jobs/run_all.sh --tier S                 # small worlds and every mutant: about 50 min
 formal/tla/engine-jobs/run_all.sh --tier M                 # medium: an estimated 5-30 min
-formal/tla/engine-jobs/run_all.sh --only L_save_all,L_r4_switch,L_save_deep,L_world   # large: hours
+formal/tla/engine-jobs/run_all.sh --only L_save_all,L_save_deep,L_world               # large: hours
 formal/tla/engine-jobs/run_all.sh --only L_session         # one night each, alone (disk below)
 formal/tla/engine-jobs/run_all.sh --only L_recover_all
 formal/tla/engine-jobs/run_all.sh --only L_world           # the bounded simulation of the whole world
@@ -61,20 +61,20 @@ Options: `--workers N` (TLC worker threads; default all cores), `--heap 12g` (de
 
 ## How long it takes
 
-Measured on the owner's Mac (Apple M4 Pro, 14 cores, 48 GB) on 2026-10-28 with 14 TLC workers, on the
-model after simplification B. Other work may have loaded the Mac during these runs, so single times can be
-up to twice what a quiet Mac gives. The agent ran the small tier in parts of at most 10 minutes (`--only`
-lists).
+Measured on the owner's Mac (Apple M4 Pro, 14 cores, 48 GB) on 2026-10-31 with 14 TLC workers, on the
+model after S0068 (ADR-0067: R4 is a background job with no disk effect; model sha256 e572cbc11832). Other work
+may have loaded the Mac during these runs, so single times can be up to twice what a quiet Mac gives. Earlier
+models' numbers are in git history.
 
 | Tier | Configurations | Result | Size | Wall time |
 |---|---|---|---|---|
-| S | 30 safety worlds (`S_save_orphan` removed by simplification B) | all PASS | 2,548 (`S_create_nonempty`) to 6,618,093 distinct states (`S_r4_attempts`); 38.6 million together | 1 s to 156 s each (`S_switch`); 735 s together |
-| S | 5 liveness worlds (`LS_boot`, `LS_quit`, `LS_free`, `LS_free_cc`, `LS_free_orphan` new in simplification B) | all PASS | up to 790,140 (`LS_boot`) | 449 s together (`LS_boot` 375 s, against 215 s on the model after review 4 with the same 790,140 states: the Mac was busier) |
-| S | `LS_jobs` | **not re-run by the agent** (one run takes longer than an agent tool call); the owner's `--tier S` run covers it | 1,723,585 on an earlier model | 642 s on an earlier model |
-| S | 92 mutant configurations (90 mutants; the reviewers' own among them, MAPPING.md §6) | each violates its property | | 237 s of checking, about 10 min with start-up (longest `MUT_cnc_auto_lift`, 61 s) |
-| S | all of the above but `LS_jobs` | **all as expected, 127 configurations** | | 1,421 s of checking, about 30 min with start-up; with `LS_jobs` about 40-45 min |
-| M | `LM_free`, `M_recover_temps`, `M_r4_switch` | not run on this model | | `LM_free`: 219 s on an earlier model; others below |
-| L | `L_save_all`, `L_r4_switch`, `L_session`, `L_recover_all`, `L_save_deep` | not run on this model | | estimate below |
+| S | 27 safety worlds | all PASS | 2,548 (`S_create_nonempty`) to 5,840,976 distinct states (`S_fs_weak`); 27.9 million together | 1 s to 322 s each (`S_save_quit_power`); 1,277 s together |
+| S | 5 liveness worlds (`LS_boot`, `LS_quit`, `LS_free`, `LS_free_cc`, `LS_free_orphan`) | all PASS | up to 782,677 (`LS_boot`) | 490 s together (`LS_boot` 399 s) |
+| S | `LS_jobs` | **not re-run by the agent** (one run takes longer than an agent should wait); the owner's `--tier S` run covers it | 1,723,585 on an earlier model | 642 s on an earlier model |
+| S | 83 mutant configurations (81 mutants and the two reachability checks; the reviewers' own among them, MAPPING.md §6) | each violates its property | | 351 s of checking (longest `MUT_boot_waits_for_success`, 66 s) |
+| S | all of the above but `LS_jobs` | **all as expected, 115 configurations** | | 2,118 s of checking |
+| M | `LM_free`, `M_recover_temps` | not run on this model | | `LM_free`: 219 s on an earlier model; others below |
+| L | `L_save_all`, `L_session`, `L_recover_all`, `L_save_deep` | not run on this model | | estimate below |
 | L | `L_world` (bounded simulation) | not run on this model | default 200,000 traces of ≤ 200 steps (about 11.5 million states) | estimate below |
 
 Simplification B removed the orphaned engine's own steps, so the worlds where it wrote shrank:
@@ -89,11 +89,11 @@ Estimates for what was not run, and how they were derived. The model grew betwee
 small worlds have 1-6 times as many states as before (`S_save_crash` 573,953 → 3,377,888; `S_recover`
 440,068 → 2,282,270; `S_queue` about the same), mostly because Quit anyway and the screen exits now have
 no counters (§13 requires that). Distinct states per second stayed at 50,000-90,000 with 12 workers.
-- `M_r4_switch`: 149,002 states at 84c8b8c9; under a minute now.
 - `M_recover_temps`: 7,890,754 states in 207 s at 84c8b8c9; now an estimated 8-50 million, 2-12 minutes.
-- `L_save_all`, `L_r4_switch`: at 84c8b8c9 each passed 23.5 million states in 10 minutes with the queue
+- `L_save_all`: at 84c8b8c9 it passed 23.5 million states in 10 minutes with the queue
   almost at its peak (an estimated 50-100 million in all); now an estimated 50-600 million states,
-  between 10 minutes and 2 hours each.
+  between 10 minutes and 2 hours. S0068 removed R4's records and gate, so the worlds with a save shrank
+  (`S_save_crash` 2,814,748 → 2,711,371); these estimates stand as upper bounds.
 - `L_session`, `L_recover_all`: at 84c8b8c9 the queue was still growing fast after 20 minutes (40-58
   million states); now likely beyond a billion states: many hours to a day each, and tens of GB of state
   files. Optional; one per night with `--only`.

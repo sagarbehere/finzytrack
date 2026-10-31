@@ -2,7 +2,7 @@
 
 This record decides how the contract runs a full official load of text that is not yet on disk.
 
-- **Status:** Accepted. Amended by ADR-0064 (2026-10-27): guardrail 3's re-check runs after "saved" in every mode and is never switched off; the load rule's "heavy-load semaphore" becomes one engine job at a time. Note of 2026-10-29 (S0056): on desktop every ledger loads in full; no trust prompt in v0.4.0 (ADR-0040).
+- **Status:** Accepted. **Superseded in part by ADR-0067 (2026-10-31):** guardrail 3's amendment by ADR-0064 (the next save waits for R4; a mismatch pauses saving) no longer holds: R4 compares, logs a difference and shows a notice, and gates nothing; the overlay load is the save's preview. Amended by ADR-0064 (2026-10-27): guardrail 3's re-check runs after "saved" in every mode and is never switched off; the load rule's "heavy-load semaphore" becomes one engine job at a time. Note of 2026-10-29 (S0056): on desktop every ledger loads in full; no trust prompt in v0.4.0 (ADR-0040).
 - **Date:** 2026-10-24
 - **Deciders:** owner
 - **Area:** write path, ledger
@@ -58,3 +58,9 @@ Owner, 2026-10-29, in session: "I'm wondering if we should remove this feature f
 Owner, 2026-10-31, in session, answering `design/inbox/answered/20261031-r4-load-policy.md` (raised by S0066): "for the r4 load policy inbox item, I agree with the recommendation of option 1 with option 3's note".
 - R4's real load (Beancount's own `load_file`, uncached, BL-0118) asks the `LoadPolicy` nothing per file, since Beancount's loader cannot be asked: "through the `LoadPolicy`" is met by running it only when the disk's fingerprint equals the record's, whose files, plugins and folders the save's own load passed through the policy. The window in which the load meets a file changed since that check is the whole load (spec §15); it is seen afterwards (`superseded`). R4's loads refuse encrypted files as the overlay does (no `gpg` runs).
 - A parse-only pre-check asking the policy about every file is built only if a hosted mode is ever planned (ADR-0041 already requires that plan to revisit the load rules).
+
+## Note (2026-10-31): guardrail 3 after ADR-0067
+
+Owner, 2026-10-31, in session: "Yes, draft that ADR. I'm approving it already, so go ahead and implement it." (S0068).
+- **Superseded in the 2026-10-27 amendment:** "the next save to that workspace waits for it (ADR-0008 amendment); a mismatch pauses saving, adopts the `load_file` result and shows the backup". **Instead:** guardrail 3 reads as first written, minus its rollout-only synchronous mode: after each committed write the real load is compared with the adopted result in the background, in every mode; a mismatch logs loudly, adopts the `load_file` result (the mirror publish, BL-0113) and shows a notice; saving is never paused by it (ADR-0067 decision 3).
+- **Unchanged:** the overlay load, the `LoadPolicy`, guardrails 1, 2 and 4, the load rule, and the 2026-10-31 amendment on R4's load and the policy. The overlay's load is now the save's preview (ADR-0067 decision 2).

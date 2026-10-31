@@ -39,6 +39,12 @@ EXPECTED_FIXED = (
     "backend/CLAUDE.md",
     "engine/CLAUDE.md",
     "frontend/CLAUDE.md",
+    # S0068: the other live documents an agent reads for guidance (owner, 2026-10-31)
+    "design/process/escalation-rubric.md",
+    "design/journal/README.md",
+    "design/inbox/README.md",
+    "design/generated/README.md",
+    "formal/tla/engine-jobs/HOW_TO_RUN.md",
 )
 # S0055: every agent definition and every skill, found by these patterns (one sample file each in a scratch root).
 EXPECTED_GLOB_SAMPLES = (".claude/agents/a.md", ".claude/skills/x/SKILL.md")
@@ -104,9 +110,40 @@ RETIRED_LINES = {
     "-I -m ledger_engine": "The engine runs as `python -I -m ledger_engine`.",
     "outcome unknown": "A write past its limit is outcome unknown, checking.",
     "quit grace": "The shell waits out its quit grace.",
+    # S0068 (ADR-0067): the R4 gate and the accounting refusals, as the old design wrote them
+    "check_pending": "the save refuses `WRITES_PAUSED {check_pending}` naming the record",
+    "check_failed": "a mismatch refuses `check_failed`",
+    "could_not_check": "the third failure renames it `could_not_check`",
+    "could not check (R4)": "\"Finzytrack could not check your last change, so it did not save this one.\"",
+    "Resume saving": "the user lifts the pause with Resume saving",
+    "R4 attempt count": "each failure creates `<name>.r4-attempt-<n>` beside the record",
+    "r4_confirm": "the sidecar asks `r4_confirm` in a fresh engine",
+    "r4_resume": "Resume saving's op is `r4_resume`",
+    ".mismatch record": "the record becomes `.mismatch` and saving is paused",
+    "R4 mismatch outcome": "R4's confirm answers `mismatch`",
+    "R4 nondeterministic outcome": "the parses agree: `nondeterministic`",
+    "superseded_build": "the record becomes `.done {superseded_build}`",
+    "owed R4": "the next save runs the owed R4 first",
+    "R4 first": "1. **R4 first, if owed.**",
+    "R4 gate": "the R4 gate survives a crash",
+    "never acknowledgeable": "booking errors are never acknowledgeable",
+    "May ask to acknowledge": "- **May ask to acknowledge:** BalanceError on the inserted assertion",
+    "unless acknowledged": "the semantic diff equals the intent, no new errors unless acknowledged, the hash check passes",
+    "pause on R4": "Finzytrack's check of your last change found a difference. Saving is paused.",
+    "NoSaveWhileR4Owed": "the model checks `NoSaveWhileR4Owed`",
+    "R4GateLiftedOnlyByUser": "and `R4GateLiftedOnlyByUser`",
+    "OwedR4BeforeNextSave": "`OwedR4BeforeNextSave`: an owed R4 runs before the next save lands",
+    "NoFalseMismatch": "`NoFalseMismatch` (O1)",
 }
 # Words the audit says must never be refused, in the senses the current design uses them.
 TRAP_LINES = [
+    # S0068: the current design's own words about R4 and the preview pass
+    "R4 compares and shows a notice; it gates nothing (ADR-0067).",
+    "the closed record is the save's last state; a mismatch of the fingerprint refuses `LEDGER_EXTERNALLY_CHANGED`",
+    "R4 says `differs`; `pass` and `superseded` show nothing",
+    "the preview lists the new errors and the user may save anyway",
+    "new errors are listed in a preview and written only if the user saves anyway; the user acknowledged the notice",
+    "a read-back mismatch rolls back",
     "A slot of the form; the one engine slot; an open slot is a suggestion target.",
     "The process lanes: full lane, light lane; the specialist lane.",
     "The workspace gate admits the request; the admitted key; a gate check.",
@@ -460,3 +497,35 @@ class RealRepository(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class LiveDocsAfterS0068(unittest.TestCase):
+    """The owner's requirement of 2026-10-31 (S0068): "Make sure no docs inadvertently reference the old design. We
+    don't want AI agents implementing future features to get confused and build in what we just dialled down". A
+    seeded mutant: a line of the old R4 gate put back into a live spec copied into a scratch root is refused."""
+
+    def test_a_retired_r4_line_put_back_into_the_spec_is_refused(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            for rel in EXPECTED_FIXED:
+                (root / rel).parent.mkdir(parents=True, exist_ok=True)
+                (root / rel).write_text("current text\n", encoding="utf-8")
+            for sample in EXPECTED_GLOB_SAMPLES:
+                (root / sample).parent.mkdir(parents=True, exist_ok=True)
+                (root / sample).write_text("current text\n", encoding="utf-8")
+            spec = root / "design" / "specs" / "engine-jobs.md"
+            spec.parent.mkdir(parents=True, exist_ok=True)
+            spec.write_text(
+                (ROOT / "design" / "specs" / "engine-jobs.md").read_text(encoding="utf-8")
+                + "\n1. **R4 first, if owed.** A `mismatch` refuses it with `WRITES_PAUSED {check_failed}`.\n",
+                encoding="utf-8",
+            )
+            done = subprocess.run(  # noqa: S603 (this interpreter and the repository's own script)
+                [sys.executable, str(SCRIPT), str(root)], capture_output=True, text=True, check=False
+            )
+        self.assertEqual(done.returncode, 1, done.stdout + done.stderr)
+        spec_hits = [line for line in done.stdout.splitlines() if line.startswith("design/specs/engine-jobs.md:")]
+        last = len((ROOT / "design" / "specs" / "engine-jobs.md").read_text(encoding="utf-8").splitlines()) + 2
+        self.assertEqual({line.split(":")[1] for line in spec_hits}, {str(last)}, spec_hits)  # the real text passes
+        for term in ("R4 first", "R4 mismatch outcome", "check_failed"):
+            self.assertIn(f"engine-jobs.md:{last}: retired term '{term}'", done.stdout)

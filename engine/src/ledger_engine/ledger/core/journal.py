@@ -2,11 +2,14 @@
 step 8.2, §6.5; ADR-0012 as amended by ADR-0063 and ADR-0064; S0060). Pure.
 
 One save, one name `<session>-<job>`, one record that moves between states by renames in `local/<key>/journal/`:
-`.part` (being written; no replace has happened) → `.open` (the save may be half-applied) → `.closed` (saved; R4
-owed), and later `.done`, `.mismatch`, `.resolved`, `.kept` (§6.5). The record never changes after it is written:
-every state is a rename, so the closed record's fields are written with the journal (post fingerprint, adopted and
-digest, engine build, workspace registry key and lineage id). The post fingerprint is the full fingerprint's canonical
-encoding (the ledger set R4 observes); the adopted digest is `ledger.digest`'s of the save's load result.
+`.part` (being written; no replace has happened) → `.open` (the save may be half-applied) → `.closed` (saved; the
+last state: R4 reads it and writes nothing, ADR-0067), or `.resolved` (put back), `.kept` (§6.5). The `.done` and
+`.mismatch` states and the `.r4-attempt-<n>` files of S0066-S0067's R4 gate are gone (S0068): such files, written only
+by development builds, are not records here (`parse_file_name` gives None), so nothing reads or gates on them. The
+record never changes after it is written: every state is a rename, so the closed record's fields are written with
+the journal (post fingerprint, adopted digest, engine build, workspace registry key and lineage id). The post
+fingerprint is the full fingerprint's canonical encoding (the ledger set R4 observes); the adopted digest is
+`ledger.digest`'s of the save's load result.
 
 The encoding is canonical JSON with a format name and a version; an older app refuses a newer version (ADR-0012), and
 `decode` refuses anything else that is not a whole, well-formed record of this format (a record cut off by a power
@@ -29,9 +32,10 @@ FORMAT: Final = "finzytrack-save-journal"
 VERSION: Final = 3
 """2 since S0066: `post_fingerprint` holds the post fingerprint's canonical encoding (`core.ledger_set.encode`), no
 longer its digest, so R4 can observe the same ledger set (spec §6.7 step 1). 3 since S0067: no `parse_digest` (BL-0173,
-owner 2026-10-31: "Drop digest; 2 jobs (Recommended)"; R4's confirm no longer reads one). Older records were written
-only by tests and development builds (nothing in the product saves yet) and read as `Unreadable`: R4 counts one as a
-failure to run, so it ends "could not check", never a pass."""
+owner 2026-10-31: "Drop digest; 2 jobs (Recommended)"). Unchanged by S0068 (ADR-0067 changed no field). Older
+records were written only by tests and development builds (nothing in the product saves yet) and read as
+`Unreadable`: R4 compares nothing for one (logged, no notice), and recovery cannot roll back an older `.open` journal,
+which blocks its workspace instead (fail closed)."""
 _SHA256: Final = re.compile(r"[0-9a-f]{64}")
 _ID: Final = re.compile(r"[A-Za-z0-9_]{1,64}")  # no "-": it joins session and job
 
@@ -42,8 +46,6 @@ class State(StrEnum):
     PART = "part"
     OPEN = "open"
     CLOSED = "closed"
-    DONE = "done"
-    MISMATCH = "mismatch"
     RESOLVED = "resolved"
     KEPT = "kept"
 
@@ -100,20 +102,6 @@ class Record:
     @property
     def name(self) -> str:
         return record_name(self.session, self.job)
-
-
-ATTEMPTS: Final = 3
-"""After this many failures to run the same record's R4, it counts as "could not check" (§6.7; ADR-0008 amendment of
-2026-10-27: a count, not a time)."""
-
-
-def attempt_name(name: str, n: int) -> str:
-    """The file that counts the `n`-th failure to run the R4 of the record `name` (§6.5, §6.7): `<name>.r4-attempt-<n>`,
-    created empty and exclusively beside the record, its folder synced. It is not a record (`parse_file_name` gives
-    None) and shares the record's name, so §6.5's "one save, one name" keeps it this save's."""
-    if not 1 <= n <= ATTEMPTS:
-        raise BadRecordError("attempt_number")
-    return f"{record_name(*name.split('-', 1))}.r4-attempt-{n}"
 
 
 def check_id(value: str) -> str:

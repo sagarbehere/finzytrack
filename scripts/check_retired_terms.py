@@ -17,6 +17,8 @@ is refused (it is `composables/`, owner 2026-10-29); git's and Claude Code's hoo
 
 Checked (the current-state documents): `design/ARCHITECTURE.md`, `design/INVARIANTS.md`, `design/ENGINEERING.md`,
 `design/glossary.md`, every Markdown file under `design/specs/`, `design/capabilities.toml` and `design/backlog.md`;
+since S0068 also `design/process/escalation-rubric.md`, the journal, inbox and generated READMEs and the
+engine-jobs model's `HOW_TO_RUN.md`;
 since S0055 also the files agents read first: `design/README.md`, `design/process/PROCESS.md`, the `CLAUDE.md` files
 (root, `backend/`, `engine/`, `frontend/`), every `.claude/agents/*.md` and every `.claude/skills/*/SKILL.md`.
 Not checked, because they are history: journals, the inbox, `IMPROVEMENTS.md`, and the ADRs (append-only: a
@@ -66,6 +68,12 @@ FIXED_FILES = (
     "backend/CLAUDE.md",
     "engine/CLAUDE.md",
     "frontend/CLAUDE.md",
+    # S0068: the other live documents an agent reads for guidance (the owner's requirement of 2026-10-31 above)
+    "design/process/escalation-rubric.md",
+    "design/journal/README.md",
+    "design/inbox/README.md",
+    "design/generated/README.md",
+    "formal/tla/engine-jobs/HOW_TO_RUN.md",
 )
 SPECS = "design/specs"
 GLOBS = (".claude/agents/*.md", ".claude/skills/*/SKILL.md")  # each must match at least one file
@@ -166,6 +174,35 @@ ACTIVE: tuple[Term, ...] = (
     Term("-I -m ledger_engine", r"-I -m ledger_engine\b"),
     Term("outcome unknown", r"\boutcome unknown\b"),
     Term("quit grace", r"\bquit grace\b"),
+    # S0068 (ADR-0067, owner 2026-10-31: "Make sure no docs inadvertently reference the old design. We don't want AI
+    # agents implementing future features to get confused and build in what we just dialled down"): R4 gates nothing
+    # and no accounting error refuses a write. The R4 gate's codes, records, ops, texts and model properties, and the
+    # intent table's "never acknowledgeable" refusals, are refused in the current-state documents.
+    code("check_pending"),
+    code("check_failed"),
+    code("could_not_check"),
+    Term("could not check (R4)", r"\bcould not check your last change\b"),
+    Term("Resume saving", r"\bresume saving\b"),
+    Term("R4 attempt count", r"\br4[-_]attempts?\b|\.r4-attempt"),
+    code("r4_confirm"),
+    code("r4_resume"),
+    Term(".mismatch record", r"`\.mismatch`|\.mismatch\b(?! between)"),
+    Term("R4 mismatch outcome", r"`mismatch`"),
+    Term("R4 nondeterministic outcome", r"`nondeterministic`"),
+    code("superseded_build"),
+    Term("owed R4", r"\bowed R4\b|\bR4 (?:is )?owed\b|\bowes an R4\b"),
+    Term("R4 first", r"\bR4 first\b|\bchecking your last change first\b"),
+    Term("R4 gate", r"\bR4 gate\b|\bR4 gates the next save\b|\bgates only the next save\b"),
+    Term("never acknowledgeable", r"\bnever acknowledgeable\b"),
+    Term("May ask to acknowledge", r"\bmay ask to acknowledge\b"),
+    # INV-01 reworded (owner, 2026-10-31, "Reword (Recommended)"): new errors are listed in a preview and written only
+    # if the user saves anyway; "unless acknowledged" read as per-mutator acknowledgement lists.
+    Term("unless acknowledged", r"\bunless (?:explicitly |the user )?acknowledged\b"),
+    Term("pause on R4", r"\bsaving is paused\b"),
+    code("NoSaveWhileR4Owed"),
+    code("R4GateLiftedOnlyByUser"),
+    code("OwedR4BeforeNextSave"),
+    code("NoFalseMismatch"),
 )
 
 # TODO(BL-0109): the engine-jobs slice removes the per-request time limits (spec §5.5); it moves these into ACTIVE
@@ -186,6 +223,10 @@ ALLOW: tuple[Allow, ...] = (
           "a generator run under -I, not the engine process (S0057: the engine itself never runs under -I)"),
     Allow("engine/CLAUDE.md", "-I -m ledger_engine", "ledger_engine.protocol.schema > ../contracts/engine-protocol",
           "a generator run under -I, not the engine process (S0057: the engine itself never runs under -I)"),
+    Allow("design/specs/engine-jobs.md", "R4 gate", '"Owner A" is the owner\'s design of 2026-10-27 quoted in ADR-0064',
+          "the owner's words of 2026-10-27, quoted verbatim, followed on the same line by their supersession (ADR-0067)"),
+    Allow("design/INVARIANTS.md", "unless acknowledged", "*(Reworded with the owner's approval, 2026-10-31, ADR-0067",
+          "INV-01's supersession note names the wording it replaced (owner, 2026-10-31)"),
     Allow("design/specs/engine-jobs.md", "admission", "There is no admission or memory check",
           "the spec states that the abandoned mechanism is absent (ADR-0064 decision 6)"),
     Allow("design/specs/engine-jobs.md", "semaphore", "ADR-0011's purpose for the semaphore",

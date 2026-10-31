@@ -5,10 +5,10 @@ The work of a `save` job: one `save` request to the job's engine, which runs §6
 save`); the sidecar never reads a journal or a ledger file itself. Its answer becomes the job's value:
 
 - **`Saved`** once the engine said so (the closed record is durable). `published` is False until the publish exists
-  (BL-0113). The R4 the save owes is on disk (the closed record); `after_saved` queues it as background work
-  (`submit_save` wires it: §6.1 step 11, S0066).
-- **`NotDone(error)`**, a registry error with §11's text (`save_text`): `WRITES_PAUSED {unfinished_save |
-  check_pending | check_failed}`, `LEGACY_APP_SAVING`, `LEDGER_EXTERNALLY_CHANGED`, `WORKSPACE_NOT_READY {WARMING}`,
+  (BL-0113). `after_saved` queues the save's R4 as background work (`submit_save` wires it: §6.1 step 11; S0066):
+  it compares and shows a notice, and gates nothing (ADR-0067; S0068).
+- **`NotDone(error)`**, a registry error with §11's text (`save_text`): `WRITES_PAUSED {unfinished_save}`,
+  `LEGACY_APP_SAVING`, `LEDGER_EXTERNALLY_CHANGED`, `WORKSPACE_NOT_READY {WARMING}`,
   `CHANGE_NOT_SAVED {reason, path, folder, acl_entry, unchanged}`; an engine refusal before the engine's `gate` is
   `INTERNAL` (it wrote nothing; never "saved").
 
@@ -20,15 +20,6 @@ engine asks for another (the client's bounded restart ends it); when none can be
 `CHANGE_OUTCOME_UNKNOWN` if the engine had sent its `gate` (it may have written), else `ENGINE_STOPPED` (it had not
 reached its commit point: nothing was written).
 
-**R4 first** (§6.1 step 1; S0066): when the engine refuses `check_pending` naming a closed record (its step 1, or
-step 4's re-read under the locks; it wrote nothing and ran no plugin), the work runs that record's R4 in this job
-(`r4.R4Runner`, "Checking your last change first…"), then, if R4 let the save go on (`pass`, `superseded`,
-`superseded_build`, `nondeterministic`, or the record gone), asks the engine again, in a fresh engine when R4 ran
-user code; the engine's own step 1 re-reads the records, so nothing is taken on trust. A `mismatch` refuses
-`WRITES_PAUSED {check_failed}` with the record and the backup; R4's third failure to run refuses `check_failed` with
-`could_not_check`; any other failure to run refuses `check_pending`; a Cancel cancels the save. A record already met in
-this save, or more than `MAX_R4_ROUNDS` records, refuses `check_pending` (no loop).
-
 Session ids are lower case only (`new_session_id`), so two sessions never differ only in case: names derived from
 `<session>-<job>` are compared case-folded on a case-insensitive volume (S0061 red team r3 overflow 4).
 """
@@ -39,21 +30,19 @@ import uuid
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Final, Literal, cast
+from typing import Final, cast
 
 from app.domain.errors import DomainError
 from app.platform.engine import EngineEvent, EngineFailure, EngineRefusal, GateReached, OutcomeFacts, SaveAnswer
 from app.platform.engine_jobs.queue import JobSpec
-from app.platform.engine_jobs.r4 import Cancelled, Checked, NotChecked, R4Runner, R4Target, r4_spec, r4_work, target_of
+from app.platform.engine_jobs.r4 import R4Target, r4_spec, r4_work
 from app.platform.engine_jobs.scheduler import EngineJobs, Failed, JobContext, JobTicket, Work, WorkResult
 from app.platform.engine_protocol import Violation, decode_save, decode_save_outcome
 from app.platform.errors import (
     ChangeNotSavedDetails,
     EngineStoppedDetails,
-    EngineUnavailableDetails,
     ErrorCode,
     NotSavedReason,
-    PausedReason,
     WorkspaceNotReadyDetails,
     WritesPausedDetails,
     error,
@@ -68,9 +57,6 @@ WRITER_REASONS: Final[frozenset[str]] = frozenset(
     {"hard_linked", "locked", "not_a_file", "permission", "io_error", "read_back", "name_not_utf8"}
 )
 OUTSIDE: Final[frozenset[str]] = frozenset({"changed", "path_moved"})
-MAX_R4_ROUNDS: Final = 16
-"""At most this many owed records are checked inside one save (a workspace has one, or a few after a forget and
-re-add; §6.5): beyond it the save refuses `check_pending` rather than loop."""
 
 
 def new_session_id() -> str:
@@ -110,12 +96,9 @@ class SaveRequest:
 
 @dataclass(frozen=True, slots=True)
 class Saved:
-    """The change is saved (its closed record is durable). `published`: the views were updated from it (BL-0113).
-    `nondeterministic`: the R4 run first inside this save found the ledger's plugins give a different result each time
-    (§11's notice; the screen is BL-0092's)."""
+    """The change is saved (its closed record is durable). `published`: the views were updated from it (BL-0113)."""
 
     published: bool
-    nondeterministic: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -160,34 +143,8 @@ def _not_done(code: ErrorCode, details: object | None = None) -> NotDone:
     return NotDone(error(code, details))
 
 
-def _paused(
-    reason: PausedReason,
-    file: str | None = None,
-    *,
-    record: str | None = None,
-    backup: str | None = None,
-    could_not_check: bool = False,
-) -> NotDone:
-    details = WritesPausedDetails(reason, file, record, backup, could_not_check)
-    return _not_done(ErrorCode.WRITES_PAUSED, details)
-
-
-def _unavailable(failure: EngineFailure) -> NotDone:
-    """No engine for the save after its owed R4 let it go on: not saved, nothing written, and the last change was
-    checked, so the text is the engine's (§11), never "could not check" (verifier r1 F8), worded by the failure's
-    cause (S0067, BL-0172): the restart bound (`unavailable`) "stopped several times"; an engine that could not start,
-    an incompatible one, the app closing, each its own `ENGINE_UNAVAILABLE` text; an engine that crashed or broke the
-    protocol while it started `ENGINE_STOPPED` (the save never ran: nothing written)."""
-    reasons: dict[str, Literal["stopped_often", "incompatible", "cannot_start", "closing"]] = {
-        "unavailable": "stopped_often",
-        "start_failed": "cannot_start",
-        "incompatible": "incompatible",
-        "closed": "closing",
-    }
-    reason = reasons.get(failure.kind)
-    if reason is None:
-        return _not_done(ErrorCode.ENGINE_STOPPED, EngineStoppedDetails(reason="crashed"))
-    return _not_done(ErrorCode.ENGINE_UNAVAILABLE, EngineUnavailableDetails(reason))
+def _paused(file: str | None = None) -> NotDone:
+    return _not_done(ErrorCode.WRITES_PAUSED, WritesPausedDetails("unfinished_save", file))
 
 
 def answer_of(a: SaveAnswer) -> SaveValue:
@@ -198,11 +155,7 @@ def answer_of(a: SaveAnswer) -> SaveValue:
         case "refused":
             match a.reason:
                 case "unfinished_save":
-                    return _paused(a.reason)
-                case "check_pending":
-                    return _paused(a.reason, record=a.path)
-                case "check_failed":
-                    return _paused(a.reason, record=a.path, backup=a.backup, could_not_check=a.could_not_check)
+                    return _paused()
                 case "legacy_app_saving":
                     return _not_done(ErrorCode.LEGACY_APP_SAVING)
                 case "ledger_changed":
@@ -213,7 +166,7 @@ def answer_of(a: SaveAnswer) -> SaveValue:
                     return _not_done(ErrorCode.INTERNAL)  # TODO(BL-0106): the contract's own code
         case "not_saved":
             if a.open_journal:
-                return _paused("unfinished_save")  # nothing replaced, the journal left open: Reopen resolves it
+                return _paused()  # nothing replaced, the journal left open: Reopen resolves it
             if a.reason in OUTSIDE:
                 return _not_done(ErrorCode.LEDGER_EXTERNALLY_CHANGED)
             if a.reason in WRITER_REASONS:
@@ -223,22 +176,22 @@ def answer_of(a: SaveAnswer) -> SaveValue:
                 )
             return _not_done(ErrorCode.INTERNAL)
         case "unfinished":
-            return _paused("unfinished_save", a.cause_path if a.cause == "created_path_taken" else None)
+            return _paused(a.cause_path if a.cause == "created_path_taken" else None)
 
 
 def save_outcome(facts: OutcomeFacts, *, gated: bool) -> SaveValue:
-    """§6.6, a pure function of what the disk says (model `DiskOutcome`): `.closed` or later is saved; `.resolved`,
+    """§6.6, a pure function of what the disk says (model `DiskOutcome`): `.closed` is saved; `.resolved`,
     a `.part` or no record is not saved ("unchanged" only after the re-hash); `.open` is unfinished (writes paused,
     Reopen); a record that could not be read is unknown (`CHANGE_OUTCOME_UNKNOWN` once the engine had sent its gate)."""
     match facts.record:
-        case "closed" | "done" | "mismatch":
+        case "closed":
             return Saved(published=False)  # TODO(BL-0152): a `rebuild` is queued when the publish did not land (part 2)
         case "none" | "part" | "resolved":
             unchanged = facts.unchanged is True
             details = ChangeNotSavedDetails("engine_stopped", facts.path, None, None, unchanged)
             return _not_done(ErrorCode.CHANGE_NOT_SAVED, details)
         case "open" | "kept":
-            return _paused("unfinished_save", facts.path)
+            return _paused(facts.path)
         case "unknown":
             if gated:
                 return _not_done(ErrorCode.CHANGE_OUTCOME_UNKNOWN)
@@ -249,7 +202,7 @@ type AfterSaved = Callable[[R4Target], object]
 
 
 def save_work(request: SaveRequest, *, after_saved: AfterSaved | None = None) -> Work:
-    """The work of a save job; `after_saved` is told the record of a save that landed (its R4 is owed)."""
+    """The work of a save job; `after_saved` is told the record of a save that landed (its R4 is queued)."""
 
     def work(ctx: JobContext) -> WorkResult:
         return _Run(ctx, request, after_saved).run()
@@ -261,11 +214,11 @@ def submit_save(
     jobs: EngineJobs, workspace: str, request: SaveRequest, *, background: bool = False
 ) -> JobTicket | Failed:
     """Queue a save (the user's, or the app's own in the background) whose landing queues its R4 as background work
-    (§6.1 step 11; at most one queued R4 per workspace, §3: a second one is the first's, and the record it would have
-    checked waits for the next save's step 1)."""
+    (§6.1 step 11). At most one R4 waits per workspace (§3); a newer save's takes the queued one's place, since only
+    the newest save can still be compared with the disk (`EngineJobs.submit`'s `replace_queued`; S0068)."""
 
     def queue_r4(target: R4Target) -> None:
-        jobs.submit(r4_spec(workspace), r4_work(request.app_local_data, target))
+        jobs.submit(r4_spec(workspace), r4_work(request.app_local_data, target), replace_queued=True)
 
     work = save_work(request, after_saved=queue_r4)
     return jobs.submit_background_save(workspace, work) if background else jobs.submit(save_spec(workspace), work)
@@ -278,68 +231,33 @@ class _Run:
         self._after_saved = after_saved
         self._job = new_job_name()  # this save's name: the save and its outcome read use it (§6.5, §6.6)
         self.gated = False
-        self._checked: set[R4Target] = set()
-        self._nondeterministic = False
 
     def _seen(self, event: EngineEvent) -> None:
         if isinstance(event, GateReached):
             self.gated = True
 
     def run(self) -> WorkResult:
-        while True:
-            out = self._ctx.call("save", params_of(self._r, self._job), on_event=self._seen)
-            if isinstance(out, EngineFailure):
-                if out.kind == "cancelled":
-                    return WorkResult(None)  # our own end: the job was answered already (§4)
-                if out.kind not in GONE:
-                    return WorkResult(_not_done(ErrorCode.INTERNAL))  # never sent (`too_large`): nothing written
+        out = self._ctx.call("save", params_of(self._r, self._job), on_event=self._seen)
+        if isinstance(out, EngineFailure):
+            if out.kind == "cancelled":
+                return WorkResult(None)  # our own end: the job was answered already (§4)
+            if out.kind not in GONE:
+                return WorkResult(_not_done(ErrorCode.INTERNAL))  # never sent (`too_large`): nothing written
+            return self._from_disk()
+        if isinstance(out, EngineRefusal):
+            if self.gated:  # an exception past `proceed` (round 1, verifier F3): the save may have written
                 return self._from_disk()
-            if isinstance(out, EngineRefusal):
-                if self.gated:  # an exception past `proceed` (round 1, verifier F3): the save may have written
-                    return self._from_disk()
-                return WorkResult(_not_done(ErrorCode.INTERNAL))  # refused before its gate: it wrote nothing
-            answer = decode_save(out)
-            if isinstance(answer, Violation):
-                return self._from_disk()  # a final reply we cannot read: what happened is on disk
-            if answer.outcome == "refused" and answer.reason == "check_pending":
-                stop = self._r4_first(answer)
-                if stop is None:
-                    continue  # R4 let the save go on: ask the engine again (its step 1 re-reads the records)
-                return stop
-            return self._answered(answer_of(answer))
+            return WorkResult(_not_done(ErrorCode.INTERNAL))  # refused before its gate: it wrote nothing
+        answer = decode_save(out)
+        if isinstance(answer, Violation):
+            return self._from_disk()  # a final reply we cannot read: what happened is on disk
+        return self._answered(answer_of(answer))
 
     @tla_action("S_Release")
     def _answered(self, value: SaveValue, *, ran_user_code: bool = True) -> WorkResult:
-        if isinstance(value, Saved):
-            if self._nondeterministic:
-                value = Saved(value.published, nondeterministic=True)
-            if self._after_saved is not None:
-                self._after_saved(R4Target(self._r.workspace_key, f"{self._r.session}-{self._job}"))
+        if isinstance(value, Saved) and self._after_saved is not None:
+            self._after_saved(R4Target(self._r.workspace_key, f"{self._r.session}-{self._job}"))
         return WorkResult(value, ran_user_code=ran_user_code)
-
-    def _r4_first(self, answer: SaveAnswer) -> WorkResult | None:
-        """§6.1 step 1 (the module's docstring): None when the save may be asked again."""
-        target = None if answer.path is None else target_of(answer.path)
-        if target is None or target in self._checked or len(self._checked) >= MAX_R4_ROUNDS:
-            return WorkResult(_paused("check_pending", record=answer.path))
-        self._checked.add(target)
-        runner = R4Runner(self._ctx, str(self._r.app_local_data))  # the save's engine ran no plugin: it refused
-        result = runner.run(target)
-        match result:
-            case Cancelled():
-                return WorkResult(None)  # the save's Cancel (§6.1 step 1: "A Cancel during this step cancels the save")
-            case Checked(outcome="mismatch", record=record, backup=backup):
-                return WorkResult(_paused("check_failed", record=record, backup=backup))
-            case NotChecked(counted="could_not_check", record=record, backup=backup):
-                return WorkResult(_paused("check_failed", record=record, backup=backup, could_not_check=True))
-            case NotChecked():
-                return WorkResult(_paused("check_pending", record=answer.path))
-            case Checked(outcome=outcome):
-                self._nondeterministic = self._nondeterministic or outcome == "nondeterministic"
-        failure = runner.fresh()  # steps 2-11 run in one fresh engine (§6.1)
-        if failure is not None:  # R4 let the save go on; no engine for the save itself (verifier r1 F8)
-            return WorkResult(None) if failure.kind == "cancelled" else WorkResult(_unavailable(failure))
-        return None
 
     def _no_engine(self) -> WorkResult:
         if self.gated:

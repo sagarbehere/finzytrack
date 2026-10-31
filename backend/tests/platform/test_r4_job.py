@@ -1,18 +1,11 @@
-"""R4, the sidecar's side (`app.platform.engine_jobs.r4`, `save`'s step 1, `save_text`; `design/specs/engine-jobs.md`
-§4, §5.1, §5.3, §6.1 steps 1 and 11, §6.7, §11; ADR-0008 amendments; S0066), over the fake engine port with a real
+"""R4, the sidecar's side (`app.platform.engine_jobs.r4`, `save`, `save_text`; `design/specs/engine-jobs.md` §4,
+§5.1, §5.3, §6.1 step 11, §6.7, §11; ADR-0067 decision 3; S0066, S0068), over the fake engine port with a real
 scheduler. Written from the spec's lines:
 
-- §6.1 step 1: "If this workspace has a closed record (re-read from disk), the save first runs that `r4` (§6.7) inside
-  this job. A `pass`, `superseded` or `nondeterministic` outcome lets the save go on. A `mismatch` refuses it with
-  `WRITES_PAUSED {check_failed}`; an R4 that could not finish (its engine stopped) refuses it with `WRITES_PAUSED
-  {check_pending}` … after the third such failure of the same R4 it becomes `check_failed`. A Cancel during this step
-  cancels the save"; "Steps 2-11 run in one fresh engine";
-- §6.1 step 11: "queue the `r4` as background work";
-- §6.7: "(4) Digest different, fingerprint unchanged → confirm: that engine ends, and a fresh engine that runs no user
-  code parses"; "A Cancel leaves it `.closed` … A failure to run (its engine crashed or failed to start) also leaves
-  it `.closed` and adds one to its `.r4-attempts` count"; "Resume saving is offered … The gate is lifted only by that
-  explicit action";
-- §11's rows: "a save's R4 could not finish", "the same R4 failed to run three times", "R4 mismatch".
+- §6.1 step 11: "queue the `r4` as background work"; a landed save's R4 gates nothing (ADR-0067): "saving continues";
+- §6.7: one `r4_check`, no confirm; "on a difference it logs and shows a short notice"; a failure to run, a death or a
+  Cancel shows nothing and counts nothing; at most one R4 waits per workspace, the newest save's;
+- §11's R4 row: the notice for a difference.
 """
 
 from __future__ import annotations
@@ -23,15 +16,14 @@ from typing import Any
 
 import pytest
 
-from app.platform.engine import EngineFailure
 from app.platform.engine_jobs import save_text
 from app.platform.engine_jobs.r4 import (
     Checked,
     NotChecked,
     R4Target,
-    resume_spec,
-    resume_work,
-    target_of,
+    notice_of,
+    r4_spec,
+    r4_work,
 )
 from app.platform.engine_jobs.save import (
     ChangeText,
@@ -44,17 +36,14 @@ from app.platform.engine_jobs.save import (
     submit_save,
 )
 from app.platform.engine_jobs.scheduler import Done, EngineJobs, Failed, JobTicket
-from app.platform.errors import ErrorCode, WritesPausedDetails
+from app.platform.errors import ErrorCode
 from tests.platform.fake_job_engine import BLOCK, CRASH, CRASH_TO_BOUND, FakeEngine, Gated
 
 DEADLINE = 20.0
 W1 = "ws-1"
 MAIN = "/L/main.bean"
 ALD = Path("/app")
-JD = "/app/local/k1/journal"
-OWED = f"{JD}/s0-j0.closed"
-MISMATCH = f"{JD}/s0-j0.mismatch"
-BACKUP = "/app/local/k1/backups/s0-j0"
+TARGET = R4Target("k1", "s0-j0")
 REQUEST = SaveRequest(
     session="a1b2",
     workspace_key="k1",
@@ -77,20 +66,15 @@ BLANK: dict[str, object] = {
     "cause": None,
     "cause_path": None,
     "published": False,
-    "backup": None,
-    "could_not_check": False,
 }
-OWES = {**BLANK, "outcome": "refused", "reason": "check_pending", "path": OWED, "unchanged": True}
 
 
 def answer(**kw: object) -> dict[str, object]:
     return {**BLANK, **kw}
 
 
-def r4(
-    outcome: str, *, loaded: bool = False, record: str | None = None, backup: str | None = BACKUP
-) -> dict[str, object]:
-    return {"outcome": outcome, "loaded": loaded, "record": record, "backup": backup}
+def r4(outcome: str, *, loaded: bool = True) -> dict[str, object]:
+    return {"outcome": outcome, "loaded": loaded}
 
 
 class Rig:
@@ -146,227 +130,38 @@ def make() -> Iterator[Any]:
         r.jobs.close()
 
 
-def paused(value: SaveValue) -> WritesPausedDetails:
-    assert isinstance(value, NotDone), value
-    assert value.error.code == ErrorCode.WRITES_PAUSED, value.error
-    assert isinstance(value.error.details, WritesPausedDetails)
-    return value.error.details
+def background(rig: Any, target: R4Target = TARGET) -> object:
+    out = rig.run(rig.jobs.submit(r4_spec(W1), r4_work(ALD, target)))
+    assert isinstance(out, Done), out
+    return out.value
 
 
-# -- the record a path names -----------------------------------------------------------------------------------------
+# -- R4 gates nothing ------------------------------------------------------------------------------------------------
 
 
-def test_the_target_is_read_from_the_records_path_only() -> None:
-    assert target_of(OWED) == R4Target("k1", "s0-j0")
-    assert target_of(MISMATCH) == R4Target("k1", "s0-j0")
-    for bad in (
-        "/app/local/k1/journal/s0-j0.open",  # not a state R4 acts on
-        "/app/local/k1/other/s0-j0.closed",
-        "/app/x/k1/journal/s0-j0.closed",
-        "/app/local/k1/journal/s0.closed",  # no job part
-        "/app/local/k1/journal/s0-j/0.closed",
-        "/app/local/../journal/s0-j0.closed",
-        "s0-j0.closed",
-    ):
-        assert target_of(bad) is None, bad
-
-
-# -- R4 first, inside the save (§6.1 step 1) -----------------------------------------------------------------------
-
-
-@pytest.mark.parametrize("outcome", ["pass", "superseded", "superseded_build"])
-def test_an_owed_r4_that_lets_the_save_go_on_is_run_first_and_the_save_is_asked_again_in_a_fresh_engine(
-    make: Any, outcome: str
-) -> None:
-    rig = make({"save": [OWES, Gated(answer())], "r4_check": [r4(outcome, loaded=True, record=f"{JD}/s0-j0.done")]})
-    assert rig.save() == Saved(published=False)
-    assert rig.ops() == ["save", "r4_check", "save"]
-    calls = rig.serials()
-    assert calls[0][0] == calls[1][0], "R4 runs in the save's own engine: it ran no plugin before refusing"
-    assert calls[2][0] != calls[1][0], "steps 2-11 run in a fresh engine after R4's load (§6.1, §5.1)"
-    assert rig.engine.params[1][2] == {"app_local_data": "/app", "key": "k1", "name": "s0-j0"}
-
-
-def test_r4_that_did_not_load_leaves_the_engine_to_the_save(make: Any) -> None:
-    rig = make({"save": [OWES, Gated(answer())], "r4_check": [r4("superseded", loaded=False)]})
-    assert rig.save() == Saved(published=False)
-    calls = rig.serials()
-    assert calls[0][0] == calls[1][0] == calls[2][0]  # parse-only work may serve the next part (§5.1)
-
-
-def test_a_mismatch_refuses_check_failed_with_the_record_and_the_backup(make: Any) -> None:
-    rig = make(
-        {
-            "save": [OWES],
-            "r4_check": [r4("differs", loaded=True, record=OWED)],
-            "r4_confirm": [r4("mismatch", record=MISMATCH)],
-        }
-    )
-    d = paused(rig.save())
-    assert d == WritesPausedDetails("check_failed", None, MISMATCH, BACKUP, False)
-    assert save_text.paused_text(d) == f"{save_text.CHECK_FAILED} {save_text.BACKUP_HERE}"
-    assert rig.ops() == ["save", "r4_check", "r4_confirm"]
-    calls = rig.serials()
-    assert calls[2][0] != calls[1][0], "the confirm runs in a fresh engine that ran no user code (§6.7 step 4)"
-
-
-def test_a_passed_r4_then_no_engine_for_the_save_is_not_could_not_check(make: Any) -> None:
-    """Verifier r1 F8: the owed R4 passed (the record is `.done`), then no engine could start for the save itself:
-    the engine's answer (`ENGINE_UNAVAILABLE`), never "could not check your last change"."""
-    import time
-
-    rig = make({"save": [OWES, Gated(answer())], "r4_check": [r4("pass", loaded=True, record=f"{JD}/s0-j0.done")]})
-    real = rig.engine.call
-
-    def call(op: str, params: Any, **kw: Any) -> Any:
-        out = real(op, params, **kw)
-        if op == "r4_check":
-            now = time.monotonic()
-            rig.engine.unavailable((now, now, now))  # no engine can start after R4's load
-        return out
-
-    rig.engine.call = call
-    value = rig.save()
-    assert isinstance(value, NotDone)
-    assert value.error.code == ErrorCode.ENGINE_UNAVAILABLE
-    assert rig.ops() == ["save", "r4_check"]
-
-
-@pytest.mark.parametrize(
-    ("kind", "code", "reason"),
-    [
-        ("incompatible", ErrorCode.ENGINE_UNAVAILABLE, "incompatible"),
-        ("start_failed", ErrorCode.ENGINE_UNAVAILABLE, "cannot_start"),
-        ("crashed", ErrorCode.ENGINE_STOPPED, "crashed"),
-        ("protocol_violation", ErrorCode.ENGINE_STOPPED, "crashed"),
-        ("unavailable", ErrorCode.ENGINE_UNAVAILABLE, "stopped_often"),
-    ],
-)
-def test_a_passed_r4_then_no_engine_for_the_save_is_worded_by_its_cause(
-    make: Any, kind: str, code: ErrorCode, reason: str
-) -> None:
-    """BL-0172 (S0066 red team r2): the fresh engine for the save after its owed R4 passed did not come; the text says
-    why (§11): "stopped several times" only when the restart bound was reached; an engine that crashed or broke the
-    protocol while it started is `ENGINE_STOPPED` (nothing written: the save never ran); an incompatible one says the
-    install is damaged (before S0067: every cause but three read "stopped several times")."""
-    import time
-
-    rig = make({"save": [OWES, Gated(answer())], "r4_check": [r4("pass", loaded=True, record=f"{JD}/s0-j0.done")]})
-    real = rig.engine.call
-
-    def call(op: str, params: Any, **kw: Any) -> Any:
-        out = real(op, params, **kw)
-        if op == "r4_check":
-            if kind == "incompatible":
-                rig.engine.incompatible()
-            elif kind == "unavailable":
-                now = time.monotonic()
-                rig.engine.unavailable((now, now, now))
-            else:
-                rig.engine.start_failure = EngineFailure(kind, "test")  # type: ignore[arg-type]
-        return out
-
-    rig.engine.call = call
-    value = rig.save()
-    assert isinstance(value, NotDone)
-    assert value.error.code == code
-    assert getattr(value.error.details, "reason", None) == reason
-    assert rig.ops() == ["save", "r4_check"]
-
-
-def test_no_backup_folder_no_promise_of_one() -> None:
-    """Verifier r1 F9: a pause whose record could not be read has no backup folder to show."""
-    for could_not_check in (True, False):
-        d = WritesPausedDetails("check_failed", None, MISMATCH, None, could_not_check)
-        assert save_text.BACKUP_HERE not in save_text.paused_text(d)
-
-
-def test_a_nondeterministic_outcome_saves_and_says_so(make: Any) -> None:
-    rig = make(
-        {
-            "save": [OWES, Gated(answer())],
-            "r4_check": [r4("differs", loaded=True, record=OWED)],
-            "r4_confirm": [r4("nondeterministic", record=f"{JD}/s0-j0.done")],
-        }
-    )
-    assert rig.save() == Saved(published=False, nondeterministic=True)
-    assert rig.ops() == ["save", "r4_check", "r4_confirm", "save"]
-
-
-def test_an_r4_whose_engine_died_counts_one_failure_in_a_fresh_engine_and_refuses_check_pending(make: Any) -> None:
-    rig = make({"save": [OWES], "r4_check": [CRASH], "r4_attempt": [r4("counted", record=OWED)]})
-    d = paused(rig.save())
-    assert d == WritesPausedDetails("check_pending", None, OWED, None, False)
-    assert save_text.paused_text(d) == save_text.CHECK_PENDING
-    assert rig.ops() == ["save", "r4_check", "r4_attempt"]
-    assert rig.serials()[2][0] != rig.serials()[1][0]
-
-
-@pytest.mark.parametrize("failure", ["confirm", "refusal", "unreadable"])
-def test_other_failures_to_run_are_counted_too(make: Any, failure: str) -> None:
-    from app.platform.engine import EngineRefusal
-
-    scripted: dict[str, list[object]] = {"save": [OWES], "r4_attempt": [r4("counted", record=OWED)]}
-    if failure == "confirm":
-        scripted["r4_check"] = [r4("differs", loaded=True, record=OWED)]
-        scripted["r4_confirm"] = [CRASH]
-    elif failure == "refusal":  # an exception in the engine (the replica refused): its plugins may have run
-        scripted["r4_check"] = [EngineRefusal("engine.internal", "failed")]
-    else:
-        scripted["r4_check"] = [r4("unreadable", backup=None)]
-    rig = make(scripted)
-    assert paused(rig.save()).reason == "check_pending"
-    assert rig.ops()[-1] == "r4_attempt"
-    if failure == "unreadable":  # no plugin ran: the same engine counts it
-        assert rig.serials()[-1][0] == rig.serials()[-2][0]
-    else:  # a refusal may come after the plugins ran, a death leaves no engine: a fresh one counts it (§5.1)
-        assert rig.serials()[-1][0] != rig.serials()[-2][0]
-
-
-def test_the_third_failure_refuses_check_failed_could_not_check(make: Any) -> None:
-    rig = make({"save": [OWES], "r4_check": [CRASH], "r4_attempt": [r4("could_not_check", record=MISMATCH)]})
-    d = paused(rig.save())
-    assert d == WritesPausedDetails("check_failed", None, MISMATCH, BACKUP, True)
-    assert save_text.paused_text(d) == f"{save_text.COULD_NOT_CHECK} {save_text.BACKUP_HERE}"
-
-
-def test_a_cancel_during_the_owed_r4_cancels_the_save_and_counts_nothing(make: Any) -> None:
-    rig = make({"save": [OWES], "r4_check": [BLOCK, r4("pass", loaded=True)]})
-    ticket = rig.jobs.submit(save_spec(W1), save_work(REQUEST))
-    assert isinstance(ticket, JobTicket)
+def test_after_a_difference_the_next_save_runs_with_no_r4_inside_it(make: Any) -> None:
+    """ADR-0067 decision 3 (S0068): a save after an R4 that found a difference is one `save` request: no pause, no R4
+    run first (until S0068: `WRITES_PAUSED {check_failed}`, or the owed R4 inside the save)."""
+    rig = make({"save": [Gated(answer()), Gated(answer())], "r4_check": [r4("differs")]})
+    first = rig.run(submit_save(rig.jobs, W1, REQUEST))
+    assert isinstance(first, Done), first
     rig.called("r4_check")
-    rig.jobs.cancel(ticket.id)
-    out = rig.run(ticket)
-    assert isinstance(out, Failed), out
-    assert out.error.code == ErrorCode.JOB_CANCELLED
-    assert "r4_attempt" not in rig.ops()
-
-
-def test_no_engine_to_count_in_counts_nothing_and_refuses_check_pending(make: Any) -> None:
-    rig = make({"save": [OWES], "r4_check": [CRASH_TO_BOUND]})
-    value = rig.save()
-    assert paused(value).reason == "check_pending"
-    assert "r4_attempt" not in rig.ops()
-
-
-def test_a_record_met_twice_in_one_save_is_not_checked_again(make: Any) -> None:
-    rig = make({"save": [OWES, OWES], "r4_check": [r4("pass", loaded=True)]})
-    assert paused(rig.save()) == WritesPausedDetails("check_pending", None, OWED, None, False)
+    assert rig.save() == Saved(published=False)
     assert rig.ops() == ["save", "r4_check", "save"]
 
 
-def test_a_check_failed_refusal_from_the_engine_carries_its_record_and_backup(make: Any) -> None:
-    rig = make(
-        {"save": [answer(outcome="refused", reason="check_failed", path=MISMATCH, backup=BACKUP, could_not_check=True)]}
-    )
-    assert paused(rig.save()) == WritesPausedDetails("check_failed", None, MISMATCH, BACKUP, True)
+def test_a_save_is_one_request_whatever_records_stand(make: Any) -> None:
+    """S0068: the save never asks for R4 first; the engine's answer is the save's value."""
+    rig = make({"save": [Gated(answer())]})
+    assert rig.save() == Saved(published=False)
+    assert rig.ops() == ["save"]
 
 
 # -- the R4 a landed save queues (§6.1 step 11) ------------------------------------------------------------------
 
 
 def test_a_landed_save_queues_its_own_r4(make: Any) -> None:
-    rig = make({"save": [Gated(answer())], "r4_check": [r4("pass", loaded=True)]})
+    rig = make({"save": [Gated(answer())], "r4_check": [r4("pass")]})
     out = rig.run(submit_save(rig.jobs, W1, REQUEST))
     assert isinstance(out, Done), out
     assert out.value == Saved(published=False)
@@ -386,69 +181,87 @@ def test_a_save_read_from_disk_as_saved_queues_its_r4_too(make: Any) -> None:
     from tests.platform.fake_job_engine import GATE_DIE
 
     facts = {"record": "closed", "unchanged": None, "path": None, "errno": None}
-    rig = make({"save": [GATE_DIE], "save_outcome": [facts], "r4_check": [r4("pass", loaded=True)]})
+    rig = make({"save": [GATE_DIE], "save_outcome": [facts], "r4_check": [r4("pass")]})
     out = rig.run(submit_save(rig.jobs, W1, REQUEST))
     assert isinstance(out, Done), out
     assert out.value == Saved(published=False)
     rig.called("r4_check")
 
 
-def test_the_background_r4_counts_its_engines_death_in_a_fresh_engine(make: Any) -> None:
-    from app.platform.engine_jobs.r4 import r4_spec, r4_work
+def test_a_newer_saves_r4_takes_the_queued_ones_place(make: Any) -> None:
+    """S0068: one R4 waits per workspace (INV-10), and it is the newest save's: an older save's R4 would only find
+    the disk moved by the newer save (`superseded`), leaving the newest save unchecked (the old gate caught it at the
+    next save's step 1; nothing does now)."""
+    rig = make({"r4_check": [BLOCK, r4("pass"), r4("pass")]})
+    first = rig.jobs.submit(r4_spec(W1), r4_work(ALD, R4Target("k1", "s0-j0")))  # running, blocked
+    assert isinstance(first, JobTicket)
+    rig.called("r4_check")
+    older = rig.jobs.submit(r4_spec(W1), r4_work(ALD, R4Target("k1", "s0-j1")))
+    newer = rig.jobs.submit(r4_spec(W1), r4_work(ALD, R4Target("k1", "s0-j2")), replace_queued=True)
+    assert isinstance(older, JobTicket)
+    assert isinstance(newer, JobTicket)
+    assert newer.id == older.id  # one queued R4
+    rig.engine.release("r4_check")
+    rig.run(first)
+    rig.run(newer)
+    names = [p[2]["name"] for p in rig.engine.params if p[1] == "r4_check"]
+    assert names == ["s0-j0", "s0-j2"]
 
-    rig = make({"r4_check": [CRASH], "r4_attempt": [r4("counted", record=OWED)]})
-    out = rig.run(rig.jobs.submit(r4_spec(W1), r4_work(ALD, R4Target("k1", "s0-j0"))))
-    assert isinstance(out, Done), out
-    assert out.value == NotChecked("counted", OWED, BACKUP)
-    assert rig.ops() == ["r4_check", "r4_attempt"]
-    assert rig.serials()[0][0] != rig.serials()[1][0]
+
+# -- the outcomes and the notice (§6.7, §11) -----------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("outcome", ["pass", "differs", "superseded", "gone", "unreadable"])
+def test_the_background_r4_is_one_check_and_reports_its_outcome(make: Any, outcome: str) -> None:
+    rig = make({"r4_check": [r4(outcome)]})
+    value = background(rig)
+    assert value == Checked(outcome)  # pyright: ignore[reportArgumentType]
+    assert rig.ops() == ["r4_check"]  # no confirm, no count (S0068)
+
+
+def test_only_a_difference_has_a_notice() -> None:
+    """§11 (S0068): the notice is said for `differs` only, and says the change is saved."""
+    assert notice_of(Checked("differs")) == save_text.R4_DIFFERS
+    assert save_text.R4_DIFFERS.startswith("Your change is saved.")
+    for other in ("pass", "superseded", "gone", "unreadable"):
+        assert notice_of(Checked(other)) is None
+    for why in ("engine_failed", "refused", "violation"):
+        assert notice_of(NotChecked(why)) is None
+
+
+@pytest.mark.parametrize("death", [CRASH, CRASH_TO_BOUND])
+def test_a_death_of_r4s_engine_counts_nothing_and_shows_nothing(make: Any, death: str) -> None:
+    """S0068: the queue loses an R4 whose engine died, as a read (`EngineLost`, §5.3): no fresh engine, no
+    `r4_attempt`, no notice (until S0068 the job was kept to count the failure on disk)."""
+    rig = make({"r4_check": [death]})
+    out = rig.run(rig.jobs.submit(r4_spec(W1), r4_work(ALD, TARGET)))
+    assert isinstance(out, Failed), out
+    assert out.error.code == ErrorCode.ENGINE_STOPPED
+    assert rig.ops() == ["r4_check"]
+
+
+def test_a_refusal_from_the_engine_is_not_checked(make: Any) -> None:
+    from app.platform.engine import EngineRefusal
+
+    rig = make({"r4_check": [EngineRefusal("engine.internal", "an encrypted file met on the saved disk")]})
+    assert background(rig) == NotChecked("refused")
 
 
 def test_the_background_r4_ended_by_another_jobs_cancel_counts_nothing(make: Any) -> None:
-    from app.platform.engine_jobs.r4 import r4_spec, r4_work
-
-    rig = make({"r4_check": [BLOCK, r4("pass", loaded=True)], "save": [Gated(answer())]})
-    bg = rig.jobs.submit(r4_spec(W1), r4_work(ALD, R4Target("k1", "s0-j0")))
+    rig = make({"r4_check": [BLOCK, r4("pass")], "save": [Gated(answer())]})
+    bg = rig.jobs.submit(r4_spec(W1), r4_work(ALD, TARGET))
     assert isinstance(bg, JobTicket)
     rig.called("r4_check")
     waiting = rig.jobs.submit(save_spec(W1), save_work(REQUEST))
     assert isinstance(waiting, JobTicket)
     rig.jobs.cancel(waiting.id)  # §4: a waiting user's Cancel ends a running R4 (nobody waits for it)
     rig.run(bg)
-    assert "r4_attempt" not in rig.ops()
+    assert rig.ops() == ["r4_check"]
 
 
-def test_the_background_r4_reports_a_mismatch(make: Any) -> None:
-    from app.platform.engine_jobs.r4 import r4_spec, r4_work
-
-    rig = make({"r4_check": [r4("differs", loaded=True, record=OWED)], "r4_confirm": [r4("mismatch", record=MISMATCH)]})
-    out = rig.run(rig.jobs.submit(r4_spec(W1), r4_work(ALD, R4Target("k1", "s0-j0"))))
-    assert isinstance(out, Done), out
-    assert out.value == Checked("mismatch", MISMATCH, BACKUP)
-
-
-# -- Resume saving -------------------------------------------------------------------------------------------------
-
-
-def test_resume_saving_renames_the_record_it_was_shown(make: Any) -> None:
-    rig = make({"r4_resume": [r4("done", record=f"{JD}/s0-j0.done", backup=None)]})
-    out = rig.run(rig.jobs.submit(resume_spec(W1), resume_work(ALD, MISMATCH)))
-    assert isinstance(out, Done), out
-    assert out.value == "done"
-    assert rig.engine.params[0][2] == {"app_local_data": "/app", "key": "k1", "name": "s0-j0"}
-
-
-@pytest.mark.parametrize("record", [OWED, f"{JD}/s0-j0.done", "/elsewhere/s0-j0.mismatch"])
-def test_resume_saving_never_acts_on_anything_but_a_mismatch_record(make: Any, record: str) -> None:
-    rig = make({})
-    out = rig.run(rig.jobs.submit(resume_spec(W1), resume_work(ALD, record)))
-    assert isinstance(out, Done), out
-    assert out.value == "gone"
-    assert rig.ops() == []
-
-
-def test_resume_saving_that_gets_no_answer_says_it_failed(make: Any) -> None:
-    rig = make({"r4_resume": [CRASH]})
-    out = rig.run(rig.jobs.submit(resume_spec(W1), resume_work(ALD, MISMATCH)))
-    assert isinstance(out, Done), out
-    assert out.value == "failed"
+def test_a_save_value_never_carries_r4(make: Any) -> None:
+    """S0068: `Saved` has no `nondeterministic` (R4 never runs inside a save)."""
+    rig = make({"save": [Gated(answer())]})
+    value = rig.save()
+    assert isinstance(value, Saved | NotDone)
+    assert not hasattr(value, "nondeterministic")

@@ -16,13 +16,13 @@ CFG_DIR = os.path.join(HERE, "cfg")
 
 DEFAULTS = {
     "MUTANT": '"none"', "UserBudget": "0", "BootJ": "{}", "BootTemps": "FALSE", "BootTorn": "FALSE", "BootTarget": "1",
-    "BootOrphan": "FALSE", "BootLink": "FALSE", "EdFiles": "{}", "R4Outs": '{"pass"}',
+    "BootOrphan": "FALSE", "BootLink": "FALSE", "EdFiles": "{}",
     "StopBound": "3",
     "MaxSaves": "0", "MaxBg": "0", "MaxReads": "0", "MaxRebuild": "0", "MaxEdits": "0",
     "MaxCrash": "0", "MaxAppCrash": "0", "MaxPower": "0", "MaxStarts": "0", "MaxSwitch": "0",
     "MaxHang": "0", "MaxStuck": "0", "MaxOrphan": "0",
     "MaxUnreach": "0", "MaxLink": "0", "MaxForget": "0", "MaxIO": "0", "MaxClose": "0",
-    "MaxUpdate": "0", "MaxExpire": "0", "MaxDrop": "0", "MaxResume": "0",
+    "MaxUpdate": "0", "MaxExpire": "0", "MaxDrop": "0",
     "DoCopy": "FALSE", "CreateTarget": '"none"', "DoQuit": "FALSE", "EdDurable": "TRUE", "RestartAfterQuit": "FALSE", "CloseQueued": "TRUE", "JobBound": "12",
 }
 
@@ -35,7 +35,6 @@ INVARIANTS = [
     "CommittedCombinationChecked", "ExternalEditNeverSilentlyLost",
     "RecoveryNeverClobbersForeignBytes", "RecoveryWritesOnlyRecordedPaths",
     "EveryJournalRecoveredOrBlocking", "NoOpenOverUnresolvedJournal", "NoCopyOverOpenJournal",
-    "NoSaveWhileR4Owed", "RecordsMatchByLineage",
     "NoManifestOverIncompleteFolder", "NonEmptyTargetUntouched", "DroppedFileNeverReplaced",
     "OtherNamesDoNotStop", "ForeignOverwriteCaughtByReadBack",
     "NoAdviceOnTimerForSlowWork", "EveryWaitHasAnExit", "QuitAnywayAlwaysEnabled",
@@ -46,9 +45,8 @@ INVARIANTS = [
 ]
 SAFETY_PROPS = [
     "WaitedForFirst", "OutcomeTruthful", "UnchangedOnlyAfterRehash", "NoTornLedgerAfterRecovery",
-    "CutTempNeverBlocks", "BlockedOnlyForCause", "R4GateLiftedOnlyByUser",
-    "BuildChangePublishesRealLoad", "DeleteAdviceOnlyForOwnFiles", "InstallerNeverOverOpenJournal",
-    "OwedR4BeforeNextSave", "NoFalseMismatch", "AppScopedWaitsForRecovery",
+    "CutTempNeverBlocks", "BlockedOnlyForCause", "DeleteAdviceOnlyForOwnFiles", "InstallerNeverOverOpenJournal",
+    "AppScopedWaitsForRecovery",
     "KeepOnlyJudged",   # fidelity review 4
 ]
 LIVENESS = ["EveryBootEnds", "EveryWaitedForJobEnds", "EverySwitchEnds", "EveryQuitEndsOrOffersQuitAnyway",
@@ -63,7 +61,6 @@ def strs(*xs):
     return "{" + ", ".join('"%s"' % x for x in xs) + "}"
 
 
-ALLR4 = strs("pass", "nondet", "differ")
 # name: (tier, world overrides, specification, liveness properties or None for all safety)
 WORLDS = {
     # --- the save (§6.1-§6.6, §10) ---
@@ -75,15 +72,10 @@ WORLDS = {
     "S_save_quit_power": ("S", S(RestartAfterQuit=True, MaxSaves=1, MaxStarts=2, MaxStuck=1, MaxOrphan=1,
                                  MaxClose=1, MaxPower=1)),
     "S_cancel_commit": ("S", S(MaxSaves=1, MaxEdits=1, EdFiles=strs("R", "I"), MaxCrash=1)),
-    # --- R4 and records (§6.5, §6.7) ---
-    "S_r4_outcomes": ("S", S(MaxSaves=2, R4Outs=ALLR4, MaxEdits=1, EdFiles=strs("I"), MaxResume=1)),
-    # fidelity review 3 (M1): R4 ended by another job's Cancel or a crash after its record's rename, the
-    # gate that then acts on the record, and a power loss (the reviewer's RV3_gate_unsynced_*, RV3_lift_by_cancel)
-    "S_r4_ends": ("S", S(MaxSaves=2, R4Outs=ALLR4, MaxReads=1, MaxCrash=1, MaxPower=1, MaxStarts=1,
-                         MaxResume=1)),
-    "S_r4_attempts": ("S", S(MaxSaves=2, MaxCrash=3, MaxExpire=3, MaxResume=1, MaxStarts=1,
-                             MaxAppCrash=1)),
-    "S_r4_build": ("S", S(RestartAfterQuit=True, MaxSaves=1, DoQuit=True, MaxUpdate=1, MaxStarts=1, MaxCrash=1)),
+    # --- R4 (§6.7): since S0068 (ADR-0067) a background job with no disk effect; saves, a read whose Cancel ends
+    #     the R4 ahead of it, a crash and a power loss around it (S_r4_outcomes, S_r4_attempts, S_r4_build and
+    #     the R4 gate's properties went with the gate) ---
+    "S_r4_ends": ("S", S(MaxSaves=2, MaxReads=1, MaxCrash=1, MaxPower=1, MaxStarts=1)),
     "S_forget": ("S", S(MaxSaves=2, MaxSwitch=2, MaxForget=1, MaxAppCrash=1, MaxStarts=1)),
     # --- recover-all, boot, blocking (§8.1, §9.2) ---
     "S_recover": ("S", S(BootJ=strs("b2", "b3"), MaxCrash=1, MaxUnreach=1, MaxEdits=1, EdFiles=strs("R"))),
@@ -133,23 +125,19 @@ WORLDS = {
     "L_recover_all": ("L", S(BootJ=strs("b2", "b3"), BootTemps=True, BootOrphan=True, MaxCrash=2,
                              MaxUnreach=1, MaxEdits=1, EdFiles=strs("R", "J", "K"),
                              DoCopy=True, MaxPower=1, MaxStarts=1)),
-    "L_r4_switch": ("L", S(JobBound=30, MaxSaves=2, MaxBg=1, R4Outs=ALLR4, MaxSwitch=2, MaxForget=1,
-                           MaxCrash=2, MaxResume=1, MaxEdits=1, EdFiles=strs("I"))),
     "L_session": ("L", S(RestartAfterQuit=True, JobBound=30, MaxSaves=1, MaxBg=1, MaxReads=1, MaxRebuild=1, MaxSwitch=2, MaxHang=1,
                          MaxStuck=1, MaxClose=1, MaxCrash=1, DoQuit=True,
                          MaxStarts=1, CreateTarget='"empty"', MaxEdits=1, EdFiles=strs("R"))),
-    "M_r4_switch": ("M", S(MaxSaves=2, R4Outs=ALLR4, MaxSwitch=1, MaxForget=1, MaxCrash=1,
-                           MaxResume=1)),
     # --- large: the whole world at once ---
     # the whole world at once is far beyond exhaustive checking: a bounded random simulation instead
     # (mode "simulate"); create and copy stay out of it (the small create/copy worlds cover them)
     "L_world": ("L", S(RestartAfterQuit=True, JobBound=30, BootJ=strs("b2", "b3"), BootTemps=True, MaxSaves=2, MaxBg=1, MaxReads=1,
-                       R4Outs=ALLR4, MaxEdits=2, EdFiles=strs("R", "N", "I", "K"), MaxCrash=2,
+                       MaxEdits=2, EdFiles=strs("R", "N", "I", "K"), MaxCrash=2,
                        MaxAppCrash=1, MaxPower=1, MaxStarts=2, MaxSwitch=2, MaxHang=1, MaxStuck=1,
                        MaxOrphan=1, MaxUnreach=1, MaxForget=1, MaxIO=1, MaxClose=1, MaxUpdate=1,
-                       MaxResume=1, DoQuit=True)),
+                       DoQuit=True)),
     "L_save_deep": ("L", S(RestartAfterQuit=True, JobBound=30, MaxSaves=2, MaxBg=1, MaxCrash=2, MaxIO=1, MaxEdits=3,
-                           EdFiles=strs("R", "N", "I"), MaxPower=2, MaxStarts=3, MaxAppCrash=1, MaxOrphan=1, R4Outs=ALLR4, MaxResume=1)),
+                           EdFiles=strs("R", "N", "I"), MaxPower=2, MaxStarts=3, MaxAppCrash=1, MaxOrphan=1)),
 }
 
 # liveness configurations: world, spec, properties
@@ -180,14 +168,16 @@ LIVE = {
 
 # mutant: (world it runs on, property it must break, extra overrides)
 # The first 35 are §13's "thirty-five mutants of the two executable models"; then §13's five more;
-# then one per property §13 names that had none (PROCESS.md §3: each property has a mutant).
+# then one per property §13 names that had none (PROCESS.md §3: each property has a mutant). S0068 (ADR-0067)
+# removed the R4 gate's mutants with its properties: gate_in_memory, gate_by_key, supersede_publishes_nothing,
+# switch_waits_for_r4 (replaced by switch_close_never), cnc_auto_lift, r4_skipped_before_save, confirm_no_recheck,
+# r4_rename_unsynced, rv_r4_crash_nosync, r4_cancel_nosync (MAPPING.md §5).
 MUTANTS = [
     # model 1 (16)
     ("report_before_close_sync", "S_save_power", "SavedSurvivesPowerLoss", {}),
     ("no_journal_sync", "S_save_crash", "JournalDurableBeforeFirstReplace", {}),
     ("no_backup_sync", "S_save_crash", "BackupDurableBeforeReplace", {}),
     ("no_temp_fsync", "S_save_power", "NoTornLedgerAfterRecovery", {}),
-    ("gate_in_memory", "S_save_crash", "NoSaveWhileR4Owed", S(MaxSaves=2, MaxIO=0, MaxEdits=0, MaxReads=0)),
     ("no_path_guard", "S_recover_lock", "RecoveryWritesOnlyRecordedPaths", S(BootOrphan=False)),
     ("recover_target_only", "S_recover", "NoOpenOverUnresolvedJournal", {}),
     ("cancel_after_commit", "S_cancel_commit", "NoOwnEndAfterCommitPoint", {}),
@@ -197,7 +187,6 @@ MUTANTS = [
     ("temps_after_close", "S_save_crash", "CutTempNeverBlocks", {}),
     ("old_temp_rule", "S_recover_lock", "CutTempNeverBlocks", S(BootLink=False, BootOrphan=False)),
     ("quit_says_undone", "S_save_quit", "OutcomeTruthful", {}),
-    ("gate_by_key", "S_forget", "RecordsMatchByLineage", {}),
     ("quit_note_two_branches", "S_save_quit", "OutcomeTruthful", {}),
     # model 2 (19)
     ("cancel_stops_all", "S_recover", "EveryJournalRecoveredOrBlocking", {}),
@@ -224,7 +213,6 @@ MUTANTS = [
     ("switch_drops_confirmed_save", "S_switch", "OutcomeTruthful", {}),
     ("recovery_while_open", "S_switch", "OnlyOpenWorkspaceRunsJobs", {}),
     ("spawn_before_reap", "S_queue", "AtMostOneEngine", {}),
-    ("supersede_publishes_nothing", "S_r4_build", "BuildChangePublishesRealLoad", {}),
     # one per property that §13 names without a mutant (added by the model, MAPPING.md)
     ("dispatch_while_running", "S_queue", "AtMostOneJobRunning", {}),
     ("open_before_close", "S_switch", "AtMostOneOpenWorkspace", {}),
@@ -232,19 +220,18 @@ MUTANTS = [
     ("unchanged_without_rehash", "S_cancel_commit", "UnchangedOnlyAfterRehash", {}),
     ("block_without_cause", "S_recover_lock", "BlockedOnlyForCause", S(BootLink=False, BootOrphan=False)),
     ("installer_ignores_journal", "S_quit", "InstallerNeverOverOpenJournal", {}),
+    # S0068 (ADR-0067): a save that waits for the queued background R4 never ends (a save never waits for R4); A that
+    # never closes (switch_waits_for_r4 had nothing left to wait for)
     ("save_waits_r4_forever", "LS_jobs", "EveryWaitedForJobEnds", S(MaxSaves=2, MaxBg=0, MaxReads=0,
                                                                    MaxSwitch=0, MaxCrash=0)),
-    ("switch_waits_for_r4", "LS_jobs", "EverySwitchEnds", S(MaxBg=0, MaxReads=0, MaxCrash=0)),
+    ("switch_close_never", "LS_jobs", "EverySwitchEnds", S(MaxBg=0, MaxReads=0, MaxCrash=0)),
     ("quit_waits_reap", "LS_quit", "EveryQuitEndsOrOffersQuitAnyway", {}),
-    ("cnc_auto_lift", "S_r4_attempts", "R4GateLiftedOnlyByUser", S(MaxSaves=3)),
-    ("r4_skipped_before_save", "S_r4_outcomes", "OwedR4BeforeNextSave", {}),
     # the model's findings F1-F4 and O1, now rules of the spec (§13): each must fail its property
     ("outcome_unsynced", "S_save_power", "SavedSurvivesPowerLoss", S(MaxCrash=1, MaxEdits=0, EdFiles="{}")),
     ("rollback_skips_temp_rule", "S_save_crash", "ExternalEditNeverSilentlyLost",
      S(MaxCrash=0, MaxAppCrash=0, MaxReads=0, MaxStarts=0, EdFiles=strs("R"))),
     ("swap_back_unsynced", "S_save_power", "ExternalEditNeverSilentlyLost", S(MaxIO=1)),
     ("screen_holds_queue", "LS_boot", "EveryBootEnds", {}),
-    ("confirm_no_recheck", "S_r4_outcomes", "NoFalseMismatch", {}),
     # model review 1: its extra mutants, and new rules
     ("stay_disabled", "S_switch", "EveryWaitHasAnExit", {}),
     ("retry_disabled", "S_boot", "EveryWaitHasAnExit", {}),
@@ -259,7 +246,6 @@ MUTANTS = [
     ("advice_only_to_waiting", "LS_free", "EngineCanAlwaysBeFreed", {}),
     # fidelity review 2 (spec at 31afbd82) and its model fixes: each old rule must fail its property
     ("no_restore_temp_fsync", "S_recover_power", "NoTornLedgerAfterRecovery", {}),          # H1
-    ("r4_rename_unsynced", "S_r4_outcomes", "R4GateLiftedOnlyByUser", {}),                   # M5
     ("cancel_open_keeps_opening", "S_stuck_opening", "OpeningHasItsJob", {}),                # M1
     ("recover_cancel_before_listing", "S_save_quit_power", "OutcomeTruthful", {}),          # M2
     ("rc_unsynced", "S_save_quit_power", "OutcomeTruthful", {}),                             # M2 (the reviewer's)
@@ -269,8 +255,6 @@ MUTANTS = [
     # fidelity review 3 (spec at c87ce786): the reviewer's mutants (rv_*) and the old rules of its fixes
     ("rv_boot_skips_recovery", "S_recover", "EveryJournalRecoveredOrBlocking", S(BootJ=strs("b3"))),       # H1
     ("rv_retry_skips_recovery", "S_recover", "EveryJournalRecoveredOrBlocking", S(BootJ=strs("b3"))),      # H1
-    ("rv_r4_crash_nosync", "S_r4_ends", "R4GateLiftedOnlyByUser", {}),                                     # M1
-    ("r4_cancel_nosync", "S_r4_ends", "R4GateLiftedOnlyByUser", {}),                                       # M1
     ("create_crash_msg_from_memory", "S_create_absent", "OutcomeTruthful", {}),                           # M2
     ("rv_quiesce_ends_confirmed", "S_switch", "CancelReachIsTheOneRule", {}),                             # M3
     ("rv_cancel_keeps_stage", "S_switch_hung_create", "OpeningHasItsJob", {}),

@@ -79,7 +79,8 @@ class EngineJobsModel(unittest.TestCase):
     def test_every_mutant_section13_names_is_seeded_and_switchable(self) -> None:
         listed = set(re.findall(r"`([a-z0-9]+(?:_[a-z0-9]+)+)`",
                                 _between(self.s13, "**Already checked by two small executable models**", "**Not modelled")))
-        self.assertEqual(len(listed), 35, "§13 says thirty-five mutants of the two executable models")
+        # §13's "thirty-five mutants of the two executable models", less the two of the R4 gate (S0068, ADR-0067)
+        self.assertEqual(len(listed), 33, "§13's mutants of the two executable models")
         seeded = {m[0] for m in self.gen.MUTANTS}
         self.assertEqual(sorted(listed - seeded), [], "mutants §13 names that gen_cfgs.py does not run")
         for name in seeded:

@@ -62,13 +62,16 @@ WORLDS: dict[str, dict[str, Any]] = {
     # S0064: a closed tab while its read is queued
     "S_close": {"base": "S_cancel", "traces": 6, "depth": 40, "least": 10, "leave": ["boot_cancel", "close_queued_read"]},
     "S_recover_lock": {"base": "S_recover_lock", "traces": 8, "depth": 40, "least": 2, "leave": []},
-    # saves that finish and their R4 in a fresh engine; R4's crashes and the window
+    # saves that finish and their R4 (S0068: a background job with no disk effect)
     "S_r4_fresh": {
-        "base": "S_r4_attempts", "set": {"MaxCrash": "0", "MaxAppCrash": "0"}, "traces": 6, "depth": 80, "least": 40,
-        "leave": ["cancel"],
+        "base": "S_r4_ends", "set": {"MaxCrash": "0", "MaxPower": "0", "MaxReads": "0"}, "traces": 6, "depth": 80,
+        "least": 30, "leave": ["cancel"],
     },
-    "S_r4_attempts": {
-        "base": "S_r4_attempts", "traces": 8, "depth": 80, "least": 16, "leave": ["cancel", "crash_in_r4"],
+    # R4's engine death, and the window letting that one stop go below the bound (S_r4_attempts walked it before S0068)
+    "S_r4_crash": {
+        "base": "S_r4_ends", "set": {"MaxPower": "0", "MaxReads": "0", "MaxExpire": "1"}, "traces": 8, "depth": 80,
+        "least": 16,
+        "leave": ["cancel", "crash_in_r4"],
     },
     # one stop makes the engine unavailable: the queued jobs end without one, the window, Try again
     "S_queue_bound1": {
@@ -82,7 +85,7 @@ WORLDS: dict[str, dict[str, Any]] = {
     },
     # BL-0159: a Cancel of a queued save meeting a running R4 (R4 is ended by another's Cancel)
     "S_cancel_r4": {
-        "base": "S_r4_attempts", "set": {"MaxCrash": "0", "MaxAppCrash": "0"}, "traces": 8, "depth": 80,
+        "base": "S_r4_ends", "set": {"MaxCrash": "0", "MaxPower": "0", "MaxReads": "0"}, "traces": 8, "depth": 80,
         "least": 30, "leave": ["cancel_behind_r4", "save_behind_r4"],
     },
     # BL-0151 slice 5, BL-0159: recover-all's listing, a Cancel after it, an engine death, the fresh engine and,
@@ -132,9 +135,11 @@ WORLDS: dict[str, dict[str, Any]] = {
         "base": "S_save_crash", "set": {"MaxIO": "0", "MaxEdits": "0"}, "traces": 6, "depth": 60, "least": 20,
         "leave": ["cancel", "crash_after_close"],
     },
+    # an engine death past the commit point (S0068: least 24, as no R4 runs after the death any more and most walks
+    # end at its drain, 22-38 states)
     "S_save_io_crash": {
         "base": "S_save_crash", "set": {"MaxSaves": "2", "MaxEdits": "0", "MaxReads": "0"}, "traces": 16,
-        "depth": 90, "least": 30, "leave": ["cancel", "crash_past_commit", "save_after_r4"],
+        "depth": 90, "least": 24, "leave": ["cancel", "crash_past_commit", "save_after_r4"],
     },
 }  # fmt: skip
 CANDIDATES = 20
@@ -190,10 +195,9 @@ LEAVE: dict[str, dict[str, str]] = {
     "crash_after_close": {"EngineCrash": 'RJ.k = "save" /\\ ctl.pc \\in {"s_csync", "s_saved", "s_pub", "s_rel"}'},
     # a second save only while an R4 runs, so a Cancel of it meets the R4 (S0064)
     "save_behind_r4": {"UserSave": 'n.save = 0 \\/ (Busy /\\ RJ.k = "r4")'},
-    # a second save only once the first has ended and no R4 is owed (S0064: the model runs an owed R4 inside the save,
-    # which the code does not yet do, BL-0152, so the engine replay stops there; and a save asked for while the first
-    # runs is planned on the mirror from before it, so its gate refuses it)
-    "save_after_r4": {"UserSave": 'n.save = 0 \\/ (~Busy /\\ ClosedJ(1) = {})'},
+    # a second save only once the first has ended (S0064: a save asked for while the first runs is planned on the
+    # mirror from before it, so its gate refuses it; S0068: no R4 runs inside a save any more)
+    "save_after_r4": {"UserSave": 'n.save = 0 \\/ ~Busy'},
     # faults only in the second save (S0064)
     "second_save_faults": {"IOFail": 'ctl.s = "s2"', "EngineCrash": 'RJ.k = "save" /\\ ctl.past /\\ ctl.s = "s2"'},
     # an I/O error in the second save only once it has replaced its first file, so its rollback puts pre bytes back
@@ -440,7 +444,7 @@ def save_state(state: dict[str, Any]) -> dict[str, Any]:
         "jr": {j: rec["st"] for j, rec in state["jr"].items()},
         "sv": {
             "s": ctl["s"], "fi": ctl["fi"], "rj": ctl["rj"], "plan": {f: ctl["plan"][f] for f in ("R", "N", "I")},
-            "rbt": ctl["rbt"], "skip": ctl["skip"], "r4j": ctl["r4j"],
+            "rbt": ctl["rbt"], "skip": ctl["skip"],
         },
         "told": dict(state["gh"]["told"]),
     }  # fmt: skip

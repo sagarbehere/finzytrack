@@ -149,14 +149,24 @@ def test_names_and_suffixes() -> None:
         "s1-j7.part",
         "s1-j7.open",
         "s1-j7.closed",
-        "s1-j7.done",
-        "s1-j7.mismatch",
         "s1-j7.resolved",
         "s1-j7.kept",
     ]
     for s in State:
         assert parse_file_name(file_name("s1-j7", s)) == ("s1-j7", s)
-    for other in ("s1-j7", "s1-j7.tmp", "s1.open", ".s1-j7.open", "s 1-j7.open", "s1-j-7.open", "-j7.open"):
+    # S0068: the R4 gate's states are gone; a development build's file is not a record (it gates nothing)
+    for other in (
+        "s1-j7.done",
+        "s1-j7.mismatch",
+        "s1-j7.r4-attempt-1",
+        "s1-j7",
+        "s1-j7.tmp",
+        "s1.open",
+        ".s1-j7.open",
+        "s 1-j7.open",
+        "s1-j-7.open",
+        "-j7.open",
+    ):
         assert parse_file_name(other) is None, other
     assert temp_name("main.beancount", "s1-j7") == ".main.beancount.ft-s1-j7.tmp"
 

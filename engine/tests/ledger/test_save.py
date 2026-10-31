@@ -3,10 +3,9 @@
 (the load and the fingerprint read the disk with the loader's own calls, so the fake file system cannot stand in for
 them; the durable order's crash sweeps are `test_writer.py`'s and `test_restore.py`'s). Written from the spec's lines:
 
-- step 1 "If this workspace has a closed record (re-read from disk), the save first runs that `r4`" (S0066: the engine
-  refuses `check_pending` naming the record, and the sidecar runs its R4 and asks again, `test_r4_job.py`); step 4
-  "this workspace has no `.open` journal, no closed record and no `.mismatch` record (matched as §6.5 says)": by
-  registry key or lineage id, in any `local/*/journal/`;
+- step 1 "An `.open` journal of this workspace (re-read from disk, matched as §6.5 says) refuses the save with
+  `WRITES_PAUSED {unfinished_save}` ... No other record gates a save" (ADR-0067); step 4 "this workspace has no `.open`
+  journal (matched as §6.5 says)": by registry key or lineage id, in any `local/*/journal/`;
 - step 2 "every `data/.write.lock` ... deduplicated by `path_key`, tried once each without waiting, before any
   ledger-set lock. Free: held until the save ends. Absent: go on. Held, or any other outcome: refused with
   `LEGACY_APP_SAVING`, nothing written";
@@ -185,13 +184,13 @@ def ports_for(
         for_this_os(),
         locks or DarwinLocks(str(led.ald / "locks")),
         legacy or DarwinLegacyLocks(),
-        load or sv.desktop_load(POLICY, for_this_os()),
+        load or sv.desktop_load(POLICY),
     )
 
 
 def wrapped(before: Callable[[], object] | None = None, after: Callable[[], object] | None = None) -> sv.Load:
     """The real load with an outside program's act just before it starts and just after it returns."""
-    real = sv.desktop_load(POLICY, for_this_os())
+    real = sv.desktop_load(POLICY)
 
     def load(root: str, candidates: Mapping[str, bytes]) -> overlay.LoadResult:
         if before is not None:
@@ -225,7 +224,7 @@ def test_a_save_lands_after_its_gate_and_its_closed_record_carries_the_loads_pos
     plan = plan_for(led)
     job = FakeJob()
     seen: list[overlay.Loaded] = []
-    real = sv.desktop_load(POLICY, for_this_os())
+    real = sv.desktop_load(POLICY)
 
     def load(root: str, candidates: Mapping[str, bytes]) -> overlay.LoadResult:
         out = real(root, candidates)
@@ -360,51 +359,60 @@ def _record(led: Ledger, key: str, name: str, state: State, *, lineage: str = LI
     return path
 
 
-@pytest.mark.parametrize(
-    ("state", "reason"),
-    [(State.CLOSED, "check_pending"), (State.MISMATCH, "check_failed"), (State.OPEN, "unfinished_save")],
-)
-def test_a_record_of_this_workspace_refuses_before_any_lock(led: Ledger, state: State, reason: str) -> None:
-    path = _record(led, KEY, "s0-j1", state)
+def test_an_open_journal_of_this_workspace_refuses_before_any_lock(led: Ledger) -> None:
+    """@regression-guard (S0068: the `.open` refusal stays, ADR-0012; spec §6.1 step 1)."""
+    path = _record(led, KEY, "s0-j1", State.OPEN)
     locks = SpyLocks(DarwinLocks(str(led.ald / "locks")))
     legacy = SpyLegacy(DarwinLegacyLocks())
     plan = plan_for(led, legacy_locks=(str(led.tmp / "legacy" / ".write.lock"),))
     before = led.tree()
     out = sv.run(plan, ports_for(led, locks=locks, legacy=legacy), FakeJob())
-    backup = "/b/s0-j1" if state is State.MISMATCH else None  # S0066: a pause shows its backup ("Your backup is here")
-    assert out == sv.Refused(reason, unchanged=True, path=str(path), backup=backup)  # pyright: ignore[reportArgumentType]
+    assert out == sv.Refused("unfinished_save", unchanged=True, path=str(path))
     assert (locks.tried, legacy.tried) == ([], [])  # step 1 comes first
     assert led.tree() == before
 
 
-def test_a_record_under_another_key_with_this_lineage_refuses(led: Ledger) -> None:
-    """§6.5: forgetting a folder and adding it again under a new key cannot skip an owed R4 or lift a pause."""
-    path = _record(led, "old", "s0-j1", State.MISMATCH, owner="old")
+def test_a_closed_record_of_this_workspace_does_not_refuse_the_next_save(led: Ledger) -> None:
+    """S0068 (ADR-0067 decision 3): R4 gates nothing. A landed save's `.closed` record, its R4 run or not, lets the
+    next save of the workspace land (until S0068 it refused `check_pending`)."""
+    closed = _record(led, KEY, "s0-j1", State.CLOSED)
     out = sv.run(plan_for(led), ports_for(led), FakeJob())
-    assert out == sv.Refused("check_failed", unchanged=True, path=str(path), backup="/b/s0-j1")
+    assert isinstance(out, sv.Saved), out
+    assert closed.read_bytes()  # left as it was: the save reads no record but `.open` ones
 
 
-def test_a_mismatch_after_three_failures_to_run_its_r4_says_could_not_check(led: Ledger) -> None:
-    """§6.7, §11 (S0066): "the same R4 failed to run three times" has its own text: the refusal says which."""
-    path = _record(led, KEY, "s0-j1", State.MISMATCH)
+@pytest.mark.parametrize("suffix", ["mismatch", "done", "r4-attempt-3"])
+def test_records_a_development_build_left_do_not_refuse(led: Ledger, suffix: str) -> None:
+    """S0068: `.mismatch`, `.done` and `.r4-attempt-<n>` files were written only by S0066-S0067 development builds;
+    they are not records any more, so they fail safe: nothing gates on them (until S0068 a `.mismatch` refused
+    `check_failed` until Resume saving)."""
+    folder = led.ald / "local" / KEY / "journal"
+    folder.mkdir(parents=True)
+    (folder / f"s0-j1.{suffix}").write_bytes(
+        journal.encode(
+            Record(
+                session="s0",
+                job="j1",
+                workspace_key=KEY,
+                lineage=LINEAGE,
+                engine_build="b",
+                post_fingerprint="sha256:" + "1" * 64,
+                adopted_digest="a",
+                backup_dir="/b/s0-j1",
+                files=(FileEntry("/x/a.bean", "/x/a.bean", "1" * 64, "2" * 64, "0-a.bean", ".a.bean.ft-s0-j1.tmp"),),
+                created_dirs=(),
+            )
+        )
+    )
     out = sv.run(plan_for(led), ports_for(led), FakeJob())
-    assert isinstance(out, sv.Refused)
-    assert not out.could_not_check
-    (path.parent / journal.attempt_name("s0-j1", 3)).write_bytes(b"")
-    out = sv.run(plan_for(led), ports_for(led), FakeJob())
-    assert out == sv.Refused("check_failed", True, str(path), "/b/s0-j1", could_not_check=True)
-    (path.parent / journal.attempt_name("s0-j1", 3)).unlink()
-    (path.parent / journal.attempt_name("s0-j1", 2)).write_bytes(b"")
-    out = sv.run(plan_for(led), ports_for(led), FakeJob())
-    assert isinstance(out, sv.Refused)
-    assert not out.could_not_check  # two failures and a mismatch found: a mismatch
+    assert isinstance(out, sv.Saved), out
 
 
-def test_an_unreadable_mismatch_record_still_refuses_with_no_backup(led: Ledger) -> None:
-    path = _record(led, KEY, "s0-j1", State.MISMATCH)
-    path.write_bytes(b"garbage")
+def test_an_open_journal_under_another_key_with_this_lineage_refuses(led: Ledger) -> None:
+    """§6.5: forgetting a folder and adding it again under a new key cannot skip an unfinished save."""
+    path = _record(led, "old", "s0-j1", State.OPEN, owner="old")
     out = sv.run(plan_for(led), ports_for(led), FakeJob())
-    assert out == sv.Refused("check_failed", True, str(path), None, could_not_check=False)
+    assert out == sv.Refused("unfinished_save", unchanged=True, path=str(path))
 
 
 def test_a_record_under_another_key_naming_this_key_refuses(led: Ledger) -> None:
@@ -415,7 +423,7 @@ def test_a_record_under_another_key_naming_this_key_refuses(led: Ledger) -> None
 
 def test_another_workspaces_records_and_this_workspaces_history_do_not_refuse(led: Ledger) -> None:
     _record(led, "other", "s0-j1", State.OPEN, owner="other", lineage="lin9")
-    _record(led, KEY, "s0-j2", State.DONE)
+    _record(led, KEY, "s0-j2", State.CLOSED)
     _record(led, KEY, "s0-j3", State.RESOLVED)
     _record(led, KEY, "s0-j4", State.PART)
     out = sv.run(plan_for(led), ports_for(led), FakeJob())
@@ -443,19 +451,19 @@ def test_a_journal_folder_that_cannot_be_listed_refuses(led: Ledger) -> None:
 
 
 def test_a_record_written_while_the_save_waits_for_its_locks_refuses_at_the_gate(led: Ledger) -> None:
-    """Step 4 reads the records again under the locks: the step-1 read is not trusted across the wait."""
+    """Step 4 reads the `.open` journals again under the locks: the step-1 read is not trusted across the wait."""
     plan = plan_for(led)
     holder = DarwinLocks(str(led.ald / "locks")).lock(sv._key(for_this_os(), str(led.inc)))  # pyright: ignore[reportPrivateUsage]
 
     def waiting(phase: str) -> None:
         if phase == "waiting_for_files":
-            _record(led, KEY, "s0-j9", State.CLOSED)
+            _record(led, KEY, "s0-j9", State.OPEN)
             holder.release()
 
     job = FakeJob(on_progress=waiting)
     out = sv.run(plan, ports_for(led), job)
     assert isinstance(out, sv.Refused)
-    assert out.reason == "check_pending"
+    assert out.reason == "unfinished_save"
     assert job.events == ["waiting_for_files"]
 
 
@@ -708,11 +716,11 @@ def test_a_ledger_folder_that_cannot_be_searched_is_not_saved_and_names_the_file
 @pytest.mark.parametrize(
     "taken",
     [
-        "journal/s1-j7.done",  # an earlier save of this name landed and was checked
+        "journal/s1-j7.closed",  # an earlier save of this name landed
         "journal/s1-j7.resolved",
         "journal/s1-j7.part",
-        "journal/s1-j7.r4-attempts",
-        "journal/S1-J7.done",  # the same name in another case (APFS is case-insensitive)
+        "journal/s1-j7.mismatch",  # any suffix: a development build's file too
+        "journal/S1-J7.closed",  # the same name in another case (APFS is case-insensitive)
         "backups/s1-j7",
     ],
 )

@@ -43,8 +43,7 @@ APP_ACTIONS_OUTSIDE_APPSTEP = frozenset({"AdviceTimer"})  # MAPPING.md §1.2: an
 MARKED_GROUPS = ("EngineStep", "AppStep")  # their actions are the code's: each needs a marker or a PLANNED row
 FREE_GROUPS = ("UserStep", "EnvStep")  # user, OS and outside-editor actions: no marker needed
 
-R4_READS = "BL-0152"  # the reads and the open (BL-0152 part 2; R4 itself landed in S0066)
-R4_REPLAY = "BL-0168"  # R4 walked by the save conformance replay (S0066 left it to the sidecar's tests)
+R4_READS = "BL-0152"  # the reads and the open (BL-0152 part 2; R4 itself landed in S0066, simplified in S0068)
 CREATE_COPY = "BL-0153"  # create and copy
 SWITCH = "BL-0154"  # the switch, Reopen, quit, boot and update
 
@@ -52,8 +51,6 @@ RECOVER_ALL = "BL-0164"  # recover-all's per-journal tries replayed through the 
 PUBLISH = "BL-0113"  # the save's publish of the mirror (§6.1 step 10)
 
 PLANNED: Mapping[str, str] = {
-    "S_WaitR4": R4_REPLAY,  # a seeded bug's action only (the save waits for the queued R4); R4 runs inside the save
-    # (S0066), so no code carries this action: it stays planned only for the replay that will walk R4 (BL-0168)
     "S_Publish": PUBLISH,
     **{a: RECOVER_ALL for a in ["RC_Init", "RC_Next", "RC_Lock", "RC_Check"]},
     **{
@@ -97,8 +94,6 @@ PARTIAL: Mapping[str, str] = {
     "CR_Commit": CREATE_COPY,
     "CP_Commit": CREATE_COPY,
     "UserCancelQueued": SWITCH,  # the switch's or boot's cancelled screen (§9.1 step 3, §9.2)
-    "S_R4Check": R4_REPLAY,  # the replay walks "no R4 owed"; an owed R4 is run by the sidecar between two `save`
-    # requests (S0066, `test_r4_job.py`), which the engine's save replay does not walk yet (BL-0168)
     "S_Compare": MODEL_UPDATE,  # a read with no hook: the replay sees only that the code goes on when the swap
     # displaced our own bytes; an outside save goes to a kept name in the code, the model swaps it back (BL-0161), so
     # the kept-name branch is `test_writer.py`'s (it kills "always ours")

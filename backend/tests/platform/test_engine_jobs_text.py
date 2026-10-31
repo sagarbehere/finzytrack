@@ -17,7 +17,6 @@ from app.platform.engine_jobs.scheduler import JobsStatus, Shown
 from app.platform.engine_jobs.text import (
     ADVICE,
     CANNOT_STOP_FROM_HERE,
-    CHECKING_LAST_CHANGE_FIRST,
     FINISHING,
     PHASES,
     STILL_WORKING,
@@ -131,23 +130,6 @@ def test_a_background_job_has_no_cancel() -> None:
     shown = describe(s, 3, NOW, DELAY)
     assert shown is not None
     assert not shown.cancel
-
-
-def test_a_save_that_checks_the_last_change_first_says_so() -> None:
-    """BL-0173 (owner, 2026-10-31: "Drop digest; 2 jobs (Recommended)"); §11: "a save waits for R4 | 'Checking your
-    last change first…'": the save runs the previous save's R4 before its own work. The background R4 says "Checking
-    your last change…"; a job waiting behind the save reads the save's text."""
-    s = status(running=Running(SAVE), queued=(WAITING,), shown={2: Shown("checking_last_change", NOW)})
-    shown = describe(s, 2, NOW, DELAY)
-    assert shown is not None
-    assert shown.text == CHECKING_LAST_CHANGE_FIRST == "Checking your last change first…"
-    assert shown.cancel, "§6.1 step 1: a Cancel during this step cancels the save"
-    waiting = describe(s, 4, NOW, DELAY)
-    assert waiting is not None
-    assert waiting.text == "Waiting for: Checking your last change first…"
-    background = describe(status(running=Running(R4), shown={3: Shown("checking_last_change", NOW)}), 3, NOW, DELAY)
-    assert background is not None
-    assert background.text == "Checking your last change…"
 
 
 def test_the_advice_shows_in_the_waiting_jobs_place_or_else_as_a_notice() -> None:

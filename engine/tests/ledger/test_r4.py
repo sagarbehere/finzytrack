@@ -1,24 +1,16 @@
-"""R4 inside the engine (`ledger_engine.ledger.r4`; `design/specs/engine-jobs.md` §6.5, §6.7; ADR-0008 amendments,
-ADR-0010 guardrail 3; BL-0118; S0066), on real APFS scratch folders after a real save. Written from the spec's lines:
+"""R4 inside the engine (`ledger_engine.ledger.r4`; `design/specs/engine-jobs.md` §6.7; ADR-0067 decision 3, ADR-0010
+guardrail 3; BL-0118; S0066, S0068), on real APFS scratch folders after a real save. Written from the spec's lines:
 
-- step 1 "the disk's fingerprint equals the record's post fingerprint and no `.open` journal exists; otherwise
-  `superseded`"; an engine-build change: "R4 runs step 2 with the new build, then step 3's fingerprint check (moved →
-  `superseded`) … the record becomes `.done {superseded_build}`";
-- step 2 "a full `load_file` of the disk … Beancount's real loader, never the overlay's replica … never
-  `loader.load_file` itself, which reads, deletes and writes a pickle cache";
-- step 3 "The fingerprint again: moved → `superseded`; digest equal → `pass`";
-- step 4 "a fresh engine that runs no user code parses the disk with Beancount's parser and with the overlay's replica
-  on the same bytes. Then the fingerprint once more: moved since step 3 → `superseded`, never a false mismatch … both
-  parse digests equal each other and the record's → `nondeterministic` … Anything else → `mismatch`: the record becomes
-  `.mismatch`";
-- "A failure to run … adds one to its `.r4-attempts` count (written and synced). After the third failure of the same
-  R4 … the record becomes `.mismatch {could_not_check}` … The gate is lifted only by that explicit action";
-- "Every rename of the record … is followed by a `durable_sync` of the journal directory before the outcome is acted
-  on or shown".
+- "the disk's fingerprint equals the record's post fingerprint; otherwise `superseded`" (before and after the load);
+- "a full load of the disk … Beancount's real loader, never the overlay's replica … never `loader.load_file` itself,
+  which reads, deletes and writes a pickle cache";
+- "digest equal → `pass`; different → `differs`: logged and a notice; saving goes on";
+- "an engine build other than the record's → `superseded`";
+- "R4 reads the closed record and writes nothing" (ADR-0067: `.closed` is terminal; no `.done`, `.mismatch`, attempt
+  count or Resume saving).
 
 The world's actors: an outside editor that edits, edits and reverts (A-B-A) or truncates and then writes during the
-load and during the confirm; an `.open` journal of the workspace; a record matched by lineage in another key folder.
-The renames' syncs under power loss are `test_r4_power_loss` (over the fake file system) below.
+load; an `.open` journal of the workspace.
 """
 
 from __future__ import annotations
@@ -125,7 +117,7 @@ def save(w: World, changes: tuple[Change, ...] | None = None, *, load: sv.Load |
         legacy_locks=(),
         app_local_data=str(w.ald),
     )
-    ports = sv.Ports(fs, DarwinLocks(str(w.ald / "locks")), DarwinLegacyLocks(), load or sv.desktop_load(POLICY, fs))
+    ports = sv.Ports(fs, DarwinLocks(str(w.ald / "locks")), DarwinLegacyLocks(), load or sv.desktop_load(POLICY))
     out = sv.run(plan, ports, Job())
     assert isinstance(out, sv.Saved), out
     return w.record()
@@ -154,20 +146,12 @@ def logged(log: list[str], fn: Callable[[str], str]) -> Callable[[str], str]:
     return call
 
 
-def refuses(root: str) -> overlay.LoadRefused:
-    return overlay.LoadRefused("encrypted", root)
-
-
 def ports(**kw: object) -> r4.Ports:
-    return replace(r4.desktop(for_this_os(), BUILD, POLICY), **kw)
+    return replace(r4.desktop(for_this_os(), BUILD), **kw)
 
 
 def check(w: World, p: r4.Ports | None = None, key: str = KEY) -> r4.Answer:
     return r4.check(p or ports(), str(w.ald), key, NAME, Job())
-
-
-def confirm(w: World, p: r4.Ports | None = None, key: str = KEY) -> r4.Answer:
-    return r4.confirm(p or ports(), str(w.ald), key, NAME, Job())
 
 
 def around(real: Callable[[str], object], before: Callable[[], object], after: Callable[[], object] | None = None):
@@ -199,13 +183,25 @@ def test_the_closed_record_carries_the_post_fingerprint_and_the_adopted_digest_r
 # -- the outcomes ---------------------------------------------------------------------------------------------------
 
 
-def test_a_saved_ledger_passes_and_its_record_is_done(w: World) -> None:
+def test_a_saved_ledger_passes_and_its_record_stays_closed(w: World) -> None:
+    """S0068 (ADR-0067): R4 renames nothing; the record stays `.closed` ("saved") after `pass` (before: `.done`)."""
     save(w)
+    before = (w.journal() / f"{NAME}.closed").read_bytes()
     out = check(w)
     assert (out.outcome, out.loaded) == ("pass", True)
-    assert w.states() == [f"{NAME}.done"]
-    assert out.record == str(w.journal() / f"{NAME}.done")
-    assert out.backup == str(w.ald / "local" / KEY / "backups" / NAME)
+    assert w.states() == [f"{NAME}.closed"]
+    assert (w.journal() / f"{NAME}.closed").read_bytes() == before
+
+
+def test_a_different_digest_is_differs_at_once_and_the_record_stays_closed(w: World) -> None:
+    """@regression-guard (S0068: `check` already answered so). ADR-0067 decision 3: no confirm, no `.mismatch`: a
+    difference with the disk unchanged is `differs` (the sidecar logs it and shows the notice); asked again, it compares
+    again."""
+    save(w)
+    out = check(w, ports(load=fixed(OTHER)))
+    assert (out.outcome, out.loaded) == ("differs", True)
+    assert w.states() == [f"{NAME}.closed"]
+    assert check(w).outcome == "pass"
 
 
 def test_a_save_that_creates_a_file_passes(w: World) -> None:
@@ -249,88 +245,28 @@ def save_creating(w: World, main: bytes, include: str, created: Path) -> Record:
 
 
 @pytest.mark.parametrize(
-    ("created", "entry"),
+    ("created", "outcome"),
     [
-        (DATED, False),
-        (f"new/{DATED}", False),
-        (f"Assets/Cash/{DATED}", True),
-        (f"Expenses/Food/{DATED}", True),
+        (DATED, "pass"),
+        (f"new/{DATED}", "pass"),
+        (f"Assets/Cash/{DATED}", "differs"),
+        (f"Expenses/Food/{DATED}", "differs"),
     ],
     ids=["file", "file_in_a_new_folder", "file_in_an_account_folder", "file_in_a_new_account_folder"],
 )
-def test_a_file_created_under_a_documents_root_is_in_the_post_fingerprint(w: World, created: str, entry: bool) -> None:
-    """Red team r1 F1, S0066 r2 (BL-0172 a): the closed record's post fingerprint has the created file in the root's
-    listing (`ledger_set.as_after`), and the save's prediction walked that listing, so R4 compares and passes: a dated
-    name in an account folder is a `document` entry for Beancount after the write, and was one in the prediction
-    (before S0067: `differs`, then `nondeterministic` with no plugin)."""
+def test_a_file_created_under_a_documents_root_is_compared(w: World, created: str, outcome: str) -> None:
+    """Red team r1 F1 (S0066); S0068 (ADR-0067, spec §15): the closed record's post fingerprint has the created file in
+    the root's listing (`ledger_set.as_after`), so R4 compares. The save's preview read the documents root before the
+    write (S0067's listing swap is gone), so a dated name in an account folder, which Beancount turns into a
+    `document` entry after the write, is missing from the prediction: `differs`, the notice; saving goes on."""
     (w.root / "Assets" / "Cash").mkdir(parents=True)
     w.main.write_bytes(DOCS_MAIN)
     rec = save_creating(w, DOCS_MAIN, created, w.root / created)
     fp = decode(rec.post_fingerprint.encode("ascii"))
     assert (created, True) in (dict(fp.documents)[str(w.root)] or ())
-    assert (str(w.root / created) in documents_of(w)) is entry
-    assert check(w, ports(load=fixed(OTHER))).outcome == "differs"
-    assert check(w).outcome == "pass"
-
-
-def test_a_save_that_creates_the_documents_root_passes(w: World) -> None:
-    """BL-0172 a: the root did not exist at the save's load ("Document root … does not exist"); the save creates it
-    with a dated file in an account folder: R4 compares and passes."""
-    main = MAIN.replace(b'include "inc.bean"\n', b'include "inc.bean"\noption "documents" "docs"\n')
-    w.main.write_bytes(main)
-    created = f"docs/Assets/Cash/{DATED}"
-    save_creating(w, main, created, w.root / created)
-    assert documents_of(w) == [str(w.root / created)]
-    assert check(w).outcome == "pass"
-
-
-def _swap_case(p: Path) -> str:
-    return str(p).swapcase()
-
-
-def _case_insensitive(p: Path) -> bool:
-    return os.path.exists(_swap_case(p))
-
-
-@pytest.mark.parametrize("spelling", ["case", "nfd", "link_to_the_root", "file_through_a_link_to_the_root"])
-def test_a_documents_root_named_another_way_still_compares(w: World, spelling: str) -> None:
-    """BL-0172 b: a created file is matched to a documents root by `path_key` (case on APFS, NFD against NFC, the
-    root named through a link, the file named through a link to the root), so the prediction and the record have it
-    and R4 passes (before S0067: string prefixes, so R4 was `superseded`, never compared)."""
-    folder = "Docés"  # NFC on disk
-    docs = w.root / folder
-    (docs / "Assets" / "Cash").mkdir(parents=True)
-    (w.root / "docslink").symlink_to(docs)
-    option, include = {
-        "case": (_swap_case(docs), f"{folder}/Assets/Cash/{DATED}"),
-        "nfd": ("Docés", f"{folder}/Assets/Cash/{DATED}"),
-        "link_to_the_root": ("docslink", f"{folder}/Assets/Cash/{DATED}"),
-        "file_through_a_link_to_the_root": (folder, f"docslink/Assets/Cash/{DATED}"),
-    }[spelling]
-    if spelling == "case" and not _case_insensitive(docs):
-        pytest.skip("the scratch volume is case-sensitive")
-    main = MAIN.replace(b'include "inc.bean"\n', f'include "inc.bean"\noption "documents" "{option}"\n'.encode())
-    w.main.write_bytes(main)
-    save_creating(w, main, include, w.root / include)
-    assert len(documents_of(w)) == 1
-    assert check(w).outcome == "pass"
-
-
-def test_a_file_created_through_a_link_inside_the_documents_root_is_superseded(w: World) -> None:
-    """@regression-guard (S0067: unchanged behaviour, pinned). BL-0172 b's limit (spec §15): a folder inside the root
-    that links elsewhere, and the file named through the link's target, is not matched: the record's listing lacks it,
-    the disk's has it, so R4 is `superseded`, never a false `pass`."""
-    (w.root / "elsewhere" / "Assets" / "Cash").mkdir(parents=True)
-    (w.root / "docs").mkdir()
-    (w.root / "docs" / "Assets").symlink_to(w.root / "elsewhere" / "Assets")
-    main = MAIN.replace(b'include "inc.bean"\n', b'include "inc.bean"\noption "documents" "docs"\n')
-    w.main.write_bytes(main)
-    include = f"elsewhere/Assets/Cash/{DATED}"
-    save_creating(w, main, include, w.root / include)
-    assert documents_of(w) == [str(w.root / "docs" / "Assets" / "Cash" / DATED)]
-    loads: list[str] = []
-    assert check(w, ports(load=logged(loads, ports().load))).outcome == "superseded"
-    assert loads == []
+    assert (str(w.root / created) in documents_of(w)) is (outcome == "differs")
+    assert check(w).outcome == outcome
+    assert w.states() == [f"{NAME}.closed"]
 
 
 def test_a_created_file_a_glob_also_matches_is_superseded_never_a_pass(w: World) -> None:
@@ -395,28 +331,21 @@ def vary(entries, options_map):
 
 
 @pytest.mark.parametrize(
-    ("module", "source", "outcome", "state"),
-    [
-        ("r4_readself_plugin", READSELF, "nondeterministic", "done"),
-        ("r4_vary_plugin", VARY, "nondeterministic", "done"),
-    ],
+    ("module", "source"),
+    [("r4_readself_plugin", READSELF), ("r4_vary_plugin", VARY)],
     ids=["reads_a_ledger_file_itself", "varies_run_to_run"],
 )
-def test_a_plugin_whose_result_differs_from_the_prediction_end_to_end(
-    w: World, module: str, source: bytes, outcome: str, state: str
-) -> None:
-    """Verifier r1 F10 and red team r1 F3, end to end with real plugins: a plugin that varies run to run is
-    `nondeterministic`; so is one that reads the root file from disk itself (it sees the pre bytes at the save's load
-    and the post bytes in R4's): a plugin difference shows a notice and does not pause saving (owner answer 4 of
-    2026-10-26: "only a real loader difference pauses; plugin differences show a notice"; spec §15)."""
+def test_a_plugin_whose_result_differs_from_the_prediction_end_to_end(w: World, module: str, source: bytes) -> None:
+    """Verifier r1 F10 and red team r1 F3 (S0066), end to end with real plugins; S0068 (ADR-0067): a plugin that varies
+    run to run, or reads the root file from disk itself (the pre bytes at the save's load, the post bytes in R4's), is
+    `differs`: the notice, saving goes on; the record stays `.closed`."""
     (w.root / f"{module}.py").write_bytes(source)
     main = f'option "insert_pythonpath" "TRUE"\nplugin "{module}"\n'.encode() + MAIN
     w.main.write_bytes(main)
     try:
         save(w, (Change(str(w.main), sha256(main), main + TXN),))
         assert check(w).outcome == "differs"
-        assert confirm(w).outcome == outcome
-        assert w.states() == [f"{NAME}.{state}"]
+        assert w.states() == [f"{NAME}.closed"]
     finally:
         sys.modules.pop(module, None)
         sys.path[:] = [p for p in sys.path if p != str(w.root)]
@@ -485,7 +414,7 @@ def test_a_users_plugin_walking_a_documents_root_sees_the_disk_in_the_prediction
     """S0067 red team r1 F1 (High): only Beancount's own documents step reads the overlay's listing of a documents
     root; a user plugin that walks the root (`account.walk`, Beancount's `validate_directory`) sees the disk, empty
     folders, their `dirs` and `followlinks` included, as Beancount's real load does: R4 `pass` (before the fix: the
-    prediction differed, the parse-only confirm said `nondeterministic`, and saving went on unchecked)."""
+    prediction differed)."""
     module = f"r4_{case}_plugin"
     if case == "validate_directory_empty_folder":
         (w.root / "docs" / "Assets" / "Old").mkdir(parents=True)  # no `open Assets:Old`: Beancount reports it
@@ -516,7 +445,7 @@ def test_an_outside_edit_before_the_check_supersedes_it_without_loading(w: World
     loads: list[str] = []
     out = check(w, ports(load=logged(loads, fixed(OTHER))))
     assert (out.outcome, out.loaded, loads) == ("superseded", False, [])
-    assert w.states() == [f"{NAME}.done"]
+    assert w.states() == [f"{NAME}.closed"]
 
 
 @pytest.mark.parametrize("edit", [EDIT, b""], ids=["edit", "truncate"])
@@ -525,61 +454,32 @@ def test_an_outside_edit_during_the_load_supersedes_it(w: World, edit: bytes) ->
     p = ports()
     out = check(w, ports(load=around(p.load, lambda: None, lambda: w.inc.write_bytes(edit))))
     assert (out.outcome, out.loaded) == ("superseded", True)
-    assert w.states() == [f"{NAME}.done"]
+    assert w.states() == [f"{NAME}.closed"]
 
 
 @pytest.mark.parametrize("edit", [EDIT, b""], ids=["edit_revert", "truncate_then_write"])
-def test_an_edit_reverted_during_the_load_is_never_a_mismatch(w: World, edit: bytes) -> None:
-    """The load read other bytes (A-B-A, or `script > file` caught empty): its digest differs, but the confirm reads
-    the saved bytes again: `nondeterministic`, saving goes on; never `mismatch`."""
+def test_an_edit_reverted_during_the_load_is_differs_and_gates_nothing(w: World, edit: bytes) -> None:
+    """@regression-guard (`check` already answered so). S0068 (ADR-0067; spec §15): the load read other bytes (A-B-A, or
+    `script > file` caught empty) and the fingerprint is the same before and after it: R4 cannot tell this from a
+    prediction that differs (the parse-only confirm that told them apart is gone), so it is `differs`; the notice names
+    both causes and nothing is gated."""
     save(w)
     p = ports()
     out = check(w, ports(load=around(p.load, lambda: w.inc.write_bytes(edit), lambda: w.inc.write_bytes(INC))))
     assert out.outcome == "differs"
     assert w.states() == [f"{NAME}.closed"]
-    assert confirm(w).outcome == "nondeterministic"
-    assert w.states() == [f"{NAME}.done"]
 
 
-def test_an_open_journal_of_the_workspace_supersedes_it(w: World) -> None:
-    """@regression-guard (S0066 round 1: now a readable record; an unreadable one is the next test's)."""
+def test_an_open_journal_of_the_workspace_does_not_stop_the_compare(w: World) -> None:
+    """S0068: R4's own `.open` match is gone; the fingerprint alone decides. A later save's journal left `.open` with
+    the files at the record's post state (its rollback failed before any replace) leaves the disk the saved state:
+    R4 compares (until S0068: `superseded`). A half-applied one moves the fingerprint (the next test)."""
     rec = save(w)
     (w.journal() / "s2-j1.open").write_bytes(another_save(rec, "s2", "j1"))
-    assert check(w).outcome == "superseded"
-
-
-@pytest.mark.parametrize("key", [KEY, "k2"], ids=["own_key", "another_key"])
-def test_an_open_journal_that_cannot_be_read_is_a_failure_to_run_never_a_lift(w: World, key: str) -> None:
-    """Verifier r1 F1 = red team r1 F5: an `.open` that cannot be read (garbage, a newer app's format) cannot be
-    matched by key or lineage; the save's `records` counts it as this workspace's to refuse, but in R4 that would lift
-    the check. It is a failure to run (counted by the sidecar); the record stays `.closed`."""
-    save(w)
-    folder = w.journal(key)
-    folder.mkdir(parents=True, exist_ok=True)
-    (folder / "s9-j9.open").write_bytes(b'{"format":"finzytrack-save-journal","v":4}\n')
-    with pytest.raises(r4.R4Error):
-        check(w, ports(load=fixed(OTHER)))
-    with pytest.raises(r4.R4Error):
-        confirm(w, ports(parse_beancount=fixed(OTHER)))
-    assert f"{NAME}.closed" in w.states()
-    assert not any(n.startswith(NAME) and not n.endswith(".closed") for n in w.states())
-
-
-def test_another_workspaces_readable_open_journal_does_not_lift_the_check(w: World) -> None:
-    """@regression-guard (S0066 round 1: R4's own `.open` match keeps what `records` did for a readable record)."""
-    rec = save(w)
-    other = w.journal("k2")
-    other.mkdir(parents=True)
-    (other / "s9-j9.open").write_bytes(another_save(rec, "s9", "j9", workspace_key="k2", lineage="lin2"))
-    assert check(w, ports(load=fixed(OTHER))).outcome == "differs"
-
-
-def test_an_open_journal_matched_by_lineage_in_another_key_supersedes_it(w: World) -> None:
-    rec = save(w)
-    other = w.journal("k2")
-    other.mkdir(parents=True)
-    # another save's journal, left `.open` under another key by a forgotten and re-added folder: same lineage
-    (other / f"{NAME}.open").write_bytes(journal.encode(replace(rec, workspace_key="k2")))
+    assert check(w).outcome == "pass"
+    (w.journal() / "s2-j1.open").write_bytes(b"garbage")  # unreadable: nothing to read in it either
+    assert check(w).outcome == "pass"
+    w.inc.write_bytes(EDIT)  # a half-applied later save: the disk is no longer the saved state
     assert check(w).outcome == "superseded"
 
 
@@ -588,8 +488,8 @@ def test_a_new_engine_build_is_superseded_after_the_real_load(w: World) -> None:
     loads: list[str] = []
     real = ports().load
     out = check(w, ports(build="another build", load=logged(loads, real)))
-    assert (out.outcome, out.loaded, loads) == ("superseded_build", True, [str(w.main)])
-    assert w.states() == [f"{NAME}.done"]
+    assert (out.outcome, out.loaded, loads) == ("superseded", True, [str(w.main)])
+    assert w.states() == [f"{NAME}.closed"]
 
 
 def test_a_save_through_any_load_records_its_adopted_digest(w: World) -> None:
@@ -602,157 +502,6 @@ def test_a_save_through_any_load_records_its_adopted_digest(w: World) -> None:
     rec = save(w, load=plain)
     assert rec.adopted_digest == ports().load(str(w.main))
     assert check(w).outcome == "pass"
-
-
-def test_a_different_digest_is_confirmed_in_a_parse_only_step_and_is_a_mismatch_when_the_parsers_differ(
-    w: World,
-) -> None:
-    save(w)
-    out = check(w, ports(load=fixed(OTHER)))
-    assert (out.outcome, out.loaded) == ("differs", True)
-    assert w.states() == [f"{NAME}.closed"]
-    loads: list[str] = []
-    out = confirm(w, ports(parse_beancount=fixed(OTHER), load=logged(loads, fixed(OTHER))))
-    assert (out.outcome, out.loaded, loads) == ("mismatch", False, [])  # the confirm runs no load (no user code)
-    assert w.states() == [f"{NAME}.mismatch"]
-    assert out.record == str(w.journal() / f"{NAME}.mismatch")
-
-
-def drifted_replica() -> Callable[[str], overlay.Parsed | overlay.LoadRefused]:
-    """The replica's parse of the disk with another digest (its own drift from Beancount's parser)."""
-    real = ports().parse_replica
-
-    def drifted(root: str) -> overlay.Parsed | overlay.LoadRefused:
-        out = real(root)
-        assert isinstance(out, overlay.Parsed)
-        return overlay.Parsed(OTHER, out.files)
-
-    return drifted
-
-
-def test_a_replica_that_differs_from_the_record_is_a_mismatch(w: World) -> None:
-    save(w)
-    assert confirm(w, ports(parse_replica=drifted_replica())).outcome == "mismatch"
-
-
-def test_equal_parses_with_a_different_load_are_nondeterministic(w: World) -> None:
-    save(w)
-    out = confirm(w)
-    assert (out.outcome, out.loaded) == ("nondeterministic", False)
-    assert w.states() == [f"{NAME}.done"]
-
-
-@pytest.mark.parametrize("edit", [EDIT, b""], ids=["edit", "truncate"])
-def test_an_edit_during_the_confirm_is_superseded_never_a_mismatch(w: World, edit: bytes) -> None:
-    """O1: "moved since step 3 → `superseded`, never a false mismatch from an edit made during the confirm"."""
-    save(w)
-    p = ports()
-    out = confirm(w, ports(parse_beancount=around(p.parse_beancount, lambda: w.inc.write_bytes(edit))))
-    assert out.outcome == "superseded"
-    assert w.states() == [f"{NAME}.done"]
-
-
-def test_an_edit_after_both_parses_of_the_confirm_is_superseded(w: World) -> None:
-    """O1: the fingerprint once more, after the parses: an edit neither parser read is still `superseded`."""
-    save(w)
-    p = ports()
-    out = confirm(w, ports(parse_replica=around(p.parse_replica, lambda: None, lambda: w.inc.write_bytes(EDIT))))
-    assert out.outcome == "superseded"
-    assert w.states() == [f"{NAME}.done"]
-
-
-def test_an_open_journal_that_appears_during_the_confirm_supersedes_it(w: World) -> None:
-    save(w)
-    p = ports()
-    rec = w.record()
-    opened = another_save(rec, "s2", "j1")
-    out = confirm(
-        w, ports(parse_replica=around(p.parse_replica, lambda: (w.journal() / "s2-j1.open").write_bytes(opened)))
-    )
-    assert out.outcome == "superseded"
-
-
-def test_parses_that_agree_are_nondeterministic_only_when_the_replica_read_the_records_bytes(w: World) -> None:
-    """@regression-guard (S0067: the rule S0066 built, now the only one). §6.7 step 4 as reworded by BL-0173: no stored
-    parse digest; the replica's parse of the record's own bytes,
-    proved by what it says it read, stands in for it. Parses that agree on other bytes than the record's (the disk
-    moved and came back while the replica read) are `superseded`, never `nondeterministic`."""
-    save(w)
-    real = ports().parse_replica
-
-    def read_other(root: str) -> overlay.Parsed | overlay.LoadRefused:
-        out = real(root)
-        assert isinstance(out, overlay.Parsed)
-        return overlay.Parsed(out.digest, {**out.files, str(w.inc): overlay.fp.content(EDIT)})
-
-    assert confirm(w, ports(parse_replica=read_other)).outcome == "superseded"
-
-
-def test_an_edit_after_beancounts_second_parse_is_superseded(w: World) -> None:
-    """@regression-guard (S0067: the code was right; kills the mutant `second_parse_no_moved`). The parsers disagree,
-    Beancount's second parse answers as its first, then an outside edit: the fingerprint once more, `superseded`,
-    never a `mismatch` on a disk that moved."""
-    save(w)
-    real = ports().parse_beancount
-    calls: list[str] = []
-
-    def then_edit(root: str) -> str:
-        calls.append(root)
-        try:
-            return real(root)
-        finally:
-            if len(calls) == 2:
-                w.inc.write_bytes(EDIT)
-
-    out = confirm(w, ports(parse_beancount=then_edit, parse_replica=drifted_replica()))
-    assert (out.outcome, len(calls)) == ("superseded", 2)
-    assert w.states() == [f"{NAME}.done"]
-
-
-def test_an_edit_the_replica_read_and_was_reverted_during_the_confirm_is_superseded(w: World) -> None:
-    """The replica parsed other bytes than the record's (it says which it read): never a mismatch."""
-    save(w)
-    p = ports()
-    out = confirm(
-        w,
-        ports(parse_replica=around(p.parse_replica, lambda: w.inc.write_bytes(EDIT), lambda: w.inc.write_bytes(INC))),
-    )
-    assert out.outcome == "superseded"
-
-
-def test_a_truncate_and_rewrite_during_beancounts_parse_is_never_a_mismatch(w: World) -> None:
-    """Red team r1 F4: `script > file` (truncated, then the same bytes written back) while Beancount's parser reads,
-    done before the replica reads: nothing records what Beancount read and the fingerprint after is unchanged.
-    Beancount parses once more and answers differently: `superseded` (before: a false `mismatch`)."""
-    save(w)
-    real = ports().parse_beancount
-    calls: list[str] = []
-
-    def once(root: str) -> str:
-        calls.append(root)
-        if len(calls) > 1:
-            return real(root)
-        w.inc.write_bytes(b"")
-        try:
-            return real(root)
-        finally:
-            w.inc.write_bytes(INC)
-
-    out = confirm(w, ports(parse_beancount=once))
-    assert (out.outcome, len(calls)) == ("superseded", 2)
-    assert w.states() == [f"{NAME}.done"]
-
-
-def test_a_replica_that_refuses_an_edit_made_during_the_confirm_is_superseded(w: World) -> None:
-    """Verifier r1 O1: the replica refuses what an outside edit made of the disk: the disk moved (`superseded`), not a
-    failure to run."""
-    save(w)
-
-    def edited(root: str) -> overlay.LoadRefused:
-        w.inc.write_bytes(EDIT)
-        return refuses(root)
-
-    assert confirm(w, ports(parse_replica=edited)).outcome == "superseded"
 
 
 def test_r4_never_decrypts_an_encrypted_file_added_during_the_check(w: World, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -781,13 +530,11 @@ def test_r4_never_decrypts_an_encrypted_file_added_during_the_check(w: World, mo
     assert beancount_encryption.read_encrypted_file is spy  # put back after the load
 
 
-@pytest.mark.parametrize("where", ["load", "parse"])
-def test_the_reconciliation_loads_refuse_an_encrypted_file(w: World, where: str) -> None:
+def test_the_reconciliation_load_refuses_an_encrypted_file(w: World) -> None:
     (w.root / "secret.gpg").write_bytes(b"-----BEGIN PGP MESSAGE-----\n")
     w.main.write_bytes(MAIN + b'include "secret.gpg"\n')
-    fn = beancount_port.reconcile_load if where == "load" else beancount_port.reconcile_parse
     with pytest.raises(beancount_port.EncryptedFileMet) as e:
-        fn(str(w.main))
+        beancount_port.reconcile_load(str(w.main))
     assert e.value.path == str(w.root / "secret.gpg")
 
 
@@ -799,15 +546,6 @@ def test_an_encrypted_file_met_on_an_unchanged_disk_is_a_failure_to_run(w: World
 
     with pytest.raises(r4.R4Error):
         check(w, ports(load=met))
-    with pytest.raises(r4.R4Error):
-        confirm(w, ports(parse_beancount=met))
-    assert w.states() == [f"{NAME}.closed"]
-
-
-def test_a_replica_that_refuses_is_a_failure_to_run(w: World) -> None:
-    save(w)
-    with pytest.raises(r4.R4Error):
-        confirm(w, ports(parse_replica=refuses))
     assert w.states() == [f"{NAME}.closed"]
 
 
@@ -818,9 +556,7 @@ def test_a_replica_that_refuses_is_a_failure_to_run(w: World) -> None:
 def test_r4_never_touches_a_record_that_is_not_closed(w: World, state: str) -> None:
     save(w)
     (w.journal() / f"{NAME}.closed").rename(w.journal() / f"{NAME}.{state}")
-    for op in (check, confirm):
-        assert op(w).outcome == "gone"
-    assert r4.attempt(for_this_os(), str(w.ald), KEY, NAME).outcome == "gone"
+    assert check(w).outcome == "gone"
     assert w.states() == [f"{NAME}.{state}"]
 
 
@@ -828,7 +564,6 @@ def test_an_unreadable_record_is_reported_and_left(w: World) -> None:
     save(w)
     (w.journal() / f"{NAME}.closed").write_bytes(b"garbage")
     assert check(w).outcome == "unreadable"
-    assert confirm(w).outcome == "unreadable"
     assert w.states() == [f"{NAME}.closed"]
 
 
@@ -839,36 +574,19 @@ def test_a_record_with_an_old_style_fingerprint_is_unreadable(w: World) -> None:
     assert check(w).outcome == "unreadable"
 
 
-def test_a_version_1_record_is_never_a_pass(w: World) -> None:
-    """Verifier r1 F10: a journal format 1 record (its post fingerprint a digest) is `unreadable`, left `.closed`;
-    three counted failures make it "could not check"."""
-    save(w)
-    f = w.journal() / f"{NAME}.closed"
-    data = f.read_bytes()
-    assert b'"v":3' in data
-    f.write_bytes(data.replace(b'"v":3', b'"v":1'))
-    assert check(w).outcome == "unreadable"
-    assert confirm(w).outcome == "unreadable"
-    assert w.states() == [f"{NAME}.closed"]
-    outs = [r4.attempt(for_this_os(), str(w.ald), KEY, NAME).outcome for _ in range(3)]
-    assert outs == ["counted", "counted", "could_not_check"]
-    assert f"{NAME}.mismatch" in w.states()
-
-
-def test_a_version_2_record_is_never_a_pass(w: World) -> None:
-    """BL-0173: a journal format 2 record (S0066, with its parse digest) is `unreadable` (format 3 dropped the
-    field), so R4 never passes it: three counted failures make it "could not check" (Resume saving)."""
+@pytest.mark.parametrize("version", [1, 2])
+def test_an_older_record_is_unreadable_never_compared(w: World, version: int) -> None:
+    """@regression-guard. Verifier r1 F10 (S0066), BL-0173 (S0067): a journal format 1 or 2 record is `unreadable`: R4
+    compares nothing (logged, no notice), and leaves it."""
     save(w)
     f = w.journal() / f"{NAME}.closed"
     raw = json.loads(f.read_bytes())
-    raw["v"] = 2
+    assert raw["v"] == 3
+    raw["v"] = version
     raw["parse_digest"] = "sha256:" + "b" * 64
     f.write_bytes((json.dumps(raw, sort_keys=True, separators=(",", ":"), ensure_ascii=False) + "\n").encode())
     assert check(w).outcome == "unreadable"
-    assert confirm(w).outcome == "unreadable"
     assert w.states() == [f"{NAME}.closed"]
-    outs = [r4.attempt(for_this_os(), str(w.ald), KEY, NAME).outcome for _ in range(3)]
-    assert outs == ["counted", "counted", "could_not_check"]
 
 
 def test_a_record_renamed_by_hand_is_unreadable(w: World) -> None:
@@ -877,81 +595,7 @@ def test_a_record_renamed_by_hand_is_unreadable(w: World) -> None:
     assert r4.check(ports(), str(w.ald), KEY, "s9-j9", Job()).outcome == "unreadable"
 
 
-# -- attempts and Resume saving ---------------------------------------------------------------------------------
-
-
-def test_the_third_failure_to_run_makes_the_record_could_not_check(w: World) -> None:
-    save(w)
-    fs = for_this_os()
-    outs = [r4.attempt(fs, str(w.ald), KEY, NAME).outcome for _ in range(3)]
-    assert outs == ["counted", "counted", "could_not_check"]
-    assert w.states() == [f"{NAME}.mismatch", *(f"{NAME}.r4-attempt-{n}" for n in (1, 2, 3))]
-    assert sv.paused_by(fs, str(w.journal() / f"{NAME}.mismatch")) == (
-        str(w.ald / "local" / KEY / "backups" / NAME),
-        True,
-    )
-
-
-def test_a_mismatch_found_by_the_confirm_is_not_could_not_check(w: World) -> None:
-    save(w)
-    fs = for_this_os()
-    r4.attempt(fs, str(w.ald), KEY, NAME)
-    r4.attempt(fs, str(w.ald), KEY, NAME)
-    assert confirm(w, ports(parse_beancount=fixed(OTHER))).outcome == "mismatch"
-    assert sv.paused_by(fs, str(w.journal() / f"{NAME}.mismatch"))[1] is False
-
-
-def test_a_count_left_by_a_cut_try_counts_once(w: World) -> None:
-    save(w)
-    (w.journal() / f"{NAME}.r4-attempt-1").write_bytes(b"")
-    assert r4.attempt(for_this_os(), str(w.ald), KEY, NAME).outcome == "counted"
-    assert (w.journal() / f"{NAME}.r4-attempt-2").exists()
-
-
-def test_resume_saving_lifts_only_a_mismatch(w: World) -> None:
-    save(w)
-    fs = for_this_os()
-    assert r4.resume(fs, str(w.ald), KEY, NAME).outcome == "gone"  # a pending check is never lifted by Resume
-    assert w.states() == [f"{NAME}.closed"]
-    for _ in range(3):
-        r4.attempt(fs, str(w.ald), KEY, NAME)
-    out = r4.resume(fs, str(w.ald), KEY, NAME)
-    assert (out.outcome, out.record) == ("done", str(w.journal() / f"{NAME}.done"))
-    assert f"{NAME}.done" in w.states()
-    assert r4.resume(fs, str(w.ald), KEY, NAME).outcome == "gone"
-
-
-def test_the_save_is_refused_check_failed_with_the_backup_while_a_mismatch_stands(w: World) -> None:
-    save(w)
-    assert confirm(w, ports(parse_beancount=fixed(OTHER))).outcome == "mismatch"
-    fs = for_this_os()
-    loaded = overlay.load(str(w.main), {}, POLICY)
-    assert isinstance(loaded, overlay.Loaded)
-    plan = sv.SavePlan(
-        session="s1",
-        job="j8",
-        workspace_key=KEY,
-        lineage=LINEAGE,
-        engine_build=BUILD,
-        root=str(w.main),
-        changes=(Change(str(w.main), sha256(MAIN + TXN), MAIN + TXN + TXN),),
-        fingerprint=loaded.fingerprint,
-        mirror=digest(loaded.fingerprint),
-        legacy_locks=(),
-        app_local_data=str(w.ald),
-    )
-    ports_ = sv.Ports(fs, DarwinLocks(str(w.ald / "locks")), DarwinLegacyLocks(), sv.desktop_load(POLICY, fs))
-    out = sv.run(plan, ports_, Job())
-    assert out == sv.Refused(
-        "check_failed",
-        True,
-        str(w.journal() / f"{NAME}.mismatch"),
-        str(w.ald / "local" / KEY / "backups" / NAME),
-        False,
-    )
-
-
-# -- every rename is synced before the answer (over a spy of the real port) --------------------------------------
+# -- R4 writes nothing ------------------------------------------------------------------------------------------
 
 
 @dataclass
@@ -993,17 +637,13 @@ class SpyFs:
         return SpyDir(self.inner.open_dir(path), self.log)  # pyright: ignore[reportReturnType]
 
 
-def test_every_rename_and_count_is_followed_by_a_sync_of_the_journal_folder(w: World) -> None:
+def test_r4_writes_nothing_on_any_outcome(w: World) -> None:
+    """S0068 (ADR-0067 decision 3): no rename, no count, no sync of the journal folder, whatever the outcome (until
+    S0068 every outcome but `differs` and a Cancel renamed the record, and a failure created an attempt count)."""
     save(w)
     fs = SpyFs(for_this_os())
-    assert r4.attempt(fs, str(w.ald), KEY, NAME).outcome == "counted"
-    assert confirm(w, ports(fs=fs, parse_beancount=fixed(OTHER))).outcome == "mismatch"
-    assert r4.resume(fs, str(w.ald), KEY, NAME).outcome == "done"
-    assert fs.log == [
-        f"create {NAME}.r4-attempt-1",
-        "sync",
-        f"rename {NAME}.closed {NAME}.mismatch",
-        "sync",
-        f"rename {NAME}.mismatch {NAME}.done",
-        "sync",
-    ]
+    assert check(w, ports(fs=fs)).outcome == "pass"
+    assert check(w, ports(fs=fs, load=fixed(OTHER))).outcome == "differs"
+    assert check(w, ports(fs=fs, build="another build")).outcome == "superseded"
+    assert fs.log == []
+    assert w.states() == [f"{NAME}.closed"]

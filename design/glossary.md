@@ -30,7 +30,7 @@ Terms are grouped by area and sorted inside each group. Where a term is decided 
 ## Write path and data safety
 
 - **Clearance (promotion).** Enabling a mutator for real ledgers after it meets its criteria (corpus, properties, oracle comparison, volume and time per kind of edit) and the owner signs the milestone's clearance page. Until then it runs only on test copies (ADR-0014).
-- **Contract (write-safety contract).** The seven fail-closed steps every ledger write passes before any byte reaches disk: parse, semantic diff, full load gate, fingerprint, atomic write with backup, read-back, adopt (ADR-0008). Also called the D1 contract.
+- **Contract (write-safety contract).** The seven steps every ledger write passes before any byte reaches disk: parse, semantic diff, full load (a preview whose new errors the user may save anyway, ADR-0067), fingerprint, atomic write with backup, read-back, adopt (ADR-0008). Each fails closed: a check that cannot run refuses. Also called the D1 contract.
 - **Corpus.** A curated set of ledgers and inputs used as a test asset: the D1 write corpus (example ledgers, generated 5k/54k ledgers, nasty cases), import fixtures, attack-input corpora, old-workspace fixtures. Real-ledger copies live only outside the repo, in the local tier.
 - **D1 / D2.** Review names for the write-path design (D1: the contract and splicing) and the overlay load (D2). Kept as short names in tests and docs (ADR-0008 to ADR-0010).
 - **Draft.** One proposed ledger entry under review, with an anchor posting, explicit open slots and provenance. Import, manual entry and AI proposals all produce drafts (ADR-0027).
@@ -39,10 +39,12 @@ Terms are grouped by area and sorted inside each group. Where a term is decided 
 - **Extended fingerprint.** The stat-and-hash summary of the whole ledger set (every include, glob matches, absent paths, documents roots). It decides mirror freshness and detects external edits (ADR-0015).
 - **Fail closed.** If a safety check errors, times out or cannot decide, the write is refused (INV-22).
 - **Intent / intended change.** What a write is supposed to change, stated as data. The contract's semantic diff must equal it exactly (ADR-0008).
-- **Intent table.** The per-mutator table of intents, acknowledgeable error keys and old-app expectations; the pilot slice builds it (ADR-0046).
+- **Intent table.** The per-mutator table of intents, the errors its preview may list (wording hints, never a refusal: ADR-0067), its integrity and policy refusals and old-app expectations; the pilot slice builds it (ADR-0046).
 - **Oracle.** A trusted source to compare against. Beancount is the oracle for ledger semantics (INV-02); the old app (v0.3.0, run from the legacy worktree on copies) is the differential oracle for write behaviour (ADR-0014).
 - **Overlay load.** A full Beancount load where some files are given as in-memory candidate text instead of disk content, so a write is validated before it reaches disk (ADR-0010).
+- **Preview / Save anyway.** The overlay load before a save lists the new errors the change brings (a failing assertion, a booking or plugin error); the user saves anyway or cancels. An accounting error never refuses a write; only integrity failures do (ADR-0067: integrity blocks, accounting advises).
 - **Plan / WritePlan.** The data form of a change: what will be written, with hashes and new error keys, created by a preview and executed only by a confirm (EP-08, ADR-0038).
+- **R4.** The re-check after a save: Beancount's own load of the disk compared with the save's prediction; a difference is logged and shown as a notice, and nothing is paused (ADR-0067; engine-jobs spec §6.7).
 - **Splicing.** Editing only the exact line span of an entry in its source file, so everything outside it is untouched (ADR-0009).
 - **Swap-based replace.** Replacing a file by an atomic swap and hashing the displaced file, so an outside save at the same moment is detected and kept (ADR-0013).
 - **Write-intent journal.** A machine-local record, written before a multi-file write, of each file's canonical path, pre hash (or "absent" for a created file), intended post hash and backup, used for crash recovery. Every journal in the app is recovered before any workspace opens (ADR-0012, ADR-0063).

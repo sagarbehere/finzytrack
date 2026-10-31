@@ -100,25 +100,18 @@ class EngineUnavailableDetails:
     reason: Literal["stopped_often", "incompatible", "cannot_start", "closing"]
 
 
-type PausedReason = Literal["unfinished_save", "check_pending", "check_failed"]
+type PausedReason = Literal["unfinished_save"]
 
 
 @dataclass(frozen=True, slots=True)
 class WritesPausedDetails:
     """This workspace's saves are paused (engine-jobs §6.1 steps 1 and 4, §6.4, §6.6, §11; S0063). `unfinished_save`:
-    an unfinished save's journal is open (Reopen recovers it); `check_pending`: the check of the last save (R4) is owed
-    and could not run first; `check_failed`: that check found a difference, or could not run three times (Resume
-    saving). `file`: for `unfinished_save`, the file the save was creating that the undo will ask about (its Reopen
-    text then promises no undo: S0061 red team r8 overflow 1), else None. For `check_failed` (S0066): `record`, the
-    paused save's record, which Resume saving names; `backup`, that save's backup folder ("Your backup is here"; None
-    when its record cannot be read); `could_not_check`, the check could not run three times rather than finding a
-    difference."""
+    an unfinished save's journal is open (Reopen recovers it); the only reason since S0068 (ADR-0067: the check after
+    a save, R4, never pauses saving). `file`: the file the save was creating that the undo will ask about (its Reopen
+    text then promises no undo: S0061 red team r8 overflow 1), else None."""
 
     reason: PausedReason
     file: str | None
-    record: str | None
-    backup: str | None
-    could_not_check: bool
 
 
 type NotSavedReason = Literal[
@@ -268,7 +261,7 @@ def specs() -> tuple[ErrorSpec, ...]:
             retryable=False,
             message="Saving is paused in this workspace, so Finzytrack did not save your change.",
             data_safe=False,  # an unfinished save may be half-applied until Reopen undoes it (§6.6)
-            next_step="Follow the steps shown to resume saving.",
+            next_step="Reopen the workspace so Finzytrack can check your files and undo the unfinished change.",
             details=WritesPausedDetails,
         ),
         ErrorSpec(

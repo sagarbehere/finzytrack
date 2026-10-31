@@ -88,15 +88,6 @@ def test_the_replica_and_beancounts_loader_give_one_digest(ledger: Path) -> None
     assert real(ledger).startswith("sha256:")
 
 
-def test_the_replicas_parse_and_beancounts_parse_give_one_digest(ledger: Path) -> None:
-    entries, errors, options = port.reconcile_parse(str(ledger))
-    beancount = digest.of_result(entries, errors, options, keys())
-    parsed = overlay.parse(str(ledger), POLICY, keys())
-    assert isinstance(parsed, overlay.Parsed)
-    assert parsed.digest == beancount
-    assert parsed.digest != real(ledger)  # the parse is not the load
-
-
 def test_a_touch_changes_nothing_though_beancount_s_input_hash_moves(ledger: Path) -> None:
     before = port.reconcile_load(str(ledger))[2]["input_hash"]
     d = real(ledger)

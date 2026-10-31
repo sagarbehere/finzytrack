@@ -1,7 +1,8 @@
-"""R4's ops on the protocol (`ledger_engine.protocol.r4`; `design/specs/engine-jobs.md` §5.1, §6.7; S0066), on the real
-file system (macOS, fresh `tmp_path` folders) after a real `save` through the same server: `r4_check` passes and says
-it loaded; `r4_attempt` counts; `r4_resume` lifts a `.mismatch` only; each is answered only by an engine that holds
-the engine lock, only for the app's own folder, and only for a record name and one key folder."""
+"""R4's op on the protocol (`ledger_engine.protocol.r4`; `design/specs/engine-jobs.md` §5.1, §6.7; S0066, S0068), on
+the real file system (macOS, fresh `tmp_path` folders) after a real `save` through the same server: `r4_check` passes,
+says it loaded and renames nothing; it is answered only by an engine that holds the engine lock, only for the app's
+own folder, and only for a record name and one key folder. `r4_confirm`, `r4_attempt` and `r4_resume` are gone
+(ADR-0067: R4 gates nothing)."""
 
 from __future__ import annotations
 
@@ -39,32 +40,25 @@ def test_a_saved_ledger_passes_r4_through_the_protocol(setup: tuple[Path, Path, 
     target = saved(main, ald, params)
     reply = call(ald, "r4_check", target)
     assert reply["ok"], reply
-    assert reply["result"] == {
-        "outcome": "pass",
-        "loaded": True,
-        "record": str(ald / "local" / "k1" / "journal" / "s1-j7.done"),
-        "backup": str(ald / "local" / "k1" / "backups" / "s1-j7"),
-    }
+    assert reply["result"] == {"outcome": "pass", "loaded": True}
     assert reply["events"] == ["checking_last_change"]
     assert reply["decision"]["table"] == "engine.r4"
+    assert sorted(p.name for p in (ald / "local" / "k1" / "journal").iterdir()) == ["s1-j7.closed"]
 
 
-def test_attempts_then_resume_through_the_protocol(setup: tuple[Path, Path, dict[str, Any]]) -> None:
+@pytest.mark.parametrize("op", ["r4_confirm", "r4_attempt", "r4_resume"])
+def test_the_r4_gates_ops_are_gone(setup: tuple[Path, Path, dict[str, Any]], op: str) -> None:
+    """S0068 (ADR-0067 decision 3): no confirm, no attempt count, no Resume saving."""
     main, ald, params = setup
     target = saved(main, ald, params)
-    assert call(ald, "r4_resume", target)["result"]["outcome"] == "gone"  # a pending check is never lifted
-    outs = [call(ald, "r4_attempt", target)["result"]["outcome"] for _ in range(3)]
-    assert outs == ["counted", "counted", "could_not_check"]
-    assert call(ald, "r4_check", target)["result"]["outcome"] == "gone"  # R4 never touches a `.mismatch`
-    assert call(ald, "r4_resume", target)["result"]["outcome"] == "done"
-    assert (ald / "local" / "k1" / "journal" / "s1-j7.done").is_file()
+    assert call(ald, op, target)["error"]["key"] == "protocol.unknown_op"
+    assert sorted(p.name for p in (ald / "local" / "k1" / "journal").iterdir()) == ["s1-j7.closed"]
 
 
-@pytest.mark.parametrize("op", ["r4_check", "r4_confirm", "r4_attempt", "r4_resume"])
-def test_no_r4_op_runs_in_an_engine_without_the_engine_lock(setup: tuple[Path, Path, dict[str, Any]], op: str) -> None:
+def test_no_r4_op_runs_in_an_engine_without_the_engine_lock(setup: tuple[Path, Path, dict[str, Any]]) -> None:
     main, ald, params = setup
     target = saved(main, ald, params)
-    assert call(None, op, target)["error"]["key"] == "engine.no_engine_lock"
+    assert call(None, "r4_check", target)["error"]["key"] == "engine.no_engine_lock"
     assert (ald / "local" / "k1" / "journal" / "s1-j7.closed").is_file()
 
 
@@ -85,9 +79,8 @@ def test_malformed_params_are_refused_and_nothing_moves(
 ) -> None:
     main, ald, params = setup
     target = saved(main, ald, params)
-    for op in ("r4_check", "r4_attempt", "r4_resume"):
-        reply = call(ald, op, {**target, **bad})
-        assert reply["error"]["key"] == "protocol.invalid_params", (op, reply)
+    reply = call(ald, "r4_check", {**target, **bad})
+    assert reply["error"]["key"] == "protocol.invalid_params", reply
     assert sorted(p.name for p in (ald / "local" / "k1" / "journal").iterdir()) == ["s1-j7.closed"]
 
 
@@ -96,6 +89,6 @@ def test_another_app_folder_is_refused(setup: tuple[Path, Path, dict[str, Any]],
     target = saved(main, ald, params)
     other = tmp_path / "other"
     (other / "locks").mkdir(parents=True)
-    reply = call(other, "r4_attempt", target)
+    reply = call(other, "r4_check", target)
     assert reply["error"]["key"] == "protocol.invalid_params"
     assert sorted(p.name for p in (ald / "local" / "k1" / "journal").iterdir()) == ["s1-j7.closed"]

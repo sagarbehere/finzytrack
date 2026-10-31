@@ -259,11 +259,10 @@ DOCS = b'option "documents" "."\n2020-01-01 open Assets:Cash\n'
 DATED = "2020-01-02.statement.beancount"
 
 
-def test_the_documents_step_reads_the_listing_the_load_recorded(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """BL-0172 a: Beancount's documents step walks the listing the load took of each root (the fingerprint), not the
-    disk again: a file added after the listing is not an entry of this load, and the next observation differs."""
+def test_the_documents_step_reads_the_disk_as_beancount_does(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """S0068 (ADR-0067; S0067's listing swap removed): Beancount's documents step reads the disk in the overlay as in
+    Beancount's own load: a file added after the overlay listed the root is an entry of this load (its next
+    observation differs, so a save refuses at its re-check; the fingerprint is what the gate compares)."""
     root = tmp_path / "main.beancount"
     root.write_bytes(DOCS)
     (tmp_path / "Assets" / "Cash").mkdir(parents=True)
@@ -277,9 +276,53 @@ def test_the_documents_step_reads_the_listing_the_load_recorded(
     monkeypatch.setattr(overlay_module.fp, "listing", then_add)
     loaded = load(str(root), {}, DESKTOP)
     assert isinstance(loaded, Loaded), loaded
-    assert not any(isinstance(e, port.Document) for e in loaded.entries)
-    monkeypatch.setattr(overlay_module.fp, "listing", real)
-    same(load(str(root), {}, DESKTOP), load_file(root))  # read again: the file is an entry, as for Beancount
+    assert any(isinstance(e, port.Document) for e in loaded.entries)
+
+
+WALKING_PLUGIN = b"""
+from beancount.core import data
+from beancount.ops import documents
+from beancount.ops.documents import *  # noqa: F403 (S0067 red team r2 F1: `account` and `path` come along)
+
+__plugins__ = ["walk"]
+
+
+def walk(entries, options_map):
+    docs = options_map["filename"].rsplit("/", 1)[0] + "/docs"
+    seen = [f"{a}:{len(d)}" for a, _, d, _ in documents.account.walk(docs)]
+    seen += [f"star:{a}:{len(d)}" for a, _, d, _ in account.walk(docs)]  # noqa: F405
+    meta = data.new_metadata(options_map["filename"], 0)
+    return entries, [documents.DocumentError(meta, " ".join(seen), None)]
+"""
+
+
+def test_a_users_plugin_that_imports_the_documents_module_sees_the_disk_in_the_preview(tmp_path: Path) -> None:
+    """S0067 red team r2 F1 (High, folded into S0068): a plugin reaching `account` through `beancount.ops.documents`
+    (`documents.account.walk`, or `from beancount.ops.documents import *` at import time) saw the overlay's listing
+    (no empty folders) in the save's prediction and the real disk in R4's load. Now both read the disk: the preview,
+    and a fresh import in Beancount's own load (the module popped between them, as R4's fresh engine), agree."""
+    module = f"walk_{uuid.uuid4().hex}"
+    (tmp_path / f"{module}.py").write_bytes(WALKING_PLUGIN)
+    (tmp_path / "docs" / "Assets" / "Cash" / "Sub").mkdir(parents=True)
+    (tmp_path / "docs" / "Assets" / "Cash" / DATED).write_bytes(b"x")
+    root = tmp_path / "main.beancount"
+    root.write_text(
+        f'option "insert_pythonpath" "TRUE"\noption "documents" "docs"\nplugin "{module}"\n'
+        "2020-01-01 open Assets:Cash\n2020-01-01 open Assets:Cash:Sub\n",
+        encoding="utf-8",
+    )
+    try:
+        loaded = load(str(root), {}, DESKTOP)
+        assert isinstance(loaded, Loaded), loaded
+        sys.modules.pop(module, None)
+        real_entries, real_errors, _ = port.reconcile_load(str(root))
+    finally:
+        sys.modules.pop(module, None)
+    walked = [e.message for e in loaded.errors if "Assets/Cash" in e.message or "star:" in e.message]
+    assert walked == [e.message for e in real_errors if "Assets/Cash" in e.message or "star:" in e.message]
+    assert walked
+    assert ":1" in walked[0]  # the empty `Sub` folder is seen: `Cash` has one subfolder
+    assert len(loaded.entries) == len(real_entries)
 
 
 def test_the_documents_step_orders_documents_as_beancount_does(tmp_path: Path) -> None:
@@ -310,36 +353,24 @@ def test_the_documents_step_orders_documents_as_beancount_does(tmp_path: Path) -
     assert documents(loaded.entries) == documents(entries)
 
 
-@pytest.mark.parametrize(
-    ("documents", "created"),
-    [
-        (".", f"Assets/Cash/{DATED}"),
-        (".", f"Assets/New/{DATED}"),
-        ("docs", f"docs/Assets/Cash/{DATED}"),
-    ],
-    ids=["existing_account_folder", "new_account_folder", "new_documents_root"],
-)
-def test_a_created_file_under_a_documents_root_is_predicted_as_after_the_write(
-    documents: str, created: str, tmp_path: Path
-) -> None:
-    """BL-0172 a: the save's prediction sees the files it creates under a documents root as Beancount sees them
-    after the write (a `document` entry, a root that now exists), and records them (`Loaded.created_documents`)."""
+def test_a_file_a_save_creates_under_a_documents_root_is_not_in_the_preview(tmp_path: Path) -> None:
+    """S0068 (ADR-0067; spec §15): the honest limit that replaced S0067's prediction. The preview's documents step
+    reads the disk before the write, so the `document` entry a created dated file makes is missing from it; after
+    the write Beancount has it, and R4 shows its notice."""
     root = tmp_path / "main.beancount"
-    head = f'option "documents" "{documents}"\n2020-01-01 open Assets:Cash\n2020-01-01 open Assets:New\n'.encode()
+    head = b'option "documents" "."\n2020-01-01 open Assets:Cash\n'
     root.write_bytes(head)
     (tmp_path / "Assets" / "Cash").mkdir(parents=True)
-    new = tmp_path / created
+    created = f"Assets/Cash/{DATED}"
     main = head + f'include "{created}"\n'.encode()
     text = b"2020-01-03 open Expenses:Food\n"
-    predicted = load(str(root), {str(root): main, str(new): text}, DESKTOP)
+    predicted = load(str(root), {str(root): main, str(tmp_path / created): text}, DESKTOP)
     assert isinstance(predicted, Loaded), predicted
-    base = str(tmp_path / documents) if documents != "." else str(tmp_path)
-    assert dict(predicted.created_documents) == {base: (str(new)[len(base) + 1 :],)}
+    assert not any(isinstance(e, port.Document) for e in predicted.entries)
     root.write_bytes(main)
-    new.parent.mkdir(parents=True, exist_ok=True)
-    new.write_bytes(text)
-    same(predicted, load_file(root), written_after=True)
-    assert any(isinstance(e, port.Document) for e in predicted.entries)
+    (tmp_path / created).write_bytes(text)
+    entries, _, _ = port.reconcile_load(str(root))
+    assert any(isinstance(e, port.Document) for e in entries)
 
 
 def test_a_candidate_for_a_new_file_named_by_a_plain_include_is_loaded(tmp_path: Path) -> None:

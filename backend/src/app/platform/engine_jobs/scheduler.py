@@ -516,9 +516,11 @@ class EngineJobs:
         self._thread.start()
         return self._ask(self._boot, self._closing())
 
-    def submit(self, spec: JobSpec, work: Work) -> JobTicket | Failed:
-        """Queue a job; refused at once for a workspace that is not open or a full queue (§3)."""
-        return self._ask(lambda: self._submit(spec, work, boot=False), self._closing())
+    def submit(self, spec: JobSpec, work: Work, *, replace_queued: bool = False) -> JobTicket | Failed:
+        """Queue a job; refused at once for a workspace that is not open or a full queue (§3). A kind the queue keeps
+        one of (`AlreadyQueued`) answers with the queued job's ticket; with `replace_queued` that job will run `work`
+        instead of its own (the background R4: the newest save is the one to compare, §6.7; S0068)."""
+        return self._ask(lambda: self._submit(spec, work, boot=False, replace=replace_queued), self._closing())
 
     @tla_action("AppBgSave")
     def submit_background_save(self, workspace: str, work: Work) -> JobTicket | Failed:
@@ -731,7 +733,7 @@ class EngineJobs:
         spec = JobSpec(kind="recover_all", workspace=None, waited_for=True, confirmed=False, owner="switch")
         return self._submit(spec, self._recover_all or _recover_nothing, boot=True)
 
-    def _submit(self, spec: JobSpec, work: Work, *, boot: bool) -> JobTicket | Failed:
+    def _submit(self, spec: JobSpec, work: Work, *, boot: bool, replace: bool = False) -> JobTicket | Failed:
         self._submitting = (spec, work, boot)
         try:
             effects = self._step(Submit(spec))
@@ -742,7 +744,10 @@ class EngineJobs:
                 case Queued(job=job):
                     return self._jobs[job.id].ticket
                 case AlreadyQueued(job_id=job_id):
-                    return self._jobs[job_id].ticket
+                    queued = self._jobs[job_id]
+                    if replace:
+                        queued.work = work  # still queued (`AlreadyQueued` names a queued job): it has not started
+                    return queued.ticket
                 case Refused(code="WORKSPACE_NOT_OPEN"):
                     details = WorkspaceNotOpenDetails(open_workspace=self._state.open_workspace, switching=False)
                     return Failed(error(ErrorCode.WORKSPACE_NOT_OPEN, details))

@@ -41,7 +41,7 @@ def facts(fs: MemFS) -> sv.OutcomeFacts:
     return sv.outcome(fs, ALD, "k1", "s1", "j7", CHANGES)
 
 
-@pytest.mark.parametrize("state", ["open", "closed", "done", "mismatch", "kept"])  # nothing at the created path
+@pytest.mark.parametrize("state", ["open", "closed", "kept"])  # nothing at the created path (S0068: no `.done`)
 def test_a_record_found_is_told_by_its_state(state: str) -> None:
     fs = world()
     fs.outside_write(f"{JD}/s1-j7.{state}", b"{}")

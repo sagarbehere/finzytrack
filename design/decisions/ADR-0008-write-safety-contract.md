@@ -2,7 +2,7 @@
 
 This record defines the contract that every ledger write must pass before any byte reaches disk.
 
-- **Status:** Accepted. Amended by ADR-0064 (2026-10-27): a refusal caused by another program's change says so and does not enter `RECOVERING`; an R4 that fails to run three times can be acknowledged by the user. Amended on 2026-10-27 (S0047): the bounded parse cache is built only if the measured save misses the 5 s target.
+- **Status:** Accepted. **Superseded in part by ADR-0067 (2026-10-31):** step 3 no longer refuses for new errors of any class (the preview lists them and the user may save anyway; steps 1, 2, 2b, 4-7 still block, failing closed), and R4 compares and shows a notice and gates nothing: the R4 rules of the amendments below (2026-10-25, 2026-10-27 D2, 2026-10-31's "two jobs") no longer hold. Amended by ADR-0064 (2026-10-27): a refusal caused by another program's change says so and does not enter `RECOVERING`; an R4 that fails to run three times can be acknowledged by the user. Amended on 2026-10-27 (S0047): the bounded parse cache is built only if the measured save misses the 5 s target.
 - **Date:** 2026-10-24
 - **Deciders:** owner
 - **Area:** write path, data safety
@@ -75,3 +75,9 @@ Owner, answering `design/inbox/answered/20261031-r4-parse-digest-and-5s.md`, cho
 
 The owner's option said the format need not change (the save would stop filling the field). **The implementer chose otherwise** (S0067, agent decision, not the owner's): the journal format goes to 3 and the field is removed, so no reader can take an old value for a current one. A record of an older format is unreadable: R4 counts a closed one as a failure to run (it ends "could not check", never a pass), and recovery cannot roll back a format 2 `.open` journal, which blocks opening its workspace instead (fails closed). Format 2 existed only in development builds for one day; nothing in the product saves yet.
 
+
+## Note (2026-10-31): superseded in part by ADR-0067
+
+Owner, 2026-10-31, in session: "Yes, draft that ADR. I'm approving it already, so go ahead and implement it." (S0068).
+- **Superseded:** step 3's refusal ("No new errors of any type … except errors the user explicitly acknowledged", and the intent table's lists of keys each mutator may ask to acknowledge): the full load is a preview whose new errors the user may save anyway; no error class is refused. A preview load that cannot run still refuses (INV-22). The 2026-10-25 amendment's R4 rule ("completes before the **next** write … A failed re-check blocks writes"), the 2026-10-27 amendment's D2 (three failures, Resume saving), and the 2026-10-31 amendment's "two jobs" half: R4 compares and shows a notice and never gates a save (ADR-0067 decision 3).
+- **Unchanged:** steps 1, 2, 2b, 4, 5, 6 and 7, each failing closed; the error identity of step 3 (it decides which errors the preview lists); the parse-cache amendment; the dropped parse digest (2026-10-31).

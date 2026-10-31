@@ -35,7 +35,7 @@ STATE_1 ==
 /\ runs = {}
 /\ eng = [st |-> "none", p |-> 0, ended |-> [k |-> "none"]]
 /\ ctl = [pc |-> "none", past |-> FALSE, rinit |-> FALSE, tried |-> {}, s |-> "none", fi |-> 1, rj |-> "none",
-     plan |-> [R |-> 0, N |-> 0, I |-> 0, J |-> 0, K |-> 0], rbt |-> "none", skip |-> "none", r4j |-> "none"]
+     plan |-> [R |-> 0, N |-> 0, I |-> 0, J |-> 0, K |-> 0], rbt |-> "none", skip |-> "none"]
 /\ ses = [app |-> "boot", stops |-> 0, advice |-> "none", opened |-> {}]
 /\ pst = [orphan |-> FALSE, mirror |-> << [fp |-> [I |-> 1]], [fp |-> [I |-> 2]] >>]
 /\ fs = [cur |-> [R |-> 1, N |-> 0, I |-> 1, J |-> 1, K |-> 1], tc |-> ( <<"b2", "R">> :> 0 @@ <<"s1", "R">> :> 0 @@ <<"s1", "N">> :> -1 ),
@@ -49,7 +49,7 @@ STATE_2 ==
 /\ runs = {[w |-> 2, s |-> "none", k |-> "read", wf |-> TRUE, conf |-> FALSE, req |-> "gone", id |-> 3, own |-> "user"]}
 /\ eng = [st |-> "busy", p |-> 1]
 /\ ctl = [pc |-> "rd_load", past |-> FALSE, rinit |-> FALSE, s |-> "s1", fi |-> 2, rj |-> "none",
-     plan |-> [R |-> 1, N |-> 0, I |-> 1], rbt |-> "none", skip |-> "none", r4j |-> "none"]
+     plan |-> [R |-> 1, N |-> 0, I |-> 1], rbt |-> "none", skip |-> "none"]
 /\ ses = [app |-> "run", stops |-> 2, advice |-> "timer", opened |-> {2}]
 /\ pst = [orphan |-> TRUE, mirror |-> << [fp |-> [I |-> 3]] >>]
 /\ fs = [cur |-> [R |-> 1, N |-> 0, I |-> 1, J |-> 1, K |-> 1], tc |-> ( <<"b2", "R">> :> 0 @@ <<"s1", "R">> :> 0 @@ <<"s1", "N">> :> -1 ),
@@ -92,7 +92,7 @@ class ReaderTest(unittest.TestCase):
                                        "bk": {"s1": 0, "s2": 0, "s3": 0}, "rt": {"R": 0, "N": 0}})  # fmt: skip
         self.assertEqual(first["jr"], {"b2": "none", "s1": "part"})
         self.assertEqual(second["sv"], {"s": "s1", "fi": 2, "rj": "none", "plan": {"R": 1, "N": 0, "I": 1},
-                                        "rbt": "none", "skip": "none", "r4j": "none"})  # fmt: skip
+                                        "rbt": "none", "skip": "none"})  # fmt: skip
         self.assertEqual(first["told"], {"s1": "none", "s2": "none", "s3": "none"})
 
     def test_a_state_without_a_replay_variable_is_refused(self) -> None:

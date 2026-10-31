@@ -29,7 +29,8 @@ product calls it. Each rule names its spec line.
   (`owner == "switch"`); otherwise jobs of the open workspace and app-scoped ones (§3; INV-31).
 - **Admission** (§3): a job of a workspace that is not open is refused `WORKSPACE_NOT_OPEN` (INV-28); beyond
   `max_queued` queued jobs `ENGINE_QUEUE_FULL` (INV-10); a second queued `r4` or background save of one workspace is
-  not queued (`AlreadyQueued`; every job is idempotent at its start, §2).
+  not queued (`AlreadyQueued`; every job is idempotent at its start, §2; the shell lets a newer save's R4 take the
+  queued one's place, S0068).
 - **Cancel** (§4): the job's own requester cancels it, queued (removed; nothing ran) or running (its engine ended
   with reason `cancel`, recorded before the signal, so it is never a stop; §5.2), except past its commit point ("too
   late"). Cancel of a queued job applies **the one rule** to the job running ahead of it: that job is ended only when
@@ -43,7 +44,7 @@ product calls it. Each rule names its spec line.
   marks the job past its commit point and answers `Proceed`. A Cancel processed before that step has already ended
   the engine, so its `gate` changes nothing; one after it is "too late".
 - **Retire** (§5.1): after a job that ran user code its engine is ended (`retire`); a job may also retire its engine
-  and ask for a fresh one mid-job (`RetireEngine`, `EngineNeeded`: the save's own R4 first, R4's confirm, §6.1, §6.7).
+  and ask for a fresh one mid-job (`RetireEngine`, `EngineNeeded`: a save whose engine died reads its outcome, §6.6).
 - **The advice on the timer** (§5.2, §5.4; model finding N3; simplification B): the shell arms a timer with the
   current `epoch` whenever the slot becomes `ending` and at boot; when it fires and the slot is still held by a
   process we signalled (or the engine lock is still waited for), `ShowAdvice` ("Finzytrack cannot stop the earlier
@@ -78,9 +79,10 @@ from typing import Any, Final, Literal
 
 from app.platform.tla import tla_action
 
-TABLE_VERSION: Final = 6  # 2 (S0058): the lock before every fresh engine, the engine unavailable; 3: Try again;
+TABLE_VERSION: Final = 7  # 2 (S0058): the lock before every fresh engine, the engine unavailable; 3: Try again;
 # 4 (S0062): recover-all goes on per journal (Cancel after its listing, a death, no engine); 5 (S0063): a save whose
-# engine died reads its outcome from disk in a fresh engine; 6 (S0066): so does an R4, to count its failure to run
+# engine died reads its outcome from disk in a fresh engine; 6 (S0066): so does an R4, to count its failure to run;
+# 7 (S0068, ADR-0067): an R4 whose engine died is lost like a read (nothing is counted)
 """Raised whenever a decision changes, so the decision log (§12) replays each recording with its own table."""
 
 type JobKind = Literal["open", "rebuild", "preview", "save", "r4", "bql", "recover_all", "create", "copy"]
@@ -139,9 +141,8 @@ class Job:
 @dataclass(frozen=True, slots=True)
 class Running:
     """The running job: past its commit point or not, waiting for a fresh engine mid-job or not, for a recover-all
-    whether it has listed the journals (§8.1), and for a save or an R4 whether its engine died, so that the save's
-    outcome is read from disk next (§6.6; S0063), or the R4's failure to run is counted on disk (§6.7; S0066), in a
-    fresh engine."""
+    whether it has listed the journals (§8.1), and for a save whether its engine died, so that its outcome is read
+    from disk next, in a fresh engine (§6.6; S0063)."""
 
     job: Job
     past_commit: bool = False
@@ -521,7 +522,7 @@ def endable_by_another(running: Running) -> bool:
     confirm it, and it has not reached its commit point. Recover-all is never ended this way (§8.1)."""
     job = running.job
     if job.kind == "r4":
-        return not job.waited_for and not job.confirmed  # the background R4, never Resume saving (S0066 r1 F7)
+        return not job.waited_for and not job.confirmed  # the background R4 (S0068: no Resume saving left)
     if job.kind == "save":
         return not job.confirmed and not running.past_commit
     return job.kind in (*READS, "open") and not job.requester_present
@@ -529,8 +530,7 @@ def endable_by_another(running: Running) -> bool:
 
 def _reports_itself(running: Running) -> bool:
     """A running job that ends with its own answer when no engine can be had for its next part (`EngineRefused`):
-    a recover-all (its report, §8.1), a save whose engine died (its outcome, §6.6) and an R4 whose engine died (its
-    failure is then not counted, §6.7)."""
+    a recover-all (its report, §8.1) and a save whose engine died (its outcome, §6.6)."""
     return running.job.kind == "recover_all" or running.outcome_owed
 
 
@@ -598,7 +598,7 @@ def _dispatch_unavailable(state: QueueState) -> tuple[QueueState, tuple[Effect, 
 @tla_action("SpawnStep")
 def _spawn_step(state: QueueState) -> tuple[QueueState, tuple[Effect, ...]]:
     """§5.1: the running job that asked for a fresh engine gets one once the slot is free (after the lock's wait);
-    model `SpawnStep`'s unavailable branch: while the engine is unavailable it ends without one ("the save (or its R4)
+    model `SpawnStep`'s unavailable branch: while the engine is unavailable it ends without one ("the save
     could not get an engine: refused, nothing written")."""
     running = state.running
     if running is None or not running.wants_engine or state.slot not in ("none", "idle"):
@@ -644,9 +644,11 @@ def _engine_needed(p: QueuePolicy, s: QueueState, e: EngineNeeded) -> Step:
     return Step(replace(s, running=replace(r, wants_engine=True)))
 
 
-@tla_action("FreshEnd")
 def _retire_engine(p: QueuePolicy, s: QueueState, e: RetireEngine) -> Step:
-    """§5.1: an engine that ran user code ends before the job's next part (reason `retire`, not a stop)."""
+    """§5.1: an engine that ran user code ends before the job's next part (reason `retire`, not a stop). The model no
+    longer has this step (its `FreshEnd` went with R4's confirm and the save's R4 first, S0068): the one job that
+    still asks is a save reading its outcome from disk after a refusal past its gate, which the model tells at the
+    crash (`formal/tla/engine-jobs/MAPPING.md` §5)."""
     r = s.running
     if r is None or r.job.id != e.job_id or s.slot != "busy":
         return Step(s)
@@ -848,10 +850,10 @@ def _engine_died(p: QueuePolicy, s: QueueState, e: EngineDied) -> Step:
     if s.slot == "busy" and r is not None and r.job.kind == "recover_all":
         state, ended = _ending(s, "crashed")  # §8.1: the journal in hand counts `failed`; the job goes on
         return Step(state, ended)
-    if s.slot == "busy" and r is not None and r.job.kind in ("save", "r4"):
+    if s.slot == "busy" and r is not None and r.job.kind == "save":
         # §6.6: the save's outcome is read from disk in a fresh engine (the job asks for it); a Cancel before the
-        # commit point still ends the job (nothing was written), one past it is "too late" (S0063). §6.7: an R4 that
-        # could not run has its failure counted on disk in a fresh engine (S0066); a Cancel still ends it (§4)
+        # commit point still ends the job (nothing was written), one past it is "too late" (S0063). An R4 whose engine
+        # died is lost like a read (S0068: nothing is counted; ADR-0067)
         state, ended = _ending(replace(s, running=replace(r, outcome_owed=True)), "crashed")
         return Step(state, ended)
     if s.slot == "busy" and r is not None:

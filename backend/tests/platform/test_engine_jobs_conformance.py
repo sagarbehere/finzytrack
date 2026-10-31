@@ -6,7 +6,7 @@ BL-0150; `design/specs/engine-jobs.md` §3-§5, §13, §14; ADR-0064).
 it is enabled, as the table takes it inside the step that allows it). Each step is turned into what the code sees
 (`ops`): a request (submit, Cancel, a closed tab, Try again), an engine report (a crash, an end drained), a time
 event (the display delay, the restart window), the engine lock coming free, or the running job's own part (its end,
-its commit point, its ask for a fresh engine). The same ops drive two replays:
+its commit point, recover-all's listing). The same ops drive two replays:
 
 - **the table** (`queue.transition`, fed the events the shell would feed it, with the shell's two follow-ups: the
   reset done after `ResetEngine`, and the boot's window ended with its job);
@@ -117,11 +117,11 @@ REGENERATE = "python3 formal/tla/engine-jobs/gen_traces.py"
 DEADLINE = 10.0  # a failure guard on each settle, never a pass condition
 DELAY = 2.0
 WINDOW = 300.0
-SPAWN_PCS = frozenset({"s_spawn", "r4_spawn", "rc_spawn"})
+SPAWN_PCS = frozenset({"rc_spawn"})
 EAGER = frozenset({"Dispatch", "DispatchUnavail", "SpawnStep"})
 
 SAVE, R4_READS, CREATE_COPY, SWITCH = "BL-0151", "BL-0152", "BL-0153", "BL-0154"
-R4_REPLAY = "BL-0168"  # R4 itself landed in S0066 in the engine (`ledger.r4`) and the sidecar (`engine_jobs.r4`)
+R4_JOB = "S0068"  # R4 has no disk effect (ADR-0067); its work is `engine_jobs.r4` (`test_r4_job.py`)
 
 # -- the inventory: every action of the model's Next ---------------------------------------------------------------
 
@@ -136,7 +136,6 @@ MAPPED = (
     "Dispatch",  # the dispatch inside the step that allows it (§3); `Start`, the engine lock waited for first
     "DispatchUnavail",  # the queued jobs end `NoEngine` while the engine is unavailable (§5.3)
     "SpawnStep",  # the running job's fresh engine, or its end while unavailable (§5.1)
-    "FreshEnd",  # the job's `fresh_engine()`: `RetireEngine`, `EngineNeeded`
     "AdviceTimer",  # the display delay passes (§5.4): the clock moves, `AdviceTimer`
     "Drain",  # the ended engine's group is drained: its end report, `EngineEnded` (§5.2)
     "OrphanEnd",  # the earlier session's engine ends: the lock wait returns, `EngineLockFree` (§5.1)
@@ -157,13 +156,13 @@ JOB_STEPS: Mapping[str, str] = {
     **{
         a: SAVE
         for a in names(
-            "S_R4Check S_WaitR4 S_Locks S_Gate S_Load S_Recheck S_Commit S_Backup S_BackupSync S_JPart S_JPartSync "
+            "S_Locks S_Gate S_Load S_Recheck S_Commit S_Backup S_BackupSync S_JPart S_JPartSync "
             "S_JOpen S_JDirSync S_TempStart S_TempDone S_TempSync S_Swap S_Compare S_DirSync S_ReadBack "
             "S_RemoveTemps S_Close S_CloseSync S_Saved S_Publish S_Release RB_Check RS_Write RS_Swap RS_Compare "
             "RS_Temps RS_Sync RS_Resolve RC_Init RC_Next RC_Lock RC_Check IOFail"
         )
     },
-    **{a: R4_REPLAY for a in names("R4_Pick R4_Start R4_Load R4_Check R4_Confirm R4_Sync")},
+    **{a: R4_JOB for a in names("R4_Start R4_Load R4_Check")},
     **{a: R4_READS for a in names("RD_Load RD_Check OP_Load OP_Check")},
 }
 SEAMS: Mapping[str, str] = {
@@ -176,7 +175,6 @@ AWAY: Mapping[str, str] = {
     "EditorOverwrite": "env",
     "PathChange": "env",
     "Unreach": "env",
-    "UserResume": SAVE,  # a record's rename (§6.5)
     "UserForgetReadd": SAVE,  # the registry key (§6.5)
 }
 OUT: Mapping[str, str] = {
@@ -458,10 +456,9 @@ def ends_of(s: StateJ, t: StateJ, classes: Mapping[str, Class]) -> dict[int, End
     run = s["run"]
     out: dict[int, End] = {}
     for mid in left:
-        if a == "EngineCrash" and run is not None and mid == run["id"] and run["k"] in ("save", "r4"):
-            # §6.6: the save is told its outcome from disk (S0063), never "lost"; §6.7: an R4's failure to run is
-            # counted on disk in a fresh engine, and the job then ends with that answer (S0066; the model counts it
-            # at the crash, as its `R4Failed`)
+        if a == "EngineCrash" and run is not None and mid == run["id"] and run["k"] == "save":
+            # §6.6: the save is told its outcome from disk (S0063), never "lost"; an R4 whose engine died is lost like
+            # a read (§6.7, S0068)
             out[mid] = End("finished")
         elif a == "EngineCrash" and run is not None and mid == run["id"]:
             out[mid] = End("lost", past_commit=s["ctl"]["past"])  # only a writing job has a commit point
@@ -518,10 +515,10 @@ class GoneOp:
 @dataclass(frozen=True, slots=True)
 class WorkOp:
     """The running job's own part: its end (`done`, with whether it ran user code), its commit point (`gate`), its
-    ask for a fresh engine (`fresh`), its engine's death mid-request (`crash`, with the bound reached or not; a
+    engine's death mid-request (`crash`, with the bound reached or not; a
     recover-all then asks a fresh engine for its next journal, §8.1), or recover-all's listing (`listed`, S0062)."""
 
-    what: Literal["done", "gate", "fresh", "crash", "listed"]
+    what: Literal["done", "gate", "crash", "listed"]
     flag: bool = False
 
 
@@ -611,8 +608,6 @@ def ops_of(s: StateJ, t: StateJ, bound: int, classes: Mapping[str, Class]) -> li
             return [SimpleOp("lift")] if s["ses"]["stops"] >= bound > t["ses"]["stops"] else []
         case "AdviceTimer":
             return [SimpleOp("timer")]
-        case "FreshEnd":
-            return [WorkOp("fresh")]
         case "Hang" | "Stuck":
             return []
         case "Assess":
@@ -733,17 +728,13 @@ class TableReplay:
                 self.feed(Gate(self.running_id()))
             case WorkOp(what="listed"):
                 self.feed(RecoveryListed(self.running_id()))
-            case WorkOp(what="fresh"):
-                job_id = self.running_id()
-                self.feed(RetireEngine(job_id))
-                self.feed(EngineNeeded(job_id))
             case WorkOp(what="crash", flag=reached):
                 if reached:
                     self.feed(EngineAvailability(False))
                 assert self.state.engine is not None
                 running = self.state.running
                 self.feed(EngineDied(self.state.engine))
-                if running is not None and running.job.kind in ("save", "r4"):
+                if running is not None and running.job.kind == "save":
                     # S0063: the table keeps a save whose engine died; its work reads the outcome from disk and
                     # answers (the model tells `DiskOutcome` at the crash; the disk read itself is the work's,
                     # `test_save_job.py`; the engine's reading against the model's states is
@@ -820,9 +811,6 @@ class Script:
                 ctx.call("gate", {})
             elif what == "listed":
                 ctx.listed()
-            elif what == "fresh":
-                if ctx.fresh_engine() is not None:
-                    return WorkResult(None, ran_user_code=True)
             else:
                 ctx.call("crash", {})
                 if self._goes_on(ctx):
@@ -1032,16 +1020,12 @@ BRANCHES: Mapping[str, Pred] = {
     "dispatch, fresh engine": lambda s, t, b: t["act"]["a"] == "Dispatch" and s["eng"]["st"] != "idle",
     "dispatch, idle engine reused": lambda s, t, b: t["act"]["a"] == "Dispatch" and s["eng"]["st"] == "idle",
     "dispatch while unavailable": lambda s, t, b: t["act"]["a"] == "DispatchUnavail",
-    "a job's fresh engine": lambda s, t, b: (
-        t["act"]["a"] == "SpawnStep" and s["ctl"]["pc"] != "rc_spawn" and t["run"] is not None
-    ),
     "recover-all's fresh engine for its next journal": lambda s, t, b: (
         t["act"]["a"] == "SpawnStep" and s["ctl"]["pc"] == "rc_spawn" and t["run"] is not None
     ),
     "recover-all with no engine for its next journal (unavailable)": lambda s, t, b: (
         t["act"]["a"] == "SpawnStep" and s["ctl"]["pc"] == "rc_spawn" and t["run"] is None
     ),
-    "the engine that ran user code retired mid-job": lambda s, t, b: t["act"]["a"] == "FreshEnd",
     # Cancel (§4): the one rule for the job running ahead
     "Cancel of a queued job ends a running R4": lambda s, t, b: (
         (r := _ahead_of_cancel(s, t)) is not None and r["k"] == "r4" and t["run"] is None
@@ -1137,9 +1121,9 @@ UNREACHED: Mapping[str, str] = {
         f"({R4_READS}, {SWITCH})"
     ),
     "OrphanEndStuck": f"its stuck orphan comes only from a quit or the app's crash, both left out ({SWITCH})",
-    "SpawnStep, a save or an R4 with no engine": (
-        "unreachable: a save or an R4 asks a fresh engine only after its own engine ran user code (`s_fresh`, "
-        "`r4_fresh`), and only an engine death counts a stop, which ends that job (the hand-written suites cover it)"
+    "SpawnStep, a save or an R4": (
+        "unreachable: only recover-all asks a fresh engine mid-job (`rc_spawn`); a save and an R4 run in one engine "
+        "(S0068, ADR-0067)"
     ),
 }
 """Branches of mapped actions the corpus cannot reach, each with why (the hand-written suites guard them)."""
@@ -1308,9 +1292,6 @@ def test_the_ops_reader_refuses_an_unknown_action() -> None:
         ops_of(s, t, 3, inventory())
 
 
-R4_PCS = frozenset({"r4_a", "r4_load", "r4_c", "r4_fresh", "r4_spawn", "r4_conf", "r4_sync"})
-
-
 def test_the_outcome_after_a_save_death_is_the_models_disk_outcome() -> None:
     """§6.6: after a save's engine died, what the sidecar decides from the engine's facts (`save.save_outcome`) is what
     the model told at that crash (`DiskOutcome`), for each record state and re-hash the corpus reaches (S0064, BL-0151
@@ -1321,8 +1302,8 @@ def test_the_outcome_after_a_save_death_is_the_models_disk_outcome() -> None:
         states = cast(list[dict[str, Any]], trace["states"])
         for s, t in pairwise(states):
             run = s["run"]
-            if t["act"]["a"] != "EngineCrash" or run is None or run["k"] != "save" or s["ctl"]["pc"] in R4_PCS:
-                continue  # an R4 inside the save that could not run refuses the save (S0066, `test_r4_job.py`)
+            if t["act"]["a"] != "EngineCrash" or run is None or run["k"] != "save":
+                continue
             sv = s["sv"]["s"]
             record = s["jr"][sv]
             unchanged = all(s["fs"]["cur"][f] == s["sv"]["plan"][f] for f in ("R", "N"))

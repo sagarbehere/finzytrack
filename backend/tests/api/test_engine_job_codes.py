@@ -40,8 +40,6 @@ SAVE_ANSWER: dict[str, object] = {
     "cause": None,
     "cause_path": None,
     "published": False,
-    "backup": None,
-    "could_not_check": False,
 }
 REQUEST = SaveRequest(
     session="s1",
@@ -90,7 +88,7 @@ class Scenarios:
         return self._save({"outcome": "refused", "reason": "ledger_changed", "unchanged": True})
 
     def writes_paused(self) -> object:
-        return self._save({"outcome": "refused", "reason": "check_pending", "unchanged": True})
+        return self._save({"outcome": "refused", "reason": "unfinished_save", "unchanged": True})
 
     def legacy_app_saving(self) -> object:
         return self._save({"outcome": "refused", "reason": "legacy_app_saving", "unchanged": True})
@@ -275,18 +273,13 @@ def test_a_save_whose_ledger_moved_is_ledger_externally_changed(scenarios: Scena
 
 
 @pytest.mark.error_code("WRITES_PAUSED")
-def test_a_save_refused_for_an_owed_check_is_writes_paused_with_its_reason(scenarios: Scenarios) -> None:
+def test_a_save_refused_for_an_unfinished_save_is_writes_paused_with_its_reason(scenarios: Scenarios) -> None:
+    """S0068 (ADR-0067): `unfinished_save` is the only reason saves pause; R4 pauses nothing."""
     status, payload, app = answer(scenarios, "writes_paused")
     assert status == 409
     error = payload["error"]
     assert error["code"] == "WRITES_PAUSED"
-    assert error["details"] == {
-        "reason": "check_pending",
-        "file": None,
-        "record": None,
-        "backup": None,
-        "could_not_check": False,
-    }
+    assert error["details"] == {"reason": "unfinished_save", "file": None}
     assert error["data_safe"] is False
     conforms(app, payload)
 

@@ -25,14 +25,11 @@ class LoadError:
     entry: None
     def __init__(self, source: dict[str, Any], message: str, entry: None = None) -> None: ...
 
-# The loader's internals the reconciliation loads wrap (`beancount_port.reconcile_load`, `reconcile_parse`; BL-0118):
+# The loader's internals the reconciliation loads wrap (`beancount_port.reconcile_load`; BL-0118):
 # `load_file` without its pickle cache.
 def _load(
     sources: list[tuple[str, bool]],
     log_timings: Any,
     extra_validations: list[Any] | None,
     encoding: str | None,
-) -> tuple[Directives, list[BeancountError], OptionsMap]: ...
-def _parse_recursive(
-    sources: list[tuple[str, bool]], log_timings: Any, encoding: str | None = None
 ) -> tuple[Directives, list[BeancountError], OptionsMap]: ...

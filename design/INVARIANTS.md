@@ -14,7 +14,7 @@ Origin: accepted by the owner as a starting point on 2026-10-24 (review:20 §2),
 ---
 
 ### INV-01: Every ledger write passes the write-safety contract
-- **Rule:** Every ledger write passes the D1 write-safety contract: the semantic diff equals the intent, no new errors unless acknowledged, the hash/fingerprint check passes, the write is atomic with a backup, and the read-back matches.
+- **Rule:** Every ledger write passes the D1 write-safety contract: the semantic diff equals the intent; new errors are listed in a preview and written only if the user saves anyway; the hash/fingerprint check passes; the write is atomic with a backup; and the read-back matches. *(Reworded with the owner's approval, 2026-10-31, ADR-0067; it read "no new errors unless acknowledged".)*
 - **Why:** Ledger corruption is the owner's top risk, above performance (review:10 D1).
 - **Enforced by:** planned: the D1 write corpus; property tests (apply/inverse); the old-app oracle comparison before promotion; fail-closed per INV-22.
 - **Status:** pending (BL-0001, by M1b)

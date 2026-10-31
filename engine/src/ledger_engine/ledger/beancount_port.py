@@ -8,8 +8,8 @@ stages of a full load and the semantic calls (tolerance, residual, balance asser
 - `LOAD_STAGES`, the steps of a full load (sort, booking, transformations with plugins, validation, options
   aggregation). Only `ledger/overlay.py` uses them, so every full load is the overlay replica (ADR-0010), with its
   `LoadPolicy` and its refusals.
-- `RECONCILE_LOADS`, Beancount's own loader with no pickle cache: the full load and the parse of the re-check after a
-  save (R4, `design/specs/engine-jobs.md` §6.7; BL-0118). Only `ledger/r4.py` uses them: R4 compares the replica's
+- `RECONCILE_LOADS`, Beancount's own loader with no pickle cache: the full load of the re-check after a save (R4,
+  `design/specs/engine-jobs.md` §6.7; BL-0118). Only `ledger/r4.py` uses them: R4 compares the replica's
   prediction with Beancount's real loader, so it must not be the replica (it could not catch the replica's own drift).
 - `WRAPPERS`, everything else: parser-only calls and the semantic calls, usable anywhere in the engine.
 Other modules use only the names in `__all__`; every function there is in exactly one of the three classes.
@@ -19,8 +19,8 @@ name.
 **No `load_file` or `load_string` here.** Beancount's `load_file` keeps a pickle cache beside the root file: it reads
 `.<name>.picklecache` (unpickling a file from the ledger folder runs whatever code it holds), deletes it when stale
 and writes a new one after a load of a second or more. The engine never reads or writes beside a ledger outside the
-write path (S0049 journal). The reconciliation loads call the loader's internal `_load` and `_parse_recursive`, which
-`load_file` wraps with that cache: they read the ledger files and nothing else (no `.picklecache` is read or written,
+write path (S0049 journal). The reconciliation load calls the loader's internal `_load`, which `load_file` wraps
+with that cache: they read the ledger files and nothing else (no `.picklecache` is read or written,
 `engine/tests/ledger/test_r4.py`).
 
 Pinned to Beancount 3.2.0 (ADR-0004); `BEANCOUNT_VERSION` is checked by the overlay's pin test.
@@ -28,16 +28,14 @@ Pinned to Beancount 3.2.0 (ADR-0004); `BEANCOUNT_VERSION` is checked by the over
 
 from __future__ import annotations
 
-import os
 import sys
-from collections.abc import Generator, Iterable, Iterator, Mapping, Sequence
+from collections.abc import Generator, Iterable, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
 from decimal import Decimal
 from importlib.metadata import version
 from typing import Any, Final, cast
 
-from beancount.core import account as _account
 from beancount.core.data import SORT_ORDER as _SORT_ORDER
 from beancount.core.data import (
     Balance,
@@ -69,11 +67,9 @@ from beancount.core.realization import get as _realization_get
 from beancount.core.realization import realize as _realize
 from beancount.loader import LoadError as _LoadError
 from beancount.loader import _load as _loader_load  # pyright: ignore[reportPrivateUsage] (BL-0118)
-from beancount.loader import _parse_recursive as _loader_parse  # pyright: ignore[reportPrivateUsage] (BL-0118)
 from beancount.loader import aggregate_options_map as _aggregate_options_map
 from beancount.loader import compute_input_hash as _compute_input_hash
 from beancount.loader import run_transformations as _run_transformations
-from beancount.ops import documents as _documents
 from beancount.ops.balance import get_balance_tolerance as _get_balance_tolerance
 from beancount.ops.validation import validate as _validate
 from beancount.parser.booking import book as _book
@@ -125,7 +121,6 @@ __all__ = [
     "parse_file",
     "parse_string",
     "reconcile_load",
-    "reconcile_parse",
     "run_transformations",
     "sort_entries",
     "sort_order",
@@ -151,7 +146,7 @@ LOAD_STAGES: Final = frozenset(
         "load_error",
     }
 )
-RECONCILE_LOADS: Final = frozenset({"reconcile_load", "reconcile_parse"})
+RECONCILE_LOADS: Final = frozenset({"reconcile_load"})
 WRAPPERS: Final = frozenset(
     {
         "sort_order",
@@ -234,14 +229,6 @@ def reconcile_load(root: str) -> ParseResult:
     return list(entries), list(errors), dict(options)
 
 
-def reconcile_parse(root: str) -> ParseResult:
-    """Beancount's own parse of the ledger rooted at `root`, its includes followed (`loader._parse_recursive`):
-    nothing booked, no plugin run; an encrypted file met is not decrypted (`EncryptedFileMet`)."""
-    with _never_decrypt():
-        entries, errors, options = _loader_parse([(root, True)], None)
-    return list(entries), list(errors), dict(options)
-
-
 # ---- the stages of a full load (only ledger/overlay.py) ------------------------------------------------------------
 
 
@@ -254,123 +241,25 @@ def book(entries: list[Directive], options: OptionsMap) -> tuple[list[Directive]
     return list(booked), list(errors)
 
 
-type Listings = Mapping[str, Mapping[str, bool] | None]
-"""Each documents root (as `ops.documents.find_documents` resolves it) with its file names (relative, `/`-joined),
-each with whether it leads to a file; None when the root does not exist (`fingerprint.listing`'s shape)."""
-
-
 def run_transformations(
-    entries: list[Directive], errors: list[BeancountError], options: OptionsMap, documents: Listings | None = None
+    entries: list[Directive], errors: list[BeancountError], options: OptionsMap
 ) -> tuple[list[Directive], list[BeancountError]]:
     """Beancount's plugins, with the `pythonpath` directories first on `sys.path` while they run, as
     `loader._load` does. `sys.path` is the process's; the engine runs one job at a time (ADR-0064).
 
-    Two differences, for R4 (S0067, BL-0172; `design/specs/engine-jobs.md` §6.7):
-    - **No file is decrypted** (ADR-0059), as in the reconciliation loads: a plugin that decrypts a side file meets
-      `EncryptedFileMet` here as it does in R4's load, so the prediction and R4 agree (Beancount turns an exception in
-      a plugin into an error; one raised while a plugin is imported escapes, and the overlay refuses the load).
-    - **`documents`**: Beancount's documents step (`ops.documents`: `find_documents`, `verify_document_files_exist`)
-      walks these listings for these roots instead of the disk: its own code runs, and only the two questions it asks
-      of the disk through its own module's names (`account.walk`, `path.exists`) are answered from them. The overlay
-      gives the listings it recorded, with the files the save creates added, so the step sees the disk as it will be
-      after the write. Any other directory or file is asked of the disk, and a user plugin's own `account`, `os` and
-      `os.path` are never touched: it sees the disk exactly as Beancount's real load does (S0067 red team r1 F1)."""
+    **No file is decrypted** (ADR-0059; S0067), as in the reconciliation load: a plugin that decrypts a side file
+    meets `EncryptedFileMet` here as it does in R4's load (Beancount turns an exception in a plugin into an error; one
+    raised while a plugin is imported escapes, and the overlay refuses the load). Beancount's documents step reads the
+    disk, as in Beancount's own load (S0068 removed S0067's listing swap: ADR-0067, spec §15)."""
     saved = list(sys.path)
     try:
         if "pythonpath" in options:
             sys.path[0:0] = options["pythonpath"]
-        with _never_decrypt(), _documents_from(documents or {}):
+        with _never_decrypt():
             transformed, all_errors = _run_transformations(entries, errors, options, None)
     finally:
         sys.path[:] = saved
     return list(transformed), list(all_errors)
-
-
-def _walk_listing(top: str, names: Mapping[str, bool]) -> Iterator[tuple[str, list[str], list[str]]]:
-    """`os.walk(top)` of a listing: each folder that holds files, top-down, folders and files in name order, as
-    `account.walk` visits them (it sorts both in place before `os.walk` goes on)."""
-    folders: dict[tuple[str, ...], list[str]] = {}
-    for rel in names:
-        *parts, base = rel.split("/")
-        folders.setdefault(tuple(parts), []).append(base)
-    for parts in sorted(folders):
-        yield (os.path.join(top, *parts) if parts else top), [], sorted(folders[parts])
-
-
-class _PathAnswers:
-    """`os.path`, with `exists` answered from the listings for the roots and the files listed under them."""
-
-    def __init__(self, documents: Listings) -> None:
-        self._roots = {d: names is not None for d, names in documents.items()}
-        self._files = {
-            os.path.join(d, n): e for d, names in documents.items() if names is not None for n, e in names.items()
-        }
-
-    def exists(self, p: str) -> bool:
-        if p in self._roots:
-            return self._roots[p]
-        if p in self._files:
-            return self._files[p]
-        return os.path.exists(p)
-
-    def __getattr__(self, name: str) -> Any:
-        return getattr(os.path, name)
-
-
-class _OsAnswers:
-    """`os` for one call of Beancount's `account.walk(top)`: `walk` of `top` answered from its listing."""
-
-    def __init__(self, top: str, names: Mapping[str, bool] | None) -> None:
-        self._top = top
-        self._names = names
-
-    def walk(
-        self, top: str, topdown: bool = True, onerror: Any = None, followlinks: bool = False
-    ) -> Iterator[tuple[str, list[str], list[str]]]:
-        if top == self._top:
-            return iter(()) if self._names is None else _walk_listing(top, self._names)
-        return os.walk(top, topdown, onerror, followlinks)
-
-    def __getattr__(self, name: str) -> Any:
-        return getattr(os, name)
-
-
-class _AccountAnswers:
-    """`beancount.core.account` as `ops.documents` names it (its own module attribute, nobody else's): `walk` of a
-    listed root is Beancount's own `account.walk` run over the listing, collected while `account`'s `os` answers from
-    it (no user code runs inside that call); `walk` of any other folder, and every other name, are the real module's."""
-
-    def __init__(self, documents: Listings) -> None:
-        self._documents = documents
-
-    def walk(self, root_directory: str, followlinks: bool = True) -> Iterator[tuple[str, str, list[str], list[str]]]:
-        if root_directory not in self._documents:
-            return _account.walk(root_directory, followlinks)
-        real_os = getattr(_account, "os")  # noqa: B009 (a module's own import, not exported)
-        setattr(_account, "os", _OsAnswers(root_directory, self._documents[root_directory]))  # noqa: B010
-        try:
-            return iter(list(_account.walk(root_directory, followlinks)))
-        finally:
-            setattr(_account, "os", real_os)  # noqa: B010
-
-    def __getattr__(self, name: str) -> Any:
-        return getattr(_account, name)
-
-
-@contextmanager
-def _documents_from(documents: Listings) -> Generator[None]:
-    """Beancount's documents step reads `documents` for those roots (`run_transformations`): only the `path` and
-    `account` names of `ops.documents` itself are swapped, so a user plugin's own modules see the disk. The engine
-    runs one op at a time on one thread, so swapping them for the call is safe."""
-    real_path = getattr(_documents, "path")  # noqa: B009 (a module's own import, not exported)
-    real_account = getattr(_documents, "account")  # noqa: B009
-    setattr(_documents, "path", _PathAnswers(documents))  # noqa: B010 (the module's attribute, for this call only)
-    setattr(_documents, "account", _AccountAnswers(documents))  # noqa: B010
-    try:
-        yield
-    finally:
-        setattr(_documents, "path", real_path)  # noqa: B010
-        setattr(_documents, "account", real_account)  # noqa: B010
 
 
 def validate(entries: list[Directive], options: OptionsMap) -> list[BeancountError]:

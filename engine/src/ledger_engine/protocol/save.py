@@ -30,7 +30,7 @@ from ledger_engine.protocol.messages import (
 from ledger_engine.protocol.recovery import BadParamsError, Decider, app_local_data_of, ledger_locks_in
 
 TABLE: Final = "engine.save"
-TABLE_VERSION: Final = 1
+TABLE_VERSION: Final = 2  # 2 (S0068): no `check_pending` or `check_failed` refusal (ADR-0067)
 
 
 class SaveJob(Decider, Protocol):
@@ -67,11 +67,10 @@ def _result(out: sv.SaveOutcome) -> SaveResult:
     match out:
         case sv.Saved(published=published):
             outcome, reason, path, unchanged, open_journal = "saved", None, None, False, False
-            entry = detail = cause = cause_path = backup = None
+            entry = detail = cause = cause_path = None
         case sv.Refused(reason=reason, unchanged=unchanged, path=path):
             outcome, open_journal, published = "refused", False, False
             entry = detail = cause = cause_path = None
-            backup = out.backup
         case NotSaved():
             outcome, reason, path, unchanged, open_journal = (
                 "not_saved",
@@ -80,10 +79,10 @@ def _result(out: sv.SaveOutcome) -> SaveResult:
                 out.unchanged,
                 out.open_journal,
             )
-            entry, detail, cause, cause_path, published, backup = out.entry, out.detail, None, None, False, None
+            entry, detail, cause, cause_path, published = out.entry, out.detail, None, None, False
         case Unfinished():
             outcome, reason, path, unchanged, open_journal = "unfinished", out.reason.value, out.path, False, True
-            entry, detail, cause, cause_path, published, backup = None, None, out.cause, out.cause_path, False, None
+            entry, detail, cause, cause_path, published = None, None, out.cause, out.cause_path, False
     return SaveResult(
         outcome=outcome,
         reason=reason,
@@ -95,8 +94,6 @@ def _result(out: sv.SaveOutcome) -> SaveResult:
         cause=cause,
         cause_path=cause_path,
         published=published,
-        backup=backup,
-        could_not_check=isinstance(out, sv.Refused) and out.could_not_check,
     )
 
 
@@ -122,7 +119,7 @@ def save(params: Message, ctx: SaveJob) -> Message:
         legacy_locks=tuple(params.legacy_locks),
         app_local_data=ald,
     )
-    ports = sv.Ports(fs, ledger_locks_in(ald), DarwinLegacyLocks(), sv.desktop_load(DesktopPolicy(), fs))
+    ports = sv.Ports(fs, ledger_locks_in(ald), DarwinLegacyLocks(), sv.desktop_load(DesktopPolicy()))
     try:
         out = sv.run(plan, ports, ctx)
     except BadPlanError as e:

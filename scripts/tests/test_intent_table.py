@@ -21,9 +21,9 @@ BEANCOUNT_ERRORS = {"BalanceError", "PadError", "ValidationError", "DocumentErro
                     "ParserError", "ParserSyntaxError", "LoadError", "DeprecatedError", "ImplicitPriceError",
                     "UniquePricesError", "CheckCommodityError", "CoherentCostError", "CommodityError", "LeafOnlyError",
                     "OneCommodityError", "SellGainsError", "UnusedAccountError", "MatchBasisError", "ConfigError"}
-# Never acknowledgeable (README "What a row means"): booking and parser errors.
-NEVER_ACK = {"BookingError", "ReductionError", "AmbiguousMatchError", "InterpolationError", "CategorizationError",
-             "SelfReduxError", "LexerError", "ParserError", "ParserSyntaxError"}
+# Parser errors in Finzytrack's own text are a job 1 failure (ADR-0067 decision 2): they block, so they are never a
+# preview hint. Every other class may be listed by the preview and saved anyway; none is a refusal reason.
+PARSE_ERRORS = {"LexerError", "ParserError", "ParserSyntaxError"}
 # ADR-0026 §4.1 app-written keys and review:28 §4.2 user vocabulary: the only keys a row may write.
 APP_KEYS = {"import-key", "txn-date", "original", "statement-amount", "memo"}
 VOCABULARY = {"name", "asset-class", "exposure", "fetch-symbol", "isin", "issue-date", "denomination", "account-type",
@@ -86,16 +86,30 @@ class IntentTableTest(unittest.TestCase):
                 if "replace_file" in r["edits"]:
                     self.assertEqual(r["id"], "ws.refresh-demo")  # the one replacement in the system (INV-25)
 
-    def test_acknowledgeable_errors_are_beancount_errors_that_may_be_acknowledged(self) -> None:
+    def test_preview_hints_are_beancount_errors_or_warnings_never_parser_errors(self) -> None:
+        """ADR-0067: `ack` is what the preview may list; booking errors included, parser errors never (they block)."""
         for r in self.rows:
             for ack in r["ack"]:
                 with self.subTest(row=r["id"], ack=ack):
                     if ack.startswith("as "):
                         self.assertTrue(self.refers_to_a_row(ack, r["id"]), ack)
                         continue
+                    if ack.startswith("Warning: "):
+                        continue
                     first = ack.split()[0]
-                    self.assertIn(first, BEANCOUNT_ERRORS - NEVER_ACK, ack)
+                    self.assertIn(first, BEANCOUNT_ERRORS - PARSE_ERRORS, ack)
                     self.assertIn(" on ", ack)
+
+    def test_no_refusal_is_an_accounting_error(self) -> None:
+        """ADR-0067 decision 2 (S0068): job 2 advises and never refuses; a refusal reason that is a Beancount error
+        (other than a parser error in our own text) belongs in the preview hints."""
+        for r in self.rows:
+            for ref in r["refuses"]:
+                with self.subTest(row=r["id"], refuses=ref):
+                    self.assertNotIn("never acknowledgeable", ref)
+                    self.assertNotIn("would follow", ref)
+                    for cls in BEANCOUNT_ERRORS - PARSE_ERRORS:
+                        self.assertNotIn(cls, ref)
 
     def test_metadata_written_is_on_the_contract_list(self) -> None:
         for r in self.rows:

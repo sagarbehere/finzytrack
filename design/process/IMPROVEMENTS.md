@@ -492,3 +492,11 @@ Format:
 - Why: each red-team round costs about 150-230k tokens and 10-25 minutes; re-reading a whole slice re-attacks code earlier rounds covered, and a block that loses nothing was being treated as a reason for another round.
 - Expected effect: one verifier and at most one scoped red team per slice; the planned order: BL-0151 slice 4 (S0063) verifier and red team scoped to the gate, locks, load, re-check and outcomes; slice 5 verifier only; BL-0160 and BL-0153 red team; BL-0152 verifier plus a red team scoped to the check-failed pause.
 - Status: kept (owner-approved loosening).
+
+## IMP-0050: INV-01 says the preview lists new errors and the user may save anyway; "unless acknowledged" retired (2026-10-31)
+- Trigger: owner decision, 2026-10-31, in session, on S0068 (ADR-0067: integrity blocks, accounting advises), choosing the option labelled "Reword (Recommended)" for INV-01's rule.
+- What changed: invariant wording and gate. INV-01's rule reads "the semantic diff equals the intent; new errors are listed in a preview and written only if the user saves anyway; the hash/fingerprint check passes; the write is atomic with a backup; and the read-back matches" (ADR-0067 decision 2; meaning: no error class is refused, the user's Save anyway on the preview is the consent). `scripts/check_retired_terms.py` refuses "unless acknowledged" in the current-state documents; INV-01's own supersession note is allowed.
+- PROCESS.md section: none.
+- Why: "no new errors unless acknowledged" could be read as S0004's per-mutator acknowledgement lists, the refusal ADR-0067 retired (owner, 2026-10-31: "Make sure no docs inadvertently reference the old design").
+- Expected effect: an agent building the preview (BL-0106) reads INV-01 as the preview with Save anyway, not as a list of error classes a save may refuse.
+- Status: kept (invariant wording owner-approved; the term an agent-approved tightening asked for by the owner's rewording; S0068).

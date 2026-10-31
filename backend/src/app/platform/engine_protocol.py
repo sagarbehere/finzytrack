@@ -64,9 +64,6 @@ OPS = (
     "save",
     "save_outcome",
     "r4_check",
-    "r4_confirm",
-    "r4_attempt",
-    "r4_resume",
 )
 # The members of `RefusalKey` (the contract test checks both against the schema).
 REFUSAL_KEYS = frozenset(
@@ -490,8 +487,6 @@ _SAVE = frozenset(
         "cause",
         "cause_path",
         "published",
-        "backup",
-        "could_not_check",
     }
 )
 _SAVE_OUTCOMES: frozenset[str] = frozenset({"saved", "refused", "not_saved", "unfinished"})
@@ -510,8 +505,6 @@ def _save(result: Mapping[str, object]) -> SaveAnswer:
         cause=_text(o["cause"], "cause", nullable=True),
         cause_path=_path(o["cause_path"], "cause_path", nullable=True),
         published=_bool(o["published"], "published"),
-        backup=_path(o["backup"], "backup", nullable=True),
-        could_not_check=_bool(o["could_not_check"], "could_not_check"),
     )
 
 
@@ -520,48 +513,25 @@ def decode_save(result: Mapping[str, object]) -> SaveAnswer | Violation:
     return _decoded(_save, result)
 
 
-_R4 = frozenset({"outcome", "loaded", "record", "backup"})
-_R4_CHECK: frozenset[str] = frozenset({"gone", "unreadable", "superseded", "superseded_build", "pass", "differs"})
-_R4_CONFIRM: frozenset[str] = frozenset(
-    {"gone", "unreadable", "superseded", "superseded_build", "nondeterministic", "mismatch"}
-)
-_R4_ATTEMPT: frozenset[str] = frozenset({"gone", "counted", "could_not_check"})
-_R4_RESUME: frozenset[str] = frozenset({"gone", "done"})
+_R4 = frozenset({"outcome", "loaded"})
+R4_OUTCOMES: frozenset[str] = frozenset({"gone", "unreadable", "superseded", "pass", "differs"})
 
 
-def r4_outcomes(op: str) -> frozenset[str]:
-    """What each R4 op may answer (its result model's set): an outcome another op gives (a `pass` from `r4_attempt`)
-    breaks the protocol."""
-    match op:
-        case "r4_check":
-            return _R4_CHECK
-        case "r4_confirm":
-            return _R4_CONFIRM
-        case "r4_attempt":
-            return _R4_ATTEMPT
-        case _:
-            return _R4_RESUME
+def _r4(result: Mapping[str, object]) -> R4Answer:
+    o = _keys(dict(result), _R4, "the r4_check result")
+    return R4Answer(
+        outcome=cast("R4Outcome", _choice(o["outcome"], R4_OUTCOMES, "outcome")),
+        loaded=_bool(o["loaded"], "loaded"),
+    )
 
 
-def decode_r4(op: str, result: Mapping[str, object]) -> R4Answer | Violation:
-    """The result of the R4 op `op` (S0066)."""
-
-    def decode(r: Mapping[str, object]) -> R4Answer:
-        o = _keys(dict(r), _R4, f"the {op} result")
-        return R4Answer(
-            outcome=cast("R4Outcome", _choice(o["outcome"], r4_outcomes(op), "outcome")),
-            loaded=_bool(o["loaded"], "loaded"),
-            record=_path(o["record"], "record", nullable=True),
-            backup=_path(o["backup"], "backup", nullable=True),
-        )
-
-    return _decoded(decode, result)
+def decode_r4(result: Mapping[str, object]) -> R4Answer | Violation:
+    """The `r4_check` result (S0066, S0068)."""
+    return _decoded(_r4, result)
 
 
 _FACTS = frozenset({"record", "unchanged", "path", "errno"})
-_RECORDS: frozenset[str] = frozenset(
-    {"none", "part", "open", "closed", "done", "mismatch", "resolved", "kept", "unknown"}
-)
+_RECORDS: frozenset[str] = frozenset({"none", "part", "open", "closed", "resolved", "kept", "unknown"})
 
 
 def _facts(result: Mapping[str, object]) -> OutcomeFacts:

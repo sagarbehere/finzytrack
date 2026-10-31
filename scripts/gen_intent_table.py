@@ -52,7 +52,7 @@ def render(table: dict) -> str:
         out.append("")
         for label, key in (("Capabilities", "caps"), ("Kind of edit", "kind"), ("Old endpoint", "old"), ("Edits", "edits"),
                            ("Files", "files"), ("Intended change", "intent"), ("Metadata written", "meta"),
-                           ("May ask to acknowledge", "ack"), ("Refused when", "refuses"), ("v0.3 oracle expectation", "oracle"),
+                           ("The preview may list (never a refusal, ADR-0067)", "ack"), ("Refused when", "refuses"), ("v0.3 oracle expectation", "oracle"),
                            ("Status", "status"), ("Milestone", "milestone"), ("ADRs", "adrs")):
             out.append(f"- **{label}:** {cell(r[key])}")
     out.append("")
