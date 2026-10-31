@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import datetime
 import os
+import subprocess
 import sys
 from decimal import Decimal
 from pathlib import Path
@@ -93,10 +94,7 @@ def test_the_replicas_parse_and_beancounts_parse_give_one_digest(ledger: Path) -
     parsed = overlay.parse(str(ledger), POLICY, keys())
     assert isinstance(parsed, overlay.Parsed)
     assert parsed.digest == beancount
-    loaded = overlay.load(str(ledger), {}, POLICY, key_of=keys())
-    assert isinstance(loaded, overlay.Loaded)
-    assert loaded.parse_digest == beancount  # the parse digest a save writes into its record
-    assert loaded.parse_digest != real(ledger)  # the parse is not the load
+    assert parsed.digest != real(ledger)  # the parse is not the load
 
 
 def test_a_touch_changes_nothing_though_beancount_s_input_hash_moves(ledger: Path) -> None:
@@ -204,3 +202,25 @@ def test_a_name_that_cannot_be_resolved_encodes_as_itself() -> None:
     k = digest.path_keys(for_this_os())
     assert k("relative/name") == "n:relative/name"
     assert k("/").startswith("k:")
+
+
+GEN_DEMO = Path(__file__).resolve().parents[3] / "backend" / "scripts" / "gen_demo.py"
+
+
+def test_the_replica_and_beancounts_loader_give_one_digest_on_the_54k_demo_ledger(tmp_path: Path) -> None:
+    """@regression-guard (S0067: the code was right; the test was missing). BL-0172, BL-0171 (8) (S0066 verifier r1
+    F10): the equality R4's `pass` rests on, at the size ADR-0008 names
+    (the demo generator's 54k ledger, one file of about 8.7 MB). The generator is the main sidecar's build step; it is
+    run as its own program (it writes ledger text; the engine imports nothing of the sidecar, ADR-0054). About 5 s."""
+    out = tmp_path / "demo"
+    done = subprocess.run(  # noqa: S603 (fixed argv: this interpreter and the repository's own generator)
+        [sys.executable, "-I", str(GEN_DEMO), "--size", "54k", "--out", str(out), "--anchor", "2026-10-25"],
+        capture_output=True,
+        check=False,
+    )
+    assert done.returncode == 0, done.stderr.decode(errors="replace")
+    roots = [p for p in out.iterdir() if p.suffix in (".beancount", ".bean")]
+    assert len(roots) == 1, sorted(p.name for p in out.iterdir())
+    entries, _, _ = port.reconcile_load(str(roots[0]))
+    assert sum(isinstance(e, Transaction) for e in entries) >= 54_000
+    assert replica(roots[0]) == real(roots[0])

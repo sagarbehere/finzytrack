@@ -48,7 +48,6 @@ RECORD = Record(
     engine_build="build1",
     post_fingerprint="sha256:" + "f" * 64,
     adopted_digest="sha256:" + "a" * 64,
-    parse_digest="sha256:" + "b" * 64,
     backup_dir="/app/local/k1/backups/s1-j7",
     files=(
         FileEntry("/w/L/inc/a.bean", "/w/l/inc/a.bean", "1" * 64, "2" * 64, "0-a.bean", ".a.bean.ft-s1-j7.tmp"),
@@ -80,6 +79,17 @@ def test_a_record_cut_off_at_any_length_is_unreadable() -> None:
     data = encode(RECORD)
     for n in range(len(data)):
         assert isinstance(decode(data[:n]), Unreadable), n
+
+
+def test_format_3_has_no_parse_digest_and_a_version_2_record_is_unreadable() -> None:
+    """BL-0173 (owner, 2026-10-31: "Drop digest; 2 jobs (Recommended)"): format 3 drops the parse digest; a format 2
+    record (S0066, with it) is not read as a record (R4 counts it as a failure to run; never a pass)."""
+    obj = json.loads(encode(RECORD))
+    assert (VERSION, "parse_digest" in obj) == (3, False)
+    obj["v"] = 2
+    obj["parse_digest"] = "sha256:" + "b" * 64
+    out = decode((json.dumps(obj, sort_keys=True, separators=(",", ":"), ensure_ascii=False) + "\n").encode())
+    assert out == Unreadable("unknown version")
 
 
 def test_a_newer_version_is_refused() -> None:

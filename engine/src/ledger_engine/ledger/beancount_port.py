@@ -28,14 +28,16 @@ Pinned to Beancount 3.2.0 (ADR-0004); `BEANCOUNT_VERSION` is checked by the over
 
 from __future__ import annotations
 
+import os
 import sys
-from collections.abc import Generator, Iterable, Sequence
+from collections.abc import Generator, Iterable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
 from decimal import Decimal
 from importlib.metadata import version
 from typing import Any, Final, cast
 
+from beancount.core import account as _account
 from beancount.core.data import SORT_ORDER as _SORT_ORDER
 from beancount.core.data import (
     Balance,
@@ -71,6 +73,7 @@ from beancount.loader import _parse_recursive as _loader_parse  # pyright: ignor
 from beancount.loader import aggregate_options_map as _aggregate_options_map
 from beancount.loader import compute_input_hash as _compute_input_hash
 from beancount.loader import run_transformations as _run_transformations
+from beancount.ops import documents as _documents
 from beancount.ops.balance import get_balance_tolerance as _get_balance_tolerance
 from beancount.ops.validation import validate as _validate
 from beancount.parser.booking import book as _book
@@ -251,19 +254,99 @@ def book(entries: list[Directive], options: OptionsMap) -> tuple[list[Directive]
     return list(booked), list(errors)
 
 
+type Listings = Mapping[str, Mapping[str, bool] | None]
+"""Each documents root (as `ops.documents.find_documents` resolves it) with its file names (relative, `/`-joined),
+each with whether it leads to a file; None when the root does not exist (`fingerprint.listing`'s shape)."""
+
+
 def run_transformations(
-    entries: list[Directive], errors: list[BeancountError], options: OptionsMap
+    entries: list[Directive], errors: list[BeancountError], options: OptionsMap, documents: Listings | None = None
 ) -> tuple[list[Directive], list[BeancountError]]:
     """Beancount's plugins, with the `pythonpath` directories first on `sys.path` while they run, as
-    `loader._load` does. `sys.path` is the process's; the engine runs one job at a time (ADR-0064)."""
+    `loader._load` does. `sys.path` is the process's; the engine runs one job at a time (ADR-0064).
+
+    Two differences, for R4 (S0067, BL-0172; `design/specs/engine-jobs.md` §6.7):
+    - **No file is decrypted** (ADR-0059), as in the reconciliation loads: a plugin that decrypts a side file meets
+      `EncryptedFileMet` here as it does in R4's load, so the prediction and R4 agree (Beancount turns an exception in
+      a plugin into an error; one raised while a plugin is imported escapes, and the overlay refuses the load).
+    - **`documents`**: Beancount's documents step (`ops.documents`: `find_documents`, `verify_document_files_exist`)
+      walks these listings for these roots instead of the disk: its own code runs, and only its `os.walk` (through
+      `account.walk`) and `path.exists` are answered from them. The overlay gives the listings it recorded, with the
+      files the save creates added, so the step sees the disk as it will be after the write. Any other directory or
+      file is asked of the disk."""
     saved = list(sys.path)
     try:
         if "pythonpath" in options:
             sys.path[0:0] = options["pythonpath"]
-        transformed, all_errors = _run_transformations(entries, errors, options, None)
+        with _never_decrypt(), _documents_from(documents or {}):
+            transformed, all_errors = _run_transformations(entries, errors, options, None)
     finally:
         sys.path[:] = saved
     return list(transformed), list(all_errors)
+
+
+def _walk_listing(top: str, names: Mapping[str, bool]) -> Iterator[tuple[str, list[str], list[str]]]:
+    """`os.walk(top)` of a listing: each folder that holds files, top-down, folders and files in name order, as
+    `account.walk` visits them (it sorts both in place before `os.walk` goes on)."""
+    folders: dict[tuple[str, ...], list[str]] = {}
+    for rel in names:
+        *parts, base = rel.split("/")
+        folders.setdefault(tuple(parts), []).append(base)
+    for parts in sorted(folders):
+        yield (os.path.join(top, *parts) if parts else top), [], sorted(folders[parts])
+
+
+class _PathAnswers:
+    """`os.path`, with `exists` answered from the listings for the roots and the files listed under them."""
+
+    def __init__(self, documents: Listings) -> None:
+        self._roots = {d: names is not None for d, names in documents.items()}
+        self._files = {
+            os.path.join(d, n): e for d, names in documents.items() if names is not None for n, e in names.items()
+        }
+
+    def exists(self, p: str) -> bool:
+        if p in self._roots:
+            return self._roots[p]
+        if p in self._files:
+            return self._files[p]
+        return os.path.exists(p)
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(os.path, name)
+
+
+class _OsAnswers:
+    """`os`, with `walk` of a listed root answered from its listing."""
+
+    def __init__(self, documents: Listings) -> None:
+        self._documents = documents
+
+    def walk(
+        self, top: str, topdown: bool = True, onerror: Any = None, followlinks: bool = False
+    ) -> Iterator[tuple[str, list[str], list[str]]]:
+        if top in self._documents:
+            names = self._documents[top]
+            return iter(()) if names is None else _walk_listing(top, names)
+        return os.walk(top, topdown, onerror, followlinks)
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(os, name)
+
+
+@contextmanager
+def _documents_from(documents: Listings) -> Generator[None]:
+    """Beancount's documents step reads `documents` for those roots (`run_transformations`). The engine runs one op at
+    a time on one thread, so swapping the two modules' attributes for the call is safe."""
+    real_path = getattr(_documents, "path")  # noqa: B009 (a module's own import, not exported)
+    real_os = getattr(_account, "os")  # noqa: B009
+    setattr(_documents, "path", _PathAnswers(documents))  # noqa: B010 (the module's attribute, for this call only)
+    setattr(_account, "os", _OsAnswers(documents))  # noqa: B010
+    try:
+        yield
+    finally:
+        setattr(_documents, "path", real_path)  # noqa: B010
+        setattr(_account, "os", real_os)  # noqa: B010
 
 
 def validate(entries: list[Directive], options: OptionsMap) -> list[BeancountError]:

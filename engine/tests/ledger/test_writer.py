@@ -83,11 +83,7 @@ def test_the_record_names_every_file_by_canonical_path_and_key_with_the_closed_r
     assert [f.pre for f in r.files] == [None if t.pre is None else sha256(t.pre) for t in w.targets]
     assert [f.post for f in r.files] == [sha256(t.post) for t in w.targets]
     assert (r.workspace_key, r.lineage, r.engine_build) == ("k1", "lin1", "build1")
-    assert (r.post_fingerprint, r.adopted_digest, r.parse_digest) == (
-        w.commit.post_fingerprint,
-        w.commit.adopted_digest,
-        w.commit.parse_digest,
-    )
+    assert (r.post_fingerprint, r.adopted_digest) == (w.commit.post_fingerprint, w.commit.adopted_digest)
     assert journal.decode(journals(w.fs)[State.CLOSED]) == r
 
 

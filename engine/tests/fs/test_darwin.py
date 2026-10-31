@@ -232,7 +232,6 @@ def _commit(root: Path, *changes: Change) -> Commit:
         engine_build="b",
         post_fingerprint="fp",
         adopted_digest="ad",
-        parse_digest="pd",
         changes=changes,
         journal_dir=str(root / "local" / "journal"),
         backups_dir=str(root / "local" / "backups"),

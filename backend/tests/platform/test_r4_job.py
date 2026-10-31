@@ -23,6 +23,7 @@ from typing import Any
 
 import pytest
 
+from app.platform.engine import EngineFailure
 from app.platform.engine_jobs import save_text
 from app.platform.engine_jobs.r4 import (
     Checked,
@@ -228,6 +229,48 @@ def test_a_passed_r4_then_no_engine_for_the_save_is_not_could_not_check(make: An
     value = rig.save()
     assert isinstance(value, NotDone)
     assert value.error.code == ErrorCode.ENGINE_UNAVAILABLE
+    assert rig.ops() == ["save", "r4_check"]
+
+
+@pytest.mark.parametrize(
+    ("kind", "code", "reason"),
+    [
+        ("incompatible", ErrorCode.ENGINE_UNAVAILABLE, "incompatible"),
+        ("start_failed", ErrorCode.ENGINE_UNAVAILABLE, "cannot_start"),
+        ("crashed", ErrorCode.ENGINE_STOPPED, "crashed"),
+        ("protocol_violation", ErrorCode.ENGINE_STOPPED, "crashed"),
+        ("unavailable", ErrorCode.ENGINE_UNAVAILABLE, "stopped_often"),
+    ],
+)
+def test_a_passed_r4_then_no_engine_for_the_save_is_worded_by_its_cause(
+    make: Any, kind: str, code: ErrorCode, reason: str
+) -> None:
+    """BL-0172 (S0066 red team r2): the fresh engine for the save after its owed R4 passed did not come; the text says
+    why (§11): "stopped several times" only when the restart bound was reached; an engine that crashed or broke the
+    protocol while it started is `ENGINE_STOPPED` (nothing written: the save never ran); an incompatible one says the
+    install is damaged (before S0067: every cause but three read "stopped several times")."""
+    import time
+
+    rig = make({"save": [OWES, Gated(answer())], "r4_check": [r4("pass", loaded=True, record=f"{JD}/s0-j0.done")]})
+    real = rig.engine.call
+
+    def call(op: str, params: Any, **kw: Any) -> Any:
+        out = real(op, params, **kw)
+        if op == "r4_check":
+            if kind == "incompatible":
+                rig.engine.incompatible()
+            elif kind == "unavailable":
+                now = time.monotonic()
+                rig.engine.unavailable((now, now, now))
+            else:
+                rig.engine.start_failure = EngineFailure(kind, "test")  # type: ignore[arg-type]
+        return out
+
+    rig.engine.call = call
+    value = rig.save()
+    assert isinstance(value, NotDone)
+    assert value.error.code == code
+    assert getattr(value.error.details, "reason", None) == reason
     assert rig.ops() == ["save", "r4_check"]
 
 

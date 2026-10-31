@@ -216,10 +216,13 @@ def test_a_document_directives_file_is_recorded_before_beancount_asks(
     original = port.run_transformations
 
     def file_vanishes_first(
-        entries: list[port.Directive], errors: list[port.BeancountError], options: port.OptionsMap
+        entries: list[port.Directive],
+        errors: list[port.BeancountError],
+        options: port.OptionsMap,
+        documents: port.Listings | None = None,
     ) -> tuple[list[port.Directive], list[port.BeancountError]]:
         pdf.unlink()
-        return original(entries, errors, options)
+        return original(entries, errors, options, documents)
 
     monkeypatch.setattr(port, "run_transformations", file_vanishes_first)
     result = loaded(root)
@@ -276,9 +279,12 @@ def after_the_plugins(monkeypatch: pytest.MonkeyPatch, action: Callable[[], obje
     original = port.run_transformations
 
     def then_act(
-        entries: list[port.Directive], errors: list[port.BeancountError], options: port.OptionsMap
+        entries: list[port.Directive],
+        errors: list[port.BeancountError],
+        options: port.OptionsMap,
+        documents: port.Listings | None = None,
     ) -> tuple[list[port.Directive], list[port.BeancountError]]:
-        result = original(entries, errors, options)
+        result = original(entries, errors, options, documents)
         action()
         return result
 
@@ -602,26 +608,23 @@ def test_as_before_puts_each_candidate_back_at_its_pre_state_and_keeps_every_oth
     assert observe(before.ledger_set) == before  # the disk as the load read it
 
 
-def test_as_after_adds_each_created_file_to_the_listing_of_every_documents_root_it_is_under() -> None:
-    """S0066 red team r1 F1: the closed record's post fingerprint is the disk after the commit."""
+def test_as_after_adds_the_files_the_load_predicted_under_each_documents_root() -> None:
+    """S0066 red team r1 F1, BL-0172: the closed record's post fingerprint is the disk after the commit: each
+    documents root's listing with the files the load's prediction added under it (`Loaded.created_documents`, matched
+    by `path_key`), a root the save creates included; a `document` directive naming such a file exists after it."""
     fp = Fingerprint.of(
         "/L/main.bean",
         {"/L/main.bean": Content("1" * 64), "/L/docs/a/new.bean": Content("2" * 64)},
         {},
         {"/L": {"main.bean": True}, "/L/docs": None, "/Other": {"x": True}},
-        {},
+        {"/L/docs/a/new.bean": False, "/L/other.pdf": False},
     )
-    after = as_after(fp, {"/L/main.bean": "0" * 64, "/L/docs/a/new.bean": None})
+    after = as_after(fp, {"/L": ("docs/a/new.bean",), "/L/docs": ("a/new.bean",)})
     assert dict(after.documents) == {
         "/L": (("docs/a/new.bean", True), ("main.bean", True)),
         "/L/docs": (("a/new.bean", True),),
         "/Other": (("x", True),),
     }
-    assert (after.root, after.files, after.globs, after.document_files) == (
-        fp.root,
-        fp.files,
-        fp.globs,
-        fp.document_files,
-    )
-    assert as_after(fp, {"/L/main.bean": "0" * 64}) == fp  # nothing created: the load's own record
-    assert dict(as_after(fp, {"/Lx/new.bean": None}).documents) == dict(fp.documents)  # not under `/L`
+    assert dict(after.document_files) == {"/L/docs/a/new.bean": True, "/L/other.pdf": False}
+    assert (after.root, after.files, after.globs) == (fp.root, fp.files, fp.globs)
+    assert as_after(fp, {}) == fp  # nothing created under a root: the load's own record

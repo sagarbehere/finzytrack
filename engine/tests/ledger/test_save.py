@@ -243,13 +243,10 @@ def test_a_save_lands_after_its_gate_and_its_closed_record_carries_the_loads_pos
     assert isinstance(rec, Record)
     assert rec.post_fingerprint == encode(seen[0].fingerprint).decode("ascii")  # S0066: R4 observes this ledger set
     assert (rec.workspace_key, rec.lineage, rec.engine_build) == (KEY, LINEAGE, "test build")
-    # R4's prediction (§6.7): the digest of the load's result, and of its parse
+    # R4's prediction (§6.7): the digest of the load's result (no parse digest since BL-0173)
     keys = path_keys(for_this_os())
     assert rec.adopted_digest == of_result(seen[0].entries, seen[0].errors, seen[0].options, keys)
-    assert rec.parse_digest == seen[0].parse_digest
-    assert rec.parse_digest is not None
-    assert rec.parse_digest.startswith("sha256:")
-    assert rec.adopted_digest != rec.parse_digest
+    assert rec.adopted_digest.startswith("sha256:")
     assert_locks_free(led, plan)
 
 
@@ -355,7 +352,6 @@ def _record(led: Ledger, key: str, name: str, state: State, *, lineage: str = LI
         engine_build="b",
         post_fingerprint="sha256:" + "1" * 64,
         adopted_digest="a",
-        parse_digest="p",
         backup_dir="/b/" + name,
         files=(FileEntry("/x/a.bean", "/x/a.bean", "1" * 64, "2" * 64, "0-a.bean", f".a.bean.ft-{name}.tmp"),),
         created_dirs=(),

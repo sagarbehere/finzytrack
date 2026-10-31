@@ -14,6 +14,7 @@ from __future__ import annotations
 import ast
 import hashlib
 import shutil
+import sys
 import tomllib
 import uuid
 from collections.abc import Callable
@@ -27,6 +28,7 @@ from beancount import loader
 from beancount.utils import encryption
 
 from ledger_engine.ledger import beancount_port as port
+from ledger_engine.ledger import overlay as overlay_module
 from ledger_engine.ledger.overlay import Loaded, LoadRefused, load
 from ledger_engine.ledger.policy import DESKTOP
 
@@ -149,21 +151,167 @@ def test_a_candidate_named_by_a_path_that_is_not_normalized_is_the_same_file(tmp
 
 
 @pytest.mark.usefixtures("no_decryption")
-def test_a_missing_encrypted_looking_file_is_a_missing_file(tmp_path: Path) -> None:
-    # Not refused as encrypted (nothing is there to be encrypted) and not a crash: the loader's own error. A missing
-    # include does not match its glob; a root that is gone and a dangling link the glob still lists are missing.
-    for name in ("gone.beancount.gpg", "gone.beancount.asc"):
-        loaded = load(str(tmp_path / name), {}, DESKTOP)
-        assert isinstance(loaded, Loaded), loaded
-        assert [e.message for e in loaded.errors] == [f'File "{tmp_path / name}" does not exist']
-    # The same for a missing plain root, which Beancount's own loader also reports this way.
+@pytest.mark.parametrize("name", ["gone.beancount.gpg", "gone.beancount.asc", "dangling.beancount.asc", "dangling.gpg"])
+def test_a_missing_file_beancount_would_decrypt_is_refused(name: str, tmp_path: Path) -> None:
+    """BL-0172 (S0066 red team r2): Beancount's loader asks whether a file is encrypted before whether it exists, so it
+    would decrypt a missing `.gpg` (and fail) and open a missing `.asc` (and raise): R4's load could never run on the
+    ledger the save accepted. The overlay refuses the name before checking existence: as the root, and as an include
+    the glob still lists (a dangling link). A missing include matches no glob, so neither loader opens it: the glob's
+    error, as Beancount gives it (before S0067: "does not exist", and the save landed)."""
+    if name.startswith("dangling"):
+        (tmp_path / name).symlink_to(tmp_path / f"nowhere-{name}")
+    assert load(str(tmp_path / name), {}, DESKTOP) == LoadRefused("encrypted", str(tmp_path / name))
+    root = tmp_path / "main.beancount"
+    root.write_text(f'include "{name}"\n', encoding="utf-8")
+    if name.startswith("dangling"):
+        assert load(str(root), {}, DESKTOP) == LoadRefused("encrypted", str(tmp_path / name))
+    else:
+        same(load(str(root), {}, DESKTOP), load_file(root))
+
+
+@pytest.mark.usefixtures("no_decryption")
+def test_a_missing_file_beancount_would_not_decrypt_is_a_missing_file(tmp_path: Path) -> None:
+    """@regression-guard (S0067: unchanged, pinned beside the refusal above). The loader's own error, as Beancount
+    gives it: a missing plain root, and a `.GPG` (Beancount's test of the name is case-sensitive), which it reports
+    missing too."""
     same(load(str(tmp_path / "gone.beancount"), {}, DESKTOP), load_file(tmp_path / "gone.beancount"))
     root = tmp_path / "main.beancount"
-    (tmp_path / "dangling.beancount.asc").symlink_to(tmp_path / "nowhere.beancount.asc")
-    root.write_text('include "dangling.beancount.asc"\n', encoding="utf-8")
+    root.write_text('include "gone.GPG"\n', encoding="utf-8")
+    same(load(str(root), {}, DESKTOP), load_file(root))
+
+
+def test_an_asc_file_that_is_not_encrypted_still_loads(tmp_path: Path) -> None:
+    """@regression-guard (S0067: unchanged, pinned beside the refusal above): an existing `.asc` without a PGP header
+    is a plain ledger file for Beancount."""
+    root = copy_case("asc-plain", tmp_path)
+    same(load(str(root), {}, DESKTOP), load_file(root))
+
+
+DECRYPT_PLUGIN = b"""
+from beancount.utils import encryption
+__plugins__ = ["side"]
+def side(entries, options_map):
+    encryption.read_encrypted_file(options_map["filename"].rsplit("/", 1)[0] + "/side.gpg")
+    return entries, []
+"""
+
+
+def test_a_plugin_that_decrypts_a_side_file_meets_the_same_refusal_as_r4(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """BL-0172 (S0066 red team r2): ADR-0059, no file is decrypted. R4's load refuses a decryption
+    (`beancount_port.EncryptedFileMet`); the overlay's plugins run under the same refusal, so the prediction and R4
+    agree (before S0067: the overlay ran `gpg`, R4 refused, so every save was `nondeterministic`)."""
+    calls: list[str] = []
+
+    def spy(name: str) -> str:
+        calls.append(name)
+        return ""
+
+    monkeypatch.setattr(encryption, "read_encrypted_file", spy)
+    module = f"decrypt_{uuid.uuid4().hex}"
+    (tmp_path / f"{module}.py").write_bytes(DECRYPT_PLUGIN)
+    (tmp_path / "side.gpg").write_bytes(b"-----BEGIN PGP MESSAGE-----\n")
+    root = tmp_path / "main.beancount"
+    root.write_text(f'option "insert_pythonpath" "TRUE"\nplugin "{module}"\n', encoding="utf-8")
+    try:
+        loaded = load(str(root), {}, DESKTOP)
+        assert isinstance(loaded, Loaded), loaded
+        assert calls == []
+        assert any("EncryptedFileMet" in e.message for e in loaded.errors)
+        assert encryption.read_encrypted_file is spy  # put back after the load
+    finally:
+        sys.modules.pop(module, None)
+
+
+DECRYPT_AT_IMPORT = b"""
+from beancount.utils import encryption
+encryption.read_encrypted_file(__file__.rsplit("/", 1)[0] + "/side.gpg")
+__plugins__ = []
+"""
+
+
+def test_a_plugin_that_decrypts_while_it_is_imported_refuses_the_load(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """BL-0172: Beancount catches only an `ImportError` while it imports a plugin, so the refusal escapes its
+    transformations: the overlay refuses the load (`encrypted`), nothing decrypted, and the save never lands (R4's
+    load would meet the same refusal and could never run)."""
+    calls: list[str] = []
+
+    def spy(name: str) -> str:
+        calls.append(name)
+        return ""
+
+    monkeypatch.setattr(encryption, "read_encrypted_file", spy)
+    module = f"decrypt_at_import_{uuid.uuid4().hex}"
+    (tmp_path / f"{module}.py").write_bytes(DECRYPT_AT_IMPORT)
+    root = tmp_path / "main.beancount"
+    root.write_text(f'option "insert_pythonpath" "TRUE"\nplugin "{module}"\n', encoding="utf-8")
+    try:
+        assert load(str(root), {}, DESKTOP) == LoadRefused("encrypted", str(tmp_path / "side.gpg"))
+        assert calls == []
+    finally:
+        sys.modules.pop(module, None)
+
+
+DOCS = b'option "documents" "."\n2020-01-01 open Assets:Cash\n'
+DATED = "2020-01-02.statement.beancount"
+
+
+def test_the_documents_step_reads_the_listing_the_load_recorded(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """BL-0172 a: Beancount's documents step walks the listing the load took of each root (the fingerprint), not the
+    disk again: a file added after the listing is not an entry of this load, and the next observation differs."""
+    root = tmp_path / "main.beancount"
+    root.write_bytes(DOCS)
+    (tmp_path / "Assets" / "Cash").mkdir(parents=True)
+    real = overlay_module.fp.listing
+
+    def then_add(d: str) -> dict[str, bool] | None:
+        out = real(d)
+        (tmp_path / "Assets" / "Cash" / DATED).write_bytes(b"")
+        return out
+
+    monkeypatch.setattr(overlay_module.fp, "listing", then_add)
     loaded = load(str(root), {}, DESKTOP)
     assert isinstance(loaded, Loaded), loaded
-    assert [e.message for e in loaded.errors] == [f'File "{tmp_path / "dangling.beancount.asc"}" does not exist']
+    assert not any(isinstance(e, port.Document) for e in loaded.entries)
+    monkeypatch.setattr(overlay_module.fp, "listing", real)
+    same(load(str(root), {}, DESKTOP), load_file(root))  # read again: the file is an entry, as for Beancount
+
+
+@pytest.mark.parametrize(
+    ("documents", "created"),
+    [
+        (".", f"Assets/Cash/{DATED}"),
+        (".", f"Assets/New/{DATED}"),
+        ("docs", f"docs/Assets/Cash/{DATED}"),
+    ],
+    ids=["existing_account_folder", "new_account_folder", "new_documents_root"],
+)
+def test_a_created_file_under_a_documents_root_is_predicted_as_after_the_write(
+    documents: str, created: str, tmp_path: Path
+) -> None:
+    """BL-0172 a: the save's prediction sees the files it creates under a documents root as Beancount sees them
+    after the write (a `document` entry, a root that now exists), and records them (`Loaded.created_documents`)."""
+    root = tmp_path / "main.beancount"
+    head = f'option "documents" "{documents}"\n2020-01-01 open Assets:Cash\n2020-01-01 open Assets:New\n'.encode()
+    root.write_bytes(head)
+    (tmp_path / "Assets" / "Cash").mkdir(parents=True)
+    new = tmp_path / created
+    main = head + f'include "{created}"\n'.encode()
+    text = b"2020-01-03 open Expenses:Food\n"
+    predicted = load(str(root), {str(root): main, str(new): text}, DESKTOP)
+    assert isinstance(predicted, Loaded), predicted
+    base = str(tmp_path / documents) if documents != "." else str(tmp_path)
+    assert dict(predicted.created_documents) == {base: (str(new)[len(base) + 1 :],)}
+    root.write_bytes(main)
+    new.parent.mkdir(parents=True, exist_ok=True)
+    new.write_bytes(text)
+    same(predicted, load_file(root), written_after=True)
+    assert any(isinstance(e, port.Document) for e in predicted.entries)
 
 
 def test_a_candidate_for_a_new_file_named_by_a_plain_include_is_loaded(tmp_path: Path) -> None:

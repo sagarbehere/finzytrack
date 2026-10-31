@@ -19,7 +19,7 @@ import pytest
 
 from ledger_engine.fs.port import AclEntry, Right
 from ledger_engine.ledger.core import journal
-from ledger_engine.ledger.core.journal import State
+from ledger_engine.ledger.core.journal import VERSION, State
 from ledger_engine.ledger.core.recovery import Cause
 from ledger_engine.ledger.restore import Failed, Resolved, Stopped, recover_journal
 from ledger_engine.ledger.writer import durable_commit
@@ -424,7 +424,8 @@ def test_an_unreadable_or_newer_record_stops_the_journal(bad: bytes | str) -> No
     path = f"{JD}/{NAME}.open"
     data = w.fs.file(path)
     assert data is not None
-    w.fs.outside_write(path, data.replace(b'"v":2', b'"v":3') if bad == "newer" else bad)  # type: ignore[arg-type]
+    newer = data.replace(f'"v":{VERSION}'.encode(), f'"v":{VERSION + 1}'.encode())
+    w.fs.outside_write(path, newer if bad == "newer" else bad)  # type: ignore[arg-type]
     _stops_with_nothing_written(w, Cause.UNREADABLE, None)
 
 

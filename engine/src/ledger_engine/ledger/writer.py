@@ -131,7 +131,6 @@ class Commit:
     engine_build: str
     post_fingerprint: str
     adopted_digest: str
-    parse_digest: str
     changes: tuple[Change, ...]
     journal_dir: str
     backups_dir: str
@@ -265,7 +264,6 @@ def _check_plan(c: Commit) -> None:
         c.engine_build,
         c.post_fingerprint,
         c.adopted_digest,
-        c.parse_digest,
     ):
         if not field_value:
             raise BadPlanError("empty_record_field")  # the journal could not be written (S0060 verifier F5)
@@ -475,7 +473,6 @@ def _record(c: Commit, plan: _Plan, name: str, backups: dict[str, str]) -> Recor
         engine_build=c.engine_build,
         post_fingerprint=c.post_fingerprint,
         adopted_digest=c.adopted_digest,
-        parse_digest=c.parse_digest,
         backup_dir=_join(plan.backups_dir, name),
         files=tuple(
             FileEntry(

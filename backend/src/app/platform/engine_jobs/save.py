@@ -174,13 +174,20 @@ def _paused(
 
 def _unavailable(failure: EngineFailure) -> NotDone:
     """No engine for the save after its owed R4 let it go on: not saved, nothing written, and the last change was
-    checked, so the text is the engine's (§11 `ENGINE_UNAVAILABLE`), never "could not check" (verifier r1 F8)."""
-    reasons: dict[str, Literal["incompatible", "cannot_start", "closing"]] = {
+    checked, so the text is the engine's (§11), never "could not check" (verifier r1 F8), worded by the failure's
+    cause (S0067, BL-0172): the restart bound (`unavailable`) "stopped several times"; an engine that could not start,
+    an incompatible one, the app closing, each its own `ENGINE_UNAVAILABLE` text; an engine that crashed or broke the
+    protocol while it started `ENGINE_STOPPED` (the save never ran: nothing written)."""
+    reasons: dict[str, Literal["stopped_often", "incompatible", "cannot_start", "closing"]] = {
+        "unavailable": "stopped_often",
         "start_failed": "cannot_start",
         "incompatible": "incompatible",
         "closed": "closing",
     }
-    return _not_done(ErrorCode.ENGINE_UNAVAILABLE, EngineUnavailableDetails(reasons.get(failure.kind, "stopped_often")))
+    reason = reasons.get(failure.kind)
+    if reason is None:
+        return _not_done(ErrorCode.ENGINE_STOPPED, EngineStoppedDetails(reason="crashed"))
+    return _not_done(ErrorCode.ENGINE_UNAVAILABLE, EngineUnavailableDetails(reason))
 
 
 def answer_of(a: SaveAnswer) -> SaveValue:

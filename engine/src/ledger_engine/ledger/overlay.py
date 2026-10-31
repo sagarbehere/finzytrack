@@ -11,8 +11,11 @@ disk, and equals `loader.load_file(root)`; the equivalence and the pin of the mi
 Where it differs from Beancount, on purpose (each refuses the whole load, EP-13; nothing is partly loaded):
 - **Encrypted files** in the include tree, the root included, are refused, never decrypted (ADR-0059); a candidate
   for a `.gpg` or `.asc` file (any letter case) is refused before anything is read (ADR-0010 guardrail 4). A missing
-  `.gpg` or `.asc` include is the loader's "does not exist" error, like any missing file (Beancount would try to
-  decrypt or open it and fail).
+  (or dangling) `.gpg` or `.asc` file is refused too, before its existence is checked: Beancount asks whether a file
+  is encrypted first, so it would try to decrypt a missing `.gpg` and open a missing `.asc`, and its load would fail
+  where the replica's succeeded (R4 could never run; S0067, BL-0172). A plugin that decrypts a side file meets the
+  same refusal as R4's load (`beancount_port.run_transformations`); one raised while a plugin is imported refuses the
+  load.
 - **The policy** is asked about each file before the load touches it (before its existence is checked or its first
   bytes read by the encrypted-file test) and, once all files are parsed and before any plugin runs, about each user
   plugin, `pythonpath` directory and documents root (`policy.LoadPolicy`).
@@ -30,12 +33,17 @@ Where it differs from Beancount, on purpose (each refuses the whole load, EP-13;
   and before Beancount scans it, and the file of each `document` directive is checked before Beancount checks it,
   so a change during the load makes the next observation differ. The `document` entries a plugin adds are only
   known after the plugins ran; their record comes from Beancount's own check (`_plugin_documents`).
+- **The documents step walks the listing this module took** of each root (`beancount_port.run_transformations`'s
+  `documents`), not the disk again, with each candidate the save creates under a root added (matched by `path_key`
+  through `identify`; `ledger_set.name_under`): Beancount's step sees the folder as it will be after the write, so a
+  save that creates a dated file in an account folder, or creates the root, is predicted as Beancount will load it
+  (S0067, BL-0172 a). What was added is `Loaded.created_documents`, from which the closed record's post fingerprint
+  is made (`ledger_set.as_after`), so the record and the prediction agree.
 
-**For R4** (`design/specs/engine-jobs.md` §6.7; S0066): given a `path_key` function, `load` also gives the digest of
-the parser's output (`Loaded.parse_digest`, `ledger.digest`), taken right after the parse, before booking builds new
-entries and plugins run; the save writes it into the closed record. `parse` is the parse alone, of the disk: R4's
-confirm compares it with Beancount's own parse of the same files, and with the record's; it also says which bytes it
-parsed (`Parsed.files`), so an edit made and reverted while it read is seen.
+**For R4** (`design/specs/engine-jobs.md` §6.7; S0066): `parse` is the parse alone, of the disk: R4's confirm compares
+it with Beancount's own parse of the same files; it also says which bytes it parsed (`Parsed.files`), so an edit made
+and reverted while it read is seen, and a parse of other bytes than the closed record's is never taken for the save's
+(BL-0173: the save no longer stores a parse digest; the replica's parse of the record's own bytes stands in for it).
 
 A load holds `sys.path` and the plugin modules of the process while it runs; engine jobs run one at a time
 (ADR-0064). The save runs it inside its engine job (S0063); the mirror build will (TODO(BL-0113)).
@@ -45,7 +53,7 @@ from __future__ import annotations
 
 import glob
 import os
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from os import path
 from typing import Literal, cast
@@ -53,7 +61,8 @@ from typing import Literal, cast
 from ledger_engine.ledger import beancount_port as port
 from ledger_engine.ledger import digest as _digest
 from ledger_engine.ledger import fingerprint as fp
-from ledger_engine.ledger.core.ledger_set import Absent, FileState, Fingerprint
+from ledger_engine.ledger.core.ledger_set import Absent, FileState, Fingerprint, listing_after, name_under
+from ledger_engine.ledger.paths import PathId
 from ledger_engine.ledger.policy import LoadPolicy
 
 type RefusalReason = Literal[
@@ -68,17 +77,27 @@ type RefusalReason = Literal[
 ENCRYPTED_SUFFIXES = (".gpg", ".asc")
 DOCUMENTS_PLUGIN = "beancount.ops.documents"
 
+type Identify = Callable[[str], PathId]
+"""A path's canonical path and `path_key` (§6.3; `ledger.paths.identify` on the save's file system)."""
+
+
+def _by_name(p: str) -> PathId:
+    """Without a file system: the path as written is both (a created file matches a root only as spelled)."""
+    return PathId(p, p)
+
 
 @dataclass(frozen=True, slots=True)
 class Loaded:
     """Beancount's result: the booked, transformed and validated entries, every error, and the options map; and
-    what the load read (`fingerprint`: observe its `ledger_set` again to learn whether the next load would differ)."""
+    what the load read (`fingerprint`: observe its `ledger_set` again to learn whether the next load would differ);
+    `created_documents`: each documents root with the names of the candidates the documents step counted under it
+    that its listing did not have (files the save creates; `ledger_set.as_after`)."""
 
     entries: list[port.Directive]
     errors: list[port.BeancountError]
     options: port.OptionsMap
     fingerprint: Fingerprint
-    parse_digest: str | None = None
+    created_documents: tuple[tuple[str, tuple[str, ...]], ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -108,11 +127,9 @@ class NotAbsoluteError(ValueError):
         super().__init__(f"a ledger path must be absolute: {given!r}")
 
 
-def load(
-    root: str, overlay: Mapping[str, bytes], policy: LoadPolicy, *, key_of: _digest.KeyOf | None = None
-) -> LoadResult:
+def load(root: str, overlay: Mapping[str, bytes], policy: LoadPolicy, *, identify: Identify = _by_name) -> LoadResult:
     """Load the ledger set rooted at `root` (an absolute path) with `overlay`'s bytes in place of the files they
-    name (absolute paths), under `policy`. With `key_of`, also the parse digest (`Loaded.parse_digest`)."""
+    name (absolute paths), under `policy`. `identify` matches the candidates to the documents roots (`path_key`)."""
     if not path.isabs(root):
         raise NotAbsoluteError(root)
     candidates: dict[str, bytes] = {}
@@ -135,21 +152,52 @@ def load(
     refused = _ask_before_running(options, policy)
     if refused is not None:
         return refused
-    parse_digest = None if key_of is None else _digest.of_result(entries, parse_errors, options, key_of)
     documents = {d: fp.listing(d) for d in _documents_roots(options)}
+    created = _created_under(documents, candidates, identify)
+    after = {d: listing_after(names, created.get(d, ())) for d, names in documents.items()}
     document_files = {e.filename: fp.document_file(e.filename) for e in entries if isinstance(e, port.Document)}
 
     # loader._load, after _parse_recursive.
     port.sort_entries(entries)
     entries, balance_errors = port.book(entries, options)
     parse_errors.extend(balance_errors)
-    entries, errors = port.run_transformations(entries, parse_errors, options)
-    listed = {path.join(d, name) for d, names in documents.items() if names is not None for name in names}
+    try:
+        entries, errors = port.run_transformations(entries, parse_errors, options, after)
+    except port.EncryptedFileMet as e:  # raised while a plugin was imported (its calls' errors are Beancount's)
+        return LoadRefused("encrypted", e.path)
+    listed = {path.join(d, name) for d, names in after.items() if names is not None for name in names}
     document_files.update(_plugin_documents(entries, errors, options, listed | set(document_files)))
     errors.extend(port.validate(entries, options))
     options["input_hash"] = port.input_hash(options["include"])
     fingerprint = Fingerprint.of(path.normpath(root), seen.files, seen.globs, documents, document_files)
-    return Loaded(entries, errors, options, fingerprint, parse_digest)
+    return Loaded(entries, errors, options, fingerprint, tuple(sorted(created.items())))
+
+
+def _created_under(
+    documents: Mapping[str, Mapping[str, bool] | None], candidates: Mapping[str, bytes], identify: Identify
+) -> dict[str, tuple[str, ...]]:
+    """Each documents root with the names (`ledger_set.name_under`) of the candidates under it that its listing does
+    not have: the files the save creates there. A path that cannot be identified matches nothing (R4 then finds the
+    listing moved: `superseded`, never a false `pass`)."""
+    if not candidates or not documents:
+        return {}
+    ids: list[PathId] = []
+    for c in sorted(candidates):
+        try:
+            ids.append(identify(c))
+        except (OSError, ValueError):
+            continue
+    out: dict[str, tuple[str, ...]] = {}
+    for d, listing in documents.items():
+        try:
+            r = identify(d)
+        except (OSError, ValueError):
+            continue
+        names = {n for i in ids if (n := name_under(r.key, i.key, i.canonical)) is not None}
+        new = tuple(sorted(names - set(listing or ())))
+        if new:
+            out[d] = new
+    return out
 
 
 def parse(root: str, policy: LoadPolicy, key_of: _digest.KeyOf) -> Parsed | LoadRefused:
@@ -199,12 +247,14 @@ def _parse_recursive(
         # read by the encrypted-file test.
         if not policy.may_read(filename):
             return LoadRefused("read-refused", filename)
+        # Beancount asks "encrypted?" before "exists?": a missing `.gpg` it would decrypt, a missing `.asc` it would
+        # open; either fails its load, so it is refused here too, never reported missing (S0067, BL-0172).
+        if on_disk and _beancount_decrypts(filename):
+            return LoadRefused("encrypted", filename)
         if on_disk and not path.exists(filename):
             record.files.setdefault(filename, Absent())
             parse_errors.append(port.load_error(f'File "{filename}" does not exist'))
             continue
-        if on_disk and port.is_encrypted_file(filename):
-            return LoadRefused("encrypted", filename)
         seen.add(filename)
         if on_disk:
             with open(filename, "rb") as f:
@@ -243,6 +293,16 @@ def _parse_recursive(
     options["include"] = sorted(seen)
     options = port.aggregate_options(options, other_options)
     return entries, parse_errors, options
+
+
+def _beancount_decrypts(filename: str) -> bool:
+    """Whether Beancount's loader would decrypt `filename` (or fail trying) instead of reading it: its own test,
+    `is_encrypted_file`, which names a `.gpg` file by its name alone and opens a `.asc` one to look for a PGP header
+    (a missing `.asc` makes it raise)."""
+    ext = path.splitext(filename)[1]
+    if ext == ".gpg":
+        return True
+    return ext == ".asc" and (not path.exists(filename) or port.is_encrypted_file(filename))
 
 
 def _plugin_documents(

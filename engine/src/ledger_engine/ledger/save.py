@@ -16,8 +16,9 @@
    the published mirror's equals the plan's (else `mirror_stale`, `WORKSPACE_NOT_READY {WARMING}`); the records again.
 5. **The load** of the candidate (`overlay.load`, the contract's step 3; ADR-0011's one full load). A refused load is
    `load_refused`; judging its errors against the plan's is the contract's (TODO(BL-0106)). Then the prediction R4
-   checks (§6.7, S0066): the adopted digest of the load's result and the parse digest of its parse (`ledger.digest`),
-   before step 6, so the re-check stays right before the commit point.
+   checks (§6.7, S0066): the adopted digest of the load's result (`ledger.digest`), before step 6, so the re-check
+   stays right before the commit point (no parse digest since S0067: BL-0173). The load matches the files the save
+   creates to the documents roots by `path_key` (`ledger.paths.identify` on the save's file system; BL-0172).
 6. **The re-check, under the locks** (§6.1 step 6; ADR-0013; the owner's TLC run `L_save_deep`): the disk's
    fingerprint equals the plan's **and** the disk equals what the load itself parsed (`ledger_set.as_before` of
    `Loaded.fingerprint`). So an include the load read in an edited form, reverted before this step, refuses; one
@@ -26,8 +27,8 @@
 8. `writer.durable_commit` (§6.1 step 8), after the workspace's journal and backups folders exist and every folder
    from `app_local_data` down to them has a durable entry (its parent synced, whether it was made now or not). The
    closed record carries the load's post fingerprint as its canonical encoding (R4 observes that ledger set; the
-   created files added to the documents listings they fall in, `ledger_set.as_after`) and the two digests; a load
-   that gave no parse digest (a test's) writes `not_computed` for both, which R4 treats as an engine-build change.
+   created files the load counted under each documents root added to its listing, `ledger_set.as_after` of
+   `Loaded.created_documents`) and the adopted digest.
 9. `job.committed()` once it `Landed`.
 10. The publish (§6.1 step 10) is not built: `Saved.published` is False (TODO(BL-0113)); the rebuild a failed
     publish queues is BL-0152 part 2's. The sidecar queues the record's R4 (S0066).
@@ -61,6 +62,7 @@ from ledger_engine.fs.port import FileSystem, LegacyAbsent, LegacyHeld, LegacyLo
 from ledger_engine.ledger import digest as _digest
 from ledger_engine.ledger import fingerprint as _fingerprint
 from ledger_engine.ledger import overlay
+from ledger_engine.ledger import paths as ledger_paths
 from ledger_engine.ledger.core import journal
 from ledger_engine.ledger.core import paths as core_paths
 from ledger_engine.ledger.core.journal import Record, State
@@ -84,9 +86,6 @@ LOCAL: Final = "local"
 JOURNAL: Final = "journal"
 BACKUPS: Final = "backups"
 LOCKS: Final = "locks"
-NOT_COMPUTED: Final = "not_computed"
-"""The closed record's adopted and parse digests when the save's load gave none (a test's load): R4 cannot compare a
-prediction it does not have, so it treats such a record as it treats an engine-build change (§6.7 step 1)."""
 SESSION: Final = re.compile(r"[a-z0-9_]{1,64}")
 """A session id: lower case only, so two sessions never differ only in case (names derived from `<session>-<job>`
 are compared case-folded on a case-insensitive volume; S0061 red team r3 overflow 4)."""
@@ -159,11 +158,14 @@ class Ports:
 
 
 def desktop_load(policy: LoadPolicy, fs: FileSystem) -> Load:
-    """The commit's load: the overlay under `policy`, with the parse digest (file names keyed on `fs`)."""
-    key_of = _digest.path_keys(fs)
+    """The commit's load: the overlay under `policy`, matching the files the save creates to the documents roots by
+    `path_key` on `fs` (BL-0172)."""
+
+    def identify(p: str) -> ledger_paths.PathId:
+        return ledger_paths.identify(fs, p)
 
     def load(root: str, candidates: Mapping[str, bytes]) -> overlay.LoadResult:
-        return overlay.load(root, candidates, policy, key_of=key_of)
+        return overlay.load(root, candidates, policy, identify=identify)
 
     return load
 
@@ -501,10 +503,8 @@ def _under_locks(
         return io_error(e.filename if isinstance(e.filename, str) else None)
     if isinstance(loaded, overlay.LoadRefused):
         return refused("load_refused", loaded.subject)
-    adopted, parsed = NOT_COMPUTED, NOT_COMPUTED  # R4's prediction (§6.7), before the re-check
-    if loaded.parse_digest is not None:
-        adopted = _digest.of_result(loaded.entries, loaded.errors, loaded.options, _digest.path_keys(ports.fs))
-        parsed = loaded.parse_digest
+    # R4's prediction (§6.7), before the re-check
+    adopted = _digest.of_result(loaded.entries, loaded.errors, loaded.options, _digest.path_keys(ports.fs))
     if ports.observe(plan.fingerprint) != plan.fingerprint:  # step 6
         return refused("ledger_changed")
     if ports.observe(loaded.fingerprint) != as_before(loaded.fingerprint, pre):
@@ -527,9 +527,8 @@ def _under_locks(
         workspace_key=plan.workspace_key,
         lineage=plan.lineage,
         engine_build=plan.engine_build,
-        post_fingerprint=encode(as_after(loaded.fingerprint, pre)).decode("ascii"),
+        post_fingerprint=encode(as_after(loaded.fingerprint, dict(loaded.created_documents))).decode("ascii"),
         adopted_digest=adopted,
-        parse_digest=parsed,
         changes=plan.changes,
         journal_dir=jd,
         backups_dir=bd,

@@ -12,6 +12,7 @@ or the one after (never lost, never doubled), and a count file only beside a `.c
 from __future__ import annotations
 
 from collections.abc import Callable
+from dataclasses import replace
 
 import pytest
 
@@ -36,7 +37,6 @@ RECORD = Record(
     engine_build="build1",
     post_fingerprint=encode(FP).decode("ascii"),
     adopted_digest="sha256:" + "a" * 64,
-    parse_digest=PARSE,
     backup_dir=f"{ALD}/local/{KEY}/backups/{NAME}",
     files=(
         FileEntry(
@@ -146,3 +146,26 @@ def test_an_io_error_at_any_effect_is_raised_never_answered(name: str) -> None:
         fs.inject(at, crash=False)
         with pytest.raises(OSError, match="injected"):
             op(fs)
+
+
+def test_an_unreadable_open_journal_listed_first_does_not_hide_the_workspaces_readable_one() -> None:
+    """BL-0172 (S0066 red team r2): `r4._open_journal` reads every key folder before it raises on an `.open` it cannot
+    read: the workspace's own readable `.open` journal (the disk may be half-applied) lifts R4 (`superseded`) wherever
+    the listing puts it (before S0067: another workspace's unreadable journal, listed first, raised)."""
+    fs = world()
+    fs.outside_mkdirs(f"{ALD}/local/a0/journal")
+    fs.outside_write(f"{ALD}/local/a0/journal/s9-j9.open", b"garbage")
+    other = replace(RECORD, session="s2", job="j1", backup_dir=f"{ALD}/local/{KEY}/backups/s2-j1")
+    other = replace(other, files=tuple(replace(f, temp=journal.temp_name("main.bean", "s2-j1")) for f in other.files))
+    fs.outside_write(f"{JD}/s2-j1.open", journal.encode(other))
+    assert r4.check(ports(fs, PARSE), ALD, KEY, NAME, NoJob()).outcome == "superseded"
+
+
+def test_an_unreadable_open_journal_alone_is_still_a_failure_to_run() -> None:
+    """@regression-guard (S0066 verifier r1 F1, kept): with no readable journal of the workspace, an unreadable one is
+    a failure to run, never a lift."""
+    fs = world()
+    fs.outside_mkdirs(f"{ALD}/local/z9/journal")
+    fs.outside_write(f"{ALD}/local/z9/journal/s9-j9.open", b"garbage")
+    with pytest.raises(r4.R4Error):
+        r4.check(ports(fs, PARSE), ALD, KEY, NAME, NoJob())

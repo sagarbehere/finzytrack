@@ -224,7 +224,9 @@ engine/src/ledger_engine/
                  ledger_set.py: LedgerSet, the extended Fingerprint as a value, encode/digest (S0051)
     overlay.py   load(root, overlay, policy) -> Loaded | LoadRefused  (the D2 replica of _parse_recursive, pinned;
                  ADR-0010; encrypted files, unreached candidates and policy refusals refuse the whole load) (S0049);
-                 every file parsed from the bytes it read, so `Loaded.fingerprint` is what the load read (S0051)
+                 every file parsed from the bytes it read, so `Loaded.fingerprint` is what the load read (S0051);
+                 Beancount's documents step walks the listing it took, with the files the save creates under a
+                 root (matched by path_key) added, so the prediction sees the disk after the write (S0067)
     fingerprint.py  observe(ledger_set) -> Fingerprint: the disk asked the loader's own questions (S0051; ADR-0008
                  step 4, ADR-0015; SHA-256 per file per the engine-jobs spec §1, not ADR-0015's mtime and size;
                  also each include's glob answer, plain paths too, documents listings with each name's presence, the

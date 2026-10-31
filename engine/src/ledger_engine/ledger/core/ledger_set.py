@@ -281,23 +281,47 @@ def as_before(loaded: Fingerprint, pre: Mapping[str, str | None]) -> Fingerprint
     return Fingerprint(loaded.root, files, globs, loaded.documents, loaded.document_files)
 
 
-def as_after(loaded: Fingerprint, pre: Mapping[str, str | None]) -> Fingerprint:
+def name_under(root_key: str, key: str, canonical: str) -> str | None:
+    """The name a documents root's listing gives a file (relative to the root, `/`-joined, as `fingerprint.listing`
+    makes it), from the root's `path_key` and the file's `path_key` and canonical path (§6.3: one folded component per
+    component, links resolved, the stored spelling of what exists): the canonical path's tail below the root when the
+    file's key lies under the root's; None otherwise (S0067, BL-0172 b). The tail is how the walk of the root will
+    list the file once it exists, unless a folder inside the root is a link to where the file is named: that file is
+    not matched (its key is not under the root's), so R4 finds the listing moved and is `superseded`."""
+    root_parts = [p for p in root_key.split("/") if p]
+    parts = [p for p in key.split("/") if p]
+    canon = [p for p in canonical.split("/") if p]
+    if len(parts) != len(canon) or len(parts) <= len(root_parts) or parts[: len(root_parts)] != root_parts:
+        return None
+    return "/".join(canon[len(root_parts) :])
+
+
+def listing_after(listing: Mapping[str, bool] | None, created: Sequence[str]) -> dict[str, bool] | None:
+    """A documents root's listing once the files `created` (names `name_under` gives) exist: each added, present; a
+    root that did not exist (None) holds only them; with nothing created, the listing as it was."""
+    if not created:
+        return None if listing is None else dict(listing)
+    return {**(listing or {}), **dict.fromkeys(created, True)}
+
+
+def as_after(loaded: Fingerprint, created: Mapping[str, Sequence[str]]) -> Fingerprint:
     """What the disk holds once a save of the candidate `loaded` was parsed from has landed (the closed record's post
     fingerprint, which R4 observes; S0066 red team r1 F1): the load's own record, where every file already has its
-    candidate's state and a plain-path include of a created file already matches it (`overlay.load`), with each file
-    the save creates (`pre` None) added to the listing of every documents root it lies under. The load listed those
-    roots from the disk before the commit; the created file is there after it. A root that did not exist then
-    (None) holds only the created files under it. A created file named through another spelling of the root (a link)
-    is not added: R4 then finds the fingerprint moved (`superseded`), never a false `pass`."""
-    created = [p for p, h in pre.items() if h is None]
+    candidate's state and a plain-path include of a created file already matches it (`overlay.load`), with the files
+    the load's prediction counted under each documents root (`created`: `Loaded.created_documents`, matched by
+    `path_key`, BL-0172) in that root's listing, and a `document` file named exactly so present. The load listed the
+    roots from the disk before the commit, and its documents step walked these listings (`overlay`), so the record and
+    the prediction agree. A created file the load did not match is not added: R4 then finds the fingerprint moved
+    (`superseded`), never a false `pass`."""
     documents: list[tuple[str, Listing]] = []
+    now_present: set[str] = set()
     for root, listing in loaded.documents:
-        prefix = root.rstrip("/") + "/"
-        names = {n[len(prefix) :]: True for n in created if n.startswith(prefix)}
+        names = tuple(created.get(root, ()))
         if not names:
             documents.append((root, listing))
             continue
-        merged = dict(listing or ())
-        merged.update(names)
-        documents.append((root, tuple(sorted(merged.items()))))
-    return Fingerprint(loaded.root, loaded.files, loaded.globs, tuple(documents), loaded.document_files)
+        after = listing_after(dict(listing or ()), names)
+        documents.append((root, None if after is None else tuple(sorted(after.items()))))
+        now_present.update(posixpath.join(root, n) for n in names)
+    document_files = tuple((p, e or p in now_present) for p, e in loaded.document_files)
+    return Fingerprint(loaded.root, loaded.files, loaded.globs, tuple(documents), document_files)
