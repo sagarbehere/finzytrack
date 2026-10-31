@@ -95,7 +95,7 @@ Round 1 (verifier on a915e7a4..480dbf74, focus cc0b27db..480dbf74: 0 High, 3 Med
 - **F7 (Low)** The guard's "pause on R4" term matches the R4 pause's own words only; the current `WRITES_PAUSED` message is a passing trap line.
 - **F8 (Low)** The `done` and `r4-attempt-3` cases are marked `@regression-guard`.
 - **Question / red team L2:** spec §15 gained the `document`-directive save that R4 never compares (and the false "File does not exist" the preview could list once BL-0106 is built), and the string-prefix match of `as_after`. Red team L1 (an unreachable `.done` name collision) needs nothing.
-- Round 2: due by PROCESS.md §3 step 5 (ADR-0058: a data-touching slice with three Medium fixes gets a fresh verifier round).
+- Round 2: not run (orchestrator, 2026-11-01). PROCESS.md §3 step 5 (ADR-0058) would give a fresh round after three Medium fixes; the owner's rule for this session overrides it: "One review round by default; a second only after a High fix." No High was found. The step-back review the owner scheduled for right after this slice lands (an area review of the save path and a proportionality review; owner, 2026-11-01: "Yes") reads this code next. The orchestrator checked the fix commit: tree clean, `check_invariants`, `check_capabilities`, `check_generated` and `check_retired_terms` (40 documents, 0 refused) pass, `test_r4_job.py` 24 passed, `recon.proceed` has no refusals left.
 
 ## Retro
 - Two implementers (the first ran out of context mid-slice; the second finished, then fixed round 1); one verifier and one red-team round; findings 0 High, 3 Medium, 7 Low (verifier 5, red team 2). The doc sweep missed the model's own documents because the guard's scope was a fixed list: scope by directory next time.
