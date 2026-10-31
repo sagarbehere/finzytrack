@@ -13,6 +13,7 @@
 from __future__ import annotations
 
 import json
+import re
 import threading
 from collections.abc import Iterator
 from pathlib import Path
@@ -21,7 +22,7 @@ from typing import Any
 import pytest
 from jsonschema import Draft202012Validator
 
-from app.platform.engine import EngineFailure, OutcomeFacts, SaveAnswer, SaveOutcomeKind
+from app.platform.engine import EngineFailure, EngineRefusal, OutcomeFacts, SaveAnswer, SaveOutcomeKind
 from app.platform.engine_jobs import save_text
 from app.platform.engine_jobs.recovery_text import REOPEN
 from app.platform.engine_jobs.save import (
@@ -54,7 +55,6 @@ MAIN = "/L/main.bean"
 NEW = "/L/prices.bean"
 REQUEST = SaveRequest(
     session="a1b2",
-    job="j3",
     workspace_key="k1",
     lineage="lin1",
     root=MAIN,
@@ -251,7 +251,7 @@ def test_a_save_cut_past_its_gate_is_told_what_the_disk_says(
         "app_local_data": "/app",
         "workspace_key": "k1",
         "session": "a1b2",
-        "job": "j3",
+        "job": rig.engine.params[0][2]["job"],
         "targets": [{"path": MAIN, "pre": "0" * 64}, {"path": NEW, "pre": None}],
     }
 
@@ -402,10 +402,10 @@ def test_session_ids_never_differ_only_in_case() -> None:
 
 def test_the_request_is_what_the_engine_protocol_takes() -> None:
     schema = json.loads((REPO / "contracts" / "engine-protocol.schema.json").read_text(encoding="utf-8"))
-    request: Any = {"v": 2, "id": 1, "op": "save", "params": params_of(REQUEST)}
+    request: Any = {"v": 2, "id": 1, "op": "save", "params": params_of(REQUEST, "j3")}
     validator = Draft202012Validator({"$ref": "#/$defs/SaveRequest", "$defs": schema["$defs"]})
     assert list(validator.iter_errors(request)) == []  # pyright: ignore[reportUnknownMemberType]
-    upper: Any = {**request, "params": {**params_of(REQUEST), "session": "A1B2"}}
+    upper: Any = {**request, "params": {**params_of(REQUEST, "j3"), "session": "A1B2"}}
     assert list(validator.iter_errors(upper)) != []  # pyright: ignore[reportUnknownMemberType]
 
 
@@ -428,3 +428,61 @@ def test_a_request_the_client_could_not_send_is_internal_never_saved() -> None:
     out = _Run(Ctx(), REQUEST).run()  # type: ignore[arg-type]
     assert isinstance(out.value, NotDone)
     assert out.value.error.code == ErrorCode.INTERNAL
+
+
+# -- round 1 ----------------------------------------------------------------------------------------------------------
+
+
+def test_an_engine_refusal_past_the_gate_reads_the_outcome_from_disk(make: Any) -> None:
+    """Verifier r1 F3, red team r1 M1: past `proceed` the engine may have replaced files, and an exception there comes
+    back as an `engine.internal` refusal; §6.6 then decides from disk, never "refused before it ran"."""
+    refusal = EngineRefusal("engine.internal", "Something went wrong inside the engine.")
+    rig = make({"save": [Gated(refusal)], "save_outcome": [facts("open")]})
+    value = rig.save()
+    assert details(value) == WritesPausedDetails("unfinished_save", None)
+    assert [op for _, op in rig.engine.calls] == ["save", "save_outcome"]
+
+
+def test_an_engine_refusal_before_the_gate_is_internal_and_reads_nothing() -> None:
+    from app.platform.engine_jobs.save import _Run  # pyright: ignore[reportPrivateUsage]
+
+    class Ctx:
+        def __init__(self) -> None:
+            self.ops: list[str] = []
+
+        def call(self, op: str, params: object, *, on_event: object = None) -> EngineRefusal:
+            self.ops.append(op)
+            return EngineRefusal("protocol.invalid_params", "bad save plan: name_taken")
+
+    ctx = Ctx()
+    out = _Run(ctx, REQUEST).run()  # type: ignore[arg-type]
+    assert isinstance(out.value, NotDone)
+    assert out.value.error.code == ErrorCode.INTERNAL
+    assert ctx.ops == ["save"]
+
+
+def test_every_save_has_its_own_name_and_its_outcome_is_read_by_that_name(make: Any) -> None:
+    """Verifier r1 F2: §6.6 tells the outcome by the record's name `<session>-<job>` alone, so no two saves may share
+    it (§6.5 "One save, one name"): the sidecar makes the job part for every save, never the caller; a second try of
+    the same request gets a new name, so an earlier save's record is never taken for it."""
+    rig = make({"save": [CRASH, CRASH], "save_outcome": [facts("none", True), facts("none", True)]})
+    rig.save()
+    rig.save()
+    sent = [(op, p["session"], p["job"]) for _, op, p in rig.engine.params]
+    [(_, s1, j1), (_, s1b, j1b), (_, s2, j2), (_, s2b, j2b)] = sent
+    assert [op for op, _, _ in sent] == ["save", "save_outcome", "save", "save_outcome"]
+    assert (s1, j1) == (s1b, j1b), "the outcome is read by the name its save sent"
+    assert (s2, j2) == (s2b, j2b)
+    assert j1 != j2, "two saves never share a name"
+    assert all(isinstance(j, str) and re.fullmatch(r"[a-z0-9_]{1,64}", j) for j in (j1, j2))
+
+
+def test_an_io_error_naming_a_file_never_says_another_program_changed_it() -> None:
+    """The writer's and the save's `io_error` name the file the error was about, not one found changed: only the
+    outcome after a death (`engine_stopped`) names a file that differs from its pre bytes (§11)."""
+    for reason in ("io_error", "read_back", "name_not_utf8"):
+        text = save_text.not_saved_text(ChangeNotSavedDetails(reason, MAIN, None, None, False))
+        assert "changed by another program" not in text, reason
+        assert "is unchanged" not in text, reason
+    stopped = save_text.not_saved_text(ChangeNotSavedDetails("engine_stopped", MAIN, None, None, False))
+    assert "main.bean was changed by another program" in stopped

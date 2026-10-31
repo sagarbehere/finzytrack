@@ -19,7 +19,8 @@
    `Loaded.fingerprint`). So an include the load read in an edited form, reverted before this step, refuses; one
    edited and reverted after the load passes (the save builds only on bytes still on disk).
 7. **The commit point:** `job.gate()` (§4: the sidecar's one table step answers `proceed` or ends the engine).
-8. `writer.durable_commit` (§6.1 step 8), after the workspace's journal and backups folders exist.
+8. `writer.durable_commit` (§6.1 step 8), after the workspace's journal and backups folders exist and every folder
+   from `app_local_data` down to them has a durable entry (its parent synced, whether it was made now or not).
 9. `job.committed()` once it `Landed`.
 10. The publish (§6.1 step 10) is not built: `Saved.published` is False (TODO(BL-0113)); the sidecar queues nothing
     yet (the rebuild is BL-0152's).
@@ -28,7 +29,11 @@
 **The step rule.** Steps 1-7 write nothing but lock files (`app_local_data/locks/`, never deleted); every refusal
 there says `unchanged` only after each file the save would write was hashed again and equals its pre bytes (§11's
 rule). Step 8 has its own rule (`writer`). A Cancel ends the engine at the gate, before step 8. Python's garbage
-collector is paused for the job (ADR-0008 amendment). A malformed plan raises `writer.BadPlanError` before step 1.
+collector is paused for the job (ADR-0008 amendment). A malformed plan raises `writer.BadPlanError` before step 1, and
+so does a plan whose name `<session>-<job>` already has a record or a backups folder in this key (§6.5 "One save, one
+name": §6.6 tells a dead save's outcome by that name alone; the sidecar makes a new name for every save). An I/O error
+taking a ledger-set lock, or one the load meets (an include it cannot read), is `NotSaved(io_error)` naming the file,
+with the re-hash; nothing was written.
 
 `outcome(...)` is §6.6's reading of the disk after a save's engine died: the job's journal folder `durable_sync`ed,
 then its record's state, and with no record (or a `.part`) every target hashed again. The decision is the sidecar's
@@ -97,7 +102,9 @@ class SavePlan:
     digest of the published mirror's fingerprint (None: none is published); `changes`: each file as the ledger names
     it (absolute, normalized), its pre SHA-256 (None: the save creates it) and its post bytes; `legacy_locks`: the
     `data/.write.lock` of every legacy install whose config names a file of this ledger set (ADR-0062; the sidecar
-    knows them from M3, BL-0026); `app_local_data`: the app's machine-local folder (journals, backups, locks)."""
+    knows them from M3, BL-0026); `app_local_data`: the app's machine-local folder (journals, backups, locks).
+    `session`-`job` names this save alone (§6.5 "One save, one name"; the sidecar makes a new job part for every save):
+    a name that already has a record or a backups folder in this key raises `BadPlanError("name_taken")`."""
 
     session: str
     job: str
@@ -264,6 +271,13 @@ class _LegacyRefused(Exception):
         self.path = path
 
 
+class _LockFailed(Exception):
+    """An I/O error taking the ledger-set lock of `path` (red team r1 L2)."""
+
+    def __init__(self, path: str) -> None:
+        self.path = path
+
+
 def _key(fs: FileSystem, path: str) -> str:
     return core_paths.path_key(fs.resolve(path))
 
@@ -292,17 +306,21 @@ def _legacy_locks(ports: Ports, paths: tuple[str, ...]) -> Generator[None]:
 
 
 @contextmanager
-def _ledger_locks(ports: Ports, keys: list[str], job: Job) -> Generator[None]:
-    """ADR-0012 Q29: each key's lock, in `path_key` order, waiting (§6.1 step 3)."""
+def _ledger_locks(ports: Ports, keys: Mapping[str, str], job: Job) -> Generator[None]:
+    """ADR-0012 Q29: each key's lock, in `path_key` order, waiting (§6.1 step 3). `keys`: each key's file (named if
+    its lock cannot be taken: `_LockFailed`)."""
     with ExitStack() as held:
         shown = False
-        for key in sorted(set(keys)):
-            lock: Lock | None = ports.locks.try_lock(key)
-            if lock is None:
-                if not shown:
-                    job.progress("waiting_for_files")
-                    shown = True
-                lock = ports.locks.lock(key)
+        for key in sorted(keys):
+            try:
+                lock: Lock | None = ports.locks.try_lock(key)
+                if lock is None:
+                    if not shown:
+                        job.progress("waiting_for_files")
+                        shown = True
+                    lock = ports.locks.lock(key)
+            except OSError:
+                raise _LockFailed(keys[key]) from None
             held.callback(lock.release)
         yield
 
@@ -332,17 +350,42 @@ def _unchanged(fs: FileSystem, changes: tuple[Change, ...]) -> bool:
 
 
 def _ensure_dir(fs: FileSystem, parent: str, name: str) -> str:
+    """The folder `name` in `parent`, its entry durable: `parent` is synced whether or not the folder was made now. A
+    folder that was there already may be the mkdir of an earlier engine that died before its sync; a power loss could
+    then drop it, with the `.open` journal or the backups in it, while the ledger files stay swapped (round 1, verifier
+    F1). A sync with nothing to flush costs nothing (§6.2)."""
     path = join(parent, name)
     with fs.open_dir(parent) as h:
         if h.stat(name) is None:
             h.mkdir(name)
-            h.sync()
+        h.sync()
     return path
+
+
+def _name_taken(fs: FileSystem, plan: SavePlan) -> bool:
+    """§6.5 "One save, one name": a record of any state (or an R4 count) named `<session>-<job>` in this key's journal
+    folder, or a backups folder of that name. Names are compared case-folded (a case-insensitive volume). A folder that
+    is absent holds nothing; one that cannot be read is step 1's to refuse (`unfinished_save`)."""
+    name = journal.record_name(plan.session, plan.job).casefold()
+    key_dir = join(join(plan.app_local_data, LOCAL), plan.workspace_key)
+    try:
+        with fs.open_dir(join(key_dir, JOURNAL)) as jd:
+            if any(entry.casefold().startswith(f"{name}.") for entry in jd.names()):
+                return True
+    except OSError:
+        pass
+    try:
+        with fs.open_dir(join(key_dir, BACKUPS)) as bd:
+            return bd.stat(name) is not None
+    except OSError:
+        return False
 
 
 def run(plan: SavePlan, ports: Ports, job: Job) -> SaveOutcome:
     """§6.1 steps 1-11 in this engine (the module's docstring)."""
     pre = _check(plan)
+    if _name_taken(ports.fs, plan):
+        raise BadPlanError("name_taken")
     collecting = gc.isenabled()
     gc.disable()
     try:
@@ -359,17 +402,23 @@ def _run(plan: SavePlan, ports: Ports, job: Job, pre: Mapping[str, str | None]) 
     owed = _records_refusal(ports.fs, plan)  # step 1
     if owed is not None:
         return refused(*owed)
-    keys: list[str] = []
+
+    def io_error(path: str | None) -> NotSaved:
+        return NotSaved(Step.BACKUP, Reason.IO_ERROR, _unchanged(ports.fs, plan.changes), path=path)
+
+    keys: dict[str, str] = {}
     for p in sorted({*(p for p, _ in plan.fingerprint.files), *pre}):
         try:
-            keys.append(_key(ports.fs, p))
+            keys.setdefault(_key(ports.fs, p), p)
         except OSError:  # a folder that denies looking names up in it (§15): not saved, nothing written
-            return NotSaved(Step.BACKUP, Reason.IO_ERROR, _unchanged(ports.fs, plan.changes), path=p)
+            return io_error(p)
     try:
         with _legacy_locks(ports, plan.legacy_locks), _ledger_locks(ports, keys, job):  # steps 2, 3 (11: released)
-            return _under_locks(plan, ports, job, pre, refused)
+            return _under_locks(plan, ports, job, pre, refused, io_error)
     except _LegacyRefused as e:
         return refused("legacy_app_saving", e.path)
+    except _LockFailed as e:
+        return io_error(e.path)
 
 
 def _under_locks(
@@ -378,16 +427,22 @@ def _under_locks(
     job: Job,
     pre: Mapping[str, str | None],
     refused: Callable[..., Refused],
+    io_error: Callable[[str | None], NotSaved],
 ) -> SaveOutcome:
     if ports.observe(plan.fingerprint) != plan.fingerprint:  # step 4
         return refused("ledger_changed")
+    # TODO(BL-0125): compare with the published generation read under the locks; until a mirror is published
+    # (BL-0113) this compares two values of the plan, both sent before the locks were taken (verifier r1 Q1).
     if plan.mirror != digest(plan.fingerprint):
         return refused("mirror_stale")
     owed = _records_refusal(ports.fs, plan)
     if owed is not None:
         return refused(*owed)
     job.progress("checking_change")
-    loaded = ports.load(plan.root, {c.path: c.post for c in plan.changes})  # step 5
+    try:
+        loaded = ports.load(plan.root, {c.path: c.post for c in plan.changes})  # step 5
+    except OSError as e:  # an include it cannot read (red team r1 L2): before the gate, nothing written
+        return io_error(e.filename if isinstance(e.filename, str) else None)
     if isinstance(loaded, overlay.LoadRefused):
         return refused("load_refused", loaded.subject)
     if ports.observe(plan.fingerprint) != plan.fingerprint:  # step 6
@@ -398,7 +453,10 @@ def _under_locks(
     job.progress("saving")
     jd = journal_dir(plan)
     try:
-        key_dir = _ensure_dir(ports.fs, _ensure_dir(ports.fs, plan.app_local_data, LOCAL), plan.workspace_key)
+        # every folder from the app's own down, its entry durable before the first write (round 1, verifier F1)
+        app_parent, _, app_name = plan.app_local_data.rstrip("/").rpartition("/")
+        ald = _ensure_dir(ports.fs, app_parent or "/", app_name)
+        key_dir = _ensure_dir(ports.fs, _ensure_dir(ports.fs, ald, LOCAL), plan.workspace_key)
         _ensure_dir(ports.fs, key_dir, JOURNAL)
         bd = _ensure_dir(ports.fs, key_dir, BACKUPS)
     except OSError:

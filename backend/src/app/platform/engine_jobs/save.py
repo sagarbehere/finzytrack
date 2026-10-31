@@ -8,11 +8,12 @@ save`); the sidecar never reads a journal or a ledger file itself. Its answer be
   (BL-0113); the R4 the save owes is on disk (the closed record) and is queued as background work by BL-0152.
 - **`NotDone(error)`**, a registry error with §11's text (`save_text`): `WRITES_PAUSED {unfinished_save |
   check_pending | check_failed}`, `LEGACY_APP_SAVING`, `LEDGER_EXTERNALLY_CHANGED`, `WORKSPACE_NOT_READY {WARMING}`,
-  `CHANGE_NOT_SAVED {reason, path, folder, acl_entry, unchanged}`; an engine refusal or a reply of the wrong shape is
-  `INTERNAL` (never "saved").
+  `CHANGE_NOT_SAVED {reason, path, folder, acl_entry, unchanged}`; an engine refusal before the engine's `gate` is
+  `INTERNAL` (it wrote nothing; never "saved").
 
-**After the engine died without its final reply** (§5.3, §6.6): the queue keeps the job (the table's `outcome_owed`),
-and the work asks for a fresh engine and reads the outcome from disk (`save_outcome`: the job's journal folder synced
+**After the engine died without its final reply** (§5.3, §6.6), the queue keeps the job (the table's `outcome_owed`);
+then, as after a refusal past its `gate` (an exception once it may have written) or a final reply of the wrong
+shape, the work asks for a fresh engine and reads the outcome from disk (`save_outcome`: the job's journal folder synced
 first, then its record, and with no record the targets hashed again); `save_outcome` below decides. A death of that
 engine asks for another (the client's bounded restart ends it); when none can be had, the answer is
 `CHANGE_OUTCOME_UNKNOWN` if the engine had sent its `gate` (it may have written), else `ENGINE_STOPPED` (it had not
@@ -74,10 +75,13 @@ class ChangeText:
 class SaveRequest:
     """A confirmed plan (the preview's, BL-0106): who saves, the root, the changes, the plan's fingerprint (its
     canonical encoding, opaque here), the published mirror's fingerprint digest (None: none published), the legacy
-    locks to try (ADR-0062; none until M3 knows the legacy installs, BL-0026) and the app's machine-local folder."""
+    locks to try (ADR-0062; none until M3 knows the legacy installs, BL-0026) and the app's machine-local folder.
+
+    It names no job: the record's name `<session>-<job>` must be this save's alone (§6.5 "One save, one name"), since
+    §6.6 tells a dead save's outcome by that name; `save_work` makes a new job part for every save it runs, so a
+    request sent twice is two saves with two names (round 1, verifier F2)."""
 
     session: str
-    job: str
     workspace_key: str
     lineage: str
     root: str
@@ -112,10 +116,16 @@ def save_spec(workspace: str, *, background: bool = False) -> JobSpec:
     return JobSpec(kind="save", workspace=workspace, waited_for=True, confirmed=True, owner="user")
 
 
-def params_of(r: SaveRequest) -> dict[str, object]:
+def new_job_name() -> str:
+    """A save's job part of its record name (`[a-z0-9_]`), new for every save: random, so it is unique across runs of
+    one session as well as across sessions."""
+    return uuid.uuid4().hex
+
+
+def params_of(r: SaveRequest, job: str) -> dict[str, object]:
     return {
         "session": r.session,
-        "job": r.job,
+        "job": job,
         "workspace_key": r.workspace_key,
         "lineage": r.lineage,
         "root": r.root,
@@ -197,6 +207,7 @@ class _Run:
     def __init__(self, ctx: JobContext, request: SaveRequest) -> None:
         self._ctx = ctx
         self._r = request
+        self._job = new_job_name()  # this save's name: the save and its outcome read use it (§6.5, §6.6)
         self.gated = False
 
     def _seen(self, event: EngineEvent) -> None:
@@ -204,7 +215,7 @@ class _Run:
             self.gated = True
 
     def run(self) -> WorkResult:
-        out = self._ctx.call("save", params_of(self._r), on_event=self._seen)
+        out = self._ctx.call("save", params_of(self._r, self._job), on_event=self._seen)
         if isinstance(out, EngineFailure):
             if out.kind == "cancelled":
                 return WorkResult(None)  # our own end: the job was answered already (§4)
@@ -212,7 +223,9 @@ class _Run:
                 return WorkResult(_not_done(ErrorCode.INTERNAL))  # never sent (`too_large`): nothing written
             return self._from_disk()
         if isinstance(out, EngineRefusal):
-            return WorkResult(_not_done(ErrorCode.INTERNAL))  # refused before it ran: nothing written
+            if self.gated:  # an exception past `proceed` (round 1, verifier F3): the save may have written
+                return self._from_disk()
+            return WorkResult(_not_done(ErrorCode.INTERNAL))  # refused before its gate: it wrote nothing
         answer = decode_save(out)
         if isinstance(answer, Violation):
             return self._from_disk()  # a final reply we cannot read: what happened is on disk
@@ -230,7 +243,7 @@ class _Run:
             "app_local_data": str(self._r.app_local_data),
             "workspace_key": self._r.workspace_key,
             "session": self._r.session,
-            "job": self._r.job,
+            "job": self._job,
             "targets": [{"path": c.path, "pre": c.pre} for c in self._r.changes],
         }
         while True:

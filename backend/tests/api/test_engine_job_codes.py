@@ -43,7 +43,6 @@ SAVE_ANSWER: dict[str, object] = {
 }
 REQUEST = SaveRequest(
     session="s1",
-    job="j1",
     workspace_key="k1",
     lineage="lin1",
     root="/L/main.bean",

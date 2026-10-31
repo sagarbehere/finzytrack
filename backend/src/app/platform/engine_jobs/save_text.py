@@ -39,7 +39,7 @@ def _name(path: str | None) -> str:
 def _unchanged_or_not(d: ChangeNotSavedDetails) -> str:
     if d.unchanged:
         return f"{NOT_SAVED} {UNCHANGED}"
-    if d.path is not None:
+    if d.reason == "engine_stopped" and d.path is not None:  # §6.6's re-hash: the first file not at its pre bytes
         return f"Your change was not saved, and {_name(d.path)} was changed by another program."
     return f"{NOT_SAVED} Finzytrack could not check whether your ledger changed."
 

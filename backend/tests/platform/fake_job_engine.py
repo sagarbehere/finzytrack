@@ -26,7 +26,15 @@ import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 
-from app.platform.engine import EndReason, EngineEnd, EngineEvent, EngineFailure, EngineInfo, GateReached
+from app.platform.engine import (
+    EndReason,
+    EngineEnd,
+    EngineEvent,
+    EngineFailure,
+    EngineInfo,
+    EngineRefusal,
+    GateReached,
+)
 from app.platform.engine_supervision import Closed, Idle, Incompatible, Ready, SupervisionState, Unavailable
 
 INFO = EngineInfo(protocol=2, engine_version="0.4.0.dev0", beancount_version="3.2.0")
@@ -38,9 +46,10 @@ GATE_DIE = "gate_die"  # a scripted save: `gate`, then after `proceed` the engin
 
 @dataclass(frozen=True)
 class Gated:
-    """A scripted save: `gate`, then after `proceed` this result (S0063)."""
+    """A scripted save: `gate`, then after `proceed` this result (S0063), or this refusal (an exception in the engine
+    past its commit point, S0063 round 1)."""
 
-    result: dict[str, object]
+    result: dict[str, object] | EngineRefusal
 
 
 DEADLINE = 20.0
@@ -120,7 +129,7 @@ class FakeEngine:
         *,
         on_event: Callable[[EngineEvent], None] | None = None,
         spawn: bool = True,
-    ) -> Mapping[str, object] | EngineFailure:
+    ) -> Mapping[str, object] | EngineRefusal | EngineFailure:
         gated: object = None
         with self._cond:
             eng = self._live

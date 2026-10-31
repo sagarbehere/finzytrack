@@ -3,17 +3,23 @@ over the in-memory file system with its durable layer. Written from the spec's l
 `durable_sync`s the job's journal directory, then decides the outcome from disk ... so it never tells an outcome from
 a record a power loss could still take back (a `.closed` rename, or an `.open` rename, made just before the engine
 died; model finding F1)"; "no record → not saved; the targets are hashed again, and "Your ledger is unchanged" is said
-only if they equal the pre hashes (ADR-0012 F-2)"."""
+only if they equal the pre hashes (ADR-0012 F-2)". And the save's own folders over the same durable layer (round 1:
+the journal and backups folders, and their parents, durable before the commit point)."""
 
 from __future__ import annotations
 
 import errno
+from collections.abc import Mapping
+from dataclasses import replace
 
 import pytest
 
+from ledger_engine.fs.port import LegacyAbsent
+from ledger_engine.ledger import overlay
 from ledger_engine.ledger import save as sv
+from ledger_engine.ledger.core.ledger_set import Content, Fingerprint, digest
 from ledger_engine.ledger.writer import Change, sha256
-from tests.fakes.memfs import MemFS
+from tests.fakes.memfs import Crash, MemFS, MemLocks
 
 pytestmark = [pytest.mark.inv("INV-22"), pytest.mark.inv("INV-01")]
 
@@ -108,3 +114,101 @@ def test_an_open_record_names_a_file_the_save_was_creating_that_stands_there() -
     assert facts(fs) == sv.OutcomeFacts("open")
     fs.outside_write("/L/new.bean", b"x")
     assert facts(fs) == sv.OutcomeFacts("open", path="/L/new.bean")
+
+
+# -- round 1: the save's own folders are durable before its commit point (verifier r1 F1) --------------------------
+#
+# Spec §6.1 step 8.2 "an `.open` journal is never torn" and §6.2 "A directory sync with nothing to flush costs
+# nothing": each folder of `<app>/local/<key>/{journal,backups}`, the app's folder included, must be durable before
+# the first swap, also when it was already there but its entry was never synced (an earlier engine died between its
+# `mkdir` and that sync; the app's folder made by a start just before). Otherwise
+# a power loss can drop the folder, with the `.open` journal and every backup, while the swapped ledger files stay.
+
+A, B = b"a pre\n", b"b pre\n"
+FP = Fingerprint("/L/a.bean", (("/L/a.bean", Content(sha256(A))), ("/L/b.bean", Content(sha256(B)))), (), (), ())
+CHAIN = (ALD, f"{ALD}/local", f"{ALD}/local/k1", JD, f"{ALD}/local/k1/backups")
+
+
+class NoLegacy:
+    def try_lock(self, path: str) -> LegacyAbsent:
+        return LegacyAbsent()
+
+
+class Job:
+    def progress(self, phase: str) -> None: ...
+    def gate(self) -> None: ...
+    def committed(self) -> None: ...
+
+
+def _loaded(root: str, candidates: Mapping[str, bytes]) -> overlay.LoadResult:
+    return overlay.Loaded([], [], {}, FP)
+
+
+def save_world(not_durable: str) -> MemFS:
+    """The ledger `a.bean`, `b.bean`, and the app folder whose `not_durable` folder exists but was never synced."""
+    fs = MemFS()
+    fs.outside_mkdirs("/L")
+    fs.outside_write("/L/a.bean", A)
+    fs.outside_write("/L/b.bean", B)
+    parent, _, name = not_durable.rpartition("/")
+    fs.outside_mkdirs(parent or "/")
+    with fs.open_dir(parent or "/") as h:
+        h.mkdir(name)  # the earlier engine's mkdir; it died before the folder's sync
+    return fs
+
+
+def two_file_plan(**kw: object) -> sv.SavePlan:
+    plan = sv.SavePlan(
+        session="s1",
+        job="j7",
+        workspace_key="k1",
+        lineage="lin1",
+        engine_build="b",
+        root="/L/a.bean",
+        changes=(Change("/L/a.bean", sha256(A), b"a post\n"), Change("/L/b.bean", sha256(B), b"b post\n")),
+        fingerprint=FP,
+        mirror=digest(FP),
+        legacy_locks=(),
+        app_local_data=ALD,
+    )
+    return replace(plan, **kw)
+
+
+def save_ports(fs: MemFS) -> sv.Ports:
+    return sv.Ports(fs, MemLocks(), NoLegacy(), _loaded, observe=lambda fp: fp)
+
+
+@pytest.mark.parametrize("not_durable", CHAIN)
+def test_a_landed_save_keeps_its_closed_record_and_backups_through_a_power_loss(not_durable: str) -> None:
+    fs = save_world(not_durable)
+    out = sv.run(two_file_plan(), save_ports(fs), Job())
+    assert isinstance(out, sv.Saved), out
+    for state in fs.power_loss_states():
+        if state.file("/L/a.bean") == b"a post\n" or state.file("/L/b.bean") == b"b post\n":
+            assert state.file(f"{JD}/s1-j7.closed") is not None, "its files swapped, its record gone"
+            assert state.file(f"{ALD}/local/k1/backups/s1-j7/0-a.bean") == A
+            assert state.file(f"{ALD}/local/k1/backups/s1-j7/1-b.bean") == B
+
+
+@pytest.mark.parametrize("not_durable", CHAIN)
+def test_a_save_cut_after_its_first_swap_never_leaves_a_half_applied_ledger_without_its_journal(
+    not_durable: str,
+) -> None:
+    labels: list[str] = []
+    fs = save_world(not_durable)
+    first = len(fs.effects)
+    fs.on_effect = lambda i, label: labels.append(label)
+    sv.run(two_file_plan(), save_ports(fs), Job())
+    swaps = [i for i, label in enumerate(labels) if "swap" in label]
+    assert len(swaps) == 2, labels
+    fs = save_world(not_durable)
+    fs.inject(first + swaps[1], crash=True)  # the engine dies at the second swap: a.bean is swapped, b.bean is not
+    with pytest.raises(Crash):
+        sv.run(two_file_plan(), save_ports(fs), Job())
+    torn = 0
+    for state in fs.power_loss_states():
+        if state.file("/L/a.bean") == b"a post\n" and state.file("/L/b.bean") == B:
+            torn += 1
+            assert state.file(f"{JD}/s1-j7.open") is not None, "half applied, and no journal for recover-all"
+            assert state.file(f"{ALD}/local/k1/backups/s1-j7/0-a.bean") == A
+    assert torn, "the cut must leave a half-applied state to check"

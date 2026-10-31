@@ -672,3 +672,94 @@ def test_a_ledger_folder_that_cannot_be_searched_is_not_saved_and_names_the_file
     assert isinstance(out, NotSaved), out
     assert (out.reason, out.path) == (Reason.IO_ERROR, str(sub / "a.bean"))
     assert not (led.ald / "local").exists()
+
+
+# -- round 1: one save, one name; an I/O error at a lock or in the load --------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "taken",
+    [
+        "journal/s1-j7.done",  # an earlier save of this name landed and was checked
+        "journal/s1-j7.resolved",
+        "journal/s1-j7.part",
+        "journal/s1-j7.r4-attempts",
+        "journal/S1-J7.done",  # the same name in another case (APFS is case-insensitive)
+        "backups/s1-j7",
+    ],
+)
+def test_a_save_whose_name_already_has_a_record_or_backups_raises_and_writes_nothing(led: Ledger, taken: str) -> None:
+    """Spec §6.5 "One save, one name": §6.6 tells a dead save's outcome by its record's name alone, so a name that is
+    already on disk is a caller's error, refused before step 1 (verifier r1 F2)."""
+    entry = led.ald / "local" / KEY / taken
+    entry.parent.mkdir(parents=True)
+    if taken.startswith("backups/"):
+        entry.mkdir()
+    else:
+        entry.write_bytes(b"{}")
+    before = led.tree()
+    with pytest.raises(BadPlanError, match="name_taken"):
+        sv.run(plan_for(led), ports_for(led), FakeJob())
+    assert led.tree() == before
+    assert led.main.read_bytes() == MAIN
+
+
+def test_another_saves_name_does_not_take_this_one(led: Ledger) -> None:
+    jd = led.journal()
+    jd.mkdir(parents=True)
+    (jd / "s1-j70.done").write_bytes(b"{}")  # `s1-j7` is a prefix of its name, not its name
+    (jd / "s1-j8.done").write_bytes(b"{}")
+    (led.ald / "local" / KEY / "backups" / "s1-j70").mkdir(parents=True)
+    out = sv.run(plan_for(led), ports_for(led), FakeJob())
+    assert isinstance(out, sv.Saved), out
+
+
+@dataclass
+class FailingLocks:
+    inner: Locks
+    fails_on: str  # the ledger file whose lock cannot be taken
+
+    def try_lock(self, key: str) -> Lock | None:
+        if key == sv._key(for_this_os(), self.fails_on):  # pyright: ignore[reportPrivateUsage]
+            raise PermissionError(13, "Permission denied")
+        return self.inner.try_lock(key)
+
+    def lock(self, key: str) -> Lock:
+        return self.inner.lock(key)
+
+
+def test_a_ledger_set_lock_that_cannot_be_taken_is_not_saved_and_names_its_file(led: Ledger) -> None:
+    """Red team r1 L2: an I/O error taking a lock is "not saved", with the re-hash, as a name that cannot be resolved
+    is (spec §11's rule), never an internal error."""
+    before = led.tree()
+    plan = plan_for(led)
+    out = sv.run(plan, ports_for(led, locks=FailingLocks(DarwinLocks(str(led.ald / "locks")), str(led.inc))), FakeJob())
+    assert isinstance(out, NotSaved), out
+    assert (out.reason, out.path, out.unchanged, out.open_journal) == (Reason.IO_ERROR, str(led.inc), True, False)
+    assert_nothing_written(led, before, out)
+    assert_locks_free(led, plan)
+
+
+def test_an_include_the_load_cannot_read_is_not_saved_and_names_it(led: Ledger) -> None:
+    def unreadable(root: str, candidates: Mapping[str, bytes]) -> overlay.LoadResult:
+        raise PermissionError(13, "Permission denied", str(led.inc))
+
+    before = led.tree()
+    plan = plan_for(led)
+    out = sv.run(plan, ports_for(led, load=unreadable), FakeJob())
+    assert isinstance(out, NotSaved), out
+    assert (out.reason, out.path, out.unchanged, out.open_journal) == (Reason.IO_ERROR, str(led.inc), True, False)
+    assert_nothing_written(led, before, out)
+    assert_locks_free(led, plan)
+
+
+def test_an_io_error_in_the_load_says_unchanged_only_after_the_rehash(led: Ledger) -> None:
+    """§11's rule: the file the save writes was edited by another program before the load failed, so not "unchanged"."""
+
+    def edited_then_unreadable(root: str, candidates: Mapping[str, bytes]) -> overlay.LoadResult:
+        led.main.write_bytes(MAIN + b"; an editor\n")
+        raise PermissionError(13, "Permission denied", str(led.inc))
+
+    out = sv.run(plan_for(led), ports_for(led, load=edited_then_unreadable), FakeJob())
+    assert isinstance(out, NotSaved), out
+    assert (out.reason, out.path, out.unchanged) == (Reason.IO_ERROR, str(led.inc), False)
