@@ -70,6 +70,7 @@ from ledger_engine.ledger.writer import (
     Unfinished,
     durable_commit,
 )
+from ledger_engine.tla import tla_action
 
 LOCAL: Final = "local"
 JOURNAL: Final = "journal"
@@ -252,6 +253,7 @@ def records(fs: FileSystem, app_local_data: str, workspace_key: str, lineage: st
     return None
 
 
+@tla_action("S_R4Check")
 def _records_refusal(fs: FileSystem, plan: SavePlan) -> tuple[RefusedReason, str | None] | None:
     try:
         out = records(fs, plan.app_local_data, plan.workspace_key, plan.lineage)
@@ -305,6 +307,7 @@ def _legacy_locks(ports: Ports, paths: tuple[str, ...]) -> Generator[None]:
         yield
 
 
+@tla_action("S_Locks")
 @contextmanager
 def _ledger_locks(ports: Ports, keys: Mapping[str, str], job: Job) -> Generator[None]:
     """ADR-0012 Q29: each key's lock, in `path_key` order, waiting (§6.1 step 3). `keys`: each key's file (named if
@@ -395,6 +398,7 @@ def run(plan: SavePlan, ports: Ports, job: Job) -> SaveOutcome:
             gc.enable()
 
 
+@tla_action("S_Release")
 def _run(plan: SavePlan, ports: Ports, job: Job, pre: Mapping[str, str | None]) -> SaveOutcome:
     def refused(reason: RefusedReason, path: str | None = None) -> Refused:
         return Refused(reason, _unchanged(ports.fs, plan.changes), path)
@@ -421,6 +425,7 @@ def _run(plan: SavePlan, ports: Ports, job: Job, pre: Mapping[str, str | None]) 
         return io_error(e.path)
 
 
+@tla_action("S_Gate", "S_Load", "S_Recheck", "S_Commit", "S_Saved")
 def _under_locks(
     plan: SavePlan,
     ports: Ports,

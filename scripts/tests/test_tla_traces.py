@@ -34,20 +34,28 @@ STATE_1 ==
      plan |-> [I |-> 0, J |-> -1], id |-> 1, own |-> "switch" ] >>
 /\ runs = {}
 /\ eng = [st |-> "none", p |-> 0, ended |-> [k |-> "none"]]
-/\ ctl = [pc |-> "none", past |-> FALSE, rinit |-> FALSE, tried |-> {}]
+/\ ctl = [pc |-> "none", past |-> FALSE, rinit |-> FALSE, tried |-> {}, s |-> "none", fi |-> 1, rj |-> "none",
+     plan |-> [R |-> 0, N |-> 0, I |-> 0, J |-> 0, K |-> 0], rbt |-> "none", skip |-> "none", r4j |-> "none"]
 /\ ses = [app |-> "boot", stops |-> 0, advice |-> "none", opened |-> {}]
-/\ pst = [orphan |-> FALSE, mirror |-> << [fp |-> [I |-> 1]] >>]
-/\ fs = [tc |-> ( <<"s1", "R">> :> 0 @@ <<"s1", "N">> :> 0 )]
+/\ pst = [orphan |-> FALSE, mirror |-> << [fp |-> [I |-> 1]], [fp |-> [I |-> 2]] >>]
+/\ fs = [cur |-> [R |-> 1, N |-> 0, I |-> 1, J |-> 1, K |-> 1], tc |-> ( <<"b2", "R">> :> 0 @@ <<"s1", "R">> :> 0 @@ <<"s1", "N">> :> -1 ),
+     bk |-> [s1 |-> 0, s2 |-> 0, s3 |-> 0], rt |-> [R |-> 0, N |-> 0, I |-> 0, J |-> 0, K |-> 0], ud |-> {}]
+/\ jr = [b2 |-> [st |-> "none", files |-> {}], s1 |-> [st |-> "part", files |-> {"R", "N"}]]
+/\ gh = [told |-> [s1 |-> "none", s2 |-> "none", s3 |-> "none"], acc |-> [R |-> {}]]
 
 STATE_2 ==
 /\ act = [a |-> "UserRead", p |-> 2]
 /\ q = <<>>
 /\ runs = {[w |-> 2, s |-> "none", k |-> "read", wf |-> TRUE, conf |-> FALSE, req |-> "gone", id |-> 3, own |-> "user"]}
 /\ eng = [st |-> "busy", p |-> 1]
-/\ ctl = [pc |-> "rd_load", past |-> FALSE, rinit |-> FALSE]
+/\ ctl = [pc |-> "rd_load", past |-> FALSE, rinit |-> FALSE, s |-> "s1", fi |-> 2, rj |-> "none",
+     plan |-> [R |-> 1, N |-> 0, I |-> 1], rbt |-> "none", skip |-> "none", r4j |-> "none"]
 /\ ses = [app |-> "run", stops |-> 2, advice |-> "timer", opened |-> {2}]
-/\ pst = [orphan |-> TRUE]
-/\ fs = [tc |-> ( <<"s1", "R">> :> 0 )]
+/\ pst = [orphan |-> TRUE, mirror |-> << [fp |-> [I |-> 3]] >>]
+/\ fs = [cur |-> [R |-> 1, N |-> 0, I |-> 1, J |-> 1, K |-> 1], tc |-> ( <<"b2", "R">> :> 0 @@ <<"s1", "R">> :> 0 @@ <<"s1", "N">> :> -1 ),
+     bk |-> [s1 |-> 0, s2 |-> 0, s3 |-> 0], rt |-> [R |-> 0, N |-> 0, I |-> 0, J |-> 0, K |-> 0], ud |-> {}]
+/\ jr = [b2 |-> [st |-> "none", files |-> {}], s1 |-> [st |-> "part", files |-> {"R", "N"}]]
+/\ gh = [told |-> [s1 |-> "none", s2 |-> "none", s3 |-> "none"], acc |-> [R |-> {}]]
 
 =================================================
 """
@@ -58,8 +66,12 @@ class ReaderTest(unittest.TestCase):
         value = GEN.Reader('[a |-> <<1, -2, "x\\"y">>, b |-> {TRUE, FALSE}, c |-> [d |-> <<>>], e |-> {}]').value()
         self.assertEqual(value, {"a": [1, -2, 'x"y'], "b": {"set": [True, False]}, "c": {"d": []}, "e": {"set": []}})
 
+    def test_reads_a_function_of_tuples(self) -> None:
+        value = GEN.Reader('( <<"s1", "R">> :> 0 @@ <<"s1", "N">> :> -1 )').value()
+        self.assertEqual(value, {"fn": [[["s1", "R"], 0], [["s1", "N"], -1]]})
+
     def test_refuses_what_it_does_not_read(self) -> None:
-        for text in ['( <<"s1", "R">> :> 0 )', "[a |-> 1", "[a |-> 1] 2", "<<1, 2", "1..3"]:
+        for text in ['( <<"s1", "R">> :> 0 2 )', '( <<"s1">> 0 )', "[a |-> 1", "[a |-> 1] 2", "<<1, 2", "1..3"]:
             with self.subTest(text=text), self.assertRaises(ValueError):
                 GEN.Reader(text).value()
 
@@ -73,13 +85,47 @@ class ReaderTest(unittest.TestCase):
         self.assertIsNone(first["run"])
         self.assertEqual(second["run"]["req"], "gone")
         self.assertEqual(second["ses"], {"app": "run", "stops": 2, "advice": "timer", "opened": [2]})
-        self.assertEqual(second["pst"], {"orphan": True})
+        self.assertEqual(second["pst"], {"orphan": True, "mirror1": {"I": 3}})
         self.assertEqual(second["eng"], {"st": "busy"})
         self.assertEqual(second["ctl"], {"pc": "rd_load", "past": False, "rinit": False})
+        self.assertEqual(first["fs"], {"cur": {"R": 1, "N": 0, "I": 1}, "tc": {"s1/R": 0, "s1/N": -1},
+                                       "bk": {"s1": 0, "s2": 0, "s3": 0}, "rt": {"R": 0, "N": 0}})  # fmt: skip
+        self.assertEqual(first["jr"], {"b2": "none", "s1": "part"})
+        self.assertEqual(second["sv"], {"s": "s1", "fi": 2, "rj": "none", "plan": {"R": 1, "N": 0, "I": 1},
+                                        "rbt": "none", "skip": "none", "r4j": "none"})  # fmt: skip
+        self.assertEqual(first["told"], {"s1": "none", "s2": "none", "s3": "none"})
 
     def test_a_state_without_a_replay_variable_is_refused(self) -> None:
         with self.assertRaises(ValueError):
             GEN.read_trace(SAMPLE.replace("/\\ runs = {}\n", ""))
+
+
+class CorpusFormTest(unittest.TestCase):
+    """S0064: the save state kept only around saves, the steps as deltas, the traces kept by the branches they add."""
+
+    def test_the_deltas_rebuild_the_states(self) -> None:
+        a = {"act": {"a": "Init"}, "run": None, "fs": {"x": 1}}
+        b = {"act": {"a": "UserSave"}, "run": None}
+        c = {"act": {"a": "Dispatch"}, "run": {"k": "save"}, "fs": {"x": 2}}
+        steps = GEN.delta([a, b, c])
+        self.assertEqual(steps[1], {"act": {"a": "UserSave"}, "-": ["fs"]})
+        self.assertEqual(GEN.undelta(steps), [a, b, c])
+
+    def test_the_save_state_is_kept_only_around_a_save(self) -> None:
+        def st(k: str | None) -> dict:
+            return {"run": None if k is None else {"k": k}, "fs": 1, "jr": 2, "sv": 3, "told": 4, "q": []}
+
+        out = GEN.prune([st(None), st("read"), st("save"), st(None), st(None)])
+        self.assertEqual(["fs" in s for s in out], [True, False, True, True, False])
+        self.assertEqual(out[1]["q"], [])
+
+    def test_the_traces_that_add_branches_are_kept_first(self) -> None:
+        def tr(*acts: str) -> list[dict]:
+            return [{"act": {"a": a}, "run": None, "ctl": {"pc": "none"}} for a in ("Init", *acts)]
+
+        long = [tr("A"), tr("A"), tr("A", "B"), tr("C")]
+        self.assertEqual(GEN.select(long, 2), [long[2], long[3]])
+        self.assertEqual(GEN.select(long, 4), long)
 
 
 class WrapperTest(unittest.TestCase):
@@ -95,9 +141,9 @@ class WrapperTest(unittest.TestCase):
         text = GEN.wrapper(MODEL, ["cancel"])
         self.assertIn("TNext == IF ENABLED Eager THEN TEager ELSE TOther", text)
         self.assertIn("Eager == Dispatch \\/ DispatchUnavail \\/ SpawnStep", text)
-        self.assertIn('(\\E i \\in 1..Len(q) : UserCancelQueued(i) /\\ FALSE /\\ act\'', text)
+        self.assertIn('(\\E i \\in 1..Len(q) : UserCancelQueued(i) /\\ (FALSE) /\\ act\'', text)
         for name, guard in GEN.GUARDS.items():
-            self.assertIn(guard, text, name)
+            self.assertIn(f"/\\ ({guard})", text, name)  # parenthesized (S0064: a guard with a disjunction)
 
     def test_left_out_and_guarded_names_are_actions_of_the_model(self) -> None:
         names = {name for _, name, _ in GEN.actions(MODEL)}

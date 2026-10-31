@@ -525,7 +525,7 @@ Each runs on a small world (`cfg/MUT_<name>.cfg`) and checks only its property; 
 | `app_scoped_during_recovery` | model review 1 (finding 14) | `AppScopedWaitsForRecovery` | `S_boot` | a create or copy may start during a switch or boot |
 | `read_refusal_stuck` | this update | `NoEngineStall` | `S_save_crash` | a read meeting an `.open` journal cannot refuse |
 
-## 7. The code's conformance (S0059)
+## 7. The code's conformance (S0059, S0064)
 
 `gen_traces.py` walks small worlds of this model with TLC's simulate mode (a fixed seed, one worker) and writes
 `traces/corpus.json`; `backend/tests/platform/test_engine_jobs_conformance.py` replays each trace through the queue
@@ -545,10 +545,23 @@ file actions and two record actions (7) must leave the queue's state as it is; c
 switch, quit, the app's crash, a power loss and the next start (BL-0154) (29) are left out of the walk. The test's
 docstring and `design/journal/S0059-conformance-traces.md` give the equivalences and what the replay cannot see.
 
-What it covers today is BL-0150's action names over 62 traces of small worlds, not every branch of them: a Cancel
-meeting a background save past its commit point, a Cancel while an R4 runs, `SpawnStep`'s unavailable branch and
-`OrphanEndStuck` (mapped, never replayed) are not in the corpus, and each world has one workspace, so a job of a
-workspace that is not open is never seen (the switch is BL-0154). `SpawnStep`'s `rc_spawn` branch is not left out of
-the walk (guarding it would deadlock the walk, which takes the dispatch whenever it is enabled): it is only absent
-with this seed. BL-0159 widens the corpus by branch with BL-0151; until then the hand-written suites
-(`test_engine_queue.py`, `test_engine_scheduler.py`) are the main guard for these rules.
+What it covers (S0064, BL-0159): the branches of `BRANCHES` in the test, each walked at least once over the whole
+corpus (a Cancel meeting a background save before and past its commit point, a Cancel ending a running R4, recover-all's
+listing, its Cancel after it, its engine's death and fresh engine, and `SpawnStep`'s unavailable branch for it, among
+42), checked by `test_the_corpus_covers_every_branch`; `UNREACHED` names what the corpus cannot reach and why
+(`OrphanEndStuck` and a second recover-all need a quit, a switch or the app's crash, BL-0154; a Cancel meeting
+recover-all needs the open job, BL-0152; `SpawnStep`'s unavailable branch for a save or an R4 is unreachable in the
+model). Each world has one workspace, so a job of a workspace that is
+not open is never seen (the switch is BL-0154). The worlds steer the walk with leave rules (`gen_traces.LEAVE`: an
+engine death only in a save, an edit only past the commit point, a second save only once no R4 is owed...), and of
+the traces TLC walks for a world those that add the most branches are kept (`gen_traces.select`).
+
+**The save path through the engine** (S0064, BL-0151 slice 5): `engine/tests/ledger/test_save_conformance.py`
+replays every save of the worlds without boot journals through `ledger_engine.ledger.save.run` over the in-memory file
+system, the model's `R`, `N` and `I` projected onto three files and the model's records, temps and backups onto the
+fake's, and compares the fake with the model at each model step the code reaches (its hooks: each file-system
+effect, the locks, the observations, the load, the commit point, the close), and what the code answered with what
+the model told; after a death, the engine's reading of the disk (`save.outcome`) against `DiskOutcome`. Where the
+model and the code differ (the swap-backs, the old temp rule, an undo that removes a created file, an edit the code's
+backup step sees first, an owed R4 run inside the save, a stale mirror) the replay stops that trace, counted by reason
+(BL-0161, BL-0152, BL-0125). Recover-all's per-journal tries through the engine are BL-0164.

@@ -33,12 +33,12 @@ A few branches stop their trace (`STOPS`): behaviour of a later piece that the c
 leaves four of them out (`gen_traces.GUARDS`), the fifth is only absent (see `STOPS`), and the coverage test checks
 that none is reached.
 
-What this covers today: the action names of BL-0150 over 62 traces of small worlds, not every branch of them (S0059
-verifier F1, F3, F4): a Cancel meeting a background save past its commit point, a Cancel while an R4 runs,
-`SpawnStep`'s unavailable branch and `OrphanEndStuck` (mapped, never replayed) are not in the corpus, and each world
-has one workspace, so a job of a workspace that is not open is never seen (the switch is BL-0154). BL-0159 widens the
-corpus by branch with BL-0151. The hand-written suites (`test_engine_queue.py`, `test_engine_scheduler.py`) remain
-the main guard for these rules; this replay checks the code against the model's behaviour as a whole.
+What this covers (S0064, BL-0159): every branch of `BRANCHES` over the whole corpus
+(`test_the_corpus_covers_every_branch`), recover-all's listing, its Cancel after it, its engine's death and fresh
+engine included; `UNREACHED` names what the corpus cannot reach and why. Each world has one workspace, so a job of a
+workspace that is not open is never seen (the switch is BL-0154). A save's own steps are replayed through the engine in
+`engine/tests/ledger/test_save_conformance.py`; here the outcome the sidecar decides after a save's death is checked
+against the model's `DiskOutcome` (`test_the_outcome_after_a_save_death_is_the_models_disk_outcome`).
 """
 
 from __future__ import annotations
@@ -52,13 +52,14 @@ from collections import Counter, deque
 from collections.abc import Callable, Iterable, Iterator, Mapping
 from dataclasses import dataclass, field, replace
 from functools import cache
+from itertools import pairwise
 from pathlib import Path
-from typing import Literal, TypedDict, cast
+from typing import Any, Literal, TypedDict, cast
 
 import pytest
 
 from app.domain.errors import DomainError
-from app.platform.engine import EngineFailure
+from app.platform.engine import EngineFailure, OutcomeFacts
 from app.platform.engine_jobs import queue, scheduler
 from app.platform.engine_jobs.queue import (
     AdviceTimer,
@@ -73,6 +74,7 @@ from app.platform.engine_jobs.queue import (
     EngineLockFree,
     EngineLost,
     EngineNeeded,
+    EngineRefused,
     Event,
     ExclusiveEnded,
     Finished,
@@ -86,6 +88,7 @@ from app.platform.engine_jobs.queue import (
     Queued,
     QueuePolicy,
     QueueState,
+    RecoveryListed,
     ResetEngine,
     RetireEngine,
     Start,
@@ -96,9 +99,10 @@ from app.platform.engine_jobs.queue import (
     eligible,
     transition,
 )
+from app.platform.engine_jobs.save import NotDone, Saved, save_outcome
 from app.platform.engine_jobs.scheduler import Done, EngineJobs, Failed, JobContext, JobTicket, WorkResult
 from app.platform.engine_supervision import RestartPolicy
-from app.platform.errors import ErrorCode, JobCancelledDetails
+from app.platform.errors import ChangeNotSavedDetails, ErrorCode, JobCancelledDetails
 from tests.architecture.test_tla_mapping import next_groups, step_actions
 from tests.platform.fake_job_engine import FakeEngine
 
@@ -282,10 +286,30 @@ class Meta(TypedDict):
     constants: dict[str, dict[str, str]]
 
 
+def undelta(steps: list[dict[str, object]]) -> list[dict[str, object]]:
+    """The states of a trace, from the corpus's steps (each the variables that changed, and under "-" the ones gone;
+    a copy of `gen_traces.undelta`, which a test may not import)."""
+    states: list[dict[str, object]] = []
+    for step in steps:
+        state = {**(states[-1] if states else {}), **step}
+        for k in cast(list[str], state.pop("-", [])):
+            del state[k]
+        states.append(state)
+    return states
+
+
 @cache
 def corpus() -> tuple[Meta, tuple[TraceJ, ...]]:
     lines = CORPUS.read_text(encoding="utf-8").splitlines()
-    return cast(Meta, json.loads(lines[0])), tuple(cast(TraceJ, json.loads(line)) for line in lines[1:])
+    rows = [cast(dict[str, object], json.loads(line)) for line in lines[1:]]
+    traces = tuple(
+        cast(
+            TraceJ,
+            {"world": r["world"], "trace": r["trace"], "states": undelta(cast(list[dict[str, object]], r["steps"]))},
+        )
+        for r in rows
+    )
+    return cast(Meta, json.loads(lines[0])), traces
 
 
 def sha256(path: Path) -> str:
@@ -441,6 +465,10 @@ def ends_of(s: StateJ, t: StateJ, classes: Mapping[str, Class]) -> dict[int, End
             out[mid] = End("lost", past_commit=s["ctl"]["past"])  # only a writing job has a commit point
         elif classes[a] == "job_step":
             out[mid] = End("finished")
+        elif run is not None and mid == run["id"] and run["k"] == "recover" and a in ("SpawnStep", "UserCancelRunning"):
+            # §8.1 (S0062): recover-all ends with its report: no engine for its next journal (every journal not yet
+            # tried `not_tried`), or a Cancel after its listing with nothing left to try
+            out[mid] = End("finished") if a == "SpawnStep" or s["ctl"]["rinit"] else End("cancelled", False)
         elif a in ("DispatchUnavail", "SpawnStep"):
             out[mid] = End("no_engine")
         elif a == "UserCancelQueued" and mid == s["q"][int(t["act"]["p"]) - 1]["id"]:
@@ -473,7 +501,11 @@ class SubmitOp:
 
 @dataclass(frozen=True, slots=True)
 class CancelOp:
+    """A Cancel; `then`: what the job's work does once its call fails (recover-all after its listing, S0062: it asks a
+    fresh engine for its next journal, or ends with its report when nothing is left)."""
+
     model_id: int
+    then: Literal["none", "fresh", "done"] = "none"
 
 
 @dataclass(frozen=True, slots=True)
@@ -484,9 +516,10 @@ class GoneOp:
 @dataclass(frozen=True, slots=True)
 class WorkOp:
     """The running job's own part: its end (`done`, with whether it ran user code), its commit point (`gate`), its
-    ask for a fresh engine (`fresh`), or its engine's death mid-request (`crash`, with the bound reached or not)."""
+    ask for a fresh engine (`fresh`), its engine's death mid-request (`crash`, with the bound reached or not; a
+    recover-all then asks a fresh engine for its next journal, §8.1), or recover-all's listing (`listed`, S0062)."""
 
-    what: Literal["done", "gate", "fresh", "crash"]
+    what: Literal["done", "gate", "fresh", "crash", "listed"]
     flag: bool = False
 
 
@@ -504,20 +537,12 @@ type Op = SubmitOp | CancelOp | GoneOp | WorkOp | SimpleOp | OpenedOp
 
 
 STOPS: Mapping[str, str] = {
-    # Built in S0062 (the queue's `RecoveryListed`, `JournalCancelled`, `EngineRefused`), but not walked by this
-    # corpus yet: `gen_traces.GUARDS` still leaves them out; widening it is the save path's replay (BL-0151 slice 5).
-    "recover_spawn": f"recover-all goes on with the next journal in a fresh engine ({SAVE}, slice 5's replay)",
-    "recover_cancel": f"a Cancel of recover-all after its listing ends only its engine ({SAVE}, slice 5's replay)",
-    "recover_crash": f"recover-all goes on with the next journal after its engine's death ({SAVE}, slice 5's replay)",
     "open_crash": f"the open's engine death ends the switch on its failed screen ({R4_READS})",
     "open_job": f"the boot's open of a workspace whose mirror is out of date runs an open job ({R4_READS})",
 }
-"""Steps that stop their trace: behaviour of a later piece that the code does not have yet, or (the three `recover_`
-ones, since S0062) that the corpus does not walk yet. `gen_traces.GUARDS`
-leaves four of them out of the walk (`recover_cancel`, `recover_crash`, `open_crash`, `open_job`). `recover_spawn` is
-not guarded: guarding `SpawnStep` would deadlock the walk (the trace module takes the dispatch whenever it is enabled),
-so it is only absent from this corpus, its seed and its worlds (it follows only from `recover_crash` or
-`recover_cancel`). The coverage test fails if a trace reaches any of them (S0059 verifier F5)."""
+"""Steps that stop their trace: behaviour of a later piece that the code does not have yet. `gen_traces.GUARDS` leaves
+both out of the walk; the coverage test fails if a trace reaches either (S0059 verifier F5). Recover-all's listing, a
+Cancel after it, its engine's death and its fresh engine (S0062) are walked since S0064 (BL-0151 slice 5)."""
 
 
 class Stop(Exception):
@@ -554,8 +579,6 @@ def ops_of(s: StateJ, t: StateJ, bound: int, classes: Mapping[str, Class]) -> li
     run = s["run"]
     cls = classes[a]
     if a in EAGER:
-        if a == "SpawnStep" and s["ctl"]["pc"] == "rc_spawn":
-            raise Stop("recover_spawn")
         return []  # the table took it inside the step before (§3)
     submits: list[Op] = [SubmitOp(j, background_save=a == "AppBgSave") for j in new_jobs(s, t)]
     match a:
@@ -566,7 +589,7 @@ def ops_of(s: StateJ, t: StateJ, bound: int, classes: Mapping[str, Class]) -> li
         case "UserCancelRunning":
             assert run is not None
             if run["k"] == "recover" and s["ctl"]["rinit"]:
-                raise Stop("recover_cancel")
+                return [CancelOp(run["id"], "done" if t["run"] is None else "fresh")]  # §8.1: it goes on
             return [CancelOp(run["id"])]
         case "UserCloseTab":
             return [GoneOp(int(p))]
@@ -574,8 +597,6 @@ def ops_of(s: StateJ, t: StateJ, bound: int, classes: Mapping[str, Class]) -> li
             return [SimpleOp("try_again")]
         case "EngineCrash":
             assert run is not None
-            if run["k"] == "recover":
-                raise Stop("recover_crash")
             if run["k"] == "open":
                 raise Stop("open_crash")
             reached = s["ses"]["stops"] < bound <= t["ses"]["stops"]
@@ -609,6 +630,8 @@ def ops_of(s: StateJ, t: StateJ, bound: int, classes: Mapping[str, Class]) -> li
                 return [WorkOp("done", end == "sig"), *submits]
             if t["ctl"]["past"] and not s["ctl"]["past"]:
                 return [WorkOp("gate"), *submits]
+            if run["k"] == "recover" and t["ctl"]["rinit"] and not s["ctl"]["rinit"]:
+                return [WorkOp("listed"), *submits]  # §8.1: the listing is reported (`RecoveryListed`, S0062)
             assert (t["ctl"]["pc"] in SPAWN_PCS) == (s["ctl"]["pc"] in SPAWN_PCS), f"{a} moved between engines"
             assert t["eng"]["st"] == s["eng"]["st"], f"{a} changed the engine ({s['eng']['st']} -> {t['eng']['st']})"
             return submits
@@ -673,6 +696,8 @@ class TableReplay:
                 self.lock_asked = True
             elif isinstance(e, ResetEngine):
                 follow.append(EngineAvailability(True))  # the reset, done
+            elif isinstance(e, EngineRefused):
+                follow.append(JobDone(e.job_id, ran_user_code=False))  # recover-all's work answers with its report
             elif isinstance(e, Cancelled | EngineLost | NoEngine | Finished) and e.job_id == self.boot_id:
                 follow.append(ExclusiveEnded())  # the shell ends the boot's window with its job
         if self.lock_asked and not self.orphan:
@@ -691,14 +716,21 @@ class TableReplay:
         match op:
             case SubmitOp(job=j):
                 self.ids[j["id"]] = self.submit(spec_of(j))
-            case CancelOp(model_id=m):
+            case CancelOp(model_id=m, then=then):
                 self.feed(Cancel(self.ids[m]))
+                if then == "fresh":
+                    self.feed(RetireEngine(self.ids[m]))  # the work's `fresh_engine()` (§8.1)
+                    self.feed(EngineNeeded(self.ids[m]))
+                elif then == "done":
+                    self.feed(JobDone(self.ids[m], ran_user_code=False))
             case GoneOp(model_id=m):
                 self.feed(ClientGone(self.ids[m]))
             case WorkOp(what="done", flag=ran):
                 self.feed(JobDone(self.running_id(), ran))
             case WorkOp(what="gate"):
                 self.feed(Gate(self.running_id()))
+            case WorkOp(what="listed"):
+                self.feed(RecoveryListed(self.running_id()))
             case WorkOp(what="fresh"):
                 job_id = self.running_id()
                 self.feed(RetireEngine(job_id))
@@ -712,8 +744,13 @@ class TableReplay:
                 if running is not None and running.job.kind == "save":
                     # S0063: the table keeps a save whose engine died; its work reads the outcome from disk and
                     # answers (the model tells `DiskOutcome` at the crash; the disk read itself is the work's,
-                    # `test_save_job.py`), so here it answers at once, as the model's job ends at once
+                    # `test_save_job.py`; the engine's reading against the model's states is
+                    # `engine/tests/ledger/test_save_conformance.py`), so here it answers at once, as the model's job
+                    # ends at once
                     self.feed(JobDone(running.job.id, ran_user_code=True))
+                elif running is not None and running.job.kind == "recover_all":
+                    self.feed(RetireEngine(running.job.id))  # §8.1: the work asks a fresh engine for its next part
+                    self.feed(EngineNeeded(running.job.id))
                 self.feed(EngineEnded())
             case SimpleOp(what="drain"):
                 self.feed(EngineEnded())
@@ -755,25 +792,39 @@ class TableReplay:
 
 class Script:
     """A job's work, told what to do by the replay: it waits in a `block` request between commands, so our end of
-    its engine ends it wherever it is."""
+    its engine ends it wherever it is. A recover-all goes on after its engine ends (§8.1, S0062): the replay queues
+    what its work does then (`after`: ask a fresh engine, or end with its report) before it ends the engine."""
 
     def __init__(self) -> None:
         self.commands: deque[tuple[str, bool]] = deque()
+        self.after: deque[str] = deque()
+
+    def _goes_on(self, ctx: JobContext) -> bool:
+        """After its engine ended: recover-all asks a fresh engine for its next part, unless told to end."""
+        if not self.after or self.after.popleft() == "done":
+            return False
+        return ctx.fresh_engine() is None
 
     def __call__(self, ctx: JobContext) -> WorkResult:
         while True:
             if isinstance(ctx.call("block", {}), EngineFailure):
+                if self._goes_on(ctx):
+                    continue
                 return WorkResult(None, ran_user_code=True)
             what, flag = self.commands.popleft()
             if what == "done":
                 return WorkResult(None, ran_user_code=flag)
             if what == "gate":
                 ctx.call("gate", {})
+            elif what == "listed":
+                ctx.listed()
             elif what == "fresh":
                 if ctx.fresh_engine() is not None:
                     return WorkResult(None, ran_user_code=True)
             else:
                 ctx.call("crash", {})
+                if self._goes_on(ctx):
+                    continue
                 return WorkResult(None, ran_user_code=True)
 
 
@@ -829,8 +880,12 @@ class ShellReplay:
         return self.scripts[r.job.id]
 
     def command(self, what: str, flag: bool = False) -> None:
-        self.running_script().commands.append((what, flag))
+        script = self.running_script()
+        script.commands.append((what, flag))
         self.engine.release("block")
+        # the release is a flag, not a count: wait until this command was taken, so the next one's release is not
+        # merged with it (S0064: a command that changes nothing the view shows, recover-all's `listed`)
+        until(lambda: not script.commands, f"the job's work took {what}")
 
     def apply(self, op: Op) -> None:
         match op:
@@ -846,7 +901,9 @@ class ShellReplay:
                 self.ids[j["id"]] = ticket.id
                 self.scripts.setdefault(ticket.id, script)
                 self.tickets[ticket.id] = ticket
-            case CancelOp(model_id=m):
+            case CancelOp(model_id=m, then=then):
+                if then != "none":
+                    self.scripts[self.ids[m]].after.append(then)
                 self.jobs.cancel(self.ids[m])
             case GoneOp(model_id=m):
                 self.jobs.client_gone(self.ids[m])
@@ -854,6 +911,9 @@ class ShellReplay:
                 if reached:
                     self.engine.unavailable((self.clock.now,) * self.bound)
                 held = self.engine.held
+                r = self.jobs.status().queue.running
+                if r is not None and r.job.kind == "recover_all":
+                    self.running_script().after.append("fresh")  # §8.1: it goes on with a fresh engine
                 self.command("crash")
                 until(lambda: self.engine.held > held, "the crashed engine's end report")
                 self.engine.release_ends()  # the model drains a crashed engine at once
@@ -942,12 +1002,154 @@ def until(cond: Callable[[], bool], what: str) -> None:
     assert cond(), f"never came: {what}"
 
 
+# -- the branches ----------------------------------------------------------------------------------------------------
+
+type Pred = Callable[[StateJ, StateJ, int], bool]
+
+
+def _kind(s: StateJ) -> str:
+    r = s["run"]
+    return "" if r is None else r["k"]
+
+
+def _ahead_of_cancel(s: StateJ, t: StateJ) -> JobJ | None:
+    """The job running ahead of a queued job's Cancel."""
+    return s["run"] if t["act"]["a"] == "UserCancelQueued" else None
+
+
+def _lifts(s: StateJ, t: StateJ, bound: int) -> bool:
+    return s["ses"]["stops"] >= bound > t["ses"]["stops"]
+
+
+def _ends_running(s: StateJ, t: StateJ) -> bool:
+    return s["run"] is not None and (t["run"] is None or t["run"]["id"] != s["run"]["id"])
+
+
+BRANCHES: Mapping[str, Pred] = {
+    # the dispatch (§3, §5.1, §5.3)
+    "dispatch, fresh engine": lambda s, t, b: t["act"]["a"] == "Dispatch" and s["eng"]["st"] != "idle",
+    "dispatch, idle engine reused": lambda s, t, b: t["act"]["a"] == "Dispatch" and s["eng"]["st"] == "idle",
+    "dispatch while unavailable": lambda s, t, b: t["act"]["a"] == "DispatchUnavail",
+    "a job's fresh engine": lambda s, t, b: (
+        t["act"]["a"] == "SpawnStep" and s["ctl"]["pc"] != "rc_spawn" and t["run"] is not None
+    ),
+    "recover-all's fresh engine for its next journal": lambda s, t, b: (
+        t["act"]["a"] == "SpawnStep" and s["ctl"]["pc"] == "rc_spawn" and t["run"] is not None
+    ),
+    "recover-all with no engine for its next journal (unavailable)": lambda s, t, b: (
+        t["act"]["a"] == "SpawnStep" and s["ctl"]["pc"] == "rc_spawn" and t["run"] is None
+    ),
+    "the engine that ran user code retired mid-job": lambda s, t, b: t["act"]["a"] == "FreshEnd",
+    # Cancel (§4): the one rule for the job running ahead
+    "Cancel of a queued job ends a running R4": lambda s, t, b: (
+        (r := _ahead_of_cancel(s, t)) is not None and r["k"] == "r4" and t["run"] is None
+    ),
+    "Cancel of a queued job ends a background save before its commit point": lambda s, t, b: (
+        (r := _ahead_of_cancel(s, t)) is not None and r["k"] == "save" and not r["wf"] and not s["ctl"]["past"]
+        and t["run"] is None
+    ),
+    "Cancel of a queued job meets a background save past its commit point": lambda s, t, b: (
+        (r := _ahead_of_cancel(s, t)) is not None and r["k"] == "save" and not r["wf"] and s["ctl"]["past"]
+        and t["run"] is not None
+    ),
+    "Cancel of a queued job meets a confirmed save": lambda s, t, b: (
+        (r := _ahead_of_cancel(s, t)) is not None and r["k"] == "save" and r["conf"]
+    ),
+    "Cancel of a queued job with nothing running": lambda s, t, b: (
+        t["act"]["a"] == "UserCancelQueued" and s["run"] is None
+    ),
+    "Cancel of a running read": lambda s, t, b: t["act"]["a"] == "UserCancelRunning" and _kind(s) == "read",
+    "Cancel of a running save before its commit point": lambda s, t, b: (
+        t["act"]["a"] == "UserCancelRunning" and _kind(s) == "save"
+    ),
+    "Cancel of recover-all before its listing": lambda s, t, b: (
+        t["act"]["a"] == "UserCancelRunning" and _kind(s) == "recover" and not s["ctl"]["rinit"]
+    ),
+    "Cancel of recover-all after its listing: it goes on": lambda s, t, b: (
+        t["act"]["a"] == "UserCancelRunning" and _kind(s) == "recover" and s["ctl"]["rinit"] and t["run"] is not None
+    ),
+    "Cancel of recover-all after its listing, nothing left: it ends": lambda s, t, b: (
+        t["act"]["a"] == "UserCancelRunning" and _kind(s) == "recover" and s["ctl"]["rinit"] and t["run"] is None
+    ),
+    "a closed tab cancels a queued read": lambda s, t, b: (
+        t["act"]["a"] == "UserCloseTab" and len(t["q"]) < len(s["q"])
+    ),
+    "a closed tab: a running job loses its requester": lambda s, t, b: (
+        t["act"]["a"] == "UserCloseTab" and s["run"] is not None and t["run"] is not None
+        and s["run"]["req"] == "present" and t["run"]["req"] == "gone"
+    ),
+    # engine deaths (§5.3, §6.6, §8.1)
+    "a save's engine dies before its commit point": lambda s, t, b: (
+        t["act"]["a"] == "EngineCrash" and _kind(s) == "save" and not s["ctl"]["past"]
+    ),
+    "a save's engine dies past its commit point": lambda s, t, b: (
+        t["act"]["a"] == "EngineCrash" and _kind(s) == "save" and s["ctl"]["past"]
+    ),
+    "an R4's engine dies": lambda s, t, b: t["act"]["a"] == "EngineCrash" and _kind(s) == "r4",
+    "a read's engine dies": lambda s, t, b: t["act"]["a"] == "EngineCrash" and _kind(s) == "read",
+    "recover-all's engine dies before its listing": lambda s, t, b: (
+        t["act"]["a"] == "EngineCrash" and _kind(s) == "recover" and not s["ctl"]["rinit"]
+    ),
+    "recover-all's engine dies after its listing": lambda s, t, b: (
+        t["act"]["a"] == "EngineCrash" and _kind(s) == "recover" and s["ctl"]["rinit"]
+    ),
+    "an engine death reaches the stop bound": lambda s, t, b: (
+        t["act"]["a"] == "EngineCrash" and s["ses"]["stops"] < b <= t["ses"]["stops"]
+    ),
+    # the slot, the lock, the window, Try again, the advice
+    "an ended engine is drained": lambda s, t, b: t["act"]["a"] == "Drain",
+    "the earlier session's engine ends": lambda s, t, b: t["act"]["a"] == "OrphanEnd",
+    "the window lifts the bound": lambda s, t, b: t["act"]["a"] == "WindowExpire" and _lifts(s, t, b),
+    "the window lets one stop go": lambda s, t, b: t["act"]["a"] == "WindowExpire" and not _lifts(s, t, b),
+    "Try again": lambda s, t, b: t["act"]["a"] == "UserTryAgain",
+    "the advice on the timer": lambda s, t, b: t["act"]["a"] == "AdviceTimer",
+    "a job hangs": lambda s, t, b: t["act"]["a"] == "Hang",
+    "an engine member is stuck": lambda s, t, b: t["act"]["a"] == "Stuck",
+    # requests, the boot's open, the job steps' ends
+    "a user's save": lambda s, t, b: t["act"]["a"] == "UserSave",
+    "a read": lambda s, t, b: t["act"]["a"] == "UserRead",
+    "a background save": lambda s, t, b: t["act"]["a"] == "AppBgSave",
+    "a save reaches its commit point": lambda s, t, b: _kind(s) == "save" and t["ctl"]["past"] and not s["ctl"]["past"],
+    "a save ends with its answer": lambda s, t, b: (
+        _kind(s) == "save" and _ends_running(s, t)
+        and t["act"]["a"] not in ("EngineCrash", "UserCancelRunning", "UserCancelQueued")
+    ),
+    "a save queues its R4": lambda s, t, b: (
+        t["act"]["a"] == "S_Release" and any(j["k"] == "r4" for j in new_jobs(s, t))
+    ),
+    "recover-all lists the journals": lambda s, t, b: (
+        _kind(s) == "recover" and t["ctl"]["rinit"] and not s["ctl"]["rinit"]
+    ),
+    "the boot's open": lambda s, t, b: t["act"]["a"] == "Assess" and bool(t["ses"]["opened"]),
+}  # fmt: skip
+"""The branches the replay must walk (S0064, BL-0159; S0059 verifier F1, F3: the action names overstated the
+coverage). Each is a predicate on a model step (the state before, the state after, the stop bound)."""
+
+UNREACHED: Mapping[str, str] = {
+    "DispatchUnavail, recover-all": (
+        f"recover-all is queued only at the boot here, before any stop; a later one comes with a switch, Retry, Back "
+        f"or the next start ({SWITCH})"
+    ),
+    "UserCancelQueued, recover-all running": (
+        f"while the boot's recover-all runs only its own jobs may be queued, and its open job is left out "
+        f"({R4_READS}, {SWITCH})"
+    ),
+    "OrphanEndStuck": f"its stuck orphan comes only from a quit or the app's crash, both left out ({SWITCH})",
+    "SpawnStep, a save or an R4 with no engine": (
+        "unreachable: a save or an R4 asks a fresh engine only after its own engine ran user code (`s_fresh`, "
+        "`r4_fresh`), and only an engine death counts a stop, which ends that job (the hand-written suites cover it)"
+    ),
+}
+"""Branches of mapped actions the corpus cannot reach, each with why (the hand-written suites guard them)."""
+
+
 # -- the replay ------------------------------------------------------------------------------------------------------
 
 
 @dataclass
 class Tally:
     steps: Counter[str] = field(default_factory=lambda: Counter[str]())
+    branches: Counter[str] = field(default_factory=lambda: Counter[str]())
     compared: int = 0
     stops: Counter[str] = field(default_factory=lambda: Counter[str]())
 
@@ -980,6 +1182,7 @@ def replay(trace: TraceJ, make: Callable[[QueuePolicy, bool, int], Replay], tall
                 tally.stops[stop.reason] += 1
                 return
             tally.steps[label] += 1
+            tally.branches.update(name for name, walked in BRANCHES.items() if walked(s, t, bound))
             for mid, end in ends_of(s, t, classes).items():
                 want_ends[code.ids[mid]] = end
             fresh += fresh_start(s, t)
@@ -1046,13 +1249,17 @@ def test_every_action_of_the_model_is_classified() -> None:
     assert sorted(EAGER) == sorted(corpus()[0]["header"]["eager"])
 
 
-def test_the_corpus_covers_every_mapped_action() -> None:
-    """Each of BL-0150's actions occurs in a replayed step at least once, so the replay checks every one of them."""
+def test_the_corpus_covers_every_branch() -> None:
+    """Each branch of `BRANCHES` occurs in a replayed step at least once, and so does each mapped action but those
+    `UNREACHED` names, so the replay checks every one of them (S0064, BL-0159: branches, not action names)."""
     tally = Tally()
     for trace in traces():
         replay(trace, lambda p, o, b: TableReplay(p, o), tally)
-    missing = [a for a in MAPPED if tally.steps[a] == 0 and a != "OrphanEndStuck"]  # its stuck orphan needs a quit
-    assert not missing, f"the corpus never reaches {missing}: widen its worlds in gen_traces.py"
+    missing = [b for b in BRANCHES if tally.branches[b] == 0]
+    assert not missing, f"the corpus never walks {missing}: widen its worlds in gen_traces.py"
+    unmapped = [a for a in MAPPED if tally.steps[a] == 0 and a not in UNREACHED]
+    assert not unmapped, f"the corpus never reaches {unmapped}: widen its worlds in gen_traces.py"
+    assert tally.steps["OrphanEndStuck"] == 0, "OrphanEndStuck is reached now: replay it and drop it from UNREACHED"
     assert not tally.stops, f"traces reach steps gen_traces.GUARDS should leave out: {dict(tally.stops)}"
 
 
@@ -1097,3 +1304,40 @@ def test_the_ops_reader_refuses_an_unknown_action() -> None:
     t = cast(StateJ, {**s, "act": {"a": "NoSuchAction", "p": 0}})
     with pytest.raises(KeyError):
         ops_of(s, t, 3, inventory())
+
+
+R4_PCS = frozenset({"r4_a", "r4_load", "r4_c", "r4_fresh", "r4_spawn", "r4_conf", "r4_sync"})
+
+
+def test_the_outcome_after_a_save_death_is_the_models_disk_outcome() -> None:
+    """§6.6: after a save's engine died, what the sidecar decides from the engine's facts (`save.save_outcome`) is what
+    the model told at that crash (`DiskOutcome`), for each record state and re-hash the corpus reaches (S0064, BL-0151
+    slice 5). The engine's reading of the disk into those facts is replayed against the model's states in
+    `engine/tests/ledger/test_save_conformance.py`."""
+    seen: Counter[str] = Counter()
+    for trace in traces():
+        states = cast(list[dict[str, Any]], trace["states"])
+        for s, t in pairwise(states):
+            run = s["run"]
+            if t["act"]["a"] != "EngineCrash" or run is None or run["k"] != "save" or s["ctl"]["pc"] in R4_PCS:
+                continue  # an R4 inside the save that could not run is "not saved" by the queue (BL-0152)
+            sv = s["sv"]["s"]
+            record = s["jr"][sv]
+            unchanged = all(s["fs"]["cur"][f] == s["sv"]["plan"][f] for f in ("R", "N"))
+            facts = OutcomeFacts(record, unchanged if record in ("none", "part", "resolved") else None, None, None)
+            got = save_outcome(facts, gated=s["ctl"]["past"])
+            told = t["told"][sv]
+            seen[f"{record}: {told}"] += 1
+            if told == "saved":
+                assert isinstance(got, Saved), (record, got)
+                continue
+            assert isinstance(got, NotDone), (record, told, got)
+            if told == "unfinished":
+                assert got.error.code is ErrorCode.WRITES_PAUSED, (record, got)
+                continue
+            assert got.error.code is ErrorCode.CHANGE_NOT_SAVED, (record, told, got)
+            details = got.error.details
+            assert isinstance(details, ChangeNotSavedDetails)
+            if told in ("unchanged", "changed"):  # "notsaved" (a `.resolved` record) says nothing more
+                assert details.unchanged is (told == "unchanged"), (record, told, details)
+    assert {"none: unchanged", "open: unfinished", "closed: saved"} <= set(seen), seen

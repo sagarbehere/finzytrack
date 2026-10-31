@@ -63,7 +63,8 @@ product calls it. Each rule names its spec line.
   engine ends as `crashed` (a stop) and the job asks for a fresh engine that reads the outcome from disk; when none
   can be had, `EngineRefused` tells its work, which answers without one. The model ends the job at the crash and tells
   the disk's outcome at once (`EngineCrash`'s save branch); the code needs an engine to read the disk (the sidecar
-  never reads ledger or journal files), so the replay stops at a save's crash until BL-0151 slice 5 maps it.
+  never reads ledger or journal files): the queue replay answers the save at once, and the engine's reading of the
+  disk is replayed against the model's states in `engine/tests/ledger/test_save_conformance.py` (S0064).
 
 Not here yet (BL-0109's later pieces): the quiesce, the quit and their screens (BL-0154). The code map's planned list
 names each (`backend/tests/architecture/test_tla_mapping.py`).

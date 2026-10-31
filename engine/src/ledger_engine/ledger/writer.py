@@ -79,6 +79,7 @@ from ledger_engine.ledger.handles import (
     volume_without_swap,
 )
 from ledger_engine.ledger.handles import join as _join
+from ledger_engine.tla import tla_action
 
 _SHA256: Final = re.compile(r"[0-9a-f]{64}")
 BACKUP_MODE: Final = 0o600
@@ -423,6 +424,7 @@ def _unchanged(handles: Handles, targets: tuple[_Target, ...]) -> bool:
     return True
 
 
+@tla_action("S_Backup", "S_BackupSync")
 def _backups(handles: Handles, plan: _Plan, name: str) -> dict[str, str]:
     """Step 8.1. Returns the backup name per target key."""
     parent = handles.at(plan.backups_dir)
@@ -484,6 +486,7 @@ class _Progress:
     made: set[str] = field(default_factory=lambda: set())  # keys of the folders made so far (or that may have been)
 
 
+@tla_action("S_Compare")
 def _check_displaced(h: DirHandle, name: str, t: _Target) -> None:
     """What the swap moved to our temp name (or what our temp holds at its clean-up), §6.4 as decided on 2026-10-29
     (owner: "Yes" to the kept-name design; ADR-0013 amendment): a file byte-identical to the pre bytes (the backup
@@ -501,6 +504,7 @@ def _check_displaced(h: DirHandle, name: str, t: _Target) -> None:
     raise _Stop(Reason.CHANGED, t.canonical)
 
 
+@tla_action("S_TempStart", "S_TempDone", "S_TempSync")
 def _stage(h: DirHandle, t: _Target, mode: int, like: str | None) -> None:
     """The new bytes at the temp name, by way of the staging name (owner, 2026-10-30: "Staging name (Recommended)"):
     written and synced under the staging name, renamed exclusively to the temp name, and that rename made durable by
@@ -517,6 +521,7 @@ def _stage(h: DirHandle, t: _Target, mode: int, like: str | None) -> None:
     h.sync()
 
 
+@tla_action("S_Swap", "S_DirSync")
 def _replace(handles: Handles, t: _Target, progress: _Progress) -> None:
     """Step 8.3 for one file."""
     handles.on = t.canonical
@@ -555,6 +560,7 @@ def _replace(handles: Handles, t: _Target, progress: _Progress) -> None:
     h.sync()
 
 
+@tla_action("S_ReadBack")
 def _read_back(handles: Handles, targets: tuple[_Target, ...]) -> None:
     """Step 8.4: every written file equals its post bytes (ADR-0008 step 6)."""
     for t in targets:
@@ -563,6 +569,7 @@ def _read_back(handles: Handles, targets: tuple[_Target, ...]) -> None:
             raise _Stop(Reason.READ_BACK, t.canonical)
 
 
+@tla_action("S_RemoveTemps")
 def _remove_temps(handles: Handles, targets: tuple[_Target, ...]) -> None:
     """Step 8.4: each temp removed only while it holds bytes we hold (the pre bytes, or our post bytes) with one link;
     an outside program may have written into it through a descriptor it held from before the swap (S0060 red team
@@ -619,6 +626,7 @@ def _rollback(
     )
 
 
+@tla_action("S_JPart", "S_JPartSync", "S_JOpen", "S_JDirSync", "S_Close", "S_CloseSync")
 def durable_commit(fs: FileSystem, c: Commit) -> Outcome:
     """§6.1 step 8 for a save past its commit point, with §6.4's rollback (see the module's docstring)."""
     _check_plan(c)

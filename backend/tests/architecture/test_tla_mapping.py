@@ -43,53 +43,17 @@ APP_ACTIONS_OUTSIDE_APPSTEP = frozenset({"AdviceTimer"})  # MAPPING.md §1.2: an
 MARKED_GROUPS = ("EngineStep", "AppStep")  # their actions are the code's: each needs a marker or a PLANNED row
 FREE_GROUPS = ("UserStep", "EnvStep")  # user, OS and outside-editor actions: no marker needed
 
-SAVE = "BL-0151"  # the save, rollback and recover-all over the fake file system
 R4_READS = "BL-0152"  # R4, the reads and the open
 CREATE_COPY = "BL-0153"  # create and copy
 SWITCH = "BL-0154"  # the switch, Reopen, quit, boot and update
 
+RECOVER_ALL = "BL-0164"  # recover-all's per-journal tries replayed through the engine (after BL-0161)
+PUBLISH = "BL-0113"  # the save's publish of the mirror (§6.1 step 10)
+
 PLANNED: Mapping[str, str] = {
-    **{
-        a: SAVE
-        for a in [
-            "S_R4Check",
-            "S_WaitR4",
-            "S_Locks",
-            "S_Gate",
-            "S_Load",
-            "S_Recheck",
-            "S_Backup",
-            "S_BackupSync",
-            "S_JPart",
-            "S_JPartSync",
-            "S_JOpen",
-            "S_JDirSync",
-            "S_TempStart",
-            "S_TempDone",
-            "S_TempSync",
-            "S_Swap",
-            "S_Compare",
-            "S_DirSync",
-            "S_ReadBack",
-            "S_RemoveTemps",
-            "S_Close",
-            "S_CloseSync",
-            "S_Saved",
-            "S_Publish",
-            "S_Release",
-            "RB_Check",
-            "RS_Write",
-            "RS_Swap",
-            "RS_Compare",
-            "RS_Temps",
-            "RS_Sync",
-            "RS_Resolve",
-            "RC_Init",
-            "RC_Next",
-            "RC_Lock",
-            "RC_Check",
-        ]
-    },
+    "S_WaitR4": R4_READS,  # a seeded bug's action only (the save waits for the queued R4): the save's own R4 is BL-0152
+    "S_Publish": PUBLISH,
+    **{a: RECOVER_ALL for a in ["RC_Init", "RC_Next", "RC_Lock", "RC_Check"]},
     **{
         a: R4_READS
         for a in [
@@ -125,15 +89,26 @@ PLANNED: Mapping[str, str] = {
     },
     **{a: SWITCH for a in ("CloseA", "QuitClose", "Assess")},
 }
+"""Since S0064 (BL-0151 slice 5) the save's steps, its rollback and the restore are marked in the engine
+(`ledger_engine.tla`), each on an action `engine/tests/ledger/test_save_conformance.py` walks through the code."""
+
+MODEL_UPDATE = "BL-0161"  # the model after the kept-name design and the owner's 2026-10-30 rules
 
 PARTIAL: Mapping[str, str] = {
     "DispatchUnavail": SWITCH,  # the quit notes a recover-all that never ran answers (§9.3); its `not_tried` marks
     # are the sidecar's "nothing listed: every open blocked" since S0062 (`recovery.blocking_for`)
-    "S_Commit": SAVE,  # the save's own gate in the engine (§6.1 step 7); the table's step and `proceed` are built
     "CR_Commit": CREATE_COPY,
     "CP_Commit": CREATE_COPY,
-    "FreshEnd": SAVE,  # the save's and R4's own engine changes call it
+    "FreshEnd": R4_READS,  # the save's own R4 retires its engine first (§6.1 step 1): R4 is BL-0152
     "UserCancelQueued": SWITCH,  # the switch's or boot's cancelled screen (§9.1 step 3, §9.2)
+    "S_R4Check": R4_READS,  # the replay walks "no R4 owed"; an owed R4 runs inside the save with BL-0152 (it refuses
+    # `check_pending` until then)
+    "S_Release": R4_READS,  # the locks released; the R4 the save queues is BL-0152's
+    "S_Compare": MODEL_UPDATE,  # walked when the swap displaced our own bytes; an outside save goes to a kept name in
+    # the code, the model swaps it back (BL-0161)
+    "RS_Compare": MODEL_UPDATE,  # the same for the restore's swap
+    "RB_Check": MODEL_UPDATE,  # walked when the temp rule passes; the code's staging-name rule differs from the
+    # model's old one, and the code checks a created path (`created_path_taken`), which the model removes (BL-0161)
 }
 
 

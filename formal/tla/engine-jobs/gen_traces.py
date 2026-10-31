@@ -48,8 +48,8 @@ COMMAND = "python3 formal/tla/engine-jobs/gen_traces.py"
 # The small worlds walked, each a committed world (`cfg/<base>.cfg`) with a few constants changed (`set`) and some
 # branches left out (`leave`, names in LEAVE): the queue, Cancel's one rule and the engine; the engine lock at boot;
 # the stop bound, its window and Try again. `traces` are kept, of at most `depth` states, each with at least `least`
-# states: TLC walks CANDIDATES times as many and the first long enough are kept (a world runs out of things to do
-# early when the boot is cancelled, say). Kept small: the test replays every trace through the table and through
+# states: TLC walks CANDIDATES times as many and, of the long enough ones, those that add the most branches are kept
+# (`select`; a world runs out of things to do early when the boot is cancelled, say). Kept small: the test replays every trace through the table and through
 # the shell in seconds.
 WORLDS: dict[str, dict[str, Any]] = {
     "S_queue": {"base": "S_queue", "traces": 12, "depth": 50, "least": 20, "leave": ["boot_cancel"]},
@@ -58,17 +58,76 @@ WORLDS: dict[str, dict[str, Any]] = {
         "base": "S_queue", "set": {"MaxCrash": "0"}, "traces": 6, "depth": 60, "least": 30, "leave": ["cancel"],
     },
     "S_cancel": {"base": "S_cancel", "traces": 12, "depth": 40, "least": 14, "leave": []},
+    # S0064: a closed tab while its read is queued
+    "S_close": {"base": "S_cancel", "traces": 6, "depth": 40, "least": 10, "leave": ["boot_cancel", "close_queued_read"]},
     "S_recover_lock": {"base": "S_recover_lock", "traces": 8, "depth": 40, "least": 2, "leave": []},
     # saves that finish and their R4 in a fresh engine; R4's crashes and the window
     "S_r4_fresh": {
         "base": "S_r4_attempts", "set": {"MaxCrash": "0", "MaxAppCrash": "0"}, "traces": 6, "depth": 80, "least": 40,
         "leave": ["cancel"],
     },
-    "S_r4_attempts": {"base": "S_r4_attempts", "traces": 8, "depth": 80, "least": 16, "leave": ["cancel"]},
+    "S_r4_attempts": {
+        "base": "S_r4_attempts", "traces": 8, "depth": 80, "least": 16, "leave": ["cancel", "crash_in_r4"],
+    },
     # one stop makes the engine unavailable: the queued jobs end without one, the window, Try again
     "S_queue_bound1": {
         "base": "S_queue", "set": {"StopBound": "1", "MaxExpire": "1"}, "traces": 10, "depth": 50, "least": 16,
         "leave": ["cancel"],
+    },
+    # BL-0159 (S0064): a Cancel of a queued read meeting a background save, before and past its commit point
+    "S_cancel_bg": {
+        "base": "S_queue", "set": {"MaxSaves": "0", "MaxCrash": "0", "MaxEdits": "0"}, "traces": 10, "depth": 50,
+        "least": 16, "leave": ["cancel_behind_bg_save"],
+    },
+    # BL-0159: a Cancel of a queued save meeting a running R4 (R4 is ended by another's Cancel)
+    "S_cancel_r4": {
+        "base": "S_r4_attempts", "set": {"MaxCrash": "0", "MaxAppCrash": "0"}, "traces": 8, "depth": 80,
+        "least": 30, "leave": ["cancel_behind_r4", "save_behind_r4"],
+    },
+    # BL-0151 slice 5, BL-0159: recover-all's listing, a Cancel after it, an engine death, the fresh engine and,
+    # with the bound reached, its unavailable branch (two boot journals; StopBound 2)
+    "S_recover_bound": {"base": "S_recover_bound", "traces": 10, "depth": 40, "least": 8, "leave": []},
+    "S_recover": {"base": "S_recover", "traces": 8, "depth": 40, "least": 8, "leave": []},
+    # BL-0151 slice 5: the save path replayed through the engine's save over the in-memory file system: outside
+    # edits, an engine death and an I/O error anywhere in the save (one save; then two, the second replacing the
+    # file the first created, so its rollback restores both)
+    "S_save": {
+        "base": "S_save_crash", "set": {"MaxEdits": "0"}, "traces": 16, "depth": 60, "least": 10,
+        "leave": ["cancel", "crash_in_save"],
+    },
+    "S_save_edit": {
+        "base": "S_save_crash", "set": {"MaxIO": "0"}, "traces": 12, "depth": 60, "least": 16,
+        "leave": ["cancel", "edit_before_commit", "crash_in_save"],
+    },
+    "S_save_edit_late": {
+        "base": "S_save_crash", "set": {"MaxIO": "0"}, "traces": 12, "depth": 60, "least": 16,
+        "leave": ["cancel", "edit_past_commit", "crash_past_commit"],
+    },
+    # a Cancel of a save (its own, or of a read queued behind it) before or past its commit point, outside edits
+    "S_save_cancel": {"base": "S_cancel_commit", "traces": 12, "depth": 50, "least": 8, "leave": ["boot_cancel"]},
+    "S_save_io": {
+        "base": "S_save_crash", "set": {"MaxCrash": "0", "MaxSaves": "2", "MaxEdits": "0", "MaxReads": "0"},
+        "traces": 16, "depth": 90, "least": 30, "leave": ["cancel", "save_after_r4"],
+    },
+    # the second save's faults: it replaces the file the first created, so its rollback restores both files; a third
+    # save is refused while the second's journal is open
+    "S_save_two": {
+        "base": "S_save_crash", "set": {"MaxSaves": "3", "MaxEdits": "0", "MaxReads": "0", "MaxIO": "1"},
+        "traces": 16, "depth": 120, "least": 40, "leave": ["cancel", "save_after_r4", "second_save_faults"],
+    },
+    "S_save_restore": {
+        "base": "S_save_crash", "set": {"MaxSaves": "2", "MaxEdits": "0", "MaxReads": "0", "MaxCrash": "0"},
+        "traces": 10, "depth": 100, "least": 40, "leave": ["cancel", "save_after_r4", "second_save_faults",
+                                                           "io_after_first_swap"],
+    },
+    # an engine death after the journal's close (the save has landed: told "saved" from the disk)
+    "S_save_late_crash": {
+        "base": "S_save_crash", "set": {"MaxIO": "0", "MaxEdits": "0"}, "traces": 6, "depth": 60, "least": 20,
+        "leave": ["cancel", "crash_after_close"],
+    },
+    "S_save_io_crash": {
+        "base": "S_save_crash", "set": {"MaxSaves": "2", "MaxEdits": "0", "MaxReads": "0"}, "traces": 16,
+        "depth": 90, "least": 30, "leave": ["cancel", "crash_past_commit", "save_after_r4"],
     },
 }  # fmt: skip
 CANDIDATES = 20
@@ -90,9 +149,9 @@ OUT = frozenset(
 # Branches of an action that belong to a later piece, left out the same way (the replay stops on each, should one
 # ever reach it).
 GUARDS: dict[str, str] = {
-    # BL-0151: recover-all goes on with the next journal after its engine's death, and after a Cancel past its listing
-    "EngineCrash": '~(Busy /\\ RJ.k \\in {"recover", "open"})',
-    "UserCancelRunning": '~(Busy /\\ RJ.k = "recover" /\\ ctl.rinit)',
+    # BL-0152: the open job's engine death ends the switch on its failed screen (recover-all's death and its Cancel
+    # after the listing are walked since S0064, BL-0151 slice 5)
+    "EngineCrash": '~(Busy /\\ RJ.k = "open")',
     # BL-0152: the open job (the boot's open of a workspace whose mirror is out of date, as after an outside edit
     # during the boot)
     "Assess": '~(\\E i \\in 1..Len(q\') : q\'[i].k = "open")',
@@ -104,8 +163,34 @@ GUARDS: dict[str, str] = {
 LEAVE: dict[str, dict[str, str]] = {
     "boot_cancel": {"UserCancelRunning": '~(Busy /\\ RJ.own = "switch")', "UserCancelQueued": 'q[i].own # "switch"'},
     "cancel": {"UserCancelRunning": "FALSE", "UserCancelQueued": "FALSE"},
-}
-KEEP_VARS = ("act", "q", "runs", "eng", "ctl", "ses", "pst")
+    # only the Cancels that meet a running background save (S0064, BL-0159), or a running R4
+    "cancel_behind_bg_save": {
+        "UserCancelRunning": "FALSE", "UserCancelQueued": 'Busy /\\ RJ.k = "save" /\\ ~RJ.wf',
+    },
+    "cancel_behind_r4": {"UserCancelRunning": "FALSE", "UserCancelQueued": 'Busy /\\ RJ.k = "r4"'},
+    # outside edits only while a save runs, before or past its commit point (S0064: an edit early in a walk makes
+    # every save refuse at its gate)
+    "edit_before_commit": {"Editor": 'Busy /\\ RJ.k = "save" /\\ ~ctl.past'},
+    "edit_past_commit": {"Editor": 'Busy /\\ RJ.k = "save" /\\ ctl.past'},
+    # an engine death only where a world wants it (S0064: with one death allowed, recover-all at boot took it first)
+    "crash_in_r4": {"EngineCrash": 'RJ.k = "r4"'},
+    "crash_in_save": {"EngineCrash": 'RJ.k = "save"'},
+    "crash_past_commit": {"EngineCrash": 'RJ.k = "save" /\\ ctl.past'},
+    "crash_after_close": {"EngineCrash": 'RJ.k = "save" /\\ ctl.pc \\in {"s_csync", "s_saved", "s_pub", "s_rel"}'},
+    # a second save only while an R4 runs, so a Cancel of it meets the R4 (S0064)
+    "save_behind_r4": {"UserSave": 'n.save = 0 \\/ (Busy /\\ RJ.k = "r4")'},
+    # a second save only once the first has ended and no R4 is owed (S0064: the model runs an owed R4 inside the save,
+    # which the code does not yet do, BL-0152, so the engine replay stops there; and a save asked for while the first
+    # runs is planned on the mirror from before it, so its gate refuses it)
+    "save_after_r4": {"UserSave": 'n.save = 0 \\/ (~Busy /\\ ClosedJ(1) = {})'},
+    # faults only in the second save (S0064)
+    "second_save_faults": {"IOFail": 'ctl.s = "s2"', "EngineCrash": 'RJ.k = "save" /\\ ctl.past /\\ ctl.s = "s2"'},
+    # an I/O error in the second save only once it has replaced its first file, so its rollback puts pre bytes back
+    "io_after_first_swap": {"IOFail": 'ctl.s = "s2" /\\ fs.cur["N"] = PostV("s2")'},
+    # a closed tab only while its read is queued (S0064)
+    "close_queued_read": {"UserCloseTab": '\\E i \\in 1..Len(q) : q[i].id = id /\\ q[i].k = "read"'},
+}  # fmt: skip
+KEEP_VARS = ("act", "q", "runs", "eng", "ctl", "ses", "pst", "fs", "jr", "gh")
 
 # -- the model's Next, read from its source --------------------------------------------------------------------------
 
@@ -154,7 +239,7 @@ def wrapper(model: str, leave: list[str]) -> str:
         param = arg if arg else "0"
         call = f"{name}({arg})" if arg else name
         for guard in guards.get(name, []):
-            call = f"{call} /\\ {guard}"
+            call = f"{call} /\\ ({guard})"
         return f"({binder} {call} /\\ act' = [a |-> \"{name}\", p |-> {param}])".replace("( ", "(")
 
     every = actions(model)
@@ -202,12 +287,16 @@ def world_cfg(world: str) -> str:
 
 # -- TLC's trace values ----------------------------------------------------------------------------------------------
 
-TOKEN = re.compile(r'\s*(?:(<<|>>|\|->|[\[\]{}(),])|("(?:[^"\\]|\\.)*")|(-?\d+)|(TRUE|FALSE)|([A-Za-z_][A-Za-z0-9_]*))')
+TOKEN = re.compile(
+    r'\s*(?:(<<|>>|\|->|:>|@@|[\[\]{}(),])|("(?:[^"\\]|\\.)*")|(-?\d+)|(TRUE|FALSE)|([A-Za-z_][A-Za-z0-9_]*))'
+)
 
 
 class Reader:
     """A TLA+ value as TLC prints it: `[f |-> v, ...]` (dict), `<<v, ...>>` (list), `{v, ...}` (a list tagged
-    {"set": [...]}), strings, integers, booleans. Nothing else (a function `:>`/`@@`, a model value) is read."""
+    {"set": [...]}), a function whose domain is neither strings nor `1..n`, `(k :> v @@ ...)` (a list of `[k, v]`
+    pairs tagged {"fn": [...]}; S0064: the save temps' slots `<<journal, file>>`), strings, integers, booleans.
+    Nothing else (a model value, a range) is read."""
 
     def __init__(self, text: str) -> None:
         self.tokens: list[tuple[str, str]] = []
@@ -263,6 +352,17 @@ class Reader:
             return self._items(">>")
         if text == "{":
             return {"set": self._items("}")}
+        if text == "(":
+            pairs: list[list[Any]] = []
+            while True:
+                key = self._value()
+                self._take(":>")
+                pairs.append([key, self._value()])
+                sep = self._take()[1]
+                if sep == ")":
+                    return {"fn": pairs}
+                if sep != "@@":
+                    raise ValueError(f"expected '@@' or ')', found {sep!r}")
         if text == "[":
             record: dict[str, Any] = {}
             while True:
@@ -308,8 +408,31 @@ def compact(state: dict[str, Any]) -> dict[str, Any]:
             **{k: state["ses"][k] for k in ("app", "stops", "advice")},
             "opened": sorted(state["ses"]["opened"]["set"]),
         },
-        "pst": {"orphan": state["pst"]["orphan"]},
+        "pst": {"orphan": state["pst"]["orphan"], "mirror1": state["pst"]["mirror"][0]["fp"]},
+        **save_state(state),
     }
+
+
+def save_state(state: dict[str, Any]) -> dict[str, Any]:
+    """S0064 (BL-0151 slice 5): what the engine's save replay reads (`engine/tests/ledger/test_save_conformance.py`):
+    the ledger files of workspace 1 and their temps, backups and restore temps (`fs`), each journal's state (`jr`),
+    the running save's progress (`sv`: its journal, file index, plan, the journal a restore is on, the rollback's
+    message, the file it skips) and what each save was told (`told`)."""
+    fs, ctl = state["fs"], state["ctl"]
+    return {
+        "fs": {
+            "cur": {f: fs["cur"][f] for f in ("R", "N", "I")},
+            "tc": {f"{k[0]}/{k[1]}": v for k, v in fs["tc"]["fn"] if k[0] in ("s1", "s2", "s3")},
+            "bk": dict(fs["bk"]),
+            "rt": {f: fs["rt"][f] for f in ("R", "N")},
+        },
+        "jr": {j: rec["st"] for j, rec in state["jr"].items()},
+        "sv": {
+            "s": ctl["s"], "fi": ctl["fi"], "rj": ctl["rj"], "plan": {f: ctl["plan"][f] for f in ("R", "N", "I")},
+            "rbt": ctl["rbt"], "skip": ctl["skip"], "r4j": ctl["r4j"],
+        },
+        "told": dict(state["gh"]["told"]),
+    }  # fmt: skip
 
 
 # -- the corpus ------------------------------------------------------------------------------------------------------
@@ -360,7 +483,24 @@ def simulate(world: str, traces: int, depth: int, work: Path) -> list[list[dict[
     files = sorted(folder.glob("trace_*"), key=lambda p: [int(x) for x in p.name.split("_")[1:]])
     if len(files) != traces:
         raise SystemExit(f"{world}: TLC wrote {len(files)} traces, not {traces}")
-    return [[compact(s) for s in read_trace(f.read_text(encoding="utf-8"))] for f in files]
+    return [prune([compact(s) for s in read_trace(f.read_text(encoding="utf-8"))]) for f in files]
+
+
+SAVE_KEYS = ("fs", "jr", "sv", "told")
+
+
+def prune(trace: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """The save state (`save_state`) kept only where the engine's save replay reads it: the first state, each state
+    in which a save runs, and the state right after one (what it was told). The corpus stays a few MB."""
+
+    def saving(st: dict[str, Any]) -> bool:
+        return st["run"] is not None and st["run"]["k"] == "save"
+
+    out = []
+    for i, st in enumerate(trace):
+        keep = i == 0 or saving(st) or saving(trace[i - 1])
+        out.append(st if keep else {k: v for k, v in st.items() if k not in SAVE_KEYS})
+    return out
 
 
 def generate() -> dict[str, Any]:
@@ -372,11 +512,61 @@ def generate() -> dict[str, Any]:
             keep, least = w["traces"], w["least"]
             corpus["constants"][world] = constants(world)
             walked = simulate(world, keep * CANDIDATES, w["depth"], Path(tmp))
-            long = [t for t in walked if len(t) >= least][:keep]
+            long = [t for t in walked if len(t) >= least]
             if len(long) < keep:
                 raise SystemExit(f"{world}: only {len(long)} of {len(walked)} traces have {least} states or more")
-            corpus["traces"][world] = long
+            corpus["traces"][world] = select(long, keep)
     return corpus
+
+
+def branches(trace: list[dict[str, Any]]) -> set[tuple[object, ...]]:
+    """The steps of a trace by branch (S0064, BL-0159): the action, where the running job was (its kind and step), and
+    whether the step ended it. A coarse key: the replay's own branch list is `BRANCHES` in the conformance test."""
+    return {
+        (t["act"]["a"], s["run"]["k"] if s["run"] else "", s["ctl"]["pc"], t["run"] is None)
+        for s, t in zip(trace, trace[1:], strict=False)
+    }
+
+
+def select(long: list[list[dict[str, Any]]], keep: int) -> list[list[dict[str, Any]]]:
+    """`keep` of the long enough traces, in TLC's order: each time the one that adds the most branches not yet kept
+    (the first such on a tie), then the first ones left once nothing new comes (S0064: the first long enough traces of
+    a world were alike, and a step that is enabled everywhere, as an I/O error, came early in each)."""
+    seen: set[tuple[object, ...]] = set()
+    chosen: list[int] = []
+    keys = [branches(t) for t in long]
+    while len(chosen) < min(keep, len(long)):
+        gain, best = max((len(k - seen), -i) for i, k in enumerate(keys) if i not in chosen)
+        if gain == 0:
+            break
+        chosen.append(-best)
+        seen |= keys[-best]
+    chosen += [i for i in range(len(long)) if i not in chosen][: keep - len(chosen)]
+    return [long[i] for i in sorted(chosen)]
+
+
+def delta(trace: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Each state as the variables that differ from the state before (the first whole), and under "-" the ones it no
+    longer has. The readers rebuild the states with `undelta` (S0064: the corpus with the save state would be several
+    MB)."""
+    out = [trace[0]] if trace else []
+    for before, now in zip(trace, trace[1:], strict=False):
+        step = {k: v for k, v in now.items() if k not in before or before[k] != v}
+        gone = sorted(before.keys() - now.keys())
+        out.append({**step, "-": gone} if gone else step)
+    return out
+
+
+def undelta(steps: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """The states `delta` wrote (`backend/tests/platform/test_engine_jobs_conformance.py` and
+    `engine/tests/ledger/test_save_conformance.py` each hold a copy of these lines: neither may import this file)."""
+    states: list[dict[str, Any]] = []
+    for step in steps:
+        state = {**(states[-1] if states else {}), **step}
+        for k in state.pop("-", []):
+            del state[k]
+        states.append(state)
+    return states
 
 
 def write(corpus: dict[str, Any]) -> None:
@@ -384,7 +574,8 @@ def write(corpus: dict[str, Any]) -> None:
     lines = [json.dumps({k: v for k, v in corpus.items() if k != "traces"}, sort_keys=True)]
     for world, traces in corpus["traces"].items():
         for i, trace in enumerate(traces):
-            lines.append(json.dumps({"world": world, "trace": i, "states": trace}, sort_keys=True, separators=(",", ":")))
+            row = {"world": world, "trace": i, "steps": delta(trace)}
+            lines.append(json.dumps(row, sort_keys=True, separators=(",", ":")))
     CORPUS.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 

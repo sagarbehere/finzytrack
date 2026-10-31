@@ -106,6 +106,7 @@ from ledger_engine.ledger.handles import (
     volume_without_swap,
 )
 from ledger_engine.ledger.handles import join as _join
+from ledger_engine.tla import tla_action
 
 
 @dataclass(frozen=True, slots=True)
@@ -282,6 +283,7 @@ def _look_file(
         raise
 
 
+@tla_action("RB_Check")
 def _check(handles: Handles, record: Record, f: FileEntry, *, created: frozenset[str]) -> _Checked:
     """Step 2 for one file (the module's docstring)."""
     path = f.canonical_path
@@ -396,6 +398,7 @@ def _check_folders(handles: Handles, record: Record, removable: frozenset[str]) 
         _writable(handles, ph, parent, d.canonical_path)
 
 
+@tla_action("RS_Compare")
 def _settle(h: DirHandle, name: str, x: _Checked, record: Record, ours: tuple[str | None, ...]) -> None:
     """What a restore swap displaced to `name`: ours (byte-identical to bytes we hold) is removed;
     an outside save is moved to the kept name and the journal stops (§6.4 as decided on 2026-10-29); when every kept
@@ -408,6 +411,7 @@ def _settle(h: DirHandle, name: str, x: _Checked, record: Record, ours: tuple[st
         h.remove(name)  # ours, a second link included: its other name keeps the same bytes
 
 
+@tla_action("RS_Write", "RS_Swap")
 def _put_back(handles: Handles, record: Record, x: _Checked) -> None:
     """Step 3 for one replaced file at post: its pre bytes back."""
     f = x.entry
@@ -457,6 +461,7 @@ def _sync_folders(handles: Handles, folders: list[str]) -> None:
     handles.entry = None
 
 
+@tla_action("RS_Temps", "RS_Sync")
 def _restore_all(handles: Handles, record: Record, checked: list[_Checked], removable: frozenset[str]) -> str | None:
     """Step 3 (the module's docstring); the canonical path of a created path that is `taken`, if any (then nothing
     more is done: the journal stops). The folders synced are every folder the record names, not only those this try
@@ -519,6 +524,7 @@ def _vanished(handles: Handles, checked: list[_Checked]) -> bool:
     return False
 
 
+@tla_action("RS_Resolve")
 def restore(
     fs: FileSystem,
     record: Record,
