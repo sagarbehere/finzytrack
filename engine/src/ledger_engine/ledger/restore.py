@@ -37,8 +37,10 @@ next try can resolve.
    file with one link (the owner's rule, `handles.hard_links`), not locked, its extended attributes readable, allowed to
    be moved away; a folder it makes the restore temp in must allow entry changes; every
    folder the save made that would be removed must have no lock flag (red team r6 overflow 3) and be removable from its
-   parent. Any stop: `Stopped(cause)` with nothing written, with one exception: a temp that is not ours is moved to its
-   kept name first, out of reach of every deletion.
+   parent. Any stop: `Stopped(cause)` with nothing written, with two exceptions: a temp that is not ours is moved to
+   its kept name first, out of reach of every deletion; and a replaced file missing on a volume without the swap is
+   still put back, alone, before the try answers (`_missing_back`, S0065 red team r1 F2: its put-back writes only into
+   an empty name), or the answer names it when it cannot be.
 3. Every folder the record names synced first (a swap a crashed save or try left unsynced is then durable before
    anything it displaced is removed: S0061 r4). Each name of ours checked again by the temp rule right before its
    removal (not ours: kept, stop; unreadable: `Failed`), beside a file at pre and beside a created path alike; beside
@@ -58,7 +60,10 @@ next try can resolve.
    **On a volume without the swap** (`handles.write_mode`, S0065) the restore temp is moved by `handles.move_excl`,
    then the file is hashed again (still at post, else `Stopped(foreign)`, nothing moved) and replaced by a plain
    rename (spec §15, W1); a replaced file found absent there is **missing** (a power loss split a replace on a volume
-   without a journal: `core.recovery.judge`) and gets the restore temp by an exclusive move, from its backup.
+   without a journal: `core.recovery.judge`) and gets its pre bytes back from its backup: by `RENAME_EXCL` of the
+   restore temp, or where no rename is exclusive (`PLAIN`) by an exclusive create of an empty file at its name (the
+   claim), then the claim checked and replaced as a file at post is (`_put_back_plainly`; S0065 r1 F1). The save's
+   temp beside it is removed only after that, as beside a file at post (red team r1 F4).
    Otherwise each folder the save made is removed if it is empty, deepest first, and their parents synced.
 4. **Only then** `.open` renamed `.resolved` and the journal folder synced: `Resolved`.
 
@@ -86,6 +91,7 @@ from ledger_engine.ledger.core import paths as core_paths
 from ledger_engine.ledger.core.journal import FileEntry, Record, State
 from ledger_engine.ledger.core.recovery import (
     ABSENT,
+    EMPTY,
     Cause,
     Seen,
     Stop,
@@ -320,7 +326,7 @@ def _check(handles: Handles, record: Record, f: FileEntry, *, created: frozenset
     handles.entry = None
     temps = Temps(*(state for state, _ in looked))
     backup: Seen | None = None
-    missing = file == ABSENT and write is not Mode.SWAP
+    missing = write is not Mode.SWAP and (file == ABSENT or (write is Mode.PLAIN and file == EMPTY))
     if f.pre is not None and f.backup is not None and (file == Seen(Kind.FILE, f.post) or missing):
         handles.entry = _join(record.backup_dir, f.backup)
         try:
@@ -330,7 +336,7 @@ def _check(handles: Handles, record: Record, f: FileEntry, *, created: frozenset
         except (FileNotFoundError, NotADirectoryError):
             backup = Seen(Kind.OTHER)  # its folder is not there: the backup is missing (any other error: `Failed`)
         handles.entry = None
-    v = judge(f, file, temps, backup, swap=write is Mode.SWAP)
+    v = judge(f, file, temps, backup, swap=write is Mode.SWAP, plain=write is Mode.PLAIN)
     if isinstance(v, Stop) and v.cause is Cause.IO_ERROR:
         gone = next(n for n, state in zip(names, temps.states(), strict=True) if state is TempState.UNREADABLE)
         raise _Fail(v.cause, path, None, _join(parent, gone))  # vanished between its stat and its read: nothing written
@@ -424,21 +430,35 @@ def _settle(h: DirHandle, name: str, x: _Checked, record: Record, ours: tuple[st
 def _put_back_plainly(h: DirHandle, x: _Checked, rt: str) -> None:
     """The fallback's replace in the restore (a volume without the swap, S0065): a file at post is hashed again just
     before a plain rename of the restore temp onto it (still at post, and the same kind, else `foreign`, nothing
-    moved: an outside save found here is never replaced; one landing after the re-hash is window W1 of spec §15); a
-    missing file gets the restore temp by an exclusive move (an entry that appeared there: `foreign`, untouched)."""
+    moved: an outside save found here is never replaced; one landing after the re-hash is window W1 of spec §15).
+    A missing file: on `NO_SWAP` the restore temp moved onto its name by `RENAME_EXCL` (an entry that appeared there:
+    `foreign`, untouched); on `PLAIN`, where no rename is exclusive, the empty name is first **claimed** by an
+    exclusive create (`O_EXCL`) of an empty file (an entry that appeared there: `foreign`, untouched), then that empty
+    file is checked and replaced as a file at post is, so another program's file is never replaced unseen: one
+    landing on the claim after its check is W1's (S0065 verifier and red team r1 F1). The claim holds no bytes, so a
+    crash or a power loss leaves the ledger file whole, missing or empty, never torn (`core.recovery.judge` takes the
+    empty file for missing)."""
     path = x.entry.canonical_path
-    if x.verdict is Verdict.MISSING:
+    if x.verdict is Verdict.MISSING and x.write is Mode.NO_SWAP:
         try:
             move_excl(h, x.write, rt, x.base)
         except FileExistsError:
             raise _Halt(Cause.FOREIGN, path) from None
         h.sync()
         return
+    want = x.entry.post
+    if x.verdict is Verdict.MISSING:
+        want = EMPTY.sha  # our claim: an empty file
+        if h.stat(x.base) is None:  # else a claim a cut try left (or an empty file of another's: no bytes at stake)
+            try:
+                h.create(x.base, b"", MISSING_MODE)
+            except FileExistsError:
+                raise _Halt(Cause.FOREIGN, path) from None
     st = h.stat(x.base)
     if st is not None and st.kind is Kind.FILE and hard_links(st):
         raise _Halt(Cause.HARD_LINKED, path)  # a link made since the checks would keep the post bytes, unseen
     data = h.read(x.base) if st is not None and st.kind is Kind.FILE else None
-    if data is None or sha256(data) != x.entry.post:
+    if data is None or sha256(data) != want:
         raise _Halt(Cause.FOREIGN, path)
     replace_file(h, rt, x.base)
     h.sync()
@@ -515,8 +535,9 @@ def _restore_all(handles: Handles, record: Record, checked: list[_Checked], remo
         handles.on = x.entry.canonical_path
         h = handles.at(x.parent)
         for k, (n, staged) in enumerate(zip(journal.scratch_names(x.base, record.name), _STAGED, strict=True)):
-            if k == 0 and x.verdict is Verdict.AT_POST:
-                continue  # the old object at the pre bytes: removed only once they are back (below)
+            if k == 0 and x.verdict in _PUT_BACK:
+                continue  # the old object at the pre bytes, or beside a missing file our post bytes (red team r1
+                # F4): removed only once the pre bytes are back (below)
             handles.entry = _join(x.parent, n)
             _clean(h, n, x, record, staged=staged)
         handles.entry = None
@@ -549,6 +570,62 @@ def _restore_all(handles: Handles, record: Record, checked: list[_Checked], remo
     handles.entry = None
     _sync_folders(handles, parents)  # every removal of a folder durable, this try's and an earlier one's
     return None
+
+
+def _missing(handles: Handles, f: FileEntry) -> bool:
+    """`f` is a replaced file that looks missing now: absent (or, on `PLAIN`, an empty file that is neither its pre
+    nor its post bytes: a claim) in a folder that is there, on a volume without the swap. Writes nothing; any error
+    answers no."""
+    if f.pre is None:
+        return False
+    claim = EMPTY.sha not in (f.pre, f.post)  # an empty file is at pre or at post when those bytes are empty
+    parent, base = _parent(f.canonical_path)
+    try:
+        h = handles.at(parent)
+        mode = write_mode(h)
+        if mode is Mode.SWAP:
+            return False
+        st = h.stat(base)
+        if st is None:
+            return True
+        return claim and mode is Mode.PLAIN and st.kind is Kind.FILE and h.read(base) == b""
+    except (OSError, PathMovedError):
+        return False
+
+
+def _missing_back(handles: Handles, record: Record, created: frozenset[str], stop: Stopped) -> RestoreOutcome:
+    """A try that stops still puts back every replaced file that is missing on a volume without the swap (S0065 red
+    team r1 F2): its put-back writes only into an empty name (`_put_back_plainly`), so it never touches another
+    program's bytes, and otherwise the stop would not name it and Keep would leave the ledger without it. Each such
+    file is checked and restored alone, as a full try does (step 2, then step 3 for it); a stop or an error there is
+    the outcome instead of `stop`, naming that file. Every other file stays as the stop left it."""
+    for f in reversed(record.files):
+        if f.canonical_path == stop.path or not _missing(handles, f):
+            continue
+        try:
+            x = _check(handles, record, f, created=created)
+            if x.verdict is not Verdict.MISSING:
+                continue
+            h = handles.at(x.parent)
+            for n, staged in list(zip(journal.scratch_names(x.base, record.name), _STAGED, strict=True))[1:]:
+                handles.entry = _join(x.parent, n)
+                _clean(h, n, x, record, staged=staged)
+            handles.entry = None
+            _put_back(handles, record, x)
+            temp = journal.scratch_names(x.base, record.name)[0]
+            handles.entry = _join(x.parent, temp)
+            _clean(h, temp, x, record, staged=False)
+            handles.entry = None
+            h.sync()
+        except _Fail as e:
+            return Failed(e.cause, e.path, e.errno, e.entry or handles.entry)
+        except _Halt as e:
+            return Stopped(e.cause, e.path, e.entry, e.detail)
+        except PathMovedError:
+            return Stopped(Cause.PATH_MOVED, handles.on)
+        except OSError as e:
+            return Failed(Cause.IO_ERROR, handles.on, e.errno, handles.entry)
+    return stop
 
 
 def _vanished(handles: Handles, checked: list[_Checked]) -> bool:
@@ -600,7 +677,7 @@ def restore(
             except _Fail as e:
                 return Failed(e.cause, e.path, e.errno, e.entry or handles.entry)
             except _Halt as e:
-                return Stopped(e.cause, e.path, e.entry, e.detail)
+                return _missing_back(handles, record, created, Stopped(e.cause, e.path, e.entry, e.detail))
             except PathMovedError:
                 return Stopped(Cause.PATH_MOVED, handles.on)
             except OSError as e:  # a check that answered an error (a stat, a listing, an open): Retry may undo it
@@ -619,7 +696,7 @@ def restore(
             except _Fail as e:
                 return Failed(e.cause, e.path, e.errno, e.entry or handles.entry)
             except _Halt as e:
-                return Stopped(e.cause, e.path, e.entry, e.detail)
+                return _missing_back(handles, record, created, Stopped(e.cause, e.path, e.entry, e.detail))
             except PathMovedError:
                 return Stopped(Cause.PATH_MOVED, handles.on)
             except OSError as e:

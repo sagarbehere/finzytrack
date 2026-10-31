@@ -38,8 +38,9 @@ S0060): what a save does after its commit point (§6.1 step 7), through the file
    object, at its pre bytes, else `changed` and that file is not replaced) and replaced by a **plain rename** of the
    temp, the folder synced; nothing is displaced to check, since the old file is unlinked (window W1 of spec §15). A
    created file there: the exclusive rename of its temp (`no_swap`), or on a `plain` volume an exclusive create
-   (`O_EXCL`) of the file itself (W4). A `mkdir` or a rename answered `EEXIST` (a plain rename `ENOENT`) there is ours
-   when it took effect (a network volume's retry: `handles.move_excl`, `made_by_retry`).
+   (`O_EXCL`) of the file itself (W4; one that answers an error removes the part it made: `_remove_own_part`). A
+   `mkdir` or a rename answered `EEXIST` (a plain rename `ENOENT`) there is ours when it took effect (a network
+   volume's retry: `handles.move_excl`, `made_by_retry`).
 4. **Read-back:** every written file equals its post bytes; then each temp, checked to still hold the pre (or post)
    bytes (an outside program may write through a descriptor it held: those bytes go to the kept name, and the save
    stops, §6.4), removed, and the folders synced.
@@ -542,8 +543,10 @@ def _retried_mkdir(handles: Handles, h: DirHandle, name: str, canonical: str) ->
 
 def _create_in_place(h: DirHandle, t: _Target, progress: _Progress) -> None:
     """A created file on a `plain` volume (no exclusive rename): an exclusive create (`O_EXCL`) of the file itself,
-    so another program's file there is never replaced; a crash while it is written leaves part of it at its path,
-    which the undo never removes and asks about (window W4 of spec §15; owner, 2026-10-30: "Never remove it")."""
+    so another program's file there is never replaced. A create that answers an error (a full drive, an I/O error)
+    removes the part it made (`_remove_own_part`), so the save is "not saved" as on APFS (S0065 verifier r1 F2); a
+    crash while it is written leaves part of it at its path, which the undo never removes and asks about (window W4
+    of spec §15; owner, 2026-10-30: "Never remove it")."""
     before = progress.replaced
     progress.replaced = True  # a create that answers an error may still have made the entry...
     try:
@@ -551,7 +554,32 @@ def _create_in_place(h: DirHandle, t: _Target, progress: _Progress) -> None:
     except FileExistsError:
         progress.replaced = before  # ...except this one: a file stood there, nothing of ours was made
         raise _Stop(Reason.CHANGED, t.canonical) from None
+    except OSError:
+        if _remove_own_part(h, t):
+            progress.replaced = before  # ...or nothing of ours is left there
+        raise
     h.sync()
+
+
+def _remove_own_part(h: DirHandle, t: _Target) -> bool:
+    """After the exclusive create of `t` answered an error: True when nothing of ours stands at its path, having
+    removed what does when it is still ours alone (a regular file with one link whose bytes are a prefix of ours,
+    empty included). Anything else stays (False), as on any error here: the undo asks about it. The instant between
+    this check and the removal is window W4 of spec §15 (another program's file put at that path then is removed);
+    the folder sync that makes the removal durable is the rollback's (it syncs every folder of the record)."""
+    try:
+        st = h.stat(t.base)
+        if st is None:
+            return True  # the create made no entry
+        if st.kind is not Kind.FILE or hard_links(st):
+            return False
+        data = h.read(t.base)
+        if data is None or not t.change.post.startswith(data):
+            return False
+        h.remove(t.base)
+    except OSError:
+        return False
+    return True
 
 
 def _replace_plainly(h: DirHandle, t: _Target, progress: _Progress) -> None:

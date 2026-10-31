@@ -4,7 +4,10 @@
 `check_disk` states what every state of the disk must satisfy, crash or not, before or after a power loss, during a
 save, a rollback or a recovery, written from §10's rows and §13's write-protocol and recovery properties:
 - every target is whole at its pre or its post bytes (a created file: absent or post): `NoTornLedger`,
-  `NoTornLedgerAfterRecovery`;
+  `NoTornLedgerAfterRecovery`; on a `plain` volume (S0065), and only under an `.open` journal, a replaced file may
+  also be missing or empty (only in a state a power loss left, `MemFS.lost_power`: a split replace, then recovery's
+  empty claim of the name) and a created file may hold a part of its post bytes (a prefix; after a power loss also
+  a torn shape of one, `memfs.tears`);
 - a target at its post bytes only under a readable `.open` or `.closed` journal whose backups hold the pre bytes:
   `BackupDurableBeforeReplace`, `JournalDurableBeforeFirstReplace`; a `.part` may be torn, an `.open` never;
 - a `.closed` journal only with every target at post, a `.resolved` one only with every target at pre, and with
@@ -31,7 +34,7 @@ from ledger_engine.ledger.core.journal import Record, State
 from ledger_engine.ledger.core.recovery import Cause
 from ledger_engine.ledger.restore import Failed, Resolved, RestoreOutcome, Stopped, recover_journal
 from ledger_engine.ledger.writer import Change, Commit, sha256
-from tests.fakes.memfs import MemFS, MemLocks
+from tests.fakes.memfs import MemFS, MemLocks, tears
 
 JD = "/w/local/journal"
 BD = "/w/local/backups"
@@ -173,9 +176,11 @@ def check_disk(fs: MemFS, w: World) -> None:
     at_post = False
     for t in w.targets:
         now = fs.file(t.path)
-        if w.plain and now is None and t.pre is not None:
-            # missing in the middle of a replace a power loss split (exFAT, FAT: no journal), never torn (S0065):
-            # only under an `.open` record whose backup holds the pre bytes, from which recovery restores it
+        if w.plain and t.pre is not None and now in (None, b"") and now != t.post:
+            # missing in the middle of a replace a power loss split (exFAT, FAT: no journal), never torn, or the empty
+            # file recovery claims the name with before it puts the file back (S0065): only after a power loss, only
+            # under an `.open` record whose backup holds the pre bytes, from which recovery restores it
+            assert fs.lost_power, f"{t.path} {'missing' if now is None else 'empty'} without a power loss"
             assert state is State.OPEN, f"{t.path} missing under a {state} journal"
             at_post = True  # checked below as a replaced file: its backup must hold the pre bytes
             continue
@@ -184,6 +189,7 @@ def check_disk(fs: MemFS, w: World) -> None:
             # on this volume): only under `.open`; recovery never touches it and asks the user (created_path_taken)
             assert state is State.OPEN, f"part of {t.path} under a {state} journal"
             assert snap[t.path][0] == "file", snap[t.path]
+            assert part_of(now, t.post, lost_power=fs.lost_power), f"{t.path} holds bytes not ours: {now!r}"
             continue
         assert now in (t.pre, t.post), f"{t.path} is torn or foreign: {now!r}"
         if now == t.post and now != t.pre:
@@ -246,14 +252,25 @@ def created(w: World) -> tuple[Target, ...]:
     return tuple(t for t in w.targets if t.pre is None)
 
 
+def part_of(now: bytes | None, post: bytes, *, lost_power: bool) -> bool:
+    """`now` is what a cut exclusive create of `post` leaves (S0065, `plain`): a prefix of it (empty included); after
+    a power loss also a torn shape of a prefix (`memfs.tears`: its data was not yet synced)."""
+    if now is None:
+        return False
+    if post.startswith(now):
+        return True
+    return lost_power and any(now in tears(post[:n]) for n in range(len(post) + 1))
+
+
 def assert_our_created_file(fs: MemFS, w: World, path: str) -> None:
     """The file at a created path is the save's own (no outside program acted): its post bytes, or on a `plain` volume
-    any part of them a crash in its exclusive create left (S0065), which a power loss may also tear."""
+    a part of them a crash in its exclusive create left (S0065; after a power loss perhaps torn: `part_of`)."""
     now = fs.file(path)
+    post = next(t.post for t in created(w) if t.path == path)
     if w.plain:
-        assert now is not None, f"no file of ours at {path}"
+        assert part_of(now, post, lost_power=fs.lost_power), f"not our own file at {path}: {now!r}"
         return
-    assert now == next(t.post for t in created(w) if t.path == path), "not our own file"
+    assert now == post, "not our own file"
 
 
 def check_taken(fs: MemFS, w: World, out: RestoreOutcome | None) -> None:

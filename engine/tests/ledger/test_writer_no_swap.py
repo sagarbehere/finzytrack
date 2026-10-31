@@ -28,6 +28,7 @@ from tests.ledger.worlds import (
     JD,
     NAME,
     World,
+    assert_our_created_file,
     check_disk,
     check_every_power_loss,
     check_recovered,
@@ -49,13 +50,14 @@ def clean_effects(volume: str, new_dir: bool = False) -> tuple[str, ...]:
     return tuple(w.fs.effects)
 
 
-def _hook(fs: MemFS, label: str, act: Callable[[], None]) -> None:
-    """Run `act` (an outside program) right before the first effect labelled `label`."""
+def _hook(fs: MemFS, label: str | tuple[str, ...], act: Callable[[], None]) -> None:
+    """Run `act` (an outside program) right before the first effect labelled `label` (or any of the labels)."""
     done = False
+    labels = (label,) if isinstance(label, str) else label
 
     def hook(_: int, seen: str) -> None:
         nonlocal done
-        if not done and seen == label:
+        if not done and seen in labels:
             done = True
             act()
 
@@ -63,10 +65,10 @@ def _hook(fs: MemFS, label: str, act: Callable[[], None]) -> None:
 
 
 def _placed(volume: str) -> int:
-    """The effect that puts the created file at its path: its exclusive rename (`no_swap`), its exclusive create
-    (`plain`)."""
+    """The last effect of putting the created file at its path: its exclusive rename (`no_swap`); on `plain` the data
+    sync that ends its exclusive create (a create that answers an error removes the part it made: verifier r1 F2)."""
     e = clean_effects(volume)
-    label = "create /w/L:prices.bean" if volume == "plain" else "rename /w/L:.prices.bean.ft-s1-j7.tmp,prices.bean"
+    label = "fsync /w/L:prices.bean" if volume == "plain" else "rename /w/L:.prices.bean.ft-s1-j7.tmp,prices.bean"
     return e.index(label)
 
 
@@ -361,7 +363,7 @@ def test_eexist_is_still_someone_elses_when_the_source_is_there_or_the_target_is
     """The retry check never takes another program's entry for ours: a rename that did not happen (its source still
     there), and a folder that is not empty, stay foreign: the save stops and nothing of theirs is touched."""
     w = world(volume=volume)
-    label = clean_effects(volume)[_placed(volume)] if volume == "no_swap" else None
+    label = "rename /w/L:.prices.bean.ft-s1-j7.tmp,prices.bean" if volume == "no_swap" else None
     if label is not None:
         w.fs.inject(clean_effects(volume).index(label), crash=False, err=errno.EEXIST)
         out = durable_commit(w.fs, w.commit)
@@ -590,3 +592,316 @@ def test_an_io_error_part_way_through_a_write_is_told_truthfully_and_recovery_re
     if isinstance(out, NotSaved):
         assert out.unchanged
     check_recovered(w.fs, w, recover(w.fs))
+
+
+# -- round 1 (S0065 verifier r1 F1, F2; red team r1 F1, F2, F4, F5) ------------------------------------------------
+
+MAIN, RT_MAIN = "/w/L/main.bean", ".main.bean.ft-restore-s1-j7.tmp"
+
+
+def test_a_file_put_at_a_missing_files_path_up_to_its_put_back_is_never_replaced() -> None:
+    """Verifier and red team r1 F1: on `plain` the put-back first claims the empty name with an exclusive create
+    (`O_EXCL`) of an empty file. A file another program puts at that path at the last moment before the claim (on
+    7c78838c: after the check that the name is free, right before the plain rename onto it) stays, and the try stops
+    (`foreign`) with its restore copy kept for the next try."""
+    w, state = _missing_state("plain")
+    _hook(
+        state, ("create /w/L:main.bean", f"move /w/L:{RT_MAIN},main.bean"), lambda: state.outside_write(MAIN, FOREIGN)
+    )
+    out = recover(state)
+    assert out == Stopped(Cause.FOREIGN, MAIN), out
+    assert state.file(MAIN) == FOREIGN
+    assert state.file(w.targets[2].rtemp) == w.targets[2].pre
+
+
+@pytest.mark.parametrize("new_inode", [False, True], ids=["in_place", "by_rename"])
+def test_W1_a_save_onto_the_claimed_name_after_its_check_is_overwritten(new_inode: bool) -> None:
+    """Pins window W1 of spec §15 for the put-back (not a guarantee): once the empty claim is checked, an outside save
+    onto it before the plain rename is overwritten, as at any file the fallback replaces."""
+    w, state = _missing_state("plain")
+    _hook(state, f"move /w/L:{RT_MAIN},main.bean", lambda: state.outside_write(MAIN, FOREIGN, new_inode=new_inode))
+    check_recovered(state, w, recover(state))
+    assert state.file(MAIN) == w.targets[2].pre
+
+
+@pytest.mark.parametrize("theirs", ["bytes", "link"])
+def test_a_claimed_name_that_is_not_our_empty_file_at_its_check_is_never_replaced(theirs: str) -> None:
+    """The check after the claim: what stands there must be an empty regular file with one link (our claim). Bytes
+    written into it, or a second link made to it, right after the claim stop the try (`foreign`, `hard_linked`) with
+    nothing replaced."""
+    _, state = _missing_state("plain")
+
+    def act() -> None:
+        if theirs == "bytes":
+            state.outside_write(MAIN, FOREIGN)
+        else:
+            state.outside_link(MAIN, "/w/L/x")
+
+    _hook(state, "fsync /w/L:main.bean", act)  # the claim's own data sync: the empty file stands there
+    out = recover(state)
+    if theirs == "bytes":
+        assert out == Stopped(Cause.FOREIGN, MAIN), out
+        assert state.file(MAIN) == FOREIGN
+    else:
+        assert out == Stopped(Cause.HARD_LINKED, MAIN), out
+        assert state.file(MAIN) == b""
+        assert state.file("/w/L/x") == b""
+
+
+def test_an_empty_file_at_a_missing_files_path_is_the_claim_of_a_cut_try_and_is_put_back() -> None:
+    """A try cut after its claim leaves an empty file at the path (red team r1 F1's fix): the next try takes it for
+    the claim (no bytes are at stake) and puts the old version back."""
+    w, state = _missing_state("plain")
+    state.outside_write(MAIN, b"")
+    check_recovered(state, w, recover(state))
+    assert state.file(MAIN) == w.targets[2].pre
+
+
+def test_on_hfs_an_empty_file_at_a_missing_files_path_is_foreign() -> None:
+    """The empty claim exists only on `plain`; with RENAME_EXCL (HFS+) the put-back is one exclusive rename, so an
+    empty file at a replaced path there is another program's: the try stops."""
+    w = world(volume="no_swap")
+    w.fs.inject(clean_effects("no_swap").index("move /w/L:.main.bean.ft-s1-j7.tmp,main.bean") + 1, crash=True)
+    with pytest.raises(Crash):
+        durable_commit(w.fs, w.commit)
+    w.fs.outside_write(MAIN, b"", new_inode=True)
+    assert recover(w.fs) == Stopped(Cause.FOREIGN, MAIN)
+    assert w.fs.file(MAIN) == b""
+
+
+@cache
+def _missing_points() -> tuple[tuple[int, int], ...]:
+    """(effect, power-loss state) of every state a save crashed at that effect leaves with a replaced file missing."""
+    out: list[tuple[int, int]] = []
+    for at in range(len(clean_effects("plain"))):
+        w = world(volume="plain")
+        w.fs.inject(at, crash=True)
+        with pytest.raises(Crash):
+            durable_commit(w.fs, w.commit)
+        for j, s in enumerate(w.fs.power_loss_states()):
+            if any(s.file(t.path) is None for t in w.targets if t.pre is not None):
+                out.append((at, j))
+    return tuple(out)
+
+
+def _missing_at(at: int, j: int) -> MemFS:
+    """A fresh copy of the state `_missing_points` names."""
+    w = world(volume="plain")
+    w.fs.inject(at, crash=True)
+    with pytest.raises(Crash):
+        durable_commit(w.fs, w.commit)
+    return next(s for i, s in enumerate(w.fs.power_loss_states()) if i == j)
+
+
+def _put_back_points() -> list[tuple[int, int, int]]:
+    out: list[tuple[int, int, int]] = []
+    for at, j in _missing_points():
+        s = _missing_at(at, j)
+        start = len(s.effects)
+        recover(s)
+        out += [(at, j, k) for k in range(len(s.effects) - start)]
+    return out
+
+
+PUT_BACK_POINTS = _put_back_points()
+
+
+@pytest.mark.parametrize(("at", "j", "k"), PUT_BACK_POINTS)
+def test_a_crash_at_every_effect_of_a_put_back_then_every_power_loss_still_recovers(at: int, j: int, k: int) -> None:
+    """The verifier's nested sweep, kept: a missing file's recovery crashed at each of its effects (the claim
+    included), then every power-loss state, then recovery again, which must end at pre."""
+    w = world(volume="plain")
+    s = _missing_at(at, j)
+    s.inject(len(s.effects) + k, crash=True)
+    with pytest.raises(Crash):
+        recover(s)
+    for p in (s, *s.power_loss_states()):
+        check_disk(p, w)
+        check_recovered(p, w, recover(p))
+
+
+@pytest.mark.parametrize(
+    ("label", "cut", "after"),
+    [
+        ("create /w/L:prices.bean", None, True),
+        ("write /w/L:prices.bean", 0, False),
+        ("write /w/L:prices.bean", 7, False),
+        ("write /w/L:prices.bean", None, True),
+        ("fsync /w/L:prices.bean", None, False),
+    ],
+)
+def test_a_created_file_whose_create_answers_an_error_is_removed_and_not_saved_unchanged(
+    label: str, cut: int | None, after: bool
+) -> None:
+    """Verifier r1 F2: on `plain` a write error part-way through the exclusive create of a new file (a full USB stick,
+    an I/O error) left a cut file at its path and "unfinished". The save now removes the part it made (a regular
+    file with one link holding a prefix of our bytes) and answers as on APFS: not saved, unchanged after the
+    re-hash."""
+    w = world(volume="plain")
+    w.fs.inject(clean_effects("plain").index(label), crash=False, cut=cut, after=after)
+    out = durable_commit(w.fs, w.commit)
+    assert out == NotSaved(Step.REPLACE, Reason.IO_ERROR, True, path="/w/L/prices.bean"), out
+    assert w.fs.file("/w/L/prices.bean") is None
+    check_disk(w.fs, w)
+    check_every_power_loss(w.fs, w)
+    check_told(w.fs, w, out)
+
+
+@pytest.mark.parametrize("only", [False, True], ids=["after_a_replace", "alone"])
+@pytest.mark.parametrize("theirs", ["bytes", "link"])
+def test_after_a_failed_create_a_file_at_its_path_that_is_not_ours_alone_is_never_removed(
+    theirs: str, only: bool
+) -> None:
+    """The removal's check: bytes that are not a prefix of ours (another program wrote into the file), or a second
+    link to it, leave the file where it is; the undo then asks about it (`created_path_taken`, window W4), and the
+    save is "unfinished" even when the created file is its only one (something stands at a path it was making)."""
+    w = world(volume="plain")
+    if only:
+        w = replace(w, commit=replace(w.commit, changes=(w.commit.changes[1],)))
+    probe = world(volume="plain")
+    assert isinstance(durable_commit(probe.fs, w.commit), Landed)
+    at = probe.fs.effects.index("fsync /w/L:prices.bean")
+
+    def act() -> None:
+        if theirs == "bytes":
+            w.fs.outside_write("/w/L/prices.bean", FOREIGN)
+        else:
+            w.fs.outside_link("/w/L/prices.bean", "/w/L/x")
+
+    _hook(w.fs, "fsync /w/L:prices.bean", act)
+    w.fs.inject(at, crash=False)
+    out = durable_commit(w.fs, w.commit)
+    assert isinstance(out, Unfinished), out
+    assert (out.cause, out.cause_path) == (Cause.CREATED_PATH_TAKEN.value, "/w/L/prices.bean"), out
+    assert w.fs.file("/w/L/prices.bean") == (FOREIGN if theirs == "bytes" else w.targets[1].post)
+
+
+EDITOR = b"2026-01-01 open Assets:A\n2026-01-02 open Assets:B ; the user's edit meanwhile\n"
+
+
+def test_a_try_that_stops_on_another_file_still_puts_a_missing_file_back_and_keep_keeps_it() -> None:
+    """Red team r1 F2: a missing root while recovery stops on another file (an editor's change to `inc/a.bean`): the
+    put-back writes only into an empty name, so the try still puts the root back before it stops; Keep then keeps
+    the files with the root at its old version, never missing."""
+    from ledger_engine.ledger.recover_all import Done, keep
+    from tests.fakes.memfs import MemLocks
+
+    w, state = _missing_state("plain")
+    state.outside_write("/w/L/inc/a.bean", EDITOR)
+    out = recover(state)
+    assert out == Stopped(Cause.FOREIGN, "/w/L/inc/a.bean"), out
+    assert state.file(MAIN) == w.targets[2].pre
+    for p in state.power_loss_states():
+        assert p.file(MAIN) == w.targets[2].pre, "the put-back is durable before the try answers"
+    assert keep(state, MemLocks(), JD, NAME) == Done()
+    assert state.file(MAIN) == w.targets[2].pre
+    assert state.file("/w/L/inc/a.bean") == EDITOR
+
+
+def test_a_try_that_stops_on_another_file_names_a_missing_file_it_cannot_put_back() -> None:
+    """When the missing file itself cannot be put back (its backup is gone), the stop names it, not the other file."""
+    _, state = _missing_state("plain")
+    state.outside_write("/w/L/inc/a.bean", EDITOR)
+    state.outside_remove(f"/w/local/backups/{NAME}/2-main.bean")
+    assert recover(state) == Stopped(Cause.BACKUP_BAD, MAIN)
+    assert state.file(MAIN) is None
+
+
+@pytest.mark.parametrize("post", ["bytes", "empty"])
+def test_a_try_that_stops_never_puts_back_a_file_at_post(post: str) -> None:
+    """Only a missing file is put back when a try stops: a file at post stays at post, even when its post bytes are
+    empty (it looks like a claim), and nothing beside it is checked or moved (here an outside file at its restore
+    temp stays where it is): the stop writes nothing else and names the file it stopped at."""
+    w = world(volume="plain")
+    c = w.commit
+    if post == "empty":
+        c = replace(c, changes=(*c.changes[:2], replace(c.changes[2], post=b"")))
+    w.fs.inject(clean_effects("plain").index(f"rename {JD}:{NAME}.open,{NAME}.closed"), crash=True)
+    with pytest.raises(Crash):
+        durable_commit(w.fs, c)
+    w.fs.outside_write("/w/L/inc/a.bean", EDITOR)
+    w.fs.outside_write(w.targets[2].rtemp, FOREIGN)
+    before = w.fs.snapshot()
+    assert recover(w.fs) == Stopped(Cause.FOREIGN, "/w/L/inc/a.bean")
+    assert w.fs.snapshot() == before
+
+
+def test_on_apfs_a_try_that_stops_is_answered_as_before_whatever_is_absent() -> None:
+    """On a swap volume the pass for missing files does nothing: a replaced file someone removed is not looked at,
+    and the stop names the file the checks stopped at."""
+    w = world()
+    w.fs.inject(clean_effects("swap").index(f"rename {JD}:{NAME}.open,{NAME}.closed"), crash=True)
+    with pytest.raises(Crash):
+        durable_commit(w.fs, w.commit)
+    w.fs.outside_write("/w/L/inc/a.bean", EDITOR)
+    w.fs.outside_remove(MAIN)
+    before = w.fs.snapshot()
+    assert recover(w.fs) == Stopped(Cause.FOREIGN, "/w/L/inc/a.bean")
+    assert w.fs.snapshot() == before
+
+
+def test_beside_a_missing_file_the_saves_temp_stays_until_its_old_version_is_back() -> None:
+    """Red team r1 F4: the save's temp (our post bytes) beside a missing file is removed only after the put-back, so
+    a backup that turns bad between the checks and the put-back leaves it (`backup_bad`, both copies still there)."""
+    w, state = _missing_state("plain")
+    t = w.targets[2]
+    assert state.file(t.temp) == t.post
+    _hook(  # the restore's first folder sync (step 3): every check is done
+        state,
+        ("sync /w/L/inc:", "sync /w/L:"),
+        lambda: state.outside_write(f"/w/local/backups/{NAME}/2-main.bean", b"spoiled\n"),
+    )
+    assert recover(state) == Stopped(Cause.BACKUP_BAD, MAIN)
+    assert state.file(t.temp) == t.post
+
+
+def test_the_oracle_allows_a_missing_or_empty_replaced_file_only_after_a_power_loss() -> None:
+    """Red team r1 F5: a missing (or empty) replaced file is a power-loss state only; in the disk as a crash left it
+    the oracle refuses it."""
+    w = world(volume="plain")
+    w.fs.inject(clean_effects("plain").index("move /w/L:.main.bean.ft-s1-j7.tmp,main.bean") + 1, crash=True)
+    with pytest.raises(Crash):
+        durable_commit(w.fs, w.commit)
+    check_disk(w.fs, w)
+    for spoiled in (None, b""):
+        s = next(iter(w.fs.power_loss_states()))
+        s.lost_power = False
+        if spoiled is None:
+            s.outside_remove(MAIN)
+        else:
+            s.outside_write(MAIN, spoiled)
+        with pytest.raises(AssertionError, match="without a power loss"):
+            check_disk(s, w)
+        s.lost_power = True
+        check_disk(s, w)
+
+
+def test_the_oracle_takes_only_a_part_of_our_bytes_for_our_created_file() -> None:
+    """Red team r1 F5: after `created_path_taken` the oracle checks the file left there is ours: on `plain` a prefix
+    of the post bytes (after a power loss perhaps torn), never other bytes."""
+    w = world(volume="plain")
+    w.fs.outside_write("/w/L/prices.bean", w.targets[1].post[:4])
+    assert_our_created_file(w.fs, w, "/w/L/prices.bean")
+    w.fs.outside_write("/w/L/prices.bean", FOREIGN)
+    with pytest.raises(AssertionError, match="not our own file"):
+        assert_our_created_file(w.fs, w, "/w/L/prices.bean")
+
+
+def test_the_oracle_allows_at_a_created_path_only_a_part_of_our_bytes() -> None:
+    """Red team r1 F5: on `plain` a created file cut in its exclusive create holds a prefix of the post bytes (after
+    a power loss perhaps a torn shape of one); other bytes there are not ours."""
+    w = world(volume="plain")
+    w.fs.inject(clean_effects("plain").index("fsync /w/L:prices.bean"), crash=True)
+    with pytest.raises(Crash):
+        durable_commit(w.fs, w.commit)
+    check_disk(w.fs, w)
+    w.fs.outside_write("/w/L/prices.bean", w.targets[1].post[:5])
+    check_disk(w.fs, w)
+    w.fs.outside_write("/w/L/prices.bean", bytes(5))
+    with pytest.raises(AssertionError, match="not ours"):
+        check_disk(w.fs, w)
+    w.fs.lost_power = True
+    check_disk(w.fs, w)  # a torn shape of a prefix (zeros: its data not yet synced)
+    w.fs.outside_write("/w/L/prices.bean", FOREIGN)
+    with pytest.raises(AssertionError, match="not ours"):
+        check_disk(w.fs, w)

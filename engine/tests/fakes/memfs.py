@@ -11,7 +11,7 @@ mkdir, remove, swap, exclusive rename) is durable after its directory's sync, wh
 directory before it durable. `power_loss_states()` gives every state a power loss may leave: each pending entry
 operation kept or dropped on its own (applied in order; one whose precondition no longer holds does nothing), a swap
 or a rename kept or dropped whole, and each file whose data is not synced at its synced bytes (empty if never synced:
-an entry kept before its data), its current bytes, or torn (`_tears`): cut off (the first half of its current
+an entry kept before its data), its current bytes, or torn (`tears`): cut off (the first half of its current
 bytes), its length kept with none of its blocks written (zeros), or its later blocks written before its earlier ones
 (zeros, then the second half). A real volume can tear an unsynced file in any of these shapes (delayed allocation,
 a drive that reorders writes; S0061 red team r3 F3), so nothing may count on a torn file being a prefix.
@@ -50,7 +50,8 @@ RENAME_SWAP, with RENAME_EXCL (HFS+) or without (exFAT, FAT, network shares); `c
 call answers `ENOTSUP` with nothing done. `rename` is a plain rename (one effect, labelled `move`) that replaces an
 entry at its target; on a volume without RENAME_EXCL such a replace is two entry operations a power loss keeps or
 drops on their own (the entry removed, the rename), so a file can be **missing** after a power loss there, never
-torn; elsewhere it is one.
+torn; elsewhere it is one. `lost_power` marks a state a power loss left (and every state reached from it), so the
+oracle can allow what only a power loss leaves (S0065 red team r1 F5).
 """
 
 # pyright: reportPrivateUsage=false
@@ -198,7 +199,7 @@ def _apply(entries: dict[str, tuple[str, int]], op: tuple[str, ...]) -> None:
             entries[kd] = (stored, entries.pop(ks)[1])
 
 
-def _tears(data: bytes) -> tuple[bytes, ...]:
+def tears(data: bytes) -> tuple[bytes, ...]:
     """The torn shapes an unsynced file may take after a power loss (the module's docstring)."""
     half = len(data) // 2
     return data[:half], bytes(len(data)), bytes(half) + data[half:]
@@ -214,6 +215,7 @@ class MemFS:
         self._faults: dict[int, _Fault] = {}
         self.on_effect: Callable[[int, str], None] | None = None
         self.stores_nfd = stores_nfd  # HFS+: every name stored in NFD, whatever spelling it was given (S0061 probe)
+        self.lost_power = False  # a state a power loss left (`power_loss_states`), or one reached from such a state
 
     def stored(self, name: str) -> str:
         """The spelling the volume keeps for a name it is given."""
@@ -572,7 +574,7 @@ class MemFS:
             for i in files:
                 f = self.nodes[i]
                 assert isinstance(f, _File)
-                opts = [f.synced] if f.data == f.synced else [f.synced, f.data, *_tears(f.data)]
+                opts = [f.synced] if f.data == f.synced else [f.synced, f.data, *tears(f.data)]
                 options.append(list(dict.fromkeys(opts)))
             for datas in itertools.product(*options):
                 sig = (tuple(sorted((k, tuple(sorted(v.items()))) for k, v in tables.items())), tuple(datas))
@@ -585,6 +587,7 @@ class MemFS:
         self, tables: dict[int, dict[str, tuple[str, int]]], datas: dict[int, bytes], reach: list[int]
     ) -> MemFS:
         out = MemFS(stores_nfd=self.stores_nfd)
+        out.lost_power = True
         out.nodes = {}
         out._next = self._next
         for ino in reach:

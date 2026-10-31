@@ -450,6 +450,7 @@ def test_a_save_its_crash_and_its_recovery_on_a_real_volume_without_the_swap(
     (ledger / "inc").mkdir(parents=True)
     with fs.open_dir(str(ledger)) as d:
         assert not d.caps().swap, "a volume without the swap is expected here"
+        plain = not d.caps().excl
     main, inc = ledger / "main.bean", ledger / "inc" / "a.bean"
     main.write_bytes(b"pre\n")
     inc.write_bytes(b"inc\n")
@@ -488,6 +489,19 @@ def test_a_save_its_crash_and_its_recovery_on_a_real_volume_without_the_swap(
     out3 = recover_journal(fs, DarwinLocks(str(root3 / "locks")), c3.journal_dir, "s1-j1")
     assert out3 == Stopped(Cause.FOREIGN, str(main)), out3
     assert main.read_bytes() == b"; an editor\n"
+    if plain:  # exFAT, FAT: an empty file at a missing file's path is the claim a cut try left (S0065 r1 F1)
+        root4 = tmp_path / "fourth"
+        root4.mkdir()
+        c4 = _commit(root4, Change(str(main), sha256(b"; an editor\n"), b"post4\n"))
+        with pytest.raises(_Died):
+            durable_commit(_DyingFS(fs, ".closed"), c4)  # type: ignore[arg-type]
+        main.unlink()
+        main.write_bytes(b"")
+        (root4 / "locks").mkdir()
+        out4 = recover_journal(fs, DarwinLocks(str(root4 / "locks")), c4.journal_dir, "s1-j1")
+        assert out4 == Resolved("s1-j1"), out4
+        assert main.read_bytes() == b"; an editor\n"
+        assert not [n for n in os.listdir(ledger) if ".ft-" in n]
 
 
 @pytest.mark.parametrize(

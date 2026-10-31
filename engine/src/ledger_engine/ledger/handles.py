@@ -74,7 +74,7 @@ class Mode(StrEnum):
 
     SWAP = "swap"  # RENAME_SWAP and RENAME_EXCL (APFS): the atomic swap, ADR-0013 as decided
     NO_SWAP = "no_swap"  # RENAME_EXCL only (HFS+): a plain rename after a re-hash; exclusive moves by RENAME_EXCL
-    PLAIN = "plain"  # neither (exFAT, FAT, network shares): as `NO_SWAP`, exclusive moves by a check just before
+    PLAIN = "plain"  # neither (exFAT, FAT, network shares): as `NO_SWAP`; moves to our names by a check just before
 
 
 def write_mode(h: DirHandle) -> Mode:
@@ -98,8 +98,10 @@ def _took_effect(h: DirHandle, src: str, dst: str, before: EntryStat | None) -> 
 
 def move_excl(h: DirHandle, mode: Mode, src: str, dst: str) -> None:
     """Rename `src` to `dst` only while nothing stands at `dst` (`FileExistsError` otherwise, `dst` untouched):
-    `RENAME_EXCL` (`SWAP`, `NO_SWAP`), or on `PLAIN` a check just before a plain rename (window W2 of spec §15: an
-    entry another program puts at `dst` in that instant is replaced; `dst` is always a name derived from the save).
+    `RENAME_EXCL` (`SWAP`, `NO_SWAP`). On `PLAIN` it is **not exclusive**: a check just before a plain rename, so an
+    entry another program puts at `dst` in that instant is replaced (window W2 of spec §15). Callers pass only names
+    derived from the save (a temp, a restore temp, a kept name), never a ledger file's own name: on `PLAIN` a file is
+    put at its own name by an exclusive create (`writer._create_in_place`, `restore._put_back_plainly`'s claim).
     On the fallback modes an answer of `EEXIST` or `ENOENT` is checked by `_took_effect` first."""
     if mode is Mode.SWAP:
         h.rename_excl(src, dst)
