@@ -242,7 +242,8 @@ class InspectedFile(Message):
 class RecoverTryResult(Message):
     """One journal's try (§8.1 steps 1-4): `resolved`, `stopped` (blocking reason `stopped`) or `failed` (reason
     `failed`), with the cause, the file (`path`), the entry that failed or blocked when it is not the file, the
-    blocking ACL entry (`detail`) and the error number; for `stopped`, what stands there now (`inspection`)."""
+    blocking ACL entry (`detail`; for a `foreign` stop, `empty`: the file is empty on a drive without the swap and its
+    backup holds the old version, S0065) and the error number; for `stopped`, what stands there now (`inspection`)."""
 
     outcome: Literal["resolved", "stopped", "failed"]
     cause: str | None

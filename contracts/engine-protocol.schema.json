@@ -1397,7 +1397,7 @@
     },
     "RecoverTryResult": {
       "additionalProperties": false,
-      "description": "One journal's try (§8.1 steps 1-4): `resolved`, `stopped` (blocking reason `stopped`) or `failed` (reason\n`failed`), with the cause, the file (`path`), the entry that failed or blocked when it is not the file, the\nblocking ACL entry (`detail`) and the error number; for `stopped`, what stands there now (`inspection`).",
+      "description": "One journal's try (§8.1 steps 1-4): `resolved`, `stopped` (blocking reason `stopped`) or `failed` (reason\n`failed`), with the cause, the file (`path`), the entry that failed or blocked when it is not the file, the\nblocking ACL entry (`detail`; for a `foreign` stop, `empty`: the file is empty on a drive without the swap and its\nbackup holds the old version, S0065) and the error number; for `stopped`, what stands there now (`inspection`).",
       "properties": {
         "outcome": {
           "enum": [

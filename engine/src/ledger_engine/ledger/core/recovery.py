@@ -21,11 +21,12 @@ The file the temps sit beside, then:
 - a replaced file at its post bytes: **at post** when the backup holds the pre bytes (ADR-0012 F-1), else stop;
 - a replaced file that is absent, on a volume without the swap: **missing** when the backup holds the pre bytes, else
   stop (S0065: a power loss on a volume without a journal can split a replace and drop the file's name; it is put back
-  from its backup). On a volume with neither the swap nor the exclusive rename (`plain`) an **empty** regular file
-  there is missing too: it is the name a put-back claims first with an exclusive create (`restore._put_back_plainly`,
-  S0065 r1 F1), left by a try that was cut; an empty file another program put there holds no bytes to lose. On a
-  volume with the swap no step of ours leaves a file absent: someone removed it, and it stops (`foreign`) for the
-  user to decide, as before;
+  from its backup). Only an absent file: an **empty** file there is another program's, on every volume (owner,
+  2026-10-31: "Empty = never ours (Recommended)"; S0065 red team r2 H1: a program that truncates, then writes, such
+  as `script > prices.bean` or an in-place editor, holds it open and writes into it a moment later), so it stops
+  (`foreign`), even the empty file a put-back claims a missing file's name with (`restore._put_back_plainly`) when a
+  crash leaves it: the user deletes it and presses Retry. On a volume with the swap no step of ours leaves a file
+  absent: someone removed it, and it stops (`foreign`) for the user to decide, as before;
 - anything at all at a created path (a file of any kind, whatever it holds, our post bytes included): **taken**
   (owner, 2026-10-30: "Never remove it (Recommended)"). Nothing on disk tells our unfinished file from another
   program's (a sync client, a re-run import), so the undo never removes, renames or moves it: it undoes the other
@@ -56,6 +57,7 @@ class Seen:
 
 ABSENT = Seen(None)
 EMPTY = Seen(Kind.FILE, hashlib.sha256(b"").hexdigest())  # a regular file with no bytes
+EMPTY_DETAIL = "empty"  # a `foreign` stop's detail: an empty file at a replaced path on a volume without the swap
 
 
 def seen_file(data: bytes) -> Seen:
@@ -105,7 +107,7 @@ class Temps:
 class Verdict(StrEnum):
     AT_PRE = "at_pre"  # nothing to restore
     AT_POST = "at_post"  # a replaced file: restore it from its backup
-    MISSING = "missing"  # a replaced file absent (or our empty claim) without the swap: restore it from its backup
+    MISSING = "missing"  # a replaced file absent on a volume without the swap: restore it from its backup
     TAKEN = "taken"  # something stands at a created path: never touched; the others undone, then the journal stops
 
 
@@ -133,13 +135,11 @@ class Stop:
     cause: Cause
 
 
-def judge(
-    entry: FileEntry, file: Seen, temps: Temps, backup: Seen | None, *, swap: bool = True, plain: bool = False
-) -> Verdict | Stop:
+def judge(entry: FileEntry, file: Seen, temps: Temps, backup: Seen | None, *, swap: bool = True) -> Verdict | Stop:
     """The verdict for one file (the module's docstring). `temps`: the names of ours beside it, by the temp rule.
-    `backup`: what the backup holds, None when not read. `swap`: the file's folder is on a volume with the swap;
-    `plain`: with neither the swap nor the exclusive rename (`handles.write_mode`). `Stop(io_error)`: a name of ours
-    could not be read, which the restore tells as `Failed` and writes nothing for."""
+    `backup`: what the backup holds, None when not read. `swap`: the file's folder is on a volume with the swap
+    (`handles.write_mode`). `Stop(io_error)`: a name of ours could not be read, which the restore tells as `Failed`
+    and writes nothing for."""
     if TempState.UNREADABLE in temps.states():
         return Stop(Cause.IO_ERROR)
     if TempState.FOREIGN in temps.states():
@@ -151,6 +151,6 @@ def judge(
         return Verdict.TAKEN  # never removed, whatever stands there (owner, 2026-10-30: "Never remove it")
     if file == Seen(Kind.FILE, entry.post):
         return Verdict.AT_POST if backup == pre else Stop(Cause.BACKUP_BAD)
-    if not swap and (file == ABSENT or (plain and file == EMPTY)):
+    if not swap and file == ABSENT:
         return Verdict.MISSING if backup == pre else Stop(Cause.BACKUP_BAD)
     return Stop(Cause.FOREIGN)

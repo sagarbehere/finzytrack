@@ -433,24 +433,54 @@ def _volumes() -> list[str]:
     return [v for v in raw.split(":") if v]
 
 
+def _settled_mkdir(path: Path) -> None:
+    """The test's own setup `mkdir` of a folder in one it has just made, tried again (up to 5 times, the parent
+    folder synced before each try) on `ENOENT`/`ENOTDIR`: macOS 26's FSKit FAT driver answered so right after the
+    parent's `mkdir`, 2 runs in 25 on fresh FAT16 and FAT32 images (S0065 verifier r2 F4; never reproduced in 1600
+    bare `mkdir` pairs, nor in 200 engine saves that make a folder, so whether the sync settles it is unproven). Only
+    for the setup: no engine call is ever retried here."""
+    for attempt in range(5):
+        fd = os.open(path.parent, os.O_RDONLY)
+        try:
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+        try:
+            path.mkdir(exist_ok=True)
+        except (FileNotFoundError, NotADirectoryError):
+            if attempt == 4:
+                raise
+        else:
+            return
+
+
 @pytest.mark.skipif(not _volumes(), reason="no scratch volumes given (FT_TEST_VOLUMES)")
 @pytest.mark.parametrize("volume", _volumes() or ["-"])
 def test_a_save_its_crash_and_its_recovery_on_a_real_volume_without_the_swap(
     fs: DarwinFS, tmp_path: Path, volume: str
 ) -> None:
     """BL-0160 on a real drive: the save lands by the no-swap path (a replaced file, a created file in a created
-    folder), then a save that dies before its close is undone by recovery from the backups on the Mac's disk."""
+    folder), then a save that dies before its close is undone by recovery from the backups on the Mac's disk. The
+    test's folder on the volume is removed at the end (a FAT16 root folder holds only 512 entries)."""
+    import shutil
     import uuid
 
+    ledger = Path(volume) / f"ft-{uuid.uuid4().hex}"
+    ledger.mkdir()
+    try:
+        _settled_mkdir(ledger / "inc")
+        _real_volume_run(fs, tmp_path, ledger)
+    finally:
+        shutil.rmtree(ledger, ignore_errors=True)
+
+
+def _real_volume_run(fs: DarwinFS, tmp_path: Path, ledger: Path) -> None:
     from ledger_engine.fs.darwin import DarwinLocks
-    from ledger_engine.ledger.core.recovery import Cause
+    from ledger_engine.ledger.core.recovery import EMPTY_DETAIL, Cause
     from ledger_engine.ledger.restore import Resolved, Stopped, recover_journal
 
-    ledger = Path(volume) / f"ft-{uuid.uuid4().hex}"
-    (ledger / "inc").mkdir(parents=True)
     with fs.open_dir(str(ledger)) as d:
         assert not d.caps().swap, "a volume without the swap is expected here"
-        plain = not d.caps().excl
     main, inc = ledger / "main.bean", ledger / "inc" / "a.bean"
     main.write_bytes(b"pre\n")
     inc.write_bytes(b"inc\n")
@@ -489,19 +519,25 @@ def test_a_save_its_crash_and_its_recovery_on_a_real_volume_without_the_swap(
     out3 = recover_journal(fs, DarwinLocks(str(root3 / "locks")), c3.journal_dir, "s1-j1")
     assert out3 == Stopped(Cause.FOREIGN, str(main)), out3
     assert main.read_bytes() == b"; an editor\n"
-    if plain:  # exFAT, FAT: an empty file at a missing file's path is the claim a cut try left (S0065 r1 F1)
-        root4 = tmp_path / "fourth"
-        root4.mkdir()
-        c4 = _commit(root4, Change(str(main), sha256(b"; an editor\n"), b"post4\n"))
-        with pytest.raises(_Died):
-            durable_commit(_DyingFS(fs, ".closed"), c4)  # type: ignore[arg-type]
-        main.unlink()
-        main.write_bytes(b"")
-        (root4 / "locks").mkdir()
-        out4 = recover_journal(fs, DarwinLocks(str(root4 / "locks")), c4.journal_dir, "s1-j1")
-        assert out4 == Resolved("s1-j1"), out4
-        assert main.read_bytes() == b"; an editor\n"
-        assert not [n for n in os.listdir(ledger) if ".ft-" in n]
+    # an empty file at a replaced path is another program's, or the claim of a cut put-back: the try stops and says
+    # so; once the user deletes it, Retry puts the old version back (owner, 2026-10-31: "Empty = never ours")
+    root4 = tmp_path / "fourth"
+    root4.mkdir()
+    c4 = _commit(root4, Change(str(main), sha256(b"; an editor\n"), b"post4\n"))
+    with pytest.raises(_Died):
+        durable_commit(_DyingFS(fs, ".closed"), c4)  # type: ignore[arg-type]
+    main.unlink()
+    main.write_bytes(b"")
+    (root4 / "locks").mkdir()
+    locks4 = DarwinLocks(str(root4 / "locks"))
+    out4 = recover_journal(fs, locks4, c4.journal_dir, "s1-j1")
+    assert out4 == Stopped(Cause.FOREIGN, str(main), detail=EMPTY_DETAIL), out4
+    assert main.read_bytes() == b""
+    main.unlink()
+    out5 = recover_journal(fs, locks4, c4.journal_dir, "s1-j1")
+    assert out5 == Resolved("s1-j1"), out5
+    assert main.read_bytes() == b"; an editor\n"
+    assert not [n for n in os.listdir(ledger) if ".ft-" in n]
 
 
 @pytest.mark.parametrize(

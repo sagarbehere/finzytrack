@@ -40,7 +40,9 @@ next try can resolve.
    parent. Any stop: `Stopped(cause)` with nothing written, with two exceptions: a temp that is not ours is moved to
    its kept name first, out of reach of every deletion; and a replaced file missing on a volume without the swap is
    still put back, alone, before the try answers (`_missing_back`, S0065 red team r1 F2: its put-back writes only into
-   an empty name), or the answer names it when it cannot be.
+   a free name), or the answer names it when it cannot be. An empty file at a replaced path there is another
+   program's (owner, 2026-10-31: "Empty = never ours (Recommended)"): `Stopped(foreign)` with detail `empty` when its
+   backup holds the old version, so the screen can say "delete it and press Retry".
 3. Every folder the record names synced first (a swap a crashed save or try left unsynced is then durable before
    anything it displaced is removed: S0061 r4). Each name of ours checked again by the temp rule right before its
    removal (not ours: kept, stop; unreadable: `Failed`), beside a file at pre and beside a created path alike; beside
@@ -62,7 +64,8 @@ next try can resolve.
    rename (spec §15, W1); a replaced file found absent there is **missing** (a power loss split a replace on a volume
    without a journal: `core.recovery.judge`) and gets its pre bytes back from its backup: by `RENAME_EXCL` of the
    restore temp, or where no rename is exclusive (`PLAIN`) by an exclusive create of an empty file at its name (the
-   claim), then the claim checked and replaced as a file at post is (`_put_back_plainly`; S0065 r1 F1). The save's
+   claim), then the claim checked and replaced as a file at post is (`_put_back_plainly`; S0065 r1 F1; a claim a crash
+   leaves is then an empty file, which stops the next try until the user deletes it: S0065 r2). The save's
    temp beside it is removed only after that, as beside a file at post (red team r1 F4).
    Otherwise each folder the save made is removed if it is empty, deepest first, and their parents synced.
 4. **Only then** `.open` renamed `.resolved` and the journal folder synced: `Resolved`.
@@ -92,6 +95,7 @@ from ledger_engine.ledger.core.journal import FileEntry, Record, State
 from ledger_engine.ledger.core.recovery import (
     ABSENT,
     EMPTY,
+    EMPTY_DETAIL,
     Cause,
     Seen,
     Stop,
@@ -141,7 +145,8 @@ class Stopped:
     save was creating, left as it is; every other file is durably at pre. `path`: the canonical path of the file it
     stopped at, if any. `entry`, for a `permission` stop: the entry the system would not let us change when it is
     not that file (a name of ours, a folder), and `detail` the ACL entry that blocks a folder, in `chmod`'s words
-    (`handles.acl_denial`; S0061 r6)."""
+    (`handles.acl_denial`; S0061 r6). For a `foreign` stop, `detail` `empty` (`EMPTY_DETAIL`): the file is empty, on a
+    volume without the swap, and its backup holds the old version (S0065 r2: deleting it lets Retry put that back)."""
 
     cause: Cause
     path: str | None
@@ -326,8 +331,9 @@ def _check(handles: Handles, record: Record, f: FileEntry, *, created: frozenset
     handles.entry = None
     temps = Temps(*(state for state, _ in looked))
     backup: Seen | None = None
-    missing = write is not Mode.SWAP and (file == ABSENT or (write is Mode.PLAIN and file == EMPTY))
-    if f.pre is not None and f.backup is not None and (file == Seen(Kind.FILE, f.post) or missing):
+    empty = write is not Mode.SWAP and file == EMPTY  # another program's (owner, 2026-10-31), or our cut claim
+    absent = write is not Mode.SWAP and file == ABSENT  # missing, if its backup is good
+    if f.pre is not None and f.backup is not None and (file == Seen(Kind.FILE, f.post) or absent or empty):
         handles.entry = _join(record.backup_dir, f.backup)
         try:
             backup, _ = _look(handles.at(record.backup_dir), f.backup, path)
@@ -336,7 +342,7 @@ def _check(handles: Handles, record: Record, f: FileEntry, *, created: frozenset
         except (FileNotFoundError, NotADirectoryError):
             backup = Seen(Kind.OTHER)  # its folder is not there: the backup is missing (any other error: `Failed`)
         handles.entry = None
-    v = judge(f, file, temps, backup, swap=write is Mode.SWAP, plain=write is Mode.PLAIN)
+    v = judge(f, file, temps, backup, swap=write is Mode.SWAP)
     if isinstance(v, Stop) and v.cause is Cause.IO_ERROR:
         gone = next(n for n, state in zip(names, temps.states(), strict=True) if state is TempState.UNREADABLE)
         raise _Fail(v.cause, path, None, _join(parent, gone))  # vanished between its stat and its read: nothing written
@@ -344,6 +350,8 @@ def _check(handles: Handles, record: Record, f: FileEntry, *, created: frozenset
         for n, state in zip(names, temps.states(), strict=True):
             if state is TempState.FOREIGN:
                 keep(h, n, base, record.name, write)  # out of reach of every deletion (owner, 2026-10-29)
+        if v.cause is Cause.FOREIGN and empty and backup == Seen(Kind.FILE, f.pre):
+            raise _Halt(v.cause, path, detail=EMPTY_DETAIL)  # the screen: delete it, Retry puts the old version back
         raise _Halt(v.cause, path)
     ours = [(n, nst) for n, (state, nst) in zip(names, looked, strict=True) if state is TempState.OURS]
     if ours or v in _PUT_BACK:
@@ -436,8 +444,9 @@ def _put_back_plainly(h: DirHandle, x: _Checked, rt: str) -> None:
     exclusive create (`O_EXCL`) of an empty file (an entry that appeared there: `foreign`, untouched), then that empty
     file is checked and replaced as a file at post is, so another program's file is never replaced unseen: one
     landing on the claim after its check is W1's (S0065 verifier and red team r1 F1). The claim holds no bytes, so a
-    crash or a power loss leaves the ledger file whole, missing or empty, never torn (`core.recovery.judge` takes the
-    empty file for missing)."""
+    crash or a power loss leaves the ledger file whole, missing or empty, never torn. An empty file there is never
+    taken for ours (owner, 2026-10-31: "Empty = never ours (Recommended)"), so a claim a crash left stops the next try
+    (`foreign`, detail `empty`) until the user deletes it; the old version stays in the backup."""
     path = x.entry.canonical_path
     if x.verdict is Verdict.MISSING and x.write is Mode.NO_SWAP:
         try:
@@ -449,11 +458,10 @@ def _put_back_plainly(h: DirHandle, x: _Checked, rt: str) -> None:
     want = x.entry.post
     if x.verdict is Verdict.MISSING:
         want = EMPTY.sha  # our claim: an empty file
-        if h.stat(x.base) is None:  # else a claim a cut try left (or an empty file of another's: no bytes at stake)
-            try:
-                h.create(x.base, b"", MISSING_MODE)
-            except FileExistsError:
-                raise _Halt(Cause.FOREIGN, path) from None
+        try:
+            h.create(x.base, b"", MISSING_MODE)
+        except FileExistsError:
+            raise _Halt(Cause.FOREIGN, path) from None
     st = h.stat(x.base)
     if st is not None and st.kind is Kind.FILE and hard_links(st):
         raise _Halt(Cause.HARD_LINKED, path)  # a link made since the checks would keep the post bytes, unseen
@@ -572,35 +580,46 @@ def _restore_all(handles: Handles, record: Record, checked: list[_Checked], remo
     return None
 
 
-def _missing(handles: Handles, f: FileEntry) -> bool:
-    """`f` is a replaced file that looks missing now: absent (or, on `PLAIN`, an empty file that is neither its pre
-    nor its post bytes: a claim) in a folder that is there, on a volume without the swap. Writes nothing; any error
-    answers no."""
+def missing(handles: Handles, f: FileEntry) -> bool:
+    """`f` is a replaced file that is missing now: absent in a folder that is there, on a volume without the swap
+    (S0065). Writes nothing; any error answers no. Also Keep's refusal (`recover_all.keep`; owner, 2026-10-31)."""
     if f.pre is None:
         return False
-    claim = EMPTY.sha not in (f.pre, f.post)  # an empty file is at pre or at post when those bytes are empty
     parent, base = _parent(f.canonical_path)
     try:
         h = handles.at(parent)
-        mode = write_mode(h)
-        if mode is Mode.SWAP:
+        return write_mode(h) is not Mode.SWAP and h.stat(base) is None
+    except (OSError, PathMovedError):
+        return False
+
+
+def _empty(handles: Handles, f: FileEntry) -> bool:
+    """`f` is a replaced file that is an empty regular file now, on a volume without the swap (another program's, or
+    the claim of a put-back a crash cut: S0065 r2), neither its pre nor its post bytes. Writes nothing; any error
+    answers no."""
+    if f.pre is None or EMPTY.sha in (f.pre, f.post):
+        return False  # an empty file is then at pre or at post
+    parent, base = _parent(f.canonical_path)
+    try:
+        h = handles.at(parent)
+        if write_mode(h) is Mode.SWAP:
             return False
         st = h.stat(base)
-        if st is None:
-            return True
-        return claim and mode is Mode.PLAIN and st.kind is Kind.FILE and h.read(base) == b""
+        return st is not None and st.kind is Kind.FILE and h.read(base) == b""
     except (OSError, PathMovedError):
         return False
 
 
 def _missing_back(handles: Handles, record: Record, created: frozenset[str], stop: Stopped) -> RestoreOutcome:
     """A try that stops still puts back every replaced file that is missing on a volume without the swap (S0065 red
-    team r1 F2): its put-back writes only into an empty name (`_put_back_plainly`), so it never touches another
+    team r1 F2): its put-back writes only into a free name (`_put_back_plainly`), so it never touches another
     program's bytes, and otherwise the stop would not name it and Keep would leave the ledger without it. Each such
     file is checked and restored alone, as a full try does (step 2, then step 3 for it); a stop or an error there is
-    the outcome instead of `stop`, naming that file. Every other file stays as the stop left it."""
+    the outcome instead of `stop`, naming that file. An empty replaced file there is checked too, so the stop names
+    it (`foreign`, detail `empty`: the claim of a put-back a crash cut would otherwise go unnamed beside another
+    file's stop; S0065 r2). Every other file stays as the stop left it."""
     for f in reversed(record.files):
-        if f.canonical_path == stop.path or not _missing(handles, f):
+        if f.canonical_path == stop.path or not (missing(handles, f) or _empty(handles, f)):
             continue
         try:
             x = _check(handles, record, f, created=created)

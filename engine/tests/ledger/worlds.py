@@ -31,7 +31,7 @@ from dataclasses import dataclass
 
 from ledger_engine.ledger.core import journal
 from ledger_engine.ledger.core.journal import Record, State
-from ledger_engine.ledger.core.recovery import Cause
+from ledger_engine.ledger.core.recovery import EMPTY_DETAIL, Cause
 from ledger_engine.ledger.restore import Failed, Resolved, RestoreOutcome, Stopped, recover_journal
 from ledger_engine.ledger.writer import Change, Commit, sha256
 from tests.fakes.memfs import MemFS, MemLocks, tears
@@ -307,7 +307,20 @@ def check_recovered(fs: MemFS, w: World, out: RestoreOutcome | None) -> None:
     """What recovery ends with when no outside program acts (§8.1, §10): resolved, files at pre; or no `.open`
     journal to resolve, files at pre (or, under `.closed`, at post); in the disk now and in every power-loss state.
     A stop at a created path that holds our own file (the save placed it before it was cut) is the owner's choice:
-    checked by `check_taken`, then the user deletes it and presses Retry."""
+    checked by `check_taken`, then the user deletes it and presses Retry. So is a stop at an empty file at a replaced
+    path on a drive without the swap, which only an undo cut right after its claim leaves here (owner, 2026-10-31:
+    "Empty = never ours (Recommended)"): the backup holds the pre bytes, the user deletes the empty file and presses
+    Retry."""
+    if isinstance(out, Stopped) and out.detail == EMPTY_DETAIL:
+        assert out.cause is Cause.FOREIGN, out
+        assert w.plain, "the claim exists only where no rename is exclusive"
+        assert out.path in {t.path for t in w.targets if t.pre is not None}, out
+        assert fs.file(out.path) == b"", out
+        for state in (fs, *fs.power_loss_states()):
+            check_disk(state, w)  # the empty file only after a power loss, under `.open`, its backup good
+            assert set(journals(state)) == {State.OPEN}, "the journal stops: it stays .open"
+        fs.outside_remove(out.path)
+        out = recover(fs)
     if isinstance(out, Stopped) and out.cause is Cause.CREATED_PATH_TAKEN:
         check_taken(fs, w, out)
         assert out.path is not None

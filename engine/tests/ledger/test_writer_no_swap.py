@@ -19,8 +19,8 @@ from functools import cache
 import pytest
 
 from ledger_engine.ledger.core.journal import State
-from ledger_engine.ledger.core.recovery import Cause
-from ledger_engine.ledger.restore import Resolved, Stopped
+from ledger_engine.ledger.core.recovery import EMPTY_DETAIL, Cause
+from ledger_engine.ledger.restore import Failed, Resolved, Stopped
 from ledger_engine.ledger.writer import Landed, NotSaved, Reason, Step, Unfinished, durable_commit, sha256
 from tests.fakes.memfs import Crash, MemFS
 from tests.ledger.test_writer import check_told
@@ -599,18 +599,18 @@ def test_an_io_error_part_way_through_a_write_is_told_truthfully_and_recovery_re
 MAIN, RT_MAIN = "/w/L/main.bean", ".main.bean.ft-restore-s1-j7.tmp"
 
 
-def test_a_file_put_at_a_missing_files_path_up_to_its_put_back_is_never_replaced() -> None:
+@pytest.mark.parametrize("theirs", [FOREIGN, b""], ids=["bytes", "empty"])
+def test_a_file_put_at_a_missing_files_path_up_to_its_put_back_is_never_replaced(theirs: bytes) -> None:
     """Verifier and red team r1 F1: on `plain` the put-back first claims the empty name with an exclusive create
     (`O_EXCL`) of an empty file. A file another program puts at that path at the last moment before the claim (on
     7c78838c: after the check that the name is free, right before the plain rename onto it) stays, and the try stops
-    (`foreign`) with its restore copy kept for the next try."""
+    (`foreign`) with its restore copy kept for the next try. An empty one too (S0065 r2: a program that truncates,
+    then writes; with the claim's `EEXIST` ignored, the check after it would take it for the claim)."""
     w, state = _missing_state("plain")
-    _hook(
-        state, ("create /w/L:main.bean", f"move /w/L:{RT_MAIN},main.bean"), lambda: state.outside_write(MAIN, FOREIGN)
-    )
+    _hook(state, ("create /w/L:main.bean", f"move /w/L:{RT_MAIN},main.bean"), lambda: state.outside_write(MAIN, theirs))
     out = recover(state)
     assert out == Stopped(Cause.FOREIGN, MAIN), out
-    assert state.file(MAIN) == FOREIGN
+    assert state.file(MAIN) == theirs
     assert state.file(w.targets[2].rtemp) == w.targets[2].pre
 
 
@@ -648,25 +648,32 @@ def test_a_claimed_name_that_is_not_our_empty_file_at_its_check_is_never_replace
         assert state.file("/w/L/x") == b""
 
 
-def test_an_empty_file_at_a_missing_files_path_is_the_claim_of_a_cut_try_and_is_put_back() -> None:
-    """A try cut after its claim leaves an empty file at the path (red team r1 F1's fix): the next try takes it for
-    the claim (no bytes are at stake) and puts the old version back."""
-    w, state = _missing_state("plain")
-    state.outside_write(MAIN, b"")
+@pytest.mark.parametrize("volume", NO_SWAP)
+def test_an_empty_file_at_a_replaced_path_is_kept_and_the_stop_says_it_is_empty(volume: str) -> None:
+    """Round 2 (owner, 2026-10-31: "Empty = never ours (Recommended)"; red team r2 H1, verifier r2 F1): an empty file
+    at a replaced path is another program's on every drive (a program that truncates, then writes: `script >
+    file`, an in-place editor), never taken for a claim: the try stops, writes nothing, and says the file is empty
+    (`detail`), so the screen can say the old version is in the backup. Once the user deletes it, Retry puts the old
+    version back."""
+    w, state = _missing_state(volume) if volume == "plain" else _missing_state_hfs()
+    state.outside_write(MAIN, b"", new_inode=True)
+    before = state.snapshot()
+    assert recover(state) == Stopped(Cause.FOREIGN, MAIN, detail=EMPTY_DETAIL)
+    assert state.snapshot() == before
+    state.outside_remove(MAIN)
     check_recovered(state, w, recover(state))
     assert state.file(MAIN) == w.targets[2].pre
 
 
-def test_on_hfs_an_empty_file_at_a_missing_files_path_is_foreign() -> None:
-    """The empty claim exists only on `plain`; with RENAME_EXCL (HFS+) the put-back is one exclusive rename, so an
-    empty file at a replaced path there is another program's: the try stops."""
+def _missing_state_hfs() -> tuple[World, MemFS]:
+    """`no_swap` (HFS+ journals its folders, so no power loss splits a replace there): a crash right after the plain
+    rename onto the root, then someone removed it."""
     w = world(volume="no_swap")
     w.fs.inject(clean_effects("no_swap").index("move /w/L:.main.bean.ft-s1-j7.tmp,main.bean") + 1, crash=True)
     with pytest.raises(Crash):
         durable_commit(w.fs, w.commit)
-    w.fs.outside_write(MAIN, b"", new_inode=True)
-    assert recover(w.fs) == Stopped(Cause.FOREIGN, MAIN)
-    assert w.fs.file(MAIN) == b""
+    w.fs.outside_remove(MAIN)
+    return w, w.fs
 
 
 @cache
@@ -826,15 +833,19 @@ def test_a_try_that_stops_never_puts_back_a_file_at_post(post: str) -> None:
     assert w.fs.snapshot() == before
 
 
-def test_on_apfs_a_try_that_stops_is_answered_as_before_whatever_is_absent() -> None:
-    """On a swap volume the pass for missing files does nothing: a replaced file someone removed is not looked at,
-    and the stop names the file the checks stopped at."""
+@pytest.mark.parametrize("root", ["absent", "empty"])
+def test_on_apfs_a_try_that_stops_is_answered_as_before_whatever_is_absent(root: str) -> None:
+    """On a swap volume the pass for missing (and empty) files does nothing: a replaced file someone removed or
+    emptied is not looked at, and the stop names the file the checks stopped at."""
     w = world()
     w.fs.inject(clean_effects("swap").index(f"rename {JD}:{NAME}.open,{NAME}.closed"), crash=True)
     with pytest.raises(Crash):
         durable_commit(w.fs, w.commit)
     w.fs.outside_write("/w/L/inc/a.bean", EDITOR)
-    w.fs.outside_remove(MAIN)
+    if root == "absent":
+        w.fs.outside_remove(MAIN)
+    else:
+        w.fs.outside_write(MAIN, b"")
     before = w.fs.snapshot()
     assert recover(w.fs) == Stopped(Cause.FOREIGN, "/w/L/inc/a.bean")
     assert w.fs.snapshot() == before
@@ -905,3 +916,241 @@ def test_the_oracle_allows_at_a_created_path_only_a_part_of_our_bytes() -> None:
     w.fs.outside_write("/w/L/prices.bean", FOREIGN)
     with pytest.raises(AssertionError, match="not ours"):
         check_disk(w.fs, w)
+
+
+# -- round 2 (S0065 red team r2 H1, M1, overflow 1; verifier r2 F1-F3; owner, 2026-10-31: "Empty = never ours") ------
+
+SCRIPT = b"2026-10-31 price AAPL 230.00 USD ; a script's output, written after its truncate\n"
+
+
+def _object(fs: MemFS, path: str) -> tuple[int, int] | None:
+    """The identity of the object at `path` (None: no entry), through the port as the engine sees it."""
+    folder, _, name = path.rpartition("/")
+    with fs.open_dir(folder) as d:
+        st = d.stat(name)
+    return None if st is None else st.identity
+
+
+@pytest.mark.parametrize("volume", NO_SWAP)
+def test_a_file_an_outside_program_truncated_before_the_re_hash_is_never_replaced_by_the_rollback(
+    volume: str,
+) -> None:
+    """Red team r2 H1: `script > inc/a.bean` truncates the file at once and writes seconds later. The save's re-hash
+    sees the empty file (`changed`, nothing replaced) and rolls back; the rollback must not put the old version over
+    the empty file (round 1 took it for its own claim on `plain`), or the script writes into a file no longer named.
+    The file stays the script's: "not saved", never "unchanged", and the journal stays for recovery to ask."""
+    w = world(volume=volume)
+    path = "/w/L/inc/a.bean"
+    held: dict[str, tuple[int, int] | None] = {}
+
+    def truncate() -> None:
+        w.fs.outside_write(path, b"")
+        held["obj"] = _object(w.fs, path)
+
+    _hook(w.fs, "sync /w/L/inc:", truncate)  # after its staging, before its re-hash
+    out = durable_commit(w.fs, w.commit)
+    assert _object(w.fs, path) == held["obj"], f"the script's file was replaced; told {out}"
+    assert out == NotSaved(Step.REPLACE, Reason.CHANGED, False, True, path), out  # never "unchanged"
+    w.fs.outside_write(path, SCRIPT)  # the script writes through the file it holds open
+    assert recover(w.fs) == Stopped(Cause.FOREIGN, path)
+    assert w.fs.file(path) == SCRIPT
+
+
+EDITED = b'include "inc/a.bean"\n; the user\'s in-place save\n'
+
+
+@pytest.mark.parametrize("volume", NO_SWAP)
+def test_an_in_place_editor_save_the_re_hash_caught_is_kept_by_the_rollback(volume: str) -> None:
+    """Verifier r2 F1: an editor saves the root in place (truncate, then write) while a save runs; the truncate
+    lands before the re-hash, the write while the rollback runs. Nothing of the editor's is lost."""
+    w = world(volume=volume)
+    w = replace(w, commit=replace(w.commit, changes=(w.commit.changes[0], w.commit.changes[2])))
+    step = {"n": 0}
+
+    def hook(_: int, seen: str) -> None:
+        if seen == "sync /w/L:" and step["n"] == 0 and w.fs.file("/w/L/.main.bean.ft-s1-j7.tmp") is not None:
+            step["n"] = 1
+            w.fs.outside_write(MAIN, b"")  # the editor's truncate
+        elif step["n"] == 1 and (
+            (seen.startswith("move /w/L:.main.bean.ft-restore") and seen.endswith(",main.bean"))
+            or seen.startswith("rename /w/L:.main.bean.ft-restore")
+        ):
+            step["n"] = 2
+            w.fs.outside_write(MAIN, EDITED)  # its write, into the file it holds open
+
+    w.fs.on_effect = hook
+    out = durable_commit(w.fs, w.commit)
+    if step["n"] == 1:
+        w.fs.outside_write(MAIN, EDITED)
+    assert w.fs.file(MAIN) == EDITED, f"the editor's save is lost; told {out}"
+
+
+def test_a_crash_right_after_the_claim_is_a_stop_the_user_clears_by_deleting_the_empty_file() -> None:
+    """The cost of the owner's choice: an undo cut right after it claimed a missing file's name leaves an empty file
+    there, which the next try takes for another program's: it stops, says the file is empty, and writes nothing (the
+    old version stays in the backup). The user deletes the empty file and presses Retry: the old version is back."""
+    w, state = _missing_state("plain")
+    probe = _missing_state("plain")[1]
+    start = len(probe.effects)
+    recover(probe)
+    claimed = probe.effects.index("fsync /w/L:main.bean", start)  # the claim's own data sync: the empty file stands
+    state.inject(claimed + 1, crash=True)
+    with pytest.raises(Crash):
+        recover(state)
+    assert state.file(MAIN) == b""
+    backup = state.file(f"/w/local/backups/{NAME}/2-main.bean")
+    out = recover(state)
+    assert out == Stopped(Cause.FOREIGN, MAIN, detail=EMPTY_DETAIL), out
+    assert state.file(MAIN) == b""
+    assert backup == w.targets[2].pre, "the old version is in the backup"
+    state.outside_remove(MAIN)
+    check_recovered(state, w, recover(state))
+    assert state.file(MAIN) == w.targets[2].pre
+
+
+def test_an_empty_hard_linked_file_at_a_missing_path_stops_and_writes_nothing() -> None:
+    """Red team r2 overflow 1: an empty file with a second link at a missing file's path was judged missing on
+    `plain` and a restore copy was written before the link check stopped it. Now it is another program's file: the
+    try stops at the checks, writing nothing."""
+    _, state = _missing_state("plain")
+    state.outside_write(MAIN, b"")
+    state.outside_link(MAIN, "/w/L/x")
+    before = state.snapshot()
+    assert recover(state) == Stopped(Cause.FOREIGN, MAIN, detail=EMPTY_DETAIL)
+    assert state.snapshot() == before
+
+
+@pytest.mark.parametrize("volume", NO_SWAP)
+def test_keep_refuses_while_a_replaced_file_is_missing_and_names_it(volume: str) -> None:
+    """Red team r2 M1, verifier r2 F2 (owner, 2026-10-31: "Keep refuses, naming the file, while a ledger file is
+    missing"): Keep would leave the ledger without the file (its bytes only in the backup). It refuses, naming the
+    file, and writes nothing; Retry puts the file back, and Keep is then possible."""
+    from ledger_engine.ledger.recover_all import Refused, keep
+    from tests.fakes.memfs import MemLocks
+
+    w, state = _missing_state(volume) if volume == "plain" else _missing_state_hfs()
+    before = state.snapshot()
+    assert keep(state, MemLocks(), JD, NAME) == Refused("missing", MAIN)
+    assert state.snapshot() == before
+    check_recovered(state, w, recover(state))
+
+
+def test_keep_after_a_failed_try_refuses_while_the_root_is_missing(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Verifier r2 F2's case: a try that fails (a read error on another file) does not put the missing root back,
+    and Keep, offered for `failed`, refuses while it is missing; the next Retry puts it back."""
+    from ledger_engine.ledger.recover_all import Refused, keep
+    from tests.fakes import memfs
+    from tests.fakes.memfs import MemLocks
+
+    w, state = _missing_state("plain")
+    real = memfs.MemDir.read
+
+    def read(self: memfs.MemDir, name: str) -> bytes | None:
+        if name == "a.bean":
+            raise OSError(errno.EIO, "I/O error")
+        return real(self, name)
+
+    monkeypatch.setattr(memfs.MemDir, "read", read)
+    assert isinstance(recover(state), Failed)
+    assert state.file(MAIN) is None
+    monkeypatch.setattr(memfs.MemDir, "read", real)
+    assert keep(state, MemLocks(), JD, NAME) == Refused("missing", MAIN)
+    check_recovered(state, w, recover(state))
+
+
+def test_on_apfs_keep_still_keeps_a_replaced_file_someone_removed() -> None:
+    """Only a drive without the swap can lose a file by a split replace; on APFS an absent replaced file was removed
+    by someone, and Keep keeps that, as before."""
+    from ledger_engine.ledger.recover_all import Done, keep
+    from tests.fakes.memfs import MemLocks
+
+    w = world()
+    w.fs.inject(clean_effects("swap").index("swap /w/L:.main.bean.ft-s1-j7.tmp,main.bean") + 1, crash=True)
+    with pytest.raises(Crash):
+        durable_commit(w.fs, w.commit)
+    w.fs.outside_remove(MAIN)
+    assert keep(w.fs, MemLocks(), JD, NAME) == Done()
+
+
+def test_a_file_at_pre_whose_backup_folder_is_a_link_still_resolves() -> None:
+    """Verifier r2 F3 (spec §8.1 step 2: only "a backup needed for a restore" is checked): every file at pre on
+    `plain`, so no backup is read, and a backup folder replaced by a link does not stop the try."""
+    w = world(volume="plain")
+    first = next(i for i, e in enumerate(clean_effects("plain")) if e.startswith("create /w/L/inc:"))
+    w.fs.inject(first, crash=True)
+    with pytest.raises(Crash):
+        durable_commit(w.fs, w.commit)
+    w.fs.outside_move(f"/w/local/backups/{NAME}", "/w/local/elsewhere")
+    w.fs.outside_symlink(f"/w/local/backups/{NAME}", "/w/local/elsewhere")
+    assert recover(w.fs) == Resolved(NAME)
+
+
+def _stop_points() -> list[int]:
+    _, s = _missing_state("plain")
+    s.outside_write("/w/L/inc/a.bean", EDITOR)
+    start = len(s.effects)
+    assert recover(s) == Stopped(Cause.FOREIGN, "/w/L/inc/a.bean")
+    return list(range(len(s.effects) - start))
+
+
+@pytest.mark.parametrize("k", _stop_points())
+def test_a_crash_at_every_effect_of_a_stopping_trys_put_back_then_every_power_loss(k: int) -> None:
+    """Red team r2's sweep under the owner's rule: a try that stops on an editor's change to `inc/a.bean` and puts
+    the missing root back, crashed at each of its effects, then every power-loss state. The root is then missing,
+    empty (our cut claim) or at pre. Missing: the next try puts it back and stops on `inc/a.bean`. Empty: the next
+    try names the root (detail `empty`), never `inc/a.bean` alone; the user deletes it and presses Retry. Then Keep
+    keeps the root at pre and the editor's file."""
+    from ledger_engine.ledger.recover_all import Done, keep
+    from tests.fakes.memfs import MemLocks
+
+    w, s = _missing_state("plain")
+    pre = w.targets[2].pre
+    s.outside_write("/w/L/inc/a.bean", EDITOR)
+    s.inject(len(s.effects) + k, crash=True)
+    with pytest.raises(Crash):
+        recover(s)
+    for p in (s, *s.power_loss_states()):
+        assert p.file(MAIN) in (None, b"", pre), p.file(MAIN)
+        out = recover(p)
+        if out == Stopped(Cause.FOREIGN, MAIN, detail=EMPTY_DETAIL):
+            assert p.file(MAIN) == b""
+            p.outside_remove(MAIN)
+            out = recover(p)
+        assert out == Stopped(Cause.FOREIGN, "/w/L/inc/a.bean"), out
+        assert p.file(MAIN) == pre
+        assert keep(p, MemLocks(), JD, NAME) == Done()
+        assert p.file(MAIN) == pre
+        assert p.file("/w/L/inc/a.bean") == EDITOR
+
+
+def test_an_empty_file_beside_another_files_stop_is_named() -> None:
+    """The claim of a cut put-back beside another file's stop: the stop names the empty root, not only the other
+    file, so the screen tells the user to delete it (else Keep would keep an empty root unseen)."""
+    _, state = _missing_state("plain")
+    state.outside_write(MAIN, b"")
+    state.outside_write("/w/L/inc/a.bean", EDITOR)
+    before = state.snapshot()
+    assert recover(state) == Stopped(Cause.FOREIGN, MAIN, detail=EMPTY_DETAIL)
+    assert state.snapshot() == before
+
+
+def test_an_empty_file_whose_backup_is_bad_stops_without_the_empty_detail() -> None:
+    """The screen says "the old version is in the backup" only when it is: with the backup gone the stop is a plain
+    `foreign` one, writing nothing."""
+    _, state = _missing_state("plain")
+    state.outside_write(MAIN, b"")
+    state.outside_remove(f"/w/local/backups/{NAME}/2-main.bean")
+    before = state.snapshot()
+    assert recover(state) == Stopped(Cause.FOREIGN, MAIN)
+    assert state.snapshot() == before
+
+
+def test_on_apfs_an_empty_file_at_a_replaced_path_stops_without_the_empty_detail() -> None:
+    """On a swap volume deleting the empty file would not let Retry put the old version back (an absent file there
+    stops too), so the stop does not say so."""
+    w = world()
+    w.fs.inject(clean_effects("swap").index("swap /w/L:.main.bean.ft-s1-j7.tmp,main.bean") + 1, crash=True)
+    with pytest.raises(Crash):
+        durable_commit(w.fs, w.commit)
+    w.fs.outside_write(MAIN, b"")
+    assert recover(w.fs) == Stopped(Cause.FOREIGN, MAIN)
