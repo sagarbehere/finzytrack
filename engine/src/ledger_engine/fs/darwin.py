@@ -519,9 +519,8 @@ class DarwinLegacyLocks:
     `flock(LOCK_EX | LOCK_NB)`: the call portalocker 3.2.0 makes on POSIX for `lock(fh, LOCK_EX | LOCK_NB)` (its
     `PosixLocker` calls `fcntl.flock`; `EAGAIN` or `EACCES` is its `AlreadyLocked`, any other error its
     `LockException`), so the detection sees the legacy app's lock and is tested against a holder that takes it with
-    portalocker 3.2.0 itself (`tests/ledger/test_save.py`). TODO(BL-0026): whether the engine calls portalocker
-    itself (it brings pywin32 on Windows) is the owner's question, `design/inbox/20261030-legacy-lock-primitive.md`;
-    Windows (`msvcrt.locking` over the first 64 KiB) is BL-0087's."""
+    portalocker 3.2.0 itself (`tests/ledger/test_save.py`); the engine does not import portalocker (it brings pywin32
+    on Windows; ADR-0062's 2026-10-31 amendment). Windows (`msvcrt.locking` over the first 64 KiB) is BL-0087's."""
 
     def try_lock(self, path: str) -> DarwinLock | LegacyAbsent | LegacyHeld:
         split_absolute(path)
