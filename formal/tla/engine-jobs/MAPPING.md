@@ -564,4 +564,14 @@ effect, the locks, the observations, the load, the commit point, the close), and
 the model told; after a death, the engine's reading of the disk (`save.outcome`) against `DiskOutcome`. Where the
 model and the code differ (the swap-backs, the old temp rule, an undo that removes a created file, an edit the code's
 backup step sees first, an owed R4 run inside the save, a stale mirror) the replay stops that trace, counted by reason
-(BL-0161, BL-0152, BL-0125). Recover-all's per-journal tries through the engine are BL-0164.
+(BL-0161, BL-0152, BL-0125), the counts pinned. Recover-all's per-journal tries through the engine are BL-0164.
+
+What the save replay claims (S0064 round 1): a model step counts as walked only when the code carried it out at one
+of its hooks (`WALKED`); the save's syncs are never passed silently (`SYNC_STEPS`: deleting one fails the replay);
+each of its four comparisons (at each step, after the save, the answer, and the steps the code may pass) has a
+self-test that fails when it is disabled. Not walked, and so `PARTIAL` in the code map with the hand-written tests
+that cover them (`NOT_WALKED`): the reads with no hook (`S_Compare`'s kept-name branch, `S_ReadBack`, `RB_Check`,
+`S_Backup`'s re-hash; `test_writer.py`, `test_restore.py`), `S_R4Check` and `S_Release` (BL-0152), `S_Publish`
+(BL-0113). The kept-name concurrency path has no model-driven replay until BL-0161, nor does Unfinished told by the
+engine itself. `S_save_io_edit` reaches "not saved, changed" in the engine (an outside edit, then an I/O error before
+the journal is open).

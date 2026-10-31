@@ -16,7 +16,9 @@ the fake (as an editor would, durably), an engine death is raised there (`Crash`
 (`OSError`, before the effect), and the fake is compared with the model's state just before the model's step
 (`view`): the three files, this save's journal record, its temps (the save's and the restore's) and its backup. A
 model step the code carries out without an effect (the displaced check, the read-back, the save's own R4 check when
-none is owed) is passed only when it changed nothing the view shows. After the save, what the code answered is
+none is owed) is passed only when it changed nothing the view shows; the save's syncs (`SYNC_STEPS`) are never passed:
+each must be one of the code's effects. A step counts as walked only when the code carried it out at one of its hooks
+(`WALKED`; the rest, with their reasons, `NOT_WALKED`). After the save, what the code answered is
 compared with what the model told (`gh.told`): `Saved` is "saved", `Refused` "notsaved", a `NotSaved` before the
 journal is `.open` is the re-hash ("unchanged" or "changed"), one after it (the rollback resolved) "notsaved" for an
 I/O error and "changed" otherwise, `Unfinished` "unfinished"; and after an engine death (or our end of the engine
@@ -91,6 +93,10 @@ EARLY_RESTORE: Final = frozenset({"rb_chk", "rs_w", "rs_x", "rs_c", "rs_tmp"})
 """The rollback before the model's `RS_Temps` has run: the code removes each file's names of ours as it settles that
 file, root first (spec §8.1 step 3: a replaced file's save temp only after its pre bytes are back), the model removes
 them all at `RS_Temps`; so there a save temp of the code's is the model's, or already gone (`same`)."""
+SYNC_STEPS: Final = frozenset({"S_BackupSync", "S_JPartSync", "S_JDirSync", "S_TempSync", "S_DirSync", "S_CloseSync"})
+"""The save's durable steps: each is a sync of the code's (a file's data or a folder), so the code may never pass one
+without it (round 1, verifier F2: a sync changes nothing the view shows, so the passable rule alone let a deleted sync
+through)."""
 WRITE_PCS: Final = frozenset({"s_tw1", "s_tw2", "s_ts", "s_sw", "s_cmp", "s_ds", "s_rbk", "s_rmt"})
 
 STOPS: Mapping[str, str] = {
@@ -251,6 +257,14 @@ class Point:
             return ""
         return (RORD if self.pc in RESTORE else WORD)[self.fi - 1]
 
+    def visible(self) -> bool:
+        """The model's own step here changed what the view shows (passed by the code only for `RS_Temps`, whose
+        removals the code spreads over the rollback; the next comparison then shows them done)."""
+        if self.after is None:
+            return False
+        s = self.last["sv"]["s"]
+        return model_view(self.last, s) != model_view(self.after, s)
+
     def passable(self) -> bool:
         """The model's own step here changed nothing the view shows (the code may carry it out without an effect)."""
         if self.after is None:
@@ -368,6 +382,7 @@ class Driver:
         self.ep = ep
         self.where = where
         self.at = -1  # the point the code is at
+        self.landed = False  # the code reached `at` at one of its hooks (it carries out that point's step next)
         self.last_pc = ""
         self.rolling = False
         self.compared = 0
@@ -395,9 +410,11 @@ class Driver:
         self.last_pc = pc
         if self.at >= 0 and self.key(self.at) == (pc, file):
             return
+        if self.landed:
+            self.walked[self.ep.points[self.at].step] += 1  # the code carried out the step of the point it was at
+        self.landed = False
+        seen: list[str] = []  # steps passed on the way whose effect the next comparison shows (`RS_Temps`)
         for i in range(self.at + 1, len(self.ep.points)):
-            if i > 0:
-                self.walked[self.ep.points[i - 1].step] += 1  # the code has carried out the model's step before
             p = self.ep.points[i]
             self.at = i
             for e in p.events:
@@ -405,16 +422,25 @@ class Driver:
                     self.fs.outside_write(PATH[e.file], content(e.file, e.value))
                 elif e.kind == "kill":
                     self.compare(i)
+                    self.walked.update(seen)
                     msg = f"the model's engine ended at {p.pc}"
                     raise Crash(msg)
                 else:
                     self.compare(i)
+                    self.walked.update([*seen, "IOFail"])  # the I/O error is raised at the code's hook
                     self.rolling = p.pc in WRITE_PCS
                     self.last_pc = p.pc  # the code was cut here, at the model's step (the effect did not happen)
                     raise OSError(errno.ENOSPC, f"the model's I/O error at {p.pc}")
             if self.key(i) == (pc, file):
                 self.compare(i)
+                self.walked.update(seen)
+                self.landed = True
                 return
+            if p.visible():
+                seen.append(p.step)
+            if p.step in SYNC_STEPS:
+                msg = f"{self.where}: the code is at {pc} {file}, past the model's {p.step} {p.file} without its sync"
+                raise Divergence(msg)
             if not p.passable():
                 msg = (
                     f"{self.where}: the code is at {pc} {file}, past the model's {p.pc} {p.file} ({p.step}), which "
@@ -424,11 +450,13 @@ class Driver:
         msg = f"{self.where}: the code is at {pc} {file}, which the model's save does not reach"
         raise Divergence(msg)
 
-    def finish(self) -> None:
-        """The code has answered: every model step left must be one it carries out without an effect; the outside
-        edits made there are written."""
-        if self.at >= 0:
+    def finish(self, answered: bool) -> None:
+        """The code has ended (`answered`: it returned, not cut by an engine death): every model step left must be one
+        it carries out without an effect; the outside edits made there are written. Only the step of the point the
+        code was at when it answered counts as walked: the steps left had no hook of the code's."""
+        if answered and self.landed:
             self.walked[self.ep.points[self.at].step] += 1
+        self.landed = False
         for i in range(self.at + 1, len(self.ep.points)):
             p = self.ep.points[i]
             for e in p.events:
@@ -437,7 +465,9 @@ class Driver:
             if p.step and not p.passable():
                 msg = f"{self.where}: the code ended before the model's {p.pc} ({p.step}), which changes the disk"
                 raise Divergence(msg)
-            self.walked[p.step] += 1
+            if answered and p.step in SYNC_STEPS:
+                msg = f"{self.where}: the code answered before the model's {p.step} {p.file}, without its sync"
+                raise Divergence(msg)
 
     # -- the effects of the file-system port, by the model step they belong to --------------------------------------
 
@@ -447,8 +477,7 @@ class Driver:
         name = record(self.ep.s)
         last = self.last_pc
         if folder == f"{BD}/{name}":  # the model backs up R only (N did not exist in its first save)
-            synced = op == "sync" or (op == "fsync" and names.endswith(f"-{BASE['R']}"))
-            return ("s_bks", "") if synced else ("s_bk", "")
+            return ("s_bks", "") if op == "sync" else ("s_bk", "")  # the copy (data synced), then its folder's sync
         if op == "sync_file" or ((folder.startswith(ALD) or folder in ("/", "/w")) and folder != JD):
             return "s_bk", ""
         if folder == JD:
@@ -480,7 +509,7 @@ class Driver:
                 if op == "write":
                     return "s_tw2", f
                 if op in ("fsync", "rename") and suffix == "new":
-                    return "s_ts", f
+                    return "s_tw2", f  # written and synced at the staging name, renamed to the temp name...
                 if op in ("swap", "rename"):
                     return "s_sw", f
                 if op == "remove" and (self.rolling or last in RESTORE):
@@ -488,8 +517,12 @@ class Driver:
                 if op == "remove":
                     return "s_rmt", ""
             if op == "sync":
+                if last == "s_tw2" and not self.rolling:
+                    return "s_ts", self._file_of(last)  # ...and that name made durable (`S_TempSync`)
                 if last == "s_sw" and not self.rolling:
                     return "s_ds", self._file_of(last)
+                if last == "rs_c":
+                    return "rs_sync", ""  # the restore's folders synced after its last put-back (`RS_Sync`)
                 return last, self._file_of(last)
         msg = f"{self.where}: an effect the replay cannot place: {label}"
         raise Divergence(msg)
@@ -645,7 +678,7 @@ def replay_save(fs: MemFS, ep: Episode, where: str, tally: Tally) -> None:
         assert ep.killed, f"{where}: the code's engine died where the model's did not"
     finally:
         fs.on_effect = None
-    driver.finish()
+    driver.finish(answered=out is not None)
     assert driver.locks is not None
     assert not driver.locks.held, f"{where}: the save left ledger-set locks held: {driver.locks.held}"  # S_Release
     told = told_of(out, fs, plan)
@@ -675,8 +708,14 @@ def branches(ep: Episode, out: sv.SaveOutcome | None) -> Iterator[str]:
         if last in RESTORE:
             yield "an engine death during the rollback"
     if "IOFail" in ep.actions:
-        yield "an I/O error before the journal is open" if isinstance(out, NotSaved) and out.step in (
-            Step.BACKUP, Step.JOURNAL) else "an I/O error after the journal is open: the rollback"  # fmt: skip
+        early = isinstance(out, NotSaved) and out.step in (Step.BACKUP, Step.JOURNAL)
+        yield (
+            "an I/O error before the journal is open"
+            if early
+            else "an I/O error after the journal is open: the rollback"
+        )
+        if early and ep.told == "changed":
+            yield "an I/O error before the journal is open, after an outside edit: not saved, changed"
     if ep.actions["RS_Swap"]:
         yield "the rollback puts pre bytes back"
     if isinstance(out, sv.Refused):
@@ -697,12 +736,22 @@ BRANCHES: tuple[str, ...] = (
     "an engine death before the commit point",
     "an engine death past the commit point",
     "an engine death after the close",
+    "an engine death during the rollback",
     "an I/O error before the journal is open",
+    "an I/O error before the journal is open, after an outside edit: not saved, changed",
     "an I/O error after the journal is open: the rollback",
     "the rollback puts pre bytes back",
     "an outside edit during the save",
 )
 """The save's branches the corpus must walk through the code (S0064)."""
+
+NOT_WALKED_BRANCHES: Mapping[str, str] = {
+    "Unfinished told by the engine itself (the rollback could not resolve)": (
+        "the model's rollback stops only by its old temp rule or a restore swap-back (the stops `temp_rule` and "
+        "`restore_swap_back`, BL-0161), or after a second I/O error (no world has two)"
+    ),
+}
+"""The save's branches the replay does not walk through the code, each with its reason."""
 
 
 def replay_trace(trace: State, tally: Tally) -> None:
@@ -756,9 +805,10 @@ def test_the_engine_save_follows_the_model(world_name: str) -> None:
 
 
 def test_the_replay_walks_the_save_path() -> None:
-    """Every step of the model's save that the code carries out is walked through the code at least once, and every
-    branch of `BRANCHES`; what the replay does not walk is named with its reason (`NOT_WALKED`)."""
+    """Every step of `WALKED` is walked through the code at least once, and every branch of `BRANCHES`; what the
+    replay does not walk is named with its reason (`NOT_WALKED`, `NOT_WALKED_BRANCHES`)."""
     tally = every_world()
+    assert set(tally.walked) <= set(WALKED), f"counted as walked, with no hook of the code's: {dict(tally.walked)}"
     missing_steps = [a for a in WALKED if tally.walked[a] == 0]
     assert not missing_steps, f"the replay never walks {missing_steps}: widen the save worlds in gen_traces.py"
     missing = [b for b in BRANCHES if tally.branches[b] == 0]
@@ -767,37 +817,165 @@ def test_the_replay_walks_the_save_path() -> None:
 
 
 WALKED: tuple[str, ...] = (
-    "S_R4Check", "S_Locks", "S_Gate", "S_Load", "S_Recheck", "S_Commit", "S_Backup", "S_BackupSync", "S_JPart",
-    "S_JPartSync", "S_JOpen", "S_JDirSync", "S_TempStart", "S_TempDone", "S_TempSync", "S_Swap", "S_Compare",
-    "S_DirSync", "S_ReadBack", "S_RemoveTemps", "S_Close", "S_CloseSync", "S_Saved", "S_Publish", "S_Release",
-    "RB_Check", "RS_Write", "RS_Swap", "RS_Compare", "RS_Temps", "RS_Sync", "RS_Resolve", "IOFail",
+    "S_Locks", "S_Gate", "S_Load", "S_Recheck", "S_Commit", "S_Backup", "S_BackupSync", "S_JPart", "S_JPartSync",
+    "S_JOpen", "S_JDirSync", "S_TempStart", "S_TempDone", "S_TempSync", "S_Swap", "S_DirSync", "S_RemoveTemps",
+    "S_Close", "S_CloseSync", "S_Saved", "RS_Write", "RS_Swap", "RS_Compare", "RS_Temps", "RS_Sync", "RS_Resolve",
+    "IOFail",
 )  # fmt: skip
-"""The model's save steps the replay walks through the code (each marked `@tla_action` on the code that carries it
-out, `backend/tests/architecture/test_tla_mapping.py`)."""
+"""The model's save steps the replay walks through the code: the code reached the step at one of its hooks and went
+on (`Driver.reach`, `finish`), the I/O error raised at a hook, or (`RS_Temps` only) the step's effect shown by the
+comparison at the next hook. A step the model passes without a hook of the code's is not counted, so deleting the
+code that carries out one of these (a folder's sync, say) fails `test_the_replay_walks_the_save_path`. Each is marked
+`@tla_action` on that code (`backend/tests/architecture/test_tla_mapping.py`)."""
+
+NOT_WALKED: Mapping[str, str] = {
+    "S_R4Check": "a read of the records, with no hook; an owed R4 runs inside the save with BL-0152 (a stop)",
+    "S_WaitR4": "a seeded bug's action only",
+    "S_Compare": (
+        "a read of what the swap displaced, with no hook; the replay sees only that the code went on when the model "
+        "found its own bytes (the other branch is a stop, BL-0161); `test_writer.py` checks the kept-name branch"
+    ),
+    "S_ReadBack": "a read, with no hook; the model's read-back fails only after a stop (BL-0161); `test_writer.py`",
+    "S_Publish": "not built (BL-0113)",
+    "S_Release": "no hook; the replay asserts every ledger-set lock released after each save; the queued R4 is BL-0152",
+    "RB_Check": "reads, with no hook; its stopping branches are stops (BL-0161); `test_restore.py`",
+}
+"""The model's save steps the replay does not count as walked, each with its reason (`PARTIAL` or `PLANNED` in the
+code map; S0064 round 1, verifier F2)."""
+
+
+def test_the_save_steps_are_the_models() -> None:
+    """`WALKED` and `NOT_WALKED` together are the model's save steps (its `S_*`, `RB_*`, `RS_*` and `IOFail`), each in
+    one of them: a step added to the model fails here until it is placed."""
+    model = (REPO / "formal" / "tla" / "engine-jobs" / "EngineJobs.tla").read_text(encoding="utf-8")
+    steps = set(re.findall(r"^((?:S|RB|RS)_[A-Za-z0-9]+) ==", model, re.MULTILINE)) | {"IOFail"}
+    assert not set(WALKED) & set(NOT_WALKED)
+    assert set(WALKED) | set(NOT_WALKED) == steps
+
+
+STOP_COUNTS: Mapping[str, int] = {
+    "r4_in_save": 17, "backup_check": 3, "created_path": 2, "swap_back": 1, "cut": 3, "after_stop": 1,
+}  # fmt: skip
+"""The saves of the corpus the replay does not follow, by reason (`STOPS`); pinned, so a regenerated corpus or a
+changed stop rule shows here what it stops."""
 
 
 def test_the_stops_are_counted() -> None:
-    """Every save the replay does not follow is counted under a reason of `STOPS`, and most are followed."""
+    """Every save the replay does not follow is counted under a reason of `STOPS`, as many as `STOP_COUNTS` says."""
     tally = every_world()
     assert set(tally.stops) <= set(STOPS), tally.stops
-    stopped = sum(tally.stops.values())
-    assert tally.saves > stopped, f"followed {tally.saves}, stopped {dict(tally.stops)}"
+    assert dict(tally.stops) == STOP_COUNTS, f"followed {tally.saves}, stopped {dict(tally.stops)}"
+    assert tally.saves > sum(STOP_COUNTS.values())
 
 
-def test_a_divergence_is_caught(monkeypatch: pytest.MonkeyPatch) -> None:
-    """The replay is not vacuous: a writer that leaves its temps beside the saved files fails it."""
+def _first_failure() -> str:
+    """The replay of every world run afresh: the message of its first failure, or "" (the self-tests below)."""
+    every_world.cache_clear()
+    try:
+        every_world()
+    except AssertionError as e:
+        return str(e)
+    finally:
+        every_world.cache_clear()
+    return ""
+
+
+# The replay is not vacuous: each of its four comparisons fails on a change only it sees, with its own message (S0064
+# round 1, verifier F1). Must not pass: with that comparison disabled, a later one fails with another message, or none.
+
+
+def test_a_skipped_step_is_caught(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The passable-step rule: a writer that leaves its temps beside the saved files skips the model's
+    `S_RemoveTemps`, which changes the disk."""
     from ledger_engine.ledger import writer
 
     def keep_temps(handles: object, targets: object) -> None:
         del handles, targets
 
     monkeypatch.setattr(writer, "_remove_temps", keep_temps)
-    every_world.cache_clear()
-    try:
-        with pytest.raises(AssertionError, match="S_RemoveTemps"):
-            every_world()
-    finally:
-        every_world.cache_clear()
+    assert re.search(r"past the model's s_rmt .*\(S_RemoveTemps\), which changes the disk", _first_failure())
+
+
+def test_a_save_that_stops_early_is_caught(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The same rule after the code answered (`Driver.finish`): a save that answers at once leaves the model's backup
+    undone."""
+
+    def answer_at_once(plan: sv.SavePlan, ports: sv.Ports, job: object) -> sv.SaveOutcome:
+        del plan, ports, job
+        return sv.Refused("ledger_changed", True)
+
+    monkeypatch.setattr(sv, "run", answer_at_once)
+    assert re.search(r"the code ended before the model's s_bk \(S_Backup\), which changes the disk", _first_failure())
+
+
+def test_a_skipped_sync_is_caught(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The save's syncs (`SYNC_STEPS`): a writer that stages its temp without the folder's sync is caught, though
+    nothing the view shows differs."""
+    from ledger_engine.ledger import writer
+
+    stage = writer._stage  # pyright: ignore[reportPrivateUsage]
+
+    class NoSync:
+        def __init__(self, h: Any) -> None:
+            self.h = h
+
+        def __getattr__(self, name: str) -> Any:
+            return getattr(self.h, name)
+
+        def sync(self) -> None:
+            pass
+
+    def stage_unsynced(h: Any, t: Any, mode: int, like: str | None) -> None:
+        unsynced: Any = NoSync(h)
+        stage(unsynced, t, mode, like)
+
+    monkeypatch.setattr(writer, "_stage", stage_unsynced)
+    assert re.search(r"past the model's S_TempSync [RN] without its sync", _first_failure())
+
+
+def test_a_wrong_step_is_caught(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The comparison at each step: a writer that stages other bytes than the plan's is caught at the step after its
+    write, before the read-back or the answer could tell."""
+    from dataclasses import replace as copy
+
+    from ledger_engine.ledger import writer
+
+    stage = writer._stage  # pyright: ignore[reportPrivateUsage]
+
+    def stage_other(h: Any, t: Any, mode: int, like: str | None) -> None:
+        stage(h, copy(t, change=copy(t.change, post=t.change.post + b"; other\n")), mode, like)
+
+    monkeypatch.setattr(writer, "_stage", stage_other)
+    assert re.search(r"at the model's s_ts [RN], the fake holds", _first_failure())
+
+
+def test_a_wrong_end_is_caught(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The comparison after the save: a save that leaves a temp behind after its last hook is caught there."""
+    run = sv.run
+
+    def leave_temp(plan: sv.SavePlan, ports: sv.Ports, job: Any) -> sv.SaveOutcome:
+        out = run(plan, ports, job)
+        if isinstance(out, sv.Saved):
+            fs = ports.fs
+            assert isinstance(fs, MemFS)
+            fs.outside_write(f"{LEDGER}/.{BASE['R']}.ft-{record(plan.job)}.tmp", content("R", POST[plan.job]))
+        return out
+
+    monkeypatch.setattr(sv, "run", leave_temp)
+    assert "after the save the fake holds" in _first_failure()
+
+
+def test_a_wrong_answer_is_caught(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The answer against what the model told: a writer whose "not saved" always says the files are unchanged (no
+    re-hash) is caught where an outside edit came before an I/O error (`S_save_io_edit`)."""
+    from ledger_engine.ledger import writer
+
+    def always_unchanged(handles: object, targets: object) -> bool:
+        del handles, targets
+        return True
+
+    monkeypatch.setattr(writer, "_unchanged", always_unchanged)
+    assert "the code tells 'unchanged'" in _first_failure()
 
 
 def test_the_disk_outcome_table_is_the_models() -> None:

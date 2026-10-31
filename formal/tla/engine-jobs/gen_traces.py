@@ -16,11 +16,12 @@ model in two ways only, and every step it takes is a step of the model's `Next`,
   user acts between that event and the dispatch has no counterpart in the code;
 - the actions in OUT are left out (their behaviour belongs to later pieces; the replay could only stop there).
 
-The corpus keeps, per state, only the variables the replay reads (`q`, `runs`, `eng`, `ctl`, `ses`, `pst`; the file
-system, the journals and the ghost are left out), and records the SHA-256 of the model, of each world's `.cfg`, of
+The corpus keeps, per state, only the variables the replays read (`KEEP_VARS`: the queue's, and around saves the
+file system, the records and what the user was told, `prune`; `engine/tests/ledger/test_save_conformance.py` replays
+the saves through the engine), each trace as deltas, and records the SHA-256 of the model, of each world's `.cfg`, of
 this script and of the TLA+ tools, so `backend/tests/platform/test_engine_jobs_conformance.py` fails on a stale
 corpus with this command in its message. The reader of TLC's trace values below reads only the shapes those
-variables use (records, sequences, sets, strings, integers, booleans) and refuses anything else.
+variables use (records, sequences, sets, functions, strings, integers, booleans) and refuses anything else.
 """
 
 from __future__ import annotations
@@ -120,6 +121,12 @@ WORLDS: dict[str, dict[str, Any]] = {
         "traces": 10, "depth": 100, "least": 40, "leave": ["cancel", "save_after_r4", "second_save_faults",
                                                            "io_after_first_swap"],
     },
+    # round 1 (verifier F3): an outside edit of a file the save writes, after its backup, then an I/O error before the
+    # journal is open, so the save ends in the engine with "not saved, changed" (the re-hash, §11)
+    "S_save_io_edit": {
+        "base": "S_save_crash", "set": {"MaxCrash": "0", "MaxReads": "0", "EdFiles": '{"R", "N"}'}, "traces": 10, "depth": 60,
+        "least": 10, "leave": ["cancel", "edit_after_backup", "io_after_edit"],
+    },
     # an engine death after the journal's close (the save has landed: told "saved" from the disk)
     "S_save_late_crash": {
         "base": "S_save_crash", "set": {"MaxIO": "0", "MaxEdits": "0"}, "traces": 6, "depth": 60, "least": 20,
@@ -172,6 +179,10 @@ LEAVE: dict[str, dict[str, str]] = {
     # every save refuse at its gate)
     "edit_before_commit": {"Editor": 'Busy /\\ RJ.k = "save" /\\ ~ctl.past'},
     "edit_past_commit": {"Editor": 'Busy /\\ RJ.k = "save" /\\ ctl.past'},
+    # an edit after the save's backup and before its journal is open, and an I/O error only after the edit and before
+    # the journal is open (round 1, verifier F3: the re-hash then finds the edit)
+    "edit_after_backup": {"Editor": 'Busy /\\ RJ.k = "save" /\\ ctl.pc \\in {"s_bks", "s_jp", "s_jps"}'},
+    "io_after_edit": {"IOFail": 'ctl.pc \\in PreJournalPcs /\\ n.ed = MaxEdits'},
     # an engine death only where a world wants it (S0064: with one death allowed, recover-all at boot took it first)
     "crash_in_r4": {"EngineCrash": 'RJ.k = "r4"'},
     "crash_in_save": {"EngineCrash": 'RJ.k = "save"'},

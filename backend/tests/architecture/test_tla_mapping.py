@@ -90,7 +90,8 @@ PLANNED: Mapping[str, str] = {
     **{a: SWITCH for a in ("CloseA", "QuitClose", "Assess")},
 }
 """Since S0064 (BL-0151 slice 5) the save's steps, its rollback and the restore are marked in the engine
-(`ledger_engine.tla`), each on an action `engine/tests/ledger/test_save_conformance.py` walks through the code."""
+(`ledger_engine.tla`); those `engine/tests/ledger/test_save_conformance.py` walks through the code (its `WALKED`)
+have no row here, the others are `PARTIAL` below (its `NOT_WALKED`)."""
 
 MODEL_UPDATE = "BL-0161"  # the model after the kept-name design and the owner's 2026-10-30 rules
 
@@ -104,11 +105,16 @@ PARTIAL: Mapping[str, str] = {
     "S_R4Check": R4_READS,  # the replay walks "no R4 owed"; an owed R4 runs inside the save with BL-0152 (it refuses
     # `check_pending` until then)
     "S_Release": R4_READS,  # the locks released; the R4 the save queues is BL-0152's
-    "S_Compare": MODEL_UPDATE,  # walked when the swap displaced our own bytes; an outside save goes to a kept name in
-    # the code, the model swaps it back (BL-0161)
-    "RS_Compare": MODEL_UPDATE,  # the same for the restore's swap
-    "RB_Check": MODEL_UPDATE,  # walked when the temp rule passes; the code's staging-name rule differs from the
-    # model's old one, and the code checks a created path (`created_path_taken`), which the model removes (BL-0161)
+    "S_Compare": MODEL_UPDATE,  # a read with no hook: the replay sees only that the code goes on when the swap
+    # displaced our own bytes; an outside save goes to a kept name in the code, the model swaps it back (BL-0161), so
+    # the kept-name branch is `test_writer.py`'s (it kills "always ours")
+    "RS_Compare": MODEL_UPDATE,  # walked when the restore's swap displaced our own bytes; the other branch as above
+    "RB_Check": MODEL_UPDATE,  # reads with no hook; the code's staging-name rule differs from the model's old one, and
+    # the code checks a created path (`created_path_taken`), which the model removes (BL-0161; `test_restore.py`)
+    "S_Backup": MODEL_UPDATE,  # the copy and its sync walked; the re-hash of the file is the code's (the model copies
+    # the plan's bytes unread: the stop `backup_check`, BL-0161), killed by `test_writer.py` (S0064 round 1, F2)
+    "S_ReadBack": MODEL_UPDATE,  # a read with no hook; the model's read-back fails only after an edit past the swap,
+    # which reaches a swap-back first (BL-0161); a skipped read-back is killed by `test_writer.py` (round 1, F2)
 }
 
 

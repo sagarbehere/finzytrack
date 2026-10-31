@@ -115,7 +115,7 @@ name only the variables that changed (`gen_traces.delta`). Regenerate it after a
 `EngineJobs.tla`, to a `.cfg` it uses or to the generator (the test fails until then, naming this command):
 
 ```sh
-python3 formal/tla/engine-jobs/gen_traces.py           # about 3.5 min (21 worlds); Java 21 and the pinned jar
+python3 formal/tla/engine-jobs/gen_traces.py           # about 3.5 min (22 worlds); Java 21 and the pinned jar
 python3 formal/tla/engine-jobs/gen_traces.py --check   # is the corpus current? (no Java)
 ```
 
