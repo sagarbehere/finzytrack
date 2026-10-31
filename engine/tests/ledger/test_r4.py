@@ -29,15 +29,17 @@ from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 
+import beancount.loader as beancount_loader
+import beancount.utils.encryption as beancount_encryption
 import pytest
 
 from ledger_engine.fs.darwin import DarwinLegacyLocks, DarwinLocks, for_this_os
 from ledger_engine.fs.port import DirHandle, FileSystem, Resolved
-from ledger_engine.ledger import overlay, r4
+from ledger_engine.ledger import beancount_port, overlay, r4
 from ledger_engine.ledger import save as sv
 from ledger_engine.ledger.core import journal
 from ledger_engine.ledger.core.journal import Record
-from ledger_engine.ledger.core.ledger_set import decode, digest
+from ledger_engine.ledger.core.ledger_set import Fingerprint, decode, digest
 from ledger_engine.ledger.policy import DesktopPolicy
 from ledger_engine.ledger.writer import Change, sha256
 
@@ -128,6 +130,14 @@ def save(w: World, changes: tuple[Change, ...] | None = None, *, load: sv.Load |
     return w.record()
 
 
+def another_save(rec: Record, session: str, job: str, **kw: str) -> bytes:
+    """`rec` as another save's record (its temp names follow its name)."""
+    out = replace(rec, session=session, job=job, **kw)
+    out = replace(out, backup_dir=f"{rec.backup_dir.rpartition('/')[0]}/{out.name}")
+    files = tuple(replace(f, temp=journal.temp_name(f.canonical_path.rpartition("/")[2], out.name)) for f in rec.files)
+    return journal.encode(replace(out, files=files))
+
+
 def fixed(value: str) -> Callable[[str], str]:
     def give(root: str) -> str:
         return value
@@ -203,14 +213,115 @@ def test_a_save_that_creates_a_file_passes(w: World) -> None:
     assert check(w).outcome == "pass"
 
 
-def test_no_pickle_cache_is_read_or_written(w: World) -> None:
-    """BL-0118, L1-09: R4's load is Beancount's own loader without `load_file`'s cache."""
+def test_no_pickle_cache_is_read_or_written(w: World, monkeypatch: pytest.MonkeyPatch) -> None:
+    """@regression-guard (S0066 verifier r1 F3: the code was right, its test vacuous; this one kills the `loadfile`
+    mutant). BL-0118, L1-09: R4's load is Beancount's own loader without `load_file`'s cache. A cache newer than the
+    ledger is planted and Beancount is made to write one after any load (its threshold is a second): `load_file` would
+    read the planted bytes (and fail) or replace them."""
     save(w)
+    monkeypatch.setattr(beancount_loader, "PICKLE_CACHE_THRESHOLD", -1.0)
     planted = w.root / ".main.bean.picklecache"
-    before = sorted(os.listdir(w.root))
+    planted.write_bytes(b"not a pickle")
+    os.utime(planted, (2_000_000_000, 2_000_000_000))
     assert check(w).outcome == "pass"
-    assert sorted(os.listdir(w.root)) == before
-    assert not planted.exists()
+    assert planted.read_bytes() == b"not a pickle"
+    assert sorted(os.listdir(w.root)) == [".main.bean.picklecache", "inc.bean", "main.bean"]
+
+
+DOCS_MAIN = MAIN.replace(b'include "inc.bean"\n', b'include "inc.bean"\noption "documents" "."\n')
+DATED = "2026-01-02.prices.bean"  # a dated name: the kind Beancount's documents plugin reads
+
+
+@pytest.mark.parametrize("created", [DATED, f"new/{DATED}"], ids=["file", "file_in_a_new_folder"])
+def test_a_file_created_under_a_documents_root_is_in_the_post_fingerprint(w: World, created: str) -> None:
+    """Red team r1 F1: the documents listing the save's load read is from before the commit; the closed record's post
+    fingerprint has the created file in it (`ledger_set.as_after`), so R4 compares: `pass`, or `differs` when
+    Beancount's load disagrees (before: `superseded`, never compared)."""
+    w.main.write_bytes(DOCS_MAIN)
+    new = w.root / created
+    main = DOCS_MAIN + f'include "{created}"\n'.encode()
+    changes = (Change(str(w.main), sha256(DOCS_MAIN), main), Change(str(new), None, b"2026-01-02 price ABC 1 USD\n"))
+    rec = save(w, changes)
+    fp = decode(rec.post_fingerprint.encode("ascii"))
+    assert (created, True) in (dict(fp.documents)[str(w.root)] or ())
+    assert check(w, ports(load=fixed(OTHER))).outcome == "differs"
+    assert check(w).outcome == "pass"
+
+
+def test_a_change_beancount_never_reads_in_a_documents_folder_does_not_skip_the_check(w: World) -> None:
+    """Red team r1 F2: Finder's `.DS_Store` (an undated name: Beancount's documents plugin skips it) leaves R4 to
+    compare; a dated name, which Beancount turns into an entry, still supersedes it."""
+    (w.root / "docs").mkdir()
+    m = MAIN.replace(b'include "inc.bean"\n', b'include "inc.bean"\noption "documents" "docs"\n')
+    w.main.write_bytes(m)
+    save(w, (Change(str(w.main), sha256(m), m + TXN),))
+    (w.root / "docs" / ".DS_Store").write_bytes(b"\0\0\0\1Bud1")
+    (w.root / "docs" / "notes.txt").write_bytes(b"x")
+    assert check(w, ports(load=fixed(OTHER))).outcome == "differs"
+    (w.root / "docs" / "2026-01-03.receipt.pdf").write_bytes(b"%PDF")
+    assert check(w, ports(load=fixed(OTHER))).outcome == "superseded"
+
+
+def test_beancount_reads_keeps_only_dated_names_of_each_listing() -> None:
+    fp = Fingerprint.of(
+        "/L/main.bean",
+        {},
+        {},
+        {"/L/docs": {".DS_Store": True, "Assets/Cash/2026-01-02.x.pdf": True, "Assets/a.txt": False}, "/L/no": None},
+        {},
+    )
+    assert r4.beancount_reads(fp).documents == (("/L/docs", (("Assets/Cash/2026-01-02.x.pdf", True),)), ("/L/no", None))
+
+
+READSELF = b"""
+import hashlib, datetime
+from beancount.core import data
+__plugins__ = ["readself"]
+def readself(entries, options_map):
+    h = hashlib.sha256(open(options_map["filename"], "rb").read()).hexdigest()
+    meta = data.new_metadata("<readself>", 0)
+    return entries + [data.Custom(meta, datetime.date(2026, 1, 1), "filehash", [(h, str)])], []
+"""
+
+VARY = b"""import uuid
+from beancount.core import data
+__plugins__ = ["vary"]
+def vary(entries, options_map):
+    out = []
+    for e in entries:
+        if isinstance(e, data.Transaction):
+            e = e._replace(meta={**e.meta, "run": str(uuid.uuid4())})
+        out.append(e)
+    return out, []
+"""
+
+
+@pytest.mark.parametrize(
+    ("module", "source", "outcome", "state"),
+    [
+        ("r4_readself_plugin", READSELF, "nondeterministic", "done"),
+        ("r4_vary_plugin", VARY, "nondeterministic", "done"),
+    ],
+    ids=["reads_a_ledger_file_itself", "varies_run_to_run"],
+)
+def test_a_plugin_whose_result_differs_from_the_prediction_end_to_end(
+    w: World, module: str, source: bytes, outcome: str, state: str
+) -> None:
+    """Verifier r1 F10 and red team r1 F3, end to end with real plugins: a plugin that varies run to run is
+    `nondeterministic`; so is one that reads the root file from disk itself (it sees the pre bytes at the save's load
+    and the post bytes in R4's): a plugin difference shows a notice and does not pause saving (owner answer 4 of
+    2026-10-26: "only a real loader difference pauses; plugin differences show a notice"; spec §15)."""
+    (w.root / f"{module}.py").write_bytes(source)
+    main = f'option "insert_pythonpath" "TRUE"\nplugin "{module}"\n'.encode() + MAIN
+    w.main.write_bytes(main)
+    try:
+        save(w, (Change(str(w.main), sha256(main), main + TXN),))
+        assert check(w).outcome == "differs"
+        assert confirm(w).outcome == outcome
+        assert w.states() == [f"{NAME}.{state}"]
+    finally:
+        sys.modules.pop(module, None)
+        sys.path[:] = [p for p in sys.path if p != str(w.root)]
 
 
 def test_an_outside_edit_before_the_check_supersedes_it_without_loading(w: World) -> None:
@@ -245,9 +356,36 @@ def test_an_edit_reverted_during_the_load_is_never_a_mismatch(w: World, edit: by
 
 
 def test_an_open_journal_of_the_workspace_supersedes_it(w: World) -> None:
-    save(w)
-    (w.journal() / "s2-j1.open").write_bytes(b"anything")
+    """@regression-guard (S0066 round 1: now a readable record; an unreadable one is the next test's)."""
+    rec = save(w)
+    (w.journal() / "s2-j1.open").write_bytes(another_save(rec, "s2", "j1"))
     assert check(w).outcome == "superseded"
+
+
+@pytest.mark.parametrize("key", [KEY, "k2"], ids=["own_key", "another_key"])
+def test_an_open_journal_that_cannot_be_read_is_a_failure_to_run_never_a_lift(w: World, key: str) -> None:
+    """Verifier r1 F1 = red team r1 F5: an `.open` that cannot be read (garbage, a newer app's format) cannot be
+    matched by key or lineage; the save's `records` counts it as this workspace's to refuse, but in R4 that would lift
+    the check. It is a failure to run (counted by the sidecar); the record stays `.closed`."""
+    save(w)
+    folder = w.journal(key)
+    folder.mkdir(parents=True, exist_ok=True)
+    (folder / "s9-j9.open").write_bytes(b'{"format":"finzytrack-save-journal","v":3}\n')
+    with pytest.raises(r4.R4Error):
+        check(w, ports(load=fixed(OTHER)))
+    with pytest.raises(r4.R4Error):
+        confirm(w, ports(parse_beancount=fixed(OTHER)))
+    assert f"{NAME}.closed" in w.states()
+    assert not any(n.startswith(NAME) and not n.endswith(".closed") for n in w.states())
+
+
+def test_another_workspaces_readable_open_journal_does_not_lift_the_check(w: World) -> None:
+    """@regression-guard (S0066 round 1: R4's own `.open` match keeps what `records` did for a readable record)."""
+    rec = save(w)
+    other = w.journal("k2")
+    other.mkdir(parents=True)
+    (other / "s9-j9.open").write_bytes(another_save(rec, "s9", "j9", workspace_key="k2", lineage="lin2"))
+    assert check(w, ports(load=fixed(OTHER))).outcome == "differs"
 
 
 def test_an_open_journal_matched_by_lineage_in_another_key_supersedes_it(w: World) -> None:
@@ -305,7 +443,8 @@ def test_a_replica_that_differs_from_the_record_is_a_mismatch(w: World) -> None:
 
 def test_equal_parses_with_a_different_load_are_nondeterministic(w: World) -> None:
     save(w)
-    assert confirm(w).outcome == "nondeterministic"
+    out = confirm(w)
+    assert (out.outcome, out.loaded) == ("nondeterministic", False)
     assert w.states() == [f"{NAME}.done"]
 
 
@@ -331,8 +470,10 @@ def test_an_edit_after_both_parses_of_the_confirm_is_superseded(w: World) -> Non
 def test_an_open_journal_that_appears_during_the_confirm_supersedes_it(w: World) -> None:
     save(w)
     p = ports()
+    rec = w.record()
+    opened = another_save(rec, "s2", "j1")
     out = confirm(
-        w, ports(parse_replica=around(p.parse_replica, lambda: (w.journal() / "s2-j1.open").write_bytes(b"x")))
+        w, ports(parse_replica=around(p.parse_replica, lambda: (w.journal() / "s2-j1.open").write_bytes(opened)))
     )
     assert out.outcome == "superseded"
 
@@ -355,6 +496,90 @@ def test_an_edit_the_replica_read_and_was_reverted_during_the_confirm_is_superse
         ports(parse_replica=around(p.parse_replica, lambda: w.inc.write_bytes(EDIT), lambda: w.inc.write_bytes(INC))),
     )
     assert out.outcome == "superseded"
+
+
+def test_a_truncate_and_rewrite_during_beancounts_parse_is_never_a_mismatch(w: World) -> None:
+    """Red team r1 F4: `script > file` (truncated, then the same bytes written back) while Beancount's parser reads,
+    done before the replica reads: nothing records what Beancount read and the fingerprint after is unchanged.
+    Beancount parses once more and answers differently: `superseded` (before: a false `mismatch`)."""
+    save(w)
+    real = ports().parse_beancount
+    calls: list[str] = []
+
+    def once(root: str) -> str:
+        calls.append(root)
+        if len(calls) > 1:
+            return real(root)
+        w.inc.write_bytes(b"")
+        try:
+            return real(root)
+        finally:
+            w.inc.write_bytes(INC)
+
+    out = confirm(w, ports(parse_beancount=once))
+    assert (out.outcome, len(calls)) == ("superseded", 2)
+    assert w.states() == [f"{NAME}.done"]
+
+
+def test_a_replica_that_refuses_an_edit_made_during_the_confirm_is_superseded(w: World) -> None:
+    """Verifier r1 O1: the replica refuses what an outside edit made of the disk: the disk moved (`superseded`), not a
+    failure to run."""
+    save(w)
+
+    def edited(root: str) -> overlay.LoadRefused:
+        w.inc.write_bytes(EDIT)
+        return refuses(root)
+
+    assert confirm(w, ports(parse_replica=edited)).outcome == "superseded"
+
+
+def test_r4_never_decrypts_an_encrypted_file_added_during_the_check(w: World, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Verifier r1 F2: an encrypted include an outside program adds after step 1 is met by Beancount's load, which
+    would decrypt it (`gpg --decrypt`); R4's loads refuse to (ADR-0059). The disk moved: `superseded`."""
+    save(w)
+    calls: list[str] = []
+
+    def spy(name: str) -> str:
+        calls.append(name)
+        return ""
+
+    monkeypatch.setattr(beancount_encryption, "read_encrypted_file", spy)
+    first = [True]
+
+    def observe(fp: Fingerprint) -> Fingerprint:
+        out = r4._observe(fp)  # pyright: ignore[reportPrivateUsage]
+        if first[0]:
+            first[0] = False
+            (w.root / "secret.gpg").write_bytes(b"-----BEGIN PGP MESSAGE-----\n")
+            w.main.write_bytes(w.main.read_bytes() + b'include "secret.gpg"\n')
+        return out
+
+    assert check(w, ports(observe=observe)).outcome == "superseded"
+    assert calls == []
+    assert beancount_encryption.read_encrypted_file is spy  # put back after the load
+
+
+@pytest.mark.parametrize("where", ["load", "parse"])
+def test_the_reconciliation_loads_refuse_an_encrypted_file(w: World, where: str) -> None:
+    (w.root / "secret.gpg").write_bytes(b"-----BEGIN PGP MESSAGE-----\n")
+    w.main.write_bytes(MAIN + b'include "secret.gpg"\n')
+    fn = beancount_port.reconcile_load if where == "load" else beancount_port.reconcile_parse
+    with pytest.raises(beancount_port.EncryptedFileMet) as e:
+        fn(str(w.main))
+    assert e.value.path == str(w.root / "secret.gpg")
+
+
+def test_an_encrypted_file_met_on_an_unchanged_disk_is_a_failure_to_run(w: World) -> None:
+    save(w)
+
+    def met(root: str) -> str:
+        raise beancount_port.EncryptedFileMet(root)
+
+    with pytest.raises(r4.R4Error):
+        check(w, ports(load=met))
+    with pytest.raises(r4.R4Error):
+        confirm(w, ports(parse_beancount=met))
+    assert w.states() == [f"{NAME}.closed"]
 
 
 def test_a_replica_that_refuses_is_a_failure_to_run(w: World) -> None:
@@ -390,6 +615,22 @@ def test_a_record_with_an_old_style_fingerprint_is_unreadable(w: World) -> None:
     old = replace(rec, post_fingerprint=digest(decode(rec.post_fingerprint.encode("ascii"))))
     (w.journal() / f"{NAME}.closed").write_bytes(journal.encode(old))
     assert check(w).outcome == "unreadable"
+
+
+def test_a_version_1_record_is_never_a_pass(w: World) -> None:
+    """Verifier r1 F10: a journal format 1 record (its post fingerprint a digest) is `unreadable`, left `.closed`;
+    three counted failures make it "could not check"."""
+    save(w)
+    f = w.journal() / f"{NAME}.closed"
+    data = f.read_bytes()
+    assert b'"v":2' in data
+    f.write_bytes(data.replace(b'"v":2', b'"v":1'))
+    assert check(w).outcome == "unreadable"
+    assert confirm(w).outcome == "unreadable"
+    assert w.states() == [f"{NAME}.closed"]
+    outs = [r4.attempt(for_this_os(), str(w.ald), KEY, NAME).outcome for _ in range(3)]
+    assert outs == ["counted", "counted", "could_not_check"]
+    assert f"{NAME}.mismatch" in w.states()
 
 
 def test_a_record_renamed_by_hand_is_unreadable(w: World) -> None:

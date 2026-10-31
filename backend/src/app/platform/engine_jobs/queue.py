@@ -521,7 +521,7 @@ def endable_by_another(running: Running) -> bool:
     confirm it, and it has not reached its commit point. Recover-all is never ended this way (§8.1)."""
     job = running.job
     if job.kind == "r4":
-        return True
+        return not job.waited_for and not job.confirmed  # the background R4, never Resume saving (S0066 r1 F7)
     if job.kind == "save":
         return not job.confirmed and not running.past_commit
     return job.kind in (*READS, "open") and not job.requester_present

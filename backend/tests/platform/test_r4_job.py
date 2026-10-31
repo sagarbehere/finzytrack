@@ -203,10 +203,39 @@ def test_a_mismatch_refuses_check_failed_with_the_record_and_the_backup(make: An
     )
     d = paused(rig.save())
     assert d == WritesPausedDetails("check_failed", None, MISMATCH, BACKUP, False)
-    assert save_text.paused_text(d) == save_text.CHECK_FAILED
+    assert save_text.paused_text(d) == f"{save_text.CHECK_FAILED} {save_text.BACKUP_HERE}"
     assert rig.ops() == ["save", "r4_check", "r4_confirm"]
     calls = rig.serials()
     assert calls[2][0] != calls[1][0], "the confirm runs in a fresh engine that ran no user code (§6.7 step 4)"
+
+
+def test_a_passed_r4_then_no_engine_for_the_save_is_not_could_not_check(make: Any) -> None:
+    """Verifier r1 F8: the owed R4 passed (the record is `.done`), then no engine could start for the save itself:
+    the engine's answer (`ENGINE_UNAVAILABLE`), never "could not check your last change"."""
+    import time
+
+    rig = make({"save": [OWES, Gated(answer())], "r4_check": [r4("pass", loaded=True, record=f"{JD}/s0-j0.done")]})
+    real = rig.engine.call
+
+    def call(op: str, params: Any, **kw: Any) -> Any:
+        out = real(op, params, **kw)
+        if op == "r4_check":
+            now = time.monotonic()
+            rig.engine.unavailable((now, now, now))  # no engine can start after R4's load
+        return out
+
+    rig.engine.call = call
+    value = rig.save()
+    assert isinstance(value, NotDone)
+    assert value.error.code == ErrorCode.ENGINE_UNAVAILABLE
+    assert rig.ops() == ["save", "r4_check"]
+
+
+def test_no_backup_folder_no_promise_of_one() -> None:
+    """Verifier r1 F9: a pause whose record could not be read has no backup folder to show."""
+    for could_not_check in (True, False):
+        d = WritesPausedDetails("check_failed", None, MISMATCH, None, could_not_check)
+        assert save_text.BACKUP_HERE not in save_text.paused_text(d)
 
 
 def test_a_nondeterministic_outcome_saves_and_says_so(make: Any) -> None:
@@ -255,7 +284,7 @@ def test_the_third_failure_refuses_check_failed_could_not_check(make: Any) -> No
     rig = make({"save": [OWES], "r4_check": [CRASH], "r4_attempt": [r4("could_not_check", record=MISMATCH)]})
     d = paused(rig.save())
     assert d == WritesPausedDetails("check_failed", None, MISMATCH, BACKUP, True)
-    assert save_text.paused_text(d) == save_text.COULD_NOT_CHECK
+    assert save_text.paused_text(d) == f"{save_text.COULD_NOT_CHECK} {save_text.BACKUP_HERE}"
 
 
 def test_a_cancel_during_the_owed_r4_cancels_the_save_and_counts_nothing(make: Any) -> None:

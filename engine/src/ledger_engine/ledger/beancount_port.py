@@ -29,7 +29,8 @@ Pinned to Beancount 3.2.0 (ADR-0004); `BEANCOUNT_VERSION` is checked by the over
 from __future__ import annotations
 
 import sys
-from collections.abc import Iterable, Sequence
+from collections.abc import Generator, Iterable, Sequence
+from contextlib import contextmanager
 from dataclasses import dataclass
 from decimal import Decimal
 from importlib.metadata import version
@@ -76,6 +77,7 @@ from beancount.parser.booking import book as _book
 from beancount.parser.options import OPTIONS_DEFAULTS as _OPTIONS_DEFAULTS
 from beancount.parser.parser import parse_file as _parse_file
 from beancount.parser.parser import parse_string as _parse_string
+from beancount.utils import encryption as _encryption
 from beancount.utils.encryption import is_encrypted_file as _is_encrypted_file
 
 __all__ = [
@@ -92,6 +94,7 @@ __all__ = [
     "Directive",
     "DisplayPrecision",
     "Document",
+    "EncryptedFileMet",
     "Event",
     "Note",
     "Open",
@@ -191,19 +194,48 @@ def is_encrypted_file(path: str) -> bool:
 # ---- the reconciliation loads (only ledger/r4.py; BL-0118) ---------------------------------------------------------
 
 
+class EncryptedFileMet(Exception):
+    """A reconciliation load reached an encrypted file (`path`) and did not decrypt it (ADR-0059: v0.4.0 reads no
+    encrypted file; the overlay refuses them on its own, `overlay.load`). S0066 verifier r1 F2."""
+
+    def __init__(self, path: str) -> None:
+        super().__init__("encrypted file not read")
+        self.path = path
+
+
+@contextmanager
+def _never_decrypt() -> Generator[None]:
+    """Beancount's parser decrypts a file its `is_encrypted_file` names through `encryption.read_encrypted_file`
+    (`gpg --decrypt`); for the reconciliation loads that call raises `EncryptedFileMet` instead, so no `gpg` runs.
+    The engine runs one op at a time on one thread, so swapping the module's function for the call is safe."""
+    real = _encryption.read_encrypted_file
+
+    def refuse(filename: str) -> str:
+        raise EncryptedFileMet(filename)
+
+    setattr(_encryption, "read_encrypted_file", refuse)  # noqa: B010 (the module's attribute, for this call only)
+    try:
+        yield
+    finally:
+        setattr(_encryption, "read_encrypted_file", real)  # noqa: B010
+
+
 def reconcile_load(root: str) -> ParseResult:
     """Beancount's own full load of the ledger rooted at `root` (an absolute path), as `loader.load_file` runs it but
     without its pickle cache (`loader._load`): parse, sort, booking, plugins with the `pythonpath` first on `sys.path`,
     validation, `input_hash`. No `LoadPolicy` is asked (R4 loads only a ledger set the save's overlay load accepted,
-    and its fingerprint checks before and after tell whether the disk is still that set)."""
-    entries, errors, options = _loader_load([(root, True)], None, None, None)
+    and its fingerprint checks before and after tell whether the disk is still that set); an encrypted file met is
+    not decrypted: `EncryptedFileMet` (the overlay's own refusal, which a file added during the load would escape)."""
+    with _never_decrypt():
+        entries, errors, options = _loader_load([(root, True)], None, None, None)
     return list(entries), list(errors), dict(options)
 
 
 def reconcile_parse(root: str) -> ParseResult:
     """Beancount's own parse of the ledger rooted at `root`, its includes followed (`loader._parse_recursive`):
-    nothing booked, no plugin run."""
-    entries, errors, options = _loader_parse([(root, True)], None)
+    nothing booked, no plugin run; an encrypted file met is not decrypted (`EncryptedFileMet`)."""
+    with _never_decrypt():
+        entries, errors, options = _loader_parse([(root, True)], None)
     return list(entries), list(errors), dict(options)
 
 

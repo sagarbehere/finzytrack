@@ -9,18 +9,21 @@ state it expects, by an exclusive rename followed by a sync of the journal folde
 rename … is followed by a sync of the journal directory before anything acts on the new state or shows it"):
 
 - `check` (steps 1-3; runs the ledger's plugins, so its engine is retired after it): the record `.closed` and
-  readable; no `.open` journal of this workspace (§6.5's match by key or lineage) and the disk's fingerprint of the
-  record's ledger set equal to its post fingerprint, else `superseded`; then Beancount's real load
-  (`beancount_port.reconcile_load`: no pickle cache, never the replica) and its digest (`ledger.digest`); then the
-  fingerprint and the `.open` check again, else `superseded`. An engine build other than the record's, or a record
-  without digests (`not_computed`), cannot be compared: `superseded_build` (the publish of that load is
-  TODO(BL-0113)). Digest equal: `pass`. Different: `differs`, the record left `.closed` for `confirm`.
+  readable; no readable `.open` journal of this workspace (§6.5's match by key or lineage; an unreadable one is a
+  failure to run) and what Beancount reads of the record's ledger set equal to its post fingerprint (`beancount_reads`:
+  the documents listings' undated names left out), else `superseded`; then Beancount's real load
+  (`beancount_port.reconcile_load`: no pickle cache, never the replica, no encrypted file decrypted) and its digest
+  (`ledger.digest`); then the fingerprint and the `.open` check again, else `superseded`. An engine build other than
+  the record's, or a record without digests (`not_computed`), cannot be compared: `superseded_build` (the publish of
+  that load is TODO(BL-0113)). Digest equal: `pass`. Different: `differs`, the record left `.closed` for `confirm`.
 - `confirm` (step 4; parse-only, in a fresh engine that ran no user code): Beancount's own parse of the disk
   (`reconcile_parse`) and the replica's (`overlay.parse`, which also says which bytes it parsed), then the fingerprint
   once more (model observation O1: moved since step 3 → `superseded`, never a false mismatch from an edit made during
-  the confirm). Both parse digests equal each other and the record's: `nondeterministic` (the plugins vary run to run:
-  owner, 2026-10-26, "non-deterministic plugins do not block saving"). Anything else: `mismatch`, the record renamed
-  `.mismatch`, saving paused.
+  the confirm). Both parse digests equal each other and the record's: `nondeterministic` (the difference arose after
+  the parse, in the plugins: owner, 2026-10-26, "non-deterministic plugins do not block saving (only a real loader
+  difference pauses; plugin differences show a notice)"). Otherwise Beancount parses once more (it records no bytes it
+  read: a different answer means an outside writer, `superseded`), then `mismatch`: the record renamed `.mismatch`,
+  saving paused.
 - `attempt` (parse-only): one failure to run this record's R4 counted on disk (`journal.attempt_name`, created
   exclusively, the folder synced); the third renames the record `.mismatch` ("could not check"; ADR-0008's amendment of
   2026-10-27: a count, not a time).
@@ -33,15 +36,18 @@ tries, never a pass. Every port operation may raise `OSError` (a failure to run,
 
 **The step rule** (S0066's journal): `pass` rests on the record `.closed`, readable and of this build, no `.open`
 journal, the fingerprint equal to the record's before and after the real load, and the load's digest equal to the
-record's. `superseded` rests only on a moved fingerprint or an `.open` journal (or a build the prediction cannot be
-compared with), never on digests. `mismatch` rests on a digest that differed with the fingerprint unchanged through
-the confirm, and parse digests that do not all agree. Nothing here renames a `.mismatch` record but `resume`.
+record's. `superseded` rests only on a moved fingerprint, a readable `.open` journal of the workspace or a parse that
+read other bytes (the replica's record of them, or Beancount's two parses of an unchanged fingerprint answering
+differently), or a build the prediction cannot be compared with; never on the record's digests. `mismatch` rests on a
+digest that differed with the fingerprint unchanged through the confirm, and parse digests that do not all agree (the
+same twice from Beancount). Nothing here renames a `.mismatch` record but `resume`.
 """
 
 from __future__ import annotations
 
 import contextlib
 import gc
+import re
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Final, Literal, Protocol
@@ -53,10 +59,10 @@ from ledger_engine.ledger import fingerprint as _fingerprint
 from ledger_engine.ledger import overlay
 from ledger_engine.ledger.core import journal
 from ledger_engine.ledger.core.journal import Record, State
-from ledger_engine.ledger.core.ledger_set import Fingerprint, UndecodableError, decode
+from ledger_engine.ledger.core.ledger_set import Fingerprint, Listing, UndecodableError, decode
 from ledger_engine.ledger.handles import join
 from ledger_engine.ledger.policy import LoadPolicy
-from ledger_engine.ledger.save import JOURNAL, LOCAL, NOT_COMPUTED, records
+from ledger_engine.ledger.save import JOURNAL, LOCAL, NOT_COMPUTED
 from ledger_engine.tla import tla_action
 
 type CheckOutcome = Literal["gone", "unreadable", "superseded", "superseded_build", "pass", "differs"]
@@ -71,6 +77,11 @@ PHASE: Final[Phase] = "checking_last_change"
 class R4Error(Exception):
     """R4 could not run to an outcome (the replica refused the ledger it accepted at the save): a failure to run,
     counted by the sidecar like an engine that stopped."""
+
+
+OPEN_UNREADABLE: Final = "an .open journal that cannot be read"
+ENCRYPTED: Final = "an encrypted file met on the saved disk"
+PARSE_REFUSED: Final = "a parse refused the saved disk"
 
 
 class Job(Protocol):
@@ -155,16 +166,60 @@ def _read_closed(jd: DirHandle, name: str) -> _Closed | Literal["gone", "unreada
 
 
 def _open_journal(fs: FileSystem, app_local_data: str, rec: Record) -> bool:
-    """An `.open` journal of the record's workspace (§6.5's match by key or lineage). `OSError` when a journal folder
-    cannot be listed: R4 does not run then (the save refuses `unfinished_save` on its own)."""
-    out = records(fs, app_local_data, rec.workspace_key, rec.lineage)
-    return out is not None and out[0] == "unfinished_save"
+    """A readable `.open` journal of the record's workspace: in its own key folder, or in another whose record names
+    its key or lineage (§6.5). Only such a journal lifts R4 (`superseded`). One that cannot be read raises `R4Error`
+    and a journal folder that cannot be listed `OSError`: R4 failing to run, counted, never a lift (S0066 verifier r1
+    F1; the save's own `records` fails closed the other way, toward refusing)."""
+    local = join(app_local_data, LOCAL)
+    try:
+        keys = fs.open_dir(local)
+    except FileNotFoundError:
+        return False
+    with keys:
+        for key in keys.names():
+            try:
+                jd = fs.open_dir(join(join(local, key), JOURNAL))
+            except (FileNotFoundError, NotADirectoryError):
+                continue
+            with jd:
+                for name in jd.names():
+                    parsed = journal.parse_file_name(name)
+                    if parsed is None or parsed[1] is not State.OPEN:
+                        continue
+                    data = jd.read(name)
+                    if data is None:
+                        continue  # renamed since the listing (its save went on): the fingerprint tells
+                    other = journal.decode(data)
+                    if not isinstance(other, Record):
+                        raise R4Error(OPEN_UNREADABLE)
+                    if rec.workspace_key in (key, other.workspace_key) or other.lineage == rec.lineage:
+                        return True
+    return False
+
+
+_DATED: Final = re.compile(r"(\d\d\d\d)-(\d\d)-(\d\d).(.*)")
+"""`ops.documents.find_documents`' test of a file name (Beancount 3.2.0, ADR-0004): only a name that matches can
+become a `document` entry."""
+
+
+def _dated(listing: Listing) -> Listing:
+    return None if listing is None else tuple((n, e) for n, e in listing if _DATED.match(n.rpartition("/")[2]))
+
+
+def beancount_reads(fp: Fingerprint) -> Fingerprint:
+    """`fp` without the documents-listing names Beancount never turns into an entry (`find_documents` skips a file
+    whose name does not match `_DATED`; nothing else reads them). The listing keeps every name for the gate and the
+    mirror (a superset, `fingerprint.py`); R4 compares only this part, so a `.DS_Store`, an editor's swap file or a
+    sync tool's file in a documents folder does not supersede the check (S0066 red team r1 F2)."""
+    documents = tuple((d, _dated(listing)) for d, listing in fp.documents)
+    return Fingerprint(fp.root, fp.files, fp.globs, documents, fp.document_files)
 
 
 def _moved(ports: Ports, app_local_data: str, closed: _Closed) -> bool:
-    return ports.observe(closed.fingerprint) != closed.fingerprint or _open_journal(
-        ports.fs, app_local_data, closed.record
-    )
+    """The disk is no longer the saved state: what Beancount reads of the record's ledger set differs from its post
+    fingerprint, or a readable `.open` journal of the workspace stands (`_open_journal`)."""
+    now = beancount_reads(ports.observe(closed.fingerprint))
+    return now != beancount_reads(closed.fingerprint) or _open_journal(ports.fs, app_local_data, closed.record)
 
 
 def _cannot_compare(ports: Ports, rec: Record) -> bool:
@@ -199,14 +254,32 @@ def check(ports: Ports, app_local_data: str, key: str, name: str, job: Job) -> A
         if _moved(ports, app_local_data, closed):  # step 1
             return _end(jd, closed, "superseded", State.DONE, loaded=False)
         job.progress(PHASE)
-        got = ports.load(closed.fingerprint.root)  # step 2: Beancount's real loader (user code)
+        got = _load(ports, closed)  # step 2: Beancount's real loader (user code)
         if _moved(ports, app_local_data, closed):  # step 3
             return _end(jd, closed, "superseded", State.DONE, loaded=True)
+        if got is None:
+            raise R4Error(ENCRYPTED)
         if _cannot_compare(ports, closed.record):
             return _end(jd, closed, "superseded_build", State.DONE, loaded=True)  # TODO(BL-0113): publish the load
         if got == closed.record.adopted_digest:
             return _end(jd, closed, "pass", State.DONE, loaded=True)
         return Answer("differs", True, join(jd.path(), journal.file_name(name, State.CLOSED)), closed.record.backup_dir)
+
+
+def _load(ports: Ports, closed: _Closed) -> str | None:
+    """Beancount's real load's digest; None when it met an encrypted file and stopped (never decrypted)."""
+    try:
+        return ports.load(closed.fingerprint.root)
+    except port.EncryptedFileMet:
+        return None
+
+
+def _parse(ports: Ports, closed: _Closed) -> str | None:
+    """Beancount's parse's digest; None when it met an encrypted file and stopped (never decrypted)."""
+    try:
+        return ports.parse_beancount(closed.fingerprint.root)
+    except port.EncryptedFileMet:
+        return None
 
 
 @tla_action("R4_Confirm")
@@ -222,16 +295,20 @@ def confirm(ports: Ports, app_local_data: str, key: str, name: str, job: Job) ->
         if _cannot_compare(ports, rec):
             return _end(jd, closed, "superseded_build", State.DONE, loaded=False)
         job.progress(PHASE)
-        beancount = ports.parse_beancount(closed.fingerprint.root)
+        beancount = _parse(ports, closed)
         replica = ports.parse_replica(closed.fingerprint.root)
-        if isinstance(replica, overlay.LoadRefused):
-            raise R4Error(replica.reason)
         states = dict(closed.fingerprint.files)
-        read_other = any(states.get(p) != s for p, s in replica.files.items())
+        read_other = isinstance(replica, overlay.Parsed) and any(states.get(p) != s for p, s in replica.files.items())
         if read_other or _moved(ports, app_local_data, closed):  # O1: an edit during the confirm
             return _end(jd, closed, "superseded", State.DONE, loaded=False)
+        if beancount is None or isinstance(replica, overlay.LoadRefused):
+            raise R4Error(PARSE_REFUSED)  # nothing moved: a failure to run, counted
         if beancount == replica.digest == rec.parse_digest:
             return _end(jd, closed, "nondeterministic", State.DONE, loaded=False)
+        # Beancount's parse records no bytes it read (red team r1 F4): it parses once more; another answer means an
+        # outside writer was at work (`script > file` caught empty), never a mismatch.
+        if _parse(ports, closed) != beancount or _moved(ports, app_local_data, closed):
+            return _end(jd, closed, "superseded", State.DONE, loaded=False)
         return _end(jd, closed, "mismatch", State.MISMATCH, loaded=False)
 
 

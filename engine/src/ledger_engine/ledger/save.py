@@ -25,9 +25,9 @@
 7. **The commit point:** `job.gate()` (§4: the sidecar's one table step answers `proceed` or ends the engine).
 8. `writer.durable_commit` (§6.1 step 8), after the workspace's journal and backups folders exist and every folder
    from `app_local_data` down to them has a durable entry (its parent synced, whether it was made now or not). The
-   closed record carries the load's post fingerprint as its canonical encoding (R4 observes that ledger set) and the
-   two digests; a load that gave no parse digest (a test's) writes `not_computed` for both, which R4 treats as an
-   engine-build change.
+   closed record carries the load's post fingerprint as its canonical encoding (R4 observes that ledger set; the
+   created files added to the documents listings they fall in, `ledger_set.as_after`) and the two digests; a load
+   that gave no parse digest (a test's) writes `not_computed` for both, which R4 treats as an engine-build change.
 9. `job.committed()` once it `Landed`.
 10. The publish (§6.1 step 10) is not built: `Saved.published` is False (TODO(BL-0113)); the rebuild a failed
     publish queues is BL-0152 part 2's. The sidecar queues the record's R4 (S0066).
@@ -64,7 +64,7 @@ from ledger_engine.ledger import overlay
 from ledger_engine.ledger.core import journal
 from ledger_engine.ledger.core import paths as core_paths
 from ledger_engine.ledger.core.journal import Record, State
-from ledger_engine.ledger.core.ledger_set import Absent, Content, Fingerprint, as_before, digest, encode
+from ledger_engine.ledger.core.ledger_set import Absent, Content, Fingerprint, as_after, as_before, digest, encode
 from ledger_engine.ledger.handles import join, sha256
 from ledger_engine.ledger.policy import LoadPolicy
 from ledger_engine.ledger.writer import (
@@ -527,7 +527,7 @@ def _under_locks(
         workspace_key=plan.workspace_key,
         lineage=plan.lineage,
         engine_build=plan.engine_build,
-        post_fingerprint=encode(loaded.fingerprint).decode("ascii"),
+        post_fingerprint=encode(as_after(loaded.fingerprint, pre)).decode("ascii"),
         adopted_digest=adopted,
         parse_digest=parsed,
         changes=plan.changes,

@@ -29,6 +29,7 @@ from ledger_engine.ledger.core.ledger_set import (
     Content,
     Fingerprint,
     UndecodableError,
+    as_after,
     as_before,
     decode,
     encode,
@@ -599,3 +600,28 @@ def test_as_before_puts_each_candidate_back_at_its_pre_state_and_keeps_every_oth
     assert dict(before.files) == {str(main): sha(main.read_bytes()), str(inc): sha(b""), new: Absent()}
     assert dict(before.globs)[new] == ()  # the disk's glob finds nothing there yet
     assert observe(before.ledger_set) == before  # the disk as the load read it
+
+
+def test_as_after_adds_each_created_file_to_the_listing_of_every_documents_root_it_is_under() -> None:
+    """S0066 red team r1 F1: the closed record's post fingerprint is the disk after the commit."""
+    fp = Fingerprint.of(
+        "/L/main.bean",
+        {"/L/main.bean": Content("1" * 64), "/L/docs/a/new.bean": Content("2" * 64)},
+        {},
+        {"/L": {"main.bean": True}, "/L/docs": None, "/Other": {"x": True}},
+        {},
+    )
+    after = as_after(fp, {"/L/main.bean": "0" * 64, "/L/docs/a/new.bean": None})
+    assert dict(after.documents) == {
+        "/L": (("docs/a/new.bean", True), ("main.bean", True)),
+        "/L/docs": (("a/new.bean", True),),
+        "/Other": (("x", True),),
+    }
+    assert (after.root, after.files, after.globs, after.document_files) == (
+        fp.root,
+        fp.files,
+        fp.globs,
+        fp.document_files,
+    )
+    assert as_after(fp, {"/L/main.bean": "0" * 64}) == fp  # nothing created: the load's own record
+    assert dict(as_after(fp, {"/Lx/new.bean": None}).documents) == dict(fp.documents)  # not under `/L`

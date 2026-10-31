@@ -39,7 +39,7 @@ import uuid
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Final, cast
+from typing import Final, Literal, cast
 
 from app.domain.errors import DomainError
 from app.platform.engine import EngineEvent, EngineFailure, EngineRefusal, GateReached, OutcomeFacts, SaveAnswer
@@ -50,6 +50,7 @@ from app.platform.engine_protocol import Violation, decode_save, decode_save_out
 from app.platform.errors import (
     ChangeNotSavedDetails,
     EngineStoppedDetails,
+    EngineUnavailableDetails,
     ErrorCode,
     NotSavedReason,
     PausedReason,
@@ -169,6 +170,17 @@ def _paused(
 ) -> NotDone:
     details = WritesPausedDetails(reason, file, record, backup, could_not_check)
     return _not_done(ErrorCode.WRITES_PAUSED, details)
+
+
+def _unavailable(failure: EngineFailure) -> NotDone:
+    """No engine for the save after its owed R4 let it go on: not saved, nothing written, and the last change was
+    checked, so the text is the engine's (§11 `ENGINE_UNAVAILABLE`), never "could not check" (verifier r1 F8)."""
+    reasons: dict[str, Literal["incompatible", "cannot_start", "closing"]] = {
+        "start_failed": "cannot_start",
+        "incompatible": "incompatible",
+        "closed": "closing",
+    }
+    return _not_done(ErrorCode.ENGINE_UNAVAILABLE, EngineUnavailableDetails(reasons.get(failure.kind, "stopped_often")))
 
 
 def answer_of(a: SaveAnswer) -> SaveValue:
@@ -318,8 +330,8 @@ class _Run:
             case Checked(outcome=outcome):
                 self._nondeterministic = self._nondeterministic or outcome == "nondeterministic"
         failure = runner.fresh()  # steps 2-11 run in one fresh engine (§6.1)
-        if failure is not None:
-            return WorkResult(None) if failure.kind == "cancelled" else WorkResult(_paused("check_pending"))
+        if failure is not None:  # R4 let the save go on; no engine for the save itself (verifier r1 F8)
+            return WorkResult(None) if failure.kind == "cancelled" else WorkResult(_unavailable(failure))
         return None
 
     def _no_engine(self) -> WorkResult:

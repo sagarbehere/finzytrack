@@ -1149,7 +1149,7 @@ def endable(r: Running) -> bool:
     its commit point."""
     j = r.job
     if j.kind == "r4":
-        return True
+        return not j.waited_for and not j.confirmed  # the background R4; Resume saving is waited for and confirmed
     if j.kind == "save":
         return not j.confirmed and not r.past_commit
     return j.kind in (*READS, "open") and not j.requester_present
@@ -1397,6 +1397,7 @@ def job_variants(jid: int) -> Iterable[Job]:
             owner = "switch" if kind == "recover_all" else "user"
             yield Job(jid, kind, ws, kind != "r4", kind in WRITING, owner, present)
         yield Job(jid, "save", W1, False, False, "app", present)
+        yield Job(jid, "r4", W1, True, True, "user", present)  # Resume saving (S0066 verifier r1 F7)
         yield Job(jid, "open", W2, True, False, "switch", present)
 
 
@@ -1643,6 +1644,21 @@ def test_an_r4_whose_engine_died_is_kept_to_count_its_failure(spec: JobSpec) -> 
     state, effects = run(state, JobDone(jid, ran_user_code=False))
     assert Finished(jid) in effects
     assert started(effects) == [waiting]
+
+
+def test_resume_saving_is_never_ended_by_another_jobs_cancel() -> None:
+    """S0066 verifier r1 F7 = red team r1 overflow 1: §4 "Another job's Cancel ends the running job only when nobody
+    waits for it, the user did not confirm it": Resume saving is both (its rename may land, and the user would be told
+    cancelled although saving resumed)."""
+    from app.platform.engine_jobs.r4 import resume_spec
+
+    state, jid = busy_with(resume_spec(W1), ready(W1))
+    state, (waiting,) = submit(state, user("preview"))
+    state, effects = run(state, Cancel(waiting))
+    assert Cancelled(waiting, cannot_stop_ahead=True) in effects  # the waiting job ends; the one ahead goes on
+    assert ends(effects) == []
+    assert state.running is not None
+    assert state.running.job.id == jid
 
 
 def test_an_r4_whose_engine_died_is_still_ended_by_another_jobs_cancel() -> None:

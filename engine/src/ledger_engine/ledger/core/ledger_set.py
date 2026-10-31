@@ -27,7 +27,8 @@ observations of one ledger set under its own names, and lock by `path_key`; keyi
 `path_key` comes with the published generation that carries it (TODO(BL-0125)).
 
 `decode` is `encode`'s strict inverse (the plan's fingerprint crosses the engine protocol as its encoding, S0063);
-`as_before` is what the disk must hold for a load of a save's candidate to have read it (the re-check, §6.1 step 6).
+`as_before` is what the disk must hold for a load of a save's candidate to have read it (the re-check, §6.1 step 6);
+`as_after` what it holds once that save landed (the closed record's post fingerprint, R4).
 """
 
 from __future__ import annotations
@@ -278,3 +279,25 @@ def as_before(loaded: Fingerprint, pre: Mapping[str, str | None]) -> Fingerprint
     created = {p for p, h in pre.items() if h is None}
     globs = tuple((g, () if not glob.has_magic(g) and posixpath.normpath(g) in created else m) for g, m in loaded.globs)
     return Fingerprint(loaded.root, files, globs, loaded.documents, loaded.document_files)
+
+
+def as_after(loaded: Fingerprint, pre: Mapping[str, str | None]) -> Fingerprint:
+    """What the disk holds once a save of the candidate `loaded` was parsed from has landed (the closed record's post
+    fingerprint, which R4 observes; S0066 red team r1 F1): the load's own record, where every file already has its
+    candidate's state and a plain-path include of a created file already matches it (`overlay.load`), with each file
+    the save creates (`pre` None) added to the listing of every documents root it lies under. The load listed those
+    roots from the disk before the commit; the created file is there after it. A root that did not exist then
+    (None) holds only the created files under it. A created file named through another spelling of the root (a link)
+    is not added: R4 then finds the fingerprint moved (`superseded`), never a false `pass`."""
+    created = [p for p, h in pre.items() if h is None]
+    documents: list[tuple[str, Listing]] = []
+    for root, listing in loaded.documents:
+        prefix = root.rstrip("/") + "/"
+        names = {n[len(prefix) :]: True for n in created if n.startswith(prefix)}
+        if not names:
+            documents.append((root, listing))
+            continue
+        merged = dict(listing or ())
+        merged.update(names)
+        documents.append((root, tuple(sorted(merged.items()))))
+    return Fingerprint(loaded.root, loaded.files, loaded.globs, tuple(documents), loaded.document_files)

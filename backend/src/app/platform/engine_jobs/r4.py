@@ -13,13 +13,13 @@ and its name (`R4Target`), in the engines of the job it is part of:
    bound says no; when no engine can be had, nothing is counted and the record stays `.closed` (the next save
    refuses `check_pending`). **A Cancel counts nothing** (ADR-0008 amendment: "a user's Cancel does not count").
 
-`run_r4` returns `Checked` (an outcome the engine reached and synced: `pass`, `superseded`, `superseded_build`,
+`R4Runner.run` returns `Checked` (an outcome the engine reached and synced: `pass`, `superseded`, `superseded_build`,
 `nondeterministic`, `mismatch`, or `gone` when the record is no longer `.closed`), `NotChecked` (a failure to run,
 with what was counted) or `Cancelled`. Only `Checked` with an outcome other than `mismatch` lets a save go on.
 
 The jobs: `r4_spec`/`r4_work`, the background job a landed save queues (§6.1 step 11; `save.submit_save` wires it);
 `resume_spec`/`resume_work`, **Resume saving** (§6.7: the only way out of `.mismatch`, on the record the user was
-shown, `WritesPausedDetails.record`). The save runs `run_r4` itself for a record its step 1 names
+shown, `WritesPausedDetails.record`). The save runs `R4Runner.run` itself for a record its step 1 names
 (`save._Run`). What the user reads is `save_text` (§11).
 """
 
@@ -176,7 +176,8 @@ class R4Runner:
 
 
 def r4_spec(workspace: str) -> JobSpec:
-    """The background R4 a landed save queues (§2, §6.1 step 11): nobody waits; another job's Cancel may end it (§4)."""
+    """The background R4 a landed save queues (§2, §6.1 step 11): nobody waits, unconfirmed; another job's Cancel may
+    end it (§4)."""
     return JobSpec(kind="r4", workspace=workspace, waited_for=False, confirmed=False, owner="app")
 
 
@@ -193,7 +194,7 @@ type ResumeOutcome = Literal["done", "gone", "failed"]
 
 
 def resume_spec(workspace: str) -> JobSpec:
-    """Resume saving (§6.7), after the user confirmed it: waited for."""
+    """Resume saving (§6.7), after the user confirmed it: waited for, so another job's Cancel never ends it (§4)."""
     return JobSpec(kind="r4", workspace=workspace, waited_for=True, confirmed=True, owner="user")
 
 
