@@ -18,7 +18,10 @@ is refused (it is `composables/`, owner 2026-10-29); git's and Claude Code's hoo
 Checked (the current-state documents): `design/ARCHITECTURE.md`, `design/INVARIANTS.md`, `design/ENGINEERING.md`,
 `design/glossary.md`, every Markdown file under `design/specs/`, `design/capabilities.toml` and `design/backlog.md`;
 since S0068 also `design/process/escalation-rubric.md`, the journal, inbox and generated READMEs and the
-engine-jobs model's `HOW_TO_RUN.md`;
+engine-jobs model's `HOW_TO_RUN.md`; since S0068's review round 1 also every model's Markdown
+(`formal/tla/<model>/*.md`; its `results/` are run output), the
+generated statecharts, the ADR index (`design/decisions/README.md`, but its title cells) and the root, security,
+corpora and typings READMEs (`design/capabilities.md` is generated from the checked `capabilities.toml`);
 since S0055 also the files agents read first: `design/README.md`, `design/process/PROCESS.md`, the `CLAUDE.md` files
 (root, `backend/`, `engine/`, `frontend/`), every `.claude/agents/*.md` and every `.claude/skills/*/SKILL.md`.
 Not checked, because they are history: journals, the inbox, `IMPROVEMENTS.md`, and the ADRs (append-only: a
@@ -26,6 +29,7 @@ superseded decision stays in an ADR's body, with its amendment section saying wh
 
 Exceptions inside the checked documents:
 - ARCHITECTURE.md's "**Abandoned, so stale wherever it is stated as current:**" paragraph, which names them;
+- the engine-jobs model's MAPPING.md §5 (the model's findings, each dated, with the fix of its time);
 - a `cut` capability row (it is kept for the record);
 - a backlog item row whose status is `done`, `removed` or `post-v0.4`; a row whose cells do not line up with its
   header, or whose status is not a known one, is checked (fails closed); text outside item tables is checked;
@@ -74,10 +78,20 @@ FIXED_FILES = (
     "design/inbox/README.md",
     "design/generated/README.md",
     "formal/tla/engine-jobs/HOW_TO_RUN.md",
+    # S0068 verifier r1 F2: the rest of the live Markdown outside the history (the model's documents by GLOBS)
+    "design/decisions/README.md",
+    "README.md",
+    "SECURITY.md",
+    "corpora/README.md",
+    "engine/typings/README.md",
 )
 SPECS = "design/specs"
-GLOBS = (".claude/agents/*.md", ".claude/skills/*/SKILL.md")  # each must match at least one file
+# each must match at least one file
+GLOBS = (".claude/agents/*.md", ".claude/skills/*/SKILL.md", "formal/tla/*/*.md", "design/generated/statecharts/*.md")
 ABANDONED = "**Abandoned, so stale wherever it is stated as current:**"
+ADR_INDEX = "design/decisions/README.md"  # its rows' title cells are history (S0068 verifier r1 F2)
+# a dated history section inside a live document: the model's findings, each with its date and the fix of its time
+HISTORY_SECTIONS = {"formal/tla/engine-jobs/MAPPING.md": "## 5. "}
 HISTORY_STATUSES = frozenset({"done", "removed", "post-v0.4"})
 KNOWN_STATUSES = HISTORY_STATUSES | {"open", "in-progress", "parked"}
 OWNER_QUOTE = re.compile(
@@ -198,7 +212,8 @@ ACTIVE: tuple[Term, ...] = (
     # INV-01 reworded (owner, 2026-10-31, "Reword (Recommended)"): new errors are listed in a preview and written only
     # if the user saves anyway; "unless acknowledged" read as per-mutator acknowledgement lists.
     Term("unless acknowledged", r"\bunless (?:explicitly |the user )?acknowledged\b"),
-    Term("pause on R4", r"\bsaving is paused\b"),
+    # the R4 pause's own words only; the unfinished save's `WRITES_PAUSED` text is current (S0068 verifier r1 F7)
+    Term("pause on R4", r"\bfound a difference\. saving is paused\b|\bsaving is paused until\b|\bR4 pauses saving\b"),
     code("NoSaveWhileR4Owed"),
     code("R4GateLiftedOnlyByUser"),
     code("OwedR4BeforeNextSave"),
@@ -236,6 +251,8 @@ ALLOW: tuple[Allow, ...] = (
     Allow("design/specs/engine-jobs.md", "scheduler spec or slice", '"Yes, add it to the scheduler spec as a requirement.',
           "the owner's words of 2026-10-26, in an attribution form (`The owner's requirement (<date>: ...`) the quote "
           "rule does not take"),
+    Allow("formal/tla/engine-jobs/MAPPING.md", "engine-scheduler.md", "(d8ca7823, then named `engine-scheduler.md`)",
+          "the model's source line names the spec's file name at the commit it was built from"),
     Allow("design/specs/README.md", "engine-scheduler.md", "**Renamed:** `engine-scheduler.md`",
           "the redirect from the spec's old name (owner, 2026-10-27)"),
     Allow("design/specs/README.md", "engine scheduler", "**Renamed:** `engine-scheduler.md`",
@@ -279,7 +296,35 @@ def checked_lines(path: str, text: str) -> list[tuple[int, str]]:
         return _backlog_lines(lines)
     if path == "design/ARCHITECTURE.md":
         return [(n, t) for n, t in enumerate(lines, 1) if not t.startswith(ABANDONED)]
+    if path == ADR_INDEX:
+        return [(n, _without_title(t)) for n, t in enumerate(lines, 1)]
+    if path in HISTORY_SECTIONS:
+        return _outside_section(lines, HISTORY_SECTIONS[path])
     return list(enumerate(lines, 1))
+
+
+def _without_title(line: str) -> str:
+    """An ADR index row with its title cell and link target blanked: both are the ADR's own, fixed when it was
+    decided."""
+    if not line.startswith("| [ADR-"):
+        return line
+    cells = UNESCAPED_PIPE.split(line)
+    if len(cells) <= 3:
+        return line
+    link = re.sub(r"\]\([^)]*\)", "]", cells[1])  # the ADR's file name, fixed when it was written
+    return "|".join([cells[0], link, " ", *cells[3:]])
+
+
+def _outside_section(lines: list[str], heading: str) -> list[tuple[int, str]]:
+    """The lines outside the `## ` section that starts with `heading` (a dated history inside a live document)."""
+    out: list[tuple[int, str]] = []
+    inside = False
+    for n, t in enumerate(lines, 1):
+        if t.startswith("## "):
+            inside = t.startswith(heading)
+        if not inside:
+            out.append((n, t))
+    return out
 
 
 def _capability_lines(lines: list[str]) -> list[tuple[int, str]]:
@@ -361,7 +406,7 @@ def documents(root: Path) -> tuple[list[str], list[str]]:
         if not found:
             problems.append(f"{pattern}: no files found")
         globbed += found
-    return paths + specs + globbed, problems
+    return list(dict.fromkeys(paths + specs + globbed)), problems  # a fixed file a glob also finds, once
 
 
 def check(root: Path, terms: tuple[Term, ...] = ACTIVE, allow: tuple[Allow, ...] = ALLOW) -> list[str]:

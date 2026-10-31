@@ -281,6 +281,12 @@ def test_a_save_refused_for_an_unfinished_save_is_writes_paused_with_its_reason(
     assert error["code"] == "WRITES_PAUSED"
     assert error["details"] == {"reason": "unfinished_save", "file": None}
     assert error["data_safe"] is False
+    # S0068 verifier r1 F5: the next step holds for both causes of §11, so it never promises an undo alone (a file
+    # the save was creating is asked about, `created_path_taken`)
+    assert error["next_step"] == (
+        "Reopen the workspace so Finzytrack can check your files. It undoes the unfinished change, "
+        "or asks you about a file it was creating."
+    )
     conforms(app, payload)
 
 

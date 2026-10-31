@@ -385,7 +385,8 @@ def test_a_closed_record_of_this_workspace_does_not_refuse_the_next_save(led: Le
 def test_records_a_development_build_left_do_not_refuse(led: Ledger, suffix: str) -> None:
     """S0068: `.mismatch`, `.done` and `.r4-attempt-<n>` files were written only by S0066-S0067 development builds;
     they are not records any more, so they fail safe: nothing gates on them (until S0068 a `.mismatch` refused
-    `check_failed` until Resume saving)."""
+    `check_failed` until Resume saving). The `done` and `r4-attempt-3` cases are @regression-guard: they pass on
+    cc0b27db too, which never gated on those names (S0068 verifier r1 F8); `mismatch` fails there."""
     folder = led.ald / "local" / KEY / "journal"
     folder.mkdir(parents=True)
     (folder / f"s0-j1.{suffix}").write_bytes(

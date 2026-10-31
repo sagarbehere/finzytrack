@@ -73,7 +73,7 @@ What each ledger-writing mutator may change. Column meanings and rules: [README.
 - **Intended change:** the new files equal the starter template with `option "operating_currency"` set to the chosen currency; nothing else exists before
 - **Metadata written:** —
 - **The preview may list (never a refusal, ADR-0067):** —
-- **Refused when:** the target folder is not empty, a ledger file at the path included (an absent or empty folder is used; INV-29: never created implicitly, never overwritten; engine-jobs spec §8.2)
+- **Refused when:** policy: the target folder is not empty, a ledger file at the path included (an absent or empty folder is used; INV-29: never created implicitly, never overwritten; engine-jobs spec §8.2)
 - **v0.3 oracle expectation:** M28 (if the legacy starter template carries machinery keys); the v0.3 wizard also writes `option "operating_currency"` (ADR-0052), so the currency is not a divergence
 - **Status:** draft
 - **Milestone:** M3
@@ -89,7 +89,7 @@ What each ledger-writing mutator may change. Column meanings and rules: [README.
 - **Intended change:** the demo files equal the generator's output for the build anchor
 - **Metadata written:** —
 - **The preview may list (never a refusal, ADR-0067):** —
-- **Refused when:** the target is not the app's demo path, or is a symlink (INV-25)
+- **Refused when:** policy: the target is not the app's demo path, or is a symlink (INV-25)
 - **v0.3 oracle expectation:** none: no old endpoint (the legacy seeds a bundled file, not through a write path)
 - **Status:** decided
 - **Milestone:** M3
@@ -105,7 +105,7 @@ What each ledger-writing mutator may change. Column meanings and rules: [README.
 - **Intended change:** one `open` added: the user's date, account name, currencies, booking method if chosen, and the vocabulary keys the user filled in
 - **Metadata written:** account_number; ofx-bank-id; ifsc_code; swift_bic; description; display-name; account-type; interest-rate; maturity-date; interest-account; income-type; dividend-of
 - **The preview may list (never a refusal, ADR-0067):** ValidationError on the new `open` (the account is already open)
-- **Refused when:** the name breaks the ledger's account grammar (custom root names allowed); the name was not typed or picked by the user (INV-15)
+- **Refused when:** grammar: the name breaks the ledger's account grammar (custom root names allowed); user-choice: the name was not typed or picked by the user (INV-15)
 - **v0.3 oracle expectation:** I10; I2 (glob includes); I3 (plugins); M28 (snake_case vocabulary)
 - **Status:** decided
 - **Milestone:** M4
@@ -121,7 +121,7 @@ What each ledger-writing mutator may change. Column meanings and rules: [README.
 - **Intended change:** the `open` (or `close`) replaced by the same entry with exactly the requested metadata set/removed, currencies, open date or booking method; untouched keys keep their value and type
 - **Metadata written:** the vocabulary keys of account.create
 - **The preview may list (never a refusal, ADR-0067):** ValidationError on a posting dated before the new open date; ValidationError on a posting whose currency the edited `open` no longer allows
-- **Refused when:** a booking-method change without the re-booking preview confirmed (ADR-0031)
+- **Refused when:** consent: a booking-method change without the re-booking preview confirmed (ADR-0031)
 - **v0.3 oracle expectation:** I10; I2 (glob includes); I3 (plugins); FIX-L3-15 (legacy stringifies typed metadata)
 - **Status:** decided
 - **Milestone:** M4
@@ -137,7 +137,7 @@ What each ledger-writing mutator may change. Column meanings and rules: [README.
 - **Intended change:** A and every subaccount `A:…` become B and `B:…` (ADR-0049 amendment): every account token naming one of them (postings, `open`, `close`, `balance`, `pad` both accounts, `note`, `document`, account-typed `custom` values), and every metadata value on any entry and every `custom` string value that is exactly one of those account names; text that merely contains a name is untouched. Nothing else changes. No renamed name may already exist (that is a merge)
 - **Metadata written:** —
 - **The preview may list (never a refusal, ADR-0067):** —
-- **Refused when:** a target name already exists (use account.merge); a target name breaks the account grammar; an encrypted file references a renamed account (not editable, ADR-0009)
+- **Refused when:** integrity: a target name already exists (use account.merge); grammar: a target name breaks the account grammar; not-editable: an encrypted file references a renamed account (not editable, ADR-0009)
 - **v0.3 oracle expectation:** I10; I2 (glob includes); I3 (plugins)
 - **Status:** decided
 - **Milestone:** M4
@@ -153,7 +153,7 @@ What each ledger-writing mutator may change. Column meanings and rules: [README.
 - **Intended change:** move_postings(A → B): every posting of A, A's `note` and `document` directives, and every `pad` whose source is A re-pointed to B; a transaction with legs on both keeps two B postings; A's own `balance` and `pad` directives and A's `custom "budget"` directives dropped (listed in the preview); A's `open` and `close` stay, leaving an empty A (ADR-0049 and its amendment)
 - **Metadata written:** —
 - **The preview may list (never a refusal, ADR-0067):** BalanceError on a `balance` assertion of B that newly fails (listed in the preview); ValidationError on a moved posting dated outside B's `open` and `close`; ValidationError on a moved posting whose currency B's `open` does not allow
-- **Refused when:** holdings at cost and A and B book differently (warning plus refusal until confirmed); A has subaccounts (ADR-0049)
+- **Refused when:** consent: holdings at cost and A and B book differently (warning plus refusal until confirmed); policy: A has subaccounts (ADR-0049)
 - **v0.3 oracle expectation:** none: no old endpoint
 - **Status:** decided
 - **Milestone:** M4
@@ -169,7 +169,7 @@ What each ledger-writing mutator may change. Column meanings and rules: [README.
 - **Intended change:** account.merge into B (postings, notes, documents and `pad` sources re-pointed to B), then A's `open`, `close`, `balance` and `pad` removed and A's `custom "budget"` directives dropped
 - **Metadata written:** —
 - **The preview may list (never a refusal, ADR-0067):** BalanceError on a `balance` assertion of B that newly fails (listed in the preview)
-- **Refused when:** the account.merge refusals; A has subaccounts (ADR-0049)
+- **Refused when:** as account.merge (its consent and ADR-0049 refusals); policy: A has subaccounts (ADR-0049)
 - **v0.3 oracle expectation:** none: no old endpoint
 - **Status:** decided
 - **Milestone:** M4
@@ -185,7 +185,7 @@ What each ledger-writing mutator may change. Column meanings and rules: [README.
 - **Intended change:** every transaction with a leg on A removed (every leg), every `pad` whose source is A removed, and all of A's directives removed: `open`, `close`, `balance`, `pad`, `note`, `document`, `custom "budget"`. An account with no transactions is the same intent with no transactions
 - **Metadata written:** —
 - **The preview may list (never a refusal, ADR-0067):** BalanceError on a `balance` assertion of another account whose balance changes, including accounts padded from A (each listed in the all-time preview)
-- **Refused when:** A has subaccounts (ADR-0049); the user has not chosen between Move and Delete (the question has no default)
+- **Refused when:** policy: A has subaccounts (ADR-0049); user-choice: the user has not chosen between Move and Delete (the question has no default)
 - **v0.3 oracle expectation:** I10; I2 (glob includes); I3 (plugins); FIX-I1 (legacy keeps A's balance, pad, note and budget directives); FIX-I11 (legacy lets the new errors through)
 - **Status:** decided
 - **Milestone:** M4
@@ -217,7 +217,7 @@ What each ledger-writing mutator may change. Column meanings and rules: [README.
 - **Intended change:** A's one `close` removed
 - **Metadata written:** —
 - **The preview may list (never a refusal, ADR-0067):** —
-- **Refused when:** A is not closed
+- **Refused when:** target: A is not closed
 - **v0.3 oracle expectation:** I10; I2 (glob includes); I3 (plugins)
 - **Status:** decided
 - **Milestone:** M4
@@ -249,7 +249,7 @@ What each ledger-writing mutator may change. Column meanings and rules: [README.
 - **Intended change:** the one targeted `balance` replaced with the new date, amount or currency; its paired `pad` added, moved or removed as asked
 - **Metadata written:** —
 - **The preview may list (never a refusal, ADR-0067):** BalanceError on the edited assertion; PadError on its paired `pad`
-- **Refused when:** the targeted assertion is not found by (account, date, currency, amount) exactly once
+- **Refused when:** target: the targeted assertion is not found by (account, date, currency, amount) exactly once
 - **v0.3 oracle expectation:** I10; I2 (glob includes); I3 (plugins)
 - **Status:** decided
 - **Milestone:** M4
@@ -265,7 +265,7 @@ What each ledger-writing mutator may change. Column meanings and rules: [README.
 - **Intended change:** the one targeted `balance` removed, and its paired `pad` when asked
 - **Metadata written:** —
 - **The preview may list (never a refusal, ADR-0067):** PadError on a paired `pad` the user chose to keep
-- **Refused when:** the targeted assertion is not found exactly once
+- **Refused when:** target: the targeted assertion is not found exactly once
 - **v0.3 oracle expectation:** I10; I2 (glob includes); I3 (plugins)
 - **Status:** decided
 - **Milestone:** M4
@@ -281,7 +281,7 @@ What each ledger-writing mutator may change. Column meanings and rules: [README.
 - **Intended change:** one `document` directive for the account, date and stored file path (relative to the documents root)
 - **Metadata written:** —
 - **The preview may list (never a refusal, ADR-0067):** —
-- **Refused when:** the documents root cannot be resolved (doc.documents-option first); the path leaves the documents root
+- **Refused when:** target: the documents root cannot be resolved (doc.documents-option first); policy: the path leaves the documents root
 - **v0.3 oracle expectation:** I10; I2 (glob includes); I3 (plugins)
 - **Status:** decided
 - **Milestone:** M4
@@ -297,7 +297,7 @@ What each ledger-writing mutator may change. Column meanings and rules: [README.
 - **Intended change:** the one targeted `document` directive removed (the stored file is left for the orphan scan)
 - **Metadata written:** —
 - **The preview may list (never a refusal, ADR-0067):** —
-- **Refused when:** the directive is generated by the documents plugin rather than written in a file (not targetable, ADR-0009)
+- **Refused when:** not-editable: the directive is generated by the documents plugin rather than written in a file (not targetable, ADR-0009)
 - **v0.3 oracle expectation:** I10; I2 (glob includes); I3 (plugins)
 - **Status:** decided
 - **Milestone:** M4
@@ -313,7 +313,7 @@ What each ledger-writing mutator may change. Column meanings and rules: [README.
 - **Intended change:** one `option "documents"` line added to the root; written on first use only, never on open (INV-30)
 - **Metadata written:** —
 - **The preview may list (never a refusal, ADR-0067):** —
-- **Refused when:** the ledger already declares a documents option
+- **Refused when:** policy: the ledger already declares a documents option
 - **v0.3 oracle expectation:** I10; I2 (glob includes); I3 (plugins)
 - **Status:** decided
 - **Milestone:** M3
@@ -329,7 +329,7 @@ What each ledger-writing mutator may change. Column meanings and rules: [README.
 - **Intended change:** the entry addressed by (TransactionId, entry_hash) replaced by the request merged against the parsed source entry: `@@`, lot dates and labels, elided amounts and metadata types kept where the user did not change them; nothing else changes
 - **Metadata written:** memo; document*; note; user keys typed in the drawer
 - **The preview may list (never a refusal, ADR-0067):** BalanceError on a `balance` assertion of an account whose postings changed (amount, date or account); ValidationError on the edited transaction (it does not balance, or names an account not open on its date); BookingError on the edited transaction's reduction; ReductionError on the edited transaction's reduction; AmbiguousMatchError on the edited transaction's reduction
-- **Refused when:** entry_hash mismatch (the entry changed since it was read); the entry is plugin-generated or in an encrypted file; the edit removes or changes a read-forever identity key (`id`, `transaction_id`, `import-key`, `external_id`, `external_id_type`, `ofx_id`, `source_account`): only the consented cleanup may (INV-21 c, INV-14)
+- **Refused when:** target: entry_hash mismatch (the entry changed since it was read); not-editable: the entry is plugin-generated or in an encrypted file; identity: the edit removes or changes a read-forever identity key (`id`, `transaction_id`, `import-key`, `external_id`, `external_id_type`, `ofx_id`, `source_account`): only the consented cleanup may (INV-21 c, INV-14)
 - **v0.3 oracle expectation:** I10; I2 (glob includes); I3 (plugins); FIX-L3-02 (legacy refuses priced and cost edits; drops lot dates and labels); FIX-L3-05 (legacy rewrites the written scale); FIX-L3-15 (legacy stringifies typed metadata); M28; non-comparable: entries without a legacy `id`
 - **Status:** decided
 - **Milestone:** M5
@@ -361,7 +361,7 @@ What each ledger-writing mutator may change. Column meanings and rules: [README.
 - **Intended change:** exactly the entries addressed by (TransactionId, entry_hash) removed (one entry; several are txn.delete-many)
 - **Metadata written:** —
 - **The preview may list (never a refusal, ADR-0067):** BalanceError on a `balance` assertion of an account whose balance changes
-- **Refused when:** entry_hash mismatch; a plugin-generated target
+- **Refused when:** target: entry_hash mismatch; not-editable: a plugin-generated target
 - **v0.3 oracle expectation:** I10; I2 (glob includes); I3 (plugins); non-comparable: entries without a legacy `id`
 - **Status:** decided
 - **Milestone:** M5
@@ -377,7 +377,7 @@ What each ledger-writing mutator may change. Column meanings and rules: [README.
 - **Intended change:** one `document` metadata line (or the next free `documentN`) added to the transaction, holding the stored path; nothing else in the entry changes
 - **Metadata written:** document*
 - **The preview may list (never a refusal, ADR-0067):** —
-- **Refused when:** entry_hash mismatch; the path leaves the documents root
+- **Refused when:** target: entry_hash mismatch; policy: the path leaves the documents root
 - **v0.3 oracle expectation:** I10; I2 (glob includes); I3 (plugins); FIX-L3-15
 - **Status:** draft
 - **Milestone:** M5
@@ -393,7 +393,7 @@ What each ledger-writing mutator may change. Column meanings and rules: [README.
 - **Intended change:** one transaction per committed draft, built by the domain builders: the anchor posting carries `import-key`; nothing from client-supplied metadata; duplicates (re-matched at commit) are skipped and reported
 - **Metadata written:** import-key; txn-date; original; statement-amount; memo
 - **The preview may list (never a refusal, ADR-0067):** BalanceError on a `balance` assertion of the anchor account ("Register anyway"); ValidationError on a draft dated outside the anchor account's `open` and `close`
-- **Refused when:** a draft whose import-key element is already in the ledger, unless the user forced it (`~dup<n>`) (INV-14); an open slot left empty (the draft is not complete)
+- **Refused when:** identity: a draft whose import-key element is already in the ledger, unless the user forced it (`~dup<n>`) (INV-14); user-choice: an open slot left empty (the draft is not complete)
 - **v0.3 oracle expectation:** I10; I2 (glob includes); I3 (plugins); M28 (legacy writes id, content_hash, source_account); FIX-L3-02 (legacy rounds a `@@` total to its own unit price); FIX-L3-05 (legacy rewrites the written scale)
 - **Status:** decided
 - **Milestone:** M6
@@ -409,7 +409,7 @@ What each ledger-writing mutator may change. Column meanings and rules: [README.
 - **Intended change:** the pending entry (flag `!`, every import-key element of kind `auth`) replaced by itself with the statement element appended to the anchor's `import-key` and the flag set to `*`; amounts unchanged (a difference goes to reconciliation)
 - **Metadata written:** import-key
 - **The preview may list (never a refusal, ADR-0067):** —
-- **Refused when:** the entry is not pending by the derived rule (a user's own `!` is never settled)
+- **Refused when:** target: the entry is not pending by the derived rule (a user's own `!` is never settled)
 - **v0.3 oracle expectation:** none: no old endpoint
 - **Status:** decided
 - **Milestone:** M6
@@ -425,7 +425,7 @@ What each ledger-writing mutator may change. Column meanings and rules: [README.
 - **Intended change:** the anchor posting's `import-key` line replaced (delete + insert of that one meta line) by the same elements plus one appended (a transfer counterpart, a confirmed scored duplicate, or a reconciliation match); elements never reordered or recomputed
 - **Metadata written:** import-key
 - **The preview may list (never a refusal, ADR-0067):** —
-- **Refused when:** the element is already present
+- **Refused when:** target: the element is already present
 - **v0.3 oracle expectation:** none: no old endpoint
 - **Status:** decided
 - **Milestone:** M6
@@ -440,8 +440,8 @@ What each ledger-writing mutator may change. Column meanings and rules: [README.
 - **Files:** the routed insert file and the files of the matched entries
 - **Intended change:** the additions and amount fixes the user chose (as import.commit and txn.edit), the chosen match elements (as import.link-element), then one `balance` on the anchor account dated closing + 1
 - **Metadata written:** import-key; txn-date; original; statement-amount; memo
-- **The preview may list (never a refusal, ADR-0067):** —
-- **Refused when:** the inserted assertion would fail (the report shows the residual instead); an unsettled pending entry falls on or before the as-of date (no assertion is proposed)
+- **The preview may list (never a refusal, ADR-0067):** BalanceError on the inserted assertion (Finzytrack proposes none that fails, ADR-0028; one the user adds anyway is listed with its residual, and Save anyway records it); Warning: an unsettled pending entry falls on or before the as-of date (no assertion is proposed, ADR-0028; one the user adds anyway may fail when the entry settles)
+- **Refused when:** —
 - **v0.3 oracle expectation:** none: no old endpoint
 - **Status:** draft
 - **Milestone:** M6
@@ -457,7 +457,7 @@ What each ledger-writing mutator may change. Column meanings and rules: [README.
 - **Intended change:** for each `ofx_mappings.yaml` entry the user consents to: `account_number` / `ofx-bank-id` added to the account's `open`; nothing else
 - **Metadata written:** account_number; ofx-bank-id
 - **The preview may list (never a refusal, ADR-0067):** —
-- **Refused when:** the mapped account is not open in this ledger; the key is already present with a different value (listed, never overwritten)
+- **Refused when:** target: the mapped account has no `open` directive in this ledger (nothing to write the key on); identity: the key is already present with a different value (listed, never overwritten)
 - **v0.3 oracle expectation:** none: no old endpoint
 - **Status:** draft
 - **Milestone:** M6
@@ -489,7 +489,7 @@ What each ledger-writing mutator may change. Column meanings and rules: [README.
 - **Intended change:** the one targeted `custom "budget"` replaced with the new values
 - **Metadata written:** —
 - **The preview may list (never a refusal, ADR-0067):** —
-- **Refused when:** the targeted directive is not found exactly once
+- **Refused when:** target: the targeted directive is not found exactly once
 - **v0.3 oracle expectation:** I10; I2 (glob includes); I3 (plugins)
 - **Status:** draft
 - **Milestone:** M7
@@ -505,7 +505,7 @@ What each ledger-writing mutator may change. Column meanings and rules: [README.
 - **Intended change:** the one targeted `custom "budget"` removed
 - **Metadata written:** —
 - **The preview may list (never a refusal, ADR-0067):** —
-- **Refused when:** the targeted directive is not found exactly once
+- **Refused when:** target: the targeted directive is not found exactly once
 - **v0.3 oracle expectation:** I10; I2 (glob includes); I3 (plugins)
 - **Status:** draft
 - **Milestone:** M7
@@ -521,7 +521,7 @@ What each ledger-writing mutator may change. Column meanings and rules: [README.
 - **Intended change:** one transaction: N units of the security at the given average cost into the holding account, against the chosen Equity opening account
 - **Metadata written:** —
 - **The preview may list (never a refusal, ADR-0067):** ValidationError on the inserted transaction (an account is not open on its date)
-- **Refused when:** the Equity account was not picked by the user (INV-15)
+- **Refused when:** user-choice: the Equity account was not picked by the user (INV-15)
 - **v0.3 oracle expectation:** I10; I2 (glob includes); I3 (plugins); M28; FIX-L3-02 (legacy rounds a `@@` total to its own unit price); FIX-L3-05 (legacy rewrites the written scale)
 - **Status:** draft
 - **Milestone:** M8
@@ -537,7 +537,7 @@ What each ledger-writing mutator may change. Column meanings and rules: [README.
 - **Intended change:** one `open` for the deposit account with the deposit vocabulary keys, an optional `open` for the linked interest income account, and the funding transaction if the user gave one
 - **Metadata written:** account-type; interest-rate; maturity-date; interest-account
 - **The preview may list (never a refusal, ADR-0067):** ValidationError on a new `open` (the account is already open)
-- **Refused when:** a name the user did not type or pick (INV-15)
+- **Refused when:** user-choice: a name the user did not type or pick (INV-15)
 - **v0.3 oracle expectation:** I10; I2 (glob includes); I3 (plugins); M28 (snake_case vocabulary)
 - **Status:** draft
 - **Milestone:** M8
@@ -553,7 +553,7 @@ What each ledger-writing mutator may change. Column meanings and rules: [README.
 - **Intended change:** the commodity's vocabulary keys set or removed as asked (`name`, `asset-class`, `exposure`, `fetch-symbol`, `isin`, `issue-date`, `denomination`); a missing `commodity` directive is inserted
 - **Metadata written:** name; asset-class; exposure; fetch-symbol; isin; issue-date; denomination
 - **The preview may list (never a refusal, ADR-0067):** —
-- **Refused when:** a typed key with a value of the wrong type (dates, numbers)
+- **Refused when:** grammar: a typed key with a value of the wrong type (dates, numbers)
 - **v0.3 oracle expectation:** I10; I2 (glob includes); I3 (plugins); M28 (snake_case vocabulary); FIX-L3-15
 - **Status:** draft
 - **Milestone:** M8
@@ -568,8 +568,8 @@ What each ledger-writing mutator may change. Column meanings and rules: [README.
 - **Files:** the file holding the account's `open`
 - **Intended change:** the booking method on the account's `open` set or changed; nothing else. The same write as account.edit's booking-method field, listed apart because its preview (re-booked past sales) is the investments one
 - **Metadata written:** —
-- **The preview may list (never a refusal, ADR-0067):** BookingError on a reduction the re-booking cannot match
-- **Refused when:** the re-booking preview (N past sales, realized gain change) not confirmed; AVERAGE (refused by Beancount 3.2)
+- **The preview may list (never a refusal, ADR-0067):** BookingError on a reduction the re-booking cannot match; AmbiguousMatchError on each reduction of the account under AVERAGE (Beancount 3.2: "AVERAGE method is not supported")
+- **Refused when:** consent: the re-booking preview (N past sales, realized gain change) not confirmed
 - **v0.3 oracle expectation:** none: no old endpoint
 - **Status:** decided
 - **Milestone:** M8
@@ -585,7 +585,7 @@ What each ledger-writing mutator may change. Column meanings and rules: [README.
 - **Intended change:** the inferred events the user confirmed in the one summary (buys, sells with `{}` or the statement's lots, reinvestments, splits, fees, dividends), then units `balance` assertions dated the check date for each reconciled (account, security)
 - **Metadata written:** import-key
 - **The preview may list (never a refusal, ADR-0067):** BalanceError on an inserted units assertion
-- **Refused when:** a sale on a STRICT account without lot detail (listed for the user, never guessed)
+- **Refused when:** user-choice: a sale on a STRICT account without lot detail (listed for the user, never guessed)
 - **v0.3 oracle expectation:** none: no old endpoint
 - **Status:** draft
 - **Milestone:** M8
@@ -601,7 +601,7 @@ What each ledger-writing mutator may change. Column meanings and rules: [README.
 - **Intended change:** one `price` per (date, commodity, quote) fetched or added; on a taken date the user chose Replace and the old price is replaced; ledger-file prices are never touched
 - **Metadata written:** —
 - **The preview may list (never a refusal, ADR-0067):** —
-- **Refused when:** a price for a date the ledger file already prices (read-only); a fetch that would replace a manual price (CAP-PRICE-UPDATE: manual prices are never overwritten); a number written with an exponent (never; `format(d, "f")`)
+- **Refused when:** not-editable: a price for a date the ledger file already prices (read-only); policy: a fetch that would replace a manual price (CAP-PRICE-UPDATE: manual prices are never overwritten); grammar: a number written with an exponent (never; `format(d, "f")`)
 - **v0.3 oracle expectation:** I10 (legacy rewrites the whole sidecar and drops its comments)
 - **Status:** decided
 - **Milestone:** M8
@@ -617,7 +617,7 @@ What each ledger-writing mutator may change. Column meanings and rules: [README.
 - **Intended change:** the one targeted sidecar `price` replaced or removed
 - **Metadata written:** —
 - **The preview may list (never a refusal, ADR-0067):** —
-- **Refused when:** the target is a ledger-file price (read-only)
+- **Refused when:** not-editable: the target is a ledger-file price (read-only)
 - **v0.3 oracle expectation:** I10 (legacy rewrites the whole sidecar)
 - **Status:** decided
 - **Milestone:** M8
@@ -633,7 +633,7 @@ What each ledger-writing mutator may change. Column meanings and rules: [README.
 - **Intended change:** the root's `option "operating_currency"` lines become exactly the chosen list, in order; other options untouched
 - **Metadata written:** —
 - **The preview may list (never a refusal, ADR-0067):** —
-- **Refused when:** an invalid currency code; an operating currency declared in an included file (the user edits that file)
+- **Refused when:** grammar: an invalid currency code; not-editable: an operating currency declared in an included file (the user edits that file)
 - **v0.3 oracle expectation:** I10; I2 (glob includes); I3 (plugins)
 - **Status:** decided
 - **Milestone:** M10
@@ -649,7 +649,7 @@ What each ledger-writing mutator may change. Column meanings and rules: [README.
 - **Intended change:** the consented cleanup (ADR-0026): legacy refs rewritten into posting-level `import-key` first, then machinery keys removed, snake_case vocabulary renamed, legacy ids removed only if the user opted in; every exact-match key survives (fail-closed proof)
 - **Metadata written:** import-key
 - **The preview may list (never a refusal, ADR-0067):** —
-- **Refused when:** any exact-match identity that would not survive the rewrite
+- **Refused when:** identity: any exact-match identity that would not survive the rewrite
 - **v0.3 oracle expectation:** none: no old endpoint
 - **Status:** decided
 - **Milestone:** M10
@@ -681,7 +681,7 @@ What each ledger-writing mutator may change. Column meanings and rules: [README.
 - **Intended change:** the inverse of one journaled write: each entry the write produced (found by its canonical text) removed, and each entry it removed or replaced restored at the file and position the undo journal recorded (the journal stores canonical text plus location; review:28 §4.1 identity condition 4); nothing else. Writes of option lines, meta lines and whole files (doc.documents-option, settings.*, import.link-element, ws.*) are not undoable this way and say so
 - **Metadata written:** —
 - **The preview may list (never a refusal, ADR-0067):** as the undone write's row
-- **Refused when:** an entry the write produced is gone or changed since (located by canonical hash; never guessed); a later write touched the same entries (undo the later one first); the recorded position no longer exists (the file changed around it): the restore is offered as a routed insert with a preview instead
+- **Refused when:** target: an entry the write produced is gone or changed since (located by canonical hash; never guessed); target: a later write touched the same entries (undo the later one first); target: the recorded position no longer exists (the file changed around it): the restore is offered as a routed insert with a preview instead
 - **v0.3 oracle expectation:** none: no old endpoint
 - **Status:** draft
 - **Milestone:** M5
@@ -729,7 +729,7 @@ What each ledger-writing mutator may change. Column meanings and rules: [README.
 - **Intended change:** one transaction: the dividend from the income account the user picked to the cash account
 - **Metadata written:** —
 - **The preview may list (never a refusal, ADR-0067):** ValidationError on the inserted transaction (an account is not open on its date)
-- **Refused when:** an income account the user did not pick (INV-15: suggested from metadata, never created)
+- **Refused when:** user-choice: an income account the user did not pick (INV-15: suggested from metadata, never created)
 - **v0.3 oracle expectation:** I10; I2 (glob includes); I3 (plugins); M28; FIX-L3-02 (legacy rounds a `@@` total to its own unit price); FIX-L3-05 (legacy rewrites the written scale)
 - **Status:** draft
 - **Milestone:** M8
@@ -744,8 +744,8 @@ What each ledger-writing mutator may change. Column meanings and rules: [README.
 - **Files:** the routed insert file
 - **Intended change:** one transaction: the reduction written per ADR-0031 (`{}` where the account's method decides, or one posting per lot the user picked on STRICT accounts), the cash leg, the fee leg if given, and the gains leg on the account the user picked with its amount left for Beancount to interpolate (the app does no lot math, ADR-0031, INV-02)
 - **Metadata written:** —
-- **The preview may list (never a refusal, ADR-0067):** BookingError on the sale's reduction; AmbiguousMatchError on the sale (a STRICT account and no lot chosen; Finzytrack never guesses one)
-- **Refused when:** AVERAGE booking (refused by Beancount 3.2)
+- **The preview may list (never a refusal, ADR-0067):** BookingError on the sale's reduction; AmbiguousMatchError on the sale (a STRICT account and no lot chosen; Finzytrack never guesses one); AmbiguousMatchError on the sale under AVERAGE booking (Beancount 3.2: "AVERAGE method is not supported")
+- **Refused when:** —
 - **v0.3 oracle expectation:** I10; I2 (glob includes); I3 (plugins); M28; FIX-L3-02 (legacy rounds a `@@` total to its own unit price); FIX-L3-05 (legacy rewrites the written scale)
 - **Status:** draft
 - **Milestone:** M8
@@ -761,7 +761,7 @@ What each ledger-writing mutator may change. Column meanings and rules: [README.
 - **Intended change:** one transaction: every lot of the old security reduced and new lots in the new security with the same dates and the same total cost, no gain; when the per-unit cost does not divide exactly, a rounding leg to an account the user picks makes it balance exactly, shown in the preview (ADR-0030 amendment)
 - **Metadata written:** —
 - **The preview may list (never a refusal, ADR-0067):** BookingError on the conversion's reduction
-- **Refused when:** a ratio needing a rounding leg when the user has not picked the rounding account (INV-15: never invented)
+- **Refused when:** user-choice: a ratio needing a rounding leg when the user has not picked the rounding account (INV-15: never invented)
 - **v0.3 oracle expectation:** I10; I2 (glob includes); I3 (plugins); M28; FIX-L3-02 (legacy rounds a `@@` total to its own unit price); FIX-L3-05 (legacy rewrites the written scale)
 - **Status:** draft
 - **Milestone:** M8
@@ -808,8 +808,8 @@ What each ledger-writing mutator may change. Column meanings and rules: [README.
 - **Files:** the root file
 - **Intended change:** the root's `option "booking_method"` line set to the chosen method (inserted if absent); nothing else
 - **Metadata written:** —
-- **The preview may list (never a refusal, ADR-0067):** BookingError on a reduction the re-booking cannot match
-- **Refused when:** the re-booking preview (N past sales, realized gain change) not confirmed (ADR-0031); AVERAGE (refused by Beancount 3.2); the option is declared in an included file (the user edits that file)
+- **The preview may list (never a refusal, ADR-0067):** BookingError on a reduction the re-booking cannot match; AmbiguousMatchError on each reduction booked by the default under AVERAGE (Beancount 3.2: "AVERAGE method is not supported")
+- **Refused when:** consent: the re-booking preview (N past sales, realized gain change) not confirmed (ADR-0031); not-editable: the option is declared in an included file (the user edits that file)
 - **v0.3 oracle expectation:** none: no old endpoint
 - **Status:** decided
 - **Milestone:** M8
@@ -825,7 +825,7 @@ What each ledger-writing mutator may change. Column meanings and rules: [README.
 - **Intended change:** every file of the source ledger set copied into the new folder, marked `test_copy: true`, with every include resolving inside the copy; the copy loads to the same entries and errors as the source (checked before the workspace is recorded); the source set is only read
 - **Metadata written:** —
 - **The preview may list (never a refusal, ADR-0067):** —
-- **Refused when:** the destination is a folder that is not empty (an absent or empty folder is used; engine-jobs spec §8.2); an include that resolves outside the source folder, or an absolute include (it would keep a real-ledger file in the copy's set); the copy does not load the same as the source; a source file is named by an unfinished save's journal, one recovery could not undo or the open workspace's own after a failed rollback: it may hold a half-applied save (`RECOVERY_BLOCKED`, ADR-0063; engine-jobs spec §8.2)
+- **Refused when:** policy: the destination is a folder that is not empty (an absent or empty folder is used; engine-jobs spec §8.2); policy: an include that resolves outside the source folder, or an absolute include (it would keep a real-ledger file in the copy's set); integrity: the copy does not load the same as the source; integrity: a source file is named by an unfinished save's journal, one recovery could not undo or the open workspace's own after a failed rollback: it may hold a half-applied save (`RECOVERY_BLOCKED`, ADR-0063; engine-jobs spec §8.2)
 - **v0.3 oracle expectation:** none: no old endpoint
 - **Status:** draft
 - **Milestone:** M3
@@ -841,7 +841,7 @@ What each ledger-writing mutator may change. Column meanings and rules: [README.
 - **Intended change:** the legacy ledger set copied into the new workspace and its documents into `<folder>/documents/` (Copy, the only mode, ADR-0020, ADR-0062); an `option "documents"` naming a legacy path is the one line rewritten, to the copied folder; sources read while holding the legacy lock of every legacy install whose config names them, each taken by one non-blocking try; a lock file absent at the try must still be absent, and the sources unchanged, after the read (ADR-0062); the copy loads the same as the source; the legacy files are only read
 - **Metadata written:** —
 - **The preview may list (never a refusal, ADR-0067):** —
-- **Refused when:** any write under the legacy root (INV-26); the destination is a folder that is not empty (an absent or empty folder is used; engine-jobs spec §8.2); an include that resolves outside the legacy root's folder; a legacy lock is held, or its try fails in any other way (fail closed): "Quit the old Finzytrack first", never waited for (ADR-0062); a lock file absent at the try appeared, or a source changed, during the read; the copy does not load the same as the source; a source file is named by an unfinished save's journal, for example a retired legacy ledger opened in place whose save was cut off (`RECOVERY_BLOCKED`, ADR-0063; engine-jobs spec §8.2)
+- **Refused when:** policy: any write under the legacy root (INV-26); policy: the destination is a folder that is not empty (an absent or empty folder is used; engine-jobs spec §8.2); policy: an include that resolves outside the legacy root's folder; policy: a legacy lock is held, or its try fails in any other way (fail closed): "Quit the old Finzytrack first", never waited for (ADR-0062); integrity: a lock file absent at the try appeared, or a source changed, during the read; integrity: the copy does not load the same as the source; integrity: a source file is named by an unfinished save's journal, for example a retired legacy ledger opened in place whose save was cut off (`RECOVERY_BLOCKED`, ADR-0063; engine-jobs spec §8.2)
 - **v0.3 oracle expectation:** none: no old endpoint
 - **Status:** draft
 - **Milestone:** M3
@@ -857,7 +857,7 @@ What each ledger-writing mutator may change. Column meanings and rules: [README.
 - **Intended change:** the demo's files replaced as a whole by the generator's output for the new build anchor (the one replacement in the system, INV-25, ADR-0022); if the demo was edited, one previous copy is kept in a hidden folder inside the app data dir first
 - **Metadata written:** —
 - **The preview may list (never a refusal, ADR-0067):** —
-- **Refused when:** the folder is not the app's demo path, is not `kind: demo`, or is reached through a symlink (INV-25)
+- **Refused when:** policy: the folder is not the app's demo path, is not `kind: demo`, or is reached through a symlink (INV-25)
 - **v0.3 oracle expectation:** none: no old endpoint
 - **Status:** draft
 - **Milestone:** M3

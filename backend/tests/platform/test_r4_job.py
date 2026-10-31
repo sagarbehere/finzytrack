@@ -37,6 +37,7 @@ from app.platform.engine_jobs.save import (
 )
 from app.platform.engine_jobs.scheduler import Done, EngineJobs, Failed, JobTicket
 from app.platform.errors import ErrorCode
+from app.platform.observability import Event as LogEvent
 from tests.platform.fake_job_engine import BLOCK, CRASH, CRASH_TO_BOUND, FakeEngine, Gated
 
 DEADLINE = 20.0
@@ -80,13 +81,20 @@ def r4(outcome: str, *, loaded: bool = True) -> dict[str, object]:
 class Rig:
     def __init__(self, scripted: dict[str, list[object]]) -> None:
         self.engine = FakeEngine(scripted=scripted)
-        self.jobs = EngineJobs(self.engine, wait_engine_lock=lambda: None)
+        self.logged: list[tuple[str, dict[str, object]]] = []
+        self.jobs = EngineJobs(self.engine, wait_engine_lock=lambda: None, log=self._sink)
         self.engine.spawned = self.jobs.engine_spawned
         self.engine.ended = self.jobs.engine_ended
         boot = self.jobs.start()
         assert isinstance(boot, JobTicket)
         assert boot.wait(DEADLINE) is not None
         self.jobs.workspace_opened(W1)
+
+    def _sink(self, event: LogEvent, /, **fields: object) -> None:
+        self.logged.append((event.name, fields))
+
+    def r4_lines(self) -> list[tuple[str, dict[str, object]]]:
+        return [(n, f) for n, f in self.logged if n.startswith("r4.")]
 
     def run(self, ticket: JobTicket | Failed) -> object:
         assert isinstance(ticket, JobTicket), ticket
@@ -222,6 +230,8 @@ def test_the_background_r4_is_one_check_and_reports_its_outcome(make: Any, outco
 def test_only_a_difference_has_a_notice() -> None:
     """§11 (S0068): the notice is said for `differs` only, and says the change is saved."""
     assert notice_of(Checked("differs")) == save_text.R4_DIFFERS
+    # S0068 verifier r1 F6: the one cause every file-creating save under a documents root gives is named (§15)
+    assert "a new file in a documents folder" in save_text.R4_DIFFERS
     assert save_text.R4_DIFFERS.startswith("Your change is saved.")
     for other in ("pass", "superseded", "gone", "unreadable"):
         assert notice_of(Checked(other)) is None
@@ -265,3 +275,64 @@ def test_a_save_value_never_carries_r4(make: Any) -> None:
     value = rig.save()
     assert isinstance(value, Saved | NotDone)
     assert not hasattr(value, "nondeterministic")
+
+
+# -- R4's result is logged (S0068 verifier r1 F1; ADR-0067 decision 3, §6.7) -------------------------------------------
+
+
+def test_a_difference_is_logged_with_the_job_the_workspace_key_and_the_record_only(make: Any) -> None:
+    rig = make({"r4_check": [r4("differs")]})
+    assert background(rig) == Checked("differs")
+    ((name, fields),) = rig.r4_lines()
+    assert name == "r4.differs"
+    assert fields["workspace_key"] == TARGET.key
+    assert fields["record"] == TARGET.name
+    assert set(fields) == {"job", "workspace_key", "record"}  # nothing of the ledger (INV-23)
+
+
+@pytest.mark.parametrize("outcome", ["superseded", "gone", "unreadable"])
+def test_an_outcome_that_compared_nothing_is_logged_as_not_compared(make: Any, outcome: str) -> None:
+    rig = make({"r4_check": [r4(outcome)]})
+    value = background(rig)
+    assert isinstance(value, Checked)
+    assert value.outcome == outcome
+    ((name, fields),) = rig.r4_lines()
+    assert name == "r4.not_compared"
+    assert {k: v for k, v in fields.items() if k != "job"} == {
+        "workspace_key": "k1", "record": "s0-j0", "outcome": outcome,
+    }  # fmt: skip
+
+
+def test_a_pass_logs_nothing(make: Any) -> None:
+    rig = make({"r4_check": [r4("pass")]})
+    assert background(rig) == Checked("pass")
+    assert rig.r4_lines() == []
+
+
+def test_an_r4_that_did_not_run_to_an_outcome_is_logged_with_why(make: Any) -> None:
+    from app.platform.engine import EngineRefusal
+
+    rig = make({"r4_check": [EngineRefusal("engine.internal", "an encrypted file met")]})
+    assert background(rig) == NotChecked("refused")
+    assert [(n, f["outcome"]) for n, f in rig.r4_lines()] == [("r4.not_compared", "refused")]
+
+
+# -- A save right after a save (S0068 verifier r1 F4; spec §3, §14) ----------------------------------------------------
+
+
+def test_a_save_waits_for_a_running_r4_and_never_runs_one_itself(make: Any) -> None:
+    """§3: a running job is never interrupted, so a save asked for while the previous save's R4 runs waits for it;
+    it never runs an R4 itself (one `save` request after the R4's one `r4_check`)."""
+    rig = make({"r4_check": [BLOCK, r4("pass")], "save": [Gated(answer())]})
+    bg = rig.jobs.submit(r4_spec(W1), r4_work(ALD, TARGET))
+    assert isinstance(bg, JobTicket)
+    rig.called("r4_check")
+    t = rig.jobs.submit(save_spec(W1), save_work(REQUEST))
+    assert isinstance(t, JobTicket)
+    q = rig.jobs.status().queue
+    assert q.running is not None
+    assert q.running.job.kind == "r4"
+    assert [j.kind for j in q.queued] == ["save"]  # waiting behind the running R4
+    rig.engine.release("r4_check")
+    assert isinstance(rig.run(t), Done)
+    assert rig.ops() == ["r4_check", "save"]

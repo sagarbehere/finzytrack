@@ -45,9 +45,19 @@ EXPECTED_FIXED = (
     "design/inbox/README.md",
     "design/generated/README.md",
     "formal/tla/engine-jobs/HOW_TO_RUN.md",
+    # S0068 verifier r1 F2: the rest of the live Markdown outside the history
+    "design/decisions/README.md",
+    "README.md",
+    "SECURITY.md",
+    "corpora/README.md",
+    "engine/typings/README.md",
 )
-# S0055: every agent definition and every skill, found by these patterns (one sample file each in a scratch root).
-EXPECTED_GLOB_SAMPLES = (".claude/agents/a.md", ".claude/skills/x/SKILL.md")
+# S0055: every agent definition and every skill, found by these patterns (one sample file each in a scratch root);
+# S0068 verifier r1 F2: each model's Markdown (`formal/tla/<model>/*.md`) and the generated statecharts.
+EXPECTED_GLOB_SAMPLES = (
+    ".claude/agents/a.md", ".claude/skills/x/SKILL.md", "formal/tla/m/MAPPING.md",
+    "design/generated/statecharts/s.md",
+)  # fmt: skip
 
 # One line per refuse-now term, as an abandoned design would have written it.
 RETIRED_LINES = {
@@ -128,7 +138,7 @@ RETIRED_LINES = {
     "R4 gate": "the R4 gate survives a crash",
     "never acknowledgeable": "booking errors are never acknowledgeable",
     "May ask to acknowledge": "- **May ask to acknowledge:** BalanceError on the inserted assertion",
-    "unless acknowledged": "the semantic diff equals the intent, no new errors unless acknowledged, the hash check passes",
+    "unless acknowledged": "the semantic diff equals the intent, no new errors unless acknowledged, the hash passes",
     "pause on R4": "Finzytrack's check of your last change found a difference. Saving is paused.",
     "NoSaveWhileR4Owed": "the model checks `NoSaveWhileR4Owed`",
     "R4GateLiftedOnlyByUser": "and `R4GateLiftedOnlyByUser`",
@@ -142,6 +152,8 @@ TRAP_LINES = [
     "the closed record is the save's last state; a mismatch of the fingerprint refuses `LEDGER_EXTERNALLY_CHANGED`",
     "R4 says `differs`; `pass` and `superseded` show nothing",
     "the preview lists the new errors and the user may save anyway",
+    # S0068 verifier r1 F7: the unfinished save's pause is current
+    "Saving is paused in this workspace, so Finzytrack did not save your change.",
     "new errors are listed in a preview and written only if the user saves anyway; the user acknowledged the notice",
     "a read-back mismatch rolls back",
     "A slot of the form; the one engine slot; an open slot is a suggestion target.",
@@ -485,8 +497,14 @@ class RealRepository(unittest.TestCase):
         specs = [f for _, _, files in os.walk(ROOT / "design/specs") for f in files if f.endswith(".md")]
         agents = [f for f in os.listdir(ROOT / ".claude/agents") if f.endswith(".md")]
         skills = [d for d in os.listdir(ROOT / ".claude/skills") if (ROOT / ".claude/skills" / d / "SKILL.md").is_file()]
-        self.assertIn(f"retired terms: {len(EXPECTED_FIXED) + len(specs) + len(agents) + len(skills)} documents,",
-                      r.stdout)
+        # S0068 verifier r1 F2: each model's Markdown and the generated statecharts, a fixed one once
+        more = {p.relative_to(ROOT).as_posix() for p in (*ROOT.glob("formal/tla/*/*.md"),
+                                                          *ROOT.glob("design/generated/statecharts/*.md"))}
+        more -= set(EXPECTED_FIXED)
+        self.assertIn(
+            f"retired terms: {len(EXPECTED_FIXED) + len(specs) + len(agents) + len(skills) + len(more)} documents,",
+            r.stdout,
+        )
 
     def test_a_retired_term_in_the_repository_fails_the_script(self) -> None:
         root = make_root(self, {"design/glossary.md": "- **Semaphore.** retired\n"})
@@ -529,3 +547,49 @@ class LiveDocsAfterS0068(unittest.TestCase):
         self.assertEqual({line.split(":")[1] for line in spec_hits}, {str(last)}, spec_hits)  # the real text passes
         for term in ("R4 first", "R4 mismatch outcome", "check_failed"):
             self.assertIn(f"engine-jobs.md:{last}: retired term '{term}'", done.stdout)
+
+
+class LiveModelDocsAfterS0068Review(unittest.TestCase):
+    """S0068 verifier r1 F2: the model's documents, every other Markdown file under `formal/` and the ADR index are
+    checked; MAPPING.md's dated findings (§5) and the index's title cells and file names are history."""
+
+    def run_on(self, files: dict[str, str]) -> subprocess.CompletedProcess[str]:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            for rel in (*EXPECTED_FIXED, *EXPECTED_GLOB_SAMPLES, "design/specs/s.md"):
+                (root / rel).parent.mkdir(parents=True, exist_ok=True)
+                (root / rel).write_text("current text\n", encoding="utf-8")
+            for rel, text in files.items():
+                (root / rel).parent.mkdir(parents=True, exist_ok=True)
+                (root / rel).write_text(text, encoding="utf-8")
+            return subprocess.run(  # noqa: S603 (this interpreter and the repository's own script)
+                [sys.executable, str(SCRIPT), str(root)], capture_output=True, text=True, check=False
+            )
+
+    def test_an_old_r4_line_in_the_models_mapping_is_refused_outside_its_findings_section(self) -> None:
+        mapping = (
+            "# Mapping\n## 1. Spec to model\n| row | the owed R4 runs inside the save |\n"
+            "## 5. The model's findings: now spec rules\n- M5: every R4 rename is synced; `NoFalseMismatch`.\n"
+            "## 6. Mutants\n- `confirm_no_recheck` (its `NoFalseMismatch` witness)\n"
+        )
+        done = self.run_on({"formal/tla/engine-jobs/MAPPING.md": mapping})
+        self.assertEqual(done.returncode, 1, done.stdout + done.stderr)
+        hits = sorted({line.split(":")[1] for line in done.stdout.splitlines() if "MAPPING.md:" in line})
+        self.assertEqual(hits, ["3", "7"], done.stdout)  # §5's line 5 is history
+
+    def test_a_new_models_readme_is_checked(self) -> None:
+        done = self.run_on({"formal/tla/other/README.md": "R4 gates the next save.\n"})
+        self.assertEqual(done.returncode, 1, done.stdout + done.stderr)
+        self.assertIn("formal/tla/other/README.md:1: retired term 'R4 gate'", done.stdout)
+
+    def test_the_adr_index_status_cell_is_checked_and_its_title_and_file_name_are_not(self) -> None:
+        index = (
+            "| ADR | Title | Status |\n|---|---|---|\n"
+            "| [ADR-0006](ADR-0006-frontend-framework-react.md) | Frontend framework: React | Superseded |\n"
+            "| [ADR-0064](ADR-0064-x.md) | One engine | Accepted; the R4 gate stays |\n"
+        )
+        done = self.run_on({"design/decisions/README.md": index})
+        self.assertEqual(done.returncode, 1, done.stdout + done.stderr)
+        hits = [line for line in done.stdout.splitlines() if line.startswith("design/decisions/README.md:")]
+        self.assertEqual(len(hits), 1, hits)
+        self.assertIn("README.md:4: retired term 'R4 gate'", hits[0])

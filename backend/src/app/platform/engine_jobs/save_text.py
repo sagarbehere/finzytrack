@@ -19,8 +19,9 @@ from app.platform.errors import ChangeNotSavedDetails, ErrorCode, WritesPausedDe
 NOT_SAVED: Final = "Your change was not saved."
 UNCHANGED: Final = "Your ledger is unchanged."
 R4_DIFFERS: Final = (
-    "Your change is saved. Beancount reads your ledger differently from what Finzytrack expected. A plugin that gives "
-    "a different result each time, or another program changing a file at the same moment, can cause this."
+    "Your change is saved. Beancount reads your ledger differently from what Finzytrack expected. Common causes: a new "
+    "file in a documents folder, a plugin that gives a different result each time, or another program changing a "
+    "file at the same moment."
 )
 """§11's notice when R4 finds a difference (`engine_jobs.r4.notice_of`): true whatever the cause, since R4 no longer
 tells a plugin's variation from a replica's drift (ADR-0067: no confirm). Saving goes on. Once R4's result is

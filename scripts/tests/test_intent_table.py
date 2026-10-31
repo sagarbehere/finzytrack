@@ -49,6 +49,36 @@ def harness_rows() -> dict[str, str]:
     raise AssertionError("scripts/oracle/model.py has no INTENT_ROWS")
 
 
+# The kinds of refusal ADR-0067 keeps (job 1, consent steps and policy), each written `<kind>: <reason>`.
+REFUSAL_KINDS = {
+    "target",  # the entry or directive to change is not found exactly once, or changed since it was read
+    "grammar",  # our own text would not parse into the intended entries (account grammar, codes, typed values)
+    "not-editable",  # plugin-generated, in an encrypted file, read-only, or declared in a file the user edits
+    "identity",  # the write would break a read-forever identity key or a duplicate rule (INV-14)
+    "user-choice",  # a name, account or choice the user did not make (INV-15; Finzytrack never guesses)
+    "consent",  # a confirmation step of the flow is not done yet (the re-booking preview, holdings at cost)
+    "policy",  # an invariant or ADR about folders, files and accounts (INV-25, INV-26, INV-29, ADR-0049, ...)
+    "integrity",  # the result would not be what was asked (a copy that loads differently, a source that moved)
+}
+# Words of an accounting check (a balance, a date against open/close, booking); a refusal never uses them.
+ACCOUNTING_WORDS = re.compile(
+    r"would fail|would follow|before the open|after the close|already closed|postings? (?:after|before)|"
+    r"does not balance|not open\b|\bAVERAGE\b|\bresidual\b|never acknowledgeable",
+    re.IGNORECASE,
+)
+
+
+def refusal_ok(ref: str, refers_to_a_row: bool) -> bool:
+    """A refusal of the current design: `<kind>: <reason>` with a kind of `REFUSAL_KINDS` (or `as <row>`), naming no
+    Beancount error class but a parser error and no accounting words."""
+    kind = ref.split(":", 1)[0] if ": " in ref else ""
+    if not (kind in REFUSAL_KINDS or refers_to_a_row):
+        return False
+    if any(cls in ref for cls in BEANCOUNT_ERRORS - PARSE_ERRORS):
+        return False
+    return not ACCOUNTING_WORDS.search(ref)
+
+
 class IntentTableTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
@@ -102,14 +132,13 @@ class IntentTableTest(unittest.TestCase):
 
     def test_no_refusal_is_an_accounting_error(self) -> None:
         """ADR-0067 decision 2 (S0068): job 2 advises and never refuses; a refusal reason that is a Beancount error
-        (other than a parser error in our own text) belongs in the preview hints."""
+        (other than a parser error in our own text) belongs in the preview hints. Every refusal names its kind from
+        `REFUSAL_KINDS` (S0068 verifier r1 F3: a check of class names alone let an accounting refusal through when
+        worded without one), or refers to another row's refusals (`as <row>`); and none uses accounting words."""
         for r in self.rows:
             for ref in r["refuses"]:
                 with self.subTest(row=r["id"], refuses=ref):
-                    self.assertNotIn("never acknowledgeable", ref)
-                    self.assertNotIn("would follow", ref)
-                    for cls in BEANCOUNT_ERRORS - PARSE_ERRORS:
-                        self.assertNotIn(cls, ref)
+                    self.assertTrue(refusal_ok(ref, self.refers_to_a_row(ref, r["id"])), ref)
 
     def test_metadata_written_is_on_the_contract_list(self) -> None:
         for r in self.rows:
@@ -176,3 +205,18 @@ class IntentTableTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class AccountingRefusalMutant(unittest.TestCase):
+    """S0068 verifier r1 F3's mutant: account.close's refusals of cc0b27db, put back without a class name, fail."""
+
+    def test_account_closes_old_refusals_are_caught(self) -> None:
+        old = ["the close date is before the open date", "A has postings after the close date", "A is already closed"]
+        for ref in old:
+            with self.subTest(ref=ref):
+                self.assertFalse(refusal_ok(ref, refers_to_a_row=False))
+                self.assertFalse(refusal_ok(f"target: {ref}", refers_to_a_row=False))
+        self.assertFalse(refusal_ok("target: the inserted assertion would fail", refers_to_a_row=False))
+        self.assertFalse(refusal_ok("policy: AVERAGE (refused by Beancount 3.2)", refers_to_a_row=False))
+        self.assertFalse(refusal_ok("the targeted assertion is not found exactly once", refers_to_a_row=False))
+        self.assertTrue(refusal_ok("target: the targeted assertion is not found exactly once", refers_to_a_row=False))

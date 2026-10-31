@@ -172,6 +172,36 @@ ENGINE_EXIT = Event(
 ENGINE_STDERR = Event("engine.stderr", "info", "platform", (Field("line", Kind.DEBUG_DETAIL),), source="engine")
 ENGINE_CLOSED = Event("engine.closed", "info", "platform", ())
 
+# -- R4, the re-check after a save (S0068, ADR-0067 decision 3; engine-jobs spec §6.7): logged by its work,
+# content-free: the job, the workspace's registry key and the save's record name, never a path, an account or an
+# amount (INV-23)
+
+R4_DIFFERS = Event(
+    "r4.differs",
+    "warning",
+    "platform",
+    (
+        Field("job", Kind.ID),  # the R4 job's id in the queue
+        Field("workspace_key", Kind.ID),  # the workspace's registry key (`local/<key>/`)
+        Field("record", Kind.ID),  # the save's record name (`<session>-<job>`)
+    ),
+)
+R4_NOT_COMPARED = Event(
+    "r4.not_compared",
+    "info",
+    "platform",
+    (
+        Field("job", Kind.ID),
+        Field("workspace_key", Kind.ID),
+        Field("record", Kind.ID),
+        Field(
+            "outcome",
+            Kind.ENUM,  # `superseded`, `gone`, `unreadable`: R4's outcomes; the rest: why R4 did not run to one
+            frozenset({"superseded", "gone", "unreadable", "engine_failed", "refused", "violation"}),
+        ),
+    ),
+)
+
 # -- The API edge (S0046; ARCHITECTURE.md §6.3) ------------------------------------------------------------------------
 
 API_INTERNAL_ERROR = Event(
@@ -231,6 +261,8 @@ EVENTS = (
     ENGINE_CLOSED,
     API_INTERNAL_ERROR,
     JOB_INTERNAL_ERROR,
+    R4_DIFFERS,
+    R4_NOT_COMPARED,
     LIB_RECORD,
     UNCAUGHT,
     UNREGISTERED,

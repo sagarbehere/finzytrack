@@ -271,15 +271,26 @@ class JobContext:
         """A recover-all has listed the journals (§8.1): from now on its Cancel ends only its engine (S0062)."""
         self._worker.listed()
 
+    def log(self, event: LogEvent, /, **fields: object) -> None:
+        """One registered event of the job's own (R4's comparison, §6.7), into the scheduler's log."""
+        self._worker.log(event, **fields)
+
 
 class _Worker:
     """The running job's side of the scheduler: its engine calls, its `Start`s and its end."""
 
     def __init__(
-        self, engine: JobEngine, post: Callable[[_Message], None], books: _Books, job_id: int, kind: JobKind
+        self,
+        engine: JobEngine,
+        post: Callable[[_Message], None],
+        books: _Books,
+        job_id: int,
+        kind: JobKind,
+        log: EventSink = _no_log,
     ) -> None:
         self.job_id = job_id
         self.kind = kind
+        self.log = log
         self._engine = engine
         self._post = post
         self._books = books
@@ -840,7 +851,7 @@ class EngineJobs:
         if job.worker is not None:
             job.worker.granted(start)  # a fresh engine for the job's next part
             return
-        job.worker = _Worker(self._engine, self._post, self._books, start.job.id, start.job.kind)
+        job.worker = _Worker(self._engine, self._post, self._books, start.job.id, start.job.kind, self._log)
         threading.Thread(target=self._run, args=(job.worker, job.work, start), name="engine-job", daemon=True).start()
 
     def _finish(self, job_id: int, outcome: Outcome) -> None:

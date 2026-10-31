@@ -261,7 +261,11 @@ def specs() -> tuple[ErrorSpec, ...]:
             retryable=False,
             message="Saving is paused in this workspace, so Finzytrack did not save your change.",
             data_safe=False,  # an unfinished save may be half-applied until Reopen undoes it (§6.6)
-            next_step="Reopen the workspace so Finzytrack can check your files and undo the unfinished change.",
+            # both causes of §11 (S0068 verifier r1 F5): no undo is promised when `file` is set (`created_path_taken`)
+            next_step=(
+                "Reopen the workspace so Finzytrack can check your files. It undoes the unfinished change, "
+                "or asks you about a file it was creating."
+            ),
             details=WritesPausedDetails,
         ),
         ErrorSpec(
