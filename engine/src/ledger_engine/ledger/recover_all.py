@@ -24,9 +24,11 @@ earlier session caught between its handshake and its `flock` can never run besid
   R1-3); a sync that answers `EROFS` has nothing pending (a read-only volume: probed on APFS, S0062, `F_FULLFSYNC`
   answers `EROFS` there); any other error renames nothing (`ActFailed`). A record that cannot be read is kept by its
   rename alone (ADR-0063: Keep resolves "one that cannot be read"). While a replaced file the record names is
-  missing on a volume without the swap (`restore.missing`: its bytes are only in the backup), Keep refuses, naming
-  it (`missing`; owner, 2026-10-31: "Keep refuses, naming the file, while a ledger file is missing"); Retry puts it
-  back. On APFS an absent replaced file was removed by someone, and Keep keeps that.
+  missing on a volume without the swap (`restore.is_missing`: its bytes are only in the backup), Keep refuses, naming
+  it (`missing`; owner, 2026-10-31: "Keep refuses, naming the file, while a ledger file is missing"): Retry puts it
+  back, or, when its backup does not hold the old version (detail `backup_bad`, S0065 r3), the user puts a file at
+  that path. An error while asking is `ActFailed` (fails closed, verifier r3 F4). On APFS an absent replaced file
+  was removed by someone, and Keep keeps that.
 - **`delete_kept`** (owner, 2026-10-29: "Offer to delete it (Recommended)") and **`delete_created`** (owner,
   2026-10-30: "Never remove it (Recommended)": the user deletes it, here at their request): each removes one regular
   file and nothing else, only from an `.open` record that names it: a kept name this journal derives for one of its
@@ -55,7 +57,7 @@ from ledger_engine.ledger.core import paths as core_paths
 from ledger_engine.ledger.core.journal import FileEntry, Record, State
 from ledger_engine.ledger.handles import Handles, PathMovedError, folder_blocked, sha256
 from ledger_engine.ledger.handles import join as _join
-from ledger_engine.ledger.restore import ledger_locks, missing
+from ledger_engine.ledger.restore import backup_holds_pre, is_missing, ledger_locks
 
 LOCAL: Final = "local"
 JOURNAL: Final = "journal"
@@ -244,13 +246,17 @@ class Done:
     """The action happened and is durable."""
 
 
+BACKUP_BAD = "backup_bad"  # a `missing` refusal's detail: the backup cannot give the old version (S0065 r3)
+
+
 @dataclass(frozen=True, slots=True)
 class Refused:
     """Nothing was written. `reason`: `not_open` (no `.open` record of that name), `unreadable` (a delete needs the
     record's file list), `not_in_record`, `not_kept_name`, `not_created`, `absent`, `not_a_file`, `changed` (the bytes
     differ from those the user was shown), `path_moved`, `lock_held`, `permission` (the journal folder's rule: `path`
     the folder, `detail` the ACL entry, as for a save), `missing` (Keep, while the replaced file `path` is missing on a
-    volume without the swap)."""
+    volume without the swap; `detail` `backup_bad` when its backup does not hold its old version, so Retry cannot put
+    it back: S0065 r3)."""
 
     reason: str
     path: str | None = None
@@ -312,9 +318,15 @@ def keep(fs: FileSystem, locks: Locks, journal_dir: str, name: str) -> ActOutcom
         with ledger_locks(locks, files) as held:
             if held is not None:
                 return Refused("lock_held", held)
-            gone = next((f.canonical_path for f in files if missing(handles, f)), None)
-            if gone is not None:
-                return Refused("missing", gone)  # owner, 2026-10-31: Keep would leave the ledger without it
+            try:
+                gone = next((f for f in files if is_missing(handles, f)), None)
+            except PathMovedError as e:
+                return Refused("path_moved", e.canonical)
+            except OSError as e:  # fails closed (verifier r3 F4): never a Keep that may leave a file missing
+                return ActFailed(None, e.errno)
+            if gone is not None and record is not None:  # owner, 2026-10-31: Keep would leave the ledger without it
+                good = backup_holds_pre(handles, record, gone)
+                return Refused("missing", gone.canonical_path, None if good else BACKUP_BAD)
             at: str | None = None
             try:
                 folders: dict[str, DirHandle] = {}

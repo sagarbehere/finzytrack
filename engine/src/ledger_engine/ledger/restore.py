@@ -41,8 +41,9 @@ next try can resolve.
    its kept name first, out of reach of every deletion; and a replaced file missing on a volume without the swap is
    still put back, alone, before the try answers (`_missing_back`, S0065 red team r1 F2: its put-back writes only into
    a free name), or the answer names it when it cannot be. An empty file at a replaced path there is another
-   program's (owner, 2026-10-31: "Empty = never ours (Recommended)"): `Stopped(foreign)` with detail `empty` when its
-   backup holds the old version, so the screen can say "delete it and press Retry".
+   program's (owner, 2026-10-31: "Empty = never ours (Recommended)"): `Stopped(foreign)`, with detail `empty` on `PLAIN`
+   (where a cut put-back's claim leaves one) when its backup holds the old version, so the screen can say "delete it
+   and press Retry".
 3. Every folder the record names synced first (a swap a crashed save or try left unsynced is then durable before
    anything it displaced is removed: S0061 r4). Each name of ours checked again by the temp rule right before its
    removal (not ours: kept, stop; unreadable: `Failed`), beside a file at pre and beside a created path alike; beside
@@ -146,7 +147,8 @@ class Stopped:
     stopped at, if any. `entry`, for a `permission` stop: the entry the system would not let us change when it is
     not that file (a name of ours, a folder), and `detail` the ACL entry that blocks a folder, in `chmod`'s words
     (`handles.acl_denial`; S0061 r6). For a `foreign` stop, `detail` `empty` (`EMPTY_DETAIL`): the file is empty, on a
-    volume without the swap, and its backup holds the old version (S0065 r2: deleting it lets Retry put that back)."""
+    `plain` volume, and its backup holds the old version (S0065 r2: deleting it lets Retry put that back; r3 F2: only
+    there does a put-back claim a name with an empty file)."""
 
     cause: Cause
     path: str | None
@@ -350,7 +352,8 @@ def _check(handles: Handles, record: Record, f: FileEntry, *, created: frozenset
         for n, state in zip(names, temps.states(), strict=True):
             if state is TempState.FOREIGN:
                 keep(h, n, base, record.name, write)  # out of reach of every deletion (owner, 2026-10-29)
-        if v.cause is Cause.FOREIGN and empty and backup == Seen(Kind.FILE, f.pre):
+        if v.cause is Cause.FOREIGN and write is Mode.PLAIN and file == EMPTY and backup == Seen(Kind.FILE, f.pre):
+            # only a `plain` put-back claims a name with an empty file (verifier r3 F2)
             raise _Halt(v.cause, path, detail=EMPTY_DETAIL)  # the screen: delete it, Retry puts the old version back
         raise _Halt(v.cause, path)
     ours = [(n, nst) for n, (state, nst) in zip(names, looked, strict=True) if state is TempState.OURS]
@@ -581,16 +584,37 @@ def _restore_all(handles: Handles, record: Record, checked: list[_Checked], remo
 
 
 def missing(handles: Handles, f: FileEntry) -> bool:
+    """`is_missing`, where any error answers no (a stopping try's put-back, `_missing_back`)."""
+    try:
+        return is_missing(handles, f)
+    except (OSError, PathMovedError):
+        return False
+
+
+def is_missing(handles: Handles, f: FileEntry) -> bool:
     """`f` is a replaced file that is missing now: absent in a folder that is there, on a volume without the swap
-    (S0065). Writes nothing; any error answers no. Also Keep's refusal (`recover_all.keep`; owner, 2026-10-31)."""
+    (S0065). Writes nothing; any other error raises, so Keep's refusal (`recover_all.keep`; owner, 2026-10-31) fails
+    closed (verifier r3 F4)."""
     if f.pre is None:
         return False
     parent, base = _parent(f.canonical_path)
     try:
         h = handles.at(parent)
-        return write_mode(h) is not Mode.SWAP and h.stat(base) is None
-    except (OSError, PathMovedError):
+    except (FileNotFoundError, NotADirectoryError):
+        return False  # its folder is not there
+    return write_mode(h) is not Mode.SWAP and h.stat(base) is None
+
+
+def backup_holds_pre(handles: Handles, record: Record, f: FileEntry) -> bool:
+    """`f`'s backup holds its pre bytes, so a try can put it back (S0065 r3: Keep's refusal of a missing file says
+    so only then). Writes nothing; any error answers no."""
+    if f.pre is None or f.backup is None:
         return False
+    try:
+        seen, _ = _look(handles.at(record.backup_dir), f.backup, f.canonical_path)
+    except (OSError, PathMovedError, _Halt):
+        return False
+    return seen == Seen(Kind.FILE, f.pre)
 
 
 def _empty(handles: Handles, f: FileEntry) -> bool:

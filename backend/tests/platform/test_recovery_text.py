@@ -111,14 +111,15 @@ def test_a_journal_that_could_not_be_undone_has_adr_0063s_text() -> None:
 def test_an_empty_file_at_a_replaced_path_says_the_old_version_is_in_the_backup() -> None:
     """S0065 round 2 (owner, 2026-10-31: "Empty = never ours (Recommended)"): on a drive without the swap the engine
     stops at an empty ledger file (`foreign`, detail `empty`): an undo cut while it put the file back, or another
-    program that is writing it. The screen names the file and the way out."""
+    program that is writing it. The screen names the file and the way out; round 3 (red team r3 L3): it says to wait
+    until no program is writing the file, which a program that truncates, then writes, may be about to fill."""
     b = Blocking(J, "stopped", "foreign", "/L/accounts.beancount", None, "empty")
     screen = blocked_screen(b, WS)
     assert screen.message == (
         "accounts.beancount is empty, so Finzytrack did not change it. Finzytrack may have been putting back its old "
         "version when it was interrupted, or another program is writing the file. The old version is in "
-        "Finzytrack's backup. If you do not need the empty file, delete it and press Retry: Finzytrack then puts "
-        "the old version back."
+        "Finzytrack's backup. If you do not need the empty file, wait until no program is writing it, then delete "
+        "it and press Retry: Finzytrack then puts the old version back."
     )
     assert screen.actions == ("retry", "stay_or_back", "keep")
 
@@ -224,4 +225,14 @@ def test_keep_refused_while_a_ledger_file_is_missing_names_it_and_the_backup() -
     assert text == (
         "accounts.beancount is missing, so Finzytrack did not keep the files as they are. Its old version is in "
         "Finzytrack's backup. Press Retry to put it back."
+    )
+
+
+def test_keep_refused_while_a_ledger_file_is_missing_and_its_backup_is_bad_gives_the_way_out() -> None:
+    """S0065 round 3 (verifier r3 F1, red team r3 M1): Retry cannot put the file back, so the text does not send the
+    user to Retry; it tells the way out."""
+    text = action_text(ActOutcome("refused", "missing", "/L/accounts.beancount", "backup_bad", None))
+    assert text == (
+        "accounts.beancount is missing, and Finzytrack cannot read its old version from its backup. Put the file "
+        "back yourself, or put any file at that path, then choose Keep the files as they are now."
     )

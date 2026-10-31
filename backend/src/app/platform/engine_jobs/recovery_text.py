@@ -46,9 +46,12 @@ KEPT_COPY_CAUSES: Final = frozenset({"kept_copy", "displaced", "outside_save_in_
 """Causes whose screen is the kept-copy row: an outside save Finzytrack moved to a kept name (§6.4)."""
 CREATED: Final = "created_path_taken"
 PERMISSION: Final = "permission"
+BACKUP_BAD: Final = "backup_bad"
+"""A `missing` refusal's detail (the engine's `recover_all.BACKUP_BAD`): the backup does not hold the old version, so
+Retry cannot put the file back (S0065 round 3)."""
 EMPTY: Final = "empty"
-"""A `foreign` stop's detail (the engine's `core.recovery.EMPTY_DETAIL`): the file is empty on a drive without the
-swap and its backup holds the old version (S0065 round 2)."""
+"""A `foreign` stop's detail (the engine's `core.recovery.EMPTY_DETAIL`): the file is empty on a drive with neither the
+swap nor an exclusive rename (`plain`) and its backup holds the old version (S0065 rounds 2, 3)."""
 
 
 def undone_notice(workspace: str) -> str:
@@ -129,8 +132,8 @@ def _stopped(b: Blocking, workspace: str) -> Screen:
         return Screen(
             f"{_name(b.path)} is empty, so Finzytrack did not change it. Finzytrack may have been putting back its "
             "old version when it was interrupted, or another program is writing the file. The old version is in "
-            "Finzytrack's backup. If you do not need the empty file, delete it and press Retry: Finzytrack then puts "
-            "the old version back.",
+            "Finzytrack's backup. If you do not need the empty file, wait until no program is writing it, then delete "
+            "it and press Retry: Finzytrack then puts the old version back.",
             BASE,
         )
     return Screen(
@@ -250,6 +253,11 @@ def action_text(outcome: ActOutcome) -> str | None:
         return None
     if outcome.outcome == "failed":
         return ACTION_FAILED
+    if outcome.reason == "missing" and outcome.detail == BACKUP_BAD:  # Retry cannot put it back (S0065 r3)
+        return (
+            f"{_name(outcome.path)} is missing, and Finzytrack cannot read its old version from its backup. Put the "
+            "file back yourself, or put any file at that path, then choose Keep the files as they are now."
+        )
     if outcome.reason == "missing":  # Keep (owner, 2026-10-31: "Keep refuses, naming the file, ...")
         return (
             f"{_name(outcome.path)} is missing, so Finzytrack did not keep the files as they are. Its old version is "

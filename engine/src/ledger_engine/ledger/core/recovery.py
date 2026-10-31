@@ -57,7 +57,7 @@ class Seen:
 
 ABSENT = Seen(None)
 EMPTY = Seen(Kind.FILE, hashlib.sha256(b"").hexdigest())  # a regular file with no bytes
-EMPTY_DETAIL = "empty"  # a `foreign` stop's detail: an empty file at a replaced path on a volume without the swap
+EMPTY_DETAIL = "empty"  # a `foreign` stop's detail: an empty file at a replaced path on a `plain` volume (S0065 r3)
 
 
 def seen_file(data: bytes) -> Seen:

@@ -648,14 +648,13 @@ def test_a_claimed_name_that_is_not_our_empty_file_at_its_check_is_never_replace
         assert state.file("/w/L/x") == b""
 
 
-@pytest.mark.parametrize("volume", NO_SWAP)
-def test_an_empty_file_at_a_replaced_path_is_kept_and_the_stop_says_it_is_empty(volume: str) -> None:
+def test_an_empty_file_at_a_replaced_path_is_kept_and_the_stop_says_it_is_empty() -> None:
     """Round 2 (owner, 2026-10-31: "Empty = never ours (Recommended)"; red team r2 H1, verifier r2 F1): an empty file
     at a replaced path is another program's on every drive (a program that truncates, then writes: `script >
     file`, an in-place editor), never taken for a claim: the try stops, writes nothing, and says the file is empty
     (`detail`), so the screen can say the old version is in the backup. Once the user deletes it, Retry puts the old
-    version back."""
-    w, state = _missing_state(volume) if volume == "plain" else _missing_state_hfs()
+    version back. On `plain` only (verifier r3 F2; HFS+: `test_on_hfs_an_empty_file_..._without_the_empty_detail`)."""
+    w, state = _missing_state("plain")
     state.outside_write(MAIN, b"", new_inode=True)
     before = state.snapshot()
     assert recover(state) == Stopped(Cause.FOREIGN, MAIN, detail=EMPTY_DETAIL)
@@ -1154,3 +1153,126 @@ def test_on_apfs_an_empty_file_at_a_replaced_path_stops_without_the_empty_detail
         durable_commit(w.fs, w.commit)
     w.fs.outside_write(MAIN, b"")
     assert recover(w.fs) == Stopped(Cause.FOREIGN, MAIN)
+
+
+# -- round 3 (verifier r3, red team r3) ---------------------------------------------------------------------------
+
+BACKUP_MAIN = f"/w/local/backups/{NAME}/2-main.bean"
+
+
+def test_an_empty_file_appearing_after_the_restore_temp_and_before_the_claim_is_never_replaced() -> None:
+    """Verifier r3 F3 (red team r2 H1; owner, 2026-10-31: no `stat` before the claim): `script > main.bean`
+    truncates the missing root's path after the check judged it absent and after the restore temp is synced, right
+    before the claim. The claim's exclusive create meets the script's file and stops (`foreign`); a `stat` before
+    the claim would take the empty file for a cut claim and replace it, so the script would write into an unnamed
+    file."""
+    _, state = _missing_state("plain")
+    seen = {"n": 0}
+    held: dict[str, tuple[int, int] | None] = {}
+
+    def hook(_: int, label: str) -> None:
+        if label == "sync /w/L:":
+            seen["n"] += 1
+            if seen["n"] == 2:  # the sync after the restore temp's move, right before the claim
+                state.outside_write(MAIN, b"")
+                held["obj"] = _object(state, MAIN)  # the script holds this file open and writes into it later
+
+    state.on_effect = hook
+    out = recover(state)
+    state.on_effect = None
+    assert held, "the hook must have run"
+    assert _object(state, MAIN) == held["obj"], f"the script's file was replaced; told {out}"
+    assert state.file(MAIN) == b""
+    assert out in (Stopped(Cause.FOREIGN, MAIN, detail=EMPTY_DETAIL), Stopped(Cause.FOREIGN, MAIN)), out
+
+
+@pytest.mark.parametrize("volume", NO_SWAP)
+def test_keep_refused_while_a_file_is_missing_says_when_its_backup_is_bad(volume: str) -> None:
+    """Verifier r3 F1, red team r3 M1: with the missing file's backup gone, Retry stops (`backup_bad`) and cannot
+    put it back, so Keep's refusal must not send the user to Retry: it carries detail `backup_bad`, whose text
+    tells the way out (put a file at that path, then Keep). Keep still refuses; nothing is written."""
+    from ledger_engine.ledger.recover_all import BACKUP_BAD, Done, Refused, keep
+    from tests.fakes.memfs import MemLocks
+
+    _, state = _missing_state(volume) if volume == "plain" else _missing_state_hfs()
+    state.outside_remove(BACKUP_MAIN)
+    before = state.snapshot()
+    assert keep(state, MemLocks(), JD, NAME) == Refused("missing", MAIN, BACKUP_BAD)
+    assert recover(state) == Stopped(Cause.BACKUP_BAD, MAIN)
+    assert keep(state, MemLocks(), JD, NAME) == Refused("missing", MAIN, BACKUP_BAD)
+    assert state.snapshot() == before
+    state.outside_write(MAIN, FOREIGN)  # the way out the text gives
+    assert keep(state, MemLocks(), JD, NAME) == Done()
+    assert state.file(MAIN) == FOREIGN
+
+
+def test_keep_refused_while_a_file_is_missing_whose_backup_differs_says_its_backup_is_bad() -> None:
+    """The backup holds other bytes than the old version: Retry cannot put it back either (`backup_bad`)."""
+    from ledger_engine.ledger.recover_all import BACKUP_BAD, Refused, keep
+    from tests.fakes.memfs import MemLocks
+
+    _, state = _missing_state("plain")
+    state.outside_write(BACKUP_MAIN, b"; not the old version\n")
+    assert keep(state, MemLocks(), JD, NAME) == Refused("missing", MAIN, BACKUP_BAD)
+
+
+def test_keep_fails_when_it_cannot_tell_whether_a_file_is_missing(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Verifier r3 F4, red team r3 L2: Keep's guard fails closed. An error while it asks whether a replaced file is
+    missing (reading the volume's capabilities, a `stat`) is `ActFailed`, never a Keep that leaves the ledger without
+    the file; nothing is written. Once the error is gone, Keep refuses, naming the file."""
+    from ledger_engine.ledger.recover_all import ActFailed, Refused, keep
+    from tests.fakes import memfs
+    from tests.fakes.memfs import MemLocks
+
+    _, state = _missing_state("plain")
+    before = state.snapshot()
+    real = memfs.MemDir.caps
+
+    def caps(self: memfs.MemDir) -> object:
+        raise OSError(errno.EIO, "I/O error")
+
+    monkeypatch.setattr(memfs.MemDir, "caps", caps)
+    out = keep(state, MemLocks(), JD, NAME)
+    monkeypatch.setattr(memfs.MemDir, "caps", real)
+    assert out == ActFailed(None, errno.EIO), out
+    assert state.snapshot() == before
+    assert keep(state, MemLocks(), JD, NAME) == Refused("missing", MAIN)
+
+
+def test_on_hfs_an_empty_file_at_a_replaced_path_stops_without_the_empty_detail() -> None:
+    """Verifier r3 F2, red team r3 overflow 1: detail `empty` says Finzytrack may have been putting the file back;
+    only a `plain` put-back claims a name with an empty file. On HFS+ (`no_swap`, one exclusive rename) the stop is
+    a plain `foreign` one, writing nothing; once the user deletes the file, Retry puts the old version back."""
+    w, state = _missing_state_hfs()
+    state.outside_write(MAIN, b"", new_inode=True)
+    before = state.snapshot()
+    assert recover(state) == Stopped(Cause.FOREIGN, MAIN)
+    assert state.snapshot() == before
+    state.outside_remove(MAIN)
+    check_recovered(state, w, recover(state))
+    assert state.file(MAIN) == w.targets[2].pre
+
+
+def test_keep_fails_when_it_cannot_open_a_replaced_files_folder(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The same guard: an error opening the folder (other than "not there"; once, as a network share may answer) is
+    `ActFailed`, never "not missing"."""
+    from ledger_engine.ledger import handles as handles_module
+    from ledger_engine.ledger.recover_all import ActFailed, keep
+    from tests.fakes.memfs import MemLocks
+
+    _, state = _missing_state("plain")
+    before = state.snapshot()
+    real = handles_module.Handles.at
+
+    failed: list[str] = []
+
+    def at(self: handles_module.Handles, folder: str) -> object:
+        if folder == "/w/L" and not failed:
+            failed.append(folder)
+            raise OSError(errno.EIO, "I/O error")
+        return real(self, folder)
+
+    monkeypatch.setattr(handles_module.Handles, "at", at)
+    out = keep(state, MemLocks(), JD, NAME)
+    assert out == ActFailed(None, errno.EIO), out
+    assert state.snapshot() == before
