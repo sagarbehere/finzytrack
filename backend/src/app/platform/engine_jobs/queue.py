@@ -78,9 +78,9 @@ from typing import Any, Final, Literal
 
 from app.platform.tla import tla_action
 
-TABLE_VERSION: Final = 5  # 2 (S0058): the lock before every fresh engine, the engine unavailable; 3: Try again;
+TABLE_VERSION: Final = 6  # 2 (S0058): the lock before every fresh engine, the engine unavailable; 3: Try again;
 # 4 (S0062): recover-all goes on per journal (Cancel after its listing, a death, no engine); 5 (S0063): a save whose
-# engine died reads its outcome from disk in a fresh engine
+# engine died reads its outcome from disk in a fresh engine; 6 (S0066): so does an R4, to count its failure to run
 """Raised whenever a decision changes, so the decision log (§12) replays each recording with its own table."""
 
 type JobKind = Literal["open", "rebuild", "preview", "save", "r4", "bql", "recover_all", "create", "copy"]
@@ -139,8 +139,9 @@ class Job:
 @dataclass(frozen=True, slots=True)
 class Running:
     """The running job: past its commit point or not, waiting for a fresh engine mid-job or not, for a recover-all
-    whether it has listed the journals (§8.1), and for a save whether its engine died, so that its outcome is read
-    from disk next (§6.6; S0063)."""
+    whether it has listed the journals (§8.1), and for a save or an R4 whether its engine died, so that the save's
+    outcome is read from disk next (§6.6; S0063), or the R4's failure to run is counted on disk (§6.7; S0066), in a
+    fresh engine."""
 
     job: Job
     past_commit: bool = False
@@ -528,7 +529,8 @@ def endable_by_another(running: Running) -> bool:
 
 def _reports_itself(running: Running) -> bool:
     """A running job that ends with its own answer when no engine can be had for its next part (`EngineRefused`):
-    a recover-all (its report, §8.1) and a save whose engine died (its outcome, §6.6)."""
+    a recover-all (its report, §8.1), a save whose engine died (its outcome, §6.6) and an R4 whose engine died (its
+    failure is then not counted, §6.7)."""
     return running.job.kind == "recover_all" or running.outcome_owed
 
 
@@ -846,9 +848,10 @@ def _engine_died(p: QueuePolicy, s: QueueState, e: EngineDied) -> Step:
     if s.slot == "busy" and r is not None and r.job.kind == "recover_all":
         state, ended = _ending(s, "crashed")  # §8.1: the journal in hand counts `failed`; the job goes on
         return Step(state, ended)
-    if s.slot == "busy" and r is not None and r.job.kind == "save":
-        # §6.6: the outcome is read from disk in a fresh engine (the job asks for it); a Cancel before the commit
-        # point still ends the job (nothing was written), one past it is "too late" (S0063)
+    if s.slot == "busy" and r is not None and r.job.kind in ("save", "r4"):
+        # §6.6: the save's outcome is read from disk in a fresh engine (the job asks for it); a Cancel before the
+        # commit point still ends the job (nothing was written), one past it is "too late" (S0063). §6.7: an R4 that
+        # could not run has its failure counted on disk in a fresh engine (S0066); a Cancel still ends it (§4)
         state, ended = _ending(replace(s, running=replace(r, outcome_owed=True)), "crashed")
         return Step(state, ended)
     if s.slot == "busy" and r is not None:

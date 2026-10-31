@@ -40,6 +40,8 @@ SAVE_ANSWER: dict[str, object] = {
     "cause": None,
     "cause_path": None,
     "published": False,
+    "backup": None,
+    "could_not_check": False,
 }
 REQUEST = SaveRequest(
     session="s1",
@@ -278,7 +280,13 @@ def test_a_save_refused_for_an_owed_check_is_writes_paused_with_its_reason(scena
     assert status == 409
     error = payload["error"]
     assert error["code"] == "WRITES_PAUSED"
-    assert error["details"] == {"reason": "check_pending", "file": None}
+    assert error["details"] == {
+        "reason": "check_pending",
+        "file": None,
+        "record": None,
+        "backup": None,
+        "could_not_check": False,
+    }
     assert error["data_safe"] is False
     conforms(app, payload)
 

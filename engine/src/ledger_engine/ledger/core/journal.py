@@ -5,7 +5,8 @@ One save, one name `<session>-<job>`, one record that moves between states by re
 `.part` (being written; no replace has happened) → `.open` (the save may be half-applied) → `.closed` (saved; R4
 owed), and later `.done`, `.mismatch`, `.resolved`, `.kept` (§6.5). The record never changes after it is written:
 every state is a rename, so the closed record's fields are written with the journal (post fingerprint, adopted and
-parse digests, engine build, workspace registry key and lineage id).
+parse digests, engine build, workspace registry key and lineage id). The post fingerprint is the full fingerprint's
+canonical encoding (the ledger set R4 observes); the digests are `ledger.digest`'s, or `not_computed`.
 
 The encoding is canonical JSON with a format name and a version; an older app refuses a newer version (ADR-0012), and
 `decode` refuses anything else that is not a whole, well-formed record of this format (a record cut off by a power
@@ -25,7 +26,10 @@ from typing import Final, cast
 from ledger_engine.fs.port import FoldRule, check_name, fold, split_absolute
 
 FORMAT: Final = "finzytrack-save-journal"
-VERSION: Final = 1
+VERSION: Final = 2
+"""2 since S0066: `post_fingerprint` holds the post fingerprint's canonical encoding (`core.ledger_set.encode`), no
+longer its digest, so R4 can observe the same ledger set (spec §6.7 step 1); version 1 records were written only by
+tests (nothing in the product saved before R4 existed) and read as `Unreadable`."""
 _SHA256: Final = re.compile(r"[0-9a-f]{64}")
 _ID: Final = re.compile(r"[A-Za-z0-9_]{1,64}")  # no "-": it joins session and job
 
@@ -95,6 +99,20 @@ class Record:
     @property
     def name(self) -> str:
         return record_name(self.session, self.job)
+
+
+ATTEMPTS: Final = 3
+"""After this many failures to run the same record's R4, it counts as "could not check" (§6.7; ADR-0008 amendment of
+2026-10-27: a count, not a time)."""
+
+
+def attempt_name(name: str, n: int) -> str:
+    """The file that counts the `n`-th failure to run the R4 of the record `name` (§6.5, §6.7): `<name>.r4-attempt-<n>`,
+    created empty and exclusively beside the record, its folder synced. It is not a record (`parse_file_name` gives
+    None) and shares the record's name, so §6.5's "one save, one name" keeps it this save's."""
+    if not 1 <= n <= ATTEMPTS:
+        raise BadRecordError("attempt_number")
+    return f"{record_name(*name.split('-', 1))}.r4-attempt-{n}"
 
 
 def check_id(value: str) -> str:

@@ -3,9 +3,10 @@
 (the load and the fingerprint read the disk with the loader's own calls, so the fake file system cannot stand in for
 them; the durable order's crash sweeps are `test_writer.py`'s and `test_restore.py`'s). Written from the spec's lines:
 
-- step 1 "If this workspace has a closed record (re-read from disk), the save first runs that `r4`" (R4 itself is
-  BL-0152: until then an owed R4 refuses `check_pending`); step 4 "this workspace has no `.open` journal, no closed
-  record and no `.mismatch` record (matched as §6.5 says)": by registry key or lineage id, in any `local/*/journal/`;
+- step 1 "If this workspace has a closed record (re-read from disk), the save first runs that `r4`" (S0066: the engine
+  refuses `check_pending` naming the record, and the sidecar runs its R4 and asks again, `test_r4_job.py`); step 4
+  "this workspace has no `.open` journal, no closed record and no `.mismatch` record (matched as §6.5 says)": by
+  registry key or lineage id, in any `local/*/journal/`;
 - step 2 "every `data/.write.lock` ... deduplicated by `path_key`, tried once each without waiting, before any
   ledger-set lock. Free: held until the save ends. Absent: go on. Held, or any other outcome: refused with
   `LEGACY_APP_SAVING`, nothing written";
@@ -38,7 +39,8 @@ from ledger_engine.ledger import overlay
 from ledger_engine.ledger import save as sv
 from ledger_engine.ledger.core import journal
 from ledger_engine.ledger.core.journal import FileEntry, Record, State
-from ledger_engine.ledger.core.ledger_set import digest
+from ledger_engine.ledger.core.ledger_set import digest, encode
+from ledger_engine.ledger.digest import of_result, path_keys
 from ledger_engine.ledger.policy import DesktopPolicy
 from ledger_engine.ledger.writer import BadPlanError, Change, NotSaved, Reason, sha256
 
@@ -183,13 +185,13 @@ def ports_for(
         for_this_os(),
         locks or DarwinLocks(str(led.ald / "locks")),
         legacy or DarwinLegacyLocks(),
-        load or sv.desktop_load(POLICY),
+        load or sv.desktop_load(POLICY, for_this_os()),
     )
 
 
 def wrapped(before: Callable[[], object] | None = None, after: Callable[[], object] | None = None) -> sv.Load:
     """The real load with an outside program's act just before it starts and just after it returns."""
-    real = sv.desktop_load(POLICY)
+    real = sv.desktop_load(POLICY, for_this_os())
 
     def load(root: str, candidates: Mapping[str, bytes]) -> overlay.LoadResult:
         if before is not None:
@@ -223,7 +225,7 @@ def test_a_save_lands_after_its_gate_and_its_closed_record_carries_the_loads_pos
     plan = plan_for(led)
     job = FakeJob()
     seen: list[overlay.Loaded] = []
-    real = sv.desktop_load(POLICY)
+    real = sv.desktop_load(POLICY, for_this_os())
 
     def load(root: str, candidates: Mapping[str, bytes]) -> overlay.LoadResult:
         out = real(root, candidates)
@@ -239,9 +241,15 @@ def test_a_save_lands_after_its_gate_and_its_closed_record_carries_the_loads_pos
     assert sorted(os.listdir(led.journal())) == ["s1-j7.closed"]
     rec = journal.decode((led.journal() / "s1-j7.closed").read_bytes())
     assert isinstance(rec, Record)
-    assert rec.post_fingerprint == digest(seen[0].fingerprint)
+    assert rec.post_fingerprint == encode(seen[0].fingerprint).decode("ascii")  # S0066: R4 observes this ledger set
     assert (rec.workspace_key, rec.lineage, rec.engine_build) == (KEY, LINEAGE, "test build")
-    assert rec.adopted_digest == rec.parse_digest == sv.NOT_COMPUTED  # TODO(BL-0152)
+    # R4's prediction (§6.7): the digest of the load's result, and of its parse
+    keys = path_keys(for_this_os())
+    assert rec.adopted_digest == of_result(seen[0].entries, seen[0].errors, seen[0].options, keys)
+    assert rec.parse_digest == seen[0].parse_digest
+    assert rec.parse_digest is not None
+    assert rec.parse_digest.startswith("sha256:")
+    assert rec.adopted_digest != rec.parse_digest
     assert_locks_free(led, plan)
 
 
@@ -367,7 +375,8 @@ def test_a_record_of_this_workspace_refuses_before_any_lock(led: Ledger, state: 
     plan = plan_for(led, legacy_locks=(str(led.tmp / "legacy" / ".write.lock"),))
     before = led.tree()
     out = sv.run(plan, ports_for(led, locks=locks, legacy=legacy), FakeJob())
-    assert out == sv.Refused(reason, unchanged=True, path=str(path))  # pyright: ignore[reportArgumentType]
+    backup = "/b/s0-j1" if state is State.MISMATCH else None  # S0066: a pause shows its backup ("Your backup is here")
+    assert out == sv.Refused(reason, unchanged=True, path=str(path), backup=backup)  # pyright: ignore[reportArgumentType]
     assert (locks.tried, legacy.tried) == ([], [])  # step 1 comes first
     assert led.tree() == before
 
@@ -376,7 +385,30 @@ def test_a_record_under_another_key_with_this_lineage_refuses(led: Ledger) -> No
     """§6.5: forgetting a folder and adding it again under a new key cannot skip an owed R4 or lift a pause."""
     path = _record(led, "old", "s0-j1", State.MISMATCH, owner="old")
     out = sv.run(plan_for(led), ports_for(led), FakeJob())
-    assert out == sv.Refused("check_failed", unchanged=True, path=str(path))
+    assert out == sv.Refused("check_failed", unchanged=True, path=str(path), backup="/b/s0-j1")
+
+
+def test_a_mismatch_after_three_failures_to_run_its_r4_says_could_not_check(led: Ledger) -> None:
+    """§6.7, §11 (S0066): "the same R4 failed to run three times" has its own text: the refusal says which."""
+    path = _record(led, KEY, "s0-j1", State.MISMATCH)
+    out = sv.run(plan_for(led), ports_for(led), FakeJob())
+    assert isinstance(out, sv.Refused)
+    assert not out.could_not_check
+    (path.parent / journal.attempt_name("s0-j1", 3)).write_bytes(b"")
+    out = sv.run(plan_for(led), ports_for(led), FakeJob())
+    assert out == sv.Refused("check_failed", True, str(path), "/b/s0-j1", could_not_check=True)
+    (path.parent / journal.attempt_name("s0-j1", 3)).unlink()
+    (path.parent / journal.attempt_name("s0-j1", 2)).write_bytes(b"")
+    out = sv.run(plan_for(led), ports_for(led), FakeJob())
+    assert isinstance(out, sv.Refused)
+    assert not out.could_not_check  # two failures and a mismatch found: a mismatch
+
+
+def test_an_unreadable_mismatch_record_still_refuses_with_no_backup(led: Ledger) -> None:
+    path = _record(led, KEY, "s0-j1", State.MISMATCH)
+    path.write_bytes(b"garbage")
+    out = sv.run(plan_for(led), ports_for(led), FakeJob())
+    assert out == sv.Refused("check_failed", True, str(path), None, could_not_check=False)
 
 
 def test_a_record_under_another_key_naming_this_key_refuses(led: Ledger) -> None:

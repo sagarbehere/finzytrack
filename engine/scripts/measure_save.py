@@ -5,13 +5,14 @@ ROOT is the ledger's root file (the demo generator's 54k ledger: backend/scripts
 empty scratch folder on the disk to measure (never a real ledger: every run saves into a fresh copy). Each run copies
 the ledger's folder, plans one appended transaction (a load of the copy, as a preview would), then runs
 `ledger.save.run` on the real file-system port: the records, the locks, the gate, the commit's load, the re-check, the
-durable order. It prints per run the total and each part, and the durable order's syncs (`F_FULLFSYNC` of a folder,
-of a file, the files created and synced) with their time: S0061's additions (the staging rename and its folder sync,
-`sync_file` per replaced file) are counted there. Then it undoes the save the way recovery does (the closed record
-renamed back to `.open`, `restore.recover_journal`) and prints the restore's syncs. `--app`: an empty scratch folder
-for the app's machine-local folder (journal, backups, locks) when WORK_DIR is on another drive, as it is for a ledger
-on a drive without the swap (S0065: the journal and backups stay on the Mac's disk, INV-27, INV-30); the default is
-inside WORK_DIR. The engine reads no clock in product code (EP-10); this measurement script is not product code.
+durable order. Then R4 on the closed record (S0066: its check, Beancount's own load, must pass; then its confirm, timed
+on the same record). It prints per run the total and each part, and the durable order's syncs (`F_FULLFSYNC` of a
+folder, of a file, the files created and synced) with their time: S0061's additions (the staging rename and its folder
+sync, `sync_file` per replaced file) are counted there. Then it undoes the save the way recovery does (the closed record
+renamed back to `.open`, `restore.recover_journal`) and prints the restore's syncs. `--app`: an empty scratch folder for
+the app's machine-local folder (journal, backups, locks) when WORK_DIR is on another drive, as it is for a ledger on a
+drive without the swap (S0065: the journal and backups stay on the Mac's disk, INV-27, INV-30); the default is inside
+WORK_DIR. The engine reads no clock in product code (EP-10); this measurement script is not product code.
 """
 
 from __future__ import annotations
@@ -29,7 +30,7 @@ from typing import Any
 
 from ledger_engine.fs.darwin import DarwinLegacyLocks, DarwinLocks, for_this_os
 from ledger_engine.fs.port import DirHandle, FileSystem, Resolved
-from ledger_engine.ledger import overlay
+from ledger_engine.ledger import overlay, r4
 from ledger_engine.ledger import save as sv
 from ledger_engine.ledger.core.ledger_set import Fingerprint, digest
 from ledger_engine.ledger.policy import DesktopPolicy
@@ -115,7 +116,7 @@ def check(ok: bool, what: str) -> None:
 
 
 class Job:
-    def progress(self, phase: sv.Phase) -> None:
+    def progress(self, phase: str) -> None:
         pass
 
     def gate(self) -> None:
@@ -153,7 +154,7 @@ def one_run(src: Path, work: Path, n: int, app: Path | None = None) -> None:
     )
     parts = Tally()
     durable = Tally()
-    real_load = sv.desktop_load(policy)
+    real_load = sv.desktop_load(policy, for_this_os())
 
     def load(r: str, c: Mapping[str, bytes]) -> overlay.LoadResult:
         return parts.time("load", lambda: real_load(r, c))
@@ -172,7 +173,16 @@ def one_run(src: Path, work: Path, n: int, app: Path | None = None) -> None:
     say(f"  durable order: {durable.line()}")
     jd = ald / "local" / "k1" / "journal"
     name = f"m1-j{n}"
-    os.rename(jd / f"{name}.closed", jd / f"{name}.open")
+    r4_ports = r4.desktop(for_this_os(), "measure", policy)
+    t0 = time.perf_counter()
+    checked = r4.check(r4_ports, str(ald), "k1", name, Job())
+    say(f"  R4 check (steps 1-3, Beancount's own load): {time.perf_counter() - t0:.2f} s, {checked.outcome}")
+    check(checked.outcome == "pass", f"R4 did not pass: {checked}")
+    os.rename(jd / f"{name}.done", jd / f"{name}.closed")
+    t0 = time.perf_counter()
+    confirmed = r4.confirm(r4_ports, str(ald), "k1", name, Job())
+    say(f"  R4 confirm (step 4, two parses): {time.perf_counter() - t0:.2f} s, {confirmed.outcome}")
+    os.rename(jd / f"{name}.done", jd / f"{name}.open")
     undo = Tally()
     t0 = time.perf_counter()
     res = recover_journal(CountingFS(for_this_os(), undo), DarwinLocks(str(ald / "locks")), str(jd), name)

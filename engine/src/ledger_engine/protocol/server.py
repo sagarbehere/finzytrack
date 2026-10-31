@@ -89,6 +89,7 @@ from ledger_engine.protocol.messages import (
     RefusalBody,
     RefusalKey,
 )
+from ledger_engine.protocol.r4 import R4_HANDLERS
 from ledger_engine.protocol.recovery import RECOVERY_HANDLERS, BadParamsError
 from ledger_engine.protocol.save import OUTCOME_HANDLERS, SAVE_HANDLERS
 
@@ -330,6 +331,7 @@ PRODUCTION: dict[str, Handler] = {
     **{op: Handler(OPS[op].params, run, needs_engine_lock=True) for op, run in RECOVERY_HANDLERS.items()},
     **{op: Handler(OPS[op].params, run, needs_engine_lock=True) for op, run in OUTCOME_HANDLERS.items()},
     **{op: Handler(OPS[op].params, run, needs_engine_lock=True) for op, run in SAVE_HANDLERS.items()},
+    **{op: Handler(OPS[op].params, run, needs_engine_lock=True) for op, run in R4_HANDLERS.items()},
 }
 TEST_OPS: dict[str, Handler] = {
     "test.stall": Handler(NoParams, _stall),

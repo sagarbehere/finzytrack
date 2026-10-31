@@ -75,6 +75,8 @@ BLANK: dict[str, object] = {
     "cause": None,
     "cause_path": None,
     "published": False,
+    "backup": None,
+    "could_not_check": False,
 }
 
 
@@ -146,17 +148,17 @@ def test_a_save_that_lands_is_saved_and_its_engine_is_retired(make: Any) -> None
         (
             answer(outcome="refused", reason="unfinished_save", unchanged=True),
             "WRITES_PAUSED",
-            WritesPausedDetails("unfinished_save", None),
+            WritesPausedDetails("unfinished_save", None, None, None, False),
         ),
         (
             answer(outcome="refused", reason="check_pending", unchanged=True),
             "WRITES_PAUSED",
-            WritesPausedDetails("check_pending", None),
+            WritesPausedDetails("check_pending", None, None, None, False),
         ),
         (
             answer(outcome="refused", reason="check_failed", unchanged=True),
             "WRITES_PAUSED",
-            WritesPausedDetails("check_failed", None),
+            WritesPausedDetails("check_failed", None, None, None, False),
         ),
         (answer(outcome="refused", reason="legacy_app_saving", unchanged=True), "LEGACY_APP_SAVING", None),
         (answer(outcome="refused", reason="ledger_changed"), "LEDGER_EXTERNALLY_CHANGED", None),
@@ -171,7 +173,7 @@ def test_a_save_that_lands_is_saved_and_its_engine_is_retired(make: Any) -> None
         (
             answer(outcome="not_saved", reason="io_error", open_journal=True),
             "WRITES_PAUSED",
-            WritesPausedDetails("unfinished_save", None),
+            WritesPausedDetails("unfinished_save", None, None, None, False),
         ),
         (
             answer(outcome="not_saved", reason="hard_linked", path=MAIN, unchanged=True),
@@ -193,14 +195,14 @@ def test_a_save_that_lands_is_saved_and_its_engine_is_retired(make: Any) -> None
                 cause_path=NEW,
             ),
             "WRITES_PAUSED",
-            WritesPausedDetails("unfinished_save", NEW),
+            WritesPausedDetails("unfinished_save", NEW, None, None, False),
         ),
         (
             answer(
                 outcome="unfinished", reason="changed", path=MAIN, open_journal=True, cause="kept_copy", cause_path=MAIN
             ),
             "WRITES_PAUSED",
-            WritesPausedDetails("unfinished_save", None),
+            WritesPausedDetails("unfinished_save", None, None, None, False),
         ),
         (answer(outcome="not_saved", reason="something_new"), "INTERNAL", None),
         # S0065: a drive without the swap is saved by the fallback; the engine no longer refuses it, and the reason
@@ -269,7 +271,7 @@ def test_an_engine_death_before_the_gate_is_read_from_disk_too(make: Any) -> Non
 def test_an_unfinished_save_after_a_death_names_the_file_it_was_creating(make: Any) -> None:
     rig = make({"save": [GATE_DIE], "save_outcome": [facts("open", path=NEW)]})
     value = rig.save()
-    assert details(value) == WritesPausedDetails("unfinished_save", NEW)
+    assert details(value) == WritesPausedDetails("unfinished_save", NEW, None, None, False)
     assert "undo" not in save_text.text(value.error)
 
 
@@ -385,11 +387,18 @@ def test_each_not_saved_reason_has_its_section_11_text(d: ChangeNotSavedDetails,
 
 
 def test_the_paused_texts() -> None:
-    assert save_text.paused_text(WritesPausedDetails("unfinished_save", None)) == REOPEN
-    created = save_text.paused_text(WritesPausedDetails("unfinished_save", NEW))
+    assert save_text.paused_text(WritesPausedDetails("unfinished_save", None, None, None, False)) == REOPEN
+    created = save_text.paused_text(WritesPausedDetails("unfinished_save", NEW, None, None, False))
     assert "prices.bean" in created
     assert "undo" not in created  # S0061 red team r8 overflow 1: Reopen will ask about the file
-    assert save_text.paused_text(WritesPausedDetails("check_pending", None)).startswith("Finzytrack could not check")
+    pending = save_text.paused_text(WritesPausedDetails("check_pending", None, None, None, False))
+    assert pending.startswith("Finzytrack could not check")
+    # §11 (S0066): a difference found, and three failures to run, have two texts; both say saving is paused
+    found = save_text.paused_text(WritesPausedDetails("check_failed", None, "/r", "/b", False))
+    could_not = save_text.paused_text(WritesPausedDetails("check_failed", None, "/r", "/b", True))
+    assert "found a difference" in found
+    assert could_not == "Finzytrack could not check your last change. Saving is paused. Your backup is here."
+    assert "Saving is paused" in found
 
 
 def test_session_ids_never_differ_only_in_case() -> None:
@@ -438,7 +447,7 @@ def test_an_engine_refusal_past_the_gate_reads_the_outcome_from_disk(make: Any) 
     refusal = EngineRefusal("engine.internal", "Something went wrong inside the engine.")
     rig = make({"save": [Gated(refusal)], "save_outcome": [facts("open")]})
     value = rig.save()
-    assert details(value) == WritesPausedDetails("unfinished_save", None)
+    assert details(value) == WritesPausedDetails("unfinished_save", None, None, None, False)
     assert [op for _, op in rig.engine.calls] == ["save", "save_outcome"]
 
 

@@ -253,7 +253,8 @@ class SaveAnswer:
     written); `not_saved` (the writer's refusal or failure; `open_journal`: writes paused until recovery);
     `unfinished` (a file may have been replaced, the rollback stopped: `cause`, `cause_path`). `unchanged`: every file
     the save would write was hashed again and equals its pre bytes. `entry`, `detail`: the folder and the ACL entry of
-    a `permission` refusal."""
+    a `permission` refusal. For `check_pending` and `check_failed`, `path` is the record; for `check_failed`, `backup`
+    is the paused save's backup folder and `could_not_check` whether its R4 failed to run three times (S0066)."""
 
     outcome: SaveOutcomeKind
     reason: str | None
@@ -265,6 +266,35 @@ class SaveAnswer:
     cause: str | None
     cause_path: str | None
     published: bool
+    backup: str | None = None
+    could_not_check: bool = False
+
+
+type R4Outcome = Literal[
+    "gone",
+    "unreadable",
+    "superseded",
+    "superseded_build",
+    "pass",
+    "differs",
+    "nondeterministic",
+    "mismatch",
+    "counted",
+    "could_not_check",
+    "done",
+]
+
+
+@dataclass(frozen=True, slots=True)
+class R4Answer:
+    """The result of the engine's R4 ops (`r4_check`, `r4_confirm`, `r4_attempt`, `r4_resume`; engine-jobs §6.7;
+    S0066): the outcome; `loaded`: the ledger's plugins ran in that engine; `record`: the record's path after the op;
+    `backup`: the save's backup folder."""
+
+    outcome: R4Outcome
+    loaded: bool
+    record: str | None
+    backup: str | None
 
 
 type RecordSeen = Literal["none", "part", "open", "closed", "done", "mismatch", "resolved", "kept", "unknown"]

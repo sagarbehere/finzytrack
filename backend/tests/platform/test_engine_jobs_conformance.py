@@ -121,6 +121,7 @@ SPAWN_PCS = frozenset({"s_spawn", "r4_spawn", "rc_spawn"})
 EAGER = frozenset({"Dispatch", "DispatchUnavail", "SpawnStep"})
 
 SAVE, R4_READS, CREATE_COPY, SWITCH = "BL-0151", "BL-0152", "BL-0153", "BL-0154"
+R4_REPLAY = "BL-0168"  # R4 itself landed in S0066 in the engine (`ledger.r4`) and the sidecar (`engine_jobs.r4`)
 
 # -- the inventory: every action of the model's Next ---------------------------------------------------------------
 
@@ -162,10 +163,8 @@ JOB_STEPS: Mapping[str, str] = {
             "RS_Temps RS_Sync RS_Resolve RC_Init RC_Next RC_Lock RC_Check IOFail"
         )
     },
-    **{
-        a: R4_READS
-        for a in names("R4_Pick R4_Start R4_Load R4_Check R4_Confirm R4_Sync RD_Load RD_Check OP_Load OP_Check")
-    },
+    **{a: R4_REPLAY for a in names("R4_Pick R4_Start R4_Load R4_Check R4_Confirm R4_Sync")},
+    **{a: R4_READS for a in names("RD_Load RD_Check OP_Load OP_Check")},
 }
 SEAMS: Mapping[str, str] = {
     "Assess": SWITCH,  # the boot's open: `workspace_opened()`; an open job stops the trace (BL-0152)
@@ -459,8 +458,11 @@ def ends_of(s: StateJ, t: StateJ, classes: Mapping[str, Class]) -> dict[int, End
     run = s["run"]
     out: dict[int, End] = {}
     for mid in left:
-        if a == "EngineCrash" and run is not None and mid == run["id"] and run["k"] == "save":
-            out[mid] = End("finished")  # §6.6: the save is told its outcome from disk (S0063), never "lost"
+        if a == "EngineCrash" and run is not None and mid == run["id"] and run["k"] in ("save", "r4"):
+            # §6.6: the save is told its outcome from disk (S0063), never "lost"; §6.7: an R4's failure to run is
+            # counted on disk in a fresh engine, and the job then ends with that answer (S0066; the model counts it
+            # at the crash, as its `R4Failed`)
+            out[mid] = End("finished")
         elif a == "EngineCrash" and run is not None and mid == run["id"]:
             out[mid] = End("lost", past_commit=s["ctl"]["past"])  # only a writing job has a commit point
         elif classes[a] == "job_step":
@@ -741,7 +743,7 @@ class TableReplay:
                 assert self.state.engine is not None
                 running = self.state.running
                 self.feed(EngineDied(self.state.engine))
-                if running is not None and running.job.kind == "save":
+                if running is not None and running.job.kind in ("save", "r4"):
                     # S0063: the table keeps a save whose engine died; its work reads the outcome from disk and
                     # answers (the model tells `DiskOutcome` at the crash; the disk read itself is the work's,
                     # `test_save_job.py`; the engine's reading against the model's states is
@@ -1320,7 +1322,7 @@ def test_the_outcome_after_a_save_death_is_the_models_disk_outcome() -> None:
         for s, t in pairwise(states):
             run = s["run"]
             if t["act"]["a"] != "EngineCrash" or run is None or run["k"] != "save" or s["ctl"]["pc"] in R4_PCS:
-                continue  # an R4 inside the save that could not run is "not saved" by the queue (BL-0152)
+                continue  # an R4 inside the save that could not run refuses the save (S0066, `test_r4_job.py`)
             sv = s["sv"]["s"]
             record = s["jr"][sv]
             unchanged = all(s["fs"]["cur"][f] == s["sv"]["plan"][f] for f in ("R", "N"))

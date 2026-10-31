@@ -1333,8 +1333,23 @@
         "type": "object"
       },
       "WritesPausedDetails": {
-        "description": "This workspace's saves are paused (engine-jobs §6.1 steps 1 and 4, §6.4, §6.6, §11; S0063). `unfinished_save`:\nan unfinished save's journal is open (Reopen recovers it); `check_pending`: the check of the last save (R4) is owed\nand could not run first; `check_failed`: that check found a difference, or could not run three times (Resume\nsaving). `file`: for `unfinished_save`, the file the save was creating that the undo will ask about (its Reopen\ntext then promises no undo: S0061 red team r8 overflow 1), else None.",
+        "description": "This workspace's saves are paused (engine-jobs §6.1 steps 1 and 4, §6.4, §6.6, §11; S0063). `unfinished_save`:\nan unfinished save's journal is open (Reopen recovers it); `check_pending`: the check of the last save (R4) is owed\nand could not run first; `check_failed`: that check found a difference, or could not run three times (Resume\nsaving). `file`: for `unfinished_save`, the file the save was creating that the undo will ask about (its Reopen\ntext then promises no undo: S0061 red team r8 overflow 1), else None. For `check_failed` (S0066): `record`, the\npaused save's record, which Resume saving names; `backup`, that save's backup folder (\"Your backup is here\"; None\nwhen its record cannot be read); `could_not_check`, the check could not run three times rather than finding a\ndifference.",
         "properties": {
+          "backup": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Backup"
+          },
+          "could_not_check": {
+            "title": "Could Not Check",
+            "type": "boolean"
+          },
           "file": {
             "anyOf": [
               {
@@ -1348,11 +1363,25 @@
           },
           "reason": {
             "$ref": "#/components/schemas/PausedReason"
+          },
+          "record": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Record"
           }
         },
         "required": [
           "reason",
-          "file"
+          "file",
+          "record",
+          "backup",
+          "could_not_check"
         ],
         "title": "WritesPausedDetails",
         "type": "object"

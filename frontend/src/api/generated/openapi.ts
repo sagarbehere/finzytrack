@@ -548,12 +548,21 @@ export interface components {
          *     an unfinished save's journal is open (Reopen recovers it); `check_pending`: the check of the last save (R4) is owed
          *     and could not run first; `check_failed`: that check found a difference, or could not run three times (Resume
          *     saving). `file`: for `unfinished_save`, the file the save was creating that the undo will ask about (its Reopen
-         *     text then promises no undo: S0061 red team r8 overflow 1), else None.
+         *     text then promises no undo: S0061 red team r8 overflow 1), else None. For `check_failed` (S0066): `record`, the
+         *     paused save's record, which Resume saving names; `backup`, that save's backup folder ("Your backup is here"; None
+         *     when its record cannot be read); `could_not_check`, the check could not run three times rather than finding a
+         *     difference.
          */
         WritesPausedDetails: {
+            /** Backup */
+            backup: string | null;
+            /** Could Not Check */
+            could_not_check: boolean;
             /** File */
             file: string | null;
             reason: components["schemas"]["PausedReason"];
+            /** Record */
+            record: string | null;
         };
         /** WritesPausedError */
         WritesPausedError: {

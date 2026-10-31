@@ -424,7 +424,7 @@ def test_an_unreadable_or_newer_record_stops_the_journal(bad: bytes | str) -> No
     path = f"{JD}/{NAME}.open"
     data = w.fs.file(path)
     assert data is not None
-    w.fs.outside_write(path, data.replace(b'"v":1', b'"v":2') if bad == "newer" else bad)  # type: ignore[arg-type]
+    w.fs.outside_write(path, data.replace(b'"v":2', b'"v":3') if bad == "newer" else bad)  # type: ignore[arg-type]
     _stops_with_nothing_written(w, Cause.UNREADABLE, None)
 
 

@@ -19,6 +19,8 @@ WRITE_PATH = (
     "ledger/restore.py",
     "ledger/recover_all.py",
     "ledger/save.py",  # S0063: its writes go through the port; it reads only through the load and the fingerprint
+    "ledger/r4.py",  # S0066: its renames and counts go through the port; it reads through the loads and the fingerprint
+    "ledger/digest.py",  # S0066: pure; file names resolved through the port
     "ledger/handles.py",
     "ledger/paths.py",
     "ledger/core/journal.py",

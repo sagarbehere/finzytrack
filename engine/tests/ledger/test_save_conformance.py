@@ -33,7 +33,8 @@ the replay stops that trace there, counted by reason in `STOPS`, and never compa
 - the model's rollback removes a file the save created, and its temp rule passes or stops by the old rule
   (`RB_Check`); the code never touches anything at a created path and stops `created_path_taken` (ADR-0012
   amendment of 2026-10-30, round 5), with the staging-name temp rule;
-- the model runs an owed R4 inside the save (`S_R4Check`); the code refuses `check_pending` until R4 exists (BL-0152);
+- the model runs an owed R4 inside the save (`S_R4Check`); the engine's save refuses `check_pending` naming the record
+  and the sidecar runs that R4 between two `save` requests (S0066), which this replay does not walk yet (BL-0168);
 - the model's gate refuses a stale mirror; the code compares two values of the plan until a mirror is published
   (BL-0125).
 
@@ -112,7 +113,7 @@ STOPS: Mapping[str, str] = {
         "`changed` at once; the model copies the plan's bytes unread and finds the edit at the displaced check "
         "(BL-0161)"
     ),
-    "r4_in_save": "the model runs an owed R4 inside the save; the code refuses `check_pending` until R4 (BL-0152)",
+    "r4_in_save": "the model runs an owed R4 inside the save; the sidecar runs it between two requests (BL-0168)",
     "mirror": "the model's gate refuses a stale mirror; the code compares two values of the plan (BL-0125)",
     "cut": "the walk ended before the save did (not a difference)",
     "after_stop": "a later save of a trace stopped before it (the fake no longer follows the model)",
@@ -646,8 +647,8 @@ def world() -> MemFS:
 
 def sync_world(fs: MemFS, st: State, where: str) -> None:
     """The fake made to hold what the model holds between two saves: the files (an outside edit while no save ran)
-    and each record's state after R4 (`.closed` to `.done` or `.mismatch`: R4 is BL-0152's, so its rename is
-    projected); anything else that differs is a divergence."""
+    and each record's state after R4 (`.closed` to `.done` or `.mismatch`: R4 is not walked here, BL-0168, so its
+    rename is projected); anything else that differs is a divergence."""
     for f in FILES:
         v = st["fs"]["cur"][f]
         if value(f, fs.file(PATH[f])) != v:
@@ -829,7 +830,7 @@ code that carries out one of these (a folder's sync, say) fails `test_the_replay
 `@tla_action` on that code (`backend/tests/architecture/test_tla_mapping.py`)."""
 
 NOT_WALKED: Mapping[str, str] = {
-    "S_R4Check": "a read of the records, with no hook; an owed R4 runs inside the save with BL-0152 (a stop)",
+    "S_R4Check": "a read of the records, with no hook; an owed R4 is the sidecar's (S0066; a stop, BL-0168)",
     "S_WaitR4": "a seeded bug's action only",
     "S_Compare": (
         "a read of what the swap displaced, with no hook; the replay sees only that the code went on when the model "
@@ -837,7 +838,7 @@ NOT_WALKED: Mapping[str, str] = {
     ),
     "S_ReadBack": "a read, with no hook; the model's read-back fails only after a stop (BL-0161); `test_writer.py`",
     "S_Publish": "not built (BL-0113)",
-    "S_Release": "no hook; the replay asserts every ledger-set lock released after each save; the queued R4 is BL-0152",
+    "S_Release": "no hook; the replay asserts every ledger-set lock released after each save; the sidecar queues R4",
     "RB_Check": "reads, with no hook; its stopping branches are stops (BL-0161); `test_restore.py`",
 }
 """The model's save steps the replay does not count as walked, each with its reason (`PARTIAL` or `PLANNED` in the

@@ -18,10 +18,14 @@ from app.platform.errors import ChangeNotSavedDetails, ErrorCode, WritesPausedDe
 NOT_SAVED: Final = "Your change was not saved."
 UNCHANGED: Final = "Your ledger is unchanged."
 CHECK_PENDING: Final = "Finzytrack could not check your last change, so it did not save this one."
-# TODO(BL-0152): "could not check" for a `.mismatch {could_not_check}` record, once R4 writes one
 CHECK_FAILED: Final = (
     "Finzytrack's check of your last change found a difference. Saving is paused. Your backup is here."
 )
+COULD_NOT_CHECK: Final = "Finzytrack could not check your last change. Saving is paused. Your backup is here."
+"""§11: the same R4 failed to run three times (`WritesPausedDetails.could_not_check`; S0066)."""
+NONDETERMINISTIC: Final = "Your ledger's plugins give a different result each time they run."
+"""§11's notice for an R4 that found the plugins nondeterministic (its screen is BL-0092's). §11's second sentence,
+"Finzytrack updated your views from a fresh load.", is said once R4 publishes that load (TODO(BL-0113))."""
 LEDGER_CHANGED: Final = (
     "Your ledger changed after this preview, so Finzytrack did not save your change. Review it again."
 )
@@ -76,7 +80,7 @@ def paused_text(d: WritesPausedDetails) -> str:
         case "check_pending":
             return CHECK_PENDING
         case "check_failed":
-            return CHECK_FAILED
+            return COULD_NOT_CHECK if d.could_not_check else CHECK_FAILED
 
 
 def text(err: DomainError) -> str:

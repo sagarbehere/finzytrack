@@ -11,8 +11,8 @@ engine; past `proceed` only Quit anyway ends the engine (engine-jobs §4; S0057 
 - `crash`: the engine dies by itself mid-request (`crashed`; its end is reported with no reason of ours);
 - `gate_die`: as `gate`, but the engine dies right after `proceed` (a save cut mid-write);
 - any op in `scripted` (S0062: recover-all's): its next answer, in order: a result mapping, `CRASH` (the engine
-  dies mid-request), `CRASH_TO_BOUND` (it dies and that stop reaches the bound) or `BLOCK` (waits as `block` does,
-  released by `release(op)`); every such call's params are kept in `params`.
+  dies mid-request), `CRASH_TO_BOUND` (it dies and that stop reaches the bound), `BLOCK` (waits as `block` does,
+  released by `release(op)`) or an `EngineRefusal` (S0066); every such call's params are kept in `params`.
 
 Each end report's peak memory names its engine (1000, 2000 or 4000 plus the serial), so a test can tell them apart.
 
@@ -163,6 +163,8 @@ class FakeEngine:
                         return EngineFailure("cancelled", "ended by us")
                     self._released.discard(op)
                     answer = self.scripted[op].pop(0)
+                if gated is None and isinstance(answer, EngineRefusal):
+                    return answer  # the engine refused the request (an exception in its handler; S0066)
                 if gated is None:
                     assert isinstance(answer, dict), answer
                     return answer  # pyright: ignore[reportUnknownVariableType]

@@ -31,9 +31,14 @@ Where it differs from Beancount, on purpose (each refuses the whole load, EP-13;
   so a change during the load makes the next observation differ. The `document` entries a plugin adds are only
   known after the plugins ran; their record comes from Beancount's own check (`_plugin_documents`).
 
+**For R4** (`design/specs/engine-jobs.md` §6.7; S0066): given a `path_key` function, `load` also gives the digest of
+the parser's output (`Loaded.parse_digest`, `ledger.digest`), taken right after the parse, before booking builds new
+entries and plugins run; the save writes it into the closed record. `parse` is the parse alone, of the disk: R4's
+confirm compares it with Beancount's own parse of the same files, and with the record's; it also says which bytes it
+parsed (`Parsed.files`), so an edit made and reverted while it read is seen.
+
 A load holds `sys.path` and the plugin modules of the process while it runs; engine jobs run one at a time
-(ADR-0064). Nothing calls this over the protocol yet: the mirror build runs it inside an engine job
-(TODO(BL-0109)).
+(ADR-0064). The save runs it inside its engine job (S0063); the mirror build will (TODO(BL-0113)).
 """
 
 from __future__ import annotations
@@ -46,6 +51,7 @@ from os import path
 from typing import Literal, cast
 
 from ledger_engine.ledger import beancount_port as port
+from ledger_engine.ledger import digest as _digest
 from ledger_engine.ledger import fingerprint as fp
 from ledger_engine.ledger.core.ledger_set import Absent, FileState, Fingerprint
 from ledger_engine.ledger.policy import LoadPolicy
@@ -72,6 +78,16 @@ class Loaded:
     errors: list[port.BeancountError]
     options: port.OptionsMap
     fingerprint: Fingerprint
+    parse_digest: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class Parsed:
+    """The parse alone (`parse`): the digest of the parser's output, and each file it read with the state of the
+    bytes it parsed (a file it found missing: `Absent`)."""
+
+    digest: str
+    files: Mapping[str, FileState]
 
 
 @dataclass(frozen=True, slots=True)
@@ -92,9 +108,11 @@ class NotAbsoluteError(ValueError):
         super().__init__(f"a ledger path must be absolute: {given!r}")
 
 
-def load(root: str, overlay: Mapping[str, bytes], policy: LoadPolicy) -> LoadResult:
+def load(
+    root: str, overlay: Mapping[str, bytes], policy: LoadPolicy, *, key_of: _digest.KeyOf | None = None
+) -> LoadResult:
     """Load the ledger set rooted at `root` (an absolute path) with `overlay`'s bytes in place of the files they
-    name (absolute paths), under `policy`."""
+    name (absolute paths), under `policy`. With `key_of`, also the parse digest (`Loaded.parse_digest`)."""
     if not path.isabs(root):
         raise NotAbsoluteError(root)
     candidates: dict[str, bytes] = {}
@@ -117,6 +135,7 @@ def load(root: str, overlay: Mapping[str, bytes], policy: LoadPolicy) -> LoadRes
     refused = _ask_before_running(options, policy)
     if refused is not None:
         return refused
+    parse_digest = None if key_of is None else _digest.of_result(entries, parse_errors, options, key_of)
     documents = {d: fp.listing(d) for d in _documents_roots(options)}
     document_files = {e.filename: fp.document_file(e.filename) for e in entries if isinstance(e, port.Document)}
 
@@ -130,7 +149,20 @@ def load(root: str, overlay: Mapping[str, bytes], policy: LoadPolicy) -> LoadRes
     errors.extend(port.validate(entries, options))
     options["input_hash"] = port.input_hash(options["include"])
     fingerprint = Fingerprint.of(path.normpath(root), seen.files, seen.globs, documents, document_files)
-    return Loaded(entries, errors, options, fingerprint)
+    return Loaded(entries, errors, options, fingerprint, parse_digest)
+
+
+def parse(root: str, policy: LoadPolicy, key_of: _digest.KeyOf) -> Parsed | LoadRefused:
+    """The parse of the disk's ledger set rooted at `root`, as `load` parses it (the policy asked about each file, an
+    encrypted file refused), and nothing more: no plugin runs."""
+    if not path.isabs(root):
+        raise NotAbsoluteError(root)
+    seen = _Seen()
+    parsed = _parse_recursive(path.normpath(root), {}, policy, seen)
+    if isinstance(parsed, LoadRefused):
+        return parsed
+    entries, errors, options = parsed
+    return Parsed(_digest.of_result(entries, errors, options, key_of), dict(seen.files))
 
 
 @dataclass(slots=True)

@@ -4,18 +4,24 @@ Finzytrack wraps Beancount and never re-implements it (EP-03). Every other engin
 the names here: the Beancount types it needs (re-exported, so the rest of the engine can name them), the parser, the
 stages of a full load and the semantic calls (tolerance, residual, balance assertions, display precision).
 
-**Two classes of wrapper** (ARCHITECTURE.md §2.4 rule 4; `engine/tests/architecture/test_load_rule.py`):
+**Three classes of wrapper** (ARCHITECTURE.md §2.4 rule 4; `engine/tests/architecture/test_load_rule.py`):
 - `LOAD_STAGES`, the steps of a full load (sort, booking, transformations with plugins, validation, options
   aggregation). Only `ledger/overlay.py` uses them, so every full load is the overlay replica (ADR-0010), with its
   `LoadPolicy` and its refusals.
+- `RECONCILE_LOADS`, Beancount's own loader with no pickle cache: the full load and the parse of the re-check after a
+  save (R4, `design/specs/engine-jobs.md` §6.7; BL-0118). Only `ledger/r4.py` uses them: R4 compares the replica's
+  prediction with Beancount's real loader, so it must not be the replica (it could not catch the replica's own drift).
 - `WRAPPERS`, everything else: parser-only calls and the semantic calls, usable anywhere in the engine.
-Other modules use only the names in `__all__`; every function there is in exactly one of the two classes. Beancount's
-own names are imported under private (`_`) aliases, so none of its load steps is reachable under a public name.
+Other modules use only the names in `__all__`; every function there is in exactly one of the three classes.
+Beancount's own names are imported under private (`_`) aliases, so none of its load steps is reachable under a public
+name.
 
 **No `load_file` or `load_string` here.** Beancount's `load_file` keeps a pickle cache beside the root file: it reads
 `.<name>.picklecache` (unpickling a file from the ledger folder runs whatever code it holds), deletes it when stale
 and writes a new one after a load of a second or more. The engine never reads or writes beside a ledger outside the
-write path, so the only full load is the replica, which reads ledger files and nothing else (S0049 journal).
+write path (S0049 journal). The reconciliation loads call the loader's internal `_load` and `_parse_recursive`, which
+`load_file` wraps with that cache: they read the ledger files and nothing else (no `.picklecache` is read or written,
+`engine/tests/ledger/test_r4.py`).
 
 Pinned to Beancount 3.2.0 (ADR-0004); `BEANCOUNT_VERSION` is checked by the overlay's pin test.
 """
@@ -27,8 +33,9 @@ from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from decimal import Decimal
 from importlib.metadata import version
-from typing import Any, Final
+from typing import Any, Final, cast
 
+from beancount.core.data import SORT_ORDER as _SORT_ORDER
 from beancount.core.data import (
     Balance,
     BeancountError,
@@ -58,6 +65,8 @@ from beancount.core.realization import compute_balance as _compute_balance
 from beancount.core.realization import get as _realization_get
 from beancount.core.realization import realize as _realize
 from beancount.loader import LoadError as _LoadError
+from beancount.loader import _load as _loader_load  # pyright: ignore[reportPrivateUsage] (BL-0118)
+from beancount.loader import _parse_recursive as _loader_parse  # pyright: ignore[reportPrivateUsage] (BL-0118)
 from beancount.loader import aggregate_options_map as _aggregate_options_map
 from beancount.loader import compute_input_hash as _compute_input_hash
 from beancount.loader import run_transformations as _run_transformations
@@ -72,6 +81,7 @@ from beancount.utils.encryption import is_encrypted_file as _is_encrypted_file
 __all__ = [
     "BEANCOUNT_VERSION",
     "LOAD_STAGES",
+    "RECONCILE_LOADS",
     "WRAPPERS",
     "Balance",
     "BeancountError",
@@ -108,8 +118,11 @@ __all__ = [
     "load_error",
     "parse_file",
     "parse_string",
+    "reconcile_load",
+    "reconcile_parse",
     "run_transformations",
     "sort_entries",
+    "sort_order",
     "validate",
 ]
 
@@ -132,8 +145,10 @@ LOAD_STAGES: Final = frozenset(
         "load_error",
     }
 )
+RECONCILE_LOADS: Final = frozenset({"reconcile_load", "reconcile_parse"})
 WRAPPERS: Final = frozenset(
     {
+        "sort_order",
         "parse_file",
         "parse_string",
         "is_encrypted_file",
@@ -162,9 +177,34 @@ def parse_string(data: bytes, report_filename: str | None = None) -> ParseResult
     return list(entries), list(errors), dict(options)
 
 
+def sort_order(entry: object) -> int:
+    """The rank of an entry's type among entries of one date, as Beancount sorts them (`data.SORT_ORDER`: `Open`
+    first, then `Balance`, then the rest, `Document`, `Close` last)."""
+    return cast("dict[type, int]", _SORT_ORDER).get(type(entry), 0)
+
+
 def is_encrypted_file(path: str) -> bool:
     """Beancount's own test: a `.gpg` name, or an `.asc` name whose file starts with a PGP message header."""
     return _is_encrypted_file(path)
+
+
+# ---- the reconciliation loads (only ledger/r4.py; BL-0118) ---------------------------------------------------------
+
+
+def reconcile_load(root: str) -> ParseResult:
+    """Beancount's own full load of the ledger rooted at `root` (an absolute path), as `loader.load_file` runs it but
+    without its pickle cache (`loader._load`): parse, sort, booking, plugins with the `pythonpath` first on `sys.path`,
+    validation, `input_hash`. No `LoadPolicy` is asked (R4 loads only a ledger set the save's overlay load accepted,
+    and its fingerprint checks before and after tell whether the disk is still that set)."""
+    entries, errors, options = _loader_load([(root, True)], None, None, None)
+    return list(entries), list(errors), dict(options)
+
+
+def reconcile_parse(root: str) -> ParseResult:
+    """Beancount's own parse of the ledger rooted at `root`, its includes followed (`loader._parse_recursive`):
+    nothing booked, no plugin run."""
+    entries, errors, options = _loader_parse([(root, True)], None)
+    return list(entries), list(errors), dict(options)
 
 
 # ---- the stages of a full load (only ledger/overlay.py) ------------------------------------------------------------

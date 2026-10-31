@@ -324,7 +324,10 @@ class SaveResult(Message):
     paused until recovery). `unfinished`: a file may have been replaced and the rollback stopped (`cause`, and
     `cause_path` its file: after `created_path_taken` the undo will ask about that file). `unchanged`: every file the
     save would write was hashed again and equals its pre bytes. `path`: the file it is about; `entry`: the folder a
-    `permission` refusal is about, `detail`: the ACL entry that blocks it."""
+    `permission` refusal is about, `detail`: the ACL entry that blocks it. For `check_pending` and `check_failed`,
+    `path` is the record (S0066: the sidecar runs a `.closed` record's R4 and asks again); for `check_failed`,
+    `backup` is the paused save's backup folder (None when its record cannot be read) and `could_not_check` whether
+    its R4 failed to run three times."""
 
     outcome: SaveOutcomeKind
     reason: str | None
@@ -336,6 +339,8 @@ class SaveResult(Message):
     cause: str | None
     cause_path: AbsPath | None
     published: bool
+    backup: AbsPath | None
+    could_not_check: bool
 
 
 class SaveTarget(Message):
@@ -364,6 +369,54 @@ class SaveOutcomeResult(Message):
     unchanged: bool | None
     path: AbsPath | None
     errno: int | None
+
+
+RecordName = Annotated[str, Field(pattern=r"^[A-Za-z0-9_]{1,64}-[A-Za-z0-9_]{1,64}$")]
+
+
+class R4Params(Message):
+    """R4's ops (S0066; engine-jobs §6.7): the record `<app_local_data>/local/<key>/journal/<name>.<state>`."""
+
+    app_local_data: AbsPath
+    key: Component
+    name: RecordName
+
+
+class R4Result(Message):
+    """An R4 op's answer (S0066; engine-jobs §6.7): its outcome (each op's own set, below); `loaded`: the ledger's
+    plugins ran (the engine is retired); `record`: the record's path now; `backup`: the save's backup folder. Every
+    rename was synced before this answer."""
+
+    loaded: bool
+    record: AbsPath | None
+    backup: AbsPath | None
+
+
+class R4CheckResult(R4Result):
+    """`r4_check` (steps 1-3): `gone` (the record is not `.closed`), `unreadable`, `superseded`, `superseded_build`,
+    `pass`, or `differs` (the confirm is next)."""
+
+    outcome: Literal["gone", "unreadable", "superseded", "superseded_build", "pass", "differs"]
+
+
+class R4ConfirmResult(R4Result):
+    """`r4_confirm` (step 4): `gone`, `unreadable`, `superseded`, `superseded_build`, `nondeterministic` or
+    `mismatch` (the record is now `.mismatch`)."""
+
+    outcome: Literal["gone", "unreadable", "superseded", "superseded_build", "nondeterministic", "mismatch"]
+
+
+class R4AttemptResult(R4Result):
+    """`r4_attempt`: `gone`, `counted`, or `could_not_check` (the third: the record is now `.mismatch`)."""
+
+    outcome: Literal["gone", "counted", "could_not_check"]
+
+
+class R4ResumeResult(R4Result):
+    """`r4_resume` (Resume saving): `done` (the `.mismatch` record is now `.done`) or `gone` (it was not
+    `.mismatch`)."""
+
+    outcome: Literal["done", "gone"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -461,6 +514,8 @@ OPS: dict[str, OpSpec] = {
             "cause": None,
             "cause_path": None,
             "published": False,
+            "backup": None,
+            "could_not_check": False,
         },
         {
             "session": "s1",
@@ -491,6 +546,26 @@ OPS: dict[str, OpSpec] = {
         },
         needs_engine_lock=True,
     ),
+    **{
+        op: OpSpec(
+            R4Params,
+            result,
+            {
+                "outcome": outcome,
+                "loaded": loaded,
+                "record": f"{_JD}/s1-j7.{state}",
+                "backup": f"{_ALD}/local/k1/backups/s1-j7",
+            },
+            {"app_local_data": _ALD, "key": "k1", "name": "s1-j7"},
+            needs_engine_lock=True,
+        )
+        for op, result, outcome, loaded, state in (
+            ("r4_check", R4CheckResult, "pass", True, "done"),
+            ("r4_confirm", R4ConfirmResult, "mismatch", False, "mismatch"),
+            ("r4_attempt", R4AttemptResult, "counted", False, "closed"),
+            ("r4_resume", R4ResumeResult, "done", False, "done"),
+        )
+    },
 }
 
 

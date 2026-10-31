@@ -9,6 +9,7 @@ decodes; and a mutated example is refused by the decoder exactly when the schema
 from __future__ import annotations
 
 import copy
+import functools
 import json
 from pathlib import Path
 from typing import Any, cast, get_args
@@ -39,6 +40,7 @@ from app.platform.engine_protocol import (
     Violation,
     decode_info,
     decode_pong,
+    decode_r4,
     decode_recover_act,
     decode_recover_list,
     decode_recover_try,
@@ -114,6 +116,7 @@ DECODERS: dict[str, Any] = {
     "recover_act": decode_recover_act,
     "save": decode_save,
     "save_outcome": decode_save_outcome,
+    **{op: functools.partial(decode_r4, op) for op in ("r4_check", "r4_confirm", "r4_attempt", "r4_resume")},
 }
 
 
@@ -188,6 +191,10 @@ def mutations(example: dict[str, Any]) -> list[dict[str, Any]]:
         ("RecoverActReply", "recover_act"),
         ("SaveReply", "save"),
         ("SaveOutcomeReply", "save_outcome"),
+        ("R4CheckReply", "r4_check"),
+        ("R4ConfirmReply", "r4_confirm"),
+        ("R4AttemptReply", "r4_attempt"),
+        ("R4ResumeReply", "r4_resume"),
     ],
 )
 def test_the_decoder_refuses_exactly_what_the_schema_refuses(definition: str, op: str | None) -> None:
@@ -344,7 +351,17 @@ def test_the_decoder_refuses_exactly_what_the_schema_refuses_for_a_decision(deci
 
 # -- Recover-all's ops (S0062) --------------------------------------------------------------------------------------
 
-RECOVER_OPS = ("recover_list", "recover_try", "recover_act", "save", "save_outcome")  # and the save's (S0063)
+RECOVER_OPS = (  # and the save's (S0063) and R4's (S0066)
+    "recover_list",
+    "recover_try",
+    "recover_act",
+    "save",
+    "save_outcome",
+    "r4_check",
+    "r4_confirm",
+    "r4_attempt",
+    "r4_resume",
+)
 
 
 def nested_mutations(value: object) -> list[object]:
@@ -387,6 +404,19 @@ def test_the_decoder_refuses_exactly_what_the_schema_refuses_inside_a_recover_re
             schema_ok = valid(definition, variant)
             verdict = decoded(variant, op)
             assert schema_ok == (not isinstance(verdict, Violation)), (result, verdict)
+
+
+@pytest.mark.parametrize(
+    ("op", "foreign"),
+    [("r4_attempt", "pass"), ("r4_check", "mismatch"), ("r4_confirm", "pass"), ("r4_resume", "counted")],
+)
+def test_an_r4_outcome_of_another_op_breaks_the_protocol(op: str, foreign: str) -> None:
+    """S0066: each R4 op answers only its own outcomes (a `pass` from `r4_attempt` would let a save go on)."""
+    definition = f"{stem(op)}Reply"
+    ex = examples(definition)[0]
+    variant = {**ex, "result": {**ex["result"], "outcome": foreign}}
+    assert not valid(definition, variant)
+    assert isinstance(decoded(variant, op), Violation)
 
 
 def test_the_try_result_decodes_to_its_fields() -> None:

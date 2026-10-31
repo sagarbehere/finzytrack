@@ -3,8 +3,10 @@
 
 `run(plan, ports, job)`, in one engine (§5.1: it runs the ledger's plugins, so its engine is retired after it):
 1. **R4 first, if owed** (§6.1 step 1): this workspace's records re-read from disk (`records`): a `.closed` record
-   means an R4 is owed. Until R4 exists (TODO(BL-0152)) it refuses `check_pending` (S0060's plan for this slice),
-   writing nothing; a `.mismatch` refuses `check_failed`; an `.open` journal `unfinished_save`.
+   means an R4 is owed: the save refuses `check_pending` naming that record, writing nothing, and the sidecar runs
+   that record's R4 in the same job, then asks again in a fresh engine (`app.platform.engine_jobs.save`, S0066); a
+   `.mismatch` refuses `check_failed` (with the save's backup folder and whether R4 could not run three times); an
+   `.open` journal `unfinished_save`.
 2. **Legacy-lock detection** (ADR-0062 decision 2; INV-26): every legacy `.write.lock` the plan names, deduplicated by
    `path_key`, tried once each without waiting (`LegacyLocks`); free: held to the end; absent: go on; held, or any
    error: `legacy_app_saving`, before any ledger-set lock.
@@ -13,17 +15,22 @@
 4. **The gate, under the locks** (ADR-0008 step 4): the disk's fingerprint equals the plan's (else `ledger_changed`);
    the published mirror's equals the plan's (else `mirror_stale`, `WORKSPACE_NOT_READY {WARMING}`); the records again.
 5. **The load** of the candidate (`overlay.load`, the contract's step 3; ADR-0011's one full load). A refused load is
-   `load_refused`; judging its errors against the plan's is the contract's (TODO(BL-0106)).
+   `load_refused`; judging its errors against the plan's is the contract's (TODO(BL-0106)). Then the prediction R4
+   checks (§6.7, S0066): the adopted digest of the load's result and the parse digest of its parse (`ledger.digest`),
+   before step 6, so the re-check stays right before the commit point.
 6. **The re-check, under the locks** (§6.1 step 6; ADR-0013; the owner's TLC run `L_save_deep`): the disk's
    fingerprint equals the plan's **and** the disk equals what the load itself parsed (`ledger_set.as_before` of
    `Loaded.fingerprint`). So an include the load read in an edited form, reverted before this step, refuses; one
    edited and reverted after the load passes (the save builds only on bytes still on disk).
 7. **The commit point:** `job.gate()` (§4: the sidecar's one table step answers `proceed` or ends the engine).
 8. `writer.durable_commit` (§6.1 step 8), after the workspace's journal and backups folders exist and every folder
-   from `app_local_data` down to them has a durable entry (its parent synced, whether it was made now or not).
+   from `app_local_data` down to them has a durable entry (its parent synced, whether it was made now or not). The
+   closed record carries the load's post fingerprint as its canonical encoding (R4 observes that ledger set) and the
+   two digests; a load that gave no parse digest (a test's) writes `not_computed` for both, which R4 treats as an
+   engine-build change.
 9. `job.committed()` once it `Landed`.
-10. The publish (§6.1 step 10) is not built: `Saved.published` is False (TODO(BL-0113)); the sidecar queues nothing
-    yet (the rebuild is BL-0152's).
+10. The publish (§6.1 step 10) is not built: `Saved.published` is False (TODO(BL-0113)); the rebuild a failed
+    publish queues is BL-0152 part 2's. The sidecar queues the record's R4 (S0066).
 11. Every lock released on every path out, the legacy locks last; the engine is retired by the sidecar.
 
 **The step rule.** Steps 1-7 write nothing but lock files (`app_local_data/locks/`, never deleted); every refusal
@@ -51,12 +58,13 @@ from dataclasses import dataclass
 from typing import Final, Literal, Protocol
 
 from ledger_engine.fs.port import FileSystem, LegacyAbsent, LegacyHeld, LegacyLocks, Lock, Locks
+from ledger_engine.ledger import digest as _digest
 from ledger_engine.ledger import fingerprint as _fingerprint
 from ledger_engine.ledger import overlay
 from ledger_engine.ledger.core import journal
 from ledger_engine.ledger.core import paths as core_paths
 from ledger_engine.ledger.core.journal import Record, State
-from ledger_engine.ledger.core.ledger_set import Absent, Content, Fingerprint, as_before, digest
+from ledger_engine.ledger.core.ledger_set import Absent, Content, Fingerprint, as_before, digest, encode
 from ledger_engine.ledger.handles import join, sha256
 from ledger_engine.ledger.policy import LoadPolicy
 from ledger_engine.ledger.writer import (
@@ -77,7 +85,7 @@ JOURNAL: Final = "journal"
 BACKUPS: Final = "backups"
 LOCKS: Final = "locks"
 NOT_COMPUTED: Final = "not_computed"
-"""The closed record's adopted and parse digests until R4 defines them (TODO(BL-0152)): R4 cannot compare a
+"""The closed record's adopted and parse digests when the save's load gave none (a test's load): R4 cannot compare a
 prediction it does not have, so it treats such a record as it treats an engine-build change (§6.7 step 1)."""
 SESSION: Final = re.compile(r"[a-z0-9_]{1,64}")
 """A session id: lower case only, so two sessions never differ only in case (names derived from `<session>-<job>`
@@ -87,7 +95,7 @@ type Phase = Literal["waiting_for_files", "checking_change", "saving"]
 type Paused = Literal["unfinished_save", "check_pending", "check_failed"]
 type RefusedReason = Literal[
     "unfinished_save",  # an `.open` journal of this workspace (WRITES_PAUSED)
-    "check_pending",  # an R4 is owed and could not run first (WRITES_PAUSED; until BL-0152, always)
+    "check_pending",  # an R4 is owed: the sidecar runs it and asks again (WRITES_PAUSED when it could not)
     "check_failed",  # a `.mismatch` record (WRITES_PAUSED)
     "legacy_app_saving",  # a legacy install's write lock is held, or could not be tried (LEGACY_APP_SAVING)
     "ledger_changed",  # the disk moved since the plan, or during the load (LEDGER_EXTERNALLY_CHANGED)
@@ -150,9 +158,12 @@ class Ports:
     observe: Observe = _observe
 
 
-def desktop_load(policy: LoadPolicy) -> Load:
+def desktop_load(policy: LoadPolicy, fs: FileSystem) -> Load:
+    """The commit's load: the overlay under `policy`, with the parse digest (file names keyed on `fs`)."""
+    key_of = _digest.path_keys(fs)
+
     def load(root: str, candidates: Mapping[str, bytes]) -> overlay.LoadResult:
-        return overlay.load(root, candidates, policy)
+        return overlay.load(root, candidates, policy, key_of=key_of)
 
     return load
 
@@ -170,11 +181,15 @@ class Saved:
 class Refused:
     """Refused before the commit point: nothing was written in a ledger folder, the journal or the backups. `unchanged`:
     every file the save would write was hashed again and equals its pre bytes (a created one: absent). `path`: the
-    file the refusal is about, when there is one (the legacy lock, the record, the refused load's subject)."""
+    file the refusal is about, when there is one (the legacy lock, the record, the refused load's subject). For
+    `check_failed`: `backup`, the paused save's backup folder (None when its record cannot be read), and
+    `could_not_check`, whether its R4 failed to run three times (§6.7) rather than finding a difference."""
 
     reason: RefusedReason
     unchanged: bool
     path: str | None = None
+    backup: str | None = None
+    could_not_check: bool = False
 
 
 type SaveOutcome = Saved | Refused | NotSaved | Unfinished
@@ -253,16 +268,47 @@ def records(fs: FileSystem, app_local_data: str, workspace_key: str, lineage: st
     return None
 
 
+@dataclass(frozen=True, slots=True)
+class _Owed:
+    reason: Paused
+    path: str | None
+    backup: str | None = None
+    could_not_check: bool = False
+
+
+def paused_by(fs: FileSystem, path: str) -> tuple[str | None, bool]:
+    """For a `.mismatch` record at `path`: the paused save's backup folder (None when the record cannot be read) and
+    whether its R4 failed to run three times (`journal.attempt_name(name, 3)` beside it). Fail closed toward the
+    pause: an error reading either says nothing more (the save is refused all the same)."""
+    folder, _, file = path.rpartition("/")
+    parsed = journal.parse_file_name(file)
+    if parsed is None:
+        return None, False
+    try:
+        with fs.open_dir(folder or "/") as jd:
+            data = jd.read(file)
+            third = jd.stat(journal.attempt_name(parsed[0], journal.ATTEMPTS)) is not None
+    except OSError:
+        return None, False
+    rec = journal.Unreadable("gone") if data is None else journal.decode(data)
+    return (rec.backup_dir if isinstance(rec, Record) else None), third
+
+
 @tla_action("S_R4Check")
-def _records_refusal(fs: FileSystem, plan: SavePlan) -> tuple[RefusedReason, str | None] | None:
+def _records_refusal(fs: FileSystem, plan: SavePlan) -> _Owed | None:
+    """§6.1 step 1 (and step 4's re-read): the worst gating record of this workspace. A `.closed` record refuses
+    `check_pending` naming it: the sidecar runs its R4 and asks again (S0066)."""
     try:
         out = records(fs, plan.app_local_data, plan.workspace_key, plan.lineage)
     except OSError:
-        return "unfinished_save", journal_dir(plan)
+        return _Owed("unfinished_save", journal_dir(plan))
     if out is None:
         return None
-    # TODO(BL-0152): a `.closed` record runs its R4 here first (§6.1 step 1); until then it refuses `check_pending`.
-    return out
+    reason, path = out
+    if reason == "check_failed" and path is not None:
+        backup, third = paused_by(fs, path)
+        return _Owed(reason, path, backup, third)
+    return _Owed(reason, path)
 
 
 # -- steps 2 and 3: the locks -------------------------------------------------------------------------------------
@@ -384,6 +430,11 @@ def _name_taken(fs: FileSystem, plan: SavePlan) -> bool:
         return False
 
 
+def _refused_by(owed: _Owed, ports: Ports, plan: SavePlan) -> Refused:
+    unchanged = _unchanged(ports.fs, plan.changes)
+    return Refused(owed.reason, unchanged, owed.path, owed.backup, owed.could_not_check)
+
+
 def run(plan: SavePlan, ports: Ports, job: Job) -> SaveOutcome:
     """§6.1 steps 1-11 in this engine (the module's docstring)."""
     pre = _check(plan)
@@ -405,7 +456,7 @@ def _run(plan: SavePlan, ports: Ports, job: Job, pre: Mapping[str, str | None]) 
 
     owed = _records_refusal(ports.fs, plan)  # step 1
     if owed is not None:
-        return refused(*owed)
+        return _refused_by(owed, ports, plan)
 
     def io_error(path: str | None) -> NotSaved:
         return NotSaved(Step.BACKUP, Reason.IO_ERROR, _unchanged(ports.fs, plan.changes), path=path)
@@ -442,7 +493,7 @@ def _under_locks(
         return refused("mirror_stale")
     owed = _records_refusal(ports.fs, plan)
     if owed is not None:
-        return refused(*owed)
+        return _refused_by(owed, ports, plan)
     job.progress("checking_change")
     try:
         loaded = ports.load(plan.root, {c.path: c.post for c in plan.changes})  # step 5
@@ -450,6 +501,10 @@ def _under_locks(
         return io_error(e.filename if isinstance(e.filename, str) else None)
     if isinstance(loaded, overlay.LoadRefused):
         return refused("load_refused", loaded.subject)
+    adopted, parsed = NOT_COMPUTED, NOT_COMPUTED  # R4's prediction (§6.7), before the re-check
+    if loaded.parse_digest is not None:
+        adopted = _digest.of_result(loaded.entries, loaded.errors, loaded.options, _digest.path_keys(ports.fs))
+        parsed = loaded.parse_digest
     if ports.observe(plan.fingerprint) != plan.fingerprint:  # step 6
         return refused("ledger_changed")
     if ports.observe(loaded.fingerprint) != as_before(loaded.fingerprint, pre):
@@ -472,9 +527,9 @@ def _under_locks(
         workspace_key=plan.workspace_key,
         lineage=plan.lineage,
         engine_build=plan.engine_build,
-        post_fingerprint=digest(loaded.fingerprint),
-        adopted_digest=NOT_COMPUTED,
-        parse_digest=NOT_COMPUTED,
+        post_fingerprint=encode(loaded.fingerprint).decode("ascii"),
+        adopted_digest=adopted,
+        parse_digest=parsed,
         changes=plan.changes,
         journal_dir=jd,
         backups_dir=bd,

@@ -12,7 +12,11 @@
     "recover_try",
     "recover_act",
     "save",
-    "save_outcome"
+    "save_outcome",
+    "r4_check",
+    "r4_confirm",
+    "r4_attempt",
+    "r4_resume"
   ],
   "oneOf": [
     {
@@ -784,6 +788,690 @@
         "phase"
       ],
       "title": "ProgressEvent",
+      "type": "object"
+    },
+    "R4AttemptReply": {
+      "additionalProperties": false,
+      "description": "The accepted reply to `r4_attempt`.",
+      "examples": [
+        {
+          "id": 1,
+          "ok": true,
+          "op": "r4_attempt",
+          "result": {
+            "backup": "/app-data/com.finzytrack.desktop/local/k1/backups/s1-j7",
+            "loaded": false,
+            "outcome": "counted",
+            "record": "/app-data/com.finzytrack.desktop/local/k1/journal/s1-j7.closed"
+          },
+          "v": 2
+        }
+      ],
+      "properties": {
+        "v": {
+          "const": 2,
+          "title": "V",
+          "type": "integer"
+        },
+        "id": {
+          "maximum": 2147483647,
+          "minimum": 0,
+          "title": "Id",
+          "type": "integer"
+        },
+        "op": {
+          "const": "r4_attempt",
+          "title": "Op",
+          "type": "string"
+        },
+        "ok": {
+          "const": true,
+          "title": "Ok",
+          "type": "boolean"
+        },
+        "result": {
+          "$ref": "#/$defs/R4AttemptResult"
+        },
+        "decision": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Decision"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "v",
+        "id",
+        "op",
+        "ok",
+        "result"
+      ],
+      "title": "R4AttemptReply",
+      "type": "object"
+    },
+    "R4AttemptRequest": {
+      "additionalProperties": false,
+      "description": "The `r4_attempt` request.",
+      "examples": [
+        {
+          "id": 1,
+          "op": "r4_attempt",
+          "params": {
+            "app_local_data": "/app-data/com.finzytrack.desktop",
+            "key": "k1",
+            "name": "s1-j7"
+          },
+          "v": 2
+        }
+      ],
+      "properties": {
+        "v": {
+          "const": 2,
+          "title": "V",
+          "type": "integer"
+        },
+        "id": {
+          "maximum": 2147483647,
+          "minimum": 0,
+          "title": "Id",
+          "type": "integer"
+        },
+        "op": {
+          "const": "r4_attempt",
+          "title": "Op",
+          "type": "string"
+        },
+        "params": {
+          "$ref": "#/$defs/R4Params"
+        }
+      },
+      "required": [
+        "v",
+        "id",
+        "op",
+        "params"
+      ],
+      "title": "R4AttemptRequest",
+      "type": "object"
+    },
+    "R4AttemptResult": {
+      "additionalProperties": false,
+      "description": "`r4_attempt`: `gone`, `counted`, or `could_not_check` (the third: the record is now `.mismatch`).",
+      "properties": {
+        "loaded": {
+          "title": "Loaded",
+          "type": "boolean"
+        },
+        "record": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "pattern": "^/",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Record"
+        },
+        "backup": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "pattern": "^/",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Backup"
+        },
+        "outcome": {
+          "enum": [
+            "gone",
+            "counted",
+            "could_not_check"
+          ],
+          "title": "Outcome",
+          "type": "string"
+        }
+      },
+      "required": [
+        "loaded",
+        "record",
+        "backup",
+        "outcome"
+      ],
+      "title": "R4AttemptResult",
+      "type": "object"
+    },
+    "R4CheckReply": {
+      "additionalProperties": false,
+      "description": "The accepted reply to `r4_check`.",
+      "examples": [
+        {
+          "id": 1,
+          "ok": true,
+          "op": "r4_check",
+          "result": {
+            "backup": "/app-data/com.finzytrack.desktop/local/k1/backups/s1-j7",
+            "loaded": true,
+            "outcome": "pass",
+            "record": "/app-data/com.finzytrack.desktop/local/k1/journal/s1-j7.done"
+          },
+          "v": 2
+        }
+      ],
+      "properties": {
+        "v": {
+          "const": 2,
+          "title": "V",
+          "type": "integer"
+        },
+        "id": {
+          "maximum": 2147483647,
+          "minimum": 0,
+          "title": "Id",
+          "type": "integer"
+        },
+        "op": {
+          "const": "r4_check",
+          "title": "Op",
+          "type": "string"
+        },
+        "ok": {
+          "const": true,
+          "title": "Ok",
+          "type": "boolean"
+        },
+        "result": {
+          "$ref": "#/$defs/R4CheckResult"
+        },
+        "decision": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Decision"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "v",
+        "id",
+        "op",
+        "ok",
+        "result"
+      ],
+      "title": "R4CheckReply",
+      "type": "object"
+    },
+    "R4CheckRequest": {
+      "additionalProperties": false,
+      "description": "The `r4_check` request.",
+      "examples": [
+        {
+          "id": 1,
+          "op": "r4_check",
+          "params": {
+            "app_local_data": "/app-data/com.finzytrack.desktop",
+            "key": "k1",
+            "name": "s1-j7"
+          },
+          "v": 2
+        }
+      ],
+      "properties": {
+        "v": {
+          "const": 2,
+          "title": "V",
+          "type": "integer"
+        },
+        "id": {
+          "maximum": 2147483647,
+          "minimum": 0,
+          "title": "Id",
+          "type": "integer"
+        },
+        "op": {
+          "const": "r4_check",
+          "title": "Op",
+          "type": "string"
+        },
+        "params": {
+          "$ref": "#/$defs/R4Params"
+        }
+      },
+      "required": [
+        "v",
+        "id",
+        "op",
+        "params"
+      ],
+      "title": "R4CheckRequest",
+      "type": "object"
+    },
+    "R4CheckResult": {
+      "additionalProperties": false,
+      "description": "`r4_check` (steps 1-3): `gone` (the record is not `.closed`), `unreadable`, `superseded`, `superseded_build`,\n`pass`, or `differs` (the confirm is next).",
+      "properties": {
+        "loaded": {
+          "title": "Loaded",
+          "type": "boolean"
+        },
+        "record": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "pattern": "^/",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Record"
+        },
+        "backup": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "pattern": "^/",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Backup"
+        },
+        "outcome": {
+          "enum": [
+            "gone",
+            "unreadable",
+            "superseded",
+            "superseded_build",
+            "pass",
+            "differs"
+          ],
+          "title": "Outcome",
+          "type": "string"
+        }
+      },
+      "required": [
+        "loaded",
+        "record",
+        "backup",
+        "outcome"
+      ],
+      "title": "R4CheckResult",
+      "type": "object"
+    },
+    "R4ConfirmReply": {
+      "additionalProperties": false,
+      "description": "The accepted reply to `r4_confirm`.",
+      "examples": [
+        {
+          "id": 1,
+          "ok": true,
+          "op": "r4_confirm",
+          "result": {
+            "backup": "/app-data/com.finzytrack.desktop/local/k1/backups/s1-j7",
+            "loaded": false,
+            "outcome": "mismatch",
+            "record": "/app-data/com.finzytrack.desktop/local/k1/journal/s1-j7.mismatch"
+          },
+          "v": 2
+        }
+      ],
+      "properties": {
+        "v": {
+          "const": 2,
+          "title": "V",
+          "type": "integer"
+        },
+        "id": {
+          "maximum": 2147483647,
+          "minimum": 0,
+          "title": "Id",
+          "type": "integer"
+        },
+        "op": {
+          "const": "r4_confirm",
+          "title": "Op",
+          "type": "string"
+        },
+        "ok": {
+          "const": true,
+          "title": "Ok",
+          "type": "boolean"
+        },
+        "result": {
+          "$ref": "#/$defs/R4ConfirmResult"
+        },
+        "decision": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Decision"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "v",
+        "id",
+        "op",
+        "ok",
+        "result"
+      ],
+      "title": "R4ConfirmReply",
+      "type": "object"
+    },
+    "R4ConfirmRequest": {
+      "additionalProperties": false,
+      "description": "The `r4_confirm` request.",
+      "examples": [
+        {
+          "id": 1,
+          "op": "r4_confirm",
+          "params": {
+            "app_local_data": "/app-data/com.finzytrack.desktop",
+            "key": "k1",
+            "name": "s1-j7"
+          },
+          "v": 2
+        }
+      ],
+      "properties": {
+        "v": {
+          "const": 2,
+          "title": "V",
+          "type": "integer"
+        },
+        "id": {
+          "maximum": 2147483647,
+          "minimum": 0,
+          "title": "Id",
+          "type": "integer"
+        },
+        "op": {
+          "const": "r4_confirm",
+          "title": "Op",
+          "type": "string"
+        },
+        "params": {
+          "$ref": "#/$defs/R4Params"
+        }
+      },
+      "required": [
+        "v",
+        "id",
+        "op",
+        "params"
+      ],
+      "title": "R4ConfirmRequest",
+      "type": "object"
+    },
+    "R4ConfirmResult": {
+      "additionalProperties": false,
+      "description": "`r4_confirm` (step 4): `gone`, `unreadable`, `superseded`, `superseded_build`, `nondeterministic` or\n`mismatch` (the record is now `.mismatch`).",
+      "properties": {
+        "loaded": {
+          "title": "Loaded",
+          "type": "boolean"
+        },
+        "record": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "pattern": "^/",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Record"
+        },
+        "backup": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "pattern": "^/",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Backup"
+        },
+        "outcome": {
+          "enum": [
+            "gone",
+            "unreadable",
+            "superseded",
+            "superseded_build",
+            "nondeterministic",
+            "mismatch"
+          ],
+          "title": "Outcome",
+          "type": "string"
+        }
+      },
+      "required": [
+        "loaded",
+        "record",
+        "backup",
+        "outcome"
+      ],
+      "title": "R4ConfirmResult",
+      "type": "object"
+    },
+    "R4Params": {
+      "additionalProperties": false,
+      "description": "R4's ops (S0066; engine-jobs §6.7): the record `<app_local_data>/local/<key>/journal/<name>.<state>`.",
+      "properties": {
+        "app_local_data": {
+          "minLength": 1,
+          "pattern": "^/",
+          "title": "App Local Data",
+          "type": "string"
+        },
+        "key": {
+          "maxLength": 255,
+          "minLength": 1,
+          "pattern": "^[^/\\x00]+$",
+          "title": "Key",
+          "type": "string"
+        },
+        "name": {
+          "pattern": "^[A-Za-z0-9_]{1,64}-[A-Za-z0-9_]{1,64}$",
+          "title": "Name",
+          "type": "string"
+        }
+      },
+      "required": [
+        "app_local_data",
+        "key",
+        "name"
+      ],
+      "title": "R4Params",
+      "type": "object"
+    },
+    "R4ResumeReply": {
+      "additionalProperties": false,
+      "description": "The accepted reply to `r4_resume`.",
+      "examples": [
+        {
+          "id": 1,
+          "ok": true,
+          "op": "r4_resume",
+          "result": {
+            "backup": "/app-data/com.finzytrack.desktop/local/k1/backups/s1-j7",
+            "loaded": false,
+            "outcome": "done",
+            "record": "/app-data/com.finzytrack.desktop/local/k1/journal/s1-j7.done"
+          },
+          "v": 2
+        }
+      ],
+      "properties": {
+        "v": {
+          "const": 2,
+          "title": "V",
+          "type": "integer"
+        },
+        "id": {
+          "maximum": 2147483647,
+          "minimum": 0,
+          "title": "Id",
+          "type": "integer"
+        },
+        "op": {
+          "const": "r4_resume",
+          "title": "Op",
+          "type": "string"
+        },
+        "ok": {
+          "const": true,
+          "title": "Ok",
+          "type": "boolean"
+        },
+        "result": {
+          "$ref": "#/$defs/R4ResumeResult"
+        },
+        "decision": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Decision"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "v",
+        "id",
+        "op",
+        "ok",
+        "result"
+      ],
+      "title": "R4ResumeReply",
+      "type": "object"
+    },
+    "R4ResumeRequest": {
+      "additionalProperties": false,
+      "description": "The `r4_resume` request.",
+      "examples": [
+        {
+          "id": 1,
+          "op": "r4_resume",
+          "params": {
+            "app_local_data": "/app-data/com.finzytrack.desktop",
+            "key": "k1",
+            "name": "s1-j7"
+          },
+          "v": 2
+        }
+      ],
+      "properties": {
+        "v": {
+          "const": 2,
+          "title": "V",
+          "type": "integer"
+        },
+        "id": {
+          "maximum": 2147483647,
+          "minimum": 0,
+          "title": "Id",
+          "type": "integer"
+        },
+        "op": {
+          "const": "r4_resume",
+          "title": "Op",
+          "type": "string"
+        },
+        "params": {
+          "$ref": "#/$defs/R4Params"
+        }
+      },
+      "required": [
+        "v",
+        "id",
+        "op",
+        "params"
+      ],
+      "title": "R4ResumeRequest",
+      "type": "object"
+    },
+    "R4ResumeResult": {
+      "additionalProperties": false,
+      "description": "`r4_resume` (Resume saving): `done` (the `.mismatch` record is now `.done`) or `gone` (it was not\n`.mismatch`).",
+      "properties": {
+        "loaded": {
+          "title": "Loaded",
+          "type": "boolean"
+        },
+        "record": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "pattern": "^/",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Record"
+        },
+        "backup": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "pattern": "^/",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Backup"
+        },
+        "outcome": {
+          "enum": [
+            "done",
+            "gone"
+          ],
+          "title": "Outcome",
+          "type": "string"
+        }
+      },
+      "required": [
+        "loaded",
+        "record",
+        "backup",
+        "outcome"
+      ],
+      "title": "R4ResumeResult",
       "type": "object"
     },
     "RecordSeen": {
@@ -1635,6 +2323,18 @@
           "$ref": "#/$defs/SaveOutcomeReply"
         },
         {
+          "$ref": "#/$defs/R4CheckReply"
+        },
+        {
+          "$ref": "#/$defs/R4ConfirmReply"
+        },
+        {
+          "$ref": "#/$defs/R4AttemptReply"
+        },
+        {
+          "$ref": "#/$defs/R4ResumeReply"
+        },
+        {
           "$ref": "#/$defs/Refusal"
         }
       ]
@@ -1662,6 +2362,18 @@
         },
         {
           "$ref": "#/$defs/SaveOutcomeRequest"
+        },
+        {
+          "$ref": "#/$defs/R4CheckRequest"
+        },
+        {
+          "$ref": "#/$defs/R4ConfirmRequest"
+        },
+        {
+          "$ref": "#/$defs/R4AttemptRequest"
+        },
+        {
+          "$ref": "#/$defs/R4ResumeRequest"
         }
       ]
     },
@@ -2020,8 +2732,10 @@
           "ok": true,
           "op": "save",
           "result": {
+            "backup": null,
             "cause": null,
             "cause_path": null,
+            "could_not_check": false,
             "detail": null,
             "entry": null,
             "open_journal": false,
@@ -2141,7 +2855,7 @@
     },
     "SaveResult": {
       "additionalProperties": false,
-      "description": "How the save ended (§6.1, §11). `saved`: the closed record is durable (`published`: the mirror was published,\nnever yet, BL-0113). `refused`: before the commit point, nothing written (`reason`: `unfinished_save`,\n`check_pending`, `check_failed`, `legacy_app_saving`, `ledger_changed`, `mirror_stale`, `load_refused`).\n`not_saved`: the writer's `NotSaved` (`reason` its own: `hard_linked`, `locked`, `not_a_file`, `permission`,\n`changed`, `path_moved`, `read_back`, `io_error`, `name_not_utf8`; `open_journal`: writes are\npaused until recovery). `unfinished`: a file may have been replaced and the rollback stopped (`cause`, and\n`cause_path` its file: after `created_path_taken` the undo will ask about that file). `unchanged`: every file the\nsave would write was hashed again and equals its pre bytes. `path`: the file it is about; `entry`: the folder a\n`permission` refusal is about, `detail`: the ACL entry that blocks it.",
+      "description": "How the save ended (§6.1, §11). `saved`: the closed record is durable (`published`: the mirror was published,\nnever yet, BL-0113). `refused`: before the commit point, nothing written (`reason`: `unfinished_save`,\n`check_pending`, `check_failed`, `legacy_app_saving`, `ledger_changed`, `mirror_stale`, `load_refused`).\n`not_saved`: the writer's `NotSaved` (`reason` its own: `hard_linked`, `locked`, `not_a_file`, `permission`,\n`changed`, `path_moved`, `read_back`, `io_error`, `name_not_utf8`; `open_journal`: writes are\npaused until recovery). `unfinished`: a file may have been replaced and the rollback stopped (`cause`, and\n`cause_path` its file: after `created_path_taken` the undo will ask about that file). `unchanged`: every file the\nsave would write was hashed again and equals its pre bytes. `path`: the file it is about; `entry`: the folder a\n`permission` refusal is about, `detail`: the ACL entry that blocks it. For `check_pending` and `check_failed`,\n`path` is the record (S0066: the sidecar runs a `.closed` record's R4 and asks again); for `check_failed`,\n`backup` is the paused save's backup folder (None when its record cannot be read) and `could_not_check` whether\nits R4 failed to run three times.",
       "properties": {
         "outcome": {
           "$ref": "#/$defs/SaveOutcomeKind"
@@ -2229,6 +2943,23 @@
         "published": {
           "title": "Published",
           "type": "boolean"
+        },
+        "backup": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "pattern": "^/",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Backup"
+        },
+        "could_not_check": {
+          "title": "Could Not Check",
+          "type": "boolean"
         }
       },
       "required": [
@@ -2241,7 +2972,9 @@
         "open_journal",
         "cause",
         "cause_path",
-        "published"
+        "published",
+        "backup",
+        "could_not_check"
       ],
       "title": "SaveResult",
       "type": "object"

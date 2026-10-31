@@ -2,9 +2,10 @@
 "The load rule"; INV-02; BL-0002).
 
 A full load is the overlay replica: `ledger/overlay.py` alone may use the port's load stages (`LOAD_STAGES`: sort,
-book, transformations, validation, options aggregation). The reconciliation job joins `ALLOWED` when it is built
-(BL-0109). Every public name of the port is classed as a load stage or as an ordinary wrapper, so a new wrapper
-cannot escape the rule unclassed. The port exposes neither `load_file` nor `load_string`: Beancount's `load_file`
+book, transformations, validation, options aggregation). The reconciliation loads (`RECONCILE_LOADS`: Beancount's own
+loader without its pickle cache, BL-0118) are R4's alone: only `ledger/r4.py` may use them (S0066). Every public name
+of the port is classed as a load stage, a reconciliation load or an ordinary wrapper, so a new wrapper cannot escape
+the rule unclassed. The port exposes neither `load_file` nor `load_string`: Beancount's `load_file`
 reads and writes a pickle cache beside the ledger (S0049 journal, Decisions).
 
 The scan is static and fails closed: inside `engine/src/`, any reference to a load stage outside `ALLOWED` is a
@@ -35,6 +36,7 @@ pytestmark = pytest.mark.inv("INV-02")
 ENGINE_SRC = Path(__file__).resolve().parents[2] / "src"
 PORT = "ledger_engine.ledger.beancount_port"
 ALLOWED = frozenset({"ledger_engine/ledger/overlay.py"})
+RECONCILE_HOME = frozenset({"ledger_engine/ledger/r4.py"})
 ENGINE_PACKAGE = "ledger_engine"
 _MISSING = object()
 
@@ -65,7 +67,7 @@ def _in_engine(module: str) -> bool:
     return module == ENGINE_PACKAGE or module.startswith(ENGINE_PACKAGE + ".")
 
 
-def violations(rel: str, source: str, stages: frozenset[str]) -> list[str]:
+def violations(rel: str, source: str, stages: frozenset[str], allowed: frozenset[str] = ALLOWED) -> list[str]:
     """Every way one engine source file (`rel` is relative to `engine/src/`) can reach a load stage.
 
     Imports of engine modules are resolved at runtime, so the port is followed through every module that holds it
@@ -75,7 +77,7 @@ def violations(rel: str, source: str, stages: frozenset[str]) -> list[str]:
     port or a stage, an engine import that does not resolve, and the port's module name in a string handed to a call
     or a subscript (`importlib.import_module`, `sys.modules`). A name computed at run time is beyond a static scan.
     """
-    if rel in ALLOWED or module_of(rel) == PORT:
+    if rel in allowed or module_of(rel) == PORT:
         return []
     exported = frozenset(port.__all__)
     stage_ids = {id(getattr(port, name)) for name in stages if hasattr(port, name)}
@@ -209,6 +211,29 @@ def unused_stages(source: str, stages: frozenset[str]) -> set[str]:
     return set(stages - used)
 
 
+def test_no_engine_module_but_r4_reaches_a_reconciliation_load() -> None:
+    found = [v for rel, src in source_files() for v in violations(rel, src, port.RECONCILE_LOADS, RECONCILE_HOME)]
+    assert found == []
+
+
+def test_the_overlay_does_not_reach_a_reconciliation_load() -> None:
+    # The replica must never call Beancount's own loader: R4 compares the two.
+    source = (ENGINE_SRC / "ledger_engine" / "ledger" / "overlay.py").read_text(encoding="utf-8")
+    assert violations("ledger_engine/ledger/overlay.py", source, port.RECONCILE_LOADS, RECONCILE_HOME) == []
+
+
+def test_r4_uses_the_reconciliation_loads() -> None:
+    source = (ENGINE_SRC / "ledger_engine" / "ledger" / "r4.py").read_text(encoding="utf-8")
+    assert unused_stages(source, port.RECONCILE_LOADS) == set()
+
+
+def test_a_planted_reconciliation_load_outside_r4_is_found() -> None:
+    src = "from ledger_engine.ledger import beancount_port as p\np.reconcile_load('/l/main.bean')\n"
+    assert violations(REL, src, port.RECONCILE_LOADS, RECONCILE_HOME) != []
+    assert violations("ledger_engine/ledger/overlay.py", src, port.RECONCILE_LOADS, RECONCILE_HOME) != []
+    assert violations("ledger_engine/ledger/r4.py", src, port.RECONCILE_LOADS, RECONCILE_HOME) == []
+
+
 def test_the_overlay_uses_the_load_stages() -> None:
     # The rule's one allowed home really is where the load stages are used (a renamed overlay would leave the rule
     # guarding nothing).
@@ -220,16 +245,30 @@ def test_a_home_that_misses_a_load_stage_is_found() -> None:
     assert unused_stages("port.book(e, o)\n", frozenset({"book", "validate"})) == {"validate"}
 
 
-def classing_errors(public: set[str], stages: frozenset[str], wrappers: frozenset[str]) -> list[str]:
+def classing_errors(
+    public: set[str], stages: frozenset[str], wrappers: frozenset[str], reconcile: frozenset[str] = frozenset()
+) -> list[str]:
     """Every exported callable must be in exactly one class, and each class names only exported callables."""
     out = [f"{n}: both a load stage and a wrapper" for n in sorted(stages & wrappers)]
-    out += [f"{n}: not classed" for n in sorted(public - stages - wrappers)]
-    out += [f"{n}: classed but not an exported callable of the port" for n in sorted((stages | wrappers) - public)]
+    out += [f"{n}: a reconciliation load and another class" for n in sorted(reconcile & (stages | wrappers))]
+    out += [f"{n}: not classed" for n in sorted(public - stages - wrappers - reconcile)]
+    out += [
+        f"{n}: classed but not an exported callable of the port"
+        for n in sorted((stages | wrappers | reconcile) - public)
+    ]
     return out
 
 
 def test_every_exported_callable_of_the_port_is_classed() -> None:
-    assert classing_errors(exported_callables(vars(port), port.__all__), port.LOAD_STAGES, port.WRAPPERS) == []
+    public = exported_callables(vars(port), port.__all__)
+    assert classing_errors(public, port.LOAD_STAGES, port.WRAPPERS, port.RECONCILE_LOADS) == []
+
+
+def test_a_reconciliation_load_classed_twice_is_found() -> None:
+    """@regression-guard: a must-not-pass test of the classing check itself (test code), so it passes on the base."""
+    assert classing_errors({"a", "b"}, frozenset({"a"}), frozenset(), frozenset({"a", "b"})) == [
+        "a: a reconciliation load and another class"
+    ]
 
 
 def test_the_port_holds_nothing_of_beancount_under_a_public_name_it_does_not_export() -> None:

@@ -332,15 +332,16 @@ def test_each_spawn_gets_a_new_number_and_a_reused_engine_keeps_its_own() -> Non
 def test_a_death_noticed_before_a_reuse_but_fed_after_it_ends_the_reused_engine() -> None:
     """§5.3, §5.2 (S0053 verifier R2-F1): the idle engine exits; before the shell feeds `EngineDied`, a Submit starts
     the next job on it (`reuse`). The report names that engine, which is still in the slot: its job is lost and the
-    group drained, so the queue does not stall behind a job "running" on a dead engine (a background R4 has no
-    Cancel)."""
+    group drained, so the queue does not stall behind a job "running" on a dead engine. (Since S0066 an R4 or a save
+    is kept instead, to count its failure or read its outcome in a fresh engine: the test below.) @regression-guard:
+    changed in S0066 from a background R4 to a BQL query, which the base already lost this way."""
     state, effects = run(ready(), Submit(user("preview")))
     (first,) = [e for e in effects if isinstance(e, Start)]
     state, _ = run(state, JobDone(first.job.id, ran_user_code=False))
-    state, effects = run(state, Submit(background("r4")))
+    state, effects = run(state, Submit(user("bql")))
     (reuse,) = [e for e in effects if isinstance(e, Start)]
     assert reuse.reuse
-    state, (waiting,) = submit(state, user("bql"))
+    state, (waiting,) = submit(state, user("preview"))
     state, effects = run(state, EngineDied(first.engine))
     assert EngineLost(reuse.job.id) in effects
     assert ends(effects) == ["crashed"]
@@ -1621,6 +1622,41 @@ def test_a_save_whose_engine_died_is_kept_to_read_its_outcome(past_commit: bool)
     assert started(effects) == [jid], "the outcome is read before any queued job runs"
     state, effects = run(state, JobDone(jid, ran_user_code=False))
     assert Finished(jid) in effects
+
+
+@pytest.mark.parametrize("spec", [background("r4"), user("r4")], ids=["background", "resume_saving"])
+def test_an_r4_whose_engine_died_is_kept_to_count_its_failure(spec: JobSpec) -> None:
+    """§6.7 (S0066): "A failure to run (its engine crashed or failed to start) also leaves it `.closed` and adds one to
+    its `.r4-attempts` count (written and synced)": the count is written by an engine, so the job is kept
+    (`outcome_owed`), its engine ends as a stop, and it gets the next engine before any queued job."""
+    state, jid = busy_with(spec, ready(W1))
+    state, (waiting,) = submit(state, user("preview"))
+    assert state.engine is not None
+    state, effects = run(state, EngineDied(state.engine))
+    assert not any(isinstance(e, EngineLost) for e in effects)
+    assert EndEngine("crashed") in effects
+    assert state.running is not None
+    assert (state.running.job.id, state.running.outcome_owed) == (jid, True)
+    state, _ = run(state, EngineNeeded(jid))
+    state, effects = run(state, EngineEnded())
+    assert started(effects) == [jid], "the failure is counted before any queued job runs"
+    state, effects = run(state, JobDone(jid, ran_user_code=False))
+    assert Finished(jid) in effects
+    assert started(effects) == [waiting]
+
+
+def test_an_r4_whose_engine_died_is_still_ended_by_another_jobs_cancel() -> None:
+    """§4: an R4 is ended by a waiting user's Cancel also while it waits for the engine that counts its failure: a
+    Cancel counts nothing, and the record stays `.closed` for the next save."""
+    state, jid = busy_with(background("r4"), ready(W1))
+    state, (waiting,) = submit(state, user("preview"))
+    assert state.engine is not None
+    state, _ = run(state, EngineDied(state.engine), EngineNeeded(jid), EngineEnded())
+    assert state.running is not None
+    assert state.running.job.id == jid  # the R4 runs again, to count its failure, before the waiting job
+    state, effects = run(state, Cancel(waiting))
+    assert Cancelled(waiting) in effects
+    assert ends(effects) == ["cancel"]
 
 
 @pytest.mark.parametrize(("past_commit", "cancelled"), [(False, True), (True, False)])
