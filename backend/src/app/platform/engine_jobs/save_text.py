@@ -26,10 +26,6 @@ LEDGER_CHANGED: Final = (
     "Your ledger changed after this preview, so Finzytrack did not save your change. Review it again."
 )
 LEGACY: Final = "The old Finzytrack app is saving. Quit the old Finzytrack first, then try again."
-NO_SWAP: Final = (
-    "Finzytrack did not save your change. This drive does not support safe saving yet. Move the ledger to your "
-    "Mac's disk to save changes."
-)
 
 
 def _name(path: str | None) -> str:
@@ -68,8 +64,6 @@ def not_saved_text(d: ChangeNotSavedDetails) -> str:
                 f"{did_not} Your Mac does not allow changes to {where}. Check its permissions (Finder: Get Info), "
                 "then try again."
             )
-        case "volume_no_swap":
-            return NO_SWAP
         case "io_error" | "read_back" | "name_not_utf8" | "engine_stopped":
             return _unchanged_or_not(d)
 

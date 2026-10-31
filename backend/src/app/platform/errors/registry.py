@@ -120,7 +120,6 @@ type NotSavedReason = Literal[
     "locked",  # a file is locked (`uchg`)
     "not_a_file",  # a ledger path is a folder, a FIFO, a device
     "permission",  # the system would not allow the save: a mode, an ACL, unreadable extended attributes
-    "volume_no_swap",  # the drive has no safe swap (BL-0160)
     "io_error",  # the disk answered an error (a full disk, an I/O error)
     "read_back",  # a written file did not read back as written (the save was rolled back)
     "name_not_utf8",  # a path is not valid UTF-8

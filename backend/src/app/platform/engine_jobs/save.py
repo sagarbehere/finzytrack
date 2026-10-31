@@ -52,7 +52,7 @@ GONE: Final[frozenset[str]] = frozenset({"crashed", "protocol_violation", "start
 Cancel (`cancelled`) has ended the job already; a request the client never sent (`too_large`) wrote nothing."""
 
 WRITER_REASONS: Final[frozenset[str]] = frozenset(
-    {"hard_linked", "locked", "not_a_file", "permission", "volume_no_swap", "io_error", "read_back", "name_not_utf8"}
+    {"hard_linked", "locked", "not_a_file", "permission", "io_error", "read_back", "name_not_utf8"}
 )
 OUTSIDE: Final[frozenset[str]] = frozenset({"changed", "path_moved"})
 

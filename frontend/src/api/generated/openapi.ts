@@ -377,7 +377,7 @@ export interface components {
         /** @constant */
         NotReadyPhase: "WARMING";
         /** @enum {string} */
-        NotSavedReason: "hard_linked" | "locked" | "not_a_file" | "permission" | "volume_no_swap" | "io_error" | "read_back" | "name_not_utf8" | "engine_stopped";
+        NotSavedReason: "hard_linked" | "locked" | "not_a_file" | "permission" | "io_error" | "read_back" | "name_not_utf8" | "engine_stopped";
         /** @enum {string} */
         PausedReason: "unfinished_save" | "check_pending" | "check_failed";
         /** RouteNotFoundError */

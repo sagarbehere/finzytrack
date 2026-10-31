@@ -319,7 +319,7 @@ class SaveResult(Message):
     never yet, BL-0113). `refused`: before the commit point, nothing written (`reason`: `unfinished_save`,
     `check_pending`, `check_failed`, `legacy_app_saving`, `ledger_changed`, `mirror_stale`, `load_refused`).
     `not_saved`: the writer's `NotSaved` (`reason` its own: `hard_linked`, `locked`, `not_a_file`, `permission`,
-    `volume_no_swap`, `changed`, `path_moved`, `read_back`, `io_error`, `name_not_utf8`; `open_journal`: writes are
+    `changed`, `path_moved`, `read_back`, `io_error`, `name_not_utf8`; `open_journal`: writes are
     paused until recovery). `unfinished`: a file may have been replaced and the rollback stopped (`cause`, and
     `cause_path` its file: after `created_path_taken` the undo will ask about that file). `unchanged`: every file the
     save would write was hashed again and equals its pre bytes. `path`: the file it is about; `entry`: the folder a

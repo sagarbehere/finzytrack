@@ -5,10 +5,11 @@ S0060): what a save does after its commit point (§6.1 step 7), through the file
    checked to be the file the plan meant: a replaced file a regular file (never a link, a FIFO or a folder), not
    locked (`uchg`), not hard-linked (`handles.hard_links`, the owner's decision point), the same object its
    canonical path names (`st_dev`, `st_ino`); a created path free of any entry (a dangling link included) under an
-   existing folder; every folder written in (or a folder made in) on a volume with the swap, allowing entries to be
-   added and removed (`access(2)`: write and search, `_RMFILE_OK`), and with no ACL deny entry, whoever it names,
-   other than one that new entries do not inherit and that protects only the folder itself (`handles.acl_denial`;
-   owner, 2026-10-30: "Allowlist (Recommended)", "Any subject (Recommended)"). The plan as a whole: one
+   existing folder; every folder written in (or a folder made in) allowing entries to be added and removed
+   (`access(2)`: write and search, `_RMFILE_OK`), and with no ACL deny entry, whoever it names, other than one
+   that new entries do not inherit and that protects only the folder itself (`handles.acl_denial`; owner,
+   2026-10-30: "Allowlist (Recommended)", "Any subject (Recommended)"), and its **write mode** chosen from its
+   volume (`handles.write_mode`: the swap, or the fallback on a volume without it; S0065). The plan as a whole: one
    entry per `path_key`, no target inside another target's path, no target at or under another's temp, staging,
    restore-temp or restore-staging name (`journal.scratch_names`) or kept name and no entry standing at one, the
    folders the save makes once each and never two that differ only in case, no target in the journal or backup
@@ -31,7 +32,14 @@ S0060): what a save does after its commit point (§6.1 step 7), through the file
    or the displaced old object); a **swap** with the file, and what it displaced checked (§6.4: the pre or the post
    bytes are ours; anything else is an outside save, moved at once to its kept name, and the save stops); for a file
    the save creates, an **exclusive rename** of the temp to the path that fails if a file appeared; the folder synced.
-   Each folder the save creates is made once, before the first file in it.
+   Each folder the save creates is made once, before the first file in it. **On a volume without the swap** (owner,
+   2026-10-29: "Unsafe fallback on such drives"; S0065) the same up to the temp name (its exclusive move by
+   `RENAME_EXCL`, or on a `plain` volume a check just before a plain rename), then the file **hashed again** (the same
+   object, at its pre bytes, else `changed` and that file is not replaced) and replaced by a **plain rename** of the
+   temp, the folder synced; nothing is displaced to check, since the old file is unlinked (window W1 of spec §15). A
+   created file there: the exclusive rename of its temp (`no_swap`), or on a `plain` volume an exclusive create
+   (`O_EXCL`) of the file itself (W4). A `mkdir` or a rename answered `EEXIST` (a plain rename `ENOENT`) there is ours
+   when it took effect (a network volume's retry: `handles.move_excl`, `made_by_retry`).
 4. **Read-back:** every written file equals its post bytes; then each temp, checked to still hold the pre (or post)
    bytes (an outside program may write through a descriptor it held: those bytes go to the kept name, and the save
    stops, §6.4), removed, and the folders synced.
@@ -58,7 +66,7 @@ from __future__ import annotations
 
 import errno
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from enum import StrEnum
 from typing import Final
 
@@ -70,15 +78,19 @@ from ledger_engine.ledger.core.journal import DirEntry, FileEntry, Record, State
 from ledger_engine.ledger.handles import (
     Displaced,
     Handles,
+    Mode,
     PathMovedError,
     displaced,
     folder_blocked,
     hard_links,
     keep,
+    made_by_retry,
+    move_excl,
     sha256,
-    volume_without_swap,
+    write_mode,
 )
 from ledger_engine.ledger.handles import join as _join
+from ledger_engine.ledger.handles import replace as replace_file
 from ledger_engine.tla import tla_action
 
 _SHA256: Final = re.compile(r"[0-9a-f]{64}")
@@ -133,7 +145,6 @@ class Reason(StrEnum):
     LOCKED = "locked"  # a replaced file is immutable or append-only (`chflags uchg`)
     HARD_LINKED = "hard_linked"  # a replaced file has more than one hard link (`_hard_links`)
     PERMISSION = "permission"  # the system would not allow the swap or its clean-up (a mode, an ACL)
-    VOLUME_NO_SWAP = "volume_no_swap"  # the volume has no RENAME_SWAP/RENAME_EXCL (`_volume_without_swap`)
     NAME_NOT_UTF8 = "name_not_utf8"  # a path is not valid UTF-8 (the journal cannot name it)
 
 
@@ -208,6 +219,7 @@ class _Target:
     new_dirs: tuple[tuple[str, str], ...]  # (canonical, key) of the folders the save makes for it, parents first
     rest: tuple[str, ...]  # the components that did not exist at resolution
     tag: str = ""  # the record's name `<session>-<job>`, which every name derived from the save carries
+    mode: Mode = Mode.SWAP  # its folder's write mode, chosen before the first effect (`_prepare`, `handles.write_mode`)
 
     def kept_free(self, h: DirHandle) -> bool:
         """No entry in its folder is one of this file's kept names (a stranger there would stop recovery for ever)."""
@@ -308,17 +320,17 @@ def _target(fs: FileSystem, handles: Handles, index: int, c: Commit, ch: Change)
     return _Target(index, ch, canonical, key, parent, parent_key, base, *names, None, new_dirs, r.rest, tag)
 
 
-def _check_folder(h: DirHandle, canonical: str, folder: str) -> None:
-    """The folder `folder` the save writes in (or makes a folder in), for the file `canonical`: on a volume with the
-    swap; the save may add entries there and remove them (`deny delete_child` answers yes to write and search: S0061
+def _check_folder(h: DirHandle, canonical: str, folder: str) -> Mode:
+    """The folder `folder` the save writes in (or makes a folder in), for the file `canonical`; its write mode
+    (`handles.write_mode`: the swap, or the fallback on a volume without it; S0065). The save may add entries there
+    and remove them (`deny delete_child` answers yes to write and search: S0061
     red team r6 F1, probed); and no ACL deny entry, whoever it names, blocks it (`handles.acl_denial`: owner,
     2026-10-30, "Allowlist (Recommended)", "Any subject (Recommended)"; what new entries inherit, a folder the save
     makes included, is then never a deny: red team r5 F2, r6 F1-F3, r7 F1)."""
-    if volume_without_swap(h):
-        raise _Stop(Reason.VOLUME_NO_SWAP, canonical)
     blocked = folder_blocked(h)  # a mode, a lock flag (probed: `uchg`), an ACL entry
     if blocked is not None:
         raise _Stop(Reason.PERMISSION, canonical, folder, blocked.detail)
+    return write_mode(h)
 
 
 def _check_app_folder(h: DirHandle, folder: str) -> None:
@@ -333,22 +345,22 @@ def _check_app_folder(h: DirHandle, folder: str) -> None:
         raise _Stop(Reason.PERMISSION, None, folder, blocked.detail)
 
 
-def _check_target(handles: Handles, t: _Target) -> None:
-    """One target against the disk, before the first effect."""
+def _check_target(handles: Handles, t: _Target) -> Mode:
+    """One target against the disk, before the first effect; its folder's write mode."""
     handles.on = t.canonical
     if not t.rest:
         if t.change.pre is None:
             raise _Stop(Reason.CHANGED, t.canonical)  # a file the save creates already exists
         h = handles.at(t.parent)
         _check_replaced(h.stat(t.base), t.identity, t.canonical)
-        _check_folder(h, t.canonical, t.parent)
+        mode = _check_folder(h, t.canonical, t.parent)
         if not h.allowed(t.base, Right.DELETE):
             raise _Stop(Reason.PERMISSION, t.canonical)  # the swap moves it away; an ACL denies that (deny delete)
         if not h.allowed(t.base, Right.READ_XATTRS):
             raise _Stop(Reason.PERMISSION, t.canonical)  # its extended attributes could not be copied to the temp
         if any(h.stat(n) is not None for n in t.scratch) or not t.kept_free(h):
             raise _Stop(Reason.CHANGED, t.canonical)  # an entry stands at our temp name (S0060 red team r2 L2)
-        return
+        return mode
     if t.change.pre is not None:
         raise _Stop(Reason.CHANGED, t.canonical)  # a file the save replaces vanished
     depth = len(split_absolute(t.canonical)) - len(t.rest)
@@ -359,15 +371,15 @@ def _check_target(handles: Handles, t: _Target) -> None:
         raise _Stop(Reason.CHANGED, t.canonical) from None  # the deepest existing component is not a folder
     if holder.stat(t.rest[0]) is not None:
         raise _Stop(Reason.CHANGED, t.canonical)  # an entry stands at the path (a dangling link, S0060 verifier F3)
-    _check_folder(holder, t.canonical, existing)
+    mode = _check_folder(holder, t.canonical, existing)
     if len(t.rest) == 1 and (any(holder.stat(n) is not None for n in t.scratch) or not t.kept_free(holder)):
         raise _Stop(Reason.CHANGED, t.canonical)  # an entry stands at our temp name
+    return mode  # a folder the save makes is on the volume of the folder it is made in
 
 
 def _prepare(fs: FileSystem, handles: Handles, c: Commit, targets: tuple[_Target, ...]) -> _Plan:
     """Step 0: check each target and the plan as a whole before the first effect (the module's docstring)."""
-    for t in targets:
-        _check_target(handles, t)
+    targets = tuple(replace(t, mode=_check_target(handles, t)) for t in targets)
     handles.on = None
     keys = [t.key for t in targets]
     if len(set(keys)) != len(keys):
@@ -500,7 +512,7 @@ def _check_displaced(h: DirHandle, name: str, t: _Target) -> None:
     if d is Displaced.LINKED:
         raise _Stop(Reason.HARD_LINKED, t.canonical)
     if d is Displaced.FOREIGN:
-        keep(h, name, t.base, t.tag)  # none free: it stays at the temp name beside a file at post, so it blocks
+        keep(h, name, t.base, t.tag, t.mode)  # none free: it stays at the temp name beside a file at post, so it blocks
     raise _Stop(Reason.CHANGED, t.canonical)
 
 
@@ -515,15 +527,50 @@ def _stage(h: DirHandle, t: _Target, mode: int, like: str | None) -> None:
     save stops (`changed`), and the rollback's temp rule keeps it."""
     h.create(t.staging, t.change.post, mode, like=like)
     try:
-        h.rename_excl(t.staging, t.temp)
+        move_excl(h, t.mode, t.staging, t.temp)  # RENAME_EXCL, or on a `plain` volume a check just before (W2)
     except FileExistsError:
         raise _Stop(Reason.CHANGED, t.canonical) from None
     h.sync()
 
 
+def _retried_mkdir(handles: Handles, h: DirHandle, name: str, canonical: str) -> bool:
+    """On a fallback volume, a `mkdir` that answered `EEXIST` made the folder itself if an empty folder stands there
+    (`handles.made_by_retry`: a network volume's retry, S0061 red team r4 F3)."""
+    st = h.stat(name)
+    return made_by_retry(h, handles.at(canonical) if st is not None and st.kind is Kind.DIR else None)
+
+
+def _create_in_place(h: DirHandle, t: _Target, progress: _Progress) -> None:
+    """A created file on a `plain` volume (no exclusive rename): an exclusive create (`O_EXCL`) of the file itself,
+    so another program's file there is never replaced; a crash while it is written leaves part of it at its path,
+    which the undo never removes and asks about (window W4 of spec §15; owner, 2026-10-30: "Never remove it")."""
+    before = progress.replaced
+    progress.replaced = True  # a create that answers an error may still have made the entry...
+    try:
+        h.create(t.base, t.change.post, CREATED_MODE)
+    except FileExistsError:
+        progress.replaced = before  # ...except this one: a file stood there, nothing of ours was made
+        raise _Stop(Reason.CHANGED, t.canonical) from None
+    h.sync()
+
+
+def _replace_plainly(h: DirHandle, t: _Target, progress: _Progress) -> None:
+    """A replaced file on a volume without the swap (owner, 2026-10-29: "Unsafe fallback on such drives"): the file,
+    hashed again just before, is replaced by a plain rename of our temp (window W1 of spec §15: an outside save in
+    between is overwritten, as is a write into the old file through a descriptor opened before). Not at its pre
+    bytes, or another object: that file is not replaced and the save stops (`changed`)."""
+    _check_replaced(h.stat(t.base), t.identity, t.canonical)
+    data = h.read(t.base)
+    if data is None or sha256(data) != t.change.pre:
+        raise _Stop(Reason.CHANGED, t.canonical)
+    progress.replaced = True
+    replace_file(h, t.temp, t.base)
+    h.sync()
+
+
 @tla_action("S_Swap", "S_DirSync")
 def _replace(handles: Handles, t: _Target, progress: _Progress) -> None:
-    """Step 8.3 for one file."""
+    """Step 8.3 for one file: the swap, or on a volume without it the fallback (`t.mode`, S0065)."""
     handles.on = t.canonical
     for canonical, key in t.new_dirs:
         if key in progress.made:
@@ -534,16 +581,20 @@ def _replace(handles: Handles, t: _Target, progress: _Progress) -> None:
         try:
             h.mkdir(name)
         except FileExistsError:
-            progress.made.discard(key)  # ...except this one: another program's folder stood there, never removed
-            raise _Stop(Reason.CHANGED, canonical) from None
+            if t.mode is Mode.SWAP or not _retried_mkdir(handles, h, name, canonical):
+                progress.made.discard(key)  # ...except this one: another program's folder stood there, never removed
+                raise _Stop(Reason.CHANGED, canonical) from None
         h.sync()
     h = handles.at(t.parent)
     if t.change.pre is None:
+        if t.mode is Mode.PLAIN:
+            _create_in_place(h, t, progress)
+            return
         _stage(h, t, CREATED_MODE, None)
         before = progress.replaced
         progress.replaced = True  # an exclusive rename that answers an error may still have happened...
         try:
-            h.rename_excl(t.temp, t.base)
+            move_excl(h, t.mode, t.temp, t.base)
         except FileExistsError:
             progress.replaced = before  # ...except this one: a file stood there, nothing was replaced (the
             # rollback never touches it: anything at a created path is left alone, owner, 2026-10-30)
@@ -554,6 +605,9 @@ def _replace(handles: Handles, t: _Target, progress: _Progress) -> None:
     _stage(h, t, st.mode, t.base)
     if h.stat(t.temp) is None:
         raise _Stop(Reason.CHANGED, t.canonical)  # our temp vanished before the swap
+    if t.mode is not Mode.SWAP:
+        _replace_plainly(h, t, progress)
+        return
     progress.replaced = True
     h.swap(t.temp, t.base)
     _check_displaced(h, t.temp, t)

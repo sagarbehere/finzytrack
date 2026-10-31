@@ -3,7 +3,9 @@
 - `durable_sync`: `fcntl(F_FULLFSYNC)` (plain `fsync` does not reach the platter on macOS); where the volume refuses
   it (`ENOTSUP`, `EINVAL`), `fsync`, reported once per volume through `on_fallback` (content-free: no path).
 - Swap and exclusive rename: `renameatx_np(fd, a, fd, b, RENAME_SWAP | RENAME_EXCL)` on the directory's own
-  descriptor, so the folder checked by `path()` (`F_GETPATH` on that descriptor) is the folder written.
+  descriptor, so the folder checked by `path()` (`F_GETPATH` on that descriptor) is the folder written; each only
+  where the volume's capabilities offer it, else `ENOTSUP` before the call (S0065 probe: FAT answers `RENAME_SWAP`
+  with 0 and replaces the second file). A plain `rename` is `renameat` on that descriptor.
 - `resolve`: the deepest ancestor that exists (`stat`, which opens nothing, so a FIFO never blocks and a cloud
   placeholder is not downloaded; a dangling link counts as absent, its own name as the first missing component).
   A folder's canonical path is `F_GETPATH` on a descriptor of the folder (`O_EVTONLY`); a file's is its folder's
@@ -17,7 +19,8 @@
   with `O_NONBLOCK`. `create(..., like=...)` copies the extended attributes and the ACL of `like` (`fcopyfile`
   with `COPYFILE_XATTR` only: the ACL is not kept, owner, 2026-10-29; not `COPYFILE_STAT`, which would copy the old
   modification time). `allowed` is `access(2)` with the extended bits (`_DELETE_OK`, `_REXT_OK`), which apply ACLs;
-  `can_swap` reads the volume's `VOL_CAP_INT_RENAME_SWAP` and `_EXCL` (`fgetattrlist`; exFAT and FAT have neither).
+  `caps` reads the volume's `VOL_CAP_INT_RENAME_SWAP` and `_EXCL` (`fgetattrlist`; probed S0065: exFAT and FAT
+  neither, HFS+ only the exclusive rename).
   `acl` reads the folder's extended ACL (`acl_get_fd_np`), each entry's kind and every permission and flag bit
   (S0061 r6, probed on APFS); never whom it names (owner, 2026-10-30: "Any subject (Recommended)", S0061 r7: the
   membership lookup answered "not a member" for macOS's `owner` and `group` subjects, which the kernel applies).
@@ -44,6 +47,7 @@ from typing import Final, Self
 
 from ledger_engine.fs.port import (
     AclEntry,
+    Caps,
     EntryStat,
     FileSystem,
     FoldRule,
@@ -289,15 +293,14 @@ class DarwinDir:
         target = "." if name == "." else check_name(name)
         return os.access(target, mode, dir_fd=self.fd, follow_symlinks=False)
 
-    def can_swap(self) -> bool:
+    def caps(self) -> Caps:
         attrs = _AttrList(5, 0, 0, ATTR_VOL_INFO | ATTR_VOL_CAPABILITIES, 0, 0, 0)
         buf = ctypes.create_string_buffer(64)
         if self._fs.libc.fgetattrlist(self.fd, ctypes.byref(attrs), buf, len(buf), 0) != 0:
             _errno_raise()
         # u_int32 length, then vol_capabilities_attr_t: capabilities[4], valid[4]; index 1 = the interfaces
         _, _, interfaces, _, _, _, valid, _, _ = struct.unpack("<9I", buf.raw[:36])
-        need = VOL_CAP_INT_RENAME_SWAP | VOL_CAP_INT_RENAME_EXCL
-        return interfaces & need == need and valid & need == need
+        return caps_from(interfaces, valid)
 
     def acl(self) -> tuple[AclEntry, ...]:
         """`acl_get_fd_np(ACL_TYPE_EXTENDED)` on the folder's descriptor, each entry read in full: its kind and its
@@ -342,10 +345,17 @@ class DarwinDir:
             _errno_raise()
 
     def swap(self, a: str, b: str) -> None:
+        if not self.caps().swap:
+            raise OSError(errno.ENOTSUP, "the volume offers no RENAME_SWAP")
         self._renamex(a, b, RENAME_SWAP)
 
     def rename_excl(self, src: str, dst: str) -> None:
+        if not self.caps().excl:
+            raise OSError(errno.ENOTSUP, "the volume offers no RENAME_EXCL")
         self._renamex(src, dst, RENAME_EXCL)
+
+    def rename(self, src: str, dst: str) -> None:
+        os.rename(check_name(src), check_name(dst), src_dir_fd=self.fd, dst_dir_fd=self.fd)
 
     def remove(self, name: str) -> None:
         os.unlink(check_name(name), dir_fd=self.fd)
@@ -545,6 +555,17 @@ class DarwinLegacyLocks:
             os.close(fd)
             raise OSError(errno.EINVAL, "the legacy lock is not a regular file")
         return DarwinLock(fd)  # closing the descriptor releases the lock; nothing is written or removed
+
+
+def caps_from(interfaces: int, valid: int) -> Caps:
+    """The volume's rename capabilities from its `vol_capabilities_attr_t` interface words: a call is offered only
+    when its bit is both valid and set (probed S0065: APFS both; HFS+ the swap bit not valid, the exclusive one set;
+    exFAT and FAT both valid and unset)."""
+
+    def offers(bit: int) -> bool:
+        return bool(interfaces & bit and valid & bit)
+
+    return Caps(swap=offers(VOL_CAP_INT_RENAME_SWAP), excl=offers(VOL_CAP_INT_RENAME_EXCL))
 
 
 def _identity(st: os.stat_result) -> tuple[int, int]:

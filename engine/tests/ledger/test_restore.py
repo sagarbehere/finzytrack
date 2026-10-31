@@ -562,7 +562,7 @@ STEP2_SITES = {
     "backup_stat": ("stat", "2-main.bean", "/w/L/main.bean", "/w/local/backups/s1-j7/2-main.bean"),
     "kept_listing": ("names", "/w/L/inc", "/w/L/inc/a.bean", "/w/L/inc"),
     "folder_open": ("open_dir", "/w/L/inc", "/w/L/inc/a.bean", "/w/L/inc"),
-    "volume_caps": ("can_swap", "/w/L/inc", "/w/L/inc/a.bean", "/w/L/inc"),
+    "volume_caps": ("caps", "/w/L/inc", "/w/L/inc/a.bean", "/w/L/inc"),
 }
 
 
@@ -798,13 +798,13 @@ def test_an_outside_save_by_rename_with_our_post_bytes_at_the_restore_swap_is_ou
 
 
 def test_a_kept_name_already_taken_uses_the_next_number_and_still_stops() -> None:
-    from ledger_engine.ledger.handles import keep
+    from ledger_engine.ledger.handles import Mode, keep
 
     w = crashed(CLOSE)
     w.fs.outside_write("/w/L/x.tmp", FOREIGN)
     w.fs.outside_write("/w/L/main.bean.kept-s1-j7", b"an earlier kept copy\n")
     with w.fs.open_dir("/w/L") as h:
-        assert keep(h, "x.tmp", "main.bean", "s1-j7") == "main.bean.kept-s1-j7-2"
+        assert keep(h, "x.tmp", "main.bean", "s1-j7", Mode.SWAP) == "main.bean.kept-s1-j7-2"
     assert w.fs.file("/w/L/main.bean.kept-s1-j7-2") == FOREIGN
     assert recover(w.fs) == Stopped(Cause.KEPT_COPY, "/w/L/main.bean")
 
@@ -867,11 +867,18 @@ def test_the_restored_file_keeps_its_extended_attributes() -> None:
     assert w.fs.xattrs("/w/L/main.bean") == {"com.apple.metadata:_kMDItemUserTags": b"tag"}
 
 
-def test_a_file_at_post_on_a_volume_without_the_swap_stops_before_anything_is_written() -> None:
-    """Verifier L4 (mutant m21): the owner's no-swap rule holds for the restore swap too."""
+@pytest.mark.parametrize("excl", [True, False], ids=["no_swap", "plain"])
+def test_a_file_at_post_on_a_volume_without_the_swap_is_restored_without_a_swap(excl: bool) -> None:
+    """BL-0160 (S0065; it replaced the refusal of S0061 verifier L4): the restore on such a volume puts the pre bytes
+    back by a plain rename after a re-hash, never a swap, and resolves."""
     w = crashed(CLOSE)
-    w.fs.outside_no_swap("/w/L")
-    _stops_with_nothing_written(w, Cause.VOLUME_NO_SWAP, "/w/L/main.bean")  # prices.bean is never written
+    w.fs.outside_no_swap("/w/L", excl=excl)
+    w.fs.outside_no_swap("/w/L/inc", excl=excl)
+    start = len(w.fs.effects)
+    out = undo(w.fs, w)
+    assert isinstance(out, Resolved), out
+    assert not any(x.startswith("swap ") for x in w.fs.effects[start:])
+    check_recovered(w.fs, w, out)
 
 
 def test_a_file_that_vanishes_between_its_stat_and_its_read_is_foreign(monkeypatch: pytest.MonkeyPatch) -> None:

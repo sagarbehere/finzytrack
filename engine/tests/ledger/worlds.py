@@ -88,14 +88,31 @@ class World:
     targets: tuple[Target, ...]
     before: dict[str, tuple[object, ...]]
     new_dirs: tuple[str, ...] = ()
+    volume: str = "swap"  # the ledger folder's volume (S0065): "swap" (APFS), "no_swap" (HFS+), "plain" (exFAT)
+
+    @property
+    def plain(self) -> bool:
+        """A volume with neither RENAME_SWAP nor RENAME_EXCL: a replace a power loss may split (a file missing,
+        never torn), and a created file made in place by an exclusive create (part of it there after a crash)."""
+        return self.volume == "plain"
 
 
-def world(*, new_dir: bool = False, mode: int = 0o644, stores_nfd: bool = False) -> World:
+VOLUMES = ("swap", "no_swap", "plain")
+
+
+def world(*, new_dir: bool = False, mode: int = 0o644, stores_nfd: bool = False, volume: str = "swap") -> World:
     """A ledger set in `/w/L`: `inc/a.bean` (a child, replaced), `prices.bean` (created; with `new_dir`, in a new
-    folder `y2026/`), `main.bean` (the root, replaced last) and `other.bean` (in the set, not written)."""
+    folder `y2026/`), `main.bean` (the root, replaced last) and `other.bean` (in the set, not written). `volume`: the
+    drive `/w/L` is on (S0065); the journal and backups stay on the Mac's own disk (INV-27, INV-30)."""
+    assert volume in VOLUMES, volume
     fs = MemFS(stores_nfd=stores_nfd)
-    for d in (JD, BD, "/w/L/inc"):
+    for d in (JD, BD):
         fs.outside_mkdirs(d)
+    if volume == "swap":
+        fs.outside_mkdirs("/w/L/inc")
+    else:
+        fs.outside_mkdirs("/w/L", no_swap=True, no_excl=volume == "plain")
+        fs.outside_mkdirs("/w/L/inc")
     fs.outside_write("/w/L/main.bean", b'include "inc/a.bean"\n', mode=mode)
     fs.outside_write("/w/L/inc/a.bean", b"2026-01-01 open Assets:A\n")
     fs.outside_write("/w/L/other.bean", b"; not written\n")
@@ -105,7 +122,7 @@ def world(*, new_dir: bool = False, mode: int = 0o644, stores_nfd: bool = False)
         Target(created, None, b"2026-01-03 price X 1 EUR\n"),
         Target("/w/L/main.bean", b'include "inc/a.bean"\n', b'include "inc/a.bean"\ninclude "prices.bean"\n'),
     )
-    return World(fs, commit_for(targets), targets, fs.snapshot(), ("/w/L/y2026",) if new_dir else ())
+    return World(fs, commit_for(targets), targets, fs.snapshot(), ("/w/L/y2026",) if new_dir else (), volume)
 
 
 def commit_for(targets: tuple[Target, ...]) -> Commit:
@@ -156,6 +173,18 @@ def check_disk(fs: MemFS, w: World) -> None:
     at_post = False
     for t in w.targets:
         now = fs.file(t.path)
+        if w.plain and now is None and t.pre is not None:
+            # missing in the middle of a replace a power loss split (exFAT, FAT: no journal), never torn (S0065):
+            # only under an `.open` record whose backup holds the pre bytes, from which recovery restores it
+            assert state is State.OPEN, f"{t.path} missing under a {state} journal"
+            at_post = True  # checked below as a replaced file: its backup must hold the pre bytes
+            continue
+        if w.plain and t.pre is None and now not in (None, t.post):
+            # part of a created file made in place by an exclusive create, cut by a crash (S0065: no exclusive rename
+            # on this volume): only under `.open`; recovery never touches it and asks the user (created_path_taken)
+            assert state is State.OPEN, f"part of {t.path} under a {state} journal"
+            assert snap[t.path][0] == "file", snap[t.path]
+            continue
         assert now in (t.pre, t.post), f"{t.path} is torn or foreign: {now!r}"
         if now == t.post and now != t.pre:
             at_post = True
@@ -188,6 +217,8 @@ def check_disk(fs: MemFS, w: World) -> None:
             continue
         assert w.before.get(path) == entry, f"written outside the recorded paths: {path}"
     for path in w.before:
+        if w.plain and path in {t.path for t in w.targets}:
+            continue  # a missing target was checked above (only under `.open`, its backup holding the pre bytes)
         assert path in snap, f"removed: {path}"
 
 
@@ -215,6 +246,16 @@ def created(w: World) -> tuple[Target, ...]:
     return tuple(t for t in w.targets if t.pre is None)
 
 
+def assert_our_created_file(fs: MemFS, w: World, path: str) -> None:
+    """The file at a created path is the save's own (no outside program acted): its post bytes, or on a `plain` volume
+    any part of them a crash in its exclusive create left (S0065), which a power loss may also tear."""
+    now = fs.file(path)
+    if w.plain:
+        assert now is not None, f"no file of ours at {path}"
+        return
+    assert now == next(t.post for t in created(w) if t.path == path), "not our own file"
+
+
 def check_taken(fs: MemFS, w: World, out: RestoreOutcome | None) -> None:
     """After `Stopped(created_path_taken)` (the module's docstring), in the disk now and in every power-loss state:
     the journal `.open`, something at that created path, every replaced file at pre, no name of ours left."""
@@ -239,7 +280,7 @@ def undo(fs: MemFS, w: World, locks: MemLocks | None = None) -> RestoreOutcome |
     if isinstance(out, Stopped) and out.cause is Cause.CREATED_PATH_TAKEN:
         check_taken(fs, w, out)
         assert out.path is not None
-        assert fs.file(out.path) == next(t.post for t in created(w) if t.path == out.path), "not our own file"
+        assert_our_created_file(fs, w, out.path)
         fs.outside_remove(out.path)
         out = recover(fs, locks)
     return out
@@ -253,7 +294,7 @@ def check_recovered(fs: MemFS, w: World, out: RestoreOutcome | None) -> None:
     if isinstance(out, Stopped) and out.cause is Cause.CREATED_PATH_TAKEN:
         check_taken(fs, w, out)
         assert out.path is not None
-        assert fs.file(out.path) == next(t.post for t in created(w) if t.path == out.path), "not our own file"
+        assert_our_created_file(fs, w, out.path)
         fs.outside_remove(out.path)
         out = recover(fs)
         assert isinstance(out, Resolved), f"the user deleted the file and pressed Retry: {out}"

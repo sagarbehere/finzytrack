@@ -19,6 +19,7 @@ from typing import override
 import pytest
 
 from ledger_engine.fs.darwin import DarwinFS
+from ledger_engine.fs.port import Caps
 from ledger_engine.ledger.handles import acl_denial
 from ledger_engine.ledger.paths import identify
 from ledger_engine.ledger.writer import Change, Commit, Landed, NotSaved, Reason, Step, durable_commit, sha256
@@ -385,11 +386,108 @@ def test_create_gives_the_mode_asked_for_whatever_the_umask(fs: DarwinFS, tmp_pa
     assert (tmp_path / "f").stat().st_mode & 0o777 == 0o664
 
 
-def test_an_apfs_volume_can_swap(fs: DarwinFS, tmp_path: Path) -> None:
-    """`can_swap` reads `VOL_CAP_INT_RENAME_SWAP` and `_EXCL`; an exFAT image answers False (checked by hand in
-    S0060 round 2 with `hdiutil create -fs ExFAT`, not in this suite: it would mount a disk image)."""
+def test_an_apfs_volume_offers_the_swap_and_the_exclusive_rename(fs: DarwinFS, tmp_path: Path) -> None:
+    """`caps` reads `VOL_CAP_INT_RENAME_SWAP` and `_EXCL` separately (S0065). Other volumes: the opt-in test below."""
     with fs.open_dir(str(tmp_path)) as d:
-        assert d.can_swap()
+        assert d.caps() == Caps(swap=True, excl=True)
+
+
+@pytest.mark.parametrize("call", ["swap", "rename_excl"])
+def test_a_call_the_volume_does_not_offer_is_refused_before_it_is_made(
+    fs: DarwinFS, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, call: str
+) -> None:
+    """S0065 probe: FAT (FSKit, macOS 26) reports no swap yet answers `RENAME_SWAP` with 0 and acts as a plain
+    replace, destroying the second file. So the adapter asks the volume first and answers `ENOTSUP` without calling
+    `renameatx_np` when the call is not offered."""
+    from ledger_engine.fs import darwin
+
+    (tmp_path / "a").write_bytes(b"A")
+    (tmp_path / "b").write_bytes(b"B")
+
+    def no_caps(_self: object) -> Caps:
+        return Caps(swap=False, excl=False)
+
+    monkeypatch.setattr(darwin.DarwinDir, "caps", no_caps)
+    with fs.open_dir(str(tmp_path)) as d:
+        with pytest.raises(OSError, match=r".") as e:
+            getattr(d, call)("a", "b" if call == "swap" else "c")
+        assert e.value.errno == errno.ENOTSUP
+    assert ((tmp_path / "a").read_bytes(), (tmp_path / "b").read_bytes()) == (b"A", b"B")
+    assert not (tmp_path / "c").exists()
+
+
+def test_a_plain_rename_replaces_its_target(fs: DarwinFS, tmp_path: Path) -> None:
+    (tmp_path / "t").write_bytes(b"T")
+    (tmp_path / "f").write_bytes(b"F")
+    with fs.open_dir(str(tmp_path)) as d:
+        d.rename("t", "f")
+    assert sorted(os.listdir(tmp_path)) == ["f"]
+    assert (tmp_path / "f").read_bytes() == b"T"
+
+
+def _volumes() -> list[str]:
+    """`FT_TEST_VOLUMES`: mount points of scratch volumes (exFAT, FAT, HFS+ disk images attached with
+    `hdiutil attach -nobrowse`), separated by `:`. Not in the gate: making them mounts a disk image (S0065 ran it on
+    all three)."""
+    raw = os.environ.get("FT_TEST_VOLUMES", "")
+    return [v for v in raw.split(":") if v]
+
+
+@pytest.mark.skipif(not _volumes(), reason="no scratch volumes given (FT_TEST_VOLUMES)")
+@pytest.mark.parametrize("volume", _volumes() or ["-"])
+def test_a_save_its_crash_and_its_recovery_on_a_real_volume_without_the_swap(
+    fs: DarwinFS, tmp_path: Path, volume: str
+) -> None:
+    """BL-0160 on a real drive: the save lands by the no-swap path (a replaced file, a created file in a created
+    folder), then a save that dies before its close is undone by recovery from the backups on the Mac's disk."""
+    import uuid
+
+    from ledger_engine.fs.darwin import DarwinLocks
+    from ledger_engine.ledger.core.recovery import Cause
+    from ledger_engine.ledger.restore import Resolved, Stopped, recover_journal
+
+    ledger = Path(volume) / f"ft-{uuid.uuid4().hex}"
+    (ledger / "inc").mkdir(parents=True)
+    with fs.open_dir(str(ledger)) as d:
+        assert not d.caps().swap, "a volume without the swap is expected here"
+    main, inc = ledger / "main.bean", ledger / "inc" / "a.bean"
+    main.write_bytes(b"pre\n")
+    inc.write_bytes(b"inc\n")
+    created = ledger / "y2026" / "new.bean"
+    c = _commit(
+        tmp_path,
+        Change(str(inc), sha256(b"inc\n"), b"inc2\n"),
+        Change(str(created), None, b"new\n"),
+        Change(str(main), sha256(b"pre\n"), b"post\n"),
+    )
+    out = durable_commit(fs, c)
+    assert isinstance(out, Landed), out
+    assert (main.read_bytes(), inc.read_bytes(), created.read_bytes()) == (b"post\n", b"inc2\n", b"new\n")
+    assert not [n for n in os.listdir(ledger) + os.listdir(ledger / "inc") if ".ft-" in n], "a name of ours left"
+    root2 = tmp_path / "second"
+    root2.mkdir()
+    c2 = _commit(
+        root2, Change(str(inc), sha256(b"inc2\n"), b"inc3\n"), Change(str(main), sha256(b"post\n"), b"post2\n")
+    )
+    with pytest.raises(_Died):
+        durable_commit(_DyingFS(fs, ".closed"), c2)  # type: ignore[arg-type]
+    assert main.read_bytes() == b"post2\n"
+    (root2 / "locks").mkdir()
+    main.unlink()  # missing in the middle of a replace, as a power loss on a drive without a journal can leave it
+    out2 = recover_journal(fs, DarwinLocks(str(root2 / "locks")), c2.journal_dir, "s1-j1")
+    assert out2 == Resolved("s1-j1"), out2
+    assert (main.read_bytes(), inc.read_bytes()) == (b"post\n", b"inc2\n"), "restored from the backups"
+    assert not [n for n in os.listdir(ledger) + os.listdir(ledger / "inc") if ".ft-" in n]
+    root3 = tmp_path / "third"
+    root3.mkdir()
+    c3 = _commit(root3, Change(str(main), sha256(b"post\n"), b"post3\n"))
+    with pytest.raises(_Died):
+        durable_commit(_DyingFS(fs, ".closed"), c3)  # type: ignore[arg-type]
+    main.write_bytes(b"; an editor\n")  # an outside save before the restore: never replaced
+    (root3 / "locks").mkdir()
+    out3 = recover_journal(fs, DarwinLocks(str(root3 / "locks")), c3.journal_dir, "s1-j1")
+    assert out3 == Stopped(Cause.FOREIGN, str(main)), out3
+    assert main.read_bytes() == b"; an editor\n"
 
 
 @pytest.mark.parametrize(
@@ -1486,3 +1584,22 @@ def test_R7_vF2_a_files_own_entry_failing_its_stat_in_a_read_only_folder_names_n
     finally:
         ledger.chmod(0o755)
         _clean_acls(tmp_path)
+
+
+@pytest.mark.parametrize(
+    ("interfaces", "valid", "want"),
+    [
+        (0x000C0000, 0x000C0000, Caps(swap=True, excl=True)),  # APFS
+        (0x00080000, 0x00080000, Caps(swap=False, excl=True)),  # HFS+: the swap bit not even valid
+        (0x00000000, 0x000C0000, Caps(swap=False, excl=False)),  # exFAT, FAT: both valid, neither set
+        (0x000C0000, 0x00000000, Caps(swap=False, excl=False)),  # set but not valid: not offered
+    ],
+    ids=["apfs", "hfs", "exfat_fat", "not_valid"],
+)
+def test_the_volumes_capability_words_offer_a_call_only_when_its_bit_is_valid_and_set(
+    interfaces: int, valid: int, want: Caps
+) -> None:
+    """The probed words of S0065 (`fgetattrlist`, `ATTR_VOL_CAPABILITIES`, the interfaces word and its valid word)."""
+    from ledger_engine.fs.darwin import caps_from
+
+    assert caps_from(interfaces, valid) == want

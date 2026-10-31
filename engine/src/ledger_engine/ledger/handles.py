@@ -1,11 +1,13 @@
 """What the save (`ledger.writer`) and the restore (`ledger.restore`) share: one handle per folder with the path guard,
-and the owner's refusal rules (`design/specs/engine-jobs.md` §6.3, §6.4, §8.1; ADR-0013 amendments of 2026-10-29
-and 2026-10-30; S0060, S0061). Every write goes through these handles: the check of where a folder is and the write
+the write mode per volume and its exclusive moves (S0065), and the owner's refusal rules
+(`design/specs/engine-jobs.md` §6.3, §6.4, §8.1; ADR-0013 amendments of 2026-10-29 and 2026-10-30; S0060, S0061).
+Every write goes through these handles: the check of where a folder is and the write
 that follows use one descriptor.
 """
 
 from __future__ import annotations
 
+import errno
 import hashlib
 from dataclasses import dataclass, field
 from enum import StrEnum
@@ -66,12 +68,73 @@ def hard_links(st: EntryStat) -> bool:
     return st.nlink > 1
 
 
-def volume_without_swap(h: DirHandle) -> bool:
-    """A folder on a volume without `RENAME_SWAP` and `RENAME_EXCL` (exFAT, FAT, HFS+, some network shares) is never
-    written: a save refuses before anything is written. Owner, 2026-10-29: "Unsafe fallback on such drives", then
-    "Agreed, fallback as its own slice after slice 4" (ADR-0013 amendment of 2026-10-29). The one place this rule
-    lives. TODO(BL-0160): the fallback write path for such volumes replaces this refusal."""
-    return not h.can_swap()
+class Mode(StrEnum):
+    """How the save and the undo write in one folder, chosen from its volume before any effect (`write_mode`; owner,
+    2026-10-29: "Unsafe fallback on such drives", ADR-0013 amendments; S0065)."""
+
+    SWAP = "swap"  # RENAME_SWAP and RENAME_EXCL (APFS): the atomic swap, ADR-0013 as decided
+    NO_SWAP = "no_swap"  # RENAME_EXCL only (HFS+): a plain rename after a re-hash; exclusive moves by RENAME_EXCL
+    PLAIN = "plain"  # neither (exFAT, FAT, network shares): as `NO_SWAP`, exclusive moves by a check just before
+
+
+def write_mode(h: DirHandle) -> Mode:
+    """The write path for the folder `h` (spec §6.1 step 8, §15): `SWAP` only where the volume offers both the swap
+    and the exclusive rename; otherwise the fallback, whose unsafe windows spec §15 states. The one place this rule
+    lives (it replaced the up-front refusal of a volume without the swap, S0060-S0064)."""
+    c = h.caps()
+    if c.swap and c.excl:
+        return Mode.SWAP
+    return Mode.NO_SWAP if c.excl else Mode.PLAIN
+
+
+def _took_effect(h: DirHandle, src: str, dst: str, before: EntryStat | None) -> bool:
+    """A rename a network volume retried after its first attempt took effect (S0061 red team r4 F3): its source is
+    gone and its target is the object the source was. Only then is an `EEXIST` (or a plain rename's `ENOENT`) ours."""
+    if before is None or h.stat(src) is not None:
+        return False
+    now = h.stat(dst)
+    return now is not None and now.identity == before.identity
+
+
+def move_excl(h: DirHandle, mode: Mode, src: str, dst: str) -> None:
+    """Rename `src` to `dst` only while nothing stands at `dst` (`FileExistsError` otherwise, `dst` untouched):
+    `RENAME_EXCL` (`SWAP`, `NO_SWAP`), or on `PLAIN` a check just before a plain rename (window W2 of spec §15: an
+    entry another program puts at `dst` in that instant is replaced; `dst` is always a name derived from the save).
+    On the fallback modes an answer of `EEXIST` or `ENOENT` is checked by `_took_effect` first."""
+    if mode is Mode.SWAP:
+        h.rename_excl(src, dst)
+        return
+    before = h.stat(src)
+    if mode is Mode.PLAIN and h.stat(dst) is not None:
+        raise FileExistsError(errno.EEXIST, "an entry stands at the target")
+    try:
+        if mode is Mode.NO_SWAP:
+            h.rename_excl(src, dst)
+        else:
+            h.rename(src, dst)
+    except (FileExistsError, FileNotFoundError):
+        if not _took_effect(h, src, dst, before):
+            raise
+
+
+def replace(h: DirHandle, src: str, dst: str) -> None:
+    """The fallback's replace (`NO_SWAP`, `PLAIN`): a plain rename of our temp `src` onto the file `dst`, which the
+    caller hashed again just before (window W1 of spec §15: an outside save in between is overwritten). An `ENOENT`
+    is checked by `_took_effect` (a retried rename on a network volume)."""
+    before = h.stat(src)
+    try:
+        h.rename(src, dst)
+    except FileNotFoundError:
+        if not _took_effect(h, src, dst, before):
+            raise
+
+
+def made_by_retry(h: DirHandle, sub: DirHandle | None) -> bool:
+    """A `mkdir` that answered `EEXIST` on a fallback volume made the folder itself when what stands there is an
+    empty folder (a network volume retried it after the first attempt took effect; S0061 red team r4 F3). `sub`: a
+    handle on what stands there, None when it is not a folder. An empty folder another program made in that instant
+    is taken for ours (spec §15: no bytes are lost; the undo may remove it while it is empty)."""
+    return sub is not None and not sub.names()
 
 
 FOLDER_SELF: Final = frozenset({"delete", "writeattr", "writeextattr", "writesecurity", "chown"})
@@ -165,14 +228,15 @@ def displaced(h: DirHandle, name: str, ours: tuple[str | None, ...]) -> Displace
     return Displaced.LINKED if hard_links(st) else Displaced.OURS
 
 
-def keep(h: DirHandle, name: str, base: str, job: str) -> str | None:
+def keep(h: DirHandle, name: str, base: str, job: str, mode: Mode) -> str | None:
     """Move the entry `name` (an outside save we met) at once to the first free kept name of the file `base`
     (`journal.kept_name`, exclusive), then sync the folder: nothing of ours ever deletes it, and the journal stops
     while it exists. None when every kept name is taken: the entry stays where it is, and the journal stops anyway
-    (those kept names exist). Owner, 2026-10-29: "Yes" (ADR-0013 amendment)."""
+    (those kept names exist). `mode`: the folder's write mode (`move_excl`). Owner, 2026-10-29: "Yes" (ADR-0013
+    amendment)."""
     for n in range(1, MAX_KEPT + 1):
         try:
-            h.rename_excl(name, kept_name(base, job, n))
+            move_excl(h, mode, name, kept_name(base, job, n))
         except FileExistsError:
             continue
         h.sync()

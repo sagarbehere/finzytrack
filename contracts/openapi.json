@@ -930,7 +930,6 @@
           "locked",
           "not_a_file",
           "permission",
-          "volume_no_swap",
           "io_error",
           "read_back",
           "name_not_utf8",

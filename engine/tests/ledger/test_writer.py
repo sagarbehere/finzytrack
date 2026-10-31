@@ -881,16 +881,6 @@ def test_permissions_that_would_block_the_swap_or_its_clean_up_refuse_before_the
     assert w.fs.effects == []
 
 
-def test_a_ledger_on_a_volume_without_the_swap_refuses_before_the_first_effect() -> None:
-    """Verifier r2 F3, red team r2 M4; owner, 2026-10-29: refused until the fallback of BL-0160 exists."""
-    w = world()
-    w.fs.outside_mkdirs("/w/X", no_swap=True)
-    w.fs.outside_write("/w/X/main.bean", b"pre\n")
-    out = durable_commit(w.fs, replace(w.commit, changes=(Change("/w/X/main.bean", sha256(b"pre\n"), b"post\n"),)))
-    assert out == NotSaved(Step.BACKUP, Reason.VOLUME_NO_SWAP, True, path="/w/X/main.bean")
-    assert w.fs.effects == []
-
-
 def test_two_targets_with_one_temp_name_or_a_folder_at_a_temp_name_are_refused() -> None:
     """Red team r2 L1: a long name's hashed temp equal to another target's temp; a created folder at a temp name."""
     w = world()

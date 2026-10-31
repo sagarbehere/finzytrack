@@ -203,6 +203,9 @@ def test_a_save_that_lands_is_saved_and_its_engine_is_retired(make: Any) -> None
             WritesPausedDetails("unfinished_save", None),
         ),
         (answer(outcome="not_saved", reason="something_new"), "INTERNAL", None),
+        # S0065: a drive without the swap is saved by the fallback; the engine no longer refuses it, and the reason
+        # it used to send is not a writer reason any more (a bug if it came back, never worded as a refusal)
+        (answer(outcome="not_saved", reason="volume_no_swap"), "INTERNAL", None),
     ],
 )
 def test_each_engine_answer_is_its_code(
@@ -370,10 +373,6 @@ def test_not_saved_says_unchanged_only_after_the_rehash() -> None:
         (
             ChangeNotSavedDetails("permission", None, "/app/local/k1/journal", None, True),
             "allow changes to /app/local/k1/journal.",
-        ),
-        (
-            ChangeNotSavedDetails("volume_no_swap", MAIN, None, None, True),
-            "This drive does not support safe saving yet.",
         ),
         (
             ChangeNotSavedDetails("io_error", MAIN, None, None, True),

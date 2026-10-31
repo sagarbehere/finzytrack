@@ -35,7 +35,7 @@ next try can resolve.
    denies us looking names up in it names that folder (`entry`; verifier r7 F2). Every name of ours that step 3 would
    remove must be removable (its deletion allowed, no lock flag: red team r5 F2); a file to restore must be a regular
    file with one link (the owner's rule, `handles.hard_links`), not locked, its extended attributes readable, allowed to
-   be moved away, on a volume with the swap; a folder it makes the restore temp in must allow entry changes; every
+   be moved away; a folder it makes the restore temp in must allow entry changes; every
    folder the save made that would be removed must have no lock flag (red team r6 overflow 3) and be removable from its
    parent. Any stop: `Stopped(cause)` with nothing written, with one exception: a temp that is not ours is moved to its
    kept name first, out of reach of every deletion.
@@ -55,6 +55,10 @@ next try can resolve.
    `Stopped(created_path_taken)`, the other files durably at pre, nothing of ours left beside them, the journal
    `.open` (§11: the user deletes the file and presses Retry, or keeps the files as they are now); unless that path
    is empty again by now (the user deleted it meanwhile: verifier r6 F5), when the try checks once more from step 2.
+   **On a volume without the swap** (`handles.write_mode`, S0065) the restore temp is moved by `handles.move_excl`,
+   then the file is hashed again (still at post, else `Stopped(foreign)`, nothing moved) and replaced by a plain
+   rename (spec §15, W1); a replaced file found absent there is **missing** (a power loss split a replace on a volume
+   without a journal: `core.recovery.judge`) and gets the restore temp by an exclusive move, from its backup.
    Otherwise each folder the save made is removed if it is empty, deepest first, and their parents synced.
 4. **Only then** `.open` renamed `.resolved` and the journal folder synced: `Resolved`.
 
@@ -96,16 +100,19 @@ from ledger_engine.ledger.core.recovery import (
 from ledger_engine.ledger.handles import (
     Displaced,
     Handles,
+    Mode,
     PathMovedError,
     acl_denial,
     displaced,
     folder_blocked,
     hard_links,
     keep,
+    move_excl,
     sha256,
-    volume_without_swap,
+    write_mode,
 )
 from ledger_engine.ledger.handles import join as _join
+from ledger_engine.ledger.handles import replace as replace_file
 from ledger_engine.tla import tla_action
 
 
@@ -182,8 +189,9 @@ class _Checked:
     parent: str
     base: str
     verdict: Verdict
-    mode: int
+    mode: int  # the file's mode, for its restore copy
     folder_absent: bool  # its folder is one the save made, and it is not there
+    write: Mode = Mode.SWAP  # its folder's write mode (`handles.write_mode`, S0065)
 
 
 def _parent(canonical: str) -> tuple[str, str]:
@@ -230,6 +238,8 @@ def _temp_state(
 
 
 _STAGED: tuple[bool, ...] = (False, True, False, True)  # which of `journal.scratch_names` are staging names
+_PUT_BACK: frozenset[Verdict] = frozenset({Verdict.AT_POST, Verdict.MISSING})  # files whose pre bytes are put back
+MISSING_MODE = 0o644  # the mode of a missing file put back (its own went with its name; exFAT and FAT keep none)
 
 
 def _folder(handles: Handles, folder: str, created: frozenset[str]) -> DirHandle | None:
@@ -299,6 +309,7 @@ def _check(handles: Handles, record: Record, f: FileEntry, *, created: frozenset
         return _Checked(f, parent, base, v, 0, True)
     if any(journal.is_kept_name(n, base, record.name) for n in h.names()):
         raise _Halt(Cause.KEPT_COPY, path)  # the user has not dealt with the kept copy yet (§11)
+    write = write_mode(h)  # the swap, or the fallback on a volume without it (S0065)
     handles.entry = None
     file, st = _look_file(handles, h, base, path, parent, read=f.pre is not None)
     names = journal.scratch_names(base, record.name)
@@ -309,7 +320,8 @@ def _check(handles: Handles, record: Record, f: FileEntry, *, created: frozenset
     handles.entry = None
     temps = Temps(*(state for state, _ in looked))
     backup: Seen | None = None
-    if f.pre is not None and f.backup is not None and file == Seen(Kind.FILE, f.post):
+    missing = file == ABSENT and write is not Mode.SWAP
+    if f.pre is not None and f.backup is not None and (file == Seen(Kind.FILE, f.post) or missing):
         handles.entry = _join(record.backup_dir, f.backup)
         try:
             backup, _ = _look(handles.at(record.backup_dir), f.backup, path)
@@ -318,26 +330,28 @@ def _check(handles: Handles, record: Record, f: FileEntry, *, created: frozenset
         except (FileNotFoundError, NotADirectoryError):
             backup = Seen(Kind.OTHER)  # its folder is not there: the backup is missing (any other error: `Failed`)
         handles.entry = None
-    v = judge(f, file, temps, backup)
+    v = judge(f, file, temps, backup, swap=write is Mode.SWAP)
     if isinstance(v, Stop) and v.cause is Cause.IO_ERROR:
         gone = next(n for n, state in zip(names, temps.states(), strict=True) if state is TempState.UNREADABLE)
         raise _Fail(v.cause, path, None, _join(parent, gone))  # vanished between its stat and its read: nothing written
     if isinstance(v, Stop):
         for n, state in zip(names, temps.states(), strict=True):
             if state is TempState.FOREIGN:
-                keep(h, n, base, record.name)  # out of reach of every deletion (owner, 2026-10-29)
+                keep(h, n, base, record.name, write)  # out of reach of every deletion (owner, 2026-10-29)
         raise _Halt(v.cause, path)
     ours = [(n, nst) for n, (state, nst) in zip(names, looked, strict=True) if state is TempState.OURS]
-    if ours or v is Verdict.AT_POST:
+    if ours or v in _PUT_BACK:
         _writable(handles, h, parent, path)
     for n, nst in ours:  # each removal of step 3 allowed (red team r5 F2: an inherited `deny delete`, a lock flag;
         # `DELETE` answers for the folder's side too: a mode 0555 or `deny delete_child`, probed on APFS)
         if (nst is not None and nst.locked) or not h.allowed(n, Right.DELETE):
             raise _Halt(Cause.PERMISSION, path, _join(parent, n))
-    if v is not Verdict.AT_POST:
-        return _Checked(f, parent, base, v, 0, False)
+    if v not in _PUT_BACK:
+        return _Checked(f, parent, base, v, 0, False, write)
     if not h.allowed(".", Right.CHANGE_ENTRIES):
         raise _Halt(Cause.PERMISSION, path, parent)  # the restore temp is made here (`deny add_file` allows removals)
+    if v is Verdict.MISSING:
+        return _Checked(f, parent, base, v, MISSING_MODE, False, write)  # its old mode went with its name
     assert st is not None  # noqa: S101 (a file at post was seen by `_look`)
     if hard_links(st):
         raise _Halt(Cause.HARD_LINKED, path)
@@ -347,11 +361,7 @@ def _check(handles: Handles, record: Record, f: FileEntry, *, created: frozenset
         raise _Halt(Cause.PERMISSION, path)
     if not h.allowed(base, Right.READ_XATTRS):
         raise _Halt(Cause.PERMISSION, path)  # the restore temp copies them (S0061 red team L1)
-    handles.entry = parent
-    if volume_without_swap(h):
-        raise _Halt(Cause.VOLUME_NO_SWAP, path)
-    handles.entry = None
-    return _Checked(f, parent, base, v, st.mode, False)
+    return _Checked(f, parent, base, v, st.mode, False, write)
 
 
 def _ours_in(record: Record, folder: str) -> set[str]:
@@ -405,15 +415,38 @@ def _settle(h: DirHandle, name: str, x: _Checked, record: Record, ours: tuple[st
     name is taken it stays where it is, and the journal stops anyway."""
     d = displaced(h, name, ours)
     if d is Displaced.FOREIGN:
-        keep(h, name, x.base, record.name)
+        keep(h, name, x.base, record.name, x.write)
         raise _Halt(Cause.DISPLACED, x.entry.canonical_path)
     if d is not Displaced.GONE:
         h.remove(name)  # ours, a second link included: its other name keeps the same bytes
 
 
+def _put_back_plainly(h: DirHandle, x: _Checked, rt: str) -> None:
+    """The fallback's replace in the restore (a volume without the swap, S0065): a file at post is hashed again just
+    before a plain rename of the restore temp onto it (still at post, and the same kind, else `foreign`, nothing
+    moved: an outside save found here is never replaced; one landing after the re-hash is window W1 of spec §15); a
+    missing file gets the restore temp by an exclusive move (an entry that appeared there: `foreign`, untouched)."""
+    path = x.entry.canonical_path
+    if x.verdict is Verdict.MISSING:
+        try:
+            move_excl(h, x.write, rt, x.base)
+        except FileExistsError:
+            raise _Halt(Cause.FOREIGN, path) from None
+        h.sync()
+        return
+    st = h.stat(x.base)
+    if st is not None and st.kind is Kind.FILE and hard_links(st):
+        raise _Halt(Cause.HARD_LINKED, path)  # a link made since the checks would keep the post bytes, unseen
+    data = h.read(x.base) if st is not None and st.kind is Kind.FILE else None
+    if data is None or sha256(data) != x.entry.post:
+        raise _Halt(Cause.FOREIGN, path)
+    replace_file(h, rt, x.base)
+    h.sync()
+
+
 @tla_action("RS_Write", "RS_Swap")
 def _put_back(handles: Handles, record: Record, x: _Checked) -> None:
-    """Step 3 for one replaced file at post: its pre bytes back."""
+    """Step 3 for one replaced file at post (or missing, on a volume without the swap): its pre bytes back."""
     f = x.entry
     handles.on = f.canonical_path
     h = handles.at(x.parent)
@@ -424,10 +457,15 @@ def _put_back(handles: Handles, record: Record, x: _Checked) -> None:
     if data is None or sha256(data) != f.pre:
         raise _Halt(Cause.BACKUP_BAD, f.canonical_path)
     handles.entry = _join(x.parent, rs)
-    h.create(rs, data, x.mode, like=x.base)  # its data synced before the swap (fidelity review 2, H1)
+    like = None if x.verdict is Verdict.MISSING else x.base
+    h.create(rs, data, x.mode, like=like)  # its data synced before the swap (fidelity review 2, H1)
     handles.entry = _join(x.parent, rt)
-    h.rename_excl(rs, rt)  # exclusive: an entry that appeared there since its clean-up is never replaced (`Failed`)
+    move_excl(h, x.write, rs, rt)  # exclusive: an entry that appeared there since its clean-up is never replaced
     h.sync()  # the restore temp's name durable before its swap (S0061 r3: verifier F1, red team F1)
+    if x.write is not Mode.SWAP:
+        handles.entry = None
+        _put_back_plainly(h, x, rt)
+        return
     h.swap(rt, x.base)
     h.sync()  # the swap durable before what it displaced is removed (S0061 r4: an in-place write, then a power loss)
     _settle(h, rt, x, record, (f.post, f.pre))
@@ -443,7 +481,7 @@ def _clean(h: DirHandle, name: str, x: _Checked, record: Record, *, staged: bool
     if state is TempState.UNREADABLE:
         raise _Fail(Cause.IO_ERROR, path)  # vanished since its stat: left as it is, the next try looks again
     if state is TempState.FOREIGN:
-        keep(h, name, x.base, record.name)
+        keep(h, name, x.base, record.name, x.write)
         raise _Halt(Cause.OUTSIDE_SAVE_IN_TEMP, path)
     if state is TempState.OURS:
         h.remove(name)
@@ -483,7 +521,7 @@ def _restore_all(handles: Handles, record: Record, checked: list[_Checked], remo
             _clean(h, n, x, record, staged=staged)
         handles.entry = None
     for x in reversed(checked):
-        if x.verdict is Verdict.AT_POST:
+        if x.verdict in _PUT_BACK:
             _put_back(handles, record, x)
             temp = journal.scratch_names(x.base, record.name)[0]
             handles.entry = _join(x.parent, temp)

@@ -19,6 +19,10 @@ read error made a kept copy of our own bytes). These two functions are the rule'
 The file the temps sit beside, then:
 - at its pre bytes (a created file: absent): **at pre**;
 - a replaced file at its post bytes: **at post** when the backup holds the pre bytes (ADR-0012 F-1), else stop;
+- a replaced file that is absent, on a volume without the swap: **missing** when the backup holds the pre bytes, else
+  stop (S0065: a power loss on a volume without a journal can split a replace and drop the file's name; it is put back
+  from its backup). On a volume with the swap no step of ours leaves a file absent: someone removed it, and it stops
+  (`foreign`) for the user to decide, as before;
 - anything at all at a created path (a file of any kind, whatever it holds, our post bytes included): **taken**
   (owner, 2026-10-30: "Never remove it (Recommended)"). Nothing on disk tells our unfinished file from another
   program's (a sync client, a re-run import), so the undo never removes, renames or moves it: it undoes the other
@@ -97,6 +101,7 @@ class Temps:
 class Verdict(StrEnum):
     AT_PRE = "at_pre"  # nothing to restore
     AT_POST = "at_post"  # a replaced file: restore it from its backup
+    MISSING = "missing"  # a replaced file absent on a volume without the swap: restore it from its backup (S0065)
     TAKEN = "taken"  # something stands at a created path: never touched; the others undone, then the journal stops
 
 
@@ -111,7 +116,6 @@ class Cause(StrEnum):
     HARD_LINKED = "hard_linked"  # a file to restore has a second hard link (ADR-0013 amendment of 2026-10-29)
     LOCKED = "locked"  # a file to restore has a lock flag (`uchg`)
     PERMISSION = "permission"  # the system would not allow the restore swap or the removal (a mode, an ACL)
-    VOLUME_NO_SWAP = "volume_no_swap"  # the folder's volume has no RENAME_SWAP/RENAME_EXCL
     DISPLACED = "displaced"  # an outside save met at a restore swap, a removal or a temp check: moved to a kept name
     KEPT_COPY = "kept_copy"  # a kept copy of this journal's (an outside save we moved aside) is still there
     UNREADABLE = "unreadable"  # the record cannot be read: torn, foreign, newer, or not this name's
@@ -125,10 +129,11 @@ class Stop:
     cause: Cause
 
 
-def judge(entry: FileEntry, file: Seen, temps: Temps, backup: Seen | None) -> Verdict | Stop:
+def judge(entry: FileEntry, file: Seen, temps: Temps, backup: Seen | None, *, swap: bool = True) -> Verdict | Stop:
     """The verdict for one file (the module's docstring). `temps`: the names of ours beside it, by the temp rule.
-    `backup`: what the backup holds, None when not read. `Stop(io_error)`: a name of ours could not be read, which the
-    restore tells as `Failed` and writes nothing for."""
+    `backup`: what the backup holds, None when not read. `swap`: the file's folder is on a volume with the swap
+    (`handles.write_mode`). `Stop(io_error)`: a name of ours could not be read, which the restore tells as `Failed`
+    and writes nothing for."""
     if TempState.UNREADABLE in temps.states():
         return Stop(Cause.IO_ERROR)
     if TempState.FOREIGN in temps.states():
@@ -140,4 +145,6 @@ def judge(entry: FileEntry, file: Seen, temps: Temps, backup: Seen | None) -> Ve
         return Verdict.TAKEN  # never removed, whatever stands there (owner, 2026-10-30: "Never remove it")
     if file == Seen(Kind.FILE, entry.post):
         return Verdict.AT_POST if backup == pre else Stop(Cause.BACKUP_BAD)
+    if file == ABSENT and not swap:
+        return Verdict.MISSING if backup == pre else Stop(Cause.BACKUP_BAD)
     return Stop(Cause.FOREIGN)

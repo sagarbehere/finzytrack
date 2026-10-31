@@ -8,9 +8,10 @@ never `.` or `..`); a name is never followed through a link.
 
 Durability (§6.2, §13 "File-system assumptions"): a file's data is durable after `DirHandle.create` returns (it
 syncs the data before it returns), and an existing file's after `DirHandle.sync_file`; an entry made by `create`,
-`swap`, `rename_excl`, `remove` or `mkdir` is durable only after the directory's `sync`, which makes everything done
-before it in that directory durable. A swap and an
-exclusive rename are one operation: a power loss keeps or drops each whole. Nothing is assumed about the order in
+`swap`, `rename_excl`, `rename`, `remove` or `mkdir` is durable only after the directory's `sync`, which makes
+everything done before it in that directory durable. A swap and an exclusive rename are one operation: a power loss
+keeps or drops each whole; so is a plain rename, except over an existing file on a volume without a journal (exFAT,
+FAT: `rename`). Nothing is assumed about the order in
 which unsynced operations reach the disk. Every sync is `durable_sync`: `F_FULLFSYNC` on macOS.
 
 Every operation may raise `OSError`. The real adapter is `ledger_engine.fs.darwin` (macOS); the test adapter is the
@@ -72,6 +73,16 @@ class AclEntry:
     flags: frozenset[str] = frozenset()
 
 
+@dataclass(frozen=True, slots=True)
+class Caps:
+    """What a folder's volume offers (S0065): `swap`, the atomic exchange of two entries (`RENAME_SWAP`); `excl`, a
+    rename that fails when its target exists (`RENAME_EXCL`). APFS offers both; HFS+ only `excl`; exFAT, FAT and
+    network shares neither (probed on disk images, S0065)."""
+
+    swap: bool
+    excl: bool
+
+
 class Kind(StrEnum):
     FILE = "file"
     DIR = "dir"
@@ -129,8 +140,9 @@ class DirHandle(Protocol):
         """Whether the system allows `right` on the entry `name` (`"."`: this folder). Asking writes nothing."""
         ...
 
-    def can_swap(self) -> bool:
-        """Whether this folder's volume supports the swap and the exclusive rename (`RENAME_SWAP`, `RENAME_EXCL`)."""
+    def caps(self) -> Caps:
+        """What this folder's volume offers: the swap (`RENAME_SWAP`) and the exclusive rename (`RENAME_EXCL`). Asking
+        writes nothing. The write path it chooses is `ledger.handles.write_mode`."""
         ...
 
     def acl(self) -> tuple[AclEntry, ...]:
@@ -139,11 +151,19 @@ class DirHandle(Protocol):
         ...
 
     def swap(self, a: str, b: str) -> None:
-        """Exchange the entries `a` and `b` in one operation (`RENAME_SWAP`); both must exist."""
+        """Exchange the entries `a` and `b` in one operation (`RENAME_SWAP`); both must exist. On a volume that does
+        not offer it (`caps`), `ENOTSUP` with nothing done."""
         ...
 
     def rename_excl(self, src: str, dst: str) -> None:
-        """Rename `src` to `dst` in one operation that fails if `dst` exists (`RENAME_EXCL`)."""
+        """Rename `src` to `dst` in one operation that fails if `dst` exists (`RENAME_EXCL`). On a volume that does not
+        offer it (`caps`), `ENOTSUP` with nothing done."""
+        ...
+
+    def rename(self, src: str, dst: str) -> None:
+        """A plain rename of `src` to `dst`, which replaces a file at `dst` (S0065: the write path on a volume without
+        the swap, `ledger.handles`). On HFS+ a replace is one operation; on exFAT and FAT (no journal) a power loss
+        may keep the removal of the old `dst` and lose the rename: `dst` is then missing, never torn."""
         ...
 
     def remove(self, name: str) -> None:

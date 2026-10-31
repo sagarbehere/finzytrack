@@ -10,7 +10,7 @@ from collections.abc import Callable
 
 import pytest
 
-from ledger_engine.fs.port import AclEntry, Right
+from ledger_engine.fs.port import AclEntry, Caps, Right
 from tests.fakes.memfs import Crash, MemDir, MemFS, MemLocks
 
 
@@ -569,3 +569,81 @@ def test_a_new_file_inherits_what_the_folder_holds_when_its_entry_is_made() -> N
         d.create("new", b"x", 0o644)
         with pytest.raises(PermissionError):
             d.read("new")
+
+
+# -- volumes without the swap (S0065, from the probes on exFAT, FAT and HFS+ disk images) ---------------------------
+
+
+@pytest.mark.parametrize(("excl", "caps"), [(True, Caps(swap=False, excl=True)), (False, Caps(swap=False, excl=False))])
+def test_a_volume_without_the_swap_reports_it_and_refuses_the_missing_call_with_nothing_done(
+    excl: bool, caps: Caps
+) -> None:
+    fs = fs_with("/d")
+    fs.outside_no_swap("/d", excl=excl)
+    fs.outside_write("/d/a", b"A")
+    fs.outside_write("/d/b", b"B")
+    with fs.open_dir("/d") as d:
+        assert d.caps() == caps
+        with pytest.raises(OSError, match="RENAME_SWAP") as e:
+            d.swap("a", "b")
+        assert e.value.errno == errno.ENOTSUP
+        if excl:
+            d.rename_excl("a", "c")
+        else:
+            with pytest.raises(OSError, match="RENAME_EXCL"):
+                d.rename_excl("a", "c")
+        d.mkdir("sub")
+    assert fs.file("/d/b") == b"B"
+    with fs.open_dir("/d/sub") as sub:
+        assert sub.caps() == caps, "a folder made there is on the same volume"
+    with fs.open_dir("/") as root:
+        assert root.caps() == Caps(swap=True, excl=True)
+
+
+def test_a_plain_rename_replaces_its_target_and_on_a_journaled_volume_is_kept_or_dropped_whole() -> None:
+    for no_swap in (False, True):
+        fs = fs_with("/d")
+        if no_swap:
+            fs.outside_no_swap("/d", excl=True)  # HFS+: journaled, a replace is one operation
+        fs.outside_write("/d/t", b"T")
+        fs.outside_write("/d/f", b"F")
+        with fs.open_dir("/d") as d:
+            d.rename("t", "f")
+        assert (fs.file("/d/t"), fs.file("/d/f")) == (None, b"T")
+        assert outcomes(fs, "/d/t", "/d/f") == {(b"T", b"F"), (None, b"T")}
+
+
+def test_on_a_volume_without_rename_excl_a_power_loss_can_split_a_replace_and_leave_the_file_missing() -> None:
+    """exFAT and FAT have no journal: a rename over an entry is two operations a power loss keeps or drops on their
+    own (the old entry removed, the rename), so the target may be missing, never torn."""
+    fs = fs_with("/d")
+    fs.outside_no_swap("/d")
+    fs.outside_write("/d/t", b"T")
+    fs.outside_write("/d/f", b"F")
+    with fs.open_dir("/d") as d:
+        d.rename("t", "f")
+    assert outcomes(fs, "/d/t", "/d/f") == {(b"T", b"F"), (None, b"T"), (b"T", None)}
+
+
+def test_a_plain_rename_to_a_free_name_is_one_operation_and_refuses_a_folder_target() -> None:
+    fs = fs_with("/d", "/d/dir")
+    fs.outside_no_swap("/d")
+    fs.outside_write("/d/t", b"T")
+    with fs.open_dir("/d") as d:
+        with pytest.raises(IsADirectoryError):
+            d.rename("t", "dir")
+        with pytest.raises(FileNotFoundError):
+            d.rename("missing", "x")
+        d.rename("t", "new")
+    assert outcomes(fs, "/d/t", "/d/new") == {(b"T", None), (None, b"T")}
+    assert fs.effects[-1] == "move /d:t,new"
+
+
+def test_a_plain_rename_respects_lock_flags_and_permissions_like_a_removal() -> None:
+    fs = fs_with("/d")
+    fs.outside_write("/d/t", b"T")
+    fs.outside_write("/d/f", b"F")
+    fs.outside_lock("/d/f")
+    with fs.open_dir("/d") as d, pytest.raises(PermissionError):
+        d.rename("t", "f")
+    assert fs.file("/d/f") == b"F"

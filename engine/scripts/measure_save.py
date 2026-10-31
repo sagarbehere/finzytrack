@@ -1,6 +1,6 @@
 """Measure the save job on a ledger (S0063; BL-0112; INV-20's absolute: a write in at most 5 s at 54k entries).
 
-usage (cwd = engine/): .venv/bin/python scripts/measure_save.py ROOT WORK_DIR [--runs N]
+usage (cwd = engine/): .venv/bin/python scripts/measure_save.py ROOT WORK_DIR [--runs N] [--app APP_DIR]
 ROOT is the ledger's root file (the demo generator's 54k ledger: backend/scripts/gen_demo.py --size 54k), WORK_DIR an
 empty scratch folder on the disk to measure (never a real ledger: every run saves into a fresh copy). Each run copies
 the ledger's folder, plans one appended transaction (a load of the copy, as a preview would), then runs
@@ -8,8 +8,10 @@ the ledger's folder, plans one appended transaction (a load of the copy, as a pr
 durable order. It prints per run the total and each part, and the durable order's syncs (`F_FULLFSYNC` of a folder,
 of a file, the files created and synced) with their time: S0061's additions (the staging rename and its folder sync,
 `sync_file` per replaced file) are counted there. Then it undoes the save the way recovery does (the closed record
-renamed back to `.open`, `restore.recover_journal`) and prints the restore's syncs. The engine reads no clock in
-product code (EP-10); this measurement script is not product code.
+renamed back to `.open`, `restore.recover_journal`) and prints the restore's syncs. `--app`: an empty scratch folder
+for the app's machine-local folder (journal, backups, locks) when WORK_DIR is on another drive, as it is for a ledger
+on a drive without the swap (S0065: the journal and backups stay on the Mac's disk, INV-27, INV-30); the default is
+inside WORK_DIR. The engine reads no clock in product code (EP-10); this measurement script is not product code.
 """
 
 from __future__ import annotations
@@ -71,6 +73,9 @@ class CountingDir:
     def rename_excl(self, src: str, dst: str) -> None:
         self._tally.time("rename", lambda: self._inner.rename_excl(src, dst))
 
+    def rename(self, src: str, dst: str) -> None:
+        self._tally.time("plain_rename", lambda: self._inner.rename(src, dst))
+
     def swap(self, a: str, b: str) -> None:
         self._tally.time("swap", lambda: self._inner.swap(a, b))
 
@@ -120,11 +125,11 @@ class Job:
         pass
 
 
-def one_run(src: Path, work: Path, n: int) -> None:
+def one_run(src: Path, work: Path, n: int, app: Path | None = None) -> None:
     folder = work / f"run{n}"
     shutil.copytree(src.parent, folder / "L")
     root = folder / "L" / src.name
-    ald = folder / "app"
+    ald = (app if app is not None else folder) / f"app{n}"
     (ald / "locks").mkdir(parents=True)
     policy = DesktopPolicy()
     t0 = time.perf_counter()
@@ -174,6 +179,7 @@ def one_run(src: Path, work: Path, n: int) -> None:
     say(f"  restore: {time.perf_counter() - t0:.2f} s, {type(res).__name__}; {undo.line()}")
     check(root.read_bytes() == pre, "the restore did not put the ledger back")
     shutil.rmtree(folder)
+    shutil.rmtree(ald, ignore_errors=True)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -181,12 +187,13 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("root", type=Path)
     p.add_argument("work", type=Path)
     p.add_argument("--runs", type=int, default=3)
+    p.add_argument("--app", type=Path, default=None)
     a = p.parse_args(argv)
-    if any(a.work.iterdir()):
-        sys.stderr.write("WORK_DIR must be empty\n")
+    if any(a.work.iterdir()) or (a.app is not None and any(a.app.iterdir())):
+        sys.stderr.write("WORK_DIR and APP_DIR must be empty\n")
         return 2
     for n in range(a.runs):
-        one_run(a.root.resolve(), a.work.resolve(), n)
+        one_run(a.root.resolve(), a.work.resolve(), n, None if a.app is None else a.app.resolve())
     return 0
 
 

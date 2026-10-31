@@ -43,6 +43,14 @@ A new file inherits a folder's `file_inherit` entries, a new folder its `directo
 `file_inherit`-only entry is not passed to a subfolder). Allow entries are not weighed (a deny always denies: the
 fake fails closed where APFS would let an earlier allow win). `outside_lock` locks a file or a folder (`uchg`);
 `outside_remove` is the user deleting an entry, durably.
+
+**Volumes without the swap** (S0065, probed on exFAT, FAT and HFS+ disk images): `outside_no_swap` (or
+`outside_mkdirs(..., no_swap=True, no_excl=...)`) puts a folder, and every folder made in it, on a volume without
+RENAME_SWAP, with RENAME_EXCL (HFS+) or without (exFAT, FAT, network shares); `caps` reports which, and the missing
+call answers `ENOTSUP` with nothing done. `rename` is a plain rename (one effect, labelled `move`) that replaces an
+entry at its target; on a volume without RENAME_EXCL such a replace is two entry operations a power loss keeps or
+drops on their own (the entry removed, the rename), so a file can be **missing** after a power loss there, never
+torn; elsewhere it is one.
 """
 
 # pyright: reportPrivateUsage=false
@@ -61,6 +69,7 @@ import pytest
 
 from ledger_engine.fs.port import (
     AclEntry,
+    Caps,
     EntryStat,
     FoldRule,
     Kind,
@@ -114,7 +123,8 @@ class _Dir:
     pending: list[tuple[str, ...]] = field(default_factory=lambda: [])  # ("link"|"unlink"|"swap"|"rename", ...)
     mode: int = 0o755
     deny: set[Right] = field(default_factory=lambda: set())  # CHANGE_ENTRIES: read-only; DELETE: deny delete_child
-    no_swap: bool = False  # a volume without RENAME_SWAP and RENAME_EXCL (exFAT, FAT)
+    no_swap: bool = False  # a volume without RENAME_SWAP (exFAT, FAT, HFS+, network shares)
+    no_excl: bool = False  # a volume without RENAME_EXCL (exFAT, FAT, network shares); its replace may be split
     acl: list[_Ace] = field(default_factory=lambda: [])
     locked: bool = False  # `uchg`: no entry may be added, removed or renamed in it, and it may not be removed
 
@@ -181,6 +191,10 @@ def _apply(entries: dict[str, tuple[str, int]], op: tuple[str, ...]) -> None:
     elif kind == "rename":
         _, ks, kd, stored = op
         if ks in entries and kd not in entries:
+            entries[kd] = (stored, entries.pop(ks)[1])
+    elif kind == "move":  # a plain rename: it replaces an entry at its target
+        _, ks, kd, stored = op
+        if ks in entries:
             entries[kd] = (stored, entries.pop(ks)[1])
 
 
@@ -321,15 +335,26 @@ class MemFS:
             raise FileNotFoundError(errno.ENOENT, "no parent")
         return self._dir(ino), parts[-1]
 
-    def outside_mkdirs(self, path: str, *, case_insensitive: bool | None = None, no_swap: bool | None = None) -> None:
+    def outside_mkdirs(
+        self,
+        path: str,
+        *,
+        case_insensitive: bool | None = None,
+        no_swap: bool | None = None,
+        no_excl: bool | None = None,
+    ) -> None:
+        """Make every missing folder of `path`, durably; each new one on its parent's volume, the last one with the
+        given case rule and capabilities (`no_swap`: no RENAME_SWAP; `no_excl`: no RENAME_EXCL)."""
         parts = split_absolute(path)
         for i in range(1, len(parts) + 1):
             d, name = self._parent_and_name("/" + "/".join(parts[:i]))
             if self._find(d, name) is None:
                 pino = next(k for k, v in self.nodes.items() if v is d)
-                ci = d.ci if case_insensitive is None or i < len(parts) else case_insensitive
-                ns = d.no_swap if no_swap is None or i < len(parts) else no_swap
-                ino = self._new(_Dir(ci=ci, parent=pino, no_swap=ns))
+                last = i == len(parts)
+                ci = case_insensitive if last and case_insensitive is not None else d.ci
+                ns = no_swap if last and no_swap is not None else d.no_swap
+                nx = no_excl if last and no_excl is not None else d.no_excl
+                ino = self._new(_Dir(ci=ci, parent=pino, no_swap=ns, no_excl=nx))
                 d.entries[_key(name, d.ci)] = (self.stored(name), ino)
                 d.durable = dict(d.entries)
                 d.pending = []
@@ -376,12 +401,14 @@ class MemFS:
         d.durable = dict(d.entries)
         d.pending = []
 
-    def outside_no_swap(self, path: str) -> None:
-        """The folder at `path` is now on a volume without RENAME_SWAP/RENAME_EXCL (as if the ledger were moved to an
-        exFAT drive under the same path)."""
+    def outside_no_swap(self, path: str, *, excl: bool = False) -> None:
+        """The folder at `path` is now on a volume without RENAME_SWAP (as if the ledger were on another drive under
+        the same path): with `excl`, one that has RENAME_EXCL (HFS+); without, one that has neither (exFAT, FAT, a
+        network share), whose rename over an entry a power loss may split (the module's docstring)."""
         node = self._at(path)
         assert isinstance(node, _Dir)
         node.no_swap = True
+        node.no_excl = not excl
 
     def outside_rename_case(self, path: str, spelling: str) -> None:
         """Rename an entry to another spelling of its name (a case-only rename on a case-insensitive volume),
@@ -571,6 +598,7 @@ class MemFS:
                 mode=d.mode,
                 deny=set(d.deny),
                 no_swap=d.no_swap,
+                no_excl=d.no_excl,
                 acl=list(d.acl),
                 locked=d.locked,
             )
@@ -727,9 +755,11 @@ class MemDir:
         if _denies(self._d, perm):
             raise PermissionError(errno.EACCES, f"{perm} denied")
 
-    def _swappable(self) -> None:
-        if self._d.no_swap:
-            raise OSError(errno.ENOTSUP, "no RENAME_SWAP or RENAME_EXCL on this volume")
+    def _offers(self, swap: bool) -> None:
+        """The volume offers the call (`swap`: RENAME_SWAP, else RENAME_EXCL); else `ENOTSUP`, nothing done, as exFAT
+        and HFS+ answer (probed, S0065; FAT does worse, which the macOS adapter refuses before the call)."""
+        if self._d.no_swap if swap else self._d.no_excl:
+            raise OSError(errno.ENOTSUP, "no RENAME_SWAP" if swap else "no RENAME_EXCL")
 
     def allowed(self, name: str, right: Right) -> bool:
         d = self._d
@@ -756,8 +786,8 @@ class MemDir:
         own: set[Right] = node.deny if isinstance(node, _File | _Dir) else set()
         return right not in own
 
-    def can_swap(self) -> bool:
-        return not self._d.no_swap
+    def caps(self) -> Caps:
+        return Caps(swap=not self._d.no_swap, excl=not self._d.no_excl)
 
     def acl(self) -> tuple[AclEntry, ...]:
         return tuple(a.entry for a in self._d.acl)
@@ -809,7 +839,7 @@ class MemDir:
         ka, kb = _key(check_name(a), d.ci), _key(check_name(b), d.ci)
 
         def do() -> None:
-            self._swappable()
+            self._offers(swap=True)
             self._writable()
             if ka not in d.entries or kb not in d.entries:
                 raise FileNotFoundError(errno.ENOENT, "no entry")
@@ -825,7 +855,7 @@ class MemDir:
         ks, kd = _key(check_name(src), d.ci), _key(check_name(dst), d.ci)
 
         def do() -> None:
-            self._swappable()
+            self._offers(swap=False)
             self._writable()
             if ks not in d.entries:
                 raise FileNotFoundError(errno.ENOENT, "no entry")
@@ -838,6 +868,33 @@ class MemDir:
             d.pending.append(("rename", ks, kd, stored))
 
         self._fs._effect(self._label("rename", src, dst), do)
+
+    def rename(self, src: str, dst: str) -> None:
+        """A plain rename (`renameat`): it replaces an entry at `dst` (not a folder). On a volume without RENAME_EXCL
+        a replace is two entry operations a power loss may keep or drop on their own (the entry at `dst` removed, the
+        rename): exFAT and FAT have no journal; elsewhere it is one."""
+        d = self._d
+        ks, kd = _key(check_name(src), d.ci), _key(check_name(dst), d.ci)
+
+        def do() -> None:
+            self._writable()
+            if ks not in d.entries:
+                raise FileNotFoundError(errno.ENOENT, "no entry")
+            old = d.entries.get(kd)
+            if old is not None and isinstance(self._fs.nodes[old[1]], _Dir):
+                raise IsADirectoryError(errno.EISDIR, "a directory")
+            self._may_add()
+            self._unlocked(ks)
+            if old is not None and old[1] != d.entries[ks][1]:
+                self._unlocked(kd)
+            stored = self._fs.stored(dst)
+            _apply(d.entries, ("move", ks, kd, stored))
+            if old is not None and d.no_excl:
+                d.pending += [("unlink", kd), ("rename", ks, kd, stored)]
+            else:
+                d.pending.append(("move", ks, kd, stored))
+
+        self._fs._effect(self._label("move", src, dst), do)
 
     def remove(self, name: str) -> None:
         d = self._d
@@ -866,7 +923,13 @@ class MemDir:
                 raise FileExistsError(errno.EEXIST, "exists")
             self._may_add("add_subdirectory")
             ino = self._fs._new(
-                _Dir(ci=d.ci, parent=self._ino, no_swap=d.no_swap, acl=_inherited(d, "directory_inherit"))
+                _Dir(
+                    ci=d.ci,
+                    parent=self._ino,
+                    no_swap=d.no_swap,
+                    no_excl=d.no_excl,
+                    acl=_inherited(d, "directory_inherit"),
+                )
             )
             stored = self._fs.stored(name)
             d.entries[key] = (stored, ino)
