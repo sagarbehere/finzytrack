@@ -714,7 +714,7 @@ def test_an_idle_engine_that_dies_is_reported_by_its_number_and_never_reused(rig
 
 
 def test_a_late_report_of_an_earlier_engine_changes_nothing(rig: Rig) -> None:
-    """§5.3: "a report about an earlier engine, already ended and drained (§5.2), changes nothing"."""
+    """§5.3: "a report about an earlier engine, already ended and drained, changes nothing"."""
     assert isinstance(outcome(submit(rig, user("bql"), calls("ok", ran_user_code=False))), Done)
     before = rig.jobs.status().queue
     assert before.slot == "idle"
@@ -726,7 +726,7 @@ def test_a_late_report_of_an_earlier_engine_changes_nothing(rig: Rig) -> None:
 
 
 def test_the_starts_bytecode_retry_is_not_a_death() -> None:
-    """§5.1: "If an engine fails to start while using the directory, the directory is deleted and the engine is
+    """§5.1: "If an engine fails to start while using the directory ..., the directory is deleted and the engine is
     started once without it": one start, two engines; the first's end is not the job's engine dying."""
     rig = Rig()
     try:

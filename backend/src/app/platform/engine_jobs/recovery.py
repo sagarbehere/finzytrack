@@ -12,7 +12,8 @@ answered only by an engine that holds the engine lock, so the sidecar never read
    order, each on a journal the listing found `.open` (any other is refused `not_open`, or `unlisted` when its folder
    could not be listed, without a call); a kept journal is not tried.
 3. **Each journal still `.open` is tried** (`recover_try`), in the listing's order, in the same engine (it runs no
-   user code). A record that cannot be read is not tried: it blocks (`stopped`, cause `unreadable`).
+   user code). A record that is not a file or does not decode is not tried: it blocks (`stopped`, cause
+   `unreadable`); an error while reading it ends the try `failed`, naming the record (§8.1 "What").
 
 How each step can end, and what the journal in hand counts as (§8.1): the try's own answer (`resolved`, `stopped`,
 `failed`); our Cancel (`cancelled`: the call fails, the work asks a fresh engine for the next one); an engine's death
@@ -21,7 +22,8 @@ engine to be had (the stop bound, an incompatible engine, a start that failed, a
 fails, and every journal not yet tried is `not_tried`, its cause the failure's kind). A job whose first engine did
 not start runs its work all the same: its listing call answers that failure and the run reports nothing listed. So
 **every listed `.open` journal ends the run resolved, kept by an action of this run, or blocking with exactly one
-reason**; none is skipped (INV-32; model mutants `crash_unmarked`, `untried_unmarked`, `cancel_stops_all`).
+reason**; none is skipped (INV-32; model mutant `crash_unmarked`; the cancelled and untried reasons:
+`test_recover_all.py`).
 
 **The report** (`Report`) is the job's value: what the boot's or the switch's open needs (BL-0152, BL-0154): the
 journals undone (for "Finzytrack undid an interrupted save in *Personal*."), the blocking ones with their reason,

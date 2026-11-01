@@ -8,7 +8,7 @@ durable layer. Written from the spec's lines:
   (S0061 red team r1 L7: "Retry should read the disk").
 - Keep "first `durable_sync`s every file and folder the journal names, so "now" is what a power loss keeps ... then
   renames the journal `.kept`, syncs its directory".
-- Delete the kept copy "removes only a kept copy the journal derives", after the user looked at it; Delete it removes
+- Delete the kept copy removes "only a kept copy the journal derives", after the user looked at it; Delete it removes
   only a file at a path the journal records as created (owner, 2026-10-29 and 2026-10-30): never a folder, a link, a
   FIFO, a name of ours, a file at a replaced path, another journal's kept copy, or bytes the user did not see.
 """
@@ -245,7 +245,8 @@ def test_keep_syncs_every_file_and_folder_before_its_rename() -> None:
 
 
 def test_keep_syncs_an_exchange_a_cut_restore_left_unsynced() -> None:
-    """§8.1 "Afterwards": "a restore cut by an error may have left an exchange not yet synced"."""
+    """§8.1 "Afterwards": Keep "first `durable_sync`s every file and folder the journal names, so "now" is what a
+    power loss keeps", here a swap a cut restore left unsynced."""
     w = crashed_at(36)  # main.bean swapped to post; its folder's sync not done
     assert any(s.file("/w/L/main.bean") != w.fs.file("/w/L/main.bean") for s in w.fs.power_loss_states())
     now = {p: w.fs.file(p) for p in ("/w/L/main.bean", "/w/L/inc/a.bean", "/w/L/prices.bean")}

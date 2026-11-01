@@ -237,8 +237,8 @@ def test_without_engine_venv_the_engine_is_the_packaged_one_beside_this_interpre
 
 
 def test_the_bytecode_directory_is_per_build_in_app_local_data(dirs: tuple[Path, Path]) -> None:
-    """engine-jobs §5.1: "always in app-local data (`app_local_data/engine/bytecode/<build>/`, never inside the
-    packaged install, which may be read-only)"; another app version is another build."""
+    """engine-jobs §5.1: "in app-local data (`app_local_data/engine/bytecode/<build>/`, never inside the packaged
+    install)", which may be read-only; another app version is another build."""
     args = main.parse_args(argv(*dirs))
     command = main.engine_command(args, VERSION)
     assert command.bytecode is not None
@@ -267,8 +267,8 @@ def test_wire_builds_the_engine_client_without_starting_it(dirs: tuple[Path, Pat
 
 @pytest.mark.skipif(os.name != "posix", reason="flock is POSIX; Windows is BL-0087 (M1b)")
 def test_the_boots_recover_all_starts_the_first_engine_through_the_scheduler(dirs: tuple[Path, Path]) -> None:
-    """engine-jobs §5.1, §5.5: "The engine is spawned when a job needs one ..., not at boot ... At start the first job
-    is the boot's `recover_all`, so an engine still starts early". The scheduler waits for the engine lock first
+    """engine-jobs §5.1, §5.5: "The engine is spawned when a job needs one, not at boot; at start the first job is
+    the boot's `recover_all`, so an engine still starts early". The scheduler waits for the engine lock first
     (§5.1) and the boot's window ends with its job (§3, §9.2)."""
     wiring = main.wire(main.parse_args(argv(*dirs, "--engine-venv", str(ENGINE_VENV))), no_log, VERSION)
     try:

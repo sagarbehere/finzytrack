@@ -3,9 +3,9 @@
 
 Pure: a job's text from the scheduler's published status and the time. The texts are the spec's, row by row:
 §5.4 ("at once, the job's phase with Cancel where §4 allows it ...; when it is queued, 'Waiting for: <the running
-job's phase>'. After a short display delay ... the text becomes 'Still working…' with the same actions"), §4 ("a
-writing job past its commit point ... 'Finishing your change…'"), §5.2 and §11 (the quit advice "in the waiting job's
-place, or as a notice"). The UI that shows them is BL-0092.
+job's phase>'. After a short display delay ... the text becomes 'Still working…' with the same actions"), §4 (for "a
+writing job past its commit point": "nothing: the job finishes", 'Finishing your change…'), §5.2 and §11 (the quit
+advice "in the waiting job's place, or as a notice"). The UI that shows them is BL-0092.
 """
 
 from __future__ import annotations
@@ -131,8 +131,7 @@ def test_a_background_job_has_no_cancel() -> None:
 
 
 def test_the_advice_shows_in_the_waiting_jobs_place_or_else_as_a_notice() -> None:
-    """§5.2: "in the waiting job's place if there is one, otherwise as a notice in the window, which stays until the
-    process ends" (N3)."""
+    """§5.2: "in the waiting job's place, otherwise as a notice that stays until the process ends" (N3)."""
     with_job = status(queued=(WAITING,), shown={4: Shown(None, NOW)}, slot="ending", advice=True)
     shown = describe(with_job, 4, NOW, DELAY)
     assert shown is not None
@@ -166,7 +165,7 @@ def test_the_advice_and_still_working_are_the_specs() -> None:
 
 
 def test_a_waited_for_job_between_engines_carries_the_advice_so_no_notice_shows() -> None:
-    """§5.2: "in the waiting job's place if there is one": a running job that waits for its next engine is waiting
+    """§5.2: "in the waiting job's place": a running job that waits for its next engine is waiting
     (S0058 verifier F4)."""
     between = status(
         running=Running(SAVE, wants_engine=True), shown={2: Shown("saving", NOW)}, slot="ending", advice=True

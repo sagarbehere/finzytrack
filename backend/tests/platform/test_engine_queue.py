@@ -886,9 +886,8 @@ def test_an_old_timer_does_not_show_the_advice_for_a_later_process() -> None:
 
 
 def test_after_the_first_engine_a_fresh_one_waits_for_the_engine_lock_again() -> None:
-    """§15: "A plugin child that leaves the engine's process group (`setsid`) ... can keep the engine lock ... the
-    next engine then waits for it, with the advice (§5.1)": the sidecar waits for the lock before every fresh engine,
-    not only at boot (S0053 verifier round 2)."""
+    """§15: "A plugin child that left the engine's group (`setsid`) and inherited the engine lock holds it until it
+    exits"; §5.1: "The sidecar waits for it before every fresh engine", not only at boot (S0053 verifier round 2)."""
     state, first = busy_with(user("preview"))
     assert state.engine_lock == "unchecked", "a fresh start used up the wait"
     state, _ = run(state, JobDone(first, ran_user_code=True), EngineEnded())
@@ -930,8 +929,8 @@ def test_a_mid_job_fresh_engine_waits_for_the_lock_too() -> None:
 
 
 def test_the_advice_shows_while_a_wait_within_the_session_lasts() -> None:
-    """§15 "with the advice (§5.1)"; §11: "an engine of an earlier session still holds the engine lock" and the
-    held slot share one text; a wait that lasts past the display delay is either."""
+    """§15 "with the advice (§5.2)"; §11: "the slot is held by a signalled process that has not ended, or the
+    sidecar waits for the engine lock" share one text; a wait that lasts past the display delay is either."""
     state, first = busy_with(user("preview"))
     state, _ = run(state, Cancel(first), EngineEnded())
     step = transition(POLICY, state, Submit(user("bql")))

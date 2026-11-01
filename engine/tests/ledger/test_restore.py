@@ -96,9 +96,10 @@ SAVE_POINTS = [(i, cut, False) for i, label in enumerate(EFFECTS) for cut in _cu
 def test_a_crash_at_every_effect_of_the_save_then_recovery_ends_with_every_file_at_pre_or_saved(
     at: int, cut: int | None, new_dir: bool
 ) -> None:
-    """§10 every row, §14 "each followed by recover-all": the disk as the OS keeps it after the crash and every state
-    a power loss may leave from there, each recovered: the journal resolved with every file at pre, or (only under a
-    `.closed` journal) every file at post; nothing of ours left; the outcome told matches the disk."""
+    """§10 every row, §14 "a fault and a power loss at every step of §6.1 step 8, then recover-all": the disk as the
+    OS keeps it after the crash and every state a power loss may leave from there, each recovered: the journal
+    resolved with every file at pre, or (only under a `.closed` journal) every file at post; nothing of ours left; the
+    outcome told matches the disk."""
     w = crashed(at, cut=cut, new_dir=new_dir)
     for state in (w.fs, *w.fs.power_loss_states()):
         out = recover(state)
@@ -120,7 +121,7 @@ def _recovery_effects(at: int, new_dir: bool) -> list[str]:
 def test_a_crash_at_every_effect_of_recovery_then_recovery_again_resolves(at: int, new_dir: bool) -> None:
     """§10: "A crash during a recovery or a rollback leaves the journal `.open` with each file at pre or post, so the
     next recover-all finishes it"; §8.1 step 4: "A recovery cut before this step runs again from the start ... it is
-    idempotent"; §14 "recovery cut at every step and run again". The restore temp's write is also cut part-way."""
+    idempotent"; §14 (Recovery) "cut at every step and run again". The restore temp's write is also cut part-way."""
     for k, label in enumerate(_recovery_effects(at, new_dir)):
         for cut in [None, 0, 3] if label.startswith("write ") else [None]:
             w = crashed(at, new_dir=new_dir)
@@ -139,8 +140,8 @@ def test_a_crash_at_every_effect_of_recovery_then_recovery_again_resolves(at: in
 def test_an_io_error_at_every_effect_of_recovery_fails_with_every_file_whole_and_a_second_try_resolves(
     at: int, new_dir: bool
 ) -> None:
-    """§8.1 step 3: "An I/O error during a restore stops that journal: it stays `.open`, with each file whole at pre
-    or post, and counts as blocking (reason `failed`)"; Retry then undoes it. Also an effect that happened and then
+    """§8.1 step 3: "An I/O error during a restore stops the journal: it stays `.open`, with each file whole at pre or
+    post, and blocks (reason `failed`)"; Retry then undoes it. Also an effect that happened and then
     answered an error."""
     for k in range(len(_recovery_effects(at, new_dir)) - 1):  # the restore's effects, after the listing's sync
         for after in (False, True):

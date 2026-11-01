@@ -97,3 +97,7 @@ review:D1 §13.2; review:25 §8.3, §14 item 5; review:27 M1 risks; ADR-0008, AD
 ## Note (2026-11-01): superseded in part by ADR-0068
 
 - The 2026-10-31 amendment's fallback rules on volumes without the swap (the re-hash before a plain rename, the ownership rules for a missing or empty file, the network-retry ownership, the windows W1-W4) are replaced by a best-effort mode: journal, backups and read-back kept, a plain rename, no detection of an outside save in the same instant, a notice at open (D2, built in S0071). The swap on drives that have it is unchanged (owner, 2026-11-01, in session: "I agree with 3,4,5,6, and 7." and "Yes, go ahead with all of those"; ADR-0068).
+
+## Note (2026-11-01): the ACL exception, stated exactly
+
+- The Status line's "except a non-inherited one that protects only the folder itself" is loose. The exception, in the owner's words (`design/inbox/answered/20261030-acl-allowlist.md`, option 1, "Allowlist (Recommended)"), is "a deny entry that new entries do not inherit and that protects only the folder itself (delete, writeextattr, writeattr, writesecurity, chown)". What counts is whether the entry passes on to new entries (`file_inherit`, `directory_inherit`, `only_inherit`), not whether the folder got it from its parent: such an entry is allowed, and a direct entry that new entries inherit is refused (`ledger_engine.ledger.handles.blocking_entry`; spec §6.1 step 8). The decision is unchanged (S0073 part B, verifier round 1 F1).

@@ -1,5 +1,5 @@
-"""The per-file judgement of recovery and the rollback (`design/specs/engine-jobs.md` §8.1 step 2, §6.4 "The save's
-temp paths in recovery"; §12: "the recovery check per file" is one of the engine's pure decisions; ADR-0012's per-file
+"""The per-file judgement of recovery and the rollback (`design/specs/engine-jobs.md` §8.1 step 2, §6.4 "The temp
+rule"; §12: "the recovery check per file" is one of the engine's pure decisions; ADR-0012's per-file
 rule as amended by ADR-0064, and the temp rule as decided on 2026-10-30; S0061). Pure.
 
 **The temp rule** (owner, 2026-10-30: "Staging name (Recommended)"; it replaced the refined rule of 2026-10-29,

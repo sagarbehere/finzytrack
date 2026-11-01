@@ -1066,7 +1066,7 @@ def test_a_stalled_request_waits_until_it_is_cancelled(fake_time: FakeTime) -> N
 
 
 def test_three_cancels_in_a_row_leave_the_engine_startable_at_once(fake_time: FakeTime) -> None:
-    """§14: "three Cancels in a row leave the engine `Ready`, not `Unavailable`"."""
+    """§14: a running read cancelled is not counted as a stop ("three in a row leave the engine `Ready`")."""
     c = EngineClient(engine_command(), monotonic=fake_time.monotonic, pause=fake_time.pause)
     try:
         for _ in range(3):
@@ -1233,8 +1233,8 @@ def venv_site() -> Path:
 
 
 def test_the_development_command_is_s_S_B_P_with_the_venvs_site_and_never_I() -> None:
-    """§5.1: "flags `-s -S -B -P ...`, never `-I`"; "the development form uses the same bootstrap with the virtual
-    environment's site-packages, since `-S` keeps a venv's packages off the path"."""
+    """§5.1: "flags `-s -S -B -P ...`, never `-I`"; "the development form runs the same bootstrap with the virtual
+    environment's site-packages" (it needs them, since `-S` keeps a venv's packages off the path)."""
     command = EngineCommand.for_venv(ENGINE_VENV, environ={})
     python = Path(command.argv[0])
     assert python.parent.parent == ENGINE_VENV
@@ -1321,8 +1321,8 @@ def gone(pid: int) -> bool:
 @pytest.mark.skipif(os.name != "posix", reason="process groups and flock are POSIX; Windows is BL-0087")
 @pytest.mark.parametrize("how", ["cancel", "crash of the leader alone"])
 def test_a_plugins_child_holding_a_lock_is_ended_with_the_engine(tmp_path: Path, how: str) -> None:
-    """§5.2: "a plugin's child processes go too and cannot outlive their engine" (a lock it inherited included). Since
-    ADR-0068 D7 the end is reported after one group signal and the reap, without waiting for the members: a member
+    """§5.2: "Our end signals the whole group, so a plugin's child processes go too" (a lock it inherited included).
+    Since ADR-0068 D7 the end is reported after one group signal and the reap, without waiting for the members: a member
     still exiting may hold the lock for a moment, and the next engine waits for it at the engine lock (§5.1)."""
     lock = tmp_path / "ledger.lock"
     child: list[int] = []
@@ -1390,8 +1390,9 @@ def test_no_signal_reaches_the_group_after_the_reap() -> None:
 
 @pytest.mark.skipif(os.name != "posix", reason="process groups are POSIX; Windows is BL-0087")
 def test_close_returns_without_waiting_for_the_reap() -> None:
-    """§5.5: "`close()` ... signals the engine's group once and returns without waiting for the reap" (§14: "`close()`
-    and Quit anyway return while a fake port's reap never returns")."""
+    """§5.5: "`close()` ... signals the engine's group once and returns without waiting for a call in flight or for
+    the reap" (§14: "`close()` and Quit anyway never wait for the reap"), here while a fake port's reap never
+    returns."""
     ops = RecordingOps(hold_reap=True)
     c = EngineClient(engine_command(), group_ops=ops)
     try:
@@ -1752,8 +1753,8 @@ def test_the_bytecode_directory_is_filled_once_then_used(tmp_path: Path) -> None
 def test_an_engine_that_fails_to_start_with_the_directory_gets_it_deleted_and_starts_once_without_it(
     tmp_path: Path,
 ) -> None:
-    """§5.1: "A damaged `.pyc` under `pycache_prefix` raises instead of falling back to the source ... If an engine
-    fails to start while using the directory, the directory is deleted and the engine is started once without it".
+    """§5.1: "If an engine fails to start while using the directory (a damaged `.pyc` under `pycache_prefix` raises
+    instead of falling back to the source), the directory is deleted and the engine is started once without it".
     Not a stop: the engine is fine."""
     directory = tmp_path / "bytecode"
     events = Events()
@@ -1793,7 +1794,8 @@ sys.stdin.read()
 
 @pytest.mark.skipif(os.name != "posix", reason="process groups are POSIX; Windows is BL-0087")
 def test_a_cancel_ends_the_call_even_when_an_escaped_child_keeps_the_output_open() -> None:
-    """§15: "A plugin child that leaves the engine's process group (`setsid`) is not ended with the engine". It must
+    """§15: "A plugin child that left the engine's group (`setsid`) ... holds it until it exits": our group signal
+    does not reach it. It must
     still not hold the user's Cancel: once the engine is drained, the call ends (it would wait for an end of output
     that the escaped child never gives)."""
     c = EngineClient(stand_in(ESCAPES_WITH_OUTPUT))

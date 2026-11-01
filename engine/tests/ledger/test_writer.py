@@ -275,7 +275,7 @@ def test_a_crash_at_every_effect_of_the_rollback_then_recovery_resolves(at: int,
 
 
 def test_the_rollback_is_the_restore_root_first_and_resolves_after_its_syncs() -> None:
-    """§6.4 "rolls back at once from the journal, as recovery does (§8.1 steps 2-4)": a failure at the read-back's
+    """§6.4 "rolls back at once from the journal, as recovery does (§8.1 steps 2-4; ...)": a failure at the read-back's
     temp removal (every file at post) is followed by the restore's effects, root first, then `.resolved` synced."""
     base, _ = clean_run()
     at = _index(base.fs.effects, "remove /w/L/inc:.a.bean.ft-s1-j7.tmp")
@@ -1091,7 +1091,8 @@ def test_a_displaced_outside_save_at_a_swap_is_moved_to_the_kept_name_and_the_sa
 
 
 def test_a_crash_right_after_a_swap_that_displaced_an_outside_save_keeps_it_and_recovery_moves_it_aside() -> None:
-    """§14: "a crash right after such a swap leaves the journal stopped with both versions": the outside save is in
+    """§10: "A crash with an outside save in flight leaves foreign bytes in the file, a temp or a kept copy: the
+    journal stops and the user sees both versions": the outside save is in
     the file or in our temp in every power-loss state; recovery stops, moving a temp holding it to the kept name."""
     w = world()
     _hook(w.fs, "swap /w/L:.main.bean.ft-s1-j7.tmp,main.bean", lambda: w.fs.outside_write("/w/L/main.bean", FOREIGN))

@@ -456,7 +456,7 @@ def test_an_interrupted_start_is_a_stop_and_ends_what_was_started(state: Supervi
 
 
 def test_a_start_that_fails_with_the_bytecode_directory_discards_it_and_starts_once_without_it() -> None:
-    """§5.1: "If an engine fails to start while using the directory, the directory is deleted and the engine is
+    """§5.1: "If an engine fails to start while using the directory ..., the directory is deleted and the engine is
     started once without it". A damaged `.pyc` is not the engine's crash: no stop."""
     step = transition(POLICY, Handshaking((T - 1.0,), PID, True), HandshakeFailed("bad marshal data", T))
     assert step.state == Starting((T - 1.0,))
@@ -517,7 +517,7 @@ def test_a_retire_ends_an_idle_engine_and_is_no_stop() -> None:
 
 
 def test_three_cancels_in_a_row_leave_the_engine_startable_at_once() -> None:
-    """§14: "three Cancels in a row leave the engine `Ready`, not `Unavailable`"."""
+    """§14: a running read cancelled is not counted as a stop ("three in a row leave the engine `Ready`")."""
     state: SupervisionState = Idle()
     now = T
     for _ in range(3):

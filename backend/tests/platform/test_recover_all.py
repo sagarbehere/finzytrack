@@ -6,10 +6,10 @@ ends the engine; that journal counts as blocking (reason `cancelled`), and recov
 new engine"; "An engine crash during a journal makes that journal blocking (reason `failed`) ... recovery goes on
 with the next journal after the backoff"; "When the engine cannot run ... every journal not yet tried counts as
 blocking (reason `not_tried`)"; Retry "runs `recover_all` again for every journal still `.open`"; "a blocking journal
-blocks every open of a workspace whose ledger set uses a file it names by `path_key`, its own workspace included ...
-(matched by the registry key and lineage id the journal records)"; "A journal whose file list cannot be read blocks
-every open". First over a scripted job context (each step's answer chosen by the test), then through the scheduler
-with the fake engine (the Cancel, the death and the bound as the table and the shell carry them out).
+blocks every open of a workspace whose ledger set uses a file it names by `path_key`, its own workspace included
+... (matched by the registry key and lineage id the journal records, §6.5)"; "A journal whose file list cannot be
+read blocks every open". First over a scripted job context (each step's answer chosen by the test), then through the
+scheduler with the fake engine (the Cancel, the death and the bound as the table and the shell carry them out).
 """
 
 from __future__ import annotations
