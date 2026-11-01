@@ -123,3 +123,11 @@ Built (`design/journal/S0073-spec-rules.md`): a Cancel ends only your own job (t
 ## Note (2026-11-01): D6c built (S0073 part B)
 
 `design/specs/engine-jobs.md` now states rules only (`design/journal/S0073-spec-rules.md`, Part B). Its history moved here, to ADR-0064 and to the slices' journals. One quote the spec alone held is kept here: the decision log that D7 narrows was the owner's requirement of 2026-10-26, "Yes, add it to the scheduler spec as a requirement. Let's make sure this logging system design is documented and implemented". D7 keeps its `sched.input` and `sched.decision` lines; the `sched.checkpoint` lines are not in the spec, and the replay and the ring of recent events are named there only as deferred until a field bug needs them (§12).
+
+## Note (2026-11-01): two D7 lines withdrawn, and D6c's length (owner)
+
+S0073's reviews found that two D7 cuts had a cost the step-back review had not stated, and that D6c's length target was not met by rules alone. The owner answered, 2026-11-01, in session: **"I accept your recommendations for lineage match and drain fork race."** and **"Yes, I'm accepting the 65%"** (`design/inbox/answered/20261101-lineage-match.md`, `design/inbox/answered/20261101-drain-fork-race.md`).
+- **Records stay matched by lineage** (D7's "matched by `path_key` only" is withdrawn): without it, a moved workspace folder holding a half-applied multi-file save would open silently and accept a save. No code change; BL-0191 closed.
+- **The drain's member listing comes back** (D7's "the `libproc` listing goes" is withdrawn; "signal the group, reap, never signal after the reap" stays): on macOS one signal misses a plugin child that forks while it is delivered, and a survivor holding the engine lock blocks all ledger work until a restart. Restored in BL-0190, with BL-0158.
+- **D6c:** the rules-only spec is 65% of the old words, not a third; the owner accepted it. Generating §11 from the text modules and folding §10/§15 into their rules is BL-0192.
+

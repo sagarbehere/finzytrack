@@ -27,3 +27,4 @@ Cost of keeping it: it is built and tested. One field per record and two compari
 Option 1. Keeping it costs nothing more, removing it costs more work than it saves, and it is what makes you see a half-applied save after a folder move instead of building on it silently. No byte is at stake either way, so this is your call on the policy, not a data-safety must.
 
 ## Answer (owner, verbatim, with date)
+"I accept your recommendations for lineage match and drain fork race." (owner, 2026-11-01, in session)

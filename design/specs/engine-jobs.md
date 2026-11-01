@@ -8,7 +8,6 @@
 - **Invariants:** INV-01 and INV-22 (every write passes the contract and fails closed), INV-10 (no resident ledger; bounded caches), INV-11 (the queue hangs off `UserContainer`), INV-20 (performance absolutes), INV-28 (`WORKSPACE_NOT_OPEN`), INV-29, INV-30 (recovery is the one write on open), INV-31 (only the open workspace runs jobs), INV-32 (recover every unfinished save before any workspace opens).
 - **Sources:** each rule, or cluster of rules, names its source in brackets: an invariant or an ADR.
 - **Traps:** a job that writes (save, create, copy) is never ended by us past its commit point, except by "Quit anyway" (§4). Nothing after a save gates the next one: the rebuild that follows it writes no ledger byte and pauses nothing. `-I` must not be used to start the engine: it ignores `PYTHONHASHSEED` (§5.1). A file a save creates gets the same `path_key` before and after it exists (§6.3). A member of an ended engine's group can still hold the engine lock after the reap (a SIGKILLed member still exiting): the next engine waits for it at that lock, never at the drain (§5.1, §5.2). A recover-all that is cancelled never lets a workspace open over a journal it did not try (§8). No ledger work of a new start runs until every engine of the earlier session has ended (the engine lock, §5.1).
-- **Pending the owner:** ADR-0068 D7's match of records by `path_key` only (§16). The code and §6.5, §8.1 match by registry key, lineage id and `path_key`.
 - **Main tests:** §14. The model obligations: §13.
 
 ## 1. Terms
@@ -494,4 +493,4 @@ Unit tests run on macOS; the write path's OS parts on Linux and Windows from M1b
 
 ## 16. Open questions
 
-- **Records matched by `path_key` only** (ADR-0068 D7) is pending the owner's answer: matching without the lineage id would let a moved folder that holds a half-applied multi-file save open with no blocked screen (`design/journal/S0073-spec-rules.md`). Until then the code matches by registry key, lineage id and `path_key` (§6.5, §8.1).
+- **Records stay matched by registry key, lineage id and `path_key`** (§6.5, §8.1): ADR-0068 D7's `path_key`-only match was withdrawn by the owner (ADR-0068 note of 2026-11-01), so a moved folder that holds a half-applied multi-file save still opens to the blocked screen.

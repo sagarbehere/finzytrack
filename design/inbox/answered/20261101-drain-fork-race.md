@@ -26,3 +26,4 @@ Why "keep signalling until nothing is left" is not enough on its own: on macOS, 
 Option 1. The listing is already built and tested, and it is the only way to keep "a plugin's child processes cannot outlive their engine" true, so a stuck lock never needs a restart to clear. D7's gain was about 100 lines of platform code; the cost of option 2 is a rare block that only a restart clears, plus a limit to explain. If you prefer the smaller code, option 2 is safe for your ledger bytes.
 
 ## Answer (owner, verbatim, with date)
+"I accept your recommendations for lineage match and drain fork race." (owner, 2026-11-01, in session)
