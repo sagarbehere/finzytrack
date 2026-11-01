@@ -26,7 +26,7 @@ import signal
 import subprocess
 import sys
 import threading
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Generator, Iterator
 from pathlib import Path
 
 import pytest
@@ -297,14 +297,78 @@ def lock_free(path: Path) -> bool:
         os.close(fd)
 
 
+def group_members(pgid: int) -> list[tuple[int, str]]:
+    """Every process `ps` lists in the group `pgid`, with its state letters."""
+    out = subprocess.run(["/bin/ps", "-A", "-o", "pid=,pgid=,stat="], capture_output=True, text=True, check=True).stdout
+    members: list[tuple[int, str]] = []
+    for line in out.splitlines():
+        fields = line.split()
+        if len(fields) == 3 and fields[1] == str(pgid):
+            members.append((int(fields[0]), fields[2]))
+    return members
+
+
+def alive_members(pgid: int) -> list[tuple[int, str]]:
+    return [(pid, stat) for pid, stat in group_members(pgid) if not stat.startswith("Z")]
+
+
+SENTINEL = "import time; time.sleep(3600)"
+
+
+@contextlib.contextmanager
+def our_group(script: str, *args: str) -> Generator[tuple[subprocess.Popen[str], subprocess.Popen[bytes]]]:
+    """A group this test starts (its leader runs `script`), and a sentinel member that the test starts in it and does
+    not reap before the clean-up has ended (S0075 verifier r1 F2; "never signal a process you did not start"). A
+    group id stays taken while any process, a zombie included, still has it, so while the sentinel is unreaped the id
+    cannot pass to another program: the clean-up's group signals reach only this test's processes, also after the
+    drain has reaped the leader and when no other member is left. The drain kills the sentinel with the rest; as a
+    zombie whose parent (this test) is outside the group it does not count as a live member (BL-0158), so it does
+    not change what the drain decides. The leader joins a new group in this test's session (`process_group=0`), not
+    a new session as the engine does, since a process can join only a group of its own session; the drain does not
+    look at sessions. Clean-up: signal the group until no member of it is alive, then reap the sentinel; nothing
+    is signalled after that."""
+    leader = subprocess.Popen(  # noqa: S603 (this interpreter with a fixed script)
+        [sys.executable, "-I", "-c", script, *args],
+        stdin=subprocess.PIPE,  # inherited by its children: one that left the group can be told to end by its EOF
+        stdout=subprocess.PIPE,
+        text=True,
+        process_group=0,
+    )
+    sentinel: subprocess.Popen[bytes] | None = None
+    try:
+        sentinel = subprocess.Popen([sys.executable, "-I", "-c", SENTINEL], process_group=leader.pid)  # noqa: S603
+        assert os.getpgid(sentinel.pid) == leader.pid
+        yield leader, sentinel
+    finally:
+        if sentinel is None:  # it did not start: the leader, our child and unreaped (nothing drained it), keeps the id
+            os.kill(leader.pid, signal.SIGKILL)
+        # Until the reaps below an unreaped child of ours keeps the id: the sentinel, or the leader killed just above.
+        # A leader not drained yet goes with the group signals below.
+
+        def ended() -> bool:
+            if not alive_members(leader.pid):
+                return True
+            with contextlib.suppress(ProcessLookupError, PermissionError):
+                os.killpg(leader.pid, signal.SIGKILL)
+            return False
+
+        cleaned = wait_until(ended)
+        if sentinel is not None:
+            sentinel.wait()  # dead (the last group signal reached it): the reap, after which nothing is signalled
+        if leader.returncode is None:
+            leader.wait()
+        assert leader.stdin is not None
+        assert leader.stdout is not None
+        leader.stdin.close()
+        leader.stdout.close()
+        assert cleaned, f"the group {leader.pid} still had live members at the clean-up's end"
+
+
 def test_a_child_holding_a_lock_is_ended_with_the_leader_and_the_lock_is_free(tmp_path: Path) -> None:
     lock = tmp_path / "ledger.lock"
-    leader = subprocess.Popen(  # noqa: S603 (this interpreter with a fixed script)
-        [sys.executable, "-I", "-c", LEADER, str(lock)], stdout=subprocess.PIPE, text=True, start_new_session=True
-    )
-    assert leader.stdout is not None
-    child = int(leader.stdout.readline())
-    try:
+    with our_group(LEADER, str(lock)) as (leader, _):
+        assert leader.stdout is not None
+        child = int(leader.stdout.readline())
         assert os.getpgid(leader.pid) == leader.pid
         assert os.getpgid(child) == leader.pid
         assert not lock_free(lock)
@@ -315,10 +379,6 @@ def test_a_child_holding_a_lock_is_ended_with_the_leader_and_the_lock_is_free(tm
         assert reaped.returncode == -signal.SIGKILL
         assert gone(child) or wait_until(lambda: gone(child))
         assert lock_free(lock), "the lock outlived the drained group"
-    finally:
-        if not gone(child):
-            os.kill(child, signal.SIGKILL)
-        leader.stdout.close()
 
 
 def test_a_group_whose_only_member_is_the_held_zombie_leader_has_no_live_member() -> None:
@@ -392,20 +452,13 @@ def test_after_a_drain_no_member_holds_a_lock_any_more(tmp_path: Path) -> None:
     since the old macOS probe let the lock outlive the drain in most runs."""
     for i in range(20):
         lock = tmp_path / f"ledger-{i}.lock"
-        leader = subprocess.Popen(  # noqa: S603 (this interpreter with a fixed script)
-            [sys.executable, "-I", "-c", LEADER, str(lock)], stdout=subprocess.PIPE, text=True, start_new_session=True
-        )
-        assert leader.stdout is not None
-        child = int(leader.stdout.readline())
-        try:
+        with our_group(LEADER, str(lock)) as (leader, _):
+            assert leader.stdout is not None
+            leader.stdout.readline()
             os.kill(leader.pid, signal.SIGKILL)
             reaped = EngineGroup(PosixGroupOps(), leader.pid).drain()
             leader.returncode = reaped.returncode
             assert lock_free(lock), f"run {i}: the lock outlived the drain"
-        finally:
-            if not gone(child):
-                os.kill(child, signal.SIGKILL)
-            leader.stdout.close()
 
 
 # -- Members that one signal misses, and a zombie the drain must not wait for (S0075; BL-0190, BL-0158) ---------------
@@ -436,32 +489,6 @@ time.sleep(3600)
 """
 
 
-def group_members(pgid: int) -> list[tuple[int, str]]:
-    """Every process `ps` lists in the group `pgid`, with its state letters."""
-    out = subprocess.run(["/bin/ps", "-A", "-o", "pid=,pgid=,stat="], capture_output=True, text=True, check=True).stdout
-    members: list[tuple[int, str]] = []
-    for line in out.splitlines():
-        fields = line.split()
-        if len(fields) == 3 and fields[1] == str(pgid):
-            members.append((int(fields[0]), fields[2]))
-    return members
-
-
-def alive_members(pgid: int) -> list[tuple[int, str]]:
-    return [(pid, stat) for pid, stat in group_members(pgid) if not stat.startswith("Z")]
-
-
-def end_our_group(pgid: int) -> None:
-    """Clean-up of a group this test started and whose leader it reaped: signal it until no member is left (a forking
-    member included). A group with members keeps its id, so the id is ours while `killpg` reaches anyone."""
-    for _ in range(500):
-        try:
-            os.killpg(pgid, signal.SIGKILL)
-        except (ProcessLookupError, PermissionError):  # no member left, or only zombies
-            return
-        threading.Event().wait(0.01)
-
-
 @pytest.mark.parametrize("inherit", ["lock", "no lock"])
 def test_a_member_forking_in_a_loop_does_not_outlive_the_drain(tmp_path: Path, inherit: str) -> None:
     """BL-0190 (must not pass on the one-signal drain): on macOS one `killpg(SIGKILL)` misses a member forked while it
@@ -470,36 +497,27 @@ def test_a_member_forking_in_a_loop_does_not_outlive_the_drain(tmp_path: Path, i
     is alive (a zombie its parent reaps is not), and the lock is free at once."""
     for i in range(RUNS):
         lock = tmp_path / f"engine-{i}.lock"
-        leader = subprocess.Popen(  # noqa: S603 (this interpreter with a fixed script)
-            [sys.executable, "-I", "-c", FORKING_LEADER, str(lock), inherit, FORKER],
-            stdout=subprocess.PIPE,
-            text=True,
-            start_new_session=True,
-        )
-        assert leader.stdout is not None
-        try:
+        with our_group(FORKING_LEADER, str(lock), inherit, FORKER) as (leader, _):
+            assert leader.stdout is not None
             assert leader.stdout.readline() == "ready\n"
-            assert wait_until(lambda p=leader.pid: len(alive_members(p)) > 3), "the forker did not start forking"
+            # the leader, the sentinel, the forker and at least two of its workers
+            assert wait_until(lambda p=leader.pid: len(alive_members(p)) > 4), "the forker did not start forking"
             os.kill(leader.pid, signal.SIGKILL)  # the engine crashes by itself, mid-fork of its plugin's helper
             leader.returncode = EngineGroup(PosixGroupOps(), leader.pid).drain().returncode
             survivors = alive_members(leader.pid)
             held = not lock_free(lock)
             assert not survivors, f"run {i}: {len(survivors)} members outlived the drain"
             assert not held, f"run {i}: the lock outlived the drain"
-        finally:
-            if leader.returncode is None:
-                leader.kill()
-                leader.wait()
-            end_our_group(leader.pid)
-            leader.stdout.close()
         assert wait_until(lambda p=leader.pid: not group_members(p)), f"run {i}: the group was not cleaned up"
 
 
-ZOMBIE_LEADER = r"""
+LOCK_LEADER = r"""
 import fcntl, os, subprocess, sys, time
 fd = os.open(sys.argv[1], os.O_RDWR | os.O_CREAT, 0o600)
 fcntl.flock(fd, fcntl.LOCK_EX)
-child = subprocess.Popen([sys.executable, "-I", "-c", sys.argv[2]], pass_fds=(fd,), stdout=subprocess.PIPE, text=True)
+child = subprocess.Popen(
+    [sys.executable, "-I", "-c", *sys.argv[2:]], pass_fds=(fd,), stdout=subprocess.PIPE, text=True
+)  # the member: holds the lock it inherited; its first line is passed on
 print(child.stdout.readline().strip(), flush=True)
 time.sleep(3600)
 """
@@ -517,7 +535,7 @@ for fd in range(3, 64):  # the lock goes with the grandchild only
         pass
 os.setsid()  # leaves the engine's group and never reaps its child
 print(os.getpid(), grandchild, flush=True)
-time.sleep(3600)
+sys.stdin.read()  # until the test closes the pipe: it then ends without a signal from the test (F2)
 """
 
 
@@ -528,41 +546,57 @@ def test_a_zombie_member_whose_parent_left_the_group_does_not_keep_the_drain_goi
     grandchild is a zombie in the group (files closed) whose parent lives outside it; the drain ends and the lock is
     free. Without the zombie exclusion the macOS drain would wait for as long as that parent lives."""
     lock = tmp_path / "engine.lock"
-    leader = subprocess.Popen(  # noqa: S603 (this interpreter with a fixed script)
-        [sys.executable, "-I", "-c", ZOMBIE_LEADER, str(lock), LEAVER],
-        stdout=subprocess.PIPE,
-        text=True,
-        start_new_session=True,
-    )
-    assert leader.stdout is not None
-    leaver, grandchild = (int(x) for x in leader.stdout.readline().split())
-    drained = threading.Event()
-    started = False
-    try:
-        assert os.getpgid(leaver) != leader.pid
-        assert os.getpgid(grandchild) == leader.pid
-        os.kill(leader.pid, signal.SIGKILL)
-        group = EngineGroup(PosixGroupOps(), leader.pid)
+    with our_group(LOCK_LEADER, str(lock), LEAVER) as (leader, sentinel):
+        assert leader.stdout is not None
+        leaver, grandchild = (int(x) for x in leader.stdout.readline().split())
+        drained = threading.Event()
+        try:
+            assert os.getpgid(leaver) != leader.pid
+            assert os.getpgid(grandchild) == leader.pid
+            os.kill(leader.pid, signal.SIGKILL)
+            group = EngineGroup(PosixGroupOps(), leader.pid)
 
-        def drain() -> None:
-            leader.returncode = group.drain().returncode
-            drained.set()
+            def drain() -> None:
+                leader.returncode = group.drain().returncode
+                drained.set()
 
-        threading.Thread(target=drain, daemon=True).start()
-        started = True
-        assert drained.wait(DEADLINE), "a zombie member kept the drain going"
-        members = group_members(leader.pid)
-        assert [pid for pid, _ in members] == [grandchild], members
-        assert members[0][1].startswith("Z"), "the grandchild should be a zombie its parent never reaps"
-        assert lock_free(lock), "the lock outlived the drain"
-    finally:
-        with contextlib.suppress(ProcessLookupError):
-            os.kill(leaver, signal.SIGKILL)  # our test's own process: its zombie child goes to launchd and is reaped
-        if started:
-            drained.wait(DEADLINE)
-        else:
-            leader.kill()
-            leader.wait()
-            end_our_group(leader.pid)
-        leader.stdout.close()
+            threading.Thread(target=drain, daemon=True).start()
+            assert drained.wait(DEADLINE), "a zombie member kept the drain going"
+            members = [(pid, stat) for pid, stat in group_members(leader.pid) if pid != sentinel.pid]
+            assert [pid for pid, _ in members] == [grandchild], members
+            assert members[0][1].startswith("Z"), "the grandchild should be a zombie its parent never reaps"
+            assert lock_free(lock), "the lock outlived the drain"
+        finally:
+            assert leader.stdin is not None
+            leader.stdin.close()  # the leaver reads EOF and ends; its zombie child goes to launchd and is reaped
     assert wait_until(lambda: not group_members(leader.pid)), "the group was not cleaned up"
+
+
+EXITING_RUNS = 3
+BIG_MIB = 256  # its exit takes about 6 ms after SIGKILL here (64 MiB: 2 to 8 ms, 1 GiB: 20 to 27 ms), far longer
+# than a drain round's signal and listing; small enough for a test machine, and xdist runs this test in one worker
+
+BIG_MEMBER = r"""
+import sys, time
+memory = bytearray(int(sys.argv[1]) * 1024 * 1024)
+for i in range(0, len(memory), 4096):  # touch every page, so that the exit has them to give back
+    memory[i] = 1
+print("ready", flush=True)
+time.sleep(60)  # bounded, so a member that escaped a broken drain still ends by itself
+"""
+
+
+def test_an_exiting_member_still_holding_the_lock_keeps_the_drain_going(tmp_path: Path) -> None:
+    """BL-0158's other half (S0075 verifier r1 F1; §5.2 "a member still exiting ... counts"): a member that is
+    exiting but not a zombie yet may still hold its files, the inherited engine lock included; on macOS its status
+    reads exiting (`P_WEXIT`) with `p_stat` still running until the kernel has closed them. The leader crashes, then
+    `drain()`; the lock must be free at the reap. A member with a large address space takes milliseconds to exit,
+    so a drain that excluded an exiting member as if it were a zombie would reap while the lock is held."""
+    for i in range(EXITING_RUNS):
+        lock = tmp_path / f"engine-{i}.lock"
+        with our_group(LOCK_LEADER, str(lock), BIG_MEMBER, str(BIG_MIB)) as (leader, _):
+            assert leader.stdout is not None
+            assert leader.stdout.readline() == "ready\n"
+            os.kill(leader.pid, signal.SIGKILL)
+            leader.returncode = EngineGroup(PosixGroupOps(), leader.pid).drain().returncode
+            assert lock_free(lock), f"run {i}: the drain reaped while an exiting member held the lock"
