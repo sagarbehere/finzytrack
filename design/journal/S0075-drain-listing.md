@@ -50,3 +50,6 @@ Verifier, head f46f8968: PASS WITH FINDINGS, 0 High, 2 Medium, 1 Low; 13 attacks
 - Mutants after the fixes (`scripts/mutants.py`, plan `s0075-fix/mutants.toml` in the session scratchpad: the slice's 8 plus `exiting-as-zombie`; group and client tests, `-n 4`, the copy's own `engine_group` asserted): 9 tried, 8 killed, 1 survived, the known equivalent `zombie-read-skips-pid-check` (Hand-off). Gates: group and client tests 5 × 154 passed (`-n 4`); backend suite 2151 passed, 24 xfailed; ruff, pyright; the five repo checks and the meta-tests. `ps` after every real-process run: nothing left.
 
 ## Retro
+
+## Retro
+- Build about 36 min, fix about 20 min (fresh implementer); 1 round (verifier 0H/2M/1L, red team on the zombie read 0H/0M/1L); landed at 28d84f6e (reviewers' head f46f8968). The owner's answer reversed a D7 cut one slice after it landed. Cheaper gates: a mutant list for a liveness rule needs one mutant per state the rule must still count (here "exiting, not yet a zombie"), not only the states it excludes; and a test cleanup that signals by group id needs a sentinel that keeps the id taken.
