@@ -1,5 +1,6 @@
 """The history trim's choice (`design/specs/engine-jobs.md` §6.5: "The last 16 history records of each kind are kept
-per workspace; older ones are deleted"; INV-10; BL-0169; S0074). Pure: it reads listings, never the disk.
+per workspace; older ones are deleted"; owner, 2026-10-31: "We must prevent the history records from piling up.";
+BL-0169; S0074). Pure: it reads listings, never the disk.
 
 A save's **history** is everything named after its tag `<session>-<job>` in one key's folders: its journal entries
 `<tag>.<suffix>` and its backups folder `<tag>` (the writer names the backups folder after the record,
@@ -9,15 +10,24 @@ decoded: no field of a record decides what is deleted.
 **Kinds** (`HistoryKind`), each keeping its newest `KEEP` on its own: one record state of `.closed`, `.resolved` or
 `.kept`; `leftover`, only files that S0066-S0067 development builds wrote (`.done`, `.mismatch`, `.r4-attempt-<n>`;
 ADR-0067: not records); `orphan`, a backups folder with no journal entry of its name (a save that stopped before its
-journal, or whose `.part` recover-all removed). Newest first by the record's modification time (renames keep it),
-an orphan's by its folder's, ties by name; the current save always counts as the newest of its kind.
+journal, or whose `.part` recover-all removed).
+
+**Order** (`Group.order`, greater is newer): the current save is the newest of its kind. Then by date: a record's
+modification time (renames keep it), a leftover's newest file's, an orphan's folder's; ties by name. Every entry
+on disk was written before the current save's record, so one dated later than that record has a wrong date (a clock
+that ran ahead, or was set back since): such saves count as older than every save dated at or before it, in their
+own date order. So a clock once ahead cannot push out the saves made since, and after the clock was set back once
+the saves made before it go first (they are the older ones). Without a readable current record (`.closed`, a
+regular file) nothing tells a wrong date and the plain date order holds. The limit: once the clock, after being set
+back, passes the dates of saves made before that again, those count by their dates among the saves made since, so a
+newer save can still go before an older one.
 
 **Never chosen, and counted in no kind** (fails closed): a save with an `.open` or `.part` entry, or whose tag is in
-`protected` (an `.open` or `.part` of that name in any key's journal folder, or the backups folder a readable `.open`
-record names); an entry of a suffix not listed above (a newer app's state); two record states; a journal entry that
-is not a regular file, a backups entry that is not a folder, two backups entries of one tag, or an entry whose `stat`
-failed (`Entry.kind` None). A name that is not `<tag>.<suffix>` (journal) or `<tag>` (backups) is not ours and is
-never chosen.
+`protected` (an `.open` or `.part` of that name in any key's journal folder: a record names only a backups folder of
+its own name, `journal._check`, so its name protects it; no record is decoded); an entry of a suffix not listed
+above (a newer app's state); two record states; a journal entry that is not a regular file, a backups entry that is
+not a folder, two backups entries of one tag, or an entry whose `stat` failed (`Entry.kind` None). A name that is
+not `<tag>.<suffix>` (journal) or `<tag>` (backups) is not ours and is never chosen.
 """
 
 from __future__ import annotations
@@ -70,7 +80,7 @@ class Group:
 
     tag: str
     kind: HistoryKind
-    order: tuple[bool, int, str]
+    order: tuple[bool, bool, int, str]
     journal: tuple[str, ...]
     backups: str | None
 
@@ -125,11 +135,20 @@ def _time(names: _Names, kind: HistoryKind) -> int:
     return next(e.mtime_ns for e in names.journal if journal_tag(e.name) is not None and e.name.endswith(f".{kind}"))
 
 
+def _reference(journal: Iterable[Entry], current: str) -> int | None:
+    """The current save's record's date, which no other entry's may pass (the module's docstring, Order)."""
+    want = f"{current}.{State.CLOSED.value}".casefold()
+    times = [e.mtime_ns for e in journal if e.kind is Kind.FILE and e.name.casefold() == want]
+    return max(times) if times else None
+
+
 def classify(
     journal: Iterable[Entry], backups: Iterable[Entry], protected: frozenset[str], current: str
 ) -> tuple[Group, ...]:
     """Every save's history in one key's journal and backups listings that the trim may count, the current save's
     included (it is never chosen, `select`)."""
+    journal = tuple(journal)
+    ref = _reference(journal, current)
     groups: dict[str, _Names] = {}
     for e in journal:
         parsed = journal_tag(e.name)
@@ -146,11 +165,12 @@ def classify(
         kind = _kind(names)
         if kind is None:
             continue
+        t = _time(names, kind)
         out.append(
             Group(
                 tag=tag,
                 kind=kind,
-                order=(tag == now, _time(names, kind), tag),
+                order=(tag == now, ref is None or t <= ref, t, tag),
                 journal=tuple(sorted(e.name for e in names.journal)),
                 backups=names.backups[0].name if names.backups else None,
             )

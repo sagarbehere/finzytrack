@@ -25,7 +25,8 @@ retires its engine after it (the safe default). Its steps:
    record carries no prediction (journal format 4).
 9. `job.committed()` once it `Landed`; then the history trim of this workspace key (§6.5, `ledger.history`: the
    newest 16 of each kind kept; never an `.open` journal or its backups, nor this save's record), whose errors never
-   change the outcome.
+   change the outcome. It runs before the final reply, which is what the sidecar answers the user from, so it is
+   inside the user's wait (about 10 ms in steady state, §6.1 step 9).
 10. The sidecar queues the background rebuild with Beancount's own loader (§6.7, `ledger.rebuild`); `Saved.published`
     stays False.
 11. The engine is retired by the sidecar.
@@ -390,7 +391,7 @@ def _gated(
     out = durable_commit(ports.fs, commit)  # step 8
     if isinstance(out, Landed):
         job.committed()  # step 9
-        # §6.5's history trim, in this engine, after "saved" was sent; it never fails the save (`ledger.history`)
+        # §6.5's history trim, in this engine, before the final reply (inside the user's wait); it never fails the save
         trimmed = history.trim(ports.fs, plan.app_local_data, plan.workspace_key, out.record.name)
         return Saved(out.record, trimmed=trimmed)
     return out

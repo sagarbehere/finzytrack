@@ -53,6 +53,13 @@ class Handles:
             raise PathMovedError(canonical)
         return h
 
+    def release(self, canonical: str) -> None:
+        """Close the handle of `canonical` if one is open (a folder the caller is done with; the next `at` opens and
+        checks it again). Keeps the descriptors of a walk over many folders bounded (S0074 verifier F3)."""
+        h = self.open.pop(canonical, None)
+        if h is not None:
+            h.close()
+
     def close(self) -> None:
         for h in self.open.values():
             h.close()

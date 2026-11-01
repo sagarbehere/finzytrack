@@ -1,13 +1,15 @@
-"""The history trim on disk (`design/specs/engine-jobs.md` §6.5, §6.1 step 9; INV-10; BL-0169; S0074): after a
-landed save, in the save's own engine (it holds the engine lock and ran no user code), the history of the save's
-workspace key is cut to the newest `core.history.KEEP` of each kind (the choice is `ledger.core.history`).
+"""The history trim on disk (`design/specs/engine-jobs.md` §6.5, §6.1 step 9; owner, 2026-10-31: "We must prevent
+the history records from piling up."; BL-0169; S0074): after a landed save, in the save's own engine (it holds the
+engine lock and ran no user code) and before its final reply, the history of the save's workspace key is cut to the
+newest `core.history.KEEP` of each kind (the choice is `ledger.core.history`).
 
 `trim(fs, app_local_data, workspace_key, current)`:
 1. **What protects** (`_protected`): every `local/<key>/journal/` folder of every key is listed; an `.open` or
    `.part` entry protects its tag, wherever its backups folder is (a record names a backups folder of its own name
    only: `journal._check`). Any folder there that cannot be listed (other than one that is absent) stops the whole
    trim: it may hold an `.open` record we cannot see (fails closed). Only real folders are walked, as recover-all
-   walks them.
+   walks them (an `.open` record names a backups folder in its own key only, so a linked one elsewhere needs nothing
+   here). Each key's handles are released once it is listed.
 2. **What is there:** `local/` and this key's `journal/` and `backups/`, each a real folder (an entry that is not
    followed through a link) at its canonical path (the path guard, `handles.Handles`); a link or a moved folder in
    their place, or a listing that fails, stops the whole trim (it could lead into a ledger folder: INV-27, INV-30).
@@ -15,8 +17,10 @@ workspace key is cut to the newest `core.history.KEEP` of each kind (the choice 
 3. **The backups folders** of the saves chosen, oldest first: a save's journal entries are listed again and must be
    exactly those chosen (an entry that appeared since, an `.open` or `.part` above all, leaves the save); its backups
    folder is opened under the path guard, every entry in it must be a regular file (else the save is left), they are
-   removed, then the folder. Then `backups/` is synced once, so no record goes before its backups folder's removal
-   is durable (a power loss never turns a trimmed save into a backups folder without a record).
+   removed, the folder's handle is released (descriptors stay bounded per save, whatever the backlog: a macOS app's
+   soft limit is 256), then the folder is removed. Then `backups/` is synced once, so no record goes before its
+   backups folder's removal is durable (a power loss never turns a trimmed save into a backups folder without a
+   record).
 4. **Their journal entries**, for each save whose backups folder is gone. They are not synced: a power loss can
    bring any of them back, which is history again (a record without its backups folder), and the next trim deletes
    it again.
@@ -25,9 +29,10 @@ leaves every record.
 
 Only `local/<key>/journal/` and `local/<key>/backups/` are ever written, and in them only names of a save's
 history (`core.history`); the ledger folders, kept copies, the current save's record and every `.open` journal and
-its backups are never touched. No error of the trim fails the save it follows: the save has landed and the user was
-told "saved"; `Trimmed` tells what happened (counts only). An engine death mid-trim (`BaseException`) passes through:
-the sidecar then reads the outcome from disk (§6.6), and the current `.closed` record is untouched.
+its backups are never touched. No error of the trim fails the save it follows: the save has landed (its `.closed`
+record is durable) and its answer is "saved"; `Trimmed` tells what happened (counts only). An engine death mid-trim
+(`BaseException`) passes through: the sidecar then reads the outcome from disk (§6.6), and the current `.closed`
+record is untouched.
 """
 
 from __future__ import annotations
@@ -80,13 +85,18 @@ def _protected(handles: Handles, local: str) -> frozenset[str]:
     for key in root.names():
         if not _is_dir(root, key):
             continue
-        kd = handles.at(join(local, key))
-        if not _is_dir(kd, JOURNAL):
-            continue
-        for name in handles.at(join(join(local, key), JOURNAL)).names():
-            tag = core.gating(name)
-            if tag is not None:
-                out.add(tag)
+        kpath = join(local, key)
+        jpath = join(kpath, JOURNAL)
+        try:
+            if not _is_dir(handles.at(kpath), JOURNAL):
+                continue
+            for name in handles.at(jpath).names():
+                tag = core.gating(name)
+                if tag is not None:
+                    out.add(tag)
+        finally:
+            handles.release(jpath)
+            handles.release(kpath)
     return frozenset(out)
 
 
@@ -118,14 +128,18 @@ def _remove_backups(handles: Handles, jdir: str, bdir: str, g: core.Group) -> bo
         return False
     if not here:
         raise _Leave
-    folder = handles.at(join(bdir, g.backups))
-    names = folder.names()
-    for n in names:
-        st = folder.stat(n)
-        if st is not None and st.kind is not Kind.FILE:
-            raise _Leave
-    for n in names:
-        folder.remove(n)
+    fpath = join(bdir, g.backups)
+    try:
+        folder = handles.at(fpath)
+        names = folder.names()
+        for n in names:
+            st = folder.stat(n)
+            if st is not None and st.kind is not Kind.FILE:
+                raise _Leave
+        for n in names:
+            folder.remove(n)
+    finally:
+        handles.release(fpath)
     bd.rmdir(g.backups)
     return True
 

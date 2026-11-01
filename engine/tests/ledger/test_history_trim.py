@@ -1,6 +1,7 @@
 """The history trim (`design/specs/engine-jobs.md` §6.5 "The last 16 history records of each kind are kept per
-workspace; older ones are deleted", INV-10; BL-0169; S0074), over the in-memory file system with crash, I/O-error and
-power-loss injection at every effect of the trim.
+workspace; older ones are deleted"; owner, 2026-10-31: "We must prevent the history records from piling up.";
+BL-0169; S0074), over the in-memory file system with crash, I/O-error and power-loss injection at every effect of
+the trim.
 
 Written from the spec and the slice's brief (`design/journal/S0074-history-trim.md`): the trim runs in the save's own
 engine after the save landed; it reads and deletes only in `local/<key>/journal/` and `local/<key>/backups/`; a
@@ -14,7 +15,11 @@ save.
 from __future__ import annotations
 
 import errno
+import os
+import resource
+import sys
 from dataclasses import dataclass, replace
+from pathlib import Path
 
 import pytest
 from hypothesis import given, settings
@@ -30,7 +35,7 @@ from ledger_engine.ledger.core.ledger_set import Content, Fingerprint, digest
 from ledger_engine.ledger.writer import Change, sha256
 from tests.fakes.memfs import Crash, MemFS
 
-pytestmark = [pytest.mark.inv("INV-10"), pytest.mark.inv("INV-32"), pytest.mark.inv("INV-27")]
+pytestmark = [pytest.mark.inv("INV-32"), pytest.mark.inv("INV-27")]
 
 ALD = "/app"
 LOCAL = f"{ALD}/local"
@@ -746,6 +751,8 @@ def listings(draw: st.DrawFn) -> tuple[list[core.Entry], list[core.Entry], froze
     b = {t: core.Entry(t, k, m) for t, k, m in bn}
     protected = frozenset(draw(st.lists(_TAGS, max_size=3)))
     current = draw(_TAGS)
+    if draw(st.booleans()):  # most real trims: the current save's record is there and dates the others
+        j[f"{current}.closed"] = core.Entry(f"{current}.closed", Kind.FILE, draw(st.integers(0, 50)))
     return list(j.values()), list(b.values()), protected, current
 
 
@@ -781,7 +788,22 @@ def test_the_choice_never_picks_a_protected_save_and_keeps_the_newest_sixteen_pe
         assert len(gone) == max(0, len(of_kind) - 3)
         stay = [g for g in of_kind if g.tag not in picked]
         for g in gone:
-            assert all(g.order < s.order for s in stay)
+            assert all(_age(jn, bn, current, g) < _age(jn, bn, current, s) for s in stay)
+
+
+def _age(jn: list[core.Entry], bn: list[core.Entry], current: str, g: core.Group) -> tuple[bool, bool, int, str]:
+    """The test's own order of a save, from the listings (spec §6.5; never the code's `Group.order`): the current
+    save newest; then every save dated at or before the current save's record above every save dated after it (a
+    wrong date); then by date (a record's, a leftover's newest file's, an orphan's folder's); then by name."""
+    js, bs = _group(jn, bn, g.tag)
+    if g.kind is core.HistoryKind.ORPHAN:
+        t = bs[0].mtime_ns
+    elif g.kind is core.HistoryKind.LEFTOVER:
+        t = max(e.mtime_ns for e in js)
+    else:
+        t = next(e.mtime_ns for e in js if e.name == f"{g.tag}.{g.kind}")
+    ref = [e.mtime_ns for e in jn if e.name == f"{current}.closed" and e.kind is Kind.FILE]
+    return (g.tag == current, not ref or t <= ref[0], t, g.tag)
 
 
 def test_the_choice_never_picks_the_current_save_even_when_nothing_is_kept() -> None:
@@ -797,3 +819,199 @@ def test_the_choice_keeps_sixteen_by_default() -> None:
 def test_a_trimmed_value_is_plain_data() -> None:
     t = history.Trimmed(removed=1, left=0, skipped=False)
     assert replace(t, left=2).left == 2
+
+
+# -- S0074 round 1: the order, case folding, linked folders, descriptors ---------------------------------------------
+# The verifier's proposed tests (`order_*`, `orphans_*`, `leftover_*`, case folding, two backups entries) pass on
+# 7687fadc: they are regression guards that kill its mutants M1-M4 (every earlier fixture's times rose with its names).
+# The future-dated history test and the descriptor test fail on 7687fadc.
+
+
+def test_order_is_by_modification_time_not_by_name() -> None:
+    """Names are random (uuid4): the oldest by the clock goes, whatever its name."""
+    fs = world()
+    names = [tag(i) for i in range(20)]
+    for i, n in enumerate(names):
+        seed(fs, n, "closed")
+        fs.outside_mtime(f"{JD}/{n}.closed", 10**12 - i)  # tag(0) is the NEWEST, tag(19) the oldest
+        fs.outside_mtime(f"{BD}/{n}", 10**12 - i)
+    trim(fs, current="s9-none")
+    assert [present(fs, n) for n in names] == [True] * 16 + [False] * 4
+
+
+def test_orphans_are_ordered_by_their_folders_time_not_by_name() -> None:
+    fs = world()
+    names = [tag(i) for i in range(18)]
+    for i, n in enumerate(names):
+        seed(fs, n, backups=True)
+        fs.outside_mtime(f"{BD}/{n}", 10**12 - i)
+    trim(fs, current="s9-none")
+    assert [present(fs, n) for n in names] == [True] * 16 + [False] * 2
+
+
+def test_a_leftovers_time_is_its_newest_files() -> None:
+    """A save with an old `.done` but a new `.r4-attempt-1` is new."""
+    fs = world()
+    names = [tag(i) for i in range(17)]
+    for i, n in enumerate(names):
+        seed(fs, n, "done", "r4-attempt-1")
+        fs.outside_mtime(f"{JD}/{n}.done", 1000 + i)
+        fs.outside_mtime(f"{JD}/{n}.r4-attempt-1", 2000 + i)
+    fs.outside_mtime(f"{JD}/{names[0]}.r4-attempt-1", 10**9)  # names[0] has the newest file of all
+    trim(fs, current="s9-none")
+    assert present(fs, names[0])
+    assert not present(fs, names[1])
+
+
+def test_history_dated_after_the_current_save_goes_first_and_never_collapses_the_history() -> None:
+    """A clock once far ahead (red team A4): 16 records dated 30 years ahead, then 5 saves with the clock right. Every
+    record on disk was written before the save that just landed, so one dated later has a wrong date: those go first,
+    oldest by their own dates first, and the 5 recent saves all stay (7687fadc kept only the last one)."""
+    fs = world()
+    ahead = 10**18
+    future = [f"s8-j{i:03d}" for i in range(16)]
+    for i, n in enumerate(future):
+        seed(fs, n, "closed")
+        fs.outside_mtime(f"{JD}/{n}.closed", ahead - i)  # by date the last name is the oldest: never by name
+    recent = [f"s1-j{i:03d}" for i in range(5)]
+    for i, n in enumerate(recent):
+        seed(fs, n, "closed")
+        fs.outside_mtime(f"{JD}/{n}.closed", 1000 + i)
+        trim(fs, current=n)
+    assert all(present(fs, n) for n in recent)
+    assert [present(fs, n) for n in future] == [True] * 11 + [False] * 5
+    assert len(fs.names_in(BD)) == KEEP
+
+
+def test_after_the_clock_was_set_back_the_saves_since_are_kept_and_the_older_ones_go() -> None:
+    """The clock set back once: the 16 saves made before it carry later dates than every save since, so each new save
+    pushes out the oldest of them, and the saves since all stay."""
+    fs = world()
+    before = [tag(i) for i in range(16)]
+    for i, n in enumerate(before):
+        seed(fs, n, "closed")
+        fs.outside_mtime(f"{JD}/{n}.closed", 5000 + i)
+    since = [f"s1-j{i:03d}" for i in range(5)]
+    for i, n in enumerate(since):
+        seed(fs, n, "closed")
+        fs.outside_mtime(f"{JD}/{n}.closed", 1000 + i)
+        trim(fs, current=n)
+    assert all(present(fs, n) for n in since)
+    assert [present(fs, n) for n in before] == [False] * 5 + [True] * 11
+
+
+def test_the_choice_counts_an_entry_dated_after_the_current_record_as_older_than_every_other() -> None:
+    entries = [
+        core.Entry(f"{CURRENT}.closed", Kind.FILE, 100),
+        core.Entry(f"{tag(1)}.closed", Kind.FILE, 99),
+        core.Entry(f"{tag(2)}.closed", Kind.FILE, 10**15),
+        core.Entry(f"{tag(3)}.closed", Kind.FILE, 10**15 + 1),
+    ]
+    assert [g.tag for g in core.select(entries, [], frozenset(), CURRENT, keep=2)] == [tag(2), tag(3)]
+    # without the current save's record nothing tells a wrong date: the plain clock order
+    assert [g.tag for g in core.select(entries[1:], [], frozenset(), "s9-none", keep=2)] == [tag(1)]
+
+
+def test_an_entry_dated_like_the_current_record_counts_by_its_date() -> None:
+    """Only a date later than the current record's is wrong; an equal one is not (a coarse clock)."""
+    entries = [
+        core.Entry(f"{CURRENT}.closed", Kind.FILE, 100),
+        core.Entry(f"{tag(1)}.closed", Kind.FILE, 100),
+        core.Entry(f"{tag(2)}.closed", Kind.FILE, 50),
+    ]
+    assert [g.tag for g in core.select(entries, [], frozenset(), CURRENT, keep=2)] == [tag(2)]
+
+
+def test_the_current_save_counts_as_newer_than_a_save_of_the_same_date_and_a_later_name() -> None:
+    """The current save is the newest of its kind, so the 16 kept are 15 others and it (never 16 others and it)."""
+    entries = [core.Entry(f"{CURRENT}.closed", Kind.FILE, 100), core.Entry("s9-jzzz.closed", Kind.FILE, 100)]
+    assert [g.tag for g in core.select(entries, [], frozenset(), CURRENT, keep=1)] == ["s9-jzzz"]
+
+
+def test_the_current_record_dates_the_others_whatever_the_case_of_its_name_and_only_when_a_file() -> None:
+    entries = [
+        core.Entry(f"{CURRENT}.closed", Kind.FILE, 100),
+        core.Entry(f"{tag(1)}.closed", Kind.FILE, 10**15),
+        core.Entry(f"{tag(2)}.closed", Kind.FILE, 50),
+    ]
+    assert [g.tag for g in core.select(entries, [], frozenset(), CURRENT.upper(), keep=2)] == [tag(1)]
+    # a current entry that is not a regular file dates nothing: the plain date order
+    linked = [replace(entries[0], kind=Kind.LINK), *entries[1:]]
+    assert [g.tag for g in core.select(linked, [], frozenset(), CURRENT, keep=1)] == [tag(2)]
+
+
+def test_an_open_record_in_upper_case_protects_a_lower_case_backups_folder() -> None:
+    """Grouping and gating are case-folded: `S0-J000.open` protects `s0-j000`."""
+    j = [core.Entry("S0-J000.open", Kind.FILE, 0)] + [
+        core.Entry(f"{tag(i)}.closed", Kind.FILE, i) for i in range(1, 30)
+    ]
+    b = [core.Entry(tag(0), Kind.DIR, 0)]
+    protected = frozenset({core.gating("S0-J000.open") or ""})
+    assert all(g.tag != tag(0) for g in core.select(j, b, protected, "s9-none", keep=3))
+    # the same with the `.open` only in another key's folder: the protected name must match case-folded
+    assert all(g.tag != tag(0) for g in core.select(j[1:], b, protected, "s9-none", keep=0))
+
+
+def test_an_upper_case_open_record_in_another_key_protects_a_lower_case_backups_folder_here() -> None:
+    fs = world()
+    seed(fs, tag(0), backups=True)  # an orphan here, the oldest
+    fs.outside_mkdirs(OTHER_JD)
+    fs.outside_write(f"{OTHER_JD}/{tag(0).upper()}.open", b"{}")
+    for i in range(10, 30):
+        seed(fs, tag(i), backups=True)
+    assert trim(fs, current="s9-none").removed == 4
+    assert present(fs, tag(0))
+
+
+def test_two_backups_entries_of_one_folded_name_are_left() -> None:
+    j = [core.Entry(f"{tag(i)}.closed", Kind.FILE, i) for i in range(1, 30)]
+    b = [core.Entry(tag(1), Kind.DIR, 1), core.Entry(tag(1).upper(), Kind.DIR, 1)]
+    assert all(g.tag != tag(1) for g in core.select(j, b, frozenset(), "s9-none", keep=3))
+
+
+def test_a_link_in_place_of_another_keys_journal_folder_is_not_walked_and_does_not_stop_the_trim() -> None:
+    """Only real folders are walked, as recover-all walks them. An `.open` record names a backups folder in its own
+    key only (`journal._check`, the writer's `backups_dir`), which this key's trim never touches."""
+    fs = world()
+    many_closed(fs)
+    fs.outside_mkdirs(f"{LOCAL}/k2")
+    fs.outside_mkdirs("/elsewhere")
+    fs.outside_write("/elsewhere/x.open", b"{}")
+    fs.outside_symlink(OTHER_JD, "/elsewhere")
+    assert trim(fs, current="s9-none") == history.Trimmed(removed=4, left=0, skipped=False)
+    assert fs.snapshot()[OTHER_JD] == ("link", "/elsewhere")
+    assert fs.file("/elsewhere/x.open") == b"{}"
+
+
+def _free_descriptors_limit(free: int) -> int:
+    """The soft descriptor limit that leaves exactly `free` descriptor numbers unused below it."""
+    used = {int(n) for n in os.listdir("/dev/fd")}
+    limit = 0
+    while limit - len([u for u in used if u < limit]) < free:
+        limit += 1
+    return limit
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="the real adapter is macOS-only until BL-0087")
+def test_a_long_backlog_is_trimmed_in_one_pass_under_a_low_descriptor_limit(tmp_path: Path) -> None:
+    """Verifier F3: each save's folder handles are released before the next save, so descriptors stay bounded per
+    save (a macOS app's soft limit is 256). 7687fadc held one per backups folder until the trim ended."""
+    jd, bd = tmp_path / "local" / "k1" / "journal", tmp_path / "local" / "k1" / "backups"
+    jd.mkdir(parents=True)
+    bd.mkdir(parents=True)
+    n = 120
+    for i in range(n):
+        (jd / f"{tag(i)}.closed").write_bytes(b"{}")
+        (bd / tag(i)).mkdir()
+        (bd / tag(i) / "0-a.bean").write_bytes(b"x")
+        os.utime(jd / f"{tag(i)}.closed", ns=(10**9 * (i + 1), 10**9 * (i + 1)))
+    from ledger_engine.fs.darwin import DarwinFS  # macOS only
+
+    soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+    resource.setrlimit(resource.RLIMIT_NOFILE, (_free_descriptors_limit(40), hard))
+    try:
+        out = history.trim(DarwinFS(), str(tmp_path), "k1", "s9-none")
+    finally:
+        resource.setrlimit(resource.RLIMIT_NOFILE, (soft, hard))
+    assert out == history.Trimmed(removed=n - KEEP, left=0, skipped=False)
+    assert sorted(p.name for p in bd.iterdir()) == [tag(i) for i in range(n - KEEP, n)]
