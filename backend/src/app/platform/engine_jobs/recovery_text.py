@@ -63,25 +63,45 @@ def _kept_names(b: Blocking) -> list[str]:
     return []
 
 
-def _missing(b: Blocking) -> str | None:
-    """The replaced files a stopped try found absent, with their verb ("main.bean is", "a.bean and main.bean are"), or
-    None. On a drive without the swap a power loss can leave one missing (§6.8); Keep leaves it missing, so the screen
-    and the Keep confirmation name it (S0071 red team F2). A file the save was creating, or one whose folder is not
-    there or could not be read, is not counted."""
-    names = [
-        _name(i.path) for i in b.inspection or () if not i.created and i.reachable and i.now is None and i.errno is None
-    ]
-    if not names:
-        return None
+def _missing(b: Blocking) -> tuple[list[str], list[str]]:
+    """The replaced files a stopped try found absent, by name: those whose backup the engine found holding the old
+    version (`InspectedFile.backup_good`), then the others. On a drive without the swap a power loss can leave a file
+    missing (§6.8); Keep leaves it missing, so the screen and the Keep confirmation name it (S0071 red team F2), and
+    they promise the backup only where it was checked (round 2, R2-1: a try that stops `backup_bad` there). A file the
+    save was creating, or one whose folder is not there or could not be read, is not counted."""
+    absent = [i for i in b.inspection or () if not i.created and i.reachable and i.now is None and i.errno is None]
+    return [_name(i.path) for i in absent if i.backup_good], [_name(i.path) for i in absent if not i.backup_good]
+
+
+def _are(names: list[str]) -> str:
+    """ "main.bean is", "a.bean and main.bean are", "a.bean, b.bean and main.bean are"."""
     if len(names) == 1:
         return f"{names[0]} is"
     return f"{', '.join(names[:-1])} and {names[-1]} are"
 
 
 def _missing_now(b: Blocking) -> str:
-    """§11's sentence for the stop screen when a replaced file is absent ("" when none is)."""
-    missing = _missing(b)
-    return "" if missing is None else f" {missing} missing now. Finzytrack has the old version in its backup."
+    """§11's sentences for the stop screen when a replaced file is absent ("" when none is)."""
+    good, other = _missing(b)
+    text = ""
+    if good:
+        old = "its old version" if len(good) == 1 else "their old versions"
+        text += f" {_are(good)} missing now. Finzytrack has {old} in its backup."
+    if other:
+        text += f" {_are(other)} missing now."
+    return text
+
+
+def _missing_kept(b: Blocking) -> str:
+    """§11's sentences for Keep's confirmation when a replaced file is absent ("" when none is)."""
+    good, other = _missing(b)
+    text = ""
+    if good:
+        old = "Its old version is" if len(good) == 1 else "Their old versions are"
+        text += f" {_are(good)} missing now and will stay missing. {old} only in Finzytrack's backup."
+    if other:
+        text += f" {_are(other)} missing now and will stay missing."
+    return text
 
 
 def _kept_copy(b: Blocking, workspace: str) -> Screen:
@@ -221,7 +241,7 @@ def keep_confirmation(b: Blocking, workspace: str) -> str:
     """§8.1 "Afterwards", ADR-0063: it lists the files it releases; for `cancelled`, `failed` and `not_tried` it says
     Retry may still undo the save (review 7 L6); a kept copy stays and must be deleted or moved first (owner,
     2026-10-29); a replaced file a stopped try found absent stays missing, and its old version is only in the backup
-    (S0071 red team F2)."""
+    when the engine found it there (`_missing_kept`; S0071 red team F2, round 2 R2-1)."""
     files = ", ".join(_name(f.path) for f in b.journal.files) or "the files of this save"
     text = (
         f"Keep the files as they are now? Finzytrack will stop trying to undo the unfinished save in {workspace} "
@@ -229,9 +249,7 @@ def keep_confirmation(b: Blocking, workspace: str) -> str:
     )
     if b.reason in ("cancelled", "failed", "not_tried"):
         text += " Finzytrack has not tried, or not finished, undoing this save. Retry may still undo it."
-    missing = _missing(b)
-    if missing is not None:
-        text += f" {missing} missing now and will stay missing. The old version is only in Finzytrack's backup."
+    text += _missing_kept(b)
     kept = _kept_names(b)
     if kept:
         text += f" The kept copy {' and '.join(kept)} stays. Delete or move it before you use the ledger."

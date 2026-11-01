@@ -420,6 +420,32 @@ def test_two_outside_saves_kept_in_one_try_each_get_their_own_kept_name(volume: 
     assert sorted(kept.values(), key=lambda b: b or b"") == sorted([x, y]), kept
 
 
+@pytest.mark.parametrize("backup", ["good", "removed", "other_bytes", "a_folder"])
+def test_the_inspection_says_a_backup_is_good_only_when_it_holds_the_old_version(backup: str) -> None:
+    """`Inspected.backup_good` (S0071 round 2, R2-1): the screen promises "Finzytrack has its old version in its
+    backup" only on this word. A missing file whose backup is gone, holds other bytes or is not a file is not known
+    good (the try stops `backup_bad` there); a created file never has one."""
+    w, state = _missing_state("a.bean")
+    copy = f"/w/local/backups/{NAME}/0-a.bean"
+    if backup != "good":
+        with state.open_dir(f"/w/local/backups/{NAME}") as d:
+            d.remove("0-a.bean")
+        if backup == "other_bytes":
+            state.outside_write(copy, b"; not the old version\n")
+        elif backup == "a_folder":
+            state.outside_mkdirs(copy)
+    seen = {i.path: i for i in inspect(state, record_of(state))}
+    assert seen["/w/L/inc/a.bean"].now is None
+    assert seen["/w/L/inc/a.bean"].backup_good is (backup == "good")
+    assert seen["/w/L/prices.bean"].backup_good is False, "a created file has no backup"
+    assert seen[MAIN].backup_good is True
+    out = recover(state)
+    if backup == "good":
+        assert state.file("/w/L/inc/a.bean") == w.targets[0].pre, "the backup it called good put the file back"
+    else:
+        assert out == Stopped(Cause.BACKUP_BAD, "/w/L/inc/a.bean"), out
+
+
 @pytest.mark.parametrize("volume", BEST_EFFORT)
 def test_the_restore_puts_the_old_bytes_back_by_the_best_effort_order(volume: str) -> None:
     """§6.8, §8.1 step 3 on such a volume: the pre bytes from the backup at the restore staging name, synced, then a

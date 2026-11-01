@@ -8,9 +8,17 @@ import { fileURLToPath } from 'node:url'
 import { ESLint, type Linter } from 'eslint'
 import prettierOff from 'eslint-config-prettier'
 import * as prettier from 'prettier'
-import { describe, expect, it } from 'vitest'
+import { beforeAll, describe, expect, it } from 'vitest'
 
 const root = fileURLToPath(new URL('../..', import.meta.url))
+
+// One ESLint for the file, warmed before any test: its cold start (loading the config and every plugin) took 1-4 s
+// and timed out the first lint test under load (S0071 round 2). Paid here, it is outside every test's own time.
+let eslint: ESLint
+beforeAll(async () => {
+  eslint = new ESLint({ cwd: root })
+  await eslint.lintText('export {}\n', { filePath: `${root}/src/main.ts` })
+})
 
 describe('[EP-22] the TypeScript config', () => {
   it('is exactly the strict one', () => {
@@ -45,7 +53,6 @@ describe('[EP-22] the TypeScript config', () => {
 
 async function ruleIds(code: string, file = 'main.ts', dir = 'src'): Promise<string[]> {
   // The text replaces an existing file's content in memory; nothing is written to disk.
-  const eslint = new ESLint({ cwd: root })
   const [result] = await eslint.lintText(code, { filePath: `${root}/${dir}/${file}` })
   return (result?.messages ?? []).map((m) => m.ruleId ?? 'parse-error')
 }
@@ -212,7 +219,6 @@ describe('ESLint agrees with prettier on formatting (S0032)', () => {
   it('leaves every rule eslint-config-prettier turns off switched off, for Vue and TypeScript files', async () => {
     const off = Object.keys(prettierOff.rules).filter((name) => severity(prettierOff.rules[name]) === 0)
     expect(off).toEqual(expect.arrayContaining(layout))
-    const eslint = new ESLint({ cwd: root })
     for (const file of ['src/App.vue', 'src/main.ts', 'tests/unit/gates.test.ts']) {
       const config = (await eslint.calculateConfigForFile(`${root}/${file}`)) as Linter.Config
       const on = off.filter((name) => severity(config.rules?.[name]) !== 0)

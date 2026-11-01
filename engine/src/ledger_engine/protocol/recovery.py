@@ -182,6 +182,7 @@ def _inspection(fs: FileSystem, journal_dir: str, name: str) -> list[InspectedFi
             now=None if i.now is None else _seen(i.now),
             kept=[KeptCopySeen(name=k.name, path=k.path, seen=_seen(k.seen)) for k in i.kept],
             errno=i.errno,
+            backup_good=i.backup_good,
         )
         for i in ra.inspect(fs, record)
     ]

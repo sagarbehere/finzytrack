@@ -3,7 +3,8 @@
 
 Written from the spec:
 - "Each engine leads its own process group ... Our end signals the whole group, so a plugin's child processes go too
-  and cannot keep the ledger-set locks: a `flock` lock is shared with every child that inherited its descriptor."
+  and cannot outlive their engine." (A `flock` lock, the engine lock included, is shared with every child that
+  inherited its descriptor.)
 - "Drain before the reap, never a group signal after it: wait for the leader with `waitid(P_PID, pid, WEXITED |
   WNOWAIT)` so it stays an unreaped zombie and its group id cannot be reused; signal the group until it has **no live
   member**; then `wait4(pid)` for the status, `ru_maxrss` and CPU. After the reap no signal is sent to that group:

@@ -4,13 +4,13 @@ usage (cwd = engine/): .venv/bin/python scripts/measure_save.py ROOT WORK_DIR [-
 ROOT is the ledger's root file (the demo generator's 54k ledger: backend/scripts/gen_demo.py --size 54k), WORK_DIR an
 empty scratch folder on the disk to measure (never a real ledger: every run saves into a fresh copy). Each run copies
 the ledger's folder, plans one appended transaction (a load of the candidate, as a preview would), then runs
-`ledger.save.run` on the real file-system port: the records, the locks, the gate, the durable order (no load: ADR-0068
-D1, S0070). Then the rebuild after it (`ledger.rebuild.run`, Beancount's own load; it must be `loaded`). It prints per
-run the total and each part, and the durable order's syncs (`F_FULLFSYNC` of a folder, of a file, the files created
-and synced) with their time: S0061's additions (the staging rename and its folder
-sync, `sync_file` per replaced file) are counted there. Then it undoes the save the way recovery does (the closed record
+`ledger.save.run` on the real file-system port: the records, the gate, the durable order (no load: ADR-0068 D1, S0070;
+no lock of its own: D3, D4, S0071). Then the rebuild after it (`ledger.rebuild.run`, Beancount's own load; it must be
+`loaded`). It prints per run the total and each part, and the durable order's syncs (`F_FULLFSYNC` of a folder, of a
+file, the files created and synced) with their time: S0061's additions (the staging rename and its folder sync,
+`sync_file` per replaced file) are counted there. Then it undoes the save the way recovery does (the closed record
 renamed back to `.open`, `restore.recover_journal`) and prints the restore's syncs. `--app`: an empty scratch folder for
-the app's machine-local folder (journal, backups, locks) when WORK_DIR is on another drive, as it is for a ledger on a
+the app's machine-local folder (journal, backups) when WORK_DIR is on another drive, as it is for a ledger on a
 drive without the swap (S0065: the journal and backups stay on the Mac's disk, INV-27, INV-30); the default is inside
 WORK_DIR. The engine reads no clock in product code (EP-10); this measurement script is not product code.
 """
@@ -28,7 +28,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from ledger_engine.fs.darwin import DarwinLegacyLocks, DarwinLocks, for_this_os
+from ledger_engine.fs.darwin import for_this_os
 from ledger_engine.fs.port import DirHandle, FileSystem, Resolved
 from ledger_engine.ledger import overlay, rebuild
 from ledger_engine.ledger import save as sv
@@ -131,7 +131,7 @@ def one_run(src: Path, work: Path, n: int, app: Path | None = None) -> None:
     shutil.copytree(src.parent, folder / "L")
     root = folder / "L" / src.name
     ald = (app if app is not None else folder) / f"app{n}"
-    (ald / "locks").mkdir(parents=True)
+    ald.mkdir(parents=True)
     policy = DesktopPolicy()
     pre = root.read_bytes()
     t0 = time.perf_counter()
@@ -150,7 +150,6 @@ def one_run(src: Path, work: Path, n: int, app: Path | None = None) -> None:
         changes=(Change(str(root), sha256(pre), pre + TXN),),
         fingerprint=fingerprint,
         mirror=digest(fingerprint),
-        legacy_locks=(),
         app_local_data=str(ald),
     )
     parts = Tally()
@@ -159,7 +158,7 @@ def one_run(src: Path, work: Path, n: int, app: Path | None = None) -> None:
     def observe(fp: Fingerprint) -> Fingerprint:
         return parts.time("observe", lambda: sv._observe(fp))  # pyright: ignore[reportPrivateUsage]
 
-    ports = sv.Ports(CountingFS(for_this_os(), durable), DarwinLocks(str(ald / "locks")), DarwinLegacyLocks(), observe)
+    ports = sv.Ports(CountingFS(for_this_os(), durable), observe)
     t0 = time.perf_counter()
     out = sv.run(plan, ports, Job())
     total = time.perf_counter() - t0
@@ -175,7 +174,7 @@ def one_run(src: Path, work: Path, n: int, app: Path | None = None) -> None:
     os.rename(jd / f"{name}.closed", jd / f"{name}.open")
     undo = Tally()
     t0 = time.perf_counter()
-    res = recover_journal(CountingFS(for_this_os(), undo), DarwinLocks(str(ald / "locks")), str(jd), name)
+    res = recover_journal(CountingFS(for_this_os(), undo), str(jd), name)
     say(f"  restore: {time.perf_counter() - t0:.2f} s, {type(res).__name__}; {undo.line()}")
     check(root.read_bytes() == pre, "the restore did not put the ledger back")
     shutil.rmtree(folder)

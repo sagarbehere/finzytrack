@@ -365,7 +365,7 @@
     },
     "InspectedFile": {
       "additionalProperties": false,
-      "description": "What stands at one file of a stopped journal now, and its kept copies (§11: Show both, Show it).",
+      "description": "What stands at one file of a stopped journal now, and its kept copies (§11: Show both, Show it).\n`backup_good`: a replaced file's backup is there and holds its old version (`recover_all.Inspected`).",
       "properties": {
         "path": {
           "minLength": 1,
@@ -408,6 +408,10 @@
             }
           ],
           "title": "Errno"
+        },
+        "backup_good": {
+          "title": "Backup Good",
+          "type": "boolean"
         }
       },
       "required": [
@@ -416,7 +420,8 @@
         "reachable",
         "now",
         "kept",
-        "errno"
+        "errno",
+        "backup_good"
       ],
       "title": "InspectedFile",
       "type": "object"
@@ -1440,6 +1445,7 @@
             "errno": null,
             "inspection": [
               {
+                "backup_good": true,
                 "created": false,
                 "errno": null,
                 "kept": [

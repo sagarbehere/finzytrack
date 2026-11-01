@@ -418,6 +418,10 @@ def test_the_try_result_decodes_to_its_fields() -> None:
     [main] = out.inspection
     assert main.kept[0].name == "main.bean.kept-s1-j7"
     assert main.kept[0].seen.sha256 == "0" * 64
+    assert main.backup_good is True, "S0071 round 2: the engine's word on the backup reaches the text"
+    missing = {k: v for k, v in ex["result"]["inspection"][0].items() if k != "backup_good"}
+    no_flag = {**ex, "result": {**ex["result"], "inspection": [missing]}}
+    assert isinstance(decoded(no_flag, "recover_try"), Violation), "an inspection without the flag is refused"
 
 
 def test_the_listing_decodes_to_its_fields() -> None:

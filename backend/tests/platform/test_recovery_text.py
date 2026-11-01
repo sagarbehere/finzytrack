@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import errno
 import os
+from dataclasses import replace
 
 import pytest
 
@@ -182,19 +183,20 @@ def test_the_keep_confirmation(reason: str, retry_may: bool) -> None:
     assert "The kept copy /L/accounts.beancount.kept-s1-j7 stays. Delete or move it before you use the ledger." in text
 
 
-def _with_missing(*missing: str) -> Blocking:
-    """A try stopped on a.bean (another program's file) while main.bean (and maybe more) is absent: on a drive
-    without the swap a power loss in the middle of a replace can leave it so (§6.8; S0071 red team F2)."""
+def _with_missing(*missing: str, good: bool = True, cause: str = "foreign") -> Blocking:
+    """A try stopped on a.bean (another program's file) while the files `missing` are absent: on a drive without the
+    swap a power loss in the middle of a replace can leave them so (§6.8; S0071 red team F2). `good`: the engine found
+    their backups holding the old versions (`backup_good`)."""
     files = ("/L/inc/a.bean", "/L/prices.bean", "/L/elsewhere/b.bean", "/L/d.bean", *(f"/L/{m}" for m in missing))
     journal = Journal(J.journal_dir, J.name, True, "k1", "lin1", tuple(JournalFile(f, f, False) for f in files))
     inspection = (
-        InspectedFile("/L/inc/a.bean", False, True, SEEN, (), None),
+        InspectedFile("/L/inc/a.bean", False, True, SEEN, (), None, True),
         InspectedFile("/L/prices.bean", True, True, None, (), None),  # created, not there: never "missing"
-        *(InspectedFile(f"/L/{m}", False, True, None, (), None) for m in missing),
-        InspectedFile("/L/elsewhere/b.bean", False, False, None, (), None),  # its folder is not there: unknown
-        InspectedFile("/L/d.bean", False, True, None, (), errno.EIO),  # the look failed: not known to be missing
+        *(InspectedFile(f"/L/{m}", False, True, None, (), None, good) for m in missing),
+        InspectedFile("/L/elsewhere/b.bean", False, False, None, (), None, True),  # its folder is not there: unknown
+        InspectedFile("/L/d.bean", False, True, None, (), errno.EIO, True),  # the look failed: not known to be missing
     )
-    return Blocking(journal, "stopped", "foreign", "/L/inc/a.bean", inspection=inspection)
+    return Blocking(journal, "stopped", cause, "/L/inc/a.bean", inspection=inspection)
 
 
 def test_a_replaced_file_found_missing_is_named_on_the_screen_and_in_the_keep_confirmation() -> None:
@@ -202,17 +204,49 @@ def test_a_replaced_file_found_missing_is_named_on_the_screen_and_in_the_keep_co
     b = _with_missing("main.bean")
     assert blocked_screen(b, WS).message == (
         "a.bean has an unfinished save from Personal that could not be undone. "
-        "main.bean is missing now. Finzytrack has the old version in its backup."
+        "main.bean is missing now. Finzytrack has its old version in its backup."
     )
     assert keep_confirmation(b, WS).endswith(
-        " main.bean is missing now and will stay missing. The old version is only in Finzytrack's backup."
+        " main.bean is missing now and will stay missing. Its old version is only in Finzytrack's backup."
     )
     two = _with_missing("main.bean", "c.bean")
-    assert "main.bean and c.bean are missing now. Finzytrack" in blocked_screen(two, WS).message
-    assert "main.bean and c.bean are missing now and will stay missing." in keep_confirmation(two, WS)
+    assert "main.bean and c.bean are missing now. Finzytrack has their old versions in its backup." in (
+        blocked_screen(two, WS).message
+    )
+    assert (
+        "main.bean and c.bean are missing now and will stay missing. Their old versions are only in Finzytrack's "
+        "backup."
+    ) in keep_confirmation(two, WS)
     nothing_missing = _with_missing()
     assert "missing" not in blocked_screen(nothing_missing, WS).message
     assert "missing" not in keep_confirmation(nothing_missing, WS)
+
+
+@pytest.mark.parametrize("cause", ["foreign", "backup_bad"])
+def test_a_missing_file_whose_backup_is_not_known_good_is_named_without_promising_the_backup(cause: str) -> None:
+    """S0071 round 2 (R2-1): a try that stops `backup_bad` at the missing file, or never reached its backup; the
+    engine's `backup_good` is False, so neither text claims a backup (and nothing else says "backup")."""
+    b = _with_missing("main.bean", good=False, cause=cause)
+    screen, keep = blocked_screen(b, WS).message, keep_confirmation(b, WS)
+    assert screen.endswith(" main.bean is missing now."), screen
+    assert keep.endswith(" main.bean is missing now and will stay missing."), keep
+    assert "backup" not in screen
+    assert "backup" not in keep
+    mixed = _with_missing("main.bean", "c.bean", good=False)
+    mixed = Blocking(
+        mixed.journal,
+        "stopped",
+        "foreign",
+        mixed.path,
+        inspection=tuple(replace(i, backup_good=True) if i.path == "/L/c.bean" else i for i in mixed.inspection or ()),
+    )
+    assert blocked_screen(mixed, WS).message.endswith(
+        " c.bean is missing now. Finzytrack has its old version in its backup. main.bean is missing now."
+    )
+    assert keep_confirmation(mixed, WS).endswith(
+        " c.bean is missing now and will stay missing. Its old version is only in Finzytrack's backup."
+        " main.bean is missing now and will stay missing."
+    )
 
 
 def test_the_delete_confirmations() -> None:

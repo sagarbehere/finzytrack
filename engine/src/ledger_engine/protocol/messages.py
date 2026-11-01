@@ -227,7 +227,8 @@ class KeptCopySeen(Message):
 
 
 class InspectedFile(Message):
-    """What stands at one file of a stopped journal now, and its kept copies (§11: Show both, Show it)."""
+    """What stands at one file of a stopped journal now, and its kept copies (§11: Show both, Show it).
+    `backup_good`: a replaced file's backup is there and holds its old version (`recover_all.Inspected`)."""
 
     path: AbsPath
     created: bool
@@ -235,6 +236,7 @@ class InspectedFile(Message):
     now: EntrySeen | None
     kept: list[KeptCopySeen]
     errno: int | None
+    backup_good: bool
 
 
 class RecoverTryResult(Message):
@@ -451,6 +453,7 @@ OPS: dict[str, OpSpec] = {
                         }
                     ],
                     "errno": None,
+                    "backup_good": True,
                 }
             ],
         },

@@ -1324,8 +1324,9 @@ def gone(pid: int) -> bool:
 @pytest.mark.skipif(os.name != "posix", reason="process groups and flock are POSIX; Windows is BL-0087")
 @pytest.mark.parametrize("how", ["cancel", "crash of the leader alone"])
 def test_a_plugins_child_holding_a_lock_is_ended_with_the_engine(tmp_path: Path, how: str) -> None:
-    """§5.2: "a plugin's child processes go too and cannot keep the ledger-set locks"; the end is reported only once
-    the group has no live member, so a next engine never starts beside a lock holder (§5.1)."""
+    """§5.2: "a plugin's child processes go too and cannot outlive their engine" (a lock it inherited included); the
+    end is reported only once the group has no live member, so a next engine never starts beside a lock holder
+    (§5.1)."""
     lock = tmp_path / "ledger.lock"
     child: list[int] = []
     ends = Ends(lambda: (lock_free(lock), bool(child) and gone(child[0])))

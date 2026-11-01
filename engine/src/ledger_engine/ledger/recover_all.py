@@ -178,7 +178,10 @@ class KeptCopy:
 @dataclass(frozen=True, slots=True)
 class Inspected:
     """One file of the record. `reachable` False: its folder is not there or no longer at its recorded path. `now`
-    None: nothing stands at the file. `errno`: a look that failed (then `now` and `kept` are what was seen before)."""
+    None: nothing stands at the file. `errno`: a look that failed (then `now` and `kept` are what was seen before).
+    `backup_good`: a replaced file's backup is there and holds the bytes the record names as its old version (hashed
+    again); False for a created file and whenever that is not known (S0071 round 2: the screen says "Finzytrack has
+    the old version in its backup" only then)."""
 
     path: str
     created: bool
@@ -186,6 +189,7 @@ class Inspected:
     now: Seen | None
     kept: tuple[KeptCopy, ...]
     errno: int | None = None
+    backup_good: bool = False
 
 
 def _seen(h: DirHandle, name: str, st: EntryStat | None) -> Seen | None:
@@ -199,6 +203,18 @@ def _seen(h: DirHandle, name: str, st: EntryStat | None) -> Seen | None:
     return Seen(Kind.FILE, sha256(data), len(data))
 
 
+def _backup_good(handles: Handles, record: Record, f: FileEntry) -> bool:
+    """`Inspected.backup_good`: the backup read again and hashed; any error, a moved folder or another entry there
+    is "not known good" (it never fails the inspection)."""
+    if f.pre is None or f.backup is None:
+        return False
+    try:
+        data = handles.at(record.backup_dir).read(f.backup)
+    except (OSError, PathMovedError):
+        return False
+    return data is not None and sha256(data) == f.pre
+
+
 def inspect(fs: FileSystem, record: Record) -> tuple[Inspected, ...]:
     """What the blocked screen shows for a journal (the module's docstring); writes nothing."""
     out: list[Inspected] = []
@@ -207,13 +223,14 @@ def inspect(fs: FileSystem, record: Record) -> tuple[Inspected, ...]:
         for f in record.files:
             parent, base = _parent(f.canonical_path)
             created = f.pre is None
+            good = _backup_good(handles, record, f)
             try:
                 h = handles.at(parent)
             except (PathMovedError, FileNotFoundError, NotADirectoryError):
-                out.append(Inspected(f.canonical_path, created, False, None, ()))
+                out.append(Inspected(f.canonical_path, created, False, None, (), backup_good=good))
                 continue
             except OSError as e:
-                out.append(Inspected(f.canonical_path, created, False, None, (), e.errno))
+                out.append(Inspected(f.canonical_path, created, False, None, (), e.errno, good))
                 continue
             now: Seen | None = None
             kept: list[KeptCopy] = []
@@ -225,9 +242,9 @@ def inspect(fs: FileSystem, record: Record) -> tuple[Inspected, ...]:
                         if seen is not None:
                             kept.append(KeptCopy(n, _join(parent, n), seen))
             except OSError as e:
-                out.append(Inspected(f.canonical_path, created, True, now, tuple(kept), e.errno))
+                out.append(Inspected(f.canonical_path, created, True, now, tuple(kept), e.errno, good))
                 continue
-            out.append(Inspected(f.canonical_path, created, True, now, tuple(kept)))
+            out.append(Inspected(f.canonical_path, created, True, now, tuple(kept), backup_good=good))
         return tuple(out)
     finally:
         handles.close()

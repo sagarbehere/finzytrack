@@ -200,7 +200,9 @@ class KeptCopySeen:
 
 @dataclass(frozen=True, slots=True)
 class InspectedFile:
-    """What stands at one file of a stopped journal now, and its kept copies (§11: Show both, Show it)."""
+    """What stands at one file of a stopped journal now, and its kept copies (§11: Show both, Show it).
+    `backup_good`: a replaced file's backup is there and holds its old version, hashed again by the engine; False
+    whenever that is not known (the text then promises no backup)."""
 
     path: str
     created: bool
@@ -208,6 +210,7 @@ class InspectedFile:
     now: EntrySeen | None
     kept: tuple[KeptCopySeen, ...]
     errno: int | None
+    backup_good: bool = False
 
 
 type TryOutcomeKind = Literal["resolved", "stopped", "failed"]
