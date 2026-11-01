@@ -140,7 +140,7 @@ def test_a_try_stops_at_the_created_path_with_what_stands_there_then_delete_it_a
     assert (out["outcome"], out["cause"]) == ("stopped", "created_path_taken")
     assert first["decision"] == {
         "table": "engine.recovery",
-        "version": 1,
+        "version": 2,
         "inputs": {"cause": "created_path_taken"},
         "output": "stopped",
     }

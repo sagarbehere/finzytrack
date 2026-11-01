@@ -531,6 +531,19 @@ def _real_volume_run(fs: DarwinFS, tmp_path: Path, ledger: Path) -> None:
     assert out5 == Resolved("s1-j1"), out5
     assert main.read_bytes() == b"; an editor\n"
     assert not [n for n in os.listdir(ledger) if ".ft-" in n]
+    # two outside entries at names of ours in one try each get their own kept name, on a drive without the
+    # exclusive rename too (S0071 red team F1: there the second plain rename replaced the first kept copy)
+    root5 = tmp_path / "fifth"
+    root5.mkdir()
+    c5 = _commit(root5, Change(str(main), sha256(b"; an editor\n"), b"post5\n"))
+    with pytest.raises(_Died):
+        durable_commit(_DyingFS(fs, ".closed"), c5)  # type: ignore[arg-type]
+    (ledger / ".main.bean.ft-s1-j1.tmp").write_bytes(b"X\n")
+    (ledger / ".main.bean.ft-restore-s1-j1.tmp").write_bytes(b"Y\n")
+    out6 = recover_journal(fs, c5.journal_dir, "s1-j1")
+    assert isinstance(out6, Stopped), out6
+    kept = sorted((ledger / n).read_bytes() for n in os.listdir(ledger) if ".kept-" in n and not n.startswith("._"))
+    assert kept == [b"X\n", b"Y\n"], kept
 
 
 @pytest.mark.parametrize(

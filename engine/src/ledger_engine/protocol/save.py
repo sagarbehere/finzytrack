@@ -29,7 +29,8 @@ from ledger_engine.protocol.messages import (
 from ledger_engine.protocol.recovery import BadParamsError, Decider, app_local_data_of
 
 TABLE: Final = "engine.save"
-TABLE_VERSION: Final = 2  # 2 (S0068): no `check_pending` or `check_failed` refusal (ADR-0067)
+TABLE_VERSION: Final = 3  # 2 (S0068): no `check_pending` or `check_failed` refusal (ADR-0067); 3 (S0071): no
+# `legacy_app_saving` refusal (ADR-0068 D4)
 
 
 class SaveJob(Decider, Protocol):

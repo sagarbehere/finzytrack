@@ -89,7 +89,7 @@ def test_a_save_sends_its_gate_lands_after_proceed_and_says_committed(setup: tup
     reply = json.loads(engine(ald).handle(request("save", params), channel))
     assert reply["ok"], reply
     assert reply["result"]["outcome"] == "saved"
-    assert reply["decision"]["table"] == "engine.save"
+    assert (reply["decision"]["table"], reply["decision"]["version"]) == ("engine.save", 3)
     events = [str(m["event"]) + (":" + str(m["phase"]) if "phase" in m else "") for m in channel.sent]
     assert events == ["gate", "progress:saving", "committed"]  # no load, no "checking_change" (S0070)
     assert main.read_bytes() == POST.encode()

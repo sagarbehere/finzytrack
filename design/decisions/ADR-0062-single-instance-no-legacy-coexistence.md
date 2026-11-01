@@ -2,7 +2,7 @@
 
 This record drops coexistence of v0.4 with a running legacy app on a shared ledger, removes Share workspaces, and makes v0.4 run as a single instance of itself.
 
-- **Status:** Accepted. **Superseded in part by ADR-0068 (2026-11-01):** decision 2's try of the legacy lock before a save is removed; Copy keeps it (D4, to be built: S0071); INV-26 is narrowed to match.
+- **Status:** Accepted. **Superseded in part by ADR-0068 (2026-11-01):** decision 2's try of the legacy lock before a save is removed; Copy keeps it (D4, built in S0071); INV-26 is narrowed to match.
 - **Date:** 2026-10-27
 - **Deciders:** owner: "Drop the coexistence policy; I approve the needed changes to INV-26 and ADR-0020. The rest of the pending work you have identified should be done." (2026-10-27, in session), answering the orchestrator's proposal in the same session: "My recommendation: adopt it and drop Share. Copy stays the default, so the old app never touches v0.4's files. v0.4 enforces a single instance of itself. If an old Finzytrack holds a ledger's lock anyway, v0.4 only detects it and refuses the save with "quit the old Finzytrack first"." That proposal followed the owner's own words the same day: "we can simplify it by taking the policy decision that no two instances of Finzytrack should be running at the same time; if the user does that, it's on them." What this ADR adds beyond the approved proposal is marked "(agent)": among it, Copy only also for external references, the lock file never created, the exact message text, the outcomes other than held and free, and the mechanism of the single instance.
 - **Area:** workspaces, lifecycle, data safety, desktop
@@ -70,4 +70,4 @@ Owner, 2026-10-31, in session, answering `design/inbox/answered/20261030-legacy-
 
 ## Note (2026-11-01): superseded in part by ADR-0068
 
-- Decision 2's try of the legacy lock before a save is removed; Copy keeps it (D4, to be built: S0071); INV-26 is narrowed to match (owner, 2026-11-01, in session: "I agree with 3,4,5,6, and 7." and "Yes, go ahead with all of those"; ADR-0068).
+- Decision 2's try of the legacy lock before a save is removed; Copy keeps it (D4, built in S0071); INV-26 is narrowed to match (owner, 2026-11-01, in session: "I agree with 3,4,5,6, and 7." and "Yes, go ahead with all of those"; ADR-0068).

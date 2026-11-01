@@ -2,7 +2,7 @@
 
 This record splits what a save checks into two jobs: checks that Finzytrack wrote exactly what was asked (they always block) and checks of the ledger's accounting (they only advise), and turns R4, the re-check after a save, into a comparison that shows a notice and never pauses saving.
 
-- **Status:** Accepted. **Superseded in part by ADR-0068 (2026-11-01):** decision 3 (R4 compares and shows a notice) is superseded: R4 is removed with the save's own load, and a background rebuild with Beancount's loader updates the screens after every save (D1, to be built: S0070). Decisions 1, 2 and 4 stand.
+- **Status:** Accepted. **Superseded in part by ADR-0068 (2026-11-01):** decision 3 (R4 compares and shows a notice) is superseded: R4 is removed with the save's own load, and a background rebuild with Beancount's loader updates the screens after every save (D1, built in S0070; its publish: BL-0113). Decisions 1, 2 and 4 stand.
 - **Date:** 2026-10-31
 - **Deciders:** owner. The owner questioned the premise "never write something Beancount would flag as an error": a user may deliberately record a balance assertion that fails (transactions still to enter) and use the failing `bean-check` as a reminder, and refusing by default blocks that intent. The orchestrator proposed this one ADR; the owner answered: **"Yes, draft that ADR. I'm approving it already, so go ahead and implement it."** (2026-10-31, in session, relayed by the orchestrator; S0068). Decisions 1 to 4 are that proposal; what this record adds within it is marked "(agent)".
 - **Area:** write path, data safety, engine
@@ -55,4 +55,4 @@ Example: the bank says your account holds 1,200.00 on 31 October, but you have e
 
 ## Note (2026-11-01): superseded in part by ADR-0068
 
-- Decision 3 (R4 compares and shows a notice) is superseded: R4 is removed with the save's own load, and a background rebuild with Beancount's loader updates the screens after every save (D1, to be built: S0070). Decisions 1, 2 and 4 stand (owner, 2026-11-01, in session: "I agree with 3,4,5,6, and 7." and "Yes, go ahead with all of those"; ADR-0068).
+- Decision 3 (R4 compares and shows a notice) is superseded: R4 is removed with the save's own load, and a background rebuild with Beancount's loader updates the screens after every save (D1, built in S0070; its publish: BL-0113). Decisions 1, 2 and 4 stand (owner, 2026-11-01, in session: "I agree with 3,4,5,6, and 7." and "Yes, go ahead with all of those"; ADR-0068).

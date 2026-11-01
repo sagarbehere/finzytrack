@@ -1,11 +1,11 @@
 """`canonical_path` and `path_key` as values (`design/specs/engine-jobs.md` §6.3; S0060). Pure.
 
-`path_key` is the identity of every lock, fingerprint entry, journal match and registry deduplication: the canonical
+`path_key` is the identity of every fingerprint entry, journal match and registry deduplication: the canonical
 spelling of the deepest existing ancestor joined with the rest as written, each component folded by the rule of the
 directory that holds it (macOS: NFD always, plus `casefold` on a case-insensitive volume). So the key of a path does
 not depend on whether its file exists: an absent `Prices.beancount` and the file a save then creates as
 `prices.beancount` on a case-insensitive volume have one key. Python's folding can only merge names a volume keeps
-apart, never split names it treats as one (§15: it fails closed, with more locking).
+apart, never split names it treats as one (§15: it fails closed).
 """
 
 from __future__ import annotations

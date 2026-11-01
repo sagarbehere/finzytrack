@@ -3,7 +3,7 @@
 
 - **The engine leads its own process group** (`start_new_session`), so a plugin's child processes are in it, and our
   end signals them too: a `flock` lock is shared with every child that inherited its descriptor, so a child left
-  alive would keep a ledger-set lock (and the engine lock).
+  alive would keep the engine lock.
 - **Drain before the reap, never a signal after it.** `EngineGroup.drain` (on the engine's reaper thread) waits for
   the leader with `waitid(P_PID, pid, WEXITED | WNOWAIT)`, so it stays an unreaped zombie and its group id cannot be
   reused; signals the group (`SIGKILL`) until it has no live member; then reaps it with `wait4`. From the moment the

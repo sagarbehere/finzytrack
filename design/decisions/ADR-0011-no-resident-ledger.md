@@ -2,7 +2,7 @@
 
 This record decides how the backend holds ledger data in memory and how it serializes writes and heavy work.
 
-- **Status:** Accepted. **Superseded in part by ADR-0068 (2026-11-01):** the save's "one full load" (the commit's load) is removed; the save does no load of its own (D1, to be built: S0070). The amendment of 2026-10-27's "The ledger-set file locks stay" no longer holds: the engine lock is the guard (D3, to be built: S0071). Amended by ADR-0064 (2026-10-27): the heavy-load semaphore and the per-workspace write limiter are replaced by one engine doing one job at a time.
+- **Status:** Accepted. **Superseded in part by ADR-0068 (2026-11-01):** the save's "one full load" (the commit's load) is removed; the save does no load of its own (D1, built in S0070). The amendment of 2026-10-27's "The ledger-set file locks stay" no longer holds: the engine lock is the guard (D3, built in S0071). Amended by ADR-0064 (2026-10-27): the heavy-load semaphore and the per-workspace write limiter are replaced by one engine doing one job at a time.
 - **Date:** 2026-10-24
 - **Deciders:** owner
 - **Area:** backend, performance, memory
@@ -50,4 +50,4 @@ Owner: "if we are not most of the way there, or if we can't asses that with conf
 
 ## Note (2026-11-01): superseded in part by ADR-0068
 
-- The save's "one full load" (the commit's load) is removed; the save does no load of its own (D1, to be built: S0070). The amendment of 2026-10-27's "The ledger-set file locks stay" no longer holds: the engine lock is the guard (D3, to be built: S0071) (owner, 2026-11-01, in session: "I agree with 3,4,5,6, and 7." and "Yes, go ahead with all of those"; ADR-0068).
+- The save's "one full load" (the commit's load) is removed; the save does no load of its own (D1, built in S0070). The amendment of 2026-10-27's "The ledger-set file locks stay" no longer holds: the engine lock is the guard (D3, built in S0071) (owner, 2026-11-01, in session: "I agree with 3,4,5,6, and 7." and "Yes, go ahead with all of those"; ADR-0068).

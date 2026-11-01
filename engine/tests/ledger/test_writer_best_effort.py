@@ -24,18 +24,22 @@ import pytest
 
 from ledger_engine.ledger.core.journal import State
 from ledger_engine.ledger.core.recovery import Cause
-from ledger_engine.ledger.recover_all import Done, keep
+from ledger_engine.ledger.recover_all import Done, inspect, keep
 from ledger_engine.ledger.restore import Resolved, Stopped
 from ledger_engine.ledger.writer import Landed, NotSaved, Reason, Unfinished, durable_commit, sha256
 from tests.fakes.memfs import Crash, MemFS
+from tests.ledger.test_recover_all import record_of
 from tests.ledger.test_writer import check_told
 from tests.ledger.worlds import (
+    BD,
     JD,
     NAME,
+    Target,
     World,
     check_disk,
     check_every_power_loss,
     check_recovered,
+    commit_for,
     journals,
     recover,
     world,
@@ -148,6 +152,41 @@ def test_an_outside_save_between_the_backup_and_the_replace_is_overwritten(volum
     assert isinstance(out, Landed), out
     assert w.fs.file(MAIN) == w.targets[2].post
     assert w.fs.file(f"/w/local/backups/{NAME}/2-main.bean") == w.targets[2].pre
+
+
+@pytest.mark.parametrize("volume", BEST_EFFORT)
+def test_an_editors_save_by_rename_after_the_commit_point_is_never_overwritten(volume: str) -> None:
+    """The one check left on such a volume (spec §6.8): just before its new bytes are written, the file must still be
+    the entry the gate saw (its identity). An editor that saved by writing a new file and renaming it over ours after
+    the commit point stops the save (`changed`); the editor's bytes stay. A write into the same entry, or a rename
+    while our new bytes are being written, is lost (ADR-0068 D2). S0071 verifier V2."""
+    w = world(volume=volume)
+
+    def editor() -> None:
+        w.fs.outside_write(MAIN, FOREIGN, new_inode=True)
+
+    _hook(w.fs, _put(volume, "/w/L/inc", "a.bean"), editor)  # the journal durable, as a.bean is replaced
+    out = durable_commit(w.fs, w.commit)
+    assert isinstance(out, Unfinished), out
+    assert out.reason is Reason.CHANGED, out
+    assert w.fs.file(MAIN) == FOREIGN
+
+
+def test_a_created_file_first_whose_path_was_taken_is_not_saved_and_replaced_nothing() -> None:
+    """A save whose first file is a created one, on a volume with the exclusive rename but no swap (HFS+): another
+    program's file at that path stops the save (`changed`) before any file is replaced, so the outcome is "not saved"
+    and the rollback has nothing to put back (`progress.replaced` stays false). S0071 verifier V3."""
+    fs = MemFS()
+    for d in (JD, BD):
+        fs.outside_mkdirs(d)
+    fs.outside_mkdirs("/w/L", no_swap=True, no_excl=False)
+    fs.outside_write(MAIN, b"m\n")
+    targets = (Target("/w/L/new.bean", None, b"n\n"), Target(MAIN, b"m\n", b"m2\n"))
+    _hook(fs, "rename /w/L:.new.bean.ft-s1-j7.new,new.bean", lambda: fs.outside_write("/w/L/new.bean", FOREIGN))
+    out = durable_commit(fs, commit_for(targets))
+    assert isinstance(out, NotSaved), out
+    assert (out.reason, out.path, out.open_journal) == (Reason.CHANGED, "/w/L/new.bean", True), out
+    assert (fs.file("/w/L/new.bean"), fs.file(MAIN)) == (FOREIGN, b"m\n")
 
 
 @pytest.mark.parametrize("volume", BEST_EFFORT)
@@ -355,10 +394,30 @@ def test_keep_keeps_the_files_as_they_are_even_with_one_missing() -> None:
     """Keep is the user's choice of the files as they are now (ADR-0068 D2: no refusal while a file is missing); the
     old version stays in the backup."""
     w, state = _missing_state()
+    seen = {i.path: i for i in inspect(state, record_of(state))}
+    assert (seen[MAIN].reachable, seen[MAIN].now, seen[MAIN].errno) == (True, None, None), "what the screen names"
     assert keep(state, JD, NAME) == Done()
     assert set(journals(state)) == {State.KEPT}
     assert state.file(MAIN) is None
     assert state.file(f"/w/local/backups/{NAME}/2-main.bean") == w.targets[2].pre
+
+
+@pytest.mark.parametrize("volume", BEST_EFFORT)
+def test_two_outside_saves_kept_in_one_try_each_get_their_own_kept_name(volume: str) -> None:
+    """Two foreign entries at names of ours beside one file, met in one recovery try: each goes to its own kept
+    name, neither replaces the other (S0071 red team F1: on a volume without the exclusive rename the kept name is
+    chosen by a check before the plain rename; without it the second plain rename replaced the first kept copy)."""
+    w = world(volume=volume)
+    w.fs.inject(clean_effects(volume).index(_put(volume, "/w/L", "main.bean")) + 1, crash=True)
+    with pytest.raises(Crash):
+        durable_commit(w.fs, w.commit)
+    x, y = b"; another program's bytes X\n", b"; another program's bytes Y\n"
+    w.fs.outside_write("/w/L/.main.bean.ft-s1-j7.tmp", x)
+    w.fs.outside_write("/w/L/.main.bean.ft-restore-s1-j7.tmp", y)
+    out = recover(w.fs)
+    assert isinstance(out, Stopped), out
+    kept = {n: w.fs.file(f"/w/L/{n}") for n in w.fs.names_in("/w/L") if ".kept-" in n}
+    assert sorted(kept.values(), key=lambda b: b or b"") == sorted([x, y]), kept
 
 
 @pytest.mark.parametrize("volume", BEST_EFFORT)

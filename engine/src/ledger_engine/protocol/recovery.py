@@ -51,7 +51,7 @@ from ledger_engine.protocol.messages import (
 )
 
 TABLE: Final = "engine.recovery"
-TABLE_VERSION: Final = 1
+TABLE_VERSION: Final = 2  # 2 (S0071): no `lock_held` cause (ADR-0068 D3)
 
 
 class BadParamsError(ValueError):

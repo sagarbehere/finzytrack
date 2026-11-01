@@ -22,7 +22,7 @@ ENGINE_LOCK_FILE = "engine.lock"
 
 
 def engine_lock_path(app_local_data: Path) -> Path:
-    """`app_local_data/locks/engine.lock`, beside the ledger-set locks (spec §5.1, §6.1 step 3)."""
+    """`app_local_data/locks/engine.lock` (spec §5.1; the one lock of the save since ADR-0068 D3)."""
     return app_local_data / LOCKS_FOLDER / ENGINE_LOCK_FILE
 
 

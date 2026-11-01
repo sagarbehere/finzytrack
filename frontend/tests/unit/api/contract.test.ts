@@ -53,7 +53,6 @@ describe('[S0046] the generated API types', () => {
       | 'CHANGE_OUTCOME_UNKNOWN'
       | 'LEDGER_EXTERNALLY_CHANGED'
       | 'WRITES_PAUSED'
-      | 'LEGACY_APP_SAVING'
       | 'CHANGE_NOT_SAVED'
       | 'INTERNAL'
     >()

@@ -28,7 +28,7 @@
   stdin EOF applies (S0035 independent verifier F6). **Both end the engine's whole group** (S0057; engine-jobs §5.2):
   the sidecar spawns the engine as the leader of its own process group, so on POSIX the watchdog and the
   end-of-input exit send `killpg(0, SIGKILL)`, the engine included, and a plugin's child cannot outlive the engine
-  holding a ledger lock. An engine that does not lead its group (run by hand or by a test) only exits: it never
+  holding the engine lock. An engine that does not lead its group (run by hand or by a test) only exits: it never
   signals a group that is not its own (`end_own_group`).
   On Windows the engine ends on stdin EOF when the sidecar is gone (its pipe closes), and the shell's Job Object
   (ARCHITECTURE.md §5) covers the sidecar and the engine.
@@ -281,7 +281,7 @@ def _gate(params: Message, ctx: JobContext) -> Message:
 
 
 def _child(params: Message, _: JobContext) -> Message:
-    """A stand-in for a plugin's child process holding a ledger lock: the engine takes a `flock` on `lock` and starts
+    """A stand-in for a plugin's child process holding a lock: the engine takes a `flock` on `lock` and starts
     a child that inherits the descriptor (so it holds the lock too) and sleeps."""
     assert isinstance(params, LockParams)  # noqa: S101 (the handler's own params model)
     import fcntl  # POSIX only (test op)
@@ -599,7 +599,7 @@ def leads_own_group() -> bool:
 
 def end_own_group(code: int) -> None:
     """End the engine: its whole process group when it leads one (engine-jobs §5.2: `killpg(0, SIGKILL)`, the engine
-    included, so a plugin's child cannot outlive it holding a ledger lock), else only itself. Never returns."""
+    included, so a plugin's child cannot outlive it holding the engine lock), else only itself. Never returns."""
     sys.stderr.flush()
     if leads_own_group():
         os.killpg(0, signal.SIGKILL)

@@ -182,6 +182,39 @@ def test_the_keep_confirmation(reason: str, retry_may: bool) -> None:
     assert "The kept copy /L/accounts.beancount.kept-s1-j7 stays. Delete or move it before you use the ledger." in text
 
 
+def _with_missing(*missing: str) -> Blocking:
+    """A try stopped on a.bean (another program's file) while main.bean (and maybe more) is absent: on a drive
+    without the swap a power loss in the middle of a replace can leave it so (§6.8; S0071 red team F2)."""
+    files = ("/L/inc/a.bean", "/L/prices.bean", "/L/elsewhere/b.bean", "/L/d.bean", *(f"/L/{m}" for m in missing))
+    journal = Journal(J.journal_dir, J.name, True, "k1", "lin1", tuple(JournalFile(f, f, False) for f in files))
+    inspection = (
+        InspectedFile("/L/inc/a.bean", False, True, SEEN, (), None),
+        InspectedFile("/L/prices.bean", True, True, None, (), None),  # created, not there: never "missing"
+        *(InspectedFile(f"/L/{m}", False, True, None, (), None) for m in missing),
+        InspectedFile("/L/elsewhere/b.bean", False, False, None, (), None),  # its folder is not there: unknown
+        InspectedFile("/L/d.bean", False, True, None, (), errno.EIO),  # the look failed: not known to be missing
+    )
+    return Blocking(journal, "stopped", "foreign", "/L/inc/a.bean", inspection=inspection)
+
+
+def test_a_replaced_file_found_missing_is_named_on_the_screen_and_in_the_keep_confirmation() -> None:
+    """Keep leaves a missing file missing (ADR-0068 D2), so the user is told before choosing it (§11)."""
+    b = _with_missing("main.bean")
+    assert blocked_screen(b, WS).message == (
+        "a.bean has an unfinished save from Personal that could not be undone. "
+        "main.bean is missing now. Finzytrack has the old version in its backup."
+    )
+    assert keep_confirmation(b, WS).endswith(
+        " main.bean is missing now and will stay missing. The old version is only in Finzytrack's backup."
+    )
+    two = _with_missing("main.bean", "c.bean")
+    assert "main.bean and c.bean are missing now. Finzytrack" in blocked_screen(two, WS).message
+    assert "main.bean and c.bean are missing now and will stay missing." in keep_confirmation(two, WS)
+    nothing_missing = _with_missing()
+    assert "missing" not in blocked_screen(nothing_missing, WS).message
+    assert "missing" not in keep_confirmation(nothing_missing, WS)
+
+
 def test_the_delete_confirmations() -> None:
     assert "the other program's version of accounts.beancount" in delete_kept_confirmation(
         "/L/accounts.beancount", "accounts.beancount.kept-s1-j7"

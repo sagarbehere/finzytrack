@@ -189,8 +189,13 @@ def keep(h: DirHandle, name: str, base: str, job: str, mode: Mode) -> str | None
     (`journal.kept_name`, exclusive), then sync the folder: nothing of ours ever deletes it, and the journal stops
     while it exists. None when every kept name is taken: the entry stays where it is, and the journal stops anyway
     (those kept names exist). `mode`: the folder's write mode (`move`). Owner, 2026-10-29: "Yes" (ADR-0013
-    amendment)."""
+    amendment). Where the volume has no exclusive rename (exFAT, FAT, network shares) the free name is chosen by a
+    check, then the plain rename: else a second outside save kept in the same try would replace the first (S0071 red
+    team F1); another program writing that kept name in the same instant is ADR-0068 D2's accepted loss."""
+    checked = mode is Mode.BEST_EFFORT and not h.caps().excl
     for n in range(1, MAX_KEPT + 1):
+        if checked and h.stat(kept_name(base, job, n)) is not None:
+            continue
         try:
             move(h, mode, name, kept_name(base, job, n))
         except FileExistsError:

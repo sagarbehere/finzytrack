@@ -63,6 +63,27 @@ def _kept_names(b: Blocking) -> list[str]:
     return []
 
 
+def _missing(b: Blocking) -> str | None:
+    """The replaced files a stopped try found absent, with their verb ("main.bean is", "a.bean and main.bean are"), or
+    None. On a drive without the swap a power loss can leave one missing (§6.8); Keep leaves it missing, so the screen
+    and the Keep confirmation name it (S0071 red team F2). A file the save was creating, or one whose folder is not
+    there or could not be read, is not counted."""
+    names = [
+        _name(i.path) for i in b.inspection or () if not i.created and i.reachable and i.now is None and i.errno is None
+    ]
+    if not names:
+        return None
+    if len(names) == 1:
+        return f"{names[0]} is"
+    return f"{', '.join(names[:-1])} and {names[-1]} are"
+
+
+def _missing_now(b: Blocking) -> str:
+    """§11's sentence for the stop screen when a replaced file is absent ("" when none is)."""
+    missing = _missing(b)
+    return "" if missing is None else f" {missing} missing now. Finzytrack has the old version in its backup."
+
+
 def _kept_copy(b: Blocking, workspace: str) -> Screen:
     """§11's kept-copy row (owner, 2026-10-29: "Offer to delete it (Recommended)"). Which of the two moved the outside
     save to its kept name is known only for a copy this try made (`displaced`, `outside_save_in_temp`: while undoing);
@@ -164,16 +185,18 @@ def _not_undone(b: Blocking, workspace: str) -> Screen:
 
 def blocked_screen(b: Blocking, workspace: str) -> Screen:
     """The blocked screen for one blocking journal (§11), `workspace` the display name of the journal's own
-    workspace."""
-    if b.reason == "stopped" and b.cause in KEPT_COPY_CAUSES:
-        return _kept_copy(b, workspace)
-    if b.reason == "stopped" and b.cause == CREATED:
-        return _created(b)
-    if b.reason == "stopped" and b.cause == PERMISSION:
-        return _permission(b, workspace)
-    if b.reason == "stopped":
-        return _stopped(b, workspace)
-    return _not_undone(b, workspace)
+    workspace. A stopped try that found a replaced file absent says so after its row's text (`_missing_now`)."""
+    if b.reason != "stopped":
+        return _not_undone(b, workspace)
+    if b.cause in KEPT_COPY_CAUSES:
+        screen = _kept_copy(b, workspace)
+    elif b.cause == CREATED:
+        screen = _created(b)
+    elif b.cause == PERMISSION:
+        screen = _permission(b, workspace)
+    else:
+        screen = _stopped(b, workspace)
+    return Screen(screen.message + _missing_now(b), screen.actions)
 
 
 def not_recovered_screen(n: NotRecovered) -> Screen:
@@ -197,7 +220,8 @@ def not_recovered_screen(n: NotRecovered) -> Screen:
 def keep_confirmation(b: Blocking, workspace: str) -> str:
     """§8.1 "Afterwards", ADR-0063: it lists the files it releases; for `cancelled`, `failed` and `not_tried` it says
     Retry may still undo the save (review 7 L6); a kept copy stays and must be deleted or moved first (owner,
-    2026-10-29)."""
+    2026-10-29); a replaced file a stopped try found absent stays missing, and its old version is only in the backup
+    (S0071 red team F2)."""
     files = ", ".join(_name(f.path) for f in b.journal.files) or "the files of this save"
     text = (
         f"Keep the files as they are now? Finzytrack will stop trying to undo the unfinished save in {workspace} "
@@ -205,6 +229,9 @@ def keep_confirmation(b: Blocking, workspace: str) -> str:
     )
     if b.reason in ("cancelled", "failed", "not_tried"):
         text += " Finzytrack has not tried, or not finished, undoing this save. Retry may still undo it."
+    missing = _missing(b)
+    if missing is not None:
+        text += f" {missing} missing now and will stay missing. The old version is only in Finzytrack's backup."
     kept = _kept_names(b)
     if kept:
         text += f" The kept copy {' and '.join(kept)} stays. Delete or move it before you use the ledger."
