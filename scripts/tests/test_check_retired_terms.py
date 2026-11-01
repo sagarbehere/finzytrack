@@ -158,20 +158,42 @@ RETIRED_LINES = {
     "an empty file is another program's": "missing (absent; an empty file there is another program's and stops the try)",
     "reconciliation job": "full loads only from `ledger/overlay.py` and the reconciliation job",
     "WRITES_PAUSED says not saved": "Saving is paused in this workspace, so Finzytrack did not save your change.",
+    # S0070 (ADR-0068 D1): the re-check after a save and the save's own load, as the old design wrote them
+    "R4": "After every landed save the sidecar queues R4 to compare Beancount's load with the prediction.",
+    "r4_check": "the engine answers `r4_check` on one named closed record",
+    "`r4` job kind": "a newer save's `r4` takes the queued one's place",
+    "R4 module": "the sidecar's work is `engine_jobs.r4`; the check is `ledger/r4.py` over `protocol/r4.py`",
+    "R4 log event": "a difference is logged as `r4.differs`, an old record as `r4.not_compared`",
+    "R4_DIFFERS": "the notice's code is `R4_DIFFERS`",
+    "replace_queued": "the queue's `replace_queued` swaps the waiting job",
+    "checking_last_change": "the phase `checking_last_change` is shown",
+    "Checking your last change": "\"Checking your last change…\" until it ends",
+    "adopted digest": "the closed record stores the adopted digest of the commit's load (`adopted_digest`)",
+    "post fingerprint": "the record carries the post fingerprint (`post_fingerprint`) for the comparison",
+    "parse digest": "the save computes a parse digest of the edited files",
+    "digest module": "the digest of a load result is `ledger/digest.py` (`ledger.digest`)",
+    "load_refused": "a refused commit load ends the save `load_refused`",
+    "reconcile load": "only the reconciliation load (`reconcile_load`, `RECONCILE_LOADS`) uses Beancount's own loader",
 }
 # Words the audit says must never be refused, in the senses the current design uses them.
 TRAP_LINES = [
     # S0068: the current design's own words about R4 and the preview pass
-    "R4 compares and shows a notice; it gates nothing (ADR-0067).",
     "the closed record is the save's last state; a mismatch of the fingerprint refuses `LEDGER_EXTERNALLY_CHANGED`",
-    "R4 says `differs`; `pass` and `superseded` show nothing",
     "the preview lists the new errors and the user may save anyway",
     # S0069 (ADR-0068): the current design's own words pass
     "Your change was not saved. Finzytrack could not check whether your ledger changed.",
     "no \"read your ledger differently\" notice: the screens show Beancount's own result",
     "the second line of the table; a lock is kept for that read",
     "an empty ledger file at a created path is asked about; Keep the files as they are now",
-    "R4 is removed (ADR-0068 D1); the rebuild shows Beancount's result",
+    "the re-check after a save is removed (ADR-0068 D1); the rebuild shows Beancount's result",
+    # S0070 (ADR-0068 D1): the model's own names, the dogfood rules' numbering and words that only contain the letters
+    "the model's `R4_Start`, `R4_Load` and `R4_Check` are the code's rebuild; `NeedR4`; the mutant `r4_only`",
+    "the switch no longer waits for it (`switch_waits_for_r4`); `save_waits_r4_forever`",
+    "S0061 red team r4 F1; the r4 probe on APFS; R40 and AR4 are other names",
+    "the rebuild's `loaded` and `moved`; `rebuild.loaded`, `rebuild.not_loaded`; `real_load` and `REAL_LOADS`",
+    "the preview's `Loaded.fingerprint` is the plan's fingerprint, `ledger_set.as_before`; a parse of the file",
+    "bank reconciliation; reconcile the statement; the digest of the DDL; a load that was refused",
+    "`encrypted_file` is refused; Checking… until the rebuild ends; checking your files",
         # S0068 verifier r1 F7: the unfinished save's pause is current
     "Finzytrack could not finish saving a change, so saving is paused in this workspace.",
     "new errors are listed in a preview and written only if the user saves anyway; the user acknowledged the notice",
@@ -606,10 +628,12 @@ class LiveModelDocsAfterS0068Review(unittest.TestCase):
         index = (
             "| ADR | Title | Status |\n|---|---|---|\n"
             "| [ADR-0006](ADR-0006-frontend-framework-react.md) | Frontend framework: React | Superseded |\n"
-            "| [ADR-0064](ADR-0064-x.md) | One engine | Accepted; the R4 gate stays |\n"
+            "| [ADR-0064](ADR-0064-x.md) | One engine; R4 after the reply | Accepted; the R4 gate stays |\n"
         )
         done = self.run_on({"design/decisions/README.md": index})
         self.assertEqual(done.returncode, 1, done.stdout + done.stderr)
         hits = [line for line in done.stdout.splitlines() if line.startswith("design/decisions/README.md:")]
-        self.assertEqual(len(hits), 1, hits)
-        self.assertIn("README.md:4: retired term 'R4 gate'", hits[0])
+        # S0070: the status cell's "R4" is refused too; the title cell's "R4" is the ADR's own (history)
+        self.assertEqual(len(hits), 2, hits)
+        self.assertEqual({h.split(": retired term ")[1].split("'")[1] for h in hits}, {"R4 gate", "R4"}, hits)
+        self.assertTrue(all(h.startswith("design/decisions/README.md:4:") for h in hits), hits)

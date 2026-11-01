@@ -25,7 +25,7 @@ class LoadError:
     entry: None
     def __init__(self, source: dict[str, Any], message: str, entry: None = None) -> None: ...
 
-# The loader's internals the reconciliation loads wrap (`beancount_port.reconcile_load`; BL-0118):
+# The loader's internals the real load wraps (`beancount_port.real_load`, the rebuild after a save; BL-0118):
 # `load_file` without its pickle cache.
 def _load(
     sources: list[tuple[str, bool]],

@@ -109,3 +109,7 @@ The area review also found a High defect: a second background save while one is 
 - INV-01, INV-10, INV-22, INV-26; EP-19, EP-30
 - Backlog: BL-0106 (preview), BL-0113 (publish), BL-0166 (open notice), BL-0177 (price planner join), BL-0178 to BL-0181 (S0070 to S0073)
 - Journal: `design/journal/S0069-step-back.md`
+
+## Note (2026-11-01): D1 built (S0070)
+
+D1 is built (`design/journal/S0070-save-no-load.md`). Within D1 the implementer decided (agent): the save refuses a change to an encrypted file name itself (ADR-0059), since no load meets it now; the rebuild after a save is sent uncounted, so its engine death is no stop toward the restart bound (the area review's F2 recommendation); a moved disk tries again in a fresh engine, at most 3 tries; the journal format goes to 4 (no prediction fields; older formats unreadable). The "Checking…" text and the screens' update come with the mirror publish (BL-0113). Measured at 54k entries: the save 1.81 s → 0.096-0.122 s; the rebuild after the reply 1.31-1.32 s.

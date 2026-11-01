@@ -12,7 +12,7 @@ exists. Equal fingerprints mean the next load reads the same inputs; that is the
 (ADR-0008 step 4, ADR-0013) and the mirror's freshness (ADR-0015) rely on. The one input of a load left out on purpose
 is each file's mtime and size, which Beancount reads only into `options["input_hash"]` (its cache key; no entry, error
 or other option depends on it): a fingerprint that held them would change on every `touch`. A digest that compares two
-loads' results must therefore leave `input_hash` out (R4, TODO(BL-0118)).
+loads' results must therefore leave `input_hash` out.
 
 Content hashes, not `(mtime, size)` as ADR-0015 first wrote: an edit that keeps the size within the clock's
 resolution, or a tool that restores the mtime, would pass a stat (ADR-0064's spec, S0051 journal).

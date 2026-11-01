@@ -206,6 +206,8 @@ def test_a_save_that_lands_is_saved_and_its_engine_is_retired(make: Any) -> None
 def test_each_engine_answer_is_its_code(
     make: Any, result: dict[str, object], want_code: str, want_details: object
 ) -> None:
+    """S0070's `encrypted_file` case is a @regression-guard: the base already mapped an unknown refusal to `INTERNAL`;
+    the case pins that the save's own encrypted refusal never reads as saved or as a pause."""
     rig = make({"save": [Gated(result) if result["outcome"] in ("not_saved", "unfinished") else result]})
     value = rig.save()
     assert code(value) == want_code

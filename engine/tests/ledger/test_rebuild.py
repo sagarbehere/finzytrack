@@ -140,6 +140,19 @@ def test_a_documents_root_outside_the_set_is_moved_with_it(root: Path) -> None:
     assert rebuild.run(rebuild.Ports(), a.fingerprint, FakeJob()).outcome == "loaded"
 
 
+def test_a_document_file_outside_the_set_is_moved_with_it(root: Path) -> None:
+    """S0070 mutant `wider-document-files`: a `document` entry an outside edit added after the save names a file the
+    set does not; the load used it, so the rebuild tries again with it in the set."""
+    hint = hint_of(root)
+    receipt = root.parent / "receipt.pdf"
+    receipt.write_bytes(b"%PDF-1.4\n")
+    root.write_bytes(MAIN + b'2026-01-03 document Assets:Cash "receipt.pdf"\n')
+    a = rebuild.run(rebuild.Ports(), hint, FakeJob())
+    assert a.outcome == "moved"
+    assert str(receipt) in dict(a.fingerprint.document_files)
+    assert rebuild.run(rebuild.Ports(), a.fingerprint, FakeJob()).outcome == "loaded"
+
+
 def test_an_encrypted_file_is_never_decrypted(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """ADR-0059: the real load meets an encrypted include and raises; no `gpg` runs."""
     (root.parent / "secret.bean.gpg").write_bytes(b"\x85\x01not really")

@@ -16,8 +16,8 @@ rebuild or one re-planned save.
 
 Not observed yet: the source files of plugins from outside the engine's packages (TODO(BL-0124)).
 
-The save's gate and re-check call it inside the save job (`ledger.save`, S0063); the open's freshness check and R4
-will inside theirs (TODO(BL-0152)).
+The save's gate calls it inside the save job (`ledger.save`), the rebuild after a save before and after its load
+(`ledger.rebuild`, S0070); the open's freshness check will inside its job (TODO(BL-0152)).
 """
 
 from __future__ import annotations

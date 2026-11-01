@@ -85,3 +85,8 @@ Owner, 2026-10-31, in session: "Yes, draft that ADR. I'm approving it already, s
 ## Note (2026-11-01): superseded in part by ADR-0068
 
 - The save's own full load (step 3 run again inside the save) and the re-check after it, step 7's adoption of that load for the mirror, and the 2026-10-25 amendment's R4 re-check (as ADR-0067 left it), are removed; step 4 runs without the ledger-set locks (D3, S0071): the preview's load is the prediction and a background rebuild with Beancount's loader follows every save (D1, to be built: S0070) (owner, 2026-11-01, in session: "I agree with 3,4,5,6, and 7." and "Yes, go ahead with all of those"; ADR-0068).
+
+## Note (2026-11-01): ADR-0068 D1 built, the save's speed (S0070)
+
+- Built in S0070: the save does no Beancount load; after every landed save a background rebuild with Beancount's own loader (engine-jobs spec §6.1 steps 5, 6 removed, §6.7). Its publish to the screens is BL-0113.
+- **Speed at 54k entries** (the demo generator's ledger, one 8.7 MB file, APFS, the owner's Mac, `engine/scripts/measure_save.py`, 5 runs): the save takes 0.096-0.122 s from the records check to the closed record; the rebuild after the reply 1.31-1.32 s, which nobody waits for; the preview's load 1.37-1.49 s, before the confirm. Before S0070 the save took 1.81 s and the background re-check 1.70-1.71 s. The 5 s target (mirror update included) is measured again with the publish and the 12-file ledger in M1b (BL-0112).

@@ -236,6 +236,24 @@ ACTIVE: tuple[Term, ...] = (
     Term("an empty file is another program's", r"\ban empty file (?:there )?is another program's\b"),
     Term("reconciliation job", r"\breconciliation job\b"),
     Term("WRITES_PAUSED says not saved", r"\bsaving is paused in this workspace, so finzytrack did not save your change\b"),
+    # S0070 (ADR-0068 D1, BL-0178): the save does no Beancount load of its own and R4 is gone; a background rebuild
+    # with Beancount's own loader follows every landed save. R4 is matched as written, so the model's actions and
+    # names (`R4_Start`, `NeedR4`), which MAPPING.md maps to the rebuild, pass.
+    code("R4"),
+    code("r4_check"),
+    Term("`r4` job kind", r"`r4`"),
+    Term("R4 module", r"\b(?:engine_jobs|ledger|protocol)[./]r4\b"),
+    Term("R4 log event", r"\br4\.(?:differs|not_compared)\b"),
+    code("R4_DIFFERS"),
+    code("replace_queued"),
+    code("checking_last_change"),
+    Term("Checking your last change", r"\bchecking your last change\b"),
+    Term("adopted digest", r"\badopted[ _-]digests?\b"),
+    Term("post fingerprint", r"\bpost[ _-]fingerprints?\b"),
+    Term("parse digest", r"\bparse digests?\b"),
+    Term("digest module", r"\bledger[./]digest\b|\bdigest\.py\b"),
+    code("load_refused"),
+    Term("reconcile load", r"\breconcile_loads?\b|\bRECONCILE_LOADS\b|\breconciliation loads?\b"),
 )
 
 # TODO(BL-0109): the engine-jobs slice removes the per-request time limits (spec §5.5); it moves these into ACTIVE
@@ -258,6 +276,9 @@ ALLOW: tuple[Allow, ...] = (
           "a generator run under -I, not the engine process (S0057: the engine itself never runs under -I)"),
     Allow("design/specs/engine-jobs.md", "R4 gate", '"Owner A" is the owner\'s design of 2026-10-27 quoted in ADR-0064',
           "the owner's words of 2026-10-27, quoted verbatim, followed on the same line by their supersession (ADR-0067)"),
+    Allow("design/specs/engine-jobs.md", "R4", '"Owner A" is the owner\'s design of 2026-10-27 quoted in ADR-0064',
+          "the same quote (its attribution form is not one the quote rule takes); the line's next sentence says the "
+          "re-check is gone (ADR-0068 D1)"),
     Allow("design/INVARIANTS.md", "unless acknowledged", "*(Reworded with the owner's approval, 2026-10-31, ADR-0067",
           "INV-01's supersession note names the wording it replaced (owner, 2026-10-31)"),
     Allow("design/specs/engine-jobs.md", "admission", "There is no admission or memory check",
@@ -279,6 +300,8 @@ ALLOW: tuple[Allow, ...] = (
           "the redirect from the spec's old name (owner, 2026-10-27)"),
     Allow("design/specs/roadmap.md", "Share workspace or mode", "v0.4 has no Share mode (ADR-0062)",
           "the dogfood rule R5 tells the owner that Share mode does not exist"),
+    Allow("design/specs/roadmap.md", "R4", "- **R4. Beancount's own result after each write**",
+          "the dogfood rules' own number R4 (R1 to R6), not the removed re-check; the rule describes the rebuild"),
     Allow("design/ARCHITECTURE.md", "Share workspace or mode",
           "the design grew (parallel engines, Share workspaces, shared files between workspaces)",
           "§0's own history sentence, which introduces the Abandoned paragraph"),

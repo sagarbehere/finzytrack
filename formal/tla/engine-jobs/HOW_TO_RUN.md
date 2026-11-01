@@ -1,7 +1,10 @@
 # How to run the engine-jobs model checks
 
 The TLA+ model of `design/specs/engine-jobs.md` §13 (spec with simplification B of 2026-10-28: the engine lock, Back always recovers first; and of 2026-10-29: Retry recovers first too; model with fidelity review 4's fixes and simplification B, MAPPING.md §5). It runs as a plain shell script with Java;
-no AI is involved. MAPPING.md says what the model checks and how it maps to the spec.
+no AI is involved. MAPPING.md says what the model checks and how it maps to the spec. Since S0070 (ADR-0068 D1)
+the model is ahead of the code's simplification: its save's `S_Load` and `S_Recheck` have no effect in the code,
+and its background job after a save (`R4_Start`, `R4_Load`, `R4_Check`) is the code's rebuild after a save
+(MAPPING.md §2); S0072 cuts the model to durability (BL-0180). The model files and the numbers below are unchanged.
 
 ## Before the first run
 
@@ -62,7 +65,7 @@ Options: `--workers N` (TLC worker threads; default all cores), `--heap 12g` (de
 ## How long it takes
 
 Measured on the owner's Mac (Apple M4 Pro, 14 cores, 48 GB) on 2026-10-31 with 14 TLC workers, on the
-model after S0068 (ADR-0067: R4 is a background job with no disk effect; model sha256 e572cbc11832). Other work
+model after S0068 (ADR-0067: the job after a save, `R4_*`, is background work with no disk effect; model sha256 e572cbc11832). Other work
 may have loaded the Mac during these runs, so single times can be up to twice what a quiet Mac gives. Earlier
 models' numbers are in git history.
 
@@ -92,13 +95,13 @@ no counters (§13 requires that). Distinct states per second stayed at 50,000-90
 - `M_recover_temps`: 7,890,754 states in 207 s at 84c8b8c9; now an estimated 8-50 million, 2-12 minutes.
 - `L_save_all`: at 84c8b8c9 it passed 23.5 million states in 10 minutes with the queue
   almost at its peak (an estimated 50-100 million in all); now an estimated 50-600 million states,
-  between 10 minutes and 2 hours. S0068 removed R4's records and gate, so the worlds with a save shrank
+  between 10 minutes and 2 hours. S0068 removed the records and gate of the job after a save, so the worlds with a save shrank
   (`S_save_crash` 2,814,748 → 2,711,371); these estimates stand as upper bounds.
 - `L_session`, `L_recover_all`: at 84c8b8c9 the queue was still growing fast after 20 minutes (40-58
   million states); now likely beyond a billion states: many hours to a day each, and tens of GB of state
   files. Optional; one per night with `--only`.
 - Fidelity review 2 grew the small worlds by 1-2.5 times (`S_switch` 2,266,121 → 6,570,883; `LS_boot`
-  564,830 → 921,756): Cancel of a switch's own job, a power loss in the quit-note world, R4's sync step.
+  564,830 → 921,756): Cancel of a switch's own job, a power loss in the quit-note world, the sync step of the job after a save.
   The medium and large estimates above are from before it and may be low by that factor.
 - `L_save_deep`: a deeper `L_save_all` (two saves, two power losses, three starts): likely hours.
 - `L_world`: a bounded random simulation, not an exhaustive check (the whole world at once is far beyond a
