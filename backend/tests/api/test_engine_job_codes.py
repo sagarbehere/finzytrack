@@ -21,8 +21,9 @@ from app.api.envelope import Envelope
 from app.api.routes import declare
 from app.platform.engine_jobs.queue import JobSpec, QueuePolicy
 from app.platform.engine_jobs.save import ChangeText, NotDone, SaveRequest, save_spec, save_work
+from app.platform.engine_jobs.save_text import paused_text
 from app.platform.engine_jobs.scheduler import Done, EngineJobs, Failed, JobContext, JobTicket, Work, WorkResult
-from app.platform.errors import ErrorCode, spec_for
+from app.platform.errors import ErrorCode, WritesPausedDetails, spec_for
 from app.workspaces.access import Unknown
 from tests.api.support import Counted, body, client, make_app
 from tests.platform.fake_job_engine import FakeEngine
@@ -281,6 +282,9 @@ def test_a_save_refused_for_an_unfinished_save_is_writes_paused_with_its_reason(
     assert error["code"] == "WRITES_PAUSED"
     assert error["details"] == {"reason": "unfinished_save", "file": None}
     assert error["data_safe"] is False
+    # step-back area review F3: the change may be on disk until Reopen undoes it, so the message never says it was
+    # not saved (§11's own text, `save_text.paused_text`, never does)
+    assert error["message"] == "Finzytrack could not finish saving a change, so saving is paused in this workspace."
     # S0068 verifier r1 F5: the next step holds for both causes of §11, so it never promises an undo alone (a file
     # the save was creating is asked about, `created_path_taken`)
     assert error["next_step"] == (
@@ -316,3 +320,21 @@ def test_a_save_the_writer_refused_is_change_not_saved_with_its_reason_and_file(
         "unchanged": True,
     }
     conforms(app, payload)
+
+
+@pytest.mark.parametrize("file", [None, "new.bean"])
+def test_writes_paused_never_tells_the_user_the_change_was_not_saved(file: str | None) -> None:
+    """Step-back area review F3: every save outcome that maps to `WRITES_PAUSED` (an `.open` journal at step 1, a
+    rollback that failed, an engine that died past its gate with its journal open, a kept copy that stopped the undo:
+    `save.answer_of`, `save.save_outcome`) may have the change on disk until Reopen undoes it. The API's message and
+    next step, and §11's text for the same details, never say it was not saved or that the ledger is unchanged."""
+    spec = spec_for(ErrorCode.WRITES_PAUSED)
+    assert spec is not None
+    api = f"{spec.message} {spec.next_step}"
+    told = paused_text(WritesPausedDetails("unfinished_save", file))
+    for said in (api, told):
+        assert "not save" not in said
+        assert "unchanged" not in said
+        assert "Reopen" in said
+    assert told.startswith("Finzytrack could not finish")
+    assert spec.message.startswith("Finzytrack could not finish")

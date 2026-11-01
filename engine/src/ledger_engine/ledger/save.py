@@ -356,7 +356,7 @@ def _ensure_dir(fs: FileSystem, parent: str, name: str) -> str:
 
 
 def _name_taken(fs: FileSystem, plan: SavePlan) -> bool:
-    """§6.5 "One save, one name": a record of any state (or an R4 count) named `<session>-<job>` in this key's journal
+    """§6.5 "One save, one name": a record of any state named `<session>-<job>` in this key's journal
     folder, or a backups folder of that name. Names are compared case-folded (a case-insensitive volume). A folder that
     is absent holds nothing; one that cannot be read is step 1's to refuse (`unfinished_save`)."""
     name = journal.record_name(plan.session, plan.job).casefold()

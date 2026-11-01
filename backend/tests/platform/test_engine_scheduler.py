@@ -16,7 +16,11 @@ seconds, far above the time the event takes (EP-28 deviation, as in S0053 and S0
 from __future__ import annotations
 
 import faulthandler
+import hashlib
+import json
 import os
+import subprocess
+import sys
 import threading
 import time
 from collections.abc import Callable, Iterator
@@ -29,6 +33,7 @@ from app.platform.adapters.engine_client import EngineClient, EngineCommand
 from app.platform.adapters.engine_lock import engine_lock_path, wait_engine_lock
 from app.platform.engine import EndReason, EngineEnd, EngineEvent, EngineFailure, GateReached
 from app.platform.engine_jobs.queue import JobKind, JobSpec, QueuePolicy
+from app.platform.engine_jobs.save import ChangeText, Saved, SaveRequest, new_session_id, submit_save
 from app.platform.engine_jobs.scheduler import (
     Done,
     EngineJobs,
@@ -319,21 +324,79 @@ def test_a_request_beyond_max_queued_is_refused_with_engine_queue_full() -> None
         rig.close()
 
 
-def test_a_background_save_is_capped_at_one_queued_per_workspace(rig: Rig) -> None:
-    """§3: "The app keeps at most one queued `r4` and one queued background save per workspace"; model
-    `AppBgSave` (`~QHas(... j.k = "save" /\\ ~j.wf)`): a second one is the first one."""
+class Joinable:
+    """A background save's work that can take a later request's changes (ADR-0068 D8): `joined` answers the one work
+    that runs both (here: every name it was given), or None when it cannot."""
+
+    def __init__(self, *names: str, ran: list[str], can_join: bool = True) -> None:
+        self.names = names
+        self._ran = ran
+        self._can_join = can_join
+
+    def __call__(self, ctx: JobContext) -> WorkResult:
+        ctx.call("ok", {})
+        self._ran.extend(self.names)
+        return WorkResult(self.names)
+
+    def joined(self, later: Work) -> Work | None:
+        if not self._can_join or not isinstance(later, Joinable):
+            return None
+        return Joinable(*self.names, *later.names, ran=self._ran)
+
+
+def test_a_second_background_save_never_gets_the_first_ones_ticket(rig: Rig) -> None:
+    """ADR-0068 D8 (step-back area review F1, High): a second background save while one is queued is never answered
+    with the queued job's ticket unless its own changes are in that job; a work that cannot join is refused with its
+    own answer (`ENGINE_QUEUE_FULL`: nothing of it was saved). §3 still keeps one queued background save per
+    workspace (model `AppBgSave`)."""
     first = submit(rig, user("bql"), calls("block"))
     blocked(rig)
-    save = rig.jobs.submit_background_save(W1, calls("ok"))
+    ran: list[str] = []
+    save = rig.jobs.submit_background_save(W1, Joinable("A", ran=ran, can_join=False))
     again = rig.jobs.submit_background_save(W1, calls("ok"))
     assert isinstance(save, JobTicket)
-    assert isinstance(again, JobTicket)
-    assert again.id == save.id
+    assert code_of(again) == ErrorCode.ENGINE_QUEUE_FULL
     queued = rig.jobs.status().queue.queued
     assert [(j.kind, j.waited_for, j.owner) for j in queued] == [("save", False, "app")]
     rig.engine.release()
     assert isinstance(outcome(first), Done)
-    assert isinstance(outcome(save), Done)
+    assert outcome(save) == Done(("A",))
+    assert ran == ["A"]
+
+
+def test_a_second_background_save_joins_a_queued_one_that_can_take_its_changes(rig: Rig) -> None:
+    """ADR-0068 D8: a work that declares it can join (`joined`) takes the second request's changes; the queued job
+    runs both, once, and both requesters get that job's true outcome."""
+    first = submit(rig, user("bql"), calls("block"))
+    blocked(rig)
+    ran: list[str] = []
+    save = rig.jobs.submit_background_save(W1, Joinable("A", ran=ran))
+    again = rig.jobs.submit_background_save(W1, Joinable("B", ran=ran))
+    assert isinstance(save, JobTicket)
+    assert isinstance(again, JobTicket)
+    assert again.id == save.id
+    assert len(rig.jobs.status().queue.queued) == 1
+    rig.engine.release()
+    assert isinstance(outcome(first), Done)
+    assert outcome(save) == Done(("A", "B"))
+    assert outcome(again) == Done(("A", "B"))
+    assert ran == ["A", "B"]
+
+
+def test_a_join_that_declines_refuses_the_second_save_with_its_own_answer(rig: Rig) -> None:
+    """ADR-0068 D8: `joined` answering None (it cannot take these changes) leaves the queued job as it was and refuses
+    the second request; its changes ran nowhere."""
+    first = submit(rig, user("bql"), calls("block"))
+    blocked(rig)
+    ran: list[str] = []
+    save = rig.jobs.submit_background_save(W1, Joinable("A", ran=ran, can_join=False))
+    again = rig.jobs.submit_background_save(W1, Joinable("B", ran=ran))
+    assert isinstance(save, JobTicket)
+    assert code_of(again) == ErrorCode.ENGINE_QUEUE_FULL
+    rig.engine.release()
+    assert isinstance(outcome(first), Done)
+    assert outcome(save) == Done(("A",))
+    assert ran == ["A"]
 
 
 # -- Cancel (§4) ------------------------------------------------------------------------------------------------------
@@ -1047,18 +1110,44 @@ def test_close_leaves_a_job_past_its_commit_point_unanswered(rig: Rig) -> None:
     rig.engine.release("gate")
 
 
+def test_a_fresh_engine_asked_for_after_close_is_closed_never_a_hang(rig: Rig) -> None:
+    """Step-back area review F9: a save past its commit point that asks for a fresh engine after the scheduler closed
+    (its outcome read, §6.6) gets `closed` at once; before, it posted to a stopped scheduler and waited for ever."""
+    asked: list[EngineFailure | None] = []
+
+    def work(ctx: JobContext) -> WorkResult:
+        ctx.call("gate", {})
+        asked.append(ctx.fresh_engine())
+        return WorkResult(None)
+
+    submit(rig, user("save"), work)
+    wait_until(lambda: rig.engine.proceeded == 1)
+    rig.jobs.close()
+    rig.engine.release("gate")
+    wait_until(lambda: len(asked) == 1)
+    failure = asked[0]
+    assert isinstance(failure, EngineFailure)
+    assert failure.kind == "closed"
+
+
 # -- with the real client and engine (§14 "Cancel", "Engine") ------------------------------------------------------
 
 
-def real_rig(tmp_path: Path) -> tuple[EngineJobs, EngineClient]:
+def real_rig(tmp_path: Path, ends: list[EngineEnd] | None = None) -> tuple[EngineJobs, EngineClient]:
     if not (ENGINE_VENV / "bin" / "python").exists():
         pytest.fail("engine/.venv is missing: run `uv sync --locked` in engine/ (the engine tests need it)")
     lock = engine_lock_path(tmp_path)
     holder: list[EngineJobs] = []
+
+    def ended(end: EngineEnd) -> None:
+        if ends is not None:
+            ends.append(end)
+        holder[0].engine_ended(end)
+
     client = EngineClient(
         EngineCommand.for_venv(ENGINE_VENV, test_ops=True, engine_lock=lock),
         on_engine_spawned=lambda s: holder[0].engine_spawned(s),
-        on_engine_ended=lambda e: holder[0].engine_ended(e),
+        on_engine_ended=ended,
     )
     jobs = EngineJobs(client, wait_engine_lock=lambda: wait_engine_lock(lock), display_delay=DELAY)
     holder.append(jobs)
@@ -1226,5 +1315,72 @@ def test_with_the_real_engine_try_again_pressed_while_jobs_run_never_wedges_the_
             assert outcome(ticket) == Done({"status": "ok"}), f"job {i}: slot={q.slot} advice={q.advice}"
     finally:
         stop.set()
+        jobs.close()
+        client.close()
+
+
+_FINGERPRINT = """
+import json, sys
+from ledger_engine.ledger import overlay
+from ledger_engine.ledger.core.ledger_set import digest, encode
+from ledger_engine.ledger.policy import DesktopPolicy
+r = overlay.load(sys.argv[1], {}, DesktopPolicy())
+print(json.dumps({"fp": encode(r.fingerprint).decode(), "mirror": digest(r.fingerprint)}))
+"""
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="the save's swap and its checks are built for macOS first")
+def test_with_the_real_engine_a_save_job_lands_and_retires_its_engine(tmp_path: Path) -> None:
+    """@regression-guard (S0069; it passes on the base: the path works, it had no test). Step-back area review F6: the
+    sidecar's save job through the real client and engine, end to end, on a scratch
+    ledger: `Saved`, the disk at the post bytes, one `.closed` record, and the engine that loaded the ledger (user
+    code, §5.1) is not reused by the next job. The fingerprint is the one a preview would plan with (BL-0106)."""
+    ledger = tmp_path / "ledger"
+    ledger.mkdir()
+    main = ledger / "main.bean"
+    pre = b'option "operating_currency" "USD"\n2026-01-01 open Assets:Cash\n2026-01-01 open Expenses:Food\n'
+    main.write_bytes(pre)
+    post = pre + b'2026-01-02 * "Lunch"\n  Expenses:Food  5 USD\n  Assets:Cash\n'
+    fp = json.loads(
+        subprocess.run(  # noqa: S603 (the engine's own interpreter, a fixed script, a test path)
+            [str(ENGINE_VENV / "bin" / "python"), "-c", _FINGERPRINT, str(main)],
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout
+    )
+    app = tmp_path  # the engine lock's folder: the engine refuses another `app_local_data`
+    ends: list[EngineEnd] = []
+    jobs, client = real_rig(tmp_path, ends)
+    try:
+        boot = jobs.start()
+        assert isinstance(boot, JobTicket)
+        assert outcome(boot) == Done(None)
+        wait_until(lambda: not jobs.status().queue.exclusive)
+        jobs.workspace_opened(W1)
+        retired = sum(1 for e in ends if e.reason == "retire")
+        request = SaveRequest(
+            session=new_session_id(),
+            workspace_key="k1",
+            lineage="lineage-1",
+            root=str(main),
+            changes=(ChangeText(str(main), hashlib.sha256(pre).hexdigest(), post.decode()),),
+            fingerprint=fp["fp"],
+            mirror=fp["mirror"],
+            legacy_locks=(),
+            app_local_data=app,
+        )
+        ticket = submit_save(jobs, W1, request)
+        assert isinstance(ticket, JobTicket)
+        saved = outcome(ticket)
+        assert isinstance(saved, Done)
+        assert isinstance(saved.value, Saved)
+        assert main.read_bytes() == post
+        wait_until(lambda: (q := jobs.status().queue).running is None and not q.queued)
+        records = sorted(p.name for p in (app / "local" / "k1" / "journal").iterdir())
+        assert len(records) == 1
+        assert records[0].endswith(".closed")
+        wait_until(lambda: sum(1 for e in ends if e.reason == "retire") > retired)
+    finally:
         jobs.close()
         client.close()

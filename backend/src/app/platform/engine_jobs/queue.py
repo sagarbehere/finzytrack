@@ -30,7 +30,8 @@ product calls it. Each rule names its spec line.
 - **Admission** (§3): a job of a workspace that is not open is refused `WORKSPACE_NOT_OPEN` (INV-28); beyond
   `max_queued` queued jobs `ENGINE_QUEUE_FULL` (INV-10); a second queued `r4` or background save of one workspace is
   not queued (`AlreadyQueued`; every job is idempotent at its start, §2; the shell lets a newer save's R4 take the
-  queued one's place, S0068).
+  queued one's place, S0068, and a second background save joins the queued one only when its work can take the
+  changes, else it is refused: ADR-0068 D8).
 - **Cancel** (§4): the job's own requester cancels it, queued (removed; nothing ran) or running (its engine ended
   with reason `cancel`, recorded before the signal, so it is never a stop; §5.2), except past its commit point ("too
   late"). Cancel of a queued job applies **the one rule** to the job running ahead of it: that job is ended only when

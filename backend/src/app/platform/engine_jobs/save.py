@@ -214,8 +214,10 @@ def submit_save(
     jobs: EngineJobs, workspace: str, request: SaveRequest, *, background: bool = False
 ) -> JobTicket | Failed:
     """Queue a save (the user's, or the app's own in the background) whose landing queues its R4 as background work
-    (§6.1 step 11). At most one R4 waits per workspace (§3); a newer save's takes the queued one's place, since only
-    the newest save can still be compared with the disk (`EngineJobs.submit`'s `replace_queued`; S0068)."""
+    (§6.1 step 11). A background save of a fixed request cannot join a queued one (ADR-0068 D8: only a work that
+    plans when it runs can), so a second one while one is queued is refused with its own `ENGINE_QUEUE_FULL`. At
+    most one R4 waits per workspace (§3); a newer save's takes the queued one's place, since only the newest save can
+    still be compared with the disk (`EngineJobs.submit`'s `replace_queued`; S0068; R4 goes in S0070)."""
 
     def queue_r4(target: R4Target) -> None:
         jobs.submit(r4_spec(workspace), r4_work(request.app_local_data, target), replace_queued=True)

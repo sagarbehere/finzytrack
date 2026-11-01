@@ -54,7 +54,7 @@ import threading
 import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
-from typing import Final, Literal, Protocol
+from typing import Final, Literal, Protocol, runtime_checkable
 
 from app.domain.errors import DomainError
 from app.platform.engine import (
@@ -248,6 +248,16 @@ class JobTicket:
 type Work = Callable[[JobContext], WorkResult]
 
 
+@runtime_checkable
+class JoinableWork(Protocol):
+    """A background save's work that can take a later request's changes (ADR-0068 D8): `joined` returns the one work
+    that saves both (planned when it runs), or None when it cannot; then the later request is refused."""
+
+    def __call__(self, ctx: JobContext, /) -> WorkResult: ...
+
+    def joined(self, later: Work, /) -> Work | None: ...
+
+
 class JobContext:
     """The running job's way to its engine, given to its work on the job's worker thread."""
 
@@ -298,6 +308,7 @@ class _Worker:
         self._grant: Start | None = None
         self._refused: EngineFailure | None = None
         self._over = False
+        self._closed = False
         self._lost: EngineFailure | None = None
 
     def call(
@@ -327,11 +338,16 @@ class _Worker:
         self._post(_Feed(RetireEngine(self.job_id)))
         self._post(_Feed(EngineNeeded(self.job_id)))
         with self._cond:
-            self._cond.wait_for(lambda: self._grant is not None or self._over or self._refused is not None)
+            self._cond.wait_for(
+                lambda: self._grant is not None or self._over or self._refused is not None or self._closed
+            )
             grant, self._grant = self._grant, None
             refused, self._refused = self._refused, None
+            closed = self._closed
         if refused is not None:
             return refused
+        if grant is None and closed:
+            return EngineFailure("closed", "the scheduler has closed")
         if grant is None:
             return EngineFailure("cancelled", "the job has ended")
         with self._cond:
@@ -388,6 +404,14 @@ class _Worker:
     def end(self) -> None:
         with self._cond:
             self._over = True
+            self._cond.notify_all()
+
+    def close(self) -> None:
+        """The scheduler has closed while this job runs past its commit point: it finishes on its own engine, and a
+        fresh engine it asks for after this is `closed` at once (nothing would ever grant it; step-back area review
+        F9)."""
+        with self._cond:
+            self._closed = True
             self._cond.notify_all()
 
 
@@ -530,13 +554,17 @@ class EngineJobs:
     def submit(self, spec: JobSpec, work: Work, *, replace_queued: bool = False) -> JobTicket | Failed:
         """Queue a job; refused at once for a workspace that is not open or a full queue (§3). A kind the queue keeps
         one of (`AlreadyQueued`) answers with the queued job's ticket; with `replace_queued` that job will run `work`
-        instead of its own (the background R4: the newest save is the one to compare, §6.7; S0068)."""
+        instead of its own (the background R4: the newest save is the one to compare, §6.7; S0068; R4 goes in S0070).
+        A background save is the exception: see `submit_background_save` (ADR-0068 D8)."""
         return self._ask(lambda: self._submit(spec, work, boot=False, replace=replace_queued), self._closing())
 
     @tla_action("AppBgSave")
     def submit_background_save(self, workspace: str, work: Work) -> JobTicket | Failed:
         """A save the app starts itself (prices; §2): background, unconfirmed, and at most one queued per workspace
-        (§3; model `AppBgSave`): a second one is answered with the first one's ticket."""
+        (§3; model `AppBgSave`). Its work plans when it runs (ADR-0068 D8). A second one while one is queued joins it
+        only when the queued work can take its changes (`JoinableWork.joined`): both requesters then get that job's
+        outcome. Otherwise it is refused with its own answer (`ENGINE_QUEUE_FULL`); it never gets the queued job's
+        ticket, which would tell it "saved" for changes that job does not hold (step-back area review F1)."""
         spec = JobSpec(kind="save", workspace=workspace, waited_for=False, confirmed=False, owner="app")
         return self.submit(spec, work)
 
@@ -755,9 +783,15 @@ class EngineJobs:
                 case Queued(job=job):
                     return self._jobs[job.id].ticket
                 case AlreadyQueued(job_id=job_id):
+                    # still queued (`AlreadyQueued` names a queued job): it has not started, so its work may change
                     queued = self._jobs[job_id]
-                    if replace:
-                        queued.work = work  # still queued (`AlreadyQueued` names a queued job): it has not started
+                    if spec.kind == "save":  # a save's ticket is only ever its own changes' (ADR-0068 D8)
+                        joined = queued.work.joined(work) if isinstance(queued.work, JoinableWork) else None
+                        if joined is None:
+                            return Failed(error(ErrorCode.ENGINE_QUEUE_FULL))
+                        queued.work = joined
+                    elif replace:
+                        queued.work = work
                     return queued.ticket
                 case Refused(code="WORKSPACE_NOT_OPEN"):
                     details = WorkspaceNotOpenDetails(open_workspace=self._state.open_workspace, switching=False)
@@ -786,6 +820,8 @@ class EngineJobs:
         running = self._state.running
         for job_id, job in list(self._jobs.items()):
             if running is not None and running.job.id == job_id and running.past_commit:
+                if job.worker is not None:
+                    job.worker.close()
                 continue  # it finishes (§4); "not done" would be untrue, and the app is quitting (§9.3, BL-0154)
             job.box.answer(closing)
             if job.worker is not None:
