@@ -5,7 +5,8 @@ One save, one name `<session>-<job>`, one record that moves between states by re
 `.part` (being written; no replace has happened) → `.open` (the save may be half-applied) → `.closed` (saved; the
 last state, ADR-0067), or `.resolved` (put back), `.kept` (§6.5). The `.done` and `.mismatch` states and the
 `.r4-attempt-<n>` files of S0066-S0067 are gone (S0068): such files, written only by development builds, are not
-records here (`parse_file_name` gives None), so nothing reads or gates on them. The record never changes after it is
+records here (`parse_file_name` gives None), so nothing reads or gates on them; the history trim deletes them like
+history (`ledger.history`, S0074). The record never changes after it is
 written: every state is a rename, so the closed record's fields are written with the journal (engine build,
 workspace registry key and lineage id). It carries no prediction of the save's result (ADR-0068 D1, format 4).
 

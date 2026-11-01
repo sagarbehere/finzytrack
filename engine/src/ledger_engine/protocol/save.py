@@ -29,8 +29,8 @@ from ledger_engine.protocol.messages import (
 from ledger_engine.protocol.recovery import BadParamsError, Decider, app_local_data_of
 
 TABLE: Final = "engine.save"
-TABLE_VERSION: Final = 3  # 2 (S0068): no `check_pending` or `check_failed` refusal (ADR-0067); 3 (S0071): no
-# `legacy_app_saving` refusal (ADR-0068 D4)
+TABLE_VERSION: Final = 4  # 2 (S0068): no `check_pending` or `check_failed` refusal (ADR-0067); 3 (S0071): no
+# `legacy_app_saving` refusal (ADR-0068 D4); 4 (S0074): the history trim's counts among the inputs
 
 
 class SaveJob(Decider, Protocol):
@@ -124,7 +124,19 @@ def save(params: Message, ctx: SaveJob) -> Message:
     except BadPlanError as e:
         raise BadParamsError(str(e)) from None
     result = _result(out)
-    ctx.decide(TABLE, TABLE_VERSION, {"reason": result.reason, "unchanged": result.unchanged}, result.outcome)
+    trimmed = out.trimmed if isinstance(out, sv.Saved) else None
+    ctx.decide(
+        TABLE,
+        TABLE_VERSION,
+        {
+            "reason": result.reason,
+            "unchanged": result.unchanged,
+            "trimmed": None if trimmed is None else trimmed.removed,
+            "trim_left": None if trimmed is None else trimmed.left,
+            "trim_skipped": None if trimmed is None else trimmed.skipped,
+        },
+        result.outcome,
+    )
     return result
 
 

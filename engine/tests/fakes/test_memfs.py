@@ -634,3 +634,47 @@ def test_a_plain_rename_respects_lock_flags_and_permissions_like_a_removal() -> 
     with fs.open_dir("/d") as d, pytest.raises(PermissionError):
         d.rename("t", "f")
     assert fs.file("/d/f") == b"F"
+
+
+# -- modification times (S0074: the history trim orders a workspace's history by them) -------------------------------
+
+
+def _mtime(fs: MemFS, folder: str, name: str) -> int:
+    with fs.open_dir(folder) as d:
+        st = d.stat(name)
+    assert st is not None
+    return st.mtime_ns
+
+
+def test_an_entry_made_later_has_a_later_modification_time_and_a_rename_keeps_it() -> None:
+    fs = fs_with("/d")
+    fs.outside_write("/d/a", b"A")
+    with fs.open_dir("/d") as d:
+        d.create("b", b"B", 0o644)
+        d.mkdir("c")
+    a, b, c = (_mtime(fs, "/d", n) for n in "abc")
+    assert 0 < a < b < c
+    with fs.open_dir("/d") as d:
+        d.rename_excl("b", "b2")
+    assert _mtime(fs, "/d", "b2") == b  # a rename changes no file's modification time (POSIX)
+
+
+def test_a_folders_modification_time_moves_when_its_entries_change() -> None:
+    fs = fs_with("/d", "/d/sub")
+    before = _mtime(fs, "/d", "sub")
+    with fs.open_dir("/d/sub") as d:
+        d.create("x", b"X", 0o644)
+    made = _mtime(fs, "/d", "sub")
+    assert made > before
+    with fs.open_dir("/d/sub") as d:
+        d.remove("x")
+    assert _mtime(fs, "/d", "sub") > made
+
+
+def test_an_outside_program_may_set_any_modification_time_and_a_power_loss_keeps_it() -> None:
+    fs = fs_with("/d")
+    fs.outside_write("/d/a", b"A")
+    fs.outside_mtime("/d/a", 7)
+    assert _mtime(fs, "/d", "a") == 7
+    for state in fs.power_loss_states():
+        assert _mtime(state, "/d", "a") == 7

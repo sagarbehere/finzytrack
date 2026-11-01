@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import sys
 from pathlib import Path
 from typing import Any
@@ -89,7 +90,15 @@ def test_a_save_sends_its_gate_lands_after_proceed_and_says_committed(setup: tup
     reply = json.loads(engine(ald).handle(request("save", params), channel))
     assert reply["ok"], reply
     assert reply["result"]["outcome"] == "saved"
-    assert (reply["decision"]["table"], reply["decision"]["version"]) == ("engine.save", 3)
+    assert (reply["decision"]["table"], reply["decision"]["version"]) == ("engine.save", 4)
+    # S0074: the history trim's counts ride on the save's decision (content-free; nothing to trim here)
+    assert reply["decision"]["inputs"] == {
+        "reason": None,
+        "unchanged": False,
+        "trimmed": 0,
+        "trim_left": 0,
+        "trim_skipped": False,
+    }
     events = [str(m["event"]) + (":" + str(m["phase"]) if "phase" in m else "") for m in channel.sent]
     assert events == ["gate", "progress:saving", "committed"]  # no load, no "checking_change" (S0070)
     assert main.read_bytes() == POST.encode()
@@ -169,3 +178,22 @@ def test_save_outcome_reads_the_record_after_a_save(setup: tuple[Path, Path, dic
     assert reply["result"] == {"record": "closed", "unchanged": None, "path": None, "errno": None}
     reply = json.loads(e.handle(request("save_outcome", {**outcome, "job": "j8"}, 3)))
     assert reply["result"] == {"record": "none", "unchanged": False, "path": str(main), "errno": None}
+
+
+def test_a_landed_save_trims_its_workspaces_history_on_disk(setup: tuple[Path, Path, dict[str, Any]]) -> None:
+    """S0074 (spec §6.5): on APFS, through the op: 17 older `.closed` saves and the new one leave 16."""
+    _, ald, params = setup
+    journal, backups = ald / "local" / "k1" / "journal", ald / "local" / "k1" / "backups"
+    journal.mkdir(parents=True)
+    backups.mkdir()
+    for i in range(17):
+        (journal / f"s0-j{i:02d}.closed").write_bytes(b"{}")
+        (backups / f"s0-j{i:02d}").mkdir()
+        (backups / f"s0-j{i:02d}" / "0-main.bean").write_bytes(b"old")
+        os.utime(journal / f"s0-j{i:02d}.closed", ns=(i * 10**9, i * 10**9))
+    reply = json.loads(engine(ald).handle(request("save", params), Channel(1, proceed=True)))
+    assert reply["result"]["outcome"] == "saved", reply
+    assert reply["decision"]["inputs"]["trimmed"] == 2
+    assert sorted(p.name for p in backups.iterdir()) == sorted([*(f"s0-j{i:02d}" for i in range(2, 17)), "s1-j7"])
+    assert not (journal / "s0-j00.closed").exists()
+    assert not (journal / "s0-j01.closed").exists()

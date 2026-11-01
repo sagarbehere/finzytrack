@@ -43,6 +43,11 @@ A new file inherits a folder's `file_inherit` entries, a new folder its `directo
 fake fails closed where APFS would let an earlier allow win). `outside_lock` locks a file or a folder (`uchg`);
 `outside_remove` is the user deleting an entry, durably.
 
+**Modification times** (S0074): a logical clock (`tick`): an inode's time is set when it is made, a file's when its
+data is written, a folder's when the port makes, renames or removes an entry in it (an outside program's changes to
+a folder's entries leave its time); a rename keeps a file's. `outside_mtime` sets any time (a clock set back). A
+power-loss state keeps the times as they were.
+
 **Volumes without the swap** (S0065, probed on exFAT, FAT and HFS+ disk images): `outside_no_swap` (or
 `outside_mkdirs(..., no_swap=True, no_excl=...)`) puts a folder, and every folder made in it, on a volume without
 RENAME_SWAP, with RENAME_EXCL (HFS+) or without (exFAT, FAT, network shares); `caps` reports which, and the missing
@@ -215,6 +220,8 @@ class MemFS:
         self.on_effect: Callable[[int, str], None] | None = None
         self.stores_nfd = stores_nfd  # HFS+: every name stored in NFD, whatever spelling it was given (S0061 probe)
         self.lost_power = False  # a state a power loss left (`power_loss_states`), or one reached from such a state
+        self.mtimes: dict[int, int] = {}  # inode -> modification time, from a logical clock (`tick`)
+        self._clock = 0
 
     def stored(self, name: str) -> str:
         """The spelling the volume keeps for a name it is given."""
@@ -256,7 +263,14 @@ class MemFS:
         ino = self._next
         self._next += 1
         self.nodes[ino] = node
+        self.tick(ino)
         return ino
+
+    def tick(self, ino: int) -> None:
+        """The inode was made or changed now: its modification time is the clock's next value (a file's on a write, a
+        folder's when an entry is made, renamed or removed in it by the port; a rename keeps a file's)."""
+        self._clock += 1
+        self.mtimes[ino] = self._clock
 
     def _find(self, d: _Dir, name: str) -> tuple[str, int] | None:
         return d.entries.get(_key(name, d.ci))
@@ -375,6 +389,15 @@ class MemFS:
         if not isinstance(node, _File):
             raise IsADirectoryError(errno.EISDIR, "not a file")
         node.data = node.synced = data
+        self.tick(hit[1])
+
+    def outside_mtime(self, path: str, mtime_ns: int) -> None:
+        """`touch -t`, or a clock set back: the entry at `path` (not followed) gets this modification time."""
+        d, name = self._parent_and_name(path)
+        hit = self._find(d, name)
+        if hit is None:
+            raise FileNotFoundError(errno.ENOENT, "no entry")
+        self.mtimes[hit[1]] = mtime_ns
 
     def _at(self, path: str) -> _Node:
         _, ino, rest, _ = self._walk(path)
@@ -589,6 +612,8 @@ class MemFS:
         out.lost_power = True
         out.nodes = {}
         out._next = self._next
+        out.mtimes = dict(self.mtimes)
+        out._clock = self._clock
         for ino in reach:
             d = self.nodes[ino]
             assert isinstance(d, _Dir)
@@ -713,7 +738,15 @@ class MemDir:
         kind = {_File: Kind.FILE, _Dir: Kind.DIR, _Link: Kind.LINK, _Other: Kind.OTHER}[type(node)]
         mode = node.mode if isinstance(node, _File | _Dir) else 0o777
         locked = isinstance(node, _File | _Dir) and node.locked
-        return EntryStat(kind=kind, dev=1, ino=hit[1], nlink=self._fs.nlink(hit[1]), mode=mode, locked=locked)
+        return EntryStat(
+            kind=kind,
+            dev=1,
+            ino=hit[1],
+            nlink=self._fs.nlink(hit[1]),
+            mode=mode,
+            locked=locked,
+            mtime_ns=self._fs.mtimes.get(hit[1], 0),
+        )
 
     def _unlocked(self, key: str) -> None:
         """The entry `key` may be renamed away or removed: not locked, and its deletion allowed."""
@@ -807,17 +840,22 @@ class MemDir:
         self._writable()
         self._may_add()
         f = _File(data=b"", synced=b"", mode=mode & 0o7777)
+        made: list[int] = []
 
         def link() -> None:
             if key in d.entries:
                 raise FileExistsError(errno.EEXIST, "exists")
             f.acl = _inherited(d, "file_inherit")  # what the folder holds when the entry is made (S0061 r7)
             ino = self._fs._new(f)
+            made.append(ino)
             stored = self._fs.stored(name)
             d.entries[key] = (stored, ino)
             d.pending.append(("link", key, stored, str(ino)))
+            self._fs.tick(self._ino)
 
         def write() -> None:
+            if made:
+                self._fs.tick(made[0])
             f.data = data
             if source is not None:
                 if Right.READ_XATTRS in source.deny or _denies(source, "readextattr"):
@@ -849,6 +887,7 @@ class MemDir:
             self._unlocked(kb)
             _apply(d.entries, ("swap", ka, kb))
             d.pending.append(("swap", ka, kb))
+            self._fs.tick(self._ino)
 
         self._fs._effect(self._label("swap", a, b), do)
 
@@ -868,6 +907,7 @@ class MemDir:
             stored = self._fs.stored(dst)
             _apply(d.entries, ("rename", ks, kd, stored))
             d.pending.append(("rename", ks, kd, stored))
+            self._fs.tick(self._ino)
 
         self._fs._effect(self._label("rename", src, dst), do)
 
@@ -895,6 +935,7 @@ class MemDir:
                 d.pending += [("unlink", kd), ("rename", ks, kd, stored)]
             else:
                 d.pending.append(("move", ks, kd, stored))
+            self._fs.tick(self._ino)
 
         self._fs._effect(self._label("move", src, dst), do)
 
@@ -912,6 +953,7 @@ class MemDir:
             self._unlocked(key)
             del d.entries[key]
             d.pending.append(("unlink", key))
+            self._fs.tick(self._ino)
 
         self._fs._effect(self._label("remove", name), do)
 
@@ -936,6 +978,7 @@ class MemDir:
             stored = self._fs.stored(name)
             d.entries[key] = (stored, ino)
             d.pending.append(("link", key, stored, str(ino)))
+            self._fs.tick(self._ino)
 
         self._fs._effect(self._label("mkdir", name), do)
 
@@ -957,6 +1000,7 @@ class MemDir:
                 raise PermissionError(errno.EACCES, "delete denied")
             del d.entries[key]
             d.pending.append(("unlink", key))
+            self._fs.tick(self._ino)
 
         self._fs._effect(self._label("rmdir", name), do)
 

@@ -1591,3 +1591,16 @@ def test_the_volumes_capability_words_offer_a_call_only_when_its_bit_is_valid_an
     from ledger_engine.fs.darwin import caps_from
 
     assert caps_from(interfaces, valid) == want
+
+
+def test_stat_gives_the_entrys_own_modification_time_not_a_links_target(fs: DarwinFS, tmp_path: Path) -> None:
+    """S0074: the history trim orders a workspace's history by it (`EntryStat.mtime_ns`, lstat's `st_mtime_ns`)."""
+    (tmp_path / "f").write_bytes(b"F")
+    os.utime(tmp_path / "f", ns=(1_000_000_000, 2_000_000_000))
+    (tmp_path / "l").symlink_to(tmp_path / "f")
+    with fs.open_dir(str(tmp_path)) as d:
+        f, link = d.stat("f"), d.stat("l")
+    assert f is not None
+    assert link is not None
+    assert f.mtime_ns == 2_000_000_000
+    assert link.mtime_ns == os.lstat(tmp_path / "l").st_mtime_ns != 2_000_000_000

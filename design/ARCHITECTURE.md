@@ -255,6 +255,9 @@ engine/src/ledger_engine/
     rebuild.py   the rebuild after a save (engine-jobs §6.7, S0070): Beancount's own loader without the pickle
                  cache between two observations of the ledger set; `loaded` with counts, or `moved` with the set
                  to try next; protocol/rebuild.py its op rebuild (the publish: BL-0113)
+    history.py   the history trim after a landed save, in the save's engine (engine-jobs §6.5, S0074): the newest
+                 16 of each kind kept in the key's journal and backups folders; never an `.open` or `.part`
+                 journal or its backups, nor the save that just landed; core/history.py the pure choice
     core/recovery.py  the per-file judgement of recovery (pre, post or a stop; the temp rule) (S0061)
     paths.py     canonical_path, path_key over `fs.port` (engine-jobs §6.3; S0060); core/paths.py the folding
     core/journal.py  the write-intent journal's record: fields, versioned encoding, names (ADR-0012; S0060)

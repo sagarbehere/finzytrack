@@ -93,7 +93,9 @@ class Kind(StrEnum):
 @dataclass(frozen=True, slots=True)
 class EntryStat:
     """One entry, not followed through a link (`lstat`). `locked`: an immutable or append-only flag is set
-    (`uchg`, `schg`, `uappnd`, `sappnd`): the entry cannot be swapped, renamed or removed."""
+    (`uchg`, `schg`, `uappnd`, `sappnd`): the entry cannot be swapped, renamed or removed. `mtime_ns`: its modification
+    time (`st_mtime_ns`; a rename keeps it, a folder's moves when its entries change); only the history trim reads it,
+    to tell older history from newer (S0074; spec §6.5), never to decide what may be deleted."""
 
     kind: Kind
     dev: int
@@ -101,6 +103,7 @@ class EntryStat:
     nlink: int
     mode: int
     locked: bool
+    mtime_ns: int = 0
 
     @property
     def identity(self) -> tuple[int, int]:

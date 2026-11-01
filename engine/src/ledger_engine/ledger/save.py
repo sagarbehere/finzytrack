@@ -23,7 +23,9 @@ retires its engine after it (the safe default). Its steps:
 8. `writer.durable_commit` (§6.1 step 8), after the workspace's journal and backups folders exist and every folder
    from `app_local_data` down to them has a durable entry (its parent synced, whether it was made now or not). The
    record carries no prediction (journal format 4).
-9. `job.committed()` once it `Landed`.
+9. `job.committed()` once it `Landed`; then the history trim of this workspace key (§6.5, `ledger.history`: the
+   newest 16 of each kind kept; never an `.open` journal or its backups, nor this save's record), whose errors never
+   change the outcome.
 10. The sidecar queues the background rebuild with Beancount's own loader (§6.7, `ledger.rebuild`); `Saved.published`
     stays False.
 11. The engine is retired by the sidecar.
@@ -51,7 +53,7 @@ from typing import Final, Literal, Protocol
 
 from ledger_engine.fs.port import FileSystem
 from ledger_engine.ledger import fingerprint as _fingerprint
-from ledger_engine.ledger import overlay
+from ledger_engine.ledger import history, overlay
 from ledger_engine.ledger.core import journal
 from ledger_engine.ledger.core import paths as core_paths
 from ledger_engine.ledger.core.journal import Record, State
@@ -136,10 +138,12 @@ class Ports:
 @dataclass(frozen=True, slots=True)
 class Saved:
     """The closed record is durable (§6.1 step 8.5): the save has landed. `published`: the save published the mirror
-    itself (never: the rebuild after it does, §6.7)."""
+    itself (never: the rebuild after it does, §6.7). `trimmed`: what the history trim after it did (§6.5; None: it
+    did not run)."""
 
     record: Record
     published: bool = False
+    trimmed: history.Trimmed | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -386,7 +390,9 @@ def _gated(
     out = durable_commit(ports.fs, commit)  # step 8
     if isinstance(out, Landed):
         job.committed()  # step 9
-        return Saved(out.record)
+        # §6.5's history trim, in this engine, after "saved" was sent; it never fails the save (`ledger.history`)
+        trimmed = history.trim(ports.fs, plan.app_local_data, plan.workspace_key, out.record.name)
+        return Saved(out.record, trimmed=trimmed)
     return out
 
 

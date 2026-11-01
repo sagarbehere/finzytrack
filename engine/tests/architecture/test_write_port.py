@@ -21,10 +21,12 @@ WRITE_PATH = (
     "ledger/save.py",  # S0063: its writes go through the port; it reads only through the load and the fingerprint
     "ledger/rebuild.py",  # S0070: it reads through the real load and the fingerprint, and writes nothing
     "ledger/handles.py",
+    "ledger/history.py",  # S0074: the history trim deletes only through the port
     "ledger/paths.py",
     "ledger/core/journal.py",
     "ledger/core/paths.py",
     "ledger/core/recovery.py",
+    "ledger/core/history.py",
 )
 DISK = frozenset({"os", "io", "shutil", "pathlib", "tempfile", "fcntl", "ctypes", "posix", "mmap", "glob"})
 OS_LEVEL = frozenset({"ctypes", "fcntl"})
