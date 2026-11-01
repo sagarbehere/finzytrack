@@ -2,7 +2,7 @@
 
 This record decides how the backend holds ledger data in memory and how it serializes writes and heavy work.
 
-- **Status:** Accepted. Amended by ADR-0064 (2026-10-27): the heavy-load semaphore and the per-workspace write limiter are replaced by one engine doing one job at a time.
+- **Status:** Accepted. **Superseded in part by ADR-0068 (2026-11-01):** the save's "one full load" (the commit's load) is removed; the save does no load of its own (D1, to be built: S0070). The amendment of 2026-10-27's "The ledger-set file locks stay" no longer holds: the engine lock is the guard (D3, to be built: S0071). Amended by ADR-0064 (2026-10-27): the heavy-load semaphore and the per-workspace write limiter are replaced by one engine doing one job at a time.
 - **Date:** 2026-10-24
 - **Deciders:** owner
 - **Area:** backend, performance, memory
@@ -48,3 +48,6 @@ Owner: "if we are not most of the way there, or if we can't asses that with conf
 - **Superseded (agent, a direct consequence of ADR-0064's fresh engine after user code; S0047, convergence audit C12):** "an optional short-TTL entries cache is allowed on desktop" for BQL. A BQL job loads the ledger, which runs its plugins, so its engine is ended after the job (engine-jobs spec §5.1), and an engine keeps nothing between jobs: the cache has no place to live. The recipe memo still avoids repeated loads. Owner confirmation: "I agree with both recommendations, including that EP-19 keeps requiring a formal model for the mirror publish" (2026-10-27, in session, on the S0047 verifier's recommendations, which included confirming this agent amendment).
 - **Unchanged:** no resident parsed ledger; reads never load the ledger; planning parses only the edited files; BQL is a transient load; the async edge only awaits (blocking work runs on worker threads, now behind the engine queue); every other cache is bounded.
 
+## Note (2026-11-01): superseded in part by ADR-0068
+
+- The save's "one full load" (the commit's load) is removed; the save does no load of its own (D1, to be built: S0070). The amendment of 2026-10-27's "The ledger-set file locks stay" no longer holds: the engine lock is the guard (D3, to be built: S0071) (owner, 2026-11-01, in session: "I agree with 3,4,5,6, and 7." and "Yes, go ahead with all of those"; ADR-0068).

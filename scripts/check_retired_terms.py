@@ -218,6 +218,19 @@ ACTIVE: tuple[Term, ...] = (
     code("R4GateLiftedOnlyByUser"),
     code("OwedR4BeforeNextSave"),
     code("NoFalseMismatch"),
+    # S0069 (ADR-0068, owner 2026-11-01: "I agree with 3,4,5,6, and 7." and "Yes, go ahead with all of those"): the
+    # rules the step back retires whose documents are brought in line now. The terms of the code S0070-S0073 remove
+    # (R4, the ledger-set locks, S0065's fallback, the model's queue actions, the one rule) are activated by those
+    # slices, with their docs (BL-0178 to BL-0181).
+    Term("waiting for the ledger's files", r"\bwaiting for your ledger files\b"),
+    code("waiting_for_files"),
+    Term("locks as a second line", r"\bas a second line\b"),
+    Term("legacy lock on a save", r"\bbefore a save to a workspace whose ledger files\b"),
+    Term("Empty = never ours", r"\bempty = never ours\b"),
+    Term("Keep refused while missing", r"\bkeep (?:is )?refus(?:es|ed) while\b"),
+    Term("R4 differs notice", r"\breads your ledger differently\b"),
+    Term("R4 could not check", r"\bR4\b[^.\n]{0,80}\bcould not check\b"),
+    Term("background save given another's ticket", r"\ba second one is (?:answered with )?the first one(?:'s ticket)?\b"),
 )
 
 # TODO(BL-0109): the engine-jobs slice removes the per-request time limits (spec §5.5); it moves these into ACTIVE

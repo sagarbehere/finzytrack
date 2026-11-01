@@ -25,11 +25,11 @@ This file is the target system picture of the v0.4.0 rebuild: components, packag
 
 Between 2026-10-26 and 2026-10-27 the design grew (parallel engines, Share workspaces, shared files between workspaces) and was then simplified by the owner. This section states where it converged. Anything in `design/` that contradicts it is stale, unless it is history (journals, the "rejected alternatives" of an ADR).
 
-- **One running Finzytrack at a time** (ADR-0062): a single v0.4 instance per app root; no ledger shared with a running legacy app; legacy ledgers come in by Copy; a held legacy lock is only detected and refuses. Owner: "no two instances of Finzytrack should be running at the same time; if the user does that, it's on them."
+- **One running Finzytrack at a time** (ADR-0062): a single v0.4 instance per app root; no ledger shared with a running legacy app; legacy ledgers come in by Copy; a held legacy lock is only detected and refuses the Copy (ADR-0068 D4: a save no longer tries it; to be built: S0071). Owner: "no two instances of Finzytrack should be running at the same time; if the user does that, it's on them."
 - **One open workspace at a time** (ADR-0063 decision 1, INV-28, INV-31): opening another is a switch that assesses the target, then quiesces and closes the current one; a request for a workspace that is not open is refused (`WORKSPACE_NOT_OPEN`). Owner: "Finzytrack is just about one instance, working with one workspace at a time."
 - **Every unfinished save is recovered before any workspace opens** (ADR-0063 decision 2, INV-32): journals name files by canonical path; a journal that cannot be recovered blocks only the workspaces that use its files, with "Keep the files as they are now" as the way out. Two workspaces sharing a file is not supported, and harmless. Owner: "Yes, write both into the hand-off and give me the prompt" (the recovery rule).
 - **One engine doing one job at a time** (ADR-0064, `design/specs/engine-jobs.md`): a FIFO queue in the sidecar where a job the user waits for goes ahead of background work; Cancel ends that job's engine and is not a crash; a crash is noticed by the process exiting, with S0040's bounded restart; no automatic killing of slow jobs ("Still working…" with Cancel); one load at a time bounds memory. Owner: "we go back to one engine doing one job at a time and massively simplify everything."
-- **"Saved" after commit and read-back; the re-check (R4) runs right after, compares and shows a notice, and gates nothing**, in every mode, never switched off (ADR-0010 guardrail 3, ADR-0067).
+- **"Saved" after commit and read-back; then a background rebuild with Beancount's real loader updates the screens** ("Checking…" until it ends), in every mode. The save does no Beancount load of its own: the preview's load, made on the fingerprint the save checks before writing, is the prediction; R4's comparison is removed (ADR-0068 D1; to be built: S0070).
 - **Integrity blocks, accounting advises** (ADR-0067): a save is refused only when Finzytrack cannot write exactly what was asked safely (contract steps 1, 2, 2b, 4-6, recovery) or a check cannot run (INV-22); the new errors the overlay load reports (failing assertions, booking and plugin errors) are listed in the preview and the user may save anyway.
 - **The frontend is Vue 3** (ADR-0053, decided 2026-10-25 by spike S13 under ADR-0006's rule): a Vite single-page app with composables, `.vue` files, vue-router, TanStack Vue Query, shadcn-vue on Reka UI and `vue-tsc` as the type gate (§3, pins in §10).
 
@@ -252,7 +252,8 @@ engine/src/ledger_engine/
     save.py      the save job in the engine (engine-jobs §6.1 steps 1-7 and 9-11 around `writer.durable_commit`):
                  this workspace's records first, the legacy locks once each, the ledger-set locks in `path_key`
                  order, the gate, the commit's overlay load, the re-check against the plan and the load's own
-                 fingerprint, the commit point; and `outcome`, §6.6's reading of the disk after a death (S0063);
+                 fingerprint, the commit point (ADR-0068 removes the locks, the load and the re-check: S0070, S0071);
+                 and `outcome`, §6.6's reading of the disk after a death (S0063);
                  protocol/save.py its ops save, save_outcome
     core/recovery.py  the per-file judgement of recovery (pre, post or a stop; the temp rule) (S0061)
     paths.py     canonical_path, path_key over `fs.port` (engine-jobs §6.3; S0060); core/paths.py the folding
@@ -772,32 +773,31 @@ flowchart TB
 2. **Plan (pure):** the shell finds the target spans through the mirror (file, line, `TransactionId`), refusing when the target's `entry_hash` differs from the request's (ADR-0026), reads only those files, and parses them with the parser only (`ledger.parse_files`). The slice core returns an `EditPlan {edits, intent: IntendedChange}`. A transaction edit merges the request against the parsed source entry and never takes a router-built `Transaction` (ADR-0009).
 3. **`ledger.contract.prepare`:** `apply_edits` (pure, bottom-up, span hashes checked) → step 2 semantic diff of old vs new parser output for the edited files → step 3 **overlay load** `overlay.load(root, overlay=candidates, policy)` as an engine job (ADR-0064) → error keys compared with the baseline in the mirror's `ledger_errors`: the new ones are the preview's list (ADR-0067: the user may save anyway; no error class refuses). The result is `Prepared` (with its new error keys) or `Refused` (steps 1-2b, a load that cannot run). The `WritePlan` (texts, hashes, fingerprint, new error keys; never entries) goes into the `PlanStore`, and the preview returns.
 4. **Confirm:** `POST …/plans/{id}:confirm {preview_hash, acks}` → the engine job queue (ADR-0064; the save's steps and Cancel: `design/specs/engine-jobs.md` §6) → `writer.commit`:
-   1. an `.open` journal of this workspace refuses with `WRITES_PAUSED {unfinished_save}`; nothing else on disk gates a save (ADR-0067: R4 never does; spec §6.1 step 1);
-   2. try the lock of every legacy install whose config names the files, once each, without waiting (held or any error: `LEGACY_APP_SAVING`, "Quit the old Finzytrack first", nothing written; ADR-0062), then take the per-file locks in `path_key` order;
-   3. under the locks, the gate: full extended fingerprint equal to the plan's (on mismatch, `LEDGER_EXTERNALLY_CHANGED` and re-plan, re-resolving every `TransactionId` through a fresh mirror, never through cached positions, ADR-0026), the published mirror's equal too (else `WORKSPACE_NOT_READY {WARMING}`), and no `.open` journal (else `WRITES_PAUSED {unfinished_save}`) for this workspace, re-read from disk;
-   4. re-run step 3 on the candidate, which is the commit's one full load (ADR-0011); then **re-check the full extended fingerprint under the locks**: if it moved during the load, `LEDGER_EXTERNALLY_CHANGED`, nothing written (ADR-0013; spec §6.1 step 6);
+   1. an `.open` journal of this workspace refuses with `WRITES_PAUSED {unfinished_save}`; nothing else on disk gates a save (spec §6.1 step 1);
+   2. *(removed, ADR-0068 D3 and D4; to be built: S0071)* no legacy lock and no per-file lock: the engine lock is the guard, and the engine's save op refuses without it;
+   3. the gate: full extended fingerprint equal to the plan's (on mismatch, `LEDGER_EXTERNALLY_CHANGED` and re-plan, re-resolving every `TransactionId` through a fresh mirror, never through cached positions, ADR-0026), the published mirror's equal too (else `WORKSPACE_NOT_READY {WARMING}`), and no `.open` journal (else `WRITES_PAUSED {unfinished_save}`) for this workspace, re-read from disk;
+   4. *(removed, ADR-0068 D1; to be built: S0070)* no load and no re-check inside the save: the preview's load (step 3 above) was made on the plan's fingerprint, which the gate has just checked;
    5. the commit point: one table step lets the save go on or ends it for a pending Cancel; after it the save is not cancelled (ADR-0064 decision 3);
    6. backups written and synced, and their directory synced; then the write-intent journal, naming every file the commit replaces or creates by its canonical path and `path_key`, resolved now, is written as `.part`, synced, renamed `.open`, and its directory synced, so an `.open` journal is never torn; the steps below write exactly those paths (ADR-0012 amendment, ADR-0063);
-   7. per file, children first and the root last: temp written and synced, then **replace by atomic swap**, or an **exclusive create** for a file the save creates (it fails if a file appeared); on a volume without the swap, the fallback: the file hashed again just before a plain rename, with the windows of engine-jobs §15 (spec §6.8, S0065); every swap hashes the displaced file against the planned pre-hash (ADR-0013); a symlinked file is written at its real path, file mode preserved; the directory synced. Every sync is `durable_sync` (`F_FULLFSYNC` on macOS; spec §6.2);
+   7. per file, children first and the root last: temp written and synced, then **replace by atomic swap**, or an **exclusive create** for a file the save creates (it fails if a file appeared); on a volume without the swap, best effort: a plain rename, with the backup and the read-back kept and no detection of another program's save in the same instant (spec §6.8, §15; ADR-0068 D2, to be built: S0071); every swap hashes the displaced file against the planned pre-hash (ADR-0013); a symlinked file is written at its real path, file mode preserved; the directory synced. Every sync is `durable_sync` (`F_FULLFSYNC` on macOS; spec §6.2);
    8. read-back byte equality, then our temps removed. **Any failure after the first replace (a read-back mismatch included) rolls back in-process from the journal**; if the rollback fails, the journal stays `.open`, this workspace's engine jobs are refused with `WRITES_PAUSED {unfinished_save}`, and the user is offered **Reopen**, which recovers it; the workspace does not enter `RECOVERING` (ADR-0012 amendment of 2026-10-27, ADR-0064);
    9. close the journal: `.open` renamed `.closed` and the directory synced. **"Saved" is reported once the close is durable**, never before;
-   10. build the mirror generation from the load result still in memory, publish it (a refused publish queues a rebuild and leaves the save saved), release the locks and end the engine. The response carries the old→new `TransactionId` map; the undo journal stores canonical entry text, not ids (ADR-0026).
-5. Right after "saved": the D2 guardrail-3 re-check (R4, ADR-0010) (a real Beancount load: Beancount's own loader without its pickle cache, never `load_file`, BL-0118; it runs only on a ledger set whose bytes equal those the save's load read under the `LoadPolicy`, checked by the fingerprint before and after it, and decrypts no encrypted file it meets, spec §6.7 and §15) is queued as background work (`app.platform.engine_jobs.save.submit_save`, S0066). It runs in every mode (desktop, dogfooding and a future hosted mode) and is never switched off; it compares, logs a difference and shows a short notice, and **gates nothing**: it writes nothing, the closed record is the save's last state, and the next save runs as usual (ADR-0067; spec §6.7). Adopting Beancount's result for the screens is the mirror publish (BL-0113).
+   10. end the engine and queue a background rebuild of the mirror with Beancount's real loader (ADR-0068 D1; the publish, BL-0113; to be built: S0070); a failed rebuild leaves the save saved. The response carries the old→new `TransactionId` map; the undo journal stores canonical entry text, not ids (ADR-0026).
+5. Right after "saved": the rebuild of step 4.10 runs as background work; the screens show "Checking…" until it ends, then Beancount's own result and errors. Nothing compares the result with a prediction (R4 is removed, ADR-0068 D1; until S0070 the code still queues R4, `app.platform.engine_jobs.save.submit_save`). It gates no save.
 6. Every step fails closed. An unpromoted mutator refuses to run on a ledger that isn't a copy (`UNPROMOTED_MUTATOR_ON_REAL_LEDGER`, ADR-0014).
 
 ```mermaid
 flowchart TB
   preview["Preview: plan, apply edits, diff, overlay load"] --> plan["WritePlan in the PlanStore"]
   plan --> confirm["Confirm: a save job in the engine queue"]
-  confirm --> pre["An .open journal refuses; legacy locks; per-file locks"]
-  pre --> gate{"Gate, full load, re-check"}
+  confirm --> pre["An .open journal refuses"]
+  pre --> gate{"Gate: fingerprint and mirror as planned"}
   gate -- "refused or moved" --> refused["Refused, nothing written"]
   gate --> commit["Commit point"]
-  commit --> durable["Backups, journal .open, swaps (or the fallback), read-back"]
+  commit --> durable["Backups, journal .open, swaps (best effort without the swap), read-back"]
   durable -- "failure" --> rollback["Rollback from the journal"]
   durable --> closed["Journal .closed: saved"]
-  closed --> publish["Publish the mirror, release the locks"]
-  publish --> r4["R4 queued as background work: compare, notice"]
+  closed --> rebuild["Background rebuild with Beancount's loader: the screens"]
 ```
 
 ### 9.3 Import → reconcile → commit

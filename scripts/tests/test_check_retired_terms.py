@@ -144,6 +144,16 @@ RETIRED_LINES = {
     "R4GateLiftedOnlyByUser": "and `R4GateLiftedOnlyByUser`",
     "OwedR4BeforeNextSave": "`OwedR4BeforeNextSave`: an owed R4 runs before the next save lands",
     "NoFalseMismatch": "`NoFalseMismatch` (O1)",
+    # S0069 (ADR-0068): the step back's retired rules, as the old design wrote them
+    "waiting for the ledger's files": "the user sees \"Waiting for your ledger files…\" with Cancel",
+    "waiting_for_files": "Step 3's wait shows `waiting_for_files` only while it waits",
+    "locks as a second line": "the ledger-set locks stay as a second line behind the engine lock",
+    "legacy lock on a save": "and before a save to a workspace whose ledger files a legacy install's config names",
+    "Empty = never ours": "an empty file is not ours (Empty = never ours)",
+    "Keep refused while missing": "Keep refuses while a replaced file is missing",
+    "R4 differs notice": "\"Your change is saved. Beancount reads your ledger differently from what Finzytrack expected.\"",
+    "R4 could not check": "a format 2 record is unreadable: R4 counts it as a failure to run, so it ends \"could not check\"",
+    "background save given another's ticket": "at most one queued per workspace: a second one is the first one's ticket",
 }
 # Words the audit says must never be refused, in the senses the current design uses them.
 TRAP_LINES = [
@@ -152,7 +162,13 @@ TRAP_LINES = [
     "the closed record is the save's last state; a mismatch of the fingerprint refuses `LEDGER_EXTERNALLY_CHANGED`",
     "R4 says `differs`; `pass` and `superseded` show nothing",
     "the preview lists the new errors and the user may save anyway",
-    # S0068 verifier r1 F7: the unfinished save's pause is current
+    # S0069 (ADR-0068): the current design's own words pass
+    "Your change was not saved. Finzytrack could not check whether your ledger changed.",
+    "no \"read your ledger differently\" notice: the screens show Beancount's own result",
+    "the second line of the table; a lock is kept for that read",
+    "an empty ledger file at a created path is asked about; Keep the files as they are now",
+    "R4 is removed (ADR-0068 D1); the rebuild shows Beancount's result",
+        # S0068 verifier r1 F7: the unfinished save's pause is current
     "Saving is paused in this workspace, so Finzytrack did not save your change.",
     "new errors are listed in a preview and written only if the user saves anyway; the user acknowledged the notice",
     "a read-back mismatch rolls back",

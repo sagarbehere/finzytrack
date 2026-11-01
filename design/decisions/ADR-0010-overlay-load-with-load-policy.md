@@ -2,7 +2,7 @@
 
 This record decides how the contract runs a full official load of text that is not yet on disk.
 
-- **Status:** Accepted. **Superseded in part by ADR-0067 (2026-10-31):** guardrail 3's amendment by ADR-0064 (the next save waits for R4; a mismatch pauses saving) no longer holds: R4 compares, logs a difference and shows a notice, and gates nothing; the overlay load is the save's preview. Amended by ADR-0064 (2026-10-27): guardrail 3's re-check runs after "saved" in every mode and is never switched off; the load rule's "heavy-load semaphore" becomes one engine job at a time. Note of 2026-10-29 (S0056): on desktop every ledger loads in full; no trust prompt in v0.4.0 (ADR-0040).
+- **Status:** Accepted. **Superseded in part by ADR-0068 (2026-11-01):** guardrail 3, the runtime re-check after each committed write (R4), is removed; a background rebuild with the real loader updates the screens after every save (D1, to be built: S0070). **Superseded in part by ADR-0067 (2026-10-31):** guardrail 3's amendment by ADR-0064 (the next save waits for R4; a mismatch pauses saving) no longer holds: R4 compares, logs a difference and shows a notice, and gates nothing; the overlay load is the save's preview. Amended by ADR-0064 (2026-10-27): guardrail 3's re-check runs after "saved" in every mode and is never switched off; the load rule's "heavy-load semaphore" becomes one engine job at a time. Note of 2026-10-29 (S0056): on desktop every ledger loads in full; no trust prompt in v0.4.0 (ADR-0040).
 - **Date:** 2026-10-24
 - **Deciders:** owner
 - **Area:** write path, ledger
@@ -64,3 +64,7 @@ Owner, 2026-10-31, in session, answering `design/inbox/answered/20261031-r4-load
 Owner, 2026-10-31, in session: "Yes, draft that ADR. I'm approving it already, so go ahead and implement it." (S0068).
 - **Superseded in the 2026-10-27 amendment:** "the next save to that workspace waits for it (ADR-0008 amendment); a mismatch pauses saving, adopts the `load_file` result and shows the backup". **Instead:** guardrail 3 reads as first written, minus its rollout-only synchronous mode: after each committed write the real load is compared with the adopted result in the background, in every mode; a mismatch logs loudly, adopts the `load_file` result (the mirror publish, BL-0113) and shows a notice; saving is never paused by it (ADR-0067 decision 3).
 - **Unchanged:** the overlay load, the `LoadPolicy`, guardrails 1, 2 and 4, the load rule, and the 2026-10-31 amendment on R4's load and the policy. The overlay's load is now the save's preview (ADR-0067 decision 2).
+
+## Note (2026-11-01): superseded in part by ADR-0068
+
+- Guardrail 3, the runtime re-check after each committed write (R4), is removed; a background rebuild with the real loader updates the screens after every save (D1, to be built: S0070) (owner, 2026-11-01, in session: "I agree with 3,4,5,6, and 7." and "Yes, go ahead with all of those"; ADR-0068).

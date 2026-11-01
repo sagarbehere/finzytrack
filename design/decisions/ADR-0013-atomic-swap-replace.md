@@ -2,7 +2,7 @@
 
 This record decides how a write detects an outside program that saves the same file at the same moment.
 
-- **Status:** Accepted. Amended on 2026-10-29 (S0060): a ledger file with a second hard link refuses the save; what the swap keeps of a file, and what it does not; volumes without the swap are refused until their fallback slice (BL-0160). Amended on 2026-10-29 (S0061): nothing is swapped back; an outside save a swap or a clean-up meets goes to a kept name beside the file. Amended on 2026-10-30 (S0061 round 6, owner): a folder the save or the undo writes in that carries an ACL deny entry applying to us is refused, except a non-inherited one that protects only the folder itself (macOS's own entries). Amended on 2026-10-30 (S0061 round 7, owner): any deny entry refuses, whoever it names; the journal and backups folders are judged by the same rule. Amended on 2026-10-31 (S0065, agent, under the owner's 2026-10-29 answer): the fallback on volumes without the swap is built.
+- **Status:** Accepted. **Superseded in part by ADR-0068 (2026-11-01):** the 2026-10-31 amendment's fallback rules on volumes without the swap (the re-hash before a plain rename, the ownership rules for a missing or empty file, the network-retry ownership, the windows W1-W4) are replaced by a best-effort mode: journal, backups and read-back kept, a plain rename, no detection of an outside save in the same instant, a notice at open (D2, to be built: S0071). The swap on drives that have it is unchanged. Amended on 2026-10-29 (S0060): a ledger file with a second hard link refuses the save; what the swap keeps of a file, and what it does not; volumes without the swap are refused until their fallback slice (BL-0160). Amended on 2026-10-29 (S0061): nothing is swapped back; an outside save a swap or a clean-up meets goes to a kept name beside the file. Amended on 2026-10-30 (S0061 round 6, owner): a folder the save or the undo writes in that carries an ACL deny entry applying to us is refused, except a non-inherited one that protects only the folder itself (macOS's own entries). Amended on 2026-10-30 (S0061 round 7, owner): any deny entry refuses, whoever it names; the journal and backups folders are judged by the same rule. Amended on 2026-10-31 (S0065, agent, under the owner's 2026-10-29 answer): the fallback on volumes without the swap is built.
 - **Date:** 2026-10-24
 - **Deciders:** owner
 - **Area:** write path, data safety
@@ -93,3 +93,7 @@ An editor, Fava or a sync client may save a ledger file between our final finger
 ## References
 
 review:D1 §13.2; review:25 §8.3, §14 item 5; review:27 M1 risks; ADR-0008, ADR-0012; INV-01; CAP-DATA-EXTERNAL-EDIT.
+
+## Note (2026-11-01): superseded in part by ADR-0068
+
+- The 2026-10-31 amendment's fallback rules on volumes without the swap (the re-hash before a plain rename, the ownership rules for a missing or empty file, the network-retry ownership, the windows W1-W4) are replaced by a best-effort mode: journal, backups and read-back kept, a plain rename, no detection of an outside save in the same instant, a notice at open (D2, to be built: S0071). The swap on drives that have it is unchanged (owner, 2026-11-01, in session: "I agree with 3,4,5,6, and 7." and "Yes, go ahead with all of those"; ADR-0068).

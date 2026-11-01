@@ -500,3 +500,11 @@ Format:
 - Why: "no new errors unless acknowledged" could be read as S0004's per-mutator acknowledgement lists, the refusal ADR-0067 retired (owner, 2026-10-31: "Make sure no docs inadvertently reference the old design").
 - Expected effect: an agent building the preview (BL-0106) reads INV-01 as the preview with Save anyway, not as a list of error classes a save may refuse.
 - Status: kept (invariant wording owner-approved; the term an agent-approved tightening asked for by the owner's rewording; S0068).
+
+## IMP-0051: the bytes a mechanism protects; a red team only where bytes or a write's gate are at stake; a second fix round needs the owner's options note (2026-11-01)
+- Trigger: owner decision, 2026-11-01, in session, on the step-back reviews (review:m1a/step-back-2026-11-01, the proportionality report's section 2): "I agree with 3,4,5,6, and 7." and "Yes, go ahead with all of those" (ADR-0068 D6).
+- What changed: process. (a) A mechanism that neither writes ledger or user data nor gates a write gets the slice verifier only, never the data-safety red team; every write-path brief states in one line "the bytes it protects", and "none" sends EP-30's "can a policy forbid it?" to the owner before coding. (b) A second fix round on the same mechanism needs the owner's options note first (situation, likelihood, options, recommendation).
+- PROCESS.md section: §3 step 2 (brief) and step 7 (land), §4 (red-team cadence).
+- Why: S0066 and S0067 took four plus four rounds and four High findings, all in machinery that ADR-0067 then made advisory and ADR-0068 removes; S0065 took three plus three rounds on one rule family after IMP-0049; S0061 spent rounds 5 to 7 on permission corners that lose no byte.
+- Expected effect: fewer rounds on advisory machinery; the owner sees the trade-off before a mechanism draws a second round. Metric: verifier and red-team rounds per slice on write-path slices, and rounds whose findings touch no byte.
+- Status: kept (owner-approved; S0069). (c), the engine-jobs spec rewritten to rules only, is S0073 (BL-0181).
