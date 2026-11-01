@@ -72,6 +72,12 @@ WORLDS: dict[str, dict[str, Any]] = {
         "base": "S_save_crash", "set": {"MaxCrash": "0", "EdFiles": '{"R"}'}, "traces": 6, "depth": 40,
         "least": 10, "leave": ["edit_at_swap", "io_at_compare"],
     },
+    # an outside save in the root after the journal opened, then an I/O error at a swap or exclusive rename, before it
+    # or after it took place (S0072 verifier r1 F2): the rollback stops on the outside save, Unfinished
+    "S_save_swap_io": {
+        "base": "S_save_crash", "set": {"MaxCrash": "0", "EdFiles": '{"R"}'}, "traces": 8, "depth": 40,
+        "least": 10, "leave": ["edit_before_swap", "io_at_swap"],
+    },
     # S0072 (BL-0161): a file put at the path the save creates, past the gate: the code never touches it
     "S_save_created_taken": {
         "base": "S_save_crash", "set": {"MaxIO": "0", "MaxCrash": "0", "EdFiles": '{"N"}'}, "traces": 6,
@@ -130,6 +136,9 @@ LEAVE: dict[str, dict[str, str]] = {
     # the displaced check that follows (the rollback's check then keeps it)
     "edit_at_swap": {"Editor": 'Busy /\\ run.k = "save" /\\ ctl.pc = "s_sw"'},
     "io_at_compare": {"IOFail": 'ctl.pc = "s_cmp"'},
+    # an edit after the journal is open and before the first swap, and an I/O error only at a swap or exclusive rename
+    "edit_before_swap": {"Editor": 'Busy /\\ run.k = "save" /\\ ctl.pc \\in {"s_jds", "s_tw1", "s_tw2", "s_ts"} /\\ ctl.fi = 1'},
+    "io_at_swap": {"IOFail": 'ctl.pc = "s_sw"'},
     # an edit after the save's backup and before its journal is open, and an I/O error only after the edit and before
     # the journal is open (the re-hash then finds the edit)
     "edit_after_backup": {"Editor": 'Busy /\\ run.k = "save" /\\ ctl.pc \\in {"s_bks", "s_jp", "s_jps"}'},

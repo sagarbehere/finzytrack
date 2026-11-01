@@ -764,6 +764,35 @@ def test_an_effect_that_happens_but_answers_an_error_is_told_truthfully(at: int)
     assert not isinstance(out, Landed), "an operation that answered an error is never told saved"
 
 
+@pytest.mark.parametrize("after", [False, True])
+def test_an_io_error_at_the_first_swap_with_an_outside_save_waiting_is_unfinished(after: bool) -> None:
+    """@regression-guard (S0072 verifier r1 F2): the swap is asked for before the call (`progress.replaced`), as an
+    operation that answers an error may still have happened. An I/O error at the first swap, before it took place or
+    after (`after`), with an outside save in the root since the journal opened: the rollback stops on that save before
+    writing anything, and the save says Unfinished (never "not saved", which a swap that took place would make false).
+    The outside save stays in the root; the child is at pre or, after the swap, at post; the journal stays `.open`."""
+    probe = world()
+    durable_commit(probe.fs, probe.commit)
+    swap = next(i for i, x in enumerate(probe.fs.effects) if x.startswith("swap /w/L"))
+    opened = probe.fs.effects.index(f"rename {JD}:{NAME}.part,{NAME}.open")
+    w = world()
+    child, _, root = w.targets
+
+    def outside_save(i: int, label: str) -> None:
+        del label
+        if i == opened + 1:
+            w.fs.outside_write(root.path, b"; an outside save\n")
+
+    w.fs.on_effect = outside_save
+    w.fs.inject(swap, crash=False, err=errno.EIO, after=after)
+    out = durable_commit(w.fs, w.commit)
+    assert isinstance(out, Unfinished), out
+    assert (out.reason, out.cause, out.cause_path) == (Reason.IO_ERROR, "foreign", root.path), out
+    assert w.fs.file(root.path) == b"; an outside save\n"
+    assert w.fs.file(child.path) == (child.post if after else child.pre)
+    assert set(journals(w.fs)) == {State.OPEN}
+
+
 WRITE_POINTS = [(i, cut) for i, cut in CRASH_POINTS if cut is not None]
 
 

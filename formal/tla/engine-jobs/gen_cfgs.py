@@ -100,6 +100,9 @@ MUTANTS = [
     ("plain_create", "S_save_crash", "ExternalEditNeverSilentlyLost", S(EdFiles=strs("N"))),
     ("rollback_skips_temp_rule", "S_save_crash", "ExternalEditNeverSilentlyLost",
      S(MaxCrash=0, MaxAppCrash=0, MaxStarts=0, EdFiles=strs("R"))),
+    # verifier S0072 r1 F4: the save keeps the outside save it met at the swap, then carries on to "saved"
+    ("x_keep_and_go_on", "S_save_crash", "ExternalEditNeverSilentlyLost",
+     S(MaxCrash=0, MaxAppCrash=0, MaxStarts=0, EdFiles=strs("R"))),
     ("no_temp_fsync", "S_save_power", "NoTornLedgerAfterRecovery", {}),
     ("temps_after_close", "S_save_crash", "CutTempNeverBlocks", {}),
     # recovery

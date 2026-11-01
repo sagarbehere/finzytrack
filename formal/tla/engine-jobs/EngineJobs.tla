@@ -233,12 +233,14 @@ Pre(f) == ctl.plan[f]
 CurF == WOrd[ctl.fi]
 TS == <<ctl.s, CurF>>
 
-\* the save's rollback starts (§6.4): the restore of its own record (`RS_*`), checks first
-StartRB(msg) == [ctl EXCEPT !.pc = IF MUTANT # "rollback_skips_temp_rule" THEN "rs_chk" ELSE "rs_sync",
-                            !.rj = ctl.s, !.fi = 1, !.rbt = msg, !.tried = {},
-                            \* (seeded bug rollback_skips_temp_rule: the rollback puts back what is at post, unchecked)
-                            !.put = {f \in Tg : Pre(f) # ABS /\ fs.cur[f] = PV},
-                            !.taken = \E f \in Tg : Pre(f) = ABS /\ fs.cur[f] # ABS]
+\* the save's rollback starts (§6.4) over the files `cur`: the restore of its own record (`RS_*`), checks first
+StartRBOn(msg, cur) ==
+  [ctl EXCEPT !.pc = IF MUTANT # "rollback_skips_temp_rule" THEN "rs_chk" ELSE "rs_sync",
+              !.rj = ctl.s, !.fi = 1, !.rbt = msg, !.tried = {},
+              \* (seeded bug rollback_skips_temp_rule: the rollback puts back what is at post, unchecked)
+              !.put = {f \in Tg : Pre(f) # ABS /\ cur[f] = PV},
+              !.taken = \E f \in Tg : Pre(f) = ABS /\ cur[f] # ABS]
+StartRB(msg) == StartRBOn(msg, fs.cur)
 
 NextS(p) ==
   CASE p = "s_bk" -> IF MUTANT = "no_backup_sync" THEN "s_jp" ELSE "s_bks"
@@ -333,24 +335,23 @@ Couple(f, t, P, New) ==
   IN [fs0 EXCEPT !.cp[f] = P \cup New, !.cpn[f] = New, !.cpj[f] = t[1],
                  !.pl[f] = Firsts(P \cup New), !.tpl[t] = Seconds(P \cup New)]
 
+\* the file system after the swap (a file at pre) or the exclusive rename to a created path, of the current file
+SwapFs ==
+  LET f == CurF  t == TS  P == Pairs(f, t) IN
+  IF Pre(f) # ABS
+  THEN [Couple(f, t, P, {<<a, b>> : a \in Seconds(P) \ {ABS}, b \in Firsts(P) \ {ABS}})
+          EXCEPT !.cur[f] = fs.tc[t], !.tc[t] = fs.cur[f]]
+  ELSE [Couple(f, t, P, {<<a, ABS>> : a \in Seconds(P) \ {ABS}}) EXCEPT !.cur[f] = fs.tc[t], !.tc[t] = ABS]
+\* the exclusive rename can take place: no entry stands at the created path (seeded bug plain_create: it always can)
+CanSwap == Pre(CurF) # ABS \/ fs.cur[CurF] = ABS \/ MUTANT = "plain_create"
+
 \* a replace by atomic swap (a file at pre), or an exclusive rename to a created path that fails if an entry
 \* appeared (the save stops `changed` and rolls back; what stands there is never touched)
 S_Swap ==
   /\ Step("s_sw")
-  /\ LET f == CurF  t == TS IN
-     IF Pre(f) # ABS
-     THEN LET P == Pairs(f, t)
-              New == {<<a, b>> : a \in Seconds(P) \ {ABS}, b \in Firsts(P) \ {ABS}}
-              f1 == Couple(f, t, P, New)
-          IN SaveFx([f1 EXCEPT !.cur[f] = fs.tc[t], !.tc[t] = fs.cur[f]], jr,
-                    [Adv("s_sw") EXCEPT !.repl = TRUE])
-     ELSE IF fs.cur[f] # ABS /\ MUTANT # "plain_create"
-          THEN SaveFx(fs, jr, StartRB("changed"))
-          ELSE LET P == Pairs(f, t)
-                   New == {<<a, ABS>> : a \in Seconds(P) \ {ABS}}
-                   f1 == Couple(f, t, P, New)
-               IN SaveFx([f1 EXCEPT !.cur[f] = fs.tc[t], !.tc[t] = ABS], jr,
-                         [Adv("s_sw") EXCEPT !.pc = "s_ds", !.repl = TRUE])
+  /\ IF CanSwap
+     THEN SaveFx(SwapFs, jr, [Adv("s_sw") EXCEPT !.pc = IF Pre(CurF) = ABS THEN "s_ds" ELSE @, !.repl = TRUE])
+     ELSE SaveFx(fs, jr, StartRB("changed"))
 
 \* §6.4: what the swap displaced: the pre or the post bytes are ours; anything else is an outside save, moved at
 \* once to the file's kept name (never swapped back), the folder synced, and the save stops and rolls back
@@ -361,7 +362,8 @@ S_Compare ==
      THEN SaveFx(fs, jr, Adv("s_cmp"))
      ELSE SaveFx([fs EXCEPT !.kp[t] = @ \cup {fs.tc[t]}, !.tc[t] = ABS, !.tpl[t] = {ABS},
                             !.pl[f] = {fs.cur[f]}, !.cp[f] = {}, !.cpn[f] = {}, !.cpj[f] = "none"],
-                 jr, StartRB("changed"))
+                 \* (seeded bug x_keep_and_go_on, verifier S0072 r1 F4: the save carries on past the kept copy)
+                 jr, IF MUTANT = "x_keep_and_go_on" THEN Adv("s_cmp") ELSE StartRB("changed"))
 
 S_DirSync ==
   /\ Step("s_ds")
@@ -717,7 +719,10 @@ EngineCrash ==
             /\ UNCHANGED <<fs, jr, env, tgt, app, gh>>
 
 \* an I/O error: after the journal is .open, the save rolls back; before it (a full disk), nothing was replaced:
-\* "not saved" with the re-hash (a .part is left for recover-all); during a restore, the try fails at once
+\* "not saved" with the re-hash (a .part is left for recover-all); during a restore, the try fails at once. At the
+\* swap or exclusive rename (`s_sw`) the replace counts as asked for (`repl`, the code's `progress.replaced`): the
+\* error may come before the operation or after it took place (an operation that happened but answered an error);
+\* elsewhere the error comes before the step's effect (MAPPING.md §3)
 WritePcs == {"s_tw1","s_tw2","s_ts","s_sw","s_cmp","s_ds","s_rbk","s_rmt"}
 PreJournalPcs == {"s_bk","s_bks","s_jp","s_jps"}
 RestPcs  == {"rs_chk","rs_sync","rs_clean","rs_w","rs_x","rs_c","rs_t","rs_all","rs_res"}
@@ -725,8 +730,12 @@ IOFail ==
   /\ app # "dead" /\ Busy /\ n.io < MaxIO
   /\ n' = [n EXCEPT !.io = @ + 1]
   /\ \/ /\ run.k = "save" /\ ctl.pc \in WritePcs
-        /\ ctl' = StartRB("notsaved")
+        /\ ctl' = [StartRB("notsaved") EXCEPT !.repl = @ \/ ctl.pc = "s_sw"]
         /\ UNCHANGED <<fs, jr, env, tgt, app, run, gh>>
+     \/ /\ run.k = "save" /\ ctl.pc = "s_sw" /\ CanSwap
+        /\ fs' = SwapFs
+        /\ ctl' = [StartRBOn("notsaved", SwapFs.cur) EXCEPT !.repl = TRUE]
+        /\ UNCHANGED <<jr, env, tgt, app, run, gh>>
      \/ /\ ctl.pc \in RestPcs /\ ctl.rj # "none"
         /\ RestoreStop("failed")
         /\ UNCHANGED <<fs, env, tgt, app>>
@@ -879,11 +888,14 @@ JournalDurableBeforeFirstReplace ==
 PartJournalNeverBlocks ==
   \A j \in JIds : jr[j].why # "" => (jr[j].st \in {"open","kept","resolved"}
                                       \/ (j \in BootIds /\ jr[j].st = "topen"))
-\* the editor's latest bytes of a file are in the file, at a name of ours beside it, or in a kept copy; or the user
-\* previewed them and the save replaced them (the backup holds them)
+\* the editor's latest bytes of a file are in the file, at a name of ours beside it, or in a kept copy that a journal
+\* still stops on (.open: recovery stops while the copy exists, the save's gate refuses) or that the user chose to keep
+\* (.kept); a kept copy no journal names any more is lost to the user (verifier S0072 r1 F4). Or the user previewed
+\* them and the save replaced them (the backup holds them)
 EditKept(f) ==
   \/ gh.ed[f] = fs.cur[f]
-  \/ \E j \in JIds : f \in JFiles(j) /\ gh.ed[f] \in {fs.tc[<<j, f>>], fs.rt[<<j, f>>]} \cup fs.kp[<<j, f>>]
+  \/ \E j \in JIds : f \in JFiles(j) /\ gh.ed[f] \in {fs.tc[<<j, f>>], fs.rt[<<j, f>>]}
+  \/ \E j \in JIds : f \in JFiles(j) /\ jr[j].st \in OpenSt \cup {"kept"} /\ gh.ed[f] \in fs.kp[<<j, f>>]
 ExternalEditNeverSilentlyLost ==
   \A f \in Files : gh.ed[f] # 0 /\ ~gh.edSeen[f] => EditKept(f)
 

@@ -28,6 +28,7 @@ MUT_direct_open                      VIOLATE:PartJournalNeverBlocks             
 MUT_no_displaced_check               VIOLATE:ExternalEditNeverSilentlyLost                S mutant check
 MUT_plain_create                     VIOLATE:ExternalEditNeverSilentlyLost                S mutant check
 MUT_rollback_skips_temp_rule         VIOLATE:ExternalEditNeverSilentlyLost                S mutant check
+MUT_x_keep_and_go_on                 VIOLATE:ExternalEditNeverSilentlyLost                S mutant check
 MUT_no_temp_fsync                    VIOLATE:NoTornLedgerAfterRecovery                    S mutant check
 MUT_temps_after_close                VIOLATE:CutTempNeverBlocks                           S mutant check
 MUT_no_temp_check                    VIOLATE:RecoveryNeverClobbersForeignBytes            S mutant check

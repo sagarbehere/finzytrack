@@ -2,7 +2,7 @@
 
 - **Spec:** `design/specs/engine-jobs.md` §13 (the model's scope since ADR-0068 D5) and the sections it cites: §6.1 step 8 (the durable order), §6.4 (the rollback and the kept-name design), §6.6 (the outcome after an engine death), §8.1 (recovery, recover-all, Keep), §8.2 (create and copy). The code decides where the spec's prose is older: the model follows `engine/src/ledger_engine/ledger/writer.py`, `restore.py` and `core/recovery.py` as built (S0072, BL-0161).
 - **Model:** `EngineJobs.tla` (one module, durability only since S0072: EP-19). Configurations come from `gen_cfgs.py` (`cfg/*.cfg`, `configs.txt`); `run_all.sh` runs them (HOW_TO_RUN.md).
-- **State:** on this model the small tier ran to completion, all as expected: 14 base worlds pass, 27 mutants each break their property, 23 vacuity witnesses are each reached (64 configurations; HOW_TO_RUN.md has the times). The medium and large tiers are the owner's (BL-0110).
+- **State:** on this model the small tier ran to completion, all as expected: 14 base worlds pass, 28 mutants each break their property, 23 vacuity witnesses are each reached (65 configurations; HOW_TO_RUN.md has the times). The medium and large tiers are the owner's (BL-0110).
 - `scripts/tests/test_tla_engine_jobs.py` keeps this file honest: every action in `Next` has a row in §2.1 and every row names an action; every property and mutant §13 names exists in the model and in `gen_cfgs.py`, and every one they hold is named in §13; every property has at least one mutant; every witness is a predicate of a small world.
 
 ## 1. Spec → model
@@ -41,8 +41,8 @@
 | §6.1 step 8.3: the staging name, synced, renamed to the temp, folder synced; swap or exclusive rename; displaced check; folder synced | `S_TempStart`, `S_TempDone`, `S_TempSync`, `S_Swap`, `S_Compare`, `S_DirSync` |
 | §6.4: an outside save met at a name of ours is moved at once to its kept name and the save stops | `S_Compare`, `S_RemoveTemps`, `RS_Check`, `RS_Compare`, `RS_Temp` (`fs.kp`) |
 | §6.1 step 8.4-8.5: read-back, temps checked and removed, close, "saved" | `S_ReadBack`, `S_RemoveTemps`, `S_Close`, `S_CloseSync`, `S_Saved` |
-| §6.4: any failure from the `.open` rename on rolls back at once with the restore | `StartRB`, then `RS_*` with `InRollback`; `IOFail`'s first branch |
-| §6.4, §11: the rollback's outcome (resolved: not saved; not resolved: Unfinished once a replace was asked for, else not saved with the journal open) | `RestoreStop`, `RestoreDone` (`ctl.repl`, `ctl.rbt`) |
+| §6.4: any failure from the `.open` rename on rolls back at once with the restore | `StartRB`, then `RS_*` with `InRollback`; `IOFail`'s first two branches (at the swap or exclusive rename, before it or after it took place) |
+| §6.4, §11: the rollback's outcome (resolved: not saved; not resolved: Unfinished once a replace was asked for, else not saved with the journal open) | `RestoreStop`, `RestoreDone` (`ctl.repl`, set from the swap's call on, an I/O error there included; `ctl.rbt`) |
 | §6.6: after an engine death the outcome is read from the disk after the journal folder's sync | `EngineCrash`'s save branch, `DiskOutcome` |
 | §8.1 step 2: the per-file judgement (kept copy, temp rule, at pre, at post with a good backup, a created path taken, anything else stops) | `RS_Check`: `Stops`, `AtPost`, `Taken`, `FirstStop`; the outside saves at the stopping file's names moved to its kept name first |
 | the temp rule (owner, 2026-10-30, "Staging name"): a staging file is ours whatever it holds; a temp name only at pre or post | `TempOurs`, `StagingOurs`, `Held` |
@@ -65,7 +65,7 @@ INV = state invariant, ACT = action property (`[][...]_vars`).
 | `BackupDurableBeforeReplace` | INV | post bytes of R on disk (or possible) before the close ⇒ the backup is durable | `no_backup_sync` |
 | `JournalDurableBeforeFirstReplace` | INV | post bytes on disk before the close ⇒ the journal is durably `.open` | `no_journal_sync` |
 | `PartJournalNeverBlocks` | INV | a journal of ours that never became a durable `.open` is never blocking | `direct_open` |
-| `ExternalEditNeverSilentlyLost` | INV | the editor's latest bytes of a file not previewed by a save are in the file, at a name of ours beside it, or in a kept copy | `no_displaced_check`, `plain_create`, `rollback_skips_temp_rule` |
+| `ExternalEditNeverSilentlyLost` | INV | the editor's latest bytes of a file not previewed by a save are in the file, at a name of ours beside it, or in a kept copy that a journal naming it still stops on (`.open`) or that the user kept (`.kept`) | `no_displaced_check`, `plain_create`, `rollback_skips_temp_rule`, `x_keep_and_go_on` |
 | `NoTornLedgerAfterRecovery` | INV + ACT | a torn ledger file only while an unresolved journal names it; `.resolved` only when every file durably holds neither post nor torn bytes | `no_temp_fsync`, `resolve_before_restores_synced`, `no_restore_temp_fsync` |
 | `RecoveryNeverClobbersForeignBytes` | INV | `ExternalEditNeverSilentlyLost` for the files a journal names | `no_temp_check` |
 | `RecoveryWritesOnlyRecordedPaths` | INV | the restore never writes through a replaced folder | `no_path_guard`, `fb_no_guard` |
@@ -137,12 +137,15 @@ INV = state invariant, ACT = action property (`[][...]_vars`).
 | The open of a workspace | stands as the save's gate refusing on an unresolved journal naming a file of W1's set (§1.3) |
 | A volume without the swap (exFAT, FAT, HFS+, network shares; spec §6.8) | **not covered: the model assumes the swap.** The best-effort mode (ADR-0068 D2, S0071) gives up `ExternalEditNeverSilentlyLost` for another program's save in the same instant, by the owner's policy; checked by the fake's sweeps in both no-swap modes (`engine/tests/ledger/test_writer_best_effort.py`) and on real volumes (`engine/tests/fs/test_darwin.py`, opt-in) |
 | Permissions, ACLs, lock flags, hard links | the code's refusals and their tests only (`test_writer.py`, `test_restore.py`, `test_acl_rule.py`); every folder is assumed to allow our writes |
-| The restore's staging write, its rename and that rename's sync are one step (`RS_Write`); a restore temp is durable once written | a cut write at the restore's staging name is the staging rule's, as the save's (`S_TempStart`), which the model checks |
+| The restore's staging write, its rename and that rename's sync are one step (`RS_Write`); a restore temp is durable once written; the restore swap and its folder's sync are one step (`RS_Swap`) | a cut write at the restore's staging name is the staging rule's, as the save's (`S_TempStart`), which the model checks; the two syncs inside these steps are checked in the code by the save replay (`FUSED_SYNC`: the code must make each sync before its next step, `test_a_skipped_restore_sync_is_caught`; S0072 verifier r1 F6) and by `test_restore.py`'s sweeps |
+| `RS_Write` takes the pre bytes from the record (`JPre`), not from the backup | a backup that does not hold the pre bytes stops the journal at the check (`BackupBad` in `Stops`), and the code hashes the backup again before writing it back (`restore._put_back`, `backup_bad`). So `RS_Clean`'s rule that keeps the temp beside a file to put back (it holds the only other copy of the pre bytes until they are back) cannot matter in the model: a clean-up that removes that temp too breaks no property (`x_clean_all`, S0072 verifier r1 F5); the rule is the code's and `test_restore.py`'s |
 | The outside editor writes only the ledger files' own names, never a name of ours | the clean-up's re-checks (`S_RemoveTemps`, `RS_Clean`) then never meet outside bytes but after a seeded bug; a write through a descriptor held on the old object is `test_writer.py`'s and `test_restore.py`'s |
 | An editor's unsynced write is kept or dropped whole, never torn | its own loss if a power loss tears it (§13); the save syncs a replaced file before reading it for the backup (`S_Backup`) |
 | The save backs up R only | N exists only from the second save; recovery's backup check for N is the code's (`test_restore.py`) |
 | The user's delete of a kept copy or of a file at a created path (the blocked screen's actions) | not modelled: only Keep leaves a stopped journal; deleting is the user's own write |
 | The rollback after a failed close (`.closed` renamed back to `.open`); an I/O error at the journal's renames | `test_writer.py`'s sweeps (every effect, every fault) |
+| An I/O error comes before its step's effect, except at the swap or exclusive rename (`s_sw`), where it may also come after the operation took place; either way the replace counts as asked for there (`ctl.repl`, the code's `progress.replaced`, set before the call) | an operation that takes place and then answers an error elsewhere (a write, a sync, a journal rename, a removal) is the writer's and the restore's sweeps' (`test_writer.py` `test_an_effect_that_happens_but_answers_an_error_is_told_truthfully`, `test_restore.py`). The branch after the swap reaches the states the swap followed by an error at the displaced check reaches; it is there so the replay drives the code's own path (the swap raising, the displaced check never run) and its told outcome (S0072 verifier r1 F2: before it, the model's error at the swap said "not saved" with the journal open where the code says Unfinished; `test_writer.py` `test_an_io_error_at_the_first_swap_with_an_outside_save_waiting_is_unfinished`) |
+| The save's gate refusal on an `.open` journal naming a file of W1's set (`S_Gate`'s `OpenOn`) is guarded by no property since `NoOpenOverUnresolvedJournal` left (S0072): a gate that ignores it breaks none (`x_gate_ignores_open`, S0072 verifier r1 F3) | no committed byte is lost without it: the save's displaced check and the later restore's per-file judgement stop on the other journal's bytes (`RecoveryNeverClobbersForeignBytes`, `ExternalEditNeverSilentlyLost`). The refusal itself (INV-32, ADR-0063) is the code's: `engine/tests/ledger/test_save.py` (`unfinished_save`) and the replay's branch "refused: unfinished_save" |
 | Folders the save makes, and their removal | `test_writer.py`, `test_restore.py` |
 | The rebuild after a save, the mirror publish | write no ledger byte; the publish gets its own model (BL-0113) |
 | Several kept names per file (`-2`, `-3`) | `fs.kp` is a set of the kept bytes; the numbering is `journal.kept_name`'s |
@@ -151,7 +154,7 @@ INV = state invariant, ACT = action property (`[][...]_vars`).
 
 - A save in the model plans on the disk at its start, which stands for the preview's fingerprint; an outside edit after it makes the gate refuse.
 - `StartRecover` may run whenever no job runs and an unresolved journal exists: Retry, Back and a switch all recover first (§9.1), and the model does not need to tell them apart.
-- The rollback's told outcome follows the code (`writer.durable_commit`): resolved, "not saved" (an I/O error) or "changed"; not resolved, Unfinished once a replace was asked for, else the same as resolved with the journal left open.
+- The rollback's told outcome follows the code (`writer.durable_commit`): resolved, "not saved" (an I/O error) or "changed"; not resolved, Unfinished once a replace was asked for (from the swap's or exclusive rename's call on, as an operation that answers an error may still have happened), else the same as resolved with the journal left open. No property checks that the told outcome is true (EP-19); the replay checks the code's against the model's disk (§7).
 
 ## 5. History: what left the model
 
@@ -175,6 +178,12 @@ The model before S0072 (`git show fcf96576:formal/tla/engine-jobs/MAPPING.md`) a
 - Configurations removed (23): `S_save_quit`, `S_save_quit_power`, `S_quit` (quit), `S_cancel_commit`, `S_cancel` (Cancel), `S_r4_ends` (R4; its two saves are `S_save_two`), `S_forget` (forget; Keep's world is `S_keep`), `S_recover_bound` (the stop bound), `S_boot`, `S_stuck_opening`, `S_switch`, `S_switch_fail`, `S_switch_hung_create` (the boot and the switch), `S_create_close` (the requester), `S_queue`, `L_session`, `LS_boot`, `LS_jobs`, `LS_quit`, `LS_free`, `LS_free_cc`, `LS_free_orphan`, `LM_free` (liveness). `S_recover_lock` is `S_recover_link` (the engine lock is not the model's; the path guard and the temps are). Added: `S_save_two`, `S_keep`, and the 23 witnesses (§6.2).
 - The queue's trace replay (`backend/tests/platform/test_engine_jobs_conformance.py`) is removed with the queue's actions; its check that the sidecar's decision after a save's engine death is the model's `DiskOutcome` is the sidecar's own table test (`backend/tests/platform/test_save_job.py` `test_save_outcome_is_the_disks_answer`).
 
+**S0072 round 1 (verifier F1-F6, 2026-11-01).**
+- F1: the save replay no longer compares the code's answer with `gh.told` (no property checks that it is true since `OutcomeTruthful` left, EP-19; `SavedSurvivesPowerLoss` checks only that a "saved" is durable): it checks it against the model's disk at the end, §6.6's table (§7).
+- F2: `IOFail` at `s_sw` sets `ctl.repl` (the code's `progress.replaced` is set before the call), and a branch after the swap took place was added; the corpus samples both (`S_save_swap_io`). §3 lists the I/O-error limit.
+- F4: `EditKept` counts a kept copy only while a journal naming it is `.open` or `.kept`; `x_keep_and_go_on` (the save keeps the outside save at the swap, then goes on to "saved" and `.closed`) must break `ExternalEditNeverSilentlyLost` and does. Every base world still passes.
+- F3, F5, F6: recorded in §3 (the gate's open-journal refusal, `RS_Write`'s pre bytes, the syncs inside `RS_Write` and `RS_Swap`, which the replay now checks).
+
 ## 6. Mutants and witnesses
 
 ### 6.1 Mutants
@@ -192,6 +201,7 @@ Every mutant runs on a small world and checks only the property it must break (`
 | `no_displaced_check` | `ExternalEditNeverSilentlyLost` | `S_save_crash` | what a swap displaced (and a temp at clean-up) always taken for ours |
 | `plain_create` | `ExternalEditNeverSilentlyLost` | `S_save_crash` (editor on N) | a created file put over one that appeared |
 | `rollback_skips_temp_rule` | `ExternalEditNeverSilentlyLost` | `S_save_crash` (editor on R, no crash) | the rollback takes every temp for ours |
+| `x_keep_and_go_on` | `ExternalEditNeverSilentlyLost` | `S_save_crash` (editor on R, no crash) | the save moves the outside save it met at the swap to its kept name, then goes on to "saved" (verifier S0072 r1 F4's own) |
 | `no_temp_fsync` | `NoTornLedgerAfterRecovery` | `S_save_power` | the staging file's data not synced before its rename |
 | `temps_after_close` | `CutTempNeverBlocks` | `S_save_crash` | the temps removed after the close |
 | `no_temp_check` | `RecoveryNeverClobbersForeignBytes` | `S_save_crash` | recovery takes every temp for ours |
@@ -216,7 +226,7 @@ A base world that passes could pass because it never reaches the branch a proper
 
 ## 7. The code's conformance (S0064, S0072)
 
-`traces/corpus.json` holds TLC-simulated traces of small save worlds (`gen_traces.py`: the worlds, the seed, the depth, and the actions left out: create, copy, recover-all again, Keep, the next start, the app's crash, a power loss, the path changer). `engine/tests/ledger/test_save_conformance.py` replays each save through `ledger.save.run` over the in-memory file system and compares, at each step the code reaches, the files, the save's record, its temps and staging files, restore temps, kept copies and backup with the model's, and at the end what the code answered with what the model told.
+`traces/corpus.json` holds TLC-simulated traces of small save worlds (`gen_traces.py`: the worlds, the seed, the depth, and the actions left out: create, copy, recover-all again, Keep, the next start, the app's crash, a power loss, the path changer). `engine/tests/ledger/test_save_conformance.py` replays each save through `ledger.save.run` over the in-memory file system and compares, at each step the code reaches, the files, the save's record, its temps and staging files, restore temps, kept copies and backup with the model's; at the end it checks what the code answered against the model's disk (§6.6's table over the save's record, else the re-hash: `told_on_disk`), never against `gh.told`, whose truth no property checks (EP-19; S0072 verifier r1 F1).
 
 | Model | Code hook |
 |---|---|
@@ -225,9 +235,9 @@ A base world that passes could pass because it never reaches the branch a proper
 | `S_JPart` .. `S_JDirSync`, `S_Close`, `S_CloseSync`, `RS_Resolve` | the journal folder's effects |
 | `S_TempStart`, `S_TempDone`, `S_TempSync`, `S_Swap`, `S_DirSync`, `S_RemoveTemps` | the ledger folder's effects on the save's staging and temp names |
 | `S_Compare`, `RS_Check`, `RS_Compare`, `RS_Temp` | a move to a kept name (`<name>.kept-<session>-<job>`) and its sync; otherwise reads, passed when they change nothing |
-| `RS_Sync`, `RS_Clean`, `RS_Write`, `RS_Swap`, `RS_All` | the restore's effects (its staging and restore temp names, the removals, the syncs) |
+| `RS_Sync`, `RS_Clean`, `RS_Write`, `RS_Swap`, `RS_All` | the restore's effects (its staging and restore temp names, the removals, the syncs; `RS_Write` and `RS_Swap` must each include their folder's sync, `FUSED_SYNC`) |
 | `S_Saved` | `job.committed()` |
 | `EngineCrash` | an engine death raised at the code's hook; the outcome read by `save.outcome` (`DISK`) |
-| `IOFail` | an `OSError` raised at the code's hook, before the effect |
+| `IOFail` | an `OSError` raised at the code's hook, before the effect; at the swap or exclusive rename after it, when the model's `IOFail` took the swap's effect (`MemFS.inject(after=True)`) |
 
 No save path step stops the replay (S0072): only a save the walk cut is not followed. Not replayed: recover-all's tries over boot journals (BL-0164), create and copy (BL-0153).

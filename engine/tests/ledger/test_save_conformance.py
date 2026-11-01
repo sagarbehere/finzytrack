@@ -12,25 +12,35 @@ The code runs one save in one call; the replay sees it at its **hooks**: each ef
 (`MemFS.on_effect`, classified to the model step it belongs to, `Driver.classify`), the observation (step 4, the
 model's `S_Gate`) and `job.committed()` (step 9). At each hook the replay walks the model's save up to the step the
 code is at: the model's outside edits made there are written to the fake (as an editor would, durably), an engine death
-is raised there (`Crash`), an I/O error is raised there (`OSError`, before the effect), and the fake is compared with
+is raised there (`Crash`), an I/O error is raised there (`OSError`, before the effect, or at a swap or exclusive rename
+after it, where the model's `IOFail` took the swap's effect too), and the fake is compared with
 the model's state just before the model's step (`view`): the three files, this save's journal record, its temps (the
 save's and the restore's, or their staging files), its kept copies and its backup. A
 model step the code carries out without an effect (the displaced check, the read-back)
 is passed only when it changed nothing the view shows; the save's syncs (`SYNC_STEPS`) are never passed:
-each must be one of the code's effects. A step counts as walked only when the code carried it out at one of its hooks
-(`WALKED`; the rest, with their reasons, `NOT_WALKED`). After the save, what the code answered is
-compared with what the model told (`gh.told`): `Saved` is "saved", `Refused` "notsaved", a `NotSaved` before the
-journal is `.open` is the re-hash ("unchanged" or "changed"), one after it (the rollback resolved) "notsaved" for an
-I/O error and "changed" otherwise, `Unfinished` "unfinished"; and after an engine death (or our end of the engine
-by a Cancel), the engine's reading of the disk (`save.outcome`, §6.6) told as the model's `DiskOutcome` tells it
-(`DISK`; the sidecar's decision from those facts is its own table test, `backend/tests/platform/test_save_job.py`
-`test_save_outcome_is_the_disks_answer`).
+each must be one of the code's effects, and a model step that includes its folder's sync (`FUSED_SYNC`) must see that
+sync among the code's effects before the code moves on. A step counts as walked only when the code carried it out at
+one of its hooks (`WALKED`; the rest, with their reasons, `NOT_WALKED`).
 
-**Where the model and the code differ:** nowhere on the save path since S0072 (BL-0161: the model's save, rollback
-and restore follow the code as built: staging names, kept-name moves, created paths never touched, the backup step that
-reads the file). The replay still stops a save only where its walk was cut (`STOPS`), and never compares past it.
-The model's `RS_Clean` removes every name of ours of the journal at once; the code removes them file by file as one
-run of effects, compared once at the next hook.
+After the save, what the code answered is checked against the model's disk at the save's end, never against what the
+model told (`gh.told`: no property of the durability model checks that it is true, only that a "saved" is durable,
+EP-19, ADR-0068 D5; S0072 verifier r1 F1). The disk's answer is §6.6's table over the save's record (`DISK`, the
+model's `DiskOutcome`), else the re-hash, and the code's answer must be one that disk allows (`told_on_disk`): "saved"
+only over a `.closed` record; Unfinished (the cautious answer) over any record, as `writer.Unfinished` says; "not
+saved" or "changed" only with the record resolved, or `.open` with no post bytes of ours in place (the rollback stopped
+before anything was replaced), or with no record (a refusal); the re-hash's "unchanged" or "changed" only as the files
+are. After an engine death (or our end of the engine by a Cancel) the engine's reading of the disk (`save.outcome`)
+must be the disk's answer itself (the sidecar's decision from those facts is its own table test,
+`backend/tests/platform/test_save_job.py` `test_save_outcome_is_the_disks_answer`). The wording between "not saved"
+and "changed", and whether a rollback that stopped says Unfinished, are the writer's tests' (`test_writer.py`:
+`check_told` in its sweeps, `test_an_io_error_at_the_first_swap_with_an_outside_save_waiting_is_unfinished`).
+
+**Where the model and the code differ** (MAPPING.md §3 lists them): the model's `RS_Clean` removes every name of ours of
+the journal at once, the code file by file as one run of effects, compared once at the next hook; the model's I/O
+error comes before a step's effect except at the swap or exclusive rename (the code's sweeps inject one after every
+effect, `test_writer.py`); the restore's staging write, rename and sync are one model step (`RS_Write`), as its swap
+and sync are (`RS_Swap`), so their syncs are checked as `FUSED_SYNC`. The replay stops a save only where its walk was
+cut (`STOPS`), and never compares past it.
 
 Not replayed here: traces with boot journals (recover-all's per-journal tries over their files, BL-0164), and a save
 the walk cut before it ended. The durable layer (what a power loss would keep) is
@@ -43,18 +53,19 @@ from __future__ import annotations
 import errno
 import json
 import re
+import sys
 from collections import Counter
 from collections.abc import Iterator, Mapping
 from dataclasses import dataclass, field
 from functools import cache
 from pathlib import Path
-from typing import Any, Final
+from typing import Any, Final, cast
 
 import pytest
 
 from ledger_engine.ledger import save as sv
 from ledger_engine.ledger.core.ledger_set import Absent, Content, FileState, Fingerprint, digest
-from ledger_engine.ledger.writer import Change, NotSaved, Step, Unfinished, sha256
+from ledger_engine.ledger.writer import Change, NotSaved, Reason, Step, Unfinished, sha256
 from tests.fakes.memfs import Crash, MemFS
 
 pytestmark = [pytest.mark.inv("INV-22"), pytest.mark.inv("INV-01")]
@@ -88,6 +99,10 @@ SYNC_STEPS: Final = frozenset(
 """The durable steps: each is a sync of the code's (a file's data or a folder), so the code may never pass one
 without it (round 1, verifier F2: a sync changes nothing the view shows, so the passable rule alone let a deleted sync
 through)."""
+FUSED_SYNC: Final = frozenset({"RS_Write", "RS_Swap"})
+"""The model steps that include their folder's sync (the restore temp's rename, the restore swap): the code must make
+that sync while at the step, before its next one (S0072 verifier r1 F6: a deleted sync after the restore swap
+passed)."""
 WRITE_PCS: Final = frozenset({"s_tw1", "s_tw2", "s_ts", "s_sw", "s_cmp", "s_ds", "s_rbk", "s_rmt"})
 
 STOPS: Mapping[str, str] = {
@@ -220,6 +235,7 @@ class Event:
     kind: str  # "edit", "kill", "io"
     file: str = ""
     value: int = 0
+    after: bool = False  # an I/O error answered by a swap or exclusive rename that took place (the model's `IOFail`)
 
 
 @dataclass
@@ -253,7 +269,6 @@ class Episode:
     s: str
     plan: Mapping[str, int]
     points: list[Point]
-    told: str
     end: State
     killed: bool
     actions: Counter[str]
@@ -301,7 +316,7 @@ def episodes(trace: State) -> Iterator[Episode]:
                 p.events.append(Event("edit", str(b_["act"]["p"]), b_["fs"]["cur"][b_["act"]["p"]]))
                 p.last = b_
             elif a == "IOFail":
-                p.events.append(Event("io"))
+                p.events.append(Event("io", after=a_["ctl"]["pc"] == "s_sw" and b_["fs"]["cur"] != a_["fs"]["cur"]))
                 p.step, p.after = a, b_
                 if _saving(b_, job):
                     points.append(Point(b_["ctl"]["pc"], b_["sv"]["fi"], b_))
@@ -316,7 +331,7 @@ def episodes(trace: State) -> Iterator[Episode]:
         end = states[j]
         if _saving(end, job):
             stop = stop or "cut"
-        yield Episode(s, dict(st["sv"]["plan"]), points, end["told"][s], end, killed, actions, st, stop)
+        yield Episode(s, dict(st["sv"]["plan"]), points, end, killed, actions, st, stop)
         i = j
 
 
@@ -339,6 +354,8 @@ class Driver:
         self.last_pc = ""
         self.rolling = False
         self.kept_pc = ""  # the step of a move to a kept name, whose folder sync follows
+        self.effect = -1  # the number of the code's effect at hand (`on_effect`)
+        self.ops: set[str] = set()  # the code's operations at the point it is at (`FUSED_SYNC`)
         self.compared = 0
         self.walked: Counter[str] = Counter()
 
@@ -364,8 +381,10 @@ class Driver:
         if self.at >= 0 and self.key(self.at) == (pc, file):
             return
         if self.landed:
+            self.synced(pc, file)
             self.walked[self.ep.points[self.at].step] += 1  # the code carried out the step of the point it was at
         self.landed = False
+        self.ops = set()
         for i in range(self.at + 1, len(self.ep.points)):
             p = self.ep.points[i]
             self.at = i
@@ -380,7 +399,10 @@ class Driver:
                     self.compare(i)
                     self.walked["IOFail"] += 1  # the I/O error is raised at the code's hook
                     self.rolling = p.pc in WRITE_PCS
-                    self.last_pc = p.pc  # the code was cut here, at the model's step (the effect did not happen)
+                    self.last_pc = p.pc  # the code was cut here, at the model's step
+                    if e.after:  # the operation takes place, then answers the error
+                        self.fs.inject(self.effect, crash=False, err=errno.EIO, after=True)
+                        return
                     raise OSError(errno.ENOSPC, f"the model's I/O error at {p.pc}")
             if self.key(i) == (pc, file):
                 self.compare(i)
@@ -398,11 +420,19 @@ class Driver:
         msg = f"{self.where}: the code is at {pc} {file}, which the model's save does not reach"
         raise Divergence(msg)
 
+    def synced(self, pc: str, file: str) -> None:
+        """The code leaves the point it landed at: a step of `FUSED_SYNC` must have had its folder's sync."""
+        p = self.ep.points[self.at]
+        if p.step in FUSED_SYNC and "sync" not in self.ops:
+            msg = f"{self.where}: the code is at {pc} {file}, past the model's {p.step} {p.file} without its sync"
+            raise Divergence(msg)
+
     def finish(self, answered: bool) -> None:
         """The code has ended (`answered`: it returned, not cut by an engine death): every model step left must be one
         it carries out without an effect; the outside edits made there are written. Only the step of the point the
         code was at when it answered counts as walked: the steps left had no hook of the code's."""
         if answered and self.landed:
+            self.synced("its answer", "")
             self.walked[self.ep.points[self.at].step] += 1
         self.landed = False
         for i in range(self.at + 1, len(self.ep.points)):
@@ -526,8 +556,10 @@ class Driver:
         return self.key(self.at)[1] if pc in PER_FILE and self.at >= 0 else ""
 
     def on_effect(self, i: int, label: str) -> None:
+        self.effect = i
         pc, f = self.classify(label)
         self.reach(pc, f)
+        self.ops.add(label.partition(" ")[0])
 
 
 class Job:
@@ -575,6 +607,30 @@ def plan_of(ep: Episode) -> sv.SavePlan:
     fp = Fingerprint.of(PATH["R"], {PATH[f]: state(f) for f in FILES}, {}, {}, {})
     changes = tuple(Change(PATH[f], pre(f), content(f, POST[ep.s])) for f in WORD)
     return sv.SavePlan(SESSION, ep.s, KEY, "lin1", "b", PATH["R"], changes, fp, digest(fp), ALD)
+
+
+def disk_answer(end: State, s: str, plan: Mapping[str, int]) -> str:
+    """§6.6's answer from the model's disk at the save's end: its record by `DISK` (the model's `DiskOutcome`), else
+    the re-hash of the files against the plan's pre bytes."""
+    st = end["jr"][s]
+    if st in DISK:
+        return DISK[st]
+    return "unchanged" if all(end["fs"]["cur"][f] == plan[f] for f in WORD) else "changed"
+
+
+def told_on_disk(told: str, end: State, s: str, plan: Mapping[str, int]) -> bool:
+    """The code's answer `told` is one the model's disk at the save's end allows (the module's docstring)."""
+    disk = disk_answer(end, s, plan)
+    ours = any(end["fs"]["cur"][f] == POST[s] for f in WORD)  # post bytes of ours in place
+    match disk:
+        case "saved":  # .closed (Unfinished too, the cautious answer, when the close's sync failed: `Unfinished`)
+            return told in ("saved", "unfinished")
+        case "notsaved":  # resolved: the rollback put everything back (an I/O error, or a change met); Unfinished
+            return told in ("notsaved", "changed", "unfinished")  # when only the rollback's last sync failed
+        case "unfinished":  # .open: Unfinished, or the rollback stopped before anything was replaced
+            return told == "unfinished" or (told in ("notsaved", "changed") and not ours)
+        case _:  # no record or a .part: the re-hash, or a refusal (whose `unchanged` `replay_save` checks)
+            return told in (disk, "notsaved")
 
 
 def told_of(out: sv.SaveOutcome | None, fs: MemFS, plan: sv.SavePlan) -> str:
@@ -650,19 +706,26 @@ def replay_save(fs: MemFS, ep: Episode, where: str, tally: Tally) -> None:
     if isinstance(out, sv.Refused):  # "unchanged" is said only when the targets equal their pre bytes (§11)
         fs_end = ep.end["fs"]["cur"]
         assert out.unchanged == all(fs_end[f] == ep.plan[f] for f in WORD), f"{where}: {out}, the model's {fs_end}"
-    if ep.killed and out is not None:  # the model's end came after the code's last hook: read the disk as it does
-        told = told_of(None, fs, plan)
-    assert told == ep.told, f"{where}: the code tells {told!r} ({out}), the model {ep.told!r}"
+    disk = disk_answer(ep.end, ep.s, ep.plan)
+    if ep.killed:  # §6.6: the engine's reading of the disk is the disk's answer
+        if out is not None:  # the model's end came after the code's last hook: read the disk as it does
+            told = told_of(None, fs, plan)
+        assert told == disk, f"{where}: the code tells {told!r} ({out}), the disk {disk!r} ({ep.end['jr'][ep.s]})"
+    else:
+        assert told_on_disk(told, ep.end, ep.s, ep.plan), (
+            f"{where}: the code tells {told!r} ({out}), which the disk does not allow: {disk!r} "
+            f"({ep.end['jr'][ep.s]}, files {ep.end['fs']['cur']})"
+        )
     want, got = model_view(ep.end, ep.s), code_view(fs, ep.s)
     assert want == got, f"{where}: after the save the fake holds\n  {got}\nwhere the model has\n  {want}"
     tally.saves += 1
     tally.compared += driver.compared + 1
     tally.walked.update(driver.walked)
-    tally.told[ep.told] += 1
-    tally.branches.update(branches(ep, out))
+    tally.told[told] += 1
+    tally.branches.update(branches(ep, out, told))
 
 
-def branches(ep: Episode, out: sv.SaveOutcome | None) -> Iterator[str]:
+def branches(ep: Episode, out: sv.SaveOutcome | None, told: str) -> Iterator[str]:
     """The save's branches the replay walked (`BRANCHES`)."""
     pcs = {p.pc for p in ep.points}
     last = ep.points[-1].pc
@@ -679,15 +742,20 @@ def branches(ep: Episode, out: sv.SaveOutcome | None) -> Iterator[str]:
             if early
             else "an I/O error after the journal is open: the rollback"
         )
-        if early and ep.told == "changed":
+        if early and told == "changed":
             yield "an I/O error before the journal is open, after an outside edit: not saved, changed"
     if ep.actions["RS_Swap"]:
         yield "the rollback puts pre bytes back"
     end_kept = any(ep.end["fs"]["kp"][f"{ep.s}/{f}"] for f in ("R", "N"))
     if end_kept:
         yield "an outside save moved to its kept name"
-    if isinstance(out, Unfinished) or (out is None and ep.told == "unfinished"):
+    if isinstance(out, Unfinished) or (out is None and told == "unfinished"):
         yield "Unfinished: the rollback could not resolve"
+    swap_io = [e for p in ep.points if p.pc == "s_sw" for e in p.events if e.kind == "io"]
+    if any(e.after for e in swap_io):
+        yield "an I/O error answered by a swap or exclusive rename that took place"
+    if swap_io and isinstance(out, Unfinished):
+        yield "an I/O error at a swap or exclusive rename, the rollback stopped: Unfinished"
     if out is not None and getattr(out, "cause", None) == "created_path_taken":
         yield "a file at the path the save creates is never touched"
     if isinstance(out, sv.Refused):
@@ -717,6 +785,8 @@ BRANCHES: tuple[str, ...] = (
     "an outside save moved to its kept name",
     "Unfinished: the rollback could not resolve",
     "a file at the path the save creates is never touched",
+    "an I/O error answered by a swap or exclusive rename that took place",
+    "an I/O error at a swap or exclusive rename, the rollback stopped: Unfinished",
 )
 """The save's branches the corpus must walk through the code (S0064)."""
 
@@ -891,6 +961,121 @@ def test_a_skipped_sync_is_caught(monkeypatch: pytest.MonkeyPatch) -> None:
     assert re.search(r"past the model's S_TempSync [RN] without its sync", _first_failure())
 
 
+def test_a_skipped_restore_sync_is_caught(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The restore's syncs inside one model step (`FUSED_SYNC`; S0072 verifier r1 F6): a restore that does not sync
+    the folder after its swap is caught, though nothing the view shows differs. Must not pass on 95580fa2, where only
+    `test_restore.py`'s sweep caught it."""
+    from ledger_engine.ledger import restore
+
+    put_back = restore._put_back  # pyright: ignore[reportPrivateUsage]
+
+    def put_back_unsynced(handles: Any, record: Any, x: Any) -> None:
+        h = handles.at(x.parent)
+        swap, sync = h.swap, h.sync
+        swapped = [False]
+
+        def swap_once(a: str, b: str) -> None:
+            swap(a, b)
+            swapped[0] = True
+
+        def sync_unless_swapped() -> None:
+            if not swapped[0]:
+                sync()
+            swapped[0] = False
+
+        h.swap, h.sync = swap_once, sync_unless_swapped
+        try:
+            put_back(handles, record, x)
+        finally:
+            del h.swap, h.sync
+
+    monkeypatch.setattr(restore, "_put_back", put_back_unsynced)
+    assert re.search(r"past the model's RS_Swap [RN] without its sync", _first_failure())
+
+
+def test_what_the_model_told_is_not_compared(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The answer is checked against the model's disk, never against `gh.told`, whose truth no property of the
+    durability model checks (EP-19; S0072 verifier r1 F1): with every told value of the corpus made "saved", the
+    replay still passes. Must not pass on 95580fa2, which compared the code's answer with `gh.told`."""
+    meta, traces = corpus()
+
+    def forge(st: State) -> State:
+        return {**st, "told": dict.fromkeys(st["told"], "saved")} if "told" in st else st
+
+    forged = tuple({**t, "states": [forge(st) for st in t["states"]]} for t in traces)
+    assert any(st != forge(st) for t in traces for st in t["states"])
+    monkeypatch.setattr(sys.modules[__name__], "corpus", lambda: (meta, forged))
+    assert _first_failure() == ""
+
+
+def test_an_answer_the_disk_refutes_is_caught(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The answer against the model's disk (`told_on_disk`): a save that says "saved" where it ended Unfinished is
+    caught, with the record still `.open`."""
+    run = sv.run
+
+    def unfinished_said_saved(plan: sv.SavePlan, ports: sv.Ports, job: Any) -> sv.SaveOutcome:
+        out = run(plan, ports, job)
+        if isinstance(out, Unfinished):
+            return sv.Saved(cast(Any, None))
+        return out
+
+    monkeypatch.setattr(sv, "run", unfinished_said_saved)
+    assert re.search(r"the code tells 'saved' .*which the disk does not allow: 'unfinished'", _first_failure())
+
+
+def test_a_landed_save_told_not_saved_is_caught(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A save that landed (its record `.closed`) and says "not saved" is caught."""
+    run = sv.run
+
+    def saved_said_not_saved(plan: sv.SavePlan, ports: sv.Ports, job: Any) -> sv.SaveOutcome:
+        out = run(plan, ports, job)
+        return NotSaved(Step.REPLACE, Reason.IO_ERROR, False) if isinstance(out, sv.Saved) else out
+
+    monkeypatch.setattr(sv, "run", saved_said_not_saved)
+    assert re.search(r"the code tells 'notsaved' .*which the disk does not allow: 'saved'", _first_failure())
+
+
+def test_a_resolved_rollback_told_saved_is_caught(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A save whose rollback resolved its record (every file back at pre) and says "saved" is caught."""
+    run = sv.run
+
+    def resolved_said_saved(plan: sv.SavePlan, ports: sv.Ports, job: Any) -> sv.SaveOutcome:
+        out = run(plan, ports, job)
+        late = isinstance(out, NotSaved) and out.step not in (Step.BACKUP, Step.JOURNAL) and not out.open_journal
+        return sv.Saved(cast(Any, None)) if late else out
+
+    monkeypatch.setattr(sv, "run", resolved_said_saved)
+    assert re.search(r"the code tells 'saved' .*which the disk does not allow: 'notsaved'", _first_failure())
+
+
+def test_not_saved_over_our_post_bytes_is_caught(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A rollback that stopped with post bytes of ours in place (a swap that took place, a created file) and says
+    "not saved" with the journal open, not Unfinished, is caught."""
+    run = sv.run
+
+    def unfinished_said_not_saved(plan: sv.SavePlan, ports: sv.Ports, job: Any) -> sv.SaveOutcome:
+        out = run(plan, ports, job)
+        return NotSaved(Step.REPLACE, Reason.IO_ERROR, False, True) if isinstance(out, Unfinished) else out
+
+    monkeypatch.setattr(sv, "run", unfinished_said_not_saved)
+    assert re.search(r"the code tells 'notsaved' .*which the disk does not allow: 'unfinished'", _first_failure())
+
+
+def test_a_wrong_reading_after_an_engine_death_is_caught(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The reading after an engine death against the disk's answer (§6.6): an outcome reading that takes a `.closed`
+    record for an `.open` one is caught."""
+    from dataclasses import replace as copy
+
+    read = sv.outcome
+
+    def closed_read_as_open(*args: Any) -> sv.OutcomeFacts:
+        facts = read(*args)
+        return copy(facts, record="open") if facts.record == "closed" else facts
+
+    monkeypatch.setattr(sv, "outcome", closed_read_as_open)
+    assert re.search(r"the code tells 'unfinished' .*, the disk 'saved' \(closed\)", _first_failure())
+
+
 def test_a_wrong_step_is_caught(monkeypatch: pytest.MonkeyPatch) -> None:
     """The comparison at each step: a writer that stages other bytes than the plan's is caught at the step after its
     write, before the read-back or the answer could tell."""
@@ -924,7 +1109,7 @@ def test_a_wrong_end_is_caught(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_a_wrong_answer_is_caught(monkeypatch: pytest.MonkeyPatch) -> None:
-    """The answer against what the model told: a writer whose "not saved" always says the files are unchanged (no
+    """The answer against the model's disk: a writer whose "not saved" always says the files are unchanged (no
     re-hash) is caught where an outside edit came before an I/O error (`S_save_io_edit`)."""
     from ledger_engine.ledger import writer
 

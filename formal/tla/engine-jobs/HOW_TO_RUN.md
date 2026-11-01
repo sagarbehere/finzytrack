@@ -60,19 +60,19 @@ of `L_world` (default 200,000 traces of at most 200 steps).
 ## How long it takes
 
 Measured on the owner's Mac (Apple M4 Pro, 14 cores, 48 GB) on 2026-11-01 with 14 TLC workers, on the model of S0072
-(model sha256 b64de22155e2). Earlier models' numbers (the queue, the screens and liveness) are in git history.
+round 1 (model sha256 23acd902b1d1). Earlier models' numbers (the queue, the screens and liveness) are in git history.
 
 | Tier | Configurations | Result | Size | Wall time |
 |---|---|---|---|---|
-| S | 14 base worlds | all PASS | 20 (`S_create_nonempty`) to 193,159 distinct states (`S_keep`) | 0-3 s each |
-| S | 27 mutants | each violates its property | | 0-2 s each |
+| S | 14 base worlds | all PASS | 20 (`S_create_nonempty`) to 194,461 distinct states (`S_keep`) | 0-3 s each |
+| S | 28 mutants | each violates its property | | 0-2 s each |
 | S | 23 witnesses | each reached | | 0-2 s each |
-| S | all 64 | **all as expected** | | 68 s together |
+| S | all 65 | **all as expected** | | 75 s together |
 | M | `M_recover_temps` | not run on this model (the owner's) | | |
 | L | `L_save_all`, `L_recover_all`, `L_save_deep`, `L_world` (bounded simulation) | not run on this model (the owner's, BL-0110) | | |
 
 The model lost the queue, the sessions' screens and the engine's processes in S0072, so its worlds are far smaller
-than before (`S_save_crash`: 2,711,371 distinct states before, 21,170 now). The medium and large worlds combine more
+than before (`S_save_crash`: 2,711,371 distinct states before, 21,236 now). The medium and large worlds combine more
 faults (two or three saves, two power losses, three starts, every boot journal with its temps); they are expected to
 take minutes to an hour each, not measured yet.
 
@@ -84,7 +84,7 @@ steps that name only the variables that changed (`gen_traces.delta`). Regenerate
 `EngineJobs.tla`, to a `.cfg` it uses or to the generator (the test fails until then, naming this command):
 
 ```sh
-python3 formal/tla/engine-jobs/gen_traces.py           # a minute or two (12 worlds); Java 21 and the pinned jar
+python3 formal/tla/engine-jobs/gen_traces.py           # a minute or two (13 worlds); Java 21 and the pinned jar
 python3 formal/tla/engine-jobs/gen_traces.py --check   # is the corpus current? (no Java)
 ```
 
