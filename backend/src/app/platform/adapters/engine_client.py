@@ -28,7 +28,8 @@ ARCHITECTURE.md §2.0, §5, §7; `design/specs/engine-jobs.md` §5.1-§5.5 since
   site-packages (ADR-0056). Both run `python -s -S -B -P -c <bootstrap> <engine site>`: `-S` keeps the interpreter's
   own site-packages off the path and the bootstrap adds only the engine's site (ADR-0054 decision 5); never `-I`,
   which implies `-E` and so ignores `PYTHONHASHSEED`. The environment is the client's minus `FT_*` (the shell token,
-  our settings) and every `PYTHON*` variable, plus `PYTHONHASHSEED=0` (R4's digests must not depend on hash order).
+  our settings) and every `PYTHON*` variable, plus `PYTHONHASHSEED=0` (a load of the same bytes gives the same
+  result in every engine: string hashing decides the order of Python's sets, which Beancount and plugins may follow).
   The engine is told the client's pid (`--parent-pid`) and, when the command names one, the engine lock
   (`--engine-lock`, S0053). On Windows it opens no console window (`CREATE_NO_WINDOW`).
 - **The bytecode directory** (§5.1). When the command names one (the composition root: `app_local_data/engine/
@@ -617,9 +618,12 @@ class EngineClient:
         *,
         on_event: Callable[[EngineEvent], None] | None = None,
         spawn: bool = True,
+        counted: bool = True,
     ) -> Mapping[str, object] | EngineRefusal | EngineFailure:
+        """One request. `counted` False: an end of the engine during it is no stop toward the bound (`Send.counted`;
+        the background rebuild after a save, engine-jobs §5.3)."""
         with self._call():
-            out = self._request(op, params, None, on_event, spawn=spawn)
+            out = self._request(op, params, None, on_event, spawn=spawn, counted=counted)
             return out.result if isinstance(out, Accepted) else out
 
     def proceed(self) -> bool:
@@ -881,6 +885,7 @@ class EngineClient:
         on_event: Callable[[EngineEvent], None] | None,
         *,
         spawn: bool = True,
+        counted: bool = True,
     ) -> Accepted | EngineRefusal | EngineFailure:
         """One request through the table: `Send`, then the answer or its absence. `validate` checks a result's
         shape (a `Violation` stops the engine like any invalid reply). Without `spawn` the request goes only to a
@@ -892,7 +897,7 @@ class EngineClient:
         if isinstance(ready, EngineFailure):
             return ready
         run, _ = ready
-        self._feed(Send())
+        self._feed(Send(counted))
         out = self._exchange(run, line, on_event)  # an exception from here on is fed in as `Interrupted` (`_call`)
         if isinstance(out, Accepted) and validate is not None:
             checked = validate(out.result)

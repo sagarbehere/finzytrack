@@ -148,7 +148,7 @@ def test_a_save_that_lands_is_saved_and_its_engine_is_retired(make: Any) -> None
             "WRITES_PAUSED",
             WritesPausedDetails("unfinished_save", None),
         ),
-        # S0068 (ADR-0067): R4 never refuses a save; a reason that came back would be a bug, never a pause
+        # S0068 (ADR-0067): nothing after a save refuses one; a reason that came back would be a bug, never a pause
         (answer(outcome="refused", reason="check_pending", unchanged=True), "INTERNAL", None),
         (answer(outcome="refused", reason="check_failed", unchanged=True), "INTERNAL", None),
         (answer(outcome="refused", reason="legacy_app_saving", unchanged=True), "LEGACY_APP_SAVING", None),
@@ -158,7 +158,9 @@ def test_a_save_that_lands_is_saved_and_its_engine_is_retired(make: Any) -> None
             "WORKSPACE_NOT_READY",
             WorkspaceNotReadyDetails("WARMING"),
         ),
-        (answer(outcome="refused", reason="load_refused", unchanged=True), "INTERNAL", None),
+        (answer(outcome="refused", reason="load_refused", unchanged=True), "INTERNAL", None),  # an older engine's
+        # S0070: the preview refuses an encrypted file first (BL-0106); the save's own refusal is a bug, never "saved"
+        (answer(outcome="refused", reason="encrypted_file", unchanged=True), "INTERNAL", None),
         (answer(outcome="not_saved", reason="changed"), "LEDGER_EXTERNALLY_CHANGED", None),
         (answer(outcome="not_saved", reason="path_moved"), "LEDGER_EXTERNALLY_CHANGED", None),
         (

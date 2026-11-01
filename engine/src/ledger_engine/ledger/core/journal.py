@@ -3,13 +3,11 @@ step 8.2, §6.5; ADR-0012 as amended by ADR-0063 and ADR-0064; S0060). Pure.
 
 One save, one name `<session>-<job>`, one record that moves between states by renames in `local/<key>/journal/`:
 `.part` (being written; no replace has happened) → `.open` (the save may be half-applied) → `.closed` (saved; the
-last state: R4 reads it and writes nothing, ADR-0067), or `.resolved` (put back), `.kept` (§6.5). The `.done` and
-`.mismatch` states and the `.r4-attempt-<n>` files of S0066-S0067's R4 gate are gone (S0068): such files, written only
-by development builds, are not records here (`parse_file_name` gives None), so nothing reads or gates on them. The
-record never changes after it is written: every state is a rename, so the closed record's fields are written with
-the journal (post fingerprint, adopted digest, engine build, workspace registry key and lineage id). The post
-fingerprint is the full fingerprint's canonical encoding (the ledger set R4 observes); the adopted digest is
-`ledger.digest`'s of the save's load result.
+last state, ADR-0067), or `.resolved` (put back), `.kept` (§6.5). The `.done` and `.mismatch` states and the
+`.r4-attempt-<n>` files of S0066-S0067 are gone (S0068): such files, written only by development builds, are not
+records here (`parse_file_name` gives None), so nothing reads or gates on them. The record never changes after it is
+written: every state is a rename, so the closed record's fields are written with the journal (engine build,
+workspace registry key and lineage id). It carries no prediction of the save's result (ADR-0068 D1, format 4).
 
 The encoding is canonical JSON with a format name and a version; an older app refuses a newer version (ADR-0012), and
 `decode` refuses anything else that is not a whole, well-formed record of this format (a record cut off by a power
@@ -29,13 +27,13 @@ from typing import Final, cast
 from ledger_engine.fs.port import FoldRule, check_name, fold, split_absolute
 
 FORMAT: Final = "finzytrack-save-journal"
-VERSION: Final = 3
-"""2 since S0066: `post_fingerprint` holds the post fingerprint's canonical encoding (`core.ledger_set.encode`), no
-longer its digest, so R4 can observe the same ledger set (spec §6.7 step 1). 3 since S0067: no `parse_digest` (BL-0173,
-owner 2026-10-31: "Drop digest; 2 jobs (Recommended)"). Unchanged by S0068 (ADR-0067 changed no field). Older
-records were written only by tests and development builds (nothing in the product saves yet) and read as
-`Unreadable`: R4 compares nothing for one (logged, no notice), and recovery cannot roll back an older `.open` journal,
-which blocks its workspace instead (fail closed)."""
+VERSION: Final = 4
+"""4 since S0070: no `post_fingerprint` and no `adopted_digest` (ADR-0068 D1: the save makes no prediction). Formats 2
+(S0066) and 3 (S0067) carried them. Older records were written only by tests and development builds (nothing in the
+product saves yet) and read as `Unreadable`, never as a record of this format: recovery cannot roll back an older
+`.open` journal, which blocks its workspace on the recovery screen instead (fail closed; its Keep or delete ends
+the block), a save counts one as this workspace's `.open` journal (`ledger.save.records`), and an older `.closed`
+record is read by its name alone (§6.6), so it still says "saved"."""
 _SHA256: Final = re.compile(r"[0-9a-f]{64}")
 _ID: Final = re.compile(r"[A-Za-z0-9_]{1,64}")  # no "-": it joins session and job
 
@@ -93,8 +91,6 @@ class Record:
     workspace_key: str
     lineage: str
     engine_build: str
-    post_fingerprint: str
-    adopted_digest: str
     backup_dir: str
     files: tuple[FileEntry, ...]
     created_dirs: tuple[DirEntry, ...]
@@ -340,8 +336,6 @@ def _check(record: Record) -> None:
         record.workspace_key,
         record.lineage,
         record.engine_build,
-        record.post_fingerprint,
-        record.adopted_digest,
     ):
         _str(v)
 
@@ -358,8 +352,6 @@ def encode(record: Record) -> bytes:
         "workspace_key": record.workspace_key,
         "lineage": record.lineage,
         "engine_build": record.engine_build,
-        "post_fingerprint": record.post_fingerprint,
-        "adopted_digest": record.adopted_digest,
         "backup_dir": record.backup_dir,
         "files": [
             {
@@ -386,8 +378,6 @@ _TOP: Final = frozenset(
         "workspace_key",
         "lineage",
         "engine_build",
-        "post_fingerprint",
-        "adopted_digest",
         "backup_dir",
         "files",
         "created_dirs",
@@ -458,8 +448,6 @@ def decode(data: bytes) -> Record | Unreadable:
             workspace_key=_str(top["workspace_key"]),
             lineage=_str(top["lineage"]),
             engine_build=_str(top["engine_build"]),
-            post_fingerprint=_str(top["post_fingerprint"]),
-            adopted_digest=_str(top["adopted_digest"]),
             backup_dir=_str(top["backup_dir"]),
             files=tuple(files),
             created_dirs=tuple(dirs),

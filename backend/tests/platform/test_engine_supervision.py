@@ -624,6 +624,25 @@ def test_the_stop_that_reaches_the_bound_makes_the_engine_unavailable_at_once() 
     )
 
 
+@pytest.mark.parametrize(("event", "kind"), STOPS_WHILE_BUSY)
+def test_an_uncounted_requests_engine_end_keeps_the_stops_as_they_were(event: Ended | Violated, kind: str) -> None:
+    """§5.3 (S0070, ADR-0068 D1; step-back area review F2): the background rebuild after a save is sent uncounted, so
+    a plugin that crashes in every load never makes the engine unavailable, and saving goes on. Its engine still
+    ends and its caller still fails (no stop recorded); a counted request at the same point reaches the bound."""
+    stops = (T - 20.0, T - 10.0)
+    sent = transition(POLICY, Ready(stops, PID, INFO), Send(counted=False))
+    assert sent.state == Busy(stops, PID, INFO, counted=False)
+    step = transition(POLICY, sent.state, event)
+    assert step.state == Crashed(stops, kind)  # pyright: ignore[reportArgumentType]
+    assert step.effects == (
+        End(),
+        Log(ENGINE_STOPPED, {"kind": kind, "detail": event.detail}),
+        Fail(EngineFailure(kind, event.detail)),  # pyright: ignore[reportArgumentType]
+    )
+    counted = transition(POLICY, transition(POLICY, Ready(stops, PID, INFO), Send()).state, event)
+    assert isinstance(counted.state, Unavailable)
+
+
 def test_stops_outside_the_window_do_not_count_towards_the_bound() -> None:
     stops = (T - POLICY.window, T - 10.0)  # the first is exactly one window old: out
     step = transition(POLICY, Busy(stops, PID, INFO), Ended("exit 9", T))

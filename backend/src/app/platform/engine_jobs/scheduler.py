@@ -155,6 +155,7 @@ class JobEngine(Protocol):
         *,
         on_event: Callable[[EngineEvent], None] | None = None,
         spawn: bool = True,
+        counted: bool = True,
     ) -> Mapping[str, object] | EngineRefusal | EngineFailure: ...
 
     def proceed(self) -> bool: ...
@@ -267,10 +268,16 @@ class JobContext:
         self._worker = worker
 
     def call(
-        self, op: str, params: Mapping[str, object], *, on_event: Callable[[EngineEvent], None] | None = None
+        self,
+        op: str,
+        params: Mapping[str, object],
+        *,
+        on_event: Callable[[EngineEvent], None] | None = None,
+        counted: bool = True,
     ) -> Mapping[str, object] | EngineRefusal | EngineFailure:
-        """One request to this job's engine; never to another (§5.3). `on_event` sees the job's messages first."""
-        return self._worker.call(op, params, on_event)
+        """One request to this job's engine; never to another (§5.3). `on_event` sees the job's messages first.
+        `counted` False: the engine's end during it is no stop toward the bound (the rebuild after a save, §5.3)."""
+        return self._worker.call(op, params, on_event, counted)
 
     def fresh_engine(self) -> EngineFailure | None:
         """§5.1: end this engine (it ran user code) and wait for a fresh one for the job's next part; a failure if
@@ -282,7 +289,7 @@ class JobContext:
         self._worker.listed()
 
     def log(self, event: LogEvent, /, **fields: object) -> None:
-        """One registered event of the job's own (R4's comparison, §6.7), into the scheduler's log."""
+        """One registered event of the job's own (the rebuild's outcome, §6.7), into the scheduler's log."""
         self._worker.log(event, **fields)
 
 
@@ -312,7 +319,11 @@ class _Worker:
         self._lost: EngineFailure | None = None
 
     def call(
-        self, op: str, params: Mapping[str, object], on_event: Callable[[EngineEvent], None] | None
+        self,
+        op: str,
+        params: Mapping[str, object],
+        on_event: Callable[[EngineEvent], None] | None,
+        counted: bool = True,
     ) -> Mapping[str, object] | EngineRefusal | EngineFailure:
         with self._cond:
             if self._over:
@@ -329,7 +340,7 @@ class _Worker:
             elif isinstance(event, GateReached):
                 post(_Feed(Gate(job_id)))  # the commit point is the table's step (§4)
 
-        out = self._engine.call(op, params, on_event=events, spawn=False)
+        out = self._engine.call(op, params, on_event=events, spawn=False, counted=counted)
         if isinstance(out, EngineFailure):
             self.fail(out)
         return out
@@ -551,12 +562,12 @@ class EngineJobs:
         self._thread.start()
         return self._ask(self._boot, self._closing())
 
-    def submit(self, spec: JobSpec, work: Work, *, replace_queued: bool = False) -> JobTicket | Failed:
+    def submit(self, spec: JobSpec, work: Work) -> JobTicket | Failed:
         """Queue a job; refused at once for a workspace that is not open or a full queue (§3). A kind the queue keeps
-        one of (`AlreadyQueued`) answers with the queued job's ticket; with `replace_queued` that job will run `work`
-        instead of its own (the background R4: the newest save is the one to compare, §6.7; S0068; R4 goes in S0070).
-        A background save is the exception: see `submit_background_save` (ADR-0068 D8)."""
-        return self._ask(lambda: self._submit(spec, work, boot=False, replace=replace_queued), self._closing())
+        one of (`AlreadyQueued`) answers with the queued job's ticket (the background rebuild after a save: the queued
+        one loads the disk when it runs, so it shows the newer save too, §6.7). A background save is the exception:
+        see `submit_background_save` (ADR-0068 D8)."""
+        return self._ask(lambda: self._submit(spec, work, boot=False), self._closing())
 
     @tla_action("AppBgSave")
     def submit_background_save(self, workspace: str, work: Work) -> JobTicket | Failed:
@@ -772,7 +783,7 @@ class EngineJobs:
         spec = JobSpec(kind="recover_all", workspace=None, waited_for=True, confirmed=False, owner="switch")
         return self._submit(spec, self._recover_all or _recover_nothing, boot=True)
 
-    def _submit(self, spec: JobSpec, work: Work, *, boot: bool, replace: bool = False) -> JobTicket | Failed:
+    def _submit(self, spec: JobSpec, work: Work, *, boot: bool) -> JobTicket | Failed:
         self._submitting = (spec, work, boot)
         try:
             effects = self._step(Submit(spec))
@@ -790,8 +801,6 @@ class EngineJobs:
                         if joined is None:
                             return Failed(error(ErrorCode.ENGINE_QUEUE_FULL))
                         queued.work = joined
-                    elif replace:
-                        queued.work = work
                     return queued.ticket
                 case Refused(code="WORKSPACE_NOT_OPEN"):
                     details = WorkspaceNotOpenDetails(open_workspace=self._state.open_workspace, switching=False)

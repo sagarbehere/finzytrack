@@ -1,6 +1,5 @@
-"""What the user reads when a save does not end "saved" (`design/specs/engine-jobs.md` §11's save rows; S0063), and
-R4's notice after a save (§11; S0068, ADR-0067). Plain text for non-native readers; the screens are BL-0092's and
-BL-0170's.
+"""What the user reads when a save does not end "saved" (`design/specs/engine-jobs.md` §11's save rows; S0063). Plain
+text for non-native readers; the screens are BL-0092's.
 
 "Your ledger is unchanged" is said only when every file the save would write was hashed again and equals its bytes
 before the save (§11's rule; `ChangeNotSavedDetails.unchanged`); otherwise the text says which file changed, or that
@@ -18,14 +17,6 @@ from app.platform.errors import ChangeNotSavedDetails, ErrorCode, WritesPausedDe
 
 NOT_SAVED: Final = "Your change was not saved."
 UNCHANGED: Final = "Your ledger is unchanged."
-R4_DIFFERS: Final = (
-    "Your change is saved. Beancount reads your ledger differently from what Finzytrack expected. Common causes: a new "
-    "file in a documents folder, a plugin that gives a different result each time, or another program changing a "
-    "file at the same moment."
-)
-"""§11's notice when R4 finds a difference (`engine_jobs.r4.notice_of`): true whatever the cause, since R4 no longer
-tells a plugin's variation from a replica's drift (ADR-0067: no confirm). Saving goes on. Once R4's result is
-published (TODO(BL-0113)) it gains "Finzytrack now shows Beancount's result."."""
 LEDGER_CHANGED: Final = (
     "Your ledger changed after this preview, so Finzytrack did not save your change. Review it again."
 )

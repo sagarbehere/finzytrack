@@ -76,6 +76,7 @@ class FakeEngine:
     calls: list[tuple[int, str]] = field(default_factory=lambda: [])
     scripted: dict[str, list[object]] = field(default_factory=lambda: {})
     params: list[tuple[int, str, dict[str, object]]] = field(default_factory=lambda: [])
+    uncounted: list[str] = field(default_factory=lambda: [])  # the ops sent with `counted=False` (S0070)
     ends: list[tuple[int, str]] = field(default_factory=lambda: [])
     starts: int = 0
     resets: int = 0
@@ -129,8 +130,11 @@ class FakeEngine:
         *,
         on_event: Callable[[EngineEvent], None] | None = None,
         spawn: bool = True,
+        counted: bool = True,
     ) -> Mapping[str, object] | EngineRefusal | EngineFailure:
         gated: object = None
+        if not counted:
+            self.uncounted.append(op)  # its engine's end would be no stop (the real client's `Send.counted`)
         with self._cond:
             eng = self._live
             if eng is None or eng.ended is not None:

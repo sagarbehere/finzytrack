@@ -51,10 +51,9 @@ type Phase = Literal[
     "waiting_for_files",
     "saving",
     "updating_views",
-    "checking_last_change",
 ]
 """What a job is doing (engine-jobs §5.4): the UI words them "Reading your ledger…", "Checking your change…",
-"Waiting for your ledger files…", "Saving…", "Updating your views…", "Checking your last change…"."""
+"Waiting for your ledger files…", "Saving…", "Updating your views…"."""
 PHASES: frozenset[str] = frozenset(get_args(Phase.__value__))
 DecisionScalar = str | int | bool | None
 
@@ -318,13 +317,13 @@ type SaveOutcomeKind = Literal["saved", "refused", "not_saved", "unfinished"]
 class SaveResult(Message):
     """How the save ended (§6.1, §11). `saved`: the closed record is durable (`published`: the mirror was published,
     never yet, BL-0113). `refused`: before the commit point, nothing written (`reason`: `unfinished_save`,
-    `legacy_app_saving`, `ledger_changed`, `mirror_stale`, `load_refused`).
+    `legacy_app_saving`, `ledger_changed`, `mirror_stale`, `encrypted_file`).
     `not_saved`: the writer's `NotSaved` (`reason` its own: `hard_linked`, `locked`, `not_a_file`, `permission`,
     `changed`, `path_moved`, `read_back`, `io_error`, `name_not_utf8`; `open_journal`: writes are
     paused until recovery). `unfinished`: a file may have been replaced and the rollback stopped (`cause`, and
     `cause_path` its file: after `created_path_taken` the undo will ask about that file). `unchanged`: every file the
     save would write was hashed again and equals its pre bytes. `path`: the file it is about; `entry`: the folder a
-    `permission` refusal is about, `detail`: the ACL entry that blocks it. No refusal comes from R4 (ADR-0067)."""
+    `permission` refusal is about, `detail`: the ACL entry that blocks it."""
 
     outcome: SaveOutcomeKind
     reason: str | None
@@ -366,24 +365,24 @@ class SaveOutcomeResult(Message):
     errno: int | None
 
 
-RecordName = Annotated[str, Field(pattern=r"^[A-Za-z0-9_]{1,64}-[A-Za-z0-9_]{1,64}$")]
+class RebuildParams(Message):
+    """`rebuild` (S0070; engine-jobs §6.7, §7; ADR-0068 D1): Beancount's own load of the ledger rooted at `root`, the
+    ledger set named by `fingerprint` (`ledger_set.encode`'s text: the saved plan's, or the last try's answer)
+    observed before and after it."""
+
+    root: AbsPath
+    fingerprint: str = Field(min_length=1)
 
 
-class R4Params(Message):
-    """`r4_check` (S0066; engine-jobs §6.7): the record `<app_local_data>/local/<key>/journal/<name>.closed`."""
+class RebuildResult(Message):
+    """`rebuild`'s answer: `loaded` (Beancount's result for the disk as observed; `entries` and `errors` its counts)
+    or `moved` (the disk changed during the load, or the load used files outside the set: `fingerprint` is the set to
+    try with next). It writes nothing; it runs the ledger's plugins, so the engine is retired after it."""
 
-    app_local_data: AbsPath
-    key: Component
-    name: RecordName
-
-
-class R4CheckResult(Message):
-    """`r4_check`'s answer (S0066, S0068; engine-jobs §6.7; ADR-0067): `gone` (no `.closed` record of that name),
-    `unreadable`, `superseded` (the disk moved, or another engine build), `pass` or `differs` (the notice). It renames
-    and writes nothing. `loaded`: the ledger's plugins ran (the engine is retired)."""
-
-    outcome: Literal["gone", "unreadable", "superseded", "pass", "differs"]
-    loaded: bool
+    outcome: Literal["loaded", "moved"]
+    fingerprint: str = Field(min_length=1)
+    entries: int = Field(ge=0)
+    errors: int = Field(ge=0)
 
 
 @dataclass(frozen=True, slots=True)
@@ -401,6 +400,7 @@ class OpSpec:
 
 _ALD = "/app-data/com.finzytrack.desktop"
 _JD = f"{_ALD}/local/k1/journal"
+_FP = '{"document_files":[],"documents":[],"files":[],"globs":[],"root":"/ledgers/L/main.bean","v":1}'
 _SEEN = {"kind": "file", "sha256": "0" * 64, "size": 21}
 
 
@@ -489,9 +489,7 @@ OPS: dict[str, OpSpec] = {
             "lineage": "lin1",
             "root": "/ledgers/L/main.bean",
             "changes": [{"path": "/ledgers/L/main.bean", "pre": "0" * 64, "post": "2026-01-01 open Assets:Cash\n"}],
-            "fingerprint": (
-                '{"document_files":[],"documents":[],"files":[],"globs":[],"root":"/ledgers/L/main.bean","v":1}'
-            ),
+            "fingerprint": _FP,
             "mirror": None,
             "legacy_locks": [],
             "app_local_data": _ALD,
@@ -511,11 +509,11 @@ OPS: dict[str, OpSpec] = {
         },
         needs_engine_lock=True,
     ),
-    "r4_check": OpSpec(
-        R4Params,
-        R4CheckResult,
-        {"outcome": "pass", "loaded": True},
-        {"app_local_data": _ALD, "key": "k1", "name": "s1-j7"},
+    "rebuild": OpSpec(
+        RebuildParams,
+        RebuildResult,
+        {"outcome": "loaded", "fingerprint": _FP, "entries": 3, "errors": 0},
+        {"root": "/ledgers/L/main.bean", "fingerprint": _FP},
         needs_engine_lock=True,
     ),
 }

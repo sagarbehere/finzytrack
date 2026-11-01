@@ -297,14 +297,14 @@ def test_a_running_job_is_never_interrupted_and_the_waited_for_job_goes_first(ri
 
     first = submit(rig, user("bql"), named("bql", "block"))
     blocked(rig)
-    bg = submit(rig, background("r4"), named("r4", "ok"))
+    bg = submit(rig, background("rebuild"), named("rebuild", "ok"))
     fg = submit(rig, user("preview"), named("preview", "ok"))
     absent_for_a_while()
     assert order == ["bql"], "a job started beside the running one"
     rig.engine.release()
     for t in (first, fg, bg):
         assert isinstance(outcome(t), Done)
-    assert order == ["bql", "preview", "r4"]
+    assert order == ["bql", "preview", "rebuild"]
 
 
 def test_a_job_for_a_workspace_that_is_not_open_is_refused_at_once(rig: Rig) -> None:
@@ -537,14 +537,14 @@ def test_a_cancel_after_proceed_is_too_late_and_the_save_finishes(rig: Rig) -> N
     assert not any(reason == "cancel" for _, reason in rig.engine.ends)
 
 
-def test_the_one_rule_a_waiting_users_cancel_frees_the_engine_behind_an_r4(rig: Rig) -> None:
-    """§4: "Another job's Cancel ends the running job only when nobody waits for it ...: an R4 load"; §14 "Cancel of
-    a job queued behind a hung R4 load ... frees the engine"."""
-    r4 = submit(rig, background("r4"), calls("block"))
+def test_the_one_rule_a_waiting_users_cancel_frees_the_engine_behind_a_background_rebuild(rig: Rig) -> None:
+    """§4: "Another job's Cancel ends the running job only when nobody waits for it": the background rebuild after a
+    save (S0070; R4's place); §14 "Cancel of a job queued behind a hung background load ... frees the engine"."""
+    rb = submit(rig, background("rebuild"), calls("block"))
     blocked(rig)
     waiting = submit(rig, user("preview"), calls("ok"))
     assert rig.jobs.cancel(waiting.id) == "cancelled"
-    assert code_of(outcome(r4)) == ErrorCode.JOB_CANCELLED
+    assert code_of(outcome(rb)) == ErrorCode.JOB_CANCELLED
     assert code_of(outcome(waiting)) == ErrorCode.JOB_CANCELLED
     assert any(reason == "cancel" for _, reason in rig.engine.ends)
     wait_until(lambda: slot(rig) == "none")
@@ -592,14 +592,14 @@ def test_a_client_that_goes_away_cancels_its_read_but_never_a_save(rig: Rig) -> 
 
 
 def test_a_background_job_offers_no_cancel_and_ignores_one(rig: Rig) -> None:
-    r4 = submit(rig, background("r4"), calls("block"))
+    rb = submit(rig, background("rebuild"), calls("block"))
     blocked(rig)
-    shown = describe(rig.jobs.status(), r4.id, now=rig.clock.now)
+    shown = describe(rig.jobs.status(), rb.id, now=rig.clock.now)
     assert shown is not None
     assert not shown.cancel
-    assert rig.jobs.cancel(r4.id) == "nothing"
+    assert rig.jobs.cancel(rb.id) == "nothing"
     rig.engine.release()
-    assert isinstance(outcome(r4), Done)
+    assert isinstance(outcome(rb), Done)
 
 
 def test_a_cancel_that_comes_before_the_jobs_engine_has_started_still_ends_that_engine(rig: Rig) -> None:
@@ -1154,8 +1154,10 @@ class ClosedPastTheGate(FakeEngine):
         *,
         on_event: Callable[[EngineEvent], None] | None = None,
         spawn: bool = True,
+        counted: bool = True,
     ) -> Mapping[str, object] | EngineRefusal | EngineFailure:
-        out = super().call("gate_die" if op == "gate_closed" else op, params, on_event=on_event, spawn=spawn)
+        sent = "gate_die" if op == "gate_closed" else op
+        out = super().call(sent, params, on_event=on_event, spawn=spawn, counted=counted)
         if op == "gate_closed" and isinstance(out, EngineFailure):
             return EngineFailure("closed", "the client was closed")
         return out
@@ -1462,7 +1464,7 @@ def test_with_the_real_engine_a_save_job_lands_and_retires_its_engine(tmp_path: 
             legacy_locks=(),
             app_local_data=app,
         )
-        # the save's work alone (no R4 after it): the only engine retired below is the save's own (S0069 V6)
+        # the save's work alone (no rebuild after it): the only engine retired below is the save's own (S0069 V6)
         ticket = jobs.submit(save_spec(W1), save_work(request))
         assert isinstance(ticket, JobTicket)
         saved = outcome(ticket)

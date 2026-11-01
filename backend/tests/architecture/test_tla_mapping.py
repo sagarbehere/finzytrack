@@ -43,7 +43,7 @@ APP_ACTIONS_OUTSIDE_APPSTEP = frozenset({"AdviceTimer"})  # MAPPING.md §1.2: an
 MARKED_GROUPS = ("EngineStep", "AppStep")  # their actions are the code's: each needs a marker or a PLANNED row
 FREE_GROUPS = ("UserStep", "EnvStep")  # user, OS and outside-editor actions: no marker needed
 
-R4_READS = "BL-0152"  # the reads and the open (BL-0152 part 2; R4 itself landed in S0066, simplified in S0068)
+R4_READS = "BL-0152"  # the reads and the open (BL-0152 part 2); the model's R4 is the rebuild after a save (S0070)
 CREATE_COPY = "BL-0153"  # create and copy
 SWITCH = "BL-0154"  # the switch, Reopen, quit, boot and update
 

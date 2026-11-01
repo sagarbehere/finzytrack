@@ -13,7 +13,7 @@
     "recover_act",
     "save",
     "save_outcome",
-    "r4_check"
+    "rebuild"
   ],
   "oneOf": [
     {
@@ -575,8 +575,7 @@
         "checking_change",
         "waiting_for_files",
         "saving",
-        "updating_views",
-        "checking_last_change"
+        "updating_views"
       ],
       "type": "string"
     },
@@ -787,17 +786,42 @@
       "title": "ProgressEvent",
       "type": "object"
     },
-    "R4CheckReply": {
+    "RebuildParams": {
       "additionalProperties": false,
-      "description": "The accepted reply to `r4_check`.",
+      "description": "`rebuild` (S0070; engine-jobs §6.7, §7; ADR-0068 D1): Beancount's own load of the ledger rooted at `root`, the\nledger set named by `fingerprint` (`ledger_set.encode`'s text: the saved plan's, or the last try's answer)\nobserved before and after it.",
+      "properties": {
+        "root": {
+          "minLength": 1,
+          "pattern": "^/",
+          "title": "Root",
+          "type": "string"
+        },
+        "fingerprint": {
+          "minLength": 1,
+          "title": "Fingerprint",
+          "type": "string"
+        }
+      },
+      "required": [
+        "root",
+        "fingerprint"
+      ],
+      "title": "RebuildParams",
+      "type": "object"
+    },
+    "RebuildReply": {
+      "additionalProperties": false,
+      "description": "The accepted reply to `rebuild`.",
       "examples": [
         {
           "id": 1,
           "ok": true,
-          "op": "r4_check",
+          "op": "rebuild",
           "result": {
-            "loaded": true,
-            "outcome": "pass"
+            "entries": 3,
+            "errors": 0,
+            "fingerprint": "{\"document_files\":[],\"documents\":[],\"files\":[],\"globs\":[],\"root\":\"/ledgers/L/main.bean\",\"v\":1}",
+            "outcome": "loaded"
           },
           "v": 2
         }
@@ -815,7 +839,7 @@
           "type": "integer"
         },
         "op": {
-          "const": "r4_check",
+          "const": "rebuild",
           "title": "Op",
           "type": "string"
         },
@@ -825,7 +849,7 @@
           "type": "boolean"
         },
         "result": {
-          "$ref": "#/$defs/R4CheckResult"
+          "$ref": "#/$defs/RebuildResult"
         },
         "decision": {
           "anyOf": [
@@ -846,20 +870,19 @@
         "ok",
         "result"
       ],
-      "title": "R4CheckReply",
+      "title": "RebuildReply",
       "type": "object"
     },
-    "R4CheckRequest": {
+    "RebuildRequest": {
       "additionalProperties": false,
-      "description": "The `r4_check` request.",
+      "description": "The `rebuild` request.",
       "examples": [
         {
           "id": 1,
-          "op": "r4_check",
+          "op": "rebuild",
           "params": {
-            "app_local_data": "/app-data/com.finzytrack.desktop",
-            "key": "k1",
-            "name": "s1-j7"
+            "fingerprint": "{\"document_files\":[],\"documents\":[],\"files\":[],\"globs\":[],\"root\":\"/ledgers/L/main.bean\",\"v\":1}",
+            "root": "/ledgers/L/main.bean"
           },
           "v": 2
         }
@@ -877,12 +900,12 @@
           "type": "integer"
         },
         "op": {
-          "const": "r4_check",
+          "const": "rebuild",
           "title": "Op",
           "type": "string"
         },
         "params": {
-          "$ref": "#/$defs/R4Params"
+          "$ref": "#/$defs/RebuildParams"
         }
       },
       "required": [
@@ -891,65 +914,44 @@
         "op",
         "params"
       ],
-      "title": "R4CheckRequest",
+      "title": "RebuildRequest",
       "type": "object"
     },
-    "R4CheckResult": {
+    "RebuildResult": {
       "additionalProperties": false,
-      "description": "`r4_check`'s answer (S0066, S0068; engine-jobs §6.7; ADR-0067): `gone` (no `.closed` record of that name),\n`unreadable`, `superseded` (the disk moved, or another engine build), `pass` or `differs` (the notice). It renames\nand writes nothing. `loaded`: the ledger's plugins ran (the engine is retired).",
+      "description": "`rebuild`'s answer: `loaded` (Beancount's result for the disk as observed; `entries` and `errors` its counts)\nor `moved` (the disk changed during the load, or the load used files outside the set: `fingerprint` is the set to\ntry with next). It writes nothing; it runs the ledger's plugins, so the engine is retired after it.",
       "properties": {
         "outcome": {
           "enum": [
-            "gone",
-            "unreadable",
-            "superseded",
-            "pass",
-            "differs"
+            "loaded",
+            "moved"
           ],
           "title": "Outcome",
           "type": "string"
         },
-        "loaded": {
-          "title": "Loaded",
-          "type": "boolean"
+        "fingerprint": {
+          "minLength": 1,
+          "title": "Fingerprint",
+          "type": "string"
+        },
+        "entries": {
+          "minimum": 0,
+          "title": "Entries",
+          "type": "integer"
+        },
+        "errors": {
+          "minimum": 0,
+          "title": "Errors",
+          "type": "integer"
         }
       },
       "required": [
         "outcome",
-        "loaded"
+        "fingerprint",
+        "entries",
+        "errors"
       ],
-      "title": "R4CheckResult",
-      "type": "object"
-    },
-    "R4Params": {
-      "additionalProperties": false,
-      "description": "`r4_check` (S0066; engine-jobs §6.7): the record `<app_local_data>/local/<key>/journal/<name>.closed`.",
-      "properties": {
-        "app_local_data": {
-          "minLength": 1,
-          "pattern": "^/",
-          "title": "App Local Data",
-          "type": "string"
-        },
-        "key": {
-          "maxLength": 255,
-          "minLength": 1,
-          "pattern": "^[^/\\x00]+$",
-          "title": "Key",
-          "type": "string"
-        },
-        "name": {
-          "pattern": "^[A-Za-z0-9_]{1,64}-[A-Za-z0-9_]{1,64}$",
-          "title": "Name",
-          "type": "string"
-        }
-      },
-      "required": [
-        "app_local_data",
-        "key",
-        "name"
-      ],
-      "title": "R4Params",
+      "title": "RebuildResult",
       "type": "object"
     },
     "RecordSeen": {
@@ -1799,7 +1801,7 @@
           "$ref": "#/$defs/SaveOutcomeReply"
         },
         {
-          "$ref": "#/$defs/R4CheckReply"
+          "$ref": "#/$defs/RebuildReply"
         },
         {
           "$ref": "#/$defs/Refusal"
@@ -1831,7 +1833,7 @@
           "$ref": "#/$defs/SaveOutcomeRequest"
         },
         {
-          "$ref": "#/$defs/R4CheckRequest"
+          "$ref": "#/$defs/RebuildRequest"
         }
       ]
     },
@@ -2311,7 +2313,7 @@
     },
     "SaveResult": {
       "additionalProperties": false,
-      "description": "How the save ended (§6.1, §11). `saved`: the closed record is durable (`published`: the mirror was published,\nnever yet, BL-0113). `refused`: before the commit point, nothing written (`reason`: `unfinished_save`,\n`legacy_app_saving`, `ledger_changed`, `mirror_stale`, `load_refused`).\n`not_saved`: the writer's `NotSaved` (`reason` its own: `hard_linked`, `locked`, `not_a_file`, `permission`,\n`changed`, `path_moved`, `read_back`, `io_error`, `name_not_utf8`; `open_journal`: writes are\npaused until recovery). `unfinished`: a file may have been replaced and the rollback stopped (`cause`, and\n`cause_path` its file: after `created_path_taken` the undo will ask about that file). `unchanged`: every file the\nsave would write was hashed again and equals its pre bytes. `path`: the file it is about; `entry`: the folder a\n`permission` refusal is about, `detail`: the ACL entry that blocks it. No refusal comes from R4 (ADR-0067).",
+      "description": "How the save ended (§6.1, §11). `saved`: the closed record is durable (`published`: the mirror was published,\nnever yet, BL-0113). `refused`: before the commit point, nothing written (`reason`: `unfinished_save`,\n`legacy_app_saving`, `ledger_changed`, `mirror_stale`, `encrypted_file`).\n`not_saved`: the writer's `NotSaved` (`reason` its own: `hard_linked`, `locked`, `not_a_file`, `permission`,\n`changed`, `path_moved`, `read_back`, `io_error`, `name_not_utf8`; `open_journal`: writes are\npaused until recovery). `unfinished`: a file may have been replaced and the rollback stopped (`cause`, and\n`cause_path` its file: after `created_path_taken` the undo will ask about that file). `unchanged`: every file the\nsave would write was hashed again and equals its pre bytes. `path`: the file it is about; `entry`: the folder a\n`permission` refusal is about, `detail`: the ACL entry that blocks it.",
       "properties": {
         "outcome": {
           "$ref": "#/$defs/SaveOutcomeKind"

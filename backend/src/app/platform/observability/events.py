@@ -157,7 +157,7 @@ ENGINE_EXIT = Event(
         Field(
             "job",
             Kind.ENUM,  # `app.platform.engine_jobs.queue.JobKind`, held equal by a test
-            frozenset({"open", "rebuild", "preview", "save", "r4", "bql", "recover_all", "create", "copy"}),
+            frozenset({"open", "rebuild", "preview", "save", "bql", "recover_all", "create", "copy"}),
         ),
         Field(
             "reason",
@@ -172,32 +172,32 @@ ENGINE_EXIT = Event(
 ENGINE_STDERR = Event("engine.stderr", "info", "platform", (Field("line", Kind.DEBUG_DETAIL),), source="engine")
 ENGINE_CLOSED = Event("engine.closed", "info", "platform", ())
 
-# -- R4, the re-check after a save (S0068, ADR-0067 decision 3; engine-jobs spec §6.7): logged by its work,
-# content-free: the job, the workspace's registry key and the save's record name, never a path, an account or an
-# amount (INV-23)
+# -- The rebuild after a save (S0070, ADR-0068 D1; engine-jobs spec §6.7, §7): logged by its work, content-free: the
+# job, the workspace's registry key and counts, never a path, an account or an amount (INV-23)
 
-R4_DIFFERS = Event(
-    "r4.differs",
-    "warning",
+REBUILD_LOADED = Event(
+    "rebuild.loaded",
+    "info",
     "platform",
     (
-        Field("job", Kind.ID),  # the R4 job's id in the queue
+        Field("job", Kind.ID),  # the rebuild job's id in the queue
         Field("workspace_key", Kind.ID),  # the workspace's registry key (`local/<key>/`)
-        Field("record", Kind.ID),  # the save's record name (`<session>-<job>`)
+        Field("entries", Kind.COUNT),  # Beancount's entries
+        Field("errors", Kind.COUNT),  # Beancount's errors
+        Field("tries", Kind.COUNT),  # the loads it took (§7: at most 3)
     ),
 )
-R4_NOT_COMPARED = Event(
-    "r4.not_compared",
-    "info",
+REBUILD_NOT_LOADED = Event(
+    "rebuild.not_loaded",
+    "warning",
     "platform",
     (
         Field("job", Kind.ID),
         Field("workspace_key", Kind.ID),
-        Field("record", Kind.ID),
         Field(
-            "outcome",
-            Kind.ENUM,  # `superseded`, `gone`, `unreadable`: R4's outcomes; the rest: why R4 did not run to one
-            frozenset({"superseded", "gone", "unreadable", "engine_failed", "refused", "violation"}),
+            "why",
+            Kind.ENUM,  # `changing`: the disk moved in every try; the rest: why no try reached a result
+            frozenset({"changing", "engine_failed", "refused", "violation"}),
         ),
     ),
 )
@@ -261,8 +261,8 @@ EVENTS = (
     ENGINE_CLOSED,
     API_INTERNAL_ERROR,
     JOB_INTERNAL_ERROR,
-    R4_DIFFERS,
-    R4_NOT_COMPARED,
+    REBUILD_LOADED,
+    REBUILD_NOT_LOADED,
     LIB_RECORD,
     UNCAUGHT,
     UNREGISTERED,

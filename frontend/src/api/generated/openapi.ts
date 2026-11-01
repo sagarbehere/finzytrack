@@ -545,8 +545,8 @@ export interface components {
         /**
          * WritesPausedDetails
          * @description This workspace's saves are paused (engine-jobs §6.1 steps 1 and 4, §6.4, §6.6, §11; S0063). `unfinished_save`:
-         *     an unfinished save's journal is open (Reopen recovers it); the only reason since S0068 (ADR-0067: the check after
-         *     a save, R4, never pauses saving). `file`: the file the save was creating that the undo will ask about (its Reopen
+         *     an unfinished save's journal is open (Reopen recovers it); the only reason since S0068 (ADR-0067: nothing after a
+         *     save pauses saving). `file`: the file the save was creating that the undo will ask about (its Reopen
          *     text then promises no undo: S0061 red team r8 overflow 1), else None.
          */
         WritesPausedDetails: {

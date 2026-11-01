@@ -41,8 +41,8 @@ from app.platform.engine import (
     Phase,
     Pong,
     Progress,
-    R4Answer,
-    R4Outcome,
+    RebuildAnswer,
+    RebuildOutcome,
     RecordSeen,
     RefusalKey,
     SaveAnswer,
@@ -63,7 +63,7 @@ OPS = (
     "recover_act",
     "save",
     "save_outcome",
-    "r4_check",
+    "rebuild",
 )
 # The members of `RefusalKey` (the contract test checks both against the schema).
 REFUSAL_KEYS = frozenset(
@@ -513,21 +513,23 @@ def decode_save(result: Mapping[str, object]) -> SaveAnswer | Violation:
     return _decoded(_save, result)
 
 
-_R4 = frozenset({"outcome", "loaded"})
-R4_OUTCOMES: frozenset[str] = frozenset({"gone", "unreadable", "superseded", "pass", "differs"})
+_REBUILD = frozenset({"outcome", "fingerprint", "entries", "errors"})
+REBUILD_OUTCOMES: frozenset[str] = frozenset({"loaded", "moved"})
 
 
-def _r4(result: Mapping[str, object]) -> R4Answer:
-    o = _keys(dict(result), _R4, "the r4_check result")
-    return R4Answer(
-        outcome=cast("R4Outcome", _choice(o["outcome"], R4_OUTCOMES, "outcome")),
-        loaded=_bool(o["loaded"], "loaded"),
+def _rebuild(result: Mapping[str, object]) -> RebuildAnswer:
+    o = _keys(dict(result), _REBUILD, "the rebuild result")
+    return RebuildAnswer(
+        outcome=cast("RebuildOutcome", _choice(o["outcome"], REBUILD_OUTCOMES, "outcome")),
+        fingerprint=_name(o["fingerprint"], "fingerprint"),
+        entries=cast("int", _int(o["entries"], "entries", low=0)),
+        errors=cast("int", _int(o["errors"], "errors", low=0)),
     )
 
 
-def decode_r4(result: Mapping[str, object]) -> R4Answer | Violation:
-    """The `r4_check` result (S0066, S0068)."""
-    return _decoded(_r4, result)
+def decode_rebuild(result: Mapping[str, object]) -> RebuildAnswer | Violation:
+    """The `rebuild` result (S0070)."""
+    return _decoded(_rebuild, result)
 
 
 _FACTS = frozenset({"record", "unchanged", "path", "errno"})

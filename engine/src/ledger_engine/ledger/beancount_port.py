@@ -8,9 +8,9 @@ stages of a full load and the semantic calls (tolerance, residual, balance asser
 - `LOAD_STAGES`, the steps of a full load (sort, booking, transformations with plugins, validation, options
   aggregation). Only `ledger/overlay.py` uses them, so every full load is the overlay replica (ADR-0010), with its
   `LoadPolicy` and its refusals.
-- `RECONCILE_LOADS`, Beancount's own loader with no pickle cache: the full load of the re-check after a save (R4,
-  `design/specs/engine-jobs.md` §6.7; BL-0118). Only `ledger/r4.py` uses them: R4 compares the replica's
-  prediction with Beancount's real loader, so it must not be the replica (it could not catch the replica's own drift).
+- `REAL_LOADS`, Beancount's own loader with no pickle cache: the rebuild after a save (`design/specs/engine-jobs.md`
+  §6.7; ADR-0068 D1; BL-0118). Only `ledger/rebuild.py` uses them: the screens show Beancount's own result, never
+  the replica's.
 - `WRAPPERS`, everything else: parser-only calls and the semantic calls, usable anywhere in the engine.
 Other modules use only the names in `__all__`; every function there is in exactly one of the three classes.
 Beancount's own names are imported under private (`_`) aliases, so none of its load steps is reachable under a public
@@ -19,9 +19,9 @@ name.
 **No `load_file` or `load_string` here.** Beancount's `load_file` keeps a pickle cache beside the root file: it reads
 `.<name>.picklecache` (unpickling a file from the ledger folder runs whatever code it holds), deletes it when stale
 and writes a new one after a load of a second or more. The engine never reads or writes beside a ledger outside the
-write path (S0049 journal). The reconciliation load calls the loader's internal `_load`, which `load_file` wraps
+write path (S0049 journal). The real load calls the loader's internal `_load`, which `load_file` wraps
 with that cache: they read the ledger files and nothing else (no `.picklecache` is read or written,
-`engine/tests/ledger/test_r4.py`).
+`engine/tests/ledger/test_rebuild.py`).
 
 Pinned to Beancount 3.2.0 (ADR-0004); `BEANCOUNT_VERSION` is checked by the overlay's pin test.
 """
@@ -82,7 +82,7 @@ from beancount.utils.encryption import is_encrypted_file as _is_encrypted_file
 __all__ = [
     "BEANCOUNT_VERSION",
     "LOAD_STAGES",
-    "RECONCILE_LOADS",
+    "REAL_LOADS",
     "WRAPPERS",
     "Balance",
     "BeancountError",
@@ -120,7 +120,7 @@ __all__ = [
     "load_error",
     "parse_file",
     "parse_string",
-    "reconcile_load",
+    "real_load",
     "run_transformations",
     "sort_entries",
     "sort_order",
@@ -146,7 +146,7 @@ LOAD_STAGES: Final = frozenset(
         "load_error",
     }
 )
-RECONCILE_LOADS: Final = frozenset({"reconcile_load"})
+REAL_LOADS: Final = frozenset({"real_load"})
 WRAPPERS: Final = frozenset(
     {
         "sort_order",
@@ -189,11 +189,11 @@ def is_encrypted_file(path: str) -> bool:
     return _is_encrypted_file(path)
 
 
-# ---- the reconciliation loads (only ledger/r4.py; BL-0118) ---------------------------------------------------------
+# ---- the real loads (only ledger/rebuild.py; BL-0118)-------------------------------------------------------
 
 
 class EncryptedFileMet(Exception):
-    """A reconciliation load reached an encrypted file (`path`) and did not decrypt it (ADR-0059: v0.4.0 reads no
+    """A real load reached an encrypted file (`path`) and did not decrypt it (ADR-0059: v0.4.0 reads no
     encrypted file; the overlay refuses them on its own, `overlay.load`). S0066 verifier r1 F2."""
 
     def __init__(self, path: str) -> None:
@@ -204,7 +204,7 @@ class EncryptedFileMet(Exception):
 @contextmanager
 def _never_decrypt() -> Generator[None]:
     """Beancount's parser decrypts a file its `is_encrypted_file` names through `encryption.read_encrypted_file`
-    (`gpg --decrypt`); for the reconciliation loads that call raises `EncryptedFileMet` instead, so no `gpg` runs.
+    (`gpg --decrypt`); for the real loads that call raises `EncryptedFileMet` instead, so no `gpg` runs.
     The engine runs one op at a time on one thread, so swapping the module's function for the call is safe."""
     real = _encryption.read_encrypted_file
 
@@ -218,12 +218,13 @@ def _never_decrypt() -> Generator[None]:
         setattr(_encryption, "read_encrypted_file", real)  # noqa: B010
 
 
-def reconcile_load(root: str) -> ParseResult:
+def real_load(root: str) -> ParseResult:
     """Beancount's own full load of the ledger rooted at `root` (an absolute path), as `loader.load_file` runs it but
     without its pickle cache (`loader._load`): parse, sort, booking, plugins with the `pythonpath` first on `sys.path`,
-    validation, `input_hash`. No `LoadPolicy` is asked (R4 loads only a ledger set the save's overlay load accepted,
-    and its fingerprint checks before and after tell whether the disk is still that set); an encrypted file met is
-    not decrypted: `EncryptedFileMet` (the overlay's own refusal, which a file added during the load would escape)."""
+    validation, `input_hash`. No `LoadPolicy` is asked (the rebuild loads only a ledger set the preview's overlay load
+    accepted, and its fingerprint checks before and after tell whether the disk is still that set); an encrypted file
+    met is not decrypted: `EncryptedFileMet` (the overlay's own refusal, which a file added during the load would
+    escape)."""
     with _never_decrypt():
         entries, errors, options = _loader_load([(root, True)], None, None, None)
     return list(entries), list(errors), dict(options)
@@ -247,10 +248,10 @@ def run_transformations(
     """Beancount's plugins, with the `pythonpath` directories first on `sys.path` while they run, as
     `loader._load` does. `sys.path` is the process's; the engine runs one job at a time (ADR-0064).
 
-    **No file is decrypted** (ADR-0059; S0067), as in the reconciliation load: a plugin that decrypts a side file
-    meets `EncryptedFileMet` here as it does in R4's load (Beancount turns an exception in a plugin into an error; one
-    raised while a plugin is imported escapes, and the overlay refuses the load). Beancount's documents step reads the
-    disk, as in Beancount's own load (S0068 removed S0067's listing swap: ADR-0067, spec §15)."""
+    **No file is decrypted** (ADR-0059; S0067), as in the real load: a plugin that decrypts a side file
+    meets `EncryptedFileMet` here as it does in the rebuild's load (Beancount turns an exception in a plugin into an
+    error; one raised while a plugin is imported escapes, and the overlay refuses the load). Beancount's documents step
+    reads the disk, as in Beancount's own load (S0068 removed S0067's listing swap: ADR-0067, spec §15)."""
     saved = list(sys.path)
     try:
         if "pythonpath" in options:

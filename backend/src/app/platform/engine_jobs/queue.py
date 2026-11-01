@@ -28,17 +28,18 @@ product calls it. Each rule names its spec line.
   a Reopen's or the boot's window (`exclusive`; the boot's opens with `Boot`, "from the start") only its own jobs
   (`owner == "switch"`); otherwise jobs of the open workspace and app-scoped ones (§3; INV-31).
 - **Admission** (§3): a job of a workspace that is not open is refused `WORKSPACE_NOT_OPEN` (INV-28); beyond
-  `max_queued` queued jobs `ENGINE_QUEUE_FULL` (INV-10); a second queued `r4` or background save of one workspace is
-  not queued (`AlreadyQueued`; every job is idempotent at its start, §2; the shell lets a newer save's R4 take the
-  queued one's place, S0068, and a second background save joins the queued one only when its work can take the
-  changes, else it is refused: ADR-0068 D8).
-- **Cancel** (§4): the job's own requester cancels it, queued (removed; nothing ran) or running (its engine ended
-  with reason `cancel`, recorded before the signal, so it is never a stop; §5.2), except past its commit point ("too
-  late"). Cancel of a queued job applies **the one rule** to the job running ahead of it: that job is ended only when
-  nobody waits for it, the user did not confirm it, and it has not reached its commit point (an R4, a background save
-  before its commit point, a read or an open whose requester has gone); otherwise the waiting user's own request is
-  cancelled with the answer that the earlier work cannot be stopped from here (`cannot_stop_ahead`), unless the
-  running job is a read, an open or a recover-all its own requester still waits for (theirs to cancel).
+  `max_queued` queued jobs `ENGINE_QUEUE_FULL` (INV-10); a second queued background `rebuild` or background save of one
+  workspace is not queued (`AlreadyQueued`; every job is idempotent at its start, §2: the queued rebuild loads the
+  disk when it runs, S0070; a second background save joins the queued one only when its work can take the changes,
+  else it is refused: ADR-0068 D8).
+- **Cancel** (§4): the job's own requester cancels it, queued (removed; nothing ran) or running (its engine ended with
+  reason `cancel`, recorded before the signal, so it is never a stop; §5.2), except past its commit point ("too late").
+  Cancel of a queued job applies **the one rule** to the job running ahead of it: that job is ended only when nobody
+  waits for it, the user did not confirm it, and it has not reached its commit point (the background rebuild after a
+  save, a background save before its commit point, a read or an open whose requester has gone); otherwise the waiting
+  user's own request is cancelled with the answer that the earlier work cannot be stopped from here
+  (`cannot_stop_ahead`), unless the running job is a read, an open or a recover-all its own requester still waits for
+  (theirs to cancel).
 - **A client that goes away** (§4) cancels its preview, rebuild or BQL; a save, create, copy or open only loses its
   requester ("closing is not a cancel", ADR-0063 decision 1 step 3).
 - **The commit point** (§4, §6.1 step 7, §8.2 step 6): the engine sends `gate` and waits; in one step the table
@@ -80,13 +81,14 @@ from typing import Any, Final, Literal
 
 from app.platform.tla import tla_action
 
-TABLE_VERSION: Final = 7  # 2 (S0058): the lock before every fresh engine, the engine unavailable; 3: Try again;
+TABLE_VERSION: Final = 8  # 2 (S0058): the lock before every fresh engine, the engine unavailable; 3: Try again;
 # 4 (S0062): recover-all goes on per journal (Cancel after its listing, a death, no engine); 5 (S0063): a save whose
 # engine died reads its outcome from disk in a fresh engine; 6 (S0066): so does an R4, to count its failure to run;
-# 7 (S0068, ADR-0067): an R4 whose engine died is lost like a read (nothing is counted)
+# 7 (S0068, ADR-0067): an R4 whose engine died is lost like a read (nothing is counted); 8 (S0070, ADR-0068 D1): no
+# `r4` kind; the background `rebuild` after a save takes its place in every rule
 """Raised whenever a decision changes, so the decision log (§12) replays each recording with its own table."""
 
-type JobKind = Literal["open", "rebuild", "preview", "save", "r4", "bql", "recover_all", "create", "copy"]
+type JobKind = Literal["open", "rebuild", "preview", "save", "bql", "recover_all", "create", "copy"]
 type Owner = Literal["user", "app", "switch"]
 type Slot = Literal["none", "idle", "busy", "ending"]
 type EngineLock = Literal["unchecked", "waiting", "free"]
@@ -115,9 +117,9 @@ class QueuePolicy:
 @dataclass(frozen=True, slots=True)
 class JobSpec:
     """A job as its requester asks for it. `workspace` is the open workspace's key, or None for app-scoped work
-    (`create`, `copy`, `recover_all`); `waited_for` is False for background work (R4, a save the app started);
-    `confirmed` is True for a save, create or copy the user confirmed; `owner` is `switch` for a switch's or the
-    boot's own jobs."""
+    (`create`, `copy`, `recover_all`); `waited_for` is False for background work (the rebuild after a save, a save
+    the app started); `confirmed` is True for a save, create or copy the user confirmed; `owner` is `switch` for a
+    switch's or the boot's own jobs."""
 
     kind: JobKind
     workspace: str | None
@@ -522,8 +524,8 @@ def endable_by_another(running: Running) -> bool:
     """§4's one rule: another job's Cancel ends the running job only when nobody waits for it, the user did not
     confirm it, and it has not reached its commit point. Recover-all is never ended this way (§8.1)."""
     job = running.job
-    if job.kind == "r4":
-        return not job.waited_for and not job.confirmed  # the background R4 (S0068: no Resume saving left)
+    if job.kind == "rebuild" and not job.waited_for:
+        return not job.confirmed  # the background rebuild after a save (S0070): nobody waits for it
     if job.kind == "save":
         return not job.confirmed and not running.past_commit
     return job.kind in (*READS, "open") and not job.requester_present
@@ -647,7 +649,7 @@ def _engine_needed(p: QueuePolicy, s: QueueState, e: EngineNeeded) -> Step:
 
 def _retire_engine(p: QueuePolicy, s: QueueState, e: RetireEngine) -> Step:
     """§5.1: an engine that ran user code ends before the job's next part (reason `retire`, not a stop). The model no
-    longer has this step (its `FreshEnd` went with R4's confirm and the save's R4 first, S0068): the one job that
+    longer has this step (its `FreshEnd` went with S0068): the one job that
     still asks is a save reading its outcome from disk after a refusal past its gate, which the model tells at the
     crash (`formal/tla/engine-jobs/MAPPING.md` §5)."""
     r = s.running
@@ -732,12 +734,12 @@ def _try_again(p: QueuePolicy, s: QueueState, e: TryAgain) -> Step:
 
 
 def _submit(p: QueuePolicy, s: QueueState, e: Submit) -> Step:
-    """§3: refused for a workspace that is not open (INV-28); one queued R4 and one queued background save per
-    workspace; refused beyond `max_queued` (INV-10)."""
+    """§3: refused for a workspace that is not open (INV-28); one queued background rebuild and one queued background
+    save per workspace; refused beyond `max_queued` (INV-10)."""
     spec = e.spec
     if spec.owner != "switch" and spec.workspace is not None and spec.workspace != s.open_workspace:
         return Step(s, (Refused("WORKSPACE_NOT_OPEN"),))
-    if not spec.waited_for and spec.kind in ("r4", "save"):
+    if not spec.waited_for and spec.kind in ("rebuild", "save"):
         for job in s.queued:
             if job.kind == spec.kind and job.workspace == spec.workspace and not job.waited_for:
                 return Step(s, (AlreadyQueued(job.id),))
@@ -853,8 +855,8 @@ def _engine_died(p: QueuePolicy, s: QueueState, e: EngineDied) -> Step:
         return Step(state, ended)
     if s.slot == "busy" and r is not None and r.job.kind == "save":
         # §6.6: the save's outcome is read from disk in a fresh engine (the job asks for it); a Cancel before the
-        # commit point still ends the job (nothing was written), one past it is "too late" (S0063). An R4 whose engine
-        # died is lost like a read (S0068: nothing is counted; ADR-0067)
+        # commit point still ends the job (nothing was written), one past it is "too late" (S0063). A background rebuild
+        # whose engine died is lost like a read (S0070: nothing is owed)
         state, ended = _ending(replace(s, running=replace(r, outcome_owed=True)), "crashed")
         return Step(state, ended)
     if s.slot == "busy" and r is not None:

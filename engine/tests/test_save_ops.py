@@ -92,7 +92,7 @@ def test_a_save_sends_its_gate_lands_after_proceed_and_says_committed(setup: tup
     assert reply["result"]["outcome"] == "saved"
     assert reply["decision"]["table"] == "engine.save"
     events = [str(m["event"]) + (":" + str(m["phase"]) if "phase" in m else "") for m in channel.sent]
-    assert events == ["progress:checking_change", "gate", "progress:saving", "committed"]
+    assert events == ["gate", "progress:saving", "committed"]  # no load, no "checking_change" (S0070)
     assert main.read_bytes() == POST.encode()
     assert (ald / "local" / "k1" / "journal" / "s1-j7.closed").is_file()
 

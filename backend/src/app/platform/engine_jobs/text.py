@@ -27,7 +27,6 @@ PHASES: Final[tuple[tuple[str, str], ...]] = (
     ("waiting_for_files", "Waiting for your ledger files…"),
     ("saving", "Saving…"),
     ("updating_views", "Updating your views…"),
-    ("checking_last_change", "Checking your last change…"),
 )
 """§5.4's phases ("starting" is the shell's own, while it starts the job's engine)."""
 WORKING: Final = "Working…"

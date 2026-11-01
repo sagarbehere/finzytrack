@@ -154,8 +154,8 @@ def test_a_candidate_named_by_a_path_that_is_not_normalized_is_the_same_file(tmp
 @pytest.mark.parametrize("name", ["gone.beancount.gpg", "gone.beancount.asc", "dangling.beancount.asc", "dangling.gpg"])
 def test_a_missing_file_beancount_would_decrypt_is_refused(name: str, tmp_path: Path) -> None:
     """BL-0172 (S0066 red team r2): Beancount's loader asks whether a file is encrypted before whether it exists, so it
-    would decrypt a missing `.gpg` (and fail) and open a missing `.asc` (and raise): R4's load could never run on the
-    ledger the save accepted. The overlay refuses the name before checking existence: as the root, and as an include
+    would decrypt a missing `.gpg` (and fail) and open a missing `.asc` (and raise): the real load could never run on
+    the ledger the save accepted. The overlay refuses the name before checking existence: as the root, and as an include
     the glob still lists (a dangling link). A missing include matches no glob, so neither loader opens it: the glob's
     error, as Beancount gives it (before S0067: "does not exist", and the save landed)."""
     if name.startswith("dangling"):
@@ -196,12 +196,12 @@ def side(entries, options_map):
 """
 
 
-def test_a_plugin_that_decrypts_a_side_file_meets_the_same_refusal_as_r4(
+def test_a_plugin_that_decrypts_a_side_file_meets_the_same_refusal_as_the_real_load(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """BL-0172 (S0066 red team r2): ADR-0059, no file is decrypted. R4's load refuses a decryption
-    (`beancount_port.EncryptedFileMet`); the overlay's plugins run under the same refusal, so the prediction and R4
-    agree (before S0067: the overlay ran `gpg`, R4 refused, so every save was `nondeterministic`)."""
+    """BL-0172 (S0066 red team r2): ADR-0059, no file is decrypted. The real load refuses a decryption
+    (`beancount_port.EncryptedFileMet`); the overlay's plugins run under the same refusal, so the preview and the real
+    load agree (before S0067: the overlay ran `gpg`, the real load refused)."""
     calls: list[str] = []
 
     def spy(name: str) -> str:
@@ -235,8 +235,8 @@ def test_a_plugin_that_decrypts_while_it_is_imported_refuses_the_load(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """BL-0172: Beancount catches only an `ImportError` while it imports a plugin, so the refusal escapes its
-    transformations: the overlay refuses the load (`encrypted`), nothing decrypted, and the save never lands (R4's
-    load would meet the same refusal and could never run)."""
+    transformations: the overlay refuses the load (`encrypted`), nothing decrypted: the preview refuses it (the
+    rebuild's real load would meet the same refusal)."""
     calls: list[str] = []
 
     def spy(name: str) -> str:
@@ -299,8 +299,9 @@ def walk(entries, options_map):
 def test_a_users_plugin_that_imports_the_documents_module_sees_the_disk_in_the_preview(tmp_path: Path) -> None:
     """S0067 red team r2 F1 (High, folded into S0068): a plugin reaching `account` through `beancount.ops.documents`
     (`documents.account.walk`, or `from beancount.ops.documents import *` at import time) saw the overlay's listing
-    (no empty folders) in the save's prediction and the real disk in R4's load. Now both read the disk: the preview,
-    and a fresh import in Beancount's own load (the module popped between them, as R4's fresh engine), agree."""
+    (no empty folders) in the save's prediction and the real disk in the real load. Now both read the disk: the preview,
+    and a fresh import in Beancount's own load (the module popped between them, as the rebuild's fresh engine),
+    agree."""
     module = f"walk_{uuid.uuid4().hex}"
     (tmp_path / f"{module}.py").write_bytes(WALKING_PLUGIN)
     (tmp_path / "docs" / "Assets" / "Cash" / "Sub").mkdir(parents=True)
@@ -315,7 +316,7 @@ def test_a_users_plugin_that_imports_the_documents_module_sees_the_disk_in_the_p
         loaded = load(str(root), {}, DESKTOP)
         assert isinstance(loaded, Loaded), loaded
         sys.modules.pop(module, None)
-        real_entries, real_errors, _ = port.reconcile_load(str(root))
+        real_entries, real_errors, _ = port.real_load(str(root))
     finally:
         sys.modules.pop(module, None)
     walked = [e.message for e in loaded.errors if "Assets/Cash" in e.message or "star:" in e.message]
@@ -328,7 +329,7 @@ def test_a_users_plugin_that_imports_the_documents_module_sees_the_disk_in_the_p
 def test_the_documents_step_orders_documents_as_beancount_does(tmp_path: Path) -> None:
     """@regression-guard (S0067 verifier r1 F1: the order was right, nothing pinned it). The walk of a listing visits
     folders and files as Beancount's `account.walk` does (top-down, each sorted), so `document` entries of one date
-    come in Beancount's order (R4's digest breaks such ties by text and cannot see it; the mirror will)."""
+    come in Beancount's order (the mirror will see it)."""
     root = tmp_path / "main.beancount"
     root.write_bytes(
         b'option "documents" "docs"\n2026-01-01 open Assets:Cash\n2026-01-01 open Assets:Cash-Old\n'
@@ -344,7 +345,7 @@ def test_the_documents_step_orders_documents_as_beancount_does(tmp_path: Path) -
         (tmp_path / "docs" / "Assets" / folder / name).write_bytes(b"x")
     loaded = load(str(root), {}, DESKTOP)
     assert isinstance(loaded, Loaded), loaded
-    entries, _, _ = port.reconcile_load(str(root))
+    entries, _, _ = port.real_load(str(root))
 
     def documents(es: list[Any]) -> list[str]:
         return [e.filename for e in es if isinstance(e, port.Document)]
@@ -356,7 +357,7 @@ def test_the_documents_step_orders_documents_as_beancount_does(tmp_path: Path) -
 def test_a_file_a_save_creates_under_a_documents_root_is_not_in_the_preview(tmp_path: Path) -> None:
     """S0068 (ADR-0067; spec §15): the honest limit that replaced S0067's prediction. The preview's documents step
     reads the disk before the write, so the `document` entry a created dated file makes is missing from it; after
-    the write Beancount has it, and R4 shows its notice."""
+    the write Beancount has it, and the rebuild after the save shows it."""
     root = tmp_path / "main.beancount"
     head = b'option "documents" "."\n2020-01-01 open Assets:Cash\n'
     root.write_bytes(head)
@@ -369,7 +370,7 @@ def test_a_file_a_save_creates_under_a_documents_root_is_not_in_the_preview(tmp_
     assert not any(isinstance(e, port.Document) for e in predicted.entries)
     root.write_bytes(main)
     (tmp_path / created).write_bytes(text)
-    entries, _, _ = port.reconcile_load(str(root))
+    entries, _, _ = port.real_load(str(root))
     assert any(isinstance(e, port.Document) for e in entries)
 
 

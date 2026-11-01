@@ -4,13 +4,14 @@ ADR-0064 decisions 3 and 7).
 The work of a `save` job: one `save` request to the job's engine, which runs §6.1 steps 1-11 (`ledger_engine.ledger.
 save`); the sidecar never reads a journal or a ledger file itself. Its answer becomes the job's value:
 
-- **`Saved`** once the engine said so (the closed record is durable). `published` is False until the publish exists
-  (BL-0113). `after_saved` queues the save's R4 as background work (`submit_save` wires it: §6.1 step 11; S0066):
-  it compares and shows a notice, and gates nothing (ADR-0067; S0068).
+- **`Saved`** once the engine said so (the closed record is durable), or once the disk said so after the engine
+  died (§6.6). `published` is False: the save publishes nothing itself. `after_saved` queues the background rebuild
+  with Beancount's own loader (`submit_save` wires it: §6.1 step 10; ADR-0068 D1, S0070); it gates nothing.
 - **`NotDone(error)`**, a registry error with §11's text (`save_text`): `WRITES_PAUSED {unfinished_save}`,
   `LEGACY_APP_SAVING`, `LEDGER_EXTERNALLY_CHANGED`, `WORKSPACE_NOT_READY {WARMING}`,
   `CHANGE_NOT_SAVED {reason, path, folder, acl_entry, unchanged}`; an engine refusal before the engine's `gate` is
-  `INTERNAL` (it wrote nothing; never "saved").
+  `INTERNAL` (it wrote nothing; never "saved"), and so is the save's `encrypted_file` refusal until the preview's
+  own refusal exists (BL-0106).
 
 **After the engine died without its final reply** (§5.3, §6.6), the queue keeps the job (the table's `outcome_owed`);
 then, as after a refusal past its `gate` (an exception once it may have written) or a final reply of the wrong
@@ -35,7 +36,7 @@ from typing import Final, cast
 from app.domain.errors import DomainError
 from app.platform.engine import EngineEvent, EngineFailure, EngineRefusal, GateReached, OutcomeFacts, SaveAnswer
 from app.platform.engine_jobs.queue import JobSpec
-from app.platform.engine_jobs.r4 import R4Target, r4_spec, r4_work
+from app.platform.engine_jobs.rebuild import RebuildTarget, rebuild_spec, rebuild_work
 from app.platform.engine_jobs.scheduler import EngineJobs, Failed, JobContext, JobTicket, Work, WorkResult
 from app.platform.engine_protocol import Violation, decode_save, decode_save_outcome
 from app.platform.errors import (
@@ -162,7 +163,7 @@ def answer_of(a: SaveAnswer) -> SaveValue:
                     return _not_done(ErrorCode.LEDGER_EXTERNALLY_CHANGED)
                 case "mirror_stale":
                     return _not_done(ErrorCode.WORKSPACE_NOT_READY, WorkspaceNotReadyDetails(phase="WARMING"))
-                case _:  # `load_refused`: the contract's refusal is BL-0106's; until then a bug, never "saved"
+                case _:  # `encrypted_file`: the preview refuses it first (BL-0106); here a bug, never "saved"
                     return _not_done(ErrorCode.INTERNAL)  # TODO(BL-0106): the contract's own code
         case "not_saved":
             if a.open_journal:
@@ -185,7 +186,7 @@ def save_outcome(facts: OutcomeFacts, *, gated: bool) -> SaveValue:
     Reopen); a record that could not be read is unknown (`CHANGE_OUTCOME_UNKNOWN` once the engine had sent its gate)."""
     match facts.record:
         case "closed":
-            return Saved(published=False)  # TODO(BL-0152): a `rebuild` is queued when the publish did not land (part 2)
+            return Saved(published=False)  # its rebuild is queued by `_answered` (§6.6)
         case "none" | "part" | "resolved":
             unchanged = facts.unchanged is True
             details = ChangeNotSavedDetails("engine_stopped", facts.path, None, None, unchanged)
@@ -198,11 +199,11 @@ def save_outcome(facts: OutcomeFacts, *, gated: bool) -> SaveValue:
             return _not_done(ErrorCode.ENGINE_STOPPED, EngineStoppedDetails(reason="crashed"))
 
 
-type AfterSaved = Callable[[R4Target], object]
+type AfterSaved = Callable[[RebuildTarget], object]
 
 
 def save_work(request: SaveRequest, *, after_saved: AfterSaved | None = None) -> Work:
-    """The work of a save job; `after_saved` is told the record of a save that landed (its R4 is queued)."""
+    """The work of a save job; `after_saved` is told what to rebuild after a save that landed."""
 
     def work(ctx: JobContext) -> WorkResult:
         return _Run(ctx, request, after_saved).run()
@@ -213,16 +214,17 @@ def save_work(request: SaveRequest, *, after_saved: AfterSaved | None = None) ->
 def submit_save(
     jobs: EngineJobs, workspace: str, request: SaveRequest, *, background: bool = False
 ) -> JobTicket | Failed:
-    """Queue a save (the user's, or the app's own in the background) whose landing queues its R4 as background work
-    (§6.1 step 11). A background save of a fixed request cannot join a queued one (ADR-0068 D8: only a work that
-    plans when it runs can), so a second one while one is queued is refused with its own `ENGINE_QUEUE_FULL`. At
-    most one R4 waits per workspace (§3); a newer save's takes the queued one's place, since only the newest save can
-    still be compared with the disk (`EngineJobs.submit`'s `replace_queued`; S0068; R4 goes in S0070)."""
+    """Queue a save (the user's, or the app's own in the background) whose landing queues the background rebuild
+    (§6.1 step 10, ADR-0068 D1). A background save of a fixed request cannot join a queued one (ADR-0068 D8: only a
+    work that plans when it runs can), so a second one while one is queued is refused with its own
+    `ENGINE_QUEUE_FULL`. At most one rebuild waits per workspace (§3): a newer save's finds the queued one, which loads
+    the disk when it runs and so shows both saves (its fingerprint is a hint: a set that misses a file the newer save
+    added makes it try once more with the wider set, `ledger_engine.ledger.rebuild`)."""
 
-    def queue_r4(target: R4Target) -> None:
-        jobs.submit(r4_spec(workspace), r4_work(request.app_local_data, target), replace_queued=True)
+    def queue_rebuild(target: RebuildTarget) -> None:
+        jobs.submit(rebuild_spec(workspace), rebuild_work(target))
 
-    work = save_work(request, after_saved=queue_r4)
+    work = save_work(request, after_saved=queue_rebuild)
     return jobs.submit_background_save(workspace, work) if background else jobs.submit(save_spec(workspace), work)
 
 
@@ -258,7 +260,7 @@ class _Run:
     @tla_action("S_Release")
     def _answered(self, value: SaveValue, *, ran_user_code: bool = True) -> WorkResult:
         if isinstance(value, Saved) and self._after_saved is not None:
-            self._after_saved(R4Target(self._r.workspace_key, f"{self._r.session}-{self._job}"))
+            self._after_saved(RebuildTarget(self._r.workspace_key, self._r.root, self._r.fingerprint))
         return WorkResult(value, ran_user_code=ran_user_code)
 
     def _no_engine(self) -> WorkResult:

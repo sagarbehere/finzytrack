@@ -58,8 +58,6 @@ def journalled(ald: Path) -> tuple[Path, Path, str]:
         workspace_key="k1",
         lineage="lin1",
         engine_build="b1",
-        post_fingerprint="sha256:" + "f" * 64,
-        adopted_digest="sha256:" + "a" * 64,
         changes=(Change(str(ledger / "main.bean"), sha(PRE), POST), Change(str(ledger / "prices.bean"), None, b"p\n")),
         journal_dir=str(jd),
         backups_dir=str(bd),

@@ -3,9 +3,9 @@
 usage (cwd = engine/): .venv/bin/python scripts/measure_save.py ROOT WORK_DIR [--runs N] [--app APP_DIR]
 ROOT is the ledger's root file (the demo generator's 54k ledger: backend/scripts/gen_demo.py --size 54k), WORK_DIR an
 empty scratch folder on the disk to measure (never a real ledger: every run saves into a fresh copy). Each run copies
-the ledger's folder, plans one appended transaction (a load of the copy, as a preview would), then runs
-`ledger.save.run` on the real file-system port: the records, the locks, the gate, the commit's load, the re-check, the
-durable order. Then R4 on the closed record (its check, Beancount's own load, must pass; S0066, S0068). It prints per
+the ledger's folder, plans one appended transaction (a load of the candidate, as a preview would), then runs
+`ledger.save.run` on the real file-system port: the records, the locks, the gate, the durable order (no load: ADR-0068
+D1, S0070). Then the rebuild after it (`ledger.rebuild.run`, Beancount's own load; it must be `loaded`). It prints per
 run the total and each part, and the durable order's syncs (`F_FULLFSYNC` of a folder, of a file, the files created
 and synced) with their time: S0061's additions (the staging rename and its folder
 sync, `sync_file` per replaced file) are counted there. Then it undoes the save the way recovery does (the closed record
@@ -23,16 +23,16 @@ import shutil
 import sys
 import time
 from collections import Counter
-from collections.abc import Callable, Mapping
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 from ledger_engine.fs.darwin import DarwinLegacyLocks, DarwinLocks, for_this_os
 from ledger_engine.fs.port import DirHandle, FileSystem, Resolved
-from ledger_engine.ledger import overlay, r4
+from ledger_engine.ledger import overlay, rebuild
 from ledger_engine.ledger import save as sv
-from ledger_engine.ledger.core.ledger_set import Fingerprint, digest
+from ledger_engine.ledger.core.ledger_set import Fingerprint, as_before, digest
 from ledger_engine.ledger.policy import DesktopPolicy
 from ledger_engine.ledger.restore import recover_journal
 from ledger_engine.ledger.writer import Change, sha256
@@ -133,12 +133,13 @@ def one_run(src: Path, work: Path, n: int, app: Path | None = None) -> None:
     ald = (app if app is not None else folder) / f"app{n}"
     (ald / "locks").mkdir(parents=True)
     policy = DesktopPolicy()
+    pre = root.read_bytes()
     t0 = time.perf_counter()
-    planned = overlay.load(str(root), {}, policy)
+    planned = overlay.load(str(root), {str(root): pre + TXN}, policy)  # the preview's load of the candidate
     check(isinstance(planned, overlay.Loaded), "the plan's load refused")
     assert isinstance(planned, overlay.Loaded)  # noqa: S101 (narrowing after the check)
     plan_s = time.perf_counter() - t0
-    pre = root.read_bytes()
+    fingerprint = as_before(planned.fingerprint, {str(root): sha256(pre)})
     plan = sv.SavePlan(
         session="m1",
         job=f"j{n}",
@@ -147,37 +148,30 @@ def one_run(src: Path, work: Path, n: int, app: Path | None = None) -> None:
         engine_build="measure",
         root=str(root),
         changes=(Change(str(root), sha256(pre), pre + TXN),),
-        fingerprint=planned.fingerprint,
-        mirror=digest(planned.fingerprint),
+        fingerprint=fingerprint,
+        mirror=digest(fingerprint),
         legacy_locks=(),
         app_local_data=str(ald),
     )
     parts = Tally()
     durable = Tally()
-    real_load = sv.desktop_load(policy)
-
-    def load(r: str, c: Mapping[str, bytes]) -> overlay.LoadResult:
-        return parts.time("load", lambda: real_load(r, c))
 
     def observe(fp: Fingerprint) -> Fingerprint:
         return parts.time("observe", lambda: sv._observe(fp))  # pyright: ignore[reportPrivateUsage]
 
-    ports = sv.Ports(
-        CountingFS(for_this_os(), durable), DarwinLocks(str(ald / "locks")), DarwinLegacyLocks(), load, observe
-    )
+    ports = sv.Ports(CountingFS(for_this_os(), durable), DarwinLocks(str(ald / "locks")), DarwinLegacyLocks(), observe)
     t0 = time.perf_counter()
     out = sv.run(plan, ports, Job())
     total = time.perf_counter() - t0
     check(isinstance(out, sv.Saved), f"the save did not land: {out}")
-    say(f"run {n}: save {total:.2f} s (plan load {plan_s:.2f} s, not in the save); {parts.line()}")
+    say(f"run {n}: save {total:.3f} s (preview load {plan_s:.2f} s, not in the save); {parts.line()}")
     say(f"  durable order: {durable.line()}")
     jd = ald / "local" / "k1" / "journal"
     name = f"m1-j{n}"
-    r4_ports = r4.desktop(for_this_os(), "measure")
     t0 = time.perf_counter()
-    checked = r4.check(r4_ports, str(ald), "k1", name, Job())
-    say(f"  R4 check (steps 1-3, Beancount's own load): {time.perf_counter() - t0:.2f} s, {checked.outcome}")
-    check(checked.outcome == "pass", f"R4 did not pass: {checked}")
+    rebuilt = rebuild.run(rebuild.Ports(), fingerprint, Job())
+    say(f"  rebuild (Beancount's own load, after the reply): {time.perf_counter() - t0:.2f} s, {rebuilt.outcome}")
+    check(rebuilt.outcome == "loaded", f"the rebuild did not load: {rebuilt.outcome}")
     os.rename(jd / f"{name}.closed", jd / f"{name}.open")
     undo = Tally()
     t0 = time.perf_counter()

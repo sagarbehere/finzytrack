@@ -1259,8 +1259,9 @@ def interpreter(c: EngineClient) -> dict[str, Any]:
 
 
 def test_two_engines_hash_a_string_alike_and_run_with_the_specs_flags() -> None:
-    """§5.1: R4's digests must not depend on hash order: "two runs under `-s -S -B -P` [with PYTHONHASHSEED=0] the
-    same"; `-B`: no `__pycache__` written into a user's folder (INV-30); `-I` would ignore the seed."""
+    """§5.1: a load of the same bytes gives the same result in every engine (string hashing decides set order):
+    "two runs under `-s -S -B -P` [with PYTHONHASHSEED=0] the same"; `-B`: no `__pycache__` written into a user's
+    folder (INV-30); `-I` would ignore the seed."""
     seen: list[dict[str, Any]] = []
     for _ in range(2):
         c = EngineClient(engine_command())

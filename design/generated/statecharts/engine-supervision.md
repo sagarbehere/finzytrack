@@ -12,7 +12,7 @@ The ledger engine's lifecycle as the main sidecar supervises it: `app.platform.e
 | `Starting` | The engine process is being created. |
 | `Handshaking` | The process runs and the handshake is out; `bytecode`: the engine was started with the bytecode directory. |
 | `Ready` | The engine runs, answered the handshake in our protocol, and waits for a request. |
-| `Busy` | One request is in flight. |
+| `Busy` | One request is in flight; `counted`: its engine's end is a stop (`Send.counted`). |
 | `Finishing` | A reply broke the protocol after the commit point (`detail`): the engine's input is closed and its output read and discarded until it ends; the stop is counted then (§5.3). |
 | `Crashed` | The engine stopped (`last` says how) and the bound is not reached: the next request restarts it. |
 | `Restarting` | Waiting out the backoff before a restart (`last`: the last engine's stop, None when we ended it). |
@@ -31,7 +31,7 @@ The ledger engine's lifecycle as the main sidecar supervises it: `app.platform.e
 | `HandshakeForeign` | The handshake reply is another protocol's (another `v`, or a `protocol.version_mismatch` refusal). |
 | `HandshakeFailed` | No valid handshake in our protocol: end of stream we did not cause, an invalid reply, or another refusal. |
 | `BackoffElapsed` | The backoff pause is over. |
-| `Send` | The caller's request is written to the engine. |
+| `Send` | The caller's request is written to the engine. `counted`: an end of this request's engine is a stop toward the bound; False for the background rebuild after a save (engine-jobs §5.3, ADR-0068 D1: a plugin that crashes in every load must not make the engine unavailable, so saving goes on). |
 | `Answered` | A valid reply to the request in flight: a result or a refusal. The engine is fine. |
 | `Ended` | The engine's output ended (it exited) or its input broke while the request was in flight, and we did not end it; in `Finishing`, the end awaited after a violation past the commit point. |
 | `Violated` | The reply is not a valid message for this request, before its commit point. |

@@ -27,8 +27,8 @@ observations of one ledger set under its own names, and lock by `path_key`; keyi
 `path_key` comes with the published generation that carries it (TODO(BL-0125)).
 
 `decode` is `encode`'s strict inverse (the plan's fingerprint crosses the engine protocol as its encoding, S0063);
-`as_before` is what the disk must hold for a load of a save's candidate to have read it (the re-check, §6.1 step 6);
-`as_after` what it holds once that save landed (the closed record's post fingerprint, R4).
+`as_before` is what the disk must hold for a load of a save's candidate to have read it: the plan's fingerprint the
+preview gives the save (§6.1 step 4; BL-0106).
 """
 
 from __future__ import annotations
@@ -268,36 +268,15 @@ def decode(data: bytes) -> Fingerprint:
 
 def as_before(loaded: Fingerprint, pre: Mapping[str, str | None]) -> Fingerprint:
     """What the disk must hold now for a load of a save's candidate to have read it (`design/specs/engine-jobs.md`
-    §6.1 step 6, S0063): the load's own record `loaded` (`Loaded.fingerprint`), with each candidate file (`pre`: its
-    path as the load named it, and the SHA-256 of its bytes before the save, None for a file the save creates) at its
-    pre state instead of the candidate's bytes the load parsed, and a plain-path include of a file the save creates
-    matching nothing (the load answered it with the candidate, `overlay.load`; the disk has no file there yet).
-    Everything else the load read from the disk, so it must be on the disk as the load read it."""
+    §6.1 step 4: the plan's fingerprint the preview gives the save, BL-0106; S0063, S0070): the load's own record
+    `loaded` (`Loaded.fingerprint`), with each candidate file (`pre`: its path as the load named it, and the SHA-256 of
+    its bytes before the save, None for a file the save creates) at its pre state instead of the candidate's bytes the
+    load parsed, and a plain-path include of a file the save creates matching nothing (the load answered it with the
+    candidate, `overlay.load`; the disk has no file there yet). Everything else the load read from the disk, so it must
+    be on the disk as the load read it."""
     files = tuple(
         (p, (Absent() if pre[p] is None else Content(cast(str, pre[p]))) if p in pre else s) for p, s in loaded.files
     )
     created = {p for p, h in pre.items() if h is None}
     globs = tuple((g, () if not glob.has_magic(g) and posixpath.normpath(g) in created else m) for g, m in loaded.globs)
     return Fingerprint(loaded.root, files, globs, loaded.documents, loaded.document_files)
-
-
-def as_after(loaded: Fingerprint, pre: Mapping[str, str | None]) -> Fingerprint:
-    """What the disk holds once a save of the candidate `loaded` was parsed from has landed (the closed record's post
-    fingerprint, which R4 observes; S0066 red team r1 F1): the load's own record, where every file already has its
-    candidate's state and a plain-path include of a created file already matches it (`overlay.load`), with each file
-    the save creates (`pre` None) added to the listing of every documents root it lies under. The load listed those
-    roots from the disk before the commit; the created file is there after it. A root that did not exist then
-    (None) holds only the created files under it. A created file named through another spelling of the root (a link)
-    is not added: R4 then finds the fingerprint moved (`superseded`), never a false `pass`."""
-    created = [p for p, h in pre.items() if h is None]
-    documents: list[tuple[str, Listing]] = []
-    for root, listing in loaded.documents:
-        prefix = root.rstrip("/") + "/"
-        names = {n[len(prefix) :]: True for n in created if n.startswith(prefix)}
-        if not names:
-            documents.append((root, listing))
-            continue
-        merged = dict(listing or ())
-        merged.update(names)
-        documents.append((root, tuple(sorted(merged.items()))))
-    return Fingerprint(loaded.root, loaded.files, loaded.globs, tuple(documents), loaded.document_files)

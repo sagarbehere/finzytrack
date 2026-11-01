@@ -46,8 +46,6 @@ RECORD = Record(
     workspace_key="k1",
     lineage="lin1",
     engine_build="build1",
-    post_fingerprint="sha256:" + "f" * 64,
-    adopted_digest="sha256:" + "a" * 64,
     backup_dir="/app/local/k1/backups/s1-j7",
     files=(
         FileEntry("/w/L/inc/a.bean", "/w/l/inc/a.bean", "1" * 64, "2" * 64, "0-a.bean", ".a.bean.ft-s1-j7.tmp"),
@@ -81,15 +79,18 @@ def test_a_record_cut_off_at_any_length_is_unreadable() -> None:
         assert isinstance(decode(data[:n]), Unreadable), n
 
 
-def test_format_3_has_no_parse_digest_and_a_version_2_record_is_unreadable() -> None:
-    """BL-0173 (owner, 2026-10-31: "Drop digest; 2 jobs (Recommended)"): format 3 drops the parse digest; a format 2
-    record (S0066, with it) is not read as a record (R4 counts it as a failure to run; never a pass)."""
+def test_format_4_has_no_prediction_and_older_formats_are_unreadable() -> None:
+    """ADR-0068 D1 (S0070): format 4 drops the post fingerprint and the adopted digest; a format 3 record (S0067, with
+    them) or a format 2 one (S0066, with a parse digest too) is never read as a record of this format."""
     obj = json.loads(encode(RECORD))
-    assert (VERSION, "parse_digest" in obj) == (3, False)
-    obj["v"] = 2
-    obj["parse_digest"] = "sha256:" + "b" * 64
-    out = decode((json.dumps(obj, sort_keys=True, separators=(",", ":"), ensure_ascii=False) + "\n").encode())
-    assert out == Unreadable("unknown version")
+    assert (VERSION, "post_fingerprint" in obj, "adopted_digest" in obj) == (4, False, False)
+    older = {**obj, "v": 3, "post_fingerprint": "{}", "adopted_digest": "sha256:" + "a" * 64}
+    for o in (older, {**older, "v": 2, "parse_digest": "sha256:" + "b" * 64}, {**obj, "v": 3}):
+        out = decode((json.dumps(o, sort_keys=True, separators=(",", ":"), ensure_ascii=False) + "\n").encode())
+        assert out == Unreadable("unknown version")
+    four = {**older, "v": 4}  # the old fields under the new version: not a whole record of format 4
+    out = decode((json.dumps(four, sort_keys=True, separators=(",", ":"), ensure_ascii=False) + "\n").encode())
+    assert out == Unreadable("malformed")
 
 
 def test_a_newer_version_is_refused() -> None:

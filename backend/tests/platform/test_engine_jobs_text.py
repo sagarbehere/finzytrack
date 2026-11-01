@@ -33,7 +33,7 @@ DELAY = 2.0
 
 PREVIEW = Job(1, "preview", "ws-1", True, False, "user", True)
 SAVE = Job(2, "save", "ws-1", True, True, "user", True)
-R4 = Job(3, "r4", "ws-1", False, False, "app", True)
+REBUILD = Job(3, "rebuild", "ws-1", False, False, "app", True)
 WAITING = Job(4, "bql", "ws-1", True, False, "user", True)
 
 
@@ -66,7 +66,6 @@ def test_the_phases_are_the_specs() -> None:
         "waiting_for_files": "Waiting for your ledger files…",
         "saving": "Saving…",
         "updating_views": "Updating your views…",
-        "checking_last_change": "Checking your last change…",
     }
 
 
@@ -126,7 +125,7 @@ def test_past_the_commit_point_the_job_is_finishing_with_no_cancel() -> None:
 
 
 def test_a_background_job_has_no_cancel() -> None:
-    s = status(running=Running(R4), shown={3: Shown("checking_last_change", NOW)})
+    s = status(running=Running(REBUILD), shown={3: Shown("updating_views", NOW)})
     shown = describe(s, 3, NOW, DELAY)
     assert shown is not None
     assert not shown.cancel
@@ -187,7 +186,7 @@ def test_a_queued_job_whose_requester_left_carries_no_advice_so_the_notice_shows
 
 
 def test_a_background_job_queued_carries_no_advice_so_the_notice_shows() -> None:
-    s = status(queued=(R4,), shown={3: Shown(None, NOW)}, slot="ending", advice=True)
+    s = status(queued=(REBUILD,), shown={3: Shown(None, NOW)}, slot="ending", advice=True)
     assert notice(s) == ADVICE
 
 

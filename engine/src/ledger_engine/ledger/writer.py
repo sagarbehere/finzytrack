@@ -121,16 +121,13 @@ class Change:
 class Commit:
     """A save past its commit point. `journal_dir` and `backups_dir` are the workspace's machine-local folders
     (`local/<key>/journal`, `local/<key>/backups`; INV-27, INV-30), absolute and existing, in any spelling (they are
-    resolved first). The digests and the fingerprint are the closed record's fields (§6.1 step 8.2), carried, not
-    computed, here."""
+    resolved first). The engine build, registry key and lineage id are the closed record's fields (§6.1 step 8.2)."""
 
     session: str
     job: str
     workspace_key: str
     lineage: str
     engine_build: str
-    post_fingerprint: str
-    adopted_digest: str
     changes: tuple[Change, ...]
     journal_dir: str
     backups_dir: str
@@ -262,8 +259,6 @@ def _check_plan(c: Commit) -> None:
         c.workspace_key,
         c.lineage,
         c.engine_build,
-        c.post_fingerprint,
-        c.adopted_digest,
     ):
         if not field_value:
             raise BadPlanError("empty_record_field")  # the journal could not be written (S0060 verifier F5)
@@ -471,8 +466,6 @@ def _record(c: Commit, plan: _Plan, name: str, backups: dict[str, str]) -> Recor
         workspace_key=c.workspace_key,
         lineage=c.lineage,
         engine_build=c.engine_build,
-        post_fingerprint=c.post_fingerprint,
-        adopted_digest=c.adopted_digest,
         backup_dir=_join(plan.backups_dir, name),
         files=tuple(
             FileEntry(

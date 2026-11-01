@@ -122,7 +122,7 @@ def load(root: str, overlay: Mapping[str, bytes], policy: LoadPolicy) -> LoadRes
     refused = _ask_before_running(options, policy)
     if refused is not None:
         return refused
-    documents = {d: fp.listing(d) for d in _documents_roots(options)}
+    documents = {d: fp.listing(d) for d in documents_roots(options)}
     document_files = {e.filename: fp.document_file(e.filename) for e in entries if isinstance(e, port.Document)}
 
     # loader._load, after _parse_recursive.
@@ -282,13 +282,13 @@ def _ask_before_running(options: port.OptionsMap, policy: LoadPolicy) -> LoadRef
     for directory in options["pythonpath"]:
         if not policy.may_add_pythonpath(directory):
             return LoadRefused("pythonpath-refused", directory)
-    for resolved in _documents_roots(options):
+    for resolved in documents_roots(options):
         if not policy.may_scan_documents(resolved):
             return LoadRefused("documents-refused", resolved)
     return None
 
 
-def _documents_roots(options: port.OptionsMap) -> list[str]:
+def documents_roots(options: port.OptionsMap) -> list[str]:
     """Each documents root as beancount.ops.documents.find_documents resolves it. (Only here: a root that does not
     exist leaves `filename` unset, and then no documents option either.)"""
     roots: list[str] = []

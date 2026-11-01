@@ -275,7 +275,7 @@ def test_a_save_whose_ledger_moved_is_ledger_externally_changed(scenarios: Scena
 
 @pytest.mark.error_code("WRITES_PAUSED")
 def test_a_save_refused_for_an_unfinished_save_is_writes_paused_with_its_reason(scenarios: Scenarios) -> None:
-    """S0068 (ADR-0067): `unfinished_save` is the only reason saves pause; R4 pauses nothing."""
+    """S0068 (ADR-0067): `unfinished_save` is the only reason saves pause; nothing after a save pauses them."""
     status, payload, app = answer(scenarios, "writes_paused")
     assert status == 409
     error = payload["error"]

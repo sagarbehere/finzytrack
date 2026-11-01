@@ -230,8 +230,6 @@ def _commit(root: Path, *changes: Change) -> Commit:
         workspace_key="k",
         lineage="lin",
         engine_build="b",
-        post_fingerprint="fp",
-        adopted_digest="ad",
         changes=changes,
         journal_dir=str(root / "local" / "journal"),
         backups_dir=str(root / "local" / "backups"),

@@ -19,7 +19,9 @@ reference of this table is `design/generated/statecharts/engine-supervision.md`.
   observes the end `close()` signalled.
 - **No time limits** (§5.4): nothing in the policy times a start, a handshake, a request or an end.
 - **Stops.** A failed start, a request without a valid answer (end of stream we did not cause, an invalid reply), an
-  exit noticed between requests and an interrupted start or wait are stops: each is recorded with its time. Only
+  exit noticed between requests and an interrupted start or wait are stops: each is recorded with its time. A request
+  sent uncounted (`Send.counted` False: the background rebuild after a save, S0070) ends its engine the same way,
+  `crashed` or `protocol_violation`, but records no stop. Only
   the stops of the last `window` seconds count; a stop exactly one window old has left it. The stop that makes
   `max_crashes` enters `Unavailable` at once; a request then refuses until the window has let a stop go, or `Reset`.
   An incompatible engine, an answer and a refusal are no stop, and **neither is our own end** (§5.3): `Cancelled`
@@ -122,11 +124,12 @@ class Ready:
 
 @dataclass(frozen=True, slots=True)
 class Busy:
-    """One request is in flight."""
+    """One request is in flight; `counted`: its engine's end is a stop (`Send.counted`)."""
 
     stops: Stops
     pid: int
     info: EngineInfo
+    counted: bool = True
 
 
 @dataclass(frozen=True, slots=True)
@@ -245,7 +248,11 @@ class BackoffElapsed:
 
 @dataclass(frozen=True, slots=True)
 class Send:
-    """The caller's request is written to the engine."""
+    """The caller's request is written to the engine. `counted`: an end of this request's engine is a stop toward the
+    bound; False for the background rebuild after a save (engine-jobs §5.3, ADR-0068 D1: a plugin that crashes in
+    every load must not make the engine unavailable, so saving goes on)."""
+
+    counted: bool = True
 
 
 @dataclass(frozen=True, slots=True)
@@ -437,10 +444,19 @@ def _start(policy: RestartPolicy, stops: Stops, last: StopKind | None, now: floa
 
 
 def _stopped(
-    policy: RestartPolicy, stops: Stops, now: float, kind: StopKind, detail: str, *, end: bool, fail: bool
+    policy: RestartPolicy,
+    stops: Stops,
+    now: float,
+    kind: StopKind,
+    detail: str,
+    *,
+    end: bool,
+    fail: bool,
+    count: bool = True,
 ) -> Step:
-    """Record a stop; at the bound the engine is `Unavailable` from this stop on."""
-    kept = (*counted(policy, stops, now), now)[-policy.max_crashes :]
+    """Record a stop (unless `count` is False: the engine ended, the stops stay as they were); at the bound the engine
+    is `Unavailable` from this stop on."""
+    kept = (*counted(policy, stops, now), *((now,) if count else ()))[-policy.max_crashes :]
     if kind == "start_failed":
         logged = Log(ENGINE_START_FAILED, {"kind": kind, "detail": detail})
     else:
@@ -553,7 +569,7 @@ def _ready_request(p: RestartPolicy, s: Ready, e: Request) -> Step:
 
 
 def _send(p: RestartPolicy, s: Ready, e: Send) -> Step:
-    return Step(Busy(s.stops, s.pid, s.info))
+    return Step(Busy(s.stops, s.pid, s.info, e.counted))
 
 
 def _exited(p: RestartPolicy, s: Ready, e: Exited) -> Step:
@@ -573,11 +589,11 @@ def _answered(p: RestartPolicy, s: Busy, e: Answered) -> Step:
 
 
 def _ended(p: RestartPolicy, s: Busy, e: Ended) -> Step:
-    return _stopped(p, s.stops, e.now, "crashed", e.detail, end=True, fail=True)
+    return _stopped(p, s.stops, e.now, "crashed", e.detail, end=True, fail=True, count=s.counted)
 
 
 def _violated(p: RestartPolicy, s: Busy, e: Violated) -> Step:
-    return _stopped(p, s.stops, e.now, "protocol_violation", e.detail, end=True, fail=True)
+    return _stopped(p, s.stops, e.now, "protocol_violation", e.detail, end=True, fail=True, count=s.counted)
 
 
 def _violated_past_commit(p: RestartPolicy, s: Busy, e: ViolatedPastCommit) -> Step:

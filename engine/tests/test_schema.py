@@ -60,7 +60,7 @@ def test_every_op_has_a_request_and_a_reply_definition() -> None:
         "recover_act",
         "save",
         "save_outcome",
-        "r4_check",
+        "rebuild",
     ]
     for op in schema["x-ops"]:
         name = model_stem(op)
@@ -165,7 +165,6 @@ def test_the_job_messages_and_the_decision_are_in_the_contract() -> None:
         "waiting_for_files",
         "saving",
         "updating_views",
-        "checking_last_change",
     }
 
 

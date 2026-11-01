@@ -94,7 +94,7 @@ def user(kind: JobKind, ws: str | None = W1) -> JobSpec:
 
 
 def background(kind: JobKind, ws: str | None = W1) -> JobSpec:
-    """Work nobody waits for: R4, and a save the app started itself (prices)."""
+    """Work nobody waits for: the rebuild after a save, and a save the app started itself (prices)."""
     return JobSpec(kind=kind, workspace=ws, waited_for=False, confirmed=False, owner="app")
 
 
@@ -243,16 +243,16 @@ def test_a_job_starts_at_once_on_a_fresh_engine_when_nothing_runs() -> None:
 
 
 def test_a_running_job_is_never_interrupted_to_start_another() -> None:
-    state, _ = busy_with(background("r4"))
+    state, _ = busy_with(background("rebuild"))
     state, effects = run(state, Submit(user("preview")), Submit(user("save")))
     assert started(effects) == []
     assert state.running is not None
-    assert state.running.job.kind == "r4"
+    assert state.running.job.kind == "rebuild"
 
 
 def test_a_waited_for_job_goes_ahead_of_an_older_background_job() -> None:
     state, running = busy_with(user("bql"))
-    state, (bg, fg1, fg2) = submit(state, background("r4"), user("preview"), user("save"))
+    state, (bg, fg1, fg2) = submit(state, background("rebuild"), user("preview"), user("save"))
     state, effects = run(state, JobDone(running, ran_user_code=False))
     assert started(effects) == [fg1]
     state, effects = run(state, JobDone(fg1, ran_user_code=False))
@@ -263,10 +263,10 @@ def test_a_waited_for_job_goes_ahead_of_an_older_background_job() -> None:
 
 def test_background_jobs_run_oldest_first_when_nobody_waits() -> None:
     state, running = busy_with(user("bql"))
-    state, (r4, bg_save) = submit(state, background("r4"), background("save", W1))
+    state, (rb, bg_save) = submit(state, background("rebuild"), background("save", W1))
     state, effects = run(state, JobDone(running, ran_user_code=False))
-    assert started(effects) == [r4]
-    state, effects = run(state, JobDone(r4, ran_user_code=False))
+    assert started(effects) == [rb]
+    state, effects = run(state, JobDone(rb, ran_user_code=False))
     assert started(effects) == [bg_save]
 
 
@@ -460,14 +460,14 @@ def test_a_request_beyond_max_queued_is_refused_and_not_queued() -> None:
     assert state == before
 
 
-def test_at_most_one_queued_r4_and_one_queued_background_save_per_workspace() -> None:
+def test_at_most_one_queued_background_rebuild_and_one_queued_background_save_per_workspace() -> None:
     state, _ = busy_with(user("bql"))
-    state, (r4, bg) = submit(state, background("r4"), background("save"))
-    state, effects = run(state, Submit(background("r4")), Submit(background("save")))
-    assert effects == [AlreadyQueued(r4), AlreadyQueued(bg)]
+    state, (rb, bg) = submit(state, background("rebuild"), background("save"))
+    state, effects = run(state, Submit(background("rebuild")), Submit(background("save")))
+    assert effects == [AlreadyQueued(rb), AlreadyQueued(bg)]
     assert len(state.queued) == 2
     state, _ = run(state, WorkspaceOpened(W2))
-    state, _ = submit(state, background("r4", W2))  # another workspace's is its own
+    state, _ = submit(state, background("rebuild", W2))  # another workspace's is its own
 
 
 def test_a_user_save_is_never_capped_as_a_background_save() -> None:
@@ -644,7 +644,7 @@ def test_a_save_between_engines_is_its_requesters_to_cancel_and_nothing_more_is_
 
 
 def test_a_background_job_has_no_cancel_of_its_own() -> None:
-    state, jid = busy_with(background("r4"))
+    state, jid = busy_with(background("rebuild"))
     state, effects = run(state, Cancel(jid))
     assert effects == []
     assert state.running is not None
@@ -667,14 +667,21 @@ def waiting_behind(spec: JobSpec, *, past: bool = False, gone: bool = False) -> 
 @pytest.mark.parametrize(
     ("spec", "past", "gone"),
     [
-        (background("r4"), False, False),
+        (background("rebuild"), False, False),
         (background("save"), False, False),
         (user("preview"), False, True),
         (user("rebuild"), False, True),
         (user("bql"), False, True),
         (user("open"), False, True),
     ],
-    ids=["hung-r4", "hung-bg-save-before-commit", "preview-tab-closed", "rebuild-gone", "bql-gone", "open-gone"],
+    ids=[
+        "hung-bg-rebuild",
+        "hung-bg-save-before-commit",
+        "preview-tab-closed",
+        "rebuild-gone",
+        "bql-gone",
+        "open-gone",
+    ],
 )
 def test_a_waiting_users_cancel_frees_the_engine_from_work_nobody_waits_for(
     spec: JobSpec, *, past: bool, gone: bool
@@ -993,7 +1000,7 @@ def test_while_the_engine_is_unavailable_a_queued_job_ends_without_an_engine() -
     §11: "bound reached ... `ENGINE_UNAVAILABLE`"; model `DispatchUnavail`: the job is taken from the queue and
     refused, waited-for jobs first, and no engine starts."""
     state = unavailable(ready())
-    step = transition(POLICY, state, Submit(background("r4")))
+    step = transition(POLICY, state, Submit(background("rebuild")))
     assert [type(e) for e in step.effects] == [Queued, NoEngine]
     step2 = transition(POLICY, step.state, Submit(user("preview")))
     (queued,) = [e for e in step2.effects if isinstance(e, Queued)]
@@ -1005,7 +1012,7 @@ def test_while_the_engine_is_unavailable_a_queued_job_ends_without_an_engine() -
 
 def test_the_refusals_go_waited_for_first() -> None:
     state, running = busy_with(user("bql"))
-    state, (bg, fg) = submit(state, background("r4"), user("preview"))
+    state, (bg, fg) = submit(state, background("rebuild"), user("preview"))
     state = unavailable(state)
     step = transition(POLICY, state, JobDone(running, ran_user_code=True))
     assert [e.job_id for e in step.effects if isinstance(e, NoEngine)] == [fg, bg]
@@ -1106,7 +1113,7 @@ def test_the_end_of_the_reset_lets_the_waiting_jobs_start() -> None:
 def test_cancel_is_offered_exactly_where_it_would_do_something() -> None:
     state, jid = busy_with(user("preview"))
     assert cancel_offered(POLICY, state, jid)
-    state, (bg,) = submit(state, background("r4"))
+    state, (bg,) = submit(state, background("rebuild"))
     assert not cancel_offered(POLICY, state, bg), "a background job has no requester to cancel it"
     assert not cancel_offered(POLICY, state, 999)
 
@@ -1133,7 +1140,7 @@ def test_a_waiting_users_cancel_behind_work_they_cannot_end_is_offered() -> None
 
 # -- the model's properties, after every step (MAPPING.md §1.4) ------------------------------------------------------
 
-KINDS: tuple[JobKind, ...] = ("open", "rebuild", "preview", "save", "r4", "bql", "recover_all", "create", "copy")
+KINDS: tuple[JobKind, ...] = ("open", "rebuild", "preview", "save", "bql", "recover_all", "create", "copy")
 
 
 def eligible(state: QueueState, job: Job) -> bool:
@@ -1148,8 +1155,8 @@ def endable(r: Running) -> bool:
     """§4's one rule, written from the spec: nobody waits for it, the user did not confirm it, and it has not reached
     its commit point."""
     j = r.job
-    if j.kind == "r4":
-        return not j.waited_for and not j.confirmed  # the background R4 (S0068: Resume saving is gone)
+    if j.kind == "rebuild" and not j.waited_for:
+        return not j.confirmed  # the background rebuild after a save (S0070)
     if j.kind == "save":
         return not j.confirmed and not r.past_commit
     return j.kind in (*READS, "open") and not j.requester_present
@@ -1337,13 +1344,15 @@ def _queue_seen(before: QueueState, effects: Sequence[Effect]) -> list[Job]:
 
 
 def spec_of(kind: JobKind, ws: str, fg: bool, owner: Owner) -> JobSpec:
-    """A plausible job: app-scoped kinds have no workspace; R4 is background; a save is background or confirmed."""
+    """A plausible job: app-scoped kinds have no workspace; a save or a rebuild is background (the app's) or waited
+    for; a save the user waits for is confirmed."""
+    background = not fg and kind in ("save", "rebuild")
     return JobSpec(
         kind=kind,
         workspace=None if kind in ("create", "copy", "recover_all") else ws,
-        waited_for=kind != "r4" and (fg or kind != "save"),
+        waited_for=not background,
         confirmed=kind in WRITING and fg and owner == "user",
-        owner="switch" if kind == "recover_all" else ("app" if kind == "r4" else owner),
+        owner="switch" if kind == "recover_all" else ("app" if background and kind == "rebuild" else owner),
     )
 
 
@@ -1389,16 +1398,16 @@ def test_the_models_queue_properties_hold_after_every_step_of_a_walk(data: st.Da
 
 
 def job_variants(jid: int) -> Iterable[Job]:
-    """Every kind as the user's job (confirmed when it writes), a background R4 and save, and the switch's own jobs;
+    """Every kind as the user's job (confirmed when it writes), a background rebuild and save, the switch's own jobs;
     each with its requester present or gone."""
     for present in (True, False):
         for kind in KINDS:
             ws = None if kind in ("create", "copy", "recover_all") else W1
             owner = "switch" if kind == "recover_all" else "user"
-            yield Job(jid, kind, ws, kind != "r4", kind in WRITING, owner, present)
+            yield Job(jid, kind, ws, True, kind in WRITING, owner, present)
         yield Job(jid, "save", W1, False, False, "app", present)
-        yield Job(jid, "r4", W1, True, True, "user", present)  # an R4 someone waits for: none since S0068, kept as a
-        # probe of the one rule (§4: nobody waits for it and nobody confirmed it)
+        yield Job(jid, "rebuild", W1, False, False, "app", present)  # the background rebuild after a save (S0070)
+        yield Job(jid, "rebuild", W1, False, True, "user", present)  # none is confirmed: a probe of the one rule (§4)
         yield Job(jid, "open", W2, True, False, "switch", present)
 
 
@@ -1414,7 +1423,7 @@ def abstract_states() -> Iterable[QueueState]:
                 continue
             runnings.append(Running(job, past_commit=past, wants_engine=wants, listed=listed))
     queues: list[tuple[Job, ...]] = [()]
-    queues += [(Job(6, "preview", W1, True, False, "user", True),), (Job(6, "r4", W1, False, False, "app", True),)]
+    queues += [(Job(6, "preview", W1, True, False, "user", True),), (Job(6, "rebuild", W1, False, False, "app", True),)]
     queues += [(Job(6, "recover_all", None, True, False, "switch", True),)]
     locks: tuple[EngineLock, ...] = ("unchecked", "waiting", "free")
     for running, slot, lock, excl, queued, advice, unavail, resetting in itertools.product(
@@ -1469,7 +1478,7 @@ def abstract_events(state: QueueState) -> Iterable[Event]:
         Boot(),
     )
     yield from (WorkspaceOpened(W2), WorkspaceClosed(), ExclusiveBegan(), ExclusiveEnded())
-    yield from (Submit(user("preview")), Submit(background("r4")), Submit(user("create", None)))
+    yield from (Submit(user("preview")), Submit(background("rebuild")), Submit(user("create", None)))
     yield Submit(switch_job("recover_all"))
 
 
@@ -1626,10 +1635,10 @@ def test_a_save_whose_engine_died_is_kept_to_read_its_outcome(past_commit: bool)
     assert Finished(jid) in effects
 
 
-def test_an_r4_whose_engine_died_is_lost_like_a_read() -> None:
-    """S0068 (ADR-0067): nothing is counted on disk for an R4 that could not run, so the queue keeps no R4 whose
-    engine died (until S0068: `outcome_owed`, to count its failure in a fresh engine before any queued job)."""
-    state, jid = busy_with(background("r4"), ready(W1))
+def test_a_background_rebuild_whose_engine_died_is_lost_like_a_read() -> None:
+    """§5.3 (S0070): nothing is owed for a background rebuild that could not run, so the queue keeps none whose
+    engine died (it owes no outcome read from disk)."""
+    state, jid = busy_with(background("rebuild"), ready(W1))
     state, (waiting,) = submit(state, user("preview"))
     assert state.engine is not None
     state, effects = run(state, EngineDied(state.engine))
@@ -1640,10 +1649,10 @@ def test_an_r4_whose_engine_died_is_lost_like_a_read() -> None:
     assert started(effects) == [waiting]
 
 
-def test_the_background_r4_is_ended_by_another_jobs_cancel() -> None:
-    """@regression-guard. §4's one rule: nobody waits for the background R4 and nobody confirmed it (S0068: the
-    one R4 job the user confirmed is gone)."""
-    state, jid = busy_with(background("r4"), ready(W1))
+def test_the_background_rebuild_is_ended_by_another_jobs_cancel() -> None:
+    """§4's one rule: nobody waits for the background rebuild after a save and nobody confirmed it (S0070; R4's
+    place in the rule)."""
+    state, jid = busy_with(background("rebuild"), ready(W1))
     state, (waiting,) = submit(state, user("preview"))
     state, effects = run(state, Cancel(waiting))
     assert Cancelled(jid) in effects

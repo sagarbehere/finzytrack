@@ -135,8 +135,6 @@ def commit_for(targets: tuple[Target, ...]) -> Commit:
         workspace_key="k1",
         lineage="lin1",
         engine_build="build1",
-        post_fingerprint="sha256:" + "f" * 64,
-        adopted_digest="sha256:" + "a" * 64,
         changes=tuple(Change(t.path, None if t.pre is None else sha256(t.pre), t.post) for t in targets),
         journal_dir=JD,
         backups_dir=BD,

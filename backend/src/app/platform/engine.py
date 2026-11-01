@@ -57,12 +57,9 @@ type Phase = Literal[
     "waiting_for_files",
     "saving",
     "updating_views",
-    "checking_last_change",
 ]
 """A job's phase (engine-jobs §5.4), as the engine reports it; the protocol's `Phase` (held equal by a test)."""
-PHASES: frozenset[str] = frozenset(
-    {"reading", "checking_change", "waiting_for_files", "saving", "updating_views", "checking_last_change"}
-)
+PHASES: frozenset[str] = frozenset({"reading", "checking_change", "waiting_for_files", "saving", "updating_views"})
 
 type DecisionScalar = str | int | bool | None
 
@@ -253,7 +250,7 @@ class SaveAnswer:
     written); `not_saved` (the writer's refusal or failure; `open_journal`: writes paused until recovery);
     `unfinished` (a file may have been replaced, the rollback stopped: `cause`, `cause_path`). `unchanged`: every file
     the save would write was hashed again and equals its pre bytes. `entry`, `detail`: the folder and the ACL entry of
-    a `permission` refusal. No refusal comes from R4 (ADR-0067; S0068)."""
+    a `permission` refusal."""
 
     outcome: SaveOutcomeKind
     reason: str | None
@@ -267,16 +264,19 @@ class SaveAnswer:
     published: bool
 
 
-type R4Outcome = Literal["gone", "unreadable", "superseded", "pass", "differs"]
+type RebuildOutcome = Literal["loaded", "moved"]
 
 
 @dataclass(frozen=True, slots=True)
-class R4Answer:
-    """The result of the engine's `r4_check` (engine-jobs §6.7; S0066, S0068): the outcome (`differs`: the notice);
-    `loaded`: the ledger's plugins ran in that engine. It renamed and wrote nothing (ADR-0067)."""
+class RebuildAnswer:
+    """The result of the engine's `rebuild` (engine-jobs §6.7, §7; ADR-0068 D1; S0070): `loaded` (Beancount's own result
+    for the disk as observed; `entries` and `errors` its counts) or `moved` (try again with `fingerprint`, opaque here).
+    It wrote nothing; the ledger's plugins ran in that engine."""
 
-    outcome: R4Outcome
-    loaded: bool
+    outcome: RebuildOutcome
+    fingerprint: str
+    entries: int
+    errors: int
 
 
 type RecordSeen = Literal["none", "part", "open", "closed", "resolved", "kept", "unknown"]
@@ -309,11 +309,13 @@ class EnginePort(Protocol):
         *,
         on_event: Callable[[EngineEvent], None] | None = None,
         spawn: bool = True,
+        counted: bool = True,
     ) -> Mapping[str, object] | EngineRefusal | EngineFailure:
         """Send one request and return its `result` object as plain data. No time limit: it waits until the engine
         answers or ends, or `end` ends it. `on_event` receives the job's messages, in order, on this thread. Without
         `spawn` the request goes only to an engine that is ready, and fails otherwise: nothing is started (the
-        scheduler's call inside a job, whose engine the queue chose; S0058)."""
+        scheduler's call inside a job, whose engine the queue chose; S0058). `counted` False: an end of the engine
+        during it is no stop toward the bound (the rebuild after a save, engine-jobs §5.3; S0070)."""
         ...
 
     def proceed(self) -> bool:

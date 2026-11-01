@@ -9,13 +9,11 @@ the journal and backups folders, and their parents, durable before the commit po
 from __future__ import annotations
 
 import errno
-from collections.abc import Mapping
 from dataclasses import replace
 
 import pytest
 
 from ledger_engine.fs.port import LegacyAbsent
-from ledger_engine.ledger import overlay
 from ledger_engine.ledger import save as sv
 from ledger_engine.ledger.core.ledger_set import Content, Fingerprint, digest
 from ledger_engine.ledger.writer import Change, sha256
@@ -140,10 +138,6 @@ class Job:
     def committed(self) -> None: ...
 
 
-def _loaded(root: str, candidates: Mapping[str, bytes]) -> overlay.LoadResult:
-    return overlay.Loaded([], [], {}, FP)
-
-
 def save_world(not_durable: str) -> MemFS:
     """The ledger `a.bean`, `b.bean`, and the app folder whose `not_durable` folder exists but was never synced."""
     fs = MemFS()
@@ -175,7 +169,7 @@ def two_file_plan(**kw: object) -> sv.SavePlan:
 
 
 def save_ports(fs: MemFS) -> sv.Ports:
-    return sv.Ports(fs, MemLocks(), NoLegacy(), _loaded, observe=lambda fp: fp)
+    return sv.Ports(fs, MemLocks(), NoLegacy(), observe=lambda fp: fp)
 
 
 @pytest.mark.parametrize("not_durable", CHAIN)

@@ -121,7 +121,8 @@ SPAWN_PCS = frozenset({"rc_spawn"})
 EAGER = frozenset({"Dispatch", "DispatchUnavail", "SpawnStep"})
 
 SAVE, R4_READS, CREATE_COPY, SWITCH = "BL-0151", "BL-0152", "BL-0153", "BL-0154"
-R4_JOB = "S0068"  # R4 has no disk effect (ADR-0067); its work is `engine_jobs.r4` (`test_r4_job.py`)
+R4_JOB = "S0070"  # the model's R4 is the code's background rebuild after a save (ADR-0068 D1; no disk effect); its
+# work is `engine_jobs.rebuild` (`test_rebuild_job.py`); the model's own cut is BL-0180
 
 # -- the inventory: every action of the model's Next ---------------------------------------------------------------
 
@@ -331,7 +332,7 @@ KIND: Mapping[str, JobKind] = {
     "read": "preview",
     "rebuild": "rebuild",
     "save": "save",
-    "r4": "r4",
+    "r4": "rebuild",  # the model's R4 job is the code's background rebuild (S0070)
     "recover": "recover_all",
     "open": "open",
     "create": "create",
@@ -457,8 +458,8 @@ def ends_of(s: StateJ, t: StateJ, classes: Mapping[str, Class]) -> dict[int, End
     out: dict[int, End] = {}
     for mid in left:
         if a == "EngineCrash" and run is not None and mid == run["id"] and run["k"] == "save":
-            # §6.6: the save is told its outcome from disk (S0063), never "lost"; an R4 whose engine died is lost like
-            # a read (§6.7, S0068)
+            # §6.6: the save is told its outcome from disk (S0063), never "lost"; a background rebuild (the model's
+            # R4) whose engine died is lost like a read (§6.7, S0070)
             out[mid] = End("finished")
         elif a == "EngineCrash" and run is not None and mid == run["id"]:
             out[mid] = End("lost", past_commit=s["ctl"]["past"])  # only a writing job has a commit point
@@ -1027,7 +1028,7 @@ BRANCHES: Mapping[str, Pred] = {
         t["act"]["a"] == "SpawnStep" and s["ctl"]["pc"] == "rc_spawn" and t["run"] is None
     ),
     # Cancel (§4): the one rule for the job running ahead
-    "Cancel of a queued job ends a running R4": lambda s, t, b: (
+    "Cancel of a queued job ends a running background rebuild": lambda s, t, b: (
         (r := _ahead_of_cancel(s, t)) is not None and r["k"] == "r4" and t["run"] is None
     ),
     "Cancel of a queued job ends a background save before its commit point": lambda s, t, b: (
@@ -1071,7 +1072,7 @@ BRANCHES: Mapping[str, Pred] = {
     "a save's engine dies past its commit point": lambda s, t, b: (
         t["act"]["a"] == "EngineCrash" and _kind(s) == "save" and s["ctl"]["past"]
     ),
-    "an R4's engine dies": lambda s, t, b: t["act"]["a"] == "EngineCrash" and _kind(s) == "r4",
+    "a background rebuild's engine dies": lambda s, t, b: t["act"]["a"] == "EngineCrash" and _kind(s) == "r4",
     "a read's engine dies": lambda s, t, b: t["act"]["a"] == "EngineCrash" and _kind(s) == "read",
     "recover-all's engine dies before its listing": lambda s, t, b: (
         t["act"]["a"] == "EngineCrash" and _kind(s) == "recover" and not s["ctl"]["rinit"]
@@ -1100,7 +1101,7 @@ BRANCHES: Mapping[str, Pred] = {
         _kind(s) == "save" and _ends_running(s, t)
         and t["act"]["a"] not in ("EngineCrash", "UserCancelRunning", "UserCancelQueued")
     ),
-    "a save queues its R4": lambda s, t, b: (
+    "a save queues its rebuild": lambda s, t, b: (
         t["act"]["a"] == "S_Release" and any(j["k"] == "r4" for j in new_jobs(s, t))
     ),
     "recover-all lists the journals": lambda s, t, b: (
@@ -1121,9 +1122,9 @@ UNREACHED: Mapping[str, str] = {
         f"({R4_READS}, {SWITCH})"
     ),
     "OrphanEndStuck": f"its stuck orphan comes only from a quit or the app's crash, both left out ({SWITCH})",
-    "SpawnStep, a save or an R4": (
-        "unreachable: only recover-all asks a fresh engine mid-job (`rc_spawn`); a save and an R4 run in one engine "
-        "(S0068, ADR-0067)"
+    "SpawnStep, a save or a background rebuild": (
+        "unreachable in the model: only recover-all asks a fresh engine mid-job (`rc_spawn`); a save and the model's "
+        "R4 run in one engine (the code's rebuild asks for one per try, `test_rebuild_job.py`)"
     ),
 }
 """Branches of mapped actions the corpus cannot reach, each with why (the hand-written suites guard them)."""

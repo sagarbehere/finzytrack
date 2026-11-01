@@ -39,7 +39,7 @@ from app.platform.engine_protocol import (
     Violation,
     decode_info,
     decode_pong,
-    decode_r4,
+    decode_rebuild,
     decode_recover_act,
     decode_recover_list,
     decode_recover_try,
@@ -115,7 +115,7 @@ DECODERS: dict[str, Any] = {
     "recover_act": decode_recover_act,
     "save": decode_save,
     "save_outcome": decode_save_outcome,
-    "r4_check": decode_r4,
+    "rebuild": decode_rebuild,
 }
 
 
@@ -190,7 +190,7 @@ def mutations(example: dict[str, Any]) -> list[dict[str, Any]]:
         ("RecoverActReply", "recover_act"),
         ("SaveReply", "save"),
         ("SaveOutcomeReply", "save_outcome"),
-        ("R4CheckReply", "r4_check"),
+        ("RebuildReply", "rebuild"),
     ],
 )
 def test_the_decoder_refuses_exactly_what_the_schema_refuses(definition: str, op: str | None) -> None:
@@ -347,13 +347,13 @@ def test_the_decoder_refuses_exactly_what_the_schema_refuses_for_a_decision(deci
 
 # -- Recover-all's ops (S0062) --------------------------------------------------------------------------------------
 
-RECOVER_OPS = (  # and the save's (S0063) and R4's (S0066)
+RECOVER_OPS = (  # and the save's (S0063) and the rebuild's (S0070)
     "recover_list",
     "recover_try",
     "recover_act",
     "save",
     "save_outcome",
-    "r4_check",
+    "rebuild",
 )
 
 
@@ -399,14 +399,14 @@ def test_the_decoder_refuses_exactly_what_the_schema_refuses_inside_a_recover_re
             assert schema_ok == (not isinstance(verdict, Violation)), (result, verdict)
 
 
-@pytest.mark.parametrize("foreign", ["mismatch", "nondeterministic", "superseded_build", "counted", "done"])
-def test_an_outcome_of_the_r4_gate_breaks_the_protocol(foreign: str) -> None:
-    """S0068 (ADR-0067): `r4_check` answers only `gone`, `unreadable`, `superseded`, `pass` or `differs`; an outcome
-    of the removed gate (an older engine's) is a violation, never taken for a check."""
-    ex = examples("R4CheckReply")[0]
+@pytest.mark.parametrize("foreign", ["pass", "differs", "superseded", "gone", "changing"])
+def test_an_outcome_other_than_loaded_or_moved_breaks_the_protocol(foreign: str) -> None:
+    """S0070 (ADR-0068 D1): `rebuild` answers only `loaded` or `moved`; R4's outcomes (an older engine's) are a
+    violation, never taken for a result."""
+    ex = examples("RebuildReply")[0]
     variant = {**ex, "result": {**ex["result"], "outcome": foreign}}
-    assert not valid("R4CheckReply", variant)
-    assert isinstance(decoded(variant, "r4_check"), Violation)
+    assert not valid("RebuildReply", variant)
+    assert isinstance(decoded(variant, "rebuild"), Violation)
 
 
 def test_the_try_result_decodes_to_its_fields() -> None:

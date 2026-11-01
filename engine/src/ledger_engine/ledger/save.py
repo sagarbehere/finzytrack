@@ -1,45 +1,38 @@
-"""The save job inside the engine (`design/specs/engine-jobs.md` §6.1 steps 1-7 and 9-11 around S0060's durable order,
-§6.5, §6.6; ADR-0008 steps 4-6, ADR-0012 Q29, ADR-0013, ADR-0062 decisions 2 and 5; S0063).
+"""The save job inside the engine (`design/specs/engine-jobs.md` §6.1 steps 1-4, 7, 9-11 around S0060's durable order,
+§6.5, §6.6; ADR-0008 step 4, ADR-0012 Q29, ADR-0013, ADR-0062 decisions 2 and 5, ADR-0068 D1; S0063, S0070).
 
-`run(plan, ports, job)`, in one engine (§5.1: it runs the ledger's plugins, so its engine is retired after it):
+`run(plan, ports, job)`, in one engine. **The save does no Beancount load** (ADR-0068 D1, S0070): it runs none of the
+ledger's plugins and trusts the plan, whose fingerprint is what the preview's load read (BL-0106); the sidecar still
+retires its engine after it (the safe default). Its steps:
+0. **An encrypted file is never written** (ADR-0059): a change whose name ends `.gpg` or `.asc` (any case; the
+   overlay's own candidate rule, `overlay.ENCRYPTED_SUFFIXES`) refuses `encrypted_file`, before anything is read.
 1. **The records** (§6.1 step 1): an `.open` journal of this workspace, re-read from disk (`records`), refuses
-   `unfinished_save`, writing nothing. A `.closed` record gates nothing (ADR-0067: R4 compares after the save and
-   never pauses saving; S0068); no other record state is read.
+   `unfinished_save`, writing nothing. A `.closed` record gates nothing (ADR-0067); no other record state is read.
 2. **Legacy-lock detection** (ADR-0062 decision 2; INV-26): every legacy `.write.lock` the plan names, deduplicated by
    `path_key`, tried once each without waiting (`LegacyLocks`); free: held to the end; absent: go on; held, or any
    error: `legacy_app_saving`, before any ledger-set lock.
 3. **Ledger-set locks** (ADR-0012 Q29): every file of the plan's ledger set (the absent paths included) and every file
    the save writes, in `path_key` order, each waiting; `waiting_for_files` is shown only when one is not free at once.
-4. **The gate, under the locks** (ADR-0008 step 4): the disk's fingerprint equals the plan's (else `ledger_changed`);
-   the published mirror's equals the plan's (else `mirror_stale`, `WORKSPACE_NOT_READY {WARMING}`); the `.open` check
-   again.
-5. **The load** of the candidate (`overlay.load`, the contract's step 3; ADR-0011's one full load). A refused load is
-   `load_refused`; judging its errors against the plan's is the contract's (TODO(BL-0106)). Then the prediction R4
-   checks (§6.7, S0066): the adopted digest of the load's result (`ledger.digest`), before step 6, so the re-check
-   stays right before the commit point (no parse digest since S0067: BL-0173). The load is the save's preview of
-   Beancount's result (ADR-0067 decision 2): its errors are advice, never a refusal here.
-6. **The re-check, under the locks** (§6.1 step 6; ADR-0013; the owner's TLC run `L_save_deep`): the disk's
-   fingerprint equals the plan's **and** the disk equals what the load itself parsed (`ledger_set.as_before` of
-   `Loaded.fingerprint`). So an include the load read in an edited form, reverted before this step, refuses; one
-   edited and reverted after the load passes (the save builds only on bytes still on disk).
+4. **The gate, under the locks** (ADR-0008 step 4), the last check before the commit point: the disk's fingerprint
+   equals the plan's (else `ledger_changed`); the published mirror's equals the plan's (else `mirror_stale`,
+   `WORKSPACE_NOT_READY {WARMING}`); the `.open` check again. Steps 5 and 6 (the save's own load and the re-check
+   after it) are removed (ADR-0068 D1): an outside save after step 4 is met by the swap's displaced check.
 7. **The commit point:** `job.gate()` (§4: the sidecar's one table step answers `proceed` or ends the engine).
 8. `writer.durable_commit` (§6.1 step 8), after the workspace's journal and backups folders exist and every folder
    from `app_local_data` down to them has a durable entry (its parent synced, whether it was made now or not). The
-   closed record carries the load's post fingerprint as its canonical encoding (R4 observes that ledger set; the
-   created files added to the documents listings they fall in, `ledger_set.as_after`) and the adopted digest.
+   record carries no prediction (journal format 4).
 9. `job.committed()` once it `Landed`.
-10. The publish (§6.1 step 10) is not built: `Saved.published` is False (TODO(BL-0113)); the rebuild a failed
-    publish queues is BL-0152 part 2's. The sidecar queues the record's R4 (S0066).
+10. The sidecar queues the background rebuild with Beancount's own loader (§6.7, `ledger.rebuild`); `Saved.published`
+    stays False.
 11. Every lock released on every path out, the legacy locks last; the engine is retired by the sidecar.
 
-**The step rule.** Steps 1-7 write nothing but lock files (`app_local_data/locks/`, never deleted); every refusal
+**The step rule.** Steps 0-7 write nothing but lock files (`app_local_data/locks/`, never deleted); every refusal
 there says `unchanged` only after each file the save would write was hashed again and equals its pre bytes (§11's
 rule). Step 8 has its own rule (`writer`). A Cancel ends the engine at the gate, before step 8. Python's garbage
 collector is paused for the job (ADR-0008 amendment). A malformed plan raises `writer.BadPlanError` before step 1, and
 so does a plan whose name `<session>-<job>` already has a record or a backups folder in this key (§6.5 "One save, one
 name": §6.6 tells a dead save's outcome by that name alone; the sidecar makes a new name for every save). An I/O error
-taking a ledger-set lock, or one the load meets (an include it cannot read), is `NotSaved(io_error)` naming the file,
-with the re-hash; nothing was written.
+taking a ledger-set lock is `NotSaved(io_error)` naming the file, with the re-hash; nothing was written.
 
 `outcome(...)` is §6.6's reading of the disk after a save's engine died: the job's journal folder `durable_sync`ed,
 then its record's state, and with no record (or a `.part`) every target hashed again. The decision is the sidecar's
@@ -57,15 +50,13 @@ from dataclasses import dataclass
 from typing import Final, Literal, Protocol
 
 from ledger_engine.fs.port import FileSystem, LegacyAbsent, LegacyHeld, LegacyLocks, Lock, Locks
-from ledger_engine.ledger import digest as _digest
 from ledger_engine.ledger import fingerprint as _fingerprint
 from ledger_engine.ledger import overlay
 from ledger_engine.ledger.core import journal
 from ledger_engine.ledger.core import paths as core_paths
 from ledger_engine.ledger.core.journal import Record, State
-from ledger_engine.ledger.core.ledger_set import Absent, Content, Fingerprint, as_after, as_before, digest, encode
+from ledger_engine.ledger.core.ledger_set import Absent, Content, Fingerprint, digest
 from ledger_engine.ledger.handles import join, sha256
-from ledger_engine.ledger.policy import LoadPolicy
 from ledger_engine.ledger.writer import (
     BadPlanError,
     Change,
@@ -87,13 +78,13 @@ SESSION: Final = re.compile(r"[a-z0-9_]{1,64}")
 """A session id: lower case only, so two sessions never differ only in case (names derived from `<session>-<job>`
 are compared case-folded on a case-insensitive volume; S0061 red team r3 overflow 4)."""
 
-type Phase = Literal["waiting_for_files", "checking_change", "saving"]
+type Phase = Literal["waiting_for_files", "saving"]
 type RefusedReason = Literal[
     "unfinished_save",  # an `.open` journal of this workspace (WRITES_PAUSED)
     "legacy_app_saving",  # a legacy install's write lock is held, or could not be tried (LEGACY_APP_SAVING)
-    "ledger_changed",  # the disk moved since the plan, or during the load (LEDGER_EXTERNALLY_CHANGED)
+    "ledger_changed",  # the disk moved since the plan (LEDGER_EXTERNALLY_CHANGED)
     "mirror_stale",  # the published mirror is not the plan's (WORKSPACE_NOT_READY {WARMING})
-    "load_refused",  # the commit's load refused the candidate (TODO(BL-0106): the contract's refusal)
+    "encrypted_file",  # a change names an encrypted file (ADR-0059; the preview refuses it first, BL-0106)
 ]
 
 
@@ -130,7 +121,6 @@ class Job(Protocol):
     def committed(self) -> None: ...
 
 
-type Load = Callable[[str, Mapping[str, bytes]], overlay.LoadResult]
 type Observe = Callable[[Fingerprint], Fingerprint]
 
 
@@ -140,29 +130,19 @@ def _observe(fp: Fingerprint) -> Fingerprint:
 
 @dataclass(frozen=True, slots=True)
 class Ports:
-    """The save's effects: the file-system port (every write), the ledger-set and legacy locks, and the load and the
-    observation, which read the disk with the loader's own calls (`overlay`, `fingerprint`)."""
+    """The save's effects: the file-system port (every write), the ledger-set and legacy locks, and the observation,
+    which reads the disk with the loader's own calls (`fingerprint`)."""
 
     fs: FileSystem
     locks: Locks
     legacy: LegacyLocks
-    load: Load
     observe: Observe = _observe
-
-
-def desktop_load(policy: LoadPolicy) -> Load:
-    """The commit's load: the overlay under `policy`."""
-
-    def load(root: str, candidates: Mapping[str, bytes]) -> overlay.LoadResult:
-        return overlay.load(root, candidates, policy)
-
-    return load
 
 
 @dataclass(frozen=True, slots=True)
 class Saved:
-    """The closed record is durable (§6.1 step 8.5): the save has landed. `published`: the mirror was published from
-    the load (TODO(BL-0113): never yet)."""
+    """The closed record is durable (§6.1 step 8.5): the save has landed. `published`: the save published the mirror
+    itself (never: the rebuild after it does, §6.7)."""
 
     record: Record
     published: bool = False
@@ -172,7 +152,7 @@ class Saved:
 class Refused:
     """Refused before the commit point: nothing was written in a ledger folder, the journal or the backups. `unchanged`:
     every file the save would write was hashed again and equals its pre bytes (a created one: absent). `path`: the
-    file the refusal is about, when there is one (the legacy lock, the `.open` journal, the refused load's subject)."""
+    file the refusal is about, when there is one (the legacy lock, the `.open` journal, the encrypted file)."""
 
     reason: RefusedReason
     unchanged: bool
@@ -397,6 +377,9 @@ def _run(plan: SavePlan, ports: Ports, job: Job, pre: Mapping[str, str | None]) 
     def refused(reason: RefusedReason, path: str | None = None) -> Refused:
         return Refused(reason, _unchanged(ports.fs, plan.changes), path)
 
+    for c in plan.changes:  # step 0 (ADR-0059): never an encrypted file
+        if c.path.lower().endswith(overlay.ENCRYPTED_SUFFIXES):
+            return refused("encrypted_file", c.path)
     open_journal = _open_journal(ports.fs, plan)  # step 1
     if open_journal is not None:
         return _paused(open_journal, ports, plan)
@@ -412,19 +395,18 @@ def _run(plan: SavePlan, ports: Ports, job: Job, pre: Mapping[str, str | None]) 
             return io_error(p)
     try:
         with _legacy_locks(ports, plan.legacy_locks), _ledger_locks(ports, keys, job):  # steps 2, 3 (11: released)
-            return _under_locks(plan, ports, job, pre, refused, io_error)
+            return _under_locks(plan, ports, job, refused, io_error)
     except _LegacyRefused as e:
         return refused("legacy_app_saving", e.path)
     except _LockFailed as e:
         return io_error(e.path)
 
 
-@tla_action("S_Gate", "S_Load", "S_Recheck", "S_Commit", "S_Saved")
+@tla_action("S_Gate", "S_Load", "S_Recheck", "S_Commit", "S_Saved")  # S_Load, S_Recheck: no effect since S0070
 def _under_locks(
     plan: SavePlan,
     ports: Ports,
     job: Job,
-    pre: Mapping[str, str | None],
     refused: Callable[..., Refused],
     io_error: Callable[[str | None], NotSaved],
 ) -> SaveOutcome:
@@ -437,19 +419,6 @@ def _under_locks(
     open_journal = _open_journal(ports.fs, plan)
     if open_journal is not None:
         return _paused(open_journal, ports, plan)
-    job.progress("checking_change")
-    try:
-        loaded = ports.load(plan.root, {c.path: c.post for c in plan.changes})  # step 5
-    except OSError as e:  # an include it cannot read (red team r1 L2): before the gate, nothing written
-        return io_error(e.filename if isinstance(e.filename, str) else None)
-    if isinstance(loaded, overlay.LoadRefused):
-        return refused("load_refused", loaded.subject)
-    # R4's prediction (§6.7), before the re-check
-    adopted = _digest.of_result(loaded.entries, loaded.errors, loaded.options, _digest.path_keys(ports.fs))
-    if ports.observe(plan.fingerprint) != plan.fingerprint:  # step 6
-        return refused("ledger_changed")
-    if ports.observe(loaded.fingerprint) != as_before(loaded.fingerprint, pre):
-        return refused("ledger_changed")
     job.gate()  # step 7: past it, the save finishes (§4)
     job.progress("saving")
     jd = journal_dir(plan)
@@ -468,8 +437,6 @@ def _under_locks(
         workspace_key=plan.workspace_key,
         lineage=plan.lineage,
         engine_build=plan.engine_build,
-        post_fingerprint=encode(as_after(loaded.fingerprint, pre)).decode("ascii"),
-        adopted_digest=adopted,
         changes=plan.changes,
         journal_dir=jd,
         backups_dir=bd,
@@ -477,7 +444,6 @@ def _under_locks(
     out = durable_commit(ports.fs, commit)  # step 8
     if isinstance(out, Landed):
         job.committed()  # step 9
-        # TODO(BL-0113): step 10, the mirror built from `loaded` and published under the locks.
         return Saved(out.record)
     return out
 

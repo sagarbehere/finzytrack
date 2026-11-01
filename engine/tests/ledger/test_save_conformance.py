@@ -57,7 +57,6 @@ from typing import Any, Final, override
 import pytest
 
 from ledger_engine.fs.port import LegacyAbsent
-from ledger_engine.ledger import overlay
 from ledger_engine.ledger import save as sv
 from ledger_engine.ledger.core.ledger_set import Absent, Content, FileState, Fingerprint, digest
 from ledger_engine.ledger.writer import Change, NotSaved, Step, Unfinished, sha256
@@ -398,6 +397,10 @@ class Driver:
             raise Divergence(msg)
         self.compared += 1
 
+    def ahead(self, pc: str) -> bool:
+        """The model's save reaches the step `pc` later in this episode."""
+        return any(p.pc == pc for p in self.ep.points[self.at + 1 :])
+
     def reach(self, pc: str, file: str = "") -> None:
         """The code is at the model step `pc` (of `file`): walk the model up to it. On the way, the outside edits made
         at each step are written, and an engine death or an I/O error made there is raised here; a step passed on the
@@ -570,18 +573,19 @@ def ports(fs: MemFS, driver: Driver) -> sv.Ports:
     seen = Counter[str]()
 
     def observe(fp: Fingerprint) -> Fingerprint:
+        """The save's one observation (step 4). Since S0070 the save does no load and no re-check (ADR-0068 D1): the
+        model's `S_Gate`, `S_Load` and `S_Recheck` (BL-0180 cuts them) are all reached before it, so it sees the disk
+        as the model's re-check does; the model refuses at its gate or its re-check, the code at this one check."""
         seen["observe"] += 1
-        driver.reach("s_gate" if seen["observe"] == 1 else "s_recheck")
+        driver.reach("s_gate")
+        for point in ("s_load", "s_recheck"):  # only when the model's save went on past its gate
+            if driver.ahead(point):
+                driver.reach(point)
         files = tuple((p, _state_of(fs, p)) for p, _ in fp.files)
         return Fingerprint(fp.root, files, fp.globs, fp.documents, fp.document_files)
 
-    def load(root: str, candidates: Mapping[str, bytes]) -> overlay.LoadResult:
-        driver.reach("s_load")
-        files = {p: Content(sha256(candidates[p])) if p in candidates else _state_of(fs, p) for p in PATH.values()}
-        return overlay.Loaded([], [], {}, Fingerprint.of(PATH["R"], files, {}, {}, {}))
-
     driver.locks = Locks(driver)
-    return sv.Ports(fs, driver.locks, NoLegacy(), load, observe)
+    return sv.Ports(fs, driver.locks, NoLegacy(), observe)
 
 
 def plan_of(ep: Episode) -> sv.SavePlan:
@@ -641,7 +645,7 @@ def world() -> MemFS:
 
 def sync_world(fs: MemFS, st: State, where: str) -> None:
     """The fake made to hold what the model holds between two saves: the files (an outside edit while no save ran);
-    a record that differs is a divergence (S0068: R4 renames nothing)."""
+    a record that differs is a divergence (nothing renames a closed record)."""
     for f in FILES:
         v = st["fs"]["cur"][f]
         if value(f, fs.file(PATH[f])) != v:
@@ -832,7 +836,7 @@ NOT_WALKED: Mapping[str, str] = {
     ),
     "S_ReadBack": "a read, with no hook; the model's read-back fails only after a stop (BL-0161); `test_writer.py`",
     "S_Publish": "not built (BL-0113)",
-    "S_Release": "no hook; the replay asserts every ledger-set lock released after each save; the sidecar queues R4",
+    "S_Release": "no hook; the replay asserts every ledger-set lock released after each save (the rebuild is queued)",
     "RB_Check": "reads, with no hook; its stopping branches are stops (BL-0161); `test_restore.py`",
 }
 """The model's save steps the replay does not count as walked, each with its reason (`PARTIAL` or `PLANNED` in the

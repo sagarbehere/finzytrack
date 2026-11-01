@@ -11,9 +11,9 @@ them; the durable order's crash sweeps are `test_writer.py`'s and `test_restore.
   `LEGACY_APP_SAVING`, nothing written";
 - step 3 "taken in `path_key` order, waiting (the user sees "Waiting for your ledger files…")";
 - step 4 "the disk's fingerprint equals the plan's; the published mirror's equals the plan's";
-- step 6 "The re-check passes only when the disk's fingerprint equals both the plan's and the fingerprint of the bytes
-  the load itself parsed": an outside edit read by the load and reverted before the re-check refuses; one made and
-  reverted after the load passes (the owner's TLC run `L_save_deep`, 2026-10-30);
+- steps 5 and 6 are removed (ADR-0068 D1, S0070): "The save does no Beancount load"; the plan's fingerprint is what
+  the preview's load read (BL-0106), so the save runs no plugin and refuses no candidate a load would refuse; it still
+  refuses to write an encrypted file (ADR-0059);
 - §11 "'Your ledger is unchanged' is said only after the targets were hashed again and equal their pre bytes".
 """
 
@@ -24,7 +24,7 @@ import os
 import subprocess
 import sys
 import threading
-from collections.abc import Callable, Generator, Mapping
+from collections.abc import Callable, Generator
 from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
 from pathlib import Path
@@ -38,8 +38,8 @@ from ledger_engine.ledger import overlay
 from ledger_engine.ledger import save as sv
 from ledger_engine.ledger.core import journal
 from ledger_engine.ledger.core.journal import FileEntry, Record, State
-from ledger_engine.ledger.core.ledger_set import digest, encode
-from ledger_engine.ledger.digest import of_result, path_keys
+from ledger_engine.ledger.core.ledger_set import Fingerprint, as_before, digest
+from ledger_engine.ledger.fingerprint import observe as observe_set
 from ledger_engine.ledger.policy import DesktopPolicy
 from ledger_engine.ledger.writer import BadPlanError, Change, NotSaved, Reason, sha256
 
@@ -153,10 +153,17 @@ POLICY = DesktopPolicy()
 
 
 def plan_for(led: Ledger, changes: tuple[Change, ...] | None = None, /, **kw: Any) -> sv.SavePlan:
-    """The plan a preview would make now: its fingerprint from a load of the disk, the mirror published from it."""
-    loaded = overlay.load(str(led.main), {}, POLICY)
-    assert isinstance(loaded, overlay.Loaded)
-    fp = loaded.fingerprint
+    """The plan a preview would make now (BL-0106; spec §6.1 step 4): its fingerprint is what the preview's load of the
+    candidate read, as the disk must hold it before the save (`as_before`); the mirror published from it. A candidate
+    the load refuses (the preview would refuse it) gets the disk's own load, so the save's refusals can be tested."""
+    changes = changes or (Change(str(led.main), sha256(MAIN), MAIN + TXN),)
+    loaded = overlay.load(str(led.main), {c.path: c.post for c in changes}, POLICY)
+    if isinstance(loaded, overlay.Loaded):
+        fp = as_before(loaded.fingerprint, {c.path: c.pre for c in changes})
+    else:
+        disk = overlay.load(str(led.main), {}, POLICY)
+        assert isinstance(disk, overlay.Loaded)
+        fp = disk.fingerprint
     plan = sv.SavePlan(
         session="s1",
         job="j7",
@@ -164,7 +171,7 @@ def plan_for(led: Ledger, changes: tuple[Change, ...] | None = None, /, **kw: An
         lineage=LINEAGE,
         engine_build="test build",
         root=str(led.main),
-        changes=changes or (Change(str(led.main), sha256(MAIN), MAIN + TXN),),
+        changes=changes,
         fingerprint=fp,
         mirror=digest(fp),
         legacy_locks=(),
@@ -176,31 +183,26 @@ def plan_for(led: Ledger, changes: tuple[Change, ...] | None = None, /, **kw: An
 def ports_for(
     led: Ledger,
     *,
-    load: sv.Load | None = None,
+    observe: sv.Observe | None = None,
     locks: Locks | None = None,
     legacy: LegacyLocks | None = None,
 ) -> sv.Ports:
-    return sv.Ports(
-        for_this_os(),
-        locks or DarwinLocks(str(led.ald / "locks")),
-        legacy or DarwinLegacyLocks(),
-        load or sv.desktop_load(POLICY),
-    )
+    ports = sv.Ports(for_this_os(), locks or DarwinLocks(str(led.ald / "locks")), legacy or DarwinLegacyLocks())
+    return ports if observe is None else replace(ports, observe=observe)
 
 
-def wrapped(before: Callable[[], object] | None = None, after: Callable[[], object] | None = None) -> sv.Load:
-    """The real load with an outside program's act just before it starts and just after it returns."""
-    real = sv.desktop_load(POLICY)
+def hooked(before: Callable[[], object] | None = None, after: Callable[[], object] | None = None) -> sv.Observe:
+    """The real observation of the gate (step 4) with an outside program's act just before and just after it."""
 
-    def load(root: str, candidates: Mapping[str, bytes]) -> overlay.LoadResult:
+    def observe(fp: Fingerprint) -> Fingerprint:
         if before is not None:
             before()
-        out = real(root, candidates)
+        out = observe_set(fp.ledger_set)
         if after is not None:
             after()
         return out
 
-    return load
+    return observe
 
 
 def assert_nothing_written(led: Ledger, before: dict[str, bytes | None], out: object) -> None:
@@ -220,33 +222,70 @@ def assert_locks_free(led: Ledger, plan: sv.SavePlan) -> None:
 # -- the save lands -----------------------------------------------------------------------------------------------
 
 
-def test_a_save_lands_after_its_gate_and_its_closed_record_carries_the_loads_post_fingerprint(led: Ledger) -> None:
+def test_a_save_lands_after_its_gate_with_no_load_and_its_record_carries_no_prediction(led: Ledger) -> None:
     plan = plan_for(led)
     job = FakeJob()
-    seen: list[overlay.Loaded] = []
-    real = sv.desktop_load(POLICY)
-
-    def load(root: str, candidates: Mapping[str, bytes]) -> overlay.LoadResult:
-        out = real(root, candidates)
-        assert isinstance(out, overlay.Loaded)
-        seen.append(out)
-        return out
-
-    out = sv.run(plan, ports_for(led, load=load), job)
+    out = sv.run(plan, ports_for(led), job)
     assert isinstance(out, sv.Saved), out
     assert not out.published  # TODO(BL-0113)
-    assert job.events == ["checking_change", "gate", "saving", "committed"]
+    assert job.events == ["gate", "saving", "committed"]  # no "checking_change": the save does no load (S0070)
     assert (led.main.read_bytes(), led.inc.read_bytes()) == (MAIN + TXN, INC)
     assert sorted(os.listdir(led.journal())) == ["s1-j7.closed"]
     rec = journal.decode((led.journal() / "s1-j7.closed").read_bytes())
     assert isinstance(rec, Record)
-    assert rec.post_fingerprint == encode(seen[0].fingerprint).decode("ascii")  # S0066: R4 observes this ledger set
     assert (rec.workspace_key, rec.lineage, rec.engine_build) == (KEY, LINEAGE, "test build")
-    # R4's prediction (§6.7): the digest of the load's result (no parse digest since BL-0173)
-    keys = path_keys(for_this_os())
-    assert rec.adopted_digest == of_result(seen[0].entries, seen[0].errors, seen[0].options, keys)
-    assert rec.adopted_digest.startswith("sha256:")
+    raw = (led.journal() / "s1-j7.closed").read_text()
+    assert "post_fingerprint" not in raw  # ADR-0068 D1: no prediction (journal format 4)
+    assert "adopted_digest" not in raw
     assert_locks_free(led, plan)
+
+
+PLUGIN = """__plugins__ = ["mark"]
+
+
+def mark(entries, options_map):
+    import pathlib
+
+    pathlib.Path(options_map["filename"]).with_name("plugin-ran").touch()
+    return entries, []
+"""
+
+
+def test_the_save_runs_no_plugin_of_the_ledger(led: Ledger) -> None:
+    """ADR-0068 D1: the save does no Beancount load, so no user code runs in it (the preview's load did, before)."""
+    main = b'option "insert_pythonpath" "TRUE"\nplugin "ft_s0070_mark"\n' + MAIN
+    led.main.write_bytes(main)
+    (led.root / "ft_s0070_mark.py").write_text(PLUGIN)
+    plan = plan_for(led, (Change(str(led.main), sha256(main), main + TXN),))
+    mark = led.root / "plugin-ran"
+    assert mark.exists()  # the preview's load ran it
+    mark.unlink()
+    out = sv.run(plan, ports_for(led), FakeJob())
+    assert isinstance(out, sv.Saved), out
+    assert not mark.exists()
+
+
+def test_a_candidate_a_load_would_refuse_is_saved_as_planned(led: Ledger) -> None:
+    """The save trusts the plan: a file no include reaches (the overlay's `not-reached`) is the preview's to refuse
+    (BL-0106), never the save's."""
+    stray = led.root / "stray.bean"
+    changes = (Change(str(stray), None, b"2026-01-02 open Assets:Stray\n"),)
+    out = sv.run(plan_for(led, changes), ports_for(led), FakeJob())
+    assert isinstance(out, sv.Saved), out
+    assert stray.read_bytes() == changes[0].post
+
+
+@pytest.mark.parametrize("name", ["new.gpg", "NEW.ASC", "inc.bean.gpg"])
+def test_a_change_to_an_encrypted_file_is_refused_and_writes_nothing(led: Ledger, name: str) -> None:
+    """ADR-0059: v0.4.0 never writes an encrypted file (the overlay's own candidate rule, by name)."""
+    target = led.root / name
+    plan = plan_for(led, (Change(str(led.main), sha256(MAIN), MAIN + TXN), Change(str(target), None, b"x\n")))
+    before = led.tree()
+    job = FakeJob()
+    out = sv.run(plan, ports_for(led), job)
+    assert out == sv.Refused("encrypted_file", unchanged=True, path=str(target))
+    assert "gate" not in job.events
+    assert_nothing_written(led, before, out)
 
 
 def test_a_save_that_creates_a_file_named_by_a_new_include_lands(led: Ledger) -> None:
@@ -263,69 +302,32 @@ def test_a_save_that_creates_a_file_named_by_a_new_include_lands(led: Ledger) ->
 
 def test_the_garbage_collector_is_paused_for_the_job_and_back_after_it(led: Ledger) -> None:
     states: list[bool] = []
-    out = sv.run(plan_for(led), ports_for(led, load=wrapped(before=lambda: states.append(gc.isenabled()))), FakeJob())
+    out = sv.run(plan_for(led), ports_for(led, observe=hooked(before=lambda: states.append(gc.isenabled()))), FakeJob())
     assert isinstance(out, sv.Saved)
     assert states == [False]
     assert gc.isenabled()
 
 
-# -- the re-check (step 6), both ways: the owner's TLC run `L_save_deep` ------------------------------------------
-
-
-def test_an_include_edited_and_reverted_after_the_load_lets_the_save_go_on(led: Ledger) -> None:
-    def edit_and_revert() -> None:
-        led.inc.write_bytes(EDIT)
-        led.inc.write_bytes(INC)  # identical bytes again: the load read the bytes still on disk
-
-    out = sv.run(plan_for(led), ports_for(led, load=wrapped(after=edit_and_revert)), FakeJob())
-    assert isinstance(out, sv.Saved), out
-    assert led.main.read_bytes() == MAIN + TXN
-
-
-def test_an_include_the_load_read_edited_and_reverted_before_the_recheck_refuses(led: Ledger) -> None:
-    """The plan's fingerprint alone would pass here: the disk is back at the plan's bytes, but the load parsed the
-    edited include, so the commit would build on bytes no longer on disk."""
-    plan = plan_for(led)
-    before = led.tree()
-    out = sv.run(
-        plan,
-        ports_for(led, load=wrapped(before=lambda: led.inc.write_bytes(EDIT), after=lambda: led.inc.write_bytes(INC))),
-        FakeJob(),
-    )
-    assert out == sv.Refused("ledger_changed", unchanged=True)
-    assert_nothing_written(led, before, out)
-    assert_locks_free(led, plan)
-
-
-def test_an_include_edited_during_the_load_and_left_so_refuses(led: Ledger) -> None:
-    plan = plan_for(led)
-    job = FakeJob()
-    out = sv.run(plan, ports_for(led, load=wrapped(after=lambda: led.inc.write_bytes(EDIT))), job)
-    assert out == sv.Refused("ledger_changed", unchanged=True)
-    assert "gate" not in job.events
-    assert (led.inc.read_bytes(), led.main.read_bytes()) == (EDIT, MAIN)
-
-
-def test_the_file_the_save_writes_edited_during_the_load_refuses_and_is_not_unchanged(led: Ledger) -> None:
-    plan = plan_for(led)
-    edited = MAIN + b"; an editor's line\n"
-    out = sv.run(plan, ports_for(led, load=wrapped(after=lambda: led.main.write_bytes(edited))), FakeJob())
-    assert out == sv.Refused("ledger_changed", unchanged=False)
-    assert led.main.read_bytes() == edited
-
-
 # -- the gate (step 4) ----------------------------------------------------------------------------------------------
 
 
-def test_a_ledger_moved_since_the_plan_refuses_before_the_load(led: Ledger) -> None:
+def test_a_ledger_moved_since_the_plan_refuses(led: Ledger) -> None:
     plan = plan_for(led)
     led.inc.write_bytes(EDIT)
     before = led.tree()
-    loads: list[int] = []
-    out = sv.run(plan, ports_for(led, load=wrapped(before=lambda: loads.append(1))), FakeJob())
+    job = FakeJob()
+    out = sv.run(plan, ports_for(led), job)
     assert out == sv.Refused("ledger_changed", unchanged=True)
-    assert loads == []
+    assert "gate" not in job.events
     assert_nothing_written(led, before, out)
+
+
+def test_an_include_edited_right_up_to_the_gates_observation_refuses(led: Ledger) -> None:
+    """Step 4 is the last check before the commit point (ADR-0068 D1): an edit just before it refuses."""
+    plan = plan_for(led)
+    out = sv.run(plan, ports_for(led, observe=hooked(before=lambda: led.inc.write_bytes(EDIT))), FakeJob())
+    assert out == sv.Refused("ledger_changed", unchanged=True)
+    assert (led.inc.read_bytes(), led.main.read_bytes()) == (EDIT, MAIN)
 
 
 @pytest.mark.parametrize("mirror", [None, "sha256:" + "0" * 64])
@@ -349,8 +351,6 @@ def _record(led: Ledger, key: str, name: str, state: State, *, lineage: str = LI
         workspace_key=owner,
         lineage=lineage,
         engine_build="b",
-        post_fingerprint="sha256:" + "1" * 64,
-        adopted_digest="a",
         backup_dir="/b/" + name,
         files=(FileEntry("/x/a.bean", "/x/a.bean", "1" * 64, "2" * 64, "0-a.bean", f".a.bean.ft-{name}.tmp"),),
         created_dirs=(),
@@ -373,8 +373,8 @@ def test_an_open_journal_of_this_workspace_refuses_before_any_lock(led: Ledger) 
 
 
 def test_a_closed_record_of_this_workspace_does_not_refuse_the_next_save(led: Ledger) -> None:
-    """S0068 (ADR-0067 decision 3): R4 gates nothing. A landed save's `.closed` record, its R4 run or not, lets the
-    next save of the workspace land (until S0068 it refused `check_pending`)."""
+    """ADR-0067 decision 3: a landed save's `.closed` record, its rebuild run or not, lets the next save of the
+    workspace land."""
     closed = _record(led, KEY, "s0-j1", State.CLOSED)
     out = sv.run(plan_for(led), ports_for(led), FakeJob())
     assert isinstance(out, sv.Saved), out
@@ -397,8 +397,6 @@ def test_records_a_development_build_left_do_not_refuse(led: Ledger, suffix: str
                 workspace_key=KEY,
                 lineage=LINEAGE,
                 engine_build="b",
-                post_fingerprint="sha256:" + "1" * 64,
-                adopted_digest="a",
                 backup_dir="/b/s0-j1",
                 files=(FileEntry("/x/a.bean", "/x/a.bean", "1" * 64, "2" * 64, "0-a.bean", ".a.bean.ft-s0-j1.tmp"),),
                 created_dirs=(),
@@ -495,21 +493,21 @@ def test_a_held_ledger_set_lock_is_waited_for_with_its_phase_shown(led: Ledger) 
     t = threading.Thread(target=release_later)
     t.start()
     locks = SpyLocks(DarwinLocks(str(led.ald / "locks")))
-    held_during_load: list[bool] = []
+    held_at_the_gate: list[bool] = []
 
     def probe() -> None:
         other = DarwinLocks(str(led.ald / "locks")).try_lock(key)
-        held_during_load.append(other is None)
+        held_at_the_gate.append(other is None)
         if other is not None:
             other.release()
 
     job = FakeJob(on_progress=lambda phase: released.set() if phase == "waiting_for_files" else None)
-    out = sv.run(plan_for(led), ports_for(led, locks=locks, load=wrapped(before=probe)), job)
+    out = sv.run(plan_for(led), ports_for(led, locks=locks, observe=hooked(before=probe)), job)
     t.join()
     assert isinstance(out, sv.Saved), out
     assert job.events[0] == "waiting_for_files"
     assert locks.waited == [key]  # it waited for that lock, and only that one
-    assert held_during_load == [True]  # and held it through the load
+    assert held_at_the_gate == [True]  # and held it at the gate
 
 
 def _legacy_root(led: Ledger) -> Path:
@@ -669,28 +667,7 @@ def test_a_malformed_plan_raises_before_anything_is_read(led: Ledger, bad: dict[
 def test_a_change_whose_pre_is_not_the_plans_raises(led: Ledger) -> None:
     changes = (Change(str(led.main), sha256(b"other"), MAIN + TXN),)
     with pytest.raises(BadPlanError):
-        sv.run(plan_for(led, changes), ports_for(led), FakeJob())
-
-
-def test_a_refused_load_writes_nothing(led: Ledger) -> None:
-    def refuse(root: str, candidates: Mapping[str, bytes]) -> overlay.LoadResult:
-        return overlay.LoadRefused("read-refused", str(led.inc))
-
-    before = led.tree()
-    out = sv.run(plan_for(led), ports_for(led, load=refuse), FakeJob())
-    assert out == sv.Refused("load_refused", unchanged=True, path=str(led.inc))
-    assert_nothing_written(led, before, out)
-
-
-def test_a_file_of_the_plans_ledger_set_the_save_drops_edited_during_the_load_refuses(led: Ledger) -> None:
-    """Step 6 checks the plan's fingerprint as well as the load's: an include the change removes is not read by the
-    commit's load, but it is in the plan the user confirmed, so an edit to it during the load refuses too."""
-    changes = (Change(str(led.main), sha256(MAIN), MAIN.replace(b'include "inc.bean"\n', b"")),)
-    out = sv.run(
-        plan_for(led, changes), ports_for(led, load=wrapped(after=lambda: led.inc.write_bytes(EDIT))), FakeJob()
-    )
-    assert out == sv.Refused("ledger_changed", unchanged=True)
-    assert led.main.read_bytes() == MAIN
+        sv.run(replace(plan_for(led), changes=changes), ports_for(led), FakeJob())
 
 
 def test_a_ledger_folder_that_cannot_be_searched_is_not_saved_and_names_the_file(led: Ledger) -> None:
@@ -700,7 +677,8 @@ def test_a_ledger_folder_that_cannot_be_searched_is_not_saved_and_names_the_file
     sub.mkdir()
     (sub / "a.bean").write_bytes(b"")
     led.main.write_bytes(MAIN + b'include "y2026/a.bean"\n')
-    plan = plan_for(led, (Change(str(led.main), sha256(MAIN + b'include "y2026/a.bean"\n'), MAIN + TXN),))
+    with_include = MAIN + b'include "y2026/a.bean"\n'
+    plan = plan_for(led, (Change(str(led.main), sha256(with_include), with_include + TXN),))
     sub.chmod(0o600)  # no search right
     try:
         out = sv.run(plan, ports_for(led), FakeJob())
@@ -775,28 +753,3 @@ def test_a_ledger_set_lock_that_cannot_be_taken_is_not_saved_and_names_its_file(
     assert (out.reason, out.path, out.unchanged, out.open_journal) == (Reason.IO_ERROR, str(led.inc), True, False)
     assert_nothing_written(led, before, out)
     assert_locks_free(led, plan)
-
-
-def test_an_include_the_load_cannot_read_is_not_saved_and_names_it(led: Ledger) -> None:
-    def unreadable(root: str, candidates: Mapping[str, bytes]) -> overlay.LoadResult:
-        raise PermissionError(13, "Permission denied", str(led.inc))
-
-    before = led.tree()
-    plan = plan_for(led)
-    out = sv.run(plan, ports_for(led, load=unreadable), FakeJob())
-    assert isinstance(out, NotSaved), out
-    assert (out.reason, out.path, out.unchanged, out.open_journal) == (Reason.IO_ERROR, str(led.inc), True, False)
-    assert_nothing_written(led, before, out)
-    assert_locks_free(led, plan)
-
-
-def test_an_io_error_in_the_load_says_unchanged_only_after_the_rehash(led: Ledger) -> None:
-    """§11's rule: the file the save writes was edited by another program before the load failed, so not "unchanged"."""
-
-    def edited_then_unreadable(root: str, candidates: Mapping[str, bytes]) -> overlay.LoadResult:
-        led.main.write_bytes(MAIN + b"; an editor\n")
-        raise PermissionError(13, "Permission denied", str(led.inc))
-
-    out = sv.run(plan_for(led), ports_for(led, load=edited_then_unreadable), FakeJob())
-    assert isinstance(out, NotSaved), out
-    assert (out.reason, out.path, out.unchanged) == (Reason.IO_ERROR, str(led.inc), False)

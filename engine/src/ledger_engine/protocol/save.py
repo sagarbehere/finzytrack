@@ -4,8 +4,8 @@ legacy-lock adapter. The server answers them only in an engine that holds the en
 be that lock's folder (as for recover-all's ops, `protocol.recovery`), so no op writes outside the app's own folders
 and the ledger files the plan names.
 
-- `save`: one confirmed plan, run to its end (`save.run`): it sends `checking_change`, `gate` (and waits for
-  `proceed`), `saving` and `committed`. It runs the ledger's plugins: the sidecar retires its engine after it.
+- `save`: one confirmed plan, run to its end (`save.run`): it sends `gate` (and waits for `proceed`), `saving` and
+  `committed`. It does no Beancount load (ADR-0068 D1); the sidecar still retires its engine after it.
 - `save_outcome`: §6.6's reading of the disk after a save's engine died (`save.outcome`): parse-only.
 """
 
@@ -18,7 +18,6 @@ from typing import Final, Protocol
 from ledger_engine.fs.darwin import DarwinLegacyLocks, for_this_os
 from ledger_engine.ledger import save as sv
 from ledger_engine.ledger.core.ledger_set import UndecodableError, decode
-from ledger_engine.ledger.policy import DesktopPolicy
 from ledger_engine.ledger.writer import BadPlanError, Change, NotSaved, Unfinished
 from ledger_engine.protocol.messages import (
     Message,
@@ -44,7 +43,7 @@ class SaveJob(Decider, Protocol):
 
 
 def engine_build() -> str:
-    """The engine build a closed record names (§6.7: R4 compares its prediction only with the same build)."""
+    """The engine build a closed record names (§6.5: which build wrote the save)."""
     return f"finzytrack-engine {version('finzytrack-engine')}; beancount {version('beancount')}"
 
 
@@ -119,7 +118,7 @@ def save(params: Message, ctx: SaveJob) -> Message:
         legacy_locks=tuple(params.legacy_locks),
         app_local_data=ald,
     )
-    ports = sv.Ports(fs, ledger_locks_in(ald), DarwinLegacyLocks(), sv.desktop_load(DesktopPolicy()))
+    ports = sv.Ports(fs, ledger_locks_in(ald), DarwinLegacyLocks())
     try:
         out = sv.run(plan, ports, ctx)
     except BadPlanError as e:

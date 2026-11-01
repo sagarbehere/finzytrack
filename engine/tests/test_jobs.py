@@ -187,9 +187,8 @@ def test_progress_names_one_of_the_specs_phases() -> None:
         "waiting_for_files",
         "saving",
         "updating_views",
-        "checking_last_change",
     ):
         ctx.progress(phase)
-    assert len(chan.sent) == 6
+    assert len(chan.sent) == 5
     with pytest.raises(ValidationError):
         ctx.progress("thinking")  # type: ignore[arg-type]
