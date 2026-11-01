@@ -237,8 +237,8 @@ ACTIVE: tuple[Term, ...] = (
     Term("reconciliation job", r"\breconciliation job\b"),
     Term("WRITES_PAUSED says not saved", r"\bsaving is paused in this workspace, so finzytrack did not save your change\b"),
     # S0070 (ADR-0068 D1, BL-0178): the save does no Beancount load of its own and R4 is gone; a background rebuild
-    # with Beancount's own loader follows every landed save. R4 is matched as written, so the model's actions and
-    # names (`R4_Start`, `NeedR4`), which MAPPING.md maps to the rebuild, pass.
+    # with Beancount's own loader follows every landed save. R4 is matched as written (the model's own `R4_*` names
+    # are refused since S0072, below).
     code("R4"),
     code("r4_check"),
     Term("`r4` job kind", r"`r4`"),
@@ -284,6 +284,20 @@ ACTIVE: tuple[Term, ...] = (
     Term("the empty claim", r"\bclaim(?:s|ed|ing)? (?:a|the) (?:missing file's )?name with an empty file\b|\bempty claim\b"),
     Term("network-retry ownership", r"\bretried by a network volume\b|\ba network volume's retry\b"),
     Term("no-swap test module", r"\btest_writer_no_swap\b"),
+    # S0072 (ADR-0068 D5, BL-0180, BL-0161): the engine-jobs model checks durability only; its queue, screens, quit,
+    # advice, liveness worlds, the job after a save, the save's load, re-check and locks, the old restore steps and the
+    # queue's trace replay are gone. MAPPING.md §5 (history) still names them.
+    Term("the model's R4 job", r"\b(?:R4_(?:Start|Load|Check)|NeedR4|QueueR4|NewR4)\b", case=True),
+    Term("liveness worlds", r"\bL[SM]_(?:boot|jobs|quit|free\w*)\b", case=True),
+    Term("the save's removed model steps", r"\bS_(?:Locks|Load|Recheck|Commit|Publish|Release)\b", case=True),
+    Term("the restore's removed model steps", r"\b(?:RB_Check|RS_Temps|RC_Lock|RC_Check)\b", case=True),
+    Term("the model's queue actions", r"\b(?:DispatchUnavail|SpawnStep|AppBgSave|AppFocusCheck|UserCancelQueued|UserCancelRunning|UserCloseTab|UserQuitAnyway)\b", case=True),
+    Term("the model's liveness and queue properties", r"\b(?:EngineCanAlwaysBeFreed|EveryWaitHasAnExit|CancelReachIsTheOneRule|EveryBootEnds|EveryWaitedForJobEnds|EverySwitchEnds|EveryQuitEndsOrOffersQuitAnyway|WaitedForFirst)\b", case=True),
+    code("swap_back_unsynced"),
+    code("kept_move_unsynced"),
+    Term("removed model worlds", r"\bS_(?:r4_ends|queue|cancel|cancel_commit|switch|switch_fail|switch_hung_create|recover_lock|recover_bound|forget|boot|quit|save_quit|save_quit_power|stuck_opening|create_close)\b", case=True),
+    Term("the queue's trace replay", r"\btest_engine_jobs_conformance\b|\bqueue(?:'s trace)? replay\b"),
+    Term("the backend's model marker", r"\bapp\.platform\.tla\b"),
 )
 
 # TODO(BL-0109): the engine-jobs slice removes the per-request time limits (spec §5.5); it moves these into ACTIVE
@@ -320,8 +334,6 @@ ALLOW: tuple[Allow, ...] = (
     Allow("design/specs/engine-jobs.md", "scheduler spec or slice", '"Yes, add it to the scheduler spec as a requirement.',
           "the owner's words of 2026-10-26, in an attribution form (`The owner's requirement (<date>: ...`) the quote "
           "rule does not take"),
-    Allow("formal/tla/engine-jobs/MAPPING.md", "engine-scheduler.md", "(d8ca7823, then named `engine-scheduler.md`)",
-          "the model's source line names the spec's file name at the commit it was built from"),
     Allow("design/specs/README.md", "engine-scheduler.md", "**Renamed:** `engine-scheduler.md`",
           "the redirect from the spec's old name (owner, 2026-10-27)"),
     Allow("design/specs/README.md", "engine scheduler", "**Renamed:** `engine-scheduler.md`",

@@ -202,6 +202,18 @@ RETIRED_LINES = {
     "the empty claim": "the put-back claims the missing file's name with an empty file first",
     "network-retry ownership": "a rename retried by a network volume after it took effect is ours",
     "no-swap test module": "the sweeps are `tests/ledger/test_writer_no_swap.py`",
+    # S0072 (ADR-0068 D5): the model's removed parts, as the model before it named them
+    "the model's R4 job": "the job after a save is the model's `R4_Start`, `R4_Load`, `R4_Check` (`NeedR4`)",
+    "liveness worlds": "the liveness worlds `LS_boot` and `LS_free_orphan`, and `LM_free` at medium",
+    "the save's removed model steps": "the save takes `S_Locks`, then `S_Load` and `S_Recheck`, `S_Commit`, `S_Release`",
+    "the restore's removed model steps": "the rollback's `RB_Check`, then `RS_Temps`; recovery's `RC_Lock` and `RC_Check`",
+    "the model's queue actions": "the queue's `DispatchUnavail` and `SpawnStep`; the user's `UserCancelQueued`",
+    "the model's liveness and queue properties": "`EngineCanAlwaysBeFreed` holds under fairness; `EveryWaitHasAnExit`",
+    "swap_back_unsynced": "the mutant `swap_back_unsynced` must fail",
+    "kept_move_unsynced": "the mutant `kept_move_unsynced` must still fail",
+    "removed model worlds": "the worlds `S_queue`, `S_r4_ends` and `S_recover_lock`",
+    "the queue's trace replay": "the queue replay (`test_engine_jobs_conformance.py`) walks recover-all's branches",
+    "the backend's model marker": "the marker `app.platform.tla.tla_action` on the main side",
 }
 # Words the audit says must never be refused, in the senses the current design uses them.
 TRAP_LINES = [
@@ -215,7 +227,11 @@ TRAP_LINES = [
     "an empty ledger file at a created path is asked about; Keep the files as they are now",
     "the re-check after a save is removed (ADR-0068 D1); the rebuild shows Beancount's result",
     # S0070 (ADR-0068 D1): the model's own names, the dogfood rules' numbering and words that only contain the letters
-    "the model's `R4_Start`, `R4_Load` and `R4_Check` are the code's rebuild; `NeedR4`; the mutant `r4_only`",
+    "the rebuild after a save; the mutant `r4_only` left with Cancel's reach",
+    # S0072 (ADR-0068 D5): the durability model's own names pass
+    "`S_Gate`, `S_Backup`, `RS_Check`, `RS_Sync`, `RS_Clean`, `RS_Temp`, `RS_All`, `RC_Init`, `RC_Next`; `S_save_two`",
+    "the worlds `S_recover_link`, `S_keep`, `S_copy`, `S_recover`; `KeptFilesDurable`; `W_KeptCopySave`",
+    "the queue's table tests; `test_save_conformance.py` replays the saves; `ledger_engine.tla` marks them",
     "the switch no longer waits for it (`switch_waits_for_r4`); `save_waits_r4_forever`",
     "S0061 red team r4 F1; the r4 probe on APFS; R40 and AR4 are other names",
     "the rebuild's `loaded` and `moved`; `rebuild.loaded`, `rebuild.not_loaded`; `real_load` and `REAL_LOADS`",

@@ -9,12 +9,12 @@ includes `/w/L/prices.bean` (created by the first save, replaced by a later one)
 (`ctl.plan`), in the model's order (`WOrd`: children first, the root last).
 
 The code runs one save in one call; the replay sees it at its **hooks**: each effect on the file system
-(`MemFS.on_effect`, classified to the model step it belongs to, `Driver.classify`), the observation (step 4),
-`job.gate()` (step 7) and `job.committed()` (step 9). At each hook the replay walks the model's save up to the step the
+(`MemFS.on_effect`, classified to the model step it belongs to, `Driver.classify`), the observation (step 4, the
+model's `S_Gate`) and `job.committed()` (step 9). At each hook the replay walks the model's save up to the step the
 code is at: the model's outside edits made there are written to the fake (as an editor would, durably), an engine death
 is raised there (`Crash`), an I/O error is raised there (`OSError`, before the effect), and the fake is compared with
 the model's state just before the model's step (`view`): the three files, this save's journal record, its temps (the
-save's and the restore's) and its backup. A
+save's and the restore's, or their staging files), its kept copies and its backup. A
 model step the code carries out without an effect (the displaced check, the read-back)
 is passed only when it changed nothing the view shows; the save's syncs (`SYNC_STEPS`) are never passed:
 each must be one of the code's effects. A step counts as walked only when the code carried it out at one of its hooks
@@ -23,21 +23,17 @@ compared with what the model told (`gh.told`): `Saved` is "saved", `Refused` "no
 journal is `.open` is the re-hash ("unchanged" or "changed"), one after it (the rollback resolved) "notsaved" for an
 I/O error and "changed" otherwise, `Unfinished` "unfinished"; and after an engine death (or our end of the engine
 by a Cancel), the engine's reading of the disk (`save.outcome`, §6.6) told as the model's `DiskOutcome` tells it
-(`DISK`; the sidecar's decision from those facts is checked against the same table in
-`backend/tests/platform/test_engine_jobs_conformance.py`).
+(`DISK`; the sidecar's decision from those facts is its own table test, `backend/tests/platform/test_save_job.py`
+`test_save_outcome_is_the_disks_answer`).
 
-**Where the model and the code differ** (BL-0161: the model is updated at the M1a closing sweep, not in this slice),
-the replay stops that trace there, counted by reason in `STOPS`, and never compares past it:
-- the model's displaced checks swap other bytes back (`S_Compare`, `RS_Compare`); the code moves them to a kept name
-  and stops (§6.4, the kept-name design of 2026-10-29);
-- the model's rollback removes a file the save created, and its temp rule passes or stops by the old rule
-  (`RB_Check`); the code never touches anything at a created path and stops `created_path_taken` (ADR-0012
-  amendment of 2026-10-30, round 5), with the staging-name temp rule;
-- the model's gate refuses a stale mirror; the code compares two values of the plan until a mirror is published
-  (BL-0125).
+**Where the model and the code differ:** nowhere on the save path since S0072 (BL-0161: the model's save, rollback
+and restore follow the code as built: staging names, kept-name moves, created paths never touched, the backup step that
+reads the file). The replay still stops a save only where its walk was cut (`STOPS`), and never compares past it.
+The model's `RS_Clean` removes every name of ours of the journal at once; the code removes them file by file as one
+run of effects, compared once at the next hook.
 
-Not replayed here: traces with boot journals (recover-all's per-journal tries over their files; the queue replay walks
-recover-all's branches), and a save the walk cut before it ended. The durable layer (what a power loss would keep) is
+Not replayed here: traces with boot journals (recover-all's per-journal tries over their files, BL-0164), and a save
+the walk cut before it ended. The durable layer (what a power loss would keep) is
 not compared: the writer's and the restore's own tests check every power-loss state against one oracle
 (`tests/ledger/worlds.py`).
 """
@@ -49,7 +45,7 @@ import json
 import re
 from collections import Counter
 from collections.abc import Iterator, Mapping
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from functools import cache
 from pathlib import Path
 from typing import Any, Final
@@ -84,32 +80,17 @@ WORD: Final = ("N", "R")  # the model's WOrd, the plan's order: children first, 
 RORD: Final = ("R", "N")  # the model's ROrd: the restore, root first
 SAVES: Final = ("s1", "s2", "s3")
 POST: Final = {"s1": 3, "s2": 4, "s3": 5}
-PER_FILE: Final = frozenset({"s_tw1", "s_tw2", "s_ts", "s_sw", "s_cmp", "s_ds", "rs_w", "rs_x", "rs_c"})
-RESTORE: Final = frozenset({"rb_chk", "rs_w", "rs_x", "rs_c", "rs_tmp", "rs_sync", "rs_res"})
-EARLY_RESTORE: Final = frozenset({"rb_chk", "rs_w", "rs_x", "rs_c", "rs_tmp"})
-"""The rollback before the model's `RS_Temps` has run: the code removes each file's names of ours as it settles that
-file, root first (spec §8.1 step 3: a replaced file's save temp only after its pre bytes are back), the model removes
-them all at `RS_Temps`; so there a save temp of the code's is the model's, or already gone (`same`)."""
-SYNC_STEPS: Final = frozenset({"S_BackupSync", "S_JPartSync", "S_JDirSync", "S_TempSync", "S_DirSync", "S_CloseSync"})
-"""The save's durable steps: each is a sync of the code's (a file's data or a folder), so the code may never pass one
+PER_FILE: Final = frozenset({"s_tw1", "s_tw2", "s_ts", "s_sw", "s_cmp", "s_ds", "rs_w", "rs_x", "rs_c", "rs_t"})
+RESTORE: Final = frozenset({"rs_chk", "rs_sync", "rs_clean", "rs_w", "rs_x", "rs_c", "rs_t", "rs_all", "rs_res"})
+SYNC_STEPS: Final = frozenset(
+    {"S_BackupSync", "S_JPartSync", "S_JDirSync", "S_TempSync", "S_DirSync", "S_CloseSync", "RS_Sync", "RS_All"}
+)
+"""The durable steps: each is a sync of the code's (a file's data or a folder), so the code may never pass one
 without it (round 1, verifier F2: a sync changes nothing the view shows, so the passable rule alone let a deleted sync
 through)."""
 WRITE_PCS: Final = frozenset({"s_tw1", "s_tw2", "s_ts", "s_sw", "s_cmp", "s_ds", "s_rbk", "s_rmt"})
 
 STOPS: Mapping[str, str] = {
-    "swap_back": "the model swaps an outside save back; the code moves it to a kept name and stops (BL-0161)",
-    "restore_swap_back": "the model's restore swaps an outside save back; the code keeps it and stops (BL-0161)",
-    "temp_rule": "the model's rollback stops by the old temp rule; the code's staging-name rule differs (BL-0161)",
-    "created_path": (
-        "the model's rollback removes a file at a created path; the code never does and stops `created_path_taken` "
-        "(BL-0161)"
-    ),
-    "backup_check": (
-        "an outside edit of a file the save writes after the re-check: the code's backup step reads a replaced file "
-        "(and checks a created path is still free) and stops `changed` at once; the model copies the plan's bytes "
-        "unread and finds the edit later (BL-0161)"
-    ),
-    "mirror": "the model's gate refuses a stale mirror; the code compares two values of the plan (BL-0125)",
     "cut": "the walk ended before the save did (not a difference)",
     "after_stop": "a later save of a trace stopped before it (the fake no longer follows the model)",
 }
@@ -176,25 +157,23 @@ class View:
     temps: tuple[int, ...]
     backup: int
     rtemps: tuple[int, ...]
+    kept: tuple[tuple[int, ...], ...]
 
 
-def same(model: View, code: View, pc: str) -> bool:
-    """The code's view is the model's, but for the save temps the code has already removed in the rollback
-    (`EARLY_RESTORE`)."""
-    if pc not in EARLY_RESTORE:
-        return model == code
-    temps_ok = all(c in (m, ABS) for m, c in zip(model.temps, code.temps, strict=True))
-    return temps_ok and replace(model, temps=()) == replace(code, temps=())
+def _slot(fs: State, key: str, s: str, f: str) -> Any:
+    return fs[key][f"{s}/{f}"]
 
 
 def model_view(st: State, s: str) -> View:
+    """The model's state as the fake shows it: at a name of ours its temp, else its staging file (`_scratch`)."""
     fs = st["fs"]
     return View(
         tuple(fs["cur"][f] for f in FILES),
         st["jr"][s],
-        tuple(fs["tc"][f"{s}/{f}"] for f in ("R", "N")),
+        tuple(_slot(fs, "tc", s, f) or _slot(fs, "sg", s, f) for f in ("R", "N")),
         fs["bk"][s],
-        tuple(fs["rt"][f] for f in ("R", "N")),
+        tuple(_slot(fs, "rt", s, f) for f in ("R", "N")),
+        tuple(tuple(sorted(_slot(fs, "kp", s, f))) for f in ("R", "N")),
     )
 
 
@@ -205,6 +184,13 @@ def _scratch(fs: MemFS, f: str, tag: str) -> int:
         if path in fs.names_in(LEDGER) or fs.file(path) is not None:
             return value(f, fs.file(path))
     return ABS
+
+
+def _kept(fs: MemFS, f: str, s: str) -> tuple[int, ...]:
+    """The kept copies beside `f` of the save `s` (`journal.kept_name`: `<name>.kept-<session>-<job>[-n]`)."""
+    head = f"{BASE[f]}.kept-{record(s)}"
+    names = [n.rpartition("/")[2] for n in fs.names_in(LEDGER)]
+    return tuple(sorted(value(f, fs.file(f"{LEDGER}/{n}")) for n in names if n == head or n.startswith(head + "-")))
 
 
 def journal_state(fs: MemFS, s: str) -> str:
@@ -222,6 +208,7 @@ def code_view(fs: MemFS, s: str) -> View:
         tuple(_scratch(fs, f, f"ft-{record(s)}") for f in ("R", "N")),
         backup,
         tuple(_scratch(fs, f, f"ft-restore-{record(s)}") for f in ("R", "N")),
+        tuple(_kept(fs, f, s) for f in ("R", "N")),
     )
 
 
@@ -253,23 +240,12 @@ class Point:
             return ""
         return (RORD if self.pc in RESTORE else WORD)[self.fi - 1]
 
-    def visible(self) -> bool:
-        """The model's own step here changed what the view shows (passed by the code only for `RS_Temps`, whose
-        removals the code spreads over the rollback; the next comparison then shows them done)."""
-        if self.after is None:
-            return False
-        s = self.last["sv"]["s"]
-        return model_view(self.last, s) != model_view(self.after, s)
-
     def passable(self) -> bool:
         """The model's own step here changed nothing the view shows (the code may carry it out without an effect)."""
         if self.after is None:
             return True
         s = self.last["sv"]["s"]
-        before, after = model_view(self.last, s), model_view(self.after, s)
-        if self.pc in EARLY_RESTORE or self.after["ctl"]["pc"] in EARLY_RESTORE | {"rs_sync"}:
-            return replace(before, temps=()) == replace(after, temps=())  # `RS_Temps` is spread in the code
-        return before == after
+        return model_view(self.last, s) == model_view(self.after, s)
 
 
 @dataclass
@@ -290,29 +266,13 @@ def _saving(st: State, job: int | None = None) -> bool:
     return r is not None and r["k"] == "save" and (job is None or r["id"] == job)
 
 
-JOB_STEP = re.compile(r"^(S_|RB_|RS_)|^SpawnStep$")
+JOB_STEP = re.compile(r"^(S_|RS_)")
 
 
 def _stop(s: State, t: State) -> str:
-    """Why the model's step from `s` to `t` cannot be replayed through the code (`STOPS`), or ""."""
-    a = t["act"]["a"]
-    sv_, fs = s["sv"], s["fs"]
-    into_rollback = t["run"] is not None and t["ctl"]["pc"] == "rb_chk" and s["ctl"]["pc"] != "rb_chk"
-    if a == "S_Gate" and t["run"] is None:
-        disk = all(fs["cur"][f] == sv_["plan"][f] for f in FILES)
-        gating = any(s["jr"][j] == "open" for j in SAVES)
-        if disk and not gating:
-            return "mirror"
-    if a == "S_Compare" and into_rollback:
-        return "swap_back"
-    if a == "RS_Compare" and (t["run"] is None or t["ctl"]["pc"] not in ("rs_w", "rs_tmp")):
-        return "restore_swap_back"
-    if a == "RB_Check" and (t["run"] is None or t["ctl"]["pc"] != "rs_w"):
-        return "temp_rule"
-    if into_rollback and sv_["plan"]["N"] == ABS and fs["cur"]["N"] != ABS:
-        return "created_path"  # the save placed the file it creates, or an editor did: the code stops there
-    if a == "Editor" and t["act"]["p"] in WORD and s["ctl"]["pc"] in ("s_commit", "s_bk"):
-        return "backup_check"
+    """Why the model's step from `s` to `t` cannot be replayed through the code (`STOPS`), or "": since S0072 the
+    model's save path is the code's, so no step stops a save (the walk's cut is found at its end)."""
+    del s, t
     return ""
 
 
@@ -345,7 +305,7 @@ def episodes(trace: State) -> Iterator[Episode]:
                 p.step, p.after = a, b_
                 if _saving(b_, job):
                     points.append(Point(b_["ctl"]["pc"], b_["sv"]["fi"], b_))
-            elif a in ("EngineCrash", "UserCancelRunning", "UserCancelQueued") and not _saving(b_, job):
+            elif a == "EngineCrash" and not _saving(b_, job):
                 p.events.append(Event("kill"))
                 killed = True
             elif JOB_STEP.match(a):
@@ -378,6 +338,7 @@ class Driver:
         self.landed = False  # the code reached `at` at one of its hooks (it carries out that point's step next)
         self.last_pc = ""
         self.rolling = False
+        self.kept_pc = ""  # the step of a move to a kept name, whose folder sync follows
         self.compared = 0
         self.walked: Counter[str] = Counter()
 
@@ -388,16 +349,12 @@ class Driver:
     def compare(self, i: int) -> None:
         p = self.ep.points[i]
         want, got = model_view(p.last, self.ep.s), code_view(self.fs, self.ep.s)
-        if not same(want, got, p.pc):
+        if want != got:
             msg = (
                 f"{self.where}: at the model's {p.pc} {p.file}, the fake holds\n  {got}\nwhere the model has\n  {want}"
             )
             raise Divergence(msg)
         self.compared += 1
-
-    def ahead(self, pc: str) -> bool:
-        """The model's save reaches the step `pc` later in this episode."""
-        return any(p.pc == pc for p in self.ep.points[self.at + 1 :])
 
     def reach(self, pc: str, file: str = "") -> None:
         """The code is at the model step `pc` (of `file`): walk the model up to it. On the way, the outside edits made
@@ -409,7 +366,6 @@ class Driver:
         if self.landed:
             self.walked[self.ep.points[self.at].step] += 1  # the code carried out the step of the point it was at
         self.landed = False
-        seen: list[str] = []  # steps passed on the way whose effect the next comparison shows (`RS_Temps`)
         for i in range(self.at + 1, len(self.ep.points)):
             p = self.ep.points[i]
             self.at = i
@@ -418,22 +374,18 @@ class Driver:
                     self.fs.outside_write(PATH[e.file], content(e.file, e.value))
                 elif e.kind == "kill":
                     self.compare(i)
-                    self.walked.update(seen)
                     msg = f"the model's engine ended at {p.pc}"
                     raise Crash(msg)
                 else:
                     self.compare(i)
-                    self.walked.update([*seen, "IOFail"])  # the I/O error is raised at the code's hook
+                    self.walked["IOFail"] += 1  # the I/O error is raised at the code's hook
                     self.rolling = p.pc in WRITE_PCS
                     self.last_pc = p.pc  # the code was cut here, at the model's step (the effect did not happen)
                     raise OSError(errno.ENOSPC, f"the model's I/O error at {p.pc}")
             if self.key(i) == (pc, file):
                 self.compare(i)
-                self.walked.update(seen)
                 self.landed = True
                 return
-            if p.visible():
-                seen.append(p.step)
             if p.step in SYNC_STEPS:
                 msg = f"{self.where}: the code is at {pc} {file}, past the model's {p.step} {p.file} without its sync"
                 raise Divergence(msg)
@@ -467,6 +419,14 @@ class Driver:
 
     # -- the effects of the file-system port, by the model step they belong to --------------------------------------
 
+    def restoring(self) -> bool:
+        """The code is in the rollback: an I/O error was raised in the save's writes, the model's last step reached
+        was a restore step, or the model's save goes on into its rollback from the point the code is at."""
+        if self.rolling or self.last_pc in RESTORE:
+            return True
+        nxt = self.ep.points[self.at + 1] if self.at + 1 < len(self.ep.points) else None
+        return nxt is not None and nxt.pc in RESTORE
+
     def classify(self, label: str) -> tuple[str, str]:
         op, _, rest = label.partition(" ")
         folder, _, names = rest.partition(":")
@@ -486,42 +446,81 @@ class Driver:
             if names == f"{name}.open,{name}.resolved":
                 return "rs_res", ""
             if op == "sync":
-                if self.rolling:
+                if self.restoring():
                     return last, self._file_of(last)
                 return {"s_jo": "s_jds", "s_close": "s_csync"}.get(last, last), self._file_of(last)
         if folder == LEDGER:
-            first = names.split(",")[0]
-            found = re.fullmatch(rf"\.(.+)\.ft-(restore-)?{re.escape(name)}\.(new|tmp)", first)
-            if found is not None:
-                f, restore, suffix = FILE_OF[found.group(1)], found.group(2), found.group(3)
-                if restore:
-                    if op == "swap":
-                        return "rs_x", f
-                    if op == "remove":
-                        return "rs_c", f
-                    return "rs_w", f
-                if op == "create":
-                    return "s_tw1", f
-                if op == "write":
-                    return "s_tw2", f
-                if op in ("fsync", "rename") and suffix == "new":
-                    return "s_tw2", f  # written and synced at the staging name, renamed to the temp name...
-                if op in ("swap", "rename"):
-                    return "s_sw", f
-                if op == "remove" and (self.rolling or last in RESTORE):
-                    return last, self._file_of(last)  # the rollback settles each file's names of ours as it goes
-                if op == "remove":
-                    return "s_rmt", ""
-            if op == "sync":
-                if last == "s_tw2" and not self.rolling:
-                    return "s_ts", self._file_of(last)  # ...and that name made durable (`S_TempSync`)
-                if last == "s_sw" and not self.rolling:
-                    return "s_ds", self._file_of(last)
-                if last == "rs_c":
-                    return "rs_sync", ""  # the restore's folders synced after its last put-back (`RS_Sync`)
-                return last, self._file_of(last)
+            return self._ledger(op, names.split(","), name, last)
         msg = f"{self.where}: an effect the replay cannot place: {label}"
         raise Divergence(msg)
+
+    def _ledger(self, op: str, names: list[str], name: str, last: str) -> tuple[str, str]:
+        """An effect in the ledger folder, by the model step it belongs to."""
+        if op == "sync" and self.kept_pc:  # the folder's sync after a move to a kept name: the same step
+            pc, self.kept_pc = self.kept_pc, ""
+            return pc, self._file_of(pc)
+        kept = len(names) > 1 and f".kept-{name}" in names[1]
+        if kept:  # an outside save moved to its kept name (§6.4): by the step that met it
+            if not self.restoring():
+                pc = "s_cmp" if last == "s_sw" else "s_rmt"
+            else:
+                pc = {"rs_x": "rs_c", "rs_c": "rs_t"}.get(last, "rs_chk")
+            self.kept_pc = pc
+            return pc, self._file_of(pc) if pc in PER_FILE else ""
+        found = re.fullmatch(rf"\.(.+)\.ft-(restore-)?{re.escape(name)}\.(new|tmp)", names[0])
+        if self.restoring():
+            return self._restore_effect(op, found, last)
+        if found is not None:
+            f, suffix = FILE_OF[found.group(1)], found.group(3)
+            if op == "create":
+                return "s_tw1", f
+            if op == "write":
+                return "s_tw2", f
+            if op in ("fsync", "rename") and suffix == "new":
+                return "s_tw2", f  # written and synced at the staging name, renamed to the temp name...
+            if op in ("swap", "rename"):
+                return "s_sw", f
+            if op == "remove":
+                return "s_rmt", ""
+        if op == "sync":
+            if last == "s_tw2":
+                return "s_ts", self._file_of(last)  # ...and that name made durable (`S_TempSync`)
+            if last == "s_sw":
+                return "s_ds", self._file_of(last)
+            return last, self._file_of(last)
+        msg = f"{self.where}: a ledger-folder effect the replay cannot place: {op} {names}"
+        raise Divergence(msg)
+
+    def _restore_effect(self, op: str, found: re.Match[str] | None, last: str) -> tuple[str, str]:
+        """An effect of the rollback's restore (`ledger.restore`) in the ledger folder: the folders synced first
+        (`RS_Sync`), the names of ours removed (`RS_Clean`), per file put back the restore temp written (`RS_Write`),
+        swapped (`RS_Swap`) and what it displaced settled (`RS_Compare`), the save's temp removed (`RS_Temp`), the
+        folders synced (`RS_All`)."""
+        if op == "sync":
+            if last in ("rs_w", "rs_x"):
+                return last, self._file_of(last)
+            if last in ("rs_clean", "rs_c", "rs_t", "rs_sync"):
+                return "rs_all", ""
+            return "rs_sync", ""
+        if found is not None and found.group(2):  # a restore name
+            if op == "swap":
+                return "rs_x", self._file_of("rs_w")
+            if op == "remove" and last == "rs_x":
+                return "rs_c", self._file_of(last)
+            if op in ("create", "write", "fsync", "rename"):
+                return "rs_w", self._next_put()
+        if op == "remove" and last == "rs_c":
+            return "rs_t", self._file_of(last)
+        if op == "remove":
+            return "rs_clean", ""
+        msg = f"{self.where}: a restore effect the replay cannot place: {op} at {last}"
+        raise Divergence(msg)
+
+    def _next_put(self) -> str:
+        """The file of the model's next put-back (`rs_w`) from the point the code is at."""
+        if self.last_pc == "rs_w":
+            return self.key(self.at)[1]
+        return next((p.file for p in self.ep.points[self.at + 1 :] if p.pc == "rs_w"), "")
 
     def _file_of(self, pc: str) -> str:
         return self.key(self.at)[1] if pc in PER_FILE and self.at >= 0 else ""
@@ -539,7 +538,8 @@ class Job:
         pass
 
     def gate(self) -> None:
-        self.driver.reach("s_commit")
+        """The commit point, in the model the end of `S_Gate` (reached at the observation): the code's next effect
+        is the model's backup step (an I/O error the model makes there is raised at that effect, inside the save)."""
 
     def committed(self) -> None:
         self.driver.reach("s_saved")
@@ -554,14 +554,9 @@ def ports(fs: MemFS, driver: Driver) -> sv.Ports:
     seen = Counter[str]()
 
     def observe(fp: Fingerprint) -> Fingerprint:
-        """The save's one observation (step 4). Since S0070 the save does no load and no re-check (ADR-0068 D1): the
-        model's `S_Gate`, `S_Load` and `S_Recheck` (BL-0180 cuts them) are all reached before it, so it sees the disk
-        as the model's re-check does; the model refuses at its gate or its re-check, the code at this one check."""
+        """The save's one observation (step 4, the gate): the model's `S_Gate`."""
         seen["observe"] += 1
         driver.reach("s_gate")
-        for point in ("s_load", "s_recheck"):  # only when the model's save went on past its gate
-            if driver.ahead(point):
-                driver.reach(point)
         files = tuple((p, _state_of(fs, p)) for p, _ in fp.files)
         return Fingerprint(fp.root, files, fp.globs, fp.documents, fp.document_files)
 
@@ -639,13 +634,6 @@ def sync_world(fs: MemFS, st: State, where: str) -> None:
         raise Divergence(msg)
 
 
-def end_pc(ep: Episode) -> str:
-    """Where the save's end is compared: at the model's step where its engine died (an engine death inside the
-    rollback before the model's `RS_Temps` may find a save temp the code already removed, `EARLY_RESTORE`; S0068's
-    corpus reached it: an I/O error in a temp write, then a death), else nowhere special."""
-    return ep.points[-1].pc if ep.killed else ""
-
-
 def replay_save(fs: MemFS, ep: Episode, where: str, tally: Tally) -> None:
     driver = Driver(fs, ep, where)
     plan = plan_of(ep)
@@ -666,9 +654,7 @@ def replay_save(fs: MemFS, ep: Episode, where: str, tally: Tally) -> None:
         told = told_of(None, fs, plan)
     assert told == ep.told, f"{where}: the code tells {told!r} ({out}), the model {ep.told!r}"
     want, got = model_view(ep.end, ep.s), code_view(fs, ep.s)
-    assert same(want, got, end_pc(ep)), (
-        f"{where}: after the save the fake holds\n  {got}\nwhere the model has\n  {want}"
-    )
+    assert want == got, f"{where}: after the save the fake holds\n  {got}\nwhere the model has\n  {want}"
     tally.saves += 1
     tally.compared += driver.compared + 1
     tally.walked.update(driver.walked)
@@ -697,6 +683,13 @@ def branches(ep: Episode, out: sv.SaveOutcome | None) -> Iterator[str]:
             yield "an I/O error before the journal is open, after an outside edit: not saved, changed"
     if ep.actions["RS_Swap"]:
         yield "the rollback puts pre bytes back"
+    end_kept = any(ep.end["fs"]["kp"][f"{ep.s}/{f}"] for f in ("R", "N"))
+    if end_kept:
+        yield "an outside save moved to its kept name"
+    if isinstance(out, Unfinished) or (out is None and ep.told == "unfinished"):
+        yield "Unfinished: the rollback could not resolve"
+    if out is not None and getattr(out, "cause", None) == "created_path_taken":
+        yield "a file at the path the save creates is never touched"
     if isinstance(out, sv.Refused):
         yield f"refused: {out.reason}"
     if isinstance(out, sv.Saved):
@@ -721,16 +714,11 @@ BRANCHES: tuple[str, ...] = (
     "an I/O error after the journal is open: the rollback",
     "the rollback puts pre bytes back",
     "an outside edit during the save",
+    "an outside save moved to its kept name",
+    "Unfinished: the rollback could not resolve",
+    "a file at the path the save creates is never touched",
 )
 """The save's branches the corpus must walk through the code (S0064)."""
-
-NOT_WALKED_BRANCHES: Mapping[str, str] = {
-    "Unfinished told by the engine itself (the rollback could not resolve)": (
-        "the model's rollback stops only by its old temp rule or a restore swap-back (the stops `temp_rule` and "
-        "`restore_swap_back`, BL-0161), or after a second I/O error (no world has two)"
-    ),
-}
-"""The save's branches the replay does not walk through the code, each with its reason."""
 
 
 def replay_trace(trace: State, tally: Tally) -> None:
@@ -785,7 +773,7 @@ def test_the_engine_save_follows_the_model(world_name: str) -> None:
 
 def test_the_replay_walks_the_save_path() -> None:
     """Every step of `WALKED` is walked through the code at least once, and every branch of `BRANCHES`; what the
-    replay does not walk is named with its reason (`NOT_WALKED`, `NOT_WALKED_BRANCHES`)."""
+    replay does not walk is named with its reason (`NOT_WALKED`)."""
     tally = every_world()
     assert set(tally.walked) <= set(WALKED), f"counted as walked, with no hook of the code's: {dict(tally.walked)}"
     missing_steps = [a for a in WALKED if tally.walked[a] == 0]
@@ -796,47 +784,36 @@ def test_the_replay_walks_the_save_path() -> None:
 
 
 WALKED: tuple[str, ...] = (
-    "S_Gate", "S_Load", "S_Recheck", "S_Commit", "S_Backup", "S_BackupSync", "S_JPart", "S_JPartSync",
-    "S_JOpen", "S_JDirSync", "S_TempStart", "S_TempDone", "S_TempSync", "S_Swap", "S_DirSync", "S_RemoveTemps",
-    "S_Close", "S_CloseSync", "S_Saved", "RS_Write", "RS_Swap", "RS_Compare", "RS_Temps", "RS_Sync", "RS_Resolve",
-    "IOFail",
+    "S_Gate", "S_Backup", "S_BackupSync", "S_JPart", "S_JPartSync", "S_JOpen", "S_JDirSync", "S_TempStart",
+    "S_TempDone", "S_TempSync", "S_Swap", "S_Compare", "S_DirSync", "S_RemoveTemps", "S_Close", "S_CloseSync",
+    "S_Saved", "RS_Check", "RS_Sync", "RS_Clean", "RS_Write", "RS_Swap", "RS_Compare", "RS_Temp", "RS_All",
+    "RS_Resolve", "IOFail",
 )  # fmt: skip
 """The model's save steps the replay walks through the code: the code reached the step at one of its hooks and went
-on (`Driver.reach`, `finish`), the I/O error raised at a hook, or (`RS_Temps` only) the step's effect shown by the
-comparison at the next hook. A step the model passes without a hook of the code's is not counted, so deleting the
-code that carries out one of these (a folder's sync, say) fails `test_the_replay_walks_the_save_path`. Each is marked
-`@tla_action` on that code (`backend/tests/architecture/test_tla_mapping.py`)."""
+on (`Driver.reach`, `finish`), or the I/O error raised at a hook. A step the model passes without a hook of the code's
+is not counted, so deleting the code that carries out one of these (a folder's sync, say) fails
+`test_the_replay_walks_the_save_path`. Each is marked `@tla_action` on that code
+(`backend/tests/architecture/test_tla_mapping.py`). `S_Compare` and `RS_Check` have a hook only when they move an
+outside save to its kept name (otherwise they only read): the kept-name worlds walk them so."""
 
 NOT_WALKED: Mapping[str, str] = {
-    "S_Compare": (
-        "a read of what the swap displaced, with no hook; the replay sees only that the code went on when the model "
-        "found its own bytes (the other branch is a stop, BL-0161); `test_writer.py` checks the kept-name branch"
-    ),
-    "S_ReadBack": "a read, with no hook; the model's read-back fails only after a stop (BL-0161); `test_writer.py`",
-    "S_Publish": "not built (BL-0113)",
-    "S_Locks": (
-        "no effect in the code since S0071 (ADR-0068 D3: no per-file lock; the engine lock is the guard); the model "
-        "keeps the step, unread, until S0072 cuts it (BL-0180)"
-    ),
-    "S_Release": "no hook: the model's release of its unread locks and the final reply (the rebuild is queued)",
-    "RB_Check": "reads, with no hook; its stopping branches are stops (BL-0161); `test_restore.py`",
+    "S_ReadBack": "a read, with no hook; `test_writer.py` checks its stopping branch",
+    "RS_Late": "a seeded bug's step only (`resolve_before_restores_synced`): the folders' sync after the resolve",
 }
 """The model's save steps the replay does not count as walked, each with its reason (`PARTIAL` or `PLANNED` in the
 code map; S0064 round 1, verifier F2)."""
 
 
 def test_the_save_steps_are_the_models() -> None:
-    """`WALKED` and `NOT_WALKED` together are the model's save steps (its `S_*`, `RB_*`, `RS_*` and `IOFail`), each in
+    """`WALKED` and `NOT_WALKED` together are the model's save steps (its `S_*`, `RS_*` and `IOFail`), each in
     one of them: a step added to the model fails here until it is placed."""
     model = (REPO / "formal" / "tla" / "engine-jobs" / "EngineJobs.tla").read_text(encoding="utf-8")
-    steps = set(re.findall(r"^((?:S|RB|RS)_[A-Za-z0-9]+) ==", model, re.MULTILINE)) | {"IOFail"}
+    steps = set(re.findall(r"^((?:S|RS)_[A-Za-z0-9]+) ==", model, re.MULTILINE)) | {"IOFail"}
     assert not set(WALKED) & set(NOT_WALKED)
     assert set(WALKED) | set(NOT_WALKED) == steps
 
 
-STOP_COUNTS: Mapping[str, int] = {
-    "backup_check": 6, "created_path": 1, "swap_back": 1, "cut": 3, "after_stop": 1,
-}  # fmt: skip
+STOP_COUNTS: Mapping[str, int] = {"cut": 1}
 """The saves of the corpus the replay does not follow, by reason (`STOPS`); pinned, so a regenerated corpus or a
 changed stop rule shows here what it stops."""
 
@@ -971,60 +948,15 @@ def test_the_disk_outcome_table_is_the_models() -> None:
     assert DISK["open"] == DISK["kept"] == "unfinished"
 
 
-def _pair(a: str, pc: str, next_pc: str | None, **over: Any) -> tuple[State, State]:
-    """A synthetic model step of a running save `s1` (plan: R at 1, N absent), for the stop rules' own tests."""
-    run = {"id": 2, "k": "save"}
-    s: State = {
-        "run": run, "ctl": {"pc": pc}, "jr": dict.fromkeys(SAVES, "none"),
-        "fs": {"cur": {"R": 1, "N": 0, "I": 1}}, "sv": {"plan": {"R": 1, "N": 0, "I": 1}},
-    }  # fmt: skip
-    s["fs"]["cur"].update(over.get("cur", {}))
-    s["jr"].update(over.get("jr", {}))
-    t: State = {
-        "run": run if next_pc else None,
-        "ctl": {"pc": next_pc or "none"},
-        "act": {"a": a, "p": over.get("p", 0)},
-    }
-    return s, t
-
-
-@pytest.mark.parametrize(
-    ("step", "want"),
-    [
-        (_pair("S_Gate", "s_gate", None), "mirror"),
-        (_pair("S_Gate", "s_gate", None, cur={"I": 11}), ""),  # the disk moved: the code refuses too
-        (_pair("S_Gate", "s_gate", None, jr={"s2": "open"}), ""),  # an `.open` journal: the code refuses too
-        (_pair("S_Compare", "s_cmp", "rb_chk", cur={"N": 3}), "swap_back"),
-        (_pair("S_Compare", "s_cmp", "s_ds", cur={"N": 3}), ""),
-        (_pair("RS_Compare", "rs_c", None), "restore_swap_back"),
-        (_pair("RS_Compare", "rs_c", "rs_tmp"), ""),
-        (_pair("RB_Check", "rb_chk", None), "temp_rule"),
-        (_pair("RB_Check", "rb_chk", "rs_w"), ""),
-        (_pair("IOFail", "s_tw1", "rb_chk", cur={"N": 3}), "created_path"),
-        (_pair("IOFail", "s_tw1", "rb_chk"), ""),  # nothing at the created path yet: the code resolves too
-        (_pair("Editor", "s_bk", "s_bk", p="R"), "backup_check"),
-        (_pair("Editor", "s_bk", "s_bk", p="N"), "backup_check"),  # S0068's corpus: a created path taken
-        (_pair("Editor", "s_bk", "s_bk", p="I"), ""),  # not a file the save replaces
-        (_pair("Editor", "s_jp", "s_jp", p="R"), ""),  # after the backup: the displaced check's (or a stop of its own)
-    ],
-)
-def test_a_stop_rule_fires_on_its_case_only(step: tuple[State, State], want: str) -> None:
-    """Each rule of `_stop` must name only the model behaviour the code does not have; a broader rule would hide a
-    real difference from the replay (must not pass: each rule's neighbour is replayed)."""
-    assert _stop(*step) == want
-
-
-def test_a_missing_save_temp_at_the_end_is_allowed_only_after_a_death_in_the_early_rollback() -> None:
-    """S0068: the end comparison takes `EARLY_RESTORE`'s allowance only where the model's engine died in it."""
-    model = View((1, 0, 1), "open", (0, 2), 1, (0, 0))
-    code = View((1, 0, 1), "open", (0, ABS), 1, (0, 0))
-    st: State = {"ctl": {"pc": "rb_chk"}}
-    in_rollback = Episode("s1", {}, [Point("rb_chk", 1, st)], "unfinished", st, True, Counter(), st)
-    in_write = Episode("s1", {}, [Point("s_tw2", 1, st)], "unfinished", st, True, Counter(), st)
-    finished = Episode("s1", {}, [Point("rb_chk", 1, st)], "unfinished", st, False, Counter(), st)
-    assert same(model, code, end_pc(in_rollback))
-    assert not same(model, code, end_pc(in_write))
-    assert not same(model, code, end_pc(finished))
+def test_no_save_path_step_stops_the_replay() -> None:
+    """S0072 (BL-0161): the model's save path is the code's, so every save the walk did not cut is replayed: the
+    kept-name branches (an outside save at the swap, at the rollback's check), the created path never touched and the
+    backup step that reads the file included. Must not pass on fcf96576, whose replay stopped at `swap_back`,
+    `restore_swap_back`, `temp_rule`, `created_path` and `backup_check`."""
+    assert set(STOPS) == {"cut", "after_stop"}
+    tally = every_world()
+    assert tally.branches["an outside save moved to its kept name"] > 0
+    assert tally.branches["a file at the path the save creates is never touched"] > 0
 
 
 def test_a_model_value_round_trips() -> None:

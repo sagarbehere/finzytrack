@@ -48,7 +48,6 @@ from app.platform.errors import (
     WritesPausedDetails,
     error,
 )
-from app.platform.tla import tla_action
 
 GONE: Final[frozenset[str]] = frozenset({"crashed", "protocol_violation", "start_failed", "closed"})
 """A failed `save` call after which the outcome is read from disk: the engine is gone (it may have written). Our own
@@ -177,9 +176,10 @@ def answer_of(a: SaveAnswer) -> SaveValue:
 
 
 def save_outcome(facts: OutcomeFacts, *, gated: bool) -> SaveValue:
-    """§6.6, a pure function of what the disk says (model `DiskOutcome`): `.closed` is saved; `.resolved`,
-    a `.part` or no record is not saved ("unchanged" only after the re-hash); `.open` is unfinished (writes paused,
-    Reopen); a record that could not be read is unknown (`CHANGE_OUTCOME_UNKNOWN` once the engine had sent its gate)."""
+    """§6.6, a pure function of what the disk says (the durability model's `DiskOutcome`): `.closed` is saved;
+    `.resolved`, a `.part` or no record is not saved ("unchanged" only after the re-hash); `.open` is unfinished (writes
+    paused, Reopen); a record that could not be read is unknown (`CHANGE_OUTCOME_UNKNOWN` once the engine had sent its
+    gate)."""
     match facts.record:
         case "closed":
             return Saved(published=False)  # its rebuild is queued by `_answered` (§6.6)
@@ -253,7 +253,6 @@ class _Run:
             return self._from_disk()  # a final reply we cannot read: what happened is on disk
         return self._answered(answer_of(answer))
 
-    @tla_action("S_Release")
     def _answered(self, value: SaveValue, *, ran_user_code: bool = True) -> WorkResult:
         if isinstance(value, Saved) and self._after_saved is not None:
             self._after_saved(RebuildTarget(self._r.workspace_key, self._r.root, self._r.fingerprint))

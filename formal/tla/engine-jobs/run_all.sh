@@ -2,7 +2,7 @@
 # Run the engine-jobs TLC configurations listed in configs.txt; see HOW_TO_RUN.md.
 # Plain POSIX shell and Java: no AI, no network except the one-time jar download.
 #
-#   run_all.sh [--tier S,M,L] [--kind base,mutant] [--only NAME,NAME]
+#   run_all.sh [--tier S,M,L] [--kind base,mutant,witness] [--only NAME,NAME]
 #              [--workers N] [--heap 8g] [--force] [--list]
 #
 # - One log per configuration: results/<name>.log. results/SUMMARY.md is rewritten after each one:
@@ -21,7 +21,7 @@ MODEL="$HERE/EngineJobs.tla"
 SIM_TRACES=${SIM_TRACES:-200000}; SIM_DEPTH=${SIM_DEPTH:-200}
 LIST="$HERE/configs.txt"
 
-TIERS="S,M,L"; KINDS="base,mutant"; ONLY=""; WORKERS=""; HEAP=""; FORCE=0; DRY=0
+TIERS="S,M,L"; KINDS="base,mutant,witness"; ONLY=""; WORKERS=""; HEAP=""; FORCE=0; DRY=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --tier) TIERS=$2; shift 2 ;;
@@ -47,7 +47,7 @@ check_values() {  # option values allowed [what they are]
   case "$2" in *,,*|,*|*,) echo "$1: empty item in '$2'" >&2; exit 2 ;; esac
 }
 check_values --tier "$TIERS" "S,M,L"
-check_values --kind "$KINDS" "base,mutant"
+check_values --kind "$KINDS" "base,mutant,witness"
 [ -z "$ONLY" ] || check_values --only "$ONLY" "$NAMES" "a configuration of configs.txt; see --list"
 sha256() {
   if command -v shasum >/dev/null 2>&1; then shasum -a 256 | awk '{print $1}'
@@ -83,7 +83,7 @@ verdict() {  # log cfg mode -> PASS | VIOLATE:<property> | ERROR | INCOMPLETE
     echo PASS; return
   fi
   # a configuration that checks one property: any violation TLC reports is that property's
-  # (TLC names the violated conjunct, e.g. TruthInv inside OutcomeTruthful)
+  # (TLC names the violated conjunct, e.g. NoTornLedger inside NoTornLedgerAfterRecovery)
   one=$(awk '$1 == "INVARIANT" || $1 == "PROPERTY" {print $2}' "$2")
   if [ "$(echo "$one" | wc -l | tr -d ' ')" = 1 ] && [ -n "$one" ] \
      && grep -q -E "^Error: (Invariant .* is violated|Action property .* is violated|Temporal properties were violated)" "$1"; then

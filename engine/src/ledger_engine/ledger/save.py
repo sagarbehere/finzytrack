@@ -322,7 +322,6 @@ def run(plan: SavePlan, ports: Ports, job: Job) -> SaveOutcome:
             gc.enable()
 
 
-@tla_action("S_Locks", "S_Release")  # S_Locks: no effect since S0071 (ADR-0068 D3); S0072 cuts it (BL-0180)
 def _run(plan: SavePlan, ports: Ports, job: Job, pre: Mapping[str, str | None]) -> SaveOutcome:
     def refused(reason: RefusedReason, path: str | None = None) -> Refused:
         return Refused(reason, _unchanged(ports.fs, plan.changes), path)
@@ -345,7 +344,7 @@ def _run(plan: SavePlan, ports: Ports, job: Job, pre: Mapping[str, str | None]) 
     return _gated(plan, ports, job, refused, io_error)
 
 
-@tla_action("S_Gate", "S_Load", "S_Recheck", "S_Commit", "S_Saved")  # S_Load, S_Recheck: no effect since S0070
+@tla_action("S_Gate", "S_Saved")
 def _gated(
     plan: SavePlan,
     ports: Ports,

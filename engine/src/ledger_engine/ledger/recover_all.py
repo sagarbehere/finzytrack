@@ -15,9 +15,9 @@ earlier session caught between its handshake and its `flock` can never run besid
 - **`inspect`**: what stands at each file a record names now, and every kept copy of this journal beside it (by
   `journal.is_kept_name`), each by its kind, SHA-256 and size; it writes nothing. The blocked screen shows these
   ("Show both", "Show it", Keep's list of the files it releases) and a delete names the SHA-256 it showed.
-- **`keep`** ("Keep the files as they are now", §8.1 "Afterwards"; model `UserKeep`, finding N1): every file the record
+- **`keep`** ("Keep the files as they are now", §8.1 "Afterwards"; finding N1): every file the record
   names that is there as a regular file `durable_sync`ed, and every folder it names that is there synced, so "now" is
-  what a power loss keeps (a restore cut by an error may have left an exchange unsynced); then `.open` renamed `.kept`
+  what a power loss keeps (a save cut by a crash may have left an exchange unsynced); then `.open` renamed `.kept`
   and the journal folder synced. A folder that is not there (an unplugged disk, a moved folder: `ENOENT`, `ENOTDIR`) has
   nothing to sync, and one no longer at its recorded path (a link in its place, a rename in case only) refuses Keep
   (`path_moved`: red team r1 R1-3); a sync that answers `EROFS` has nothing pending (a read-only volume: probed on APFS,

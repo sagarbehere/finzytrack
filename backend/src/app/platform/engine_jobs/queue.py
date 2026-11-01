@@ -19,7 +19,7 @@ product calls it. Each rule names its spec line.
   fresh engine is needed, so a plugin's child that left the group holding the lock delays the next engine, with the
   advice, instead of an engine waiting at the lock unseen. A failed wait starts nothing: the jobs that need an engine
   end without one (`NoEngine`), and the next one waits again. A reuse needs no wait.
-- **The engine unavailable** (§5.3; model `DispatchUnavail`, `SpawnStep`): the shell feeds `EngineAvailability`
+- **The engine unavailable** (§5.3): the shell feeds `EngineAvailability`
   (the client's bound reached, or an incompatible engine; Try again or the restart window lifts it). Meanwhile no
   job starts; every eligible queued job, waited-for first, and a running job that asks for a fresh engine end without
   one (`NoEngine`), without waiting for the slot.
@@ -53,24 +53,21 @@ product calls it. Each rule names its spec line.
   ledger work. Quit and reopen Finzytrack."), whether or not a job waits. Never for a running job the user merely
   cannot end: that answer comes only to a Cancel.
 
-- **Recover-all goes on per journal** (§4's `recover_all` row, §8.1; S0062; model `UserCancelRunning`, `EngineCrash`,
-  `SpawnStep`'s `rc_spawn` branch): the job reports its listing (`RecoveryListed`); after it, its own Cancel ends only
-  its engine (`JournalCancelled`: the journal in hand counts `cancelled`, and the job asks for a fresh engine for the
-  next one), before it the Cancel ends the job as for any job (nothing is marked; model I14). An engine's death
-  during recover-all ends only that engine: the job is not lost, it asks for a fresh engine (the journal in hand
-  counts `failed`; before the listing it lists again), after the client's backoff. When no engine can be had for it
-  (the engine unavailable, the lock's wait failed), the job is not ended without its report: `EngineRefused` tells
-  its work, which marks every journal not yet tried `not_tried` and returns.
+- **Recover-all goes on per journal** (§4's `recover_all` row, §8.1; S0062): the job reports its listing
+  (`RecoveryListed`); after it, its own Cancel ends only its engine (`JournalCancelled`: the journal in hand counts
+  `cancelled`, and the job asks for a fresh engine for the next one), before it the Cancel ends the job as for any job
+  (nothing is marked). An engine's death during recover-all ends only that engine: the job is not lost, it asks for a
+  fresh engine (the journal in hand counts `failed`; before the listing it lists again), after the client's backoff.
+  When no engine can be had for it (the engine unavailable, the lock's wait failed), the job is not ended without its
+  report: `EngineRefused` tells its work, which marks every journal not yet tried `not_tried` and returns.
 
 - **A save whose engine died is not lost** (§5.3 "a save's outcome is resolved from disk (§6.6)"; S0063): its
   engine ends as `crashed` (a stop) and the job asks for a fresh engine that reads the outcome from disk; when none
-  can be had, `EngineRefused` tells its work, which answers without one. The model ends the job at the crash and tells
-  the disk's outcome at once (`EngineCrash`'s save branch); the code needs an engine to read the disk (the sidecar
-  never reads ledger or journal files): the queue replay answers the save at once, and the engine's reading of the
-  disk is replayed against the model's states in `engine/tests/ledger/test_save_conformance.py` (S0064).
+  can be had, `EngineRefused` tells its work, which answers without one (the sidecar never reads ledger or journal
+  files). The engine's reading of the disk is replayed against the durability model's states in
+  `engine/tests/ledger/test_save_conformance.py` (S0064, S0072).
 
-Not here yet (BL-0109's later pieces): the quiesce, the quit and their screens (BL-0154). The code map's planned list
-names each (`backend/tests/architecture/test_tla_mapping.py`).
+Not here yet (BL-0109's later pieces): the quiesce, the quit and their screens (BL-0154).
 """
 
 from __future__ import annotations
@@ -78,8 +75,6 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass, replace
 from typing import Any, Final, Literal
-
-from app.platform.tla import tla_action
 
 TABLE_VERSION: Final = 8  # 2 (S0058): the lock before every fresh engine, the engine unavailable; 3: Try again;
 # 4 (S0062): recover-all goes on per journal (Cancel after its listing, a death, no engine); 5 (S0063): a save whose
@@ -545,7 +540,7 @@ def _ending(state: QueueState, reason: EndReason) -> tuple[QueueState, tuple[Eff
 
 def _end_running(state: QueueState) -> tuple[QueueState, tuple[Effect, ...]]:
     """Our `cancel` end of the running job: its engine is signalled if it holds one; a job between engines holds
-    none (model `CancelEng`)."""
+    none."""
     state = replace(state, running=None)
     if state.slot == "busy":
         return _ending(state, "cancel")
@@ -553,8 +548,8 @@ def _end_running(state: QueueState) -> tuple[QueueState, tuple[Effect, ...]]:
 
 
 def _dispatch(state: QueueState) -> tuple[QueueState, tuple[Effect, ...]]:
-    """After every event: the running job's ask for a fresh engine (`SpawnStep`); with no running job, the next
-    queued job (`Dispatch`), or, while the engine is unavailable, the queued jobs end without one (`DispatchUnavail`).
+    """After every event: the running job's ask for a fresh engine (`_spawn_step`); with no running job, the next
+    queued job, or, while the engine is unavailable, the queued jobs end without one (`_dispatch_unavailable`).
     A running job is never interrupted (§3)."""
     effects: tuple[Effect, ...] = ()
     if state.running is not None:
@@ -572,7 +567,6 @@ def _pick(state: QueueState) -> Job | None:
     return waited[0] if waited else (pool[0] if pool else None)
 
 
-@tla_action("Dispatch")
 def _dispatch_queued(state: QueueState) -> tuple[QueueState, tuple[Effect, ...]]:
     """§3, §5.1: with the engine free (none, or idle after parse-only work), the oldest eligible waited-for job
     starts, else the oldest eligible background job; a fresh engine waits for the engine lock first."""
@@ -587,9 +581,8 @@ def _dispatch_queued(state: QueueState) -> tuple[QueueState, tuple[Effect, ...]]
     return replace(state, queued=tuple(j for j in state.queued if j.id != job.id), running=Running(job)), effects
 
 
-@tla_action("DispatchUnavail")
 def _dispatch_unavailable(state: QueueState) -> tuple[QueueState, tuple[Effect, ...]]:
-    """§5.3, §11; model `DispatchUnavail` (no `SlotFree`: nothing will start, so nothing waits for a drain): while the
+    """§5.3, §11 (no wait for a free slot: nothing will start, so nothing waits for a drain): while the
     engine is unavailable, every eligible queued job ends without one, in the order it would have started."""
     effects: list[Effect] = []
     while (job := _pick(state)) is not None:
@@ -598,10 +591,9 @@ def _dispatch_unavailable(state: QueueState) -> tuple[QueueState, tuple[Effect, 
     return state, tuple(effects)
 
 
-@tla_action("SpawnStep")
 def _spawn_step(state: QueueState) -> tuple[QueueState, tuple[Effect, ...]]:
     """§5.1: the running job that asked for a fresh engine gets one once the slot is free (after the lock's wait);
-    model `SpawnStep`'s unavailable branch: while the engine is unavailable it ends without one ("the save
+    while the engine is unavailable it ends without one ("the save
     could not get an engine: refused, nothing written")."""
     running = state.running
     if running is None or not running.wants_engine or state.slot not in ("none", "idle"):
@@ -648,10 +640,8 @@ def _engine_needed(p: QueuePolicy, s: QueueState, e: EngineNeeded) -> Step:
 
 
 def _retire_engine(p: QueuePolicy, s: QueueState, e: RetireEngine) -> Step:
-    """§5.1: an engine that ran user code ends before the job's next part (reason `retire`, not a stop). The model no
-    longer has this step (its `FreshEnd` went with S0068): the one job that
-    still asks is a save reading its outcome from disk after a refusal past its gate, which the model tells at the
-    crash (`formal/tla/engine-jobs/MAPPING.md` §5)."""
+    """§5.1: an engine that ran user code ends before the job's next part (reason `retire`, not a stop). The one job
+    that still asks is a save reading its outcome from disk after a refusal past its gate."""
     r = s.running
     if r is None or r.job.id != e.job_id or s.slot != "busy":
         return Step(s)
@@ -669,14 +659,14 @@ def _recovery_listed(p: QueuePolicy, s: QueueState, e: RecoveryListed) -> Step:
 
 def _boot(p: QueuePolicy, s: QueueState, e: Boot) -> Step:
     """§5.1: at start, before its first engine, the sidecar waits for the engine lock; the advice shows after the
-    display delay while it waits. §3: the boot's window is open "from the start" (model `SwitchExclusive` holds from
-    `Init`): only its own jobs start until the shell feeds `ExclusiveEnded` when the boot ends (BL-0154)."""
+    display delay while it waits. §3: the boot's window is open "from the start": only its own jobs start until the
+    shell feeds `ExclusiveEnded` when the boot ends (BL-0154)."""
     state, effects = _wait_lock(replace(s, exclusive=True))
     return Step(state, effects)
 
 
 def _clear_advice(state: QueueState) -> tuple[QueueState, tuple[Effect, ...]]:
-    """The advice goes once nothing holds the slot or the lock (model `Drain`, `OrphanEnd`)."""
+    """The advice goes once nothing holds the slot or the lock."""
     if state.slot == "ending" or state.engine_lock == "waiting":
         return state, ()
     state = replace(state, epoch=state.epoch + 1)
@@ -723,9 +713,8 @@ def _engine_availability(p: QueuePolicy, s: QueueState, e: EngineAvailability) -
     return Step(replace(s, unavailable=not e.available, resetting=s.resetting and not e.available))
 
 
-@tla_action("UserTryAgain")
 def _try_again(p: QueuePolicy, s: QueueState, e: TryAgain) -> Step:
-    """§5.3; model `UserTryAgain` (`Unavail`): reset the client's bound, one reset at a time; the engine is available
+    """§5.3: reset the client's bound, one reset at a time; the engine is available
     only once the reset is done (the shell feeds `EngineAvailability(True)` then), so no job meets a client that
     still refuses (S0058 verifier F2: the reset is an effect of this step, not the caller's own call)."""
     if not s.unavailable or s.resetting:
@@ -751,11 +740,10 @@ def _submit(p: QueuePolicy, s: QueueState, e: Submit) -> Step:
 
 def _behind_other_work(s: QueueState) -> bool:
     """A switch's or the boot's own queued job waits behind other work: a running job, a process not ended, or the
-    engine lock (§9.1 step 3, §9.2; model `SwitchJobBehind`)."""
+    engine lock (§9.1 step 3, §9.2)."""
     return s.running is not None or s.slot not in ("none", "idle") or s.engine_lock == "waiting"
 
 
-@tla_action("UserCancelQueued")
 def _cancel_queued(s: QueueState, job: Job) -> Step:
     """§4: the waiting user's Cancel removes their queued job; for the job running ahead of it, the one rule."""
     if not (job.waited_for and job.requester_present):
@@ -771,7 +759,6 @@ def _cancel_queued(s: QueueState, job: Job) -> Step:
     return Step(state, (Cancelled(job.id, cannot_stop_ahead=r is not None and not own_to_cancel),))
 
 
-@tla_action("UserCancelRunning")
 def _cancel_running(s: QueueState, r: Running) -> Step:
     """§4: the requester's Cancel ends its running job before the commit point (reason `cancel`, not a stop);
     after it the Cancel is "too late" and the job finishes. A background job has no requester to cancel it."""
@@ -780,7 +767,7 @@ def _cancel_running(s: QueueState, r: Running) -> Step:
     if r.past_commit:
         return Step(s, (TooLate(r.job.id),))
     if r.job.kind == "recover_all" and s.slot != "busy":
-        return Step(s)  # model: between engines it holds none, nothing to cancel; a stuck slot gets the advice (§5.2)
+        return Step(s)  # between engines it holds none, nothing to cancel; a stuck slot gets the advice (§5.2)
     if r.job.kind == "recover_all" and r.listed:
         state, ended = _ending(s, "cancel")  # §8.1: the journal in hand counts `cancelled`; the job goes on
         return Step(state, (*ended, JournalCancelled(r.job.id)))
@@ -798,7 +785,6 @@ def _cancel(p: QueuePolicy, s: QueueState, e: Cancel) -> Step:
     return Step(s)
 
 
-@tla_action("UserCloseTab")
 def _client_gone(p: QueuePolicy, s: QueueState, e: ClientGone) -> Step:
     """§4: a client that goes away cancels its queued or running preview, rebuild or BQL; any other job only loses
     its requester (closing is not a cancel). A switch's own jobs have no tab, except its open."""
@@ -819,7 +805,6 @@ def _client_gone(p: QueuePolicy, s: QueueState, e: ClientGone) -> Step:
     return Step(replace(s, running=replace(r, job=replace(r.job, requester_present=False))))
 
 
-@tla_action("S_Commit", "CR_Commit", "CP_Commit")
 def _gate(p: QueuePolicy, s: QueueState, e: Gate) -> Step:
     """§4: the commit point, in one table step. A `gate` from an engine we already ended (a Cancel came first), from
     a job past its commit point, or from a job that does not write changes nothing."""
@@ -873,7 +858,6 @@ def _engine_ended(p: QueuePolicy, s: QueueState, e: EngineEnded) -> Step:
     return Step(state, effects)
 
 
-@tla_action("AdviceTimer")
 def _advice_timer(p: QueuePolicy, s: QueueState, e: AdviceTimer) -> Step:
     """§5.2, §5.1: after the display delay, the advice while the slot is held by a process we signalled (or that
     died) and that has not ended, or while the engine lock is still waited for; whether or not a job waits (N3).

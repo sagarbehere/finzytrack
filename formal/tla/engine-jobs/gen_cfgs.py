@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""Write every TLC configuration of the engine-scheduler model, and configs.txt.
+"""Write every TLC configuration of the engine-jobs model, and configs.txt.
 
 Run from anywhere: python3 gen_cfgs.py (formal/tla/engine-jobs). The .cfg files and configs.txt it writes are committed;
 edit this table, not the files (a test of the folder checks they are in step: --check).
 
-A configuration = a world (constants), the specification (Spec, FairSpec, FairUserSpec), the
-properties to check and the result it must have. Tiers: S (small, seconds to minutes), M (medium),
+A configuration = a world (constants), the specification (Spec), the properties to check and the result it
+must have. Durability only since S0072 (ADR-0068 D5): no liveness worlds. Tiers: S (small, seconds to minutes), M (medium),
 L (large). Every mutant runs on a small world and checks only the property it must break.
 """
 import os
@@ -15,42 +15,23 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 CFG_DIR = os.path.join(HERE, "cfg")
 
 DEFAULTS = {
-    "MUTANT": '"none"', "UserBudget": "0", "BootJ": "{}", "BootTemps": "FALSE", "BootTorn": "FALSE", "BootTarget": "1",
-    "BootOrphan": "FALSE", "BootLink": "FALSE", "EdFiles": "{}",
-    "StopBound": "3",
-    "MaxSaves": "0", "MaxBg": "0", "MaxReads": "0", "MaxRebuild": "0", "MaxEdits": "0",
-    "MaxCrash": "0", "MaxAppCrash": "0", "MaxPower": "0", "MaxStarts": "0", "MaxSwitch": "0",
-    "MaxHang": "0", "MaxStuck": "0", "MaxOrphan": "0",
-    "MaxUnreach": "0", "MaxLink": "0", "MaxForget": "0", "MaxIO": "0", "MaxClose": "0",
-    "MaxUpdate": "0", "MaxExpire": "0", "MaxDrop": "0",
-    "DoCopy": "FALSE", "CreateTarget": '"none"', "DoQuit": "FALSE", "EdDurable": "TRUE", "RestartAfterQuit": "FALSE", "CloseQueued": "TRUE", "JobBound": "12",
+    "MUTANT": '"none"', "BootJ": "{}", "BootTemps": "FALSE", "BootTorn": "FALSE", "BootLink": "FALSE",
+    "EdFiles": "{}", "EdDurable": "TRUE",
+    "MaxSaves": "0", "MaxEdits": "0", "MaxCrash": "0", "MaxAppCrash": "0", "MaxPower": "0", "MaxStarts": "0",
+    "MaxUnreach": "0", "MaxLink": "0", "MaxIO": "0", "MaxDrop": "0",
+    "DoCopy": "FALSE", "CreateTarget": '"none"',
 }
 
-# State invariants (INVARIANT) and temporal safety formulas (PROPERTY) of §13.
+# State invariants (INVARIANT) and temporal safety formulas (PROPERTY) of §13: durability only (EP-19, S0072).
 INVARIANTS = [
-    "AtMostOneEngine", "AtMostOneJobRunning", "AtMostOneOpenWorkspace", "OnlyOpenWorkspaceRunsJobs",
-    "NoOwnEndAfterCommitPoint", "CancelReachIsTheOneRule",
-    "CancelBeforeCommitLeavesDiskUnchanged", "SavedSurvivesPowerLoss",
-    "BackupDurableBeforeReplace", "JournalDurableBeforeFirstReplace", "PartJournalNeverBlocks",
-    "CommittedCombinationChecked", "ExternalEditNeverSilentlyLost",
+    "SavedSurvivesPowerLoss", "BackupDurableBeforeReplace", "JournalDurableBeforeFirstReplace",
+    "PartJournalNeverBlocks", "ExternalEditNeverSilentlyLost",
     "RecoveryNeverClobbersForeignBytes", "RecoveryWritesOnlyRecordedPaths",
-    "EveryJournalRecoveredOrBlocking", "NoOpenOverUnresolvedJournal", "NoCopyOverOpenJournal",
+    "EveryJournalRecoveredOrBlocking", "NoCopyOverOpenJournal",
     "NoManifestOverIncompleteFolder", "NonEmptyTargetUntouched", "DroppedFileNeverReplaced",
-    "OtherNamesDoNotStop", "ForeignOverwriteCaughtByReadBack",
-    "NoAdviceOnTimerForSlowWork", "EveryWaitHasAnExit", "QuitAnywayAlwaysEnabled",
-    "NoEngineStall", "OpeningHasItsJob", "NotesAnsweredByRecovery", "JobIdsBounded",
-    # fidelity review 4: the reviewer's checks, now permanent (model-only, MAPPING.md §1.4);
-    # AssessNeverWaits was AssessWaitHasCancel (targeted review 5, L-4)
-    "StrictRecovered", "BlockedScreenHasReason", "AssessNeverWaits",
+    "ForeignOverwriteCaughtByReadBack",
 ]
-SAFETY_PROPS = [
-    "WaitedForFirst", "OutcomeTruthful", "UnchangedOnlyAfterRehash", "NoTornLedgerAfterRecovery",
-    "CutTempNeverBlocks", "BlockedOnlyForCause", "DeleteAdviceOnlyForOwnFiles", "InstallerNeverOverOpenJournal",
-    "AppScopedWaitsForRecovery",
-    "KeepOnlyJudged",   # fidelity review 4
-]
-LIVENESS = ["EveryBootEnds", "EveryWaitedForJobEnds", "EverySwitchEnds", "EveryQuitEndsOrOffersQuitAnyway",
-            "EngineCanAlwaysBeFreed"]
+SAFETY_PROPS = ["NoTornLedgerAfterRecovery", "CutTempNeverBlocks", "BlockedOnlyForCause", "KeptFilesDurable"]
 
 
 def S(**kw):
@@ -61,223 +42,114 @@ def strs(*xs):
     return "{" + ", ".join('"%s"' % x for x in xs) + "}"
 
 
-# name: (tier, world overrides, specification, liveness properties or None for all safety)
+# name: (tier, world overrides)
 WORLDS = {
     # --- the save (§6.1-§6.6, §10) ---
     "S_save_crash": ("S", S(MaxSaves=1, MaxCrash=1, MaxIO=1, MaxEdits=1, EdFiles=strs("R", "N", "I"),
-                            MaxStarts=1, MaxAppCrash=1, MaxReads=1)),
+                            MaxStarts=1, MaxAppCrash=1)),
     "S_save_power": ("S", S(MaxSaves=1, MaxPower=1, MaxStarts=1, MaxEdits=1, EdFiles=strs("R"))),
-    "S_save_quit": ("S", S(RestartAfterQuit=True, MaxSaves=1, MaxStarts=2, MaxStuck=1, MaxOrphan=1, MaxClose=1)),
-    # fidelity review 2 (RV_save_quit_power, M2): quit notes and a power loss together
-    "S_save_quit_power": ("S", S(RestartAfterQuit=True, MaxSaves=1, MaxStarts=2, MaxStuck=1, MaxOrphan=1,
-                                 MaxClose=1, MaxPower=1)),
-    "S_cancel_commit": ("S", S(MaxSaves=1, MaxEdits=1, EdFiles=strs("R", "I"), MaxCrash=1)),
-    # --- R4 (§6.7): since S0068 (ADR-0067) a background job with no disk effect; saves, a read whose Cancel ends
-    #     the R4 ahead of it, a crash and a power loss around it (S_r4_outcomes, S_r4_attempts, S_r4_build and
-    #     the R4 gate's properties went with the gate) ---
-    "S_r4_ends": ("S", S(MaxSaves=2, MaxReads=1, MaxCrash=1, MaxPower=1, MaxStarts=1)),
-    "S_forget": ("S", S(MaxSaves=2, MaxSwitch=2, MaxForget=1, MaxAppCrash=1, MaxStarts=1)),
-    # --- recover-all, boot, blocking (§8.1, §9.2) ---
+    # two saves: the second replaces the file the first created, so its rollback restores both
+    "S_save_two": ("S", S(MaxSaves=2, MaxCrash=1, MaxIO=1, MaxPower=1, MaxStarts=1)),
+    # an in-session journal left .open, recovered in the session, kept, then a power loss
+    "S_keep": ("S", S(MaxSaves=2, MaxCrash=1, MaxIO=1, MaxEdits=1, EdFiles=strs("R"), MaxPower=1, MaxStarts=1)),
+    # --- recover-all (§8.1) ---
     "S_recover": ("S", S(BootJ=strs("b2", "b3"), MaxCrash=1, MaxUnreach=1, MaxEdits=1, EdFiles=strs("R"))),
-    "S_recover_bound": ("S", S(BootJ=strs("b2", "b3"), MaxCrash=2, StopBound=2)),
-    # an engine of the crashed session still holds the engine lock at boot (§5.1), and the path guard
-    "S_recover_lock": ("S", S(BootJ=strs("b2"), BootTemps=True, BootOrphan=True, BootLink=True, MaxStarts=1, MaxAppCrash=1)),
+    # the path guard, and what a crashed save left beside the files
+    "S_recover_link": ("S", S(BootJ=strs("b2"), BootTemps=True, BootLink=True, MaxStarts=1, MaxAppCrash=1)),
     "S_recover_power": ("S", S(BootJ=strs("b2"), MaxPower=1, MaxStarts=1, MaxIO=1, MaxEdits=1,
                                EdFiles=strs("R"), MaxLink=1)),
-    "S_boot": ("S", S(BootJ=strs("b2"), BootTarget=2, MaxCrash=1, CreateTarget='"absent"',
-                      MaxUnreach=1)),
-    # fidelity review 2 (RV_stuck_opening, M1): another job's Cancel ends the boot's open
-    "S_stuck_opening": ("S", S(BootTarget=2, EdFiles=strs("J"), MaxEdits=1, MaxClose=1,
-                               CreateTarget='"absent"')),
-    # L3: a journal whose file list cannot be read blocks every open and every copy; Keep
-    "S_recover_torn": ("S", S(BootJ=strs("b3"), BootTorn=True, BootTarget=3, DoCopy=True, MaxSwitch=1)),
+    # a journal whose file list cannot be read blocks every copy; Keep
+    "S_recover_torn": ("S", S(BootJ=strs("b3"), BootTorn=True, DoCopy=True)),
     # --- copy and create (§8.2) ---
     "S_copy": ("S", S(BootJ=strs("b2"), DoCopy=True, MaxSaves=1, MaxCrash=1)),
-    "S_create_absent": ("S", S(RestartAfterQuit=True, BootTarget=0, CreateTarget='"absent"', MaxDrop=2, MaxCrash=1, MaxStarts=1)),
-    "S_create_empty": ("S", S(BootTarget=0, CreateTarget='"empty"', MaxDrop=2, MaxPower=1,
-                              MaxStarts=1)),
-    "S_create_nonempty": ("S", S(BootTarget=0, CreateTarget='"nonempty"', MaxDrop=1)),
-    # L2: a confirmed create or copy with its requester present or gone, and a read waiting behind it
-    "S_create_close": ("S", S(CreateTarget='"absent"', DoCopy=True, MaxReads=1, MaxClose=1, MaxHang=1)),
-    # --- queue, Cancel's one rule, the engine (§3, §4, §5) ---
-    "S_cancel": ("S", S(MaxSaves=1, MaxBg=1, MaxReads=1, MaxHang=1, MaxStuck=1, MaxClose=1)),
-    "S_queue": ("S", S(MaxSaves=1, MaxBg=1, MaxReads=1, MaxCrash=1, MaxRebuild=1, MaxEdits=1,
-                       EdFiles=strs("I"))),
-    "S_switch_fail": ("S", S(MaxSwitch=2, MaxUnreach=1, MaxCrash=1, MaxEdits=1,
-                             EdFiles=strs("J"))),
+    "S_create_absent": ("S", S(CreateTarget='"absent"', MaxDrop=2, MaxCrash=1, MaxAppCrash=1, MaxStarts=1)),
+    "S_create_empty": ("S", S(CreateTarget='"empty"', MaxDrop=2, MaxPower=1, MaxStarts=1)),
+    "S_create_nonempty": ("S", S(CreateTarget='"nonempty"', MaxDrop=1)),
     # --- §13's file-system assumptions: an outside save not durable, each unsynced operation of ours
     #     kept or dropped on its own ---
     "S_fs_weak": ("S", S(EdDurable=False, MaxSaves=1, MaxPower=1, MaxStarts=1, MaxIO=1, MaxEdits=2,
                          EdFiles=strs("R", "I"))),
-    # L8: widened with an I/O error during the restore (a swap-back and a stopped journal, unsynced)
     "S_fs_weak_recover": ("S", S(EdDurable=False, BootJ=strs("b2"), BootTemps=True, MaxPower=1,
                                  MaxStarts=1, MaxEdits=1, EdFiles=strs("R"), MaxIO=1)),
-    # --- switch, quit, update (§9) ---
-    "S_switch": ("S", S(MaxSaves=1, MaxBg=1, MaxReads=1, MaxSwitch=2, CreateTarget='"empty"')),
-    # fidelity review 2 (RV_switch_hung_create, M4): the switch's recover_all queued behind a hung create
-    "S_switch_hung_create": ("S", S(MaxSwitch=1, MaxHang=1, CreateTarget='"empty"')),
-    "S_quit": ("S", S(RestartAfterQuit=True, DoQuit=True, MaxSaves=1, MaxUpdate=1, MaxStarts=1,
-                      MaxCrash=1)),
-    # --- medium: two actors combined ---
-    "L_save_all": ("L", S(RestartAfterQuit=True, JobBound=30, MaxSaves=1, MaxCrash=1, MaxIO=1, MaxEdits=2, EdFiles=strs("R", "N", "I"),
+    # --- medium and large: actors combined ---
+    "M_recover_temps": ("M", S(BootJ=strs("b2", "b3"), BootTemps=True, MaxCrash=1, MaxUnreach=1, MaxEdits=1,
+                               EdFiles=strs("R"))),
+    "L_save_all": ("L", S(MaxSaves=1, MaxCrash=1, MaxIO=1, MaxEdits=2, EdFiles=strs("R", "N", "I"),
                           MaxPower=1, MaxStarts=2, MaxAppCrash=1)),
-    "M_recover_temps": ("M", S(BootJ=strs("b2", "b3"), BootTemps=True, MaxCrash=1, MaxUnreach=1, MaxEdits=1, EdFiles=strs("R"))),
-    "L_recover_all": ("L", S(BootJ=strs("b2", "b3"), BootTemps=True, BootOrphan=True, MaxCrash=2,
-                             MaxUnreach=1, MaxEdits=1, EdFiles=strs("R", "J", "K"),
-                             DoCopy=True, MaxPower=1, MaxStarts=1)),
-    "L_session": ("L", S(RestartAfterQuit=True, JobBound=30, MaxSaves=1, MaxBg=1, MaxReads=1, MaxRebuild=1, MaxSwitch=2, MaxHang=1,
-                         MaxStuck=1, MaxClose=1, MaxCrash=1, DoQuit=True,
-                         MaxStarts=1, CreateTarget='"empty"', MaxEdits=1, EdFiles=strs("R"))),
-    # --- large: the whole world at once ---
-    # the whole world at once is far beyond exhaustive checking: a bounded random simulation instead
-    # (mode "simulate"); create and copy stay out of it (the small create/copy worlds cover them)
-    "L_world": ("L", S(RestartAfterQuit=True, JobBound=30, BootJ=strs("b2", "b3"), BootTemps=True, MaxSaves=2, MaxBg=1, MaxReads=1,
-                       MaxEdits=2, EdFiles=strs("R", "N", "I", "K"), MaxCrash=2,
-                       MaxAppCrash=1, MaxPower=1, MaxStarts=2, MaxSwitch=2, MaxHang=1, MaxStuck=1,
-                       MaxOrphan=1, MaxUnreach=1, MaxForget=1, MaxIO=1, MaxClose=1, MaxUpdate=1,
-                       DoQuit=True)),
-    "L_save_deep": ("L", S(RestartAfterQuit=True, JobBound=30, MaxSaves=2, MaxBg=1, MaxCrash=2, MaxIO=1, MaxEdits=3,
-                           EdFiles=strs("R", "N", "I"), MaxPower=2, MaxStarts=3, MaxAppCrash=1, MaxOrphan=1)),
+    "L_recover_all": ("L", S(BootJ=strs("b2", "b3"), BootTemps=True, MaxCrash=2, MaxUnreach=1, MaxEdits=1,
+                             EdFiles=strs("R", "J", "K"), DoCopy=True, MaxPower=1, MaxStarts=1)),
+    "L_save_deep": ("L", S(MaxSaves=2, MaxCrash=2, MaxIO=1, MaxEdits=3, EdFiles=strs("R", "N", "I"),
+                           MaxPower=2, MaxStarts=3, MaxAppCrash=1)),
+    # the whole world at once is beyond exhaustive checking: a bounded random simulation (mode "simulate")
+    "L_world": ("L", S(BootJ=strs("b2", "b3"), BootTemps=True, MaxSaves=3, MaxEdits=2,
+                       EdFiles=strs("R", "N", "I", "K"), MaxCrash=2, MaxAppCrash=1, MaxPower=1, MaxStarts=2,
+                       MaxUnreach=1, MaxIO=1, MaxLink=1, DoCopy=True, CreateTarget='"empty"', MaxDrop=1)),
 }
 
-# liveness configurations: world, spec, properties
-LIVE = {
-    "LS_boot": ("S", S(UserBudget=3, BootJ=strs("b2"), BootTarget=2, MaxCrash=1, CreateTarget='"absent"',
-                       MaxClose=1, JobBound=6), "FairSpec", ["EveryBootEnds"]),
-    "LS_jobs": ("S", S(UserBudget=3, MaxSaves=1, MaxBg=1, MaxReads=1, MaxCrash=1, MaxSwitch=1, MaxExpire=2,
-                       JobBound=8), "FairSpec",
-                ["EveryWaitedForJobEnds", "EverySwitchEnds"]),
-    "LS_quit": ("S", S(UserBudget=3, DoQuit=True, MaxSaves=1, MaxBg=1, MaxReads=1, MaxStuck=1, MaxHang=1,
-                       MaxUpdate=1, JobBound=6), "FairSpec", ["EveryQuitEndsOrOffersQuitAnyway"]),
-    # EngineCanAlwaysBeFreed: the waiting user's exits are Cancel and Quit anyway (a closed waiting tab
-    # or a switch ends that user's wait: EveryWaitedForJobEnds), so no queued tab closes and no switch
-    "LS_free": ("S", S(MaxSaves=1, MaxBg=1, MaxReads=1, MaxHang=1, MaxStuck=1, MaxClose=1,
-                       CloseQueued=False, JobBound=6), "FairUserSpec", ["EngineCanAlwaysBeFreed"]),
-    # hung confirmed create and copy with their requester present or gone, a read waiting behind them
-    "LS_free_cc": ("S", S(MaxReads=1, MaxHang=1, MaxStuck=1, MaxClose=1, CreateTarget='"empty"',
-                          DoCopy=True, CloseQueued=False, JobBound=6), "FairUserSpec",
-                   ["EngineCanAlwaysBeFreed"]),
-    # simplification B (§5.1): the app crashes with its engine stuck (or lingering); the next start's boot
-    # waits for the engine lock and shows the advice
-    "LS_free_orphan": ("S", S(MaxReads=1, MaxStuck=1, MaxAppCrash=1, MaxOrphan=1, MaxStarts=1,
-                              CloseQueued=False, JobBound=6), "FairUserSpec", ["EngineCanAlwaysBeFreed"]),
-    "LM_free": ("M", S(MaxSaves=1, MaxBg=1, MaxReads=1, MaxHang=1, MaxStuck=1, MaxClose=1,
-                       CreateTarget='"empty"', CloseQueued=False, JobBound=8),
-                "FairUserSpec", ["EngineCanAlwaysBeFreed"]),
-}
-
-# mutant: (world it runs on, property it must break, extra overrides)
-# The first 35 are §13's "thirty-five mutants of the two executable models"; then §13's five more;
-# then one per property §13 names that had none (PROCESS.md §3: each property has a mutant). S0068 (ADR-0067)
-# removed the R4 gate's mutants with its properties: gate_in_memory, gate_by_key, supersede_publishes_nothing,
-# switch_waits_for_r4 (replaced by switch_close_never), cnc_auto_lift, r4_skipped_before_save, confirm_no_recheck,
-# r4_rename_unsynced, rv_r4_crash_nosync, r4_cancel_nosync (MAPPING.md §5).
+# mutant: (world it runs on, property it must break, extra overrides). Durability only since S0072 (ADR-0068 D5):
+# MAPPING.md §6 lists each mutant, and §5 each one that left with the reason.
 MUTANTS = [
-    # model 1 (16)
+    # the save
     ("report_before_close_sync", "S_save_power", "SavedSurvivesPowerLoss", {}),
-    ("no_journal_sync", "S_save_crash", "JournalDurableBeforeFirstReplace", {}),
-    ("no_backup_sync", "S_save_crash", "BackupDurableBeforeReplace", {}),
-    ("no_temp_fsync", "S_save_power", "NoTornLedgerAfterRecovery", {}),
-    ("no_path_guard", "S_recover_lock", "RecoveryWritesOnlyRecordedPaths", S(BootOrphan=False)),
-    ("recover_target_only", "S_recover", "NoOpenOverUnresolvedJournal", {}),
-    ("cancel_after_commit", "S_cancel_commit", "NoOwnEndAfterCommitPoint", {}),
-    ("resolve_before_restores_synced", "S_recover_power", "NoTornLedgerAfterRecovery", {}),
-    ("no_temp_check", "S_save_crash", "RecoveryNeverClobbersForeignBytes", {}),
-    ("plain_create", "S_save_crash", "ExternalEditNeverSilentlyLost", S(EdFiles=strs("N"))),
-    ("temps_after_close", "S_save_crash", "CutTempNeverBlocks", {}),
-    ("old_temp_rule", "S_recover_lock", "CutTempNeverBlocks", S(BootLink=False, BootOrphan=False)),
-    ("quit_says_undone", "S_save_quit", "OutcomeTruthful", {}),
-    ("quit_note_two_branches", "S_save_quit", "OutcomeTruthful", {}),
-    # model 2 (19)
-    ("cancel_stops_all", "S_recover", "EveryJournalRecoveredOrBlocking", {}),
-    ("crash_unmarked", "S_recover", "EveryJournalRecoveredOrBlocking", {}),
-    ("untried_unmarked", "S_recover_bound", "EveryJournalRecoveredOrBlocking", {}),
-    ("no_displaced_check", "S_save_crash", "ExternalEditNeverSilentlyLost", {}),
-    ("direct_open", "S_save_power", "PartJournalNeverBlocks", {}),
-    ("no_recheck", "S_save_crash", "CommittedCombinationChecked", {}),
-    ("manifest_first", "S_create_empty", "NoManifestOverIncompleteFolder", {}),
-    ("no_refuse_nonempty", "S_create_nonempty", "NonEmptyTargetUntouched", {}),
-    ("copy_checks_blocking_only", "S_copy", "NoCopyOverOpenJournal", {}),
-    ("plain_file_write", "S_create_absent", "DroppedFileNeverReplaced", {}),
-    ("no_readback", "S_create_absent", "ForeignOverwriteCaughtByReadBack", {}),
-    ("boot_waits_for_success", "LS_boot", "EveryBootEnds", {}),
-    ("boot_no_actions", "S_boot", "EveryWaitHasAnExit", {}),
-    ("cancel_ends_writing_job", "S_cancel", "CancelReachIsTheOneRule", {}),
-    ("no_quit_message_for_writing", "LS_free", "EngineCanAlwaysBeFreed", {}),
-    ("r4_only", "S_cancel", "CancelReachIsTheOneRule", {}),
-    ("advice_on_timer", "S_cancel", "NoAdviceOnTimerForSlowWork", {}),
-    ("listing_check", "S_create_absent", "OtherNamesDoNotStop", {}),
-    ("delete_message_always", "S_create_absent", "DeleteAdviceOnlyForOwnFiles", {}),
-    # §13's five more
-    ("dispatch_by_arrival", "S_queue", "WaitedForFirst", {}),
-    ("switch_drops_confirmed_save", "S_switch", "OutcomeTruthful", {}),
-    ("recovery_while_open", "S_switch", "OnlyOpenWorkspaceRunsJobs", {}),
-    ("spawn_before_reap", "S_queue", "AtMostOneEngine", {}),
-    # one per property that §13 names without a mutant (added by the model, MAPPING.md)
-    ("dispatch_while_running", "S_queue", "AtMostOneJobRunning", {}),
-    ("open_before_close", "S_switch", "AtMostOneOpenWorkspace", {}),
-    ("gate_after_journal", "S_cancel_commit", "CancelBeforeCommitLeavesDiskUnchanged", {}),
-    ("unchanged_without_rehash", "S_cancel_commit", "UnchangedOnlyAfterRehash", {}),
-    ("block_without_cause", "S_recover_lock", "BlockedOnlyForCause", S(BootLink=False, BootOrphan=False)),
-    ("installer_ignores_journal", "S_quit", "InstallerNeverOverOpenJournal", {}),
-    # S0068 (ADR-0067): a save that waits for the queued background R4 never ends (a save never waits for R4); A that
-    # never closes (switch_waits_for_r4 had nothing left to wait for)
-    ("save_waits_r4_forever", "LS_jobs", "EveryWaitedForJobEnds", S(MaxSaves=2, MaxBg=0, MaxReads=0,
-                                                                   MaxSwitch=0, MaxCrash=0)),
-    ("switch_close_never", "LS_jobs", "EverySwitchEnds", S(MaxBg=0, MaxReads=0, MaxCrash=0)),
-    ("quit_waits_reap", "LS_quit", "EveryQuitEndsOrOffersQuitAnyway", {}),
-    # the model's findings F1-F4 and O1, now rules of the spec (§13): each must fail its property
     ("outcome_unsynced", "S_save_power", "SavedSurvivesPowerLoss", S(MaxCrash=1, MaxEdits=0, EdFiles="{}")),
+    ("keep_no_sync", "S_keep", "KeptFilesDurable", {}),
+    ("no_backup_sync", "S_save_crash", "BackupDurableBeforeReplace", {}),
+    ("no_journal_sync", "S_save_crash", "JournalDurableBeforeFirstReplace", {}),
+    ("direct_open", "S_save_power", "PartJournalNeverBlocks", {}),
+    ("no_displaced_check", "S_save_crash", "ExternalEditNeverSilentlyLost", {}),
+    ("plain_create", "S_save_crash", "ExternalEditNeverSilentlyLost", S(EdFiles=strs("N"))),
     ("rollback_skips_temp_rule", "S_save_crash", "ExternalEditNeverSilentlyLost",
-     S(MaxCrash=0, MaxAppCrash=0, MaxReads=0, MaxStarts=0, EdFiles=strs("R"))),
-    ("swap_back_unsynced", "S_save_power", "ExternalEditNeverSilentlyLost", S(MaxIO=1)),
-    ("screen_holds_queue", "LS_boot", "EveryBootEnds", {}),
-    # model review 1: its extra mutants, and new rules
-    ("stay_disabled", "S_switch", "EveryWaitHasAnExit", {}),
-    ("retry_disabled", "S_boot", "EveryWaitHasAnExit", {}),
-    ("fb_no_guard", "S_recover_lock", "RecoveryWritesOnlyRecordedPaths", S(BootOrphan=False)),
-    ("newest_first", "S_queue", "WaitedForFirst", {}),
-    ("manifest_overwrite", "S_create_empty", "DroppedFileNeverReplaced", {}),
-    ("app_scoped_during_recovery", "S_boot", "AppScopedWaitsForRecovery", {}),
-    ("read_refusal_stuck", "S_save_crash", "NoEngineStall", {}),
-    # the model's findings N1-N3, now rules of the spec (4fb67b23): each old rule must fail its property
-    ("keep_no_sync", "S_forget", "SavedSurvivesPowerLoss", {}),
-    ("appscoped_runs", "S_switch", "AppScopedWaitsForRecovery", {}),   # the old wording: a reachability check
-    ("advice_only_to_waiting", "LS_free", "EngineCanAlwaysBeFreed", {}),
-    # fidelity review 2 (spec at 31afbd82) and its model fixes: each old rule must fail its property
-    ("no_restore_temp_fsync", "S_recover_power", "NoTornLedgerAfterRecovery", {}),          # H1
-    ("cancel_open_keeps_opening", "S_stuck_opening", "OpeningHasItsJob", {}),                # M1
-    ("recover_cancel_before_listing", "S_save_quit_power", "OutcomeTruthful", {}),          # M2
-    ("rc_unsynced", "S_save_quit_power", "OutcomeTruthful", {}),                             # M2 (the reviewer's)
-    ("switch_job_not_cancelable", "S_switch_hung_create", "EveryWaitHasAnExit", {}),        # M4
-    ("quit_anyway_only_while_quitting", "S_cancel_commit", "EveryWaitHasAnExit", {}),       # M4 (Quit-anyway clauses)
-    ("finishing_confirmed_only", "LS_quit", "EveryQuitEndsOrOffersQuitAnyway", {}),         # M3: a reachability check
-    # fidelity review 3 (spec at c87ce786): the reviewer's mutants (rv_*) and the old rules of its fixes
-    ("rv_boot_skips_recovery", "S_recover", "EveryJournalRecoveredOrBlocking", S(BootJ=strs("b3"))),       # H1
-    ("rv_retry_skips_recovery", "S_recover", "EveryJournalRecoveredOrBlocking", S(BootJ=strs("b3"))),      # H1
-    ("create_crash_msg_from_memory", "S_create_absent", "OutcomeTruthful", {}),                           # M2
-    ("rv_quiesce_ends_confirmed", "S_switch", "CancelReachIsTheOneRule", {}),                             # M3
-    ("rv_cancel_keeps_stage", "S_switch_hung_create", "OpeningHasItsJob", {}),
+     S(MaxCrash=0, MaxAppCrash=0, MaxStarts=0, EdFiles=strs("R"))),
+    ("no_temp_fsync", "S_save_power", "NoTornLedgerAfterRecovery", {}),
+    ("temps_after_close", "S_save_crash", "CutTempNeverBlocks", {}),
+    # recovery
+    ("no_temp_check", "S_save_crash", "RecoveryNeverClobbersForeignBytes", {}),
+    ("no_path_guard", "S_recover_link", "RecoveryWritesOnlyRecordedPaths", {}),
+    ("fb_no_guard", "S_recover_link", "RecoveryWritesOnlyRecordedPaths", {}),
+    ("resolve_before_restores_synced", "S_recover_power", "NoTornLedgerAfterRecovery", {}),
+    ("no_restore_temp_fsync", "S_recover_power", "NoTornLedgerAfterRecovery", {}),
+    ("old_temp_rule", "S_recover_link", "CutTempNeverBlocks", S(BootLink=False)),
+    ("block_without_cause", "S_recover_link", "BlockedOnlyForCause", S(BootLink=False)),
+    ("crash_unmarked", "S_recover", "EveryJournalRecoveredOrBlocking", {}),
+    ("rv_boot_skips_recovery", "S_recover", "EveryJournalRecoveredOrBlocking", S(BootJ=strs("b3"))),
+    ("copy_checks_blocking_only", "S_copy", "NoCopyOverOpenJournal", {}),
+    # create
+    ("manifest_first", "S_create_empty", "NoManifestOverIncompleteFolder", {}),
     ("rv_create_no_sync", "S_create_empty", "NoManifestOverIncompleteFolder", {}),
-    ("notes_only_at_boot", "S_save_quit_power", "NotesAnsweredByRecovery", {}),                          # L1
-    # fidelity review 4 (spec at c87ce786): the reviewer's mutants (rv4_*) and the old rules of its fixes
-    # (rv4_rc_ignores_orphan and rv4_save_ignores_orphan went with simplification B: MAPPING.md §5)
-    ("back_skips_recovery", "S_recover", "StrictRecovered",                                               # M1
-     S(BootJ=strs("b3"), MaxSwitch=1, MaxCrash=0, MaxEdits=0, EdFiles="{}")),
-    ("back_skips_recovery", "S_switch", "BlockedScreenHasReason",                                         # M1
-     S(MaxCrash=1, MaxBg=0, MaxReads=0, MaxSwitch=1), "blocked"),
-    ("back_skips_recovery", "S_switch", "KeepOnlyJudged",                                                 # M1
-     S(MaxCrash=1, MaxBg=0, MaxReads=0, MaxSwitch=1), "keep"),
-    # M2. Since Retry recovers first (2026-10-29) only Keep enters the assess stage while a create runs:
-    # b3 on the unreachable disk blocks the boot's open of W3, a create starts, then Keep (MAPPING.md §5)
-    ("assess_waits_for_work", "S_switch_hung_create", "AssessNeverWaits",
-     S(MaxCrash=1, MaxUnreach=1, BootJ=strs("b3"), BootTarget=3)),
-    ("rv4_quit_drops_create", "S_create_absent", "OutcomeTruthful", S(DoQuit=True, MaxDrop=0)),          # L2
-    ("rv4_no_cancel_recover", "S_recover", "EveryWaitHasAnExit", {}),
-    ("rv4_outcome_open_notsaved", "S_save_crash", "OutcomeTruthful", {}),
-    # simplification B (owner, 2026-10-28): the engine lock (§5.1)
-    ("no_engine_lock", "S_recover_lock", "AtMostOneEngine", S(BootLink=False)),
-    ("orphan_no_advice", "LS_free_orphan", "EngineCanAlwaysBeFreed", {}),
+    ("no_refuse_nonempty", "S_create_nonempty", "NonEmptyTargetUntouched", {}),
+    ("plain_file_write", "S_create_absent", "DroppedFileNeverReplaced", {}),
+    ("manifest_overwrite", "S_create_empty", "DroppedFileNeverReplaced", {}),
+    ("no_readback", "S_create_absent", "ForeignOverwriteCaughtByReadBack", {}),
+]
+
+
+# witness: (the predicate whose negation a base world must reach, the world). Vacuity (MAPPING.md §6.2): each
+# configuration checks the witness as an invariant and must report it violated, so a base world that passes does
+# so with the branch reached.
+WITNESSES = [
+    ("W_Saved", "S_save_crash"),
+    ("W_RollbackResolved", "S_save_crash"),
+    ("W_RollbackUnfinished", "S_save_crash"),
+    ("W_KeptCopySave", "S_save_crash"),
+    ("W_CreatedPathTaken", "S_save_crash"),
+    ("W_RollbackPutsBack", "S_save_crash"),
+    ("W_RecoverResolves", "S_recover"),
+    ("W_RecoverKeptCopy", "S_recover"),
+    ("W_RecoverFailed", "S_recover"),
+    ("W_Keep", "S_keep"),
+    ("W_KeepTorn", "S_recover_torn"),
+    ("W_CutStagingDeleted", "S_save_power"),
+    ("W_StagingCutSeen", "S_save_power"),
+    ("W_CopyDone", "S_copy"),
+    ("W_CopyRefusedInsession", "S_copy"),
+    ("W_CreateDone", "S_create_absent"),
+    ("W_SecondSaved", "S_save_two"),
+    ("W_SecondRollbackTwoFiles", "S_save_two"),
+    ("W_PowerAfterSaveRecovered", "S_save_power"),
+    ("W_LinkStop", "S_recover_link"),
+    ("W_WeakLossAccepted", "S_fs_weak"),
+    ("W_WeakRecoverKept", "S_fs_weak_recover"),
+    ("W_EditorAfterGate", "S_save_crash"),
 ]
 
 
@@ -285,11 +157,8 @@ SIMULATE = {"L_world"}   # run with TLC -simulate (a bounded random walk), not e
 
 
 def world_of(name):
-    if name in WORLDS:
-        tier, w = WORLDS[name]
-        return tier, w, "Spec", None
-    tier, w, spec, props = LIVE[name]
-    return tier, w, spec, props
+    tier, w = WORLDS[name]
+    return tier, w, "Spec", None
 
 
 def render(name, consts, spec, invariants, properties, comment):
@@ -302,7 +171,7 @@ def render(name, consts, spec, invariants, properties, comment):
     for p in properties:
         lines.append("PROPERTY %s" % p)
     # The app may legitimately end with nothing left to do (no restart left), which TLC would call a
-    # deadlock; a step that should run but cannot is caught by NoEngineStall instead.
+    # deadlock.
     lines.append("CHECK_DEADLOCK FALSE")
     return "\n".join(lines) + "\n"
 
@@ -310,14 +179,10 @@ def render(name, consts, spec, invariants, properties, comment):
 def build():
     out = {}
     rows = []
-    for name in list(WORLDS) + list(LIVE):
+    for name in WORLDS:
         tier, w, spec, live = world_of(name)
-        if live is None:
-            invs, props = INVARIANTS, SAFETY_PROPS
-            comment = "safety: every state invariant and temporal safety property of section 13"
-        else:
-            invs, props = ["JobIdsBounded"], live
-            comment = "liveness under %s" % spec
+        invs, props = INVARIANTS, SAFETY_PROPS
+        comment = "every durability invariant and temporal safety property of section 13"
         mode = "simulate" if name in SIMULATE else "check"
         consts = dict(DEFAULTS)
         consts.update(w)
@@ -339,8 +204,16 @@ def build():
         out[name + ".cfg"] = render(name, consts, spec, invs, props,
                                     "mutant %s on %s: TLC must report %s violated" % (mut, base, prop))
         rows.append((name, "VIOLATE:" + prop, "S", "mutant", "check"))
+    for wit, base in WITNESSES:
+        tier, w, spec, live = world_of(base)
+        consts = dict(DEFAULTS)
+        consts.update(w)
+        name = "WIT_" + wit[2:]
+        out[name + ".cfg"] = render(name, consts, spec, [wit], [],
+                                    "witness %s on %s: TLC must report it violated (the branch is reached)" % (wit, base))
+        rows.append((name, "VIOLATE:" + wit, "S", "witness", "check"))
     lst = ["# Generated by gen_cfgs.py; do not edit by hand.",
-           "# <config> <expected: PASS | VIOLATE:<property>> <tier: S | M | L> <kind: base | mutant> <mode: check | simulate>"]
+           "# <config> <expected: PASS | VIOLATE:<property>> <tier: S | M | L> <kind: base | mutant | witness> <mode: check | simulate>"]
     for r in rows:
         lst.append("%-36s %-52s %s %-6s %s" % r)
     out["configs.txt"] = "\n".join(lst) + "\n"

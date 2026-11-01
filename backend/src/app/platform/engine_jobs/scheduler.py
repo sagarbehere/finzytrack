@@ -126,7 +126,6 @@ from app.platform.errors import (
 from app.platform.observability import Event as LogEvent
 from app.platform.observability import EventSink
 from app.platform.observability.events import ENGINE_EXIT, ENGINE_START_FAILED, JOB_INTERNAL_ERROR
-from app.platform.tla import tla_action
 
 DISPLAY_DELAY: Final = 2.0
 """§5.4: the display delay after which a job's text becomes "Still working…" and the advice may show (a UI constant;
@@ -569,10 +568,9 @@ class EngineJobs:
         see `submit_background_save` (ADR-0068 D8)."""
         return self._ask(lambda: self._submit(spec, work, boot=False), self._closing())
 
-    @tla_action("AppBgSave")
     def submit_background_save(self, workspace: str, work: Work) -> JobTicket | Failed:
         """A save the app starts itself (prices; §2): background, unconfirmed, and at most one queued per workspace
-        (§3; model `AppBgSave`). Its work plans when it runs (ADR-0068 D8). A second one while one is queued joins it
+        (§3). Its work plans when it runs (ADR-0068 D8). A second one while one is queued joins it
         only when the queued work can take its changes (`JoinableWork.joined`): both requesters then get that job's
         outcome. Otherwise it is refused with its own answer (`ENGINE_QUEUE_FULL`); it never gets the queued job's
         ticket, which would tell it "saved" for changes that job does not hold (step-back area review F1)."""

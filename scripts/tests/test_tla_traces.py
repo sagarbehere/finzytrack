@@ -1,6 +1,6 @@
 """Meta-tests for formal/tla/engine-jobs/gen_traces.py (S0059): the trace module it writes, its reader of TLC's trace
 values, and its staleness check. None runs TLC (the generator does, with Java); the conformance replay itself is
-backend/tests/platform/test_engine_jobs_conformance.py.
+engine/tests/ledger/test_save_conformance.py.
 """
 
 from __future__ import annotations
@@ -30,32 +30,33 @@ MODEL = (DIR / "EngineJobs.tla").read_text(encoding="utf-8")
 SAMPLE = r"""---------------- MODULE trace_0_0 -----------------
 STATE_1 ==
 /\ act = [a |-> "Init", p |-> 0]
-/\ q = << [ w |-> 0, s |-> "none", k |-> "recover", wf |-> TRUE, conf |-> FALSE, req |-> "present",
-     plan |-> [I |-> 0, J |-> -1], id |-> 1, own |-> "switch" ] >>
-/\ runs = {}
-/\ eng = [st |-> "none", p |-> 0, ended |-> [k |-> "none"]]
-/\ ctl = [pc |-> "none", past |-> FALSE, rinit |-> FALSE, tried |-> {}, s |-> "none", fi |-> 1, rj |-> "none",
-     plan |-> [R |-> 0, N |-> 0, I |-> 0, J |-> 0, K |-> 0], rbt |-> "none", skip |-> "none"]
-/\ ses = [app |-> "boot", stops |-> 0, advice |-> "none", opened |-> {}]
-/\ pst = [orphan |-> FALSE, mirror |-> << [fp |-> [I |-> 1]], [fp |-> [I |-> 2]] >>]
-/\ fs = [cur |-> [R |-> 1, N |-> 0, I |-> 1, J |-> 1, K |-> 1], tc |-> ( <<"b2", "R">> :> 0 @@ <<"s1", "R">> :> 0 @@ <<"s1", "N">> :> -1 ),
-     bk |-> [s1 |-> 0, s2 |-> 0, s3 |-> 0], rt |-> [R |-> 0, N |-> 0, I |-> 0, J |-> 0, K |-> 0], ud |-> {}]
+/\ app = "recover"
+/\ run = [k |-> "none", id |-> "none"]
+/\ ctl = [pc |-> "rc_init", tried |-> {}, s |-> "none", fi |-> 1, rj |-> "none",
+     plan |-> [R |-> 0, N |-> 0, I |-> 0, J |-> 0, K |-> 0], rbt |-> "none", repl |-> FALSE, put |-> {}]
+/\ fs = [cur |-> [R |-> 1, N |-> 0, I |-> 1, J |-> 1, K |-> 1],
+     tc |-> ( <<"b2", "R">> :> 0 @@ <<"s1", "R">> :> 0 @@ <<"s1", "N">> :> 3 ),
+     sg |-> ( <<"b2", "R">> :> 0 @@ <<"s1", "R">> :> -1 @@ <<"s1", "N">> :> 0 ),
+     rt |-> ( <<"b2", "R">> :> 0 @@ <<"s1", "R">> :> 0 @@ <<"s1", "N">> :> 0 ),
+     kp |-> ( <<"b2", "R">> :> {} @@ <<"s1", "R">> :> {11} @@ <<"s1", "N">> :> {} ),
+     bk |-> [s1 |-> 0, s2 |-> 0, s3 |-> 0], ud |-> {}]
 /\ jr = [b2 |-> [st |-> "none", files |-> {}], s1 |-> [st |-> "part", files |-> {"R", "N"}]]
-/\ gh = [told |-> [s1 |-> "none", s2 |-> "none", s3 |-> "none"], acc |-> [R |-> {}]]
+/\ gh = [told |-> [s1 |-> "none", s2 |-> "none", s3 |-> "none"], ed |-> [R |-> 0]]
 
 STATE_2 ==
-/\ act = [a |-> "UserRead", p |-> 2]
-/\ q = <<>>
-/\ runs = {[w |-> 2, s |-> "none", k |-> "read", wf |-> TRUE, conf |-> FALSE, req |-> "gone", id |-> 3, own |-> "user"]}
-/\ eng = [st |-> "busy", p |-> 1]
-/\ ctl = [pc |-> "rd_load", past |-> FALSE, rinit |-> FALSE, s |-> "s1", fi |-> 2, rj |-> "none",
-     plan |-> [R |-> 1, N |-> 0, I |-> 1], rbt |-> "none", skip |-> "none"]
-/\ ses = [app |-> "run", stops |-> 2, advice |-> "timer", opened |-> {2}]
-/\ pst = [orphan |-> TRUE, mirror |-> << [fp |-> [I |-> 3]] >>]
-/\ fs = [cur |-> [R |-> 1, N |-> 0, I |-> 1, J |-> 1, K |-> 1], tc |-> ( <<"b2", "R">> :> 0 @@ <<"s1", "R">> :> 0 @@ <<"s1", "N">> :> -1 ),
-     bk |-> [s1 |-> 0, s2 |-> 0, s3 |-> 0], rt |-> [R |-> 0, N |-> 0, I |-> 0, J |-> 0, K |-> 0], ud |-> {}]
-/\ jr = [b2 |-> [st |-> "none", files |-> {}], s1 |-> [st |-> "part", files |-> {"R", "N"}]]
-/\ gh = [told |-> [s1 |-> "none", s2 |-> "none", s3 |-> "none"], acc |-> [R |-> {}]]
+/\ act = [a |-> "S_TempStart", p |-> 0]
+/\ app = "run"
+/\ run = [k |-> "save", id |-> "s1"]
+/\ ctl = [pc |-> "s_tw2", tried |-> {}, s |-> "s1", fi |-> 2, rj |-> "none",
+     plan |-> [R |-> 1, N |-> 0, I |-> 1, J |-> 0, K |-> 0], rbt |-> "none", repl |-> FALSE, put |-> {}]
+/\ fs = [cur |-> [R |-> 1, N |-> 0, I |-> 1, J |-> 1, K |-> 1],
+     tc |-> ( <<"b2", "R">> :> 0 @@ <<"s1", "R">> :> 0 @@ <<"s1", "N">> :> 3 ),
+     sg |-> ( <<"b2", "R">> :> 0 @@ <<"s1", "R">> :> -1 @@ <<"s1", "N">> :> 0 ),
+     rt |-> ( <<"b2", "R">> :> 0 @@ <<"s1", "R">> :> 0 @@ <<"s1", "N">> :> 0 ),
+     kp |-> ( <<"b2", "R">> :> {} @@ <<"s1", "R">> :> {11} @@ <<"s1", "N">> :> {} ),
+     bk |-> [s1 |-> 0, s2 |-> 0, s3 |-> 0], ud |-> {}]
+/\ jr = [b2 |-> [st |-> "none", files |-> {}], s1 |-> [st |-> "open", files |-> {"R", "N"}]]
+/\ gh = [told |-> [s1 |-> "none", s2 |-> "none", s3 |-> "none"], ed |-> [R |-> 0]]
 
 =================================================
 """
@@ -80,24 +81,22 @@ class ReaderTest(unittest.TestCase):
         self.assertEqual(len(states), 2)
         first, second = states
         self.assertEqual(first["act"], {"a": "Init", "p": 0})
-        self.assertEqual(first["q"], [{"id": 1, "k": "recover", "w": 0, "wf": True, "conf": False, "req": "present",
-                                       "own": "switch"}])  # fmt: skip
+        self.assertEqual(first["app"], "recover")
         self.assertIsNone(first["run"])
-        self.assertEqual(second["run"]["req"], "gone")
-        self.assertEqual(second["ses"], {"app": "run", "stops": 2, "advice": "timer", "opened": [2]})
-        self.assertEqual(second["pst"], {"orphan": True, "mirror1": {"I": 3}})
-        self.assertEqual(second["eng"], {"st": "busy"})
-        self.assertEqual(second["ctl"], {"pc": "rd_load", "past": False, "rinit": False})
-        self.assertEqual(first["fs"], {"cur": {"R": 1, "N": 0, "I": 1}, "tc": {"s1/R": 0, "s1/N": -1},
-                                       "bk": {"s1": 0, "s2": 0, "s3": 0}, "rt": {"R": 0, "N": 0}})  # fmt: skip
-        self.assertEqual(first["jr"], {"b2": "none", "s1": "part"})
+        self.assertEqual(second["run"], {"k": "save", "id": "s1"})
+        self.assertEqual(second["ctl"], {"pc": "s_tw2"})
+        self.assertEqual(first["fs"], {"cur": {"R": 1, "N": 0, "I": 1}, "tc": {"s1/R": 0, "s1/N": 3},
+                                       "sg": {"s1/R": -1, "s1/N": 0}, "rt": {"s1/R": 0, "s1/N": 0},
+                                       "kp": {"s1/R": [11], "s1/N": []},
+                                       "bk": {"s1": 0, "s2": 0, "s3": 0}})  # fmt: skip
+        self.assertEqual(second["jr"], {"b2": "none", "s1": "open"})
         self.assertEqual(second["sv"], {"s": "s1", "fi": 2, "rj": "none", "plan": {"R": 1, "N": 0, "I": 1},
-                                        "rbt": "none", "skip": "none"})  # fmt: skip
+                                        "rbt": "none"})  # fmt: skip
         self.assertEqual(first["told"], {"s1": "none", "s2": "none", "s3": "none"})
 
     def test_a_state_without_a_replay_variable_is_refused(self) -> None:
         with self.assertRaises(ValueError):
-            GEN.read_trace(SAMPLE.replace("/\\ runs = {}\n", ""))
+            GEN.read_trace(SAMPLE.replace('/\\ app = "recover"\n', ""))
 
 
 class CorpusFormTest(unittest.TestCase):
@@ -105,19 +104,19 @@ class CorpusFormTest(unittest.TestCase):
 
     def test_the_deltas_rebuild_the_states(self) -> None:
         a = {"act": {"a": "Init"}, "run": None, "fs": {"x": 1}}
-        b = {"act": {"a": "UserSave"}, "run": None}
-        c = {"act": {"a": "Dispatch"}, "run": {"k": "save"}, "fs": {"x": 2}}
+        b = {"act": {"a": "StartSave"}, "run": None}
+        c = {"act": {"a": "S_Gate"}, "run": {"k": "save"}, "fs": {"x": 2}}
         steps = GEN.delta([a, b, c])
-        self.assertEqual(steps[1], {"act": {"a": "UserSave"}, "-": ["fs"]})
+        self.assertEqual(steps[1], {"act": {"a": "StartSave"}, "-": ["fs"]})
         self.assertEqual(GEN.undelta(steps), [a, b, c])
 
     def test_the_save_state_is_kept_only_around_a_save(self) -> None:
         def st(k: str | None) -> dict:
-            return {"run": None if k is None else {"k": k}, "fs": 1, "jr": 2, "sv": 3, "told": 4, "q": []}
+            return {"run": None if k is None else {"k": k}, "fs": 1, "jr": 2, "sv": 3, "told": 4, "app": "run"}
 
-        out = GEN.prune([st(None), st("read"), st("save"), st(None), st(None)])
+        out = GEN.prune([st(None), st("recover"), st("save"), st(None), st(None)])
         self.assertEqual(["fs" in s for s in out], [True, False, True, True, False])
-        self.assertEqual(out[1]["q"], [])
+        self.assertEqual(out[1]["app"], "run")
 
     def test_the_traces_that_add_branches_are_kept_first(self) -> None:
         def tr(*acts: str) -> list[dict]:
@@ -135,13 +134,12 @@ class WrapperTest(unittest.TestCase):
         names = {name for _, name, _ in GEN.actions(MODEL)}
         self.assertEqual(set(labelled), names - GEN.OUT)
         self.assertFalse(set(labelled) & GEN.OUT)
-        self.assertEqual(labelled.count("UserRead"), 1)
+        self.assertEqual(labelled.count("Editor"), 1)
 
-    def test_the_dispatch_is_taken_first_and_guards_are_applied(self) -> None:
-        text = GEN.wrapper(MODEL, ["cancel"])
-        self.assertIn("TNext == IF ENABLED Eager THEN TEager ELSE TOther", text)
-        self.assertIn("Eager == Dispatch \\/ DispatchUnavail \\/ SpawnStep", text)
-        self.assertIn('(\\E i \\in 1..Len(q) : UserCancelQueued(i) /\\ (FALSE) /\\ act\'', text)
+    def test_the_left_out_branches_are_guarded(self) -> None:
+        text = GEN.wrapper(MODEL, ["crash_in_save", "edit_at_swap"])
+        self.assertIn('(EngineCrash /\\ (run.k = "save") /\\ act\'', text)
+        self.assertIn('(\\E f \\in Files : Editor(f) /\\ (Busy /\\ run.k = "save" /\\ ctl.pc = "s_sw") /\\ act\'', text)
         for name, guard in GEN.GUARDS.items():
             self.assertIn(f"/\\ ({guard})", text, name)  # parenthesized (S0064: a guard with a disjunction)
 
@@ -155,14 +153,15 @@ class WrapperTest(unittest.TestCase):
             self.assertLessEqual(set(world["leave"]), set(GEN.LEAVE))
 
     def test_an_unreadable_disjunct_is_refused(self) -> None:
-        broken = MODEL.replace("\\/ Drain \\/ OrphanEnd", "\\/ (Drain) \\/ OrphanEnd")
+        broken = MODEL.replace("\\/ PathChange \\/ Unreach", "\\/ (PathChange) \\/ Unreach")
+        self.assertNotEqual(broken, MODEL)
         with self.assertRaises(SystemExit):
             GEN.actions(broken)
 
     def test_a_world_constant_that_does_not_exist_is_refused(self) -> None:
         worlds = dict(GEN.WORLDS)
         try:
-            GEN.WORLDS["X"] = {"base": "S_queue", "set": {"NoSuchConstant": "1"}}
+            GEN.WORLDS["X"] = {"base": "S_save_crash", "set": {"NoSuchConstant": "1"}}
             with self.assertRaises(SystemExit):
                 GEN.constants("X")
         finally:

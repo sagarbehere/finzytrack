@@ -25,7 +25,6 @@ from app.platform.engine_jobs.queue import JobSpec
 from app.platform.engine_jobs.scheduler import JobContext, Work, WorkResult
 from app.platform.engine_protocol import Violation, decode_rebuild
 from app.platform.observability.events import REBUILD_LOADED, REBUILD_NOT_LOADED
-from app.platform.tla import tla_action
 
 MAX_TRIES: Final = 3
 """§7: a moved fingerprint runs the load again, at most 3 times in a row."""
@@ -78,7 +77,6 @@ def _failed(failure: EngineFailure) -> RebuildResult:
     return Cancelled() if failure.kind == "cancelled" else NotLoaded("engine_failed")
 
 
-@tla_action("R4_Start")
 def run_rebuild(ctx: JobContext, target: RebuildTarget) -> RebuildResult:
     """The module's docstring: at most `MAX_TRIES` loads, each in a fresh engine, each uncounted."""
     hint = target.fingerprint

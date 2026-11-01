@@ -3,7 +3,9 @@
 ENGINEERING.md EP-19: the model comes with a two-way mapping table and a seeded mutant per property.
 These tests do not run TLC (formal/tla/engine-jobs/run_all.sh does); they check that the names line up:
 - every property and every mutant that design/specs/engine-jobs.md §13 names exists in the model and
-  in the configuration table, so a spec change that renames or adds one fails here until the model follows;
+  in the configuration table, and every one the table checks is named there (both ways, since S0072), so a spec
+  change that renames, adds or drops one fails here until the model follows;
+- every vacuity witness names a predicate of the model and a world of the table;
 - every property the configurations check has at least one mutant that must break it;
 - MAPPING.md lists exactly the actions of the model's Next relation;
 - the generated configurations are in step with gen_cfgs.py.
@@ -21,7 +23,6 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[2]
 DIR = REPO / "formal/tla/engine-jobs"
 SPEC = REPO / "design/specs/engine-jobs.md"
-HELPERS = {"JobIdsBounded", "QuitAnywayAlwaysEnabled"}  # model sanity, and a conjunct of EngineCanAlwaysBeFreed
 
 
 def _gen_cfgs():
@@ -47,10 +48,10 @@ def _model() -> str:
 
 def _next_actions(model: str) -> set[str]:
     names: set[str] = set()
-    for group in ("EngineStep", "AppStep", "UserStep", "EnvStep"):
+    for group in ("EngineStep", "UserStep", "EnvStep"):
         body = _between(model, f"\n{group} ==", "\n\n").split("==", 1)[1]
         names |= set(re.findall(r"\b([A-Z][A-Za-z0-9_]+)\b", body))
-    return names - {"WS", "Files", "Len", "E", "JobBound"}
+    return names - {"Files", "JIds", "E"}
 
 
 class EngineJobsModel(unittest.TestCase):
@@ -59,7 +60,7 @@ class EngineJobsModel(unittest.TestCase):
         cls.gen = _gen_cfgs()
         cls.model = _model()
         cls.s13 = _section13()
-        cls.checked = set(cls.gen.INVARIANTS) | set(cls.gen.SAFETY_PROPS) | set(cls.gen.LIVENESS)
+        cls.checked = set(cls.gen.INVARIANTS) | set(cls.gen.SAFETY_PROPS)
 
     def defined(self, name: str) -> bool:
         return re.search(rf"^{re.escape(name)}(\([^)]*\))? ==", self.model, re.M) is not None
@@ -69,27 +70,35 @@ class EngineJobsModel(unittest.TestCase):
         self.assertEqual(run.returncode, 0, run.stdout + run.stderr)
 
     def test_every_property_section13_names_is_defined_and_checked(self) -> None:
-        names = set(re.findall(r"`([A-Z][A-Za-z0-9]+)`", _between(self.s13, "**Safety properties:**", "**Seeded bugs")))
-        self.assertGreaterEqual(len(names), 30, "the §13 property list was not found")
+        names = set(re.findall(r"`([A-Z][A-Za-z0-9]+)`", _between(self.s13, "**Safety properties:**",
+                                                                  "**File-system assumptions**")))
+        self.assertGreaterEqual(len(names), 15, "the §13 property list was not found")
         missing = sorted(n for n in names if not self.defined(n))
         self.assertEqual(missing, [], "properties §13 names that the model does not define")
         unchecked = sorted(names - self.checked)
         self.assertEqual(unchecked, [], "properties §13 names that no configuration checks")
+        self.assertEqual(sorted(self.checked - names), [], "properties checked that §13 does not name")
 
     def test_every_mutant_section13_names_is_seeded_and_switchable(self) -> None:
         listed = set(re.findall(r"`([a-z0-9]+(?:_[a-z0-9]+)+)`",
-                                _between(self.s13, "**Already checked by two small executable models**", "**Not modelled")))
-        # §13's "thirty-five mutants of the two executable models", less the two of the R4 gate (S0068, ADR-0067)
-        self.assertEqual(len(listed), 33, "§13's mutants of the two executable models")
+                                _between(self.s13, "**Seeded bugs, each must fail its property**", "**Not modelled")))
         seeded = {m[0] for m in self.gen.MUTANTS}
         self.assertEqual(sorted(listed - seeded), [], "mutants §13 names that gen_cfgs.py does not run")
+        self.assertEqual(sorted(seeded - listed), [], "mutants gen_cfgs.py runs that §13 does not name")
         for name in seeded:
             self.assertTrue(f'"{name}"' in self.model, f"mutant {name} has no switch in EngineJobs.tla")
 
     def test_every_property_has_a_mutant_that_must_break_it(self) -> None:
         targeted = {m[2] for m in self.gen.MUTANTS}
-        self.assertEqual(sorted(self.checked - HELPERS - targeted), [])
+        self.assertEqual(sorted(self.checked - targeted), [])
         self.assertEqual(sorted(targeted - self.checked), [], "a mutant targets a property no configuration checks")
+
+    def test_every_witness_is_a_predicate_of_a_world(self) -> None:
+        self.assertGreaterEqual(len(self.gen.WITNESSES), 20)
+        for name, world in self.gen.WITNESSES:
+            self.assertTrue(name.startswith("W_") and self.defined(name), f"witness {name} is not defined")
+            self.assertIn(world, self.gen.WORLDS, f"witness {name} names no world")
+            self.assertEqual(self.gen.WORLDS[world][0], "S", f"witness {name} runs on a world outside the small tier")
 
     def test_mapping_lists_exactly_the_actions_of_next(self) -> None:
         mapping = (DIR / "MAPPING.md").read_text(encoding="utf-8")
@@ -115,7 +124,7 @@ class RunAllArgumentsTest(unittest.TestCase):
 
     def test_unknown_values_are_refused(self) -> None:
         for args in (["--tier", "S."], ["--tier", "S,,M"], ["--tier", ""], ["--kind", "mutants"],
-                     ["--only", "S_queue,NoSuch"]):  # fmt: skip
+                     ["--only", "S_save_crash,NoSuch"]):  # fmt: skip
             with self.subTest(args=args):
                 done = self.run_all(*args)
                 self.assertEqual(done.returncode, 2, done.stderr)
@@ -125,8 +134,8 @@ class RunAllArgumentsTest(unittest.TestCase):
     def test_known_values_list_their_configurations(self) -> None:
         done = self.run_all("--tier", "S", "--kind", "base")
         self.assertEqual(done.returncode, 0, done.stderr)
-        self.assertIn("S_queue", done.stdout)
-        done = self.run_all("--only", "S_queue,S_cancel")
+        self.assertIn("S_save_crash", done.stdout)
+        done = self.run_all("--only", "S_save_crash,S_copy")
         self.assertEqual(done.returncode, 0, done.stderr)
         self.assertEqual(len(done.stdout.splitlines()), 2)
 

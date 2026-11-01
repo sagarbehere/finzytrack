@@ -32,7 +32,6 @@ from ledger_engine.ledger import beancount_port as port
 from ledger_engine.ledger import fingerprint as _fingerprint
 from ledger_engine.ledger.core.ledger_set import Fingerprint, LedgerSet
 from ledger_engine.ledger.overlay import documents_roots
-from ledger_engine.tla import tla_action
 
 type Phase = Literal["updating_views"]
 PHASE: Final[Phase] = "updating_views"
@@ -108,7 +107,6 @@ def _wider(a: LedgerSet, b: LedgerSet) -> LedgerSet | None:
     )
 
 
-@tla_action("R4_Load", "R4_Check")
 def run(ports: Ports, hint: Fingerprint, job: Job) -> Answer:
     """The module's docstring: reads the ledger, writes nothing."""
     ledger_set = hint.ledger_set

@@ -11,17 +11,14 @@ model in two ways only, and every step it takes is a step of the model's `Next`,
 `Spec`:
 
 - each step is labelled with its action (`act`), so the replay knows what happened;
-- the app's own dispatch (`Dispatch`, `DispatchUnavail`, `SpawnStep`) is taken first whenever it is enabled: the
-  queue table dispatches inside the step of the event that allows it (§3), so a model interleaving in which the
-  user acts between that event and the dispatch has no counterpart in the code;
-- the actions in OUT are left out (their behaviour belongs to later pieces; the replay could only stop there).
+- the actions in OUT are left out (their behaviour is replayed elsewhere or later; the replay could only stop there).
 
-The corpus keeps, per state, only the variables the replays read (`KEEP_VARS`: the queue's, and around saves the
-file system, the records and what the user was told, `prune`; `engine/tests/ledger/test_save_conformance.py` replays
-the saves through the engine), each trace as deltas, and records the SHA-256 of the model, of each world's `.cfg`, of
-this script and of the TLA+ tools, so `backend/tests/platform/test_engine_jobs_conformance.py` fails on a stale
-corpus with this command in its message. The reader of TLC's trace values below reads only the shapes those
-variables use (records, sequences, sets, functions, strings, integers, booleans) and refuses anything else.
+The corpus keeps, per state, only the variables the save replay reads (`KEEP_VARS`; around saves the file system, the
+records and what the save was told, `prune`; `engine/tests/ledger/test_save_conformance.py` replays the saves through
+the engine), each trace as deltas, and records the SHA-256 of the model, of each world's `.cfg`, of this script and of
+the TLA+ tools, so the replay fails on a stale corpus with this command in its message. The reader of TLC's trace
+values below reads only the shapes those variables use (records, sequences, sets, functions, strings, integers,
+booleans) and refuses anything else.
 """
 
 from __future__ import annotations
@@ -47,169 +44,110 @@ CORPUS = HERE / "traces" / "corpus.json"
 COMMAND = "python3 formal/tla/engine-jobs/gen_traces.py"
 
 # The small worlds walked, each a committed world (`cfg/<base>.cfg`) with a few constants changed (`set`) and some
-# branches left out (`leave`, names in LEAVE): the queue, Cancel's one rule and the engine; the engine lock at boot;
-# the stop bound, its window and Try again. `traces` are kept, of at most `depth` states, each with at least `least`
-# states: TLC walks CANDIDATES times as many and, of the long enough ones, those that add the most branches are kept
-# (`select`; a world runs out of things to do early when the boot is cancelled, say). Kept small: the test replays every trace through the table and through
-# the shell in seconds.
+# branches left out (`leave`, names in LEAVE): outside edits, an engine death and an I/O error anywhere in the save
+# (one save; then two or three, the second replacing the file the first created, so its rollback restores both).
+# `traces` are kept, of at most `depth` states, each with at least `least` states: TLC walks CANDIDATES times as many
+# and, of the long enough ones, those that add the most branches are kept (`select`). Kept small: the test replays
+# every trace through the engine's save in seconds.
 WORLDS: dict[str, dict[str, Any]] = {
-    "S_queue": {"base": "S_queue", "traces": 12, "depth": 50, "least": 20, "leave": ["boot_cancel"]},
-    # every job runs to its end: a save's R4 queued behind a background save (the oldest background job first)
-    "S_queue_done": {
-        "base": "S_queue", "set": {"MaxCrash": "0"}, "traces": 6, "depth": 60, "least": 30, "leave": ["cancel"],
-    },
-    "S_cancel": {"base": "S_cancel", "traces": 12, "depth": 40, "least": 14, "leave": []},
-    # S0064: a closed tab while its read is queued
-    "S_close": {"base": "S_cancel", "traces": 6, "depth": 40, "least": 10, "leave": ["boot_cancel", "close_queued_read"]},
-    "S_recover_lock": {"base": "S_recover_lock", "traces": 8, "depth": 40, "least": 2, "leave": []},
-    # saves that finish and their R4 (S0068: a background job with no disk effect)
-    "S_r4_fresh": {
-        "base": "S_r4_ends", "set": {"MaxCrash": "0", "MaxPower": "0", "MaxReads": "0"}, "traces": 6, "depth": 80,
-        "least": 30, "leave": ["cancel"],
-    },
-    # R4's engine death, and the window letting that one stop go below the bound (S_r4_attempts walked it before S0068)
-    "S_r4_crash": {
-        "base": "S_r4_ends", "set": {"MaxPower": "0", "MaxReads": "0", "MaxExpire": "1"}, "traces": 8, "depth": 80,
-        "least": 16,
-        "leave": ["cancel", "crash_in_r4"],
-    },
-    # one stop makes the engine unavailable: the queued jobs end without one, the window, Try again
-    "S_queue_bound1": {
-        "base": "S_queue", "set": {"StopBound": "1", "MaxExpire": "1"}, "traces": 10, "depth": 50, "least": 16,
-        "leave": ["cancel"],
-    },
-    # BL-0159 (S0064): a Cancel of a queued read meeting a background save, before and past its commit point
-    "S_cancel_bg": {
-        "base": "S_queue", "set": {"MaxSaves": "0", "MaxCrash": "0", "MaxEdits": "0"}, "traces": 10, "depth": 50,
-        "least": 16, "leave": ["cancel_behind_bg_save"],
-    },
-    # BL-0159: a Cancel of a queued save meeting a running R4 (R4 is ended by another's Cancel)
-    "S_cancel_r4": {
-        "base": "S_r4_ends", "set": {"MaxCrash": "0", "MaxPower": "0", "MaxReads": "0"}, "traces": 8, "depth": 80,
-        "least": 30, "leave": ["cancel_behind_r4", "save_behind_r4"],
-    },
-    # BL-0151 slice 5, BL-0159: recover-all's listing, a Cancel after it, an engine death, the fresh engine and,
-    # with the bound reached, its unavailable branch (two boot journals; StopBound 2)
-    "S_recover_bound": {"base": "S_recover_bound", "traces": 10, "depth": 40, "least": 8, "leave": []},
-    "S_recover": {"base": "S_recover", "traces": 8, "depth": 40, "least": 8, "leave": []},
-    # BL-0151 slice 5: the save path replayed through the engine's save over the in-memory file system: outside
-    # edits, an engine death and an I/O error anywhere in the save (one save; then two, the second replacing the
-    # file the first created, so its rollback restores both)
     "S_save": {
-        "base": "S_save_crash", "set": {"MaxEdits": "0"}, "traces": 16, "depth": 60, "least": 10,
-        "leave": ["cancel", "crash_in_save"],
+        "base": "S_save_crash", "set": {"MaxEdits": "0"}, "traces": 20, "depth": 40, "least": 5,
+        "leave": ["crash_in_save"],
     },
     "S_save_edit": {
-        "base": "S_save_crash", "set": {"MaxIO": "0"}, "traces": 12, "depth": 60, "least": 16,
-        "leave": ["cancel", "edit_before_commit", "crash_in_save"],
+        "base": "S_save_crash", "set": {"MaxIO": "0"}, "traces": 12, "depth": 40, "least": 5,
+        "leave": ["edit_before_commit", "crash_in_save"],
     },
     "S_save_edit_late": {
-        "base": "S_save_crash", "set": {"MaxIO": "0"}, "traces": 12, "depth": 60, "least": 16,
-        "leave": ["cancel", "edit_past_commit", "crash_past_commit"],
+        "base": "S_save_crash", "set": {"MaxIO": "0"}, "traces": 12, "depth": 40, "least": 10,
+        "leave": ["edit_past_commit", "crash_past_commit"],
     },
-    # a Cancel of a save (its own, or of a read queued behind it) before or past its commit point, outside edits
-    "S_save_cancel": {"base": "S_cancel_commit", "traces": 12, "depth": 50, "least": 8, "leave": ["boot_cancel"]},
+    # S0072 (BL-0161): an outside save at the swap, moved to its kept name; the rollback then stops on the kept copy
+    "S_save_kept": {
+        "base": "S_save_crash", "set": {"MaxIO": "0", "MaxCrash": "0", "EdFiles": '{"R"}'}, "traces": 6,
+        "depth": 40, "least": 10, "leave": ["edit_at_swap"],
+    },
+    # S0072 (BL-0161): an I/O error before the displaced check: the rollback's check keeps the temp's outside save
+    "S_save_kept_io": {
+        "base": "S_save_crash", "set": {"MaxCrash": "0", "EdFiles": '{"R"}'}, "traces": 6, "depth": 40,
+        "least": 10, "leave": ["edit_at_swap", "io_at_compare"],
+    },
+    # S0072 (BL-0161): a file put at the path the save creates, past the gate: the code never touches it
+    "S_save_created_taken": {
+        "base": "S_save_crash", "set": {"MaxIO": "0", "MaxCrash": "0", "EdFiles": '{"N"}'}, "traces": 6,
+        "depth": 40, "least": 6, "leave": ["edit_past_commit"],
+    },
     "S_save_io": {
-        "base": "S_save_crash", "set": {"MaxCrash": "0", "MaxSaves": "2", "MaxEdits": "0", "MaxReads": "0"},
-        "traces": 16, "depth": 90, "least": 30, "leave": ["cancel", "save_after_r4"],
+        "base": "S_save_two", "set": {"MaxCrash": "0"}, "traces": 16, "depth": 60, "least": 20, "leave": [],
     },
     # the second save's faults: it replaces the file the first created, so its rollback restores both files; a third
     # save is refused while the second's journal is open
     "S_save_two": {
-        "base": "S_save_crash", "set": {"MaxSaves": "3", "MaxEdits": "0", "MaxReads": "0", "MaxIO": "1"},
-        "traces": 16, "depth": 120, "least": 40, "leave": ["cancel", "save_after_r4", "second_save_faults"],
+        "base": "S_save_two", "set": {"MaxSaves": "3"}, "traces": 16, "depth": 80, "least": 30,
+        "leave": ["second_save_faults"],
     },
     "S_save_restore": {
-        "base": "S_save_crash", "set": {"MaxSaves": "2", "MaxEdits": "0", "MaxReads": "0", "MaxCrash": "0"},
-        "traces": 10, "depth": 100, "least": 40, "leave": ["cancel", "save_after_r4", "second_save_faults",
-                                                           "io_after_first_swap"],
+        "base": "S_save_two", "set": {"MaxCrash": "0"}, "traces": 10, "depth": 60, "least": 30,
+        "leave": ["second_save_faults", "io_after_first_swap"],
     },
-    # round 1 (verifier F3): an outside edit of a file the save writes, after its backup, then an I/O error before the
-    # journal is open, so the save ends in the engine with "not saved, changed" (the re-hash, §11)
+    # an outside edit of a file the save writes, after its backup, then an I/O error before the journal is open, so
+    # the save ends in the engine with "not saved, changed" (the re-hash, §11)
     "S_save_io_edit": {
-        "base": "S_save_crash", "set": {"MaxCrash": "0", "MaxReads": "0", "EdFiles": '{"R", "N"}'}, "traces": 10, "depth": 60,
-        "least": 10, "leave": ["cancel", "edit_after_backup", "io_after_edit"],
+        "base": "S_save_crash", "set": {"MaxCrash": "0", "EdFiles": '{"R", "N"}'}, "traces": 10, "depth": 40,
+        "least": 8, "leave": ["edit_after_backup", "io_after_edit"],
     },
     # an engine death after the journal's close (the save has landed: told "saved" from the disk)
     "S_save_late_crash": {
-        "base": "S_save_crash", "set": {"MaxIO": "0", "MaxEdits": "0"}, "traces": 6, "depth": 60, "least": 20,
-        "leave": ["cancel", "crash_after_close"],
+        "base": "S_save_crash", "set": {"MaxIO": "0", "MaxEdits": "0"}, "traces": 6, "depth": 40, "least": 12,
+        "leave": ["crash_after_close"],
     },
-    # an engine death past the commit point (S0068: least 24, as no R4 runs after the death any more and most walks
-    # end at its drain, 22-38 states)
+    # an engine death past the commit point
     "S_save_io_crash": {
-        "base": "S_save_crash", "set": {"MaxSaves": "2", "MaxEdits": "0", "MaxReads": "0"}, "traces": 16,
-        "depth": 90, "least": 24, "leave": ["cancel", "crash_past_commit", "save_after_r4"],
+        "base": "S_save_two", "set": {"MaxEdits": "0"}, "traces": 16, "depth": 60, "least": 10,
+        "leave": ["crash_past_commit"],
     },
 }  # fmt: skip
 CANDIDATES = 20
 SEED = 20261029
-EAGER = ("Dispatch", "DispatchUnavail", "SpawnStep")
 OUT = frozenset(
     {
         # BL-0153: create and copy (their jobs never start, so their steps never run)
-        "UserCreate", "UserCopy",
-        "CP_Check", "CP_Load", "CP_Commit", "CP_Manifest",
-        "CR_Target", "CR_WriteA", "CR_SyncA", "CR_ReadBack", "CR_Load", "CR_Commit",
-        "CR_ManifestTemp", "CR_ManifestRename", "CR_ManifestSync", "CR_Register",
-        # BL-0154: the switch, Reopen, the screens, quit, update, the next start; the app's crash and a power loss
-        # end the session, whose next start is the boot's
-        "UserSwitch", "UserStay", "UserRetry", "UserBack", "UserOpenAnother", "UserKeep",
-        "UserQuit", "UserQuitAnyway", "Relaunch", "CloseA", "QuitClose", "AppCrash", "PowerLoss",
+        "StartCreate", "StartCopy", "EditorDrop", "EditorOverwrite",
+        # BL-0164: recover-all through the engine, and Keep; the app's crash and a power loss end the session, whose
+        # next start is recover-all's; the path changer and the unreachable disk act on boot journals only
+        "StartRecover", "Keep", "Relaunch", "AppCrash", "PowerLoss", "PathChange", "Unreach",
     }
 )  # fmt: skip
-# Branches of an action that belong to a later piece, left out the same way (the replay stops on each, should one
-# ever reach it).
-GUARDS: dict[str, str] = {
-    # BL-0152: the open job's engine death ends the switch on its failed screen (recover-all's death and its Cancel
-    # after the listing are walked since S0064, BL-0151 slice 5)
-    "EngineCrash": '~(Busy /\\ RJ.k = "open")',
-    # BL-0152: the open job (the boot's open of a workspace whose mirror is out of date, as after an outside edit
-    # during the boot)
-    "Assess": '~(\\E i \\in 1..Len(q\') : q\'[i].k = "open")',
-    "Editor": 'ses.app # "boot"',
-}
-# Branches a world may leave out so that its traces reach further (each trace is still a behaviour of Spec): the
-# boot's own Cancel (a cancelled boot opens nothing, and its world has nothing left to do), or every Cancel (a save
-# then reaches its R4).
+# Branches of an action that belong to a later piece, left out the same way (none since S0072).
+GUARDS: dict[str, str] = {}
+# Branches a world may leave out so that its traces reach further (each trace is still a behaviour of Spec).
 LEAVE: dict[str, dict[str, str]] = {
-    "boot_cancel": {"UserCancelRunning": '~(Busy /\\ RJ.own = "switch")', "UserCancelQueued": 'q[i].own # "switch"'},
-    "cancel": {"UserCancelRunning": "FALSE", "UserCancelQueued": "FALSE"},
-    # only the Cancels that meet a running background save (S0064, BL-0159), or a running R4
-    "cancel_behind_bg_save": {
-        "UserCancelRunning": "FALSE", "UserCancelQueued": 'Busy /\\ RJ.k = "save" /\\ ~RJ.wf',
-    },
-    "cancel_behind_r4": {"UserCancelRunning": "FALSE", "UserCancelQueued": 'Busy /\\ RJ.k = "r4"'},
-    # outside edits only while a save runs, before or past its commit point (S0064: an edit early in a walk makes
-    # every save refuse at its gate)
-    "edit_before_commit": {"Editor": 'Busy /\\ RJ.k = "save" /\\ ~ctl.past'},
-    "edit_past_commit": {"Editor": 'Busy /\\ RJ.k = "save" /\\ ctl.past'},
+    # outside edits only while a save runs, before or past its commit point (an edit early in a walk makes every
+    # save refuse at its gate)
+    "edit_before_commit": {"Editor": 'Busy /\\ run.k = "save" /\\ ctl.pc = "s_gate"'},
+    "edit_past_commit": {"Editor": 'Busy /\\ run.k = "save" /\\ ctl.pc # "s_gate"'},
+    # an edit just before the save's swap, so the swap displaces it (S0072: the kept move), and an I/O error only at
+    # the displaced check that follows (the rollback's check then keeps it)
+    "edit_at_swap": {"Editor": 'Busy /\\ run.k = "save" /\\ ctl.pc = "s_sw"'},
+    "io_at_compare": {"IOFail": 'ctl.pc = "s_cmp"'},
     # an edit after the save's backup and before its journal is open, and an I/O error only after the edit and before
-    # the journal is open (round 1, verifier F3: the re-hash then finds the edit)
-    "edit_after_backup": {"Editor": 'Busy /\\ RJ.k = "save" /\\ ctl.pc \\in {"s_bks", "s_jp", "s_jps"}'},
+    # the journal is open (the re-hash then finds the edit)
+    "edit_after_backup": {"Editor": 'Busy /\\ run.k = "save" /\\ ctl.pc \\in {"s_bks", "s_jp", "s_jps"}'},
     "io_after_edit": {"IOFail": 'ctl.pc \\in PreJournalPcs /\\ n.ed = MaxEdits'},
-    # an engine death only where a world wants it (S0064: with one death allowed, recover-all at boot took it first)
-    "crash_in_r4": {"EngineCrash": 'RJ.k = "r4"'},
-    "crash_in_save": {"EngineCrash": 'RJ.k = "save"'},
-    "crash_past_commit": {"EngineCrash": 'RJ.k = "save" /\\ ctl.past'},
-    "crash_after_close": {"EngineCrash": 'RJ.k = "save" /\\ ctl.pc \\in {"s_csync", "s_saved", "s_pub", "s_rel"}'},
-    # a second save only while an R4 runs, so a Cancel of it meets the R4 (S0064)
-    "save_behind_r4": {"UserSave": 'n.save = 0 \\/ (Busy /\\ RJ.k = "r4")'},
-    # a second save only once the first has ended (S0064: a save asked for while the first runs is planned on the
-    # mirror from before it, so its gate refuses it; S0068: no R4 runs inside a save any more)
-    "save_after_r4": {"UserSave": 'n.save = 0 \\/ ~Busy'},
-    # faults only in the second save (S0064)
-    "second_save_faults": {"IOFail": 'ctl.s = "s2"', "EngineCrash": 'RJ.k = "save" /\\ ctl.past /\\ ctl.s = "s2"'},
+    # an engine death only where a world wants it (with one death allowed, recover-all at the start took it first)
+    "crash_in_save": {"EngineCrash": 'run.k = "save"'},
+    "crash_past_commit": {"EngineCrash": 'run.k = "save" /\\ ctl.pc # "s_gate"'},
+    "crash_after_close": {"EngineCrash": 'run.k = "save" /\\ ctl.pc \\in {"s_csync", "s_saved"}'},
+    # faults only in the second save
+    "second_save_faults": {"IOFail": 'ctl.s = "s2"', "EngineCrash": 'run.k = "save" /\\ ctl.pc # "s_gate" /\\ ctl.s = "s2"'},
     # an I/O error in the second save only once it has replaced its first file, so its rollback puts pre bytes back
     "io_after_first_swap": {"IOFail": 'ctl.s = "s2" /\\ fs.cur["N"] = PostV("s2")'},
-    # a closed tab only while its read is queued (S0064)
-    "close_queued_read": {"UserCloseTab": '\\E i \\in 1..Len(q) : q[i].id = id /\\ q[i].k = "read"'},
 }  # fmt: skip
-KEEP_VARS = ("act", "q", "runs", "eng", "ctl", "ses", "pst", "fs", "jr", "gh")
+KEEP_VARS = ("act", "app", "run", "ctl", "fs", "jr", "gh")
 
 # -- the model's Next, read from its source --------------------------------------------------------------------------
 
-GROUPS = ("EngineStep", "AppStep", "UserStep", "EnvStep")
+GROUPS = ("EngineStep", "UserStep", "EnvStep")
 DISJUNCT = re.compile(r"^((?:\\E\s+[a-z]+\s+\\in\s+[^:]+:\s*)?)([A-Za-z_][A-Za-z0-9_]*)(\(([^()]*)\))?$")
 
 
@@ -243,8 +181,8 @@ def actions(model: str) -> list[tuple[str, str, str]]:
 
 
 def wrapper(model: str, leave: list[str]) -> str:
-    """The trace module: the model's Next with each step labelled, the dispatch first, OUT left out, and the guarded
-    branches left out."""
+    """The trace module: the model's Next with each step labelled, OUT left out, and the guarded branches left
+    out."""
     guards = {n: [g] for n, g in GUARDS.items()}
     for name in leave:
         for n, g in LEAVE[name].items():
@@ -262,21 +200,16 @@ def wrapper(model: str, leave: list[str]) -> str:
     unknown = OUT - names
     if unknown:
         raise SystemExit(f"OUT names actions the model does not have: {sorted(unknown)}")
-    eager = [d for d in every if d[1] in EAGER]
-    other = [d for d in every if d[1] not in EAGER and d[1] not in OUT]
+    kept = [d for d in every if d[1] not in OUT]
     lines = [
         "---------------------------- MODULE EngineJobsTrace ----------------------------",
-        "\\* written by gen_traces.py (S0059): the model's Next, each step labelled, the dispatch first",
+        "\\* written by gen_traces.py (S0059): the model's Next, each step labelled",
         "EXTENDS EngineJobs",
         "VARIABLE act",
         "TVars == <<vars, act>>",
         "TInit == Init /\\ act = [a |-> \"Init\", p |-> 0]",
-        "Eager == " + " \\/ ".join(name for _, name, _ in eager),
-        "TEager ==",
-        *[f"  \\/ {labelled(*d)}" for d in eager],
-        "TOther ==",
-        *[f"  \\/ {labelled(*d)}" for d in other],
-        "TNext == IF ENABLED Eager THEN TEager ELSE TOther",
+        "TNext ==",
+        *[f"  \\/ {labelled(*d)}" for d in kept],
         "=============================================================================",
     ]
     return "\n".join(lines) + "\n"
@@ -408,43 +341,37 @@ def read_trace(text: str) -> list[dict[str, Any]]:
 
 def compact(state: dict[str, Any]) -> dict[str, Any]:
     """Only the fields the replay reads, sets as sorted lists."""
-
-    def job(j: dict[str, Any]) -> dict[str, Any]:
-        return {k: j[k] for k in ("id", "k", "w", "wf", "conf", "req", "own")}
-
-    runs = state["runs"]["set"]
+    run = state["run"]
     return {
         "act": state["act"],
-        "q": [job(j) for j in state["q"]],
-        "run": job(runs[0]) if runs else None,
-        "eng": {"st": state["eng"]["st"]},
-        "ctl": {k: state["ctl"][k] for k in ("pc", "past", "rinit")},
-        "ses": {
-            **{k: state["ses"][k] for k in ("app", "stops", "advice")},
-            "opened": sorted(state["ses"]["opened"]["set"]),
-        },
-        "pst": {"orphan": state["pst"]["orphan"], "mirror1": state["pst"]["mirror"][0]["fp"]},
+        "app": state["app"],
+        "run": None if run["k"] == "none" else {"k": run["k"], "id": run["id"]},
+        "ctl": {"pc": state["ctl"]["pc"]},
         **save_state(state),
     }
 
 
 def save_state(state: dict[str, Any]) -> dict[str, Any]:
-    """S0064 (BL-0151 slice 5): what the engine's save replay reads (`engine/tests/ledger/test_save_conformance.py`):
-    the ledger files of workspace 1 and their temps, backups and restore temps (`fs`), each journal's state (`jr`),
-    the running save's progress (`sv`: its journal, file index, plan, the journal a restore is on, the rollback's
-    message, the file it skips) and what each save was told (`told`)."""
+    """S0064 (BL-0151 slice 5), S0072: what the engine's save replay reads (`engine/tests/ledger/test_save_conformance.py`):
+    the ledger files of workspace 1 and, per save journal and file, its temp, staging file, restore temp and kept
+    copies, and its backup (`fs`); each journal's state (`jr`); the running save's progress (`sv`: its journal, file
+    index, plan, the journal a restore is on, the rollback's message) and what each save was told (`told`)."""
     fs, ctl = state["fs"], state["ctl"]
+
+    def slots(fn: dict[str, Any]) -> dict[str, Any]:
+        return {f"{k[0]}/{k[1]}": v for k, v in fn["fn"] if k[0] in ("s1", "s2", "s3")}
+
     return {
         "fs": {
             "cur": {f: fs["cur"][f] for f in ("R", "N", "I")},
-            "tc": {f"{k[0]}/{k[1]}": v for k, v in fs["tc"]["fn"] if k[0] in ("s1", "s2", "s3")},
+            "tc": slots(fs["tc"]), "sg": slots(fs["sg"]), "rt": slots(fs["rt"]),
+            "kp": {k: sorted(v["set"]) for k, v in slots(fs["kp"]).items()},
             "bk": dict(fs["bk"]),
-            "rt": {f: fs["rt"][f] for f in ("R", "N")},
         },
         "jr": {j: rec["st"] for j, rec in state["jr"].items()},
         "sv": {
             "s": ctl["s"], "fi": ctl["fi"], "rj": ctl["rj"], "plan": {f: ctl["plan"][f] for f in ("R", "N", "I")},
-            "rbt": ctl["rbt"], "skip": ctl["skip"],
+            "rbt": ctl["rbt"],
         },
         "told": dict(state["gh"]["told"]),
     }  # fmt: skip
@@ -474,7 +401,6 @@ def header() -> dict[str, Any]:
         "candidates": CANDIDATES,
         "guards": GUARDS,
         "leave": LEAVE,
-        "eager": list(EAGER),
         "out": sorted(OUT),
         "command": COMMAND,
     }
@@ -573,8 +499,8 @@ def delta(trace: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 def undelta(steps: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """The states `delta` wrote (`backend/tests/platform/test_engine_jobs_conformance.py` and
-    `engine/tests/ledger/test_save_conformance.py` each hold a copy of these lines: neither may import this file)."""
+    """The states `delta` wrote (`engine/tests/ledger/test_save_conformance.py` holds a copy of these lines: it may
+    not import this file)."""
     states: list[dict[str, Any]] = []
     for step in steps:
         state = {**(states[-1] if states else {}), **step}

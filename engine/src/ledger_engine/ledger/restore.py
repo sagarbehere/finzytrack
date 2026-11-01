@@ -291,7 +291,7 @@ def _look_file(
         raise
 
 
-@tla_action("RB_Check")
+@tla_action("RS_Check")
 def _check(handles: Handles, record: Record, f: FileEntry, *, created: frozenset[str]) -> _Checked:
     """Step 2 for one file (the module's docstring)."""
     path = f.canonical_path
@@ -484,7 +484,7 @@ def _sync_folders(handles: Handles, folders: list[str]) -> None:
     handles.entry = None
 
 
-@tla_action("RS_Temps", "RS_Sync")
+@tla_action("RS_Sync", "RS_Clean", "RS_Temp", "RS_All")
 def _restore_all(handles: Handles, record: Record, checked: list[_Checked], removable: frozenset[str]) -> str | None:
     """Step 3 (the module's docstring); the canonical path of a created path that is `taken`, if any (then nothing
     more is done: the journal stops). The folders synced are every folder the record names, not only those this try

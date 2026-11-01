@@ -1,10 +1,9 @@
 # How to run the engine-jobs model checks
 
-The TLA+ model of `design/specs/engine-jobs.md` §13 (spec with simplification B of 2026-10-28: the engine lock, Back always recovers first; and of 2026-10-29: Retry recovers first too; model with fidelity review 4's fixes and simplification B, MAPPING.md §5). It runs as a plain shell script with Java;
-no AI is involved. MAPPING.md says what the model checks and how it maps to the spec. Since S0070 (ADR-0068 D1)
-the model is ahead of the code's simplification: its save's `S_Load` and `S_Recheck` have no effect in the code,
-and its background job after a save (`R4_Start`, `R4_Load`, `R4_Check`) is the code's rebuild after a save
-(MAPPING.md §2); S0072 cuts the model to durability (BL-0180). The model files and the numbers below are unchanged.
+The TLA+ model of the durable core of `design/specs/engine-jobs.md` (§13: the save, its rollback, recovery, Keep,
+create and copy under crashes, power loss, I/O errors and an outside editor; durability only, EP-19, ADR-0068 D5).
+It runs as a plain shell script with Java; no AI is involved. MAPPING.md says what the model checks and how it maps
+to the spec and the code.
 
 ## Before the first run
 
@@ -14,31 +13,29 @@ and its background job after a save (`R4_Start`, `R4_Load`, `R4_Check`) is the c
 
 ## The commands, per tier
 
-From the repository root (estimates for this Mac, measured or derived below):
+From the repository root:
 
 ```sh
-formal/tla/engine-jobs/run_all.sh --tier S                 # small worlds and every mutant: about 50 min
-formal/tla/engine-jobs/run_all.sh --tier M                 # medium: an estimated 5-30 min
-formal/tla/engine-jobs/run_all.sh --only L_save_all,L_save_deep,L_world               # large: hours
-formal/tla/engine-jobs/run_all.sh --only L_session         # one night each, alone (disk below)
-formal/tla/engine-jobs/run_all.sh --only L_recover_all
-formal/tla/engine-jobs/run_all.sh --only L_world           # the bounded simulation of the whole world
-formal/tla/engine-jobs/run_all.sh --kind mutant            # only the seeded bugs
+formal/tla/engine-jobs/run_all.sh --tier S                 # small worlds, every mutant and witness: about 1-2 min
+formal/tla/engine-jobs/run_all.sh --tier M                 # medium (M_recover_temps): not measured on this model
+formal/tla/engine-jobs/run_all.sh --tier L                 # large (L_save_all, L_recover_all, L_save_deep, L_world)
+formal/tla/engine-jobs/run_all.sh --only L_save_deep       # one configuration
+formal/tla/engine-jobs/run_all.sh --kind mutant            # only the seeded bugs (--kind witness: only the witnesses)
 formal/tla/engine-jobs/run_all.sh --list                   # what would run; runs nothing
 ```
 
 An unknown or empty `--tier`, `--kind` or `--only` value is refused (exit 2), so a typo never runs nothing quietly.
 Options: `--workers N` (TLC worker threads; default all cores), `--heap 12g` (default half the RAM),
 `--force` (run again configurations that already have a result). `SIM_TRACES=… SIM_DEPTH=…` size the simulation
-(default 200,000 traces of at most 200 steps).
+of `L_world` (default 200,000 traces of at most 200 steps).
 
 ## What it does
 
 - It runs the configurations in `configs.txt`, in that order. Each line says the result it must have:
-  - `PASS`;
-  - `VIOLATE:<property>` for a seeded bug (a mutant), or for `MUT_appscoped_runs` and
-    `MUT_finishing_confirmed_only`, which check a wording the spec replaced and must fail (reachability
-    checks, MAPPING.md §5).
+  - `PASS` for a base world (kind `base`);
+  - `VIOLATE:<property>` for a seeded bug (kind `mutant`);
+  - `VIOLATE:W_<name>` for a vacuity witness (kind `witness`): a base world with the negation of a branch as its
+    invariant, so TLC must find a state where the branch is reached (MAPPING.md §6.2).
 - One log per configuration: `results/<name>.log`. After every configuration it rewrites `results/SUMMARY.md`:
   result, expected result, distinct states, depth, wall time and distinct states per second, the total per
   tier, and **ALL AS EXPECTED** or **SURPRISES**. A log of an older model, `.cfg`, tool or simulation size
@@ -49,76 +46,45 @@ Options: `--workers N` (TLC worker threads; default all cores), `--heap 12g` (de
   run as `INCOMPLETE` with the states it reached, and writes the summary. Run the same command again to resume:
   a configuration is skipped while the model, its `.cfg`, the jar and the Java version are unchanged; the
   stopped one starts again from the beginning.
-- A large run's state folder can reach tens of GB: `L_session` and `L_recover_all` likely need 50-100 GB
-  free, the other large worlds 10-30 GB. Run those two alone with `--only`, one per night; `--tier L` runs
-  every large world in a row and could take two days or more. After a power loss during a run, delete
-  `formal/tla/engine-jobs/results/states/` by hand.
+- After a power loss during a run, delete `formal/tla/engine-jobs/results/states/` by hand.
 
 ## Reading the results
 
 | Result | Meaning |
 |---|---|
 | `PASS` as expected | the design holds in that world |
-| `VIOLATE:<property>` as expected | a mutant breaks exactly that property, so the model can catch that mistake (for the two reachability checks: the old wording still fails) |
+| `VIOLATE:<property>` as expected | a mutant breaks exactly that property, so the model can catch that mistake |
+| `VIOLATE:W_<name>` as expected | the world reaches that branch, so its `PASS` is not vacuous |
 | a row with "As expected = no" | needs a look: read its log (TLC prints the shortest trace that breaks the property) |
 
 ## How long it takes
 
-Measured on the owner's Mac (Apple M4 Pro, 14 cores, 48 GB) on 2026-10-31 with 14 TLC workers, on the
-model after S0068 (ADR-0067: the job after a save, `R4_*`, is background work with no disk effect; model sha256 e572cbc11832). Other work
-may have loaded the Mac during these runs, so single times can be up to twice what a quiet Mac gives. Earlier
-models' numbers are in git history.
+Measured on the owner's Mac (Apple M4 Pro, 14 cores, 48 GB) on 2026-11-01 with 14 TLC workers, on the model of S0072
+(model sha256 b64de22155e2). Earlier models' numbers (the queue, the screens and liveness) are in git history.
 
 | Tier | Configurations | Result | Size | Wall time |
 |---|---|---|---|---|
-| S | 27 safety worlds | all PASS | 2,548 (`S_create_nonempty`) to 5,840,976 distinct states (`S_fs_weak`); 27.9 million together | 1 s to 322 s each (`S_save_quit_power`); 1,277 s together |
-| S | 5 liveness worlds (`LS_boot`, `LS_quit`, `LS_free`, `LS_free_cc`, `LS_free_orphan`) | all PASS | up to 782,677 (`LS_boot`) | 490 s together (`LS_boot` 399 s) |
-| S | `LS_jobs` | **not re-run by the agent** (one run takes longer than an agent should wait); the owner's `--tier S` run covers it | 1,723,585 on an earlier model | 642 s on an earlier model |
-| S | 83 mutant configurations (81 mutants and the two reachability checks; the reviewers' own among them, MAPPING.md §6) | each violates its property | | 351 s of checking (longest `MUT_boot_waits_for_success`, 66 s) |
-| S | all of the above but `LS_jobs` | **all as expected, 115 configurations** | | 2,118 s of checking |
-| M | `LM_free`, `M_recover_temps` | not run on this model | | `LM_free`: 219 s on an earlier model; others below |
-| L | `L_save_all`, `L_session`, `L_recover_all`, `L_save_deep` | not run on this model | | estimate below |
-| L | `L_world` (bounded simulation) | not run on this model | default 200,000 traces of ≤ 200 steps (about 11.5 million states) | estimate below |
+| S | 14 base worlds | all PASS | 20 (`S_create_nonempty`) to 193,159 distinct states (`S_keep`) | 0-3 s each |
+| S | 27 mutants | each violates its property | | 0-2 s each |
+| S | 23 witnesses | each reached | | 0-2 s each |
+| S | all 64 | **all as expected** | | 68 s together |
+| M | `M_recover_temps` | not run on this model (the owner's) | | |
+| L | `L_save_all`, `L_recover_all`, `L_save_deep`, `L_world` (bounded simulation) | not run on this model (the owner's, BL-0110) | | |
 
-Simplification B removed the orphaned engine's own steps, so the worlds where it wrote shrank:
-`S_recover_lock` 151,810 → 31,173 (74,675 before review 4 added the writing orphan). Worlds without an orphan
-kept their size (`S_save_crash` 2,814,748). The large worlds that had a writing orphan (`L_save_deep` and
-`L_world`, a lingering engine after an app crash; `L_recover_all`, `BootOrphan`) lose those interleavings, so
-the estimates below, made before review 4 added them, stand; in exchange any lingering engine now holds the
-engine lock (before, only one that held ledger-set locks counted), which adds a little where `MaxOrphan` is 1.
-`results/SUMMARY.md` lists every configuration, those never run here as "not run".
+The model lost the queue, the sessions' screens and the engine's processes in S0072, so its worlds are far smaller
+than before (`S_save_crash`: 2,711,371 distinct states before, 21,170 now). The medium and large worlds combine more
+faults (two or three saves, two power losses, three starts, every boot journal with its temps); they are expected to
+take minutes to an hour each, not measured yet.
 
-Estimates for what was not run, and how they were derived. The model grew between 84c8b8c9 and now: the
-small worlds have 1-6 times as many states as before (`S_save_crash` 573,953 → 3,377,888; `S_recover`
-440,068 → 2,282,270; `S_queue` about the same), mostly because Quit anyway and the screen exits now have
-no counters (§13 requires that). Distinct states per second stayed at 50,000-90,000 with 12 workers.
-- `M_recover_temps`: 7,890,754 states in 207 s at 84c8b8c9; now an estimated 8-50 million, 2-12 minutes.
-- `L_save_all`: at 84c8b8c9 it passed 23.5 million states in 10 minutes with the queue
-  almost at its peak (an estimated 50-100 million in all); now an estimated 50-600 million states,
-  between 10 minutes and 2 hours. S0068 removed the records and gate of the job after a save, so the worlds with a save shrank
-  (`S_save_crash` 2,814,748 → 2,711,371); these estimates stand as upper bounds.
-- `L_session`, `L_recover_all`: at 84c8b8c9 the queue was still growing fast after 20 minutes (40-58
-  million states); now likely beyond a billion states: many hours to a day each, and tens of GB of state
-  files. Optional; one per night with `--only`.
-- Fidelity review 2 grew the small worlds by 1-2.5 times (`S_switch` 2,266,121 → 6,570,883; `LS_boot`
-  564,830 → 921,756): Cancel of a switch's own job, a power loss in the quit-note world, the sync step of the job after a save.
-  The medium and large estimates above are from before it and may be low by that factor.
-- `L_save_deep`: a deeper `L_save_all` (two saves, two power losses, three starts): likely hours.
-- `L_world`: a bounded random simulation, not an exhaustive check (the whole world at once is far beyond a
-  laptop); 200,000 traces, an estimated 2-10 minutes. Raise `SIM_TRACES` for more coverage.
-- `LL_jobs` (the large liveness world of 84c8b8c9) is dropped: its properties are checked in the small
-  liveness worlds, and TLC checks liveness 20-40 times slower per state.
+## The conformance traces (S0064, S0072)
 
-## The conformance traces (S0059, S0064)
-
-`traces/corpus.json` holds TLC-simulated traces of small worlds that `backend/tests/platform/test_engine_jobs_conformance.py`
-replays through the queue table and the scheduler shell, and `engine/tests/ledger/test_save_conformance.py` through
-the engine's save over the in-memory file system (S0064; no Java at test time). Each trace is stored as steps that
-name only the variables that changed (`gen_traces.delta`). Regenerate it after any change to
+`traces/corpus.json` holds TLC-simulated traces of small save worlds that `engine/tests/ledger/test_save_conformance.py`
+replays through the engine's save over the in-memory file system (no Java at test time). Each trace is stored as
+steps that name only the variables that changed (`gen_traces.delta`). Regenerate it after any change to
 `EngineJobs.tla`, to a `.cfg` it uses or to the generator (the test fails until then, naming this command):
 
 ```sh
-python3 formal/tla/engine-jobs/gen_traces.py           # about 3.5 min (22 worlds); Java 21 and the pinned jar
+python3 formal/tla/engine-jobs/gen_traces.py           # a minute or two (12 worlds); Java 21 and the pinned jar
 python3 formal/tla/engine-jobs/gen_traces.py --check   # is the corpus current? (no Java)
 ```
 
@@ -127,7 +93,7 @@ how the model's actions map to the code.
 
 ## Changing the model
 
-- Edit `EngineJobs.tla`; edit the worlds and mutants in `gen_cfgs.py`, then run
+- Edit `EngineJobs.tla`; edit the worlds, mutants and witnesses in `gen_cfgs.py`, then run
   `python3 formal/tla/engine-jobs/gen_cfgs.py` (it rewrites `cfg/` and `configs.txt`).
 - `python3 -m unittest scripts/tests/test_tla_engine_jobs.py` checks that the property and mutant names still
   match the spec's §13 and that MAPPING.md lists exactly the model's actions.

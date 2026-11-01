@@ -1,70 +1,64 @@
 ------------------------------ MODULE EngineJobs ------------------------------
 (***************************************************************************)
-(* TLA+ model of design/specs/engine-jobs.md (draft 5 with the model      *)
-(* findings F1-F4, O1, N1-N3 and fidelity reviews 1-3 folded in,         *)
-(* c87ce786; the model fixes of fidelity review 4; simplification B of    *)
-(* 2026-10-28: the engine lock, Back always recovers first; 2026-10-29:   *)
-(* Retry recovers first too),                                             *)
-(* built only from that spec's §13 obligations and the sections it cites. *)
-(* MAPPING.md maps every spec rule and property to this file, both ways,  *)
-(* and lists what is abstracted away.                                      *)
+(* TLA+ model of the durable core of design/specs/engine-jobs.md: the     *)
+(* save (§6.1 step 8, §6.4), its rollback, recovery (§8.1), create and    *)
+(* copy (§8.2), under engine crashes, app crashes, power loss, I/O errors *)
+(* and an outside editor. Durability only (EP-19; ADR-0068 D5, S0072): no *)
+(* committed change is lost or torn, and recovery returns a committed     *)
+(* state. The queue, the switch, the boot screens, quit, Cancel, advice   *)
+(* and liveness are not here: their tables and stateful tests check them. *)
+(* The save, its rollback and recovery follow the code as built (S0072,   *)
+(* BL-0161): writes go through a staging name, an outside save met at a   *)
+(* name of ours is moved to a kept name (never swapped back), and nothing *)
+(* at a path the save was creating is ever touched. MAPPING.md maps every *)
+(* rule and property to this file, both ways, and lists what is left out. *)
 (*                                                                         *)
-(* World (§13): workspaces W1 = {R, N, I}, W2 = {R, J}, W3 = {K}; W1 and   *)
-(* W2 share R, W3 shares nothing; K lives on a disk that may become        *)
-(* unreachable. A save of W1 replaces R, creates N and leaves the include  *)
-(* I alone. Journals b2 (W2: R, J) and b3 (W3: K) may be left at boot by   *)
-(* crashed saves; s1..s3 are the journals of the saves made in the model.  *)
-(* File contents are version numbers: 0 absent, -1 torn, 1 initial,        *)
-(* 2 the boot journals' post bytes, 3..5 the posts of saves s1..s3,        *)
-(* 11..15 and 21..25 an outside editor's bytes.                            *)
+(* World: workspaces W1 = {R, N, I}, W2 = {R, J}, W3 = {K}; W1 and W2     *)
+(* share R; K lives on a disk that may become unreachable. A save of W1   *)
+(* replaces R and creates N (a later save replaces N too) and leaves the  *)
+(* include I alone. Journals b2 (W2: R, J) and b3 (W3: K) may be left at  *)
+(* boot by crashed saves; s1..s3 are the journals of the saves made here. *)
+(* File contents are version numbers: 0 absent, -1 torn, 1 initial, 2 the *)
+(* boot journals' post bytes, 3..5 the posts of s1..s3, 11..15 and 21..25 *)
+(* an outside editor's bytes.                                              *)
 (*                                                                         *)
-(* Durability: every name (ledger file, temp, backup, journal, target      *)
-(* name) holds its current content and the set of contents it may hold    *)
-(* after a power loss (`pl`). A write that is not synced adds the torn     *)
-(* and the absent outcomes; a rename that is not yet dir-synced keeps the  *)
-(* old outcome possible.                                                   *)
+(* Durability: every name holds its current content and the set of        *)
+(* contents it may hold after a power loss (`pl`, `tpl`, `sgpl`, `bkpl`).  *)
+(* A write that is not synced adds the torn and the absent outcomes; a    *)
+(* swap or rename that is not yet dir-synced keeps the old outcome        *)
+(* possible (a pending swap couples the file and its temp: `cp`).         *)
 (*                                                                         *)
-(* MUTANT selects one seeded bug ("none" = the spec as written).           *)
+(* The swap is assumed (spec §13): the best-effort mode on volumes        *)
+(* without it (§6.8, ADR-0068 D2) is outside this model.                  *)
+(*                                                                         *)
+(* MUTANT selects one seeded bug ("none" = the design as built).          *)
 (***************************************************************************)
 EXTENDS Integers, FiniteSets, Sequences, TLC
 
 CONSTANTS
-    MUTANT,         \* "none" or the name of one seeded bug (MAPPING.md, mutants)
-    UserBudget,     \* 0: user exits unbounded (safety); n > 0: at most n of them (liveness worlds driven by
-                    \* engine and app fairness assume the user eventually stops restarting work)
+    MUTANT,         \* "none" or the name of one seeded bug (MAPPING.md §6)
     BootJ,          \* subset of {"b2","b3"}: journals left by crashed saves at boot
-    BootTemps,      \* TRUE: a boot journal's file may have a temp beside it (cut, pre or post)
-    BootTorn,       \* TRUE: b3's journal is torn: its file list cannot be read (§8.1 "Afterwards")
-    BootTarget,     \* the workspace the first boot opens (0 = none)
-    BootOrphan,     \* TRUE: an engine of the crashed session still holds the engine lock at boot (§5.1)
+    BootTemps,      \* TRUE: a boot journal's file may have a staging file or a temp of ours beside it
+    BootTorn,       \* TRUE: b3's journal is torn: its file list cannot be read
     BootLink,       \* TRUE: after the crash, R's folder was replaced by a link (the path changer)
     EdFiles,        \* the ledger files the outside editor may write
-    StopBound,      \* S0040: stops in the window that make the engine Unavailable (3)
-    MaxSaves, MaxBg, MaxReads, MaxRebuild, MaxEdits, MaxCrash, MaxAppCrash,
-    MaxPower, MaxStarts, MaxSwitch, MaxHang, MaxStuck, MaxOrphan,
-    MaxUnreach, MaxLink, MaxForget, MaxIO, MaxClose, MaxUpdate,
-    MaxExpire, MaxDrop,
-    DoCopy,         \* TRUE: the user may copy W2 (app-scoped)
-    CreateTarget,   \* "none" | "absent" | "empty" | "nonempty"
-    DoQuit,         \* TRUE: the user may quit (graceful) or update
-    EdDurable,      \* TRUE: the outside editor's saves are durable (it syncs its folder); FALSE: §13's
-                    \* weaker file system, where its save and our unsynced operations persist independently
-    RestartAfterQuit, \* TRUE: a next start may follow a quit or Quit anyway (else only a crash or power loss)
-    CloseQueued,    \* TRUE: closing a tab may also hit a queued job (FALSE where only Cancel is the waiting user's exit)
-    JobBound        \* upper bound of job ids (liveness quantifies over 1..JobBound)
+    EdDurable,      \* TRUE: the editor's saves are durable (it syncs its folder); FALSE: §13's weaker file system
+    MaxSaves, MaxEdits, MaxCrash, MaxAppCrash, MaxPower, MaxStarts,
+    MaxUnreach, MaxLink, MaxIO, MaxDrop,
+    DoCopy,         \* TRUE: the user may copy W2
+    CreateTarget    \* "none" | "absent" | "empty" | "nonempty"
 
-ASSUME MUTANT \in STRING /\ BootJ \subseteq {"b2","b3"} /\ BootTarget \in 0..3
+ASSUME MUTANT \in STRING /\ BootJ \subseteq {"b2","b3"}
 ASSUME BootTorn => "b3" \in BootJ
 ASSUME CreateTarget \in {"none","absent","empty","nonempty"}
-ASSUME MaxSaves + MaxBg <= 3
+ASSUME MaxSaves <= 3
 
 ----------------------------------------------------------------------------
 (* Basic sets                                                              *)
 Files   == {"R","N","I","J","K"}
 Idx(f)  == CASE f = "R" -> 1 [] f = "N" -> 2 [] f = "I" -> 3 [] f = "J" -> 4 [] f = "K" -> 5
-WS      == {1, 2, 3}
 LS(w)   == CASE w = 1 -> {"R","N","I"} [] w = 2 -> {"R","J"} [] w = 3 -> {"K"} [] OTHER -> {}
-Tg      == {"R","N"}            \* what a W1 save writes: R replaced, N created
+Tg      == {"R","N"}            \* what a W1 save writes
 ABS     == 0
 TORN    == -1
 V0      == 1
@@ -76,838 +70,185 @@ JOrder  == <<"b2","b3","s1","s2","s3">>
 SId(i)  == JOrder[i + 2]
 PostV(s) == CASE s = "s1" -> 3 [] s = "s2" -> 4 [] s = "s3" -> 5 [] OTHER -> BPOST
 JFiles(j) == CASE j = "b2" -> {"R","J"} [] j = "b3" -> {"K"} [] OTHER -> Tg
-TSlots   == UNION {{<<j, f>> : f \in JFiles(j)} : j \in JIds}   \* a save's temp beside each file it names
+TSlots   == UNION {{<<j, f>> : f \in JFiles(j)} : j \in JIds}   \* the names of ours beside each file a journal names
 ROrd(j)  == CASE j = "b2" -> <<"R","J">> [] j = "b3" -> <<"K">> [] OTHER -> <<"R","N">>  \* root first
-WOrd     == <<"N","R">>        \* children first, root last (§6.1 step 8.3)
+RecOrd(j) == CASE j = "b2" -> <<"J","R">> [] j = "b3" -> <<"K">> [] OTHER -> <<"N","R">> \* the record's order
+WOrd     == <<"N","R">>        \* the save's order: children first, the root last (§6.1 step 8.3)
 Frn(f, v) == IF v = 10 + Idx(f) THEN 20 + Idx(f) ELSE 10 + Idx(f)
-CL       == {"closed"}       \* S0068 (ADR-0067): a landed save's record is terminal; R4 renames nothing
+CL       == {"closed"}
 OpenSt   == {"open","topen"}
 Names    == {"a","m","o","x"}   \* create target: a = a file the job writes, m = manifest, o = another name, x = prior content
 ZeroFP   == [f \in Files |-> 0]
-Reads    == {"read","rebuild"}
-Writing(k) == k \in {"save","create","copy"}
 Min(S)   == CHOOSE x \in S : \A y \in S : x <= y
 
-NoJ == [st |-> "none", pl |-> {"none"}, lin |-> 0, key |-> 0, files |-> {},
-        pre |-> ZeroFP, post |-> ZeroFP, why |-> "", old |-> FALSE]
+NoJ == [st |-> "none", pl |-> {"none"}, files |-> {}, pre |-> ZeroFP, post |-> ZeroFP, why |-> "", old |-> FALSE]
 BootSt(j) == IF j = "b3" /\ BootTorn THEN "topen" ELSE "open"
 BootJRec(j) == [NoJ EXCEPT !.st = BootSt(j), !.pl = {BootSt(j)}, !.old = TRUE,
-                  !.lin = IF j = "b2" THEN 2 ELSE 3, !.key = IF j = "b2" THEN 2 ELSE 3,
                   !.files = JFiles(j),
                   !.pre = [f \in Files |-> IF f \in JFiles(j) THEN V0 ELSE 0],
                   !.post = [f \in Files |-> IF f \in JFiles(j) THEN BPOST ELSE 0]]
-NoEnded == [k |-> "none", wf |-> FALSE, conf |-> FALSE, req |-> "present", past |-> FALSE]
-NoEng   == [p |-> 0, st |-> "none", user |-> FALSE, stuck |-> FALSE, reason |-> "none",
-            endBy |-> "none", ended |-> NoEnded]
-NoCtl   == [pc |-> "none", s |-> "none", plan |-> ZeroFP, past |-> FALSE, hung |-> FALSE,
-            fi |-> 1, rj |-> "none", tried |-> {}, ofp |-> ZeroFP, tries |-> 0, rbt |-> "none",
-            skip |-> "none", rinit |-> FALSE]
-Job(id, k, w, wf, conf, own, s, plan) ==
-    [id |-> id, k |-> k, w |-> w, wf |-> wf, conf |-> conf, req |-> "present",
-     own |-> own, s |-> s, plan |-> plan]
-NoCnt == [ed |-> 0, crash |-> 0, ac |-> 0, pw |-> 0, start |-> 0, sw |-> 0, hang |-> 0,
-          stuck |-> 0, orph |-> 0, unr |-> 0, link |-> 0, forget |-> 0, io |-> 0,
-          close |-> 0, upd |-> 0, exp |-> 0, drop |-> 0,
-          save |-> 0, bg |-> 0, read |-> 0, rebuild |-> 0, copy |-> 0, create |-> 0,
-          ua |-> 0]
+NoRun == [k |-> "none", id |-> "none"]
+NoCtl == [pc |-> "none", s |-> "none", plan |-> ZeroFP, fi |-> 1, rj |-> "none", tried |-> {},
+          rbt |-> "none", repl |-> FALSE, put |-> {}, taken |-> FALSE]
 
 ----------------------------------------------------------------------------
 VARIABLES
-    fs,    \* ledger files: cur, pl, save temps tc/tpl (per journal), backups bk/bkpl (per save), restore temps rt,
-           \* ud: files whose bytes came from a restore temp whose data was not synced (seeded bug only)
+    fs,    \* ledger files cur/pl; per journal and file: save temps tc/tpl, staging files sg/sgpl, restore temps
+           \* rt, kept copies kp; backups bk/bkpl per save; pending swaps cp/cpn/cpj; ud (seeded bug only)
     jr,    \* the records in local/*/journal/: one per journal id
-    pst,   \* other durable state: build, W1's registry key, quit notes (one per job), link, unreachable disk,
-           \* an engine of an earlier session that still holds the engine lock (orphan, ostuck), mirror
+    env,   \* the path changer's link, the unreachable disk, bytes written outside the ledger
     tgt,   \* the create's target folder: names c/pl, folder exists
-    ses,   \* the sidecar session: app phase, stage, open workspace, screen, stops, advice, locks
-    q,     \* the queue (a sequence of jobs)
-    runs,  \* the running job (a set so that AtMostOneJobRunning can be stated)
+    app,   \* "recover" (recover-all runs before any other work), "run", or "dead"
+    run,   \* the job the engine runs (one at a time, ADR-0064)
     ctl,   \* the running job's progress
-    eng,   \* the engine process(es) and their group
     n,     \* counters that bound the environment and the user
-    gh     \* ghost: what the user was told, and history the properties need
+    gh     \* ghost: what a save was told, and history the properties need
 
-vars == <<fs, jr, pst, tgt, ses, q, runs, ctl, eng, n, gh>>
+vars == <<fs, jr, env, tgt, app, run, ctl, n, gh>>
 
 ----------------------------------------------------------------------------
-(* Initial state: the first boot                                           *)
+(* Initial state: the first start                                          *)
 BootFiles == (IF "b2" \in BootJ THEN {"R","J"} ELSE {}) \cup (IF "b3" \in BootJ THEN {"K"} ELSE {})
 BI(f) == IF f \in BootFiles THEN {V0, BPOST} ELSE {V0}
-TI(j, v) == IF j \in BootJ /\ BootTemps
-            THEN (IF v = BPOST THEN {ABS, V0} ELSE {ABS, TORN, BPOST})
-            ELSE {ABS}
-RecJob(id) == Job(id, "recover", 0, TRUE, FALSE, "switch", "none", ZeroFP)
-PreFP(w) == [f \in Files |-> IF f \in LS(w) THEN (IF f = "N" THEN ABS ELSE V0) ELSE 0]
+\* what a crashed save may have left beside a boot journal's file: at pre, a cut write at the staging name or
+\* its synced temp; at post, the old object the swap moved to the temp name
+BTemps(j, v) == IF j \in BootJ /\ BootTemps
+                THEN (IF v = BPOST THEN {<<ABS, ABS>>, <<V0, ABS>>}
+                      ELSE {<<ABS, ABS>>, <<ABS, TORN>>, <<BPOST, ABS>>})
+                ELSE {<<ABS, ABS>>}
+RecJob == [k |-> "recover", id |-> "rc"]
+StartCtl == [NoCtl EXCEPT !.pc = IF MUTANT = "rv_boot_skips_recovery" THEN "none" ELSE "rc_init"]
 Init ==
   \E cR \in BI("R"), cJ \in BI("J"), cK \in BI("K"):
-  \E tR \in TI("b2", cR), tJ \in TI("b2", cJ), tK \in TI("b3", cK):
+  \E tR \in BTemps("b2", cR), tJ \in BTemps("b2", cJ), tK \in BTemps("b3", cK):
     LET c  == [f \in Files |-> CASE f = "R" -> cR [] f = "J" -> cJ [] f = "K" -> cK
                                  [] f = "N" -> ABS [] OTHER -> V0]
-        tc == [x \in TSlots |-> CASE x = <<"b2","R">> -> tR [] x = <<"b2","J">> -> tJ
-                                  [] x = <<"b3","K">> -> tK [] OTHER -> ABS]
+        tp(x) == CASE x = <<"b2","R">> -> tR [] x = <<"b2","J">> -> tJ [] x = <<"b3","K">> -> tK
+                   [] OTHER -> <<ABS, ABS>>
     IN
-    /\ fs = [cur |-> c, pl |-> [f \in Files |-> {c[f]}], tc |-> tc,
-             tpl |-> [x \in TSlots |-> {tc[x]}],
+    /\ fs = [cur |-> c, pl |-> [f \in Files |-> {c[f]}],
+             tc |-> [x \in TSlots |-> tp(x)[1]], tpl |-> [x \in TSlots |-> {tp(x)[1]}],
+             sg |-> [x \in TSlots |-> tp(x)[2]], sgpl |-> [x \in TSlots |-> {tp(x)[2]}],
+             rt |-> [x \in TSlots |-> ABS], kp |-> [x \in TSlots |-> {}],
              bk |-> [s \in SaveIds |-> ABS], bkpl |-> [s \in SaveIds |-> {ABS}],
-             rt |-> [f \in Files |-> ABS], ud |-> {},
+             ud |-> {},
              cp |-> [f \in Files |-> {}], cpn |-> [f \in Files |-> {}], cpj |-> [f \in Files |-> "none"]]
     /\ jr = [j \in JIds |-> IF j \in BootJ THEN BootJRec(j) ELSE NoJ]
-    /\ pst = [build |-> 1, reg1 |-> 1, notes |-> {}, lnk |-> BootLink, outside |-> 0,
-              unr |-> FALSE, orphan |-> BootOrphan, ostuck |-> FALSE,
-              last |-> BootTarget,
-              mirror |-> [w \in WS |-> [fp |-> PreFP(w), src |-> "open", build |-> 1]]]
+    /\ env = [lnk |-> BootLink, unr |-> FALSE, outside |-> 0]
     /\ tgt = [ex |-> CreateTarget \in {"empty","nonempty"},
               c  |-> [x \in Names |-> IF x = "x" /\ CreateTarget = "nonempty" THEN "frn" ELSE "no"],
               pl |-> [x \in Names |-> {IF x = "x" /\ CreateTarget = "nonempty" THEN "frn" ELSE "no"}]]
-    \* seeded bug rv_boot_skips_recovery (review 3): the boot opens without recover_all
-    /\ ses = [app |-> "boot", stage |-> IF MUTANT = "rv_boot_skips_recovery" THEN "assess" ELSE "recover",
-              opened |-> {}, from |-> 0,
-              target |-> BootTarget, screen |-> "none", sctx |-> "none", endedBy |-> "none",
-              stops |-> 0, advice |-> "none", locks |-> {}]
-    /\ q = IF MUTANT = "rv_boot_skips_recovery" THEN <<>> ELSE <<RecJob(1)>>
-    /\ runs = {}
-    /\ ctl = NoCtl
-    /\ eng = NoEng
-    /\ n = NoCnt
-    /\ gh = [told |-> [s \in SaveIds |-> "none"], cxl |-> [s \in SaveIds |-> FALSE],
-             pre |-> [s \in SaveIds |-> ZeroFP],
+    \* the start recovers every journal before any other work (ADR-0063, INV-32); seeded bug rv_boot_skips_recovery:
+    \* it does not
+    /\ app = IF MUTANT = "rv_boot_skips_recovery" THEN "run" ELSE "recover"
+    /\ run = IF MUTANT = "rv_boot_skips_recovery" THEN NoRun ELSE RecJob
+    /\ ctl = StartCtl
+    /\ n = [ed |-> 0, crash |-> 0, ac |-> 0, pw |-> 0, start |-> 0, unr |-> 0, link |-> 0, io |-> 0,
+            drop |-> 0, save |-> 0, create |-> 0, copy |-> 0]
+    /\ gh = [told |-> [s \in SaveIds |-> "none"], pre |-> [s \in SaveIds |-> ZeroFP],
              ed |-> [f \in Files |-> 0], edSeen |-> [f \in Files |-> FALSE],
-             acc |-> [f \in Files |-> {}],
-             edLoad |-> FALSE, outW |-> FALSE,
-             dropped |-> {}, ovBefore |-> FALSE, ovAfter |-> FALSE,
-             crOut |-> "none", crMsg |-> "none", crChecked |-> FALSE, crTold |-> "none", cpMan |-> FALSE, cpTold |-> "none",
-             ccDrop |-> FALSE]
+             dropped |-> {}, ovBefore |-> FALSE, ovAfter |-> FALSE, outW |-> FALSE]
 
 ----------------------------------------------------------------------------
 (* Helpers                                                                 *)
-Alive   == ses.app # "dead"
-Busy    == runs # {}
-RJ      == CHOOSE r \in runs : TRUE
-Unavail == ses.stops >= StopBound
-EngOK   == eng.st = "busy" /\ ~eng.stuck /\ ~ctl.hung
-Step(p) == Busy /\ ctl.pc = p /\ EngOK
-SpawnPcs == {"rc_spawn"}
+Busy    == run.k # "none"
+Step(p) == Busy /\ ctl.pc = p
 FP(w)   == [f \in Files |-> IF f \in LS(w) THEN fs.cur[f] ELSE 0]
-KeyOf(w) == IF w = 1 THEN pst.reg1 ELSE w
-\* §6.5: a workspace's records are those whose registry key or lineage id is the workspace's
-Match(j, w) == jr[j].st # "none" /\ (jr[j].lin = w \/ jr[j].key = KeyOf(w))
-OpenJ(w)    == {j \in JIds : jr[j].st \in OpenSt /\ Match(j, w)}
-RemoveAt(s, i) == SubSeq(s, 1, i - 1) \o SubSeq(s, i + 1, Len(s))
-InQ(id) == \E i \in 1..Len(q) : q[i].id = id
-QHas(P(_)) == \E i \in 1..Len(q) : P(q[i])
-Ended(r) == [k |-> r.k, wf |-> r.wf, conf |-> r.conf, req |-> r.req, past |-> ctl.past]
-Retired == IF eng.user THEN [eng EXCEPT !.st = "sig", !.reason = "retire"]
-           ELSE [eng EXCEPT !.st = "idle"]
-SigEng(reason, by) == [eng EXCEPT !.st = "sig", !.reason = reason, !.endBy = by, !.ended = Ended(RJ)]
-\* our end of a running job: its engine is signalled; a job between two engines holds none
-CancelEng(by) == IF eng.st = "busy" THEN SigEng("cancel", by) ELSE eng
-Spawned == [p |-> eng.p + 1, st |-> "busy", user |-> FALSE, stuck |-> FALSE, reason |-> "none",
-            endBy |-> "none", ended |-> NoEnded]
-Reused  == [eng EXCEPT !.st = "busy"]
-\* §5.1 (simplification B): the sidecar waits for the engine lock before its first engine, so no engine of
-\* this session runs while an engine of an earlier session still holds it (seeded bug no_engine_lock: no wait)
-EngLockFree == ~pst.orphan \/ MUTANT = "no_engine_lock"
-\* §5.1: a new engine only after the previous one is reaped and its group has no live member
-SlotFree == /\ EngLockFree
-            /\ \/ eng.p = 0 \/ (eng.st = "idle" /\ ~eng.user)
-               \/ (MUTANT = "spawn_before_reap" /\ eng.st = "sig")
-Fresh == IF eng.st = "idle" /\ ~eng.user THEN Reused ELSE Spawned
-SetTold(g, s, m) == [g EXCEPT !.told[s] = m]
+\* an unresolved journal that names a file of the files F (a torn one names every file: its list cannot be read)
+OpenOn(F) == {j \in JIds : jr[j].st = "topen" \/ (jr[j].st = "open" /\ jr[j].files \cap F # {})}
+SetTold(s, m) == gh' = [gh EXCEPT !.told[s] = m]
 \* §6.6 / §11: "unchanged" only after the targets were hashed again and equal their pre bytes
-Rehash(s) == IF MUTANT = "unchanged_without_rehash" \/ \A f \in Tg : fs.cur[f] = gh.pre[s][f]
-             THEN "unchanged" ELSE "changed"
-\* §6.6: the outcome after an engine death, a pure function of the records and file hashes
-\* (seeded bug rv4_outcome_open_notsaved, fidelity review 4: an .open journal reported "not saved")
+Rehash(s) == IF \A f \in Tg : fs.cur[f] = gh.pre[s][f] THEN "unchanged" ELSE "changed"
+\* §6.6: the outcome after an engine death, a pure function of the record and the file hashes
 DiskOutcome(s) == CASE jr[s].st \in CL -> "saved"
                     [] jr[s].st = "resolved" -> "notsaved"
-                    [] jr[s].st \in OpenSt -> IF MUTANT = "rv4_outcome_open_notsaved" THEN "notsaved" ELSE "unfinished"
+                    [] jr[s].st \in OpenSt \cup {"kept"} -> "unfinished"
                     [] OTHER -> Rehash(s)
-\* §4: another job's Cancel ends the running job only when nobody waits for it, the user did
-\* not confirm it, and it has not reached its commit point
-Endable(e) ==
-    CASE MUTANT = "r4_only" -> e.k = "r4"
-      [] MUTANT = "cancel_ends_writing_job" ->
-            e.k = "r4" \/ (Writing(e.k) /\ ~e.past) \/ (e.k \in Reads \cup {"open"} /\ e.req = "gone")
-      [] OTHER -> e.k = "r4" \/ (e.k = "save" /\ ~e.conf /\ ~e.past)
-                  \/ (e.k \in Reads \cup {"open"} /\ e.req = "gone")
-\* §3: during a switch, a Reopen and the boot, after the current workspace has closed, only its own jobs start
-\* §3 (F4): a switch that stops on its failed or blocked screen has done its own work, like the boot
-SwitchExclusive == ses.app = "boot"
-                   \/ (ses.app = "switch" /\ ses.stage # "quiesce"
-                       /\ ~(MUTANT # "screen_holds_queue" /\ ses.stage = "screen"))
-Elig(j) == IF SwitchExclusive THEN j.own = "switch" \/ (MUTANT = "app_scoped_during_recovery" /\ j.w = 0)
-           ELSE (j.own = "switch" /\ MUTANT = "recovery_while_open")
-                \/ (j.own # "switch" /\ (j.w = 0 \/ j.w \in ses.opened))
-EligIdx   == {i \in 1..Len(q) : Elig(q[i])}
-EligWfIdx == {i \in EligIdx : q[i].wf}
-\* §3: the oldest queued waited-for job; if none, the oldest background job
-Max(S) == CHOOSE x \in S : \A y \in S : x >= y
-PickIdx == CASE MUTANT = "newest_first" -> (IF EligWfIdx = {} THEN Max(EligIdx) ELSE Max(EligWfIdx))
-             [] MUTANT = "dispatch_by_arrival" \/ EligWfIdx = {} -> Min(EligIdx)
-             [] OTHER -> Min(EligWfIdx)
-Blocked(t) == \E j \in JIds :
-                 \/ jr[j].st = "topen"
-                 \/ /\ jr[j].st = "open" /\ jr[j].files \cap LS(t) # {}
-                    /\ (MUTANT = "recover_target_only" => jr[j].lin = t)
-RecUntried == {j \in JIds : jr[j].st \in OpenSt /\ j \notin ctl.tried
-                           /\ (MUTANT = "recover_target_only" => jr[j].lin = ses.target)}
-FirstJ(S) == JOrder[Min({i \in 1..Len(JOrder) : JOrder[i] \in S})]
-\* job ids are canonical: the lowest id not in use (a job's id is free again once it has left)
-UsedIds == {q[k].id : k \in 1..Len(q)} \cup {r.id : r \in runs}
-NewId == CHOOSE i \in 1..(JobBound + 1) : i \notin UsedIds /\ \A k \in 1..i - 1 : k \in UsedIds
-NewR4(w) == Job(NewId, "r4", w, FALSE, FALSE, "app", "none", ZeroFP)
-\* R4 is modelled for W1, the one workspace that saves (MAPPING.md §3); S0068 (ADR-0067): queued only by a landed
-\* save, at most one waiting per workspace, with no disk effect (it gates nothing)
-NeedR4(w) == w = 1 /\ ~QHas(LAMBDA j : j.k = "r4" /\ j.w = w)
-QueueR4(w) == IF NeedR4(w) THEN q \o <<NewR4(w)>> ELSE q
-\* the user's budget of exits (liveness worlds only; UserBudget = 0 leaves them unbounded)
-CanAct == UserBudget = 0 \/ n.ua < UserBudget
-Spent == IF UserBudget = 0 THEN n ELSE [n EXCEPT !.ua = @ + 1]
-\* recover-all marks the journal in hand blocking (only while it is .open: with the seeded bug
-\* resolve_before_restores_synced the journal in hand may already be .resolved)
-MarkWhy(j, why) == IF jr[j].st \in OpenSt THEN [jr EXCEPT ![j].why = why] ELSE jr
-NoteAfterKeep(J) == {nt \in pst.notes : ~(nt.k = "save" /\ nt.s \in J)}
-\* INV-32 (fidelity review 3, H1): when a boot or a switch's recovery begins, every journal on disk is
-\* "from before this start or switch" (`old`): EveryJournalRecoveredOrBlocking and
-\* NoOpenOverUnresolvedJournal then see journals that no recover-all has listed.
-\* Fidelity review 4 (M1): the reason an earlier recover-all gave is cleared when this recover-all is queued,
-\* so only this boot's or switch's recover-all can make a journal blocking (§8.1: "the open of the target
-\* starts only after every journal has been recovered or marked blocking")
-MarkOld == [j \in JIds |-> IF jr[j].st \in OpenSt THEN [jr[j] EXCEPT !.old = TRUE, !.why = ""] ELSE jr[j]]
-
-\* the switch's or the boot's failed screen (§9.1 step 6, §9.2)
-OpenFailSes == IF ses.app = "boot"
-               THEN [ses EXCEPT !.app = IF MUTANT = "boot_waits_for_success" THEN "boot" ELSE "run",
-                                !.stage = IF MUTANT = "boot_waits_for_success" THEN "screen" ELSE "none",
-                                !.screen = "failed", !.sctx = "boot", !.advice = "none"]
-               ELSE [ses EXCEPT !.stage = "screen", !.screen = "failed",
-                                !.sctx = IF ses.from = 0 THEN "boot" ELSE "switch", !.advice = "none"]
-\* §9.1 step 3, §9.2 (M4): the user cancelled the switch's or the boot's own queued job: "Switch
-\* cancelled." / "Opening cancelled." with Retry and Back or Open another workspace
-CancelledSes == IF ses.app = "boot"
-                THEN [ses EXCEPT !.app = "run", !.stage = "none", !.screen = "cancelled", !.sctx = "boot"]
-                ELSE [ses EXCEPT !.stage = "screen", !.screen = "cancelled",
-                                 !.sctx = IF ses.from = 0 THEN "boot" ELSE "switch"]
+EndJob == run' = NoRun /\ ctl' = NoCtl
 
 ----------------------------------------------------------------------------
-(* The job ends (final reply); the engine is retired if it ran user code (§5.1) *)
-JobEnd(e) == runs' = {} /\ ctl' = NoCtl /\ eng' = e
-EndSesAdv == [ses EXCEPT !.advice = "none"]
+(* USER ACTIONS: what starts work, and the way out of a stopped journal     *)
 
-\* §8.2: a stop before the manifest; the folder is listed when the job stops
-CrWrote == tgt.c["a"] = "ours" \/ tgt.c["m"] = "ours"
-CrOnlyOwn == \A x \in Names : tgt.c[x] \in {"no","ours"}
-CrStopGh(cause) ==
-  IF RJ.k = "create" THEN
-    gh' = [gh EXCEPT !.crOut = cause,
-                     !.crMsg = IF ~CrWrote THEN "not_created"
-                               ELSE IF MUTANT = "delete_message_always" \/ CrOnlyOwn THEN "delete_ok"
-                               ELSE "check_first"]
-  ELSE UNCHANGED gh
-
-\* The outcome of a running job that our end (Cancel, quiesce, close of its tab) ended.
-\* Used by every path that signals the engine with reason `cancel` (§4, §9.1 step 2).
-CancelEffects(by) ==
-  LET r == RJ IN
-  /\ JobEnd(CancelEng(by))
-  /\ CASE r.k = "save" ->
-            /\ gh' = [gh EXCEPT !.told[r.s] = Rehash(r.s),
-                                !.cxl[r.s] = TRUE]
-            /\ UNCHANGED <<ses, pst, q, n>>
-       [] r.k = "open" ->
-            /\ ses' = IF ses.app = "boot"
-                      THEN [ses EXCEPT !.app = "run", !.stage = "none", !.screen = "failed",
-                                       !.sctx = "boot", !.advice = "none"]
-                      ELSE [ses EXCEPT !.stage = "screen", !.screen = "failed",
-                                       !.sctx = IF ses.from = 0 THEN "boot" ELSE "switch", !.advice = "none"]
-            /\ UNCHANGED <<gh, pst, q, n>>
-       [] r.k \in {"create","copy"} ->
-            /\ CrStopGh("cancel")
-            /\ UNCHANGED <<ses, pst, q, n>>
-       [] OTHER -> UNCHANGED <<gh, ses, pst, q, n>>
-  /\ jr' = jr
-  /\ UNCHANGED <<fs, tgt>>
-
-\* recover_all has ended: every journal recovered or blocking. At boot the quit note is read.
-\* §9.3: each note (local/quit-notes/<job>.json) answered from the durable record or target
-SaveNoteMsg(sv) ==
-  LET st == jr[sv].st IN
-  CASE MUTANT = "quit_says_undone" -> "q_undone"
-    [] st \in CL -> "q_saved"
-    [] MUTANT = "quit_note_two_branches" -> "q_undone"
-    [] st \in {"resolved","none","part","tpart"} -> "q_undone"
-    [] st = "kept" -> "none"
-    [] OTHER -> "q_notyet"
-SaveNotes == {nt.s : nt \in {x \in pst.notes : x.k = "save"}}
-NoteNotes == {nt \in pst.notes : nt.k = "save" /\ SaveNoteMsg(nt.s) = "q_notyet"}   \* kept until answered
-NoteGh ==
-  [gh EXCEPT !.told = [sv \in SaveIds |-> IF sv \in SaveNotes /\ SaveNoteMsg(sv) # "none"
-                                          THEN SaveNoteMsg(sv) ELSE gh.told[sv]],
-             !.crTold = IF \E nt \in pst.notes : nt.k = "create"
-                        THEN (IF tgt.c["m"] = "ours" THEN "q_created" ELSE "q_notcreated") ELSE @,
-             !.cpTold = IF \E nt \in pst.notes : nt.k = "copy"
-                        THEN (IF gh.cpMan THEN "q_created" ELSE "q_notcreated") ELSE @]
-\* §6.6, §8.1 (F1): whichever way recover_all ends, the journal directories it lists are synced
-\* before the quit note or the open reads a record
-SyncCL(J) == [j \in JIds |-> IF MUTANT \notin {"outcome_unsynced","rc_unsynced"} /\ J[j].st \in CL
-                               THEN [J[j] EXCEPT !.pl = {J[j].st}] ELSE J[j]]
-RecoverEndEffects(e, J) ==
-  /\ jr' = SyncCL(J)
-  /\ JobEnd(e)
-  /\ ses' = [ses EXCEPT !.stage = "assess", !.locks = {}]
-  \* §8.1 "Afterwards", §9.3 (c87ce786, L1): the quit notes are answered at the end of every recover-all
-  \* (seeded bug notes_only_at_boot: only at the boot's)
-  /\ IF ses.app = "boot" \/ MUTANT # "notes_only_at_boot"
-     THEN /\ pst' = [pst EXCEPT !.notes = NoteNotes]
-          /\ gh' = NoteGh
-     ELSE UNCHANGED <<pst, gh>>
-  /\ UNCHANGED <<fs, tgt, q, n>>
-
-----------------------------------------------------------------------------
-(* USER ACTIONS                                                            *)
-
-\* a confirmed save of W1, planned on the published mirror (the preview read it)
-UserSave ==
-  /\ ses.app = "run" /\ 1 \in ses.opened /\ n.save < MaxSaves
-  /\ LET s == SId(n.save + n.bg + 1) IN
-     /\ q' = q \o <<Job(NewId, "save", 1, TRUE, TRUE, "user", s, pst.mirror[1].fp)>>
+\* a confirmed save of W1 (the preview read the plan's fingerprint just before: the plan is the disk now)
+StartSave ==
+  /\ app = "run" /\ ~Busy /\ n.save < MaxSaves
+  /\ LET s == SId(n.save + 1) IN
+     /\ run' = [k |-> "save", id |-> s]
+     /\ ctl' = [NoCtl EXCEPT !.pc = "s_gate", !.s = s, !.plan = FP(1)]
      /\ n' = [n EXCEPT !.save = @ + 1]
-     /\ gh' = [gh EXCEPT !.pre[s] = pst.mirror[1].fp]
-  /\ UNCHANGED <<fs, jr, pst, tgt, ses, runs, ctl, eng>>
+     /\ gh' = [gh EXCEPT !.pre[s] = FP(1)]
+  /\ UNCHANGED <<fs, jr, env, tgt, app>>
 
-\* preview or BQL: one transient load, waited-for
-UserRead(w) ==
-  /\ ses.app = "run" /\ w \in ses.opened /\ n.read < MaxReads
-  /\ q' = q \o <<Job(NewId, "read", w, TRUE, FALSE, "user", "none", ZeroFP)>>
-  /\ n' = [n EXCEPT !.read = @ + 1]
-  /\ UNCHANGED <<fs, jr, pst, tgt, ses, runs, ctl, eng, gh>>
-
-UserCreate ==
-  /\ Alive /\ ses.app \notin {"quit","update"} /\ CreateTarget # "none" /\ n.create = 0
-  /\ q' = q \o <<Job(NewId, "create", 0, TRUE, TRUE, "user", "none", ZeroFP)>>
+StartCreate ==
+  /\ app = "run" /\ ~Busy /\ CreateTarget # "none" /\ n.create = 0
+  /\ run' = [k |-> "create", id |-> "cr"] /\ ctl' = [NoCtl EXCEPT !.pc = "cr_tgt"]
   /\ n' = [n EXCEPT !.create = 1]
-  /\ UNCHANGED <<fs, jr, pst, tgt, ses, runs, ctl, eng, gh>>
+  /\ UNCHANGED <<fs, jr, env, tgt, app, gh>>
 
-UserCopy ==
-  /\ Alive /\ ses.app \notin {"quit","update"} /\ DoCopy /\ n.copy = 0
-  /\ q' = q \o <<Job(NewId, "copy", 0, TRUE, TRUE, "user", "none", ZeroFP)>>
+StartCopy ==
+  /\ app = "run" /\ ~Busy /\ DoCopy /\ n.copy = 0
+  /\ run' = [k |-> "copy", id |-> "cp"] /\ ctl' = [NoCtl EXCEPT !.pc = "cp_chk"]
   /\ n' = [n EXCEPT !.copy = 1]
-  /\ UNCHANGED <<fs, jr, pst, tgt, ses, runs, ctl, eng, gh>>
+  /\ UNCHANGED <<fs, jr, env, tgt, app, gh>>
 
-\* §4: Cancel on a queued job; for the job running ahead of it, the one rule.
-\* §9.1 step 3, §9.2 (M4): the switch's or the boot's own queued job (recover_all, the target's open)
-\* is the user's to cancel while it waits behind other work (a running job, or a process not ended)
-SwitchJobBehind(i) == q[i].own = "switch" /\ ses.app \in {"boot","switch"} /\ (Busy \/ ~SlotFree)
-CancelableQ(i) == /\ q[i].wf /\ q[i].req = "present"
-                  /\ \/ q[i].own \in {"user","app"}
-                     \/ SwitchJobBehind(i) /\ MUTANT # "switch_job_not_cancelable"
-UserCancelQueued(i) ==
-  /\ Alive /\ i \in 1..Len(q) /\ CancelableQ(i)
-  /\ LET j  == q[i]
-         q1 == RemoveAt(q, i)
-         g1 == IF j.k = "save" THEN [gh EXCEPT !.told[j.s] = "notsaved", !.cxl[j.s] = TRUE] ELSE gh
-         \* (seeded bug rv_cancel_keeps_stage, review 3: the switch stays in its stage)
-         s1 == IF j.own = "switch" /\ MUTANT # "rv_cancel_keeps_stage" THEN CancelledSes ELSE ses
-     IN
-     IF Busy /\ Endable(Ended(RJ)) /\ RJ.k # "recover"
-     THEN \* ends the running job: an R4 load, a background save before its commit point,
-          \* a read or an open whose requester has gone
-          LET r == RJ IN
-          /\ JobEnd(CancelEng("other"))
-          /\ q' = q1
-          /\ gh' = IF r.k = "save" THEN [g1 EXCEPT !.told[r.s] = Rehash(r.s), !.cxl[r.s] = TRUE] ELSE g1
-          \* M1: an open ended this way ends its switch or boot on the failed screen, as its own Cancel does
-          /\ ses' = IF r.k = "open" /\ MUTANT # "cancel_open_keeps_opening" THEN OpenFailSes
-                    ELSE [s1 EXCEPT !.advice = "none"]
-          /\ jr' = jr
-          /\ UNCHANGED <<fs, pst, tgt, n>>
-     ELSE
-          /\ q' = q1 /\ gh' = g1
-          /\ ses' = IF Busy /\ ~(RJ.k \in Reads \cup {"open","recover"} /\ RJ.req = "present")
-                       /\ MUTANT # "no_quit_message_for_writing"
-                    THEN [s1 EXCEPT !.advice = "cancel"]   \* "Your request is cancelled. The earlier ..."
-                    ELSE s1
-          /\ UNCHANGED <<fs, jr, pst, tgt, runs, ctl, eng, n>>
+\* recover-all again in the session: Retry, Back or a switch, which recover first (ADR-0063; spec §9.1)
+StartRecover ==
+  /\ app = "run" /\ ~Busy /\ MUTANT # "rv_boot_skips_recovery"
+  /\ \E j \in JIds : jr[j].st \in OpenSt
+  /\ app' = "recover" /\ run' = RecJob /\ ctl' = [NoCtl EXCEPT !.pc = "rc_init"]
+  /\ UNCHANGED <<fs, jr, env, tgt, n, gh>>
 
-\* §4: Cancel by the running job's own requester
-UserCancelRunning ==
-  /\ Alive /\ Busy /\ (eng.st = "busy" \/ ctl.pc \in SpawnPcs) /\ RJ.wf /\ RJ.req = "present"
-  /\ ~ctl.past \/ MUTANT = "cancel_after_commit"
-  \* recover_all waiting for a new engine holds none: nothing to cancel (the timer advice covers a stuck slot)
-  /\ RJ.k = "recover" => eng.st = "busy"
-  \* (seeded bug rv4_no_cancel_recover, fidelity review 4: recover-all cannot be cancelled)
-  /\ ~(MUTANT = "rv4_no_cancel_recover" /\ RJ.k = "recover")
-  /\ IF RJ.k = "recover"
-     THEN \* §8.1: the journal being recovered counts as blocking (cancelled); go on in a new engine
-          IF ~ctl.rinit /\ MUTANT # "recover_cancel_before_listing"
-          THEN \* M2: before the listing (with its sync) nothing is in hand and nothing is marked, and
-               \* recover_all never ends unlisted: the Cancel ends the switch or boot on its cancelled
-               \* screen, as for its queued job (§9.1 step 3, §9.2; MAPPING.md I14); Retry runs it again
-               /\ JobEnd(CancelEng("own"))
-               /\ ses' = CancelledSes
-               /\ UNCHANGED <<fs, jr, pst, tgt, q, n, gh>>
-          ELSE IF MUTANT = "cancel_stops_all"
-          THEN RecoverEndEffects(CancelEng("own"),
-                                 IF ctl.rj # "none" THEN [jr EXCEPT ![ctl.rj].why = "cancelled"] ELSE jr)
-          ELSE \* the journal it is on, or, before one is in hand, the next one it would try
-               \* (with nothing in hand and nothing left to try, recover_all is done: it ends)
-               LET cj == IF ctl.rj # "none" THEN ctl.rj
-                         ELSE IF RecUntried # {} THEN FirstJ(RecUntried) ELSE "none"
-               IN
-               IF cj = "none"
-               THEN RecoverEndEffects(CancelEng("own"), jr)
-               ELSE /\ jr' = MarkWhy(cj, "cancelled")
-                    /\ eng' = CancelEng("own")
-                    /\ ctl' = [ctl EXCEPT !.pc = "rc_spawn", !.rj = "none", !.tried = @ \cup {cj}]
-                    /\ UNCHANGED <<fs, pst, tgt, ses, q, runs, n, gh>>
-     ELSE CancelEffects("own")
-
-\* closing a tab or aborting a request: cancels a preview, rebuild or BQL; never a save (§4)
-UserCloseTab(id) ==
-  /\ Alive /\ n.close < MaxClose
- /\ \/ /\ CloseQueued
-        /\ \E i \in 1..Len(q) :
-             /\ q[i].id = id /\ q[i].req = "present" /\ q[i].own \in {"user","app"}
-             /\ IF q[i].k \in Reads THEN q' = RemoveAt(q, i)
-                ELSE q' = [q EXCEPT ![i].req = "gone"]
-        /\ n' = [n EXCEPT !.close = @ + 1]
-        /\ UNCHANGED <<fs, jr, pst, tgt, ses, runs, ctl, eng, gh>>
-     \/ /\ Busy /\ RJ.id = id /\ RJ.req = "present" /\ (RJ.own \in {"user","app"} \/ RJ.k = "open")
-        /\ n' = [n EXCEPT !.close = @ + 1]
-        /\ IF RJ.k \in Reads /\ eng.st = "busy"
-           THEN /\ JobEnd(SigEng("cancel", "own"))
-                /\ UNCHANGED <<fs, jr, pst, tgt, ses, q, gh>>
-           ELSE /\ runs' = {[RJ EXCEPT !.req = "gone"]}
-                /\ UNCHANGED <<fs, jr, pst, tgt, ses, q, ctl, eng, gh>>
-
-\* §9.1 step 2: the quiesce of the open workspace A (switch, Reopen, quit, update)
-\* kept: other workspaces' jobs, A's confirmed saves, and creates and copies (app-scoped and confirmed;
-\* §9.3 step 2, fidelity review 3 L9: also when no workspace is open)
-\* (seeded bug rv4_quit_drops_create, fidelity review 4: a quit with no open workspace drops them)
-QuiesceKeep(A, j) == j.w # A \/ (j.k = "save" /\ j.conf /\ MUTANT # "switch_drops_confirmed_save")
-                     \/ (j.k \in {"create","copy"} /\ ~(MUTANT = "rv4_quit_drops_create" /\ ses.app = "run" /\ A = 0))
-\* gh.ccDrop (fidelity review 4, L2): a queued create or copy was dropped by a quiesce
-DroppedTold(A) ==
-  LET D == {i \in 1..Len(q) : ~QuiesceKeep(A, q[i]) /\ q[i].k = "save" /\ q[i].conf}
-  IN [gh EXCEPT !.told = [s \in SaveIds |->
-                            IF \E i \in D : q[i].s = s THEN "notopen" ELSE gh.told[s]],
-                !.ccDrop = @ \/ \E i \in 1..Len(q) : ~QuiesceKeep(A, q[i]) /\ q[i].k \in {"create","copy"}]
-\* a read, an R4, or a background save before its commit point, also between two engines (L3);
-\* never a confirmed save (seeded bug rv_quiesce_ends_confirmed, review 3)
-QuiesceEndsRunning(A) ==
-  /\ Busy /\ RJ.w = A /\ (eng.st = "busy" \/ ctl.pc \in SpawnPcs)
-  /\ (RJ.k \in Reads \cup {"r4"}
-      \/ (RJ.k = "save" /\ (~RJ.conf \/ MUTANT = "rv_quiesce_ends_confirmed") /\ ~ctl.past))
-Quiesce(A, newSes, extra) ==
-  LET q1 == SelectSeq(q, LAMBDA j : QuiesceKeep(A, j)) IN
-  /\ q' = q1 \o extra
-  /\ IF A # 0 /\ QuiesceEndsRunning(A)
-     THEN LET r == RJ IN
-          /\ JobEnd(IF eng.st = "busy" THEN SigEng("cancel", "quiesce") ELSE eng)
-          /\ gh' = IF r.k = "save" THEN [DroppedTold(A) EXCEPT !.told[r.s] = Rehash(r.s), !.cxl[r.s] = TRUE]
-                   ELSE DroppedTold(A)
-          /\ jr' = jr
-     ELSE /\ gh' = DroppedTold(A) /\ jr' = jr /\ UNCHANGED <<runs, ctl, eng>>
-  /\ ses' = newSes
-
-OpenW == IF ses.opened = {} THEN 0 ELSE CHOOSE w \in ses.opened : TRUE
-
-\* §9.1: the switch (t = the open workspace is Reopen); from no open workspace, an ordinary switch.
-\* §9.1 step 1 (fidelity review 4, L1): with A open, the target is first assessed read-only; one whose files
-\* cannot be read (I10) shows its screen with Stay and nothing changes: no switch starts (a disk that
-\* becomes unreachable after this assessment is the failure after A closed, §9.1 step 6)
-UserSwitch(t) ==
-  /\ ses.app = "run" /\ ses.screen = "none" /\ n.sw < MaxSwitch /\ t \in WS
-  /\ ses.opened # {} => ~(t = 3 /\ pst.unr)
-  /\ IF ses.opened = {}
-     THEN /\ ses' = [ses EXCEPT !.app = "switch", !.stage = "recover", !.from = 0, !.target = t]
-          /\ q' = q \o <<RecJob(NewId)>>
-          /\ n' = [n EXCEPT !.sw = @ + 1]
-          /\ jr' = MarkOld
-          /\ UNCHANGED <<fs, pst, tgt, runs, ctl, eng, gh>>
-     ELSE LET A == OpenW IN
-          IF MUTANT = "open_before_close"
-          THEN /\ ses' = [ses EXCEPT !.app = "switch", !.stage = "recover", !.from = A, !.target = t]
-               /\ q' = q \o <<RecJob(NewId)>>
-               /\ n' = [n EXCEPT !.sw = @ + 1]
-               /\ UNCHANGED <<fs, jr, pst, tgt, runs, ctl, eng, gh>>
-          ELSE LET extra == IF MUTANT = "recovery_while_open" THEN <<RecJob(NewId)>> ELSE <<>> IN
-               /\ Quiesce(A, [ses EXCEPT !.app = "switch", !.stage = "quiesce", !.from = A, !.target = t], extra)
-               /\ n' = [n EXCEPT !.sw = @ + 1]
-               /\ UNCHANGED <<fs, pst, tgt>>
-
-\* §9.1 step 3: Stay cancels the switch until A has closed
-GStay == ses.app = "switch" /\ ses.stage = "quiesce"
-UserStay ==
-  /\ GStay /\ MUTANT # "stay_disabled" /\ CanAct
-  /\ ses' = [ses EXCEPT !.app = "run", !.stage = "none", !.target = ses.from]
-  /\ n' = Spent
-  /\ UNCHANGED <<fs, jr, pst, tgt, q, runs, ctl, eng, gh>>
-
-\* the failed, blocked or cancelled screen (§8.1, §9.1 steps 3 and 6, §9.2)
-GRetry  == ses.screen # "none" /\ ~(MUTANT = "boot_no_actions" /\ ses.sctx = "boot")
-GBack   == ses.screen # "none" /\ ses.sctx = "switch" /\ ses.from # 0
-GOther  == ses.screen # "none" /\ ses.sctx = "boot" /\ MUTANT # "boot_no_actions"
-GKeep   == ses.screen = "blocked" /\ ~(MUTANT = "boot_no_actions" /\ ses.sctx = "boot")
-UserRetry ==
-  /\ GRetry /\ MUTANT # "retry_disabled" /\ CanAct
-  /\ n' = Spent
-  \* recover_all runs again, then the open by the same path, on the cancelled, failed and blocked screens
-  \* alike (§8.1, §9.1 step 6, §9.2; owner, 2026-10-29: "having retry recover first"; ADR-0063 amendment).
-  \* (Seeded bug rv_retry_skips_recovery, review 3: after a cancelled switch or boot, Retry only assesses.
-  \* The old I15, Retry only assessing after a failed open, breaks no property: MAPPING.md §5, 2026-10-29.)
-  /\ IF ses.screen = "cancelled" /\ MUTANT = "rv_retry_skips_recovery"
-     THEN /\ ses' = [ses EXCEPT !.app = "switch", !.stage = "assess", !.screen = "none"]
-          /\ UNCHANGED <<q, jr>>
-     ELSE /\ ses' = [ses EXCEPT !.app = "switch", !.stage = "recover", !.screen = "none"]
-          /\ q' = q \o <<RecJob(NewId)>>
-          /\ jr' = MarkOld
-  /\ UNCHANGED <<fs, pst, tgt, runs, ctl, eng, gh>>
-\* §9.1 step 6, ADR-0063 decision 1 step 6, §14: Back opens A "by the same path": Back is Retry with A as the
-\* target, recover-all first, then the open, on the cancelled, failed and blocked screens alike (owner,
-\* 2026-10-28: "back always recovers first"). (Seeded bug back_skips_recovery: Back only assesses A.)
-UserBack ==
-  /\ GBack /\ CanAct
-  /\ n' = Spent
-  /\ IF MUTANT # "back_skips_recovery"
-     THEN /\ ses' = [ses EXCEPT !.app = "switch", !.stage = "recover", !.screen = "none", !.target = ses.from]
-          /\ q' = q \o <<RecJob(NewId)>>
-          /\ jr' = MarkOld
-     ELSE /\ ses' = [ses EXCEPT !.app = "switch", !.stage = "assess", !.screen = "none", !.target = ses.from]
-          /\ UNCHANGED <<q, jr>>
-  /\ UNCHANGED <<fs, pst, tgt, runs, ctl, eng, gh>>
-UserOpenAnother(t) ==
-  /\ GOther /\ t \in WS /\ t # ses.target /\ CanAct
-  /\ ses' = [ses EXCEPT !.app = "switch", !.stage = "recover", !.screen = "none",
-                        !.from = 0, !.target = t]
-  /\ q' = q \o <<RecJob(NewId)>>
-  /\ n' = Spent
-  /\ jr' = MarkOld
-  /\ UNCHANGED <<fs, pst, tgt, runs, ctl, eng, gh>>
-\* "Keep the files as they are now" (§8.1): writes nothing to the ledger files; first durable_syncs every
-\* file and folder the journal names (N1), then renames the journal .kept (its directory synced)
-KeepSet == {j \in JIds : jr[j].st = "topen" \/ (jr[j].st = "open" /\ jr[j].files \cap LS(ses.target) # {})}
-UserKeep ==
-  /\ GKeep /\ CanAct
-  /\ jr' = [j \in JIds |-> IF j \in KeepSet THEN [jr[j] EXCEPT !.st = "kept", !.pl = {"kept"}] ELSE jr[j]]
-  /\ pst' = [pst EXCEPT !.notes = NoteAfterKeep(KeepSet),
-                        !.lnk = IF \E j \in KeepSet : "R" \in jr[j].files THEN FALSE ELSE @]
-  /\ ses' = [ses EXCEPT !.app = "switch", !.stage = "assess", !.screen = "none"]
-  /\ n' = Spent
-  \* N1: "as they are now" made durable before the journal is renamed .kept
-  /\ fs' = IF MUTANT = "keep_no_sync" THEN fs
-           \* a torn journal's file list cannot be read: it names nothing to sync
-           ELSE LET F == UNION {jr[j].files : j \in {x \in KeepSet : jr[x].st = "open"}} IN
+\* "Keep the files as they are now" (§8.1) for a journal recovery stopped: writes nothing to the ledger files;
+\* first durable_syncs every file and folder the journal names, then renames the journal .kept (synced)
+Keep(j) ==
+  /\ app = "run" /\ ~Busy /\ jr[j].st \in OpenSt /\ jr[j].why # ""
+  /\ jr' = [jr EXCEPT ![j].st = "kept", ![j].pl = {"kept"}]
+  /\ fs' = IF MUTANT = "keep_no_sync" \/ jr[j].st = "topen" THEN fs   \* a torn journal names nothing to sync
+           ELSE LET F == jr[j].files IN
                 [fs EXCEPT !.pl = [f \in Files |-> IF f \in F THEN {fs.cur[f]} ELSE fs.pl[f]],
                            !.cp = [f \in Files |-> IF f \in F THEN {} ELSE fs.cp[f]],
                            !.cpn = [f \in Files |-> IF f \in F THEN {} ELSE fs.cpn[f]],
                            !.cpj = [f \in Files |-> IF f \in F THEN "none" ELSE fs.cpj[f]],
-                           !.tpl = [x \in TSlots |-> IF x[2] \in F /\ x[1] \in KeepSet THEN {fs.tc[x]} ELSE fs.tpl[x]]]
-  /\ UNCHANGED <<tgt, q, runs, ctl, eng, gh>>
+                           !.tpl = [x \in TSlots |-> IF x[2] \in F THEN {fs.tc[x]} ELSE fs.tpl[x]],
+                           !.sgpl = [x \in TSlots |-> IF x[2] \in F THEN {fs.sg[x]} ELSE fs.sgpl[x]]]
+  /\ UNCHANGED <<env, tgt, app, run, ctl, n, gh>>
 
-\* §13: W1 forgotten and added again under a new registry key
-UserForgetReadd ==
-  /\ ses.app = "run" /\ 1 \notin ses.opened /\ ses.screen = "none" /\ n.forget < MaxForget
-  /\ pst' = [pst EXCEPT !.reg1 = 4]
-  /\ n' = [n EXCEPT !.forget = @ + 1]
-  /\ UNCHANGED <<fs, jr, tgt, ses, q, runs, ctl, eng, gh>>
-
-\* "Try again" when the engine is Unavailable (§5.3)
-UserTryAgain ==
-  /\ Alive /\ Unavail /\ CanAct
-  /\ ses' = [ses EXCEPT !.stops = 0]
-  /\ n' = Spent
-  /\ UNCHANGED <<fs, jr, pst, tgt, q, runs, ctl, eng, gh>>
-
-\* §9.3: quit (graceful) and update both start with the quiesce
-UserQuit(kind) ==
-  /\ DoQuit /\ ses.app = "run" /\ ses.screen = "none"
-  /\ kind = "quit" \/ (kind = "update" /\ n.upd < MaxUpdate)
-  /\ n' = IF kind = "update" THEN [n EXCEPT !.upd = @ + 1] ELSE n
-  /\ Quiesce(OpenW, [ses EXCEPT !.app = kind, !.stage = "quiesce"], <<>>)
-  /\ UNCHANGED <<fs, pst, tgt>>
-
-\* What the engine leaves behind when the app goes (quit, Quit anyway, app crash): its process group holds
-\* the engine lock until it ends (§5.1, §5.2): a process stuck in the kernel for ever (until the disk
-\* answers), a live one for a moment (its watchdog, or our signal). Simplification B: the new start waits for
-\* it before its first engine, so whatever it still does (a save past its commit point goes on until its
-\* watchdog ends it) happens before any ledger work of the new session; the files and records it leaves are
-\* those of a cut at a later step, which the cut of the save in the session already reaches. The model keeps
-\* only its lock (MAPPING.md §3).
-OrphanAfter(lingers) ==
-  IF eng.p > 0 /\ eng.stuck
-  THEN [pst EXCEPT !.orphan = TRUE, !.ostuck = TRUE]
-  ELSE IF lingers /\ eng.p > 0
-       THEN [pst EXCEPT !.orphan = TRUE]
-       ELSE pst
-DeadSesBy(how) == [ses EXCEPT !.app = "dead", !.endedBy = how, !.stage = "none", !.opened = {}, !.screen = "none",
-                       !.advice = "none", !.locks = {}]
-
-\* §9.3 step 3: "Quit anyway": always enabled (I11), always ends the app. The seeded bug offers it only
-\* during a quit, so EveryWaitHasAnExit's Quit-anyway clauses have something to catch
-GQuitAnyway == Alive /\ (MUTANT = "quit_anyway_only_while_quitting" => ses.app \in {"quit","update"})
-UserQuitAnyway ==
-  /\ GQuitAnyway
-  /\ \E lingers \in (IF n.orph < MaxOrphan THEN BOOLEAN ELSE {FALSE}) :
-     LET p1 == OrphanAfter(lingers)
-         \* §9.3: a note naming the running save, create or copy, one file per job
-         notes == IF Busy /\ RJ.k \in {"save","create","copy"}
-                  THEN pst.notes \cup {[k |-> RJ.k, s |-> IF RJ.k = "save" THEN RJ.s ELSE "none"]}
-                  ELSE pst.notes
-         QS == {q[i].s : i \in {i \in 1..Len(q) : q[i].k = "save" /\ q[i].conf}}
-     IN
-     /\ pst' = [p1 EXCEPT !.notes = notes]
-     /\ gh' = [gh EXCEPT !.told = [s \in SaveIds |-> IF s \in QS THEN "notsaved" ELSE gh.told[s]]]
-     /\ n' = [n EXCEPT !.orph = @ + (IF lingers THEN 1 ELSE 0)]
-  /\ ses' = DeadSesBy("quit") /\ q' = <<>> /\ runs' = {} /\ ctl' = NoCtl /\ eng' = NoEng
-  /\ UNCHANGED <<fs, jr, tgt>>
-
-\* the next start after the app ended
-\* the next start; after a quit only in worlds that check what a quit leaves (RestartAfterQuit): a
-\* bound on what follows the exit, never on the exit (Quit anyway) itself
+\* the next start after the app ended (a crash or a power loss): recover-all first
 Relaunch ==
-  /\ ses.app = "dead" /\ n.start < MaxStarts /\ (ses.endedBy = "crash" \/ RestartAfterQuit)
-  /\ ses' = [ses EXCEPT !.app = "boot", !.stage = "recover", !.opened = {}, !.from = 0,
-                        !.target = pst.last, !.screen = "none", !.sctx = "none",
-                        !.stops = 0, !.advice = "none", !.locks = {}]
-  /\ q' = <<RecJob(NewId)>>
+  /\ app = "dead" /\ n.start < MaxStarts
   /\ n' = [n EXCEPT !.start = @ + 1]
-  /\ jr' = MarkOld
-  /\ UNCHANGED <<fs, pst, tgt, runs, ctl, eng, gh>>
-
-----------------------------------------------------------------------------
-(* APP ACTIONS (the sidecar)                                               *)
-
-\* a background save of W1 (prices); at most one queued per workspace (§3)
-AppBgSave ==
-  /\ ses.app = "run" /\ 1 \in ses.opened /\ n.bg < MaxBg
-  /\ ~QHas(LAMBDA j : j.k = "save" /\ ~j.wf)
-  /\ LET s == SId(n.save + n.bg + 1) IN
-     /\ q' = q \o <<Job(NewId, "save", 1, FALSE, FALSE, "app", s, pst.mirror[1].fp)>>
-     /\ n' = [n EXCEPT !.bg = @ + 1]
-     /\ gh' = [gh EXCEPT !.pre[s] = pst.mirror[1].fp]
-  /\ UNCHANGED <<fs, jr, pst, tgt, ses, runs, ctl, eng>>
-
-\* the focus check saw an outside change: queue a rebuild (ADR-0015)
-AppFocusCheck(w) ==
-  /\ ses.app = "run" /\ w \in ses.opened /\ n.rebuild < MaxRebuild
-  /\ FP(w) # pst.mirror[w].fp
-  /\ ~QHas(LAMBDA j : j.k = "rebuild" /\ j.w = w)
-  /\ q' = q \o <<Job(NewId, "rebuild", w, TRUE, FALSE, "app", "none", ZeroFP)>>
-  /\ n' = [n EXCEPT !.rebuild = @ + 1]
-  /\ UNCHANGED <<fs, jr, pst, tgt, ses, runs, ctl, eng, gh>>
-
-\* §9.1 step 4: A closes when none of its jobs is queued or running; then recover_all
-CloseA ==
-  /\ ses.app = "switch" /\ ses.stage = "quiesce"
-  /\ ~QHas(LAMBDA j : j.w = ses.from) /\ ~(Busy /\ RJ.w = ses.from)
-  /\ MUTANT # "switch_close_never"   \* seeded bug only (S0068): A never closes
-  /\ ses' = [ses EXCEPT !.opened = {}, !.stage = "recover"]
-  /\ q' = IF MUTANT = "recovery_while_open" THEN q ELSE q \o <<RecJob(NewId)>>
-  /\ n' = n
-  /\ jr' = MarkOld
-  /\ UNCHANGED <<fs, pst, tgt, runs, ctl, eng, gh>>
-
-\* §9.3 step 4 (quit) and the update: after the quiesce
-QuitClose ==
-  /\ ses.app \in {"quit","update"} /\ q = <<>> /\ ~Busy
-  /\ MUTANT = "quit_waits_reap" => eng.p = 0
-  /\ IF ses.app = "update" /\ MUTANT # "installer_ignores_journal" /\ \E j \in JIds : jr[j].st \in OpenSt
-     THEN \* an installer never runs while a .open journal exists (ADR-0012); the user is told to Reopen
-          /\ ses' = [ses EXCEPT !.app = "run", !.stage = "none"]
-          /\ UNCHANGED <<pst, eng>>
-     ELSE /\ ses' = DeadSesBy("quit")
-          /\ eng' = IF eng.p > 0 THEN NoEng ELSE eng   \* close() signals the group once, no wait
-          \* (an engine close() signalled may linger for a moment: the same wait as after Quit anyway, which
-          \* the model has; only a stuck one is kept here, MAPPING.md §3)
-          /\ pst' = LET p1 == OrphanAfter(FALSE) IN
-                    IF ses.app = "update" THEN [p1 EXCEPT !.build = @ + 1] ELSE p1
-  /\ UNCHANGED <<fs, jr, tgt, q, runs, ctl, n, gh>>
-
-\* §9.1 step 6 / §9.2: assess the target after recover_all
-OpenDone(t) ==
-  /\ ses' = [ses EXCEPT !.app = "run", !.stage = "none", !.screen = "none", !.target = t,
-                        !.opened = IF MUTANT = "open_before_close" THEN @ \cup {t} ELSE {t}]
-  /\ pst' = [pst EXCEPT !.last = t]
-  /\ q' = q
-  /\ n' = n
-\* §2: the assessment runs outside the queue (fidelity review 4, M2): it waits only for the switch's or the
-\* boot's own job, so behind a create or copy the open is queued and its Cancel applies (§9.1 step 3, §9.2).
-\* (Seeded bug assess_waits_for_work: the old guard, which waited for any running job.)
-Assess ==
-  /\ ses.app \in {"boot","switch"} /\ ses.stage = "assess"
-  /\ IF MUTANT = "assess_waits_for_work" THEN ~Busy ELSE ~(Busy /\ RJ.own = "switch")
-  /\ ~QHas(LAMBDA j : j.own = "switch")
-  /\ LET t == ses.target IN
-     CASE t = 0 ->
-            /\ ses' = [ses EXCEPT !.app = "run", !.stage = "none"]
-            /\ UNCHANGED <<pst, q, n>>
-       [] t = 3 /\ pst.unr ->     \* the assessment cannot read the target's files
-            /\ ses' = OpenFailSes
-            /\ UNCHANGED <<pst, q, n>>
-       [] Blocked(t) /\ MUTANT = "boot_waits_for_success" /\ ses.app = "boot" ->
-            \* seeded bug: the boot ends only when its open succeeds
-            /\ ses' = [ses EXCEPT !.stage = "screen", !.screen = "blocked", !.sctx = "boot"]
-            /\ UNCHANGED <<pst, q, n>>
-       [] Blocked(t) ->
-            /\ ses' = IF ses.app = "boot"
-                      THEN [ses EXCEPT !.app = "run", !.stage = "none", !.screen = "blocked", !.sctx = "boot"]
-                      ELSE [ses EXCEPT !.stage = "screen", !.screen = "blocked",
-                                       !.sctx = IF ses.from = 0 THEN "boot" ELSE "switch"]
-            /\ UNCHANGED <<pst, q, n>>
-       [] pst.mirror[t].fp = FP(t) -> OpenDone(t)
-       [] OTHER ->
-            /\ q' = q \o <<Job(NewId, "open", t, TRUE, FALSE, "switch", "none", ZeroFP)>>
-            /\ n' = n
-            /\ ses' = [ses EXCEPT !.stage = "opening"]
-            /\ UNCHANGED pst
-  /\ UNCHANGED <<fs, jr, tgt, runs, ctl, eng, gh>>
-
-\* §5.2/§5.4: after the display delay, the app shows the quit advice while the slot is held by a
-\* process we signalled that has not ended, whether or not a job waits (N3): in the waiting job's
-\* place, or as a notice. §5.1 (simplification B): the same while the sidecar waits for the engine lock
-\* that an engine of an earlier session holds (seeded bug orphan_no_advice: not shown then)
-WaitingQ == \E i \in 1..Len(q) : q[i].wf /\ q[i].req = "present"
-AdviceTimer ==
-  /\ Alive /\ ses.advice = "none"
-  /\ \/ /\ eng.st = "sig"
-        \* seeded bug (the rule before N3): the advice only while a job waits
-        /\ MUTANT = "advice_only_to_waiting" => (WaitingQ \/ (Busy /\ ctl.pc \in SpawnPcs))
-     \/ pst.orphan /\ MUTANT # "orphan_no_advice"
-     \/ /\ MUTANT = "advice_on_timer" /\ Busy /\ eng.st = "busy" /\ WaitingQ
-        /\ ~Endable(Ended(RJ))
-  /\ ses' = [ses EXCEPT !.advice = "timer"]
-  /\ UNCHANGED <<fs, jr, pst, tgt, q, runs, ctl, eng, n, gh>>
-
-\* the OS ends a signalled process that is not stuck; drain then reap (§5.2)
-Drain ==
-  /\ eng.st = "sig" /\ ~eng.stuck
-  /\ eng' = [NoEng EXCEPT !.p = eng.p - 1]
-  /\ ses' = [ses EXCEPT !.locks = {}, !.advice = "none"]
-  /\ UNCHANGED <<fs, jr, pst, tgt, q, runs, ctl, n, gh>>
-
-\* the engine of an earlier session ends (its watchdog, or our signal before the quit): the engine lock is
-\* free, and the advice it caused goes (as Drain's does)
-OrphanEnd ==
-  /\ pst.orphan /\ ~pst.ostuck
-  /\ pst' = [pst EXCEPT !.orphan = FALSE]
-  /\ ses' = [ses EXCEPT !.advice = "none"]
-  /\ UNCHANGED <<fs, jr, tgt, q, runs, ctl, eng, n, gh>>
-\* a process stuck in the kernel ends only when the disk answers (not fair)
-OrphanEndStuck ==
-  /\ pst.orphan /\ pst.ostuck
-  /\ pst' = [pst EXCEPT !.orphan = FALSE, !.ostuck = FALSE]
-  /\ ses' = [ses EXCEPT !.advice = "none"]
-  /\ UNCHANGED <<fs, jr, tgt, q, runs, ctl, eng, n, gh>>
-
-WindowExpire ==
-  /\ Alive /\ ses.stops > 0 /\ n.exp < MaxExpire
-  /\ ses' = [ses EXCEPT !.stops = @ - 1]
-  /\ n' = [n EXCEPT !.exp = @ + 1]
-  /\ UNCHANGED <<fs, jr, pst, tgt, q, runs, ctl, eng, gh>>
-
-----------------------------------------------------------------------------
-(* DISPATCH (§3)                                                           *)
-FirstPc(k) == CASE k = "save" -> "s_locks" [] k = "r4" -> "r4_a" [] k \in Reads -> "rd_load"
-               [] k = "recover" -> "rc_init" [] k = "open" -> "op_load"
-               [] k = "create" -> "cr_tgt" [] k = "copy" -> "cp_chk"
-
-Dispatch ==
-  /\ Alive /\ ses.app # "dead" /\ EligIdx # {}
-  /\ ~Busy \/ MUTANT = "dispatch_while_running"
-  \* (S0068: the seeded bug also ignores the slot; the gap between two engines it used to start in went with
-  \* R4's confirm, so with the slot rule alone it could no longer start a second job)
-  /\ SlotFree \/ MUTANT = "dispatch_while_running"
-  /\ ~Unavail
-  /\ LET i == PickIdx  j == q[i] IN
-     /\ q' = RemoveAt(q, i)
-     /\ runs' = runs \cup {j}
-     /\ ctl' = [NoCtl EXCEPT !.pc = FirstPc(j.k), !.s = j.s, !.plan = j.plan]
-     /\ eng' = Fresh
-     /\ ses' = [ses EXCEPT !.advice = "none"]
-     /\ gh' = [gh EXCEPT !.edLoad = FALSE]
-  /\ UNCHANGED <<fs, jr, pst, tgt, n>>
-
-\* when the engine is Unavailable, a job is refused (ENGINE_UNAVAILABLE); recover_all marks
-\* every journal not yet tried as blocking (not_tried, §8.1)
-DispatchUnavail ==
-  /\ Alive /\ ~Busy /\ EligIdx # {} /\ Unavail
-  /\ LET i == PickIdx  j == q[i] IN
-     /\ q' = RemoveAt(q, i)
-     /\ CASE j.k = "recover" ->
-               \* the sidecar lists the journals after syncing their directories (§8.1, M2)
-               /\ jr' = SyncCL([x \in JIds |->
-                          IF jr[x].st \in OpenSt /\ MUTANT # "untried_unmarked"
-                          THEN [jr[x] EXCEPT !.why = "not_tried", !.pl = {jr[x].st}]
-                          ELSE IF jr[x].st \in OpenSt THEN [jr[x] EXCEPT !.why = "", !.pl = {jr[x].st}]
-                          ELSE jr[x]])
-               /\ ses' = [ses EXCEPT !.stage = "assess"]
-               \* the end of this recover-all answers the quit notes (L1)
-               /\ IF MUTANT # "notes_only_at_boot" \/ ses.app = "boot"
-                  THEN /\ pst' = [pst EXCEPT !.notes = NoteNotes] /\ gh' = NoteGh
-                  ELSE UNCHANGED <<gh, pst>>
-          [] j.k = "save" ->
-               /\ gh' = SetTold(gh, j.s, "notsaved") /\ UNCHANGED <<jr, ses, pst>>
-          [] j.k = "open" ->
-               /\ ses' = IF ses.app = "boot"
-                         THEN [ses EXCEPT !.app = "run", !.stage = "none", !.screen = "failed", !.sctx = "boot"]
-                         ELSE [ses EXCEPT !.stage = "screen", !.screen = "failed",
-                                          !.sctx = IF ses.from = 0 THEN "boot" ELSE "switch"]
-               /\ UNCHANGED <<gh, jr, pst>>
-          [] j.k = "create" ->
-               /\ gh' = [gh EXCEPT !.crOut = "unavailable", !.crMsg = "not_created"]
-               /\ UNCHANGED <<jr, ses, pst>>
-          [] OTHER -> UNCHANGED <<gh, jr, ses, pst>>
-  /\ UNCHANGED <<fs, tgt, runs, ctl, eng, n>>
-
-\* a job step that needs a fresh engine after one that ran user code or died (§5.1, §8.1)
-SpawnStep ==
-  /\ Alive /\ Busy /\ ctl.pc \in SpawnPcs
-  /\ SlotFree
-  /\ IF Unavail
-     THEN CASE ctl.pc = "rc_spawn" ->
-                 \* the journals not yet tried, from a listing after the sync (§8.1, M2)
-                 /\ RecoverEndEffects(eng,
-                      [x \in JIds |-> IF jr[x].st \in OpenSt /\ x \notin ctl.tried /\ MUTANT # "untried_unmarked"
-                                      THEN [jr[x] EXCEPT !.why = "not_tried", !.pl = {jr[x].st}] ELSE jr[x]])
-     ELSE /\ eng' = Fresh
-          /\ ctl' = [ctl EXCEPT !.hung = FALSE,   \* a hang belonged to the engine that ended
-                                !.pc = IF ctl.rinit THEN "rc_next" ELSE "rc_init"]
-          /\ UNCHANGED <<fs, jr, pst, tgt, ses, q, runs, n, gh>>
+  \* every journal on disk now is "from before this start" (INV-32); the reasons an earlier recover-all gave are
+  \* cleared, so only this start's recover-all can make a journal blocking
+  /\ jr' = [j \in JIds |-> IF jr[j].st \in OpenSt THEN [jr[j] EXCEPT !.old = TRUE, !.why = ""] ELSE jr[j]]
+  /\ app' = IF MUTANT = "rv_boot_skips_recovery" THEN "run" ELSE "recover"
+  /\ run' = IF MUTANT = "rv_boot_skips_recovery" THEN NoRun ELSE RecJob
+  /\ ctl' = StartCtl
+  /\ UNCHANGED <<fs, env, tgt, gh>>
 
 ----------------------------------------------------------------------------
 (* THE SAVE (§6.1)                                                         *)
-\* The save's steps 8-9 are stated for a control record c, the running job's (ctl): c.s names the journal
-\* (s1-s3), c.plan its pre bytes, c.fi the file in hand (children first, root last: WOrd).
-CurFc(c) == WOrd[c.fi]
-TSc(c)   == <<c.s, CurFc(c)>>
-PostFPc(c) == [f \in Files |-> IF f \in Tg THEN PostV(c.s) ELSE c.plan[f]]
 SV  == ctl.s
 PV  == PostV(ctl.s)
 Pre(f) == ctl.plan[f]
-PostFP == PostFPc(ctl)
-CurF == CurFc(ctl)
+CurF == WOrd[ctl.fi]
+TS == <<ctl.s, CurF>>
 
-\* the save's rollback starts (§6.4); §6.4 (F2): first the temp rule of recovery's step 2
-StartRBc(c, msg, skip) == [c EXCEPT !.pc = IF MUTANT # "rollback_skips_temp_rule" THEN "rb_chk" ELSE "rs_w",
-                                    !.rj = c.s, !.fi = 1, !.rbt = msg, !.skip = skip]
-StartRB(msg, skip) == StartRBc(ctl, msg, skip)
+\* the save's rollback starts (§6.4): the restore of its own record (`RS_*`), checks first
+StartRB(msg) == [ctl EXCEPT !.pc = IF MUTANT # "rollback_skips_temp_rule" THEN "rs_chk" ELSE "rs_sync",
+                            !.rj = ctl.s, !.fi = 1, !.rbt = msg, !.tried = {},
+                            \* (seeded bug rollback_skips_temp_rule: the rollback puts back what is at post, unchecked)
+                            !.put = {f \in Tg : Pre(f) # ABS /\ fs.cur[f] = PV},
+                            !.taken = \E f \in Tg : Pre(f) = ABS /\ fs.cur[f] # ABS]
 
 NextS(p) ==
-  CASE p = "s_locks" -> "s_gate"
-    [] p = "s_gate" -> "s_load"
-    [] p = "s_load" -> IF MUTANT = "no_recheck" THEN (IF MUTANT = "gate_after_journal" THEN "s_bk" ELSE "s_commit")
-                       ELSE "s_recheck"
-    [] p = "s_recheck" -> IF MUTANT = "gate_after_journal" THEN "s_bk" ELSE "s_commit"
-    [] p = "s_commit" -> IF MUTANT = "gate_after_journal" THEN "s_tw1" ELSE "s_bk"
-    [] p = "s_bk" -> IF MUTANT = "no_backup_sync" THEN "s_jp" ELSE "s_bks"
+  CASE p = "s_bk" -> IF MUTANT = "no_backup_sync" THEN "s_jp" ELSE "s_bks"
     [] p = "s_bks" -> "s_jp"
-    [] p = "s_jp" -> IF MUTANT = "no_journal_sync" THEN "s_jo" ELSE "s_jps"
-    [] p = "s_jps" -> IF MUTANT = "direct_open" THEN "s_jds" ELSE "s_jo"
+    [] p = "s_jp" -> IF MUTANT = "direct_open" THEN "s_jds" ELSE "s_jps"
+    [] p = "s_jps" -> "s_jo"
     [] p = "s_jo" -> IF MUTANT = "no_journal_sync" THEN "s_tw1" ELSE "s_jds"
-    [] p = "s_jds" -> IF MUTANT = "gate_after_journal" THEN "s_commit" ELSE "s_tw1"
+    [] p = "s_jds" -> "s_tw1"
     [] p = "s_tw1" -> "s_tw2"
-    [] p = "s_tw2" -> IF MUTANT = "no_temp_fsync" THEN "s_sw" ELSE "s_ts"
+    [] p = "s_tw2" -> "s_ts"
     [] p = "s_ts" -> "s_sw"
     [] p = "s_sw" -> "s_cmp"
     [] p = "s_cmp" -> "s_ds"
@@ -915,119 +256,71 @@ NextS(p) ==
     [] p = "s_rmt" -> IF MUTANT = "temps_after_close" THEN "s_saved" ELSE "s_close"
     [] p = "s_close" -> IF MUTANT = "report_before_close_sync" THEN "s_saved" ELSE "s_csync"
     [] p = "s_csync" -> CASE MUTANT = "temps_after_close" -> "s_rmt"
-                          [] MUTANT = "report_before_close_sync" -> "s_pub"
                           [] OTHER -> "s_saved"
-    [] p = "s_saved" -> IF MUTANT = "report_before_close_sync" THEN "s_csync" ELSE "s_pub"
-    [] p = "s_pub" -> "s_rel"
-AdvC(c, p) == [c EXCEPT !.pc = NextS(p)]
-Adv(p) == AdvC(ctl, p)
+Adv(p) == [ctl EXCEPT !.pc = NextS(p)]
+SaveFx(f1, j1, c1) == fs' = f1 /\ jr' = j1 /\ ctl' = c1 /\ UNCHANGED <<env, tgt, app, run, n, gh>>
 
-\* a refusal before anything is written: locks released, the job ends (§6.1 steps 1-6)
-SaveRefuseFrom(g, msg) ==
-  /\ gh' = SetTold(g, SV, msg)
-  /\ JobEnd(Retired)
-  /\ ses' = [ses EXCEPT !.locks = {}, !.advice = "none"]
-  /\ UNCHANGED <<fs, jr, pst, tgt, q, n>>
-SaveRefuse(msg) ==
-  /\ gh' = SetTold(gh, SV, msg)
-  /\ JobEnd(Retired)
-  /\ ses' = [ses EXCEPT !.locks = {}, !.advice = "none"]
-  /\ UNCHANGED <<fs, jr, pst, tgt, q, n>>
-
-\* step 3: ledger-set locks, waiting; with the engine lock (§5.1) no other process of ours holds one
-S_Locks ==
-  /\ Step("s_locks")
-  \* seeded bug only (S0068, ADR-0067): the save waits for the queued background R4 instead of going ahead of it
-  /\ MUTANT = "save_waits_r4_forever" => ~QHas(LAMBDA j : j.k = "r4" /\ j.w = 1)
-  /\ ses' = [ses EXCEPT !.locks = LS(1)]
-  /\ ctl' = Adv("s_locks")
-  /\ UNCHANGED <<fs, jr, pst, tgt, q, runs, eng, n, gh>>
-
-\* step 4: the gate, under the locks, every record re-read from disk
+\* steps 1-4, 7: the records (an .open journal on a file of W1's ledger set refuses: the save's own check and, for
+\* another workspace's journal, the open that recover-before-open blocks), the gate (the disk's fingerprint equals
+\* the plan's), then the commit point. No load, no re-check (ADR-0068 D1), no lock (D3, D4).
 S_Gate ==
   /\ Step("s_gate")
-  /\ IF \/ FP(1) # ctl.plan                 \* LEDGER_EXTERNALLY_CHANGED
-        \/ pst.mirror[1].fp # ctl.plan      \* WORKSPACE_NOT_READY {WARMING}
-        \/ OpenJ(1) # {}                    \* WRITES_PAUSED {unfinished_save}
-     \* S0068 (ADR-0067): no record of R4's gates a save
-     THEN SaveRefuseFrom(gh, "notsaved")
-     ELSE /\ ctl' = Adv("s_gate")
-          /\ gh' = [gh EXCEPT !.edSeen = [f \in Files |-> IF f \in LS(1) THEN TRUE ELSE gh.edSeen[f]],
-                              !.edLoad = FALSE]
-          /\ UNCHANGED <<fs, jr, pst, tgt, ses, q, runs, eng, n>>
+  /\ IF FP(1) # ctl.plan \/ OpenOn(LS(1)) # {}
+     THEN /\ SetTold(SV, "notsaved") /\ EndJob
+          /\ UNCHANGED <<fs, jr, env, tgt, app, n>>
+     ELSE /\ ctl' = [ctl EXCEPT !.pc = "s_bk"]
+          \* the editor's bytes the plan was made on are the bytes the user previewed and replaces
+          /\ gh' = [gh EXCEPT !.edSeen = [f \in Files |-> IF f \in LS(1) THEN TRUE ELSE gh.edSeen[f]]]
+          /\ UNCHANGED <<fs, jr, env, tgt, app, run, n>>
 
-\* step 5: the commit's one full load (user code)
-S_Load ==
-  /\ Step("s_load")
-  /\ eng' = [eng EXCEPT !.user = TRUE]
-  /\ ctl' = Adv("s_load")
-  /\ UNCHANGED <<fs, jr, pst, tgt, ses, q, runs, n, gh>>
+\* step 8.0-8.1: a created path must be free, a replaced file synced (an editor's unsynced bytes made durable), read
+\* and equal to its pre bytes, else "not saved" (nothing replaced; the re-hash says unchanged or changed); then its
+\* backup written (its data synced) and the backup folder synced
+S_Backup ==
+  /\ Step("s_bk")
+  /\ IF \E f \in Tg : fs.cur[f] # Pre(f)
+     THEN /\ SetTold(SV, Rehash(SV)) /\ EndJob
+          /\ UNCHANGED <<fs, jr, env, tgt, app, n>>
+     ELSE SaveFx([fs EXCEPT !.pl["R"] = IF fs.cp["R"] = {} THEN {fs.cur["R"]} ELSE @,
+                            !.bk[SV] = Pre("R"), !.bkpl[SV] = {ABS, TORN, Pre("R")}],
+                 jr, Adv("s_bk"))
+S_BackupSync == Step("s_bks") /\ SaveFx([fs EXCEPT !.bkpl[SV] = {Pre("R")}], jr, Adv("s_bks"))
 
-\* step 6: the full fingerprint again, under the locks
-S_Recheck ==
-  /\ Step("s_recheck")
-  /\ IF FP(1) # ctl.plan THEN SaveRefuse("notsaved")
-     ELSE /\ ctl' = Adv("s_recheck")
-          /\ UNCHANGED <<fs, jr, pst, tgt, ses, q, runs, eng, n, gh>>
+\* step 8.2: the journal as .part, its data synced, renamed .open, the folder synced
+NewJ == [NoJ EXCEPT !.files = Tg,
+           !.pre = [f \in Files |-> IF f \in Tg THEN ctl.plan[f] ELSE 0],
+           !.post = [f \in Files |-> IF f \in Tg THEN PV ELSE 0]]
+S_JPart ==
+  /\ Step("s_jp")
+  /\ SaveFx(fs, [jr EXCEPT ![SV] = IF MUTANT = "direct_open"
+                                   THEN [NewJ EXCEPT !.st = "open", !.pl = {"none","topen","open"}]
+                                   ELSE [NewJ EXCEPT !.st = "part", !.pl = {"none","tpart","part"}]],
+            Adv("s_jp"))
+S_JPartSync == Step("s_jps") /\ SaveFx(fs, [jr EXCEPT ![SV].pl = {"none","part"}], Adv("s_jps"))
+S_JOpen == Step("s_jo") /\ SaveFx(fs, [jr EXCEPT ![SV].st = "open", ![SV].pl = @ \cup {"open"}], Adv("s_jo"))
+S_JDirSync == Step("s_jds") /\ SaveFx(fs, [jr EXCEPT ![SV].pl = {jr[SV].st}], Adv("s_jds"))
 
-\* step 7: the commit point, decided in one table step (§4): a Cancel arriving before this step
-\* has already ended the engine; one after it is "too late"
-S_Commit ==
-  /\ Step("s_commit")
-  /\ ctl' = [Adv("s_commit") EXCEPT !.past = TRUE]
-  /\ UNCHANGED <<fs, jr, pst, tgt, ses, q, runs, eng, n, gh>>
+\* step 8.3, per file (children first, the root last): the new bytes written at the staging name (cut off here, a
+\* torn file there), then synced and renamed to the temp name, then that folder synced (S0061 round 3)
+S_TempStart ==
+  /\ Step("s_tw1")
+  /\ SaveFx([fs EXCEPT !.sg[TS] = TORN, !.sgpl[TS] = {ABS, TORN}], jr, Adv("s_tw1"))
+S_TempDone ==
+  /\ Step("s_tw2")
+  \* (seeded bug no_temp_fsync: the staging file's data is not synced before its rename)
+  /\ SaveFx([fs EXCEPT !.sg[TS] = ABS, !.sgpl[TS] = {ABS, TORN, PV},
+                       !.tc[TS] = PV, !.tpl[TS] = IF MUTANT = "no_temp_fsync" THEN {ABS, TORN, PV} ELSE {ABS, PV}],
+            jr, Adv("s_tw2"))
+S_TempSync ==
+  /\ Step("s_ts")
+  /\ SaveFx([fs EXCEPT !.sgpl[TS] = {ABS},
+                       !.tpl[TS] = IF MUTANT = "no_temp_fsync" THEN {TORN, PV} ELSE {PV}],
+            jr, Adv("s_ts"))
 
-\* Each step of 8.1-8.5 is an effect E_*(c) on the files, the journals and c: [xf, xj, xc], which the
-\* running job applies with SaveDo (the form review 4 gave them; one user since simplification B).
-Eff(f, j, c) == [xf |-> f, xj |-> j, xc |-> c]
-SaveDo(e) ==
-  /\ fs' = e.xf /\ jr' = e.xj /\ ctl' = e.xc
-  /\ UNCHANGED <<pst, tgt, ses, q, runs, eng, n, gh>>
-
-\* step 8.1: backups written, then synced with their directory (R only: N did not exist)
-E_Backup(c) ==
-  Eff([fs EXCEPT !.bk[c.s] = c.plan["R"], !.bkpl[c.s] = {ABS, TORN, c.plan["R"]}], jr, AdvC(c, "s_bk"))
-E_BackupSync(c) == Eff([fs EXCEPT !.bkpl[c.s] = {c.plan["R"]}], jr, AdvC(c, "s_bks"))
-S_Backup == Step("s_bk") /\ SaveDo(E_Backup(ctl))
-S_BackupSync == Step("s_bks") /\ SaveDo(E_BackupSync(ctl))
-
-\* step 8.2: the journal as .part, synced, renamed .open, directory synced
-NewJc(c) == [NoJ EXCEPT !.lin = 1, !.key = pst.reg1, !.files = Tg,
-               !.pre = [f \in Files |-> IF f \in Tg THEN c.plan[f] ELSE 0],
-               !.post = [f \in Files |-> IF f \in Tg THEN PostV(c.s) ELSE 0],
-               !.old = FALSE]
-E_JPart(c) ==
-  Eff(fs, [jr EXCEPT ![c.s] = IF MUTANT = "direct_open"
-                              THEN [NewJc(c) EXCEPT !.st = "open", !.pl = {"none","topen","open"}]
-                              ELSE [NewJc(c) EXCEPT !.st = "part", !.pl = {"none","tpart","part"}]],
-      AdvC(c, "s_jp"))
-E_JPartSync(c) ==
-  Eff(fs, [jr EXCEPT ![c.s].pl = IF MUTANT = "direct_open" THEN {"none","open"} ELSE {"none","part"}],
-      AdvC(c, "s_jps"))
-E_JOpen(c) == Eff(fs, [jr EXCEPT ![c.s].st = "open", ![c.s].pl = @ \cup {"open"}], AdvC(c, "s_jo"))
-E_JDirSync(c) == Eff(fs, [jr EXCEPT ![c.s].pl = {jr[c.s].st}], AdvC(c, "s_jds"))
-S_JPart == Step("s_jp") /\ SaveDo(E_JPart(ctl))
-S_JPartSync == Step("s_jps") /\ SaveDo(E_JPartSync(ctl))
-S_JOpen == Step("s_jo") /\ SaveDo(E_JOpen(ctl))
-S_JDirSync == Step("s_jds") /\ SaveDo(E_JDirSync(ctl))
-
-\* step 8.3, per file, children first and the root last
-TS == TSc(ctl)
-\* the temp beside the file is being written: cut off here, it is torn
-E_TempStart(c) == Eff([fs EXCEPT !.tc[TSc(c)] = TORN, !.tpl[TSc(c)] = {ABS, TORN}], jr, AdvC(c, "s_tw1"))
-E_TempDone(c) ==
-  Eff([fs EXCEPT !.tc[TSc(c)] = PostV(c.s), !.tpl[TSc(c)] = {ABS, TORN, PostV(c.s)}], jr, AdvC(c, "s_tw2"))
-E_TempSync(c) == Eff([fs EXCEPT !.tpl[TSc(c)] = {ABS, PostV(c.s)}], jr, AdvC(c, "s_ts"))
-S_TempStart == Step("s_tw1") /\ SaveDo(E_TempStart(ctl))
-S_TempDone == Step("s_tw2") /\ SaveDo(E_TempDone(ctl))
-S_TempSync == Step("s_ts") /\ SaveDo(E_TempSync(ctl))
-
-\* An exchange or exclusive rename in the ledger folder is one operation that a power loss keeps or drops
-\* whole (§13 file-system assumptions; no order between operations is assumed): until the folder is
-\* synced, the file and its temp survive as a pair from before or after each pending operation (cp:
-\* every possible pair; cpn: the pairs in which the latest operation persisted). Without a pending
-\* operation they are independent.
-\* a coupling left by another slot (an earlier save) is dissolved into independent outcomes
+\* An exchange or exclusive rename in the ledger folder is one operation that a power loss keeps or drops whole
+\* (§13 file-system assumptions; no order between operations is assumed): until the folder is synced, the file and
+\* its temp survive as a pair from before or after each pending operation (cp: every possible pair; cpn: the pairs
+\* in which the latest operation persisted). Without a pending operation they are independent.
 PlOf(f) == IF fs.cp[f] # {} THEN {p[1] : p \in fs.cp[f]} ELSE fs.pl[f]
 Pairs(f, t) == IF fs.cp[f] # {} /\ fs.cpj[f] = t[1] THEN fs.cp[f]
                ELSE {<<x, y>> : x \in PlOf(f), y \in fs.tpl[t]}
@@ -1040,567 +333,413 @@ Couple(f, t, P, New) ==
   IN [fs0 EXCEPT !.cp[f] = P \cup New, !.cpn[f] = New, !.cpj[f] = t[1],
                  !.pl[f] = Firsts(P \cup New), !.tpl[t] = Seconds(P \cup New)]
 
-\* a replace by atomic swap (R), or an exclusive create (N) that fails if a file appeared
-E_Swap(c) ==
-  LET f == CurFc(c)  t == TSc(c) IN
-  IF c.plan[f] # ABS
-  THEN LET P == Pairs(f, t)
-           New == {<<a, b>> : a \in Seconds(P) \ {ABS}, b \in Firsts(P) \ {ABS}}
-           f1 == Couple(f, t, P, New)
-       IN Eff([f1 EXCEPT !.cur[f] = fs.tc[t], !.tc[t] = fs.cur[f]], jr, AdvC(c, "s_sw"))
-  ELSE IF fs.cur[f] # ABS /\ MUTANT # "plain_create"
-       THEN \* a file appeared: the create fails; roll back, "your editor saved this file..."
-            Eff(fs, jr, StartRBc(c, "changed", f))
-       ELSE LET P == Pairs(f, t)
-                New == {<<a, ABS>> : a \in Seconds(P) \ {ABS}}
-                f1 == Couple(f, t, P, New)
-            IN Eff([f1 EXCEPT !.cur[f] = fs.tc[t], !.tc[t] = ABS], jr, [AdvC(c, "s_sw") EXCEPT !.pc = "s_ds"])
-S_Swap == Step("s_sw") /\ SaveDo(E_Swap(ctl))
+\* a replace by atomic swap (a file at pre), or an exclusive rename to a created path that fails if an entry
+\* appeared (the save stops `changed` and rolls back; what stands there is never touched)
+S_Swap ==
+  /\ Step("s_sw")
+  /\ LET f == CurF  t == TS IN
+     IF Pre(f) # ABS
+     THEN LET P == Pairs(f, t)
+              New == {<<a, b>> : a \in Seconds(P) \ {ABS}, b \in Firsts(P) \ {ABS}}
+              f1 == Couple(f, t, P, New)
+          IN SaveFx([f1 EXCEPT !.cur[f] = fs.tc[t], !.tc[t] = fs.cur[f]], jr,
+                    [Adv("s_sw") EXCEPT !.repl = TRUE])
+     ELSE IF fs.cur[f] # ABS /\ MUTANT # "plain_create"
+          THEN SaveFx(fs, jr, StartRB("changed"))
+          ELSE LET P == Pairs(f, t)
+                   New == {<<a, ABS>> : a \in Seconds(P) \ {ABS}}
+                   f1 == Couple(f, t, P, New)
+               IN SaveFx([f1 EXCEPT !.cur[f] = fs.tc[t], !.tc[t] = ABS], jr,
+                         [Adv("s_sw") EXCEPT !.pc = "s_ds", !.repl = TRUE])
 
-\* §6.4: every swap hashes what it displaced; other bytes are swapped back and kept
-E_Compare(c) ==
-  LET f == CurFc(c)  t == TSc(c) IN
-  IF fs.tc[t] = c.plan[f] \/ MUTANT = "no_displaced_check"
-  THEN Eff(fs, jr, AdvC(c, "s_cmp"))
-  ELSE LET New == {<<p[2], p[1]>> : p \in fs.cpn[f]}
-           f1 == Couple(f, t, Pairs(f, t), New)
-           f2 == [f1 EXCEPT !.cur[f] = fs.tc[t], !.tc[t] = fs.cur[f]]
-       \* §6.4 (F3): the swap-back is synced at once: the pair is durable as it now stands
-       IN Eff(IF MUTANT = "swap_back_unsynced" THEN f2
-              ELSE [f2 EXCEPT !.pl[f] = {fs.tc[t]}, !.tpl[t] = {fs.cur[f]},
-                              !.cp[f] = {}, !.cpn[f] = {}, !.cpj[f] = "none"],
-              jr, StartRBc(c, "changed", f))
-S_Compare == Step("s_cmp") /\ SaveDo(E_Compare(ctl))
+\* §6.4: what the swap displaced: the pre or the post bytes are ours; anything else is an outside save, moved at
+\* once to the file's kept name (never swapped back), the folder synced, and the save stops and rolls back
+S_Compare ==
+  /\ Step("s_cmp")
+  /\ LET f == CurF  t == TS IN
+     IF fs.tc[t] \in {Pre(f), PV} \/ MUTANT = "no_displaced_check"
+     THEN SaveFx(fs, jr, Adv("s_cmp"))
+     ELSE SaveFx([fs EXCEPT !.kp[t] = @ \cup {fs.tc[t]}, !.tc[t] = ABS, !.tpl[t] = {ABS},
+                            !.pl[f] = {fs.cur[f]}, !.cp[f] = {}, !.cpn[f] = {}, !.cpj[f] = "none"],
+                 jr, StartRB("changed"))
 
-E_DirSync(c) ==
-  LET f == CurFc(c)  t == TSc(c) IN
-  Eff([fs EXCEPT !.pl[f] = IF fs.cp[f] = {} THEN @ ELSE Firsts(fs.cpn[f]),
-                 !.tpl[t] = IF fs.cp[f] = {} THEN @ ELSE Seconds(fs.cpn[f]),
-                 !.cp[f] = {}, !.cpn[f] = {}, !.cpj[f] = "none"],
-      jr,
-      IF c.fi < Len(WOrd) THEN [c EXCEPT !.fi = @ + 1, !.pc = "s_tw1"] ELSE [c EXCEPT !.pc = "s_rbk"])
-S_DirSync == Step("s_ds") /\ SaveDo(E_DirSync(ctl))
+S_DirSync ==
+  /\ Step("s_ds")
+  /\ LET f == CurF  t == TS IN
+     SaveFx([fs EXCEPT !.pl[f] = IF fs.cp[f] = {} THEN @ ELSE Firsts(fs.cpn[f]),
+                       !.tpl[t] = IF fs.cp[f] = {} THEN @ ELSE Seconds(fs.cpn[f]),
+                       !.cp[f] = {}, !.cpn[f] = {}, !.cpj[f] = "none"],
+            jr,
+            IF ctl.fi < Len(WOrd) THEN [ctl EXCEPT !.fi = @ + 1, !.pc = "s_tw1"] ELSE [ctl EXCEPT !.pc = "s_rbk"])
 
-\* step 8.4: read-back, then our temps removed and their directories synced
-E_ReadBack(c) ==
-  Eff(fs, jr, IF \A f \in JFiles(c.s) : fs.cur[f] = PostV(c.s) THEN AdvC(c, "s_rbk")
-              ELSE StartRBc(c, "changed", "none"))
-E_RemoveTemps(c) ==
-  Eff([fs EXCEPT !.tc = [x \in TSlots |-> IF x[1] = c.s THEN ABS ELSE fs.tc[x]],
-                 !.tpl = [x \in TSlots |-> IF x[1] = c.s THEN {ABS} ELSE fs.tpl[x]]],
-      jr, AdvC(c, "s_rmt"))
-S_ReadBack == Step("s_rbk") /\ SaveDo(E_ReadBack(ctl))
-S_RemoveTemps == Step("s_rmt") /\ SaveDo(E_RemoveTemps(ctl))
+\* step 8.4: the read-back, then each temp (the old object, at the pre bytes) checked and removed, the folder synced
+S_ReadBack ==
+  /\ Step("s_rbk")
+  /\ SaveFx(fs, jr, IF \A f \in Tg : fs.cur[f] = PV THEN Adv("s_rbk") ELSE StartRB("changed"))
+S_RemoveTemps ==
+  /\ Step("s_rmt")
+  /\ IF \E f \in Tg : fs.tc[<<SV, f>>] \notin {ABS, Pre(f), PV} /\ MUTANT # "no_displaced_check"
+     THEN \* outside bytes in a temp (reached only after a seeded bug: the editor writes only the files' names)
+          LET f == CHOOSE g \in Tg : fs.tc[<<SV, g>>] \notin {ABS, Pre(g), PV} IN
+          SaveFx([fs EXCEPT !.kp[<<SV, f>>] = @ \cup {fs.tc[<<SV, f>>]}, !.tc[<<SV, f>>] = ABS,
+                            !.tpl[<<SV, f>>] = {ABS}], jr, StartRB("changed"))
+     ELSE SaveFx([fs EXCEPT !.tc = [x \in TSlots |-> IF x[1] = SV THEN ABS ELSE fs.tc[x]],
+                            !.tpl = [x \in TSlots |-> IF x[1] = SV THEN {ABS} ELSE fs.tpl[x]]],
+                 jr, Adv("s_rmt"))
 
 \* step 8.5: the journal close; the save has landed exactly when the closed record is durable
-E_Close(c) ==
-  Eff(fs, [jr EXCEPT ![c.s].st = "closed", ![c.s].pl = {"open","closed"}], AdvC(c, "s_close"))
-E_CloseSync(c) == Eff(fs, [jr EXCEPT ![c.s].pl = {jr[c.s].st}], AdvC(c, "s_csync"))
 S_Close ==
   /\ Step("s_close")
-  /\ jr' = E_Close(ctl).xj
-  /\ ses' = ses
-  /\ ctl' = E_Close(ctl).xc
-  /\ gh' = IF MUTANT = "report_before_close_sync" THEN SetTold(gh, SV, "saved") ELSE gh
-  /\ UNCHANGED <<fs, pst, tgt, q, runs, eng, n>>
-S_CloseSync == Step("s_csync") /\ SaveDo(E_CloseSync(ctl))
-
-\* step 9: "saved"
+  /\ jr' = [jr EXCEPT ![SV].st = "closed", ![SV].pl = {"open","closed"}]
+  /\ ctl' = Adv("s_close")
+  /\ IF MUTANT = "report_before_close_sync" THEN SetTold(SV, "saved") ELSE UNCHANGED gh
+  /\ UNCHANGED <<fs, env, tgt, app, run, n>>
+S_CloseSync ==
+  /\ Step("s_csync")
+  /\ jr' = [jr EXCEPT ![SV].pl = {jr[SV].st}]
+  /\ IF MUTANT = "report_before_close_sync" THEN EndJob ELSE ctl' = Adv("s_csync") /\ UNCHANGED run
+  /\ UNCHANGED <<fs, env, tgt, app, n, gh>>
+\* step 9: "saved"; the job ends (the rebuild after it writes nothing: not modelled)
 S_Saved ==
   /\ Step("s_saved")
-  /\ gh' = SetTold(gh, SV, "saved")
-  /\ ctl' = Adv("s_saved")
-  /\ UNCHANGED <<fs, jr, pst, tgt, ses, q, runs, eng, n>>
-
-\* step 10: publish the overlay's result if the disk equals the post fingerprint and no .open
-\* journal exists; otherwise queue a rebuild
-S_Publish ==
-  /\ Step("s_pub")
-  \* (review 3's rv_publish_over_open drops the .open test: equivalent here, since the gate refused any
-  \* .open journal of W1 and no other job runs until this one ends; MAPPING.md §6)
-  /\ IF FP(1) = PostFP /\ (OpenJ(1) = {} \/ MUTANT = "rv_publish_over_open")
-     THEN /\ pst' = [pst EXCEPT !.mirror[1] = [fp |-> FP(1), src |-> "overlay", build |-> pst.build]]
-          /\ UNCHANGED <<q, n>>
-     ELSE /\ q' = IF ses.app = "run" THEN q \o <<Job(NewId, "rebuild", 1, TRUE, FALSE, "app", "none", ZeroFP)>> ELSE q
-          /\ n' = n
-          /\ UNCHANGED pst
-  /\ ctl' = Adv("s_pub")
-  /\ UNCHANGED <<fs, jr, tgt, ses, runs, eng, gh>>
-
-\* step 11: release the locks, final reply, retire, queue the r4 as background work
-S_Release ==
-  /\ Step("s_rel")
-  /\ JobEnd(Retired)
-  /\ ses' = [ses EXCEPT !.locks = {}, !.advice = "none"]
-  \* while A is being closed (switch, quit, update) a new job naming A is refused (§9.1 step 2):
-  \* the closed record stays on disk for the next open
-  /\ q' = IF ses.app = "run" THEN QueueR4(1) ELSE q
-  /\ n' = n
-  /\ UNCHANGED <<fs, jr, pst, tgt, gh>>
+  /\ SetTold(SV, "saved")
+  \* (seeded bug report_before_close_sync: "saved" is said before the close is synced)
+  /\ IF MUTANT = "report_before_close_sync" THEN ctl' = [ctl EXCEPT !.pc = "s_csync"] /\ UNCHANGED run ELSE EndJob
+  /\ UNCHANGED <<fs, jr, env, tgt, app, n>>
 
 ----------------------------------------------------------------------------
-(* RESTORE: the save's rollback (§6.4) and recovery's step 3 (§8.1)        *)
+(* THE RESTORE: the save's rollback (§6.4) and recovery's try (§8.1), one  *)
+(* restore over one journal's record (`ledger.restore`)                     *)
 RJn  == ctl.rj
-RF   == ROrd(RJn)[ctl.fi]
+InRollback == run.k = "save"
 JPre(f)  == jr[RJn].pre[f]
 JPost(f) == jr[RJn].post[f]
-InRollback == RJ.k = "save"
-RestNext == IF ctl.fi < Len(ROrd(RJn)) THEN [ctl EXCEPT !.fi = @ + 1, !.pc = "rs_w"]
-            ELSE [ctl EXCEPT !.pc = "rs_tmp"]
+Slot(f) == <<RJn, f>>
 \* the path guard (§6.3): a recorded path that no longer resolves to its canonical path
-PathMoved(f) == pst.lnk /\ f = "R"
+PathMoved(f) == env.lnk /\ f = "R"
+Guarded == MUTANT \notin {"no_path_guard", "fb_no_guard"}
+\* the temp rule (owner, 2026-10-30, "Staging name"): a staging file is ours whatever it holds; a temp name (the
+\* save's temp, the restore temp) is ours only when it holds the pre or the post bytes. Seeded bugs: no_temp_check
+\* (recovery takes every temp for ours), rollback_skips_temp_rule (the rollback does), old_temp_rule (a staging file
+\* is judged by its bytes, as a temp name is)
+Held(j, f) == {ABS, jr[j].pre[f], jr[j].post[f]}
+NoTempRule == (MUTANT = "no_temp_check" /\ ~InRollback) \/ (MUTANT = "rollback_skips_temp_rule" /\ InRollback)
+TempOurs(j, f, v) == v \in Held(j, f) \/ NoTempRule
+StagingOurs(j, f, v) == IF MUTANT = "old_temp_rule" THEN v \in Held(j, f) ELSE TRUE
+\* seeded bug block_without_cause: the old object at pre beside a file at post is taken for an outside save
+Bogus(j, f) == MUTANT = "block_without_cause" /\ fs.cur[f] = jr[j].post[f] /\ fs.tc[<<j, f>>] = jr[j].pre[f]
+ForeignTemp(j, f) ==
+  \/ ~TempOurs(j, f, fs.tc[<<j, f>>]) \/ ~TempOurs(j, f, fs.rt[<<j, f>>])
+  \/ ~StagingOurs(j, f, fs.sg[<<j, f>>]) \/ Bogus(j, f)
+BackupBad(j, f) == j \in SaveIds /\ f = "R" /\ fs.bk[j] # jr[j].pre[f]
+\* the per-file judgement (`core.recovery.judge`) after the folder's guards: a stop, or a verdict
+Stops(j, f) ==
+  \/ PathMoved(f) /\ Guarded
+  \/ env.unr /\ f = "K"
+  \/ fs.kp[<<j, f>>] # {}                  \* a kept copy of this journal beside it: the user has not dealt with it
+  \/ ForeignTemp(j, f)
+  \/ /\ jr[j].pre[f] # ABS /\ fs.cur[f] # jr[j].pre[f]
+     /\ (fs.cur[f] = jr[j].post[f] => BackupBad(j, f))
+AtPost(j, f) == jr[j].pre[f] # ABS /\ fs.cur[f] = jr[j].post[f] /\ fs.cur[f] # jr[j].pre[f]
+Taken(j, f) == jr[j].pre[f] = ABS /\ fs.cur[f] # ABS
+FirstStop(j) == LET is == {i \in 1..Len(RecOrd(j)) : Stops(j, RecOrd(j)[i])} IN RecOrd(j)[Min(is)]
 
-\* the journal stops: the rollback leaves it .open (unfinished); recovery marks it blocking
+\* the journal stops: the rollback leaves it .open (Unfinished once a replace was asked for, else "not saved" with
+\* the journal open); recovery marks it blocking
 RestoreStop(why) ==
   IF InRollback
-  THEN /\ gh' = SetTold(gh, SV, "unfinished")
-       /\ JobEnd(Retired)
-       /\ ses' = [ses EXCEPT !.locks = {}, !.advice = "none"]
-       /\ UNCHANGED jr
+  THEN /\ SetTold(ctl.s, IF ctl.repl THEN "unfinished" ELSE ctl.rbt) /\ EndJob /\ UNCHANGED jr
   ELSE /\ jr' = [jr EXCEPT ![RJn].why = why]
        /\ ctl' = [ctl EXCEPT !.pc = "rc_next", !.tried = @ \cup {RJn}, !.rj = "none"]
-       /\ ses' = [ses EXCEPT !.locks = {}]
-       /\ UNCHANGED <<runs, eng, gh>>
+       /\ UNCHANGED <<run, gh>>
 
-\* §6.4 (F2): before it deletes the save's temps, the rollback applies recovery's temp rule: a temp
-\* beside a file that holds the post bytes, holding other bytes, is a displaced outside save
-RB_Check ==
-  /\ Step("rb_chk")
-  /\ IF \E f \in Tg : f # ctl.skip /\ fs.cur[f] = PV /\ fs.tc[<<SV, f>>] \notin {ABS, Pre(f), PV}
-     THEN /\ RestoreStop("stopped") /\ UNCHANGED <<fs, pst, tgt, q, n>>
-     ELSE /\ ctl' = [ctl EXCEPT !.pc = "rs_w"]
-          /\ UNCHANGED <<fs, jr, pst, tgt, ses, q, runs, eng, n, gh>>
+\* step 2: every file checked, in the record's order; at the first that stops, the outside saves at its names of
+\* ours are moved to its kept name first (out of reach of every deletion), then the journal stops, nothing else
+\* written. Otherwise: what to put back (the replaced files at post) and whether a created path is taken.
+RS_Check ==
+  /\ Step("rs_chk")
+  /\ IF \E f \in jr[RJn].files : Stops(RJn, f)
+     THEN LET f == FirstStop(RJn)  t == Slot(f)
+              keep == ~(PathMoved(f) /\ Guarded) /\ ~(env.unr /\ f = "K") /\ fs.kp[t] = {}
+              T  == IF keep THEN {fs.tc[t], fs.rt[t]} \ Held(RJn, f) ELSE {}
+          IN /\ fs' = IF T = {} THEN fs
+                      ELSE [fs EXCEPT !.kp[t] = @ \cup T,
+                                      !.tc[t] = IF fs.tc[t] \in T THEN ABS ELSE @,
+                                      !.tpl[t] = IF fs.tc[t] \in T THEN {ABS} ELSE @,
+                                      !.rt[t] = IF fs.rt[t] \in T THEN ABS ELSE @]
+             /\ RestoreStop("stopped")
+             /\ UNCHANGED <<env, tgt, app, n>>
+     ELSE /\ ctl' = [ctl EXCEPT !.pc = "rs_sync",
+                                !.put = {f \in jr[RJn].files : AtPost(RJn, f)},
+                                !.taken = \E f \in jr[RJn].files : Taken(RJn, f)]
+          /\ UNCHANGED <<fs, jr, env, tgt, app, run, n, gh>>
 
-\* §8.1 step 3 (H1): the restore temp is written from the backup and its data synced before the swap
-\* (one step: a restore temp is deleted unchecked, §6.4, so only what a swap puts in place matters)
-RS_Write ==
-  /\ Step("rs_w")
-  /\ LET f == RF IN
-     IF fs.cur[f] = JPre(f) \/ f = ctl.skip
-     THEN /\ ctl' = RestNext /\ UNCHANGED fs          \* already at pre (idempotent), or the outside save put back
-     ELSE /\ fs' = IF JPre(f) # ABS THEN [fs EXCEPT !.rt[f] = JPre(f)] ELSE fs
-          /\ ctl' = [ctl EXCEPT !.pc = "rs_x"]
-  /\ UNCHANGED <<jr, pst, tgt, ses, q, runs, eng, n, gh>>
-
-RS_Swap ==
-  /\ Step("rs_x")
-  /\ LET f == RF IN
-     IF PathMoved(f)
-     THEN \* reached only without the guard: the write goes through the link to a file no journal names
-          /\ pst' = [pst EXCEPT !.outside = JPre(f)]
-          /\ gh' = [gh EXCEPT !.outW = TRUE]
-          /\ fs' = [fs EXCEPT !.rt[f] = ABS]
-          /\ ctl' = RestNext
-     ELSE /\ LET nv == IF JPre(f) # ABS THEN fs.rt[f] ELSE ABS
-                  \* seeded bug (H1): the temp swapped in before its data was synced: torn after a power loss
-                  unsynced == MUTANT = "no_restore_temp_fsync" /\ JPre(f) # ABS
-                  NV == IF unsynced THEN {nv, TORN} ELSE {nv}
-                  cp1 == IF fs.cp[f] # {} THEN fs.cp[f] \cup {<<v, y>> : v \in NV, y \in Seconds(fs.cp[f])} ELSE {}
-              IN fs' = [fs EXCEPT !.cur[f] = nv, !.rt[f] = fs.cur[f], !.pl[f] = @ \cup NV,
-                                  !.cp[f] = cp1, !.ud = IF unsynced THEN @ \cup {f} ELSE @]
-          /\ ctl' = [ctl EXCEPT !.pc = "rs_c"]
-          /\ UNCHANGED <<pst, gh>>
-  /\ UNCHANGED <<jr, tgt, ses, q, runs, eng, n>>
-
-RS_Compare ==
-  /\ Step("rs_c")
-  /\ LET f == RF IN
-     IF fs.rt[f] = JPost(f) \/ MUTANT = "no_displaced_check"
-     THEN /\ fs' = [fs EXCEPT !.rt[f] = ABS]
-          /\ ctl' = RestNext
-          /\ UNCHANGED <<jr, ses, runs, eng, gh>>
-     ELSE \* other bytes: put back and kept; the journal stops (both versions shown)
-          /\ LET cp1 == IF fs.cp[f] # {} THEN fs.cp[f] \cup {<<fs.rt[f], y>> : y \in Seconds(fs.cp[f])} ELSE {}
-             IN fs' = [fs EXCEPT !.cur[f] = fs.rt[f], !.rt[f] = ABS,
-                                 \* §6.4 (F3): the swap-back is synced at once
-                                 !.pl[f] = IF MUTANT # "swap_back_unsynced" THEN {fs.rt[f]} ELSE @ \cup {fs.rt[f]},
-                                 !.cp[f] = IF MUTANT # "swap_back_unsynced" THEN {} ELSE cp1]
-          /\ RestoreStop("stopped")
-  /\ UNCHANGED <<pst, tgt, q, n>>
-
-\* the save's temps and our restore temps are deleted, whatever they hold
-RS_Temps ==
-  /\ Step("rs_tmp")
-  /\ LET F == jr[RJn].files IN
-     /\ fs' = [fs EXCEPT !.tc = [x \in TSlots |-> IF x[1] = RJn THEN ABS ELSE fs.tc[x]],
-                         !.rt = [f \in Files |-> IF f \in F THEN ABS ELSE fs.rt[f]]]
-     \* §15: an outside write displaced into a restore temp by a swap that a crash cut before its
-     \* compare is lost (an honest limit); recorded so ExternalEditNeverSilentlyLost excludes it
-     /\ gh' = [gh EXCEPT !.acc = [f \in Files |-> IF f \in F /\ fs.rt[f] # ABS
-                                                 THEN gh.acc[f] \cup {fs.rt[f]} ELSE gh.acc[f]]]
-  /\ ctl' = [ctl EXCEPT !.pc = IF MUTANT = "resolve_before_restores_synced" THEN "rs_res" ELSE "rs_sync"]
-  /\ UNCHANGED <<jr, pst, tgt, ses, q, runs, eng, n>>
-
-\* only then: the journal renamed .resolved {not_saved}, its directory synced
-RestoreDone ==
-  IF InRollback
-  THEN /\ gh' = SetTold(gh, SV, ctl.rbt)
-       /\ JobEnd(Retired)
-       /\ ses' = [ses EXCEPT !.locks = {}, !.advice = "none"]
-       /\ UNCHANGED <<jr, pst, tgt, q, n>>
-  ELSE /\ gh' = IF RJn \in SaveIds THEN SetTold(gh, RJn, "undone") ELSE gh
-       /\ ctl' = [ctl EXCEPT !.pc = "rc_next", !.tried = @ \cup {RJn}, !.rj = "none"]
-       /\ ses' = [ses EXCEPT !.locks = {}]
-       /\ UNCHANGED <<jr, pst, tgt, q, runs, eng, n>>
+\* step 3 begins: every folder the record names synced first (a swap a crashed save left unsynced is durable before
+\* anything it displaced is removed)
+SyncNamed(F, J) ==
+  [fs EXCEPT !.pl = [f \in Files |-> IF f \in F THEN {fs.cur[f]} \cup (IF f \in fs.ud THEN {TORN} ELSE {})
+                                     ELSE fs.pl[f]],
+             !.cp = [f \in Files |-> IF f \in F THEN {} ELSE fs.cp[f]],
+             !.cpn = [f \in Files |-> IF f \in F THEN {} ELSE fs.cpn[f]],
+             !.cpj = [f \in Files |-> IF f \in F THEN "none" ELSE fs.cpj[f]],
+             !.tpl = [x \in TSlots |-> IF x[2] \in F THEN {fs.tc[x]} ELSE fs.tpl[x]],
+             !.sgpl = [x \in TSlots |-> IF x[2] \in F THEN {fs.sg[x]} ELSE fs.sgpl[x]]]
 RS_Sync ==
   /\ Step("rs_sync")
-  /\ LET F == jr[RJn].files IN
-     \* the directories synced; data swapped in from an unsynced temp may still be torn (seeded bug only)
-     fs' = [fs EXCEPT !.pl = [f \in Files |-> IF f \in F THEN {fs.cur[f]} \cup (IF f \in fs.ud THEN {TORN} ELSE {})
-                                              ELSE fs.pl[f]],
-                      !.tpl = [x \in TSlots |-> IF x[1] = RJn THEN {ABS} ELSE fs.tpl[x]],
-                      !.cp = [f \in Files |-> IF f \in F THEN {} ELSE fs.cp[f]],
-                      !.cpn = [f \in Files |-> IF f \in F THEN {} ELSE fs.cpn[f]],
-                      !.cpj = [f \in Files |-> IF f \in F THEN "none" ELSE fs.cpj[f]]]
-  /\ IF MUTANT = "resolve_before_restores_synced"
-     THEN RestoreDone
-     ELSE /\ ctl' = [ctl EXCEPT !.pc = "rs_res"]
-          /\ UNCHANGED <<jr, pst, tgt, ses, q, runs, eng, n, gh>>
+  /\ fs' = SyncNamed(jr[RJn].files, RJn)
+  /\ ctl' = [ctl EXCEPT !.pc = "rs_clean"]
+  /\ UNCHANGED <<jr, env, tgt, app, run, n, gh>>
 
+\* the files to put back, root first
+PutAt(i) == ROrd(RJn)[i]
+NextPut(i) == {k \in i..Len(ROrd(RJn)) : PutAt(k) \in ctl.put}
+RF == PutAt(ctl.fi)
+\* move on to the next file to put back, or the folders' sync
+RestNextFrom(i) == IF NextPut(i) = {} THEN [ctl EXCEPT !.pc = IF MUTANT = "resolve_before_restores_synced"
+                                                            THEN "rs_res" ELSE "rs_all"]
+                   ELSE [ctl EXCEPT !.fi = Min(NextPut(i)), !.pc = "rs_w"]
+
+\* the names of ours removed (each checked again by the temp rule; nothing writes there since the check), but the
+\* temp beside a file to put back, which holds the only other copy of its pre bytes until they are back
+RS_Clean ==
+  /\ Step("rs_clean")
+  /\ LET J == RJn  F == jr[RJn].files
+         gone(x) == x[1] = J /\ x[2] \in F
+     IN fs' = [fs EXCEPT
+                 !.sg = [x \in TSlots |-> IF gone(x) THEN ABS ELSE fs.sg[x]],
+                 !.sgpl = [x \in TSlots |-> IF gone(x) THEN fs.sgpl[x] \cup {ABS} ELSE fs.sgpl[x]],
+                 !.rt = [x \in TSlots |-> IF gone(x) THEN ABS ELSE fs.rt[x]],
+                 !.tc = [x \in TSlots |-> IF gone(x) /\ x[2] \notin ctl.put THEN ABS ELSE fs.tc[x]],
+                 !.tpl = [x \in TSlots |-> IF gone(x) /\ x[2] \notin ctl.put THEN fs.tpl[x] \cup {ABS}
+                                           ELSE fs.tpl[x]]]
+  /\ ctl' = RestNextFrom(1)
+  /\ UNCHANGED <<jr, env, tgt, app, run, n, gh>>
+
+\* step 3 per file: the pre bytes from the backup written at the restore staging name, synced, renamed to the
+\* restore temp, that rename synced (one step: a cut write at the staging name is the staging rule's, as the save's)
+RS_Write ==
+  /\ Step("rs_w")
+  /\ fs' = [fs EXCEPT !.rt[Slot(RF)] = JPre(RF)]
+  /\ ctl' = [ctl EXCEPT !.pc = "rs_x"]
+  /\ UNCHANGED <<jr, env, tgt, app, run, n, gh>>
+
+\* the restore swap, then the folder synced at once (S0061 round 4)
+RS_Swap ==
+  /\ Step("rs_x")
+  /\ LET f == RF  t == Slot(f) IN
+     IF PathMoved(f)
+     THEN \* reached only without the guard: the write goes through the link to a file no journal names
+          /\ env' = [env EXCEPT !.outside = JPre(f)]
+          /\ gh' = [gh EXCEPT !.outW = TRUE]
+          /\ fs' = [fs EXCEPT !.rt[t] = ABS]
+          /\ ctl' = RestNextFrom(ctl.fi + 1)
+     ELSE /\ LET nv == fs.rt[t]
+                 \* seeded bug no_restore_temp_fsync: the restore temp's data not synced before the swap
+                 unsynced == MUTANT = "no_restore_temp_fsync"
+                 \* seeded bug resolve_before_restores_synced: the swap is not synced at once
+                 lazy == MUTANT = "resolve_before_restores_synced"
+             IN fs' = [fs EXCEPT !.cur[f] = nv, !.rt[t] = fs.cur[f],
+                                 !.pl[f] = (IF lazy THEN fs.pl[f] ELSE {}) \cup {nv}
+                                           \cup (IF unsynced THEN {TORN} ELSE {}),
+                                 !.cp[f] = {}, !.cpn[f] = {}, !.cpj[f] = "none",
+                                 !.ud = IF unsynced THEN @ \cup {f} ELSE @]
+          /\ ctl' = [ctl EXCEPT !.pc = "rs_c"]
+          /\ UNCHANGED <<env, gh>>
+  /\ UNCHANGED <<jr, tgt, app, run, n>>
+
+\* what the restore swap displaced: ours (the post or the pre bytes) is removed; anything else is an outside save in
+\* the moment between the check and the swap: moved to the kept name, and the journal stops
+RS_Compare ==
+  /\ Step("rs_c")
+  /\ LET f == RF  t == Slot(f) IN
+     IF fs.rt[t] \in {JPost(f), JPre(f)} \/ MUTANT = "no_displaced_check"
+     THEN /\ fs' = [fs EXCEPT !.rt[t] = ABS]
+          /\ ctl' = [ctl EXCEPT !.pc = "rs_t"]
+          /\ UNCHANGED <<jr, run, gh>>
+     ELSE /\ fs' = [fs EXCEPT !.kp[t] = @ \cup {fs.rt[t]}, !.rt[t] = ABS]
+          /\ RestoreStop("stopped")
+  /\ UNCHANGED <<env, tgt, app, n>>
+
+\* the save's temp beside a file now back at pre, checked again by the temp rule and removed
+RS_Temp ==
+  /\ Step("rs_t")
+  /\ LET f == RF  t == Slot(f) IN
+     IF TempOurs(RJn, f, fs.tc[t])
+     THEN /\ fs' = [fs EXCEPT !.tc[t] = ABS, !.tpl[t] = @ \cup {ABS}]
+          /\ ctl' = RestNextFrom(ctl.fi + 1)
+          /\ UNCHANGED <<jr, run, gh>>
+     ELSE /\ fs' = [fs EXCEPT !.kp[t] = @ \cup {fs.tc[t]}, !.tc[t] = ABS, !.tpl[t] = {ABS}]
+          /\ RestoreStop("stopped")
+  /\ UNCHANGED <<env, tgt, app, n>>
+
+\* every folder the record names synced; a created path that is taken ends the try here (`created_path_taken`:
+\* the other files durably at pre, the journal .open)
+RS_All ==
+  /\ Step("rs_all")
+  /\ fs' = SyncNamed(jr[RJn].files, RJn)
+  /\ IF ctl.taken
+     THEN RestoreStop("stopped")
+     ELSE /\ ctl' = [ctl EXCEPT !.pc = "rs_res"]
+          /\ UNCHANGED <<jr, run, gh>>
+  /\ UNCHANGED <<env, tgt, app, n>>
+
+\* step 4: only then the journal renamed .resolved and its folder synced
+RestoreDone ==
+  IF InRollback
+  THEN SetTold(ctl.s, ctl.rbt) /\ EndJob
+  ELSE /\ ctl' = [ctl EXCEPT !.pc = "rc_next", !.tried = @ \cup {RJn}, !.rj = "none"]
+       /\ UNCHANGED <<run, gh>>
 RS_Resolve ==
   /\ Step("rs_res")
-  /\ jr' = [jr EXCEPT ![RJn].st = "resolved", ![RJn].pl = {"resolved"}]
-  /\ IF MUTANT = "resolve_before_restores_synced"
-     THEN /\ ctl' = [ctl EXCEPT !.pc = "rs_sync"]
-          /\ UNCHANGED <<fs, pst, tgt, ses, q, runs, eng, n, gh>>
-     ELSE /\ UNCHANGED fs
-          /\ IF InRollback
-             THEN /\ gh' = SetTold(gh, SV, ctl.rbt)
-                  /\ JobEnd(Retired)
-                  /\ ses' = [ses EXCEPT !.locks = {}, !.advice = "none"]
-                  /\ UNCHANGED <<pst, tgt, q, n>>
-             ELSE /\ gh' = IF RJn \in SaveIds THEN SetTold(gh, RJn, "undone") ELSE gh
-                  /\ ctl' = [ctl EXCEPT !.pc = "rc_next", !.tried = @ \cup {RJn}, !.rj = "none"]
-                  /\ ses' = [ses EXCEPT !.locks = {}]
-                  /\ UNCHANGED <<pst, tgt, q, runs, eng, n>>
+  /\ IF ctl.taken /\ MUTANT = "resolve_before_restores_synced"
+     THEN \* the seeded order still stops at a taken created path, after its late sync
+          /\ ctl' = [ctl EXCEPT !.pc = "rs_all"] /\ UNCHANGED <<jr, run, gh>>
+     ELSE /\ jr' = [jr EXCEPT ![RJn].st = "resolved", ![RJn].pl = {"resolved"}]
+          /\ IF MUTANT = "resolve_before_restores_synced"
+             THEN ctl' = [ctl EXCEPT !.pc = "rs_late"] /\ UNCHANGED <<run, gh>>
+             ELSE RestoreDone
+  /\ UNCHANGED <<fs, env, tgt, app, n>>
+\* seeded bug resolve_before_restores_synced only: the folders' sync after the record says resolved
+RS_Late ==
+  /\ Step("rs_late")
+  /\ fs' = SyncNamed(jr[RJn].files, RJn)
+  /\ RestoreDone
+  /\ UNCHANGED <<jr, env, tgt, app, n>>
 
 ----------------------------------------------------------------------------
-(* RECOVER_ALL (§8.1)                                                      *)
-\* start: earlier judgements cleared; .part journals deleted (they never block); the directories synced
+(* RECOVER-ALL (§8.1): every .open journal tried, one at a time            *)
+\* start: earlier judgements cleared; .part journals deleted (they never block); the journal folders synced
 RC_Init ==
   /\ Step("rc_init")
   /\ jr' = [j \in JIds |-> CASE jr[j].st \in {"part","tpart"} -> NoJ
                               [] jr[j].st \in OpenSt -> [jr[j] EXCEPT !.why = "", !.pl = {jr[j].st}]
-                              \* §6.6, §8.1 (F1): recover-all syncs the journal directories it lists, so the
-                              \* quit note and the open read only durable records
-                              [] MUTANT \notin {"outcome_unsynced","rc_unsynced"} /\ jr[j].st \in CL ->
-                                   [jr[j] EXCEPT !.pl = {jr[j].st}]
-                              [] OTHER -> jr[j]]
-  /\ ctl' = [ctl EXCEPT !.pc = "rc_next", !.tried = {}, !.rinit = TRUE]
-  /\ UNCHANGED <<fs, pst, tgt, ses, q, runs, eng, n, gh>>
+                              [] OTHER -> [jr[j] EXCEPT !.pl = {jr[j].st}]]
+  /\ ctl' = [ctl EXCEPT !.pc = "rc_next", !.tried = {}]
+  /\ UNCHANGED <<fs, env, tgt, app, run, n, gh>>
 
-Untried == RecUntried
+Untried == {j \in JIds : jr[j].st \in OpenSt /\ j \notin ctl.tried}
 RC_Next ==
   /\ Step("rc_next")
   /\ IF Untried = {}
-     THEN RecoverEndEffects(Retired, jr)
-     ELSE LET j == FirstJ(Untried) IN
+     THEN /\ app' = "run" /\ EndJob
+          /\ UNCHANGED <<fs, jr, env, tgt, n, gh>>
+     ELSE LET j == JOrder[Min({i \in 1..Len(JOrder) : JOrder[i] \in Untried})] IN
           IF jr[j].st = "topen"
           THEN \* a journal whose file list cannot be read blocks every open
                /\ jr' = [jr EXCEPT ![j].why = "stopped"]
                /\ ctl' = [ctl EXCEPT !.tried = @ \cup {j}]
-               /\ UNCHANGED <<fs, pst, tgt, ses, q, runs, eng, n, gh>>
-          ELSE /\ ctl' = [ctl EXCEPT !.rj = j, !.pc = "rc_lock"]
-               /\ UNCHANGED <<fs, jr, pst, tgt, ses, q, runs, eng, n, gh>>
-
-\* step 1: the locks, without waiting. With the engine lock (§5.1) no other process of ours can hold one, so
-\* the try always succeeds here; §8.1's branch for a lock held anyway (reason failed) is not reachable in
-\* this model (MAPPING.md §3)
-RC_Lock ==
-  /\ Step("rc_lock")
-  /\ ses' = [ses EXCEPT !.locks = jr[RJn].files]
-  /\ ctl' = [ctl EXCEPT !.pc = "rc_chk"]
-  /\ UNCHANGED <<fs, jr, pst, tgt, q, runs, eng, n, gh>>
-
-\* step 2: check every file it names
-TempBad(j, f) ==
-  LET t == fs.tc[<<j, f>>] IN
-  CASE MUTANT = "no_temp_check" -> FALSE
-    [] MUTANT = "old_temp_rule" -> t \notin {ABS, jr[j].pre[f], jr[j].post[f]}
-    [] OTHER -> fs.cur[f] = jr[j].post[f] /\ t \notin {ABS, jr[j].pre[f], jr[j].post[f]}
-BackupBad(j, f) == j \in SaveIds /\ f = "R" /\ fs.cur[f] = jr[j].post[f] /\ fs.bk[j] # jr[j].pre[f]
-FileBad(j, f) ==
-  \/ PathMoved(f) /\ MUTANT \notin {"no_path_guard", "fb_no_guard"}
-  \/ pst.unr /\ f = "K"
-  \/ fs.cur[f] \notin {jr[j].pre[f], jr[j].post[f]}
-  \/ TempBad(j, f)
-  \/ BackupBad(j, f)
-  \/ MUTANT = "block_without_cause" /\ fs.cur[f] = jr[j].post[f] /\ fs.tc[<<j, f>>] = jr[j].pre[f]
-RC_Check ==
-  /\ Step("rc_chk")
-  /\ IF \E f \in jr[RJn].files : FileBad(RJn, f)
-     THEN /\ jr' = [jr EXCEPT ![RJn].why = "stopped"]
-          /\ ctl' = [ctl EXCEPT !.pc = "rc_next", !.tried = @ \cup {RJn}, !.rj = "none"]
-          /\ ses' = [ses EXCEPT !.locks = {}]
-     ELSE /\ ctl' = [ctl EXCEPT !.pc = "rs_w", !.fi = 1]
-          /\ UNCHANGED <<jr, ses>>
-  /\ UNCHANGED <<fs, pst, tgt, q, runs, eng, n, gh>>
+               /\ UNCHANGED <<fs, env, tgt, app, run, n, gh>>
+          ELSE /\ ctl' = [ctl EXCEPT !.rj = j, !.pc = "rs_chk", !.put = {}, !.taken = FALSE]
+               /\ UNCHANGED <<fs, jr, env, tgt, app, run, n, gh>>
 
 ----------------------------------------------------------------------------
-(* R4 (§6.7; ADR-0067, S0068): background work a landed save queues; it  *)
-(* loads the disk (user code), compares, and writes nothing: no record      *)
-(* state, no gate, no confirm, no count. The model keeps it only as a job   *)
-(* the queue, Cancel and the quiesce act on (durability only, EP-19).       *)
-R4_Start ==
-  /\ Step("r4_a")
-  /\ ctl' = [ctl EXCEPT !.pc = "r4_load"]
-  /\ UNCHANGED <<fs, jr, pst, tgt, ses, q, runs, eng, n, gh>>
-\* Beancount's real load of the disk (user code)
-R4_Load ==
-  /\ Step("r4_load")
-  /\ ctl' = [ctl EXCEPT !.pc = "r4_c"]
-  /\ eng' = [eng EXCEPT !.user = TRUE]
-  /\ UNCHANGED <<fs, jr, pst, tgt, ses, q, runs, n, gh>>
-\* the comparison: a difference is logged and shown; the job ends, nothing written
-R4_Check ==
-  /\ Step("r4_c")
-  /\ JobEnd(Retired) /\ ses' = EndSesAdv
-  /\ UNCHANGED <<fs, jr, pst, tgt, q, n, gh>>
-
-----------------------------------------------------------------------------
-(* LOADS THAT READ THE LEDGER (§7): open, rebuild, preview, BQL            *)
-JobW == RJ.w
-RD_Load ==
-  /\ Step("rd_load")
-  /\ IF OpenJ(JobW) # {}
-     THEN /\ MUTANT # "read_refusal_stuck"           \* seeded bug: the refusal cannot happen
-          /\ JobEnd(Retired) /\ ses' = EndSesAdv      \* WRITES_PAUSED {unfinished_save}
-     ELSE /\ ctl' = [ctl EXCEPT !.pc = "rd_chk", !.ofp = FP(JobW)]
-          /\ eng' = [eng EXCEPT !.user = TRUE]
-          /\ UNCHANGED <<runs, ses>>
-  /\ UNCHANGED <<fs, jr, pst, tgt, q, n, gh>>
-RD_Check ==
-  /\ Step("rd_chk")
-  /\ CASE FP(JobW) # ctl.ofp /\ ctl.tries < 2 ->
-            /\ ctl' = [ctl EXCEPT !.pc = "rd_load", !.tries = @ + 1]
-            /\ UNCHANGED <<pst, runs, eng, ses>>
-       [] FP(JobW) # ctl.ofp ->                       \* LEDGER_CHANGING
-            /\ JobEnd(Retired) /\ ses' = EndSesAdv /\ UNCHANGED pst
-       [] RJ.k = "rebuild" ->
-            /\ pst' = [pst EXCEPT !.mirror[JobW] = [fp |-> FP(JobW), src |-> "rebuild", build |-> pst.build]]
-            /\ JobEnd(Retired) /\ ses' = EndSesAdv
-       [] OTHER -> /\ JobEnd(Retired) /\ ses' = EndSesAdv /\ UNCHANGED pst
-  /\ UNCHANGED <<fs, jr, tgt, q, n, gh>>
-
-OP_Load ==
-  /\ Step("op_load")
-  /\ IF JobW = 3 /\ pst.unr
-     THEN /\ JobEnd(Retired) /\ ses' = OpenFailSes
-     ELSE /\ ctl' = [ctl EXCEPT !.pc = "op_chk", !.ofp = FP(JobW)]
-          /\ eng' = [eng EXCEPT !.user = TRUE]
-          /\ UNCHANGED <<runs, ses>>
-  /\ UNCHANGED <<fs, jr, pst, tgt, q, n, gh>>
-OP_Check ==
-  /\ Step("op_chk")
-  /\ CASE FP(JobW) # ctl.ofp /\ ctl.tries < 2 ->
-            /\ ctl' = [ctl EXCEPT !.pc = "op_load", !.tries = @ + 1]
-            /\ UNCHANGED <<pst, runs, eng, ses, q, n>>
-       [] FP(JobW) # ctl.ofp \/ OpenJ(JobW) # {} ->
-            /\ JobEnd(Retired) /\ ses' = OpenFailSes /\ UNCHANGED <<pst, q, n>>
-       [] OTHER ->
-            /\ JobEnd(Retired)
-            /\ LET t == JobW IN
-               /\ ses' = [ses EXCEPT !.app = "run", !.stage = "none", !.screen = "none", !.advice = "none",
-                                     !.opened = IF MUTANT = "open_before_close" THEN @ \cup {t} ELSE {t}]
-               /\ pst' = [pst EXCEPT !.mirror[t] = [fp |-> FP(t), src |-> "open", build |-> pst.build],
-                                     !.last = t]
-               /\ q' = q
-               /\ n' = n
-  /\ UNCHANGED <<fs, jr, tgt, gh>>
-
-----------------------------------------------------------------------------
-(* COPY OF W2 (§8.2; app-scoped)                                           *)
+(* COPY OF W2 (§8.2)                                                       *)
+\* its sources must not be named by an unresolved journal, blocking or in-session (seeded bug
+\* copy_checks_blocking_only: only blocking ones)
 CP_Check ==
   /\ Step("cp_chk")
-  /\ IF \E j \in JIds : jr[j].st \in OpenSt /\ (jr[j].st = "topen" \/ jr[j].files \cap LS(2) # {})
-                        /\ (MUTANT = "copy_checks_blocking_only" => jr[j].why # "")
-     THEN /\ JobEnd(Retired) /\ ses' = EndSesAdv     \* RECOVERY_BLOCKED
-     ELSE /\ ctl' = [ctl EXCEPT !.pc = "cp_load"] /\ UNCHANGED <<runs, eng, ses>>
-  /\ UNCHANGED <<fs, jr, pst, tgt, q, n, gh>>
-CP_Load ==            \* writes the copy and runs its "loads the same" check (user code)
+  /\ IF \E j \in OpenOn(LS(2)) : MUTANT = "copy_checks_blocking_only" => jr[j].why # ""
+     THEN EndJob
+     ELSE ctl' = [ctl EXCEPT !.pc = "cp_load"] /\ UNCHANGED run
+  /\ UNCHANGED <<fs, jr, env, tgt, app, n, gh>>
+CP_Load ==            \* reads the sources and writes the copy (into its own target, the create's names)
   /\ Step("cp_load")
-  /\ ctl' = [ctl EXCEPT !.pc = "cp_commit"] /\ eng' = [eng EXCEPT !.user = TRUE]
-  /\ UNCHANGED <<fs, jr, pst, tgt, ses, q, runs, n, gh>>
-CP_Commit ==
-  /\ Step("cp_commit")
-  /\ ctl' = [ctl EXCEPT !.pc = "cp_man", !.past = TRUE]
-  /\ UNCHANGED <<fs, jr, pst, tgt, ses, q, runs, eng, n, gh>>
-CP_Manifest ==       \* the copy's manifest last (its target's names are the create's, §8.2)
+  /\ ctl' = [ctl EXCEPT !.pc = "cp_man"]
+  /\ UNCHANGED <<fs, jr, env, tgt, app, run, n, gh>>
+CP_Manifest ==       \* the copy's manifest last
   /\ Step("cp_man")
-  /\ JobEnd(Retired) /\ ses' = EndSesAdv
-  /\ gh' = [gh EXCEPT !.cpMan = TRUE]
-  /\ UNCHANGED <<fs, jr, pst, tgt, q, n>>
+  /\ EndJob
+  /\ UNCHANGED <<fs, jr, env, tgt, app, n, gh>>
 
 ----------------------------------------------------------------------------
-(* CREATE (§8.2; app-scoped): the target folder and its names              *)
-CrStop(cause) ==
-  /\ CrStopGh(cause)
-  /\ JobEnd(Retired) /\ ses' = EndSesAdv
-  /\ UNCHANGED <<fs, jr, pst, tgt, q, n>>
-OtherAppeared == tgt.c["o"] # "no"
+(* CREATE (§8.2): the target folder and its names                          *)
+CrFx(t1, c1) == tgt' = t1 /\ ctl' = c1 /\ UNCHANGED <<fs, jr, env, app, run, n, gh>>
+CrStop == EndJob /\ UNCHANGED <<fs, jr, env, tgt, app, n, gh>>
 \* step 1: the target must not exist or must be empty
 CR_Target ==
   /\ Step("cr_tgt")
   /\ IF (\E x \in Names : tgt.c[x] # "no") /\ MUTANT # "no_refuse_nonempty"
-     THEN /\ gh' = [gh EXCEPT !.crOut = "notempty", !.crMsg = "notempty"]
-          /\ JobEnd(Retired) /\ ses' = EndSesAdv
-          /\ UNCHANGED <<fs, jr, pst, tgt, q, n>>
-     ELSE /\ tgt' = [tgt EXCEPT !.ex = TRUE]
-          /\ ctl' = [ctl EXCEPT !.pc = IF MUTANT = "manifest_first" THEN "cr_mw" ELSE "cr_wa"]
-          /\ UNCHANGED <<fs, jr, pst, ses, q, runs, eng, n, gh>>
-\* step 3: each file created exclusively; only a collision with a name the job writes stops it
+     THEN CrStop
+     ELSE CrFx([tgt EXCEPT !.ex = TRUE], [ctl EXCEPT !.pc = IF MUTANT = "manifest_first" THEN "cr_mr" ELSE "cr_wa"])
+\* step 3: each file created exclusively; a collision with a name the job writes stops it
 CR_WriteA ==
   /\ Step("cr_wa")
-  /\ IF (tgt.c["a"] # "no" /\ MUTANT # "plain_file_write") \/ (MUTANT = "listing_check" /\ OtherAppeared)
-     THEN CrStop("collision")
-     ELSE /\ tgt' = [tgt EXCEPT !.c["a"] = "ours", !.pl["a"] = {"no","torn","ours"}]
-          /\ ctl' = [ctl EXCEPT !.pc = "cr_ws"]
-          /\ UNCHANGED <<fs, jr, pst, ses, q, runs, eng, n, gh>>
+  /\ IF tgt.c["a"] # "no" /\ MUTANT # "plain_file_write"
+     THEN CrStop
+     ELSE CrFx([tgt EXCEPT !.c["a"] = "ours", !.pl["a"] = {"no","torn","ours"}], [ctl EXCEPT !.pc = "cr_ws"])
 CR_SyncA ==
   /\ Step("cr_ws")
-  /\ tgt' = [tgt EXCEPT !.pl["a"] = IF tgt.c["a"] = "ours" /\ MUTANT # "rv_create_no_sync" THEN {"ours"} ELSE @]
-  /\ ctl' = [ctl EXCEPT !.pc = IF MUTANT = "no_readback" THEN "cr_load" ELSE "cr_rb"]
-  /\ UNCHANGED <<fs, jr, pst, ses, q, runs, eng, n, gh>>
+  /\ CrFx([tgt EXCEPT !.pl["a"] = IF tgt.c["a"] = "ours" /\ MUTANT # "rv_create_no_sync" THEN {"ours"} ELSE @],
+          [ctl EXCEPT !.pc = IF MUTANT = "no_readback" THEN "cr_mr" ELSE "cr_rb"])
 \* step 4: read back every file
 CR_ReadBack ==
   /\ Step("cr_rb")
-  /\ IF tgt.c["a"] # "ours"
-     THEN CrStop("readback")
-     ELSE /\ ctl' = [ctl EXCEPT !.pc = "cr_load"]
-          /\ UNCHANGED <<fs, jr, pst, tgt, ses, q, runs, eng, n, gh>>
-\* step 5: the seeding's load gate on the files in the target (user code)
-CR_Load ==
-  /\ Step("cr_load")
-  /\ ctl' = [ctl EXCEPT !.pc = IF MUTANT = "manifest_first" THEN "cr_reg" ELSE "cr_commit"]
-  /\ eng' = [eng EXCEPT !.user = TRUE]
-  /\ gh' = [gh EXCEPT !.crChecked = TRUE]
-  /\ UNCHANGED <<fs, jr, pst, tgt, ses, q, runs, n>>
-\* step 6: the commit point (same table step as a save)
-CR_Commit ==
-  /\ Step("cr_commit")
-  /\ ctl' = [ctl EXCEPT !.pc = "cr_mw", !.past = TRUE]
-  /\ UNCHANGED <<fs, jr, pst, tgt, ses, q, runs, eng, n, gh>>
-\* step 7: the manifest last: temp written and synced, exclusive rename, parent synced
-CR_ManifestTemp ==
-  /\ Step("cr_mw")
-  /\ IF MUTANT = "listing_check" /\ OtherAppeared /\ ~ctl.past
-     THEN CrStop("collision")
-     ELSE /\ ctl' = [ctl EXCEPT !.pc = "cr_mr"]
-          /\ UNCHANGED <<fs, jr, pst, tgt, ses, q, runs, eng, n, gh>>
+  /\ IF tgt.c["a"] # "ours" THEN CrStop ELSE CrFx(tgt, [ctl EXCEPT !.pc = "cr_mr"])
+\* step 7: the manifest last: its temp written and synced, renamed exclusively (a .finzytrack that appeared
+\* meanwhile stops the job and is left as it is), the parent synced
 CR_ManifestRename ==
   /\ Step("cr_mr")
   /\ IF tgt.c["m"] # "no" /\ MUTANT # "manifest_overwrite"
-     THEN \* §8.2 step 7: a .finzytrack appeared meanwhile: ours is removed, nothing registered,
-          \* the foreign one is left as it is
-          /\ gh' = [gh EXCEPT !.crOut = "manifest_collision", !.crMsg = "foreign_manifest"]
-          /\ JobEnd(Retired) /\ ses' = EndSesAdv
-          /\ UNCHANGED <<fs, jr, pst, tgt, q, n>>
-     ELSE /\ tgt' = [tgt EXCEPT !.c["m"] = "ours", !.pl["m"] = {"no","ours"}]
-          /\ ctl' = [ctl EXCEPT !.pc = "cr_ms"]
-          /\ UNCHANGED <<fs, jr, pst, ses, q, runs, eng, n, gh>>
+     THEN CrStop
+     ELSE CrFx([tgt EXCEPT !.c["m"] = "ours", !.pl["m"] = {"no","ours"}], [ctl EXCEPT !.pc = "cr_ms"])
 CR_ManifestSync ==
   /\ Step("cr_ms")
-  /\ tgt' = [tgt EXCEPT !.pl["m"] = {"ours"}]
-  /\ ctl' = [ctl EXCEPT !.pc = IF MUTANT = "manifest_first" THEN "cr_wa" ELSE "cr_reg"]
-  /\ UNCHANGED <<fs, jr, pst, ses, q, runs, eng, n, gh>>
+  /\ CrFx([tgt EXCEPT !.pl["m"] = {"ours"}],
+          [ctl EXCEPT !.pc = IF MUTANT = "manifest_first" /\ tgt.c["a"] = "no" THEN "cr_wa" ELSE "cr_reg"])
 \* step 8: register
-CR_Register ==
-  /\ Step("cr_reg")
-  /\ gh' = [gh EXCEPT !.crOut = "created", !.crMsg = "created"]
-  /\ JobEnd(Retired) /\ ses' = EndSesAdv
-  /\ UNCHANGED <<fs, jr, pst, tgt, q, n>>
+CR_Register == Step("cr_reg") /\ CrStop
 
 ----------------------------------------------------------------------------
 (* ENVIRONMENT: the OS, the outside editor, the path changer               *)
+SavePcs == {"s_gate","s_bk","s_bks","s_jp","s_jps","s_jo","s_jds","s_tw1","s_tw2","s_ts","s_sw","s_cmp","s_ds",
+            "s_rbk","s_rmt","s_close","s_csync","s_saved"}
 
-\* an engine crash (any signal or exit we did not cause, a start failure): counted as a stop
-CrashEng == [eng EXCEPT !.p = @ - 1, !.st = "none", !.user = FALSE, !.reason = "none",
-                        !.endBy = "none", !.ended = NoEnded]
+\* an engine death (any signal or exit we did not cause). A save's outcome is then read from the disk in a fresh
+\* engine, after its journal folder's sync (§6.6; seeded bug outcome_unsynced: without the sync); recover-all marks
+\* the journal in hand failed and goes on in a fresh engine (seeded bug crash_unmarked: unmarked)
 EngineCrash ==
-  /\ Alive /\ Busy /\ eng.st = "busy" /\ ~eng.stuck /\ n.crash < MaxCrash
+  /\ app # "dead" /\ Busy /\ n.crash < MaxCrash
   /\ n' = [n EXCEPT !.crash = @ + 1]
-  /\ LET r == RJ  s1 == [ses EXCEPT !.stops = @ + 1, !.locks = {}, !.advice = "none"] IN
-     CASE r.k = "save" ->
-            /\ gh' = SetTold(gh, r.s, DiskOutcome(r.s))
-            \* §6.6, §8.1 (F1): the journal directory is synced before an outcome is reported from it
-            /\ jr' = IF MUTANT # "outcome_unsynced" /\ jr[r.s].st # "none"
-                     THEN [jr EXCEPT ![r.s].pl = {jr[r.s].st}] ELSE jr
-            \* §6.6: saved, and the publish did not land: a rebuild is queued
-            /\ q' = IF jr[r.s].st \in CL /\ pst.mirror[1].fp # FP(1) /\ ses.app = "run"
-                       /\ ~QHas(LAMBDA j : j.k = "rebuild" /\ j.w = 1)
-                    THEN q \o <<Job(NewId, "rebuild", 1, TRUE, FALSE, "app", "none", ZeroFP)>> ELSE q
-            /\ JobEnd(CrashEng) /\ ses' = s1
-            /\ UNCHANGED <<fs, pst, tgt>>
-       [] r.k = "recover" ->
-            /\ jr' = IF ctl.rj # "none" /\ MUTANT # "crash_unmarked"
-                     THEN MarkWhy(ctl.rj, "failed") ELSE jr
-            /\ ctl' = [ctl EXCEPT !.pc = "rc_spawn", !.rj = "none",
+  /\ CASE run.k = "save" ->
+            /\ SetTold(run.id, DiskOutcome(run.id))
+            /\ jr' = IF MUTANT # "outcome_unsynced" /\ jr[run.id].st # "none"
+                     THEN [jr EXCEPT ![run.id].pl = {jr[run.id].st}] ELSE jr
+            /\ EndJob
+            /\ UNCHANGED <<fs, env, tgt, app>>
+       [] run.k = "recover" ->
+            /\ jr' = IF ctl.rj # "none" /\ MUTANT # "crash_unmarked" /\ jr[ctl.rj].st \in OpenSt
+                     THEN [jr EXCEPT ![ctl.rj].why = "failed"] ELSE jr
+            /\ ctl' = [ctl EXCEPT !.pc = IF ctl.pc = "rc_init" THEN "rc_init" ELSE "rc_next", !.rj = "none",
                                   !.tried = IF ctl.rj # "none" THEN @ \cup {ctl.rj} ELSE @]
-            /\ eng' = CrashEng /\ ses' = s1
-            /\ UNCHANGED <<fs, pst, tgt, q, runs, gh>>
-       [] r.k = "open" ->
-            /\ JobEnd(CrashEng)
-            /\ ses' = [OpenFailSes EXCEPT !.stops = @ + 1, !.locks = {}]
-            /\ UNCHANGED <<fs, jr, pst, tgt, q, gh>>
-       \* §10 (fidelity review 3, M2): past the manifest's rename the folder is a complete workspace and
-       \* the job registers it, from disk after syncing the parent (seeded bug create_crash_msg_from_memory)
-       [] r.k = "create" /\ tgt.c["m"] = "ours" /\ MUTANT # "create_crash_msg_from_memory" ->
-            /\ tgt' = [tgt EXCEPT !.pl["m"] = {"ours"}]
-            /\ gh' = [gh EXCEPT !.crOut = "created", !.crMsg = "created"]
-            /\ JobEnd(CrashEng) /\ ses' = s1
-            /\ UNCHANGED <<fs, jr, pst, q>>
-       [] r.k = "create" ->
-            /\ CrStopGh("crash") /\ JobEnd(CrashEng) /\ ses' = s1
-            /\ UNCHANGED <<fs, jr, pst, tgt, q>>
+            /\ UNCHANGED <<fs, env, tgt, app, run, gh>>
        [] OTHER ->
-            /\ JobEnd(CrashEng) /\ ses' = s1
-            /\ UNCHANGED <<fs, jr, pst, tgt, q, gh>>
+            /\ EndJob
+            /\ UNCHANGED <<fs, jr, env, tgt, app, gh>>
 
-\* a hung job (slow or hung user code): its engine takes no step, but it answers a signal
-Hang ==
-  /\ Alive /\ Busy /\ eng.st = "busy" /\ ~ctl.hung /\ n.hang < MaxHang
-  /\ ctl' = [ctl EXCEPT !.hung = TRUE]
-  /\ n' = [n EXCEPT !.hang = @ + 1]
-  /\ UNCHANGED <<fs, jr, pst, tgt, ses, q, runs, eng, gh>>
-
-\* a member of the engine's group stuck in the kernel: it never ends after a signal
-Stuck ==
-  /\ Alive /\ eng.p > 0 /\ ~eng.stuck /\ n.stuck < MaxStuck
-  /\ eng.st \in {"busy","sig"}
-  /\ eng' = [eng EXCEPT !.stuck = TRUE]
-  /\ n' = [n EXCEPT !.stuck = @ + 1]
-  /\ UNCHANGED <<fs, jr, pst, tgt, ses, q, runs, ctl, gh>>
-
-\* an I/O error after the journal is durable (rollback), or during a rollback or a restore; or (§6.4, L6) a
-\* full disk before the journal is durable: not a rollback, nothing was replaced, "not saved" (the
-\* .part journal, if any, is left for recover-all, which deletes it)
+\* an I/O error: after the journal is .open, the save rolls back; before it (a full disk), nothing was replaced:
+\* "not saved" with the re-hash (a .part is left for recover-all); during a restore, the try fails at once
 WritePcs == {"s_tw1","s_tw2","s_ts","s_sw","s_cmp","s_ds","s_rbk","s_rmt"}
 PreJournalPcs == {"s_bk","s_bks","s_jp","s_jps"}
-RestPcs  == {"rb_chk","rs_w","rs_x","rs_c","rs_tmp","rs_sync","rs_res"}
+RestPcs  == {"rs_chk","rs_sync","rs_clean","rs_w","rs_x","rs_c","rs_t","rs_all","rs_res"}
 IOFail ==
-  /\ Alive /\ Busy /\ EngOK /\ n.io < MaxIO
+  /\ app # "dead" /\ Busy /\ n.io < MaxIO
   /\ n' = [n EXCEPT !.io = @ + 1]
-  \* after the journal is durable (c87ce786, L10: also before the first replace) the rollback runs
-  /\ \/ /\ RJ.k = "save" /\ ctl.pc \in WritePcs
-        /\ ctl' = StartRB("notsaved", "none")
-        /\ UNCHANGED <<fs, jr, pst, tgt, ses, q, runs, eng, gh>>
+  /\ \/ /\ run.k = "save" /\ ctl.pc \in WritePcs
+        /\ ctl' = StartRB("notsaved")
+        /\ UNCHANGED <<fs, jr, env, tgt, app, run, gh>>
      \/ /\ ctl.pc \in RestPcs /\ ctl.rj # "none"
         /\ RestoreStop("failed")
-        /\ UNCHANGED <<fs, pst, tgt, q>>
-     \/ /\ RJ.k = "save" /\ ctl.pc \in PreJournalPcs
-        /\ gh' = SetTold(gh, SV, Rehash(SV))
-        /\ JobEnd(Retired)
-        /\ ses' = [ses EXCEPT !.locks = {}, !.advice = "none"]
-        /\ UNCHANGED <<fs, jr, pst, tgt, q>>
+        /\ UNCHANGED <<fs, env, tgt, app>>
+     \/ /\ run.k = "save" /\ ctl.pc \in PreJournalPcs
+        /\ SetTold(SV, Rehash(SV)) /\ EndJob
+        /\ UNCHANGED <<fs, jr, env, tgt, app>>
 
-\* the app (sidecar) crashes; the engine follows unless it is stuck or lingers (§5.2, §15)
+\* the app crashes; its engine goes with it
 AppCrash ==
-  /\ Alive /\ n.ac < MaxAppCrash
-  /\ \E lingers \in (IF n.orph < MaxOrphan THEN BOOLEAN ELSE {FALSE}) :
-       /\ pst' = OrphanAfter(lingers)
-       /\ n' = [n EXCEPT !.ac = @ + 1, !.orph = @ + (IF lingers THEN 1 ELSE 0)]
-  /\ ses' = DeadSesBy("crash") /\ q' = <<>> /\ runs' = {} /\ ctl' = NoCtl /\ eng' = NoEng
-  /\ UNCHANGED <<fs, jr, tgt, gh>>
+  /\ app # "dead" /\ n.ac < MaxAppCrash
+  /\ n' = [n EXCEPT !.ac = @ + 1]
+  /\ app' = "dead" /\ EndJob
+  /\ UNCHANGED <<fs, jr, env, tgt, gh>>
 
 \* a power loss: only synced steps count; every process dies
 RECURSIVE ProdF(_, _)
@@ -1611,7 +750,7 @@ Choices(P) == {[x \in DOMAIN P |-> g[x]] : g \in ProdF(P, DOMAIN P)}
 PairOr(f) == IF fs.cp[f] # {} THEN fs.cp[f] ELSE {<<0, 0>>}
 PowerLoss ==
   /\ n.pw < MaxPower
-  /\ \E cur0 \in Choices(fs.pl), tc0 \in Choices(fs.tpl), bk \in Choices(fs.bkpl),
+  /\ \E cur0 \in Choices(fs.pl), tc0 \in Choices(fs.tpl), sg \in Choices(fs.sgpl), bk \in Choices(fs.bkpl),
         js \in Choices([j \in JIds |-> jr[j].pl]), tg \in Choices(tgt.pl),
         pR \in PairOr("R"), pN \in PairOr("N") :
      LET C  == {f \in {"R","N"} : fs.cp[f] # {}}
@@ -1621,29 +760,28 @@ PowerLoss ==
      IN
        /\ fs' = [fs EXCEPT !.cur = cur, !.pl = [f \in Files |-> {cur[f]}],
                            !.tc = tc, !.tpl = [x \in TSlots |-> {tc[x]}],
+                           !.sg = sg, !.sgpl = [x \in TSlots |-> {sg[x]}],
                            !.bk = bk, !.bkpl = [s \in SaveIds |-> {bk[s]}],
                            !.cp = [f \in Files |-> {}], !.cpn = [f \in Files |-> {}],
                            !.cpj = [f \in Files |-> "none"], !.ud = {}]
        /\ jr' = [j \in JIds |-> IF js[j] = "none" THEN NoJ
-                                ELSE [jr[j] EXCEPT !.st = js[j], !.pl = {js[j]}, !.why = ""]]   \* blocking is the session's judgement
+                                ELSE [jr[j] EXCEPT !.st = js[j], !.pl = {js[j]}, !.why = ""]]
        /\ tgt' = [tgt EXCEPT !.c = tg, !.pl = [x \in Names |-> {tg[x]}]]
        \* §13: an outside save a power loss dropped before that program synced it is its own loss
        /\ gh' = [gh EXCEPT !.ed = [f \in Files |->
                     IF ~EdDurable /\ gh.ed[f] # 0 /\ fs.pl[f] # {gh.ed[f]} /\ cur[f] # gh.ed[f]
                        /\ ~\E j \in JIds : f \in JFiles(j) /\ tc[<<j, f>>] = gh.ed[f]
                     THEN 0 ELSE gh.ed[f]]]
-  /\ pst' = [pst EXCEPT !.orphan = FALSE, !.ostuck = FALSE]
   /\ n' = [n EXCEPT !.pw = @ + 1]
-  /\ ses' = DeadSesBy("crash") /\ q' = <<>> /\ runs' = {} /\ ctl' = NoCtl /\ eng' = NoEng
-  /\ TRUE
+  /\ app' = "dead" /\ EndJob
+  /\ UNCHANGED env
 
-\* the outside editor: writes any file, durably, at any time
-InLoadWindow == Busy /\ RJ.k = "save" /\ ctl.pc \in {"s_load","s_recheck"}
+\* the outside editor: writes any file at any time (durably, or not on the weaker file system)
 Editor(f) ==
   /\ f \in EdFiles /\ n.ed < MaxEdits
   /\ LET v == Frn(f, fs.cur[f])
-         \* §13 file system: a durable save syncs its folder, which makes everything done before it
-         \* there durable, our pending operations in W1's folder included
+         \* §13 file system: a durable save syncs its folder, which makes everything done before it there durable,
+         \* our pending operations in W1's folder included
          C  == IF f \in LS(1) THEN {g \in {"R","N"} : fs.cp[g] # {}} ELSE {}
          T  == {<<fs.cpj[g], g>> : g \in C}
          f1 == [fs EXCEPT !.pl = [g \in Files |-> IF g \in C THEN Firsts(fs.cpn[g]) ELSE fs.pl[g]],
@@ -1651,8 +789,8 @@ Editor(f) ==
                           !.cp = [g \in Files |-> IF g \in C THEN {} ELSE fs.cp[g]],
                           !.cpn = [g \in Files |-> IF g \in C THEN {} ELSE fs.cpn[g]],
                           !.cpj = [g \in Files |-> IF g \in C THEN "none" ELSE fs.cpj[g]]]
-         \* not durable: kept or dropped by a power loss on its own; a pending exchange of ours on
-         \* the same name stays kept-or-dropped whole
+         \* not durable: kept or dropped by a power loss on its own; a pending exchange of ours on the same name
+         \* stays kept-or-dropped whole
          cpE == IF fs.cp[f] # {} THEN fs.cp[f] \cup {<<v, y>> : y \in Seconds(fs.cp[f])} ELSE {}
          f2 == [fs EXCEPT !.cur[f] = v,
                           !.pl[f] = IF fs.cp[f] # {} THEN Firsts(cpE) ELSE @ \cup {v},
@@ -1660,352 +798,210 @@ Editor(f) ==
                           !.cpn[f] = {<<v, p[2]>> : p \in fs.cpn[f]}]
      IN
      /\ fs' = IF EdDurable THEN [f1 EXCEPT !.cur[f] = v, !.pl[f] = {v}] ELSE f2
-     /\ gh' = [gh EXCEPT !.ed[f] = v, !.edSeen[f] = FALSE,
-                         !.edLoad = @ \/ (InLoadWindow /\ f \in LS(1) \ Tg)]
+     /\ gh' = [gh EXCEPT !.ed[f] = v, !.edSeen[f] = FALSE]
   /\ n' = [n EXCEPT !.ed = @ + 1]
-  /\ UNCHANGED <<jr, pst, tgt, ses, q, runs, ctl, eng>>
+  /\ UNCHANGED <<jr, env, tgt, app, run, ctl>>
 
-\* into the create's target: a file under a name the job writes, under another name, or over
-\* a file the job has already written
-CrPc == IF Busy /\ RJ.k = "create" THEN ctl.pc ELSE "none"
+\* into the create's target: a file under a name the job writes, under another name, or over a file the job has
+\* already written
+CrPc == IF run.k = "create" THEN ctl.pc ELSE "none"
 EditorDrop(x) ==
   /\ tgt.ex /\ n.drop < MaxDrop /\ x \in {"a","m","o"} /\ tgt.c[x] = "no"
   /\ tgt' = [tgt EXCEPT !.c[x] = "frn", !.pl[x] = {"frn"}]
   /\ gh' = IF x \in {"a","m"} THEN [gh EXCEPT !.dropped = @ \cup {x}] ELSE gh
   /\ n' = [n EXCEPT !.drop = @ + 1]
-  /\ UNCHANGED <<fs, jr, pst, ses, q, runs, ctl, eng>>
+  /\ UNCHANGED <<fs, jr, env, app, run, ctl>>
 EditorOverwrite ==
   /\ tgt.c["a"] = "ours" /\ n.drop < MaxDrop
   /\ tgt' = [tgt EXCEPT !.c["a"] = "frn", !.pl["a"] = {"frn"}]
   /\ gh' = IF CrPc \in {"cr_ws","cr_rb"} THEN [gh EXCEPT !.ovBefore = TRUE] ELSE [gh EXCEPT !.ovAfter = TRUE]
   /\ n' = [n EXCEPT !.drop = @ + 1]
-  /\ UNCHANGED <<fs, jr, pst, ses, q, runs, ctl, eng>>
+  /\ UNCHANGED <<fs, jr, env, app, run, ctl>>
 
 \* the path changer: after a crash, a folder is replaced by a link (to a copy of the post bytes)
 PathChange ==
-  /\ ses.app = "dead" /\ n.link < MaxLink
+  /\ app = "dead" /\ n.link < MaxLink
   /\ \E j \in JIds : jr[j].st = "open" /\ "R" \in jr[j].files
-  /\ pst' = [pst EXCEPT !.lnk = TRUE]
+  /\ env' = [env EXCEPT !.lnk = TRUE]
   /\ n' = [n EXCEPT !.link = @ + 1]
-  /\ UNCHANGED <<fs, jr, tgt, ses, q, runs, ctl, eng, gh>>
+  /\ UNCHANGED <<fs, jr, tgt, app, run, ctl, gh>>
 
 \* the disk that holds K becomes unreachable, or answers again
 Unreach ==
   /\ n.unr < MaxUnreach
-  /\ pst' = [pst EXCEPT !.unr = ~@]
+  /\ env' = [env EXCEPT !.unr = ~@]
   /\ n' = [n EXCEPT !.unr = @ + 1]
-  /\ UNCHANGED <<fs, jr, tgt, ses, q, runs, ctl, eng, gh>>
+  /\ UNCHANGED <<fs, jr, tgt, app, run, ctl, gh>>
 
 ----------------------------------------------------------------------------
 (* NEXT                                                                    *)
 EngineStep ==
-  \/ S_Locks \/ S_Gate \/ S_Load \/ S_Recheck \/ S_Commit
-  \/ S_Backup \/ S_BackupSync \/ S_JPart \/ S_JPartSync \/ S_JOpen \/ S_JDirSync
+  \/ S_Gate \/ S_Backup \/ S_BackupSync \/ S_JPart \/ S_JPartSync \/ S_JOpen \/ S_JDirSync
   \/ S_TempStart \/ S_TempDone \/ S_TempSync \/ S_Swap \/ S_Compare \/ S_DirSync
-  \/ S_ReadBack \/ S_RemoveTemps \/ S_Close \/ S_CloseSync \/ S_Saved \/ S_Publish \/ S_Release
-  \/ RB_Check \/ RS_Write \/ RS_Swap \/ RS_Compare \/ RS_Temps \/ RS_Sync \/ RS_Resolve
-  \/ RC_Init \/ RC_Next \/ RC_Lock \/ RC_Check
-  \/ R4_Start \/ R4_Load \/ R4_Check
-  \/ RD_Load \/ RD_Check \/ OP_Load \/ OP_Check
-  \/ CP_Check \/ CP_Load \/ CP_Commit \/ CP_Manifest
-  \/ CR_Target \/ CR_WriteA \/ CR_SyncA \/ CR_ReadBack \/ CR_Load \/ CR_Commit
-  \/ CR_ManifestTemp \/ CR_ManifestRename \/ CR_ManifestSync \/ CR_Register
-
-AppStep ==
-  \/ Dispatch \/ DispatchUnavail \/ SpawnStep \/ CloseA \/ QuitClose \/ Assess
-  \/ \E w \in WS : AppFocusCheck(w)
-  \/ AppBgSave
+  \/ S_ReadBack \/ S_RemoveTemps \/ S_Close \/ S_CloseSync \/ S_Saved
+  \/ RS_Check \/ RS_Sync \/ RS_Clean \/ RS_Write \/ RS_Swap \/ RS_Compare \/ RS_Temp \/ RS_All \/ RS_Resolve
+  \/ RS_Late
+  \/ RC_Init \/ RC_Next
+  \/ CP_Check \/ CP_Load \/ CP_Manifest
+  \/ CR_Target \/ CR_WriteA \/ CR_SyncA \/ CR_ReadBack \/ CR_ManifestRename \/ CR_ManifestSync \/ CR_Register
 
 UserStep ==
-  \/ UserSave \/ \E w \in WS : UserRead(w) \/ UserCreate \/ UserCopy
-  \/ \E i \in 1..Len(q) : UserCancelQueued(i)
-  \/ UserCancelRunning
-  \/ \E id \in 1..JobBound : UserCloseTab(id)
-  \/ \E t \in WS : UserSwitch(t)
-  \/ UserStay \/ UserRetry \/ UserBack \/ \E t \in WS : UserOpenAnother(t) \/ UserKeep
-  \/ UserForgetReadd \/ UserTryAgain
-  \/ UserQuit("quit") \/ UserQuit("update") \/ UserQuitAnyway \/ Relaunch
+  \/ StartSave \/ StartCreate \/ StartCopy \/ StartRecover \/ \E j \in JIds : Keep(j) \/ Relaunch
 
 EnvStep ==
-  \/ EngineCrash \/ Hang \/ Stuck \/ IOFail \/ AppCrash \/ PowerLoss
+  \/ EngineCrash \/ IOFail \/ AppCrash \/ PowerLoss
   \/ \E f \in Files : Editor(f)
   \/ \E x \in {"a","m","o"} : EditorDrop(x) \/ EditorOverwrite
-  \/ PathChange \/ Unreach \/ Drain \/ OrphanEnd \/ OrphanEndStuck \/ WindowExpire \/ AdviceTimer
+  \/ PathChange \/ Unreach
 
-Next == EngineStep \/ AppStep \/ UserStep \/ EnvStep
+Next == EngineStep \/ UserStep \/ EnvStep
 
 Spec == Init /\ [][Next]_vars
 
-\* §13 liveness: weak fairness on engine and app steps, and on the OS ending a signalled
-\* process that is not stuck (Drain, OrphanEnd); time passes (WindowExpire, AdviceTimer)
-Fairness ==
-  /\ WF_vars(EngineStep) /\ WF_vars(AppStep)
-  /\ WF_vars(Drain) /\ WF_vars(OrphanEnd) /\ WF_vars(WindowExpire) /\ WF_vars(AdviceTimer)
-FairSpec == Spec /\ Fairness
-\* for EngineCanAlwaysBeFreed: the waiting user eventually presses Cancel on their own wait
-\* §13 EngineCanAlwaysBeFreed's fairness: the waiting user's Cancel, a requester's Cancel of its own
-\* job, and Quit anyway once the quit advice is shown
-UserCancels == /\ WF_vars(\E i \in 1..Len(q) : UserCancelQueued(i)) /\ WF_vars(UserCancelRunning)
-               /\ WF_vars(ses.advice # "none" /\ UserQuitAnyway)
-FairUserSpec == FairSpec /\ UserCancels
-
 ----------------------------------------------------------------------------
-(* SAFETY PROPERTIES (§13; names as in the spec)                           *)
+(* PROPERTIES: durability (EP-19; names as in the spec's §13)              *)
 
-\* engine and queue; §5.1 (simplification B): across a restart too, no engine of this session exists while an
-\* engine of an earlier session still holds the engine lock
-AtMostOneEngine == eng.p <= 1 /\ (pst.orphan => eng.p = 0)
-AtMostOneJobRunning == Cardinality(runs) <= 1
-AtMostOneOpenWorkspace == Cardinality(ses.opened) <= 1
-OnlyOpenWorkspaceRunsJobs ==
-  \A r \in runs : /\ r.k = "recover" => ses.opened = {}
-                  /\ r.k \notin {"recover","open","create","copy"} => r.w \in ses.opened
-StartedId(id) == (\E r \in runs' : r.id = id) /\ ~(\E r \in runs : r.id = id)
-\* §3: a job that starts is the oldest eligible waited-for job, or, with none, the oldest eligible job
-WaitedForFirst ==
-  [][\A i \in 1..Len(q) : StartedId(q[i].id) =>
-        i = (IF EligWfIdx # {} THEN Min(EligWfIdx) ELSE Min(EligIdx))]_vars
-NoOwnEndAfterCommitPoint ==   \* Quit anyway (the exception) leaves no session behind
-  eng.st = "sig" /\ eng.reason = "cancel" => ~(eng.ended.past /\ Writing(eng.ended.k))
-CancelReachIsTheOneRule ==
-  \* "closing is not a cancel" (§9.1 step 2; fidelity review 3, M3): the quiesce ends only a read, an R4,
-  \* or a save the user did not confirm, before its commit point
-  /\ eng.endBy = "quiesce" => (eng.ended.k \in Reads \cup {"r4"}
-                               \/ (eng.ended.k = "save" /\ ~eng.ended.conf /\ ~eng.ended.past))
-  /\ eng.endBy = "other" => (eng.ended.k = "r4" \/ (eng.ended.k = "save" /\ ~eng.ended.conf /\ ~eng.ended.past)
-                             \/ (eng.ended.k \in Reads \cup {"open"} /\ eng.ended.req = "gone"))
-  /\ (ses.advice = "cancel" /\ Busy /\ eng.st = "busy") =>
-        ~(RJ.k = "r4" \/ (RJ.k = "save" /\ ~RJ.conf /\ ~ctl.past) \/ (RJ.k \in Reads \cup {"open"} /\ RJ.req = "gone"))
-
-\* outcomes
-CancelBeforeCommitLeavesDiskUnchanged ==
-  \A s \in SaveIds : gh.cxl[s] => jr[s].st = "none" /\ \A f \in Tg : fs.cur[f] # PostV(s)
-NotSaved == {"notsaved","unchanged","changed","undone","q_undone","notopen"}
-TruthInv ==
-  /\ \A s \in SaveIds :
-       /\ gh.told[s] \in {"saved","q_saved"} => jr[s].st \in CL
-       /\ gh.told[s] \in NotSaved => (jr[s].st \in {"none","part","tpart","resolved"} /\ \A f \in Tg : fs.cur[f] # PostV(s))
-       /\ gh.told[s] \in {"unfinished","q_notyet"} => jr[s].st \in {"open","kept"}
-       /\ gh.told[s] # "notopen"                       \* a confirmed save is never dropped by a switch
-       /\ s \in SaveNotes => jr[s].st # "kept"
-  \* fidelity review 3, M2: the in-session create outcome matches the target (§8.2, §10)
-  /\ gh.crMsg \in {"delete_ok","check_first","not_created"} => tgt.c["m"] # "ours"
-  /\ gh.crMsg = "created" => tgt.c["m"] = "ours"
-  /\ gh.crTold = "q_created" => tgt.c["m"] = "ours"
-  /\ gh.crTold = "q_notcreated" => tgt.c["m"] # "ours"
-  /\ gh.cpTold = "q_created" => gh.cpMan
-  /\ gh.cpTold = "q_notcreated" => ~gh.cpMan
-  \* fidelity review 4, L2: a quit or switch keeps every queued create and copy (§9.1 step 2, §9.3 step 2, L9)
-  /\ ~gh.ccDrop
-NoteRule ==   \* the note is deleted only once the record says saved or undone, or the user kept it
-  \A nt \in pst.notes \ pst'.notes : (nt.k = "save" /\ ses'.app # "dead") =>
-     jr'[nt.s].st \in CL \cup {"resolved","none","part","tpart","kept"}   \* a .part replaced nothing
-OutcomeTruthful == []TruthInv /\ [][NoteRule]_vars
+\* the save
 SavedSurvivesPowerLoss ==
-  \A s \in SaveIds : gh.told[s] \in {"saved","q_saved"} =>
+  \A s \in SaveIds : gh.told[s] = "saved" =>
      /\ jr[s].pl \subseteq CL
      /\ \A f \in Tg : (fs.cur[f] = PostV(s) /\ ~\E t \in JIds : t # s /\ f \in jr[t].files
                                                          /\ jr[t].st \in OpenSt \cup {"part","tpart"})
                      => fs.pl[f] = {PostV(s)}
-UnchangedOnlyAfterRehash ==
-  [][\A s \in SaveIds : (gh'.told[s] = "unchanged" /\ gh.told[s] # "unchanged")
-                         => \A f \in Tg : fs'.cur[f] = gh.pre[s][f]]_vars
-
-\* write protocol
 OnDisk(s, f) == fs.cur[f] = PostV(s) \/ PostV(s) \in fs.pl[f]
 BeforeClose(s) == jr[s].st \notin CL \cup {"resolved","kept"}
 BackupDurableBeforeReplace ==
   \A s \in SaveIds : OnDisk(s, "R") /\ BeforeClose(s) => fs.bkpl[s] = {gh.pre[s]["R"]}
 JournalDurableBeforeFirstReplace ==
   \A s \in SaveIds : (\E f \in Tg : OnDisk(s, f)) /\ BeforeClose(s) => jr[s].pl = {"open"}
-\* a journal of ours that never became a durable .open never blocks (a boot journal torn by
-\* something else, BootTorn, blocks by §8.1: its file list cannot be read)
+\* a journal of ours that never became a durable .open never blocks (a boot journal torn by something else,
+\* BootTorn, blocks: its file list cannot be read)
 PartJournalNeverBlocks ==
   \A j \in JIds : jr[j].why # "" => (jr[j].st \in {"open","kept","resolved"}
                                       \/ (j \in BootIds /\ jr[j].st = "topen"))
-CommittedCombinationChecked ==
-  Busy /\ RJ.k = "save" /\ ctl.past => ~gh.edLoad
+\* the editor's latest bytes of a file are in the file, at a name of ours beside it, or in a kept copy; or the user
+\* previewed them and the save replaced them (the backup holds them)
+EditKept(f) ==
+  \/ gh.ed[f] = fs.cur[f]
+  \/ \E j \in JIds : f \in JFiles(j) /\ gh.ed[f] \in {fs.tc[<<j, f>>], fs.rt[<<j, f>>]} \cup fs.kp[<<j, f>>]
 ExternalEditNeverSilentlyLost ==
-  \A f \in Files : gh.ed[f] # 0 /\ ~gh.edSeen[f] =>
-     \/ gh.ed[f] = fs.cur[f] \/ gh.ed[f] = fs.rt[f]
-     \/ \E j \in JIds : f \in JFiles(j) /\ fs.tc[<<j, f>>] = gh.ed[f]
-     \/ gh.ed[f] \in gh.acc[f]
+  \A f \in Files : gh.ed[f] # 0 /\ ~gh.edSeen[f] => EditKept(f)
 
 \* recovery
 NoTornLedger == \A f \in Files : fs.cur[f] = TORN => \E j \in JIds : jr[j].st \in OpenSt /\ f \in jr[j].files
 ResolveDurable ==
   \A j \in JIds : (jr[j].st # "resolved" /\ jr'[j].st = "resolved") =>
-     \* every file durably holds something other than our post bytes: its pre bytes, or the
-     \* outside bytes that were put back (§6.4)
+     \* every file durably holds something other than our post bytes: its pre bytes (a created path: nothing)
      \A f \in jr[j].files : fs'.cur[f] \notin {jr[j].post[f], TORN}
                             /\ jr[j].post[f] \notin fs'.pl[f] /\ TORN \notin fs'.pl[f]
 NoTornLedgerAfterRecovery == []NoTornLedger /\ [][ResolveDurable]_vars
-\* ExternalEditNeverSilentlyLost for the files a journal names (the ones recovery and rollback swap)
+\* ExternalEditNeverSilentlyLost for the files a journal names (the ones recovery and rollback swap and clean)
 RecoveryNeverClobbersForeignBytes ==
-  \A f \in Files : (gh.ed[f] # 0 /\ ~gh.edSeen[f] /\ \E j \in JIds : f \in jr[j].files) =>
-     \/ gh.ed[f] = fs.cur[f] \/ gh.ed[f] = fs.rt[f]
-     \/ \E j \in JIds : f \in JFiles(j) /\ fs.tc[<<j, f>>] = gh.ed[f]
-     \/ gh.ed[f] \in gh.acc[f]
+  \A f \in Files : (gh.ed[f] # 0 /\ ~gh.edSeen[f] /\ \E j \in JIds : f \in jr[j].files) => EditKept(f)
 RecoveryWritesOnlyRecordedPaths == ~gh.outW
-\* a cut temp (torn, beside a file that does not hold post) is never the reason a journal stops,
-\* and no temp of ours outlives its save once the journal is closed (§6.1 step 8.4)
+\* a cut write of ours (at a staging name, whatever it holds) is never the reason a journal stops, and no temp of
+\* ours outlives its save once the journal is closed (§6.1 step 8.4)
 OnlyCutTemps(j) ==
+  /\ jr[j].st = "open"
   /\ \A f \in jr[j].files :
-        /\ ~(PathMoved(f)) /\ ~(pst.unr /\ f = "K")
-        /\ fs.cur[f] \in {jr[j].pre[f], jr[j].post[f]} /\ ~BackupBad(j, f)
-        /\ (fs.cur[f] = jr[j].post[f] => fs.tc[<<j, f>>] \in {ABS, jr[j].pre[f], jr[j].post[f]})
-  /\ \E f \in jr[j].files : fs.tc[<<j, f>>] \notin {ABS, jr[j].pre[f], jr[j].post[f]}
+        /\ ~PathMoved(f) /\ ~(env.unr /\ f = "K") /\ fs.kp[<<j, f>>] = {}
+        /\ fs.tc[<<j, f>>] \in Held(j, f) /\ fs.rt[<<j, f>>] \in Held(j, f)
+        /\ IF jr[j].pre[f] = ABS THEN fs.cur[f] = ABS
+           ELSE fs.cur[f] = jr[j].pre[f] \/ (fs.cur[f] = jr[j].post[f] /\ ~BackupBad(j, f))
+  /\ \E f \in jr[j].files : fs.sg[<<j, f>>] # ABS
 CutTempNoBlock ==
-  \A j \in JIds : (jr[j].why = "" /\ jr'[j].why = "stopped" /\ jr[j].st = "open" /\ fs'.rt = fs.rt)
-                   => ~OnlyCutTemps(j)
+  \A j \in JIds : (jr[j].why = "" /\ jr'[j].why = "stopped") => ~OnlyCutTemps(j)
 NoTempOutlivesJournal ==
   \A j \in SaveIds, f \in Tg :
-     fs.tc[<<j, f>>] # ABS => (jr[j].st \in {"open","topen","kept","part","tpart","none"} \/ (Busy /\ ctl.s = j))
+     (fs.tc[<<j, f>>] # ABS \/ fs.sg[<<j, f>>] # ABS) =>
+        (jr[j].st \in {"open","topen","kept","part","tpart","none"} \/ (Busy /\ ctl.s = j))
 CutTempNeverBlocks == [][CutTempNoBlock]_vars /\ []NoTempOutlivesJournal
+\* "Keep the files as they are now" (§8.1): what the user keeps is what a power loss leaves (else a mix of the save's
+\* pre and post bytes, which no journal names any more, could come back)
+KeptFilesDurable ==
+  [][\A j \in JIds : (jr[j].st = "open" /\ jr'[j].st = "kept") =>
+        \A f \in jr[j].files : fs'.pl[f] = {fs'.cur[f]}
+                               /\ \A x \in TSlots : x[2] = f => fs'.tpl[x] = {fs'.tc[x]}]_vars
+\* INV-32: no work starts in a session before every journal from before its start was recovered or marked blocking
 EveryJournalRecoveredOrBlocking ==
-  ((\E r \in runs : r.k = "open") \/ ses.opened # {}) =>
-     \A j \in JIds : jr[j].st \in OpenSt /\ jr[j].old => jr[j].why # ""
-\* fidelity review 3's StrictRecovered, a permanent check since review 4: the boot journals (b2, b3) exist before
-\* every boot and switch, so this needs no `old` flag and cross-checks how the model marks it (INV-32, §8.1)
-StrictRecovered ==
-  ((\E r \in runs : r.k = "open") \/ ses.opened # {}) =>
-     \A j \in BootIds : jr[j].st \in OpenSt => jr[j].why # ""
-\* fidelity review 4 (M1): RECOVERY_BLOCKED {path, workspace, reason} is shown only for journals this boot's or
-\* switch's recover-all judged: each journal from before it (`old`) that blocks the target has its reason
-\* (§8.1 "Afterwards", §11; a journal of this session, the in-session .open of a failed rollback, is not `old`)
-BlockedScreenHasReason ==
-  ses.screen = "blocked" =>
-    \A j \in JIds : (jr[j].old /\ (jr[j].st = "topen" \/ (jr[j].st = "open" /\ jr[j].files \cap LS(ses.target) # {})))
-                    => jr[j].why # ""
-\* fidelity review 4 (M1): "Keep the files as they are now" is applied only to a journal that this boot's or
-\* switch's recover-all judged (§8.1 "Afterwards": its confirmation names the reason)
-KeepOnlyJudged ==
-  [][\A j \in JIds : (jr[j].old /\ jr[j].st \in OpenSt /\ jr'[j].st = "kept") => jr[j].why # ""]_vars
-NoOpenOverUnresolvedJournal ==
-  \A w \in ses.opened \cup {r.w : r \in {x \in runs : x.k = "open"}} :
-     \A j \in JIds : jr[j].st \in OpenSt /\ jr[j].old =>
-        jr[j].st = "open" /\ jr[j].files \cap LS(w) = {}
-NoCopyOverOpenJournal ==
-  \A r \in runs : r.k = "copy" /\ ctl.pc # "cp_chk" =>
-     ~\E j \in JIds : jr[j].st \in OpenSt /\ (jr[j].st = "topen" \/ jr[j].files \cap LS(2) # {})
+  app = "run" => \A j \in JIds : jr[j].st \in OpenSt /\ jr[j].old => jr[j].why # ""
+\* a journal becomes blocking only with its cause present (written independently of the check's own predicate)
 Cause(j, why) ==
-  CASE why = "stopped" -> jr[j].st = "topen"
-                          \/ (\E f \in jr[j].files :
-                                \/ PathMoved(f) \/ (pst.unr /\ f = "K")
-                                \/ fs.cur[f] \notin {jr[j].pre[f], jr[j].post[f]}
-                                \/ (fs.cur[f] = jr[j].post[f] /\ fs.tc[<<j, f>>] \notin {ABS, jr[j].pre[f], jr[j].post[f]})
-                                \/ BackupBad(j, f)
-                                \/ fs.rt[f] \notin {ABS, jr[j].post[f]})   \* displaced foreign bytes at a restore
-    [] why = "cancelled" -> eng'.reason = "cancel"
+  CASE why = "stopped" ->
+         \/ jr[j].st = "topen"
+         \/ \E f \in jr[j].files :
+               \/ PathMoved(f) \/ (env.unr /\ f = "K")
+               \/ fs.kp[<<j, f>>] # {} \/ fs'.kp[<<j, f>>] # {}               \* an outside save at a name of ours
+               \/ fs.tc[<<j, f>>] \notin Held(j, f) \/ fs.rt[<<j, f>>] \notin Held(j, f)
+               \/ (jr[j].pre[f] = ABS /\ fs.cur[f] # ABS)                     \* a created path taken
+               \/ (jr[j].pre[f] # ABS /\ fs.cur[f] \notin {jr[j].pre[f], jr[j].post[f]})
+               \/ (jr[j].pre[f] # ABS /\ fs.cur[f] = jr[j].post[f] /\ BackupBad(j, f))
     [] why = "failed" -> n'.crash > n.crash \/ n'.io > n.io
-    [] why = "not_tried" -> ses.stops >= StopBound
     [] OTHER -> FALSE
 BlockedOnlyForCause ==
   [][\A j \in JIds : (jr[j].why = "" /\ jr'[j].why # "") => Cause(j, jr'[j].why)]_vars
+\* copy: never over a file an unresolved journal names, blocking or in-session (INV-32)
+NoCopyOverOpenJournal ==
+  run.k = "copy" /\ ctl.pc # "cp_chk" => OpenOn(LS(2)) = {}
 
-\* create and copy
+\* create
 NoManifestOverIncompleteFolder ==
-  /\ tgt.c["m"] = "ours" => (tgt.c["a"] = "ours" \/ gh.ovAfter) /\ gh.crChecked
+  /\ tgt.c["m"] = "ours" => (tgt.c["a"] = "ours" \/ gh.ovAfter)
   /\ "ours" \in tgt.pl["m"] => (tgt.pl["a"] = {"ours"} \/ gh.ovAfter)
 NonEmptyTargetUntouched ==
   CreateTarget = "nonempty" => \A x \in {"a","m"} : tgt.c[x] # "ours" /\ "ours" \notin tgt.pl[x]
 DroppedFileNeverReplaced == \A x \in gh.dropped : tgt.c[x] = "frn"
-OtherNamesDoNotStop ==
-  /\ gh.crOut = "collision" => tgt.c["a"] = "frn"
-  /\ gh.crOut = "manifest_collision" => tgt.c["m"] = "frn"
 ForeignOverwriteCaughtByReadBack ==
-  gh.ovBefore => tgt.c["m"] # "ours" /\ CrPc \notin {"cr_load","cr_commit","cr_mw","cr_mr","cr_ms","cr_reg"}
-DeleteAdviceOnlyForOwnFiles ==
-  [][(gh'.crMsg = "delete_ok" /\ gh.crMsg # "delete_ok") => \A x \in Names : tgt.c[x] \in {"no","ours"}]_vars
-
-\* update
-InstallerNeverOverOpenJournal ==
-  [][pst'.build # pst.build => \A j \in JIds : jr[j].st \notin OpenSt]_vars
-
-\* advice and exits
-\* timer advice only for a signalled process that has not ended, or an engine of an earlier session still
-\* holding the engine lock (§5.1, §5.2)
-NoAdviceOnTimerForSlowWork == ses.advice = "timer" => (eng.st = "sig" \/ pst.orphan)
-OwnRunWait == Busy /\ eng.st = "busy" /\ RJ.wf /\ RJ.req = "present" /\ RJ.own \in {"user","app","switch"}
-\* §13: in every state where the user waits, the action that ends the wait is itself enabled
-\* (the actions carry no counter or bound of the model's own)
-OwnQueuedWait == \E i \in 1..Len(q) : CancelableQ(i)
-EveryWaitHasAnExit ==
-  /\ OwnQueuedWait => ENABLED (\E i \in 1..Len(q) : UserCancelQueued(i))                 \* Cancel
-  \* §9.1 step 3, §9.2 (M4): the switch's or the boot's own job queued behind other work
-  /\ \A i \in 1..Len(q) : SwitchJobBehind(i) => ENABLED UserCancelQueued(i)            \* Cancel
-  /\ (OwnRunWait /\ ~ctl.past) => ENABLED UserCancelRunning                              \* Cancel
-  /\ (OwnRunWait /\ ctl.past) => ENABLED UserQuitAnyway                     \* "Finishing your change…"
-  /\ (Busy /\ ctl.pc \in SpawnPcs) => ENABLED UserQuitAnyway      \* a slot a stuck process holds
-  /\ (ses.app = "switch" /\ ses.stage = "quiesce") => ENABLED UserStay                   \* Stay
-  /\ ses.screen # "none" => /\ ENABLED UserRetry                                          \* Retry
-                            /\ ses.sctx = "switch" => ENABLED UserBack                    \* Back
-                            /\ ses.sctx = "boot" => ENABLED (\E t \in WS : UserOpenAnother(t))
-                            /\ ses.screen = "blocked" => ENABLED UserKeep
-  /\ ses.app \in {"quit","update"} => ENABLED UserQuitAnyway                           \* Quit anyway
-QuitAnywayAlwaysEnabled == Alive => ENABLED UserQuitAnyway
-\* fidelity review 4 (M2): a switch or the boot in its assess stage while other work runs is not waiting on it:
-\* the assessment runs (§2: outside the queue). Targeted review 5, L-4: the former second disjunct (its own
-\* queued job can be cancelled) was never needed: no job of the switch is queued or running in this stage
-\* (behind other work, the open is queued in the opening stage, where EveryWaitHasAnExit covers its Cancel)
-AssessNeverWaits ==
-  (ses.app \in {"boot","switch"} /\ ses.stage = "assess" /\ Busy) => ENABLED Assess
-\* §13 (a stall check): in a switch's or the boot's recover or opening stage, its recover_all or its
-\* target's open is queued or running
-OpeningHasItsJob ==
-  (ses.app \in {"boot","switch"} /\ ses.stage \in {"recover","opening"}) =>
-     \/ QHas(LAMBDA j : j.own = "switch" /\ j.k \in {"recover","open"})
-     \/ Busy /\ RJ.k \in {"recover","open"}
+  gh.ovBefore => tgt.c["m"] # "ours" /\ CrPc \notin {"cr_mr","cr_ms","cr_reg"}
 
 ----------------------------------------------------------------------------
-(* LIVENESS (§13)                                                          *)
-JobIds == 1..JobBound
-CreateWaiting(id) == \E i \in 1..Len(q) : q[i].id = id /\ q[i].k = "create"
-EveryBootEnds ==
-  /\ [](ses.app = "boot" ~> ses.app # "boot")
-  /\ \A id \in JobIds : [](CreateWaiting(id) ~> (~CreateWaiting(id) \/ ses.app = "dead"))
-WaitedJob(id) == (\E i \in 1..Len(q) : q[i].id = id /\ q[i].wf) \/ (\E r \in runs : r.id = id /\ r.wf)
-EveryWaitedForJobEnds == \A id \in JobIds : [](WaitedJob(id) ~> ~WaitedJob(id))
-EverySwitchEnds ==
-  [](ses.app = "switch" /\ ses.stage # "screen" ~> (ses.app # "switch" \/ ses.stage = "screen"))
-\* §13: every quit ends, or Quit anyway is offered; Quit anyway, when taken, always ends the app.
-\* "Offered" is the quit's "Finishing your last change…" state (§9.3 step 3), which §13 says covers any
-\* running save, create or copy, background saves included (M3), and a queued confirmed one, with Quit
-\* anyway enabled. A quit with nothing left to finish must end by itself (close does not wait for the
-\* reap, §9.3 step 4). Mutant finishing_confirmed_only checks the reading before M3 (a reachability check:
-\* it must fail, so a running background save past its commit point does hold a quit).
-Finishing == \/ QHas(LAMBDA j : Writing(j.k) /\ j.conf)
-             \/ Busy /\ Writing(RJ.k) /\ (RJ.conf \/ MUTANT # "finishing_confirmed_only")
-QuitAnywayOffered == Finishing /\ ENABLED UserQuitAnyway
-EveryQuitEndsOrOffersQuitAnyway ==
-  /\ [](ses.app \in {"quit","update"} ~> (ses.app \notin {"quit","update"} \/ QuitAnywayOffered))
-  /\ [][UserQuitAnyway => ses'.app = "dead"]_vars
-\* §13, as stated: (a waited-for job is queued) ~> (the engine slot is free, or the quit advice is
-\* shown, or the app has quit), under FairUserSpec; Quit anyway is always enabled
-WaitedQueued == \E i \in 1..Len(q) : q[i].wf
-\* the slot is not free while an engine of an earlier session holds the engine lock (§5.1)
-EngineSlotFree == ~Busy /\ eng.st \in {"none","idle"} /\ ~pst.orphan
-EngineCanAlwaysBeFreed ==
-  /\ [](WaitedQueued ~> (EngineSlotFree \/ ses.advice # "none" \/ ses.app = "dead"))
-  /\ []QuitAnywayAlwaysEnabled
-
-\* model sanity: a running engine step is never stuck without cause
-NoEngineStall == (Alive /\ Busy /\ EngOK) => ENABLED EngineStep
-\* §13 "Also safety" (N2): no create or copy starts while recover_all runs, or between a switch's close
-\* and its target's open or screen; one started earlier runs on (§3, §9.1 step 2)
-RecoveryWindow == ses.app = "boot" \/ (ses.app = "switch" /\ ses.stage \in {"recover","assess","opening"})
-                  \/ (Busy /\ RJ.k = "recover")
-AppScopedStarts == \A i \in 1..Len(q) : (StartedId(q[i].id) /\ q[i].k \in {"create","copy"}) => ~RecoveryWindow
-\* the wording before N2 ("no create or copy runs" in the window). Mutant appscoped_runs checks it instead:
-\* not a seeded bug but a reachability check; it must fail, so the model still lets a create or copy that
-\* started before a switch's close run on through the window, as §9.1 step 2 says
-AppScopedRuns == (Busy /\ RJ.k \in {"create","copy"}) => ~RecoveryWindow
-AppScopedWaitsForRecovery ==
-  [][IF MUTANT = "appscoped_runs" THEN AppScopedRuns' ELSE AppScopedStarts]_vars
-\* §8.1 "Afterwards", §9.3 (c87ce786, L1): every recover-all answers the quit notes it can, so no
-\* workspace is open while a note that says saved or undone is still waiting (review 3's NotesAnswered)
-NotesAnsweredByRecovery ==
-  (ses.app = "run" /\ ses.opened # {}) =>
-     ~\E nt \in pst.notes : nt.k = "save" /\ SaveNoteMsg(nt.s) \in {"q_saved","q_undone"}
-JobIdsBounded == Cardinality(UsedIds) <= JobBound
+(* WITNESSES (vacuity): each base world must reach the branch its witness  *)
+(* names; the configuration checks the witness's negation, which TLC must  *)
+(* report violated (MAPPING.md §6.2), so a base PASS is never vacuous      *)
+\* a save lands and is told saved (S_save_crash)
+W_Saved == gh.told["s1"] # "saved"
+\* a rollback resolves its journal (S_save_crash)
+W_RollbackResolved == ~(jr["s1"].st = "resolved" /\ ~Busy)
+\* a rollback cannot resolve: Unfinished (S_save_crash)
+W_RollbackUnfinished == gh.told["s1"] # "unfinished"
+\* an outside save met by the save's swap is kept (S_save_crash)
+W_KeptCopySave == \A x \in TSlots : fs.kp[x] = {}
+\* a created path taken stops the journal, the other files undone (S_save_crash)
+W_CreatedPathTaken == ~(jr["s1"].st = "open" /\ jr["s1"].why = "stopped" /\ fs.cur["N"] # ABS)
+\* a rollback puts pre bytes back (S_save_crash)
+W_RollbackPutsBack == ~(Busy /\ run.k = "save" /\ ctl.pc = "rs_c")
+\* recovery resolves a boot journal (S_recover)
+W_RecoverResolves == jr["b2"].st # "resolved"
+\* recovery keeps an outside save it meets (S_recover)
+W_RecoverKeptCopy == \A x \in TSlots : fs.kp[x] = {}
+\* a try that fails marks its journal failed (S_recover)
+W_RecoverFailed == jr["b2"].why # "failed"
+\* Keep the files as they are now (S_keep)
+W_Keep == \A j \in JIds : jr[j].st # "kept"
+\* Keep of a journal whose file list cannot be read (S_recover_torn)
+W_KeepTorn == jr["b3"].st # "kept"
+\* after a power loss in the save, recovery resolves its journal (S_save_power)
+W_CutStagingDeleted == ~(jr["s1"].st = "resolved" /\ app = "run")
+\* a cut write at a staging name meets recovery (S_save_power)
+W_StagingCutSeen == ~(\E x \in TSlots : fs.sg[x] = TORN /\ app = "recover")
+\* a copy reaches its manifest (S_copy)
+W_CopyDone == ~(run.k = "copy" /\ ctl.pc = "cp_man")
+\* a copy meets an in-session .open journal (S_copy)
+W_CopyRefusedInsession == ~(run.k = "copy" /\ ctl.pc = "cp_chk" /\ jr["s1"].st = "open")
+\* a create registers (S_create_absent)
+W_CreateDone == ~(run.k = "create" /\ ctl.pc = "cr_reg")
+\* the second save lands (S_save_two)
+W_SecondSaved == gh.told["s2"] # "saved"
+\* the second save's rollback puts both files back (S_save_two)
+W_SecondRollbackTwoFiles == ~(run.k = "save" /\ ctl.s = "s2" /\ ctl.pc = "rs_w" /\ ctl.put = {"R","N"})
+\* a save cut by a power loss is undone (S_save_power)
+W_PowerAfterSaveRecovered == ~(jr["s1"].st = "resolved")
+\* the path guard stops a journal (S_recover_link)
+W_LinkStop == jr["b2"].why # "stopped"
+\* an outside save not synced is that program's loss (§13) (S_fs_weak)
+W_WeakLossAccepted == ~(n.ed > 0 /\ \A f \in Files : gh.ed[f] = 0)
+\* an outside save is kept on the weaker file system (S_fs_weak_recover)
+W_WeakRecoverKept == \A x \in TSlots : fs.kp[x] = {}
+\* an outside save after the gate is displaced into the temp (S_save_crash)
+W_EditorAfterGate == ~(Busy /\ run.k = "save" /\ ctl.pc \in {"s_cmp"} /\ fs.tc[<<"s1","R">>] = 11)
 =============================================================================
