@@ -299,16 +299,12 @@ ACTIVE: tuple[Term, ...] = (
     Term("the queue's trace replay", r"\btest_engine_jobs_conformance\b|\bqueue(?:'s trace)? replay\b"),
     Term("the backend's model marker", r"\bapp\.platform\.tla\b"),
     # S0073 part A (ADR-0068 D7, BL-0181): a Cancel ends only your own job (the rule by which a waiting user's Cancel
-    # ended another job goes); the drain signals the group once and reaps, with no listing of its members; there are
-    # no quit notes. The flight recorder and the decision log's replay are deferred, not dropped (BL-0154), and the
-    # lineage match is parked for the owner, so neither is refused.
+    # ended another job goes); there are no quit notes. The flight recorder and the decision log's replay are
+    # deferred, not dropped (BL-0154), and the lineage match was kept by the owner, so neither is refused. The drain's
+    # member listing ("no live member", `live_member*`, the libproc listing), retired here by S0073, was restored by
+    # S0075 (owner, 2026-11-01; ADR-0068 note, BL-0190), so its words are current again.
     Term("the one rule", r"\bone rule\b(?! format)"),
     code("endable_by_another"),
-    Term("no live member", r"\bno live members?\b|\blive member in\b"),
-    code("live_member"),
-    code("live_member_in_group_listing"),
-    code("live_member_in_proc"),
-    Term("libproc listing", r"\blibproc\b|\bproc_listpids\b|\bPROC_PGRP_ONLY\b"),
     Term("quit notes", r"\bquit[ -]notes?\b|\bnext-start notes?\b"),
 )
 

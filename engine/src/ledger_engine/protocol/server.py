@@ -599,7 +599,9 @@ def leads_own_group() -> bool:
 
 def end_own_group(code: int) -> None:
     """End the engine: its whole process group when it leads one (engine-jobs §5.2: `killpg(0, SIGKILL)`, the engine
-    included, so a plugin's child cannot outlive it holding the engine lock), else only itself. Never returns."""
+    included, so a plugin's child cannot outlive it holding the engine lock), else only itself. Never returns. One
+    signal: with the sidecar alive its drain follows (`app.platform.adapters.engine_group`); with the sidecar gone
+    nothing does, and on macOS a child forked in that instant can survive (engine-jobs §15, BL-0194)."""
     sys.stderr.flush()
     if leads_own_group():
         os.killpg(0, signal.SIGKILL)

@@ -217,11 +217,6 @@ RETIRED_LINES = {
     # S0073 part A (ADR-0068 D7): the rules D7 removes, as the documents before it wrote them
     "the one rule": "a waiting user's Cancel applies the one rule to the job running ahead",
     "endable_by_another": "the queue asks `endable_by_another(running)` first",
-    "no live member": "the drain signals the group until it has no live member",
-    "live_member": "the port's `live_member(pgid)` probe keeps the drain going",
-    "live_member_in_group_listing": "macOS decides with `live_member_in_group_listing`",
-    "live_member_in_proc": "Linux decides with `live_member_in_proc`",
-    "libproc listing": "the group is listed by libproc's `proc_listpids(PROC_PGRP_ONLY)`",
     "quit notes": "Quit anyway writes a quit note for the next start to answer",
 }
 # Words the audit says must never be refused, in the senses the current design uses them.
@@ -255,6 +250,9 @@ TRAP_LINES = [
     # S0073 part A (ADR-0068 D7): the current design's own words pass
     "a Cancel only ever ends your own job; one rule format for CSV and XLS; one RuleStore write path",
     "the drain signals the group once and reaps; a live engine; a member still exiting holds the engine lock",
+    # S0075 (BL-0190): the restored drain's own words pass again
+    "the drain signals the group until it has no live member; `live_member(pgid)`, `live_member_in_group_listing`",
+    "Linux decides with `live_member_in_proc`; the group is listed by libproc's `proc_listpids(PROC_PGRP_ONLY)`",
     "Quit anyway ends the engine; the next start's recover-all; the release notes; the flight recorder is deferred",
         # S0068 verifier r1 F7: the unfinished save's pause is current
     "Finzytrack could not finish saving a change, so saving is paused in this workspace.",

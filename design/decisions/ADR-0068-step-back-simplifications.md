@@ -131,3 +131,7 @@ S0073's reviews found that two D7 cuts had a cost the step-back review had not s
 - **The drain's member listing comes back** (D7's "the `libproc` listing goes" is withdrawn; "signal the group, reap, never signal after the reap" stays): on macOS one signal misses a plugin child that forks while it is delivered, and a survivor holding the engine lock blocks all ledger work until a restart. Restored in BL-0190, with BL-0158.
 - **D6c:** the rules-only spec is 65% of the old words, not a third; the owner accepted it. Generating §11 from the text modules and folding §10/§15 into their rules is BL-0192.
 
+
+## Note (2026-11-01): the drain's member listing restored (S0075)
+
+Built (`design/journal/S0075-drain-listing.md`, BL-0190, BL-0158): the drain of dfe3aee8 is back (hold the exited leader, signal the group and list its members until none but the leader is left, reap, never signal after the reap), with one change: on macOS a listed member whose status reads zombie (`sysctl(KERN_PROC_PID)`, `p_stat == SZOMB`) is not counted, so a zombie whose parent left the group no longer keeps the drain going. The engine's own end when the sidecar is gone stays one signal, a limit of the spec's §15 (BL-0194).
