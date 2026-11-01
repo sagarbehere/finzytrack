@@ -13,8 +13,8 @@ Where it differs from Beancount, on purpose (each refuses the whole load, EP-13;
   for a `.gpg` or `.asc` file (any letter case) is refused before anything is read (ADR-0010 guardrail 4). A missing
   (or dangling) `.gpg` or `.asc` file is refused too, before its existence is checked: Beancount asks whether a file
   is encrypted first, so it would try to decrypt a missing `.gpg` and open a missing `.asc`, and its load would fail
-  where the replica's succeeded (R4 could never run; S0067, BL-0172). A plugin that decrypts a side file meets the
-  same refusal as R4's load (`beancount_port.run_transformations`); one raised while a plugin is imported refuses the
+  where the replica's succeeded (S0067, BL-0172). A plugin that decrypts a side file meets the same refusal as the
+  rebuild's real load (`beancount_port.run_transformations`); one raised while a plugin is imported refuses the
   load.
 - **The policy** is asked about each file before the load touches it (before its existence is checked or its first
   bytes read by the encrypted-file test) and, once all files are parsed and before any plugin runs, about each user
@@ -34,11 +34,12 @@ Where it differs from Beancount, on purpose (each refuses the whole load, EP-13;
   so a change during the load makes the next observation differ. The `document` entries a plugin adds are only
   known after the plugins ran; their record comes from Beancount's own check (`_plugin_documents`).
 - **The documents step reads the disk**, as in Beancount's own load. A file a save creates under a documents root
-  is not in the prediction: the preview may miss the `document` entry it makes, and R4 then finds a difference and
-  shows its notice (S0068 removed S0067's listing swap, whose names a user plugin could see; spec §15).
+  is not in the preview: the preview may miss the `document` entry it makes, and the rebuild after the save shows it
+  (S0068 removed S0067's listing swap, whose names a user plugin could see; spec §15).
 
 A load holds `sys.path` and the plugin modules of the process while it runs; engine jobs run one at a time
-(ADR-0064). The save runs it inside its engine job (S0063); the mirror build will (TODO(BL-0113)).
+(ADR-0064). The preview will run it inside its engine job (TODO(BL-0106)), and the mirror build too (TODO(BL-0113));
+the save runs no load since S0070 (ADR-0068 D1).
 """
 
 from __future__ import annotations

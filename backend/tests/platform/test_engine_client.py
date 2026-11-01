@@ -2438,3 +2438,27 @@ def test_a_call_that_may_not_spawn_uses_the_ready_engine() -> None:
         assert c.pid == pid
     finally:
         c.close()
+
+
+def _stops_after_a_death(counted: bool) -> int:
+    ft = FakeTime()
+    c = EngineClient(engine_command(), RestartPolicy(), monotonic=ft.monotonic, pause=ft.pause)
+    try:
+        c.start()
+        pid = c.pid
+        assert pid is not None
+        t, out = in_thread(lambda: c.call("test.stall", {}, counted=counted))
+        assert wait_until(lambda: "stalling" in c.stderr_tail())
+        os.kill(pid, signal.SIGKILL)
+        t.join(30)
+        assert isinstance(out[0], EngineFailure)
+        return len(c.state.stops)  # pyright: ignore[reportAttributeAccessIssue, reportUnknownMemberType, reportUnknownArgumentType]
+    finally:
+        c.close()
+
+
+def test_an_uncounted_requests_engine_death_records_no_stop() -> None:
+    """S0070 r1 F2 (the verifier's probe): the client carries `counted=False` to the supervision table, so the rebuild
+    after a save, whose every try is sent uncounted, never moves the engine toward `Unavailable` (spec §5.3, §6.7)."""
+    assert _stops_after_a_death(counted=True) == 1
+    assert _stops_after_a_death(counted=False) == 0

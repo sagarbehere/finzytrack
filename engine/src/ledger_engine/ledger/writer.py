@@ -133,6 +133,12 @@ class Commit:
     backups_dir: str
 
 
+ENCRYPTED_SUFFIXES: Final = (".gpg", ".asc")
+"""ADR-0059: never written. The overlay's candidate rule (`overlay.ENCRYPTED_SUFFIXES`, pinned equal by
+`tests/ledger/test_save.py`); here for a path that resolves to such a file only once the save is past its step 0
+(S0070 red team r1 F1: a link swapped in after the gate). The writer imports nothing that loads Beancount."""
+
+
 class Reason(StrEnum):
     IO_ERROR = "io_error"  # an operation failed (a full disk, an I/O error)
     CHANGED = "changed"  # a file is not at its pre bytes, appeared, or an outside save was displaced by a swap
@@ -294,6 +300,8 @@ def _check_replaced(st: EntryStat | None, identity: tuple[int, int] | None, cano
 def _target(fs: FileSystem, handles: Handles, index: int, c: Commit, ch: Change) -> _Target:
     r = fs.resolve(ch.path)
     canonical, key = core_paths.canonical_path(r), core_paths.path_key(r)
+    if canonical.lower().endswith(ENCRYPTED_SUFFIXES):
+        raise _Stop(Reason.CHANGED, ch.path)  # the path leads to an encrypted file since the save's step 0 (a link)
     try:
         canonical.encode()
     except UnicodeEncodeError:

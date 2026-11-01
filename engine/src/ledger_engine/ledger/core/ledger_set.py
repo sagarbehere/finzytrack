@@ -22,9 +22,9 @@ encoding means bumps `v`; the price of any change is one mirror rebuild per work
 
 Paths are keyed as the load named them. The spec keys them by `path_key` (§6.3), which exists since S0060
 (`ledger_engine.ledger.paths`); for equality this is safe: the same ledger set is always observed under the same names,
-and two names for one file only make two entries that change together. The save's gate and re-check (S0063) compare
-observations of one ledger set under its own names, and lock by `path_key`; keying the stored fingerprint itself by
-`path_key` comes with the published generation that carries it (TODO(BL-0125)).
+and two names for one file only make two entries that change together. The save's gate (S0063) and the rebuild after a
+save (S0070) compare observations of one ledger set under its own names, and lock by `path_key`; keying the stored
+fingerprint itself by `path_key` comes with the published generation that carries it (TODO(BL-0125)).
 
 `decode` is `encode`'s strict inverse (the plan's fingerprint crosses the engine protocol as its encoding, S0063);
 `as_before` is what the disk must hold for a load of a save's candidate to have read it: the plan's fingerprint the

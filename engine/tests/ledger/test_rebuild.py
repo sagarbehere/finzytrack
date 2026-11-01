@@ -160,3 +160,21 @@ def test_an_encrypted_file_is_never_decrypted(root: Path, monkeypatch: pytest.Mo
     hint = observe(LedgerSet(str(root), (str(root),), (), (), ()))
     with pytest.raises(port.EncryptedFileMet):
         rebuild.run(rebuild.Ports(), hint, FakeJob())
+
+
+def test_a_dated_file_under_a_documents_root_in_the_set_is_loaded_on_the_first_try(root: Path) -> None:
+    """S0070 r1 F1 (verifier F1, red team F2): Beancount's documents step makes a `Document` entry for each dated file
+    under a documents root; the root's listing already holds it, so it is not a file outside the set."""
+    cash = root.parent / "docs" / "Assets" / "Cash"
+    cash.mkdir(parents=True)
+    (cash / "2026-01-02.receipt.pdf").write_bytes(b"x")
+    root.write_bytes(MAIN + b'option "documents" "docs"\n')
+    loads: list[str] = []
+
+    def load(r: str) -> port.ParseResult:
+        loads.append(r)
+        return port.real_load(r)
+
+    a = rebuild.run(rebuild.Ports(load=load), hint_of(root), FakeJob())
+    assert (a.outcome, len(loads)) == ("loaded", 1)
+    assert a.entries > 0

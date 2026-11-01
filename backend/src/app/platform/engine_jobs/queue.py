@@ -83,9 +83,9 @@ from app.platform.tla import tla_action
 
 TABLE_VERSION: Final = 8  # 2 (S0058): the lock before every fresh engine, the engine unavailable; 3: Try again;
 # 4 (S0062): recover-all goes on per journal (Cancel after its listing, a death, no engine); 5 (S0063): a save whose
-# engine died reads its outcome from disk in a fresh engine; 6 (S0066): so does an R4, to count its failure to run;
-# 7 (S0068, ADR-0067): an R4 whose engine died is lost like a read (nothing is counted); 8 (S0070, ADR-0068 D1): no
-# `r4` kind; the background `rebuild` after a save takes its place in every rule
+# engine died reads its outcome from disk in a fresh engine; 6 (S0066) and 7 (S0068): the removed re-check job after a
+# save (its history: those journals); 8 (S0070, ADR-0068 D1): that job kind is gone, and the background `rebuild` after
+# a save takes its place in every rule
 """Raised whenever a decision changes, so the decision log (§12) replays each recording with its own table."""
 
 type JobKind = Literal["open", "rebuild", "preview", "save", "bql", "recover_all", "create", "copy"]

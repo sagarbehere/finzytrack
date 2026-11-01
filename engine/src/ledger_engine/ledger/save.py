@@ -4,8 +4,10 @@
 `run(plan, ports, job)`, in one engine. **The save does no Beancount load** (ADR-0068 D1, S0070): it runs none of the
 ledger's plugins and trusts the plan, whose fingerprint is what the preview's load read (BL-0106); the sidecar still
 retires its engine after it (the safe default). Its steps:
-0. **An encrypted file is never written** (ADR-0059): a change whose name ends `.gpg` or `.asc` (any case; the
-   overlay's own candidate rule, `overlay.ENCRYPTED_SUFFIXES`) refuses `encrypted_file`, before anything is read.
+0. **An encrypted file is never written** (ADR-0059): a change whose name, or the canonical name it resolves to (a
+   link), ends `.gpg` or `.asc` (any case; the overlay's own candidate rule, `overlay.ENCRYPTED_SUFFIXES`) refuses
+   `encrypted_file`, before any ledger byte is written (the refusal re-hashes the targets to say "unchanged"). A link
+   swapped in after the gate is met by the writer's own check of the resolved name (`writer.ENCRYPTED_SUFFIXES`).
 1. **The records** (§6.1 step 1): an `.open` journal of this workspace, re-read from disk (`records`), refuses
    `unfinished_save`, writing nothing. A `.closed` record gates nothing (ADR-0067); no other record state is read.
 2. **Legacy-lock detection** (ADR-0062 decision 2; INV-26): every legacy `.write.lock` the plan names, deduplicated by
@@ -250,6 +252,18 @@ class _LockFailed(Exception):
         self.path = path
 
 
+def _encrypted(fs: FileSystem, path: str) -> bool:
+    """Step 0: the change's name, or the canonical name it resolves to (a link to a `.gpg` file, S0070 red team r1 F1),
+    ends `.gpg` or `.asc` in any case. A name that cannot be resolved is the next steps' to refuse (an I/O error)."""
+    if path.lower().endswith(overlay.ENCRYPTED_SUFFIXES):
+        return True
+    try:
+        resolved = core_paths.canonical_path(fs.resolve(path))
+    except OSError:
+        return False
+    return resolved.lower().endswith(overlay.ENCRYPTED_SUFFIXES)
+
+
 def _key(fs: FileSystem, path: str) -> str:
     return core_paths.path_key(fs.resolve(path))
 
@@ -377,8 +391,8 @@ def _run(plan: SavePlan, ports: Ports, job: Job, pre: Mapping[str, str | None]) 
     def refused(reason: RefusedReason, path: str | None = None) -> Refused:
         return Refused(reason, _unchanged(ports.fs, plan.changes), path)
 
-    for c in plan.changes:  # step 0 (ADR-0059): never an encrypted file
-        if c.path.lower().endswith(overlay.ENCRYPTED_SUFFIXES):
+    for c in plan.changes:  # step 0 (ADR-0059): never an encrypted file, by its name or the name it resolves to
+        if _encrypted(ports.fs, c.path):
             return refused("encrypted_file", c.path)
     open_journal = _open_journal(ports.fs, plan)  # step 1
     if open_journal is not None:

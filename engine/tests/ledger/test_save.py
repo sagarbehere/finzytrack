@@ -34,7 +34,7 @@ import pytest
 
 from ledger_engine.fs.darwin import DarwinLegacyLocks, DarwinLocks, for_this_os
 from ledger_engine.fs.port import LegacyAbsent, LegacyHeld, LegacyLocks, Lock, Locks
-from ledger_engine.ledger import overlay
+from ledger_engine.ledger import overlay, writer
 from ledger_engine.ledger import save as sv
 from ledger_engine.ledger.core import journal
 from ledger_engine.ledger.core.journal import FileEntry, Record, State
@@ -286,6 +286,40 @@ def test_a_change_to_an_encrypted_file_is_refused_and_writes_nothing(led: Ledger
     assert out == sv.Refused("encrypted_file", unchanged=True, path=str(target))
     assert "gate" not in job.events
     assert_nothing_written(led, before, out)
+
+
+def test_a_target_that_links_to_an_encrypted_file_is_refused(led: Ledger) -> None:
+    """S0070 red team r1 F1 (their P6b): step 0 checks the name a change resolves to, so plaintext never goes into a
+    `.gpg` file through a link."""
+    secret = led.root / "secret.gpg"
+    secret.write_bytes(MAIN)  # the same bytes, so the pre hash matches through the link
+    led.main.unlink()
+    led.main.symlink_to(secret)
+    job = FakeJob()
+    out = sv.run(plan_for(led), ports_for(led), job)
+    assert out == sv.Refused("encrypted_file", unchanged=True, path=str(led.main))
+    assert "gate" not in job.events
+    assert secret.read_bytes() == MAIN
+
+
+def test_a_link_to_an_encrypted_file_swapped_in_after_the_gate_is_not_written(led: Ledger) -> None:
+    """S0070 red team r1 F1 (their P6): the writer checks the resolved name again before its first effect."""
+    secret = led.root / "secret.gpg"
+    secret.write_bytes(MAIN)
+
+    def swap() -> None:
+        led.main.unlink()
+        led.main.symlink_to(secret)
+
+    out = sv.run(plan_for(led), ports_for(led), FakeJob(on_gate=swap))
+    assert isinstance(out, NotSaved), out
+    assert out.reason is Reason.CHANGED
+    assert secret.read_bytes() == MAIN
+    assert led.main.is_symlink()
+
+
+def test_the_writer_and_the_overlay_name_the_same_encrypted_suffixes() -> None:
+    assert writer.ENCRYPTED_SUFFIXES == overlay.ENCRYPTED_SUFFIXES
 
 
 def test_a_save_that_creates_a_file_named_by_a_new_include_lands(led: Ledger) -> None:

@@ -84,11 +84,19 @@ def _used(entries: list[port.Directive], options: port.OptionsMap) -> LedgerSet:
     return LedgerSet(str(options["filename"]), tuple(options["include"]), (), tuple(roots), tuple(docs))
 
 
+def _under(file: str, roots: tuple[str, ...]) -> bool:
+    """Whether a documents root's listing names `file` (S0070 r1 F1): the listing holds every file under its root,
+    by the name `os.walk` joins to the root's own string (`root/...`), the same join Beancount's documents step makes
+    for the `Document` entries it creates. Such a file is in the set through its root, not as a `document` file."""
+    return any(file.startswith(root.rstrip("/") + "/") for root in roots)
+
+
 def _wider(a: LedgerSet, b: LedgerSet) -> LedgerSet | None:
     """`a` widened by what `b` names outside it, or None when `b` names nothing outside it."""
     files = set(b.files) - set(a.files)
     documents = set(b.documents) - set(a.documents)
-    document_files = set(b.document_files) - set(a.document_files)
+    roots = (*a.documents, *sorted(documents))
+    document_files = {f for f in set(b.document_files) - set(a.document_files) if not _under(f, roots)}
     if not (files or documents or document_files):
         return None
     return LedgerSet(
