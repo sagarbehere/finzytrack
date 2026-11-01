@@ -1,6 +1,6 @@
 # S0073: the engine-jobs spec to rules only, and ADR-0068 D7's cuts
 
-Base dfe3aee8. Two passes: **part A** (this implementer) the D7 code cuts; **part B** (to come: spec rules-only rewrite, fresh implementer) ADR-0068 D6c. Part A edits the spec only where its code change makes a sentence false.
+Base dfe3aee8. Two passes: **part A** (this implementer) the D7 code cuts; **part B** (spec rules-only rewrite, fresh implementer; its section below) ADR-0068 D6c. Part A edits the spec only where its code change makes a sentence false.
 
 ## Brief
 - Goal: BL-0181 (ADR-0068 D6c and D7, owner, 2026-11-01: "I agree with 3,4,5,6, and 7." and "Yes, go ahead with all of those"). Part A, the five D7 cuts:
@@ -57,6 +57,51 @@ Base dfe3aee8. Two passes: **part A** (this implementer) the D7 code cuts; **par
   - Retired terms: 8 new terms, each with a must-not-pass line in `RETIRED_LINES` (fail on base, where the terms are not listed) and three trap lines.
 - Self-mutation (`scripts/mutants.py`; plans `/private/tmp/claude-501/-Users-sagar-experiments-finzytrack/9fc70bfc-3187-4f30-bf8c-a91c36b08b2f/scratchpad/s0073a/mutants-backend.toml` and `mutants-engine.toml`; the copy's own `app` and `ledger_engine` asserted first): 8 tried, 8 killed, 0 survived. Drain: no group signal; the signal allowed until after the reap; reaping without holding the leader; `signal()` ignoring the reap. The guard the drain now leans on: a fresh engine started without the sidecar's lock wait (queue `_engine_for`); the engine taking no engine lock (`protocol.server.hold_engine_lock`; run with a per-copy engine venv, since the engine runs under `-I` and an editable install would load the checkout's code: the first run on the shared venv "survived" for that reason only). Cancel: the job ahead ended again; background work counted as its requester's own.
 - Population: none claimed. The BL-0185 grep's terms and counts are in Decisions.
+
+## Part B: the spec to rules only (ADR-0068 D6c)
+
+Base 16f4f3fa (part A). Docs only: no code behaviour changes. The one script edit is the retired-terms allowlist: five entries matched lines that are now gone.
+
+### Brief
+- Goal: BL-0181, ADR-0068 D6c. `design/specs/engine-jobs.md` keeps every rule the code or tests rely on (what happens, in what order, what is refused, what the user is told) and loses its history. No doc may describe a dropped design. Cut 5 (records matched by lineage) is still parked: the spec describes the code (key, lineage and `path_key`), and §16 says D7's `path_key`-only match is pending the owner.
+- Constraints: the Orientation block stays; so do all section numbers (§1-§16, §5.1-§5.5, §6.1-§6.8, §8.1-§8.2, §9.1-§9.3) and step numbers (§6.1 steps 0-11 and 8.1-8.5, §8.1 steps 1-4, §8.2 steps 1-8, §9.1 steps 1-6, §9.3 steps 1-4), and §5.5's bullet order (`ledger_engine.protocol.messages` cites "§5.5 bullet 5"). The citations were found by grepping `engine/src`, `backend/src`, `scripts`, `formal` and `design`. §13 keeps the markers that `scripts/tests/test_tla_engine_jobs.py` reads, and its property and mutant names. §11 keeps the best-effort row that `backend/tests/platform/test_save_job.py` matches word for word.
+- Risk: Low, docs only. Gates: pre-commit, `run_meta_tests.py`, `check_invariants.py`, `check_capabilities.py`, `check_retired_terms.py`.
+
+### Size
+- Before: 527 lines, 25,934 words, 155,290 bytes. After: 488 lines, 16,928 words, 102,952 bytes (65 % of the words). The line count means little, since one line is one paragraph.
+- **The target of about a third was not reached** (agent). What remains is rules: the message table (§11, about 2,000 words of texts the user reads), the durable order and recovery steps (§6.1, §6.4, §8.1, about 3,600 words), and the model's names (§13, read by a test). Getting to a third would mean dropping rules or the user's texts, which the brief forbids. The next cut, if the owner wants one, is a split rather than more trimming: keep §11's texts in one generated table (`save_text`, `recovery_text` and `text` already hold most of them), and point §15's limits at the rule each one qualifies.
+
+### Where the provenance went
+- Orientation "What exists" (the build history from S0035 to S0071): the slices' journals, and ARCHITECTURE.md's engine lines. It is replaced by a list of code entry points and of what is not built yet.
+- Orientation "Status of this text" (golden reviews 5-7 and the owner's answers; the end of the review loop, "Let's do B…"; simplification B; Retry recovers first): ADR-0064 (decisions 10 and 11, its amendments), ADR-0063's amendment "Back always recovers first" ("Retry too"), IMPROVEMENTS.md (IMP-0038). All checked present.
+- The "Owner A" quote and its `[Owner A]` tags: ADR-0064 decisions 1-7 state each part (one engine, the FIFO queue, Cancel, a crash noticed by exit, no automatic killing, one load bounds memory, "saved" after commit and read-back). The quote's exact words were in the spec only. They are kept here: "one engine process, one job at a time; a FIFO queue where a job the user is waiting for goes ahead of background work; Cancel ends that job's engine and is not counted as a crash; a crash is noticed by the process exiting, with S0040's bounded restart; no automatic killing of slow jobs; one load at a time bounds memory; the save reports 'saved' after commit + read-back" (owner, 2026-10-27; the quote's last clause, on the re-check, was superseded by ADR-0067 and ADR-0068 D1). Tags now cite ADR-0064 and the decision number.
+- The ADR-0068 supersession paragraph and the notes at the top of §4, §5.2, §6.1, §6.5, §9.3, §12, §13 and §14: ADR-0068 (D1-D8) and its notes; each rule now cites its D-number.
+- §6.1 "History, as built": the rules in it went into steps 4 and 8 (the `.open` check fails closed, `ledger_set.as_before`, the mirror digest until BL-0113/BL-0125, the parent syncs before step 8, refusals write nothing). The history is in S0063, S0070 and S0071's journals.
+- §6.6 and §8.1 "Built in S0061/S0062/S0063" paragraphs: rules kept in the sections; dates and round tags (S0061 red team and verifier rounds 1-7) are in `design/journal/S0061-restore.md`, S0062's and S0063's journals.
+- Owner quotes of 2026-10-29/30 (staging name, never remove a created file, ACL allowlist and any subject, "Yes to both", hard links, offer to delete the kept copy, keep xattrs and drop ACLs, "don't go digging yourself into holes"): ADR-0012 and ADR-0013 amendments, the S0060 and S0061 journals, and `design/inbox/answered/`. All checked present. The rules cite the amendment by date.
+- The 2026-10-26 quotes (a fresh engine per heavy job; "Finishing your change…" on a Cancel past the commit point): `design/inbox/answered/20261026-engine-concurrency-and-cancel.md`, ADR-0064 decision 3.
+- The decision log's requirement (owner, 2026-10-26): the spec alone held the quote; it is now in ADR-0068's note "D6c built".
+- Measurements that only the spec held: the `-I` check (Python 3.13: two runs under `-I` with `PYTHONHASHSEED=0` gave different `hash('abc')`, two under `-s -S -B -P` the same); without the bytecode directory a fresh start costs about 0.24 s instead of 0.05-0.10 s (review 4 spike N, owner's Mac); before S0070 the save took 1.81 s and the re-check 1.70-1.71 s (also in ADR-0068's D1 note); spike S4, 3.0 s p95 at 54k in 12 files (ADR-0064 Context). The first two are kept here.
+- Model findings (F1-F4, H1, I14, L1, L9, L10, M5, N1, N3, O1) cited as tags: `formal/tla/engine-jobs/MAPPING.md` §5.
+- §14's per-test list: the tests themselves. §14 now names the test files per area and the cases a change must keep.
+
+### Dropped designs removed (findings for the orchestrator)
+1. **§11 still had the quit notes' row** ("next start after Quit anyway during a save": "Your last change before you quit was saved / was undone / has not been undone yet"). ADR-0068 D7 dropped the notes, and no code has these texts (`grep "before you quit"` in `backend/src` and `engine/src`: none). Part A missed this row; it is removed.
+2. **§14 still required "an outside edit to an include …, made during the load, is refused at the re-check"**: the save has no load and no re-check since S0070. Removed.
+3. **§14 and §15 still described the drain that lists members:** "a fake port with a stuck group member" and §15's "zombie member on macOS … the drain does not end". Since part A the drain does not wait for members. Removed. **BL-0158's row still describes that drain;** it should be closed as moot, or reworded (not changed here: backlog rows are the orchestrator's).
+4. **§12 listed `sched.checkpoint` lines** and the "Volume" estimate. D7 keeps only `sched.input` and `sched.decision`, so they are gone, as are the replay and ring bullets (deferred; §12 says so in one line).
+5. §15's "An outside save left in a restore temp … the limit … is closed": not a limit. Removed.
+
+### Spec versus code mismatches (docs fixed, code untouched)
+1. **A stray `>>>` line in §2's table** since S0070 (commit 08b50277) cut the table after the `save` row. The `bql`, `recover_all` and `create`/`copy` rows rendered as plain text. Fixed.
+2. **§2 said a `save` runs user code ("yes")**, against §1 ("the save … runs none"). The code does no load in a save, but `app.platform.engine_jobs.save` still reports `ran_user_code=True` by default, so the engine is retired after it (§6.1 step 11, "the safe default"). The row now says "no (its engine is still retired after it)". Whether the save should keep retiring its engine is a question for the orchestrator; nothing is changed here.
+3. **§3 gave the table as `queue.transition(state, event)`;** the code is `transition(policy, state, event)`. Fixed in the text.
+4. **§12 named a `switch` pure table**, which is not built (BL-0154). Marked "with BL-0154".
+5. Backlog and ADR rows (BL-0118; ADR-0008's amendment; answered inbox files) cite "§6.7 step 2/4", which has not existed since S0070. They are history, so they are left as they are.
+
+### Checks
+- `check_retired_terms.py`: 0 refused, after removing five stale allowlist entries (the "Owner A" line ×2, "ADR-0011's purpose for the semaphore", ADR-0063's "the scheduler spec draft 5 defines it", the 2026-10-26 decision-log quote). `run_meta_tests.py`: OK, 836 tests (it first caught §13's "File-system assumptions" marker, which a reworded line had broken). `check_invariants.py`, `check_capabilities.py`, `check_generated.py`: exit 0. `test_save_job.py::test_the_best_effort_drive_notice_is_the_owners_words_in_the_spec`: passes.
+- Hand-off: no check accepts, tags or refuses anything new; the allowlist only got shorter (stricter). No mutants (docs only).
 
 ## Verifier
 
