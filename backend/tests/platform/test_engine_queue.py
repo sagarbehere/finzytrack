@@ -5,8 +5,8 @@ Every expected value is written from the spec, not read from the code: the order
 waited-for job, else the oldest background job; a running job is never interrupted), one engine at a time (§5.1: a new
 one only after the previous one has ended, and only once the sidecar has waited out the engine lock; reused only
 after parse-only work), the bound and the per-workspace caps (§3), the open-workspace gate (§3, INV-28, INV-31), the
-exclusive window of a switch or boot (§3), Cancel and the one rule (§4), the commit-point step (§4), a client that
-goes away (§4), and the quit advice on the timer (§5.2, §5.1; model findings N3 and simplification B).
+exclusive window of a switch or boot (§3), Cancel, which ends only your own job (§4), the commit-point step (§4), a
+client that goes away (§4), and the quit advice on the timer (§5.2, §5.1; model findings N3 and simplification B).
 
 The model's queue properties (`formal/tla/engine-jobs/MAPPING.md` §1.4) are checked after every step of a Hypothesis
 walk and of an exhaustive sweep over a finite abstract state space (§14 "the exhaustive (state x event) test").
@@ -650,7 +650,7 @@ def test_a_background_job_has_no_cancel_of_its_own() -> None:
     assert state.running is not None
 
 
-# -- the one rule (§4; model `Endable`, `CancelReachIsTheOneRule`) ---------------------------------------------------
+# -- Cancel ends only your own job (§4; ADR-0068 D7) -----------------------------------------------------------------
 
 
 def waiting_behind(spec: JobSpec, *, past: bool = False, gone: bool = False) -> tuple[QueueState, int, int]:
@@ -665,35 +665,35 @@ def waiting_behind(spec: JobSpec, *, past: bool = False, gone: bool = False) -> 
 
 
 @pytest.mark.parametrize(
-    ("spec", "past", "gone"),
+    ("spec", "gone"),
     [
-        (background("rebuild"), False, False),
-        (background("save"), False, False),
-        (user("preview"), False, True),
-        (user("rebuild"), False, True),
-        (user("bql"), False, True),
-        (user("open"), False, True),
+        (background("rebuild"), False),
+        (background("save"), False),
+        (user("open"), True),
     ],
-    ids=[
-        "hung-bg-rebuild",
-        "hung-bg-save-before-commit",
-        "preview-tab-closed",
-        "rebuild-gone",
-        "bql-gone",
-        "open-gone",
-    ],
+    ids=["hung-bg-rebuild", "hung-bg-save-before-commit", "open-gone"],
 )
-def test_a_waiting_users_cancel_frees_the_engine_from_work_nobody_waits_for(
-    spec: JobSpec, *, past: bool, gone: bool
-) -> None:
-    state, running, waiting = waiting_behind(spec, past=past, gone=gone)
-    if gone and spec.kind in READS:  # a client that goes away already ended its running read (§4)
-        assert state.running is None
-        return
+def test_a_waiting_users_cancel_never_ends_the_job_running_ahead(spec: JobSpec, *, gone: bool) -> None:
+    """ADR-0068 D7 (owner, 2026-11-01: "Keep B7 (Recommended)"): a Cancel only ever ends your own job. Work nobody
+    waits for (the background rebuild after a save, a background save before its commit point, an open whose tab
+    closed) is no longer ended by another user's Cancel: the waiting user's own request is cancelled, with the answer
+    that the earlier work cannot be stopped from here."""
+    state, running, waiting = waiting_behind(spec, gone=gone)
     state, effects = run(state, Cancel(waiting))
+    assert effects == [Cancelled(waiting, cannot_stop_ahead=True)]
+    assert state.running is not None
+    assert state.running.job.id == running
+    assert state.slot == "busy"
+    assert waiting not in [j.id for j in state.queued]
+
+
+@pytest.mark.parametrize("kind", sorted(READS))
+def test_a_read_whose_requester_has_gone_still_ends(kind: JobKind) -> None:
+    """ADR-0068 D7: "A read whose requester has gone still ends" (its client's going away ends it, §4)."""
+    state, running = busy_with(user(kind))
+    state, effects = run(state, ClientGone(running))
     assert EndEngine("cancel") in effects
     assert Cancelled(running) in effects
-    assert Cancelled(waiting) in effects
     assert state.running is None
 
 
@@ -1151,17 +1151,6 @@ def eligible(state: QueueState, job: Job) -> bool:
     return job.owner != "switch" and (job.workspace is None or job.workspace == state.open_workspace)
 
 
-def endable(r: Running) -> bool:
-    """§4's one rule, written from the spec: nobody waits for it, the user did not confirm it, and it has not reached
-    its commit point."""
-    j = r.job
-    if j.kind == "rebuild" and not j.waited_for:
-        return not j.confirmed  # the background rebuild after a save (S0070)
-    if j.kind == "save":
-        return not j.confirmed and not r.past_commit
-    return j.kind in (*READS, "open") and not j.requester_present
-
-
 def slot_at_dispatch(before: QueueState, event: Event) -> str:
     """The engine slot after the event's own work and before any dispatch, written from §5.1 and §5.2: an ended
     engine frees it; a job that ran user code retires its engine; parse-only work leaves it idle for the next job;
@@ -1231,10 +1220,9 @@ def check_step(policy: QueuePolicy, before: QueueState, event: Event, step: Step
     if any(e == EndEngine("cancel") for e in effects):
         assert before.running is not None
         assert not before.running.past_commit
-        # CancelReachIsTheOneRule
-        if isinstance(event, Cancel) and event.job_id != before.running.job.id:
-            assert endable(before.running)
-            assert before.running.job.kind != "recover_all"
+        # A Cancel ends only your own job (ADR-0068 D7): another job's Cancel never ends the running one
+        if isinstance(event, Cancel):
+            assert event.job_id == before.running.job.id, "a Cancel ended a job running ahead of it"
     if any(isinstance(e, Proceed) for e in effects):
         assert before.running is not None
         assert before.running.job.kind in WRITING
@@ -1247,7 +1235,12 @@ def check_step(policy: QueuePolicy, before: QueueState, event: Event, step: Step
         mine = [e for e in effects if isinstance(e, Cancelled) and e.job_id == event.job_id]
         r = before.running
         if mine and (r is None or Cancelled(r.job.id) not in effects):
-            theirs = r is not None and r.job.kind in (*READS, "open", "recover_all") and r.job.requester_present
+            theirs = (
+                r is not None
+                and r.job.kind in (*READS, "open", "recover_all")
+                and r.job.waited_for
+                and r.job.requester_present
+            )
             assert mine[0].cannot_stop_ahead == (r is not None and not theirs)
     # NoAdviceOnTimerForSlowWork
     if any(isinstance(e, ShowAdvice) for e in effects) or after.advice:
@@ -1407,7 +1400,7 @@ def job_variants(jid: int) -> Iterable[Job]:
             yield Job(jid, kind, ws, True, kind in WRITING, owner, present)
         yield Job(jid, "save", W1, False, False, "app", present)
         yield Job(jid, "rebuild", W1, False, False, "app", present)  # the background rebuild after a save (S0070)
-        yield Job(jid, "rebuild", W1, False, True, "user", present)  # none is confirmed: a probe of the one rule (§4)
+        yield Job(jid, "rebuild", W1, False, True, "user", present)  # none is confirmed: a probe of who may end it (§4)
         yield Job(jid, "open", W2, True, False, "switch", present)
 
 
@@ -1649,15 +1642,16 @@ def test_a_background_rebuild_whose_engine_died_is_lost_like_a_read() -> None:
     assert started(effects) == [waiting]
 
 
-def test_the_background_rebuild_is_ended_by_another_jobs_cancel() -> None:
-    """§4's one rule: nobody waits for the background rebuild after a save and nobody confirmed it (S0070; R4's
-    place in the rule)."""
+def test_the_background_rebuild_is_not_ended_by_another_jobs_cancel() -> None:
+    """ADR-0068 D7: the background rebuild after a save is nobody's to cancel; a waiting user's Cancel removes only
+    their own request, and the rebuild goes on."""
     state, jid = busy_with(background("rebuild"), ready(W1))
     state, (waiting,) = submit(state, user("preview"))
     state, effects = run(state, Cancel(waiting))
-    assert Cancelled(jid) in effects
-    assert Cancelled(waiting) in effects
-    assert ends(effects) == ["cancel"]
+    assert effects == [Cancelled(waiting, cannot_stop_ahead=True)]
+    assert ends(effects) == []
+    assert state.running is not None
+    assert state.running.job.id == jid
 
 
 @pytest.mark.parametrize(("past_commit", "cancelled"), [(False, True), (True, False)])

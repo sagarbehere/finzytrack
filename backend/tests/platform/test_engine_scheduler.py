@@ -4,8 +4,9 @@
 The shell runs the queue table (`app.platform.engine_jobs.queue`, S0053) on one thread against an engine port. These
 tests drive it over a fake port (`tests/platform/fake_job_engine.py`) and, at the end, over the real client and
 engine. Each expected value is written from the spec's tables, row by row: §3 (the order, the bound, the open
-workspace), §4 (Cancel, the one rule, the commit point, a client that goes away), §5.1-§5.3 (one engine, fresh after
-user code, the lock before every spawn, our ends, a death by the engine's number, the bound) and §11 (the codes).
+workspace), §4 (Cancel of your own job only, the commit point, a client that goes away), §5.1-§5.3 (one engine,
+fresh after user code, the lock before every spawn, our ends, a death by the engine's number, the bound) and §11 (the
+codes).
 
 Every test has a hang guard (S0057 retro): nothing in the shell has a time limit, so a missed answer would wait for
 ever; the guard ends the run with every thread's traceback. A wait for something that must happen is a wait on a
@@ -536,20 +537,22 @@ def test_a_cancel_after_proceed_is_too_late_and_the_save_finishes(rig: Rig) -> N
     assert not any(reason == "cancel" for _, reason in rig.engine.ends)
 
 
-def test_the_one_rule_a_waiting_users_cancel_frees_the_engine_behind_a_background_rebuild(rig: Rig) -> None:
-    """§4: "Another job's Cancel ends the running job only when nobody waits for it": the background rebuild after a
-    save (S0070; R4's place); §14 "Cancel of a job queued behind a hung background load ... frees the engine"."""
+def test_a_waiting_users_cancel_behind_a_background_rebuild_cancels_only_their_own_request(rig: Rig) -> None:
+    """ADR-0068 D7 (owner, 2026-11-01: "Keep B7 (Recommended)"): a Cancel only ever ends your own job. The waiting
+    user's request is cancelled with "The earlier ledger work cannot be stopped from here"; the background rebuild
+    after a save is not ended and finishes."""
     rb = submit(rig, background("rebuild"), calls("block"))
     blocked(rig)
     waiting = submit(rig, user("preview"), calls("ok"))
     assert rig.jobs.cancel(waiting.id) == "cancelled"
-    assert code_of(outcome(rb)) == ErrorCode.JOB_CANCELLED
-    assert code_of(outcome(waiting)) == ErrorCode.JOB_CANCELLED
-    assert any(reason == "cancel" for _, reason in rig.engine.ends)
-    wait_until(lambda: slot(rig) == "none")
+    assert details(outcome(waiting)) == JobCancelledDetails(cannot_stop_ahead=True)
+    assert rb.outcome is None, "the background rebuild was ended by another job's Cancel"
+    assert not any(reason == "cancel" for _, reason in rig.engine.ends)
+    rig.engine.release()
+    assert isinstance(outcome(rb), Done)
 
 
-def test_the_one_rule_behind_a_confirmed_save_the_waiting_users_own_request_is_cancelled(rig: Rig) -> None:
+def test_behind_a_confirmed_save_the_waiting_users_own_request_is_cancelled(rig: Rig) -> None:
     """§4: "Otherwise the waiting user cannot end the running job ... a save ... the user confirmed. The waiting job
     shows the usual 'Waiting for: <label>…' and, after the display delay, 'Still working…' with Cancel, never quit
     advice on a timer ... their own request is cancelled and they read 'Your request is cancelled. The earlier ledger

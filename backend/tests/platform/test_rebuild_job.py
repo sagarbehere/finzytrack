@@ -8,7 +8,8 @@ scheduler. Written from the spec's lines:
 - §7: "A moved fingerprint discards the result and runs the job again, at most 3 times in a row";
 - §5.3: a rebuild's engine death is not a stop toward the bound (ADR-0068 D1; the step-back area review F2), tells
   no one "saved" or "not saved", and owes nothing; §5.1: each try after the first gets a fresh engine;
-- §3: at most one background rebuild waits per workspace; §4: another job's Cancel may end a running one.
+- §3: at most one background rebuild waits per workspace; §4: another job's Cancel never ends a running one
+  (ADR-0068 D7).
 R4 is gone: no `r4_check`, no notice, no `r4.*` log line.
 """
 
@@ -287,8 +288,9 @@ def test_a_reply_of_the_wrong_shape_is_not_loaded(make: Any) -> None:
     assert background(rig) == NotLoaded("violation")
 
 
-def test_the_background_rebuild_is_ended_by_another_jobs_cancel(make: Any) -> None:
-    """§4: nobody waits for it and nobody confirmed it, so a waiting user's Cancel of a queued job ends it."""
+def test_the_background_rebuild_is_not_ended_by_another_jobs_cancel(make: Any) -> None:
+    """§4, ADR-0068 D7: a Cancel only ever ends your own job. The waiting save's Cancel removes only that save; the
+    rebuild running ahead of it finishes."""
     rig = make({"rebuild": [BLOCK, loaded()], "save": [Gated(answer())]})
     bg = rig.jobs.submit(rebuild_spec(W1), rebuild_work(TARGET))
     assert isinstance(bg, JobTicket)
@@ -296,9 +298,13 @@ def test_the_background_rebuild_is_ended_by_another_jobs_cancel(make: Any) -> No
     waiting = rig.jobs.submit(save_spec(W1), save_work(REQUEST))
     assert isinstance(waiting, JobTicket)
     rig.jobs.cancel(waiting.id)
-    rig.run(bg)
+    assert isinstance(rig.run(waiting), Failed)
+    q = rig.jobs.status().queue
+    assert q.running is not None
+    assert q.running.job.id == bg.id, "the rebuild was ended by another job's Cancel"
+    rig.engine.release("rebuild")
+    assert isinstance(rig.run(bg), Done)
     assert rig.ops() == ["rebuild"]
-    assert rig.lines() == []  # a Cancel logs nothing
 
 
 def test_a_save_waits_for_a_running_rebuild(make: Any) -> None:

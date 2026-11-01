@@ -95,7 +95,7 @@ type EngineEvent = Progress | GateReached | Committed | Decision
 
 @dataclass(frozen=True, slots=True)
 class EngineEnd:
-    """One engine's end, reported once its process group has no live member and it is reaped (§5.2): `serial` is
+    """One engine's end, reported once its process group was signalled and its leader reaped (§5.2): `serial` is
     its spawn's number in this client; `reason` says who ended it: a caller's end (`cancel`, `retire`,
     `quit_anyway`), `close`, `stop` (the supervision ended a live engine after a failure: a violation before the
     commit point, a failed or interrupted start, an interrupted wait), `input_closed` (it ended at the end of the

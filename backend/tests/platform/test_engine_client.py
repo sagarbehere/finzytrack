@@ -1281,17 +1281,14 @@ def test_two_engines_hash_a_string_alike_and_run_with_the_specs_flags() -> None:
 
 
 class Ends:
-    """`on_engine_ended`: each engine's end report, and what the test sees at the moment it arrives."""
+    """`on_engine_ended`: each engine's end report."""
 
-    def __init__(self, probe: Callable[[], object] = lambda: None) -> None:
+    def __init__(self) -> None:
         self.reports: list[EngineEnd] = []
-        self.seen_at_report: list[object] = []
-        self._probe = probe
         self._got = threading.Condition()
 
     def __call__(self, end: EngineEnd) -> None:
         with self._got:
-            self.seen_at_report.append(self._probe())
             self.reports.append(end)
             self._got.notify_all()
 
@@ -1324,12 +1321,12 @@ def gone(pid: int) -> bool:
 @pytest.mark.skipif(os.name != "posix", reason="process groups and flock are POSIX; Windows is BL-0087")
 @pytest.mark.parametrize("how", ["cancel", "crash of the leader alone"])
 def test_a_plugins_child_holding_a_lock_is_ended_with_the_engine(tmp_path: Path, how: str) -> None:
-    """§5.2: "a plugin's child processes go too and cannot outlive their engine" (a lock it inherited included); the
-    end is reported only once the group has no live member, so a next engine never starts beside a lock holder
-    (§5.1)."""
+    """§5.2: "a plugin's child processes go too and cannot outlive their engine" (a lock it inherited included). Since
+    ADR-0068 D7 the end is reported after one group signal and the reap, without waiting for the members: a member
+    still exiting may hold the lock for a moment, and the next engine waits for it at the engine lock (§5.1)."""
     lock = tmp_path / "ledger.lock"
     child: list[int] = []
-    ends = Ends(lambda: (lock_free(lock), bool(child) and gone(child[0])))
+    ends = Ends()
     c = EngineClient(engine_command(), on_engine_ended=ends)
     try:
         out = c.call("test.child", {"lock": str(lock)})
@@ -1343,7 +1340,7 @@ def test_a_plugins_child_holding_a_lock_is_ended_with_the_engine(tmp_path: Path,
         else:
             kill(pid)
         assert ends.wait(1)
-        assert ends.seen_at_report == [(True, True)], "the end was reported while the group still held the lock"
+        assert wait_until(lambda: gone(child[0]) and lock_free(lock)), "the child or its lock outlived the engine"
         (report,) = ends.reports
         assert (report.pid, report.serial) == (pid, serial)
         assert report.reason == ("cancel" if how == "cancel" else None)
@@ -1429,8 +1426,8 @@ def test_quit_anyway_returns_while_the_reap_never_returns() -> None:
 
 @pytest.mark.skipif(os.name != "posix", reason="process groups are POSIX; Windows is BL-0087")
 def test_a_new_engine_starts_only_after_the_previous_ones_group_is_drained() -> None:
-    """§5.1: "A new engine is spawned when a job needs one, only after the previous one is reaped and its process
-    group has no live member" (`AtMostOneEngine`)."""
+    """§5.1: "A new engine is spawned when a job needs one, only after the previous one is reaped" (`AtMostOneEngine`;
+    a member still exiting is waited for at the engine lock, ADR-0068 D7)."""
     ops = RecordingOps(hold_reap=True)
     c = EngineClient(engine_command(), group_ops=ops)
     try:

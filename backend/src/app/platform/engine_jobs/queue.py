@@ -34,12 +34,10 @@ product calls it. Each rule names its spec line.
   else it is refused: ADR-0068 D8).
 - **Cancel** (§4): the job's own requester cancels it, queued (removed; nothing ran) or running (its engine ended with
   reason `cancel`, recorded before the signal, so it is never a stop; §5.2), except past its commit point ("too late").
-  Cancel of a queued job applies **the one rule** to the job running ahead of it: that job is ended only when nobody
-  waits for it, the user did not confirm it, and it has not reached its commit point (the background rebuild after a
-  save, a background save before its commit point, a read or an open whose requester has gone); otherwise the waiting
-  user's own request is cancelled with the answer that the earlier work cannot be stopped from here
-  (`cannot_stop_ahead`), unless the running job is a read, an open or a recover-all its own requester still waits for
-  (theirs to cancel).
+  **A Cancel only ever ends your own job** (ADR-0068 D7, owner 2026-11-01: "Keep B7 (Recommended)"): a waiting user's
+  Cancel removes their queued job and never ends the job running ahead of it; their answer says the earlier work
+  cannot be stopped from here (`cannot_stop_ahead`), unless the running job is a read, an open or a recover-all its
+  own requester still waits for (theirs to cancel; background work has no such requester).
 - **A client that goes away** (§4) cancels its preview, rebuild or BQL; a save, create, copy or open only loses its
   requester ("closing is not a cancel", ADR-0063 decision 1 step 3).
 - **The commit point** (§4, §6.1 step 7, §8.2 step 6): the engine sends `gate` and waits; in one step the table
@@ -76,12 +74,12 @@ from collections.abc import Callable
 from dataclasses import dataclass, replace
 from typing import Any, Final, Literal
 
-TABLE_VERSION: Final = 8  # 2 (S0058): the lock before every fresh engine, the engine unavailable; 3: Try again;
+TABLE_VERSION: Final = 9  # 2 (S0058): the lock before every fresh engine, the engine unavailable; 3: Try again;
 # 4 (S0062): recover-all goes on per journal (Cancel after its listing, a death, no engine); 5 (S0063): a save whose
 # engine died reads its outcome from disk in a fresh engine; 6 (S0066) and 7 (S0068): the removed re-check job after a
 # save (its history: those journals); 8 (S0070, ADR-0068 D1): that job kind is gone, and the background `rebuild` after
-# a save takes its place in every rule
-"""Raised whenever a decision changes, so the decision log (§12) replays each recording with its own table."""
+# a save takes its place in every rule; 9 (S0073, ADR-0068 D7): a Cancel ends only its own job
+"""Raised whenever a decision changes, so a decision log line (§12; BL-0154) names the table that made it."""
 
 type JobKind = Literal["open", "rebuild", "preview", "save", "bql", "recover_all", "create", "copy"]
 type Owner = Literal["user", "app", "switch"]
@@ -250,7 +248,7 @@ class EngineDied:
 
 @dataclass(frozen=True, slots=True)
 class EngineEnded:
-    """The ending engine was reaped and its group has no live member (§5.2)."""
+    """The ending engine's group was signalled and its leader reaped (§5.2)."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -416,7 +414,7 @@ class Proceed:
 @dataclass(frozen=True, slots=True)
 class EndEngine:
     """Signal the engine's group with this reason, recorded before the signal (§5.2), and drain it; feed
-    `EngineEnded` once it has no live member."""
+    `EngineEnded` once its leader is reaped."""
 
     reason: EndReason
 
@@ -513,17 +511,6 @@ def eligible(state: QueueState, job: Job) -> bool:
     if state.exclusive:
         return job.owner == "switch"
     return job.owner != "switch" and (job.workspace is None or job.workspace == state.open_workspace)
-
-
-def endable_by_another(running: Running) -> bool:
-    """§4's one rule: another job's Cancel ends the running job only when nobody waits for it, the user did not
-    confirm it, and it has not reached its commit point. Recover-all is never ended this way (§8.1)."""
-    job = running.job
-    if job.kind == "rebuild" and not job.waited_for:
-        return not job.confirmed  # the background rebuild after a save (S0070): nobody waits for it
-    if job.kind == "save":
-        return not job.confirmed and not running.past_commit
-    return job.kind in (*READS, "open") and not job.requester_present
 
 
 def _reports_itself(running: Running) -> bool:
@@ -745,17 +732,19 @@ def _behind_other_work(s: QueueState) -> bool:
 
 
 def _cancel_queued(s: QueueState, job: Job) -> Step:
-    """§4: the waiting user's Cancel removes their queued job; for the job running ahead of it, the one rule."""
+    """§4: the waiting user's Cancel removes their queued job and never ends the job running ahead (ADR-0068 D7)."""
     if not (job.waited_for and job.requester_present):
         return Step(s)
     if job.owner == "switch" and not _behind_other_work(s):
         return Step(s)
     state = replace(s, queued=tuple(j for j in s.queued if j.id != job.id))
     r = state.running
-    if r is not None and endable_by_another(r) and r.job.kind != "recover_all":
-        state, ended = _end_running(state)
-        return Step(state, (*ended, Cancelled(r.job.id), Cancelled(job.id)))
-    own_to_cancel = r is not None and r.job.kind in (*READS, "open", "recover_all") and r.job.requester_present
+    own_to_cancel = (
+        r is not None
+        and r.job.kind in (*READS, "open", "recover_all")
+        and r.job.waited_for  # background work has no requester who could cancel it
+        and r.job.requester_present
+    )
     return Step(state, (Cancelled(job.id, cannot_stop_ahead=r is not None and not own_to_cancel),))
 
 

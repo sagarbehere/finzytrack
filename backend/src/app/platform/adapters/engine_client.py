@@ -16,10 +16,11 @@ ARCHITECTURE.md §2.0, §5, §7; `design/specs/engine-jobs.md` §5.1-§5.5 since
   fails `cancelled`) or `Retired`, never a stop: a recorded reason wins over the exit status. A retire is for an idle
   engine (after the job's final reply); during a call it is a bug and raises.
 - **The engine's process group** (§5.2). The engine is spawned as the leader of its own group (`start_new_session`).
-  Each engine has a reaper thread that holds its leader unreaped once it exits, signals the group until it has no
-  live member, then reaps it (`app.platform.adapters.engine_group`); after that no signal goes to the group. Once
-  drained, the end is reported to `on_engine_ended` (its spawn serial, pid, our reason, exit, peak memory). A new
-  engine is spawned only after the previous one is drained (§5.1). Windows has no groups: the engine is ended and
+  Each engine has a reaper thread that holds its leader unreaped once it exits, signals the group once, then reaps
+  it (`app.platform.adapters.engine_group`; ADR-0068 D7); after that no signal goes to the group. Once drained, the
+  end is reported to `on_engine_ended` (its spawn serial, pid, our reason, exit, peak memory). A new engine is spawned
+  only after the previous one is drained (§5.1); a member of its group still exiting is waited for at the engine
+  lock. Windows has no groups: the engine is ended and
   waited for alone until its nested Job Object (BL-0087).
 - **`close()`** (§5.5, §9.3 step 4) records `close`, signals the group once and returns: it takes no call lock (a call
   to a hung engine cannot hold it) and never waits for the reap. The call in flight fails `closed`.

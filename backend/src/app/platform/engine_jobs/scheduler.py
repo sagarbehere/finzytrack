@@ -42,8 +42,9 @@ wait, at most two engines in the books (the previous one until its end report, a
   (`fresh_engine`) and goes on with the next journal; when none can be had, `fresh_engine` answers the failure
   (`EngineRefused`) and the work returns its report.
 
-Not here yet: the decision log and the flight recorder (§12; BL-0154), the quiesce, the switch and the quit (BL-0154;
-`exclusive_began`/`exclusive_ended` are their seams), the job's CPU (BL-0082).
+Not here yet: the decision log's `sched.input` and `sched.decision` lines (§12; BL-0154; ADR-0068 D7 defers the
+rest), the quiesce, the switch and the quit (BL-0154; `exclusive_began`/`exclusive_ended` are their seams), the job's
+CPU (BL-0082).
 """
 
 from __future__ import annotations

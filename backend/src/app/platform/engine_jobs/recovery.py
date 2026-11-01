@@ -32,7 +32,7 @@ that cannot be read, a journal folder that could not be listed, or a run that ne
 open (fail closed). Retry and Back are this work run again (§9.1 step 6): a fresh listing, so a record that became
 `.resolved` meanwhile is neither tried nor reported (S0061 red team r1 L7).
 
-The quit notes answered at the end of a recover-all (§9.3) are BL-0154's; the screens are BL-0092's.
+The screens are BL-0092's.
 """
 
 from __future__ import annotations

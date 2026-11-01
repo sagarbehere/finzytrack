@@ -5,7 +5,7 @@ its engine-lock amendment; S0062). The sidecar's `recover_all` job orders these 
 earlier session caught between its handshake and its `flock` can never run beside them (BL-0151's gap).
 
 - **`list_journals`**: every `<app_local_data>/local/<key>/journal/` folder is `durable_sync`ed before it is read
-  (what the listing finds, and what the quit notes are answered from, survives a power loss; model finding F1); every
+  (what the listing finds survives a power loss; model finding F1); every
   `.part` record in it is removed (no replace happens before a record is `.open`, §6.1 step 8.2: it names nothing to
   undo and never blocks; a removal that fails leaves it, harmless); every `.open` record is read and decoded strictly
   (`Listed.record` None when it cannot be: torn, foreign, newer, of another name, or a read error; such a journal

@@ -298,6 +298,18 @@ ACTIVE: tuple[Term, ...] = (
     Term("removed model worlds", r"\bS_(?:r4_ends|queue|cancel|cancel_commit|switch|switch_fail|switch_hung_create|recover_lock|recover_bound|forget|boot|quit|save_quit|save_quit_power|stuck_opening|create_close)\b", case=True),
     Term("the queue's trace replay", r"\btest_engine_jobs_conformance\b|\bqueue(?:'s trace)? replay\b"),
     Term("the backend's model marker", r"\bapp\.platform\.tla\b"),
+    # S0073 part A (ADR-0068 D7, BL-0181): a Cancel ends only your own job (the rule by which a waiting user's Cancel
+    # ended another job goes); the drain signals the group once and reaps, with no listing of its members; there are
+    # no quit notes. The flight recorder and the decision log's replay are deferred, not dropped (BL-0154), and the
+    # lineage match is parked for the owner, so neither is refused.
+    Term("the one rule", r"\bone rule\b(?! format)"),
+    code("endable_by_another"),
+    Term("no live member", r"\bno live members?\b|\blive member in\b"),
+    code("live_member"),
+    code("live_member_in_group_listing"),
+    code("live_member_in_proc"),
+    Term("libproc listing", r"\blibproc\b|\bproc_listpids\b|\bPROC_PGRP_ONLY\b"),
+    Term("quit notes", r"\bquit[ -]notes?\b|\bnext-start notes?\b"),
 )
 
 # TODO(BL-0109): the engine-jobs slice removes the per-request time limits (spec §5.5); it moves these into ACTIVE

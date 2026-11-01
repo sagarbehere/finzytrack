@@ -214,6 +214,15 @@ RETIRED_LINES = {
     "removed model worlds": "the worlds `S_queue`, `S_r4_ends` and `S_recover_lock`",
     "the queue's trace replay": "the queue replay (`test_engine_jobs_conformance.py`) walks recover-all's branches",
     "the backend's model marker": "the marker `app.platform.tla.tla_action` on the main side",
+    # S0073 part A (ADR-0068 D7): the rules D7 removes, as the documents before it wrote them
+    "the one rule": "a waiting user's Cancel applies the one rule to the job running ahead",
+    "endable_by_another": "the queue asks `endable_by_another(running)` first",
+    "no live member": "the drain signals the group until it has no live member",
+    "live_member": "the port's `live_member(pgid)` probe keeps the drain going",
+    "live_member_in_group_listing": "macOS decides with `live_member_in_group_listing`",
+    "live_member_in_proc": "Linux decides with `live_member_in_proc`",
+    "libproc listing": "the group is listed by libproc's `proc_listpids(PROC_PGRP_ONLY)`",
+    "quit notes": "Quit anyway writes a quit note for the next start to answer",
 }
 # Words the audit says must never be refused, in the senses the current design uses them.
 TRAP_LINES = [
@@ -243,6 +252,10 @@ TRAP_LINES = [
     "Copy refuses with `LEGACY_APP_SAVING`; the save takes no lock of its own; ADR-0068 D3 removed the ledger-set locks",
     "the best-effort mode: a plain rename; the fake's `no_swap` and `plain` volumes in `worlds.VOLUMES`",
     "a plain text file; `Mode.BEST_EFFORT`; workspaces W1 and W2 share one file; window 2",
+    # S0073 part A (ADR-0068 D7): the current design's own words pass
+    "a Cancel only ever ends your own job; one rule format for CSV and XLS; one RuleStore write path",
+    "the drain signals the group once and reaps; a live engine; a member still exiting holds the engine lock",
+    "Quit anyway ends the engine; the next start's recover-all; the release notes; the flight recorder is deferred",
         # S0068 verifier r1 F7: the unfinished save's pause is current
     "Finzytrack could not finish saving a change, so saving is paused in this workspace.",
     "new errors are listed in a preview and written only if the user saves anyway; the user acknowledged the notice",
