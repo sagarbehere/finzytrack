@@ -27,7 +27,7 @@ This folder holds the architecture decision records of Finzytrack v0.4: why the 
 | [ADR-0009](ADR-0009-fava-style-source-splicing.md) | Fava-style source splicing; mutators are edit producers | Accepted | 2026-10-24 | write path |
 | [ADR-0010](ADR-0010-overlay-load-with-load-policy.md) | Validate candidate text with an overlay load (D2), behind a LoadPolicy | Accepted; amended by ADR-0064; note by S0056 (desktop loads in full); guardrail 3's gate superseded by ADR-0067; parts superseded by ADR-0068 | 2026-10-24 | write path, ledger |
 | [ADR-0011](ADR-0011-no-resident-ledger.md) | No resident ledger; bounded memory and serialized writes | Accepted; amended by ADR-0064; parts superseded by ADR-0068 | 2026-10-24 | backend, performance, memory |
-| [ADR-0012](ADR-0012-write-intent-journal-and-recovery.md) | Write-intent journal and one recovery spec | Accepted; amended by ADR-0063, ADR-0064 | 2026-10-24 | write path, data safety, lifecycle |
+| [ADR-0012](ADR-0012-write-intent-journal-and-recovery.md) | Write-intent journal and one recovery spec | Accepted; amended by ADR-0063, ADR-0064; parts superseded by ADR-0068 | 2026-10-24 | write path, data safety, lifecycle |
 | [ADR-0013](ADR-0013-atomic-swap-replace.md) | Replace by atomic swap; the external-editor race is accepted with detection | Accepted; parts superseded by ADR-0068 | 2026-10-24 | write path, data safety |
 | [ADR-0014](ADR-0014-mutator-promotion-and-clearance.md) | Mutator promotion, clearance by kind of edit, and the old app as oracle | Accepted | 2026-10-24 | write path, process |
 | [ADR-0015](ADR-0015-mirror-rebuildable-cache-atomic-publish.md) | The mirror is a rebuildable cache, published atomically | Accepted | 2026-10-24 | mirror, data safety |

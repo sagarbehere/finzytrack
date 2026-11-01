@@ -154,6 +154,10 @@ RETIRED_LINES = {
     "R4 differs notice": "\"Your change is saved. Beancount reads your ledger differently from what Finzytrack expected.\"",
     "R4 could not check": "a format 2 record is unreadable: R4 counts it as a failure to run, so it ends \"could not check\"",
     "background save given another's ticket": "at most one queued per workspace: a second one is the first one's ticket",
+    "R4 queued after a save": "| close durable (`committed`) | post | `.closed` | **saved**; R4 queued |",
+    "an empty file is another program's": "missing (absent; an empty file there is another program's and stops the try)",
+    "reconciliation job": "full loads only from `ledger/overlay.py` and the reconciliation job",
+    "WRITES_PAUSED says not saved": "Saving is paused in this workspace, so Finzytrack did not save your change.",
 }
 # Words the audit says must never be refused, in the senses the current design uses them.
 TRAP_LINES = [
@@ -169,7 +173,7 @@ TRAP_LINES = [
     "an empty ledger file at a created path is asked about; Keep the files as they are now",
     "R4 is removed (ADR-0068 D1); the rebuild shows Beancount's result",
         # S0068 verifier r1 F7: the unfinished save's pause is current
-    "Saving is paused in this workspace, so Finzytrack did not save your change.",
+    "Finzytrack could not finish saving a change, so saving is paused in this workspace.",
     "new errors are listed in a preview and written only if the user saves anyway; the user acknowledged the notice",
     "a read-back mismatch rolls back",
     "A slot of the form; the one engine slot; an open slot is a suggestion target.",

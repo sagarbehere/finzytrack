@@ -231,6 +231,11 @@ ACTIVE: tuple[Term, ...] = (
     Term("R4 differs notice", r"\breads your ledger differently\b"),
     Term("R4 could not check", r"\bR4\b[^.\n]{0,80}\bcould not check\b"),
     Term("background save given another's ticket", r"\ba second one is (?:answered with )?the first one(?:'s ticket)?\b"),
+    # S0069 round 1 (verifier V2, V3, V7): more of the same families, in words no "(to be built)" note uses
+    Term("R4 queued after a save", r"\bR4 (?:is )?queued\b|\bqueue the `r4`"),
+    Term("an empty file is another program's", r"\ban empty file (?:there )?is another program's\b"),
+    Term("reconciliation job", r"\breconciliation job\b"),
+    Term("WRITES_PAUSED says not saved", r"\bsaving is paused in this workspace, so finzytrack did not save your change\b"),
 )
 
 # TODO(BL-0109): the engine-jobs slice removes the per-request time limits (spec §5.5); it moves these into ACTIVE

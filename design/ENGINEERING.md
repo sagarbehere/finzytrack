@@ -92,7 +92,7 @@ if not beancount_port.is_within_tolerance(residual, tolerances): ...
 
 **Enforcement.**
 - import-linter: only `ledger.beancount_port` imports `beancount`.
-- AST test: the load rule of ARCHITECTURE §2.4 item 4 (full loads only from `ledger/overlay.py` and the reconciliation job; parser-only calls only via `beancount_port`).
+- AST test: the load rule of ARCHITECTURE §2.4 item 4 (full loads only from `ledger/overlay.py` and the rebuild after a save, ADR-0068 D1, R4's load until S0070; parser-only calls only via `beancount_port`).
 - Concept counters for tolerance, balance-check and account-grammar implementations (count = 1).
 - Beancount-generated vectors on both sides (`gen_domain_vectors.py`).
 

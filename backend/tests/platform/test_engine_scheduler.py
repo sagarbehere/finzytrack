@@ -23,7 +23,7 @@ import subprocess
 import sys
 import threading
 import time
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Mapping
 from pathlib import Path
 from typing import Any, override
 
@@ -31,9 +31,17 @@ import pytest
 
 from app.platform.adapters.engine_client import EngineClient, EngineCommand
 from app.platform.adapters.engine_lock import engine_lock_path, wait_engine_lock
-from app.platform.engine import EndReason, EngineEnd, EngineEvent, EngineFailure, GateReached
+from app.platform.engine import EndReason, EngineEnd, EngineEvent, EngineFailure, EngineRefusal, GateReached
 from app.platform.engine_jobs.queue import JobKind, JobSpec, QueuePolicy
-from app.platform.engine_jobs.save import ChangeText, Saved, SaveRequest, new_session_id, submit_save
+from app.platform.engine_jobs.save import (
+    ChangeText,
+    Saved,
+    SaveRequest,
+    new_session_id,
+    save_spec,
+    save_work,
+    submit_save,
+)
 from app.platform.engine_jobs.scheduler import (
     Done,
     EngineJobs,
@@ -381,6 +389,59 @@ def test_a_second_background_save_joins_a_queued_one_that_can_take_its_changes(r
     assert outcome(save) == Done(("A", "B"))
     assert outcome(again) == Done(("A", "B"))
     assert ran == ["A", "B"]
+
+
+def test_a_second_background_save_of_the_products_plain_work_is_refused(rig: Rig, tmp_path: Path) -> None:
+    """S0069 verifier V1: the product's background save (`save.submit_save(..., background=True)`, a plain
+    `save.save_work` closure that cannot join) queued, a second one is refused with its own `ENGINE_QUEUE_FULL`;
+    it never gets the queued ticket (ADR-0068 D8)."""
+    first = submit(rig, user("bql"), calls("block"))
+    blocked(rig)
+    request = SaveRequest(
+        session=new_session_id(),
+        workspace_key="k1",
+        lineage="lineage-1",
+        root=str(tmp_path / "main.bean"),
+        changes=(ChangeText(str(tmp_path / "main.bean"), None, "x"),),
+        fingerprint="fp",
+        mirror=None,
+        legacy_locks=(),
+        app_local_data=tmp_path,
+    )
+    save = submit_save(rig.jobs, W1, request, background=True)
+    again = submit_save(rig.jobs, W1, request, background=True)
+    assert isinstance(save, JobTicket)
+    assert code_of(again) == ErrorCode.ENGINE_QUEUE_FULL
+    plain = rig.jobs.submit_background_save(W1, calls("ok"))
+    assert code_of(plain) == ErrorCode.ENGINE_QUEUE_FULL
+    assert len(rig.jobs.status().queue.queued) == 1
+    rig.engine.release()
+    assert isinstance(outcome(first), Done)
+    assert outcome(save) is not None
+
+
+def test_a_join_that_raises_refuses_the_second_save_and_is_logged(rig: Rig) -> None:
+    """S0069 red team L1: a `joined` that raises (a bug) refuses the second request with its own
+    `ENGINE_QUEUE_FULL`, never the scheduler's `closing`; the queued job runs its own work."""
+
+    class Raises(Joinable):
+        @override
+        def joined(self, later: Work) -> Work | None:
+            msg = "join failed"
+            raise RuntimeError(msg)
+
+    first = submit(rig, user("bql"), calls("block"))
+    blocked(rig)
+    ran: list[str] = []
+    save = rig.jobs.submit_background_save(W1, Raises("A", ran=ran))
+    again = rig.jobs.submit_background_save(W1, Joinable("B", ran=ran))
+    assert isinstance(save, JobTicket)
+    assert code_of(again) == ErrorCode.ENGINE_QUEUE_FULL
+    assert rig.log.of(JOB_INTERNAL_ERROR)
+    rig.engine.release()
+    assert isinstance(outcome(first), Done)
+    assert outcome(save) == Done(("A",))
+    assert ran == ["A"]
 
 
 def test_a_join_that_declines_refuses_the_second_save_with_its_own_answer(rig: Rig) -> None:
@@ -1082,6 +1143,37 @@ def test_a_create_whose_engine_died_past_its_commit_point_is_not_told_its_files_
     assert not unknown.retryable, "a change that may have landed must not be repeated by a Retry"
 
 
+class ClosedPastTheGate(FakeEngine):
+    """`gate_closed`: the gate is passed, then the client answers `closed` (it was closed while the job ran)."""
+
+    @override
+    def call(
+        self,
+        op: str,
+        params: Mapping[str, object],
+        *,
+        on_event: Callable[[EngineEvent], None] | None = None,
+        spawn: bool = True,
+    ) -> Mapping[str, object] | EngineRefusal | EngineFailure:
+        out = super().call("gate_die" if op == "gate_closed" else op, params, on_event=on_event, spawn=spawn)
+        if op == "gate_closed" and isinstance(out, EngineFailure):
+            return EngineFailure("closed", "the client was closed")
+        return out
+
+
+def test_a_create_past_its_commit_point_whose_client_closed_is_not_told_it_was_not_done() -> None:
+    """S0069 red team overflow 2: past the commit point a `closed` failure is an unknown outcome, never `closing`'s
+    "not done" (`_lost_outcome` checked `closed` first)."""
+    rig = Rig(engine=ClosedPastTheGate())
+    rig.boot()
+    try:
+        create = submit(rig, user("create", None), calls("gate_closed"))
+        assert code_of(outcome(create)) == ErrorCode.CHANGE_OUTCOME_UNKNOWN
+        assert rig.engine.proceeded == 1
+    finally:
+        rig.close()
+
+
 def test_a_create_whose_engine_died_before_its_commit_point_is_engine_stopped(rig: Rig) -> None:
     create = submit(rig, user("create", None), calls("crash"))
     assert code_of(outcome(create)) == ErrorCode.ENGINE_STOPPED
@@ -1370,7 +1462,8 @@ def test_with_the_real_engine_a_save_job_lands_and_retires_its_engine(tmp_path: 
             legacy_locks=(),
             app_local_data=app,
         )
-        ticket = submit_save(jobs, W1, request)
+        # the save's work alone (no R4 after it): the only engine retired below is the save's own (S0069 V6)
+        ticket = jobs.submit(save_spec(W1), save_work(request))
         assert isinstance(ticket, JobTicket)
         saved = outcome(ticket)
         assert isinstance(saved, Done)

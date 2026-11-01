@@ -786,7 +786,7 @@ class EngineJobs:
                     # still queued (`AlreadyQueued` names a queued job): it has not started, so its work may change
                     queued = self._jobs[job_id]
                     if spec.kind == "save":  # a save's ticket is only ever its own changes' (ADR-0068 D8)
-                        joined = queued.work.joined(work) if isinstance(queued.work, JoinableWork) else None
+                        joined = self._joined(queued.work, work)
                         if joined is None:
                             return Failed(error(ErrorCode.ENGINE_QUEUE_FULL))
                         queued.work = joined
@@ -802,6 +802,17 @@ class EngineJobs:
                     pass
         msg = "the queue answered a Submit with neither Queued nor a refusal"  # pragma: no cover (the table's contract)
         raise RuntimeError(msg)
+
+    def _joined(self, queued: Work, later: Work) -> Work | None:
+        """The one work that saves both, or None: the queued work cannot join, or its `joined` raised (a bug, logged;
+        the later request is then refused with its own answer, never the scheduler's `closing`; S0069 red team L1)."""
+        if not isinstance(queued, JoinableWork):
+            return None
+        try:
+            return queued.joined(later)
+        except Exception as exc:  # noqa: BLE001 (a work's bug: logged, and the request refused as not joined)
+            self._log_internal(None, exc)
+            return None
 
     def _cancel(self, job_id: int) -> CancelAnswer:
         effects = self._step(Cancel(job_id))
@@ -906,13 +917,14 @@ class EngineJobs:
         if kind in ("unavailable", "incompatible"):
             reason = "incompatible" if kind == "incompatible" else "stopped_often"
             return Failed(error(ErrorCode.ENGINE_UNAVAILABLE, EngineUnavailableDetails(reason)))
-        if kind == "closed":
-            return self._closing()
         if job is not None and job.past_commit:
             # A writing job past its commit point may have changed files, so it is never told "Your ledger files are
-            # safe" (S0058 verifier F5). A save never ends here since S0063 (the table keeps it to read its outcome
-            # from disk, §6.6); a `create` or `copy` does until BL-0153 reads its target.
+            # safe" (S0058 verifier F5), nor "closing" (S0069 red team overflow 2). A save never ends here since S0063
+            # (the table keeps it to read its outcome from disk, §6.6); a `create` or `copy` does until BL-0153 reads
+            # its target.
             return Failed(error(ErrorCode.CHANGE_OUTCOME_UNKNOWN))
+        if kind == "closed":
+            return self._closing()
         # TODO(BL-0094): `killed_by_system` once the end report's cause is told apart (failure-modes E4).
         return Failed(error(ErrorCode.ENGINE_STOPPED, EngineStoppedDetails(reason="crashed")))
 
