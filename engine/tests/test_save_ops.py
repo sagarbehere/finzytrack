@@ -68,7 +68,6 @@ def setup(tmp_path: Path) -> tuple[Path, Path, dict[str, Any]]:
         "changes": [{"path": str(main), "pre": sha(PRE), "post": POST}],
         "fingerprint": encode(loaded.fingerprint).decode("ascii"),
         "mirror": digest(loaded.fingerprint),
-        "legacy_locks": [],
         "app_local_data": str(ald),
     }
     return main, ald, params
@@ -137,6 +136,7 @@ def test_no_save_op_runs_in_an_engine_without_the_engine_lock(
         {"changes": []},
         {"fingerprint": "{}"},
         {"changes": [{"path": "/x", "pre": None, "post": "\ud800"}]},
+        {"legacy_locks": []},  # ADR-0068 D4: a save tries no legacy lock, so its plan names none (S0071)
     ],
 )
 def test_malformed_params_are_refused_and_nothing_is_written(

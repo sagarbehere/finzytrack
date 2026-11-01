@@ -52,7 +52,6 @@ class ErrorCode(StrEnum):
     CHANGE_OUTCOME_UNKNOWN = "CHANGE_OUTCOME_UNKNOWN"
     LEDGER_EXTERNALLY_CHANGED = "LEDGER_EXTERNALLY_CHANGED"
     WRITES_PAUSED = "WRITES_PAUSED"
-    LEGACY_APP_SAVING = "LEGACY_APP_SAVING"
     CHANGE_NOT_SAVED = "CHANGE_NOT_SAVED"
     INTERNAL = "INTERNAL"
 
@@ -268,15 +267,6 @@ def specs() -> tuple[ErrorSpec, ...]:
                 "or asks you about a file it was creating."
             ),
             details=WritesPausedDetails,
-        ),
-        ErrorSpec(
-            ErrorCode.LEGACY_APP_SAVING,
-            ErrorClass.CONFLICT,
-            retryable=True,
-            message="The old Finzytrack app is saving.",
-            data_safe=True,  # refused before anything was written (ADR-0062)
-            next_step="Quit the old Finzytrack first, then try again.",
-            details=None,
         ),
         ErrorSpec(
             ErrorCode.CHANGE_NOT_SAVED,

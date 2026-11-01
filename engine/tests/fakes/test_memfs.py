@@ -11,7 +11,7 @@ from collections.abc import Callable
 import pytest
 
 from ledger_engine.fs.port import AclEntry, Caps, Right
-from tests.fakes.memfs import Crash, MemDir, MemFS, MemLocks
+from tests.fakes.memfs import Crash, MemDir, MemFS
 
 
 def fs_with(*dirs: str, ci: bool = True) -> MemFS:
@@ -325,19 +325,6 @@ def test_a_volume_that_stores_nfd_keeps_every_name_in_nfd_and_finds_it_by_either
     with fs.open_dir("/d/Caf\u00e9") as h:
         assert h.path() == "/d/Cafe\u0301"
     assert fs.names_in("/d") == ["Cafe\u0301", "xe\u0301"]
-
-
-def test_the_fakes_locks_are_taken_without_waiting_and_released() -> None:
-    locks = MemLocks()
-    a = locks.try_lock("/k/a")
-    assert a is not None
-    assert locks.held == {"/k/a"}
-    assert locks.try_lock("/k/a") is None, "held by ourselves: a second take does not wait either"
-    locks.outside_hold("/k/b")
-    assert locks.try_lock("/k/b") is None
-    a.release()
-    assert locks.held == set()
-    assert locks.taken == ["/k/a", "/k/a", "/k/b"]
 
 
 def test_a_removed_folders_handle_answers_its_old_path_as_apfs_does() -> None:

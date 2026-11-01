@@ -30,10 +30,9 @@ syncs its save; they are not effects).
 the first missing component), and `Resolved.identity` is `(1, inode)`. Files may have several hard links
 (`outside_link`); `stat` gives the link count, and a locked file (`outside_lock`, `uchg`) refuses a swap, a rename
 and a remove. `create(..., like=...)` copies `like`'s extended attributes (`outside_setxattr`). With `stores_nfd`
-the volume keeps every name in NFD, as HFS+ does (S0061 probe). `MemLocks` stands for the ledger-set locks of one
-process (`outside_hold`: another process holds one). `outside_acl` adds an ACL entry (`AclEntry`: whether it
-denies, its permissions and flags, in `chmod`'s words) to a file or a folder, with whether the kernel applies it to
-us (`applies`: the fake's own knowledge, as the kernel's; the port never reports it, S0061 r7), and
+the volume keeps every name in NFD, as HFS+ does (S0061 probe). `outside_acl` adds an ACL entry (`AclEntry`:
+whether it denies, its permissions and flags, in `chmod`'s words) to a file or a folder, with whether the kernel
+applies it to us (`applies`: the fake's own knowledge, as the kernel's; the port never reports it, S0061 r7), and
 `outside_acl_clear` removes them all (`chmod -N`). A deny entry that applies to us and is not `only_inherit` acts as
 on APFS (probed, S0061 r6): on a folder, `add_file` refuses a create or a rename into it, `add_subdirectory` a
 `mkdir`, `delete_child` every removal or rename away, `search` every lookup in it (`stat`, `read`, a path through
@@ -975,45 +974,3 @@ class MemDir:
             d.pending = []
 
         self._fs._effect(self._label("sync"), do)
-
-
-class MemLock:
-    def __init__(self, locks: MemLocks, key: str) -> None:
-        self._locks = locks
-        self._key: str | None = key
-
-    def release(self) -> None:
-        if self._key is not None:
-            self._locks.held.discard(self._key)
-            self._key = None
-
-
-class MemLocks:
-    """The ledger-set locks (`ledger_engine.fs.port.Locks`) of one process. `outside_hold`: another process holds a
-    key's lock (a process outside the engine lock, §8.1 step 1). `taken` lists every key tried, in order."""
-
-    def __init__(self) -> None:
-        self.held: set[str] = set()
-        self.outside: set[str] = set()
-        self.taken: list[str] = []
-
-    def outside_hold(self, key: str) -> None:
-        self.outside.add(key)
-
-    def outside_release(self, key: str) -> None:
-        self.outside.discard(key)
-
-    def try_lock(self, key: str) -> MemLock | None:
-        self.taken.append(key)
-        if key in self.held or key in self.outside:
-            return None
-        self.held.add(key)
-        return MemLock(self, key)
-
-    def lock(self, key: str) -> MemLock:
-        """The waiting form: a fake has nobody to wait for, so a lock that is not free is a test's mistake."""
-        lock = self.try_lock(key)
-        if lock is None:
-            msg = f"the fake's lock of {key!r} is held: a real one would wait for ever"
-            raise RuntimeError(msg)
-        return lock

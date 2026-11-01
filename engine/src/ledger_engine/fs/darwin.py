@@ -26,8 +26,8 @@
   membership lookup answered "not a member" for macOS's `owner` and `group` subjects, which the kernel applies).
 
 - `rmdir`: `unlinkat(AT_REMOVEDIR)` on the folder's descriptor (`ENOTEMPTY` for a folder holding a `.DS_Store`,
-  `ENOTDIR` for a link, probed S0061). `DarwinLocks`: the ledger-set locks, a `flock(LOCK_EX | LOCK_NB)` on
-  `<locks>/<sha256(path_key)>`, never deleted.
+  `ENOTDIR` for a link, probed S0061). `DarwinLegacyLocks`: the legacy app's write lock, tried only for Copy
+  (INV-26, ADR-0068 D4; Copy is BL-0026's: the save no longer tries it).
 
 Other operating systems refuse (`for_this_os`): their primitives are BL-0087 (spec §14).
 """
@@ -37,7 +37,6 @@ from __future__ import annotations
 import ctypes
 import errno
 import fcntl
-import hashlib
 import os
 import stat
 import struct
@@ -480,6 +479,8 @@ class DarwinFS:
 
 
 class DarwinLock:
+    """A legacy write lock held by this process (`DarwinLegacyLocks`)."""
+
     def __init__(self, fd: int) -> None:
         self._fd: int | None = fd
 
@@ -487,40 +488,6 @@ class DarwinLock:
         if self._fd is not None:
             os.close(self._fd)  # closing the descriptor releases its `flock`
             self._fd = None
-
-
-class DarwinLocks:
-    """The ledger-set locks (`ledger_engine.fs.port.Locks`): a whole-file `flock` on `<folder>/<sha256(key)>`, made
-    with mode 0600 if absent and never deleted (§6.1 step 3), taken with `LOCK_NB` (never waiting, §8.1 step 1)."""
-
-    def __init__(self, folder: str) -> None:
-        split_absolute(folder)
-        self._folder = folder
-
-    def try_lock(self, key: str) -> DarwinLock | None:
-        name = hashlib.sha256(key.encode()).hexdigest()
-        flags = os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_CLOEXEC
-        fd = os.open(_join(self._folder, name), flags, 0o600)
-        try:
-            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError:
-            os.close(fd)
-            return None
-        except BaseException:
-            os.close(fd)
-            raise
-        return DarwinLock(fd)
-
-    def lock(self, key: str) -> DarwinLock:
-        name = hashlib.sha256(key.encode()).hexdigest()
-        flags = os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_CLOEXEC
-        fd = os.open(_join(self._folder, name), flags, 0o600)
-        try:
-            fcntl.flock(fd, fcntl.LOCK_EX)  # waiting (§6.1 step 3); Cancel ends the engine, and with it the wait
-        except BaseException:
-            os.close(fd)
-            raise
-        return DarwinLock(fd)
 
 
 class DarwinLegacyLocks:

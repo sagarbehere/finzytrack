@@ -2,7 +2,7 @@
 `design/specs/engine-jobs.md` §6.4, §8.1 steps 1-4, §10, §13 recovery properties, §14 "Recovery" and "Save, durable
 order"; ADR-0012, ADR-0013, ADR-0063, ADR-0064; S0061), over the in-memory file system with its durable layer.
 
-Row by row from §8.1: step 1 (locks without waiting), step 2 (every check before any write, each stop cause), step 3
+Row by row from §8.1: step 2 (every check before any write, each stop cause), step 3
 (restore root first by the save's durable discipline, the displaced check at every swap and removal, temps), step 4
 (`.resolved` only after every restore is synced); then the sweeps: a crash at every effect of the save followed by
 recovery; a crash at every effect of recovery followed by recovery again; an I/O error at every effect of recovery
@@ -23,7 +23,7 @@ from ledger_engine.ledger.core.journal import VERSION, State
 from ledger_engine.ledger.core.recovery import Cause
 from ledger_engine.ledger.restore import Failed, Resolved, Stopped, recover_journal
 from ledger_engine.ledger.writer import durable_commit
-from tests.fakes.memfs import Crash, MemDir, MemFS, MemLocks
+from tests.fakes.memfs import Crash, MemDir, MemFS
 from tests.ledger.worlds import (
     JD,
     NAME,
@@ -429,30 +429,6 @@ def test_an_unreadable_or_newer_record_stops_the_journal(bad: bytes | str) -> No
     _stops_with_nothing_written(w, Cause.UNREADABLE, None)
 
 
-def test_a_lock_held_by_another_process_leaves_the_journal_untouched_with_reason_failed() -> None:
-    """§8.1 step 1, §14 "a ledger-set lock held by a process outside the engine lock leaves its journal untouched and
-    blocking with reason `failed`"."""
-    w = crashed(CLOSE)
-    locks = MemLocks()
-    locks.outside_hold("/w/l/main.bean")
-    n = len(w.fs.effects)
-    out = recover(w.fs, locks, listed=False)
-    assert out == Failed(Cause.LOCK_HELD, "/w/L/main.bean")
-    assert w.fs.effects[n:] == []
-    assert locks.held == set(), "the locks it took are released"
-    locks.outside_release("/w/l/main.bean")
-    assert isinstance(undo(w.fs, w, locks), Resolved)
-    assert locks.held == set()
-
-
-def test_the_locks_are_tried_in_path_key_order_and_released_after_the_try() -> None:
-    w = crashed(CLOSE)
-    locks = MemLocks()
-    assert recover(w.fs, locks) == TAKEN
-    assert locks.taken == sorted(f.lower() for f in ("/w/L/inc/a.bean", "/w/L/prices.bean", "/w/L/main.bean"))
-    assert locks.held == set()
-
-
 def test_a_journal_named_differently_from_its_record_stops() -> None:
     """The record's own name must be the file's: a record copied under another name is not that save's."""
     w = crashed(CLOSE)
@@ -464,7 +440,7 @@ def test_a_journal_named_differently_from_its_record_stops() -> None:
     assert out is not None
     from ledger_engine.ledger.restore import recover_journal
 
-    assert recover_journal(w.fs, MemLocks(), JD, "s1-j8") == Stopped(Cause.UNREADABLE, None)
+    assert recover_journal(w.fs, JD, "s1-j8") == Stopped(Cause.UNREADABLE, None)
     assert w.fs.effects[n:] == []
 
 
@@ -870,8 +846,8 @@ def test_the_restored_file_keeps_its_extended_attributes() -> None:
 
 @pytest.mark.parametrize("excl", [True, False], ids=["no_swap", "plain"])
 def test_a_file_at_post_on_a_volume_without_the_swap_is_restored_without_a_swap(excl: bool) -> None:
-    """BL-0160 (S0065; it replaced the refusal of S0061 verifier L4): the restore on such a volume puts the pre bytes
-    back by a plain rename after a re-hash, never a swap, and resolves."""
+    """The best-effort mode (ADR-0068 D2): the restore on such a volume puts the pre bytes back by a plain rename,
+    never a swap, and resolves."""
     w = crashed(CLOSE)
     w.fs.outside_no_swap("/w/L", excl=excl)
     w.fs.outside_no_swap("/w/L/inc", excl=excl)
@@ -2213,4 +2189,4 @@ def test_R7_vF2_an_io_error_at_the_restores_step_0_names_the_journal_folder(monk
 def test_R7_vF2_a_listed_record_that_is_gone_fails_naming_the_record() -> None:
     """Mutant `r7_gone_record_entry_none`: a record listed but gone by the time it is looked up names that record."""
     w = crashed(FIRST_REMOVE)
-    assert recover_journal(w.fs, MemLocks(), JD, "s1-j8") == Failed(Cause.IO_ERROR, None, None, f"{JD}/s1-j8.open")
+    assert recover_journal(w.fs, JD, "s1-j8") == Failed(Cause.IO_ERROR, None, None, f"{JD}/s1-j8.open")

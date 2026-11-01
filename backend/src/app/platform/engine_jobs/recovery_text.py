@@ -46,12 +46,6 @@ KEPT_COPY_CAUSES: Final = frozenset({"kept_copy", "displaced", "outside_save_in_
 """Causes whose screen is the kept-copy row: an outside save Finzytrack moved to a kept name (§6.4)."""
 CREATED: Final = "created_path_taken"
 PERMISSION: Final = "permission"
-BACKUP_BAD: Final = "backup_bad"
-"""A `missing` refusal's detail (the engine's `recover_all.BACKUP_BAD`): the backup does not hold the old version, so
-Retry cannot put the file back (S0065 round 3)."""
-EMPTY: Final = "empty"
-"""A `foreign` stop's detail (the engine's `core.recovery.EMPTY_DETAIL`): the file is empty on a drive with neither the
-swap nor an exclusive rename (`plain`) and its backup holds the old version (S0065 rounds 2, 3)."""
 
 
 def undone_notice(workspace: str) -> str:
@@ -126,14 +120,6 @@ def _stopped(b: Blocking, workspace: str) -> Screen:
         return Screen(
             "Finzytrack cannot read the record of an unfinished save, so it cannot tell which files it changed. "
             "No workspace opens until you press Retry or choose Keep the files as they are now.",
-            BASE,
-        )
-    if b.cause == "foreign" and b.detail == EMPTY:  # owner, 2026-10-31: "Empty = never ours (Recommended)"
-        return Screen(
-            f"{_name(b.path)} is empty, so Finzytrack did not change it. Finzytrack may have been putting back its "
-            "old version when it was interrupted, or another program is writing the file. The old version is in "
-            "Finzytrack's backup. If you do not need the empty file, wait until no program is writing it, then delete "
-            "it and press Retry: Finzytrack then puts the old version back.",
             BASE,
         )
     return Screen(
@@ -238,7 +224,6 @@ ACTION_REFUSED: Final[tuple[tuple[str, str], ...]] = (
     ("absent", "The file is no longer there."),
     ("not_open", "This unfinished save was already resolved."),
     ("unlisted", "Finzytrack could not read the folder of this unfinished save, so it did not do this. Press Retry."),
-    ("lock_held", "Another program is using this ledger file. Try again in a moment."),
     ("path_moved", "The folder moved. Press Retry."),
     ("permission", "Your Mac does not allow Finzytrack to change this folder."),
 )
@@ -253,16 +238,6 @@ def action_text(outcome: ActOutcome) -> str | None:
         return None
     if outcome.outcome == "failed":
         return ACTION_FAILED
-    if outcome.reason == "missing" and outcome.detail == BACKUP_BAD:  # Retry cannot put it back (S0065 r3)
-        return (
-            f"{_name(outcome.path)} is missing, and Finzytrack cannot read its old version from its backup. Put the "
-            "file back yourself, or put any file at that path, then choose Keep the files as they are now."
-        )
-    if outcome.reason == "missing":  # Keep (owner, 2026-10-31: "Keep refuses, naming the file, ...")
-        return (
-            f"{_name(outcome.path)} is missing, so Finzytrack did not keep the files as they are. Its old version is "
-            "in Finzytrack's backup. Press Retry to put it back."
-        )
     return next((t for r, t in ACTION_REFUSED if r == outcome.reason), ACTION_REFUSED_OTHER)
 
 

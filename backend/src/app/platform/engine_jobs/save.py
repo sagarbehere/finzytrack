@@ -8,7 +8,7 @@ save`); the sidecar never reads a journal or a ledger file itself. Its answer be
   died (§6.6). `published` is False: the save publishes nothing itself. `after_saved` queues the background rebuild
   with Beancount's own loader (`submit_save` wires it: §6.1 step 10; ADR-0068 D1, S0070); it gates nothing.
 - **`NotDone(error)`**, a registry error with §11's text (`save_text`): `WRITES_PAUSED {unfinished_save}`,
-  `LEGACY_APP_SAVING`, `LEDGER_EXTERNALLY_CHANGED`, `WORKSPACE_NOT_READY {WARMING}`,
+  `LEDGER_EXTERNALLY_CHANGED`, `WORKSPACE_NOT_READY {WARMING}`,
   `CHANGE_NOT_SAVED {reason, path, folder, acl_entry, unchanged}`; an engine refusal before the engine's `gate` is
   `INTERNAL` (it wrote nothing; never "saved"), and so is the save's `encrypted_file` refusal until the preview's
   own refusal exists (BL-0106).
@@ -76,9 +76,9 @@ class ChangeText:
 
 @dataclass(frozen=True, slots=True)
 class SaveRequest:
-    """A confirmed plan (the preview's, BL-0106): who saves, the root, the changes, the plan's fingerprint (its
-    canonical encoding, opaque here), the published mirror's fingerprint digest (None: none published), the legacy
-    locks to try (ADR-0062; none until M3 knows the legacy installs, BL-0026) and the app's machine-local folder.
+    """A confirmed plan (the preview's, BL-0106): who saves, the root, the changes, the plan's
+    fingerprint (its canonical encoding, opaque here), the published mirror's fingerprint digest (None: none published)
+    and the app's machine-local folder (no legacy lock: a save tries none, ADR-0068 D4).
 
     It names no job: the record's name `<session>-<job>` must be this save's alone (§6.5 "One save, one name"), since
     §6.6 tells a dead save's outcome by that name; `save_work` makes a new job part for every save it runs, so a
@@ -91,7 +91,6 @@ class SaveRequest:
     changes: tuple[ChangeText, ...]
     fingerprint: str
     mirror: str | None
-    legacy_locks: tuple[str, ...]
     app_local_data: Path
 
 
@@ -135,7 +134,6 @@ def params_of(r: SaveRequest, job: str) -> dict[str, object]:
         "changes": [{"path": c.path, "pre": c.pre, "post": c.post} for c in r.changes],
         "fingerprint": r.fingerprint,
         "mirror": r.mirror,
-        "legacy_locks": list(r.legacy_locks),
         "app_local_data": str(r.app_local_data),
     }
 
@@ -157,8 +155,6 @@ def answer_of(a: SaveAnswer) -> SaveValue:
             match a.reason:
                 case "unfinished_save":
                     return _paused()
-                case "legacy_app_saving":
-                    return _not_done(ErrorCode.LEGACY_APP_SAVING)
                 case "ledger_changed":
                     return _not_done(ErrorCode.LEDGER_EXTERNALLY_CHANGED)
                 case "mirror_stale":

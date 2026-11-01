@@ -68,8 +68,8 @@
 | §5.1, §5.2, §15 (simplification B) | an engine of an earlier session (stuck, or lingering for a moment) holds the engine lock after its app died; the advice while the sidecar waits for it, whether or not a job waits; it goes when that engine ends | `OrphanAfter`, `pst.orphan`, `pst.ostuck`, `AdviceTimer`, `OrphanEnd`, `OrphanEndStuck`; mutant `orphan_no_advice` |
 | §5.3 | crash, outcomes, bounded restart (Unavailable, Try again) | `EngineCrash`, `ses.stops`, `StopBound`, `WindowExpire`, `UserTryAgain`, `DispatchUnavail` |
 | §5.4 | no time limits; "Still working…" changes only text | no timer ends a job; only `AdviceTimer` changes `ses.advice` |
-| §6.1 step 1 | an `.open` journal refuses; no job after a save runs inside a save (S0068, ADR-0067) | `S_Gate` (the model checks the records once, under the locks; the code also checks before the locks, which only refuses earlier); the mutant `save_waits_r4_forever` guards `S_Locks` on the queued job after a save |
-| §6.1 steps 3-6 | locks (no other holder: the engine lock); gate under locks; since S0070 no load and no re-check (ADR-0068 D1) | `S_Locks`, `S_Gate`; `S_Load`, `S_Recheck` have no effect in the code: the save's one observation is the model's `s_gate`, and the code refuses at it where the model refuses at its gate or its re-check (`test_save_conformance.Driver.ahead`; S0072 removes them) |
+| §6.1 step 1 | an `.open` journal refuses; no job after a save runs inside a save (S0068, ADR-0067) | `S_Gate` (the model checks the records once, at its gate; the code also checks at step 1, which only refuses earlier); the mutant `save_waits_r4_forever` guards `S_Locks` on the queued job after a save |
+| §6.1 steps 3-6 | since S0071 no per-file lock (ADR-0068 D3: the engine lock is the guard); the gate; since S0070 no load and no re-check (ADR-0068 D1) | `S_Locks` (no effect in the code since S0071; S0072 removes it, BL-0180), `S_Gate`; `S_Load`, `S_Recheck` have no effect in the code: the save's one observation is the model's `s_gate`, and the code refuses at it where the model refuses at its gate or its re-check (`test_save_conformance.Driver.ahead`; S0072 removes them) |
 | §6.1 step 8 | backups synced; `.part` synced, renamed `.open`, dir synced; per file temp, sync, swap or exclusive create, displaced check, dir sync; read-back; temps removed; close and sync | `S_Backup`…`S_CloseSync` (order in `NextS`) |
 | §6.1 steps 9-11 | "saved" after the durable close; publish if fingerprint = post and no `.open`; release, retire, queue r4 | `S_Saved`, `S_Publish`, `S_Release` |
 | §6.3 | the path guard | `PathMoved`, `FileBad`, `RS_Swap` |
@@ -205,7 +205,7 @@ Model-only properties (not named in §13; each with a mutant):
 | `QuitClose` | §9.3 step 4; the installer (ADR-0012) |
 | `Assess` | §9.1 step 6, §9.2; §2 (outside the queue: it waits only for the switch's or boot's own job; review 4, M2) |
 | `AdviceTimer` | §5.2 last bullet (whether or not a job waits, N3), §5.4 display delay; §5.1 (while an engine of an earlier session holds the engine lock) |
-| `S_Locks` | §6.1 step 3 |
+| `S_Locks` | §6.1 step 3 (removed by ADR-0068 D3; no effect in the code since S0071; S0072 cuts it) |
 | `S_Gate` | §6.1 step 4 |
 | `S_Load` | §6.1 step 5, removed in S0070 (no code effect; S0072) |
 | `S_Recheck` | §6.1 step 6, removed in S0070 (no code effect; S0072) |
@@ -265,7 +265,7 @@ Model-only properties (not named in §13; each with a mutant):
 |---|---|
 | Beancount semantics, digests beyond equal or not | §13 "Not modelled"; the outcome of the job after a save is not modelled (it has no disk effect, S0068); the corpus and Hypothesis model (ARCHITECTURE §8) |
 | OS rename atomicity beyond the stated primitives | §13; an exchange or exclusive rename is kept or dropped whole by a power loss; nothing else is assumed about the order of unsynced operations (§13 "File-system assumptions"; the `S_fs_weak*` worlds drop the one stronger assumption the other worlds make, next row) |
-| A volume without the swap (exFAT, FAT, HFS+, network shares; spec §6.8, S0065) | **Not covered by the model: it assumes the swap.** The fallback (a plain rename after a re-hash, exclusive moves by a check where the volume has no exclusive rename, a replace a power loss may split on a volume without a journal, a missing file restored from its backup, its name first claimed by an empty exclusive create where no rename is exclusive) breaks `ExternalEditNeverSilentlyLost` by design in window W1 of spec §15 (owner, 2026-10-29: "Unsafe fallback on such drives"). Checked instead by the fake's crash, power-loss and I/O-error sweeps in both no-swap modes (`engine/tests/ledger/test_writer_no_swap.py`) and on real exFAT, FAT and HFS+ volumes (`engine/tests/fs/test_darwin.py`, opt-in) |
+| A volume without the swap (exFAT, FAT, HFS+, network shares; spec §6.8) | **Not covered by the model: it assumes the swap.** The best-effort mode there (ADR-0068 D2, S0071: a plain rename, a replace a power loss may split on a volume without a journal, a missing file restored from its backup) gives up `ExternalEditNeverSilentlyLost` for another program's save in the same instant, by the owner's policy. Checked instead by the fake's crash, power-loss and I/O-error sweeps in both no-swap modes (`engine/tests/ledger/test_writer_best_effort.py`) and on real exFAT, FAT and HFS+ volumes (`engine/tests/fs/test_darwin.py`, opt-in) |
 | A durable outside save syncs its folder (worlds with `EdDurable = TRUE`) | §13's own assumption: a sync makes everything done before it in that folder durable, so our pending operations there persist with it. With `EdDurable = FALSE` an outside save is not durable and does not sync, and a power loss may drop it (that program's loss, excused by `PowerLoss` only while the save was not durable) |
 | Our own folder syncs make an outside program's earlier unsynced save durable (§13) | modelled, also in the `EdDurable = FALSE` worlds: our directory syncs (`S_DirSync`, `RS_Sync`, `UserKeep`, the swap-back) make the file's current bytes durable, an outside save in them included, as §13 says a sync does (review 3 L7 corrected this row) |
 | Restore temps under a power loss | a restore temp's own content is not tracked by `PowerLoss`; recovery deletes restore temps without a check either way, and the loss this allows is §15's accepted limit (recorded in `gh.acc`). Its data is synced before its swap (H1), so the swapped-in bytes are never torn; the seeded bug shows the opposite |
@@ -289,7 +289,7 @@ Model-only properties (not named in §13; each with a mutant):
 | Two editor versions per file | each outside write differs from the file's bytes before it; more versions add no new orderings for these properties |
 | The steps an engine takes after its app died (simplification B; it replaced review 4's three orphan rows) | not modelled: the model keeps only its engine lock (`pst.orphan`, `pst.ostuck`). The engine lock puts all of them before the new session's first ledger work (`AtMostOneEngine` checks that no engine of this session runs meanwhile), so the files and records they leave are those of the same save cut at a later step, which `AppCrash` already reaches at every step of the live save, with the outside editor and a power loss interleaved there as they could be with the orphan's steps. Nothing of the new session reads or writes a ledger file or a record before its first engine runs: the assessment and the quit notes come after recover-all, and every job needs the engine. A process stuck in the kernel takes no step at all |
 | Which engines linger (simplification B) | after an app crash or Quit anyway, any live engine may linger (bounded by `MaxOrphan`); a stuck one always holds the lock. After a graceful quit only a stuck one is kept (`QuitClose`): an idle or retiring engine that `close()` signalled may linger for a moment too, which is the same wait as after Quit anyway |
-| §8.1 step 1's held-lock branch (simplification B) | not reachable: with the engine lock no other process of ours holds a ledger-set lock, and an outside program takes none. The spec kept it (reason `failed`) should the engine lock ever be bypassed, until ADR-0068 D3 removed the ledger-set locks (S0071, S0072); `ses.locks` is still recorded but nothing reads it |
+| §8.1 step 1's held-lock branch (simplification B) | gone: ADR-0068 D3 removed the ledger-set locks from the spec and the code (S0071); `ses.locks` is still recorded by the model but nothing reads it, and S0072 cuts it (BL-0180) |
 | The job after a save for W1 only | the model's `R4_*` job serves W1, the one workspace that saves |
 | §9.1 step 1: a target that "needs the user" | the read-only assessment's only such target here is one whose files cannot be read (I10); other needs (a missing folder, a migration) are not in §13's world |
 
@@ -549,7 +549,7 @@ the traces TLC walks for a world those that add the most branches are kept (`gen
 replays every save of the worlds without boot journals through `ledger_engine.ledger.save.run` over the in-memory file
 system, the model's `R`, `N` and `I` projected onto three files and the model's records, temps and backups onto the
 fake's, and compares the fake with the model at each model step the code reaches (its hooks: each file-system
-effect, the locks, the observations, the load, the commit point, the close), and what the code answered with what
+effect, the observation, the commit point, the close; the locks until S0071), and what the code answered with what
 the model told; after a death, the engine's reading of the disk (`save.outcome`) against `DiskOutcome`. Where the
 model and the code differ (the swap-backs, the old temp rule, an undo that removes a created file, an edit the code's
 backup step sees first, a stale mirror) the replay stops that trace, counted by reason
@@ -560,7 +560,7 @@ of its hooks (`WALKED`); the save's syncs are never passed silently (`SYNC_STEPS
 each of its four comparisons (at each step, after the save, the answer, and the steps the code may pass) has a
 self-test that fails when it is disabled. Not walked, and so `PARTIAL` in the code map with the hand-written tests
 that cover them (`NOT_WALKED`): the reads with no hook (`S_Compare`'s kept-name branch, `S_ReadBack`, `RB_Check`,
-`S_Backup`'s re-hash; `test_writer.py`, `test_restore.py`), `S_R4Check` and `S_Release` (BL-0152), `S_Publish`
+`S_Backup`'s re-hash; `test_writer.py`, `test_restore.py`), `S_R4Check` and `S_Release` (BL-0152), `S_Locks` (no effect since S0071, ADR-0068 D3), `S_Publish`
 (BL-0113). The kept-name concurrency path has no model-driven replay until BL-0161, nor does Unfinished told by the
 engine itself. `S_save_io_edit` reaches "not saved, changed" in the engine (an outside edit, then an I/O error before
 the journal is open).

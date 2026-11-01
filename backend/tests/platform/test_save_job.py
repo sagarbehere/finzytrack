@@ -61,7 +61,6 @@ REQUEST = SaveRequest(
     changes=(ChangeText(MAIN, "0" * 64, "post\n"), ChangeText(NEW, None, "p\n")),
     fingerprint='{"document_files":[],"documents":[],"files":[],"globs":[],"root":"/L/main.bean","v":1}',
     mirror=None,
-    legacy_locks=(),
     app_local_data=Path("/app"),
 )
 BLANK: dict[str, object] = {
@@ -151,7 +150,8 @@ def test_a_save_that_lands_is_saved_and_its_engine_is_retired(make: Any) -> None
         # S0068 (ADR-0067): nothing after a save refuses one; a reason that came back would be a bug, never a pause
         (answer(outcome="refused", reason="check_pending", unchanged=True), "INTERNAL", None),
         (answer(outcome="refused", reason="check_failed", unchanged=True), "INTERNAL", None),
-        (answer(outcome="refused", reason="legacy_app_saving", unchanged=True), "LEGACY_APP_SAVING", None),
+        # S0071 (ADR-0068 D4): a save tries no legacy lock; that reason coming back would be a bug
+        (answer(outcome="refused", reason="legacy_app_saving", unchanged=True), "INTERNAL", None),
         (answer(outcome="refused", reason="ledger_changed"), "LEDGER_EXTERNALLY_CHANGED", None),
         (
             answer(outcome="refused", reason="mirror_stale", unchanged=True),
@@ -481,3 +481,11 @@ def test_an_io_error_naming_a_file_never_says_another_program_changed_it() -> No
         assert "is unchanged" not in text, reason
     stopped = save_text.not_saved_text(ChangeNotSavedDetails("engine_stopped", MAIN, None, None, False))
     assert "main.bean was changed by another program" in stopped
+
+
+def test_the_best_effort_drive_notice_is_the_owners_words_in_the_spec() -> None:
+    """ADR-0068 D2: the notice a workspace on a drive without the swap shows at open (BL-0166 shows it) is §11's row,
+    word for word, and lives in one place (`save_text.BEST_EFFORT_DRIVE`)."""
+    spec = (REPO / "design" / "specs" / "engine-jobs.md").read_text(encoding="utf-8")
+    row = next(ln for ln in spec.splitlines() if ln.startswith("| a workspace whose ledger is on a drive without"))
+    assert f'| "{save_text.BEST_EFFORT_DRIVE}" |' in row

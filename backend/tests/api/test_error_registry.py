@@ -104,7 +104,6 @@ def test_the_codes_of_architecture_6_1_this_slice_raises_have_their_classes() ->
         # the save's refusals and its "not saved"
         "LEDGER_EXTERNALLY_CHANGED": ErrorClass.CONFLICT,
         "WRITES_PAUSED": ErrorClass.CONFLICT,
-        "LEGACY_APP_SAVING": ErrorClass.CONFLICT,
         "CHANGE_NOT_SAVED": ErrorClass.CONFLICT,
         "INTERNAL": ErrorClass.INTERNAL,
     }
@@ -140,7 +139,6 @@ def test_not_ready_is_retryable_and_the_others_are_not() -> None:
         "ENGINE_QUEUE_FULL",
         "ENGINE_STOPPED",
         "ENGINE_UNAVAILABLE",
-        "LEGACY_APP_SAVING",  # §11: Try again once the old app has quit (S0063)
     }
     assert {s.code for s in specs() if s.retryable} == retryable
 

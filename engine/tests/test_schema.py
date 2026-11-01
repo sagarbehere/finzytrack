@@ -162,7 +162,6 @@ def test_the_job_messages_and_the_decision_are_in_the_contract() -> None:
     assert set(defs["Phase"]["enum"]) == {
         "reading",
         "checking_change",
-        "waiting_for_files",
         "saving",
         "updating_views",
     }

@@ -1,6 +1,6 @@
 """The save's ops on the protocol (S0063; `design/specs/engine-jobs.md` §6.1, §6.6, §11): plain data in and out of
-`ledger_engine.ledger.save`, over the real file-system port, the ledger-set locks in `<app_local_data>/locks/` and the
-legacy-lock adapter. The server answers them only in an engine that holds the engine lock, and `app_local_data` must
+`ledger_engine.ledger.save`, over the real file-system port (no per-file lock and no legacy lock: ADR-0068 D3,
+D4). The server answers them only in an engine that holds the engine lock, and `app_local_data` must
 be that lock's folder (as for recover-all's ops, `protocol.recovery`), so no op writes outside the app's own folders
 and the ledger files the plan names.
 
@@ -15,7 +15,7 @@ from collections.abc import Callable
 from importlib.metadata import version
 from typing import Final, Protocol
 
-from ledger_engine.fs.darwin import DarwinLegacyLocks, for_this_os
+from ledger_engine.fs.darwin import for_this_os
 from ledger_engine.ledger import save as sv
 from ledger_engine.ledger.core.ledger_set import UndecodableError, decode
 from ledger_engine.ledger.writer import BadPlanError, Change, NotSaved, Unfinished
@@ -26,7 +26,7 @@ from ledger_engine.protocol.messages import (
     SaveParams,
     SaveResult,
 )
-from ledger_engine.protocol.recovery import BadParamsError, Decider, app_local_data_of, ledger_locks_in
+from ledger_engine.protocol.recovery import BadParamsError, Decider, app_local_data_of
 
 TABLE: Final = "engine.save"
 TABLE_VERSION: Final = 2  # 2 (S0068): no `check_pending` or `check_failed` refusal (ADR-0067)
@@ -115,10 +115,9 @@ def save(params: Message, ctx: SaveJob) -> Message:
         changes=tuple(Change(c.path, c.pre, _post(c.post)) for c in params.changes),
         fingerprint=fingerprint,
         mirror=params.mirror,
-        legacy_locks=tuple(params.legacy_locks),
         app_local_data=ald,
     )
-    ports = sv.Ports(fs, ledger_locks_in(ald), DarwinLegacyLocks())
+    ports = sv.Ports(fs)
     try:
         out = sv.run(plan, ports, ctx)
     except BadPlanError as e:

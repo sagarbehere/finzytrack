@@ -1,5 +1,5 @@
 """The save job inside the engine (`design/specs/engine-jobs.md` §6.1 steps 1-4, 7, 9-11 around S0060's durable order,
-§6.5, §6.6; ADR-0008 step 4, ADR-0012 Q29, ADR-0013, ADR-0062 decisions 2 and 5, ADR-0068 D1; S0063, S0070).
+§6.5, §6.6; ADR-0008 step 4, ADR-0013, ADR-0062 decision 5, ADR-0068 D1, D3, D4; S0063, S0070, S0071).
 
 `run(plan, ports, job)`, in one engine. **The save does no Beancount load** (ADR-0068 D1, S0070): it runs none of the
 ledger's plugins and trusts the plan, whose fingerprint is what the preview's load read (BL-0106); the sidecar still
@@ -10,12 +10,12 @@ retires its engine after it (the safe default). Its steps:
    swapped in after the gate is met by the writer's own check of the resolved name (`writer.ENCRYPTED_SUFFIXES`).
 1. **The records** (§6.1 step 1): an `.open` journal of this workspace, re-read from disk (`records`), refuses
    `unfinished_save`, writing nothing. A `.closed` record gates nothing (ADR-0067); no other record state is read.
-2. **Legacy-lock detection** (ADR-0062 decision 2; INV-26): every legacy `.write.lock` the plan names, deduplicated by
-   `path_key`, tried once each without waiting (`LegacyLocks`); free: held to the end; absent: go on; held, or any
-   error: `legacy_app_saving`, before any ledger-set lock.
-3. **Ledger-set locks** (ADR-0012 Q29): every file of the plan's ledger set (the absent paths included) and every file
-   the save writes, in `path_key` order, each waiting; `waiting_for_files` is shown only when one is not free at once.
-4. **The gate, under the locks** (ADR-0008 step 4), the last check before the commit point: the disk's fingerprint
+2. *(Removed, ADR-0068 D4.)* The save tries no legacy lock: only Copy does (INV-26, BL-0026).
+3. *(Removed, ADR-0068 D3.)* No per-file lock: the engine lock is the guard (the `save` op runs only in an engine that
+   holds it, `OpSpec.needs_engine_lock`). Every path of the ledger set and every file the save writes is resolved
+   first; one that cannot be (a folder that denies looking names up in it, §15) is `NotSaved(io_error)` naming it,
+   with the re-hash; nothing was written.
+4. **The gate** (ADR-0008 step 4), the last check before the commit point: the disk's fingerprint
    equals the plan's (else `ledger_changed`); the published mirror's equals the plan's (else `mirror_stale`,
    `WORKSPACE_NOT_READY {WARMING}`); the `.open` check again. Steps 5 and 6 (the save's own load and the re-check
    after it) are removed (ADR-0068 D1): an outside save after step 4 is met by the swap's displaced check.
@@ -26,15 +26,14 @@ retires its engine after it (the safe default). Its steps:
 9. `job.committed()` once it `Landed`.
 10. The sidecar queues the background rebuild with Beancount's own loader (§6.7, `ledger.rebuild`); `Saved.published`
     stays False.
-11. Every lock released on every path out, the legacy locks last; the engine is retired by the sidecar.
+11. The engine is retired by the sidecar.
 
-**The step rule.** Steps 0-7 write nothing but lock files (`app_local_data/locks/`, never deleted); every refusal
+**The step rule.** Steps 0-7 write nothing; every refusal
 there says `unchanged` only after each file the save would write was hashed again and equals its pre bytes (§11's
 rule). Step 8 has its own rule (`writer`). A Cancel ends the engine at the gate, before step 8. Python's garbage
 collector is paused for the job (ADR-0008 amendment). A malformed plan raises `writer.BadPlanError` before step 1, and
 so does a plan whose name `<session>-<job>` already has a record or a backups folder in this key (§6.5 "One save, one
-name": §6.6 tells a dead save's outcome by that name alone; the sidecar makes a new name for every save). An I/O error
-taking a ledger-set lock is `NotSaved(io_error)` naming the file, with the re-hash; nothing was written.
+name": §6.6 tells a dead save's outcome by that name alone; the sidecar makes a new name for every save).
 
 `outcome(...)` is §6.6's reading of the disk after a save's engine died: the job's journal folder `durable_sync`ed,
 then its record's state, and with no record (or a `.part`) every target hashed again. The decision is the sidecar's
@@ -46,12 +45,11 @@ from __future__ import annotations
 import gc
 import posixpath
 import re
-from collections.abc import Callable, Generator, Mapping
-from contextlib import ExitStack, contextmanager
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Final, Literal, Protocol
 
-from ledger_engine.fs.port import FileSystem, LegacyAbsent, LegacyHeld, LegacyLocks, Lock, Locks
+from ledger_engine.fs.port import FileSystem
 from ledger_engine.ledger import fingerprint as _fingerprint
 from ledger_engine.ledger import overlay
 from ledger_engine.ledger.core import journal
@@ -75,15 +73,13 @@ from ledger_engine.tla import tla_action
 LOCAL: Final = "local"
 JOURNAL: Final = "journal"
 BACKUPS: Final = "backups"
-LOCKS: Final = "locks"
 SESSION: Final = re.compile(r"[a-z0-9_]{1,64}")
 """A session id: lower case only, so two sessions never differ only in case (names derived from `<session>-<job>`
 are compared case-folded on a case-insensitive volume; S0061 red team r3 overflow 4)."""
 
-type Phase = Literal["waiting_for_files", "saving"]
+type Phase = Literal["saving"]
 type RefusedReason = Literal[
     "unfinished_save",  # an `.open` journal of this workspace (WRITES_PAUSED)
-    "legacy_app_saving",  # a legacy install's write lock is held, or could not be tried (LEGACY_APP_SAVING)
     "ledger_changed",  # the disk moved since the plan (LEDGER_EXTERNALLY_CHANGED)
     "mirror_stale",  # the published mirror is not the plan's (WORKSPACE_NOT_READY {WARMING})
     "encrypted_file",  # a change names an encrypted file (ADR-0059; the preview refuses it first, BL-0106)
@@ -94,9 +90,8 @@ type RefusedReason = Literal[
 class SavePlan:
     """A confirmed plan (§2's `save`). `fingerprint`: the plan's, of the ledger set before the save; `mirror`: the
     digest of the published mirror's fingerprint (None: none is published); `changes`: each file as the ledger names
-    it (absolute, normalized), its pre SHA-256 (None: the save creates it) and its post bytes; `legacy_locks`: the
-    `data/.write.lock` of every legacy install whose config names a file of this ledger set (ADR-0062; the sidecar
-    knows them from M3, BL-0026); `app_local_data`: the app's machine-local folder (journals, backups, locks).
+    it (absolute, normalized), its pre SHA-256 (None: the save creates it) and its post bytes; `app_local_data`: the
+    app's machine-local folder (journals, backups).
     `session`-`job` names this save alone (§6.5 "One save, one name"; the sidecar makes a new job part for every save):
     a name that already has a record or a backups folder in this key raises `BadPlanError("name_taken")`."""
 
@@ -109,7 +104,6 @@ class SavePlan:
     changes: tuple[Change, ...]
     fingerprint: Fingerprint
     mirror: str | None
-    legacy_locks: tuple[str, ...]
     app_local_data: str
 
 
@@ -132,12 +126,10 @@ def _observe(fp: Fingerprint) -> Fingerprint:
 
 @dataclass(frozen=True, slots=True)
 class Ports:
-    """The save's effects: the file-system port (every write), the ledger-set and legacy locks, and the observation,
-    which reads the disk with the loader's own calls (`fingerprint`)."""
+    """The save's effects: the file-system port (every write) and the observation, which reads the disk with the
+    loader's own calls (`fingerprint`)."""
 
     fs: FileSystem
-    locks: Locks
-    legacy: LegacyLocks
     observe: Observe = _observe
 
 
@@ -154,7 +146,7 @@ class Saved:
 class Refused:
     """Refused before the commit point: nothing was written in a ledger folder, the journal or the backups. `unchanged`:
     every file the save would write was hashed again and equals its pre bytes (a created one: absent). `path`: the
-    file the refusal is about, when there is one (the legacy lock, the `.open` journal, the encrypted file)."""
+    file the refusal is about, when there is one (the `.open` journal, the encrypted file)."""
 
     reason: RefusedReason
     unchanged: bool
@@ -237,19 +229,7 @@ def _open_journal(fs: FileSystem, plan: SavePlan) -> str | None:
         return journal_dir(plan)
 
 
-# -- steps 2 and 3: the locks -------------------------------------------------------------------------------------
-
-
-class _LegacyRefused(Exception):
-    def __init__(self, path: str) -> None:
-        self.path = path
-
-
-class _LockFailed(Exception):
-    """An I/O error taking the ledger-set lock of `path` (red team r1 L2)."""
-
-    def __init__(self, path: str) -> None:
-        self.path = path
+# -- step 0 and the paths ------------------------------------------------------------------------------------------
 
 
 def _encrypted(fs: FileSystem, path: str) -> bool:
@@ -266,50 +246,6 @@ def _encrypted(fs: FileSystem, path: str) -> bool:
 
 def _key(fs: FileSystem, path: str) -> str:
     return core_paths.path_key(fs.resolve(path))
-
-
-@contextmanager
-def _legacy_locks(ports: Ports, paths: tuple[str, ...]) -> Generator[None]:
-    """ADR-0062 decision 2: each legacy lock once, without waiting, deduplicated by `path_key`, in key order."""
-    by_key: dict[str, str] = {}
-    for p in paths:
-        try:
-            by_key.setdefault(_key(ports.fs, p), p)
-        except (OSError, ValueError):
-            raise _LegacyRefused(p) from None
-    with ExitStack() as held:
-        for key in sorted(by_key):
-            path = by_key[key]
-            try:
-                out = ports.legacy.try_lock(path)
-            except OSError:
-                raise _LegacyRefused(path) from None
-            if isinstance(out, LegacyHeld):
-                raise _LegacyRefused(path)
-            if not isinstance(out, LegacyAbsent):
-                held.callback(out.release)
-        yield
-
-
-@tla_action("S_Locks")
-@contextmanager
-def _ledger_locks(ports: Ports, keys: Mapping[str, str], job: Job) -> Generator[None]:
-    """ADR-0012 Q29: each key's lock, in `path_key` order, waiting (§6.1 step 3). `keys`: each key's file (named if
-    its lock cannot be taken: `_LockFailed`)."""
-    with ExitStack() as held:
-        shown = False
-        for key in sorted(keys):
-            try:
-                lock: Lock | None = ports.locks.try_lock(key)
-                if lock is None:
-                    if not shown:
-                        job.progress("waiting_for_files")
-                        shown = True
-                    lock = ports.locks.lock(key)
-            except OSError:
-                raise _LockFailed(keys[key]) from None
-            held.callback(lock.release)
-        yield
 
 
 # -- the run -----------------------------------------------------------------------------------------------------------
@@ -386,7 +322,7 @@ def run(plan: SavePlan, ports: Ports, job: Job) -> SaveOutcome:
             gc.enable()
 
 
-@tla_action("S_Release")
+@tla_action("S_Locks", "S_Release")  # S_Locks: no effect since S0071 (ADR-0068 D3); S0072 cuts it (BL-0180)
 def _run(plan: SavePlan, ports: Ports, job: Job, pre: Mapping[str, str | None]) -> SaveOutcome:
     def refused(reason: RefusedReason, path: str | None = None) -> Refused:
         return Refused(reason, _unchanged(ports.fs, plan.changes), path)
@@ -401,23 +337,16 @@ def _run(plan: SavePlan, ports: Ports, job: Job, pre: Mapping[str, str | None]) 
     def io_error(path: str | None) -> NotSaved:
         return NotSaved(Step.BACKUP, Reason.IO_ERROR, _unchanged(ports.fs, plan.changes), path=path)
 
-    keys: dict[str, str] = {}
-    for p in sorted({*(p for p, _ in plan.fingerprint.files), *pre}):
+    for p in sorted({*(p for p, _ in plan.fingerprint.files), *pre}):  # step 3: every path resolves
         try:
-            keys.setdefault(_key(ports.fs, p), p)
+            _key(ports.fs, p)
         except OSError:  # a folder that denies looking names up in it (§15): not saved, nothing written
             return io_error(p)
-    try:
-        with _legacy_locks(ports, plan.legacy_locks), _ledger_locks(ports, keys, job):  # steps 2, 3 (11: released)
-            return _under_locks(plan, ports, job, refused, io_error)
-    except _LegacyRefused as e:
-        return refused("legacy_app_saving", e.path)
-    except _LockFailed as e:
-        return io_error(e.path)
+    return _gated(plan, ports, job, refused, io_error)
 
 
 @tla_action("S_Gate", "S_Load", "S_Recheck", "S_Commit", "S_Saved")  # S_Load, S_Recheck: no effect since S0070
-def _under_locks(
+def _gated(
     plan: SavePlan,
     ports: Ports,
     job: Job,
@@ -426,8 +355,8 @@ def _under_locks(
 ) -> SaveOutcome:
     if ports.observe(plan.fingerprint) != plan.fingerprint:  # step 4
         return refused("ledger_changed")
-    # TODO(BL-0125): compare with the published generation read under the locks; until a mirror is published
-    # (BL-0113) this compares two values of the plan, both sent before the locks were taken (verifier r1 Q1).
+    # TODO(BL-0125): compare with the published generation read at this gate; until a mirror is published
+    # (BL-0113) this compares two values of the plan, both sent with it (verifier r1 Q1).
     if plan.mirror != digest(plan.fingerprint):
         return refused("mirror_stale")
     open_journal = _open_journal(ports.fs, plan)

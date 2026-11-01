@@ -456,8 +456,9 @@ def _settled_mkdir(path: Path) -> None:
 def test_a_save_its_crash_and_its_recovery_on_a_real_volume_without_the_swap(
     fs: DarwinFS, tmp_path: Path, volume: str
 ) -> None:
-    """BL-0160 on a real drive: the save lands by the no-swap path (a replaced file, a created file in a created
-    folder), then a save that dies before its close is undone by recovery from the backups on the Mac's disk. The
+    """The best-effort mode on a real drive (ADR-0068 D2): the save lands by a plain rename (a replaced file, a created
+    file in a created folder), a backup of every replaced file exists and the read-back held; then a save that dies
+    before its close is undone by recovery from the backups on the Mac's disk. The
     test's folder on the volume is removed at the end (a FAT16 root folder holds only 512 entries)."""
     import shutil
     import uuid
@@ -472,8 +473,7 @@ def test_a_save_its_crash_and_its_recovery_on_a_real_volume_without_the_swap(
 
 
 def _real_volume_run(fs: DarwinFS, tmp_path: Path, ledger: Path) -> None:
-    from ledger_engine.fs.darwin import DarwinLocks
-    from ledger_engine.ledger.core.recovery import EMPTY_DETAIL, Cause
+    from ledger_engine.ledger.core.recovery import Cause
     from ledger_engine.ledger.restore import Resolved, Stopped, recover_journal
 
     with fs.open_dir(str(ledger)) as d:
@@ -500,9 +500,8 @@ def _real_volume_run(fs: DarwinFS, tmp_path: Path, ledger: Path) -> None:
     with pytest.raises(_Died):
         durable_commit(_DyingFS(fs, ".closed"), c2)  # type: ignore[arg-type]
     assert main.read_bytes() == b"post2\n"
-    (root2 / "locks").mkdir()
     main.unlink()  # missing in the middle of a replace, as a power loss on a drive without a journal can leave it
-    out2 = recover_journal(fs, DarwinLocks(str(root2 / "locks")), c2.journal_dir, "s1-j1")
+    out2 = recover_journal(fs, c2.journal_dir, "s1-j1")
     assert out2 == Resolved("s1-j1"), out2
     assert (main.read_bytes(), inc.read_bytes()) == (b"post\n", b"inc2\n"), "restored from the backups"
     assert not [n for n in os.listdir(ledger) + os.listdir(ledger / "inc") if ".ft-" in n]
@@ -512,12 +511,11 @@ def _real_volume_run(fs: DarwinFS, tmp_path: Path, ledger: Path) -> None:
     with pytest.raises(_Died):
         durable_commit(_DyingFS(fs, ".closed"), c3)  # type: ignore[arg-type]
     main.write_bytes(b"; an editor\n")  # an outside save before the restore: never replaced
-    (root3 / "locks").mkdir()
-    out3 = recover_journal(fs, DarwinLocks(str(root3 / "locks")), c3.journal_dir, "s1-j1")
+    out3 = recover_journal(fs, c3.journal_dir, "s1-j1")
     assert out3 == Stopped(Cause.FOREIGN, str(main)), out3
     assert main.read_bytes() == b"; an editor\n"
-    # an empty file at a replaced path is another program's, or the claim of a cut put-back: the try stops and says
-    # so; once the user deletes it, Retry puts the old version back (owner, 2026-10-31: "Empty = never ours")
+    # an empty file at a replaced path is judged like any other content (ADR-0068 D2): the try stops; once the user
+    # deletes it, the file is missing and Retry puts the old version back from the backup
     root4 = tmp_path / "fourth"
     root4.mkdir()
     c4 = _commit(root4, Change(str(main), sha256(b"; an editor\n"), b"post4\n"))
@@ -525,13 +523,11 @@ def _real_volume_run(fs: DarwinFS, tmp_path: Path, ledger: Path) -> None:
         durable_commit(_DyingFS(fs, ".closed"), c4)  # type: ignore[arg-type]
     main.unlink()
     main.write_bytes(b"")
-    (root4 / "locks").mkdir()
-    locks4 = DarwinLocks(str(root4 / "locks"))
-    out4 = recover_journal(fs, locks4, c4.journal_dir, "s1-j1")
-    assert out4 == Stopped(Cause.FOREIGN, str(main), detail=EMPTY_DETAIL), out4
+    out4 = recover_journal(fs, c4.journal_dir, "s1-j1")
+    assert out4 == Stopped(Cause.FOREIGN, str(main)), out4
     assert main.read_bytes() == b""
     main.unlink()
-    out5 = recover_journal(fs, locks4, c4.journal_dir, "s1-j1")
+    out5 = recover_journal(fs, c4.journal_dir, "s1-j1")
     assert out5 == Resolved("s1-j1"), out5
     assert main.read_bytes() == b"; an editor\n"
     assert not [n for n in os.listdir(ledger) if ".ft-" in n]
@@ -571,7 +567,7 @@ def test_permissions_that_would_block_the_save_refuse_it_before_anything_is_writ
     assert main.read_bytes() == b"pre\n"
 
 
-# ---- S0061: rmdir, the ledger-set locks, the restore over the real adapter -----------------------------------------
+# ---- S0061: rmdir, the restore over the real adapter -----------------------------------------
 
 
 def test_rmdir_removes_only_an_empty_folder_on_apfs(fs: DarwinFS, tmp_path: Path) -> None:
@@ -589,40 +585,6 @@ def test_rmdir_removes_only_an_empty_folder_on_apfs(fs: DarwinFS, tmp_path: Path
         with pytest.raises(FileNotFoundError):
             d.rmdir("empty")
     assert sorted(p.name for p in tmp_path.iterdir()) == ["full", "link"]
-
-
-HOLD = """import fcntl, os, sys
-fd = os.open(sys.argv[1], os.O_RDWR | os.O_CREAT, 0o600)
-fcntl.flock(fd, fcntl.LOCK_EX)
-print("held", flush=True)
-sys.stdin.read()
-"""
-
-
-def test_a_ledger_set_lock_held_by_another_process_is_not_taken_and_is_free_once_it_ends(tmp_path: Path) -> None:
-    """§6.1 step 3, §8.1 step 1: one lock file per `path_key`, `<sha256(path_key)>`, never deleted; tried without
-    waiting."""
-    from ledger_engine.fs.darwin import DarwinLocks
-
-    locks = DarwinLocks(str(tmp_path))
-    key = "/users/x/ledger/main.bean"
-    lock_file = tmp_path / sha256(key.encode())
-    holder = subprocess.Popen(  # noqa: S603 (this interpreter, fixed code)
-        [sys.executable, "-c", HOLD, str(lock_file)], stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True
-    )
-    try:
-        assert holder.stdout is not None
-        assert holder.stdout.readline() == "held\n"  # an event, not a sleep
-        assert locks.try_lock(key) is None
-    finally:
-        assert holder.stdin is not None
-        holder.stdin.close()
-        holder.wait()
-    mine = locks.try_lock(key)
-    assert mine is not None
-    mine.release()
-    assert lock_file.exists(), "lock files are never deleted"
-    assert stat.S_IMODE(lock_file.stat().st_mode) == 0o600
 
 
 class _Died(BaseException):
@@ -681,20 +643,17 @@ def _crashed_save_on_apfs(fs: DarwinFS, root: Path) -> tuple[Commit, Path, Path]
 
 
 def test_a_crashed_saves_journal_is_resolved_on_apfs(fs: DarwinFS, tmp_path: Path) -> None:
-    from ledger_engine.fs.darwin import DarwinLocks
     from ledger_engine.ledger.core.recovery import Cause
     from ledger_engine.ledger.restore import Resolved, Stopped, recover_journal
 
     c, main, created = _crashed_save_on_apfs(fs, tmp_path)
-    (tmp_path / "locks").mkdir()
-    locks = DarwinLocks(str(tmp_path / "locks"))
-    out = recover_journal(fs, locks, c.journal_dir, "s1-j1")
+    out = recover_journal(fs, c.journal_dir, "s1-j1")
     # the save had placed new.bean: never removed (owner, 2026-10-30: "Never remove it (Recommended)")
     assert out == Stopped(Cause.CREATED_PATH_TAKEN, str(created))
     assert (main.read_bytes(), created.read_bytes()) == (b"pre\n", b"new\n")
     assert os.listdir(tmp_path / "local" / "journal") == ["s1-j1.open"]
     created.unlink()  # the user deletes it and presses Retry
-    out = recover_journal(fs, locks, c.journal_dir, "s1-j1")
+    out = recover_journal(fs, c.journal_dir, "s1-j1")
     assert out == Resolved("s1-j1")
     assert main.read_bytes() == b"pre\n"
     assert not created.exists()
@@ -704,14 +663,12 @@ def test_a_crashed_saves_journal_is_resolved_on_apfs(fs: DarwinFS, tmp_path: Pat
 
 def test_a_hard_linked_file_at_post_stops_the_restore_on_apfs(fs: DarwinFS, tmp_path: Path) -> None:
     """Probed before coding: a restore swap would give the name the pre bytes and leave the other link at post."""
-    from ledger_engine.fs.darwin import DarwinLocks
     from ledger_engine.ledger.core.recovery import Cause
     from ledger_engine.ledger.restore import Stopped, recover_journal
 
     c, main, _ = _crashed_save_on_apfs(fs, tmp_path)
     os.link(main, tmp_path / "copy.bean")
-    (tmp_path / "locks").mkdir()
-    out = recover_journal(fs, DarwinLocks(str(tmp_path / "locks")), c.journal_dir, "s1-j1")
+    out = recover_journal(fs, c.journal_dir, "s1-j1")
     assert isinstance(out, Stopped)
     assert out.cause is Cause.HARD_LINKED
     assert main.read_bytes() == (tmp_path / "copy.bean").read_bytes() == b"post\n"
@@ -723,7 +680,6 @@ def test_a_folder_the_save_made_in_a_read_only_parent_stops_the_restore_before_a
 ) -> None:
     """S0061 verifier V1 on APFS: the parent made read-only (mode 0555) after the crash: the created folder could not
     be removed, so the try stops at its checks with `permission`, every file as it was, instead of failing for ever."""
-    from ledger_engine.fs.darwin import DarwinLocks
     from ledger_engine.ledger.core.recovery import Cause
     from ledger_engine.ledger.restore import Stopped, recover_journal
 
@@ -732,10 +688,9 @@ def test_a_folder_the_save_made_in_a_read_only_parent_stops_the_restore_before_a
     c = _commit(tmp_path, Change(str(created), None, b"new\n"))
     with pytest.raises(_Died):  # at the created file's exclusive rename: the folder holds only our temp (S0061 r5)
         durable_commit(_DyingFS(fs, "new.bean"), c)  # type: ignore[arg-type]
-    (tmp_path / "locks").mkdir()
     os.chmod(tmp_path / "L", 0o555)  # noqa: S103 (read-only on purpose)
     try:
-        out = recover_journal(fs, DarwinLocks(str(tmp_path / "locks")), c.journal_dir, "s1-j1")
+        out = recover_journal(fs, c.journal_dir, "s1-j1")
         assert isinstance(out, Stopped)
         assert out.cause is Cause.PERMISSION
         assert not created.exists()
@@ -753,7 +708,6 @@ def test_an_outside_program_shortening_the_file_through_a_descriptor_held_from_b
     displaced old object at our temp name, a prefix of both pre and post (the save appended). Recovery keeps them in
     the kept copy and stops (owner, 2026-10-30: "Staging name (Recommended)": a temp name is ours only when equal to
     the pre or post bytes)."""
-    from ledger_engine.fs.darwin import DarwinLocks
     from ledger_engine.ledger.core.recovery import Cause
     from ledger_engine.ledger.restore import Stopped, recover_journal
 
@@ -775,8 +729,7 @@ def test_an_outside_program_shortening_the_file_through_a_descriptor_held_from_b
         os.fsync(held)
     finally:
         os.close(held)
-    (tmp_path / "locks").mkdir()
-    out = recover_journal(fs, DarwinLocks(str(tmp_path / "locks")), c.journal_dir, "s1-j1")
+    out = recover_journal(fs, c.journal_dir, "s1-j1")
     assert out == Stopped(Cause.OUTSIDE_SAVE_IN_TEMP, os.path.realpath(main))
     assert (ledger / "main.bean.kept-s1-j1").read_bytes() == shortened
     assert os.listdir(tmp_path / "local" / "journal") == ["s1-j1.open"]
@@ -910,7 +863,6 @@ def test_a_name_of_ours_whose_removal_is_denied_stops_the_rollback_before_anythi
     """Red team r5 F2, step 2's half: our staging file carries a `deny delete` (as an inherited entry would); the
     save fails at its rename; the rollback's checks see that its removal is denied (`access(_DELETE_OK)`) and stop
     with `permission`, nothing written; once the entry is gone, recovery resolves."""
-    from ledger_engine.fs.darwin import DarwinLocks
     from ledger_engine.ledger.core.recovery import Cause
     from ledger_engine.ledger.restore import Resolved, Stopped, recover_journal
 
@@ -925,13 +877,11 @@ def test_a_name_of_ours_whose_removal_is_denied_stops_the_rollback_before_anythi
         assert out == NotSaved(Step.REPLACE, Reason.IO_ERROR, True, True, str(main)), out
         assert staging.exists()
         assert sorted(os.listdir(folder)) == [".main.bean.ft-s1-j1.new", "main.bean"]
-        (tmp_path / "locks").mkdir()
-        locks = DarwinLocks(str(tmp_path / "locks"))
-        assert recover_journal(fs, locks, c.journal_dir, "s1-j1") == Stopped(Cause.PERMISSION, str(main), str(staging))
+        assert recover_journal(fs, c.journal_dir, "s1-j1") == Stopped(Cause.PERMISSION, str(main), str(staging))
         assert staging.exists()
         assert os.listdir(tmp_path / "local" / "journal") == ["s1-j1.open"]
         _run("/bin/chmod", "-N", str(staging))
-        assert recover_journal(fs, locks, c.journal_dir, "s1-j1") == Resolved("s1-j1")
+        assert recover_journal(fs, c.journal_dir, "s1-j1") == Resolved("s1-j1")
         assert sorted(os.listdir(folder)) == ["main.bean"]
         assert main.read_bytes() == b"pre\n"
     finally:
@@ -944,17 +894,15 @@ def test_a_folder_that_denies_new_entries_stops_the_restore_of_a_file_at_post_be
     """Probed on APFS (S0061 r5): `deny add_file` on a folder allows removals (`access(_DELETE_OK)` answers yes) but
     refuses the restore temp's create; the entry-change right is checked for a file at post, so the try stops with
     `permission` before anything is written instead of failing half-way."""
-    from ledger_engine.fs.darwin import DarwinLocks
     from ledger_engine.ledger.core.recovery import Cause
     from ledger_engine.ledger.restore import Stopped, recover_journal
 
     c, main, created = _crashed_save_on_apfs(fs, tmp_path)
     created.unlink()  # nothing at the created path: only main.bean, at post, is undone
-    (tmp_path / "locks").mkdir()
     before = sorted(os.listdir(tmp_path / "L"))
     try:
         _run("/bin/chmod", "+a", "everyone deny add_file", str(tmp_path / "L"))
-        out = recover_journal(fs, DarwinLocks(str(tmp_path / "locks")), c.journal_dir, "s1-j1")
+        out = recover_journal(fs, c.journal_dir, "s1-j1")
         assert out == Stopped(Cause.PERMISSION, str(main), str(tmp_path / "L"), "deny add_file"), out
         assert sorted(os.listdir(tmp_path / "L")) == before
         assert main.read_bytes() == b"post\n"
@@ -1228,23 +1176,20 @@ def test_V6_F2_an_acl_entry_that_appeared_after_the_crash_stops_recovery_before_
     put on the ledger folder. The try stops with `permission`, naming the folder and the entry, nothing written (it
     used to write its restore staging file, which inherited the entry, and every later try stopped on it). Once the
     entry is removed, Retry undoes main.bean."""
-    from ledger_engine.fs.darwin import DarwinLocks
     from ledger_engine.ledger.core.recovery import Cause
     from ledger_engine.ledger.restore import Stopped, recover_journal
 
     c, main, created = _crashed_save_on_apfs(fs, tmp_path)
-    (tmp_path / "locks").mkdir()
-    locks = DarwinLocks(str(tmp_path / "locks"))
     ledger = tmp_path / "L"
     before = sorted(str(p.relative_to(ledger)) for p in ledger.rglob("*"))
     try:
         _run("/bin/chmod", "+a", "everyone deny delete,file_inherit", str(ledger))
-        out = recover_journal(fs, locks, c.journal_dir, "s1-j1")
+        out = recover_journal(fs, c.journal_dir, "s1-j1")
         assert out == Stopped(Cause.PERMISSION, str(main), str(ledger), "deny delete,file_inherit"), out
         assert sorted(str(p.relative_to(ledger)) for p in ledger.rglob("*")) == before
         assert main.read_bytes() == b"post\n"
         _run("/bin/chmod", "-N", str(ledger))
-        out = recover_journal(fs, locks, c.journal_dir, "s1-j1")
+        out = recover_journal(fs, c.journal_dir, "s1-j1")
         assert out == Stopped(Cause.CREATED_PATH_TAKEN, str(created)), out
         assert main.read_bytes() == b"pre\n"
     finally:
@@ -1258,7 +1203,6 @@ def test_R6_O3_a_locked_ledger_folder_is_refused_and_a_locked_folder_the_save_ma
     `_RMFILE_OK` answer no (probed): refused at step 0. On a folder the save made and would remove (the save died at
     its staging create, so it is empty), its `rmdir` would answer `EPERM` on every try: step 2 stops with
     `permission`, nothing written; once the flag is cleared, Retry resolves."""
-    from ledger_engine.fs.darwin import DarwinLocks
     from ledger_engine.ledger.core.recovery import Cause
     from ledger_engine.ledger.restore import Resolved, Stopped, recover_journal
 
@@ -1290,12 +1234,10 @@ def test_R6_O3_a_locked_ledger_folder_is_refused_and_a_locked_folder_the_save_ma
             durable_commit(_DiesFS(fs, "<none>"), c)  # type: ignore[arg-type]
         assert os.listdir(made) == []
         _run("/usr/bin/chflags", "uchg", str(made))
-        (tmp_path / "locks").mkdir()
-        locks = DarwinLocks(str(tmp_path / "locks"))
-        assert recover_journal(fs, locks, c.journal_dir, "s1-j1") == Stopped(Cause.PERMISSION, str(made))
+        assert recover_journal(fs, c.journal_dir, "s1-j1") == Stopped(Cause.PERMISSION, str(made))
         assert made.is_dir()
         _run("/usr/bin/chflags", "nouchg", str(made))
-        assert recover_journal(fs, locks, c.journal_dir, "s1-j1") == Resolved("s1-j1")
+        assert recover_journal(fs, c.journal_dir, "s1-j1") == Resolved("s1-j1")
         assert not made.exists()
     finally:
         _clean_acls(tmp_path)
@@ -1406,23 +1348,20 @@ def test_R7_F1_an_owner_or_group_entry_added_after_a_crash_stops_recovery_and_re
     ledger folder. Round 6 passed it, and the try's restore staging file inherited it (every later try stopped on
     it). Now the try stops with `permission` naming the folder, nothing written; once the entry is removed, Retry
     undoes main.bean (then stops at the created file, which is never removed)."""
-    from ledger_engine.fs.darwin import DarwinLocks
     from ledger_engine.ledger.core.recovery import Cause
     from ledger_engine.ledger.restore import Stopped, recover_journal
 
     c, main, created = _crashed_save_on_apfs(fs, tmp_path)
     ledger = tmp_path / "L"
     os.chown(ledger, -1, os.getgid())
-    (tmp_path / "locks").mkdir()
-    locks = DarwinLocks(str(tmp_path / "locks"))
     before = sorted(str(p.relative_to(ledger)) for p in ledger.rglob("*"))
     try:
         _run("/bin/chmod", "+a", ace, str(ledger))
-        out = recover_journal(fs, locks, c.journal_dir, "s1-j1")
+        out = recover_journal(fs, c.journal_dir, "s1-j1")
         assert out == Stopped(Cause.PERMISSION, str(main), str(ledger), "deny delete,file_inherit"), out
         assert sorted(str(p.relative_to(ledger)) for p in ledger.rglob("*")) == before
         _run("/bin/chmod", "-N", str(ledger))
-        out = recover_journal(fs, locks, c.journal_dir, "s1-j1")
+        out = recover_journal(fs, c.journal_dir, "s1-j1")
         assert out == Stopped(Cause.CREATED_PATH_TAKEN, str(created)), out
         assert main.read_bytes() == b"pre\n"
     finally:
@@ -1476,24 +1415,21 @@ def test_R7_F3_an_entry_on_the_journal_folder_after_a_crash_stops_recovery_befor
     """Red team r7 F3's recovery half, ported: after a crash, `deny read,file_inherit,only_inherit` is put on the
     journal folder. Recovery checks that folder first: `permission`, naming it, nothing written; once the entry is
     removed, Retry goes on."""
-    from ledger_engine.fs.darwin import DarwinLocks
     from ledger_engine.ledger.core.recovery import Cause
     from ledger_engine.ledger.restore import Stopped, recover_journal
 
     c, main, created = _crashed_save_on_apfs(fs, tmp_path)
-    (tmp_path / "locks").mkdir()
-    locks = DarwinLocks(str(tmp_path / "locks"))
     jd = os.path.realpath(c.journal_dir)
     try:
         _run("/bin/chmod", "+a", f"user:{_me()} deny read,file_inherit,only_inherit", c.journal_dir)
-        out = recover_journal(fs, locks, c.journal_dir, "s1-j1")
+        out = recover_journal(fs, c.journal_dir, "s1-j1")
         assert isinstance(out, Stopped), out
         assert (out.cause, out.path, out.entry) == (Cause.PERMISSION, None, jd), out
         assert out.detail is not None
         assert os.listdir(c.journal_dir) == ["s1-j1.open"]
         assert main.read_bytes() == b"post\n"
         _run("/bin/chmod", "-N", c.journal_dir)
-        assert recover_journal(fs, locks, c.journal_dir, "s1-j1") == Stopped(Cause.CREATED_PATH_TAKEN, str(created))
+        assert recover_journal(fs, c.journal_dir, "s1-j1") == Stopped(Cause.CREATED_PATH_TAKEN, str(created))
         assert main.read_bytes() == b"pre\n"
     finally:
         _clean_acls(tmp_path)
@@ -1537,7 +1473,6 @@ def test_R7_F2_an_entry_added_during_the_save_leaves_a_named_leftover_and_chmod_
     bytes. After the user removes the folder's entry, every Retry stops with `permission`, naming that hidden file;
     once the entry is removed from it too (`chmod -N`; probed: works even under an inherited `deny writesecurity`),
     Retry resolves."""
-    from ledger_engine.fs.darwin import DarwinLocks
     from ledger_engine.ledger.core.recovery import Cause
     from ledger_engine.ledger.restore import Resolved, Stopped, recover_journal
 
@@ -1548,8 +1483,6 @@ def test_R7_F2_an_entry_added_during_the_save_leaves_a_named_leftover_and_chmod_
     c = _commit(tmp_path, Change(str(main), sha256(b"pre\n"), b"post\n"))
     canonical = os.path.realpath(ledger)
     staging = f"{canonical}/.main.bean.ft-s1-j1.new"
-    (tmp_path / "locks").mkdir()
-    locks = DarwinLocks(str(tmp_path / "locks"))
     try:
         out = durable_commit(_AclAtStagingFS(fs, canonical, ace), c)  # type: ignore[arg-type]
         assert isinstance(out, NotSaved), out
@@ -1558,11 +1491,11 @@ def test_R7_F2_an_entry_added_during_the_save_leaves_a_named_leftover_and_chmod_
         assert os.listdir(c.journal_dir) == ["s1-j1.open"]
         _run("/bin/chmod", "-N", str(ledger))
         for _ in range(2):
-            got = recover_journal(fs, locks, c.journal_dir, "s1-j1")
+            got = recover_journal(fs, c.journal_dir, "s1-j1")
             assert got == Stopped(Cause.PERMISSION, f"{canonical}/main.bean", staging), got
             assert main.read_bytes() == b"pre\n"
         _run("/bin/chmod", "-N", staging)
-        assert recover_journal(fs, locks, c.journal_dir, "s1-j1") == Resolved("s1-j1")
+        assert recover_journal(fs, c.journal_dir, "s1-j1") == Resolved("s1-j1")
         assert sorted(os.listdir(ledger)) == ["main.bean"]
         assert main.read_bytes() == b"pre\n"
     finally:
@@ -1577,7 +1510,6 @@ def test_R7_vF2_a_direct_deny_search_or_list_after_a_crash_fails_the_try_naming_
     folder makes the try fail before anything is written (`EACCES`); the outcome now names the folder (`entry`),
     not only the file (the `list` row held at 71c84897: the kept-copy listing already named it). Once the entry is
     removed, Retry undoes main.bean."""
-    from ledger_engine.fs.darwin import DarwinLocks
     from ledger_engine.ledger.core.recovery import Cause
     from ledger_engine.ledger.restore import Failed, Resolved, recover_journal
 
@@ -1589,15 +1521,13 @@ def test_R7_vF2_a_direct_deny_search_or_list_after_a_crash_fails_the_try_naming_
     with pytest.raises(_Died):
         durable_commit(_DyingFS(fs, ".closed"), c)  # type: ignore[arg-type]
     canonical = os.path.realpath(ledger)
-    (tmp_path / "locks").mkdir()
-    locks = DarwinLocks(str(tmp_path / "locks"))
     try:
         _run("/bin/chmod", "+a", f"user:{_me()} deny {bit}", str(ledger))
-        out = recover_journal(fs, locks, c.journal_dir, "s1-j1")
+        out = recover_journal(fs, c.journal_dir, "s1-j1")
         assert out == Failed(Cause.IO_ERROR, f"{canonical}/main.bean", errno.EACCES, canonical), out
         _run("/bin/chmod", "-N", str(ledger))
         assert main.read_bytes() == b"post\n"
-        assert recover_journal(fs, locks, c.journal_dir, "s1-j1") == Resolved("s1-j1")
+        assert recover_journal(fs, c.journal_dir, "s1-j1") == Resolved("s1-j1")
         assert main.read_bytes() == b"pre\n"
     finally:
         _clean_acls(tmp_path)
@@ -1610,7 +1540,6 @@ def test_R7_vF2_a_files_own_entry_failing_its_stat_in_a_read_only_folder_names_n
     `r7_darwin_search_as_write`: the adapter asks `X_OK` for `Right.SEARCH`. In a read-only folder (mode
     0555: search allowed, write not; probed) where main.bean's own `deny readattr` fails its `stat`, the try fails
     naming main.bean alone, not its folder."""
-    from ledger_engine.fs.darwin import DarwinLocks
     from ledger_engine.ledger.core.recovery import Cause
     from ledger_engine.ledger.restore import Failed, recover_journal
 
@@ -1622,11 +1551,10 @@ def test_R7_vF2_a_files_own_entry_failing_its_stat_in_a_read_only_folder_names_n
     with pytest.raises(_Died):
         durable_commit(_DyingFS(fs, ".closed"), c)  # type: ignore[arg-type]
     canonical = os.path.realpath(ledger)
-    (tmp_path / "locks").mkdir()
     try:
         _run("/bin/chmod", "+a", f"user:{_me()} deny readattr", str(main))
         ledger.chmod(0o555)
-        out = recover_journal(fs, DarwinLocks(str(tmp_path / "locks")), c.journal_dir, "s1-j1")
+        out = recover_journal(fs, c.journal_dir, "s1-j1")
         assert out == Failed(Cause.IO_ERROR, f"{canonical}/main.bean", errno.EACCES), out
     finally:
         ledger.chmod(0o755)

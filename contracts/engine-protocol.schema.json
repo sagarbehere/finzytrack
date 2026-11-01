@@ -573,7 +573,6 @@
       "enum": [
         "reading",
         "checking_change",
-        "waiting_for_files",
         "saving",
         "updating_views"
       ],
@@ -1563,7 +1562,7 @@
     },
     "RecoverTryResult": {
       "additionalProperties": false,
-      "description": "One journal's try (§8.1 steps 1-4): `resolved`, `stopped` (blocking reason `stopped`) or `failed` (reason\n`failed`), with the cause, the file (`path`), the entry that failed or blocked when it is not the file, the\nblocking ACL entry (`detail`; for a `foreign` stop, `empty`: the file is empty on a drive without the swap and its\nbackup holds the old version, S0065) and the error number; for `stopped`, what stands there now (`inspection`).",
+      "description": "One journal's try (§8.1 steps 2-4): `resolved`, `stopped` (blocking reason `stopped`) or `failed` (reason\n`failed`), with the cause, the file (`path`), the entry that failed or blocked when it is not the file, the\nblocking ACL entry (`detail`) and the error number; for `stopped`, what stands there now (`inspection`).",
       "properties": {
         "outcome": {
           "enum": [
@@ -2097,7 +2096,7 @@
     },
     "SaveParams": {
       "additionalProperties": false,
-      "description": "A confirmed plan (§2's `save`): who saves (`session`, `job`, the workspace's registry key and lineage id), the\nledger's root, the changes, the plan's fingerprint (`ledger_set.encode`'s text), the published mirror's\nfingerprint digest (null: none), the legacy locks to try (ADR-0062) and the app's machine-local folder.",
+      "description": "A confirmed plan (§2's `save`): who saves (`session`, `job`, the workspace's registry key and lineage id), the\nledger's root, the changes, the plan's fingerprint (`ledger_set.encode`'s text), the published mirror's\nfingerprint digest (null: none) and the app's machine-local folder.",
       "properties": {
         "session": {
           "pattern": "^[a-z0-9_]{1,64}$",
@@ -2152,15 +2151,6 @@
           ],
           "title": "Mirror"
         },
-        "legacy_locks": {
-          "items": {
-            "minLength": 1,
-            "pattern": "^/",
-            "type": "string"
-          },
-          "title": "Legacy Locks",
-          "type": "array"
-        },
         "app_local_data": {
           "minLength": 1,
           "pattern": "^/",
@@ -2177,7 +2167,6 @@
         "changes",
         "fingerprint",
         "mirror",
-        "legacy_locks",
         "app_local_data"
       ],
       "title": "SaveParams",
@@ -2271,7 +2260,6 @@
             ],
             "fingerprint": "{\"document_files\":[],\"documents\":[],\"files\":[],\"globs\":[],\"root\":\"/ledgers/L/main.bean\",\"v\":1}",
             "job": "j7",
-            "legacy_locks": [],
             "lineage": "lin1",
             "mirror": null,
             "root": "/ledgers/L/main.bean",
@@ -2313,7 +2301,7 @@
     },
     "SaveResult": {
       "additionalProperties": false,
-      "description": "How the save ended (§6.1, §11). `saved`: the closed record is durable (`published`: the mirror was published,\nnever yet, BL-0113). `refused`: before the commit point, nothing written (`reason`: `unfinished_save`,\n`legacy_app_saving`, `ledger_changed`, `mirror_stale`, `encrypted_file`).\n`not_saved`: the writer's `NotSaved` (`reason` its own: `hard_linked`, `locked`, `not_a_file`, `permission`,\n`changed`, `path_moved`, `read_back`, `io_error`, `name_not_utf8`; `open_journal`: writes are\npaused until recovery). `unfinished`: a file may have been replaced and the rollback stopped (`cause`, and\n`cause_path` its file: after `created_path_taken` the undo will ask about that file). `unchanged`: every file the\nsave would write was hashed again and equals its pre bytes. `path`: the file it is about; `entry`: the folder a\n`permission` refusal is about, `detail`: the ACL entry that blocks it.",
+      "description": "How the save ended (§6.1, §11). `saved`: the closed record is durable (`published`: the mirror was published,\nnever yet, BL-0113). `refused`: before the commit point, nothing written (`reason`: `unfinished_save`,\n`ledger_changed`, `mirror_stale`, `encrypted_file`).\n`not_saved`: the writer's `NotSaved` (`reason` its own: `hard_linked`, `locked`, `not_a_file`, `permission`,\n`changed`, `path_moved`, `read_back`, `io_error`, `name_not_utf8`; `open_journal`: writes are\npaused until recovery). `unfinished`: a file may have been replaced and the rollback stopped (`cause`, and\n`cause_path` its file: after `created_path_taken` the undo will ask about that file). `unchanged`: every file the\nsave would write was hashed again and equals its pre bytes. `path`: the file it is about; `entry`: the folder a\n`permission` refusal is about, `detail`: the ACL entry that blocks it.",
       "properties": {
         "outcome": {
           "$ref": "#/$defs/SaveOutcomeKind"

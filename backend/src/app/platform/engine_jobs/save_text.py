@@ -20,7 +20,13 @@ UNCHANGED: Final = "Your ledger is unchanged."
 LEDGER_CHANGED: Final = (
     "Your ledger changed after this preview, so Finzytrack did not save your change. Review it again."
 )
-LEGACY: Final = "The old Finzytrack app is saving. Quit the old Finzytrack first, then try again."
+BEST_EFFORT_DRIVE: Final = (
+    "This drive (for example a USB stick or network share) can't replace files in one safe step. Finzytrack still "
+    "keeps a backup of every save, but if another program edits the same file at the very moment you save, its "
+    "change can be lost. For full protection, keep your ledger on your computer's own disk."
+)
+"""§11's notice when a workspace whose ledger is on a drive without the swap opens (ADR-0068 D2, the owner's words;
+§6.8). The workspace open shows it (BL-0166); this is the one place its words live."""
 
 
 def _name(path: str | None) -> str:
@@ -79,8 +85,6 @@ def text(err: DomainError) -> str:
             return paused_text(err.details)
         case ErrorCode.LEDGER_EXTERNALLY_CHANGED:
             return LEDGER_CHANGED
-        case ErrorCode.LEGACY_APP_SAVING:
-            return LEGACY
         case _:
             spec = spec_for(err.code)
             return "Something went wrong inside Finzytrack." if spec is None else f"{spec.message} {spec.next_step}"

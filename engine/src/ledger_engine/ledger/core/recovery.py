@@ -20,13 +20,10 @@ The file the temps sit beside, then:
 - at its pre bytes (a created file: absent): **at pre**;
 - a replaced file at its post bytes: **at post** when the backup holds the pre bytes (ADR-0012 F-1), else stop;
 - a replaced file that is absent, on a volume without the swap: **missing** when the backup holds the pre bytes, else
-  stop (S0065: a power loss on a volume without a journal can split a replace and drop the file's name; it is put back
-  from its backup). Only an absent file: an **empty** file there is another program's, on every volume (owner,
-  2026-10-31: "Empty = never ours (Recommended)"; S0065 red team r2 H1: a program that truncates, then writes, such
-  as `script > prices.bean` or an in-place editor, holds it open and writes into it a moment later), so it stops
-  (`foreign`), even the empty file a put-back claims a missing file's name with (`restore._put_back_plainly`) when a
-  crash leaves it: the user deletes it and presses Retry. On a volume with the swap no step of ours leaves a file
-  absent: someone removed it, and it stops (`foreign`) for the user to decide, as before;
+  stop (a power loss on a volume without a journal can split a replace and drop the file's name; it is put back
+  from its backup by the best-effort mode, ADR-0068 D2). Anything else there, an empty file included, is judged as on
+  every volume (`foreign`). On a volume with the swap no step of ours leaves a file absent: someone removed it, and it
+  stops (`foreign`) for the user to decide, as before;
 - anything at all at a created path (a file of any kind, whatever it holds, our post bytes included): **taken**
   (owner, 2026-10-30: "Never remove it (Recommended)"). Nothing on disk tells our unfinished file from another
   program's (a sync client, a re-run import), so the undo never removes, renames or moves it: it undoes the other
@@ -56,8 +53,6 @@ class Seen:
 
 
 ABSENT = Seen(None)
-EMPTY = Seen(Kind.FILE, hashlib.sha256(b"").hexdigest())  # a regular file with no bytes
-EMPTY_DETAIL = "empty"  # a `foreign` stop's detail: an empty file at a replaced path on a `plain` volume (S0065 r3)
 
 
 def seen_file(data: bytes) -> Seen:
@@ -126,7 +121,6 @@ class Cause(StrEnum):
     KEPT_COPY = "kept_copy"  # a kept copy of this journal's (an outside save we moved aside) is still there
     UNREADABLE = "unreadable"  # the record cannot be read: torn, foreign, newer, or not this name's
     CREATED_PATH_TAKEN = "created_path_taken"  # something stands at a path the save was creating: left alone (§11)
-    LOCK_HELD = "lock_held"  # a ledger-set lock is held by another process (`Failed`)
     IO_ERROR = "io_error"  # an operation failed while restoring (`Failed`)
 
 

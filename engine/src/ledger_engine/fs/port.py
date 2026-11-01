@@ -207,25 +207,9 @@ class FileSystem(Protocol):
 
 
 class Lock(Protocol):
-    """A ledger-set lock held by this process (`design/specs/engine-jobs.md` §6.1 step 3)."""
+    """A legacy write lock held by this process (`LegacyLocks`)."""
 
     def release(self) -> None: ...
-
-
-class Locks(Protocol):
-    """The ledger-set locks: one lock file per `path_key` in `app_local_data/locks/<sha256(path_key)>`, never
-    deleted (§6.1 step 3, §8.1 step 1; ADR-0012 Q29)."""
-
-    def try_lock(self, key: str) -> Lock | None:
-        """The lock of `key` taken without waiting, or None when any holder has it (this process included). An
-        `OSError` when the lock file cannot be opened."""
-        ...
-
-    def lock(self, key: str) -> Lock:
-        """The lock of `key`, waiting for any holder to release it (§6.1 step 3: the save waits, with Cancel; with the
-        engine lock nothing of ours holds one, so the wait ends at once). An `OSError` when the lock file cannot be
-        opened or locked."""
-        ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -239,13 +223,14 @@ class LegacyHeld:
 
 
 class LegacyLocks(Protocol):
-    """A legacy install's write lock, `<legacy root>/data/.write.lock` (ADR-0062 decisions 2 and 5; INV-26): tried
+    """A legacy install's write lock, `<legacy root>/data/.write.lock` (ADR-0062 decisions 2 and 5; INV-26), for Copy
+    only (ADR-0068 D4; Copy is BL-0026's, so nothing calls it yet): tried
     once, without waiting, with the legacy app's own primitive (portalocker 3.2.0, `LOCK_EX | LOCK_NB`), on the file
     opened read-only and only if it exists; nothing is ever created, written or removed there."""
 
     def try_lock(self, path: str) -> Lock | LegacyAbsent | LegacyHeld:
         """Free: the lock, held until released. Any other outcome than these three (the file cannot be opened, is not
-        a regular file, or the lock call fails otherwise) raises `OSError`: the save refuses (fail closed)."""
+        a regular file, or the lock call fails otherwise) raises `OSError`: the Copy refuses (fail closed)."""
         ...
 
 

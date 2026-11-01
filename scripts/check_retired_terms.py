@@ -254,6 +254,36 @@ ACTIVE: tuple[Term, ...] = (
     Term("digest module", r"\bledger[./]digest\b|\bdigest\.py\b"),
     code("load_refused"),
     Term("reconcile load", r"\breconcile_loads?\b|\bRECONCILE_LOADS\b|\breconciliation loads?\b"),
+    # S0071 (ADR-0068 D2-D4, BL-0179): the best-effort mode replaces S0065's fallback and its ownership rules; the
+    # ledger-set locks and the save's legacy-lock try are gone (the legacy lock stays for Copy, so its adapter's names
+    # `LegacyLocks`, `DarwinLegacyLocks` and `LEGACY_APP_SAVING`, Copy's error code, pass).
+    Term("ledger-set Locks call", r"\bLocks\.try_lock\b"),
+    code("DarwinLocks"),
+    code("MemLocks"),
+    code("ledger_locks"),
+    code("lock_held"),
+    code("LOCK_HELD"),
+    code("legacy_locks"),
+    code("legacy_app_saving"),
+    Term("ledger-set locks taken", r"\b(?:takes?|taking|taken|tak(?:es|ing)) the ledger-set locks?\b|\bunder the (?:ledger-set )?locks\b"),
+    Term("lock files per ledger file", r"\blocks/<sha256"),
+    code("move_excl"),
+    code("made_by_retry"),
+    code("_took_effect"),
+    code("_create_in_place"),
+    code("_remove_own_part"),
+    code("_replace_plainly"),
+    code("_put_back_plainly"),
+    code("_missing_back"),
+    code("EMPTY_DETAIL"),
+    code("backup_holds_pre"),
+    code("NO_SWAP"),
+    Term("fallback write modes", r"`no_swap` and `plain` modes|\bon `PLAIN`", case=True),
+    Term("re-hash before the plain rename", r"\bre-hash(?:ed)? (?:just )?before (?:a |the )?plain rename\b|\bplain rename after a re-hash\b"),
+    Term("windows W1-W4", r"\bwindows? W[1-4](?:[-\u2013]W[1-4])?\b"),
+    Term("the empty claim", r"\bclaim(?:s|ed|ing)? (?:a|the) (?:missing file's )?name with an empty file\b|\bempty claim\b"),
+    Term("network-retry ownership", r"\bretried by a network volume\b|\ba network volume's retry\b"),
+    Term("no-swap test module", r"\btest_writer_no_swap\b"),
 )
 
 # TODO(BL-0109): the engine-jobs slice removes the per-request time limits (spec §5.5); it moves these into ACTIVE

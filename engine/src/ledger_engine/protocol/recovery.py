@@ -1,7 +1,7 @@
 """Recover-all's ops on the protocol (S0062; `design/specs/engine-jobs.md` §8.1, §11; ADR-0063 decision 2): plain
 data in and out of `ledger_engine.ledger.recover_all` and `ledger_engine.ledger.restore.recover_journal`, over the
-real file-system port and the ledger-set locks in `<app_local_data>/locks/`. The server answers them only in an
-engine that holds the engine lock (`Engine.took_engine_lock`).
+real file-system port, with no per-file lock (ADR-0068 D3). The server answers them only in an engine that holds the
+engine lock (`Engine.took_engine_lock`).
 
 - `recover_list`: the listing (`recover_all.list_journals`).
 - `recover_try`: one journal's try (`restore.recover_journal`); for a `stopped` one, `recover_all.inspect` of its
@@ -23,7 +23,7 @@ import os
 from collections.abc import Callable
 from typing import Final, Protocol
 
-from ledger_engine.fs.darwin import DarwinLocks, for_this_os
+from ledger_engine.fs.darwin import for_this_os
 from ledger_engine.fs.port import FileSystem, Kind, same_path
 from ledger_engine.ledger import recover_all as ra
 from ledger_engine.ledger.core import journal
@@ -70,14 +70,6 @@ class Decider(Protocol):
 
 def _fs() -> FileSystem:
     return for_this_os()
-
-
-def ledger_locks_in(app_local_data: str) -> DarwinLocks:
-    """The ledger-set locks in `<app_local_data>/locks/` (the engine lock's folder: made if missing, as the engine lock
-    makes it)."""
-    folder = join(app_local_data.rstrip("/") or "/", "locks")
-    os.makedirs(folder, exist_ok=True)
-    return DarwinLocks(folder)
 
 
 def _canonical(fs: FileSystem, path: str) -> str | None:
@@ -200,11 +192,7 @@ def recover_try(params: Message, ctx: Decider) -> Message:
     fs = _fs()
     ald = app_local_data_of(fs, params.app_local_data, ctx)
     jd = _journal_dir(fs, ald, params.journal_dir)
-    out = (
-        recover_journal(fs, ledger_locks_in(ald), jd, params.name)
-        if _guarded(fs, jd)
-        else Stopped(Cause.PATH_MOVED, None, jd)
-    )
+    out = recover_journal(fs, jd, params.name) if _guarded(fs, jd) else Stopped(Cause.PATH_MOVED, None, jd)
     if isinstance(out, Resolved):
         result = RecoverTryResult(
             outcome="resolved", cause=None, path=None, entry=None, detail=None, errno=None, inspection=None
@@ -239,17 +227,16 @@ def recover_act(params: Message, ctx: Decider) -> Message:
     fs = _fs()
     ald = app_local_data_of(fs, params.app_local_data, ctx)
     jd = _journal_dir(fs, ald, params.journal_dir)
-    locks = ledger_locks_in(ald)
     if params.action == "keep":
-        out = ra.keep(fs, locks, jd, params.name)
+        out = ra.keep(fs, jd, params.name)
     elif params.file is None or params.sha256 is None or (params.action == "delete_kept" and params.kept is None):
         msg = f"params: {params.action} needs file, sha256" + (" and kept" if params.action == "delete_kept" else "")
         raise BadParamsError(msg)
     elif params.action == "delete_kept":
         assert params.kept is not None  # noqa: S101 (checked above)
-        out = ra.delete_kept(fs, locks, jd, params.name, params.file, params.kept, params.sha256)
+        out = ra.delete_kept(fs, jd, params.name, params.file, params.kept, params.sha256)
     else:
-        out = ra.delete_created(fs, locks, jd, params.name, params.file, params.sha256)
+        out = ra.delete_created(fs, jd, params.name, params.file, params.sha256)
     if isinstance(out, ra.Done):
         return RecoverActResult(outcome="done", reason=None, path=None, detail=None, errno=None)
     if isinstance(out, ra.Refused):

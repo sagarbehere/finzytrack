@@ -38,7 +38,7 @@
   it for its whole life (the descriptor is never closed; the OS releases it when the process and every process that
   inherited it have ended). So an engine of an earlier session (left by a crash, Quit anyway or a quit) keeps a new
   session's engines from doing any ledger work until it has ended, and the new session's recovery never runs beside
-  it. Opened like every later ledger-set lock (`os.open`, so a forked child holds it as it holds those). POSIX only;
+  it. Opened with `os.open`, so a forked child holds it too. POSIX only;
   Windows is BL-0087.
 - **Recover-all's ops** (S0062; `ledger_engine.protocol.recovery`): `recover_list`, `recover_try` and `recover_act`
   are answered only by an engine that holds the engine lock (`engine.no_engine_lock` otherwise), so the listing,

@@ -61,7 +61,6 @@ REQUEST = SaveRequest(
     changes=(ChangeText(MAIN, "0" * 64, "post\n"),),
     fingerprint=FP,
     mirror=None,
-    legacy_locks=(),
     app_local_data=ALD,
 )
 BLANK: dict[str, object] = {

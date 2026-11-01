@@ -63,7 +63,6 @@ def test_the_phases_are_the_specs() -> None:
         "starting": "Starting the ledger engine…",
         "reading": "Reading your ledger…",
         "checking_change": "Checking your change…",
-        "waiting_for_files": "Waiting for your ledger files…",
         "saving": "Saving…",
         "updating_views": "Updating your views…",
     }

@@ -94,6 +94,7 @@ PARTIAL: Mapping[str, str] = {
     "CR_Commit": CREATE_COPY,
     "CP_Commit": CREATE_COPY,
     "UserCancelQueued": SWITCH,  # the switch's or boot's cancelled screen (§9.1 step 3, §9.2)
+    "S_Locks": "BL-0180",  # no effect in the code since S0071 (ADR-0068 D3: no per-file lock); S0072 cuts the step
     "S_Compare": MODEL_UPDATE,  # a read with no hook: the replay sees only that the code goes on when the swap
     # displaced our own bytes; an outside save goes to a kept name in the code, the model swaps it back (BL-0161), so
     # the kept-name branch is `test_writer.py`'s (it kills "always ours")

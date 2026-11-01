@@ -15,25 +15,21 @@ earlier session caught between its handshake and its `flock` can never run besid
 - **`inspect`**: what stands at each file a record names now, and every kept copy of this journal beside it (by
   `journal.is_kept_name`), each by its kind, SHA-256 and size; it writes nothing. The blocked screen shows these
   ("Show both", "Show it", Keep's list of the files it releases) and a delete names the SHA-256 it showed.
-- **`keep`** ("Keep the files as they are now", §8.1 "Afterwards"; model `UserKeep`, finding N1): the ledger-set
-  locks of every file the record names, without waiting; every file the record names that is there as a regular file
-  `durable_sync`ed, and every folder it names that is there synced, so "now" is what a power loss keeps (a restore cut
-  by an error may have left an exchange unsynced); then `.open` renamed `.kept` and the journal folder synced. A
-  folder that is not there (an unplugged disk, a moved folder: `ENOENT`, `ENOTDIR`) has nothing to sync, and one no
-  longer at its recorded path (a link in its place, a rename in case only) refuses Keep (`path_moved`: red team r1
-  R1-3); a sync that answers `EROFS` has nothing pending (a read-only volume: probed on APFS, S0062, `F_FULLFSYNC`
-  answers `EROFS` there); any other error renames nothing (`ActFailed`). A record that cannot be read is kept by its
-  rename alone (ADR-0063: Keep resolves "one that cannot be read"). While a replaced file the record names is
-  missing on a volume without the swap (`restore.is_missing`: its bytes are only in the backup), Keep refuses, naming
-  it (`missing`; owner, 2026-10-31: "Keep refuses, naming the file, while a ledger file is missing"): Retry puts it
-  back, or, when its backup does not hold the old version (detail `backup_bad`, S0065 r3), the user puts a file at
-  that path. An error while asking is `ActFailed` (fails closed, verifier r3 F4). On APFS an absent replaced file
-  was removed by someone, and Keep keeps that.
+- **`keep`** ("Keep the files as they are now", §8.1 "Afterwards"; model `UserKeep`, finding N1): every file the record
+  names that is there as a regular file `durable_sync`ed, and every folder it names that is there synced, so "now" is
+  what a power loss keeps (a restore cut by an error may have left an exchange unsynced); then `.open` renamed `.kept`
+  and the journal folder synced. A folder that is not there (an unplugged disk, a moved folder: `ENOENT`, `ENOTDIR`) has
+  nothing to sync, and one no longer at its recorded path (a link in its place, a rename in case only) refuses Keep
+  (`path_moved`: red team r1 R1-3); a sync that answers `EROFS` has nothing pending (a read-only volume: probed on APFS,
+  S0062, `F_FULLFSYNC` answers `EROFS` there); any other error renames nothing (`ActFailed`). A record that cannot be
+  read is kept by its rename alone (ADR-0063: Keep resolves "one that cannot be read"). A replaced file that is absent
+  is kept absent (ADR-0068 D2: no refusal while a file is missing on a volume without the swap); its old version stays
+  in the backup.
 - **`delete_kept`** (owner, 2026-10-29: "Offer to delete it (Recommended)") and **`delete_created`** (owner,
   2026-10-30: "Never remove it (Recommended)": the user deletes it, here at their request): each removes one regular
   file and nothing else, only from an `.open` record that names it: a kept name this journal derives for one of its
   files (`journal.derives_kept_name`, exact up to NFD), or the path of a file the record says the save created (a
-  `FileEntry` with no pre hash), through the path guard of its folder, under that file's ledger-set lock, and only
+  `FileEntry` with no pre hash), through the path guard of its folder, and only
   when its bytes equal the SHA-256 the user was shown (`seen`): a program that wrote there after the look keeps its
   bytes (`changed`). Never a folder, a link, a FIFO, a name of ours or a file at a replaced path. The instant between
   the check of the bytes and the removal stays POSIX's (spec §15).
@@ -51,13 +47,12 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Final
 
-from ledger_engine.fs.port import DirHandle, EntryStat, FileSystem, Kind, Locks
+from ledger_engine.fs.port import DirHandle, EntryStat, FileSystem, Kind
 from ledger_engine.ledger.core import journal
 from ledger_engine.ledger.core import paths as core_paths
 from ledger_engine.ledger.core.journal import FileEntry, Record, State
 from ledger_engine.ledger.handles import Handles, PathMovedError, folder_blocked, sha256
 from ledger_engine.ledger.handles import join as _join
-from ledger_engine.ledger.restore import backup_holds_pre, is_missing, ledger_locks
 
 LOCAL: Final = "local"
 JOURNAL: Final = "journal"
@@ -246,17 +241,12 @@ class Done:
     """The action happened and is durable."""
 
 
-BACKUP_BAD = "backup_bad"  # a `missing` refusal's detail: the backup cannot give the old version (S0065 r3)
-
-
 @dataclass(frozen=True, slots=True)
 class Refused:
     """Nothing was written. `reason`: `not_open` (no `.open` record of that name), `unreadable` (a delete needs the
     record's file list), `not_in_record`, `not_kept_name`, `not_created`, `absent`, `not_a_file`, `changed` (the bytes
-    differ from those the user was shown), `path_moved`, `lock_held`, `permission` (the journal folder's rule: `path`
-    the folder, `detail` the ACL entry, as for a save), `missing` (Keep, while the replaced file `path` is missing on a
-    volume without the swap; `detail` `backup_bad` when its backup does not hold its old version, so Retry cannot put
-    it back: S0065 r3)."""
+    differ from those the user was shown), `path_moved`, `permission` (the journal folder's rule: `path` the folder,
+    `detail` the ACL entry, as for a save)."""
 
     reason: str
     path: str | None = None
@@ -301,7 +291,7 @@ def _tolerant_sync(sync: Callable[[], None]) -> None:
             raise
 
 
-def keep(fs: FileSystem, locks: Locks, journal_dir: str, name: str) -> ActOutcome:
+def keep(fs: FileSystem, journal_dir: str, name: str) -> ActOutcome:
     """ "Keep the files as they are now" (the module's docstring)."""
     handles = Handles(fs)
     try:
@@ -315,45 +305,33 @@ def keep(fs: FileSystem, locks: Locks, journal_dir: str, name: str) -> ActOutcom
             return opened
         jd, record = opened
         files = record.files if record is not None else ()
-        with ledger_locks(locks, files) as held:
-            if held is not None:
-                return Refused("lock_held", held)
-            try:
-                gone = next((f for f in files if is_missing(handles, f)), None)
-            except PathMovedError as e:
-                return Refused("path_moved", e.canonical)
-            except OSError as e:  # fails closed (verifier r3 F4): never a Keep that may leave a file missing
-                return ActFailed(None, e.errno)
-            if gone is not None and record is not None:  # owner, 2026-10-31: Keep would leave the ledger without it
-                good = backup_holds_pre(handles, record, gone)
-                return Refused("missing", gone.canonical_path, None if good else BACKUP_BAD)
-            at: str | None = None
-            try:
-                folders: dict[str, DirHandle] = {}
-                for f in files:
-                    parent, base = _parent(f.canonical_path)
-                    h = _present(handles, parent)
-                    if h is None:
-                        continue
-                    folders[parent] = h
-                    st = h.stat(base)
-                    if st is not None and st.kind is Kind.FILE:
-                        at = f.canonical_path
-                        _tolerant_sync(lambda h=h, base=base: h.sync_file(base))
-                for d in record.created_dirs if record is not None else ():
-                    h = _present(handles, d.canonical_path)
-                    if h is not None:
-                        folders[d.canonical_path] = h
-                for folder, h in sorted(folders.items(), key=lambda kv: kv[0].count("/"), reverse=True):
-                    at = folder
-                    _tolerant_sync(h.sync)
-                at = journal_dir
-                jd.rename_excl(journal.file_name(name, State.OPEN), journal.file_name(name, State.KEPT))
-                jd.sync()
-            except PathMovedError as e:  # red team r1 R1-3: what stands there now may not be synced
-                return Refused("path_moved", e.canonical)
-            except OSError as e:
-                return ActFailed(at, e.errno)
+        at: str | None = None
+        try:
+            folders: dict[str, DirHandle] = {}
+            for f in files:
+                parent, base = _parent(f.canonical_path)
+                h = _present(handles, parent)
+                if h is None:
+                    continue
+                folders[parent] = h
+                st = h.stat(base)
+                if st is not None and st.kind is Kind.FILE:
+                    at = f.canonical_path
+                    _tolerant_sync(lambda h=h, base=base: h.sync_file(base))
+            for d in record.created_dirs if record is not None else ():
+                h = _present(handles, d.canonical_path)
+                if h is not None:
+                    folders[d.canonical_path] = h
+            for folder, h in sorted(folders.items(), key=lambda kv: kv[0].count("/"), reverse=True):
+                at = folder
+                _tolerant_sync(h.sync)
+            at = journal_dir
+            jd.rename_excl(journal.file_name(name, State.OPEN), journal.file_name(name, State.KEPT))
+            jd.sync()
+        except PathMovedError as e:  # red team r1 R1-3: what stands there now may not be synced
+            return Refused("path_moved", e.canonical)
+        except OSError as e:
+            return ActFailed(at, e.errno)
         return Done()
     finally:
         handles.close()
@@ -372,9 +350,7 @@ def _entry_of(record: Record, file: str) -> FileEntry | None:
     return next((f for f in record.files if f.canonical_path == file), None)
 
 
-def delete_kept(
-    fs: FileSystem, locks: Locks, journal_dir: str, name: str, file: str, kept: str, seen: str
-) -> ActOutcome:
+def delete_kept(fs: FileSystem, journal_dir: str, name: str, file: str, kept: str, seen: str) -> ActOutcome:
     """Delete the kept copy `kept` (an entry name beside the record's file `file`) whose bytes the user saw as
     `seen` (the module's docstring)."""
 
@@ -387,10 +363,10 @@ def delete_kept(
             return Refused("not_kept_name")
         return f, kept
 
-    return _delete_one(fs, locks, journal_dir, name, seen, chosen)
+    return _delete_one(fs, journal_dir, name, seen, chosen)
 
 
-def delete_created(fs: FileSystem, locks: Locks, journal_dir: str, name: str, file: str, seen: str) -> ActOutcome:
+def delete_created(fs: FileSystem, journal_dir: str, name: str, file: str, seen: str) -> ActOutcome:
     """Delete what stands at `file`, a path the record says the save was creating, whose bytes the user saw as
     `seen` (the module's docstring)."""
 
@@ -402,12 +378,11 @@ def delete_created(fs: FileSystem, locks: Locks, journal_dir: str, name: str, fi
             return Refused("not_created")
         return f, _parent(f.canonical_path)[1]
 
-    return _delete_one(fs, locks, journal_dir, name, seen, chosen)
+    return _delete_one(fs, journal_dir, name, seen, chosen)
 
 
 def _delete_one(
     fs: FileSystem,
-    locks: Locks,
     journal_dir: str,
     name: str,
     seen: str,
@@ -432,32 +407,29 @@ def _delete_one(
         f, entry = pick
         parent, _ = _parent(f.canonical_path)
         target = _join(parent, entry)
-        with ledger_locks(locks, (f,)) as held:
-            if held is not None:
-                return Refused("lock_held", held)
-            try:
-                h = handles.at(parent)
-            except PathMovedError:
-                return Refused("path_moved", parent)
-            except (FileNotFoundError, NotADirectoryError):
+        try:
+            h = handles.at(parent)
+        except PathMovedError:
+            return Refused("path_moved", parent)
+        except (FileNotFoundError, NotADirectoryError):
+            return Refused("absent", target)
+        except OSError as e:
+            return ActFailed(parent, e.errno)
+        try:
+            st = h.stat(entry)
+            if st is None:
                 return Refused("absent", target)
-            except OSError as e:
-                return ActFailed(parent, e.errno)
-            try:
-                st = h.stat(entry)
-                if st is None:
-                    return Refused("absent", target)
-                if st.kind is not Kind.FILE:
-                    return Refused("not_a_file", target)
-                data = h.read(entry)
-                if data is None:
-                    return Refused("absent", target)
-                if sha256(data) != seen:
-                    return Refused("changed", target)
-                h.remove(entry)
-                h.sync()
-            except OSError as e:
-                return ActFailed(target, e.errno)
+            if st.kind is not Kind.FILE:
+                return Refused("not_a_file", target)
+            data = h.read(entry)
+            if data is None:
+                return Refused("absent", target)
+            if sha256(data) != seen:
+                return Refused("changed", target)
+            h.remove(entry)
+            h.sync()
+        except OSError as e:
+            return ActFailed(target, e.errno)
         return Done()
     finally:
         handles.close()

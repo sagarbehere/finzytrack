@@ -54,12 +54,11 @@ type EndCause = Literal["cancel", "retire", "quit_anyway", "close", "stop", "inp
 type Phase = Literal[
     "reading",
     "checking_change",
-    "waiting_for_files",
     "saving",
     "updating_views",
 ]
 """A job's phase (engine-jobs §5.4), as the engine reports it; the protocol's `Phase` (held equal by a test)."""
-PHASES: frozenset[str] = frozenset({"reading", "checking_change", "waiting_for_files", "saving", "updating_views"})
+PHASES: frozenset[str] = frozenset({"reading", "checking_change", "saving", "updating_views"})
 
 type DecisionScalar = str | int | bool | None
 

@@ -1,5 +1,5 @@
 """What the save (`ledger.writer`) and the restore (`ledger.restore`) share: one handle per folder with the path guard,
-the write mode per volume and its exclusive moves (S0065), and the owner's refusal rules
+the write mode per volume (the swap, or the best-effort mode: ADR-0068 D2), and the owner's refusal rules
 (`design/specs/engine-jobs.md` §6.3, §6.4, §8.1; ADR-0013 amendments of 2026-10-29 and 2026-10-30; S0060, S0061).
 Every write goes through these handles: the check of where a folder is and the write
 that follows use one descriptor.
@@ -7,7 +7,6 @@ that follows use one descriptor.
 
 from __future__ import annotations
 
-import errno
 import hashlib
 from dataclasses import dataclass, field
 from enum import StrEnum
@@ -69,74 +68,29 @@ def hard_links(st: EntryStat) -> bool:
 
 
 class Mode(StrEnum):
-    """How the save and the undo write in one folder, chosen from its volume before any effect (`write_mode`; owner,
-    2026-10-29: "Unsafe fallback on such drives", ADR-0013 amendments; S0065)."""
+    """How the save and the undo write in one folder, chosen from its volume before any effect (`write_mode`;
+    ADR-0013, ADR-0068 D2)."""
 
     SWAP = "swap"  # RENAME_SWAP and RENAME_EXCL (APFS): the atomic swap, ADR-0013 as decided
-    NO_SWAP = "no_swap"  # RENAME_EXCL only (HFS+): a plain rename after a re-hash; exclusive moves by RENAME_EXCL
-    PLAIN = "plain"  # neither (exFAT, FAT, network shares): as `NO_SWAP`; moves to our names by a check just before
+    BEST_EFFORT = "best_effort"  # without them (exFAT, FAT, HFS+, network shares): a plain rename (spec §6.8)
 
 
 def write_mode(h: DirHandle) -> Mode:
-    """The write path for the folder `h` (spec §6.1 step 8, §15): `SWAP` only where the volume offers both the swap
-    and the exclusive rename; otherwise the fallback, whose unsafe windows spec §15 states. The one place this rule
-    lives (it replaced the up-front refusal of a volume without the swap, S0060-S0064)."""
+    """The write path for the folder `h` (spec §6.1 step 8, §6.8): `SWAP` only where the volume offers both the swap
+    and the exclusive rename; otherwise the best-effort mode (owner, 2026-11-01, ADR-0068 D2). The one place this rule
+    lives."""
     c = h.caps()
-    if c.swap and c.excl:
-        return Mode.SWAP
-    return Mode.NO_SWAP if c.excl else Mode.PLAIN
+    return Mode.SWAP if c.swap and c.excl else Mode.BEST_EFFORT
 
 
-def _took_effect(h: DirHandle, src: str, dst: str, before: EntryStat | None) -> bool:
-    """A rename a network volume retried after its first attempt took effect (S0061 red team r4 F3): its source is
-    gone and its target is the object the source was. Only then is an `EEXIST` (or a plain rename's `ENOENT`) ours."""
-    if before is None or h.stat(src) is not None:
-        return False
-    now = h.stat(dst)
-    return now is not None and now.identity == before.identity
-
-
-def move_excl(h: DirHandle, mode: Mode, src: str, dst: str) -> None:
-    """Rename `src` to `dst` only while nothing stands at `dst` (`FileExistsError` otherwise, `dst` untouched):
-    `RENAME_EXCL` (`SWAP`, `NO_SWAP`). On `PLAIN` it is **not exclusive**: a check just before a plain rename, so an
-    entry another program puts at `dst` in that instant is replaced (window W2 of spec §15). Callers pass only names
-    derived from the save (a temp, a restore temp, a kept name), never a ledger file's own name: on `PLAIN` a file is
-    put at its own name by an exclusive create (`writer._create_in_place`, `restore._put_back_plainly`'s claim).
-    On the fallback modes an answer of `EEXIST` or `ENOENT` is checked by `_took_effect` first."""
-    if mode is Mode.SWAP:
+def move(h: DirHandle, mode: Mode, src: str, dst: str) -> None:
+    """Rename `src` to `dst`: `RENAME_EXCL` (`FileExistsError` when an entry stands at `dst`, `dst` untouched) on
+    `SWAP`, and on `BEST_EFFORT` where the volume has it (HFS+); else a plain rename, which replaces an entry another
+    program put at `dst` in that instant (ADR-0068 D2's accepted loss, spec §6.8)."""
+    if mode is Mode.SWAP or h.caps().excl:
         h.rename_excl(src, dst)
-        return
-    before = h.stat(src)
-    if mode is Mode.PLAIN and h.stat(dst) is not None:
-        raise FileExistsError(errno.EEXIST, "an entry stands at the target")
-    try:
-        if mode is Mode.NO_SWAP:
-            h.rename_excl(src, dst)
-        else:
-            h.rename(src, dst)
-    except (FileExistsError, FileNotFoundError):
-        if not _took_effect(h, src, dst, before):
-            raise
-
-
-def replace(h: DirHandle, src: str, dst: str) -> None:
-    """The fallback's replace (`NO_SWAP`, `PLAIN`): a plain rename of our temp `src` onto the file `dst`, which the
-    caller hashed again just before (window W1 of spec §15: an outside save in between is overwritten). An `ENOENT`
-    is checked by `_took_effect` (a retried rename on a network volume)."""
-    before = h.stat(src)
-    try:
+    else:
         h.rename(src, dst)
-    except FileNotFoundError:
-        if not _took_effect(h, src, dst, before):
-            raise
-
-
-def made_by_retry(h: DirHandle, sub: DirHandle | None) -> bool:
-    """A `mkdir` that answered `EEXIST` on a fallback volume made the folder itself when what stands there is an
-    empty folder (a network volume retried it after the first attempt took effect; S0061 red team r4 F3). `sub`: a
-    handle on what stands there, None when it is not a folder. An empty folder another program made in that instant
-    is taken for ours (spec §15: no bytes are lost; the undo may remove it while it is empty)."""
-    return sub is not None and not sub.names()
 
 
 FOLDER_SELF: Final = frozenset({"delete", "writeattr", "writeextattr", "writesecurity", "chown"})
@@ -234,11 +188,11 @@ def keep(h: DirHandle, name: str, base: str, job: str, mode: Mode) -> str | None
     """Move the entry `name` (an outside save we met) at once to the first free kept name of the file `base`
     (`journal.kept_name`, exclusive), then sync the folder: nothing of ours ever deletes it, and the journal stops
     while it exists. None when every kept name is taken: the entry stays where it is, and the journal stops anyway
-    (those kept names exist). `mode`: the folder's write mode (`move_excl`). Owner, 2026-10-29: "Yes" (ADR-0013
+    (those kept names exist). `mode`: the folder's write mode (`move`). Owner, 2026-10-29: "Yes" (ADR-0013
     amendment)."""
     for n in range(1, MAX_KEPT + 1):
         try:
-            move_excl(h, mode, name, kept_name(base, job, n))
+            move(h, mode, name, kept_name(base, job, n))
         except FileExistsError:
             continue
         h.sync()

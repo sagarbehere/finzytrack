@@ -1,15 +1,12 @@
 """The save job inside the engine (`ledger_engine.ledger.save`; `design/specs/engine-jobs.md` §6.1 steps 1-7 and
-9-11, §6.5, §11; ADR-0008 step 4, ADR-0012 Q29, ADR-0013, ADR-0062 decision 2; S0063), on real APFS in scratch folders
+9-11, §6.5, §11; ADR-0008 step 4, ADR-0013, ADR-0068; S0063, S0071), on real APFS in scratch folders
 (the load and the fingerprint read the disk with the loader's own calls, so the fake file system cannot stand in for
 them; the durable order's crash sweeps are `test_writer.py`'s and `test_restore.py`'s). Written from the spec's lines:
 
 - step 1 "An `.open` journal of this workspace (re-read from disk, matched as §6.5 says) refuses the save with
   `WRITES_PAUSED {unfinished_save}` ... No other record gates a save" (ADR-0067); step 4 "this workspace has no `.open`
   journal (matched as §6.5 says)": by registry key or lineage id, in any `local/*/journal/`;
-- step 2 "every `data/.write.lock` ... deduplicated by `path_key`, tried once each without waiting, before any
-  ledger-set lock. Free: held until the save ends. Absent: go on. Held, or any other outcome: refused with
-  `LEGACY_APP_SAVING`, nothing written";
-- step 3 "taken in `path_key` order, waiting (the user sees "Waiting for your ledger files…")";
+- steps 2 and 3 are removed (ADR-0068 D3, D4; S0071): the save takes no per-file lock and tries no legacy lock;
 - step 4 "the disk's fingerprint equals the plan's; the published mirror's equals the plan's";
 - steps 5 and 6 are removed (ADR-0068 D1, S0070): "The save does no Beancount load"; the plan's fingerprint is what
   the preview's load read (BL-0106), so the save runs no plugin and refuses no candidate a load would refuse; it still
@@ -21,19 +18,15 @@ from __future__ import annotations
 
 import gc
 import os
-import subprocess
 import sys
-import threading
-from collections.abc import Callable, Generator
-from contextlib import contextmanager
-from dataclasses import dataclass, field, replace
+from collections.abc import Callable
+from dataclasses import dataclass, field, fields, replace
 from pathlib import Path
 from typing import Any
 
 import pytest
 
-from ledger_engine.fs.darwin import DarwinLegacyLocks, DarwinLocks, for_this_os
-from ledger_engine.fs.port import LegacyAbsent, LegacyHeld, LegacyLocks, Lock, Locks
+from ledger_engine.fs.darwin import for_this_os
 from ledger_engine.ledger import overlay, writer
 from ledger_engine.ledger import save as sv
 from ledger_engine.ledger.core import journal
@@ -86,35 +79,6 @@ class FakeJob:
 
 
 @dataclass
-class SpyLocks:
-    inner: Locks
-    tried: list[str] = field(default_factory=list[str])
-    waited: list[str] = field(default_factory=list[str])
-
-    def try_lock(self, key: str) -> Lock | None:
-        self.tried.append(key)
-        return self.inner.try_lock(key)
-
-    def lock(self, key: str) -> Lock:
-        self.waited.append(key)
-        return self.inner.lock(key)
-
-
-@dataclass
-class SpyLegacy:
-    inner: LegacyLocks
-    tried: list[str] = field(default_factory=list[str])
-    locks: SpyLocks | None = None
-    ledger_locks_before: list[int] = field(default_factory=list[int])
-
-    def try_lock(self, path: str) -> Lock | LegacyAbsent | LegacyHeld:
-        self.tried.append(path)
-        if self.locks is not None:
-            self.ledger_locks_before.append(len(self.locks.tried))
-        return self.inner.try_lock(path)
-
-
-@dataclass
 class Ledger:
     tmp: Path
     root: Path
@@ -123,15 +87,14 @@ class Ledger:
     ald: Path
 
     def tree(self) -> dict[str, bytes | None]:
-        """Every entry under the scratch folder, but the lock files (they are never deleted, §6.1 step 3)."""
+        """Every entry under the scratch folder."""
         out: dict[str, bytes | None] = {}
         for folder, dirs, files in os.walk(self.tmp):
             for d in dirs:
                 out[os.path.join(folder, d)] = None
             for f in files:
                 p = os.path.join(folder, f)
-                if os.path.dirname(p) != str(self.ald / "locks"):
-                    out[p] = Path(p).read_bytes() if Path(p).is_file() and not Path(p).is_symlink() else None
+                out[p] = Path(p).read_bytes() if Path(p).is_file() and not Path(p).is_symlink() else None
         return out
 
     def journal(self) -> Path:
@@ -174,7 +137,6 @@ def plan_for(led: Ledger, changes: tuple[Change, ...] | None = None, /, **kw: An
         changes=changes,
         fingerprint=fp,
         mirror=digest(fp),
-        legacy_locks=(),
         app_local_data=str(led.ald),
     )
     return replace(plan, **kw)
@@ -184,10 +146,8 @@ def ports_for(
     led: Ledger,
     *,
     observe: sv.Observe | None = None,
-    locks: Locks | None = None,
-    legacy: LegacyLocks | None = None,
 ) -> sv.Ports:
-    ports = sv.Ports(for_this_os(), locks or DarwinLocks(str(led.ald / "locks")), legacy or DarwinLegacyLocks())
+    ports = sv.Ports(for_this_os())
     return ports if observe is None else replace(ports, observe=observe)
 
 
@@ -210,15 +170,6 @@ def assert_nothing_written(led: Ledger, before: dict[str, bytes | None], out: ob
     assert not (led.ald / "local").exists()  # no journal, no backup folder
 
 
-def assert_locks_free(led: Ledger, plan: sv.SavePlan) -> None:
-    locks = DarwinLocks(str(led.ald / "locks"))
-    fs = for_this_os()
-    for p in {*(p for p, _ in plan.fingerprint.files), *(c.path for c in plan.changes)}:
-        lock = locks.try_lock(sv._key(fs, p))  # pyright: ignore[reportPrivateUsage]
-        assert lock is not None, p
-        lock.release()
-
-
 # -- the save lands -----------------------------------------------------------------------------------------------
 
 
@@ -237,7 +188,16 @@ def test_a_save_lands_after_its_gate_with_no_load_and_its_record_carries_no_pred
     raw = (led.journal() / "s1-j7.closed").read_text()
     assert "post_fingerprint" not in raw  # ADR-0068 D1: no prediction (journal format 4)
     assert "adopted_digest" not in raw
-    assert_locks_free(led, plan)
+
+
+def test_a_save_takes_no_lock_of_its_own(led: Ledger) -> None:
+    """ADR-0068 D3, D4: no per-file lock file is made (the engine lock is the guard) and the plan names no legacy
+    lock to try (only Copy tries one, INV-26)."""
+    assert "legacy_locks" not in {f.name for f in fields(sv.SavePlan)}
+    assert {f.name for f in fields(sv.Ports)} == {"fs", "observe"}
+    out = sv.run(plan_for(led), ports_for(led), FakeJob())
+    assert isinstance(out, sv.Saved), out
+    assert os.listdir(led.ald / "locks") == []
 
 
 PLUGIN = """__plugins__ = ["mark"]
@@ -393,16 +353,12 @@ def _record(led: Ledger, key: str, name: str, state: State, *, lineage: str = LI
     return path
 
 
-def test_an_open_journal_of_this_workspace_refuses_before_any_lock(led: Ledger) -> None:
+def test_an_open_journal_of_this_workspace_refuses_and_writes_nothing(led: Ledger) -> None:
     """@regression-guard (S0068: the `.open` refusal stays, ADR-0012; spec §6.1 step 1)."""
     path = _record(led, KEY, "s0-j1", State.OPEN)
-    locks = SpyLocks(DarwinLocks(str(led.ald / "locks")))
-    legacy = SpyLegacy(DarwinLegacyLocks())
-    plan = plan_for(led, legacy_locks=(str(led.tmp / "legacy" / ".write.lock"),))
     before = led.tree()
-    out = sv.run(plan, ports_for(led, locks=locks, legacy=legacy), FakeJob())
+    out = sv.run(plan_for(led), ports_for(led), FakeJob())
     assert out == sv.Refused("unfinished_save", unchanged=True, path=str(path))
-    assert (locks.tried, legacy.tried) == ([], [])  # step 1 comes first
     assert led.tree() == before
 
 
@@ -483,199 +439,25 @@ def test_a_journal_folder_that_cannot_be_listed_refuses(led: Ledger) -> None:
     assert out.reason == "unfinished_save"
 
 
-def test_a_record_written_while_the_save_waits_for_its_locks_refuses_at_the_gate(led: Ledger) -> None:
-    """Step 4 reads the `.open` journals again under the locks: the step-1 read is not trusted across the wait."""
-    plan = plan_for(led)
-    holder = DarwinLocks(str(led.ald / "locks")).lock(sv._key(for_this_os(), str(led.inc)))  # pyright: ignore[reportPrivateUsage]
-
-    def waiting(phase: str) -> None:
-        if phase == "waiting_for_files":
-            _record(led, KEY, "s0-j9", State.OPEN)
-            holder.release()
-
-    job = FakeJob(on_progress=waiting)
-    out = sv.run(plan, ports_for(led), job)
+def test_a_record_written_after_step_1_refuses_at_the_gate(led: Ledger) -> None:
+    """@regression-guard (spec §6.1 step 4): the gate reads the `.open` journals again; the step-1 read is not
+    trusted."""
+    out = sv.run(
+        plan_for(led), ports_for(led, observe=hooked(before=lambda: _record(led, KEY, "s0-j9", State.OPEN))), FakeJob()
+    )
     assert isinstance(out, sv.Refused)
     assert out.reason == "unfinished_save"
-    assert job.events == ["waiting_for_files"]
-
-
-# -- the locks (steps 2, 3) ---------------------------------------------------------------------------------------
-
-
-def test_the_ledger_set_locks_are_taken_in_path_key_order_and_released(led: Ledger) -> None:
-    locks = SpyLocks(DarwinLocks(str(led.ald / "locks")))
-    plan = plan_for(led)
-    out = sv.run(plan, ports_for(led, locks=locks), FakeJob())
-    assert isinstance(out, sv.Saved)
-    fs = for_this_os()
-    want = sorted({sv._key(fs, p) for p, _ in plan.fingerprint.files})  # pyright: ignore[reportPrivateUsage]
-    assert locks.tried == want
-    assert len(want) == 2
-    assert_locks_free(led, plan)
-
-
-def test_a_held_ledger_set_lock_is_waited_for_with_its_phase_shown(led: Ledger) -> None:
-    key = sv._key(for_this_os(), str(led.main))  # pyright: ignore[reportPrivateUsage]
-    holder = DarwinLocks(str(led.ald / "locks")).lock(key)
-    released = threading.Event()
-
-    def release_later() -> None:
-        released.wait()
-        holder.release()
-
-    t = threading.Thread(target=release_later)
-    t.start()
-    locks = SpyLocks(DarwinLocks(str(led.ald / "locks")))
-    held_at_the_gate: list[bool] = []
-
-    def probe() -> None:
-        other = DarwinLocks(str(led.ald / "locks")).try_lock(key)
-        held_at_the_gate.append(other is None)
-        if other is not None:
-            other.release()
-
-    job = FakeJob(on_progress=lambda phase: released.set() if phase == "waiting_for_files" else None)
-    out = sv.run(plan_for(led), ports_for(led, locks=locks, observe=hooked(before=probe)), job)
-    t.join()
-    assert isinstance(out, sv.Saved), out
-    assert job.events[0] == "waiting_for_files"
-    assert locks.waited == [key]  # it waited for that lock, and only that one
-    assert held_at_the_gate == [True]  # and held it at the gate
-
-
-def _legacy_root(led: Ledger) -> Path:
-    data = led.tmp / "legacy" / "data"
-    data.mkdir(parents=True)
-    lock = data / ".write.lock"
-    lock.write_bytes(b"")
-    return lock
-
-
-HOLDER = """
-import sys, portalocker
-fh = open(sys.argv[1], "a")
-portalocker.lock(fh, portalocker.LOCK_EX)
-print("held", flush=True)
-sys.stdin.readline()
-"""
-TRY = """
-import sys, portalocker
-fh = open(sys.argv[1], "rb")
-try:
-    portalocker.lock(fh, getattr(portalocker, sys.argv[2]) | portalocker.LOCK_NB)
-except portalocker.AlreadyLocked:
-    print("held")
-else:
-    print("free")
-"""
-
-
-@contextmanager
-def legacy_app_saving(lock: Path) -> Generator[None]:
-    """The legacy app saving: another process holds its write lock as v0.2.2/v0.3.0 do (portalocker 3.2.0,
-    `portalocker.lock(fp, LOCK_EX)` in its `write_lock.py`; ADR-0062)."""
-    proc = subprocess.Popen(  # noqa: S603 (our own interpreter and script)
-        [sys.executable, "-c", HOLDER, str(lock)], stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True
-    )
-    try:
-        assert proc.stdout is not None
-        assert proc.stdout.readline().strip() == "held"
-        yield
-    finally:
-        assert proc.stdin is not None
-        proc.stdin.write("\n")
-        proc.stdin.close()
-        proc.wait()
-
-
-def legacy_state(lock: Path, kind: str = "LOCK_EX") -> str:
-    """Whether another process could take the legacy lock now, with portalocker 3.2.0 (exclusive, or shared)."""
-    return subprocess.run(  # noqa: S603 (our own interpreter and script)
-        [sys.executable, "-c", TRY, str(lock), kind], capture_output=True, text=True, check=True
-    ).stdout.strip()
-
-
-def test_a_held_legacy_lock_refuses_before_any_ledger_set_lock_and_writes_nothing(led: Ledger) -> None:
-    lock = _legacy_root(led)
-    locks = SpyLocks(DarwinLocks(str(led.ald / "locks")))
-    plan = plan_for(led, legacy_locks=(str(lock),))
-    before = led.tree()
-    with legacy_app_saving(lock):
-        out = sv.run(plan, ports_for(led, locks=locks), FakeJob())
-    assert out == sv.Refused("legacy_app_saving", unchanged=True, path=str(lock))
-    assert locks.tried == []
-    assert_nothing_written(led, before, out)
-    assert lock.read_bytes() == b""
-
-
-def test_a_free_legacy_lock_is_held_until_the_save_ends_and_never_written(led: Ledger) -> None:
-    lock = _legacy_root(led)
-    seen: list[str] = []
-    job = FakeJob(on_gate=lambda: seen.extend((legacy_state(lock), legacy_state(lock, "LOCK_SH"))))
-    out = sv.run(plan_for(led, legacy_locks=(str(lock),)), ports_for(led), job)
-    assert isinstance(out, sv.Saved), out
-    assert seen == ["held", "held"]  # held exclusively: the old app could not start a save half-way through ours
-    assert legacy_state(lock) == "free"
-    assert lock.read_bytes() == b""
-
-
-def test_an_absent_legacy_lock_lets_the_save_go_on_and_is_never_created(led: Ledger) -> None:
-    lock = led.tmp / "legacy" / "data" / ".write.lock"
-    lock.parent.mkdir(parents=True)
-    out = sv.run(plan_for(led, legacy_locks=(str(lock),)), ports_for(led), FakeJob())
-    assert isinstance(out, sv.Saved), out
-    assert os.listdir(lock.parent) == []
-
-
-@pytest.mark.parametrize("kind", ["folder", "fifo", "link", "unreadable"])
-def test_a_legacy_lock_that_cannot_be_tried_refuses(led: Ledger, kind: str) -> None:
-    lock = led.tmp / "legacy" / "data" / ".write.lock"
-    lock.parent.mkdir(parents=True)
-    match kind:
-        case "folder":
-            lock.mkdir()
-        case "fifo":
-            os.mkfifo(lock)
-        case "link":
-            (lock.parent / "real").write_bytes(b"")
-            lock.symlink_to(lock.parent / "real")
-        case _:
-            lock.write_bytes(b"")
-            lock.chmod(0o000)
-    before = led.tree() if kind != "unreadable" else None
-    try:
-        out = sv.run(plan_for(led, legacy_locks=(str(lock),)), ports_for(led), FakeJob())
-    finally:
-        if kind == "unreadable":
-            lock.chmod(0o600)
-    assert out == sv.Refused("legacy_app_saving", unchanged=True, path=str(lock))
-    if before is not None:
-        assert led.tree() == before
-
-
-def test_one_legacy_lock_named_twice_is_tried_once(led: Ledger) -> None:
-    """Deduplicated by `path_key`: the scratch volume is case-insensitive APFS, so two spellings are one file."""
-    lock = _legacy_root(led)
-    other = str(lock.parent.parent / "DATA" / ".write.lock")
-    legacy = SpyLegacy(DarwinLegacyLocks())
-    out = sv.run(plan_for(led, legacy_locks=(str(lock), other)), ports_for(led, legacy=legacy), FakeJob())
-    assert isinstance(out, sv.Saved), out
-    assert len(legacy.tried) == 1
 
 
 # -- Cancel, the writer's refusals, a bad plan ----------------------------------------------------------------------
 
 
-def test_a_cancel_at_the_gate_writes_nothing_and_releases_every_lock(led: Ledger) -> None:
-    lock = _legacy_root(led)
-    plan = plan_for(led, legacy_locks=(str(lock),))
+def test_a_cancel_at_the_gate_writes_nothing(led: Ledger) -> None:
+    plan = plan_for(led)
     before = led.tree()
     with pytest.raises(Cancelled):
         sv.run(plan, ports_for(led), FakeJob(cancel=True))
     assert_nothing_written(led, before, None)
-    assert_locks_free(led, plan)
-    assert legacy_state(lock) == "free"
 
 
 def test_a_writer_refusal_comes_back_as_it_is_with_its_file(led: Ledger) -> None:
@@ -761,29 +543,3 @@ def test_another_saves_name_does_not_take_this_one(led: Ledger) -> None:
     (led.ald / "local" / KEY / "backups" / "s1-j70").mkdir(parents=True)
     out = sv.run(plan_for(led), ports_for(led), FakeJob())
     assert isinstance(out, sv.Saved), out
-
-
-@dataclass
-class FailingLocks:
-    inner: Locks
-    fails_on: str  # the ledger file whose lock cannot be taken
-
-    def try_lock(self, key: str) -> Lock | None:
-        if key == sv._key(for_this_os(), self.fails_on):  # pyright: ignore[reportPrivateUsage]
-            raise PermissionError(13, "Permission denied")
-        return self.inner.try_lock(key)
-
-    def lock(self, key: str) -> Lock:
-        return self.inner.lock(key)
-
-
-def test_a_ledger_set_lock_that_cannot_be_taken_is_not_saved_and_names_its_file(led: Ledger) -> None:
-    """Red team r1 L2: an I/O error taking a lock is "not saved", with the re-hash, as a name that cannot be resolved
-    is (spec §11's rule), never an internal error."""
-    before = led.tree()
-    plan = plan_for(led)
-    out = sv.run(plan, ports_for(led, locks=FailingLocks(DarwinLocks(str(led.ald / "locks")), str(led.inc))), FakeJob())
-    assert isinstance(out, NotSaved), out
-    assert (out.reason, out.path, out.unchanged, out.open_journal) == (Reason.IO_ERROR, str(led.inc), True, False)
-    assert_nothing_written(led, before, out)
-    assert_locks_free(led, plan)

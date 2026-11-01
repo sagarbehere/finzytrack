@@ -50,7 +50,6 @@ REQUEST = SaveRequest(
     changes=(ChangeText("/L/main.bean", "0" * 64, "x"),),
     fingerprint="{}",
     mirror=None,
-    legacy_locks=(),
     app_local_data=Path("/app"),
 )
 
@@ -90,9 +89,6 @@ class Scenarios:
 
     def writes_paused(self) -> object:
         return self._save({"outcome": "refused", "reason": "unfinished_save", "unchanged": True})
-
-    def legacy_app_saving(self) -> object:
-        return self._save({"outcome": "refused", "reason": "legacy_app_saving", "unchanged": True})
 
     def not_saved(self) -> object:
         return self._save({"outcome": "not_saved", "reason": "hard_linked", "path": "/L/main.bean", "unchanged": True})
@@ -291,18 +287,6 @@ def test_a_save_refused_for_an_unfinished_save_is_writes_paused_with_its_reason(
         "Reopen the workspace so Finzytrack can check your files. It undoes the unfinished change, "
         "or asks you about a file it was creating."
     )
-    conforms(app, payload)
-
-
-@pytest.mark.error_code("LEGACY_APP_SAVING")
-def test_a_save_refused_for_the_old_app_is_legacy_app_saving_and_retryable(scenarios: Scenarios) -> None:
-    """§11 "legacy app saving" (ADR-0062): "The old Finzytrack app is saving. Quit the old Finzytrack first, then try
-    again." with Try again."""
-    status, payload, app = answer(scenarios, "legacy_app_saving")
-    assert status == 409
-    error = payload["error"]
-    assert (error["code"], error["retryable"], error["data_safe"]) == ("LEGACY_APP_SAVING", True, True)
-    assert error["message"] == "The old Finzytrack app is saving."
     conforms(app, payload)
 
 

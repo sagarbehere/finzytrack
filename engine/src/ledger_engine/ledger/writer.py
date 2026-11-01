@@ -9,7 +9,7 @@ S0060): what a save does after its commit point (§6.1 step 7), through the file
    (`access(2)`: write and search, `_RMFILE_OK`), and with no ACL deny entry, whoever it names, other than one
    that new entries do not inherit and that protects only the folder itself (`handles.acl_denial`; owner,
    2026-10-30: "Allowlist (Recommended)", "Any subject (Recommended)"), and its **write mode** chosen from its
-   volume (`handles.write_mode`: the swap, or the fallback on a volume without it; S0065). The plan as a whole: one
+   volume (`handles.write_mode`: the swap, or the best-effort mode without it; ADR-0068 D2). The plan as a whole: one
    entry per `path_key`, no target inside another target's path, no target at or under another's temp, staging,
    restore-temp or restore-staging name (`journal.scratch_names`) or kept name and no entry standing at one, the
    folders the save makes once each and never two that differ only in case, no target in the journal or backup
@@ -32,15 +32,12 @@ S0060): what a save does after its commit point (§6.1 step 7), through the file
    or the displaced old object); a **swap** with the file, and what it displaced checked (§6.4: the pre or the post
    bytes are ours; anything else is an outside save, moved at once to its kept name, and the save stops); for a file
    the save creates, an **exclusive rename** of the temp to the path that fails if a file appeared; the folder synced.
-   Each folder the save creates is made once, before the first file in it. **On a volume without the swap** (owner,
-   2026-10-29: "Unsafe fallback on such drives"; S0065) the same up to the temp name (its exclusive move by
-   `RENAME_EXCL`, or on a `plain` volume a check just before a plain rename), then the file **hashed again** (the same
-   object, at its pre bytes, else `changed` and that file is not replaced) and replaced by a **plain rename** of the
-   temp, the folder synced; nothing is displaced to check, since the old file is unlinked (window W1 of spec §15). A
-   created file there: the exclusive rename of its temp (`no_swap`), or on a `plain` volume an exclusive create
-   (`O_EXCL`) of the file itself (W4; one that answers an error removes the part it made: `_remove_own_part`). A
-   `mkdir` or a rename answered `EEXIST` (a plain rename `ENOENT`) there is ours when it took effect (a network
-   volume's retry: `handles.move_excl`, `made_by_retry`).
+   Each folder the save creates is made once, before the first file in it. **On a volume without the swap**, the
+   best-effort mode (owner, 2026-11-01, ADR-0068 D2; spec §6.8): the new bytes written and synced at the staging
+   name, then a **plain rename** of it onto the file (a created file: `RENAME_EXCL` where the volume has it, else a
+   plain rename too; `handles.move`), the folder synced. No temp name, no swap, no displaced check and no re-hash
+   before the rename: another program's save to the same file in that instant is overwritten (the backup holds the
+   bytes before our save), the accepted loss of D2.
 4. **Read-back:** every written file equals its post bytes; then each temp, checked to still hold the pre (or post)
    bytes (an outside program may write through a descriptor it held: those bytes go to the kept name, and the save
    stops, §6.4), removed, and the folders synced.
@@ -85,13 +82,11 @@ from ledger_engine.ledger.handles import (
     folder_blocked,
     hard_links,
     keep,
-    made_by_retry,
-    move_excl,
+    move,
     sha256,
     write_mode,
 )
 from ledger_engine.ledger.handles import join as _join
-from ledger_engine.ledger.handles import replace as replace_file
 from ledger_engine.tla import tla_action
 
 _SHA256: Final = re.compile(r"[0-9a-f]{64}")
@@ -324,7 +319,7 @@ def _target(fs: FileSystem, handles: Handles, index: int, c: Commit, ch: Change)
 
 def _check_folder(h: DirHandle, canonical: str, folder: str) -> Mode:
     """The folder `folder` the save writes in (or makes a folder in), for the file `canonical`; its write mode
-    (`handles.write_mode`: the swap, or the fallback on a volume without it; S0065). The save may add entries there
+    (`handles.write_mode`: the swap, or the best-effort mode without it; ADR-0068 D2). The save may add entries there
     and remove them (`deny delete_child` answers yes to write and search: S0061
     red team r6 F1, probed); and no ACL deny entry, whoever it names, blocks it (`handles.acl_denial`: owner,
     2026-10-30, "Allowlist (Recommended)", "Any subject (Recommended)"; what new entries inherit, a folder the save
@@ -526,77 +521,33 @@ def _stage(h: DirHandle, t: _Target, mode: int, like: str | None) -> None:
     save stops (`changed`), and the rollback's temp rule keeps it."""
     h.create(t.staging, t.change.post, mode, like=like)
     try:
-        move_excl(h, t.mode, t.staging, t.temp)  # RENAME_EXCL, or on a `plain` volume a check just before (W2)
+        h.rename_excl(t.staging, t.temp)
     except FileExistsError:
         raise _Stop(Reason.CHANGED, t.canonical) from None
     h.sync()
 
 
-def _retried_mkdir(handles: Handles, h: DirHandle, name: str, canonical: str) -> bool:
-    """On a fallback volume, a `mkdir` that answered `EEXIST` made the folder itself if an empty folder stands there
-    (`handles.made_by_retry`: a network volume's retry, S0061 red team r4 F3)."""
-    st = h.stat(name)
-    return made_by_retry(h, handles.at(canonical) if st is not None and st.kind is Kind.DIR else None)
-
-
-def _create_in_place(h: DirHandle, t: _Target, progress: _Progress) -> None:
-    """A created file on a `plain` volume (no exclusive rename): an exclusive create (`O_EXCL`) of the file itself,
-    so another program's file there is never replaced. A create that answers an error (a full drive, an I/O error)
-    removes the part it made (`_remove_own_part`), so the save is "not saved" as on APFS (S0065 verifier r1 F2); a
-    crash while it is written leaves part of it at its path, which the undo never removes and asks about (window W4
-    of spec §15; owner, 2026-10-30: "Never remove it")."""
+def _best_effort(h: DirHandle, t: _Target, mode: int, like: str | None, progress: _Progress) -> None:
+    """A file on a volume without the swap (ADR-0068 D2, spec §6.8): its new bytes written and synced at the staging
+    name, then moved onto its name (`handles.move`: a plain rename; for a created file `RENAME_EXCL` where the volume
+    has it, an entry there then a stop, `changed`, never touched), the folder synced."""
+    h.create(t.staging, t.change.post, mode, like=like)
     before = progress.replaced
-    progress.replaced = True  # a create that answers an error may still have made the entry...
+    progress.replaced = True  # a rename that answers an error may still have happened...
     try:
-        h.create(t.base, t.change.post, CREATED_MODE)
+        if t.change.pre is None:
+            move(h, t.mode, t.staging, t.base)  # RENAME_EXCL where the volume has it
+        else:
+            h.rename(t.staging, t.base)  # a plain rename over the file
     except FileExistsError:
-        progress.replaced = before  # ...except this one: a file stood there, nothing of ours was made
+        progress.replaced = before  # ...except this one: a file stood at a created path, nothing was replaced
         raise _Stop(Reason.CHANGED, t.canonical) from None
-    except OSError:
-        if _remove_own_part(h, t):
-            progress.replaced = before  # ...or nothing of ours is left there
-        raise
-    h.sync()
-
-
-def _remove_own_part(h: DirHandle, t: _Target) -> bool:
-    """After the exclusive create of `t` answered an error: True when nothing of ours stands at its path, having
-    removed what does when it is still ours alone (a regular file with one link whose bytes are a prefix of ours,
-    empty included). Anything else stays (False), as on any error here: the undo asks about it. The instant between
-    this check and the removal is window W4 of spec §15 (another program's file put at that path then is removed);
-    the folder sync that makes the removal durable is the rollback's (it syncs every folder of the record)."""
-    try:
-        st = h.stat(t.base)
-        if st is None:
-            return True  # the create made no entry
-        if st.kind is not Kind.FILE or hard_links(st):
-            return False
-        data = h.read(t.base)
-        if data is None or not t.change.post.startswith(data):
-            return False
-        h.remove(t.base)
-    except OSError:
-        return False
-    return True
-
-
-def _replace_plainly(h: DirHandle, t: _Target, progress: _Progress) -> None:
-    """A replaced file on a volume without the swap (owner, 2026-10-29: "Unsafe fallback on such drives"): the file,
-    hashed again just before, is replaced by a plain rename of our temp (window W1 of spec §15: an outside save in
-    between is overwritten, as is a write into the old file through a descriptor opened before). Not at its pre
-    bytes, or another object: that file is not replaced and the save stops (`changed`)."""
-    _check_replaced(h.stat(t.base), t.identity, t.canonical)
-    data = h.read(t.base)
-    if data is None or sha256(data) != t.change.pre:
-        raise _Stop(Reason.CHANGED, t.canonical)
-    progress.replaced = True
-    replace_file(h, t.temp, t.base)
     h.sync()
 
 
 @tla_action("S_Swap", "S_DirSync")
 def _replace(handles: Handles, t: _Target, progress: _Progress) -> None:
-    """Step 8.3 for one file: the swap, or on a volume without it the fallback (`t.mode`, S0065)."""
+    """Step 8.3 for one file: the swap, or on a volume without it the best-effort mode (`t.mode`, ADR-0068 D2)."""
     handles.on = t.canonical
     for canonical, key in t.new_dirs:
         if key in progress.made:
@@ -607,20 +558,23 @@ def _replace(handles: Handles, t: _Target, progress: _Progress) -> None:
         try:
             h.mkdir(name)
         except FileExistsError:
-            if t.mode is Mode.SWAP or not _retried_mkdir(handles, h, name, canonical):
-                progress.made.discard(key)  # ...except this one: another program's folder stood there, never removed
-                raise _Stop(Reason.CHANGED, canonical) from None
+            progress.made.discard(key)  # ...except this one: another program's folder stood there, never removed
+            raise _Stop(Reason.CHANGED, canonical) from None
         h.sync()
     h = handles.at(t.parent)
-    if t.change.pre is None:
-        if t.mode is Mode.PLAIN:
-            _create_in_place(h, t, progress)
+    if t.mode is Mode.BEST_EFFORT:
+        if t.change.pre is None:
+            _best_effort(h, t, CREATED_MODE, None, progress)
             return
+        st = _check_replaced(h.stat(t.base), t.identity, t.canonical)
+        _best_effort(h, t, st.mode, t.base, progress)
+        return
+    if t.change.pre is None:
         _stage(h, t, CREATED_MODE, None)
         before = progress.replaced
         progress.replaced = True  # an exclusive rename that answers an error may still have happened...
         try:
-            move_excl(h, t.mode, t.temp, t.base)
+            h.rename_excl(t.temp, t.base)
         except FileExistsError:
             progress.replaced = before  # ...except this one: a file stood there, nothing was replaced (the
             # rollback never touches it: anything at a created path is left alone, owner, 2026-10-30)
@@ -631,9 +585,6 @@ def _replace(handles: Handles, t: _Target, progress: _Progress) -> None:
     _stage(h, t, st.mode, t.base)
     if h.stat(t.temp) is None:
         raise _Stop(Reason.CHANGED, t.canonical)  # our temp vanished before the swap
-    if t.mode is not Mode.SWAP:
-        _replace_plainly(h, t, progress)
-        return
     progress.replaced = True
     h.swap(t.temp, t.base)
     _check_displaced(h, t.temp, t)

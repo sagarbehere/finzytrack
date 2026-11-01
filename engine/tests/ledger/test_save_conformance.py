@@ -9,12 +9,12 @@ includes `/w/L/prices.bean` (created by the first save, replaced by a later one)
 (`ctl.plan`), in the model's order (`WOrd`: children first, the root last).
 
 The code runs one save in one call; the replay sees it at its **hooks**: each effect on the file system
-(`MemFS.on_effect`, classified to the model step it belongs to, `Driver.classify`), the ledger-set lock (step 3),
-the observations and the load (steps 4-6), `job.gate()` (step 7) and `job.committed()` (step 9). At each hook the
-replay walks the model's save up to the step the code is at: the model's outside edits made there are written to
-the fake (as an editor would, durably), an engine death is raised there (`Crash`), an I/O error is raised there
-(`OSError`, before the effect), and the fake is compared with the model's state just before the model's step
-(`view`): the three files, this save's journal record, its temps (the save's and the restore's) and its backup. A
+(`MemFS.on_effect`, classified to the model step it belongs to, `Driver.classify`), the observation (step 4),
+`job.gate()` (step 7) and `job.committed()` (step 9). At each hook the replay walks the model's save up to the step the
+code is at: the model's outside edits made there are written to the fake (as an editor would, durably), an engine death
+is raised there (`Crash`), an I/O error is raised there (`OSError`, before the effect), and the fake is compared with
+the model's state just before the model's step (`view`): the three files, this save's journal record, its temps (the
+save's and the restore's) and its backup. A
 model step the code carries out without an effect (the displaced check, the read-back)
 is passed only when it changed nothing the view shows; the save's syncs (`SYNC_STEPS`) are never passed:
 each must be one of the code's effects. A step counts as walked only when the code carried it out at one of its hooks
@@ -52,15 +52,14 @@ from collections.abc import Iterator, Mapping
 from dataclasses import dataclass, field, replace
 from functools import cache
 from pathlib import Path
-from typing import Any, Final, override
+from typing import Any, Final
 
 import pytest
 
-from ledger_engine.fs.port import LegacyAbsent
 from ledger_engine.ledger import save as sv
 from ledger_engine.ledger.core.ledger_set import Absent, Content, FileState, Fingerprint, digest
 from ledger_engine.ledger.writer import Change, NotSaved, Step, Unfinished, sha256
-from tests.fakes.memfs import Crash, MemFS, MemLock, MemLocks
+from tests.fakes.memfs import Crash, MemFS
 
 pytestmark = [pytest.mark.inv("INV-22"), pytest.mark.inv("INV-01")]
 
@@ -381,7 +380,6 @@ class Driver:
         self.rolling = False
         self.compared = 0
         self.walked: Counter[str] = Counter()
-        self.locks: MemLocks | None = None
 
     def key(self, i: int) -> tuple[str, str]:
         p = self.ep.points[i]
@@ -533,23 +531,6 @@ class Driver:
         self.reach(pc, f)
 
 
-class Locks(MemLocks):
-    def __init__(self, driver: Driver) -> None:
-        super().__init__()
-        self.driver = driver
-
-    @override
-    def try_lock(self, key: str) -> MemLock | None:
-        if not self.taken:
-            self.driver.reach("s_locks")
-        return super().try_lock(key)
-
-
-class NoLegacy:
-    def try_lock(self, path: str) -> LegacyAbsent:
-        return LegacyAbsent()
-
-
 class Job:
     def __init__(self, driver: Driver) -> None:
         self.driver = driver
@@ -584,8 +565,7 @@ def ports(fs: MemFS, driver: Driver) -> sv.Ports:
         files = tuple((p, _state_of(fs, p)) for p, _ in fp.files)
         return Fingerprint(fp.root, files, fp.globs, fp.documents, fp.document_files)
 
-    driver.locks = Locks(driver)
-    return sv.Ports(fs, driver.locks, NoLegacy(), observe)
+    return sv.Ports(fs, observe)
 
 
 def plan_of(ep: Episode) -> sv.SavePlan:
@@ -599,7 +579,7 @@ def plan_of(ep: Episode) -> sv.SavePlan:
 
     fp = Fingerprint.of(PATH["R"], {PATH[f]: state(f) for f in FILES}, {}, {}, {})
     changes = tuple(Change(PATH[f], pre(f), content(f, POST[ep.s])) for f in WORD)
-    return sv.SavePlan(SESSION, ep.s, KEY, "lin1", "b", PATH["R"], changes, fp, digest(fp), (), ALD)
+    return sv.SavePlan(SESSION, ep.s, KEY, "lin1", "b", PATH["R"], changes, fp, digest(fp), ALD)
 
 
 def told_of(out: sv.SaveOutcome | None, fs: MemFS, plan: sv.SavePlan) -> str:
@@ -678,8 +658,6 @@ def replay_save(fs: MemFS, ep: Episode, where: str, tally: Tally) -> None:
     finally:
         fs.on_effect = None
     driver.finish(answered=out is not None)
-    assert driver.locks is not None
-    assert not driver.locks.held, f"{where}: the save left ledger-set locks held: {driver.locks.held}"  # S_Release
     told = told_of(out, fs, plan)
     if isinstance(out, sv.Refused):  # "unchanged" is said only when the targets equal their pre bytes (§11)
         fs_end = ep.end["fs"]["cur"]
@@ -818,7 +796,7 @@ def test_the_replay_walks_the_save_path() -> None:
 
 
 WALKED: tuple[str, ...] = (
-    "S_Locks", "S_Gate", "S_Load", "S_Recheck", "S_Commit", "S_Backup", "S_BackupSync", "S_JPart", "S_JPartSync",
+    "S_Gate", "S_Load", "S_Recheck", "S_Commit", "S_Backup", "S_BackupSync", "S_JPart", "S_JPartSync",
     "S_JOpen", "S_JDirSync", "S_TempStart", "S_TempDone", "S_TempSync", "S_Swap", "S_DirSync", "S_RemoveTemps",
     "S_Close", "S_CloseSync", "S_Saved", "RS_Write", "RS_Swap", "RS_Compare", "RS_Temps", "RS_Sync", "RS_Resolve",
     "IOFail",
@@ -836,7 +814,11 @@ NOT_WALKED: Mapping[str, str] = {
     ),
     "S_ReadBack": "a read, with no hook; the model's read-back fails only after a stop (BL-0161); `test_writer.py`",
     "S_Publish": "not built (BL-0113)",
-    "S_Release": "no hook; the replay asserts every ledger-set lock released after each save (the rebuild is queued)",
+    "S_Locks": (
+        "no effect in the code since S0071 (ADR-0068 D3: no per-file lock; the engine lock is the guard); the model "
+        "keeps the step, unread, until S0072 cuts it (BL-0180)"
+    ),
+    "S_Release": "no hook: the model's release of its unread locks and the final reply (the rebuild is queued)",
     "RB_Check": "reads, with no hook; its stopping branches are stops (BL-0161); `test_restore.py`",
 }
 """The model's save steps the replay does not count as walked, each with its reason (`PARTIAL` or `PLANNED` in the

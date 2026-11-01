@@ -36,7 +36,7 @@ from ledger_engine.ledger.recover_all import (
 )
 from ledger_engine.ledger.restore import Failed, Resolved, Stopped, recover_journal
 from ledger_engine.ledger.writer import durable_commit, sha256
-from tests.fakes.memfs import Crash, MemFS, MemLocks
+from tests.fakes.memfs import Crash, MemFS
 from tests.ledger.worlds import BD, JD, NAME, Target, World, commit_for, world
 
 pytestmark = [pytest.mark.inv("INV-32"), pytest.mark.inv("INV-22"), pytest.mark.inv("INV-01")]
@@ -176,10 +176,10 @@ def test_a_try_whose_last_sync_failed_is_not_listed_again() -> None:
     clean = keyed(at=AFTER_CREATE)
     clean.fs.outside_remove("/w/L/prices.bean")
     m = len(clean.fs.effects)
-    assert isinstance(recover_journal(clean.fs, MemLocks(), KJD, NAME), Resolved)
+    assert isinstance(recover_journal(clean.fs, KJD, NAME), Resolved)
     last = len(clean.fs.effects) - m - 1  # the journal folder's sync after the `.resolved` rename
     w.fs.inject(before + last, crash=False, err=errno.EIO)
-    out = recover_journal(w.fs, MemLocks(), KJD, NAME)
+    out = recover_journal(w.fs, KJD, NAME)
     assert isinstance(out, Failed), out
     again = list_journals(w.fs, ALD)
     assert again.journals == (), "Retry listed a journal already resolved"
@@ -235,7 +235,7 @@ def test_keep_syncs_every_file_and_folder_before_its_rename() -> None:
     w.fs.outside_write("/w/L/main.bean", b"edited, not synced\n")
     w.fs.outside_unsynced("/w/L/main.bean", synced=b'include "inc/a.bean"\n')
     assert any(s.file("/w/L/main.bean") != b"edited, not synced\n" for s in w.fs.power_loss_states())
-    assert keep(w.fs, MemLocks(), JD, NAME) == Done()
+    assert keep(w.fs, JD, NAME) == Done()
     assert set(w.fs.names_in(JD)) == {f"{NAME}.kept"}
     for state in w.fs.power_loss_states():
         if state.file(f"{JD}/{NAME}.kept") is not None:
@@ -249,25 +249,16 @@ def test_keep_syncs_an_exchange_a_cut_restore_left_unsynced() -> None:
     w = crashed_at(36)  # main.bean swapped to post; its folder's sync not done
     assert any(s.file("/w/L/main.bean") != w.fs.file("/w/L/main.bean") for s in w.fs.power_loss_states())
     now = {p: w.fs.file(p) for p in ("/w/L/main.bean", "/w/L/inc/a.bean", "/w/L/prices.bean")}
-    assert keep(w.fs, MemLocks(), JD, NAME) == Done()
+    assert keep(w.fs, JD, NAME) == Done()
     for state in w.fs.power_loss_states():
         assert {p: state.file(p) for p in now} == now
-
-
-def test_keep_refuses_while_a_files_lock_is_held_and_renames_nothing() -> None:
-    w = crashed_at(AFTER_CREATE)
-    locks = MemLocks()
-    key = next(f.path_key for f in record_of(w.fs).files if f.canonical_path == "/w/L/main.bean")
-    locks.outside_hold(key)
-    assert keep(w.fs, locks, JD, NAME) == Refused("lock_held", "/w/L/main.bean")
-    assert f"{NAME}.open" in w.fs.names_in(JD)
 
 
 def test_keep_renames_nothing_when_a_sync_fails() -> None:
     w = crashed_at(AFTER_CREATE)
     n = len(w.fs.effects)
     w.fs.inject(n, crash=False, err=errno.EIO)  # the first file's sync
-    out = keep(w.fs, MemLocks(), JD, NAME)
+    out = keep(w.fs, JD, NAME)
     assert isinstance(out, ActFailed), out
     assert out.errno == errno.EIO
     assert f"{NAME}.open" in w.fs.names_in(JD)
@@ -281,7 +272,7 @@ def test_keep_on_a_read_only_drive_goes_on() -> None:
     n = len(w.fs.effects)
     for i in range(n, n + 3):
         w.fs.inject(i, crash=False, err=errno.EROFS)
-    assert keep(w.fs, MemLocks(), JD, NAME) == Done()
+    assert keep(w.fs, JD, NAME) == Done()
     assert f"{NAME}.kept" in w.fs.names_in(JD)
 
 
@@ -289,21 +280,21 @@ def test_keep_a_record_that_cannot_be_read() -> None:
     """ADR-0063: Keep resolves "one that cannot be read"."""
     w = crashed_at(AFTER_CREATE)
     w.fs.outside_write(f"{JD}/s9-j9.open", b"torn {")
-    assert keep(w.fs, MemLocks(), JD, "s9-j9") == Done()
+    assert keep(w.fs, JD, "s9-j9") == Done()
     assert "s9-j9.kept" in w.fs.names_in(JD)
     assert f"{NAME}.open" in w.fs.names_in(JD), "Keep of one journal touched another"
 
 
 def test_keep_of_a_journal_that_is_not_open_is_refused() -> None:
     w = crashed_at(AFTER_CREATE)
-    assert keep(w.fs, MemLocks(), JD, "s8-j8") == Refused("not_open")
+    assert keep(w.fs, JD, "s8-j8") == Refused("not_open")
 
 
 def test_keep_skips_a_folder_that_is_not_there() -> None:
     """ADR-0063: Keep resolves "a journal whose files cannot be reached"."""
     w = crashed_at(AFTER_CREATE)
     w.fs.outside_move("/w/L/inc", "/w/elsewhere")
-    assert keep(w.fs, MemLocks(), JD, NAME) == Done()
+    assert keep(w.fs, JD, NAME) == Done()
 
 
 def test_keep_refuses_a_folder_no_longer_at_its_path_and_renames_nothing() -> None:
@@ -313,7 +304,7 @@ def test_keep_refuses_a_folder_no_longer_at_its_path_and_renames_nothing() -> No
     w.fs.outside_move("/w/L", "/w/moved")
     w.fs.outside_symlink("/w/L", "/w/moved")
     snap = w.fs.snapshot()
-    assert keep(w.fs, MemLocks(), JD, NAME) == Refused("path_moved", "/w/L/inc")  # the first folder it syncs
+    assert keep(w.fs, JD, NAME) == Refused("path_moved", "/w/L/inc")  # the first folder it syncs
     assert w.fs.snapshot() == snap
     assert f"{NAME}.open" in w.fs.names_in(JD)
 
@@ -330,11 +321,11 @@ def test_an_action_refuses_a_journal_folder_the_folder_rule_refuses_and_writes_n
     w.fs.outside_acl(JD, _deny("delete_child"))
     snap = w.fs.snapshot()
     if action == "keep":
-        out = keep(w.fs, MemLocks(), JD, NAME)
+        out = keep(w.fs, JD, NAME)
     elif action == "delete_kept":
-        out = delete_kept(w.fs, MemLocks(), JD, NAME, "/w/L/main.bean", KEPT, sha256(KEPT_BYTES))
+        out = delete_kept(w.fs, JD, NAME, "/w/L/main.bean", KEPT, sha256(KEPT_BYTES))
     else:
-        out = delete_created(w.fs, MemLocks(), JD, NAME, "/w/L/prices.bean", sha256(POST))
+        out = delete_created(w.fs, JD, NAME, "/w/L/prices.bean", sha256(POST))
     assert isinstance(out, Refused), out
     assert (out.reason, out.path) == ("permission", JD)
     assert w.fs.snapshot() == snap
@@ -361,7 +352,7 @@ def test_keep_syncs_a_folder_the_save_made_that_holds_no_file_of_the_record() ->
         durable_commit(w.fs, w.commit)
     assert {d.canonical_path for d in record_of(w.fs).created_dirs} == {"/w/L/y", "/w/L/y/q"}
     n = len(w.fs.effects)
-    assert keep(w.fs, MemLocks(), JD, NAME) == Done()
+    assert keep(w.fs, JD, NAME) == Done()
     synced = [e for e in w.fs.effects[n:] if e.startswith("sync ")]
     assert "sync /w/L/y:" in synced, synced
     assert "sync /w/L/y/q:" in synced, synced
@@ -381,18 +372,18 @@ def with_kept() -> World:
 
 def test_delete_the_kept_copy_removes_it_durably_and_then_the_journal_can_resolve() -> None:
     w = with_kept()
-    stopped = recover_journal(w.fs, MemLocks(), JD, NAME)
+    stopped = recover_journal(w.fs, JD, NAME)
     assert isinstance(stopped, Stopped)
     assert stopped.cause is Cause.KEPT_COPY
     snap = w.fs.snapshot()
-    assert delete_kept(w.fs, MemLocks(), JD, NAME, "/w/L/main.bean", KEPT, sha256(KEPT_BYTES)) == Done()
+    assert delete_kept(w.fs, JD, NAME, "/w/L/main.bean", KEPT, sha256(KEPT_BYTES)) == Done()
     after = w.fs.snapshot()
     assert set(snap) - set(after) == {f"/w/L/{KEPT}"}, "more than the kept copy went"
     assert {p: e for p, e in after.items()} == {p: e for p, e in snap.items() if p != f"/w/L/{KEPT}"}
     for state in w.fs.power_loss_states():
         assert state.file(f"/w/L/{KEPT}") is None
     w.fs.outside_remove("/w/L/prices.bean")
-    assert isinstance(recover_journal(w.fs, MemLocks(), JD, NAME), Resolved)
+    assert isinstance(recover_journal(w.fs, JD, NAME), Resolved)
 
 
 @pytest.mark.parametrize(
@@ -413,13 +404,13 @@ def test_delete_the_kept_copy_removes_only_a_name_its_journal_derives(file: str,
     for decoy in ("main.bean.kept-s5-j5", "other.bean.kept-s1-j7", "prices.bean.kept-s1-j7"):
         w.fs.outside_write(f"/w/L/{decoy}", KEPT_BYTES)
     snap = w.fs.snapshot()
-    assert delete_kept(w.fs, MemLocks(), JD, NAME, file, kept, sha256(KEPT_BYTES)) == Refused(reason)
+    assert delete_kept(w.fs, JD, NAME, file, kept, sha256(KEPT_BYTES)) == Refused(reason)
     assert w.fs.snapshot() == snap
 
 
 def test_delete_the_kept_copy_refuses_bytes_the_user_did_not_see() -> None:
     w = with_kept()
-    out = delete_kept(w.fs, MemLocks(), JD, NAME, "/w/L/main.bean", KEPT, sha256(b"what the screen showed\n"))
+    out = delete_kept(w.fs, JD, NAME, "/w/L/main.bean", KEPT, sha256(b"what the screen showed\n"))
     assert out == Refused("changed", f"/w/L/{KEPT}")
     assert w.fs.file(f"/w/L/{KEPT}") == KEPT_BYTES
 
@@ -435,9 +426,7 @@ def test_delete_the_kept_copy_never_removes_anything_but_a_regular_file(kind: st
     else:
         w.fs.outside_fifo(path)
     snap = w.fs.snapshot()
-    assert delete_kept(w.fs, MemLocks(), JD, NAME, "/w/L/main.bean", KEPT, sha256(KEPT_BYTES)) == Refused(
-        "not_a_file", path
-    )
+    assert delete_kept(w.fs, JD, NAME, "/w/L/main.bean", KEPT, sha256(KEPT_BYTES)) == Refused("not_a_file", path)
     assert w.fs.snapshot() == snap
 
 
@@ -445,12 +434,9 @@ def test_delete_the_kept_copy_refusals_write_nothing() -> None:
     w = with_kept()
     snap = w.fs.snapshot()
     seen = sha256(KEPT_BYTES)
-    assert delete_kept(w.fs, MemLocks(), JD, "s8-j8", "/w/L/main.bean", KEPT, seen) == Refused("not_open")
-    locks = MemLocks()
-    locks.outside_hold(next(f.path_key for f in record_of(w.fs).files if f.canonical_path == "/w/L/main.bean"))
-    assert delete_kept(w.fs, locks, JD, NAME, "/w/L/main.bean", KEPT, seen) == Refused("lock_held", "/w/L/main.bean")
+    assert delete_kept(w.fs, JD, "s8-j8", "/w/L/main.bean", KEPT, seen) == Refused("not_open")
     w.fs.outside_write(f"{JD}/s9-j9.open", b"torn {")
-    assert delete_kept(w.fs, MemLocks(), JD, "s9-j9", "/w/L/main.bean", KEPT, seen) == Refused("unreadable")
+    assert delete_kept(w.fs, JD, "s9-j9", "/w/L/main.bean", KEPT, seen) == Refused("unreadable")
     assert w.fs.file(f"/w/L/{KEPT}") == KEPT_BYTES
     assert {p: e for p, e in w.fs.snapshot().items() if p != f"{JD}/s9-j9.open"} == snap
 
@@ -460,16 +446,14 @@ def test_delete_the_kept_copy_refuses_a_folder_no_longer_at_its_path() -> None:
     w = with_kept()
     w.fs.outside_move("/w/L", "/w/moved")
     w.fs.outside_symlink("/w/L", "/w/moved")
-    out = delete_kept(w.fs, MemLocks(), JD, NAME, "/w/L/main.bean", KEPT, sha256(KEPT_BYTES))
+    out = delete_kept(w.fs, JD, NAME, "/w/L/main.bean", KEPT, sha256(KEPT_BYTES))
     assert out == Refused("path_moved", "/w/L")
     assert w.fs.file(f"/w/moved/{KEPT}") == KEPT_BYTES
 
 
 def test_delete_the_kept_copy_of_an_absent_one() -> None:
     w = crashed_at(AFTER_CREATE)
-    assert delete_kept(w.fs, MemLocks(), JD, NAME, "/w/L/main.bean", KEPT, sha256(KEPT_BYTES)) == Refused(
-        "absent", f"/w/L/{KEPT}"
-    )
+    assert delete_kept(w.fs, JD, NAME, "/w/L/main.bean", KEPT, sha256(KEPT_BYTES)) == Refused("absent", f"/w/L/{KEPT}")
 
 
 # -- Delete it (a created path) ------------------------------------------------------------------------------------
@@ -479,16 +463,16 @@ POST = b"2026-01-03 price X 1 EUR\n"
 
 def test_delete_it_removes_the_file_at_the_created_path_and_retry_resolves() -> None:
     w = crashed_at(AFTER_CREATE)
-    stopped = recover_journal(w.fs, MemLocks(), JD, NAME)
+    stopped = recover_journal(w.fs, JD, NAME)
     assert isinstance(stopped, Stopped)
     assert stopped.cause is Cause.CREATED_PATH_TAKEN
     snap = w.fs.snapshot()
-    assert delete_created(w.fs, MemLocks(), JD, NAME, "/w/L/prices.bean", sha256(POST)) == Done()
+    assert delete_created(w.fs, JD, NAME, "/w/L/prices.bean", sha256(POST)) == Done()
     after = w.fs.snapshot()
     assert set(snap) - set(after) == {"/w/L/prices.bean"}
     for state in w.fs.power_loss_states():
         assert state.file("/w/L/prices.bean") is None
-    assert isinstance(recover_journal(w.fs, MemLocks(), JD, NAME), Resolved)
+    assert isinstance(recover_journal(w.fs, JD, NAME), Resolved)
 
 
 @pytest.mark.parametrize(
@@ -505,7 +489,7 @@ def test_delete_it_removes_only_a_path_the_journal_records_as_created(file: str,
     w = crashed_at(AFTER_CREATE)
     snap = w.fs.snapshot()
     data = w.fs.file(file) or b""
-    assert delete_created(w.fs, MemLocks(), JD, NAME, file, sha256(data)) == Refused(reason)
+    assert delete_created(w.fs, JD, NAME, file, sha256(data)) == Refused(reason)
     assert w.fs.snapshot() == snap
 
 
@@ -520,37 +504,28 @@ def test_delete_it_never_removes_anything_but_a_regular_file(kind: str) -> None:
     else:
         w.fs.outside_fifo("/w/L/prices.bean")
     snap = w.fs.snapshot()
-    assert delete_created(w.fs, MemLocks(), JD, NAME, "/w/L/prices.bean", sha256(POST)) == Refused(
-        "not_a_file", "/w/L/prices.bean"
-    )
+    assert delete_created(w.fs, JD, NAME, "/w/L/prices.bean", sha256(POST)) == Refused("not_a_file", "/w/L/prices.bean")
     assert w.fs.snapshot() == snap
 
 
 def test_delete_it_refuses_bytes_the_user_did_not_see() -> None:
     w = crashed_at(AFTER_CREATE)
     w.fs.outside_write("/w/L/prices.bean", b"a sync client's file\n")
-    out = delete_created(w.fs, MemLocks(), JD, NAME, "/w/L/prices.bean", sha256(POST))
+    out = delete_created(w.fs, JD, NAME, "/w/L/prices.bean", sha256(POST))
     assert out == Refused("changed", "/w/L/prices.bean")
     assert w.fs.file("/w/L/prices.bean") == b"a sync client's file\n"
 
 
-def test_delete_it_of_an_absent_file_and_a_held_lock() -> None:
+def test_delete_it_of_an_absent_file() -> None:
     w = crashed_at(AFTER_CREATE)
-    locks = MemLocks()
-    locks.outside_hold(next(f.path_key for f in record_of(w.fs).files if f.pre is None))
-    assert delete_created(w.fs, locks, JD, NAME, "/w/L/prices.bean", sha256(POST)) == Refused(
-        "lock_held", "/w/L/prices.bean"
-    )
     w.fs.outside_remove("/w/L/prices.bean")
-    assert delete_created(w.fs, MemLocks(), JD, NAME, "/w/L/prices.bean", sha256(POST)) == Refused(
-        "absent", "/w/L/prices.bean"
-    )
+    assert delete_created(w.fs, JD, NAME, "/w/L/prices.bean", sha256(POST)) == Refused("absent", "/w/L/prices.bean")
 
 
 def test_a_failed_removal_is_reported_with_its_error() -> None:
     w = crashed_at(AFTER_CREATE)
     n = len(w.fs.effects)
     w.fs.inject(n, crash=False, err=errno.EACCES)  # the removal
-    out = delete_created(w.fs, MemLocks(), JD, NAME, "/w/L/prices.bean", sha256(POST))
+    out = delete_created(w.fs, JD, NAME, "/w/L/prices.bean", sha256(POST))
     assert out == ActFailed("/w/L/prices.bean", errno.EACCES)
     assert w.fs.file("/w/L/prices.bean") == POST

@@ -470,7 +470,6 @@
                 "INTERNAL": "#/components/schemas/InternalError",
                 "JOB_CANCELLED": "#/components/schemas/JobCancelledError",
                 "LEDGER_EXTERNALLY_CHANGED": "#/components/schemas/LedgerExternallyChangedError",
-                "LEGACY_APP_SAVING": "#/components/schemas/LegacyAppSavingError",
                 "ROUTE_NOT_FOUND": "#/components/schemas/RouteNotFoundError",
                 "VALIDATION_FAILED": "#/components/schemas/ValidationFailedError",
                 "WORKSPACE_NOT_OPEN": "#/components/schemas/WorkspaceNotOpenError",
@@ -516,9 +515,6 @@
               },
               {
                 "$ref": "#/components/schemas/WritesPausedError"
-              },
-              {
-                "$ref": "#/components/schemas/LegacyAppSavingError"
               },
               {
                 "$ref": "#/components/schemas/ChangeNotSavedError"
@@ -799,76 +795,6 @@
           "correlation_id"
         ],
         "title": "LedgerExternallyChangedError",
-        "type": "object"
-      },
-      "LegacyAppSavingError": {
-        "properties": {
-          "class": {
-            "const": "conflict",
-            "title": "Class",
-            "type": "string"
-          },
-          "code": {
-            "const": "LEGACY_APP_SAVING",
-            "title": "Code",
-            "type": "string"
-          },
-          "correlation_id": {
-            "title": "Correlation Id",
-            "type": "string"
-          },
-          "data_safe": {
-            "title": "Data Safe",
-            "type": "boolean"
-          },
-          "details": {
-            "title": "Details",
-            "type": "null"
-          },
-          "issues": {
-            "items": {
-              "$ref": "#/components/schemas/Issue"
-            },
-            "title": "Issues",
-            "type": "array"
-          },
-          "message": {
-            "title": "Message",
-            "type": "string"
-          },
-          "next_step": {
-            "title": "Next Step",
-            "type": "string"
-          },
-          "retry_after_ms": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Retry After Ms"
-          },
-          "retryable": {
-            "title": "Retryable",
-            "type": "boolean"
-          }
-        },
-        "required": [
-          "code",
-          "class",
-          "message",
-          "data_safe",
-          "next_step",
-          "issues",
-          "retryable",
-          "retry_after_ms",
-          "details",
-          "correlation_id"
-        ],
-        "title": "LegacyAppSavingError",
         "type": "object"
       },
       "Meta": {

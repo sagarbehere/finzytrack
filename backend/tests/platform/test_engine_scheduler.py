@@ -405,7 +405,6 @@ def test_a_second_background_save_of_the_products_plain_work_is_refused(rig: Rig
         changes=(ChangeText(str(tmp_path / "main.bean"), None, "x"),),
         fingerprint="fp",
         mirror=None,
-        legacy_locks=(),
         app_local_data=tmp_path,
     )
     save = submit_save(rig.jobs, W1, request, background=True)
@@ -1461,7 +1460,6 @@ def test_with_the_real_engine_a_save_job_lands_and_retires_its_engine(tmp_path: 
             changes=(ChangeText(str(main), hashlib.sha256(pre).hexdigest(), post.decode()),),
             fingerprint=fp["fp"],
             mirror=fp["mirror"],
-            legacy_locks=(),
             app_local_data=app,
         )
         # the save's work alone (no rebuild after it): the only engine retired below is the save's own (S0069 V6)

@@ -47,6 +47,7 @@ Terms are grouped by area and sorted inside each group. Where a term is decided 
 - **Rebuild after a save.** A background engine job queued after every landed save: Beancount's own loader (no pickle cache) loads the disk, so the screens show Beancount's own result and errors. It gates nothing and compares nothing; a disk that moves during it is tried again in a fresh engine, at most 3 times (ADR-0068 D1; engine-jobs spec §6.7). Example: you save a lunch expense; "Saved" appears at once, and a moment later the screens update from Beancount's own reading of the file.
 - **Splicing.** Editing only the exact line span of an entry in its source file, so everything outside it is untouched (ADR-0009).
 - **Swap-based replace.** Replacing a file by an atomic swap and hashing the displaced file, so an outside save at the same moment is detected and kept (ADR-0013).
+- **Best-effort mode.** How a save writes on a drive without the atomic swap (exFAT, FAT, HFS+, network shares): the backup, journal and read-back are kept, the file is replaced by a plain rename, and another program's save in the same instant can be lost; a notice says so when such a workspace opens (ADR-0068 D2).
 - **Write-intent journal.** A machine-local record, written before a multi-file write, of each file's canonical path, pre hash (or "absent" for a created file), intended post hash and backup, used for crash recovery. Every journal in the app is recovered before any workspace opens (ADR-0012, ADR-0063).
 
 ## Workspaces, mirror and lifecycle

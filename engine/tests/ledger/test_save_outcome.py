@@ -13,11 +13,10 @@ from dataclasses import replace
 
 import pytest
 
-from ledger_engine.fs.port import LegacyAbsent
 from ledger_engine.ledger import save as sv
 from ledger_engine.ledger.core.ledger_set import Content, Fingerprint, digest
 from ledger_engine.ledger.writer import Change, sha256
-from tests.fakes.memfs import Crash, MemFS, MemLocks
+from tests.fakes.memfs import Crash, MemFS
 
 pytestmark = [pytest.mark.inv("INV-22"), pytest.mark.inv("INV-01")]
 
@@ -127,11 +126,6 @@ FP = Fingerprint("/L/a.bean", (("/L/a.bean", Content(sha256(A))), ("/L/b.bean", 
 CHAIN = (ALD, f"{ALD}/local", f"{ALD}/local/k1", JD, f"{ALD}/local/k1/backups")
 
 
-class NoLegacy:
-    def try_lock(self, path: str) -> LegacyAbsent:
-        return LegacyAbsent()
-
-
 class Job:
     def progress(self, phase: str) -> None: ...
     def gate(self) -> None: ...
@@ -162,14 +156,13 @@ def two_file_plan(**kw: object) -> sv.SavePlan:
         changes=(Change("/L/a.bean", sha256(A), b"a post\n"), Change("/L/b.bean", sha256(B), b"b post\n")),
         fingerprint=FP,
         mirror=digest(FP),
-        legacy_locks=(),
         app_local_data=ALD,
     )
     return replace(plan, **kw)
 
 
 def save_ports(fs: MemFS) -> sv.Ports:
-    return sv.Ports(fs, MemLocks(), NoLegacy(), observe=lambda fp: fp)
+    return sv.Ports(fs, observe=lambda fp: fp)
 
 
 @pytest.mark.parametrize("not_durable", CHAIN)

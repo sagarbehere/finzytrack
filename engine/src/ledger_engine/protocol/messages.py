@@ -48,12 +48,11 @@ RequestId = Annotated[int, Field(ge=0, le=MAX_ID)]
 type Phase = Literal[
     "reading",
     "checking_change",
-    "waiting_for_files",
     "saving",
     "updating_views",
 ]
 """What a job is doing (engine-jobs §5.4): the UI words them "Reading your ledger…", "Checking your change…",
-"Waiting for your ledger files…", "Saving…", "Updating your views…"."""
+"Saving…", "Updating your views…"."""
 PHASES: frozenset[str] = frozenset(get_args(Phase.__value__))
 DecisionScalar = str | int | bool | None
 
@@ -239,10 +238,9 @@ class InspectedFile(Message):
 
 
 class RecoverTryResult(Message):
-    """One journal's try (§8.1 steps 1-4): `resolved`, `stopped` (blocking reason `stopped`) or `failed` (reason
+    """One journal's try (§8.1 steps 2-4): `resolved`, `stopped` (blocking reason `stopped`) or `failed` (reason
     `failed`), with the cause, the file (`path`), the entry that failed or blocked when it is not the file, the
-    blocking ACL entry (`detail`; for a `foreign` stop, `empty`: the file is empty on a drive without the swap and its
-    backup holds the old version, S0065) and the error number; for `stopped`, what stands there now (`inspection`)."""
+    blocking ACL entry (`detail`) and the error number; for `stopped`, what stands there now (`inspection`)."""
 
     outcome: Literal["resolved", "stopped", "failed"]
     cause: str | None
@@ -297,7 +295,7 @@ class SaveChange(Message):
 class SaveParams(Message):
     """A confirmed plan (§2's `save`): who saves (`session`, `job`, the workspace's registry key and lineage id), the
     ledger's root, the changes, the plan's fingerprint (`ledger_set.encode`'s text), the published mirror's
-    fingerprint digest (null: none), the legacy locks to try (ADR-0062) and the app's machine-local folder."""
+    fingerprint digest (null: none) and the app's machine-local folder."""
 
     session: SessionId
     job: JobName
@@ -307,7 +305,6 @@ class SaveParams(Message):
     changes: list[SaveChange] = Field(min_length=1)
     fingerprint: str = Field(min_length=1)
     mirror: str | None
-    legacy_locks: list[AbsPath]
     app_local_data: AbsPath
 
 
@@ -317,7 +314,7 @@ type SaveOutcomeKind = Literal["saved", "refused", "not_saved", "unfinished"]
 class SaveResult(Message):
     """How the save ended (§6.1, §11). `saved`: the closed record is durable (`published`: the mirror was published,
     never yet, BL-0113). `refused`: before the commit point, nothing written (`reason`: `unfinished_save`,
-    `legacy_app_saving`, `ledger_changed`, `mirror_stale`, `encrypted_file`).
+    `ledger_changed`, `mirror_stale`, `encrypted_file`).
     `not_saved`: the writer's `NotSaved` (`reason` its own: `hard_linked`, `locked`, `not_a_file`, `permission`,
     `changed`, `path_moved`, `read_back`, `io_error`, `name_not_utf8`; `open_journal`: writes are
     paused until recovery). `unfinished`: a file may have been replaced and the rollback stopped (`cause`, and
@@ -491,7 +488,6 @@ OPS: dict[str, OpSpec] = {
             "changes": [{"path": "/ledgers/L/main.bean", "pre": "0" * 64, "post": "2026-01-01 open Assets:Cash\n"}],
             "fingerprint": _FP,
             "mirror": None,
-            "legacy_locks": [],
             "app_local_data": _ALD,
         },
         needs_engine_lock=True,
