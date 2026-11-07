@@ -36,8 +36,14 @@
 - Population: none claimed.
 
 ## Verifier
+- Round 1, head 908b8e20: PASS WITH FINDINGS, 0 High, 2 Medium, 1 Low (report in the orchestrator's hand). One fix round; no second round (Medium slice, no High, fewer than three Medium fixes; ADR-0058).
+- V1 Medium: fixed (test). No test closed during a call in flight before its commit point; the mutant "not while a call is in flight" in `_ending` survived the client, scheduler and main tests. Added the verifier's test in the file's style, `test_close_waits_for_the_drain_of_the_engine_of_a_call_in_flight` (also checks the call fails `closed`); `scripts/mutants.py` with that mutant: killed (plan `scratchpad/s0076/m7.toml`). Named in failure-modes E7.
+- V2 Medium: fixed (doc). ADR-0064's decision 10 and its 2026-10-28 amendment's "Unchanged" item still said `close()` exits without waiting for the reap: a status-line pointer and a dated note (2026-11-07) with the owner's quote, as for ADR-0068.
+- V3 Low: fixed (doc). BL-0091's "`close()` and Quit anyway ... do not wait for the reap" corrected for `close()`. The same grep found BL-0109's open scope list saying "`close()` without waiting for the reap"; corrected the same way.
+- Verifier note, no change: dropping `leader_exited()` from `_ending` survives and is benign (redundant with `exited`, which the reaper sets as soon as the leader exits); kept so the check matches `_mark_ended`'s.
 
 ## Golden changes
 - none.
 
 ## Retro
+- Build about 45 min, fix about 10 min, 1 verifier round, findings 0H/2M/1L. Cheaper gate: a mutant per state the close can meet the engine in (idle, in a call, retired, crashed), not only per branch of `_ending`, and a grep of every ADR for the rule's old words before hand-off.

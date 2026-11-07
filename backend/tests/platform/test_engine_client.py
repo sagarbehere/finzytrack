@@ -1418,6 +1418,28 @@ def test_close_waits_for_the_drain_of_the_engine_it_ended() -> None:
 
 
 @pytest.mark.skipif(os.name != "posix", reason="process groups are POSIX; Windows is BL-0087")
+def test_close_waits_for_the_drain_of_the_engine_of_a_call_in_flight() -> None:
+    """BL-0194 (S0076 verifier V1): the engine `close()` signalled while a call was in flight, before its commit
+    point, is one that is ending: the close returns only once its drain is done (the call fails `closed`)."""
+    ops = RecordingOps(hold_reap=True)
+    c = EngineClient(engine_command(), group_ops=ops, close_wait=DEADLINE)
+    try:
+        t, out = stall(c)
+        closer = threading.Thread(target=c.close, daemon=True)
+        closer.start()
+        assert wait_until(lambda: "reap" in ops.calls)
+        closer.join(ABSENCE)
+        assert closer.is_alive(), "close() returned before the drain of the call's engine was done"
+        ops.release.set()
+        closer.join(DEADLINE)
+        assert not closer.is_alive()
+        t.join(DEADLINE)
+        assert out == [EngineFailure("closed", "the engine client was closed")]
+    finally:
+        ops.release.set()
+
+
+@pytest.mark.skipif(os.name != "posix", reason="process groups are POSIX; Windows is BL-0087")
 def test_close_waits_for_a_previous_engine_still_draining() -> None:
     """BL-0194: an engine already ended (here retired after its job) whose drain is still under way is waited for
     too: the quit is the last chance to finish its drain."""
