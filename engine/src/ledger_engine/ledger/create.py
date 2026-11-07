@@ -102,6 +102,7 @@ type Reason = Literal[
     "cannot_rewrite",  # a line naming another file could not be pointed at the copy (`path`, `detail`: the line)
     "cannot_place",  # a source's name cannot be written in the copy's folder (`path`, `detail`: why)
     "load_differs",  # the copy does not load the same as the source (`path`, `detail`: the line, or what differs)
+    "plugin_modules",  # the source's load imported a module of its own (`path`: where from; BL-0202)
 ]
 type ManifestSeen = Literal["ours", "foreign", "absent", "unknown"]
 
@@ -128,13 +129,16 @@ class NewFile:
 @dataclass(frozen=True, slots=True)
 class CreatePlan:
     """A confirmed create: the job's name (`.finzytrack.ft-<job>`), the target folder (absolute), the workspace's
-    files relative to it, which of them is the ledger's root, and the files of `.finzytrack/` relative to it."""
+    files relative to it, which of them is the ledger's root, the files of `.finzytrack/` relative to it, and the
+    folders to make even when no file goes in them (a copy's documents root: Beancount reports a missing one, S0081
+    r1)."""
 
     job: str
     target: str
     files: tuple[NewFile, ...]
     root: str
     manifest: tuple[NewFile, ...]
+    folders: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -248,6 +252,10 @@ def check_plan(plan: CreatePlan) -> None:
     """The plan against itself, before anything is read or written (`BadPlanError`)."""
     check_base(plan)
     _check_files(plan.files, top_reserved=True)
+    if plan.folders:  # each a path a file could have, and not a file's
+        _check_files(tuple(NewFile(f, b"") for f in plan.folders), top_reserved=True)
+        if {_folded(f) for f in plan.folders} & {_folded(f.path) for f in plan.files}:
+            raise BadPlanError("file_and_folder_one_name")
     if plan.root not in {f.path for f in plan.files}:
         raise BadPlanError("root_not_a_file")
 
@@ -255,11 +263,11 @@ def check_plan(plan: CreatePlan) -> None:
 _check = check_plan
 
 
-def _folders(files: tuple[NewFile, ...]) -> list[str]:
-    """Every folder the files need, relative, parents first."""
+def _folders(files: tuple[NewFile, ...], extra: tuple[str, ...] = ()) -> list[str]:
+    """Every folder the files need, and the `extra` folders and theirs, relative, parents first."""
     out: set[str] = set()
-    for f in files:
-        parts = f.path.split("/")
+    for p in (*(f.path for f in files), *(e + "/." for e in extra)):
+        parts = p.split("/")
         out.update("/".join(parts[:i]) for i in range(1, len(parts)))
     return sorted(out, key=lambda d: (d.count("/"), d))
 
@@ -287,9 +295,10 @@ class Stop(Exception):
 
 
 class Steps(Protocol):
-    """What a job adds to the create's writer (`Run`): step 2 (`prepare`: it may read sources and replace `run.plan`)
-    and step 5 (`check`, on the files in the target, just before the commit point). Each raises `Stop` to stop the
-    job. A copy is the other user (`ledger_engine.ledger.copy`, S0081)."""
+    """What a job adds to the create's writer (`Run`): step 2 (`prepare`: it may read sources and replace `run.plan`;
+    it runs before step 1, so a refusal there leaves nothing made, not even the target folder: S0081 r1) and step 5
+    (`check`, on the files in the target, just before the commit point). Each raises `Stop` to stop the job. A copy is
+    the other user (`ledger_engine.ledger.copy`, S0081)."""
 
     def prepare(self, run: Run) -> None: ...
 
@@ -334,6 +343,7 @@ class Run:
         self.steps = steps
         self.job = job
         self.handles = Handles(ports.fs)
+        self._said_saving = False
         self.folder = plan.target  # its canonical path once resolved; answers name `plan.target` (r1 RT6)
         self.made_target = False
         self.target_identity: tuple[int, int] | None = None
@@ -345,6 +355,7 @@ class Run:
     def run(self) -> CreateOutcome:
         try:
             try:
+                self.steps.prepare(self)  # step 2 before step 1: a copy reads its sources before it makes anything
                 self._target()
             except Stop as s:
                 return self._stopped(s)
@@ -353,8 +364,7 @@ class Run:
             except OSError as e:
                 return self._stopped(Stop("io_error", self.folder, err=e.errno))
             try:
-                self.job.progress("saving")
-                self.steps.prepare(self)  # step 2: a copy reads its sources (and its plan) here
+                self.say_saving()
                 self._write()
                 self._sync()
                 self._read_back()
@@ -369,6 +379,12 @@ class Run:
             return self._manifest()
         finally:
             self.handles.close()
+
+    def say_saving(self) -> None:
+        """The `saving` phase, once (a copy says it when it starts reading its sources)."""
+        if not self._said_saving:
+            self._said_saving = True
+            self.job.progress("saving")
 
     def _stopped(self, s: Stop) -> NotCreated:
         """A stop with no `.finzytrack` of ours in place: the job removes what it made (`_cleanup`) and names what it
@@ -463,7 +479,7 @@ class Run:
 
     # step 3 ------------------------------------------------------------------------------------------------------
     def _write(self) -> None:
-        for d in _folders(self.plan.files):
+        for d in _folders(self.plan.files, self.plan.folders):
             parent, _, name = d.rpartition("/")
             self._make(self.handles.at(_under(self.folder, parent)), name, join(self.folder, d), mkdir=True)
         for f in self.plan.files:
@@ -522,7 +538,7 @@ class Run:
             self.unsure.append(rel)
 
     def _sync(self) -> None:
-        for d in reversed(_folders(self.plan.files)):
+        for d in reversed(_folders(self.plan.files, self.plan.folders)):
             self.handles.on = join(self.folder, d)
             self.handles.at(join(self.folder, d)).sync()
         self.handles.on = self.folder
@@ -690,7 +706,7 @@ def _ours(plan: CreatePlan) -> tuple[set[str], set[str]]:
             folders.add(_nfd(base))
         for f in group:
             files.add(_nfd(_under(base, f.path) if base else f.path))
-        folders.update(_nfd(_under(base, d) if base else d) for d in _folders(group))
+        folders.update(_nfd(_under(base, d) if base else d) for d in _folders(group, () if base else plan.folders))
     return files, folders
 
 

@@ -21,6 +21,7 @@ import hashlib
 import json
 import os
 import sys
+import threading
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any, override
@@ -167,24 +168,173 @@ def test_without_proceed_no_manifest_is_written(ald: Path, tmp_path: Path) -> No
     assert not (target / ".finzytrack").exists()
 
 
-def test_a_plugin_beside_the_ledger_does_not_load_the_same_and_is_refused(ald: Path, tmp_path: Path) -> None:
-    """BL-0202: a plugin module beside the ledger is not copied, so the copy does not load the same; the source's
-    module must not be reused by the copy's load (the modules a load imported are forgotten)."""
+PLUG = (
+    "__plugins__ = ['run']\nfrom beancount.core import data\n"
+    "def run(entries, options):\n"
+    "    return entries + [data.Commodity(data.new_metadata('<p>', 0), entries[0].date, 'PLUGGED')], []\n"
+)
+
+
+@pytest.mark.parametrize("shape", ["module", "package", "namespace"])
+def test_a_ledgers_own_plugin_refuses_the_copy_whatever_its_shape(ald: Path, tmp_path: Path, shape: str) -> None:
+    """BL-0202, r1 F1: a ledger's own plugin is not copied, so the copy could never load the same; a namespace
+    package (no `__init__.py`, no `__file__`) included. Its modules are forgotten after the source's load."""
     books = tmp_path / "src"
     books.mkdir()
-    (books / "ft_s0081_plug.py").write_text(
-        "__plugins__ = ['run']\ndef run(entries, options):\n    return entries, []\n"
-    )
+    name = f"ft_s0081_{shape}_{os.getpid()}"
+    if shape == "module":
+        (books / f"{name}.py").write_text(PLUG)
+        plugin = name
+    else:
+        (books / name).mkdir()
+        (books / name / "p.py").write_text(PLUG)
+        if shape == "package":
+            (books / name / "__init__.py").write_text("")
+        plugin = f"{name}.p"
     (books / "main.beancount").write_text(
-        'option "insert_pythonpath" "True"\nplugin "ft_s0081_plug"\n2026-01-01 open Assets:Cash EUR\n'
+        f'option "insert_pythonpath" "True"\nplugin "{plugin}"\n2026-01-01 open Assets:Cash EUR\n'
     )
     target = tmp_path / "copy"
     reply, events = copy(ald, params(target, books / "main.beancount", ald))
     r = reply["result"]
-    assert (r["outcome"], r["reason"], r["left"]) == ("not_created", "load_differs", []), r
+    assert (r["outcome"], r["reason"], r["left"]) == ("not_created", "plugin_modules", []), r
+    assert r["path"].startswith(str(books)), r
     assert "gate" not in events
-    assert not target.exists(), "the job removes what it made, the target folder included"
-    assert "ft_s0081_plug" not in sys.modules
+    assert not target.exists(), "a refusal of step 2 makes nothing"
+    assert not any(m.startswith(name) for m in sys.modules)
+
+
+def test_a_documents_root_at_the_ledgers_folder_is_copied_whole_and_its_names_kept(ald: Path, tmp_path: Path) -> None:
+    """r1 F2: the folder's own `outside/statement.pdf` keeps its name; the outside ledger file takes another."""
+    books = tmp_path / "data" / "books"
+    (books / "outside").mkdir(parents=True)
+    (tmp_path / "data" / "shared").mkdir()
+    doc = b"%PDF the user's statement"
+    (books / "outside" / "statement.pdf").write_bytes(doc)
+    (tmp_path / "data" / "shared" / "statement.pdf").write_text("2026-01-02 price EUR 1.10 USD\n")
+    (books / "main.beancount").write_text(
+        'option "documents" "."\n2026-01-01 open Assets:Cash EUR\ninclude "../shared/statement.pdf"\n'
+    )
+    target = tmp_path / "copy"
+    reply, _ = copy(ald, params(target, books / "main.beancount", ald))
+    assert reply["result"]["outcome"] == "created", reply
+    assert (target / "outside" / "statement.pdf").read_bytes() == doc
+    assert (target / "outside-2" / "statement.pdf").read_text() == "2026-01-02 price EUR 1.10 USD\n"
+
+
+@pytest.mark.parametrize("where", ["beside", "elsewhere"])
+def test_v03_document_directives_are_copied_in_and_point_at_the_copies(ald: Path, tmp_path: Path, where: str) -> None:
+    """r1 F3 (owner's decision 3: the copy is self-contained): a v0.3 ledger-relative `document` path, one into a
+    sibling folder and an absolute one are copied in, their lines rewritten; the copy then loads the same."""
+    books = tmp_path / "data" / "ledgers"
+    books.mkdir(parents=True)
+    docs = tmp_path / "data" / "documents" / "books-1a2b" / "Assets" / "Bank"
+    docs.mkdir(parents=True)
+    (docs / "statement.pdf").write_bytes(b"%PDF x")
+    (tmp_path / "data" / "receipts").mkdir()
+    (tmp_path / "data" / "receipts" / "r.pdf").write_bytes(b"%PDF receipt")
+    (books / "a.pdf").write_bytes(b"%PDF a")
+    (books / "main.beancount").write_text(
+        'option "documents" "../documents/books-1a2b"\n2026-01-01 open Assets:Bank EUR\n'
+        '2026-01-07 document Assets:Bank "../documents/books-1a2b/Assets/Bank/statement.pdf"\n'
+        '2026-01-08 document Assets:Bank "../receipts/r.pdf"\n'
+        f'2026-01-09 document Assets:Bank "{books}/a.pdf"\n'
+    )
+    target = tmp_path / ("data" if where == "beside" else "other") / "Books copy"
+    target.parent.mkdir(exist_ok=True)
+    reply, _ = copy(ald, params(target, books / "main.beancount", ald))
+    assert reply["result"]["outcome"] == "created", reply
+    assert (target / "main.beancount").read_text().splitlines()[2:] == [
+        '2026-01-07 document Assets:Bank "documents/Assets/Bank/statement.pdf"',
+        '2026-01-08 document Assets:Bank "outside/r.pdf"',
+        '2026-01-09 document Assets:Bank "a.pdf"',
+    ]
+    assert (target / "outside" / "r.pdf").read_bytes() == b"%PDF receipt"
+    assert (target / "a.pdf").read_bytes() == b"%PDF a"
+
+
+@pytest.mark.parametrize("line", ['include "../shared/missing.beancount"', 'include "../shared/*.beancount"'])
+def test_a_missing_include_keeps_its_error_and_the_ledger_copies(ald: Path, tmp_path: Path, line: str) -> None:
+    """r1 F4: Beancount's error quotes the include as written; the rewritten text maps back, so the same error is the
+    same (ADR-0067: the copy keeps the source's errors)."""
+    books = tmp_path / "data" / "books"
+    books.mkdir(parents=True)
+    (tmp_path / "data" / "shared").mkdir()
+    (books / "main.beancount").write_text(line + "\n2026-01-01 open Assets:Cash EUR\n")
+    (tmp_path / "out").mkdir()
+    reply, _ = copy(ald, params(tmp_path / "out" / "copy", books / "main.beancount", ald))
+    assert reply["result"]["outcome"] == "created", reply
+
+
+def test_a_missing_include_inside_the_folder_keeps_its_error(ald: Path, tmp_path: Path) -> None:
+    """@regression-guard (S0081 r1 F4): it held on 55800b54; a missing include that is not rewritten keeps its error."""
+    books = tmp_path / "books"
+    books.mkdir()
+    (books / "main.beancount").write_text('include "gone.beancount"\n2026-01-01 open Assets:Cash EUR\n')
+    reply, _ = copy(ald, params(tmp_path / "copy", books / "main.beancount", ald))
+    assert reply["result"]["outcome"] == "created", reply
+
+
+def test_an_indented_include_beancount_reads_is_rewritten(ald: Path, tmp_path: Path) -> None:
+    """r1 verifier F3: the decision is Beancount's parse, never the shape alone."""
+    parent = tmp_path / "Ledgers"
+    books = parent / "books"
+    books.mkdir(parents=True)
+    (parent / "p.beancount").write_text("2026-01-02 price EUR 1.10 USD\n")
+    (books / "main.beancount").write_text('2026-01-01 open Assets:Cash EUR\n  include "../p.beancount"\n')
+    target = tmp_path / "copy"
+    reply, _ = copy(ald, params(target, books / "main.beancount", ald))
+    assert reply["result"]["outcome"] == "created", reply
+    assert (target / "main.beancount").read_text().endswith('  include "outside/p.beancount"\n')
+
+
+def test_a_workspace_with_documents_dot_is_copied_without_its_own_finzytrack(ald: Path, tmp_path: Path) -> None:
+    """r1 verifier F5: the source's `.finzytrack/` is not a document of the copy (the copy writes its own)."""
+    books = tmp_path / "src"
+    (books / ".finzytrack").mkdir(parents=True)
+    (books / ".finzytrack" / "workspace.json").write_text('{"theirs": true}\n')
+    (books / "main.beancount").write_text('option "documents" "."\n2026-01-01 open Assets:Cash EUR\n')
+    target = tmp_path / "copy"
+    reply, _ = copy(ald, params(target, books / "main.beancount", ald))
+    assert reply["result"]["outcome"] == "created", reply
+    assert (target / ".finzytrack" / "workspace.json").read_text() == WS_JSON
+
+
+def test_a_fifo_in_the_documents_folder_is_left_out_and_never_hangs_the_copy(ald: Path, tmp_path: Path) -> None:
+    """r1 F5: an entry of a documents folder that is not a regular file is left out (a FIFO is never opened)."""
+    books = tmp_path / "src"
+    (books / "docs").mkdir(parents=True)
+    os.mkfifo(books / "docs" / "pipe")
+    (books / "docs" / "note.txt").write_text("kept\n")
+    (books / "main.beancount").write_text('option "documents" "docs"\n2026-01-01 open Assets:Cash EUR\n')
+    target = tmp_path / "copy"
+    result: list[dict[str, Any]] = []
+    t = threading.Thread(target=lambda: result.append(copy(ald, params(target, books / "main.beancount", ald))[0]))
+    t.daemon = True
+    t.start()
+    t.join(30)
+    if t.is_alive():
+        fd = os.open(books / "docs" / "pipe", os.O_WRONLY | os.O_NONBLOCK)
+        os.close(fd)
+        t.join(10)
+        pytest.fail("the copy hung on a FIFO")
+    assert result[0]["result"]["outcome"] == "created", result
+    assert sorted(p.name for p in (target / "docs").iterdir()) == ["note.txt"]
+
+
+def test_a_new_folder_inside_a_documents_root_named_through_a_link_is_refused_before_anything(
+    ald: Path, tmp_path: Path
+) -> None:
+    """r1 F6: the documents root is compared as the volume names it (links resolved), before anything is written."""
+    real = tmp_path / "real"
+    (real / "docs").mkdir(parents=True)
+    (tmp_path / "link").symlink_to(real)
+    (real / "main.beancount").write_text('option "documents" "docs"\n2026-01-01 open Assets:Cash EUR\n')
+    reply, events = copy(ald, params(real / "docs" / "copy", tmp_path / "link" / "main.beancount", ald))
+    r = reply["result"]
+    assert (r["outcome"], r["reason"], r["detail"]) == ("not_created", "cannot_place", "inside_documents"), r
+    assert list((real / "docs").iterdir()) == [], "nothing was written into the documents folder"
+    assert "checking_change" not in events
 
 
 def test_a_missing_source_is_refused_and_nothing_stays(ald: Path, tmp_path: Path) -> None:
@@ -296,3 +446,19 @@ def test_no_copy_op_runs_in_an_engine_without_the_engine_lock(tmp_path: Path, op
     )
     assert not reply["ok"]
     assert reply["error"]["key"] == "engine.no_engine_lock"
+
+
+def test_an_empty_documents_folder_comes_in_empty(ald: Path, tmp_path: Path) -> None:
+    """r1: Beancount reports a documents root that does not exist, so the copy makes it even with nothing in it (a
+    fresh v0.3 ledger's documents folder is empty); without it the copy would never load the same."""
+    books = tmp_path / "data" / "ledgers"
+    books.mkdir(parents=True)
+    (tmp_path / "data" / "documents" / "books-1a2b").mkdir(parents=True)
+    (books / "main.beancount").write_text(
+        'option "documents" "../documents/books-1a2b"\n2026-01-01 open Assets:Cash EUR\n'
+    )
+    target = tmp_path / "copy"
+    reply, _ = copy(ald, params(target, books / "main.beancount", ald))
+    assert reply["result"]["outcome"] == "created", reply
+    assert (target / "documents").is_dir()
+    assert list((target / "documents").iterdir()) == []

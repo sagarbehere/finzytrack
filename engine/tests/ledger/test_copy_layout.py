@@ -7,11 +7,20 @@ point outside, so they point to the copies. ADR-0017 already says copied workspa
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Sequence
 
-import pytest
-
-from ledger_engine.ledger.core.copy_layout import Layout, Refusal, SourceSet, back, layout, place, rewrite
+from ledger_engine.ledger.copy import parsed_from
+from ledger_engine.ledger.core.copy_layout import (
+    Layout,
+    Parsed,
+    Refusal,
+    Rewritten,
+    SourceSet,
+    back,
+    layout,
+    place,
+    rewrite,
+)
 
 B = "/data/ledgers"
 ROOT = f"{B}/main.beancount"
@@ -24,20 +33,25 @@ def src(
     globs: Sequence[str] = (),
     documents: Sequence[str] = (),
     document_files: Sequence[str] = (),
+    listed: Sequence[str] = (),
 ) -> SourceSet:
-    return SourceSet(ROOT, tuple(files), tuple(missing), tuple(globs), tuple(documents), tuple(document_files))
+    return SourceSet(
+        ROOT, tuple(files), tuple(missing), tuple(globs), tuple(documents), tuple(document_files), tuple(listed)
+    )
 
 
-def parse_of(
-    includes: Sequence[str], documents: Sequence[str] = ()
-) -> tuple[Callable[[], tuple[Sequence[str], Sequence[str]]], list[int]]:
-    calls: list[int] = []
+def rw(lay: Layout, file: str, data: bytes, *, root: bool = True, parsed: Parsed | None = None) -> object:
+    """`rewrite` with what Beancount's own parser reads from `data` (or `parsed`, a made-up reading)."""
+    if parsed is None:
+        parsed = parsed_from(data, file)
+        if not root:
+            parsed = Parsed(parsed.includes, (), parsed.document_lines)
+    return rewrite(lay, file, data, parsed)
 
-    def parse() -> tuple[Sequence[str], Sequence[str]]:
-        calls.append(1)
-        return includes, documents
 
-    return parse, calls
+def text(out: object) -> bytes:
+    assert isinstance(out, Rewritten), out
+    return out.data
 
 
 # -- the layout ---------------------------------------------------------------------------------------------------
@@ -101,88 +115,121 @@ def test_back_maps_the_copys_paths_to_the_sources_in_one_pass() -> None:
 
 def test_a_file_whose_lines_stay_is_not_rewritten_and_not_parsed() -> None:
     lay = layout(src([ROOT, f"{B}/p.beancount"]))
-    parse, calls = parse_of(["p.beancount"])
-    assert rewrite(lay, ROOT, b'include "./p.beancount"\n', is_root=True, parse=parse) is None
-    assert calls == []
+    assert rw(lay, ROOT, b'include "./p.beancount"\n') is None
 
 
 def test_an_include_reaching_outside_points_to_the_copy() -> None:
     lay = layout(src([ROOT, "/data/shared/r.beancount"]))
     data = b'2026-01-01 open Assets:Cash\ninclude "../shared/r.beancount" ; prices\n'
-    parse, _ = parse_of(["../shared/r.beancount"])
-    assert rewrite(lay, ROOT, data, is_root=True, parse=parse) == (
-        b'2026-01-01 open Assets:Cash\ninclude "outside/r.beancount" ; prices\n'
-    )
+    out = rw(lay, ROOT, data)
+    assert text(out) == b'2026-01-01 open Assets:Cash\ninclude "outside/r.beancount" ; prices\n'
+    assert isinstance(out, Rewritten)
+    assert out.quoted == (("outside/r.beancount", "../shared/r.beancount"),), "for the error a missing one gives"
 
 
 def test_an_absolute_include_becomes_relative() -> None:
     lay = layout(src([ROOT, f"{B}/sub/p.beancount"]))
-    parse, _ = parse_of([f"{B}/sub/p.beancount"])
-    assert rewrite(lay, ROOT, f'include "{B}/sub/p.beancount"\n'.encode(), is_root=True, parse=parse) == (
-        b'include "sub/p.beancount"\n'
-    )
+    assert text(rw(lay, ROOT, f'include "{B}/sub/p.beancount"\n'.encode())) == b'include "sub/p.beancount"\n'
 
 
 def test_an_outside_file_that_includes_back_into_the_folder_is_rewritten() -> None:
     lay = layout(src([ROOT, "/data/shared/r.beancount", f"{B}/p.beancount"]))
-    parse, _ = parse_of(["../ledgers/p.beancount"])
-    out = rewrite(lay, "/data/shared/r.beancount", b'include "../ledgers/p.beancount"\n', is_root=False, parse=parse)
-    assert out == b'include "../p.beancount"\n'
+    out = rw(lay, "/data/shared/r.beancount", b'include "../ledgers/p.beancount"\n', root=False)
+    assert text(out) == b'include "../p.beancount"\n'
 
 
 def test_a_glob_reaching_outside_keeps_its_wildcard() -> None:
     lay = layout(src(globs=[f"{B}/../shared/*.beancount"]))
-    parse, _ = parse_of(["../shared/*.beancount"])
-    out = rewrite(lay, ROOT, b'include "../shared/*.beancount"\n', is_root=True, parse=parse)
-    assert out == b'include "outside/*.beancount"\n'
+    out = rw(lay, ROOT, b'include "../shared/*.beancount"\n')
+    assert text(out) == b'include "outside/*.beancount"\n'
 
 
 def test_the_v03_documents_option_comes_in_as_documents() -> None:
     lay = layout(src(documents=["/data/documents/books-1a2b"]))
-    parse, _ = parse_of([], ["../documents/books-1a2b"])
-    out = rewrite(lay, ROOT, b'option "documents" "../documents/books-1a2b"\n', is_root=True, parse=parse)
-    assert out == b'option "documents" "documents"\n'
+    out = rw(lay, ROOT, b'option "documents" "../documents/books-1a2b"\n')
+    assert text(out) == b'option "documents" "documents"\n'
 
 
 def test_a_documents_option_outside_the_root_file_is_never_rewritten() -> None:
     """Beancount reads `option "documents"` from the root only."""
     lay = layout(src(["/data/ledgers/main.beancount", f"{B}/inc.beancount"], documents=[]))
-    parse, calls = parse_of([])
-    assert rewrite(lay, f"{B}/inc.beancount", b'option "documents" "/x"\n', is_root=False, parse=parse) is None
-    assert calls == []
+    assert rw(lay, f"{B}/inc.beancount", b'option "documents" "/x"\n', root=False) is None
 
 
 def test_a_line_count_is_kept_by_every_rewrite() -> None:
     lay = layout(src([ROOT, "/x/r.beancount"]))
     data = b'a\r\ninclude "/x/r.beancount"\r\nb\n'
-    parse, _ = parse_of(["/x/r.beancount"])
-    out = rewrite(lay, ROOT, data, is_root=True, parse=parse)
-    assert isinstance(out, bytes)
-    assert out.splitlines() == [b"a", b'include "outside/r.beancount"', b"b"]
+    out = rw(lay, ROOT, data, parsed=Parsed(["/x/r.beancount"], (), ()))
+    assert text(out).splitlines() == [b"a", b'include "outside/r.beancount"', b"b"]
 
 
-@pytest.mark.parametrize(
-    ("data", "parsed"),
-    [
-        (b'include "/x/r.beancount"\n', ["/x/r.beancount", "/x/hidden.beancount"]),  # a line the shape misses
-        (b'2026-01-01 note A "x\ninclude "/x/r.beancount"\n"\n', []),  # inside a multi-line string
-        (b'include "/x/r\\"q.beancount"\n', ['/x/r"q.beancount']),  # an escaped quote
-    ],
-)
-def test_lines_that_are_not_exactly_what_beancount_parsed_refuse(data: bytes, parsed: list[str]) -> None:
+def test_lines_that_are_not_exactly_what_beancount_parsed_refuse() -> None:
+    """A line Beancount reads that the shape does not find (here made up) refuses: never a half-rewritten file."""
     lay = layout(src([ROOT, "/x/r.beancount", "/x/hidden.beancount"]))
-    parse, _ = parse_of(parsed)
-    assert rewrite(lay, ROOT, data, is_root=True, parse=parse) == Refusal(ROOT, 0)
+    made_up = Parsed(["/x/r.beancount", "/x/hidden.beancount"], (), ())
+    assert rw(lay, ROOT, b'include "/x/r.beancount"\n', parsed=made_up) == Refusal(ROOT, 0)
+
+
+def test_an_escaped_quote_in_a_moved_include_refuses() -> None:
+    lay = layout(src([ROOT, '/x/r"q.beancount']))
+    assert rw(lay, ROOT, b'include "/x/r\\"q.beancount"\n') == Refusal(ROOT, 0)
+
+
+def test_an_include_inside_a_multi_line_string_is_not_an_include_and_stays() -> None:
+    lay = layout(src([ROOT, "/x/r.beancount"]))
+    data = b'2026-01-01 note Assets:A "x\ninclude "/x/r.beancount"\n'
+    assert parsed_from(data, ROOT).includes == []
+    assert rw(lay, ROOT, data) is None
+
+
+def test_an_indented_include_beancount_reads_is_rewritten() -> None:
+    """r1 verifier F3: Beancount reads an indented `include`; the shape finds it too."""
+    lay = layout(src([ROOT, "/data/gone.beancount"]))
+    data = b'2026-01-01 open Assets:Cash EUR\n  include "../gone.beancount"\n'
+    assert parsed_from(data, ROOT).includes == ["../gone.beancount"]
+    assert text(rw(lay, ROOT, data)) == b'2026-01-01 open Assets:Cash EUR\n  include "outside/gone.beancount"\n'
+
+
+def test_a_document_directive_outside_is_pointed_at_its_copy() -> None:
+    """r1 F3, owner's decision 3: the copy is self-contained; a v0.3 ledger-relative `document` path moves in."""
+    doc = "/data/documents/books-1a2b/Assets/Bank/s.pdf"
+    lay = layout(src(documents=["/data/documents/books-1a2b"], document_files=[doc, "/data/r/x.pdf"]))
+    data = (
+        b"2026-01-01 open Assets:Bank\n"
+        b'2026-01-07 document Assets:Bank "../documents/books-1a2b/Assets/Bank/s.pdf" #t\n'
+        b'2026-01-08 document Assets:Bank "/data/r/x.pdf"\n'
+    )
+    assert text(rw(lay, ROOT, data)) == (
+        b"2026-01-01 open Assets:Bank\n"
+        b'2026-01-07 document Assets:Bank "documents/Assets/Bank/s.pdf" #t\n'
+        b'2026-01-08 document Assets:Bank "outside/x.pdf"\n'
+    )
+
+
+def test_an_absolute_document_path_inside_the_folder_becomes_relative() -> None:
+    lay = layout(src(document_files=[f"{B}/r/x.pdf"]))
+    data = f'2026-01-01 open Assets:Bank\n2026-01-08 document Assets:Bank "{B}/r/x.pdf"\n'.encode()
+    assert text(rw(lay, ROOT, data)) == b'2026-01-01 open Assets:Bank\n2026-01-08 document Assets:Bank "r/x.pdf"\n'
+
+
+def test_a_document_line_whose_text_does_not_name_beancounts_file_refuses() -> None:
+    lay = layout(src(document_files=["/x/a.pdf"]))
+    made_up = Parsed((), (), ((1, "/x/b.pdf"),))
+    assert rw(lay, ROOT, b'2026-01-01 document A:B "/x/a.pdf"\n', parsed=made_up) == Refusal(ROOT, 1)
 
 
 def test_a_new_path_that_needs_a_quote_refuses_at_its_line() -> None:
-    lay = layout(src([ROOT, '/x/a"b.beancount']))
-    parse, _ = parse_of(["/x/a"])
     lay = Layout(B, (("/x", 'out"side'),))
-    assert rewrite(lay, ROOT, b'\ninclude "/x/a"\n', is_root=True, parse=parse) == Refusal(ROOT, 2)
+    assert rw(lay, ROOT, b'\ninclude "/x/a"\n', parsed=Parsed(["/x/a"], (), ())) == Refusal(ROOT, 2)
 
 
 def test_an_include_with_no_place_in_the_copy_refuses() -> None:
     lay = Layout(B, ())
-    parse, _ = parse_of(["/nowhere/a.beancount"])
-    assert rewrite(lay, ROOT, b'include "/nowhere/a.beancount"\n', is_root=True, parse=parse) == Refusal(ROOT, 0)
+    assert rw(lay, ROOT, b'include "/nowhere/a.beancount"\n') == Refusal(ROOT, 0)
+
+
+def test_a_documents_root_at_the_ledgers_folder_reserves_every_name_it_holds() -> None:
+    """r1 F2: the listing's own names are never taken for `outside` or `documents`."""
+    lay = layout(src([ROOT, "/data/shared/s.beancount"], documents=[B], listed=[f"{B}/outside/statement.pdf"]))
+    assert place(lay, "/data/shared/s.beancount") == "outside-2/s.beancount"
+    assert place(lay, f"{B}/outside/statement.pdf") == "outside/statement.pdf"

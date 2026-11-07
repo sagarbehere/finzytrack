@@ -139,9 +139,9 @@ def test_what_a_stopped_copy_kept_is_named_in_the_creates_words(make: Any) -> No
     value = rig.copy()
     assert isinstance(value, NotCopied)
     assert copy_text.text(value) == (
-        "Not copied. The copy did not load the same as your ledger (first at Main Books.beancount, line 12). This "
-        "can happen when your ledger uses a plugin kept in its own folder. Finzytrack left these in /u/Books copy "
-        "because it could not be sure they are only its own: x. Check them, and remove any you do not need."
+        "Not copied. The copy did not load the same as your ledger (first at Main Books.beancount, line 12). "
+        "Finzytrack left these in /u/Books copy because it could not be sure they are only its own: x. Check them, "
+        "and remove any you do not need."
     )
 
 
@@ -241,3 +241,12 @@ def test_the_manifest_of_a_copy_has_a_new_lineage_and_the_sources_root_name() ->
 def test_a_copy_is_an_app_scoped_waited_for_writing_job() -> None:
     spec = copy_spec()
     assert (spec.kind, spec.workspace, spec.waited_for, spec.confirmed) == ("copy", None, True, True)
+
+
+def test_a_ledger_with_its_own_plugin_is_told_why_it_cannot_be_copied() -> None:
+    """r1 F1, BL-0202: the plugin's file is named, and the reason is the version's limit, not the user's ledger."""
+    value = NotCopied("plugin_modules", FOLDER, (), path="/data/ledgers/plugins/fx.py")
+    assert copy_text.text(value) == (
+        "Not copied. Your ledger uses a plugin of its own (fx.py). This version of Finzytrack cannot copy a ledger's "
+        "own plugins."
+    )

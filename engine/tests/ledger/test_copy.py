@@ -120,6 +120,9 @@ class World:
     on_copy_load: Callable[[], None] | None = None
     copy_title: bytes | None = None
     copy_parses: tuple[str, ...] = ()
+    copy_documents: tuple[str, ...] = ()  # the files of `document` entries the copy's load checked
+    imports: list[tuple[str, ...]] = field(default_factory=lambda: [])  # per load: the user modules it imported
+    ledger_files: tuple[str, ...] = LEDGER_FILES
 
     # -- the ports ------------------------------------------------------------------------------------------------
     def try_lock(self, path: str) -> Lock | LegacyAbsent | LegacyHeld:
@@ -152,7 +155,7 @@ class World:
         listing = {
             DOCS: {p[len(DOCS) + 1 :]: True for p in self.src if p.startswith(DOCS + "/")},
         }
-        files = {p: self.file_state(p) for p in LEDGER_FILES}
+        files = {p: self.file_state(p) for p in self.ledger_files}
         globs = {f"{B}/prices/p.beancount": [PRICES], f"{B}/../shared/r.beancount": [RATES]}
         return Fingerprint.of(ROOT, files, globs, listing, {})
 
@@ -160,15 +163,18 @@ class World:
         assert ledger_set == self.fingerprint().ledger_set
         return self.fingerprint()
 
-    def load(self, root: str) -> overlay.LoadResult:
+    def load(self, root: str) -> tuple[overlay.LoadResult, tuple[str, ...]]:
         """Beancount's load as far as the comparison reads it: the options (the title read from the root's bytes, the
-        files parsed, the documents root)."""
+        files parsed, the documents root), with the user modules it imported (`imports`)."""
         self.log.append(f"load {root}")
+        return self.load_result(root), self.imports.pop(0) if self.imports else ()
+
+    def load_result(self, root: str) -> overlay.LoadResult:
         if root == ROOT:
             title = _TITLE.search(self.src.get(ROOT, b""))
             options = {
                 "filename": ROOT,
-                "include": sorted(LEDGER_FILES),
+                "include": sorted(self.ledger_files),
                 "documents": ["../docs"],
                 "title": title.group(1).decode() if title else "",
             }
@@ -184,7 +190,8 @@ class World:
             "documents": ["documents"],
             "title": self.copy_title.decode() if self.copy_title else (title.group(1).decode() if title else ""),
         }
-        fp = Fingerprint.of(root, {p: Content(sha(self.fs.file(p) or b"")) for p in files}, {}, {}, {})
+        documents = {p: True for p in self.copy_documents}
+        fp = Fingerprint.of(root, {p: Content(sha(self.fs.file(p) or b"")) for p in files}, {}, {}, documents)
         return overlay.Loaded([], [], options, fp)
 
     def ports(self) -> CopyPorts:
@@ -195,6 +202,7 @@ class World:
             source=self.source,
             observe=self.observe,
             file_state=self.file_state,
+            regular=lambda path: path in self.src,
         )
 
 
@@ -324,7 +332,7 @@ def test_a_missing_source_root_is_refused() -> None:
 
 def test_an_encrypted_source_file_is_refused() -> None:
     w = new_world()
-    w.load = lambda root: overlay.LoadRefused("encrypted", f"{B}/x.gpg")
+    w.load_result = lambda root: overlay.LoadRefused("encrypted", f"{B}/x.gpg")
     nc = not_copied(go(w)[0], "encrypted")
     assert nc.path == f"{B}/x.gpg"
 
@@ -335,8 +343,58 @@ def test_a_source_load_that_cannot_run_is_refused() -> None:
     def boom(root: str) -> overlay.LoadResult:
         raise RuntimeError(root)
 
-    w.load = boom
+    w.load_result = boom
     not_copied(go(w)[0], "source_failed")
+
+
+# -- r1: a refusal of step 2 makes nothing at all; the ledger's own plugins; a clash -----------------------------
+
+
+def test_a_refusal_of_step_2_makes_nothing_not_even_the_target_folder() -> None:
+    """Step 2 runs before step 1 (S0081 r1): a refused copy leaves no trace in the place the user chose."""
+    w = new_world()
+    w.locks[LOCK] = ["held"]
+    go(w, plan=CopyPlan("j8", T, ROOT, PLAN.manifest, ALD, (LOCK,)))
+    assert w.fs.effects == []
+
+
+@pytest.mark.parametrize("which", ["source", "copy"])
+def test_a_load_that_imported_a_module_of_the_ledgers_own_refuses_the_copy(which: str) -> None:
+    """r1 F1: a ledger's own plugin (a namespace package included) is not copied (BL-0202), so the copy could never
+    load the same; whichever load imported one, nothing is told "copied"."""
+    w = new_world()
+    w.imports = [(f"{B}/plug",)] if which == "source" else [(), (f"{T}/documents/plug.py",)]
+    out, job = go(w)
+    nc = not_copied(out, "plugin_modules")
+    assert nc.path == (f"{B}/plug" if which == "source" else f"{T}/documents/plug.py")
+    assert job.gated == 0
+    assert not exists(w.fs, T)
+
+
+def test_two_sources_that_would_take_one_name_refuse_and_none_is_dropped() -> None:
+    """r1 F2: a path two different sources want is a refusal, naming the second, never a silent drop."""
+    w = new_world()
+    upper = f"{B}/Prices/p.beancount"  # another file on a case-sensitive source, the same name on the target
+    w.src[upper] = b"2026-01-02 price EUR 1.20 USD\n"
+    w.ledger_files = (*LEDGER_FILES, upper)
+    nc = not_copied(go(w)[0], "cannot_place")
+    assert nc.detail == "two_sources"
+    assert nc.path in {upper, PRICES}, "the file named is one of the two"
+    assert not exists(w.fs, T)
+
+
+def test_a_new_folder_inside_the_legacy_root_is_refused_before_anything_is_made() -> None:
+    """INV-26: v0.4 creates nothing under a legacy root (S0081 r1 verifier question)."""
+    w = new_world()
+    w.fs.outside_mkdirs(f"{U}/legacy/data")
+    lock = f"{U}/legacy/data/.write.lock"
+    w.locks[lock] = ["absent"]
+    nc = not_copied(
+        go(w, plan=CopyPlan("j8", f"{U}/legacy/copy", ROOT, PLAN.manifest, ALD, (lock,)))[0], "cannot_place"
+    )
+    assert (nc.path, nc.detail) == (f"{U}/legacy", "inside_legacy")
+    assert w.fs.names_in(f"{U}/legacy") == ["data"]
+    assert w.fs.effects == []
 
 
 # -- step 2c: the journals (§8.1, INV-32, `NoCopyOverOpenJournal`) -------------------------------------------------
@@ -500,6 +558,25 @@ def test_a_copy_that_does_not_load_the_same_is_refused() -> None:
     assert nc.detail == "options"
     assert job.gated == 0
     assert not exists(w.fs, T)
+
+
+def test_a_copy_whose_document_entry_names_a_file_outside_its_folder_is_refused() -> None:
+    """r1 F3, verifier F2: a `document` entry's file counts as read (a plugin's, which no line names, Limit (plugin
+    documents))."""
+    w = new_world()
+    w.copy_documents = ("/s/elsewhere/x.pdf",)
+    nc = not_copied(go(w)[0], "load_outside")
+    assert nc.path == "/s/elsewhere/x.pdf"
+
+
+def test_a_ledger_file_in_a_folder_named_finzytrack_is_refused_naming_it() -> None:
+    """r1 verifier F5: every refusal names the file."""
+    w = new_world()
+    reserved = f"{B}/.finzytrack/x.beancount"
+    w.src[reserved] = b"2026-01-02 price EUR 1.20 USD\n"
+    w.ledger_files = (*LEDGER_FILES, reserved)
+    nc = not_copied(go(w)[0], "cannot_place")
+    assert (nc.path, nc.detail) == (reserved, "reserved_name")
 
 
 def test_a_copy_whose_load_reads_outside_its_folder_is_refused() -> None:

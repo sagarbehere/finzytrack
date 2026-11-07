@@ -285,21 +285,37 @@ def _parent(file: str | None, up: int) -> str:
     return file
 
 
-@contextmanager
-def user_modules_forgotten() -> Generator[None]:
-    """Forget, when the block ends, every module first imported inside it from outside the engine's install (a
-    ledger's plugin from its `insert_pythonpath` folder, and what that plugin imported), so the next load in this
-    process imports its own: a copy's "loads the same" check must not run the source's plugin when the copy's folder
-    lacks it (S0081). What a plugin changed in modules it did not make (a patch to Beancount) is not undone: the
-    sidecar still retires an engine that ran user code (engine-jobs §5.1)."""
-    before = set(sys.modules)
+def _locations(module: object) -> list[str]:
+    """Where a module was loaded from: its file, else the folders of a package (a namespace package has no file,
+    only `__path__`). Empty for a module built into the interpreter."""
+    file = getattr(module, "__file__", None)
+    if isinstance(file, str):
+        return [file]
+    path = getattr(module, "__path__", None)
     try:
-        yield
+        return [p for p in path if isinstance(p, str)] if path is not None else []
+    except TypeError:
+        return ["<unknown>"]  # a `__path__` we cannot read: never taken for the engine's own
+
+
+@contextmanager
+def user_modules_forgotten() -> Generator[list[str]]:
+    """Yields a list that, when the block ends, names every module first imported inside it from outside the engine's
+    install (a ledger's plugin from its `insert_pythonpath` folder, a namespace package with no `__init__.py`
+    included, and what such a plugin imported): one location each. Those modules are forgotten too, so the next load
+    in this process imports its own. A copy refuses a ledger whose load imported any (S0081 r1 F1: a ledger's own
+    plugins are not copied, BL-0202). What a plugin changed in modules it did not make is not undone: the sidecar
+    retires an engine that ran user code (engine-jobs §5.1)."""
+    before = set(sys.modules)
+    found: list[str] = []
+    try:
+        yield found
     finally:
         roots = _install_roots()
-        for name in set(sys.modules) - before:
-            file = getattr(sys.modules[name], "__file__", None)
-            if isinstance(file, str) and not file.startswith(roots):
+        for name in sorted(set(sys.modules) - before):
+            places = _locations(sys.modules[name])
+            if places and not all(p.startswith(roots) for p in places):
+                found.append(next(p for p in places if not p.startswith(roots)))
                 del sys.modules[name]
         importlib.invalidate_caches()
 

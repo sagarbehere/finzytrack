@@ -32,10 +32,7 @@ def _differs(v: NotCopied) -> str:
         "error": " (its Beancount errors differ)",
         "entry": "",
     }.get(v.detail or "", f" (first at {name_of(v.path)}, line {v.detail})" if v.path else "")
-    return (
-        f"The copy did not load the same as your ledger{where}. This can happen when your ledger uses a plugin kept "
-        "in its own folder."
-    )
+    return f"The copy did not load the same as your ledger{where}."
 
 
 def _blocked(v: NotCopied) -> str:
@@ -89,9 +86,16 @@ def _why(v: NotCopied) -> str | None:
                 return "Your ledger uses a folder named .finzytrack, a name Finzytrack keeps for itself."
             if v.detail == "inside_documents":
                 return "The new folder is inside your ledger's documents folder. Choose another place."
-            return "Two of your files would get the same name in the new folder."
+            if v.detail == "inside_legacy":
+                return "The new folder is inside the old Finzytrack app's folder. Choose another place."
+            return f"{name_of(v.path)} and another of your files would get the same name in the new folder."
         case "load_differs":
             return _differs(v)
+        case "plugin_modules":
+            return (
+                f"Your ledger uses a plugin of its own ({name_of(v.path)}). This version of Finzytrack cannot copy a "
+                "ledger's own plugins."
+            )
         case "not_empty" | "manifest_taken" | "legacy_saving":  # pragma: no cover (whole texts of their own, `text`)
             return None
 

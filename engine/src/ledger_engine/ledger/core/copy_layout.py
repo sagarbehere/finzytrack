@@ -5,21 +5,28 @@ ADR-0017; S0081, the owner's decision 3 of 2026-11-07: "Copy them in"). Pure: pa
 Every other place is moved into the copy's folder under a name of its own:
 - each documents root outside B becomes `documents` (a second one `documents-2`, and so on; ADR-0017: copied
   workspaces write `option "documents" "documents"`), with everything under it;
-- the ledger files outside B (and the paths the load looked for there, and the folders of the `include` globs that
-  reach there) go under `outside`, kept relative to their deepest common folder (**A**), so their own relative
-  `include` lines still resolve among themselves.
-A name a path under B already uses at the top of the copy (compared without case, as a case-insensitive volume does)
-is never taken: the next number is (`outside-2`, `documents-3`). Under B is decided first, so a moved folder that
-holds B (a documents root `..`) never moves B's own files.
+- the ledger files outside B (and the paths the load looked for there, the folders of the `include` globs that reach
+  there, and the files of `document` directives there that no documents root holds) go under `outside`, kept
+  relative to their deepest common folder (**A**), so their own relative `include` lines still resolve among
+  themselves.
+A name any copied path under B already uses at the top of the copy, a file of a documents root at or above B
+included (S0081 r1 F2), is never taken (compared without case, as a case-insensitive volume does): the next number is
+(`outside-2`, `documents-3`). Under B is decided first, so a moved folder that holds B (a documents root `..`) never
+moves B's own files.
 
-**The rewrites** (`rewrite`): only an `include` line whose path, placed, would read another place (an absolute path,
-or one that reaches outside B, or one in a moved file that reaches back into B), and only the root's
-`option "documents"` lines whose root moves. Its new text is the placed path relative to the file's new folder. A
-line is rewritten only when the lines found by their shape are exactly the strings Beancount parsed from that file
-(`includes`, `documents`): a string with a quote, a backslash or a line break, an `include` hidden in a multi-line
-string, or a line Beancount reads that the shape does not find, refuses the copy (`Refusal`). A rewrite changes no
-line count, so every entry keeps its line number. What the copy then loads is compared with the source's
-(`ledger_engine.ledger.loads_same`): a rewrite that changed meaning cannot pass unseen.
+**The rewrites** (`rewrite`), decided from what Beancount parsed from the file (`Parsed`), never from the shape alone:
+an `include` whose path, placed, would read another place (an absolute path, or one that reaches outside B, or one in
+a moved file that reaches back into B), the root's `option "documents"` whose root moves, and a `document` directive
+whose file moves or is named by an absolute path (S0081 r1 F3: owner's decision 3, the copy is self-contained). The new
+text is the placed path relative to the file's new folder. The lines are then found by their shape (leading blanks
+allowed: Beancount reads an indented `include` too): the `include` and `option "documents"` lines found must be
+exactly the strings Beancount parsed, and a `document` directive's line (its line number) must hold a string that
+resolves to the file Beancount resolved; otherwise (a quote, a backslash or a line break in a path, a line hidden in a
+multi-line string, a line the shape misses) the copy is refused (`Refusal`). A rewrite changes no line count, so every
+entry keeps its line number. What the copy then loads is compared with the source's
+(`ledger_engine.ledger.loads_same`): a rewrite that changed meaning cannot pass unseen. Beancount quotes an `include`
+as written in its error for a glob that matches nothing, so a rewrite reports each changed include text
+(`Rewritten.quoted`) for that comparison to map back (S0081 r1 F4).
 
 `back` maps a path in the copy back to the source's place, for that comparison.
 """
@@ -29,24 +36,25 @@ from __future__ import annotations
 import posixpath
 import re
 import unicodedata
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from typing import Final
 
 OUTSIDE: Final = "outside"
 DOCUMENTS: Final = "documents"
 _MAGIC: Final = re.compile(r"[*?[]")
-_INCLUDE: Final = re.compile(rb'^include[ \t]+"([^"\\\r\n]*)"')
-_DOCUMENTS: Final = re.compile(rb'^option[ \t]+"documents"[ \t]+"([^"\\\r\n]*)"')
+_INCLUDE: Final = re.compile(rb'^[ \t]*include[ \t]+"([^"\\\r\n]*)"')
+_DOCUMENTS: Final = re.compile(rb'^[ \t]*option[ \t]+"documents"[ \t]+"([^"\\\r\n]*)"')
+_DOCUMENT: Final = re.compile(rb'^\d{4}[-/]\d{2}[-/]\d{2}[ \t]+document[ \t]+[^ \t"]+[ \t]+"([^"\\\r\n]*)"')
 _UNSAFE: Final = re.compile(r'["\\\r\n]')
-_LOOSE: Final = re.compile(rb"^(?:include\b|option[ \t]+\"documents\")")
 
 
 @dataclass(frozen=True, slots=True)
 class SourceSet:
     """What the source's load named (all paths absolute and normalized as the loader normalizes them): its root, the
     ledger files it parsed, the paths it looked for and did not find, each `include`'s search string (as globbed),
-    each documents root, and the file of each `document` entry."""
+    each documents root, the file of each `document` entry (there or not), and every file listed under a documents
+    root."""
 
     root: str
     files: tuple[str, ...]
@@ -54,6 +62,7 @@ class SourceSet:
     globs: tuple[str, ...]
     documents: tuple[str, ...]
     document_files: tuple[str, ...]
+    listed: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -122,6 +131,7 @@ def layout(src: SourceSet) -> Layout:
         *src.missing,
         *src.documents,
         *src.document_files,
+        *src.listed,
         *(literal_folder(posixpath.normpath(g)) for g in src.globs),
     ]
     for p in inside_paths:
@@ -138,7 +148,9 @@ def layout(src: SourceSet) -> Layout:
         return any(_under(m, p) is not None for m in moved)
 
     outside = [
-        posixpath.dirname(p) for p in (*src.files, *src.missing) if _under(base, p) is None and not placed_by_move(p)
+        posixpath.dirname(p)
+        for p in (*src.files, *src.missing, *src.document_files)
+        if _under(base, p) is None and not placed_by_move(p)
     ]
     outside += [
         f
@@ -216,56 +228,77 @@ def _new_documents(lay: Layout, root_file: str, v: str) -> str | None:
     return new
 
 
-def rewrite(
-    lay: Layout,
-    source_file: str,
-    data: bytes,
-    *,
-    is_root: bool,
-    parse: Callable[[], tuple[Sequence[str], Sequence[str]]],
-) -> bytes | Refusal | None:
-    """`data` (the bytes of `source_file`, as the load parsed them) with its moved `include` lines and, for the root,
-    its moved `option "documents"` lines rewritten; None when no line changes. The lines are found by their shape;
-    when one must change (or has no place), `parse` gives the strings Beancount parsed from this file (its includes,
-    and its documents roots: Beancount reads that option from the root only), which must be exactly the strings
-    found, else `Refusal`."""
+@dataclass(frozen=True, slots=True)
+class Parsed:
+    """What Beancount parsed from one file: its `include` strings in order, its `option "documents"` strings (the
+    root's only), and each `document` directive's line number and the file Beancount resolved it to."""
+
+    includes: Sequence[str]
+    documents: Sequence[str]
+    document_lines: Sequence[tuple[int, str]]
+
+
+@dataclass(frozen=True, slots=True)
+class Rewritten:
+    """A file's new bytes, and each changed `include` text with the text it replaced (new, old)."""
+
+    data: bytes
+    quoted: tuple[tuple[str, str], ...]
+
+
+def _new_document(lay: Layout, source_file: str, raw: str, resolved: str) -> str | None:
+    """The new text of a `document` directive's `"raw"` (Beancount resolved it to `resolved`), or None when it stays.
+    Raises `LookupError` when the text does not name that file or the file has no place in the copy."""
+    named = posixpath.normpath(raw if raw.startswith("/") else posixpath.join(posixpath.dirname(source_file), raw))
+    to = place(lay, resolved)
+    here = place(lay, source_file)
+    if named != resolved or to is None or here is None:
+        raise LookupError(raw)
+    new = _relative(to, posixpath.dirname(here))
+    if not raw.startswith("/") and posixpath.normpath(raw) == new:
+        return None
+    return new
+
+
+def rewrite(lay: Layout, source_file: str, data: bytes, parsed: Parsed) -> Rewritten | Refusal | None:
+    """`data` (the bytes of `source_file`, as the load parsed them) with its moved lines rewritten (the module's
+    docstring); None when no line changes."""
+    try:
+        new_inc = [_new_include(lay, source_file, s) for s in parsed.includes]
+        new_opt = [_new_documents(lay, source_file, v) for v in parsed.documents]
+    except LookupError:
+        return Refusal(source_file, 0)
     lines = data.splitlines(keepends=True)
-    found: list[tuple[int, re.Match[bytes], bool]] = []  # (line index, match, is a documents option)
-    for i, line in enumerate(lines):
-        if m := _INCLUDE.match(line):
-            found.append((i, m, False))
-        elif is_root and (m := _DOCUMENTS.match(line)):
-            found.append((i, m, True))
-    texts = [_text(m) for _, m, _ in found]
-    try:
-        new = [
-            None if t is None else (_new_documents if docs else _new_include)(lay, source_file, t)
-            for t, (_, _, docs) in zip(texts, found, strict=True)
-        ]
-    except LookupError:
-        new = [""]  # a line with no place: Beancount decides below whether it reads it
-    loose = sum(1 for line in lines if _LOOSE.match(line) and (is_root or line.startswith(b"include")))
-    if all(n is None for n in new) and loose == len(found):
-        return None  # every line of the shape found, none moves (a line the shape misses is checked below)
-    includes, documents = parse()
-    if [t for t, (_, _, d) in zip(texts, found, strict=True) if not d] != list(includes) or [
-        t for t, (_, _, d) in zip(texts, found, strict=True) if d
-    ] != (list(documents) if is_root else []):
-        return Refusal(source_file, 0)
-    try:
-        new = [
-            (_new_documents if docs else _new_include)(lay, source_file, t or "")
-            for t, (_, _, docs) in zip(texts, found, strict=True)
-        ]
-    except LookupError:
-        return Refusal(source_file, 0)
-    for (i, m, _), n in zip(found, new, strict=True):
-        if n is None:
-            continue
-        if _UNSAFE.search(n):
+    changes: list[tuple[int, re.Match[bytes], str]] = []
+    for lineno, resolved in parsed.document_lines:
+        m = _DOCUMENT.match(lines[lineno - 1]) if 0 < lineno <= len(lines) else None
+        raw = None if m is None else _text(m)
+        if m is None or raw is None:
+            return Refusal(source_file, lineno)
+        try:
+            new = _new_document(lay, source_file, raw, resolved)
+        except LookupError:
+            return Refusal(source_file, lineno)
+        if new is not None:
+            changes.append((lineno - 1, m, new))
+    if any(n is not None for n in (*new_inc, *new_opt)):
+        found_inc = [(i, m) for i, line in enumerate(lines) if (m := _INCLUDE.match(line))]
+        found_opt = [(i, m) for i, line in enumerate(lines) if parsed.documents and (m := _DOCUMENTS.match(line))]
+        if [_text(m) for _, m in found_inc] != list(parsed.includes) or [_text(m) for _, m in found_opt] != list(
+            parsed.documents
+        ):
+            return Refusal(source_file, 0)
+        for (i, m), new in (*zip(found_inc, new_inc, strict=True), *zip(found_opt, new_opt, strict=True)):
+            if new is not None:
+                changes.append((i, m, new))
+    if not changes:
+        return None
+    for i, m, new in changes:
+        if _UNSAFE.search(new):
             return Refusal(source_file, i + 1)
-        lines[i] = lines[i][: m.start(1)] + n.encode("utf-8") + lines[i][m.end(1) :]
-    return b"".join(lines)
+        lines[i] = lines[i][: m.start(1)] + new.encode("utf-8") + lines[i][m.end(1) :]
+    quoted = tuple((n, o) for o, n in zip(parsed.includes, new_inc, strict=True) if n is not None)
+    return Rewritten(b"".join(lines), quoted)
 
 
 def inside(lay: Layout, p: str) -> bool:

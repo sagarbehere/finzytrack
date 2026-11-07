@@ -51,6 +51,7 @@ type NotCopiedReason = Literal[
     "cannot_rewrite",
     "cannot_place",
     "load_differs",
+    "plugin_modules",
     "stopped",  # the engine stopped before its answer (read from disk, or no engine to read it)
 ]
 REASONS: Final[frozenset[str]] = frozenset(
@@ -76,6 +77,7 @@ REASONS: Final[frozenset[str]] = frozenset(
         "cannot_rewrite",
         "cannot_place",
         "load_differs",
+        "plugin_modules",
     }
 )
 """The engine's own reasons for a copy (`ledger_engine.ledger.create.Reason`); `stopped` is the sidecar's."""

@@ -27,6 +27,7 @@ import errno
 import glob
 import hashlib
 import os
+import stat
 from collections.abc import Iterator
 from os import path
 
@@ -62,11 +63,38 @@ def file_state(p: str) -> FileState:
 
 
 def chunks(p: str, size: int = 1 << 20) -> Iterator[bytes]:
-    """The bytes of the file at `p`, as the loader opens it (links followed), `size` at a time: a copy streams its
-    sources with it (S0081), never holding a document whole. Raises `OSError` as `open` and `read` do."""
-    with open(p, "rb") as f:
+    """The bytes of the regular file at `p`, as the loader opens it (links followed), `size` at a time: a copy streams
+    its sources with it (S0081), never holding a document whole. Opened without blocking, so a FIFO swapped in never
+    hangs the job (S0081 r1 F5): anything but a regular file raises `OSError` (`EINVAL`), as `open` and `read` do."""
+    fd = os.open(p, os.O_RDONLY | os.O_NONBLOCK | os.O_CLOEXEC)
+    with os.fdopen(fd, "rb") as f:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            raise OSError(errno.EINVAL, "not a regular file", p)
+        os.set_blocking(fd, True)
         while chunk := f.read(size):
             yield chunk
+
+
+def regular(p: str) -> bool:
+    """Whether `p` is a regular file (links followed): a copy copies only those from a documents folder (S0081 r1 F5;
+    a FIFO, a socket or a device there is left out)."""
+    try:
+        return stat.S_ISREG(os.stat(p).st_mode)
+    except OSError:
+        return False
+
+
+def streamed_state(p: str) -> FileState:
+    """`file_state`, read with `chunks` (never blocking on a FIFO): a copy's re-check of a document (S0081)."""
+    if not path.exists(p):
+        return Absent()
+    h = hashlib.sha256()
+    try:
+        for chunk in chunks(p):
+            h.update(chunk)
+    except OSError as e:
+        return Unreadable(errno.errorcode.get(e.errno, type(e).__name__) if e.errno else type(e).__name__)
+    return Content(h.hexdigest())
 
 
 def listing(root: str) -> dict[str, bool] | None:

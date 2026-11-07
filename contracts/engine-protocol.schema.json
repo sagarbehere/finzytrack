@@ -204,7 +204,7 @@
     },
     "CopyParams": {
       "additionalProperties": false,
-      "description": "A confirmed copy (§8.2): the job's name (`.finzytrack.ft-<job>`), the target folder, the source ledger's root (as\nthe user named it), the files of `.finzytrack/` (the manifest, with the copy's new lineage id), the app's local data\nfolder (its `local/<key>/journal/` folders are read for `.open` journals) and the legacy write-lock files to try\n(ADR-0062). Its answers are the create's (`CreateResult`, `CreateOutcomeResult`), with the copy's own reasons:\n`legacy_saving`, `recovery_blocked`, `source_missing`, `source_unreadable`, `source_failed`, `encrypted`,\n`source_changed`, `cannot_rewrite`, `cannot_place`, `load_differs` (and `load_failed`, `load_outside`). The same\nparams name the copy whose outcome `copy_outcome` reads.",
+      "description": "A confirmed copy (§8.2): the job's name (`.finzytrack.ft-<job>`), the target folder, the source ledger's root (as\nthe user named it), the files of `.finzytrack/` (the manifest, with the copy's new lineage id), the app's local data\nfolder (its `local/<key>/journal/` folders are read for `.open` journals) and the legacy write-lock files to try\n(ADR-0062). Its answers are the create's (`CreateResult`, `CreateOutcomeResult`), with the copy's own reasons:\n`legacy_saving`, `recovery_blocked`, `source_missing`, `source_unreadable`, `source_failed`, `encrypted`,\n`source_changed`, `cannot_rewrite`, `cannot_place`, `load_differs`, `plugin_modules` (and `load_failed`,\n`load_outside`). The same\nparams name the copy whose outcome `copy_outcome` reads.",
       "properties": {
         "job": {
           "pattern": "^[a-z0-9_]{1,64}$",

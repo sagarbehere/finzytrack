@@ -448,7 +448,8 @@ class CopyParams(Message):
     folder (its `local/<key>/journal/` folders are read for `.open` journals) and the legacy write-lock files to try
     (ADR-0062). Its answers are the create's (`CreateResult`, `CreateOutcomeResult`), with the copy's own reasons:
     `legacy_saving`, `recovery_blocked`, `source_missing`, `source_unreadable`, `source_failed`, `encrypted`,
-    `source_changed`, `cannot_rewrite`, `cannot_place`, `load_differs` (and `load_failed`, `load_outside`). The same
+    `source_changed`, `cannot_rewrite`, `cannot_place`, `load_differs`, `plugin_modules` (and `load_failed`,
+    `load_outside`). The same
     params name the copy whose outcome `copy_outcome` reads."""
 
     job: JobName

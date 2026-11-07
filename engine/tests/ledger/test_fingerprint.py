@@ -12,10 +12,12 @@ fingerprints never share a digest except by a SHA-256 collision.
 
 from __future__ import annotations
 
+import errno
 import json
 import os
 import random
 import shutil
+import threading
 from collections.abc import Callable
 from os import path
 from pathlib import Path
@@ -33,7 +35,7 @@ from ledger_engine.ledger.core.ledger_set import (
     digest,
     encode,
 )
-from ledger_engine.ledger.fingerprint import observe
+from ledger_engine.ledger.fingerprint import chunks, observe, regular
 from ledger_engine.ledger.overlay import Loaded, load
 from ledger_engine.ledger.policy import DESKTOP
 
@@ -565,3 +567,27 @@ def test_the_ledger_set_is_the_fingerprints_keys(fp: Fingerprint) -> None:
     assert ls.globs == tuple(p for p, _ in fp.globs)
     assert ls.documents == tuple(p for p, _ in fp.documents)
     assert ls.document_files == tuple(p for p, _ in fp.document_files)
+
+
+def test_a_copys_reader_refuses_a_fifo_without_blocking(tmp_path: Path) -> None:
+    """S0081 r1 F5: `chunks` opens without blocking and reads only a regular file; a FIFO raises at once."""
+    os.mkfifo(tmp_path / "pipe")
+    assert not regular(str(tmp_path / "pipe"))
+    seen: list[BaseException] = []
+
+    def read() -> None:
+        try:
+            list(chunks(str(tmp_path / "pipe")))
+        except OSError as e:
+            seen.append(e)
+
+    t = threading.Thread(target=read, daemon=True)
+    t.start()
+    t.join(10)
+    if t.is_alive():
+        os.close(os.open(tmp_path / "pipe", os.O_WRONLY | os.O_NONBLOCK))
+        t.join(5)
+        pytest.fail("the reader blocked on a FIFO")
+    assert len(seen) == 1
+    assert isinstance(seen[0], OSError)
+    assert seen[0].errno == errno.EINVAL

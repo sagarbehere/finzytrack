@@ -477,9 +477,19 @@ COPY: tuple[Row, ...] = (
         lambda: _not_copied("cannot_place", detail="inside_documents"),
     ),
     (
+        "msg:copy.cannot_place_legacy",
+        "the new folder is inside the old app's folder (the legacy root of a lock the request names; INV-26)",
+        lambda: _not_copied("cannot_place", path="<legacy folder>", detail="inside_legacy"),
+    ),
+    (
         "msg:copy.cannot_place",
         "two source files would take one name in the copy",
-        lambda: _not_copied("cannot_place", detail="two_files_one_name"),
+        lambda: _not_copied("cannot_place", detail="two_sources"),
+    ),
+    (
+        "msg:copy.plugin_modules",
+        "the source's load imported a plugin of the ledger's own (BL-0202)",
+        lambda: _not_copied("plugin_modules", path="<plugin file>"),
     ),
     (
         "msg:copy.load_differs",
