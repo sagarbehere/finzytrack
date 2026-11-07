@@ -264,16 +264,81 @@ def test_a_linked_folder_with_no_open_record_blocks_nothing() -> None:
     assert f"{NAME}.part" in w.fs.names_in(KJD)
 
 
-def test_a_file_or_a_link_to_a_file_in_local_is_not_a_workspace_folder() -> None:
-    """A file in `local/` is skipped as before; a link there that leads to a file fails closed (it is not ours, and
-    cannot be listed)."""
+def test_a_file_or_a_link_to_a_file_in_local_or_in_place_of_a_journal_blocks_nothing() -> None:
+    """A file in `local/` is skipped as before. A link that leads to a file (in place of a key folder, or of a journal
+    folder, or a linked key whose `journal` is a file) can hold no record, and the save's gate skips the same entries
+    (`ENOTDIR`), so it blocks nothing (S0077 verifier F3: only integrity blocks)."""
     fs = MemFS()
-    fs.outside_mkdirs("/w/local")
+    fs.outside_mkdirs("/w/local/k5")
+    fs.outside_mkdirs("/elsewhere/k6")
     fs.outside_write("/w/notes.txt", b"mine")
+    fs.outside_write("/elsewhere/k6/journal", b"a file")
     fs.outside_write("/w/local/k3", b"a file")
     fs.outside_symlink("/w/local/k4", "/w/notes.txt")
+    fs.outside_symlink("/w/local/k5/journal", "/w/notes.txt")
+    fs.outside_symlink("/w/local/k6", "/elsewhere/k6")
     listing = list_journals(fs, ALD)
-    assert [(u.folder, u.errno, u.linked) for u in listing.unlisted] == [("/w/local/k4", errno.ENOTDIR, True)]
+    assert (listing.journals, listing.unlisted) == ((), ())
+
+
+def test_a_linked_key_folder_with_no_journal_folder_blocks_nothing() -> None:
+    """@regression-guard (d01806e0 passes it; it kills the verifier's mutant M2). S0077 verifier F1: §8.1 "a link
+    that holds no `.open` record blocks nothing", for a linked `local/<key>` that holds no journal folder at all."""
+    fs = MemFS()
+    fs.outside_mkdirs("/w/local")
+    fs.outside_mkdirs("/elsewhere/k2")
+    fs.outside_symlink("/w/local/k2", "/elsewhere/k2")
+    listing = list_journals(fs, ALD)
+    assert (listing.journals, listing.unlisted, listing.parts_removed) == ((), (), 0)
+
+
+def test_an_open_record_whose_backups_folder_is_a_link_is_not_tried_and_names_the_link() -> None:
+    """S0077 red team M1: the try's path guard would stop at the backup (`backup_bad`) though the backups are whole
+    behind the link, and push the user toward Keep. The journal is real, so its `.part` still goes; the record is
+    not listed (never tried) and the link blocks every open until the real folder is back, then Retry undoes it."""
+    w = keyed(at=AFTER_CREATE)
+    w.fs.outside_write(f"{KJD}/s0-j0.part", b"{}")
+    w.fs.outside_mkdirs("/elsewhere")
+    w.fs.outside_move(KBD, "/elsewhere/backups")
+    w.fs.outside_symlink(KBD, "/elsewhere/backups")
+    listing = list_journals(w.fs, ALD)
+    assert [(u.folder, u.errno, u.linked) for u in listing.unlisted] == [(KBD, None, True)]
+    assert (listing.journals, listing.parts_removed) == ((), 1)
+    assert f"{NAME}.open" in w.fs.names_in(KJD)
+    w.fs.outside_remove(KBD)
+    w.fs.outside_move("/elsewhere/backups", KBD)
+    w.fs.outside_remove("/w/L/prices.bean")  # the created path empty: the try can resolve
+    again = list_journals(w.fs, ALD)
+    assert again.unlisted == ()
+    assert isinstance(recover_journal(w.fs, KJD, NAME), Resolved)
+
+
+def test_a_linked_backups_folder_with_no_open_record_blocks_nothing() -> None:
+    """@regression-guard (d01806e0 never looked at `backups`): the M1 fix blocks only on an `.open` record."""
+    w = keyed(at=PART_WRITE)
+    w.fs.outside_mkdirs("/elsewhere")
+    w.fs.outside_move(KBD, "/elsewhere/backups")
+    w.fs.outside_symlink(KBD, "/elsewhere/backups")
+    listing = list_journals(w.fs, ALD)
+    assert (listing.journals, listing.unlisted) == ((), ())
+
+
+def test_a_link_swapped_in_after_the_saves_folder_check_is_caught_by_the_next_listing() -> None:
+    """@regression-guard (d01806e0 passes it: the red team asked for the test). S0077 red team attack 3 (spec §15):
+    a link put in place of the journal folder between the save's folder step and the writer's resolve sends the
+    record behind the link; a save cut there is named by the next listing, never skipped."""
+    w = world()
+    w.fs.outside_mkdirs("/elsewhere/journal")
+    w.fs.outside_mkdirs(KBD)
+    w.fs.outside_symlink(KJD, "/elsewhere/journal")
+    w = replace(w, commit=replace(w.commit, journal_dir=KJD, backups_dir=KBD))
+    w.fs.inject(AFTER_CREATE, crash=True)
+    with pytest.raises(Crash):
+        durable_commit(w.fs, w.commit)
+    assert f"{NAME}.open" in w.fs.names_in("/elsewhere/journal"), "the writer followed the link (the precondition)"
+    listing = list_journals(w.fs, ALD)
+    assert [(u.folder, u.errno, u.linked) for u in listing.unlisted] == [(KJD, None, True)]
+    assert listing.journals == ()
 
 
 # -- inspect --------------------------------------------------------------------------------------------------------

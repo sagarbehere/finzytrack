@@ -15,8 +15,11 @@ earlier session caught between its handshake and its `flock` can never run besid
   `local/<key>` or `local/<key>/journal` folder** (S0077, BL-0193) is never walked as ours (no sync, no `.part` removed,
   no record read through it: the save refuses to write through one, `save._ensure_dir`), but it is never skipped
   blindly either, since the save's gate reads through it: its names are listed through the link, read-only, and one
-  that holds an `.open` record, or cannot be opened or listed through the link (it may lead to an unplugged disk), is
-  `Unlisted(linked=True)`: it blocks every open, and the screen says to put the real folder back.
+  that holds an `.open` record, or cannot be opened or listed through the link (it may lead to an unplugged disk; a link
+  to a file holds no record and blocks nothing), is `Unlisted(linked=True)`: it blocks every open, and the screen
+  says to put the real folder back or remove the link. A real journal folder holding an `.open` record whose key's
+  `backups` is a link is `Unlisted(linked=True)` naming that link too, and is not tried (the try's path guard would
+  stop it `backup_bad` with the backups whole behind the link; red team M1).
 - **`inspect`**: what stands at each file a record names now, and every kept copy of this journal beside it (by
   `journal.is_kept_name`), each by its kind, SHA-256 and size; it writes nothing. The blocked screen shows these
   ("Show both", "Show it", Keep's list of the files it releases) and a delete names the SHA-256 it showed.
@@ -61,6 +64,7 @@ from ledger_engine.ledger.handles import join as _join
 
 LOCAL: Final = "local"
 JOURNAL: Final = "journal"
+BACKUPS: Final = "backups"
 
 
 @dataclass(frozen=True, slots=True)
@@ -101,6 +105,14 @@ def _kind(h: DirHandle, name: str) -> Kind | None:
     return None if st is None else st.kind
 
 
+def _linked_backups(handles: Handles, key_dir: str) -> bool:
+    """The key's `backups` is a link. A failed look says no: the try's own checks then fail closed."""
+    try:
+        return _kind(handles.at(key_dir), BACKUPS) is Kind.LINK
+    except (OSError, PathMovedError):
+        return False
+
+
 def _through_link(fs: FileSystem, key_dir: str, linked: str) -> Unlisted | None:
     """A link in place of a key folder (`linked` is `key_dir`) or of its journal folder (`linked` is the journal
     folder): the journal folder's names listed through the link, read-only. None when it holds no `.open` record."""
@@ -112,6 +124,8 @@ def _through_link(fs: FileSystem, key_dir: str, linked: str) -> Unlisted | None:
                     return None  # the linked key folder holds no journal folder
         with fs.open_dir(folder) as jd:
             names = jd.names()
+    except NotADirectoryError:
+        return None  # a link to a file, or a journal that is a file behind it: no record can be there (the gate agrees)
     except OSError as e:
         return Unlisted(linked, e.errno, linked=True)
     if any((p := journal.parse_file_name(n)) is not None and p[1] is State.OPEN for n in names):
@@ -169,11 +183,13 @@ def list_journals(fs: FileSystem, app_local_data: str) -> Listing:
                 with contextlib.suppress(OSError):  # a `.part` a power loss brings back: the next listing's
                     jd.sync()
             removed += gone
-            for n in names:
-                parsed = journal.parse_file_name(n)
-                if parsed is None or parsed[1] is not State.OPEN:
-                    continue
-                found.append(_read_record(jd, folder, n, parsed[0]))
+            opens = [(n, p[0]) for n in names if (p := journal.parse_file_name(n)) is not None and p[1] is State.OPEN]
+            if opens and _linked_backups(handles, key_dir):
+                # the try would stop `backup_bad` at the path guard though the backups are whole behind the link
+                # (S0077 red team M1): never tried; Retry works once the real folder is back
+                unlisted.append(Unlisted(_join(key_dir, BACKUPS), None, linked=True))
+                continue
+            found.extend(_read_record(jd, folder, n, name) for n, name in opens)
         return Listing(tuple(found), tuple(unlisted), removed)
     finally:
         handles.close()

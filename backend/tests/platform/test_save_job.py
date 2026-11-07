@@ -382,7 +382,8 @@ def test_not_saved_says_unchanged_only_after_the_rehash() -> None:
         ),
         (
             ChangeNotSavedDetails("linked_folder", None, "/app/local/k1/journal", None, True),
-            "The folder /app/local/k1/journal is a link to another place.",
+            "The folder /app/local/k1/journal is a link to another place. Finzytrack keeps its save records and "
+            "backups only in a real folder. Put the real folder back in its place, or remove the link, then try again.",
         ),
     ],
 )

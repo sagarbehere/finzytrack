@@ -69,7 +69,7 @@ def not_saved_text(d: ChangeNotSavedDetails) -> str:
             return (
                 f"{did_not} The folder {d.folder or 'of its save records'} is a link to another place. Finzytrack "
                 "keeps its save records and backups only in a real folder. Put the real folder back in its place, "
-                "then try again."
+                "or remove the link, then try again."
             )
         case "io_error" | "read_back" | "name_not_utf8" | "engine_stopped":
             return _unchanged_or_not(d)

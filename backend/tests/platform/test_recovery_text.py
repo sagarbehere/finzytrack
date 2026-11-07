@@ -180,6 +180,7 @@ def test_a_linked_journal_folder_says_to_put_the_real_folder_back() -> None:
     assert screen.actions == ("retry",)
     assert "/app/local/k1/journal is a link to another place" in screen.message
     assert "Put the real folder back in its place, then press Retry." in screen.message
+    assert "If there is no real folder (the link is a mistake, or its disk is gone), remove the link" in screen.message
     assert "could not read" not in screen.message
     unreachable = not_recovered_screen(NotRecovered("/app/local/k1/journal", 2, linked=True)).message
     assert os.strerror(2) in unreachable

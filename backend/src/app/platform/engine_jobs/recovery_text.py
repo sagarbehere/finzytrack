@@ -226,7 +226,8 @@ def not_recovered_screen(n: NotRecovered) -> Screen:
         return Screen(
             f"{n.folder} is a link to another place{answer}. Finzytrack does not use its save records through a link, "
             "and it may hold an unfinished save. No workspace opens until it is a real folder again. "
-            "Put the real folder back in its place, then press Retry.",
+            "Put the real folder back in its place, then press Retry. If there is no real folder (the link is a "
+            "mistake, or its disk is gone), remove the link, then press Retry.",
             ("retry",),
         )
     if n.folder is not None:

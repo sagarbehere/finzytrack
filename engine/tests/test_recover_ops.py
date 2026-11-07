@@ -312,6 +312,25 @@ def test_the_listing_names_a_linked_journal_folder_holding_an_open_record_and_wr
     assert (ledger / "main.bean").read_bytes() == POST
 
 
+def test_the_listing_names_a_linked_backups_folder_beside_an_open_record_and_lists_no_try(
+    ald: Path, tmp_path: Path
+) -> None:
+    """S0077 red team M1, on the real disk: the backups moved away and a link put in their place. The try would stop
+    `backup_bad` with the backups whole; the listing instead names the link and lists no journal to try."""
+    ledger, _, _ = journalled(ald)
+    bd = ald / "local" / "k1" / "backups"
+    moved = tmp_path / "elsewhere_b"
+    os.rename(bd, moved)
+    bd.symlink_to(moved)
+    reply = Rig(held(ald)).send("recover_list", {"app_local_data": str(ald)})
+    assert reply["ok"], reply
+    result = reply["result"]
+    assert result["journals"] == []
+    [u] = result["unlisted"]
+    assert (u["folder"].endswith("/local/k1/backups"), u["errno"], u["linked"]) == (True, None, True)
+    assert (ledger / "main.bean").read_bytes() == POST
+
+
 # -- the gap: an engine whose lock another process holds ---------------------------------------------------------
 
 
