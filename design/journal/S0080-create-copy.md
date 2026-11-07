@@ -138,5 +138,17 @@ Verifier: passed with findings, 0 High, 1 Medium, 3 Low. Red team: failed, 3 Hig
   - Round 1: 11 killed. D7 and D10 survived. They were killed by `test_a_target_whose_stat_failed_after_its_mkdir_is_kept_and_named` (now also asserting the reason) and `test_a_failed_create_whose_name_cannot_be_checked_is_named`. No survivors.
 - Gates on the fix tree: engine ruff, pyright 0 errors, pytest 9071 passed; backend ruff, pyright 0 errors, pytest 2247 passed; `check_generated`, `check_invariants` and `run_meta_tests` (836) OK.
 
+### Round 4 (final), head 0393a3f8 (verifier)
+Passed with findings: 0 High, 0 Medium, 2 Low. Neither loses, tears or overwrites a byte, and neither gives a false outcome, so under the owner's rule of 2026-11-07 both are backlog rows, not code changes:
+- **R3V-1, Low → BL-0199.** After a death, `.` is named even when the job never made the target, and `msg:create.left_folder` then says Finzytrack "left" a folder it may not have made. The row gives the death read its own wording, and also carries the untested spec cases the verifier noted: `.` across the APFS protocol round trip, and `manifest_taken` with `left=None`.
+- **R3V-2, Low → BL-0200.** A `DirHandle.create` that returns None makes `_make` fall back to a later `stat`, which reopens F4's race for a future adapter (macOS returns the `fstat` identity). The row also carries a test of the Limit's `mkdir`-then-`stat` instant.
+- The slice lands at this head plus this journal and backlog commit, and `next` is pushed.
+
 ## Retro
-- Provisional, after round 1 (the final line follows the last round): the pre-commit hook checks staged files only, and the trace corpus's staleness test runs in the pre-push hook and the Stop hook, so editing a generator's comment passed the commit and turned the Stop hook red. The cheaper gate: regenerate every generated artifact whose generator the slice touches before committing (`gen_traces.py` hashes its own source).
+- Build about 150 min, fix about 210 min over three fix rounds; 4 review rounds. Findings per round:
+  - round 1: verifier 0H/2M/5L, red team 2H/2M/2L;
+  - round 2: verifier 0H/2M/3L, red team 2H/1M/2L;
+  - round 3: verifier 0H/1M/3L, red team 3H/1M/1L;
+  - round 4: verifier 0H/0M/2L.
+- Cheaper gate: settle a write path's ownership rule ("what may this job remove, and how does it know the entry is its own?") with the owner before coding. Here it was by name, identity and bytes, never by content alone. Three rounds were spent converging on it through the cleanup and the delete advice, one mechanism.
+- Also from round 1: the pre-commit hook checks staged files only, and the trace corpus's staleness test runs in the pre-push hook and the Stop hook. So editing a generator's comment passed the commit and turned the Stop hook red. Regenerate every generated artifact whose generator the slice touches before committing.
