@@ -37,14 +37,16 @@ from __future__ import annotations
 import ctypes
 import errno
 import fcntl
+import hashlib
 import os
 import stat
 import struct
 import sys
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from typing import Final, Self
 
 from ledger_engine.fs.port import (
+    CHUNK,
     AclEntry,
     Caps,
     EntryStat,
@@ -269,13 +271,34 @@ class DarwinDir:
         finally:
             os.close(fd)
 
-    def create(self, name: str, data: bytes, mode: int, like: str | None = None) -> tuple[int, int] | None:
+    def sha256(self, name: str, limit: int) -> tuple[str, int] | None:
+        try:
+            fd = self._open_regular(check_name(name))
+        except FileNotFoundError:
+            return None
+        try:
+            h = hashlib.sha256()
+            n = 0
+            while n < limit:
+                chunk = os.read(fd, min(CHUNK, limit - n))
+                if not chunk:
+                    break
+                h.update(chunk)
+                n += len(chunk)
+            return h.hexdigest(), n
+        finally:
+            os.close(fd)
+
+    def create(
+        self, name: str, data: bytes | Iterable[bytes], mode: int, like: str | None = None
+    ) -> tuple[int, int] | None:
         flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC
         fd = os.open(check_name(name), flags, mode & 0o7777, dir_fd=self.fd)
         try:
-            view = memoryview(data)
-            while view:
-                view = view[os.write(fd, view) :]
+            for piece in (data,) if isinstance(data, bytes) else data:
+                view = memoryview(piece)
+                while view:
+                    view = view[os.write(fd, view) :]
             if like is not None:
                 src = self._open_regular(check_name(like))
                 try:

@@ -21,9 +21,14 @@ in-memory fake `tests/fakes/memfs.py`, with a separate durable layer, crash, I/O
 from __future__ import annotations
 
 import unicodedata
+from collections.abc import Iterable
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import Protocol, Self
+from typing import Final, Protocol, Self
+
+CHUNK: Final = 1 << 20
+"""How many bytes a streamed create or a hash reads or writes at a time (S0081: a copied document is never held whole
+in memory)."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -134,8 +139,18 @@ class DirHandle(Protocol):
         link, a folder, a FIFO: `OSError`; no entry: `FileNotFoundError`)."""
         ...
 
-    def create(self, name: str, data: bytes, mode: int, like: str | None = None) -> tuple[int, int] | None:
-        """Create the file `name` exclusively (it fails if any entry of that name exists), write `data`, give it
+    def sha256(self, name: str, limit: int) -> tuple[str, int] | None:
+        """The SHA-256 (lower-case hex) and the length of at most the first `limit` bytes of the regular file `name`,
+        read in chunks of `CHUNK` (S0081: a copy's read-back and cleanup check never hold a file whole), or None when
+        there is no entry of that name. Refused as `read` refuses."""
+        ...
+
+    def create(
+        self, name: str, data: bytes | Iterable[bytes], mode: int, like: str | None = None
+    ) -> tuple[int, int] | None:
+        """Create the file `name` exclusively (it fails if any entry of that name exists), write `data` (the bytes,
+        or each chunk an iterable gives, in order: S0081's streamed copy; the iterable is read only after the entry
+        is made), give it
         `mode` and, with `like`, the extended attributes of the regular file `like` in this directory (a replaced file
         keeps its Finder tags; not its ACL: owner, 2026-10-29), and sync its data. The entry is durable only after
         `sync`. Returns the identity `(st_dev, st_ino)` of the file it made, read from its own descriptor (`fstat`),

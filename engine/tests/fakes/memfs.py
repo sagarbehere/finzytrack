@@ -64,9 +64,10 @@ from __future__ import annotations
 
 import contextlib
 import errno
+import hashlib
 import itertools
 import unicodedata
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass, field
 from typing import Self
 
@@ -220,6 +221,7 @@ class MemFS:
         self.on_effect: Callable[[int, str], None] | None = None
         self.stores_nfd = stores_nfd  # HFS+: every name stored in NFD, whatever spelling it was given (S0061 probe)
         self.lost_power = False  # a state a power loss left (`power_loss_states`), or one reached from such a state
+        self.largest_chunk = 0  # the largest chunk a streamed create was given (S0081: never a whole document)
         self.mtimes: dict[int, int] = {}  # inode -> modification time, from a logical clock (`tick`)
         self._clock = 0
 
@@ -827,7 +829,16 @@ class MemDir:
     def acl(self) -> tuple[AclEntry, ...]:
         return tuple(a.entry for a in self._d.acl)
 
-    def create(self, name: str, data: bytes, mode: int, like: str | None = None) -> tuple[int, int] | None:
+    def sha256(self, name: str, limit: int) -> tuple[str, int] | None:
+        """As `read`, hashed (`DirHandle.sha256`)."""
+        data = self.read(name, limit)
+        if data is None:
+            return None
+        return hashlib.sha256(data).hexdigest(), len(data)
+
+    def create(
+        self, name: str, data: bytes | Iterable[bytes], mode: int, like: str | None = None
+    ) -> tuple[int, int] | None:
         d = self._d
         key = _key(check_name(name), d.ci)
         source: _File | None = None
@@ -853,10 +864,22 @@ class MemDir:
             d.pending.append(("link", key, stored, str(ino)))
             self._fs.tick(self._ino)
 
+        chunks: list[bytes] = []
+
+        def whole() -> bytes:
+            if isinstance(data, bytes):
+                return data
+            if not chunks:  # the iterable is read once, when the write happens (a streamed copy)
+                for piece in data:
+                    self._fs.largest_chunk = max(self._fs.largest_chunk, len(piece))
+                    chunks.append(piece)
+                chunks.append(b"")
+            return b"".join(chunks)
+
         def write() -> None:
             if made:
                 self._fs.tick(made[0])
-            f.data = data
+            f.data = whole()
             if source is not None:
                 if Right.READ_XATTRS in source.deny or _denies(source, "readextattr"):
                     raise PermissionError(errno.EACCES, "extended attributes not readable")
@@ -865,7 +888,7 @@ class MemDir:
                 f.xattrs = dict(source.xattrs)
 
         def cut(n: int) -> None:
-            f.data = data[:n]
+            f.data = whole()[:n]
 
         def fsync() -> None:
             f.synced = f.data

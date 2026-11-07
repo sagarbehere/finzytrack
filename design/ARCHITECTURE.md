@@ -162,7 +162,10 @@ backend/src/app/
     engine_jobs/create.py  the create job's work: one `create` op; after an engine death, a refusal or a bad
                  reply, the outcome read from disk by a fresh engine (`create_outcome`) and decided by the pure
                  `create_outcome` (engine-jobs §1, §8.2, S0080); create_text.py §11's texts for a create that did
-                 not end "created", naming what the job left
+                 not end "created", naming what the job left; `FolderJob`, that work for a create or a copy
+    engine_jobs/copy.py  the copy job's work: one `copy` op, read from disk after a death (`copy_outcome`), on
+                 the create's `FolderJob` (engine-jobs §8.2, S0081); copy_text.py §11's texts for a copy that did not
+                 end "copied"
     adapters/    the only place that does real I/O: real fs (atomic replace, fsync_dir), portalocker
                  locks (incl. the legacy-lock detection, ADR-0062), httpx, imaplib+TLS,
                  Pydantic AI gateway, .env resolver,
@@ -183,7 +186,7 @@ backend/src/app/
                  manifest.py, `read_manifest(bytes) -> Manifest | ManifestNewer | ManifestInvalid`, S0051;
                  `encode_manifest`, S0080)
     creation.py  a new workspace's `.finzytrack/` files for the create job: the manifest with a new lineage id
-                 (engine-jobs §8.2, S0080)
+                 (engine-jobs §8.2, S0080); a copy's, with a new lineage id and the source root's name (S0081)
     registry.py  the registry (registry key vs lineage id, dedupe by canonical root)
     containers.py  UserContainer / WorkspaceContainer (composition; ref-counted; never hold a ledger;
                  at most one open WorkspaceContainer per UserContainer, ADR-0063)
@@ -269,7 +272,13 @@ engine/src/ledger_engine/
                  Beancount's own load of the new ledger (no error, only the job's files), the commit point,
                  `.finzytrack/` last by an exclusive rename, read back; a stop removes only what the run made and names what
                  it keeps (owner, 2026-11-07); and `outcome`,
-                 §1's "resolved from disk" after a death; protocol/create.py its ops create, create_outcome
+                 §1's "resolved from disk" after a death; protocol/create.py its ops create, create_outcome; `Run`
+                 with `Steps` is the writer a copy shares
+    copy.py      the copy job in the engine (engine-jobs §8.2, S0081): the legacy locks tried and held for the reads,
+                 the source loaded once (the overlay load: its fingerprint is checked again just before the commit
+                 point), no `.open` journal naming a source, the layout and rewrites (core/copy_layout.py, pure),
+                 every file streamed into the create's writer, "loads the same" (loads_same.py: entries, errors and
+                 options, paths mapped back); protocol/copy.py its ops copy, copy_outcome
     history.py   the history trim after a landed save, in the save's engine (engine-jobs §6.5, S0074): the newest
                  16 of each kind kept in the key's journal and backups folders; never an `.open` or `.part`
                  journal or its backups, nor the save that just landed; core/history.py the pure choice

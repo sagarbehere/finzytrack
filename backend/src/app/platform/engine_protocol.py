@@ -70,6 +70,8 @@ OPS = (
     "rebuild",
     "create",
     "create_outcome",
+    "copy",
+    "copy_outcome",
 )
 # The members of `RefusalKey` (the contract test checks both against the schema).
 REFUSAL_KEYS = frozenset(

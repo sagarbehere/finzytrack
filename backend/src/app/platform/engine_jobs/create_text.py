@@ -23,18 +23,22 @@ SHOWN: Final = 5
 REPORT: Final = "This is a fault in Finzytrack; please report it."
 
 
-def _name(path: str | None) -> str:
+def name_of(path: str | None) -> str:
     return "A file" if not path else path.rpartition("/")[2]
 
 
-def unknown_folder(folder: str) -> str:
+UNFINISHED: Final = "an unfinished new workspace"
+"""What a folder a create did not finish may hold (a copy says "an unfinished copy": `copy_text`)."""
+
+
+def unknown_folder(folder: str, unfinished: str = UNFINISHED) -> str:
     """The folder was not listed: it may hold the job's files, or another program's."""
-    return f"The folder {folder} may hold an unfinished new workspace. Check it before you delete anything."
+    return f"The folder {folder} may hold {unfinished}. Check it before you delete anything."
 
 
-def manifest_taken(folder: str) -> str:
+def manifest_taken(folder: str, not_done: str = NOT_CREATED) -> str:
     return (
-        f"{NOT_CREATED} Another program put a Finzytrack workspace file into {folder} at the same moment. Check the "
+        f"{not_done} Another program put a Finzytrack workspace file into {folder} at the same moment. Check the "
         "folder before you use it."
     )
 
@@ -44,13 +48,13 @@ def _why(v: NotCreated) -> str | None:
         case "not_a_folder":
             return f"{v.folder} is a file, not a folder. Choose an empty folder or a new name."
         case "no_parent":
-            return f"The folder to put {_name(v.folder)} in does not exist."
+            return f"The folder to put {name_of(v.folder)} in does not exist."
         case "permission":
             return f"The system does not let Finzytrack write in {v.path or v.folder}."
         case "taken":
-            return f"Another program put {_name(v.path)} into the folder at the same moment."
+            return f"Another program put {name_of(v.path)} into the folder at the same moment."
         case "read_back":
-            return f"Another program changed {_name(v.path)} while Finzytrack was writing it."
+            return f"Another program changed {name_of(v.path)} while Finzytrack was writing it."
         case "load_failed":
             return "Finzytrack could not check the new ledger."
         case "load_errors":
@@ -61,7 +65,7 @@ def _why(v: NotCreated) -> str | None:
             return "The folder was moved or renamed while Finzytrack was writing it."
         case "io_error":
             answer = f" The system answered: {recovery_text.system_answer(v.errno)}." if v.errno is not None else ""
-            return f"Finzytrack could not write {_name(v.path)}.{answer}"
+            return f"Finzytrack could not write {name_of(v.path)}.{answer}"
         case "stopped":
             return "Finzytrack stopped before it finished."
         case "not_empty" | "manifest_taken":  # pragma: no cover (whole texts of their own, `text`)
@@ -88,10 +92,15 @@ def kept(folder: str, left: tuple[str, ...]) -> str:
     )
 
 
+def folder_text(folder: str, left: tuple[str, ...] | None, unfinished: str = UNFINISHED) -> str | None:
+    """What the job left in the folder (`NotCreated.left`), or None when it left nothing of its own."""
+    if left is None:
+        return unknown_folder(folder, unfinished)
+    return kept(folder, left) if left else None
+
+
 def _folder(v: NotCreated) -> str | None:
-    if v.left is None:
-        return unknown_folder(v.folder)
-    return kept(v.folder, v.left) if v.left else None
+    return folder_text(v.folder, v.left)
 
 
 def text(v: NotCreated) -> str:

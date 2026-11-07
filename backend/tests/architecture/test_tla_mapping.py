@@ -38,7 +38,7 @@ MARKED_GROUPS = ("EngineStep",)  # its actions are the code's: each needs a mark
 FREE_GROUPS = ("UserStep", "EnvStep")  # user, OS and outside-editor actions: no marker needed
 MUTANT_ONLY = frozenset({"RS_Late"})  # a step only a seeded bug takes (`resolve_before_restores_synced`): no code
 
-CREATE_COPY = "BL-0196"  # copy, and the create's and copy's conformance replay (S0080 built the create, unreplayed)
+CREATE_COPY = "BL-0201"  # the create's and the copy's conformance replay (S0080 built the create, S0081 the copy)
 REGISTER = "BL-0102"  # registering a created workspace needs the registry
 RECOVER_ALL = "BL-0164"  # recover-all's per-journal tries replayed through the engine
 

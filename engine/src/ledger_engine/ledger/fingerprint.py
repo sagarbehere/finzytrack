@@ -16,8 +16,9 @@ rebuild or one re-planned save.
 
 Not observed yet: the source files of plugins from outside the engine's packages (TODO(BL-0124)).
 
-The save's gate calls it inside the save job (`ledger.save`), the rebuild after a save before and after its load
-(`ledger.rebuild`, S0070); the open's freshness check will inside its job (TODO(BL-0152)).
+A copy streams its sources with `chunks` and checks each with `file_state` (S0081). The save's gate calls it inside
+the save job (`ledger.save`), the rebuild after a save before and after its load (`ledger.rebuild`, S0070); the open's
+freshness check will inside its job (TODO(BL-0152)).
 """
 
 from __future__ import annotations
@@ -26,6 +27,7 @@ import errno
 import glob
 import hashlib
 import os
+from collections.abc import Iterator
 from os import path
 
 from ledger_engine.ledger.core.ledger_set import (
@@ -57,6 +59,14 @@ def file_state(p: str) -> FileState:
             return Content(hashlib.file_digest(f, "sha256").hexdigest())
     except OSError as e:
         return Unreadable(errno.errorcode.get(e.errno, type(e).__name__) if e.errno else type(e).__name__)
+
+
+def chunks(p: str, size: int = 1 << 20) -> Iterator[bytes]:
+    """The bytes of the file at `p`, as the loader opens it (links followed), `size` at a time: a copy streams its
+    sources with it (S0081), never holding a document whole. Raises `OSError` as `open` and `read` do."""
+    with open(p, "rb") as f:
+        while chunk := f.read(size):
+            yield chunk
 
 
 def listing(root: str) -> dict[str, bool] | None:

@@ -28,6 +28,7 @@ Pinned to Beancount 3.2.0 (ADR-0004); `BEANCOUNT_VERSION` is checked by the over
 
 from __future__ import annotations
 
+import importlib
 import sys
 from collections.abc import Generator, Iterable, Sequence
 from contextlib import contextmanager
@@ -124,6 +125,7 @@ __all__ = [
     "run_transformations",
     "sort_entries",
     "sort_order",
+    "user_modules_forgotten",
     "validate",
 ]
 
@@ -159,6 +161,7 @@ WRAPPERS: Final = frozenset(
         "booked_positions",
         "display_precision",
         "is_interpolated",
+        "user_modules_forgotten",
     }
 )
 
@@ -261,6 +264,44 @@ def run_transformations(
     finally:
         sys.path[:] = saved
     return list(transformed), list(all_errors)
+
+
+def _install_roots() -> tuple[str, ...]:
+    """Where the engine's own modules come from: the interpreter's library, the environment, Beancount's site
+    folder and the engine's own package."""
+    import beancount
+
+    import ledger_engine
+
+    folders = {sys.base_prefix, sys.prefix, *(_parent(m.__file__, 2) for m in (beancount, ledger_engine))}
+    return tuple(sorted(f.rstrip("/") + "/" for f in folders if f))
+
+
+def _parent(file: str | None, up: int) -> str:
+    if not file:
+        return ""
+    for _ in range(up):
+        file = file.rpartition("/")[0]
+    return file
+
+
+@contextmanager
+def user_modules_forgotten() -> Generator[None]:
+    """Forget, when the block ends, every module first imported inside it from outside the engine's install (a
+    ledger's plugin from its `insert_pythonpath` folder, and what that plugin imported), so the next load in this
+    process imports its own: a copy's "loads the same" check must not run the source's plugin when the copy's folder
+    lacks it (S0081). What a plugin changed in modules it did not make (a patch to Beancount) is not undone: the
+    sidecar still retires an engine that ran user code (engine-jobs §5.1)."""
+    before = set(sys.modules)
+    try:
+        yield
+    finally:
+        roots = _install_roots()
+        for name in set(sys.modules) - before:
+            file = getattr(sys.modules[name], "__file__", None)
+            if isinstance(file, str) and not file.startswith(roots):
+                del sys.modules[name]
+        importlib.invalidate_caches()
 
 
 def validate(entries: list[Directive], options: OptionsMap) -> list[BeancountError]:

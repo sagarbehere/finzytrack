@@ -439,6 +439,26 @@ class CreateOutcomeResult(Message):
     errno: int | None
 
 
+# -- The copy (S0081; engine-jobs §1, §4, §8.1, §8.2) -------------------------------------------------------------
+
+
+class CopyParams(Message):
+    """A confirmed copy (§8.2): the job's name (`.finzytrack.ft-<job>`), the target folder, the source ledger's root (as
+    the user named it), the files of `.finzytrack/` (the manifest, with the copy's new lineage id), the app's local data
+    folder (its `local/<key>/journal/` folders are read for `.open` journals) and the legacy write-lock files to try
+    (ADR-0062). Its answers are the create's (`CreateResult`, `CreateOutcomeResult`), with the copy's own reasons:
+    `legacy_saving`, `recovery_blocked`, `source_missing`, `source_unreadable`, `source_failed`, `encrypted`,
+    `source_changed`, `cannot_rewrite`, `cannot_place`, `load_differs` (and `load_failed`, `load_outside`). The same
+    params name the copy whose outcome `copy_outcome` reads."""
+
+    job: JobName
+    target: AbsPath
+    source: AbsPath
+    manifest: list[CreateFile] = Field(min_length=1)
+    app_local_data: AbsPath
+    legacy_locks: list[AbsPath]
+
+
 @dataclass(frozen=True, slots=True)
 class OpSpec:
     """One op: its params and result models, the example result its reply carries in the schema, the example params
@@ -462,6 +482,15 @@ _CREATE = {
     "files": [{"path": "main.beancount", "text": "2026-01-01 open Assets:Cash\n"}],
     "root": "main.beancount",
     "manifest": [{"path": "workspace.json", "text": "{}\n"}],
+}
+
+_COPY = {
+    "job": "j8",
+    "target": "/ledgers/Books copy",
+    "source": "/ledgers/Books/main.beancount",
+    "manifest": [{"path": "workspace.json", "text": "{}\n"}],
+    "app_local_data": _ALD,
+    "legacy_locks": [],
 }
 
 
@@ -597,6 +626,28 @@ OPS: dict[str, OpSpec] = {
         CreateOutcomeResult,
         {"manifest": "absent", "left": ["main.beancount"], "errno": None},
         _CREATE,
+        needs_engine_lock=True,
+    ),
+    "copy": OpSpec(
+        CopyParams,
+        CreateResult,
+        {
+            "outcome": "not_created",
+            "reason": "source_changed",
+            "folder": "/ledgers/Books copy",
+            "path": "/ledgers/Books/main.beancount",
+            "detail": None,
+            "errno": None,
+            "left": [],
+        },
+        _COPY,
+        needs_engine_lock=True,
+    ),
+    "copy_outcome": OpSpec(
+        CopyParams,
+        CreateOutcomeResult,
+        {"manifest": "absent", "left": ["main.beancount"], "errno": None},
+        _COPY,
         needs_engine_lock=True,
     ),
 }

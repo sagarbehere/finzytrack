@@ -57,6 +57,11 @@ def create(params: Message, ctx: CreateJob) -> Message:
         out = cr.run(plan, cr.Ports(for_this_os()), ctx)
     except BadPlanError as e:
         raise BadParamsError(str(e)) from None
+    return answer(out, ctx, TABLE, TABLE_VERSION)
+
+
+def answer(out: cr.CreateOutcome, ctx: Decider, table: str, version: int) -> CreateResult:
+    """A create's or a copy's outcome as its result, with its decision line."""
     match out:
         case cr.Created(folder=folder):
             result = CreateResult(
@@ -79,8 +84,8 @@ def create(params: Message, ctx: CreateJob) -> Message:
                 left=None if out.left is None else list(out.left),
             )
     ctx.decide(
-        TABLE,
-        TABLE_VERSION,
+        table,
+        version,
         {"reason": result.reason, "left": None if result.left is None else len(result.left)},
         result.outcome,
     )
@@ -93,9 +98,14 @@ def create_outcome(params: Message, ctx: Decider) -> Message:
         facts = cr.outcome(for_this_os(), plan)
     except BadPlanError as e:
         raise BadParamsError(str(e)) from None
+    return facts_result(facts, ctx, TABLE, TABLE_VERSION)
+
+
+def facts_result(facts: cr.Facts, ctx: Decider, table: str, version: int) -> CreateOutcomeResult:
+    """A create's or a copy's outcome read as its result, with its decision line."""
     ctx.decide(
-        TABLE,
-        TABLE_VERSION,
+        table,
+        version,
         {"manifest": facts.manifest, "left": None if facts.left is None else len(facts.left)},
         "facts",
     )

@@ -22,7 +22,7 @@ client's bounded restart ends it)."""
 from __future__ import annotations
 
 import uuid
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Final, Literal, cast
 
@@ -166,9 +166,14 @@ def create_work(request: CreateRequest) -> Work:
     """The work of a create job."""
 
     def work(ctx: JobContext) -> WorkResult:
-        return _Run(ctx, request).run()
+        params = params_of(request, new_job_name())  # the create and its outcome read name the same job
+        return FolderJob(ctx, "create", "create_outcome", params, request.target, answer_of, _from_facts).run()
 
     return work
+
+
+def _from_facts(facts: CreateFacts, gated: bool, folder: str) -> CreateValue:
+    return create_outcome(facts, gated=gated, folder=folder)
 
 
 def submit_create(jobs: EngineJobs, request: CreateRequest) -> JobTicket | Failed:
@@ -176,11 +181,29 @@ def submit_create(jobs: EngineJobs, request: CreateRequest) -> JobTicket | Faile
     return jobs.submit(create_spec(), create_work(request))
 
 
-class _Run:
-    def __init__(self, ctx: JobContext, request: CreateRequest) -> None:
+class FolderJob[V]:
+    """The work of a job that writes a new folder and its manifest last (a create, a copy: S0081): one request to the
+    job's engine; after an engine death, an engine refusal or a reply of the wrong shape, the outcome read from disk
+    in a fresh engine (`outcome_op`), decided by `from_facts`; with no engine for that read, `CHANGE_OUTCOME_UNKNOWN`
+    past the commit point, else "stopped" with the folder unlisted (`from_facts` of no facts is not asked)."""
+
+    def __init__(
+        self,
+        ctx: JobContext,
+        op: str,
+        outcome_op: str,
+        params: Mapping[str, object],
+        target: str,
+        answer: Callable[[CreateAnswer], V],
+        from_facts: Callable[[CreateFacts, bool, str], V],
+    ) -> None:
         self._ctx = ctx
-        self._r = request
-        self._params = params_of(request, new_job_name())  # the create and its outcome read name the same job
+        self._op = op
+        self._outcome_op = outcome_op
+        self._params = params
+        self._target = target
+        self._answer = answer
+        self._from_facts = from_facts
         self.gated = False
 
     def _seen(self, event: EngineEvent) -> None:
@@ -188,7 +211,7 @@ class _Run:
             self.gated = True
 
     def run(self) -> WorkResult:
-        out = self._ctx.call("create", self._params, on_event=self._seen)
+        out = self._ctx.call(self._op, self._params, on_event=self._seen)
         if isinstance(out, EngineFailure):
             if out.kind == "cancelled":
                 return WorkResult(None)  # our own end: the job was answered already (§4)
@@ -204,20 +227,20 @@ class _Run:
         answer = decode_create(out)
         if isinstance(answer, Violation):
             return self._from_disk()  # a final reply we cannot read: what happened is on disk
-        return WorkResult(answer_of(answer))
+        return WorkResult(self._answer(answer))
 
     def _no_engine(self) -> WorkResult:
         if self.gated:
             return WorkResult(NotDone(error(ErrorCode.CHANGE_OUTCOME_UNKNOWN)), ran_user_code=False)
-        value = NotCreated("stopped", self._r.target, None)  # no `.finzytrack` before the gate; not listed
+        # no `.finzytrack` before the gate; not listed
+        value = self._from_facts(CreateFacts("unknown", None, None), False, self._target)
         return WorkResult(value, ran_user_code=False)
 
     def _from_disk(self) -> WorkResult:
-        params: Mapping[str, object] = self._params
         while True:
             if self._ctx.fresh_engine() is not None:
                 return self._no_engine()
-            out = self._ctx.call("create_outcome", params)
+            out = self._ctx.call(self._outcome_op, self._params)
             if isinstance(out, EngineFailure):
                 if out.kind in GONE:
                     continue  # that engine died too: another, until the client's bound says no
@@ -227,5 +250,4 @@ class _Run:
             facts = decode_create_outcome(out)
             if isinstance(facts, Violation):
                 return self._no_engine()
-            value = create_outcome(facts, gated=self.gated, folder=self._r.target)
-            return WorkResult(value, ran_user_code=False)
+            return WorkResult(self._from_facts(facts, self.gated, self._target), ran_user_code=False)

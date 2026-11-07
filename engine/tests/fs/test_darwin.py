@@ -7,6 +7,7 @@ from __future__ import annotations
 import contextlib
 import errno
 import fcntl
+import hashlib
 import os
 import stat
 import subprocess
@@ -100,6 +101,35 @@ def test_a_bounded_read_reads_at_most_its_limit(fs: DarwinFS, tmp_path: Path) ->
         assert h.read("big", limit=0) == b""
         assert h.read("none", limit=5) is None
         assert h.read("big") == b"x" * (3 << 20)
+
+
+def test_a_bounded_hash_reads_at_most_its_limit_and_refuses_what_read_refuses(fs: DarwinFS, tmp_path: Path) -> None:
+    """S0081: a copy's read-back and cleanup check hash a file in chunks, never past its length plus one byte."""
+    data = bytes(range(256)) * ((3 << 20) // 256)
+    (tmp_path / "big").write_bytes(data)
+    (tmp_path / "dir").mkdir()
+    (tmp_path / "link").symlink_to(tmp_path / "big")
+    with fs.open_dir(str(tmp_path)) as h:
+        assert h.sha256("big", len(data) + 1) == (hashlib.sha256(data).hexdigest(), len(data))
+        assert h.sha256("big", 5) == (hashlib.sha256(data[:5]).hexdigest(), 5)
+        assert h.sha256("big", (1 << 20) + 7) == (hashlib.sha256(data[: (1 << 20) + 7]).hexdigest(), (1 << 20) + 7)
+        assert h.sha256("none", 5) is None
+        for refused in ("dir", "link"):  # a link is never followed (as `read` refuses it)
+            with pytest.raises(OSError, match=r"not a regular file"):
+                h.sha256(refused, 5)
+
+
+def test_a_streamed_create_writes_every_chunk_in_order_exclusively(fs: DarwinFS, tmp_path: Path) -> None:
+    """S0081: a copy hands the create its source in chunks; the file holds them all, its identity is its own."""
+    chunks = [b"a" * 7, b"", b"b" * (1 << 20), b"c"]
+    with fs.open_dir(str(tmp_path)) as h:
+        identity = h.create("f", iter(chunks), 0o644)
+        st = (tmp_path / "f").lstat()
+        assert identity == (st.st_dev, st.st_ino)
+        assert (tmp_path / "f").read_bytes() == b"".join(chunks)
+        with pytest.raises(FileExistsError):
+            h.create("f", iter([b"x"]), 0o644)
+    assert (tmp_path / "f").read_bytes() == b"".join(chunks), "an existing file is never written"
 
 
 def test_a_handles_path_follows_its_folder_when_it_moves_and_a_link_put_in_its_place_is_not_followed(

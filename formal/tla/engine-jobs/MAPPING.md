@@ -86,7 +86,7 @@ INV = state invariant, ACT = action property (`[][...]_vars`).
 | Action | Spec | Code (`@tla_action`, or the backlog row that builds it) |
 |---|---|---|
 | `StartSave` | §6.1, a confirmed save planned on the preview's fingerprint | the sidecar's save job (user action) |
-| `StartCreate`, `StartCopy` | §8.2 | user actions: `app.platform.engine_jobs.create.submit_create` (S0080); copy BL-0196 |
+| `StartCreate`, `StartCopy` | §8.2 | user actions: `app.platform.engine_jobs.create.submit_create` (S0080), `app.platform.engine_jobs.copy.submit_copy` (S0081) |
 | `StartRecover` | §8.1, §9.1: Retry, Back and a switch recover first | the sidecar (user action) |
 | `Keep` | §8.1 "Afterwards" | `ledger.recover_all` (user action) |
 | `Relaunch` | §9.2: the next start recovers first | the sidecar's boot (user action) |
@@ -107,8 +107,8 @@ INV = state invariant, ACT = action property (`[][...]_vars`).
 | `RS_Resolve` | §8.1 step 4 | `restore.restore` |
 | `RS_Late` | none: the seeded bug `resolve_before_restores_synced`'s own step | none (`MUTANT_ONLY`) |
 | `RC_Init`, `RC_Next` | §8.1 | BL-0164 (recover-all's tries through the engine) |
-| `CP_Check`, `CP_Load`, `CP_Manifest` | §8.2 copy | BL-0196 |
-| `CR_Target`, `CR_WriteA`, `CR_SyncA`, `CR_ReadBack`, `CR_ManifestRename`, `CR_ManifestSync`, `CR_Register` | §8.2 create | built in S0080 as `ledger_engine.ledger.create` (`_Run._target`, `_write`, `_sync`, `_read_back`, `_manifest`), not marked until its conformance replay (BL-0196; `ledger_engine.tla`'s rule); its properties are swept over the fake (`engine/tests/ledger/test_create.py`); `CR_Register` is the registry's (BL-0102) |
+| `CP_Check`, `CP_Load`, `CP_Manifest` | §8.2 copy | built in S0081 as `ledger_engine.ledger.copy` (`_CopySteps.prepare`: the journals, `_journals`; the reads and writes through the create's `Run`; the manifest the create's `Run._manifest`), not marked until its conformance replay (BL-0201); `NoCopyOverOpenJournal` and the copy's durability are swept over the fake (`engine/tests/ledger/test_copy.py`) |
+| `CR_Target`, `CR_WriteA`, `CR_SyncA`, `CR_ReadBack`, `CR_ManifestRename`, `CR_ManifestSync`, `CR_Register` | §8.2 create | built in S0080 as `ledger_engine.ledger.create` (`Run._target`, `_write`, `_sync`, `_read_back`, `_manifest`), not marked until its conformance replay (BL-0201; `ledger_engine.tla`'s rule); its properties are swept over the fake (`engine/tests/ledger/test_create.py`); `CR_Register` is the registry's (BL-0102) |
 | `EngineCrash` | §5.3, §6.6, §8.1 | OS |
 | `IOFail` | §6.4, §8.1 step 3 | OS |
 | `AppCrash`, `PowerLoss` | §10, §13 | OS |
@@ -240,4 +240,4 @@ A base world that passes could pass because it never reaches the branch a proper
 | `EngineCrash` | an engine death raised at the code's hook; the outcome read by `save.outcome` (`DISK`) |
 | `IOFail` | an `OSError` raised at the code's hook, before the effect; at the swap or exclusive rename after it, when the model's `IOFail` took the swap's effect (`MemFS.inject(after=True)`) |
 
-No save path step stops the replay (S0072): only a save the walk cut is not followed. Not replayed: recover-all's tries over boot journals (BL-0164), create and copy (BL-0196; S0080 built the create, checked by its own sweeps over the fake).
+No save path step stops the replay (S0072): only a save the walk cut is not followed. Not replayed: recover-all's tries over boot journals (BL-0164), create and copy (BL-0201; S0080 built the create and S0081 the copy, each checked by its own sweeps over the fake).
