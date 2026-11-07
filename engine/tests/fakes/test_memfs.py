@@ -558,6 +558,26 @@ def test_a_new_file_inherits_what_the_folder_holds_when_its_entry_is_made() -> N
             d.read("new")
 
 
+def test_on_read_runs_before_a_hashed_read_and_is_not_an_effect() -> None:
+    """S0084: the create replay's hook at the read-back. An outside write made in it is what the read sees."""
+    fs = fs_with("/d")
+    fs.outside_write("/d/f", b"ours")
+    seen: list[str] = []
+
+    def hook(label: str) -> None:
+        seen.append(label)
+        fs.outside_write("/d/f", b"theirs")
+
+    fs.on_read = hook
+    with fs.open_dir("/d") as d:
+        assert d.sha256("f", 100) == d.sha256("f", 100)
+        got = d.sha256("f", 100)
+    assert seen == ["sha256 /d:f"] * 3
+    assert got is not None
+    assert got[1] == len(b"theirs")
+    assert fs.effects == []
+
+
 # -- volumes without the swap (S0065, from the probes on exFAT, FAT and HFS+ disk images) ---------------------------
 
 

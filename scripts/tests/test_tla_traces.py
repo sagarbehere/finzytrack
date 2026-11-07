@@ -1,6 +1,6 @@
 """Meta-tests for formal/tla/engine-jobs/gen_traces.py (S0059): the trace module it writes, its reader of TLC's trace
-values, and its staleness check. None runs TLC (the generator does, with Java); the conformance replay itself is
-engine/tests/ledger/test_save_conformance.py.
+values, and its staleness check. None runs TLC (the generator does, with Java); the conformance replays themselves are
+engine/tests/ledger/test_save_conformance.py and test_create_conformance.py.
 """
 
 from __future__ import annotations
@@ -42,6 +42,8 @@ STATE_1 ==
      bk |-> [s1 |-> 0, s2 |-> 0, s3 |-> 0], ud |-> {}]
 /\ jr = [b2 |-> [st |-> "none", files |-> {}], s1 |-> [st |-> "part", files |-> {"R", "N"}]]
 /\ gh = [told |-> [s1 |-> "none", s2 |-> "none", s3 |-> "none"], ed |-> [R |-> 0]]
+/\ tgt = [ex |-> FALSE, c |-> [a |-> "no", m |-> "no", o |-> "no", x |-> "frn"],
+     pl |-> [a |-> {"no"}, m |-> {"no"}, o |-> {"no"}, x |-> {"frn"}]]
 
 STATE_2 ==
 /\ act = [a |-> "S_TempStart", p |-> 0]
@@ -57,6 +59,8 @@ STATE_2 ==
      bk |-> [s1 |-> 0, s2 |-> 0, s3 |-> 0], ud |-> {}]
 /\ jr = [b2 |-> [st |-> "none", files |-> {}], s1 |-> [st |-> "open", files |-> {"R", "N"}]]
 /\ gh = [told |-> [s1 |-> "none", s2 |-> "none", s3 |-> "none"], ed |-> [R |-> 0]]
+/\ tgt = [ex |-> TRUE, c |-> [a |-> "ours", m |-> "no", o |-> "no", x |-> "frn"],
+     pl |-> [a |-> {"no", "torn", "ours"}, m |-> {"no"}, o |-> {"no"}, x |-> {"frn"}]]
 
 =================================================
 """
@@ -85,7 +89,7 @@ class ReaderTest(unittest.TestCase):
         self.assertIsNone(first["run"])
         self.assertEqual(second["run"], {"k": "save", "id": "s1"})
         self.assertEqual(second["ctl"], {"pc": "s_tw2"})
-        self.assertEqual(first["fs"], {"cur": {"R": 1, "N": 0, "I": 1}, "tc": {"s1/R": 0, "s1/N": 3},
+        self.assertEqual(first["fs"], {"cur": {"R": 1, "N": 0, "I": 1, "J": 1}, "tc": {"s1/R": 0, "s1/N": 3},
                                        "sg": {"s1/R": -1, "s1/N": 0}, "rt": {"s1/R": 0, "s1/N": 0},
                                        "kp": {"s1/R": [11], "s1/N": []},
                                        "bk": {"s1": 0, "s2": 0, "s3": 0}})  # fmt: skip
@@ -93,6 +97,10 @@ class ReaderTest(unittest.TestCase):
         self.assertEqual(second["sv"], {"s": "s1", "fi": 2, "rj": "none", "plan": {"R": 1, "N": 0, "I": 1},
                                         "rbt": "none"})  # fmt: skip
         self.assertEqual(first["told"], {"s1": "none", "s2": "none", "s3": "none"})
+        # S0084: the create's target, each name's power-loss values sorted
+        self.assertEqual(first["tgt"], {"ex": False, "c": {"a": "no", "m": "no", "o": "no", "x": "frn"},
+                                        "pl": {"a": ["no"], "m": ["no"], "o": ["no"], "x": ["frn"]}})  # fmt: skip
+        self.assertEqual(second["tgt"]["pl"]["a"], ["no", "ours", "torn"])
 
     def test_a_state_without_a_replay_variable_is_refused(self) -> None:
         with self.assertRaises(ValueError):
@@ -117,6 +125,9 @@ class CorpusFormTest(unittest.TestCase):
         out = GEN.prune([st(None), st("recover"), st("save"), st(None), st(None)])
         self.assertEqual(["fs" in s for s in out], [True, False, True, True, False])
         self.assertEqual(out[1]["app"], "run")
+        # S0084: around a copy too (the journals it checks), never around a create (its target is `tgt`)
+        out = GEN.prune([st(None), st("create"), st("copy"), st(None), st(None)])
+        self.assertEqual(["fs" in s for s in out], [True, False, True, True, False])
 
     def test_the_traces_that_add_branches_are_kept_first(self) -> None:
         def tr(*acts: str) -> list[dict]:
@@ -129,12 +140,27 @@ class CorpusFormTest(unittest.TestCase):
 
 class WrapperTest(unittest.TestCase):
     def test_every_action_but_the_left_out_ones_is_labelled_once(self) -> None:
-        text = GEN.wrapper(MODEL, [])
-        labelled = re.findall(r'act\' = \[a \|-> "(\w+)"', text)
+        jobs = set().union(*GEN.JOB_ACTIONS.values())
         names = {name for _, name, _ in GEN.actions(MODEL)}
-        self.assertEqual(set(labelled), names - GEN.OUT)
-        self.assertFalse(set(labelled) & GEN.OUT)
-        self.assertEqual(labelled.count("Editor"), 1)
+        for world_jobs, left in (([], GEN.OUT | jobs), (["create", "copy"], GEN.OUT),
+                                 (["copy"], GEN.OUT | GEN.JOB_ACTIONS["create"])):  # fmt: skip
+            with self.subTest(jobs=world_jobs):
+                labelled = re.findall(r'act\' = \[a \|-> "(\w+)"', GEN.wrapper(MODEL, [], world_jobs))
+                self.assertEqual(set(labelled), names - left)
+                self.assertEqual(len(labelled), len(set(labelled)))
+                self.assertEqual(labelled.count("Editor"), 1)
+
+    def test_a_world_without_a_job_cannot_take_its_actions(self) -> None:
+        """S0084: `JOB_ACTIONS` are left out of a world that does not name the job, which changes no behaviour only
+        while that world's constants never start the job. Must not pass: a save world with `DoCopy = TRUE`."""
+        for name, world in GEN.WORLDS.items():
+            consts = GEN.constants(name)
+            jobs = world.get("jobs", [])
+            self.assertLessEqual(set(jobs), set(GEN.JOB_ACTIONS), name)
+            if "create" not in jobs:
+                self.assertEqual((consts["CreateTarget"], consts["MaxDrop"]), ('"none"', "0"), name)
+            if "copy" not in jobs:
+                self.assertEqual(consts["DoCopy"], "FALSE", name)
 
     def test_the_left_out_branches_are_guarded(self) -> None:
         text = GEN.wrapper(MODEL, ["crash_in_save", "edit_at_swap"])
@@ -146,6 +172,8 @@ class WrapperTest(unittest.TestCase):
     def test_left_out_and_guarded_names_are_actions_of_the_model(self) -> None:
         names = {name for _, name, _ in GEN.actions(MODEL)}
         self.assertLessEqual(GEN.OUT, names)
+        self.assertLessEqual(set().union(*GEN.JOB_ACTIONS.values()), names)
+        self.assertFalse(GEN.OUT & set().union(*GEN.JOB_ACTIONS.values()))
         self.assertLessEqual(set(GEN.GUARDS), names)
         for branches in GEN.LEAVE.values():
             self.assertLessEqual(set(branches), names)

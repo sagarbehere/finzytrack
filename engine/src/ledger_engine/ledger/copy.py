@@ -57,6 +57,7 @@ from ledger_engine.ledger.handles import join
 from ledger_engine.ledger.paths import path_key
 from ledger_engine.ledger.policy import DESKTOP
 from ledger_engine.ledger.writer import BadPlanError
+from ledger_engine.tla import tla_action
 
 LEGACY_LOCK_TAIL = "/data/.write.lock"
 BEANCOUNT_PACKAGES = frozenset({"beancount", "beanquery"})
@@ -168,6 +169,7 @@ class _CopySteps:
         while self.held:
             self.held.pop().release()
 
+    @tla_action("CP_Load")
     def prepare(self, run: Run) -> None:
         """Step 2, before step 1 makes anything (`create.Steps`)."""
         run.say_saving()
@@ -265,6 +267,7 @@ class _CopySteps:
             raise Stop("source_missing", root)
         return loaded
 
+    @tla_action("CP_Check")
     def _journals(self, sources: Sequence[str]) -> None:
         """Step 2c: no `.open` journal of any workspace may name a source ledger file (by `path_key`); an `.open`
         record that cannot be read, and a journal folder that cannot be listed, refuse too (fail closed)."""
@@ -373,6 +376,7 @@ class _CopySteps:
         return new.data
 
     # step 5 ---------------------------------------------------------------------------------------------------------
+    @tla_action("CP_Load")
     def check(self, run: Run) -> None:
         self.release()  # held only for the copy's file reads (ADR-0062 Consequences)
         self.job.progress("checking_change")

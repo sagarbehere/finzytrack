@@ -107,8 +107,14 @@ INV = state invariant, ACT = action property (`[][...]_vars`).
 | `RS_Resolve` | §8.1 step 4 | `restore.restore` |
 | `RS_Late` | none: the seeded bug `resolve_before_restores_synced`'s own step | none (`MUTANT_ONLY`) |
 | `RC_Init`, `RC_Next` | §8.1 | BL-0164 (recover-all's tries through the engine) |
-| `CP_Check`, `CP_Load`, `CP_Manifest` | §8.2 copy | built in S0081 as `ledger_engine.ledger.copy` (`_CopySteps.prepare`: the journals, `_journals`; the reads and writes through the create's `Run`; the manifest the create's `Run._manifest`), not marked until its conformance replay (BL-0201); `NoCopyOverOpenJournal` and the copy's durability are swept over the fake (`engine/tests/ledger/test_copy.py`) |
-| `CR_Target`, `CR_WriteA`, `CR_SyncA`, `CR_ReadBack`, `CR_ManifestRename`, `CR_ManifestSync`, `CR_Register` | §8.2 create | built in S0080 as `ledger_engine.ledger.create` (`Run._target`, `_write`, `_sync`, `_read_back`, `_manifest`), not marked until its conformance replay (BL-0201; `ledger_engine.tla`'s rule); its properties are swept over the fake (`engine/tests/ledger/test_create.py`); `CR_Register` is the registry's (BL-0102) |
+| `CP_Check` | §8.2 copy step 2c | `copy._CopySteps._journals` |
+| `CP_Load` | §8.2 copy steps 2, 3-5 | `copy._CopySteps.prepare` (the reads, the layout), `copy._CopySteps.check` (loads the same, the re-check); its writes are the create's (`CR_WriteA` .. `CR_ReadBack`) |
+| `CP_Manifest` | §8.2 copy step 7 | `create.Run._manifest` (with `CR_ManifestRename`, `CR_ManifestSync`) |
+| `CR_Target` | §8.2 create step 1 | `create.Run._target` |
+| `CR_WriteA`, `CR_SyncA` | §8.2 create step 3 | `create.Run._write`, `create.Run._sync` |
+| `CR_ReadBack` | §8.2 create step 4 | `create.Run._read_back` |
+| `CR_ManifestRename`, `CR_ManifestSync` | §8.2 create step 7 | `create.Run._manifest` (`.finzytrack.ft-<job>/` written, synced and read back, renamed exclusively to `.finzytrack`, the target synced) |
+| `CR_Register` | §8.2 create step 8 | BL-0102 (the registry; the engine answers created) |
 | `EngineCrash` | §5.3, §6.6, §8.1 | OS |
 | `IOFail` | §6.4, §8.1 step 3 | OS |
 | `AppCrash`, `PowerLoss` | §10, §13 | OS |
@@ -149,6 +155,11 @@ INV = state invariant, ACT = action property (`[][...]_vars`).
 | Folders the save makes, and their removal | `test_writer.py`, `test_restore.py` |
 | The rebuild after a save, the mirror publish | write no ledger byte; the publish gets its own model (BL-0113) |
 | Several kept names per file (`-2`, `-3`) | `fs.kp` is a set of the kept bytes; the numbering is `journal.kept_name`'s |
+| The create's `.finzytrack.ft-<job>/` folder: its folders made, its files created and synced, read back, then the exclusive rename are one step (`CR_ManifestRename`); the temp's name is not one of `Names` | the temp is not a workspace (no `.finzytrack`); the create replay classifies its effects to that step (S0084), and `test_create.py`'s sweeps check every effect inside it |
+| The cleanup of a create or copy that stopped (S0080, the owner's middle path: it removes what this run made, checked by identity and bytes, and only that); the model's `CrStop` leaves the folder as it is | removing a stopped job's own files loses no committed byte (the folder is not a workspace without `.finzytrack/`). The create replay accepts a name the model has as ours being absent after a stop, and nothing else: another program's entry stays exactly as the model has it (`DroppedFileNeverReplaced`, `NonEmptyTargetUntouched`); the cleanup's own rules are `test_create.py`'s and `test_copy.py`'s |
+| The create's load check (step 5) and its commit point (step 6); the copy's legacy locks, layout and "loads the same" | write nothing: not durability (EP-19); `test_create.py`, `test_copy.py`, `test_create_ops.py`, `test_copy_ops.py` |
+| The copy's writes (`CP_Load`, `CP_Manifest` have no effect on `tgt`) | the copy writes with the create's writer (`create.run_steps`), whose steps the create replay walks; the copy replay checks that it writes only in its target and leaves no `.finzytrack` of ours after a death |
+| The copy checks the journals before it reads the sources (`CP_Check`, then `CP_Load`); the code loads the source first (step 2b), then reads the journals (2c) | both only read, and a refusal comes before any write in both; the copy replay places the code's source load at `CP_Check` |
 
 ## 4. Interpretations where the spec is still silent
 
@@ -224,9 +235,9 @@ Every mutant runs on a small world and checks only the property it must break (`
 
 A base world that passes could pass because it never reaches the branch a property is about. Each witness (`W_*` in `EngineJobs.tla`, `gen_cfgs.py` `WITNESSES`, configurations `WIT_*`, kind `witness`) is the negation of a branch as an invariant on a small world; TLC must report it violated, so the branch is reached. The branches: a save lands (`W_Saved`), a rollback resolves (`W_RollbackResolved`), puts pre bytes back (`W_RollbackPutsBack`), cannot resolve (`W_RollbackUnfinished`), keeps an outside save met at the swap (`W_KeptCopySave`), stops on a taken created path with the other files undone (`W_CreatedPathTaken`); an outside save after the gate is displaced into the temp (`W_EditorAfterGate`); recovery resolves a boot journal (`W_RecoverResolves`), keeps an outside save (`W_RecoverKeptCopy`), fails a try (`W_RecoverFailed`), stops on the path guard (`W_LinkStop`); Keep (`W_Keep`) and Keep of a torn journal (`W_KeepTorn`); a cut staging write meets recovery (`W_StagingCutSeen`) and the save cut by a power loss is undone (`W_CutStagingDeleted`, `W_PowerAfterSaveRecovered`); a copy reaches its manifest (`W_CopyDone`) and meets an in-session `.open` journal (`W_CopyRefusedInsession`); a create registers (`W_CreateDone`); the second save lands (`W_SecondSaved`) and its rollback puts both files back (`W_SecondRollbackTwoFiles`); on the weaker file system an unsynced outside save is that program's loss (`W_WeakLossAccepted`) and an outside save is kept (`W_WeakRecoverKept`).
 
-## 7. The code's conformance (S0064, S0072)
+## 7. The code's conformance (S0064, S0072, S0084)
 
-`traces/corpus.json` holds TLC-simulated traces of small save worlds (`gen_traces.py`: the worlds, the seed, the depth, and the actions left out: create, copy, recover-all again, Keep, the next start, the app's crash, a power loss, the path changer). `engine/tests/ledger/test_save_conformance.py` replays each save through `ledger.save.run` over the in-memory file system and compares, at each step the code reaches, the files, the save's record, its temps and staging files, restore temps, kept copies and backup with the model's; at the end it checks what the code answered against the model's disk (§6.6's table over the save's record, else the re-hash: `told_on_disk`), never against `gh.told`, whose truth no property checks (EP-19; S0072 verifier r1 F1).
+`traces/corpus.json` holds TLC-simulated traces of small save worlds, and since S0084 of create and copy worlds (`gen_traces.py`: the worlds, the seed, the depth, and the actions left out: recover-all again, Keep, the next start, the app's crash, a power loss, the path changer). `engine/tests/ledger/test_save_conformance.py` replays each save through `ledger.save.run` over the in-memory file system and compares, at each step the code reaches, the files, the save's record, its temps and staging files, restore temps, kept copies and backup with the model's; at the end it checks what the code answered against the model's disk (§6.6's table over the save's record, else the re-hash: `told_on_disk`), never against `gh.told`, whose truth no property checks (EP-19; S0072 verifier r1 F1).
 
 | Model | Code hook |
 |---|---|
@@ -240,4 +251,19 @@ A base world that passes could pass because it never reaches the branch a proper
 | `EngineCrash` | an engine death raised at the code's hook; the outcome read by `save.outcome` (`DISK`) |
 | `IOFail` | an `OSError` raised at the code's hook, before the effect; at the swap or exclusive rename after it, when the model's `IOFail` took the swap's effect (`MemFS.inject(after=True)`) |
 
-No save path step stops the replay (S0072): only a save the walk cut is not followed. Not replayed: recover-all's tries over boot journals (BL-0164), create and copy (BL-0201; S0080 built the create and S0081 the copy, each checked by its own sweeps over the fake).
+No save path step stops the replay (S0072): only a save the walk cut is not followed. Not replayed: recover-all's tries over boot journals (BL-0164).
+
+**The create and the copy** (S0084, BL-0201). The corpus also walks create worlds (`S_create_*`: an absent, empty or non-empty target, files dropped into it or written over the one the job wrote, an engine death) and copy worlds (`S_copy*`: a boot journal recover-all could not resolve or whose file list cannot be read, a save's journal left `.open` in the session, none, an engine death in the copy); their actions are walked only in worlds that name the job (`gen_traces.py` `JOB_ACTIONS`), so the save worlds' traces stay as they were. `engine/tests/ledger/test_create_conformance.py` replays each through `create.run` and `copy.run` over the fake. The create: the model's names `a`, `m`, `o`, `x` are `main.beancount`, `.finzytrack`, `other.txt`, `prior.txt` in `/u/new`; at each hook the fake is compared with `tgt`: whether the folder exists, what each name holds, and what a power loss may leave there (every state of `MemFS.power_loss_states()` must be one `tgt.pl` allows, so the sync steps cannot be passed); the answer must be the stop of the model's last step, or created at `CR_Register`; after a death the fake is exactly `tgt`. The copy: the fake's journals are the model's at the copy's start; it refuses (`recovery_blocked`) exactly when `CP_Check` ends the job, writes only in its target, leaves no `.finzytrack` of ours after a death, and answers created exactly when `CP_Manifest` ran.
+
+| Model | Code hook (create, copy) |
+|---|---|
+| `CR_Target` | the target's `mkdir` and its parent's sync (an existing empty folder: no effect) |
+| `CR_WriteA`, `CR_SyncA` | the file's exclusive create (entry, write, data sync); the folders' sync |
+| `CR_ReadBack` | the read-back's read of the file (`MemFS.on_read`) |
+| `CR_ManifestRename`, `CR_ManifestSync` | every effect in `.finzytrack.ft-<job>/` and its exclusive rename; the target's sync after the rename |
+| a stop's cleanup | removals and syncs after the step that stopped the model's job (outside the model, §3) |
+| `CP_Check` | the source's load (just before the code reads the journals) |
+| `CP_Load`, `CP_Manifest` | the effects in the copy's target before the manifest's temp; the manifest's |
+| `EngineCrash` | an engine death raised at the code's hook |
+
+Not walked: `CR_Register` (the registry's, BL-0102). `PowerLoss` and `AppCrash` stay out of the traces (each ends the session; the next start is recover-all's, BL-0164): a power loss at every step is the durable comparison above, and an app crash leaves the target as an engine death does.

@@ -4,7 +4,8 @@
 (or the engine's part of it). The marker changes nothing at run time and registers nothing: it returns the function
 unchanged. `backend/tests/architecture/test_tla_mapping.py` reads the markers from the source (never importing the
 engine, ADR-0054) and checks the map both ways against the model's `Next` relation; a marker is placed only on an
-action the conformance replay walks through the code (`tests/ledger/test_save_conformance.py`; S0060's rule).
+action a conformance replay walks through the code (`tests/ledger/test_save_conformance.py`, the save;
+`tests/ledger/test_create_conformance.py`, the create and the copy, S0084; S0060's rule).
 """
 
 from __future__ import annotations

@@ -15,9 +15,9 @@ pieces land. The markers are read from the source (AST), never by importing the 
 refuses a disjunct it cannot read rather than dropping it (S0053 verifier F9).
 
 Limit: the check sees which actions are marked, not whether the marked function is the one that carries the action
-out. A marker on the wrong function passes; the save's conformance replay (S0064,
-`engine/tests/ledger/test_save_conformance.py`) runs the model's saves through the engine and catches wrong behaviour,
-whichever function holds it.
+out. A marker on the wrong function passes; the conformance replays (S0064,
+`engine/tests/ledger/test_save_conformance.py`; S0084, `engine/tests/ledger/test_create_conformance.py`) run the
+model's saves, creates and copies through the engine and catch wrong behaviour, whichever function holds it.
 """
 
 from __future__ import annotations
@@ -38,31 +38,17 @@ MARKED_GROUPS = ("EngineStep",)  # its actions are the code's: each needs a mark
 FREE_GROUPS = ("UserStep", "EnvStep")  # user, OS and outside-editor actions: no marker needed
 MUTANT_ONLY = frozenset({"RS_Late"})  # a step only a seeded bug takes (`resolve_before_restores_synced`): no code
 
-CREATE_COPY = "BL-0201"  # the create's and the copy's conformance replay (S0080 built the create, S0081 the copy)
 REGISTER = "BL-0102"  # registering a created workspace needs the registry
 RECOVER_ALL = "BL-0164"  # recover-all's per-journal tries replayed through the engine
 
 PLANNED: Mapping[str, str] = {
     **{a: RECOVER_ALL for a in ["RC_Init", "RC_Next"]},
-    **{
-        a: CREATE_COPY
-        for a in [
-            "CP_Check",
-            "CP_Load",
-            "CP_Manifest",
-            "CR_Target",
-            "CR_WriteA",
-            "CR_SyncA",
-            "CR_ReadBack",
-            "CR_ManifestRename",
-            "CR_ManifestSync",
-        ]
-    },
     "CR_Register": REGISTER,
 }
 """Since S0064 (BL-0151 slice 5) the save's steps, its rollback and the restore are marked in the engine
 (`ledger_engine.tla`); `engine/tests/ledger/test_save_conformance.py` walks them through the code (its `WALKED`, and
-`NOT_WALKED` with its reasons)."""
+`NOT_WALKED` with its reasons). Since S0084 (BL-0201) the create's and the copy's steps are marked too, walked by
+`engine/tests/ledger/test_create_conformance.py`; `CR_Register` is the sidecar's registry's (BL-0102)."""
 
 PARTIAL: Mapping[str, str] = {}
 

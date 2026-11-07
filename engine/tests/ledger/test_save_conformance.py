@@ -158,8 +158,14 @@ def corpus() -> tuple[State, tuple[State, ...]]:
 
 
 def worlds() -> list[str]:
+    """The save worlds: no boot journal (recover-all's tries, BL-0164), no create and no copy (their replay is
+    `test_create_conformance.py`, S0084)."""
     meta, _ = corpus()
-    return sorted(w for w, c in meta["constants"].items() if c["BootJ"] == "{}")
+    return sorted(
+        w
+        for w, c in meta["constants"].items()
+        if c["BootJ"] == "{}" and c["CreateTarget"] == '"none"' and c["DoCopy"] == "FALSE"
+    )
 
 
 # -- the views -------------------------------------------------------------------------------------------------------

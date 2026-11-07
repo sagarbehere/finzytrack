@@ -24,7 +24,7 @@ rollback's, S0061): `Crash` (a `BaseException`, as a process death that no `exce
 (`ENOSPC` by default), before the effect, or for a write after writing only its first `cut` bytes, or with
 `after=True` after the effect took place (an operation that happened but answered an error). `on_effect(i, label)`
 runs before each effect, for an outside program to act between two effects (`outside_*`: durable, as an editor that
-syncs its save; they are not effects).
+syncs its save; they are not effects); `on_read(label)` before each `sha256` read (S0084).
 
 **Resolution, as the macOS adapter does it:** links are followed, a dangling link counts as absent (its own name is
 the first missing component), and `Resolved.identity` is `(1, inode)`. Files may have several hard links
@@ -219,6 +219,7 @@ class MemFS:
         self.effects: list[str] = []
         self._faults: dict[int, _Fault] = {}
         self.on_effect: Callable[[int, str], None] | None = None
+        self.on_read: Callable[[str], None] | None = None  # S0084: before each `sha256` (the create's read-back)
         self.stores_nfd = stores_nfd  # HFS+: every name stored in NFD, whatever spelling it was given (S0061 probe)
         self.lost_power = False  # a state a power loss left (`power_loss_states`), or one reached from such a state
         self.largest_chunk = 0  # the largest chunk a streamed create was given (S0081: never a whole document)
@@ -830,7 +831,10 @@ class MemDir:
         return tuple(a.entry for a in self._d.acl)
 
     def sha256(self, name: str, limit: int) -> tuple[str, int] | None:
-        """As `read`, hashed (`DirHandle.sha256`)."""
+        """As `read`, hashed (`DirHandle.sha256`). `on_read(label)` runs first (S0084: the conformance replay's hook
+        at the create's read-back; a read is not an effect)."""
+        if self._fs.on_read is not None:
+            self._fs.on_read(self._label("sha256", name))
         data = self.read(name, limit)
         if data is None:
             return None

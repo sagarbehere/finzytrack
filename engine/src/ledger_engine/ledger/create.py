@@ -69,6 +69,7 @@ from ledger_engine.ledger import fingerprint, overlay
 from ledger_engine.ledger.core import paths as core_paths
 from ledger_engine.ledger.handles import Handles, PathMovedError, folder_blocked, join
 from ledger_engine.ledger.writer import BadPlanError
+from ledger_engine.tla import tla_action
 
 MANIFEST_DIR: Final = ".finzytrack"
 TEMP_INFIX: Final = ".ft-"
@@ -443,6 +444,7 @@ class Run:
         return _named(kept)
 
     # step 1 ------------------------------------------------------------------------------------------------------
+    @tla_action("CR_Target")
     def _target(self) -> None:
         r = self.fs.resolve(self.plan.target)
         if len(r.rest) > 1:
@@ -478,6 +480,7 @@ class Run:
             raise Stop("permission", folder, blocked.detail)
 
     # step 3 ------------------------------------------------------------------------------------------------------
+    @tla_action("CR_WriteA")
     def _write(self) -> None:
         for d in _folders(self.plan.files, self.plan.folders):
             parent, _, name = d.rpartition("/")
@@ -539,6 +542,7 @@ class Run:
         if there:
             self.unsure.append(rel)
 
+    @tla_action("CR_SyncA")
     def _sync(self) -> None:
         for d in reversed(_folders(self.plan.files, self.plan.folders)):
             self.handles.on = join(self.folder, d)
@@ -547,6 +551,7 @@ class Run:
         self.handles.at(self.folder).sync()
 
     # step 4 ------------------------------------------------------------------------------------------------------
+    @tla_action("CR_ReadBack")
     def _read_back(self) -> None:
         """Every file holds what the job wrote (its SHA-256 and length, read at most that length plus one byte)."""
         for f in self.plan.files:
@@ -558,6 +563,7 @@ class Run:
                 raise Stop("read_back", path)
 
     # step 7 ------------------------------------------------------------------------------------------------------
+    @tla_action("CR_ManifestRename", "CR_ManifestSync", "CP_Manifest")
     def _manifest(self) -> CreateOutcome:
         temp = _temp(self.plan)
         tpath = join(self.folder, temp)

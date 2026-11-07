@@ -11,14 +11,16 @@ model in two ways only, and every step it takes is a step of the model's `Next`,
 `Spec`:
 
 - each step is labelled with its action (`act`), so the replay knows what happened;
-- the actions in OUT are left out (their behaviour is replayed elsewhere or later; the replay could only stop there).
+- the actions in OUT are left out (their behaviour is replayed elsewhere or later; the replay could only stop there),
+  and so are the create's and the copy's (`JOB_ACTIONS`) in a world that does not name the job (S0084).
 
-The corpus keeps, per state, only the variables the save replay reads (`KEEP_VARS`; around saves the file system, the
-records and what the save was told, `prune`; `engine/tests/ledger/test_save_conformance.py` replays the saves through
-the engine), each trace as deltas, and records the SHA-256 of the model, of each world's `.cfg`, of this script and of
-the TLA+ tools, so the replay fails on a stale corpus with this command in its message. The reader of TLC's trace
-values below reads only the shapes those variables use (records, sequences, sets, functions, strings, integers,
-booleans) and refuses anything else.
+The corpus keeps, per state, only the variables the replays read (`KEEP_VARS`; around saves and copies the file
+system, the records and what the save was told, `prune`; the create's target always, `target`;
+`engine/tests/ledger/test_save_conformance.py` replays the saves through the engine,
+`engine/tests/ledger/test_create_conformance.py` the creates and copies, S0084), each trace as deltas, and records
+the SHA-256 of the model, of each world's `.cfg`, of this script and of the TLA+ tools, so the replay fails on a
+stale corpus with this command in its message. The reader of TLC's trace values below reads only the shapes those
+variables use (records, sequences, sets, functions, strings, integers, booleans) and refuses anything else.
 """
 
 from __future__ import annotations
@@ -112,13 +114,69 @@ WORLDS: dict[str, dict[str, Any]] = {
         "base": "S_save_two", "set": {"MaxEdits": "0"}, "traces": 16, "depth": 60, "least": 10,
         "leave": ["crash_past_commit"],
     },
+    # S0084 (BL-0201): the create into an absent, an empty and a non-empty folder, with files dropped into it or
+    # written over the one it wrote, and an engine death in it (`engine/tests/ledger/test_create_conformance.py`)
+    "S_create_absent": {
+        "jobs": ["create"], "base": "S_create_absent", "set": {}, "traces": 14, "depth": 30, "least": 6,
+        "leave": ["crash_in_create", "drop_in_create"],
+    },
+    # the create that lands: at most one file dropped or written over, no death; then a death after the manifest's
+    # rename
+    "S_create_land": {
+        "jobs": ["create"], "base": "S_create_absent", "set": {"MaxDrop": "1", "MaxCrash": "0"}, "traces": 8,
+        "depth": 30, "least": 6, "leave": ["drop_in_create"],
+    },
+    "S_create_land_empty": {
+        "jobs": ["create"], "base": "S_create_empty", "set": {"MaxDrop": "1", "MaxPower": "0"}, "traces": 4,
+        "depth": 30, "least": 6, "leave": ["drop_in_create"],
+    },
+    "S_create_overwrite_late": {
+        "jobs": ["create"], "base": "S_create_absent", "set": {"MaxDrop": "1", "MaxCrash": "0"}, "traces": 2,
+        "depth": 30, "least": 8, "leave": ["overwrite_after_read_back"],
+    },
+    "S_create_late_crash": {
+        "jobs": ["create"], "base": "S_create_absent", "set": {"MaxDrop": "0"}, "traces": 2, "depth": 30,
+        "least": 6, "leave": ["crash_late_create"],
+    },
+    "S_create_empty": {
+        "jobs": ["create"], "base": "S_create_empty", "set": {"MaxPower": "0", "MaxCrash": "1"}, "traces": 12,
+        "depth": 30, "least": 6, "leave": ["crash_in_create", "drop_in_create"],
+    },
+    "S_create_nonempty": {
+        "jobs": ["create"], "base": "S_create_nonempty", "set": {}, "traces": 4, "depth": 30, "least": 4,
+        "leave": ["crash_in_create", "drop_in_create"],
+    },
+    # S0084 (BL-0201): the copy of W2 over a boot journal recover-all could not resolve, a save's journal left open by
+    # its engine's death, or none; and an engine death in the copy
+    "S_copy": {
+        "jobs": ["copy"], "base": "S_copy", "set": {}, "traces": 12, "depth": 30, "least": 6, "leave": [],
+    },
+    "S_copy_crash": {
+        "jobs": ["copy"], "base": "S_copy", "set": {}, "traces": 6, "depth": 30, "least": 6, "leave": ["crash_in_copy"],
+    },
+    # a boot journal whose file list cannot be read (it stays unresolved), then the copy
+    "S_copy_torn": {
+        "jobs": ["copy"], "base": "S_copy", "set": {"BootJ": '{"b2", "b3"}', "BootTorn": "TRUE", "MaxCrash": "0"},
+        "traces": 3, "depth": 30, "least": 4, "leave": [],
+    },
+    # a save's journal left `.open` by its engine's death in this session, then the copy (W_CopyRefusedInsession)
+    "S_copy_insession": {
+        "jobs": ["copy"], "base": "S_copy", "set": {"BootJ": "{}"}, "traces": 6, "depth": 40, "least": 8,
+        "leave": ["crash_open_journal"],
+    },
 }  # fmt: skip
 CANDIDATES = 20
 SEED = 20261029
+# S0084 (BL-0201): the actions of the create and the copy, walked only in the worlds that name the job (`jobs`). They
+# cannot be taken in any other world (its constants never start the job: `CreateTarget = "none"`, `DoCopy = FALSE`,
+# `MaxDrop = 0`), so leaving them out there changes no behaviour; it keeps TLC's walk of the save worlds, and so their
+# traces, as they were.
+JOB_ACTIONS: dict[str, frozenset[str]] = {
+    "create": frozenset({"StartCreate", "EditorDrop", "EditorOverwrite"}),
+    "copy": frozenset({"StartCopy"}),
+}
 OUT = frozenset(
     {
-        # BL-0201: create and copy (their jobs never start, so their steps never run; their replay is BL-0201's)
-        "StartCreate", "StartCopy", "EditorDrop", "EditorOverwrite",
         # BL-0164: recover-all through the engine, and Keep; the app's crash and a power loss end the session, whose
         # next start is recover-all's; the path changer and the unreachable disk act on boot journals only
         "StartRecover", "Keep", "Relaunch", "AppCrash", "PowerLoss", "PathChange", "Unreach",
@@ -151,8 +209,18 @@ LEAVE: dict[str, dict[str, str]] = {
     "second_save_faults": {"IOFail": 'ctl.s = "s2"', "EngineCrash": 'run.k = "save" /\\ ctl.pc # "s_gate" /\\ ctl.s = "s2"'},
     # an I/O error in the second save only once it has replaced its first file, so its rollback puts pre bytes back
     "io_after_first_swap": {"IOFail": 'ctl.s = "s2" /\\ fs.cur["N"] = PostV("s2")'},
+    # S0084: an engine death only in the create or the copy, and files dropped into the create's target only while
+    # it runs (a drop after its end is never met by the code)
+    "crash_in_create": {"EngineCrash": 'run.k = "create"'},
+    "crash_in_copy": {"EngineCrash": 'run.k = "copy"'},
+    "overwrite_after_read_back": {
+        "EditorDrop": "FALSE", "EditorOverwrite": 'run.k = "create" /\\ ctl.pc \\in {"cr_mr", "cr_ms", "cr_reg"}',
+    },
+    "crash_late_create": {"EngineCrash": 'run.k = "create" /\\ ctl.pc \\in {"cr_ms", "cr_reg"}'},
+    "crash_open_journal": {"EngineCrash": 'run.k = "save" /\\ jr[run.id].st = "open"'},
+    "drop_in_create": {"EditorDrop": 'run.k = "create"', "EditorOverwrite": 'run.k = "create"'},
 }  # fmt: skip
-KEEP_VARS = ("act", "app", "run", "ctl", "fs", "jr", "gh")
+KEEP_VARS = ("act", "app", "run", "ctl", "fs", "jr", "gh", "tgt")
 
 # -- the model's Next, read from its source --------------------------------------------------------------------------
 
@@ -189,9 +257,9 @@ def actions(model: str) -> list[tuple[str, str, str]]:
     return [d for group in GROUPS for d in disjuncts(model, group)]
 
 
-def wrapper(model: str, leave: list[str]) -> str:
-    """The trace module: the model's Next with each step labelled, OUT left out, and the guarded branches left
-    out."""
+def wrapper(model: str, leave: list[str], jobs: list[str] | None = None) -> str:
+    """The trace module: the model's Next with each step labelled, OUT left out, the actions of the jobs the world
+    does not name left out (`JOB_ACTIONS`), and the guarded branches left out."""
     guards = {n: [g] for n, g in GUARDS.items()}
     for name in leave:
         for n, g in LEAVE[name].items():
@@ -209,7 +277,11 @@ def wrapper(model: str, leave: list[str]) -> str:
     unknown = OUT - names
     if unknown:
         raise SystemExit(f"OUT names actions the model does not have: {sorted(unknown)}")
-    kept = [d for d in every if d[1] not in OUT]
+    unknown = set().union(*JOB_ACTIONS.values()) - names
+    if unknown:
+        raise SystemExit(f"JOB_ACTIONS names actions the model does not have: {sorted(unknown)}")
+    out = OUT.union(*(acts for job, acts in JOB_ACTIONS.items() if job not in (jobs or [])))
+    kept = [d for d in every if d[1] not in out]
     lines = [
         "---------------------------- MODULE EngineJobsTrace ----------------------------",
         "\\* written by gen_traces.py (S0059): the model's Next, each step labelled",
@@ -356,7 +428,19 @@ def compact(state: dict[str, Any]) -> dict[str, Any]:
         "app": state["app"],
         "run": None if run["k"] == "none" else {"k": run["k"], "id": run["id"]},
         "ctl": {"pc": state["ctl"]["pc"]},
+        "tgt": target(state["tgt"]),
         **save_state(state),
+    }
+
+
+def target(tgt: dict[str, Any]) -> dict[str, Any]:
+    """S0084 (BL-0201): the create's target folder as `engine/tests/ledger/test_create_conformance.py` reads it:
+    whether it exists, and per name (`a` the file the job writes, `m` `.finzytrack`, `o` another name, `x` what was
+    there before) what it holds now and what a power loss may leave there."""
+    return {
+        "ex": tgt["ex"],
+        "c": dict(tgt["c"]),
+        "pl": {x: sorted(v["set"]) for x, v in tgt["pl"].items()},
     }
 
 
@@ -372,7 +456,7 @@ def save_state(state: dict[str, Any]) -> dict[str, Any]:
 
     return {
         "fs": {
-            "cur": {f: fs["cur"][f] for f in ("R", "N", "I")},
+            "cur": {f: fs["cur"][f] for f in ("R", "N", "I", "J")},
             "tc": slots(fs["tc"]), "sg": slots(fs["sg"]), "rt": slots(fs["rt"]),
             "kp": {k: sorted(v["set"]) for k, v in slots(fs["kp"]).items()},
             "bk": dict(fs["bk"]),
@@ -411,6 +495,7 @@ def header() -> dict[str, Any]:
         "guards": GUARDS,
         "leave": LEAVE,
         "out": sorted(OUT),
+        "job_actions": {k: sorted(v) for k, v in JOB_ACTIONS.items()},
         "command": COMMAND,
     }
 
@@ -420,7 +505,9 @@ def simulate(world: str, traces: int, depth: int, work: Path) -> list[list[dict[
     folder = work / world
     folder.mkdir()
     shutil.copy(MODEL, folder / "EngineJobs.tla")
-    (folder / "EngineJobsTrace.tla").write_text(wrapper(MODEL.read_text(encoding="utf-8"), WORLDS[world]["leave"]), encoding="utf-8")
+    w = WORLDS[world]
+    trace_module = wrapper(MODEL.read_text(encoding="utf-8"), w["leave"], w.get("jobs"))
+    (folder / "EngineJobsTrace.tla").write_text(trace_module, encoding="utf-8")
     (folder / "EngineJobsTrace.cfg").write_text(world_cfg(world), encoding="utf-8")
     cmd = [
         "java", "-XX:+UseParallelGC", "-cp", str(JAR), "tlc2.TLC",
@@ -440,11 +527,12 @@ SAVE_KEYS = ("fs", "jr", "sv", "told")
 
 
 def prune(trace: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """The save state (`save_state`) kept only where the engine's save replay reads it: the first state, each state
-    in which a save runs, and the state right after one (what it was told). The corpus stays a few MB."""
+    """The save state (`save_state`) kept only where the engine's replays read it: the first state, each state in
+    which a save or a copy runs (S0084: the journals a copy checks), and the state right after one (what it was told).
+    The corpus stays a few MB."""
 
     def saving(st: dict[str, Any]) -> bool:
-        return st["run"] is not None and st["run"]["k"] == "save"
+        return st["run"] is not None and st["run"]["k"] in ("save", "copy")
 
     out = []
     for i, st in enumerate(trace):
