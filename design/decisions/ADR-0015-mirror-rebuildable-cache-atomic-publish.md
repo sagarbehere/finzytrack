@@ -50,6 +50,15 @@ Owner: "Yes, keep numbers beyond 28 digits as exact, with a warning and amend ad
 - Why: an edit that keeps the size and restores the modification time is caught, and a `touch` or a sync tool rewriting the same bytes no longer forces a rebuild. Measured cost at 54k entries: about 3 ms per check (S0051).
 - ADR-0064's "Unchanged: … ADR-0015" holds for everything else in this ADR.
 
+## Amendment (2026-11-07): the mirror folder is ours; grace period only (S0085)
+
+The publish's design was written as rules in `design/specs/mirror/publish.md` (S0085, BL-0113). Two questions there were the owner's; the orchestrator put them in session, 2026-11-07:
+- **Ownership of the mirror folder** (`…/workspaces/<key>/mirror/`): owner chose **"Whole folder is ours"**: the publish and its cleanup may delete anything in that folder and replace whatever sits at `current.db`. The orchestrator's safety rule, stated to the owner with it: the cleanup never follows a link; a link at `mirror/` itself or inside it is removed as a link, never what it points to.
+- **Reader pinning:** owner chose **"Grace period only (Recommended)"**: the amendment of 2026-10-25 is the whole rule: the previous generation is always kept, a replaced one is kept 10 minutes, then deleted. There is no pin tracking in the app: on macOS and Linux, removing a file that an open connection reads is safe. A read resolves `current.db` once and opens that file. This replaces "Old generations are removed once no reader holds them" and the 2026-10-25 amendment's "(if it is still pinned inside the app, later)".
+- **Windows** (the pointer file, and a deletion that fails because a file is open, retried at the next cleanup) moves to M11 (ADR-0061): BL-0206. Until then the design is macOS and Linux only.
+- Agent decisions within these (S0085): the names (`gen-<N>.db`, `current.db` a relative link), the number (above every number still in a name, and above the sidecar's floor), the cleanup first in every `open` and `rebuild` job, the replacement time of a generation read from its successor's modification time, `ledger_version` = `<N>/<digest>`, and the save's gate reading the published generation itself (`SaveRequest.mirror` goes). Their reasons are in the spec's §12 and the S0085 journal.
+- Open: how many generations the grace period may keep during a burst of saves (`design/inbox/20261108-mirror-generations-disk.md`).
+
 ## References
 
 review:D1 §11; review:10 I4, D4, D5; review:23 §1.2, §3.4; review:00 §1b; ADR-0011, ADR-0016, ADR-0017; INV-05; CAP-DATA-MIRROR, CAP-MIRROR-EXTERNAL.
