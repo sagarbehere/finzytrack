@@ -387,6 +387,58 @@ class RebuildResult(Message):
     errors: int = Field(ge=0)
 
 
+# -- The create (S0080; engine-jobs §1, §4, §8.2) ---------------------------------------------------------------------
+
+RelPath = Annotated[str, Field(min_length=1, max_length=1024, pattern=r"^[^/\x00]")]  # relative; checked by the job
+
+
+class CreateFile(Message):
+    """One file of a new workspace: its path relative to the folder it is written in, and its text (UTF-8)."""
+
+    path: RelPath
+    text: str
+
+
+class CreateParams(Message):
+    """A confirmed create (§8.2): the job's name (`.finzytrack.ft-<job>`), the target folder, the workspace's files,
+    which of them is the ledger's root, and the files of `.finzytrack/` (the manifest first among them). The same
+    params name the create whose outcome `create_outcome` reads."""
+
+    job: JobName
+    target: AbsPath
+    files: list[CreateFile] = Field(min_length=1)
+    root: RelPath
+    manifest: list[CreateFile] = Field(min_length=1)
+
+
+class CreateResult(Message):
+    """How the create ended (§8.2, §11). `created`: `.finzytrack/` holds the plan's bytes and is durable. `not_created`:
+    no `.finzytrack/` of ours stands there; `reason`: `not_empty`, `not_a_folder`, `no_parent`, `permission`, `taken`,
+    `read_back`, `load_failed`, `load_errors`, `load_outside`, `manifest_taken`, `path_moved`, `io_error`. `folder`:
+    the target's canonical path; `path`: the entry it is about; `detail`: the ACL entry, or how many load errors;
+    `errno`: the system's answer. The delete advice: `wrote` (the job made something in the folder) and `only_ours`
+    (listed when the job stopped, it holds nothing but the job's own bytes; null: not listed)."""
+
+    outcome: Literal["created", "not_created"]
+    reason: str | None
+    folder: AbsPath
+    path: AbsPath | None
+    detail: str | None
+    errno: int | None
+    wrote: bool
+    only_ours: bool | None
+
+
+class CreateOutcomeResult(Message):
+    """§1 "resolved from disk": `.finzytrack` after the target's sync holds the plan's bytes (`ours`), something else
+    (`foreign`), nothing (`absent`), or could not be read (`unknown`; `errno`); and the delete advice."""
+
+    manifest: Literal["ours", "foreign", "absent", "unknown"]
+    wrote: bool
+    only_ours: bool | None
+    errno: int | None
+
+
 @dataclass(frozen=True, slots=True)
 class OpSpec:
     """One op: its params and result models, the example result its reply carries in the schema, the example params
@@ -404,6 +456,13 @@ _ALD = "/app-data/com.finzytrack.desktop"
 _JD = f"{_ALD}/local/k1/journal"
 _FP = '{"document_files":[],"documents":[],"files":[],"globs":[],"root":"/ledgers/L/main.bean","v":1}'
 _SEEN = {"kind": "file", "sha256": "0" * 64, "size": 21}
+_CREATE = {
+    "job": "j7",
+    "target": "/ledgers/Books",
+    "files": [{"path": "main.beancount", "text": "2026-01-01 open Assets:Cash\n"}],
+    "root": "main.beancount",
+    "manifest": [{"path": "workspace.json", "text": "{}\n"}],
+}
 
 
 OPS: dict[str, OpSpec] = {
@@ -516,6 +575,29 @@ OPS: dict[str, OpSpec] = {
         RebuildResult,
         {"outcome": "loaded", "fingerprint": _FP, "entries": 3, "errors": 0},
         {"root": "/ledgers/L/main.bean", "fingerprint": _FP},
+        needs_engine_lock=True,
+    ),
+    "create": OpSpec(
+        CreateParams,
+        CreateResult,
+        {
+            "outcome": "not_created",
+            "reason": "taken",
+            "folder": "/ledgers/Books",
+            "path": "/ledgers/Books/main.beancount",
+            "detail": None,
+            "errno": None,
+            "wrote": True,
+            "only_ours": False,
+        },
+        _CREATE,
+        needs_engine_lock=True,
+    ),
+    "create_outcome": OpSpec(
+        CreateParams,
+        CreateOutcomeResult,
+        {"manifest": "ours", "wrote": True, "only_ours": True, "errno": None},
+        _CREATE,
         needs_engine_lock=True,
     ),
 }

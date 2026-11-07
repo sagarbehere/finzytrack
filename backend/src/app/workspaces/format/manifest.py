@@ -1,5 +1,6 @@
 """The workspace manifest, `.finzytrack/workspace.json` (ADR-0017, ADR-0019, EP-14, INV-17; S0051). Pure: it reads
-bytes, never a folder (INV-30: the open reads it; nothing here writes it).
+and makes bytes, never a folder (INV-30: the open reads it; the engine's `create` job writes the bytes made here,
+S0080).
 
 Format 1:
 
@@ -15,7 +16,9 @@ Format 1:
 
 `read_manifest` tells a newer manifest apart before it validates anything else (a newer app may change every other
 field): `ManifestNewer` is the open's NEWER_WORKSPACE, `ManifestInvalid` its WS_CONFIG_INVALID (ADR-0019). Reading
-the file from a folder and `assess_workspace` are the open's (BL-0102, M2); writing a manifest is M3's (L10-08).
+the file from a folder and `assess_workspace` are the open's (BL-0102, M2). `encode_manifest` makes the bytes of a
+new workspace's manifest (format `FORMAT`); its new lineage id comes from the caller (`app.workspaces.creation`), so
+this module stays pure; the `create` job writes the bytes last (engine-jobs §8.2, S0080).
 The JSON Schema in `contracts/workspace-manifest.schema.json` is generated from `ManifestV1` (EP-16).
 """
 
@@ -164,3 +167,18 @@ def read_manifest(data: bytes) -> ManifestRead:
         return ManifestInvalid(str(e.errors()[0]["loc"][0]), "invalid")
     ledger: LedgerPlace = External() if wire.ledger == "external" else Inside(WorkspacePath.parse(wire.ledger.root))
     return Manifest(wire.format, wire.min_reader, LineageId(wire.lineage_id), ledger)
+
+
+# ---- writing -------------------------------------------------------------------------------------------------------
+
+
+def encode_manifest(manifest: Manifest) -> bytes:
+    """The manifest's bytes, in format `FORMAT` (UTF-8 JSON, one trailing newline); `read_manifest` reads them back
+    to an equal `Manifest`. Only a manifest of this app's own format is written (INV-17: never a newer one)."""
+    if manifest.format != FORMAT or manifest.min_reader != FORMAT:
+        msg = "only this app's own format is written"
+        raise ValueError(msg)
+    ledger: object = "external" if isinstance(manifest.ledger, External) else {"root": str(manifest.ledger.root)}
+    wire = {"format": FORMAT, "min_reader": FORMAT, "lineage_id": manifest.lineage_id, "ledger": ledger}
+    ManifestV1.model_validate(wire)  # the schema's own check: a bad id never reaches a disk
+    return (json.dumps(wire, indent=2, ensure_ascii=False) + "\n").encode("utf-8")

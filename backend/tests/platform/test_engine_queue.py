@@ -1604,11 +1604,14 @@ def test_the_listing_mark_is_only_for_the_running_recover_all() -> None:
 # -- a save whose engine died (S0063; §5.3 "a save's outcome is resolved from disk (§6.6)") ----------------------------
 
 
+@pytest.mark.parametrize("kind", ["save", "create", "copy"])
 @pytest.mark.parametrize("past_commit", [False, True])
-def test_a_save_whose_engine_died_is_kept_to_read_its_outcome(past_commit: bool) -> None:
+def test_a_writing_job_whose_engine_died_is_kept_to_read_its_outcome(kind: JobKind, past_commit: bool) -> None:
     """The model ends the job at the crash and tells `DiskOutcome`; the code needs a fresh engine to read the disk,
-    so the job is kept (`outcome_owed`), its engine ends as a stop, and it gets the next engine first."""
-    state, jid = busy_with(user("save"), ready(W1))
+    so the job is kept (`outcome_owed`), its engine ends as a stop, and it gets the next engine first. A `create` or
+    `copy` too since S0080 (§1: "After the commit point the job finishes or is resolved from disk"; before it, the
+    read gives §8.2's delete advice)."""
+    state, jid = busy_with(user(kind, W1 if kind == "save" else None), ready(W1))
     if past_commit:
         state, effects = run(state, Gate(jid))
         assert Proceed(jid) in effects

@@ -37,6 +37,8 @@ from app.platform.engine_protocol import (
     REFUSAL_KEYS,
     Accepted,
     Violation,
+    decode_create,
+    decode_create_outcome,
     decode_info,
     decode_pong,
     decode_rebuild,
@@ -116,6 +118,8 @@ DECODERS: dict[str, Any] = {
     "save": decode_save,
     "save_outcome": decode_save_outcome,
     "rebuild": decode_rebuild,
+    "create": decode_create,
+    "create_outcome": decode_create_outcome,
 }
 
 
@@ -191,6 +195,8 @@ def mutations(example: dict[str, Any]) -> list[dict[str, Any]]:
         ("SaveReply", "save"),
         ("SaveOutcomeReply", "save_outcome"),
         ("RebuildReply", "rebuild"),
+        ("CreateReply", "create"),
+        ("CreateOutcomeReply", "create_outcome"),
     ],
 )
 def test_the_decoder_refuses_exactly_what_the_schema_refuses(definition: str, op: str | None) -> None:
@@ -347,13 +353,15 @@ def test_the_decoder_refuses_exactly_what_the_schema_refuses_for_a_decision(deci
 
 # -- Recover-all's ops (S0062) --------------------------------------------------------------------------------------
 
-RECOVER_OPS = (  # and the save's (S0063) and the rebuild's (S0070)
+RECOVER_OPS = (  # and the save's (S0063), the rebuild's (S0070) and the create's (S0080)
     "recover_list",
     "recover_try",
     "recover_act",
     "save",
     "save_outcome",
     "rebuild",
+    "create",
+    "create_outcome",
 )
 
 

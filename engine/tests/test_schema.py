@@ -61,6 +61,8 @@ def test_every_op_has_a_request_and_a_reply_definition() -> None:
         "save",
         "save_outcome",
         "rebuild",
+        "create",
+        "create_outcome",
     ]
     for op in schema["x-ops"]:
         name = model_stem(op)

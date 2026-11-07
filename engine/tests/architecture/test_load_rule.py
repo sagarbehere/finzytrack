@@ -3,7 +3,8 @@
 
 A full load is the overlay replica: `ledger/overlay.py` alone may use the port's load stages (`LOAD_STAGES`: sort,
 book, transformations, validation, options aggregation). The real loads (`REAL_LOADS`: Beancount's own
-loader without its pickle cache, BL-0118) are the rebuild's alone: only `ledger/rebuild.py` may use them (S0066, S0070).
+loader without its pickle cache, BL-0118) are the rebuild's and the create's load check's: only `ledger/rebuild.py` and
+`ledger/create.py` may use them (S0066, S0070, S0080).
 Every public name of the port is classed as a load stage, a real load or an ordinary wrapper, so a new wrapper cannot
 escape
 the rule unclassed. The port exposes neither `load_file` nor `load_string`: Beancount's `load_file`
@@ -37,7 +38,7 @@ pytestmark = pytest.mark.inv("INV-02")
 ENGINE_SRC = Path(__file__).resolve().parents[2] / "src"
 PORT = "ledger_engine.ledger.beancount_port"
 ALLOWED = frozenset({"ledger_engine/ledger/overlay.py"})
-REAL_HOME = frozenset({"ledger_engine/ledger/rebuild.py"})
+REAL_HOME = frozenset({"ledger_engine/ledger/rebuild.py", "ledger_engine/ledger/create.py"})
 ENGINE_PACKAGE = "ledger_engine"
 _MISSING = object()
 
@@ -223,16 +224,21 @@ def test_the_overlay_does_not_reach_a_real_load() -> None:
     assert violations("ledger_engine/ledger/overlay.py", source, port.REAL_LOADS, REAL_HOME) == []
 
 
-def test_the_rebuild_uses_the_real_loads() -> None:
-    source = (ENGINE_SRC / "ledger_engine" / "ledger" / "rebuild.py").read_text(encoding="utf-8")
+@pytest.mark.parametrize("home", ["ledger_engine/ledger/rebuild.py", "ledger_engine/ledger/create.py"])
+def test_each_home_of_the_real_loads_uses_them(home: str) -> None:
+    assert home in REAL_HOME
+    source = (ENGINE_SRC / home).read_text(encoding="utf-8")
     assert unused_stages(source, port.REAL_LOADS) == set()
 
 
 def test_a_planted_real_load_outside_the_rebuild_is_found() -> None:
+    """@regression-guard (S0080: its new line, that the save is still no home of the real loads now that the create
+    is one, held on the base too)."""
     src = "from ledger_engine.ledger import beancount_port as p\np.real_load('/l/main.bean')\n"
     assert violations(REL, src, port.REAL_LOADS, REAL_HOME) != []
     assert violations("ledger_engine/ledger/overlay.py", src, port.REAL_LOADS, REAL_HOME) != []
     assert violations("ledger_engine/ledger/rebuild.py", src, port.REAL_LOADS, REAL_HOME) == []
+    assert violations("ledger_engine/ledger/save.py", src, port.REAL_LOADS, REAL_HOME) != [], "the save does no load"
 
 
 def test_the_overlay_uses_the_load_stages() -> None:

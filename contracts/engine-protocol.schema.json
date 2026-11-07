@@ -13,7 +13,9 @@
     "recover_act",
     "save",
     "save_outcome",
-    "rebuild"
+    "rebuild",
+    "create",
+    "create_outcome"
   ],
   "oneOf": [
     {
@@ -79,6 +81,467 @@
           "$ref": "#/$defs/ProceedControl"
         }
       ]
+    },
+    "CreateFile": {
+      "additionalProperties": false,
+      "description": "One file of a new workspace: its path relative to the folder it is written in, and its text (UTF-8).",
+      "properties": {
+        "path": {
+          "maxLength": 1024,
+          "minLength": 1,
+          "pattern": "^[^/\\x00]",
+          "title": "Path",
+          "type": "string"
+        },
+        "text": {
+          "title": "Text",
+          "type": "string"
+        }
+      },
+      "required": [
+        "path",
+        "text"
+      ],
+      "title": "CreateFile",
+      "type": "object"
+    },
+    "CreateOutcomeReply": {
+      "additionalProperties": false,
+      "description": "The accepted reply to `create_outcome`.",
+      "examples": [
+        {
+          "id": 1,
+          "ok": true,
+          "op": "create_outcome",
+          "result": {
+            "errno": null,
+            "manifest": "ours",
+            "only_ours": true,
+            "wrote": true
+          },
+          "v": 2
+        }
+      ],
+      "properties": {
+        "v": {
+          "const": 2,
+          "title": "V",
+          "type": "integer"
+        },
+        "id": {
+          "maximum": 2147483647,
+          "minimum": 0,
+          "title": "Id",
+          "type": "integer"
+        },
+        "op": {
+          "const": "create_outcome",
+          "title": "Op",
+          "type": "string"
+        },
+        "ok": {
+          "const": true,
+          "title": "Ok",
+          "type": "boolean"
+        },
+        "result": {
+          "$ref": "#/$defs/CreateOutcomeResult"
+        },
+        "decision": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Decision"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "v",
+        "id",
+        "op",
+        "ok",
+        "result"
+      ],
+      "title": "CreateOutcomeReply",
+      "type": "object"
+    },
+    "CreateOutcomeRequest": {
+      "additionalProperties": false,
+      "description": "The `create_outcome` request.",
+      "examples": [
+        {
+          "id": 1,
+          "op": "create_outcome",
+          "params": {
+            "files": [
+              {
+                "path": "main.beancount",
+                "text": "2026-01-01 open Assets:Cash\n"
+              }
+            ],
+            "job": "j7",
+            "manifest": [
+              {
+                "path": "workspace.json",
+                "text": "{}\n"
+              }
+            ],
+            "root": "main.beancount",
+            "target": "/ledgers/Books"
+          },
+          "v": 2
+        }
+      ],
+      "properties": {
+        "v": {
+          "const": 2,
+          "title": "V",
+          "type": "integer"
+        },
+        "id": {
+          "maximum": 2147483647,
+          "minimum": 0,
+          "title": "Id",
+          "type": "integer"
+        },
+        "op": {
+          "const": "create_outcome",
+          "title": "Op",
+          "type": "string"
+        },
+        "params": {
+          "$ref": "#/$defs/CreateParams"
+        }
+      },
+      "required": [
+        "v",
+        "id",
+        "op",
+        "params"
+      ],
+      "title": "CreateOutcomeRequest",
+      "type": "object"
+    },
+    "CreateOutcomeResult": {
+      "additionalProperties": false,
+      "description": "§1 \"resolved from disk\": `.finzytrack` after the target's sync holds the plan's bytes (`ours`), something else\n(`foreign`), nothing (`absent`), or could not be read (`unknown`; `errno`); and the delete advice.",
+      "properties": {
+        "manifest": {
+          "enum": [
+            "ours",
+            "foreign",
+            "absent",
+            "unknown"
+          ],
+          "title": "Manifest",
+          "type": "string"
+        },
+        "wrote": {
+          "title": "Wrote",
+          "type": "boolean"
+        },
+        "only_ours": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Only Ours"
+        },
+        "errno": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Errno"
+        }
+      },
+      "required": [
+        "manifest",
+        "wrote",
+        "only_ours",
+        "errno"
+      ],
+      "title": "CreateOutcomeResult",
+      "type": "object"
+    },
+    "CreateParams": {
+      "additionalProperties": false,
+      "description": "A confirmed create (§8.2): the job's name (`.finzytrack.ft-<job>`), the target folder, the workspace's files,\nwhich of them is the ledger's root, and the files of `.finzytrack/` (the manifest first among them). The same\nparams name the create whose outcome `create_outcome` reads.",
+      "properties": {
+        "job": {
+          "pattern": "^[a-z0-9_]{1,64}$",
+          "title": "Job",
+          "type": "string"
+        },
+        "target": {
+          "minLength": 1,
+          "pattern": "^/",
+          "title": "Target",
+          "type": "string"
+        },
+        "files": {
+          "items": {
+            "$ref": "#/$defs/CreateFile"
+          },
+          "minItems": 1,
+          "title": "Files",
+          "type": "array"
+        },
+        "root": {
+          "maxLength": 1024,
+          "minLength": 1,
+          "pattern": "^[^/\\x00]",
+          "title": "Root",
+          "type": "string"
+        },
+        "manifest": {
+          "items": {
+            "$ref": "#/$defs/CreateFile"
+          },
+          "minItems": 1,
+          "title": "Manifest",
+          "type": "array"
+        }
+      },
+      "required": [
+        "job",
+        "target",
+        "files",
+        "root",
+        "manifest"
+      ],
+      "title": "CreateParams",
+      "type": "object"
+    },
+    "CreateReply": {
+      "additionalProperties": false,
+      "description": "The accepted reply to `create`.",
+      "examples": [
+        {
+          "id": 1,
+          "ok": true,
+          "op": "create",
+          "result": {
+            "detail": null,
+            "errno": null,
+            "folder": "/ledgers/Books",
+            "only_ours": false,
+            "outcome": "not_created",
+            "path": "/ledgers/Books/main.beancount",
+            "reason": "taken",
+            "wrote": true
+          },
+          "v": 2
+        }
+      ],
+      "properties": {
+        "v": {
+          "const": 2,
+          "title": "V",
+          "type": "integer"
+        },
+        "id": {
+          "maximum": 2147483647,
+          "minimum": 0,
+          "title": "Id",
+          "type": "integer"
+        },
+        "op": {
+          "const": "create",
+          "title": "Op",
+          "type": "string"
+        },
+        "ok": {
+          "const": true,
+          "title": "Ok",
+          "type": "boolean"
+        },
+        "result": {
+          "$ref": "#/$defs/CreateResult"
+        },
+        "decision": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Decision"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "v",
+        "id",
+        "op",
+        "ok",
+        "result"
+      ],
+      "title": "CreateReply",
+      "type": "object"
+    },
+    "CreateRequest": {
+      "additionalProperties": false,
+      "description": "The `create` request.",
+      "examples": [
+        {
+          "id": 1,
+          "op": "create",
+          "params": {
+            "files": [
+              {
+                "path": "main.beancount",
+                "text": "2026-01-01 open Assets:Cash\n"
+              }
+            ],
+            "job": "j7",
+            "manifest": [
+              {
+                "path": "workspace.json",
+                "text": "{}\n"
+              }
+            ],
+            "root": "main.beancount",
+            "target": "/ledgers/Books"
+          },
+          "v": 2
+        }
+      ],
+      "properties": {
+        "v": {
+          "const": 2,
+          "title": "V",
+          "type": "integer"
+        },
+        "id": {
+          "maximum": 2147483647,
+          "minimum": 0,
+          "title": "Id",
+          "type": "integer"
+        },
+        "op": {
+          "const": "create",
+          "title": "Op",
+          "type": "string"
+        },
+        "params": {
+          "$ref": "#/$defs/CreateParams"
+        }
+      },
+      "required": [
+        "v",
+        "id",
+        "op",
+        "params"
+      ],
+      "title": "CreateRequest",
+      "type": "object"
+    },
+    "CreateResult": {
+      "additionalProperties": false,
+      "description": "How the create ended (§8.2, §11). `created`: `.finzytrack/` holds the plan's bytes and is durable. `not_created`:\nno `.finzytrack/` of ours stands there; `reason`: `not_empty`, `not_a_folder`, `no_parent`, `permission`, `taken`,\n`read_back`, `load_failed`, `load_errors`, `load_outside`, `manifest_taken`, `path_moved`, `io_error`. `folder`:\nthe target's canonical path; `path`: the entry it is about; `detail`: the ACL entry, or how many load errors;\n`errno`: the system's answer. The delete advice: `wrote` (the job made something in the folder) and `only_ours`\n(listed when the job stopped, it holds nothing but the job's own bytes; null: not listed).",
+      "properties": {
+        "outcome": {
+          "enum": [
+            "created",
+            "not_created"
+          ],
+          "title": "Outcome",
+          "type": "string"
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Reason"
+        },
+        "folder": {
+          "minLength": 1,
+          "pattern": "^/",
+          "title": "Folder",
+          "type": "string"
+        },
+        "path": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "pattern": "^/",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Path"
+        },
+        "detail": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Detail"
+        },
+        "errno": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Errno"
+        },
+        "wrote": {
+          "title": "Wrote",
+          "type": "boolean"
+        },
+        "only_ours": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Only Ours"
+        }
+      },
+      "required": [
+        "outcome",
+        "reason",
+        "folder",
+        "path",
+        "detail",
+        "errno",
+        "wrote",
+        "only_ours"
+      ],
+      "title": "CreateResult",
+      "type": "object"
     },
     "Decision": {
       "additionalProperties": false,
@@ -1815,6 +2278,12 @@
           "$ref": "#/$defs/RebuildReply"
         },
         {
+          "$ref": "#/$defs/CreateReply"
+        },
+        {
+          "$ref": "#/$defs/CreateOutcomeReply"
+        },
+        {
           "$ref": "#/$defs/Refusal"
         }
       ]
@@ -1845,6 +2314,12 @@
         },
         {
           "$ref": "#/$defs/RebuildRequest"
+        },
+        {
+          "$ref": "#/$defs/CreateRequest"
+        },
+        {
+          "$ref": "#/$defs/CreateOutcomeRequest"
         }
       ]
     },

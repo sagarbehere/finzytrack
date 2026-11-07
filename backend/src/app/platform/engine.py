@@ -284,6 +284,40 @@ class RebuildAnswer:
     errors: int
 
 
+type CreateOutcomeKind = Literal["created", "not_created"]
+
+
+@dataclass(frozen=True, slots=True)
+class CreateAnswer:
+    """The engine's `create` result (engine-jobs §8.2, §11; S0080): `created` (`.finzytrack/` holds the plan's bytes
+    and is durable) or `not_created` with its `reason`; `folder` the target's canonical path, `path` the entry it is
+    about, `detail` the ACL entry or how many load errors, `errno` the system's answer; the delete advice `wrote` and
+    `only_ours` (None: not listed)."""
+
+    outcome: CreateOutcomeKind
+    reason: str | None
+    folder: str
+    path: str | None
+    detail: str | None
+    errno: int | None
+    wrote: bool
+    only_ours: bool | None
+
+
+type ManifestSeen = Literal["ours", "foreign", "absent", "unknown"]
+
+
+@dataclass(frozen=True, slots=True)
+class CreateFacts:
+    """The engine's `create_outcome` result (§1 "resolved from disk"; S0080): what stands at `.finzytrack` after the
+    target's sync, and the delete advice."""
+
+    manifest: ManifestSeen
+    wrote: bool
+    only_ours: bool | None
+    errno: int | None
+
+
 type RecordSeen = Literal["none", "part", "open", "closed", "resolved", "kept", "unknown"]
 
 

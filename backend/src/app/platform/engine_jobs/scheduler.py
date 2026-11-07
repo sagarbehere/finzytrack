@@ -71,6 +71,7 @@ from app.platform.engine import (
     Progress,
 )
 from app.platform.engine_jobs.queue import (
+    WRITING,
     AdviceTimer,
     AlreadyQueued,
     ArmAdviceTimer,
@@ -925,12 +926,8 @@ class EngineJobs:
         if kind in ("unavailable", "incompatible"):
             reason = "incompatible" if kind == "incompatible" else "stopped_often"
             return Failed(error(ErrorCode.ENGINE_UNAVAILABLE, EngineUnavailableDetails(reason)))
-        if job is not None and job.past_commit:
-            # A writing job past its commit point may have changed files, so it is never told "Your ledger files are
-            # safe" (S0058 verifier F5), nor "closing" (S0069 red team overflow 2). A save never ends here since S0063
-            # (the table keeps it to read its outcome from disk, §6.6); a `create` or `copy` does until BL-0153 reads
-            # its target.
-            return Failed(error(ErrorCode.CHANGE_OUTCOME_UNKNOWN))
+        # A writing job never ends here (S0063 a save, S0080 a create or copy): the table keeps it to read its outcome
+        # from disk (§1, §6.6, §8.2), so a job lost here wrote nothing and "Your ledger files are safe" is true.
         if kind == "closed":
             return self._closing()
         # TODO(BL-0094): `killed_by_system` once the end report's cause is told apart (failure-modes E4).
@@ -939,12 +936,13 @@ class EngineJobs:
     # -- the job's worker thread --------------------------------------------------------------------------------
 
     def _run(self, worker: _Worker, work: Work, start: Start) -> None:
-        if worker.begin(start) is not None and worker.kind not in ("recover_all", "save"):
+        if worker.begin(start) is not None and worker.kind != "recover_all" and worker.kind not in WRITING:
             return  # the failed start was reported by the context (the table ends the job: `EngineLost`)
         # A recover-all whose first engine did not start still runs its work (§8.1 "When the engine cannot run"):
         # the table keeps the job (its death is the engine's alone), and the work's first call answers the start's
         # failure, so the work ends with its report (S0062 verifier r1 V1). A save too: the table keeps it to read
-        # its outcome (§6.6), and its work answers from disk or without an engine (S0063).
+        # its outcome (§6.6), and its work answers from disk or without an engine (S0063); a create or copy alike
+        # (§8.2, S0080).
         try:
             result: WorkResult | None = work(JobContext(worker))
         except Exception as exc:  # noqa: BLE001 (the job runner: ARCHITECTURE §6.3; logged, the job ends INTERNAL)

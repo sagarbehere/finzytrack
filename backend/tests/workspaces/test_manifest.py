@@ -29,6 +29,7 @@ from app.workspaces.format.manifest import (
     Manifest,
     ManifestInvalid,
     ManifestNewer,
+    encode_manifest,
     read_manifest,
 )
 
@@ -235,3 +236,28 @@ def test_a_workspace_path_is_a_value() -> None:
     assert WorkspacePath.parse("a/b") == WorkspacePath.parse("a/b")
     assert WorkspacePath.parse("a/b") != WorkspacePath.parse("a/c")
     assert WorkspacePath.parse("a/b").parts == ("a", "b")
+
+
+# -- writing (S0080: the create job writes these bytes last, engine-jobs §8.2) ----------------------------------------
+
+
+@pytest.mark.parametrize(
+    "ledger",
+    [Inside(WorkspacePath.parse("main.beancount")), Inside(WorkspacePath.parse("books/2026.bean")), External()],
+)
+def test_an_encoded_manifest_reads_back_equal(ledger: Inside | External) -> None:
+    m = Manifest(FORMAT, FORMAT, LineageId(LINEAGE), ledger)
+    assert read_manifest(encode_manifest(m)) == m
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        Manifest(FORMAT + 1, FORMAT, LineageId("0d4c1f1e-0b8a-4c2e-9a39-5b1f0f6f2a10"), External()),
+        Manifest(FORMAT, FORMAT, LineageId("0D4C1F1E-0B8A-4C2E-9A39-5B1F0F6F2A10"), External()),
+        Manifest(FORMAT, FORMAT, LineageId("not-a-uuid"), External()),
+    ],
+)
+def test_only_a_manifest_of_this_apps_format_with_a_canonical_id_is_written(bad: Manifest) -> None:
+    with pytest.raises(ValueError):  # noqa: PT011 (pydantic's ValidationError is a ValueError)
+        encode_manifest(bad)

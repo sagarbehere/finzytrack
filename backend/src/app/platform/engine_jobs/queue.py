@@ -44,7 +44,8 @@ product calls it. Each rule names its spec line.
   marks the job past its commit point and answers `Proceed`. A Cancel processed before that step has already ended
   the engine, so its `gate` changes nothing; one after it is "too late".
 - **Retire** (§5.1): after a job that ran user code its engine is ended (`retire`); a job may also retire its engine
-  and ask for a fresh one mid-job (`RetireEngine`, `EngineNeeded`: a save whose engine died reads its outcome, §6.6).
+  and ask for a fresh one mid-job (`RetireEngine`, `EngineNeeded`: a writing job whose engine died reads its outcome,
+  §6.6, §8.2).
 - **The advice on the timer** (§5.2, §5.4; model finding N3; simplification B): the shell arms a timer with the
   current `epoch` whenever the slot becomes `ending` and at boot; when it fires and the slot is still held by a
   process we signalled (or the engine lock is still waited for), `ShowAdvice` ("Finzytrack cannot stop the earlier
@@ -74,11 +75,12 @@ from collections.abc import Callable
 from dataclasses import dataclass, replace
 from typing import Any, Final, Literal
 
-TABLE_VERSION: Final = 9  # 2 (S0058): the lock before every fresh engine, the engine unavailable; 3: Try again;
+TABLE_VERSION: Final = 10  # 2 (S0058): the lock before every fresh engine, the engine unavailable; 3: Try again;
 # 4 (S0062): recover-all goes on per journal (Cancel after its listing, a death, no engine); 5 (S0063): a save whose
 # engine died reads its outcome from disk in a fresh engine; 6 (S0066) and 7 (S0068): the removed re-check job after a
 # save (its history: those journals); 8 (S0070, ADR-0068 D1): that job kind is gone, and the background `rebuild` after
-# a save takes its place in every rule; 9 (S0073, ADR-0068 D7): a Cancel ends only its own job
+# a save takes its place in every rule; 9 (S0073, ADR-0068 D7): a Cancel ends only its own job; 10 (S0080): a
+# `create` or `copy` whose engine died is kept to read its outcome from disk, like a save
 """Raised whenever a decision changes, so a decision log line (§12; BL-0154) names the table that made it."""
 
 type JobKind = Literal["open", "rebuild", "preview", "save", "bql", "recover_all", "create", "copy"]
@@ -137,8 +139,8 @@ class Job:
 @dataclass(frozen=True, slots=True)
 class Running:
     """The running job: past its commit point or not, waiting for a fresh engine mid-job or not, for a recover-all
-    whether it has listed the journals (§8.1), and for a save whether its engine died, so that its outcome is read
-    from disk next, in a fresh engine (§6.6; S0063)."""
+    whether it has listed the journals (§8.1), and for a writing job (save, create, copy) whether its engine died, so
+    that its outcome is read from disk next, in a fresh engine (§6.6, S0063; §1, §8.2, S0080)."""
 
     job: Job
     past_commit: bool = False
@@ -515,7 +517,7 @@ def eligible(state: QueueState, job: Job) -> bool:
 
 def _reports_itself(running: Running) -> bool:
     """A running job that ends with its own answer when no engine can be had for its next part (`EngineRefused`):
-    a recover-all (its report, §8.1) and a save whose engine died (its outcome, §6.6)."""
+    a recover-all (its report, §8.1) and a writing job whose engine died (its outcome, §6.6, §8.2)."""
     return running.job.kind == "recover_all" or running.outcome_owed
 
 
@@ -827,10 +829,11 @@ def _engine_died(p: QueuePolicy, s: QueueState, e: EngineDied) -> Step:
     if s.slot == "busy" and r is not None and r.job.kind == "recover_all":
         state, ended = _ending(s, "crashed")  # §8.1: the journal in hand counts `failed`; the job goes on
         return Step(state, ended)
-    if s.slot == "busy" and r is not None and r.job.kind == "save":
-        # §6.6: the save's outcome is read from disk in a fresh engine (the job asks for it); a Cancel before the
-        # commit point still ends the job (nothing was written), one past it is "too late" (S0063). A background rebuild
-        # whose engine died is lost like a read (S0070: nothing is owed)
+    if s.slot == "busy" and r is not None and r.job.kind in WRITING:
+        # §6.6, §1: a writing job's outcome is read from disk in a fresh engine (the job asks for it): a save's
+        # (S0063), a create's or copy's (S0080; before its commit point the read gives §8.2's delete advice). A Cancel
+        # before the commit point still ends the job (no `.open` journal or `.finzytrack` was written), one past it
+        # is "too late". A background rebuild whose engine died is lost like a read (S0070: nothing is owed)
         state, ended = _ending(replace(s, running=replace(r, outcome_owed=True)), "crashed")
         return Step(state, ended)
     if s.slot == "busy" and r is not None:

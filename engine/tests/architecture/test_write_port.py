@@ -20,6 +20,7 @@ WRITE_PATH = (
     "ledger/recover_all.py",
     "ledger/save.py",  # S0063: its writes go through the port; it reads only through the load and the fingerprint
     "ledger/rebuild.py",  # S0070: it reads through the real load and the fingerprint, and writes nothing
+    "ledger/create.py",  # S0080: the create writes only through the port; it reads through the real load
     "ledger/handles.py",
     "ledger/history.py",  # S0074: the history trim deletes only through the port
     "ledger/paths.py",

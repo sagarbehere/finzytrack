@@ -61,7 +61,6 @@ from app.platform.errors import (
     ErrorCode,
     JobCancelledDetails,
     WorkspaceNotOpenDetails,
-    spec_for,
 )
 from app.platform.observability import Event
 from app.platform.observability.events import ENGINE_EXIT, ENGINE_START_FAILED, JOB_INTERNAL_ERROR
@@ -1131,18 +1130,33 @@ def test_the_status_read_after_an_answer_shows_that_answer(rig: Rig, monkeypatch
     assert isinstance(outcome(first), Done)
 
 
-def test_a_create_whose_engine_died_past_its_commit_point_is_not_told_its_files_are_safe(rig: Rig) -> None:
-    """§5.3; OutcomeTruthful (S0058 verifier F5): past its commit point a writing job may have written, so it is never
-    told "Your ledger files are safe". A save reads its outcome from disk since S0063 (`test_save_job.py`); a `create`
-    or `copy` is told that the outcome is not known until BL-0153 reads its target."""
-    create = submit(rig, user("create", None), calls("gate_die"))
+def reads_the_disk(first: str) -> Work:
+    """A writing job's work in the shape of the save's and the create's (§1: "resolved from disk"): its request, and
+    after a lost engine a fresh engine for the read; it returns what it was told, or the failure that ended it."""
+
+    def work(ctx: JobContext) -> WorkResult:
+        out = ctx.call(first, {})
+        if isinstance(out, EngineFailure) and out.kind != "cancelled":
+            refused = ctx.fresh_engine()
+            if refused is not None:
+                return WorkResult(refused)
+            return WorkResult(ctx.call("ok", {}))
+        return WorkResult(out)
+
+    return work
+
+
+@pytest.mark.parametrize("first", ["gate_die", "crash"])
+def test_a_create_whose_engine_died_is_kept_for_its_work_to_read_the_disk(rig: Rig, first: str) -> None:
+    """§1, §8.2 (S0080): a `create` or `copy` whose engine died, before or past its commit point, is not ended by the
+    table (`_lost_outcome` is never its answer): its work gets a fresh engine and answers from what the disk says
+    (`test_create_job.py`). It is never told "Your ledger files are safe" (S0058 verifier F5)."""
+    create = submit(rig, user("create", None), reads_the_disk(first))
     out = outcome(create)
-    assert rig.engine.proceeded == 1
-    assert code_of(out) == ErrorCode.CHANGE_OUTCOME_UNKNOWN
-    unknown = spec_for(ErrorCode.CHANGE_OUTCOME_UNKNOWN)
-    assert unknown is not None
-    assert not unknown.data_safe
-    assert not unknown.retryable, "a change that may have landed must not be repeated by a Retry"
+    assert out == Done({"op": "ok"})
+    serials = [serial for serial, _ in rig.engine.calls]
+    assert [op for _, op in rig.engine.calls] == [first, "ok"]
+    assert serials[0] != serials[1], "the read runs in a fresh engine"
 
 
 class ClosedPastTheGate(FakeEngine):
@@ -1165,22 +1179,19 @@ class ClosedPastTheGate(FakeEngine):
         return out
 
 
-def test_a_create_past_its_commit_point_whose_client_closed_is_not_told_it_was_not_done() -> None:
-    """S0069 red team overflow 2: past the commit point a `closed` failure is an unknown outcome, never `closing`'s
-    "not done" (`_lost_outcome` checked `closed` first)."""
+def test_a_create_past_its_commit_point_whose_client_closed_is_left_to_its_work() -> None:
+    """S0069 red team overflow 2: past the commit point a `closed` failure is never `closing`'s "not done". Since
+    S0080 the table keeps the job and its work answers (the create's: `CHANGE_OUTCOME_UNKNOWN` when no engine reads
+    the disk, `test_create_job.py`)."""
     rig = Rig(engine=ClosedPastTheGate())
     rig.boot()
     try:
         create = submit(rig, user("create", None), calls("gate_closed"))
-        assert code_of(outcome(create)) == ErrorCode.CHANGE_OUTCOME_UNKNOWN
+        out = outcome(create)
+        assert out == Done(EngineFailure("closed", "the client was closed"))
         assert rig.engine.proceeded == 1
     finally:
         rig.close()
-
-
-def test_a_create_whose_engine_died_before_its_commit_point_is_engine_stopped(rig: Rig) -> None:
-    create = submit(rig, user("create", None), calls("crash"))
-    assert code_of(outcome(create)) == ErrorCode.ENGINE_STOPPED
 
 
 def test_close_answers_every_waiting_job(rig: Rig) -> None:

@@ -117,7 +117,7 @@ CANDIDATES = 20
 SEED = 20261029
 OUT = frozenset(
     {
-        # BL-0153: create and copy (their jobs never start, so their steps never run)
+        # BL-0196: create and copy (their jobs never start, so their steps never run; the replay comes with copy)
         "StartCreate", "StartCopy", "EditorDrop", "EditorOverwrite",
         # BL-0164: recover-all through the engine, and Keep; the app's crash and a power loss end the session, whose
         # next start is recover-all's; the path changer and the unreachable disk act on boot journals only

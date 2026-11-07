@@ -26,7 +26,7 @@ from app.platform.engine_jobs.scheduler import Done, EngineJobs, Failed, JobCont
 from app.platform.errors import ErrorCode, WritesPausedDetails, spec_for
 from app.workspaces.access import Unknown
 from tests.api.support import Counted, body, client, make_app
-from tests.platform.fake_job_engine import FakeEngine
+from tests.platform.fake_job_engine import CRASH_TO_BOUND, GATE_DIE, FakeEngine
 
 DEADLINE = 20.0
 W1 = "ws-1"
@@ -127,9 +127,12 @@ class Scenarios:
         return self._outcome(self._submit(lambda ctx: WorkResult(ctx.call("crash", {}))))
 
     def outcome_unknown(self) -> object:
-        # a save reads its outcome from disk since S0063; a `create` cut past its commit point does not yet (BL-0153)
-        spec = JobSpec(kind="create", workspace=None, waited_for=True, confirmed=True, owner="user")
-        ticket = self.jobs.submit(spec, lambda ctx: WorkResult(ctx.call("gate_die", {})))
+        """@regression-guard (S0080: the scenario moved from a create to a save, which held on the base too). A save cut
+        past its gate (S0063), and since S0080 a create cut past its commit point, read their outcome from disk; with no
+        engine to read it, the outcome is not known."""
+        self.engine.scripted["save"] = [GATE_DIE]
+        self.engine.scripted["save_outcome"] = [CRASH_TO_BOUND]
+        ticket = self.jobs.submit(save_spec(W1), save_work(REQUEST))
         assert isinstance(ticket, JobTicket)
         return self._outcome(ticket)
 

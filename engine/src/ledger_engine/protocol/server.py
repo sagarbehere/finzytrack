@@ -40,6 +40,8 @@
   session's engines from doing any ledger work until it has ended, and the new session's recovery never runs beside
   it. Opened with `os.open`, so a forked child holds it too. POSIX only;
   Windows is BL-0087.
+- **The create's ops** (S0080; `ledger_engine.protocol.create`): `create` and `create_outcome`, answered only by an
+  engine that holds the engine lock.
 - **Recover-all's ops** (S0062; `ledger_engine.protocol.recovery`): `recover_list`, `recover_try` and `recover_act`
   are answered only by an engine that holds the engine lock (`engine.no_engine_lock` otherwise), so the listing,
   each try and the blocked screen's actions never run beside an engine of an earlier session.
@@ -67,6 +69,7 @@ from typing import IO, Any, Protocol
 
 from pydantic import BaseModel, ConfigDict, ValidationError
 
+from ledger_engine.protocol.create import CREATE_HANDLERS, CREATE_OUTCOME_HANDLERS
 from ledger_engine.protocol.messages import (
     MAX_ECHO_CHARS,
     MAX_ID,
@@ -332,6 +335,8 @@ PRODUCTION: dict[str, Handler] = {
     **{op: Handler(OPS[op].params, run, needs_engine_lock=True) for op, run in OUTCOME_HANDLERS.items()},
     **{op: Handler(OPS[op].params, run, needs_engine_lock=True) for op, run in SAVE_HANDLERS.items()},
     **{op: Handler(OPS[op].params, run, needs_engine_lock=True) for op, run in REBUILD_HANDLERS.items()},
+    **{op: Handler(OPS[op].params, run, needs_engine_lock=True) for op, run in CREATE_HANDLERS.items()},
+    **{op: Handler(OPS[op].params, run, needs_engine_lock=True) for op, run in CREATE_OUTCOME_HANDLERS.items()},
 }
 TEST_OPS: dict[str, Handler] = {
     "test.stall": Handler(NoParams, _stall),
