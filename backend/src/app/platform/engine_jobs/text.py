@@ -51,6 +51,11 @@ def phase_text(phase: ShownPhase) -> str:
     return WORKING if phase is None else next(text for name, text in PHASES if name == phase)
 
 
+def waiting_for(phase_words: str) -> str:
+    """A queued job's text: the running job's phase (§5.4)."""
+    return f"Waiting for: {phase_words}"
+
+
 def describe(status: JobsStatus, job_id: int, now: float, delay: float = DISPLAY_DELAY) -> JobText | None:
     """The job's text and whether Cancel is offered; None for a job the queue no longer holds."""
     state = status.queue
@@ -72,8 +77,8 @@ def describe(status: JobsStatus, job_id: int, now: float, delay: float = DISPLAY
         return JobText(phase_text(shown.phase if shown is not None else None), cancel)
     if running is not None:
         ahead = status.shown.get(running.job.id)
-        return JobText(f"Waiting for: {phase_text(ahead.phase if ahead is not None else None)}", cancel)
-    return JobText(f"Waiting for: {phase_text('starting')}", cancel)
+        return JobText(waiting_for(phase_text(ahead.phase if ahead is not None else None)), cancel)
+    return JobText(waiting_for(phase_text("starting")), cancel)
 
 
 def notice(status: JobsStatus) -> str | None:

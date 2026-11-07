@@ -148,7 +148,8 @@ backend/src/app/
                  table (engine-jobs spec §3-§5, S0053, S0058)
     engine_jobs/scheduler.py  the scheduler shell: runs the table on one thread against the engine client; jobs,
                  tickets, the engine's books, the lock wait, the timers (S0058)
-    engine_jobs/text.py  what the user reads about a job: its phase, Still working, Cancel, the advice (S0058)
+    engine_jobs/text.py  what the user reads about a job: its phase, Still working, Cancel, the advice (S0058);
+                 every text of the three text modules is rendered in design/generated/engine-job-texts.md (S0079)
     engine_jobs/recovery.py  recover-all's work: the listing, the blocked screen's actions, each journal's try,
                  all as engine ops; Cancel per journal, a death, `not_tried`; the report and its match to a workspace
                  by registry key, lineage and `path_key` (engine-jobs §8.1, S0062)

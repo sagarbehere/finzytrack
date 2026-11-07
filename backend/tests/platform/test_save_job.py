@@ -494,8 +494,12 @@ def test_an_io_error_naming_a_file_never_says_another_program_changed_it() -> No
 
 
 def test_the_best_effort_drive_notice_is_the_owners_words_in_the_spec() -> None:
-    """ADR-0068 D2: the notice a workspace on a drive without the swap shows at open (BL-0166 shows it) is §11's row,
-    word for word, and lives in one place (`save_text.BEST_EFFORT_DRIVE`)."""
+    """ADR-0068 D2: the notice a workspace on a drive without the swap shows at open (BL-0166 shows it) is §11's row
+    and lives in one place (`save_text.BEST_EFFORT_DRIVE`): since S0079 the row cites its key, and the generated
+    reference renders that key from the code, word for word."""
     spec = (REPO / "design" / "specs" / "engine-jobs.md").read_text(encoding="utf-8")
     row = next(ln for ln in spec.splitlines() if ln.startswith("| a workspace whose ledger is on a drive without"))
-    assert f'| "{save_text.BEST_EFFORT_DRIVE}" |' in row
+    assert "| `msg:save.best_effort_drive` |" in row
+    texts = (REPO / "design" / "generated" / "engine-job-texts.md").read_text(encoding="utf-8")
+    rendered = next(ln for ln in texts.splitlines() if ln.startswith("| `msg:save.best_effort_drive` |"))
+    assert rendered.endswith(f"| {save_text.BEST_EFFORT_DRIVE} |")

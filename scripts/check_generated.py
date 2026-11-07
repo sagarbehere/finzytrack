@@ -59,6 +59,17 @@ GENERATORS: dict[str, tuple[list[str], list[str]]] = {
         [str(BACKEND_PYTHON), "-I", "backend/scripts/gen_statecharts.py", "--stdout"],
         ["backend/src/app/platform/engine_supervision.py", "backend/scripts/gen_statecharts.py"],
     ),
+    # What the user reads about engine jobs, rendered from the code that says it (S0079, BL-0192): the spec's §11
+    # cites each text by its key (`scripts/tests/test_engine_jobs_spec.py`).
+    "design/generated/engine-job-texts.md": (
+        [str(BACKEND_PYTHON), "-I", "backend/scripts/gen_engine_job_texts.py", "--stdout"],
+        [
+            "backend/src/app/platform/engine_jobs/",
+            "backend/src/app/platform/errors/",
+            "backend/src/app/platform/engine.py",
+            "backend/scripts/gen_engine_job_texts.py",
+        ],
+    ),
     # The API contract, exported offline from the app (ADR-0038, S0046): any module of the app can change a schema,
     # a route or an error code, so the whole package is its source.
     "contracts/openapi.json": (
