@@ -172,6 +172,7 @@ def _entry(st: os.stat_result) -> EntryStat:
         mode=stat.S_IMODE(m),
         locked=bool(getattr(st, "st_flags", 0) & LOCK_FLAGS),
         mtime_ns=st.st_mtime_ns,
+        size=st.st_size,
     )
 
 

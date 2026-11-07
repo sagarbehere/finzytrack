@@ -27,7 +27,15 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Final, Literal, cast
 
-from app.platform.engine import CreateAnswer, CreateFacts, EngineEvent, EngineFailure, EngineRefusal, GateReached
+from app.platform.engine import (
+    CreateAdvice,
+    CreateAnswer,
+    CreateFacts,
+    EngineEvent,
+    EngineFailure,
+    EngineRefusal,
+    GateReached,
+)
 from app.platform.engine_jobs.queue import JobSpec
 from app.platform.engine_jobs.save import GONE, NotDone
 from app.platform.engine_jobs.scheduler import EngineJobs, Failed, JobContext, JobTicket, Work, WorkResult
@@ -98,13 +106,12 @@ class Created:
 
 @dataclass(frozen=True, slots=True)
 class NotCreated:
-    """No `.finzytrack/` of ours stands in `folder`. `wrote`: the job made something there (None: not known);
-    `only_ours`: listed when the job stopped, the folder holds nothing but the job's own bytes (None: not listed)."""
+    """No `.finzytrack/` of ours stands in `folder` (the target as requested). `advice`: the delete advice
+    (`CreateAdvice`): `check` whenever the folder was not listed or what it holds is not known (S0080 r1 RT3)."""
 
     reason: NotCreatedReason
     folder: str
-    wrote: bool | None
-    only_ours: bool | None
+    advice: CreateAdvice
     path: str | None = None
     detail: str | None = None
     errno: int | None = None
@@ -138,7 +145,7 @@ def answer_of(a: CreateAnswer) -> CreateValue:
     if a.outcome == "created":
         return Created(a.folder)
     reason = a.reason if a.reason in REASONS else "io_error"
-    return NotCreated(cast("NotCreatedReason", reason), a.folder, a.wrote, a.only_ours, a.path, a.detail, a.errno)
+    return NotCreated(cast("NotCreatedReason", reason), a.folder, a.advice, a.path, a.detail, a.errno)
 
 
 def create_outcome(facts: CreateFacts, *, gated: bool, folder: str) -> CreateValue:
@@ -151,7 +158,7 @@ def create_outcome(facts: CreateFacts, *, gated: bool, folder: str) -> CreateVal
     if gated and facts.manifest == "unknown":
         return NotDone(error(ErrorCode.CHANGE_OUTCOME_UNKNOWN))
     reason: NotCreatedReason = "manifest_taken" if gated and facts.manifest == "foreign" else "stopped"
-    return NotCreated(reason, folder, facts.wrote, facts.only_ours, errno=facts.errno)
+    return NotCreated(reason, folder, facts.advice, errno=facts.errno)
 
 
 def create_work(request: CreateRequest) -> Work:
@@ -188,6 +195,10 @@ class _Run:
                 return WorkResult(NotDone(error(ErrorCode.INTERNAL)))  # never sent (`too_large`): nothing written
             return self._from_disk()
         if isinstance(out, EngineRefusal):
+            if out.key != "engine.internal" and not self.gated:
+                # A request the engine would not take (malformed params, a malformed plan: `BadPlanError`) is refused
+                # before anything is read or written: Finzytrack's own fault, never "stopped" (S0080 r1 question 2).
+                return WorkResult(NotDone(error(ErrorCode.INTERNAL)))
             return self._from_disk()  # an exception in the engine: it may have written, before or past its gate
         answer = decode_create(out)
         if isinstance(answer, Violation):
@@ -197,7 +208,7 @@ class _Run:
     def _no_engine(self) -> WorkResult:
         if self.gated:
             return WorkResult(NotDone(error(ErrorCode.CHANGE_OUTCOME_UNKNOWN)), ran_user_code=False)
-        value = NotCreated("stopped", self._r.target, wrote=None, only_ours=None)  # no `.finzytrack` before the gate
+        value = NotCreated("stopped", self._r.target, "check")  # no `.finzytrack` before the gate; not listed
         return WorkResult(value, ran_user_code=False)
 
     def _from_disk(self) -> WorkResult:

@@ -65,8 +65,7 @@ def create(params: Message, ctx: CreateJob) -> Message:
                 path=None,
                 detail=None,
                 errno=None,
-                wrote=True,
-                only_ours=None,
+                advice="none",
             )
         case cr.NotCreated():
             result = CreateResult(
@@ -76,10 +75,9 @@ def create(params: Message, ctx: CreateJob) -> Message:
                 path=out.path,
                 detail=out.detail,
                 errno=out.errno,
-                wrote=out.wrote,
-                only_ours=out.only_ours,
+                advice=out.advice,
             )
-    ctx.decide(TABLE, TABLE_VERSION, {"reason": result.reason, "only_ours": result.only_ours}, result.outcome)
+    ctx.decide(TABLE, TABLE_VERSION, {"reason": result.reason, "advice": result.advice}, result.outcome)
     return result
 
 
@@ -89,8 +87,8 @@ def create_outcome(params: Message, ctx: Decider) -> Message:
         facts = cr.outcome(for_this_os(), plan)
     except BadPlanError as e:
         raise BadParamsError(str(e)) from None
-    ctx.decide(TABLE, TABLE_VERSION, {"manifest": facts.manifest, "only_ours": facts.only_ours}, "facts")
-    return CreateOutcomeResult(manifest=facts.manifest, wrote=facts.wrote, only_ours=facts.only_ours, errno=facts.errno)
+    ctx.decide(TABLE, TABLE_VERSION, {"manifest": facts.manifest, "advice": facts.advice}, "facts")
+    return CreateOutcomeResult(manifest=facts.manifest, advice=facts.advice, errno=facts.errno)
 
 
 CREATE_HANDLERS: Final[dict[str, Callable[[Message, CreateJob], Message]]] = {"create": create}

@@ -80,7 +80,8 @@ TABLE_VERSION: Final = 10  # 2 (S0058): the lock before every fresh engine, the 
 # engine died reads its outcome from disk in a fresh engine; 6 (S0066) and 7 (S0068): the removed re-check job after a
 # save (its history: those journals); 8 (S0070, ADR-0068 D1): that job kind is gone, and the background `rebuild` after
 # a save takes its place in every rule; 9 (S0073, ADR-0068 D7): a Cancel ends only its own job; 10 (S0080): a
-# `create` or `copy` whose engine died is kept to read its outcome from disk, like a save
+# `create` or `copy` whose engine died is kept to read its outcome from disk, like a save, and every writing job
+# answers itself when no engine can be had for that read (V3)
 """Raised whenever a decision changes, so a decision log line (§12; BL-0154) names the table that made it."""
 
 type JobKind = Literal["open", "rebuild", "preview", "save", "bql", "recover_all", "create", "copy"]
@@ -517,8 +518,11 @@ def eligible(state: QueueState, job: Job) -> bool:
 
 def _reports_itself(running: Running) -> bool:
     """A running job that ends with its own answer when no engine can be had for its next part (`EngineRefused`):
-    a recover-all (its report, §8.1) and a writing job whose engine died (its outcome, §6.6, §8.2)."""
-    return running.job.kind == "recover_all" or running.outcome_owed
+    a recover-all (its report, §8.1), a writing job whose engine died (`outcome_owed`, its outcome read from disk,
+    §6.6, §8.2), and a writing job past its commit point, whose engine answered a refusal and was retired so that its
+    outcome is read from disk (S0080 verifier r1 V3: its work answers `CHANGE_OUTCOME_UNKNOWN` when no engine comes,
+    never the table's `ENGINE_UNAVAILABLE`: it may have written)."""
+    return running.job.kind == "recover_all" or running.outcome_owed or running.past_commit
 
 
 def _ending(state: QueueState, reason: EndReason) -> tuple[QueueState, tuple[Effect, ...]]:

@@ -50,7 +50,7 @@ import gc
 import posixpath
 import re
 import unicodedata
-from collections.abc import Callable, Iterator
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Final, Literal, Protocol
 
@@ -84,6 +84,10 @@ type Reason = Literal[
     "io_error",  # the system answered an error (`errno`, `path`)
 ]
 type ManifestSeen = Literal["ours", "foreign", "absent", "unknown"]
+type Advice = Literal["none", "delete", "others", "check"]
+"""The delete advice (spec §8.2, `_advice`): `none` (nothing in the folder to speak of), `delete` (it holds only the
+job's own files: "You can delete it."), `others` (it holds another program's entry), `check` (it may: check it
+first)."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -108,20 +112,20 @@ class CreatePlan:
 
 @dataclass(frozen=True, slots=True)
 class Created:
-    """`.finzytrack/` holds the plan's bytes and is durable, over files that were synced and read back."""
+    """`.finzytrack/` holds the plan's bytes and is durable, over files that were synced and read back. `folder` is
+    the plan's target as requested, in every answer and after a death alike (S0080 r1 RT6)."""
 
     folder: str
 
 
 @dataclass(frozen=True, slots=True)
 class NotCreated:
-    """No `.finzytrack/` of ours stands in the folder. `wrote`: the job made something there; `only_ours`: the folder,
-    listed when the job stopped, holds nothing but the job's own bytes (None: it could not be listed)."""
+    """No `.finzytrack/` of ours stands in the folder (the plan's target as requested). `advice`: the delete advice
+    from one listing when the job stopped (`_advice`); `none` for a refusal of step 1, which wrote nothing."""
 
     reason: Reason
     folder: str
-    wrote: bool
-    only_ours: bool | None
+    advice: Advice
     path: str | None = None
     detail: str | None = None
     errno: int | None = None
@@ -257,8 +261,9 @@ class _Run:
         self.load = ports.load
         self.job = job
         self.handles = Handles(ports.fs)
-        self.folder = plan.target  # its canonical path once resolved
+        self.folder = plan.target  # its canonical path once resolved; answers name `plan.target` (r1 RT6)
         self.made_target = False
+        self.made: set[str] = set()  # every path, relative to the target, that the job itself made (r1 RT1)
 
     def run(self) -> CreateOutcome:
         try:
@@ -288,10 +293,15 @@ class _Run:
             self.handles.close()
 
     def _stopped(self, s: _Stop, *, listed: bool = True) -> NotCreated:
-        """A stop before `.finzytrack` is in place; the target is listed for the delete advice once the job has made
-        or written anything (a refusal of step 1 wrote nothing: no advice)."""
-        wrote, only_ours = _advice(self.fs, self.plan, self.folder) if listed else (False, False)
-        return NotCreated(s.reason, self.folder, wrote or self.made_target, only_ours, s.path, s.detail, s.errno)
+        """A stop with no `.finzytrack` of ours in place; the target is listed for the delete advice once the job has
+        made anything (a refusal of step 1 wrote nothing: no advice). A folder the job made and left empty is its
+        own."""
+        advice: Advice = "none"
+        if listed:
+            advice = _advice(self.handles, self.plan, self.folder, frozenset(_nfd(m) for m in self.made))
+            if advice == "none" and self.made_target:
+                advice = "delete"
+        return NotCreated(s.reason, self.plan.target, advice, s.path, s.detail, s.errno)
 
     # step 1 ------------------------------------------------------------------------------------------------------
     def _target(self) -> None:
@@ -334,6 +344,7 @@ class _Run:
 
     def _make(self, h: DirHandle, name: str, path: str, *, mkdir: bool = False, data: bytes = b"") -> None:
         self.handles.on = path
+        rel = path[len(self.folder) + 1 :]
         try:
             if mkdir:
                 h.mkdir(name)
@@ -341,6 +352,11 @@ class _Run:
                 h.create(name, data, FILE_MODE)
         except FileExistsError:
             raise _Stop("taken", path) from None
+        except OSError:
+            if not mkdir and h.stat(name) is not None:
+                self.made.add(rel)  # the entry may be ours, its write cut short (`create` makes it first)
+            raise
+        self.made.add(rel)
 
     def _sync(self) -> None:
         for d in reversed(_folders(self.plan.files)):
@@ -386,10 +402,13 @@ class _Run:
             return self._stopped(_Stop("taken", tpath))
         except OSError as e:
             return self._stopped(_Stop("io_error", tpath, err=e.errno))
+        self.made.add(temp)
         try:
-            self._write_temp(tpath)
-        except (OSError, PathMovedError) as e:
-            _remove_ours(self.fs, th, temp, self.plan.manifest)
+            self._write_temp(tpath)  # its read-back, last, checks the folder's path through the guard (r1 V1)
+        except (OSError, PathMovedError, _Stop) as e:
+            _remove_ours(self.handles, tpath, self.plan.manifest)
+            if isinstance(e, _Stop):
+                return self._stopped(e)
             if isinstance(e, PathMovedError):
                 return self._stopped(_Stop("path_moved", e.canonical))
             if isinstance(e, FileExistsError):
@@ -401,53 +420,62 @@ class _Run:
             else:
                 if th.stat(MANIFEST_DIR) is not None:
                     raise FileExistsError(_errno.EEXIST, "taken")
-                th.rename(temp, MANIFEST_DIR)
+                th.rename(temp, MANIFEST_DIR)  # §6.8: an entry put there in this instant can be replaced (r1 RT8)
         except OSError as e:
             if th.stat(temp) is None:
                 raise  # the rename may have happened: the disk tells (`outcome`)
-            _remove_ours(self.fs, th, temp, self.plan.manifest)
+            _remove_ours(self.handles, tpath, self.plan.manifest)
             if e.errno in TAKEN or th.stat(MANIFEST_DIR) is not None:
                 return self._stopped(_Stop("manifest_taken", join(self.folder, MANIFEST_DIR)))
             return self._stopped(_Stop("io_error", join(self.folder, MANIFEST_DIR), err=e.errno))
         th.sync()  # an error here is raised: the sidecar reads the disk
-        return Created(self.folder)
+        self.made = {m.replace(temp, MANIFEST_DIR, 1) if m.split("/")[0] == temp else m for m in self.made}
+        # `.finzytrack` read back through the path guard (ADR-0008 step 6; r1 RT2, V1): "created" only for our bytes
+        # at the target's path. A folder moved since raises (`PathMovedError`): the sidecar reads the disk at the path.
+        if _manifest_seen(self.handles, self.plan, self.folder) != "ours":
+            return self._stopped(_Stop("read_back", join(self.folder, MANIFEST_DIR)))
+        return Created(self.plan.target)
 
     def _write_temp(self, tpath: str) -> None:
         for d in _folders(self.plan.manifest):
             parent, _, name = d.rpartition("/")
-            self.handles.on = join(tpath, d)
-            self.handles.at(_under(tpath, parent)).mkdir(name)
+            self._make(self.handles.at(_under(tpath, parent)), name, join(tpath, d), mkdir=True)
         for f in self.plan.manifest:
             parent, _, name = f.path.rpartition("/")
-            self.handles.on = join(tpath, f.path)
-            self.handles.at(_under(tpath, parent)).create(name, f.data, FILE_MODE)
+            self._make(self.handles.at(_under(tpath, parent)), name, join(tpath, f.path), data=f.data)
         for d in reversed(_folders(self.plan.manifest)):
             self.handles.at(join(tpath, d)).sync()
         self.handles.at(tpath).sync()
+        for f in self.plan.manifest:  # read back before the rename (ADR-0008 step 6; r1 RT2)
+            parent, _, name = f.path.rpartition("/")
+            if self.handles.at(_under(tpath, parent)).read(name) != f.data:
+                raise _Stop("read_back", join(tpath, f.path))
 
 
-def _remove_ours(fs: FileSystem, parent: DirHandle, name: str, files: tuple[NewFile, ...]) -> None:
-    """Remove the job's own temp folder (`name` in `parent`), then sync `parent`; best effort, and only what is the
-    job's: a file at one of its names holding its bytes or a prefix of them, and its folders once empty. Anything
-    another program put there stays, and so does the folder that holds it."""
-    ours = {_nfd(f.path): f.data for f in files}
-    base = join(parent.path(), name)
+def _remove_ours(handles: Handles, base: str, files: tuple[NewFile, ...]) -> None:
+    """Remove the job's own temp folder `base` (absolute), then sync the folder that holds it; best effort, and only
+    what is the job's: a file at one of its names holding its bytes or a prefix of them, and its folders once empty.
+    Anything another program put there stays, and so does the folder that holds it. Every folder is reached through
+    the path guard (`Handles.at`), so a link put in place of one is never followed (S0080 red team r1 RT9)."""
+    parent, _, name = base.rpartition("/")
     try:
         for f in files:
             folder, _, leaf = f.path.rpartition("/")
-            with fs.open_dir(_under(base, folder)) as h:
-                st = h.stat(leaf)
-                data = h.read(leaf) if st is not None and st.kind is Kind.FILE else None
-                if data is not None and ours[_nfd(f.path)].startswith(data):
+            h = handles.at(_under(base, folder))
+            st = h.stat(leaf)
+            if st is not None and st.kind is Kind.FILE and st.size <= len(f.data):
+                data = h.read(leaf)
+                if data is not None and f.data.startswith(data):
                     h.remove(leaf)
                     h.sync()
         for d in reversed(_folders(files)):
             folder, _, leaf = d.rpartition("/")
-            with fs.open_dir(_under(base, folder)) as h:
-                h.rmdir(leaf)
-                h.sync()
-        parent.rmdir(name)
-        parent.sync()
+            h = handles.at(_under(base, folder))
+            h.rmdir(leaf)
+            h.sync()
+        ph = handles.at(parent or "/")
+        ph.rmdir(name)
+        ph.sync()
     except (OSError, PathMovedError):
         pass
 
@@ -475,44 +503,63 @@ def _ours(plan: CreatePlan) -> tuple[dict[str, bytes], set[str]]:
     return files, folders
 
 
-def _walk(fs: FileSystem, folder: str, rel: str = "") -> Iterator[tuple[str, Kind, bytes | None]]:
-    """Every entry under `folder`, relative, not following links; a folder is walked only when it is one of ours."""
-    with fs.open_dir(_under(folder, rel)) as h:
-        for name in h.names():
-            st = h.stat(name)
-            if st is None:
-                continue
-            path = _under(rel, name) if rel else name
-            yield path, st.kind, h.read(name) if st.kind is Kind.FILE else None
+def _advice(handles: Handles, plan: CreatePlan, folder: str, made: frozenset[str] | None) -> Advice:
+    """The delete advice from one listing of the target (spec §8.2), never following a link and never reading a file
+    longer than the job's own bytes for its name (S0080 red team r1 RT4):
 
+    - `made` (the live job): the relative paths the job itself made. An entry is the job's only when the job made its
+      name and, for a file, it holds the job's bytes or a prefix of them (a write cut short); any other entry is
+      another program's (`others`), whatever its bytes: an empty file another program put at one of the job's names
+      first is not the job's (red team r1 RT1).
+    - `made` None (the outcome read after a death): who made a name is not known. A file is the job's only when it
+      holds all of the job's bytes; an empty file, a prefix of them or an empty folder of one of the job's names may be
+      anyone's (`check`); any other entry is another program's (`others`).
 
-def _advice(fs: FileSystem, plan: CreatePlan, folder: str) -> tuple[bool, bool | None]:
-    """(`wrote`, `only_ours`) from one listing of the target (the module's docstring); (False, True) when it is not
-    there, (False, None) when it cannot be listed."""
+    `others` when any entry is another program's, else `check` when one may be, else `delete` when the job's entries
+    are all there is, else `none` (nothing in the folder, or no folder). A folder that cannot be listed: `check`."""
     files, folders = _ours(plan)
-    wrote, only_ours = False, True
+    seen_ours = foreign = unsure = False
     todo = [""]
     try:
         while todo:
             rel = todo.pop()
             try:
-                entries = list(_walk(fs, folder, rel))
+                h = handles.at(_under(folder, rel))
             except FileNotFoundError:
                 if rel:
                     raise
-                return False, True
-            for path, kind, data in entries:
+                return "none"
+            names = h.names()
+            if rel and not names and made is None:
+                unsure = True  # an empty folder of one of our names: anyone's
+            for name in names:
+                st = h.stat(name)
+                if st is None:
+                    continue
+                path = _under(rel, name) if rel else name
                 key = _nfd(path)
-                if kind is Kind.DIR and key in folders:
-                    wrote = True
+                if made is not None and key not in made:
+                    foreign = True
+                elif st.kind is Kind.DIR and key in folders:
                     todo.append(path)
-                elif kind is Kind.FILE and key in files and data is not None and files[key].startswith(data):
-                    wrote = True
+                    seen_ours = True
+                elif st.kind is Kind.FILE and key in files and st.size <= len(files[key]):
+                    data = h.read(name)
+                    if data is None or not files[key].startswith(data):
+                        foreign = True
+                    elif made is not None or data == files[key]:
+                        seen_ours = True
+                    else:
+                        unsure = True
                 else:
-                    only_ours = False
+                    foreign = True
     except (OSError, PathMovedError):
-        return wrote, None
-    return wrote, only_ours
+        return "others" if foreign else "check"
+    if foreign:
+        return "others"
+    if unsure:
+        return "check"
+    return "delete" if seen_ours else "none"
 
 
 @dataclass(frozen=True, slots=True)
@@ -521,13 +568,14 @@ class Facts:
     `errno`), and the delete advice."""
 
     manifest: ManifestSeen
-    wrote: bool
-    only_ours: bool | None
+    advice: Advice
     errno: int | None = None
 
 
-def _manifest_seen(fs: FileSystem, plan: CreatePlan, folder: str, h: DirHandle) -> ManifestSeen:
-    st = h.stat(MANIFEST_DIR)
+def _manifest_seen(handles: Handles, plan: CreatePlan, folder: str) -> ManifestSeen:
+    """What stands at `.finzytrack` in `folder`: the plan's bytes in every one of its files (`ours`), something else
+    (`foreign`), or nothing (`absent`). Read through the path guard; a file longer than ours is not read."""
+    st = handles.at(folder).stat(MANIFEST_DIR)
     if st is None:
         return "absent"
     if st.kind is not Kind.DIR:
@@ -536,10 +584,11 @@ def _manifest_seen(fs: FileSystem, plan: CreatePlan, folder: str, h: DirHandle) 
     for f in plan.manifest:
         parent, _, name = f.path.rpartition("/")
         try:
-            with fs.open_dir(_under(base, parent)) as d:
-                if d.read(name) != f.data:
-                    return "foreign"
-        except (FileNotFoundError, NotADirectoryError):
+            h = handles.at(_under(base, parent))
+            fst = h.stat(name)
+            if fst is None or fst.kind is not Kind.FILE or fst.size != len(f.data) or h.read(name) != f.data:
+                return "foreign"
+        except (FileNotFoundError, NotADirectoryError, PathMovedError):
             return "foreign"
     return "ours"
 
@@ -547,17 +596,18 @@ def _manifest_seen(fs: FileSystem, plan: CreatePlan, folder: str, h: DirHandle) 
 def outcome(fs: FileSystem, plan: CreatePlan) -> Facts:
     """§1's "resolved from disk" for a create whose engine died (the module's docstring)."""
     _check(plan)
+    handles = Handles(fs)
     try:
         r = fs.resolve(plan.target)
         if r.rest:
-            return Facts("absent", wrote=False, only_ours=True)
+            return Facts("absent", "none")
         folder = core_paths.canonical_path(r)
-        with fs.open_dir(folder) as h:
-            h.sync()  # what is read below is what a power loss keeps
-            seen = _manifest_seen(fs, plan, folder, h)
+        handles.at(folder).sync()  # what is read below is what a power loss keeps
+        seen = _manifest_seen(handles, plan, folder)
+        return Facts(seen, _advice(handles, plan, folder, None))
     except NotADirectoryError:
-        return Facts("absent", wrote=False, only_ours=False)
-    except OSError as e:
-        return Facts("unknown", wrote=False, only_ours=None, errno=e.errno)
-    wrote, only_ours = _advice(fs, plan, folder)
-    return Facts(seen, wrote, only_ours)
+        return Facts("absent", "others")  # a file stands at the target: not ours
+    except (OSError, PathMovedError) as e:
+        return Facts("unknown", "check", errno=e.errno if isinstance(e, OSError) else None)
+    finally:
+        handles.close()

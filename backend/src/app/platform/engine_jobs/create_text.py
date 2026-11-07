@@ -1,13 +1,13 @@
 """What the user reads when a create does not end "created" (`design/specs/engine-jobs.md` §8.2, §11's create rows;
 S0080). Plain text for non-native readers; the screens are BL-0092's and M3's.
 
-A text is "Not created.", then why (one sentence, when there is one), then the folder's state: when the job wrote
-into the folder, "The folder <folder> holds an unfinished new workspace." and either "You can delete it." (the
-folder, listed when the job stopped, holds nothing but the job's own files) or the sentence that says other files
-are there. When the folder was not listed (a Cancel ended the engine, or no engine could read it), the text says the
-folder may hold an unfinished new workspace and to check it first; it never says "You can delete it." without a
-listing. Two refusals have whole texts of their own: a folder that is not empty (§11) and a `.finzytrack` another
-program put there at the same moment (§8.2 step 7).
+A text is "Not created.", then why (one sentence, when there is one), then the folder's state by its delete advice
+(`NotCreated.advice`): `delete` says the folder holds an unfinished new workspace and "You can delete it." (listed
+when the job stopped, it holds nothing but the job's own files); `others` says other files are there; `check` (not
+listed, a Cancel, no engine, or entries whose maker is not known after a death) says the folder may hold an unfinished
+new workspace and to check it first; `none` says nothing of the folder. It never says "You can delete it." without
+a listing that proved it. Two refusals have whole texts of their own: a folder that is not empty (§11) and a
+`.finzytrack` another program put there at the same moment (§8.2 step 7).
 """
 
 from __future__ import annotations
@@ -74,11 +74,15 @@ def _why(v: NotCreated) -> str | None:
 
 
 def _folder(v: NotCreated) -> str | None:
-    if v.wrote is None or (v.only_ours is None and v.wrote):
-        return unknown_folder(v.folder)
-    if not v.wrote:
-        return None
-    return f"{unfinished(v.folder)} {DELETE_OK if v.only_ours else CHECK_OTHERS}"
+    match v.advice:
+        case "none":
+            return None
+        case "delete":
+            return f"{unfinished(v.folder)} {DELETE_OK}"
+        case "others":
+            return f"{unfinished(v.folder)} {CHECK_OTHERS}"
+        case "check":
+            return unknown_folder(v.folder)
 
 
 def text(v: NotCreated) -> str:

@@ -114,10 +114,9 @@
           "ok": true,
           "op": "create_outcome",
           "result": {
+            "advice": "delete",
             "errno": null,
-            "manifest": "ours",
-            "only_ours": true,
-            "wrote": true
+            "manifest": "ours"
           },
           "v": 2
         }
@@ -228,7 +227,7 @@
     },
     "CreateOutcomeResult": {
       "additionalProperties": false,
-      "description": "§1 \"resolved from disk\": `.finzytrack` after the target's sync holds the plan's bytes (`ours`), something else\n(`foreign`), nothing (`absent`), or could not be read (`unknown`; `errno`); and the delete advice.",
+      "description": "§1 \"resolved from disk\": `.finzytrack` after the target's sync holds the plan's bytes (`ours`), something else\n(`foreign`), nothing (`absent`), or could not be read (`unknown`; `errno`); and the delete advice (who made a name\nis not known here, so an empty file, a prefix of ours or an empty folder at one of our names is `check`).",
       "properties": {
         "manifest": {
           "enum": [
@@ -240,20 +239,15 @@
           "title": "Manifest",
           "type": "string"
         },
-        "wrote": {
-          "title": "Wrote",
-          "type": "boolean"
-        },
-        "only_ours": {
-          "anyOf": [
-            {
-              "type": "boolean"
-            },
-            {
-              "type": "null"
-            }
+        "advice": {
+          "enum": [
+            "none",
+            "delete",
+            "others",
+            "check"
           ],
-          "title": "Only Ours"
+          "title": "Advice",
+          "type": "string"
         },
         "errno": {
           "anyOf": [
@@ -269,8 +263,7 @@
       },
       "required": [
         "manifest",
-        "wrote",
-        "only_ours",
+        "advice",
         "errno"
       ],
       "title": "CreateOutcomeResult",
@@ -334,14 +327,13 @@
           "ok": true,
           "op": "create",
           "result": {
+            "advice": "others",
             "detail": null,
             "errno": null,
             "folder": "/ledgers/Books",
-            "only_ours": false,
             "outcome": "not_created",
             "path": "/ledgers/Books/main.beancount",
-            "reason": "taken",
-            "wrote": true
+            "reason": "taken"
           },
           "v": 2
         }
@@ -452,7 +444,7 @@
     },
     "CreateResult": {
       "additionalProperties": false,
-      "description": "How the create ended (§8.2, §11). `created`: `.finzytrack/` holds the plan's bytes and is durable. `not_created`:\nno `.finzytrack/` of ours stands there; `reason`: `not_empty`, `not_a_folder`, `no_parent`, `permission`, `taken`,\n`read_back`, `load_failed`, `load_errors`, `load_outside`, `manifest_taken`, `path_moved`, `io_error`. `folder`:\nthe target's canonical path; `path`: the entry it is about; `detail`: the ACL entry, or how many load errors;\n`errno`: the system's answer. The delete advice: `wrote` (the job made something in the folder) and `only_ours`\n(listed when the job stopped, it holds nothing but the job's own bytes; null: not listed).",
+      "description": "How the create ended (§8.2, §11). `created`: `.finzytrack/` holds the plan's bytes and is durable. `not_created`:\nno `.finzytrack/` of ours stands there; `reason`: `not_empty`, `not_a_folder`, `no_parent`, `permission`, `taken`,\n`read_back`, `load_failed`, `load_errors`, `load_outside`, `manifest_taken`, `path_moved`, `io_error`. `folder`:\nthe target as requested; `path`: the entry it is about; `detail`: the ACL entry, or how many load errors;\n`errno`: the system's answer. `advice`, the delete advice from one listing when the job stopped: `none` (nothing\nto say: a refusal of step 1, or an empty folder), `delete` (it holds only the job's own files), `others` (it\nholds another program's entry), `check` (it may: not listed, or not known).",
       "properties": {
         "outcome": {
           "enum": [
@@ -514,20 +506,15 @@
           ],
           "title": "Errno"
         },
-        "wrote": {
-          "title": "Wrote",
-          "type": "boolean"
-        },
-        "only_ours": {
-          "anyOf": [
-            {
-              "type": "boolean"
-            },
-            {
-              "type": "null"
-            }
+        "advice": {
+          "enum": [
+            "none",
+            "delete",
+            "others",
+            "check"
           ],
-          "title": "Only Ours"
+          "title": "Advice",
+          "type": "string"
         }
       },
       "required": [
@@ -537,8 +524,7 @@
         "path",
         "detail",
         "errno",
-        "wrote",
-        "only_ours"
+        "advice"
       ],
       "title": "CreateResult",
       "type": "object"

@@ -348,10 +348,10 @@ RECOVERY: tuple[Row, ...] = (
 _seen_create: set[str] = set()
 
 
-def _not_created(reason: str, *, wrote: bool | None = False, only_ours: bool | None = True, **kw: object) -> str:
+def _not_created(reason: str, *, advice: str = "none", **kw: object) -> str:
     _seen_create.add(reason)
     d: dict[str, object] = {"path": FILE} | kw
-    return ct.text(NotCreated(reason, FOLDER, wrote, only_ours, **d))  # type: ignore[arg-type]
+    return ct.text(NotCreated(reason, FOLDER, advice, **d))  # type: ignore[arg-type]
 
 
 CREATE: tuple[Row, ...] = (
@@ -382,18 +382,18 @@ CREATE: tuple[Row, ...] = (
     ),
     (
         "msg:create.unfinished_delete",
-        "added when the job wrote into the folder and it holds only the job's files",
-        lambda: _not_created("taken", wrote=True, only_ours=True),
+        "added when the folder holds only the job's own files (`delete`)",
+        lambda: _not_created("taken", advice="delete"),
     ),
     (
         "msg:create.unfinished_check",
-        "added when the folder also holds files Finzytrack did not write",
-        lambda: _not_created("taken", wrote=True, only_ours=False),
+        "added when the folder also holds another program's entry (`others`)",
+        lambda: _not_created("taken", advice="others"),
     ),
     (
         "msg:create.unfinished_unlisted",
-        "added when the folder could not be listed (no engine to read it)",
-        lambda: _not_created("stopped", wrote=None, only_ours=None),
+        "added when the folder was not listed, or holds entries whose maker is not known after a death",
+        lambda: _not_created("stopped", advice="check"),
     ),
     (
         "msg:create.cancelled",

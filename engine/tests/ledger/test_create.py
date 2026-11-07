@@ -28,7 +28,7 @@ from functools import cache
 
 import pytest
 
-from ledger_engine.fs.port import Right
+from ledger_engine.fs.port import AclEntry, Right
 from ledger_engine.ledger.create import (
     MANIFEST_DIR,
     Created,
@@ -40,8 +40,9 @@ from ledger_engine.ledger.create import (
     outcome,
     run,
 )
+from ledger_engine.ledger.handles import PathMovedError
 from ledger_engine.ledger.writer import BadPlanError
-from tests.fakes.memfs import Crash, MemFS
+from tests.fakes.memfs import Crash, MemDir, MemFS
 
 pytestmark = [pytest.mark.inv("INV-01"), pytest.mark.inv("INV-22")]
 
@@ -163,7 +164,7 @@ def test_a_non_empty_target_is_refused_before_anything_is_written() -> None:
     fs.outside_write(f"{T}/notes.txt", FOREIGN)
     before = fs.snapshot()
     out, job = go(fs)
-    assert out == NotCreated("not_empty", T, wrote=False, only_ours=False)
+    assert out == NotCreated("not_empty", T, "none")
     assert fs.effects == []
     assert fs.snapshot() == before
     assert job.gated == 0
@@ -183,7 +184,7 @@ def test_a_file_at_the_target_is_not_a_folder() -> None:
     fs = new_fs()
     fs.outside_write(T, FOREIGN)
     out, _ = go(fs)
-    assert out == NotCreated("not_a_folder", T, wrote=False, only_ours=False)
+    assert out == NotCreated("not_a_folder", T, "none")
     assert fs.effects == []
     assert fs.file(T) == FOREIGN
 
@@ -193,7 +194,7 @@ def test_a_target_whose_folder_does_not_exist_is_refused() -> None:
     out, _ = go(fs)
     assert isinstance(out, NotCreated)
     assert out.reason == "no_parent"
-    assert out.wrote is False
+    assert out.advice == "none"
     assert fs.effects == []
 
 
@@ -230,7 +231,7 @@ def test_a_file_dropped_under_a_name_the_job_writes_is_never_replaced() -> None:
     drop_at(fs, f"create {T}:main.beancount", f"{T}/main.beancount")
     out, job = go(fs)
     assert isinstance(out, NotCreated)
-    assert (out.reason, out.path, out.wrote, out.only_ours) == ("taken", f"{T}/main.beancount", True, False)
+    assert (out.reason, out.path, out.advice) == ("taken", f"{T}/main.beancount", "others")
     assert fs.file(f"{T}/main.beancount") == FOREIGN
     assert MANIFEST_DIR not in fs.names_in(T)
     assert job.gated == 0
@@ -268,7 +269,7 @@ def test_a_foreign_overwrite_before_the_read_back_stops_the_job_before_its_manif
     fs.on_effect = overwrite
     out, job = go(fs)
     assert isinstance(out, NotCreated)
-    assert (out.reason, out.path, out.only_ours) == ("read_back", f"{T}/main.beancount", False)
+    assert (out.reason, out.path, out.advice) == ("read_back", f"{T}/main.beancount", "others")
     assert fs.file(f"{T}/main.beancount") == FOREIGN
     assert MANIFEST_DIR not in fs.names_in(T)
     assert job.gated == 0
@@ -281,7 +282,7 @@ def test_a_ledger_that_loads_with_errors_is_not_created() -> None:
     fs = new_fs()
     out, job = go(fs, load=lambda _root: LoadResult(errors=2, parsed=(f"{T}/main.beancount",)))
     assert isinstance(out, NotCreated)
-    assert (out.reason, out.detail, out.wrote, out.only_ours) == ("load_errors", "2", True, True)
+    assert (out.reason, out.detail, out.advice) == ("load_errors", "2", "delete")
     assert MANIFEST_DIR not in fs.names_in(T)
     assert job.gated == 0
 
@@ -341,7 +342,7 @@ def test_a_foreign_temp_folder_of_the_jobs_name_is_never_removed() -> None:
 
     out, _ = go(fs, Job(at_gate=put_theirs))
     assert isinstance(out, NotCreated)
-    assert (out.reason, out.path, out.only_ours) == ("taken", TEMP, False)
+    assert (out.reason, out.path, out.advice) == ("taken", TEMP, "others")
     assert fs.file(theirs) == FOREIGN
     assert MANIFEST_DIR not in fs.names_in(T)
 
@@ -369,7 +370,7 @@ def test_a_foreign_file_put_into_the_temp_folder_stops_the_job_and_is_never_remo
     drop_at(fs, f"create {TEMP}:workspace.json", theirs)
     out, _ = go(fs)
     assert isinstance(out, NotCreated)
-    assert (out.reason, out.path, out.only_ours) == ("taken", theirs, False)
+    assert (out.reason, out.path, out.advice) == ("taken", theirs, "others")
     assert fs.file(theirs) == FOREIGN
     assert MANIFEST_DIR not in fs.names_in(T)
 
@@ -403,7 +404,7 @@ def test_the_delete_advice_says_only_ours_when_the_folder_holds_only_the_jobs_fi
     fs = new_fs(target="empty")
     out, _ = go(fs, load=lambda _root: LoadResult(errors=1, parsed=()))
     assert isinstance(out, NotCreated)
-    assert (out.wrote, out.only_ours) == (True, True)
+    assert out.advice == "delete"
 
 
 def test_a_file_another_program_added_spoils_the_delete_advice() -> None:
@@ -415,7 +416,7 @@ def test_a_file_another_program_added_spoils_the_delete_advice() -> None:
 
     out, _ = go(fs, load=load)
     assert isinstance(out, NotCreated)
-    assert (out.wrote, out.only_ours) == (True, False)
+    assert out.advice == "others"
 
 
 def test_a_file_of_ours_changed_by_another_program_spoils_the_delete_advice() -> None:
@@ -427,7 +428,7 @@ def test_a_file_of_ours_changed_by_another_program_spoils_the_delete_advice() ->
 
     out, _ = go(fs, load=load)
     assert isinstance(out, NotCreated)
-    assert out.only_ours is False
+    assert out.advice == "others"
 
 
 # -- the plan ----------------------------------------------------------------------------------------------------
@@ -511,7 +512,7 @@ def test_a_crash_at_every_effect_never_leaves_a_manifest_over_an_incomplete_fold
             check_disk(state)
         check_told(fs)
         if _exists(fs, T) and MANIFEST_DIR not in fs.names_in(T):
-            assert outcome(fs, PLAN).only_ours is True, (i, fs.effects[i], fs.snapshot())
+            assert outcome(fs, PLAN).advice in ("delete", "check", "none"), (i, fs.effects[i], fs.snapshot())
 
 
 @pytest.mark.parametrize("no_excl", [False, True])
@@ -550,7 +551,7 @@ def test_a_power_loss_after_a_create_keeps_it_or_leaves_no_manifest() -> None:
 
 def test_the_outcome_of_a_target_that_does_not_exist_is_no_manifest() -> None:
     facts = outcome(new_fs(), PLAN)
-    assert (facts.manifest, facts.wrote, facts.only_ours) == ("absent", False, True)
+    assert (facts.manifest, facts.advice) == ("absent", "none")
 
 
 def test_the_outcome_of_a_created_workspace_is_ours() -> None:
@@ -564,7 +565,7 @@ def test_the_outcome_of_a_foreign_finzytrack_folder_is_foreign() -> None:
     go(fs, Job(at_gate=lambda: fs.outside_write(f"{T}/{MANIFEST_DIR}", FOREIGN)))
     facts = outcome(fs, PLAN)
     assert facts.manifest == "foreign"
-    assert facts.only_ours is False
+    assert facts.advice == "others"
 
 
 def test_the_outcome_of_a_finzytrack_folder_with_our_names_but_other_bytes_is_foreign() -> None:
@@ -582,7 +583,7 @@ def test_the_outcome_of_a_finzytrack_folder_with_our_names_but_other_bytes_is_fo
     assert outcome(fs, PLAN).manifest == "ours"
 
 
-def test_a_file_of_ours_cut_short_counts_as_ours_for_the_delete_advice() -> None:
+def test_a_file_cut_short_after_a_death_asks_to_check_the_folder() -> None:
     fs = new_fs()
     i = clean_effects(False).index(f"write {T}:main.beancount")
     fs.inject(i, cut=5)
@@ -590,7 +591,7 @@ def test_a_file_of_ours_cut_short_counts_as_ours_for_the_delete_advice() -> None
         go(fs)
     assert fs.file(f"{T}/main.beancount") == MAIN[:5]
     facts = outcome(fs, PLAN)
-    assert (facts.manifest, facts.wrote, facts.only_ours) == ("absent", True, True)
+    assert (facts.manifest, facts.advice) == ("absent", "check"), "who wrote a cut file is not known after a death"
 
 
 def test_the_outcome_syncs_the_target_before_it_reads() -> None:
@@ -604,7 +605,7 @@ def test_the_outcome_syncs_the_target_before_it_reads() -> None:
     assert fs.effects[before:] == [f"sync {T}:"]
 
 
-def test_the_temp_folder_of_a_job_cut_in_its_manifest_write_counts_as_ours() -> None:
+def test_the_temp_folder_of_a_job_cut_in_its_manifest_write_asks_to_check_the_folder() -> None:
     fs = new_fs()
     k = next(k for k, e in enumerate(clean_effects(False)) if e.startswith(f"create {TEMP}:workspace.json"))
     fs.inject(k + 1)
@@ -612,7 +613,7 @@ def test_the_temp_folder_of_a_job_cut_in_its_manifest_write_counts_as_ours() -> 
         go(fs)
     assert f"{MANIFEST_DIR}.ft-j7" in fs.names_in(T)
     facts = outcome(fs, PLAN)
-    assert (facts.manifest, facts.only_ours) == ("absent", True)
+    assert (facts.manifest, facts.advice) == ("absent", "check")
 
 
 def test_the_target_moved_away_during_the_writes_stops_the_job() -> None:
@@ -637,3 +638,192 @@ def test_the_target_moved_away_at_the_commit_point_stops_the_job_before_its_mani
     assert out.reason == "path_moved"
     assert MANIFEST_DIR not in fs.names_in("/u/elsewhere")
     assert not any(n.startswith(MANIFEST_DIR) for n in fs.names_in("/u/elsewhere"))
+
+
+# -- S0080 round 1 (red team RT1, RT2, RT4, RT7; verifier V1, V3, V4) ----------------------------------------------
+
+
+def put(fs: MemFS, what: str, path: str) -> None:
+    """Another program's entry at `path`: an empty file, a prefix of our main file's bytes, all of them, or a folder."""
+    match what:
+        case "empty":
+            fs.outside_write(path, b"")
+        case "prefix":
+            fs.outside_write(path, MAIN[:6])
+        case "all":
+            fs.outside_write(path, MAIN)
+        case _:
+            fs.outside_mkdirs(path)
+
+
+@pytest.mark.parametrize("what", ["empty", "prefix", "all", "folder"])
+def test_a_name_another_program_took_first_is_never_called_ours_whatever_it_holds(what: str) -> None:
+    """Red team r1 RT1: the live job judges from the names it made, never from bytes, so another program's entry at
+    one of its names, empty, a prefix of the job's bytes or even all of them, keeps "You can delete it." away."""
+    fs = new_fs()
+
+    def hook(_i: int, lab: str) -> None:
+        if lab == f"create {T}:main.beancount":
+            fs.on_effect = None
+            put(fs, what, f"{T}/main.beancount")
+
+    fs.on_effect = hook
+    out, _ = go(fs)
+    assert isinstance(out, NotCreated)
+    assert out.reason == "taken", what
+    assert out.advice == "others", what
+
+
+@pytest.mark.parametrize(
+    ("what", "path"),
+    [
+        ("empty", f"{T}/main.beancount"),
+        ("prefix", f"{T}/main.beancount"),
+        ("folder", f"{T}/prices"),
+        ("folder", f"{T}/{MANIFEST_DIR}"),
+    ],
+)
+def test_the_outcome_read_never_calls_an_entry_it_cannot_tell_ours(what: str, path: str) -> None:
+    """Verifier r1 V4, red team r1 RT7: after a death, who made a name is not known; an entry that holds less than
+    all of the job's bytes may be the user's, so the advice is to check, never to delete."""
+    fs = new_fs(target="empty")
+    put(fs, what, path)
+    facts = outcome(fs, PLAN)
+    assert facts.advice == "check", (what, path)
+
+
+def test_a_manifest_changed_in_its_temp_folder_before_the_rename_is_never_created() -> None:
+    """Red team r1 RT2: `.finzytrack/`'s files are read back before the rename (ADR-0008 step 6)."""
+    fs = new_fs()
+
+    def hook(_i: int, lab: str) -> None:
+        if lab.startswith(f"rename {T}:"):
+            fs.on_effect = None
+            fs.outside_write(f"{TEMP}/workspace.json", FOREIGN)
+
+    fs.on_effect = hook
+    out, _ = go(fs)
+    facts = outcome(fs, PLAN)
+    assert not isinstance(out, Created) or facts.manifest == "ours", (out, facts)
+
+
+@pytest.mark.parametrize("when", ["sync", "rename"])
+def test_a_manifest_changed_around_the_rename_is_told_as_the_disk_holds_it(when: str) -> None:
+    """Red team r1 RT2: before the temp's read-back (its folder's sync) the change stops the job before the rename;
+    after the rename the job reads `.finzytrack` back and never answers "created" over other bytes."""
+    fs = new_fs()
+    label = f"sync {TEMP}:" if when == "sync" else f"sync {T}:"
+    path = f"{TEMP}/workspace.json" if when == "sync" else f"{T}/{MANIFEST_DIR}/workspace.json"
+    seen = {"n": 0}
+
+    def hook(_i: int, lab: str) -> None:
+        if lab == label:
+            seen["n"] += 1
+            if when == "sync" or seen["n"] == 2:  # the target's second sync is the one after the rename
+                fs.on_effect = None
+                fs.outside_write(path, FOREIGN)
+
+    fs.on_effect = hook
+    out, _ = go(fs)
+    assert isinstance(out, NotCreated), out
+    assert out.reason == "read_back"
+    assert outcome(fs, PLAN).manifest != "ours"
+    assert fs.file(path) == FOREIGN, "never removed"
+
+
+def test_the_target_moved_just_before_the_rename_is_never_told_created_at_its_old_path() -> None:
+    """Verifier r1 V1: the rename goes through the target's descriptor; `.finzytrack` is read back at the target's
+    path, so a folder moved in that instant raises and the disk at the path tells (`outcome`)."""
+    fs = new_fs()
+    rename = next(e for e in clean_effects(False) if e.startswith(f"rename {T}:"))
+
+    def move(_i: int, lab: str) -> None:
+        if lab == rename:
+            fs.on_effect = None
+            fs.outside_move(T, "/u/elsewhere")
+
+    fs.on_effect = move
+    try:
+        out, _ = go(fs)
+    except PathMovedError:
+        out = None
+    assert out != Created(T)
+    assert outcome(fs, PLAN).manifest == "absent"
+
+
+def test_the_listing_never_reads_a_file_longer_than_the_jobs_own() -> None:
+    """Red team r1 RT4: a big foreign file in the folder is never read into the engine (memory-frugal hosting)."""
+    fs = new_fs()
+    big = b"x" * 5_000_000
+    read: list[int] = []
+    original = MemDir.read
+
+    def counting(self: MemDir, name: str) -> bytes | None:
+        out = original(self, name)
+        read.append(len(out or b""))
+        return out
+
+    def hook(_i: int, lab: str) -> None:
+        if lab == f"create {T}:main.beancount":
+            fs.on_effect = None
+            fs.outside_write(f"{T}/movie.mov", big)
+            fs.outside_write(f"{T}/main.beancount", big)
+
+    fs.on_effect = hook
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(MemDir, "read", counting)
+        out, _ = go(fs)
+        facts = outcome(fs, PLAN)
+    assert isinstance(out, NotCreated)
+    assert (out.advice, facts.advice) == ("others", "others")
+    assert max(read, default=0) < len(big)
+
+
+def test_a_folder_the_job_made_and_left_empty_is_its_own_to_delete() -> None:
+    fs = new_fs()
+    fs.inject(clean_effects(False).index(f"mkdir {T}:prices"), crash=False, err=errno.EIO)
+    out, _ = go(fs)
+    assert isinstance(out, NotCreated)
+    assert (out.reason, out.advice) == ("io_error", "delete")
+
+
+def test_a_target_that_cannot_be_listed_after_a_stop_asks_to_check_it() -> None:
+    """Verifier r1 V2 (engine side): a listing that fails is `check`, never "nothing written"."""
+    fs = new_fs()
+
+    def load(_root: str) -> LoadResult:
+        fs.outside_deny(T, Right.CHANGE_ENTRIES)
+        fs.outside_acl(T, AclEntry(deny=True, perms=frozenset({"list"})))
+        return LoadResult(errors=1, parsed=())
+
+    out, _ = go(fs, load=load)
+    assert isinstance(out, NotCreated)
+    assert out.advice == "check"
+
+
+def test_every_answer_names_the_target_as_requested() -> None:
+    """Red team r1 RT6: `Created.folder` is the request's target, live or read from disk alike."""
+    fs = MemFS()
+    fs.outside_mkdirs("/real/u")
+    fs.outside_symlink("/u", "/real/u")
+    out, _ = go(fs, load=lambda root: LoadResult(0, (root, root.replace("main.beancount", "prices/p.beancount"))))
+    assert out == Created(T), "the target as requested, not its canonical path /real/u/new"
+    assert fs.file("/real/u/new/main.beancount") == MAIN
+
+
+def test_a_target_moved_after_the_temp_folder_is_written_gets_no_manifest_anywhere() -> None:
+    """Verifier r1 V1: the temp folder's read-back, the job's last step before the rename, goes through the path
+    guard, so a folder moved after the temp folder was written never becomes a workspace where the user did not ask
+    for one."""
+    fs = new_fs()
+
+    def move(_i: int, lab: str) -> None:
+        if lab == f"sync {TEMP}:":
+            fs.on_effect = None
+            fs.outside_move(T, "/u/elsewhere")
+
+    fs.on_effect = move
+    out, _ = go(fs)
+    assert isinstance(out, NotCreated)
+    assert out.reason == "path_moved"
+    assert MANIFEST_DIR not in fs.names_in("/u/elsewhere")

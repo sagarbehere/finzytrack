@@ -69,12 +69,11 @@ def test_a_create_loads_its_ledger_gates_and_writes_the_manifest_last(ald: Path,
     assert reply["result"] == {
         "outcome": "created",
         "reason": None,
-        "folder": str(target.resolve()),
+        "folder": str(target),
         "path": None,
         "detail": None,
         "errno": None,
-        "wrote": True,
-        "only_ours": None,
+        "advice": "none",
     }
     assert events == ["saving", "checking_change", "gate"]
     assert (target / ".finzytrack" / "workspace.json").read_text() == WS_JSON
@@ -96,7 +95,7 @@ def test_a_ledger_with_beancount_errors_is_not_created(ald: Path, tmp_path: Path
     failing = "2026-01-01 open Assets:Cash EUR\n2026-01-02 balance Assets:Cash 5 EUR\n"
     reply, events = create(ald, params(target, failing))
     r = reply["result"]
-    assert (r["outcome"], r["reason"], r["wrote"], r["only_ours"]) == ("not_created", "load_errors", True, True)
+    assert (r["outcome"], r["reason"], r["advice"]) == ("not_created", "load_errors", "delete")
     assert "gate" not in events
     assert not (target / ".finzytrack").exists()
 
@@ -116,7 +115,7 @@ def test_a_non_empty_folder_is_refused_and_left_as_it_is(ald: Path, tmp_path: Pa
     (target / "mine.txt").write_text("mine\n")
     reply, events = create(ald, params(target))
     r = reply["result"]
-    assert (r["outcome"], r["reason"], r["wrote"]) == ("not_created", "not_empty", False)
+    assert (r["outcome"], r["reason"], r["advice"]) == ("not_created", "not_empty", "none")
     assert events == []
     assert sorted(p.name for p in target.iterdir()) == ["mine.txt"]
 
@@ -126,9 +125,9 @@ def test_create_outcome_reads_what_the_create_left(ald: Path, tmp_path: Path) ->
     e = engine(ald)
     assert json.loads(e.handle(request("create", params(target)), Channel(1, proceed=True)))["ok"]
     reply = json.loads(e.handle(request("create_outcome", params(target), 2)))
-    assert reply["result"] == {"manifest": "ours", "wrote": True, "only_ours": True, "errno": None}
+    assert reply["result"] == {"manifest": "ours", "advice": "delete", "errno": None}
     gone = json.loads(e.handle(request("create_outcome", params(tmp_path / "Nothing"), 3)))
-    assert gone["result"] == {"manifest": "absent", "wrote": False, "only_ours": True, "errno": None}
+    assert gone["result"] == {"manifest": "absent", "advice": "none", "errno": None}
 
 
 @pytest.mark.parametrize("op", ["create", "create_outcome"])

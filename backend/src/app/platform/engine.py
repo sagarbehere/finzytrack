@@ -285,14 +285,16 @@ class RebuildAnswer:
 
 
 type CreateOutcomeKind = Literal["created", "not_created"]
+type CreateAdvice = Literal["none", "delete", "others", "check"]
+"""The delete advice (engine-jobs §8.2): `none` (nothing to say), `delete` (the folder holds only the job's own files),
+`others` (it holds another program's entry), `check` (it may, or it was not listed)."""
 
 
 @dataclass(frozen=True, slots=True)
 class CreateAnswer:
     """The engine's `create` result (engine-jobs §8.2, §11; S0080): `created` (`.finzytrack/` holds the plan's bytes
-    and is durable) or `not_created` with its `reason`; `folder` the target's canonical path, `path` the entry it is
-    about, `detail` the ACL entry or how many load errors, `errno` the system's answer; the delete advice `wrote` and
-    `only_ours` (None: not listed)."""
+    and is durable) or `not_created` with its `reason`; `folder` the target as requested, `path` the entry it is
+    about, `detail` the ACL entry or how many load errors, `errno` the system's answer; `advice` the delete advice."""
 
     outcome: CreateOutcomeKind
     reason: str | None
@@ -300,8 +302,7 @@ class CreateAnswer:
     path: str | None
     detail: str | None
     errno: int | None
-    wrote: bool
-    only_ours: bool | None
+    advice: CreateAdvice
 
 
 type ManifestSeen = Literal["ours", "foreign", "absent", "unknown"]
@@ -313,8 +314,7 @@ class CreateFacts:
     target's sync, and the delete advice."""
 
     manifest: ManifestSeen
-    wrote: bool
-    only_ours: bool | None
+    advice: CreateAdvice
     errno: int | None
 
 

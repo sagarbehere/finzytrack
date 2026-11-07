@@ -1297,9 +1297,15 @@ def _check_recover_all(before: QueueState, event: Event, after: QueueState, effe
             assert EndEngine("cancel") in effects
             assert after.running is not None
             assert after.running.job.id == r.job.id, "Cancel per journal ended the job"
+        if isinstance(e, EngineLost | NoEngine) and r is not None and e.job_id == r.job.id:
+            # §6.6, §8.2 (S0080, BL-0174): a writing job that may have written answers from disk, never the table
+            assert not r.outcome_owed, f"a writing job whose engine died ended by {type(e).__name__}"
+            assert not r.past_commit, f"a writing job past its commit point ended by {type(e).__name__}"
         if isinstance(e, EngineRefused):
             assert r is not None
-            assert rec
+            # only a job that answers itself: a recover-all (§8.1), a writing job whose engine died or that is past
+            # its commit point (§6.6, §8.2; BL-0174: the oracle of S0062 knew only the recover-all)
+            assert rec or r.outcome_owed or (r.job.kind in WRITING and r.past_commit)
             assert e.job_id == r.job.id
             assert after.running is not None
             assert after.running.job.id == r.job.id
@@ -1701,3 +1707,43 @@ def test_a_save_that_did_not_die_still_ends_without_an_engine_when_none_can_be_h
     state, _ = run(state, EngineAvailability(available=False))
     state, effects = run(state, EngineEnded())
     assert NoEngine(jid, "unavailable") in effects
+
+
+def test_the_oracle_lets_a_save_whose_engine_died_be_refused_an_engine_bl0174() -> None:
+    """@regression-guard (BL-0174: the queue held on the base; the oracle in this file was what changed). Its
+    counterexample, replayed as the walk replays it: the save whose engine died answers itself when the lock wait
+    fails (`EngineRefused`), which the properties now allow."""
+    state, _ = run(QueueState(open_workspace=W1), Boot())
+    walk: tuple[Event, ...] = (
+        EngineLockFree(),
+        ExclusiveEnded(),
+        Submit(spec_of("save", W1, False, "user")),
+        EngineDied(1),
+        EngineEnded(),
+        EngineNeeded(1),
+        EngineLockFailed(),
+    )
+    effects: tuple[Effect, ...] = ()
+    for event in walk:
+        step = transition(POLICY, state, event)
+        check_step(POLICY, state, event, step)
+        state, effects = step.state, step.effects
+    assert EngineRefused(1, "lock_failed") in effects
+
+
+@pytest.mark.parametrize("kind", ["save", "create", "copy"])
+def test_a_writing_job_refused_past_its_gate_then_left_without_an_engine_answers_itself(kind: JobKind) -> None:
+    """S0080 verifier r1 V3: a writing job whose engine refused past its gate (alive, so `outcome_owed` stays False)
+    retires it and asks for another to read its outcome; when the engine has become unavailable meanwhile, the job's
+    own work answers (`EngineRefused`: `CHANGE_OUTCOME_UNKNOWN`), never the table's `NoEngine` (`ENGINE_UNAVAILABLE`,
+    which would read as "nothing happened")."""
+    state, jid = busy_with(user(kind, W1 if kind == "save" else None), ready(W1))
+    state, effects = run(state, Gate(jid))
+    assert Proceed(jid) in effects
+    state, effects = run(
+        state, RetireEngine(jid), EngineNeeded(jid), EngineAvailability(available=False), EngineEnded()
+    )
+    assert not any(isinstance(e, NoEngine) and e.job_id == jid for e in effects)
+    assert EngineRefused(jid, "unavailable") in effects
+    assert state.running is not None
+    assert state.running.job.id == jid

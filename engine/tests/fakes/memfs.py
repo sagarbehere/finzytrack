@@ -746,6 +746,7 @@ class MemDir:
             mode=mode,
             locked=locked,
             mtime_ns=self._fs.mtimes.get(hit[1], 0),
+            size=len(node.data) if isinstance(node, _File) else 0,
         )
 
     def _unlocked(self, key: str) -> None:

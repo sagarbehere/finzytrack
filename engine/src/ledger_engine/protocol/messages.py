@@ -392,6 +392,9 @@ class RebuildResult(Message):
 RelPath = Annotated[str, Field(min_length=1, max_length=1024, pattern=r"^[^/\x00]")]  # relative; checked by the job
 
 
+CreateAdvice = Literal["none", "delete", "others", "check"]
+
+
 class CreateFile(Message):
     """One file of a new workspace: its path relative to the folder it is written in, and its text (UTF-8)."""
 
@@ -415,9 +418,10 @@ class CreateResult(Message):
     """How the create ended (§8.2, §11). `created`: `.finzytrack/` holds the plan's bytes and is durable. `not_created`:
     no `.finzytrack/` of ours stands there; `reason`: `not_empty`, `not_a_folder`, `no_parent`, `permission`, `taken`,
     `read_back`, `load_failed`, `load_errors`, `load_outside`, `manifest_taken`, `path_moved`, `io_error`. `folder`:
-    the target's canonical path; `path`: the entry it is about; `detail`: the ACL entry, or how many load errors;
-    `errno`: the system's answer. The delete advice: `wrote` (the job made something in the folder) and `only_ours`
-    (listed when the job stopped, it holds nothing but the job's own bytes; null: not listed)."""
+    the target as requested; `path`: the entry it is about; `detail`: the ACL entry, or how many load errors;
+    `errno`: the system's answer. `advice`, the delete advice from one listing when the job stopped: `none` (nothing
+    to say: a refusal of step 1, or an empty folder), `delete` (it holds only the job's own files), `others` (it
+    holds another program's entry), `check` (it may: not listed, or not known)."""
 
     outcome: Literal["created", "not_created"]
     reason: str | None
@@ -425,17 +429,16 @@ class CreateResult(Message):
     path: AbsPath | None
     detail: str | None
     errno: int | None
-    wrote: bool
-    only_ours: bool | None
+    advice: CreateAdvice
 
 
 class CreateOutcomeResult(Message):
     """§1 "resolved from disk": `.finzytrack` after the target's sync holds the plan's bytes (`ours`), something else
-    (`foreign`), nothing (`absent`), or could not be read (`unknown`; `errno`); and the delete advice."""
+    (`foreign`), nothing (`absent`), or could not be read (`unknown`; `errno`); and the delete advice (who made a name
+    is not known here, so an empty file, a prefix of ours or an empty folder at one of our names is `check`)."""
 
     manifest: Literal["ours", "foreign", "absent", "unknown"]
-    wrote: bool
-    only_ours: bool | None
+    advice: CreateAdvice
     errno: int | None
 
 
@@ -587,8 +590,7 @@ OPS: dict[str, OpSpec] = {
             "path": "/ledgers/Books/main.beancount",
             "detail": None,
             "errno": None,
-            "wrote": True,
-            "only_ours": False,
+            "advice": "others",
         },
         _CREATE,
         needs_engine_lock=True,
@@ -596,7 +598,7 @@ OPS: dict[str, OpSpec] = {
     "create_outcome": OpSpec(
         CreateParams,
         CreateOutcomeResult,
-        {"manifest": "ours", "wrote": True, "only_ours": True, "errno": None},
+        {"manifest": "ours", "advice": "delete", "errno": None},
         _CREATE,
         needs_engine_lock=True,
     ),

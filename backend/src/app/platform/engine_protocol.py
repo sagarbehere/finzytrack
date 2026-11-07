@@ -25,6 +25,7 @@ from app.platform.engine import (
     ActOutcome,
     ActOutcomeKind,
     Committed,
+    CreateAdvice,
     CreateAnswer,
     CreateFacts,
     CreateOutcomeKind,
@@ -543,12 +544,9 @@ def decode_rebuild(result: Mapping[str, object]) -> RebuildAnswer | Violation:
     return _decoded(_rebuild, result)
 
 
-_CREATE = frozenset({"outcome", "reason", "folder", "path", "detail", "errno", "wrote", "only_ours"})
+_CREATE = frozenset({"outcome", "reason", "folder", "path", "detail", "errno", "advice"})
+_ADVICE: frozenset[str] = frozenset({"none", "delete", "others", "check"})
 _CREATE_OUTCOMES: frozenset[str] = frozenset({"created", "not_created"})
-
-
-def _nullable_bool(value: object, what: str) -> bool | None:
-    return None if value is None else _bool(value, what)
 
 
 def _create(result: Mapping[str, object]) -> CreateAnswer:
@@ -560,8 +558,7 @@ def _create(result: Mapping[str, object]) -> CreateAnswer:
         path=_path(o["path"], "path", nullable=True),
         detail=_text(o["detail"], "detail", nullable=True),
         errno=_int(o["errno"], "errno", nullable=True),
-        wrote=_bool(o["wrote"], "wrote"),
-        only_ours=_nullable_bool(o["only_ours"], "only_ours"),
+        advice=cast("CreateAdvice", _choice(o["advice"], _ADVICE, "advice")),
     )
 
 
@@ -570,7 +567,7 @@ def decode_create(result: Mapping[str, object]) -> CreateAnswer | Violation:
     return _decoded(_create, result)
 
 
-_CREATE_FACTS = frozenset({"manifest", "wrote", "only_ours", "errno"})
+_CREATE_FACTS = frozenset({"manifest", "advice", "errno"})
 _MANIFESTS: frozenset[str] = frozenset({"ours", "foreign", "absent", "unknown"})
 
 
@@ -578,8 +575,7 @@ def _create_facts(result: Mapping[str, object]) -> CreateFacts:
     o = _keys(dict(result), _CREATE_FACTS, "the create_outcome result")
     return CreateFacts(
         manifest=cast("ManifestSeen", _choice(o["manifest"], _MANIFESTS, "manifest")),
-        wrote=_bool(o["wrote"], "wrote"),
-        only_ours=_nullable_bool(o["only_ours"], "only_ours"),
+        advice=cast("CreateAdvice", _choice(o["advice"], _ADVICE, "advice")),
         errno=_int(o["errno"], "errno", nullable=True),
     )
 

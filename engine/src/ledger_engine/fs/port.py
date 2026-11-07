@@ -95,7 +95,8 @@ class EntryStat:
     """One entry, not followed through a link (`lstat`). `locked`: an immutable or append-only flag is set
     (`uchg`, `schg`, `uappnd`, `sappnd`): the entry cannot be swapped, renamed or removed. `mtime_ns`: its modification
     time (`st_mtime_ns`; a rename keeps it, a folder's moves when its entries change); only the history trim reads it,
-    to tell older history from newer (S0074; spec §6.5), never to decide what may be deleted."""
+    to tell older history from newer (S0074; spec §6.5), never to decide what may be deleted. `size`: its length in
+    bytes (`st_size`); the create's listing reads it so that it never reads a file longer than its own (S0080)."""
 
     kind: Kind
     dev: int
@@ -104,6 +105,7 @@ class EntryStat:
     mode: int
     locked: bool
     mtime_ns: int = 0
+    size: int = 0
 
     @property
     def identity(self) -> tuple[int, int]:
