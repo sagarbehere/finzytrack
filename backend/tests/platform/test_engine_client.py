@@ -2139,7 +2139,8 @@ sys.stdin.read()
 
 @pytest.mark.skipif(os.name != "posix", reason="process groups are POSIX; Windows is BL-0087")
 def test_a_cancel_ends_the_call_even_when_an_escaped_child_keeps_the_output_open() -> None:
-    """§15: "A plugin child that left the engine's group (`setsid`) ... holds it until it exits": our group signal
+    """§5.1, limit "inherited lock": a plugin child that left the engine's group (`setsid`) "holds the lock until it
+    exits": our group signal
     does not reach it. It must
     still not hold the user's Cancel: once the engine is drained, the call ends (it would wait for an end of output
     that the escaped child never gives)."""

@@ -106,8 +106,8 @@ UNAVAILABLE: Final[tuple[tuple[str, str], ...]] = (
     ("incompatible", "This installation is damaged. Please reinstall Finzytrack."),
     ("closing", "Finzytrack is closing."),
 )
-"""§11 "bound reached | failure-modes E1's text"; E6's two texts (an engine that cannot start; an incompatible one,
-a damaged install); the app closing."""
+"""§11's "no engine" row (`msg:unavailable.*`): the bound reached, failure-modes E1; E6's two texts (an engine that
+cannot start; an incompatible one, a damaged install); the app closing."""
 
 
 def unavailable_text(details: EngineUnavailableDetails) -> str:

@@ -26,7 +26,7 @@ reason**; none is skipped (INV-32; model mutant `crash_unmarked`; the cancelled 
 `test_recover_all.py`).
 
 **The report** (`Report`) is the job's value: what the boot's or the switch's open needs (BL-0152, BL-0154): the
-journals undone (for "Finzytrack undid an interrupted save in *Personal*."), the blocking ones with their reason,
+journals undone (for `msg:recovery.undone`), the blocking ones with their reason,
 cause, file, entry, ACL entry and error number and what stands on disk now (`inspection`), and the folders that could
 not be listed. `blocking_for` matches it to a workspace (§8.1 "Afterwards", ADR-0063): a journal blocks a workspace
 whose registry key or lineage id it records, or whose ledger set shares one of its files by `path_key`; a record

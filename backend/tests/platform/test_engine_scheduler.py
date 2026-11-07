@@ -887,7 +887,7 @@ def test_the_engine_lock_is_waited_for_again_before_every_fresh_engine(rig: Rig)
 
 def test_after_the_bound_jobs_end_unavailable_without_an_engine_until_the_window_lets_a_stop_go() -> None:
     """§5.3: "three stops in 300 s make the engine `Unavailable` until the oldest leaves the window, or Try again";
-    §11 "bound reached ... `ENGINE_UNAVAILABLE`". On the tests' clock: the window ends exactly when the oldest
+    §11's "no engine" row (`ENGINE_UNAVAILABLE`). On the tests' clock: the window ends exactly when the oldest
     counted stop is one window old, never earlier (S0040: half-open)."""
     rig = Rig()
     try:

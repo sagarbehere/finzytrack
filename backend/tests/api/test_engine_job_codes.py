@@ -186,7 +186,7 @@ def answer(scenarios: Scenarios, name: str) -> tuple[int, dict[str, Any], FastAP
 
 @pytest.mark.error_code("ENGINE_QUEUE_FULL")
 def test_a_full_queue_is_engine_queue_full_and_retryable(scenarios: Scenarios) -> None:
-    """§11 "queue full": "Finzytrack is busy with other ledger work. Please try again in a moment." (Try again)."""
+    """§11 "queue full": `msg:code.ENGINE_QUEUE_FULL` (Try again)."""
     status, payload, app = answer(scenarios, "queue_full")
     assert status == 503
     error = payload["error"]

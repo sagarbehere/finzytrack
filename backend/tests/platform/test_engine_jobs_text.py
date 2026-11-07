@@ -204,6 +204,7 @@ def test_a_background_job_queued_carries_no_advice_so_the_notice_shows() -> None
     ],
 )
 def test_the_engine_unavailable_answer_is_worded_by_its_reason(reason: str, text: str) -> None:
-    """§11 "bound reached | failure-modes E1's text"; E6's text for an engine that cannot start (S0058 verifier F8).
+    """§11's "no engine" row (`msg:unavailable.*`): the bound reached, failure-modes E1; E6's text for an engine that
+    cannot start (S0058 verifier F8).
     The registry's message is the code's short form; these are the words the UI shows for each reason (BL-0092)."""
     assert unavailable_text(EngineUnavailableDetails(reason=reason)) == text  # type: ignore[arg-type]

@@ -60,7 +60,7 @@ GENERATORS: dict[str, tuple[list[str], list[str]]] = {
         ["backend/src/app/platform/engine_supervision.py", "backend/scripts/gen_statecharts.py"],
     ),
     # What the user reads about engine jobs, rendered from the code that says it (S0079, BL-0192): the spec's §11
-    # cites each text by its key (`scripts/tests/test_engine_jobs_spec.py`).
+    # cites each text by its key (`backend/tests/platform/test_engine_job_texts_spec.py`).
     "design/generated/engine-job-texts.md": (
         [str(BACKEND_PYTHON), "-I", "backend/scripts/gen_engine_job_texts.py", "--stdout"],
         [

@@ -367,7 +367,7 @@ class ArmAdviceTimer:
 
 @dataclass(frozen=True, slots=True)
 class ShowAdvice:
-    """ "Finzytrack cannot stop the earlier ledger work. Quit and reopen Finzytrack." (§5.2, §11)."""
+    """`msg:advice` (§5.2, §11; `design/generated/engine-job-texts.md`)."""
 
 
 @dataclass(frozen=True, slots=True)

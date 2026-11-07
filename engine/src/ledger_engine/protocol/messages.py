@@ -51,8 +51,7 @@ type Phase = Literal[
     "saving",
     "updating_views",
 ]
-"""What a job is doing (engine-jobs §5.4): the UI words them "Reading your ledger…", "Checking your change…",
-"Saving…", "Updating your views…"."""
+"""What a job is doing (engine-jobs §5.4): the UI words them `msg:phase.*` (`design/generated/engine-job-texts.md`)."""
 PHASES: frozenset[str] = frozenset(get_args(Phase.__value__))
 DecisionScalar = str | int | bool | None
 

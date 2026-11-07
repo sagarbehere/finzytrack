@@ -8,7 +8,7 @@ text modules produce (`app.platform.engine_jobs.text`, `save_text`, `recovery_te
 next step for the engine-job codes, rendered by calling the code with placeholders such as `<file>` and
 `<workspace>`. Each text has a key (`msg:…`) that `design/specs/engine-jobs.md` cites, so each sentence has one home,
 the code. `scripts/check_generated.py` runs it with `--stdout` and fails when the committed file differs;
-`scripts/tests/test_engine_jobs_spec.py` checks the keys both ways against the spec.
+`backend/tests/platform/test_engine_job_texts_spec.py` checks the keys both ways against the spec.
 
 The system's own answer to an error (`recovery_text.system_answer`, `strerror`) differs by OS, so it is rendered as
 `<system's answer>`.
@@ -20,18 +20,20 @@ import errno
 import sys
 from collections.abc import Callable
 from pathlib import Path
+from typing import Final, get_args
 from unittest import mock
 
 from app.platform.engine import ActOutcome, EntrySeen, InspectedFile, JournalFile, KeptCopySeen
 from app.platform.engine_jobs import recovery_text as rt
 from app.platform.engine_jobs import save_text as st
 from app.platform.engine_jobs import text as jt
-from app.platform.engine_jobs.recovery import ENGINE_STOPPED, UNREADABLE, Blocking, Journal, NotRecovered
+from app.platform.engine_jobs.recovery import ENGINE_STOPPED, UNREADABLE, Blocking, Journal, NotRecovered, Reason
 from app.platform.errors import (
     ChangeNotSavedDetails,
     EngineUnavailableDetails,
     ErrorCode,
     JobCancelledDetails,
+    NotSavedReason,
     WritesPausedDetails,
     spec_for,
 )
@@ -49,6 +51,7 @@ FOLDER = "<folder>"
 KEPT = "<kept copy>"
 SEEN = EntrySeen("file", None, None)
 J = Journal("<journal folder>", "<save>", True, None, None, (JournalFile(FILE, FILE, False),))
+J_EMPTY = Journal("<journal folder>", "<save>", True, None, None, ())
 
 # The codes an engine job or a workspace request ends with (§11's code column), in the registry's order.
 CODES = (
@@ -67,13 +70,32 @@ CODES = (
 
 
 def _blocking(reason: str, cause: str | None = None, **kw: object) -> Blocking:
+    _seen_blocking.add(reason)
     return Blocking(J, reason, cause, kw.pop("path", FILE), **kw)  # type: ignore[arg-type]
 
 
-def _missing(*, backup_good: bool, n: int = 1) -> Blocking:
-    names = ("<path>/<file>", "<path>/<other file>")[:n]
-    files = tuple(InspectedFile(name, False, True, None, (), None, backup_good) for name in names)
+def _missing(good: int, other: int) -> Blocking:
+    """A stopped try that found `good` replaced files absent with their backup checked good, and `other` absent
+    without that check."""
+    names = ("<path>/<file>", "<path>/<other file>", "<path>/<third file>", "<path>/<fourth file>")
+    kinds = [True] * good + [False] * other
+    files = tuple(InspectedFile(n, False, True, None, (), None, k) for n, k in zip(names, kinds, strict=False))
     return _blocking("stopped", "backup_bad", inspection=files)
+
+
+def _missing_rows(prefix: str, where: str, render: Callable[[Blocking], str]) -> tuple[Row, ...]:
+    """Every branch of the missing-file sentences: one or several files, backup checked good or not, and both."""
+    cases = (
+        ("_backup", "one file, its backup checked good", 1, 0),
+        ("_backup_several", "several files, their backups checked good", 3, 0),
+        ("", "one file, its backup not checked", 0, 1),
+        ("_several", "several files, their backups not checked", 0, 3),
+        ("_mixed", "both kinds: the checked sentence, then the other", 1, 1),
+    )
+    return tuple(
+        (f"{prefix}{suffix}", f"{where}: {what}", lambda g=good, o=other: render(_missing(g, o)).strip())
+        for suffix, what, good, other in cases
+    )
 
 
 def _kept(cause: str, *, named: bool) -> Blocking:
@@ -81,7 +103,16 @@ def _kept(cause: str, *, named: bool) -> Blocking:
     return _blocking("stopped", cause, inspection=(InspectedFile(FILE, False, True, SEEN, kept, None),))
 
 
+# Every reason of `ChangeNotSavedDetails` and `Blocking` must show in the reference (`_check_complete`), so a new
+# reason in the code fails the generation, and with it `scripts/check_generated.py`, until it has a row. These
+# reasons share another row's words: `save_text._unchanged_or_not` words them all alike.
+SAME_WORDS_AS_IO_ERROR: Final = frozenset({"read_back", "name_not_utf8"})
+_seen_not_saved: set[str] = set()
+_seen_blocking: set[str] = set()
+
+
 def _not_saved(reason: str, **kw: object) -> str:
+    _seen_not_saved.add(reason)
     d = {"path": FILE, "folder": None, "acl_entry": None, "unchanged": False} | kw
     return st.not_saved_text(ChangeNotSavedDetails(reason, **d))  # type: ignore[arg-type]
 
@@ -144,6 +175,26 @@ SAVE: tuple[Row, ...] = (
         lambda: _not_saved("permission", path=None, folder=FOLDER, acl_entry="<entry>"),
     ),
     (
+        "msg:save.permission_folder",
+        "`CHANGE_NOT_SAVED {permission}` at the app's journal or backups folder, no ACL entry known",
+        lambda: _not_saved("permission", path=None, folder=FOLDER),
+    ),
+    (
+        "msg:save.permission_unknown",
+        "`CHANGE_NOT_SAVED {permission}` with neither file nor folder known",
+        lambda: _not_saved("permission", path=None),
+    ),
+    (
+        "msg:save.linked_folder_unknown",
+        "`CHANGE_NOT_SAVED {linked_folder}` with no folder known",
+        lambda: _not_saved("linked_folder", path=None),
+    ),
+    (
+        "msg:save.unnamed_file",
+        "any save text above whose file is not known names it this way (here `locked`)",
+        lambda: _not_saved("locked", path=None),
+    ),
+    (
         "msg:save.linked_folder",
         "`CHANGE_NOT_SAVED {linked_folder}`",
         lambda: _not_saved("linked_folder", path=None, folder=FOLDER),
@@ -200,21 +251,7 @@ RECOVERY: tuple[Row, ...] = (
     ),
     ("msg:recovery.unreadable", "`stopped`, `unreadable` record", lambda: _screen(_blocking("stopped", UNREADABLE))),
     ("msg:recovery.stopped", "`stopped`, any other cause", lambda: _screen(_blocking("stopped", "backup_bad"))),
-    (
-        "msg:recovery.missing_backup",
-        "added to a stop screen: a replaced file is absent, its backup checked good (§6.8)",
-        lambda: rt._missing_now(_missing(backup_good=True)).strip(),
-    ),
-    (
-        "msg:recovery.missing_backup_several",
-        "the same, several files",
-        lambda: rt._missing_now(_missing(backup_good=True, n=2)).strip(),
-    ),
-    (
-        "msg:recovery.missing",
-        "added to a stop screen: a replaced file is absent, its backup not checked",
-        lambda: rt._missing_now(_missing(backup_good=False)).strip(),
-    ),
+    *_missing_rows("msg:recovery.missing", "added to a stop screen, replaced files absent (§6.8)", rt._missing_now),
     ("msg:recovery.cancelled", "`cancelled`", lambda: _screen(_blocking("cancelled"))),
     ("msg:recovery.not_tried", "`not_tried`", lambda: _screen(_blocking("not_tried"))),
     (
@@ -225,19 +262,23 @@ RECOVERY: tuple[Row, ...] = (
     (
         "msg:recovery.failed_errno",
         "`failed` with an error the system answered",
-        lambda: _screen(_blocking("failed", "io", errno=errno.EIO)),
+        lambda: _screen(_blocking("failed", "<cause>", errno=errno.EIO)),
     ),
     (
         "msg:recovery.failed_permission",
         "`failed` with `EACCES` or `EPERM`",
-        lambda: _screen(_blocking("failed", "io", errno=errno.EACCES)),
+        lambda: _screen(_blocking("failed", "<cause>", errno=errno.EACCES)),
     ),
     (
         "msg:recovery.failed_read_only",
         "`failed` with `EROFS`",
-        lambda: _screen(_blocking("failed", "io", errno=errno.EROFS)),
+        lambda: _screen(_blocking("failed", "<cause>", errno=errno.EROFS)),
     ),
-    ("msg:recovery.failed", "`failed`, a step the engine refused", lambda: _screen(_blocking("failed", "refused"))),
+    (
+        "msg:recovery.failed",
+        "`failed` with no error number: the engine refused a step (cause: its refusal key)",
+        lambda: _screen(_blocking("failed", "<refusal key>")),
+    ),
     (
         "msg:recovery.not_listed",
         "every open blocked: a journal folder could not be listed",
@@ -247,6 +288,26 @@ RECOVERY: tuple[Row, ...] = (
         "msg:recovery.not_listed_link",
         "every open blocked: a link in place of a journal folder (§8.1)",
         lambda: rt.not_recovered_screen(NotRecovered(FOLDER, None, linked=True)).message,
+    ),
+    (
+        "msg:recovery.not_listed_link_errno",
+        "the same, with the system's answer for the link",
+        lambda: rt.not_recovered_screen(NotRecovered(FOLDER, errno.ELOOP, linked=True)).message,
+    ),
+    (
+        "msg:recovery.unnamed_file",
+        "any blocked screen above whose file is not known names it this way (here `stopped`)",
+        lambda: _screen(Blocking(J_EMPTY, "stopped", "backup_bad")),
+    ),
+    (
+        "msg:recovery.permission_unknown",
+        "`stopped`, `permission`, neither entry nor file known",
+        lambda: _screen(Blocking(J_EMPTY, "stopped", rt.PERMISSION)),
+    ),
+    (
+        "msg:recovery.keep_unnamed",
+        "Keep's confirmation for a record that names no file",
+        lambda: rt.keep_confirmation(Blocking(J_EMPTY, "stopped", "backup_bad"), WS),
     ),
     (
         "msg:recovery.never_listed",
@@ -259,15 +320,8 @@ RECOVERY: tuple[Row, ...] = (
         "Keep's confirmation for `cancelled`, `failed`, `not_tried`",
         lambda: rt.keep_confirmation(_blocking("cancelled"), WS),
     ),
-    (
-        "msg:recovery.keep_missing_backup",
-        "added to Keep's confirmation: a replaced file is absent, its backup checked good",
-        lambda: rt._missing_kept(_missing(backup_good=True)).strip(),
-    ),
-    (
-        "msg:recovery.keep_missing",
-        "added to Keep's confirmation: a replaced file is absent, its backup not checked",
-        lambda: rt._missing_kept(_missing(backup_good=False)).strip(),
+    *_missing_rows(
+        "msg:recovery.keep_missing", "added to Keep's confirmation, replaced files absent", rt._missing_kept
     ),
     (
         "msg:recovery.keep_kept_copy",
@@ -312,6 +366,14 @@ def _table(rows: tuple[Row, ...]) -> list[str]:
     return out
 
 
+def _check_complete() -> None:
+    not_saved = set(get_args(NotSavedReason.__value__)) - SAME_WORDS_AS_IO_ERROR
+    blocking = set(get_args(Reason.__value__))
+    missing = sorted((not_saved - _seen_not_saved) | (blocking - _seen_blocking))
+    if missing:
+        raise SystemExit(f"gen_engine_job_texts: no row renders {', '.join(missing)}")  # noqa: TRY003
+
+
 def render() -> str:
     with mock.patch.object(rt, "system_answer", return_value="<system's answer>"):
         out = [
@@ -343,6 +405,7 @@ def render() -> str:
             "",
             *_table(REGISTRY),
         ]
+    _check_complete()
     return "\n".join(out) + "\n"
 
 

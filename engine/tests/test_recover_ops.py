@@ -41,8 +41,8 @@ def sha(data: bytes) -> str:
 
 def journalled(ald: Path) -> tuple[Path, Path, str]:
     """A save landed on disk, its record renamed back to `.open`: a crash right before the close (every file at post,
-    temps removed; §10's row "all replaced and read back, close not yet durable"). Returns the ledger file, the
-    journal folder (canonical) and the record's name."""
+    temps removed; §6.6's `.open` row, "up to every file replaced and read back, the close not yet durable"). Returns
+    the ledger file, the journal folder (canonical) and the record's name."""
     ledger = ald.parent / "L"
     ledger.mkdir()
     (ledger / "main.bean").write_bytes(PRE)

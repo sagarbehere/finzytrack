@@ -155,8 +155,8 @@ CRASH_POINTS = _sweep(_cuts)
 
 @pytest.mark.parametrize(("at", "cut"), CRASH_POINTS)
 def test_a_crash_at_every_effect_then_every_power_loss_leaves_a_recoverable_disk(at: int, cut: int | None) -> None:
-    """§10 every row, §14: a crash at each effect (a write cut at each offset), the disk as the OS keeps it, then
-    every state a power loss may leave from there."""
+    """§6.6's table, every row, §14: a crash at each effect (a write cut at each offset), the disk as the OS keeps it,
+    then every state a power loss may leave from there."""
     w = world()
     w.fs.inject(at, crash=True, cut=cut)
     with pytest.raises(Crash):
@@ -166,7 +166,7 @@ def test_a_crash_at_every_effect_then_every_power_loss_leaves_a_recoverable_disk
 
 
 def check_told(fs: MemFS, w: World, out: Outcome, *, kept: str | None = None) -> None:
-    """The outcome told matches the disk (§6.4, §10, §11; INV-22), in the disk now and in every power-loss state of it.
+    """The outcome told matches the disk (§6.4, §6.6, §11; INV-22), in the disk now and in every power-loss state of it.
     `kept`: the file whose outside save the save itself put back (it holds those bytes, not pre)."""
     for state in (fs, *fs.power_loss_states()):
         js = journals(state)
@@ -262,8 +262,8 @@ def test_an_io_error_in_the_rollback_at_every_effect_is_told_truthfully_and_reco
 
 @pytest.mark.parametrize(("at", "j"), ROLLBACK_POINTS)
 def test_a_crash_at_every_effect_of_the_rollback_then_recovery_resolves(at: int, j: int) -> None:
-    """§10: "A crash during a recovery or a rollback leaves the journal `.open` with each file at pre or post, so the
-    next recover-all finishes it"."""
+    """§6.4: "A crash during the rollback leaves the journal `.open` with each file at pre or post, and the next
+    start's recover-all finishes it"."""
     w = world()
     w.fs.inject(at, crash=False)
     w.fs.inject(j, crash=True)
@@ -1091,7 +1091,7 @@ def test_a_displaced_outside_save_at_a_swap_is_moved_to_the_kept_name_and_the_sa
 
 
 def test_a_crash_right_after_a_swap_that_displaced_an_outside_save_keeps_it_and_recovery_moves_it_aside() -> None:
-    """§10: "A crash with an outside save in flight leaves foreign bytes in the file, a temp or a kept copy: the
+    """§6.4: "A crash with an outside save in flight leaves foreign bytes in the file, a temp or a kept copy: the
     journal stops and the user sees both versions": the outside save is in
     the file or in our temp in every power-loss state; recovery stops, moving a temp holding it to the kept name."""
     w = world()

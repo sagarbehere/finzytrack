@@ -2,7 +2,7 @@
 §6.1 step 8, §6.4, §8.1, §10, §13; S0060, S0061). Shared by the writer's and the restore's tests.
 
 `check_disk` states what every state of the disk must satisfy, crash or not, before or after a power loss, during a
-save, a rollback or a recovery, written from §10's rows and §13's write-protocol and recovery properties:
+save, a rollback or a recovery, written from §6.6's table and §13's write-protocol and recovery properties:
 - every target is whole at its pre or its post bytes (a created file: absent or post): `NoTornLedger`,
   `NoTornLedgerAfterRecovery`; on a `plain` volume (the best-effort mode, ADR-0068 D2), and only under an `.open`
   journal, a replaced file may also be missing (only in a state a power loss left, `MemFS.lost_power`: a split

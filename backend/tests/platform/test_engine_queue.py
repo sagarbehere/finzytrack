@@ -929,7 +929,8 @@ def test_a_mid_job_fresh_engine_waits_for_the_lock_too() -> None:
 
 
 def test_the_advice_shows_while_a_wait_within_the_session_lasts() -> None:
-    """§15 "with the advice (§5.2)"; §11: "the slot is held by a signalled process that has not ended, or the
+    """§5.1, limit "inherited lock": "all ledger work waits, with the advice"; §11: "the slot is held by a signalled
+    process that has not ended, or the
     sidecar waits for the engine lock" share one text; a wait that lasts past the display delay is either."""
     state, first = busy_with(user("preview"))
     state, _ = run(state, Cancel(first), EngineEnded())
@@ -996,7 +997,7 @@ def unavailable(state: QueueState) -> QueueState:
 
 def test_while_the_engine_is_unavailable_a_queued_job_ends_without_an_engine() -> None:
     """§5.3: "three stops in 300 s make the engine `Unavailable` until the oldest leaves the window, or Try again";
-    §11: "bound reached ... `ENGINE_UNAVAILABLE`"; model `DispatchUnavail`: the job is taken from the queue and
+    §11's "no engine" row (`ENGINE_UNAVAILABLE`); model `DispatchUnavail`: the job is taken from the queue and
     refused, waited-for jobs first, and no engine starts."""
     state = unavailable(ready())
     step = transition(POLICY, state, Submit(background("rebuild")))
@@ -1228,7 +1229,7 @@ def check_step(policy: QueuePolicy, before: QueueState, event: Event, step: Step
         assert not before.running.past_commit
         assert after.running is not None
         assert after.running.past_commit
-    # §4: the waiting user's own Cancel, when the job ahead is not ended: "cannot be stopped from here" unless the job
+    # §4: the waiting user's own Cancel, when the job ahead is not ended: `msg:cannot_stop_from_here` unless the job
     # ahead is a read, an open or a recover-all its own requester still waits for (theirs to cancel), or none runs
     if isinstance(event, Cancel) and Cancelled(event.job_id) not in effects:
         mine = [e for e in effects if isinstance(e, Cancelled) and e.job_id == event.job_id]

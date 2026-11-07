@@ -12,7 +12,7 @@ a table event and carries out the effects, in order:
 - **The running job** runs on a worker thread of its own (one at a time: the table runs one job), with a
   `JobContext`: its requests go to the engine the table's `Start` gave it, and only to that one
   (`call(..., spawn=False)`): a job whose engine died is not run again on another (§5.3). A fresh `Start` starts the
-  engine first ("Starting the ledger engine…"); the engine's progress becomes the job's phase (§5.4); its `gate` is
+  engine first (`msg:phase.starting`); the engine's progress becomes the job's phase (§5.4); its `gate` is
   fed to the table, whose `Proceed` the shell sends (§4: the commit point is the table's one step); a job may ask for
   a fresh engine for its next part (`fresh_engine`, §5.1). A job's own exception ends it `INTERNAL`, logged, and
   its engine is not reused (ARCHITECTURE §6.3: the job runner is one of the three catch-all places).

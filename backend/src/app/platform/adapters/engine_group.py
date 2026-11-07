@@ -11,7 +11,8 @@ M3).
   drain decides to reap, `signal()` sends nothing: after the reap the group id may belong to another program. A
   leader that exited by itself (a crash) is drained the same way. One signal is not enough: on macOS it misses a
   member forked while it is delivered (S0073's reviews; BL-0190). A member stuck in the kernel keeps the drain going,
-  and so the engine slot held (§5.2: "A process that cannot be ended ... keeps the engine slot and its locks").
+  and so the engine slot held (§5.2, limit "stuck process": an engine or a member of its group "keeps the engine slot
+  (the drain waits for it) and any engine lock it holds").
 - **"No live member"**, so that none of the group's files (its `flock` locks) is still open: macOS: no process but
   the held leader is listed in the group (libproc `proc_listpids(PROC_PGRP_ONLY)`), not counting a listed member
   whose status reads zombie (`sysctl(KERN_PROC_PID)`'s `p_stat == SZOMB`: its files are closed; BL-0158: a zombie

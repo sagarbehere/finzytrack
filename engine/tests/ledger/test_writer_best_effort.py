@@ -220,8 +220,8 @@ CRASH_POINTS = [(v, i, cut) for v in BEST_EFFORT for i, x in enumerate(clean_eff
 def test_a_crash_at_every_effect_then_every_power_loss_leaves_a_disk_recovery_resolves(
     volume: str, at: int, cut: int | None
 ) -> None:
-    """§10 on such a volume: a crash at each effect (a write cut at offsets), every state a power loss may leave
-    (a split replace included: a file missing, never torn), then recovery puts every file back at pre."""
+    """§6.6's table on such a volume: a crash at each effect (a write cut at offsets), every state a power loss may
+    leave (a split replace included: a file missing, never torn), then recovery puts every file back at pre."""
     w = world(volume=volume)
     w.fs.inject(at, crash=True, cut=cut)
     with pytest.raises(Crash):
