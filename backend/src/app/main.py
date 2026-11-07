@@ -393,8 +393,9 @@ def main(argv: list[str] | None = None) -> int:
             sys.stdout.flush()
             server.run(sockets=[sock])
     finally:
-        # Signals the engine's group once without waiting for a call in flight, then waits for its drain at most the
-        # display delay (engine-jobs §5.5, §9.3 step 4; S0057, S0076). TODO(BL-0154): the quiesce of §9.3 runs first.
+        # Signals the engine's group once without waiting for a call in flight, then waits for its drain and its logged
+        # close at most the display delay (engine-jobs §5.5, §9.3 step 4; S0057, S0076, S0078). TODO(BL-0154): the
+        # quiesce of §9.3 runs first.
         try:
             wiring.jobs.close()  # answers the waiting jobs; never waits for one
         finally:

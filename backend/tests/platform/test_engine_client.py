@@ -1439,6 +1439,64 @@ def test_close_waits_for_the_drain_of_the_engine_of_a_call_in_flight() -> None:
         ops.release.set()
 
 
+class HeldClose:
+    """An `EventSink` that holds the `engine.closed` line until released, as a slow thread would."""
+
+    def __init__(self) -> None:
+        self.names: list[str] = []
+        self.entered = threading.Event()
+        self.release = threading.Event()
+
+    def __call__(self, event: Event, /, **fields: object) -> None:
+        if event.name == "engine.closed":
+            self.entered.set()
+            self.release.wait(DEADLINE)
+        self.names.append(event.name)
+
+
+NO_HANDSHAKE = r"""
+import sys
+sys.stdin.readline()
+sys.stdin.read()
+"""
+
+
+@pytest.mark.parametrize("where", ["handshake", "request"])
+def test_close_returns_only_once_engine_closed_is_logged_by_the_call_in_flight(where: str) -> None:
+    """BL-0176 (S0078): `close()` takes no call lock, so the call in flight feeds the close to the table and logs
+    `engine.closed` on its own thread. A sidecar exits right after `close()` returns and its daemon threads die with
+    it, so a close that returned before that line was written lost it: the start storm of `test_main.py` found a
+    sidecar whose log had no line at all. The line is held here until released; `close()` waits for it, still bounded
+    by `close_wait` (§9.3 step 4)."""
+    sink = HeldClose()
+    bound = 4 * DEADLINE  # far beyond the joins below: a close that is never woken shows as one that did not return
+    if where == "handshake":  # the boot's first engine, before it has answered
+        c = EngineClient(stand_in(NO_HANDSHAKE), log=sink, close_wait=bound)
+        t, out = in_thread(c.start)
+        assert wait_until(lambda: isinstance(c.state, Handshaking))
+    else:
+        c = EngineClient(engine_command(), log=sink, close_wait=bound)
+        t, out = stall(c)
+    try:
+        closer = threading.Thread(target=c.close, daemon=True)
+        closer.start()
+        assert sink.entered.wait(DEADLINE), "the call in flight never logged the close"
+        closer.join(ABSENCE)
+        assert closer.is_alive(), "close() returned before engine.closed was written"
+        sink.release.set()
+        closer.join(DEADLINE)
+        assert not closer.is_alive(), "close() was not woken once engine.closed was written"
+        assert sink.names.count("engine.closed") == 1
+        assert isinstance(c.state, Closed)
+        t.join(DEADLINE)
+        [failure] = out
+        assert isinstance(failure, EngineFailure)
+        assert failure.kind == "closed"
+    finally:
+        sink.release.set()
+        c.close()
+
+
 @pytest.mark.skipif(os.name != "posix", reason="process groups are POSIX; Windows is BL-0087")
 def test_close_waits_for_a_previous_engine_still_draining() -> None:
     """BL-0194: an engine already ended (here retired after its job) whose drain is still under way is waited for

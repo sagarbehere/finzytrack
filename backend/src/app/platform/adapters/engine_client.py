@@ -25,9 +25,12 @@ ARCHITECTURE.md §2.0, §5, §7; `design/specs/engine-jobs.md` §5.1-§5.5 since
   hung engine cannot hold it), and the call in flight fails `closed`. Then it **waits for the drain** of every engine
   that is ending (the one it signalled, one that had already exited or been ended, a previous one still draining),
   for at most `close_wait` (`CLOSE_WAIT`), so that at a quit the drain's later signals reach a member forked during
-  the first one before the sidecar exits (BL-0194; owner, 2026-11-07: "Yes, make quit wait for the drain."). An
-  engine it did not signal (a job past its commit point, §4) is not waited for. A drain still going at the bound is
-  left to the reaper thread, which ends with the sidecar: a stuck process cannot hold the quit.
+  the first one before the sidecar exits (BL-0194; owner, 2026-11-07: "Yes, make quit wait for the drain."). Within
+  the same bound it waits for its close step, which the call in flight runs on its own thread once it sees the end:
+  the sidecar exits right after `close()` and its daemon threads die with it, so `engine.closed` would be lost
+  (S0078, BL-0176). An engine it did not signal (a job past its commit point, §4) is not waited for, nor its close.
+  A drain still going at the bound is left to the reaper thread, which ends with the sidecar: a stuck process cannot
+  hold the quit.
 - **Spawn** (§5.1). `EngineCommand` names the interpreter and environment: `for_venv` in development and tests,
   `for_packaged` in the bundle (S0038), where one interpreter serves both processes with two separate
   site-packages (ADR-0056). Both run `python -s -S -B -P -c <bootstrap> <engine site>`: `-S` keeps the interpreter's
@@ -605,6 +608,7 @@ class EngineClient:
         self._in_call = False
         self._pending: _Ours | None = None
         self._closing = False
+        self._closed_logged = False  # the table's close step has carried out its effects (`engine.closed` written)
         self._needs_settle = False
         self._serial = 0
         self._next_id = 0
@@ -662,8 +666,12 @@ class EngineClient:
 
     def close(self) -> None:
         """Record `close` and signal the engine's group once, without waiting for a call; then wait for the drain of
-        every engine that is ending, for at most `close_wait` (BL-0194, §9.3 step 4)."""
+        every engine that is ending (BL-0194) and for the close's own step, which a call in flight runs on its thread
+        once it sees our end (`engine.closed` written; BL-0176), together for at most `close_wait` (§9.3 step 4). A
+        close deferred past a job's commit point waits for neither: the job finishes and settles the close."""
         with self._signals:
+            current = self._run
+            deferred = current is not None and current.past_commit and current.reason is None  # as `_mark_ended`
             self._closing = True
             self._mark_ended("close")
             self._needs_settle = True
@@ -673,7 +681,10 @@ class EngineClient:
             filler.stop()
         self._settle_if_idle()
         with self._signals:
-            self._signals.wait_for(lambda: all(run.drained.is_set() for run in ending), timeout=self._close_wait)
+            self._signals.wait_for(
+                lambda: all(run.drained.is_set() for run in ending) and (deferred or self._closed_logged),
+                timeout=self._close_wait,
+            )
 
     def _ending(self) -> list[_Running]:
         """Under `_signals`: the engines whose drain a close waits for: the previous one, and the running one if we
@@ -838,6 +849,10 @@ class EngineClient:
         out: EngineFailure | Spawn | Handshake | Pause | None = None
         for effect in step.effects:
             out = self._effect(effect) or out
+        if isinstance(step.state, Closed) and not self._closed_logged:
+            with self._signals:  # `close()` waits for this, whichever thread ran the step (BL-0176)
+                self._closed_logged = True
+                self._signals.notify_all()
         return out
 
     def _effect(self, effect: Effect) -> EngineFailure | Spawn | Handshake | Pause | None:
