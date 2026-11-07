@@ -178,6 +178,17 @@ def test_an_engine_death_that_finds_only_the_folder_never_says_finzytrack_left_i
     assert "left the folder" not in text
 
 
+def test_a_live_copy_stop_that_kept_only_its_folder_says_finzytrack_left_it() -> None:
+    """S0082 verifier V2: a live stop (the engine answered) that kept only the folder the job made says "left"
+    (`msg:copy.left_folder`), never the after-death words."""
+    text = copy_text.text(NotCopied("load_differs", FOLDER, (".",)))
+    assert text.endswith(
+        "Finzytrack left the folder /u/Books copy because it could not be sure everything in it is its own. Check "
+        "it, and remove it if you do not need it."
+    )
+    assert "may have made" not in text
+
+
 def test_no_engine_past_the_commit_point_is_change_outcome_unknown(make: Any) -> None:
     rig = make({"copy": [GATE_DIE], "copy_outcome": [CRASH_TO_BOUND]})
     value = rig.copy()

@@ -15,8 +15,10 @@ from __future__ import annotations
 import contextlib
 import json
 import os
+import selectors
 import subprocess
 import sys
+import threading
 from typing import Final, cast
 
 from ledger_engine.ledger.copy_check import CheckRequest, CheckResult
@@ -49,9 +51,10 @@ def environment() -> dict[str, str]:
 def check(request: CheckRequest) -> CheckResult:
     """The copy's load in a fresh process, and its answer; `failed` when the child did not answer.
 
-    The parent reads one answer line, then waits for the child's exit, never for the end of the pipe: a process a
-    plugin forked can hold the pipe open after the child has answered and ended (BL-0203). The child ends itself
-    once it has answered (`copy_check.main`); one that never answers is ended with the engine's group (§5.2)."""
+    The parent reads one answer line or stops reading when the child has ended, whichever comes first, never waiting
+    for the end of the pipe: a process a plugin forked can hold the pipe open after the child has answered, or died
+    without an answer (BL-0203; S0082 verifier V1). The child ends itself once it has answered (`copy_check.main`);
+    one that never answers and never ends is ended with the engine's group (§5.2)."""
     line = json.dumps({"path": list(sys.path), "request": request.encode()}).encode("utf-8") + b"\n"
     with subprocess.Popen(  # noqa: S603 (our own interpreter and code, no shell)
         command(),
@@ -68,8 +71,7 @@ def check(request: CheckRequest) -> CheckResult:
         except BrokenPipeError:  # a child that ended before it read: its exit status tells
             with contextlib.suppress(OSError):
                 child.stdin.close()
-        answer = child.stdout.readline()
-        child.stdout.close()
+        answer = _answer_line(child)
         code = child.wait()
     if code != 0:
         return CheckResult("failed", subject=f"exit {code}")
@@ -77,3 +79,44 @@ def check(request: CheckRequest) -> CheckResult:
         return CheckResult.decode(cast("dict[str, object]", json.loads(answer)))
     except (ValueError, KeyError, TypeError):
         return CheckResult("failed", subject="answer")
+
+
+def _answer_line(child: subprocess.Popen[bytes]) -> bytes:
+    """The child's answer: its standard output up to the first newline, or what it wrote before it ended. A thread
+    waits for the child's end and wakes the reader through a pipe of its own; once the child has ended, only what is
+    already in the answer's pipe is read (everything the child wrote is there by then), so a process a plugin forked
+    that holds the pipe open never holds the job. No time limit: each wait ends on data, the pipe's end or the
+    child's end."""
+    assert child.stdout is not None  # noqa: S101 (PIPE)
+    out = child.stdout.fileno()
+    wake_r, wake_w = os.pipe()
+
+    def waiter() -> None:
+        child.wait()
+        os.write(wake_w, b"x")
+
+    thread = threading.Thread(target=waiter, name="copy-check-wait", daemon=True)
+    thread.start()
+    got = bytearray()
+    try:
+        with selectors.DefaultSelector() as sel:
+            sel.register(out, selectors.EVENT_READ)
+            sel.register(wake_r, selectors.EVENT_READ)
+            ended = False
+            while b"\n" not in got:
+                ready = {key.fd for key, _ in sel.select(0 if ended else None)}
+                if out in ready:
+                    chunk = os.read(out, 1 << 16)
+                    if not chunk:
+                        break  # the pipe's end
+                    got += chunk
+                elif ended:
+                    break  # the child has ended and nothing more is in the pipe
+                if wake_r in ready:
+                    ended = True
+                    sel.unregister(wake_r)
+    finally:
+        thread.join()
+        os.close(wake_r)
+        os.close(wake_w)
+    return bytes(got).partition(b"\n")[0]

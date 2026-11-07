@@ -61,7 +61,8 @@ def test_a_plugin_thread_that_never_ends_does_not_hold_the_answer(tmp_path: Path
 
 
 def test_what_a_plugin_prints_never_reaches_the_answer(tmp_path: Path) -> None:
-    """S0081 verifier F2: the mutant `os.dup2(2, 1)` → `pass` survived. A plugin prints a forged answer with
+    """@regression-guard (passes on the base, which already isolated the output; it is the test the base lacked):
+    S0081 verifier F2: the mutant `os.dup2(2, 1)` → `pass` survived. A plugin prints a forged answer with
     Python's `print` and writes garbage straight to descriptor 1; the answer is still the load's."""
     forged = '{"outcome": "checked", "summary": null, "read": [], "subject": null}'
     plugin = (
@@ -110,10 +111,41 @@ def test_a_process_a_plugin_forked_that_holds_the_pipe_does_not_hold_the_answer(
             os.kill(int(pid_file.read_text()), signal.SIGKILL)
 
 
+def test_a_child_that_dies_before_answering_while_a_forked_process_holds_the_pipe_is_a_failed_check(
+    tmp_path: Path,
+) -> None:
+    """S0082 verifier V1: a plugin forks a process that keeps the answer's pipe, then the child dies before it answers
+    (here it kills itself, as a crash in a C extension would end it). The check answers as soon as the child has
+    ended, with its exit status; it never waits for the forked process. On the base and at 5e8d9888 this test never
+    returns."""
+    pid_file = tmp_path / "forked.pid"
+    plugin = (
+        "import os, signal\n" + HEAD + "def run(entries, options, config):\n"
+        "    pid = os.fork()\n"
+        "    if pid == 0:\n"
+        "        try:\n"
+        "            while True:\n"
+        "                signal.pause()\n"
+        "        finally:\n"
+        "            os._exit(0)\n"
+        "    with open(config, 'w') as f:\n"
+        "        f.write(str(pid))\n"
+        "    os.kill(os.getpid(), signal.SIGKILL)\n"
+    )
+    try:
+        result = fresh_load.check(ledger(tmp_path, plugin, str(pid_file)))
+    finally:
+        if pid_file.exists():
+            os.kill(int(pid_file.read_text()), signal.SIGKILL)
+    assert result == CheckResult("failed", subject=f"exit {-signal.SIGKILL}")
+
+
 def test_a_child_that_never_answers_is_ended_by_the_drain_and_the_check_fails(tmp_path: Path) -> None:
-    """A plugin that blocks forever: the check waits (no time limit, §5.4), and the drain that ends the engine's group
-    ends the child too (§5.2); the check then answers `failed` with the exit status, never a hang. The plugin tells
-    its process id through a named pipe, so the test kills it only once it is blocked."""
+    """@regression-guard (passes on the base: `subprocess.run` also returned once the killed child closed the pipe;
+    BL-0203 asked for the case to be tested). A plugin that blocks forever: the check waits (no time limit, §5.4),
+    and the drain that ends the engine's group ends the child too (§5.2); the check then answers `failed` with the
+    exit status, never a hang. The plugin tells its process id through a named pipe, so the test kills it only once
+    it is blocked."""
     fifo = tmp_path / "pid.fifo"
     os.mkfifo(fifo)
     plugin = (

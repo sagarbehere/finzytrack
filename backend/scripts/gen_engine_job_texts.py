@@ -540,6 +540,11 @@ COPY: tuple[Row, ...] = (
         lambda: _not_copied("taken", left=("<name>", "<other name>")),
     ),
     (
+        "msg:copy.left_folder",
+        "added when a stopped job kept only the folder it made (`msg:create.left_folder`'s words)",
+        lambda: _not_copied("load_failed", left=(".",)),
+    ),
+    (
         "msg:copy.maybe_made_folder",
         "added after an engine death when the read finds the folder empty (`msg:create.maybe_made_folder`'s words)",
         lambda: _not_copied("stopped", left=(".",)),
