@@ -25,3 +25,7 @@ Create the file, and option 1. A safety rule that silently checks nothing is the
 Owner: "Also, regarding the inbox questions: Yes to correcting the wording in the ADR sentences, Replace the line with the accurate list re: inv-24, defer the privacy list for now, and if it still matters, I'd pick the "slots are engine processes, queue lives in the sidecar" design and reword INV-28 and INV-31 and add INV-32 as proposed." (2026-10-27, in session)
 
 Deferred. This file stays in the inbox: the M1b local tier (copies of your real ledgers) still waits for the denylist.
+
+Owner: "Park the privacy denylist permanently. I don't want to do it for the foreseeable future." (2026-11-07, in session)
+
+**Parked permanently.** The scanner stays as it is (option 3): the denylist rule reads the file when it exists and checks nothing when it does not. The M1b local tier no longer waits for it. Reopened only if the owner asks.
