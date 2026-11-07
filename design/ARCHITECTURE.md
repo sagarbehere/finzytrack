@@ -276,10 +276,11 @@ engine/src/ledger_engine/
                  with `Steps` is the writer a copy shares
     copy.py      the copy job in the engine (engine-jobs §8.2, S0081): the legacy locks tried and held for the reads,
                  the source loaded once (the overlay load: its fingerprint is checked again just before the commit
-                 point; a ledger with plugins of its own refused), no `.open` journal naming a source, the layout and
-                 rewrites of `include`, documents and `document` lines (core/copy_layout.py, pure),
+                 point), no `.open` journal naming a source, the layout and rewrites of `include`, documents and
+                 `document` lines (core/copy_layout.py, pure),
                  every file streamed into the create's writer, "loads the same" (loads_same.py: entries, errors and
-                 options, paths mapped back); protocol/copy.py its ops copy, copy_outcome
+                 options, paths mapped back) on the copy loaded in a fresh process (fresh_load.py, copy_check.py);
+                 protocol/copy.py its ops copy, copy_outcome
     history.py   the history trim after a landed save, in the save's engine (engine-jobs §6.5, S0074): the newest
                  16 of each kind kept in the key's journal and backups folders; never an `.open` or `.part`
                  journal or its backups, nor the save that just landed; core/history.py the pure choice

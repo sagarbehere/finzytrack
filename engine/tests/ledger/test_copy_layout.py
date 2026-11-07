@@ -18,6 +18,8 @@ from ledger_engine.ledger.core.copy_layout import (
     SourceSet,
     back,
     layout,
+    lines_of,
+    norm_path,
     place,
     rewrite,
 )
@@ -233,3 +235,32 @@ def test_a_documents_root_at_the_ledgers_folder_reserves_every_name_it_holds() -
     lay = layout(src([ROOT, "/data/shared/s.beancount"], documents=[B], listed=[f"{B}/outside/statement.pdf"]))
     assert place(lay, "/data/shared/s.beancount") == "outside-2/s.beancount"
     assert place(lay, f"{B}/outside/statement.pdf") == "outside/statement.pdf"
+
+
+def test_lines_end_at_a_newline_only_as_beancount_counts_them() -> None:
+    """r2 F4: a lone `\r` is no line break to Beancount's lexer."""
+    assert lines_of(b"a\rb\nc\r\n\nd") == [b"a\rb\n", b"c\r\n", b"\n", b"d"]
+    assert lines_of(b"x\n") == [b"x\n"]
+    assert lines_of(b"") == []
+
+
+def test_a_lone_carriage_return_does_not_shift_a_document_line() -> None:
+    lay = layout(src(document_files=["/data/r/r.pdf"]))
+    data = b'2026-01-01 open Assets:Bank\n; a\rb\n2026-01-08 document Assets:Bank "../r/r.pdf"\n'
+    assert (
+        text(rw(lay, ROOT, data))
+        == b'2026-01-01 open Assets:Bank\n; a\rb\n2026-01-08 document Assets:Bank "outside/r.pdf"\n'
+    )
+
+
+def test_one_file_has_one_name_whatever_its_absolute_spelling() -> None:
+    """r2 F3: Beancount keeps an absolute `document` path as written."""
+    assert norm_path("/x/rec/../rec/r.pdf") == "/x/rec/r.pdf"
+    assert norm_path("//x/r.pdf") == "/x/r.pdf"
+    assert norm_path("///x//r.pdf") == "/x/r.pdf"
+    lay = layout(src(document_files=["/x/rec/r.pdf"]))
+    data = b'2026-01-08 document A:B "/x/rec/../rec/r.pdf"\n2026-01-09 document A:B "//x/rec/r.pdf"\n'
+    assert (
+        text(rw(lay, ROOT, data))
+        == b'2026-01-08 document A:B "outside/r.pdf"\n2026-01-09 document A:B "outside/r.pdf"\n'
+    )

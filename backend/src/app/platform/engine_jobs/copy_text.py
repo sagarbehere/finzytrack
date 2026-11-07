@@ -35,6 +35,25 @@ def _differs(v: NotCopied) -> str:
     return f"The copy did not load the same as your ledger{where}."
 
 
+def _cannot_place(v: NotCopied) -> str:
+    """One true sentence per detail (r2 F8); a refusal of the writer's own plan check is Finzytrack's fault."""
+    match v.detail:
+        case "reserved_name":
+            return (
+                f"Your ledger uses a folder named .finzytrack ({name_of(v.path)}), a name Finzytrack keeps for itself."
+            )
+        case "inside_documents":
+            return "The new folder is inside your ledger's documents folder. Choose another place."
+        case "inside_legacy":
+            return "The new folder is inside the old Finzytrack app's folder. Choose another place."
+        case "inside_target":
+            return f"Your ledger names a file inside the new folder ({v.path}). Choose another place."
+        case "two_sources":
+            return f"{name_of(v.path)} and another of your files would get the same name in the new folder."
+        case _:
+            return f"Finzytrack could not place the files of the copy. {REPORT}"
+
+
 def _blocked(v: NotCopied) -> str:
     if v.detail in {"unreadable", "unlisted"}:
         return "Finzytrack could not read its record of an unfinished save. Restart Finzytrack, then try again."
@@ -82,19 +101,13 @@ def _why(v: NotCopied) -> str | None:
             line = f" (line {v.detail})" if v.detail else ""
             return f"Finzytrack could not change a line that names another file in {name_of(v.path)}{line}."
         case "cannot_place":
-            if v.detail == "reserved_name":
-                return "Your ledger uses a folder named .finzytrack, a name Finzytrack keeps for itself."
-            if v.detail == "inside_documents":
-                return "The new folder is inside your ledger's documents folder. Choose another place."
-            if v.detail == "inside_legacy":
-                return "The new folder is inside the old Finzytrack app's folder. Choose another place."
-            return f"{name_of(v.path)} and another of your files would get the same name in the new folder."
+            return _cannot_place(v)
         case "load_differs":
             return _differs(v)
         case "plugin_modules":
             return (
-                f"Your ledger uses a plugin of its own ({name_of(v.path)}). This version of Finzytrack cannot copy a "
-                "ledger's own plugins."
+                f"The copy did not load the same as your ledger, which uses a plugin of its own ({v.detail}). This "
+                "version of Finzytrack cannot copy a ledger's own plugins."
             )
         case "not_empty" | "manifest_taken" | "legacy_saving":  # pragma: no cover (whole texts of their own, `text`)
             return None

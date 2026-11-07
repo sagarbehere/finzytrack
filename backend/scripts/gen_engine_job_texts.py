@@ -487,9 +487,19 @@ COPY: tuple[Row, ...] = (
         lambda: _not_copied("cannot_place", detail="two_sources"),
     ),
     (
+        "msg:copy.cannot_place_target",
+        "the ledger names a path inside the new folder",
+        lambda: _not_copied("cannot_place", detail="inside_target"),
+    ),
+    (
+        "msg:copy.cannot_place_fault",
+        "the writer's own check of the copy's plan refused it (a Finzytrack fault)",
+        lambda: _not_copied("cannot_place", path=None, detail="two_files_one_name"),
+    ),
+    (
         "msg:copy.plugin_modules",
-        "the source's load imported a plugin of the ledger's own (BL-0202)",
-        lambda: _not_copied("plugin_modules", path="<plugin file>"),
+        "the copy does not load the same, and the source names a plugin that is not Beancount's own (BL-0202)",
+        lambda: _not_copied("plugin_modules", path=None, detail="<plugin>"),
     ),
     (
         "msg:copy.load_differs",

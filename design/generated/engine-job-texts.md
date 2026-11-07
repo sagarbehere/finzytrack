@@ -140,11 +140,13 @@ Each blocked screen's actions are `Screen.actions` (§11).
 | `msg:copy.encrypted` | the source holds an encrypted ledger file (ADR-0059) | Not copied. <file> is encrypted. This version of Finzytrack does not read encrypted ledger files. |
 | `msg:copy.source_changed` | a source changed while it was copied, or before the commit point (the owner's words) | Not copied. Your ledger changed while Finzytrack was copying it. Try again. |
 | `msg:copy.cannot_rewrite` | a line naming another file could not be pointed at the copy (here at line 7) | Not copied. Finzytrack could not change a line that names another file in <file> (line 7). |
-| `msg:copy.cannot_place_reserved` | the source uses a folder named `.finzytrack` | Not copied. Your ledger uses a folder named .finzytrack, a name Finzytrack keeps for itself. |
+| `msg:copy.cannot_place_reserved` | the source uses a folder named `.finzytrack` | Not copied. Your ledger uses a folder named .finzytrack (<file>), a name Finzytrack keeps for itself. |
 | `msg:copy.cannot_place_documents` | the new folder is inside one of the source's documents roots | Not copied. The new folder is inside your ledger's documents folder. Choose another place. |
 | `msg:copy.cannot_place_legacy` | the new folder is inside the old app's folder (the legacy root of a lock the request names; INV-26) | Not copied. The new folder is inside the old Finzytrack app's folder. Choose another place. |
 | `msg:copy.cannot_place` | two source files would take one name in the copy | Not copied. <file> and another of your files would get the same name in the new folder. |
-| `msg:copy.plugin_modules` | the source's load imported a plugin of the ledger's own (BL-0202) | Not copied. Your ledger uses a plugin of its own (<plugin file>). This version of Finzytrack cannot copy a ledger's own plugins. |
+| `msg:copy.cannot_place_target` | the ledger names a path inside the new folder | Not copied. Your ledger names a file inside the new folder (<path>/<file>). Choose another place. |
+| `msg:copy.cannot_place_fault` | the writer's own check of the copy's plan refused it (a Finzytrack fault) | Not copied. Finzytrack could not place the files of the copy. This is a fault in Finzytrack; please report it. |
+| `msg:copy.plugin_modules` | the copy does not load the same, and the source names a plugin that is not Beancount's own (BL-0202) | Not copied. The copy did not load the same as your ledger, which uses a plugin of its own (<plugin>). This version of Finzytrack cannot copy a ledger's own plugins. |
 | `msg:copy.load_differs` | the copy does not load the same as the source (here first at an entry's line 12) | Not copied. The copy did not load the same as your ledger (first at <file>, line 12). |
 | `msg:copy.load_differs_errors` | the same, when only Beancount's errors differ (`options`: "its options differ") | Not copied. The copy did not load the same as your ledger (its Beancount errors differ). |
 | `msg:copy.load_failed` | the copy's load could not run | Not copied. Finzytrack could not check the copy. |

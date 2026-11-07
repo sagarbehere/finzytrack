@@ -244,9 +244,26 @@ def test_a_copy_is_an_app_scoped_waited_for_writing_job() -> None:
 
 
 def test_a_ledger_with_its_own_plugin_is_told_why_it_cannot_be_copied() -> None:
-    """r1 F1, BL-0202: the plugin's file is named, and the reason is the version's limit, not the user's ledger."""
-    value = NotCopied("plugin_modules", FOLDER, (), path="/data/ledgers/plugins/fx.py")
+    """r2 (the owner's "Fresh process"), BL-0202: the plugin is named, and the reason is the version's limit."""
+    value = NotCopied("plugin_modules", FOLDER, (), detail="my_fx_rates")
     assert copy_text.text(value) == (
-        "Not copied. Your ledger uses a plugin of its own (fx.py). This version of Finzytrack cannot copy a ledger's "
-        "own plugins."
+        "Not copied. The copy did not load the same as your ledger, which uses a plugin of its own (my_fx_rates). "
+        "This version of Finzytrack cannot copy a ledger's own plugins."
     )
+
+
+@pytest.mark.parametrize(
+    ("detail", "path", "start"),
+    [
+        ("reserved_name", "/s/.finzytrack/x.beancount", "Your ledger uses a folder named .finzytrack (x.beancount)"),
+        ("inside_documents", "/s/docs", "The new folder is inside your ledger's documents folder."),
+        ("inside_legacy", "/legacy", "The new folder is inside the old Finzytrack app's folder."),
+        ("inside_target", "/u/Books copy/x.beancount", "Your ledger names a file inside the new folder"),
+        ("two_sources", "/s/a.pdf", "a.pdf and another of your files would get the same name"),
+        ("two_files_one_name", None, "Finzytrack could not place the files of the copy. This is a fault"),
+    ],
+)
+def test_every_cannot_place_detail_has_its_own_true_sentence(detail: str, path: str | None, start: str) -> None:
+    """r2 F8: one sentence per detail; the writer's own refusal (no path) is Finzytrack's fault, never "same name"."""
+    text = copy_text.text(NotCopied("cannot_place", FOLDER, (), path=path, detail=detail))
+    assert text.startswith(f"Not copied. {start}"), text

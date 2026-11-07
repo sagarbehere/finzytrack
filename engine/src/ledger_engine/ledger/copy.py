@@ -6,26 +6,30 @@ ADR-0063 decision 1, ADR-0062 decision 2, ADR-0059, ADR-0017, ADR-0067; S0081, t
 the read-back, the commit point, `.finzytrack/` last and the cleanup of a stop, one code for both: owner, "Reuse
 create's code; do not write a second cleanup") with the copy's own steps 2 and 5 (`_CopySteps`):
 
-2. **The sources**, before anything is written into the target:
-   a. each legacy write lock the request names tried once, without waiting (`LegacyLocks.try_lock`, ADR-0062): held,
-      or any error, refuses (`legacy_saving`; fail closed); a free one is held through the copy's file reads; an
-      absent one is checked again just before the commit point;
+2. **The sources**, before step 1 makes anything (a refusal here leaves nothing, not even the target folder):
+   a. a target under the legacy root of a lock the request names refuses (`cannot_place`, `inside_legacy`; INV-26);
+      each lock tried once, without waiting (`LegacyLocks.try_lock`, ADR-0062): held, or any error, refuses
+      (`legacy_saving`; fail closed); a free one is held through the copy's file reads; an absent one is checked
+      again just before the commit point;
    b. the source loaded once with the overlay load (Beancount's full load, plugins included, never decrypting:
-      `encrypted`), the modules its plugins imported then forgotten (`beancount_port.user_modules_forgotten`), its
-      result reduced to `loads_same.Summary` and dropped. Its `fingerprint` hashes exactly the bytes it parsed: the
-      "fingerprint before reading" of the owner's decision 2;
+      `encrypted`), its result reduced to `loads_same.Summary` and dropped. Its `fingerprint` hashes exactly the bytes
+      it parsed: the "fingerprint before reading" of the owner's decision 2. The plugins it names that are not
+      Beancount's own are remembered, for the text of a copy that then does not load the same (BL-0202);
    c. no `.open` journal may name a source ledger file (a save writes only ledger files): one that does, one that
       cannot be read and a journal folder that cannot be listed refuse (`recovery_blocked`; spec §8.1, INV-32, model
       `NoCopyOverOpenJournal`);
-   d. the layout and the rewrites (`core.copy_layout`): every ledger file the load parsed (each streamed from its
-      source and checked against the fingerprint, or, when a line must be rewritten, read whole, checked, rewritten),
-      every file under each documents root, and each `document` entry's file under the source's folder (streamed,
-      their hashes recorded as copied).
-5. **"Loads the same"** (`loads_same`): the held locks released, the copy loaded with the overlay load in the
-   target; it must run (`load_failed`), read only inside the target (`load_outside`; a `document` entry's absolute
-   path may name the original file: spec Limit), and give the source's summary (`load_differs`). Then the re-check,
-   just before the commit point: the source's ledger set observed again equals the fingerprint, every copied
-   document hashes as it was copied, every absent lock is still absent (`source_changed`, `legacy_saving`).
+   d. a target inside a documents root, or one holding a path the ledger names, refuses (`cannot_place`, compared by
+      `path_key`); the layout and the rewrites (`core.copy_layout`): every ledger file the load parsed (each streamed
+      from its source and checked against the fingerprint, or, when a line must be rewritten, read whole, checked,
+      rewritten), every regular file under each documents root (no `.finzytrack` folder), every documents root folder,
+      and every `document` entry's file (streamed, their hashes recorded as copied).
+5. **"Loads the same"**: the held locks released, the copy loaded **in a fresh process** (`fresh_load.check`,
+   `copy_check`: nothing of the source's load, which ran its plugins in this engine, can reach it; the owner's choice
+   of 2026-11-07, S0081 r2); it must run (`load_failed`), read only inside the target (`load_outside`, a `document`
+   entry's file included), and give the source's summary (`load_differs`, or `plugin_modules` when the source names a
+   plugin of its own). Then the re-check, just before the commit point: the source's ledger set observed again equals
+   the fingerprint, every copied document hashes as it was copied, every absent lock is still absent
+   (`source_changed`, `legacy_saving`).
 
 `outcome(fs, plan)` is the create's outcome read; it names every entry in the target, since the file list was known
 only to the engine that died (`create.outcome_of`, `every`). The source is only ever read: the job writes, locks or
@@ -37,14 +41,13 @@ from __future__ import annotations
 
 import gc
 import posixpath
-import re
 import unicodedata
 from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass, field
 
 from ledger_engine.fs.port import FileSystem, LegacyAbsent, LegacyHeld, LegacyLocks, Lock
 from ledger_engine.ledger import beancount_port as port
-from ledger_engine.ledger import create, fingerprint, loads_same, overlay
+from ledger_engine.ledger import copy_check, create, fingerprint, fresh_load, loads_same, overlay
 from ledger_engine.ledger.core import copy_layout as cl
 from ledger_engine.ledger.core import journal
 from ledger_engine.ledger.core.journal import Record, State
@@ -55,6 +58,8 @@ from ledger_engine.ledger.paths import path_key
 from ledger_engine.ledger.policy import DESKTOP
 from ledger_engine.ledger.writer import BadPlanError
 
+LEGACY_LOCK_TAIL = "/data/.write.lock"
+BEANCOUNT_PACKAGES = frozenset({"beancount", "beanquery"})
 LOCAL = "local"
 JOURNAL = "journal"
 
@@ -73,12 +78,10 @@ class CopyPlan:
     legacy_locks: tuple[str, ...]
 
 
-def _overlay_load(root: str) -> tuple[overlay.LoadResult, tuple[str, ...]]:
-    """Beancount's full load (the overlay load, nothing in its overlay), and where each module it imported from
-    outside the engine's install came from (a ledger's own plugin); those modules are forgotten after it."""
-    with port.user_modules_forgotten() as imported:
-        out = overlay.load(root, {}, DESKTOP)
-    return out, tuple(imported)
+def _overlay_load(root: str) -> overlay.LoadResult:
+    """Beancount's full load of the source (the overlay load, nothing in its overlay). Its plugins run in this engine,
+    which the sidecar retires after the job (§5.1); the copy's own load runs in a fresh process (`fresh_load`)."""
+    return overlay.load(root, {}, DESKTOP)
 
 
 def parsed_from(data: bytes, filename: str) -> cl.Parsed:
@@ -96,12 +99,14 @@ def parsed_from(data: bytes, filename: str) -> cl.Parsed:
 @dataclass(frozen=True, slots=True)
 class CopyPorts:
     """The copy's effects: the file-system port (every write in the target, the journals), the legacy locks, the
-    load (with the user modules it imported), the reads of a source (`chunks`), the observation of a ledger set and
-    the state of one file, what the parser reads from one file, and whether a path is a regular file."""
+    source's load, the copy's load in a fresh process (`fresh_load.check`), the reads of a source (`chunks`), the
+    observation of a ledger set and the state of one file, what the parser reads from one file, and whether a path is
+    a regular file."""
 
     fs: FileSystem
     legacy: LegacyLocks
-    load: Callable[[str], tuple[overlay.LoadResult, tuple[str, ...]]] = _overlay_load
+    load: Callable[[str], overlay.LoadResult] = _overlay_load
+    check: Callable[[copy_check.CheckRequest], copy_check.CheckResult] = fresh_load.check
     source: Callable[[str], Iterator[bytes]] = fingerprint.chunks
     observe: Callable[[LedgerSet], Fingerprint] = fingerprint.observe
     file_state: Callable[[str], FileState] = fingerprint.streamed_state
@@ -120,6 +125,8 @@ def _check(plan: CopyPlan) -> CreatePlan:
     _absolute(plan.app_local_data, "app_local_data")
     for lock in plan.legacy_locks:
         _absolute(lock, "legacy_lock")
+        if not lock.endswith(LEGACY_LOCK_TAIL):  # `<legacy root>/data/.write.lock` only (ADR-0062; r2 F9)
+            raise BadPlanError("legacy_lock")
     base = CreatePlan(plan.job, plan.target, (), "", plan.manifest)
     create.check_base(base)
     return base
@@ -155,6 +162,7 @@ class _CopySteps:
     layout: cl.Layout | None = None
     documents: list[tuple[str, str]] = field(default_factory=lambda: [])  # (source, path in the copy)
     quoted: dict[str, set[str]] = field(default_factory=lambda: {})  # a rewritten include's text -> its old texts
+    own_plugins: tuple[str, ...] = ()  # plugins the source names that are not Beancount's own
 
     def release(self) -> None:
         while self.held:
@@ -165,13 +173,16 @@ class _CopySteps:
         run.say_saving()
         target = self._key(self.plan.target)
         for lock in self.plan.legacy_locks:  # INV-26: never a new folder under a legacy root (S0081 r1 question)
-            legacy_root = posixpath.dirname(posixpath.dirname(lock))
+            legacy_root = lock[: -len(LEGACY_LOCK_TAIL)]
             if _in(self._key(legacy_root), target):
                 raise Stop("cannot_place", legacy_root, "inside_legacy")
         self._locks()
         root = posixpath.normpath(self.plan.source)
         loaded = self._load_source(root)
         fp = loaded.fingerprint
+        self.own_plugins = tuple(
+            str(name) for name, _ in loaded.options["plugin"] if str(name).split(".")[0] not in BEANCOUNT_PACKAGES
+        )
         try:
             self.summary = loads_same.summary(loaded, _same)
         except loads_same.UncomparableError as e:
@@ -183,13 +194,21 @@ class _CopySteps:
         for root_folder, _ in fp.documents:  # compared as the volume names them, links resolved (r1 F6)
             if _in(self._key(root_folder), target):  # its own files would change the source's listing
                 raise Stop("cannot_place", root_folder, "inside_documents")
+        named = (
+            *files,
+            *(cl.literal_folder(posixpath.normpath(g)) for g, _ in fp.globs),
+            *(p for p, _ in fp.document_files),
+        )
+        for p in named:  # a path the ledger names inside the new folder would read the copy (r2 F5)
+            if _in(target, self._key(cl.norm_path(p))):
+                raise Stop("cannot_place", p, "inside_target")
         src = cl.SourceSet(
             root=root,
             files=tuple(p for p, s in files.items() if isinstance(s, Content)),
             missing=tuple(p for p, s in files.items() if isinstance(s, Absent)),
             globs=tuple(g for g, _ in fp.globs),
             documents=tuple(d for d, _ in fp.documents),
-            document_files=tuple(p for p, _ in fp.document_files),
+            document_files=tuple(cl.norm_path(p) for p, _ in fp.document_files),
             listed=tuple(join(d, n) for d, listing in fp.documents for n, _ in listing or ()),
         )
         lay = cl.layout(src)
@@ -208,12 +227,14 @@ class _CopySteps:
         run.plan = plan
 
     def _key(self, p: str) -> str:
-        """`p`'s `path_key` (links resolved, compared as its volume compares names); `p` itself when it cannot be
-        resolved (the re-check before the commit point still sees a changed source)."""
+        """`p`'s `path_key` (links resolved, compared as its volume compares names). One that cannot be resolved
+        refuses the copy (fail closed, r2 F10): it is never compared by its text."""
         try:
             return path_key(self.ports.fs, p)
-        except (OSError, ValueError):
-            return p
+        except OSError as e:
+            raise Stop("source_unreadable", p, err=e.errno) from None
+        except ValueError:
+            raise Stop("source_unreadable", p) from None
 
     def _locks(self) -> None:
         """Step 2a (ADR-0062 decision 2): each lock tried once, never waited for; only free and absent go on. A lock
@@ -233,13 +254,11 @@ class _CopySteps:
 
     def _load_source(self, root: str) -> overlay.Loaded:
         try:
-            loaded, imported = self.ports.load(root)
+            loaded = self.ports.load(root)
         except OSError as e:
             raise Stop("source_unreadable", e.filename if isinstance(e.filename, str) else root, err=e.errno) from None
         except Exception:  # noqa: BLE001 (the load could not run: a plugin, Beancount)
             raise Stop("source_failed") from None
-        if imported:  # a ledger's own plugin is not copied (BL-0202): the copy could never load the same (r1 F1)
-            raise Stop("plugin_modules", imported[0])
         if isinstance(loaded, overlay.LoadRefused):
             raise Stop("encrypted" if loaded.reason == "encrypted" else "source_failed", loaded.subject)
         if not isinstance(dict(loaded.fingerprint.files).get(root), Content):
@@ -296,23 +315,23 @@ class _CopySteps:
     def _files(
         self, lay: cl.Layout, src: cl.SourceSet, files: dict[str, FileState], fp: Fingerprint
     ) -> tuple[NewFile, ...]:
-        """Step 2d: every file the copy writes, ledger files first. A path two different sources would take refuses
-        the copy, naming the second (r1 F2: nothing is ever dropped); the source's own `.finzytrack` folder under a
-        documents root at its folder is left out (the copy writes its own; r1 verifier F5), and a documents folder's
-        entry that is not a regular file (a FIFO, a socket) is left out (r1 F5)."""
+        """Step 2d: every file the copy writes, ledger files first. A path two different sources would take (compared
+        by `path_key`: one file named in NFC and NFD is one source, r2 F2) refuses the copy, naming one (r1 F2: nothing
+        is ever dropped). Under a documents root, every `.finzytrack` folder (a workspace's own, at any depth: r2 F1)
+        and every entry that is not a regular file (r1 F5) are left out; any other path through such a name refuses."""
         out: dict[str, tuple[str, NewFile]] = {}
 
         def add(path: str, data: bytes | Streamed) -> bool:
             dst = _placed(lay, path)
-            top = _fold(dst.split("/")[0])
-            if top == create.MANIFEST_DIR or top.startswith(create.MANIFEST_DIR + create.TEMP_INFIX):
+            if _reserved(dst):
                 raise Stop("cannot_place", path, "reserved_name")
             key = _fold(dst)
+            source = self._key(path)
             if key in out:
-                if out[key][0] != path:
+                if out[key][0] != source:
                     raise Stop("cannot_place", path, "two_sources")
                 return False
-            out[key] = (path, NewFile(dst, data))
+            out[key] = (source, NewFile(dst, data))
             return True
 
         for p in src.files:
@@ -322,12 +341,13 @@ class _CopySteps:
         for root, listing in fp.documents:
             for name, there in listing or ():
                 path = join(root, name)
-                if not there or _own_workspace(lay, path) or not self.ports.regular(path):
+                if not there or _reserved(name) or not self.ports.regular(path):
                     continue
                 if add(path, Streamed(path, None)):
                     self.documents.append((path, _placed(lay, path)))
-        for path, there in fp.document_files:  # a `document` entry's file, wherever it is (r1 F3; decision 3)
-            if there and self.ports.regular(path) and add(path, Streamed(path, None)):
+        for raw, there in fp.document_files:  # a `document` entry's file, wherever it is (r1 F3; decision 3)
+            path = cl.norm_path(raw)  # never opened unless a regular file: `chunks` refuses any other (r2 (h))
+            if there and add(path, Streamed(path, None)):
                 self.documents.append((path, _placed(lay, path)))
         return tuple(f for _, f in out.values())
 
@@ -360,37 +380,21 @@ class _CopySteps:
         assert self.fingerprint is not None  # noqa: S101
         assert self.layout is not None  # noqa: S101
         folder = run.folder
-        try:
-            loaded, imported = self.ports.load(join(folder, run.plan.root))
-        except Exception:  # noqa: BLE001 (the check could not run)
-            raise Stop("load_failed") from None
-        if imported:  # a module the copy's folder holds (a documents root): not the source's load (r1 F1)
-            raise Stop("plugin_modules", imported[0])
-        if isinstance(loaded, overlay.LoadRefused):
-            raise Stop("load_failed", loaded.subject)
-        fp = loaded.fingerprint
-        for p in (*(f for f, _ in fp.files), *(d for d, _ in fp.documents), *(d for d, _ in fp.document_files)):
+        quoted = tuple((n, next(iter(o))) for n, o in self.quoted.items() if len(o) == 1)  # ambiguous: left (r1 F4)
+        request = copy_check.CheckRequest(join(folder, run.plan.root), folder, self.layout, quoted)
+        result = self.ports.check(request)  # a fresh process: nothing of the source's load reaches it (r2 V1)
+        if result.outcome != "checked" or result.summary is None:
+            raise Stop("load_failed", detail=result.subject)
+        for p in result.read:
             if not _in(folder, p):  # a `document` entry's file too (r1 F3, verifier F2)
                 raise Stop("load_outside", p)
-        pattern, table = cl.back(self.layout, folder)
-        # Beancount quotes an include as written when its glob matches nothing: the rewritten text maps back to the
-        # one it replaced, when only one did (r1 F4); an ambiguous one is left as it is (a refusal, never a pass)
-        quoted = {f'"{n}"': f'"{next(iter(o))}"' for n, o in self.quoted.items() if len(o) == 1}
-        texts = re.compile("|".join(re.escape(k) for k in sorted(quoted, key=len, reverse=True))) if quoted else None
-
-        def back(s: str) -> str:
-            if texts is not None:
-                s = texts.sub(lambda m: quoted[m.group(0)], s)
-            return pattern.sub(lambda m: table[m.group(0)], s)
-
-        try:
-            copied = loads_same.summary(loaded, back)
-        except loads_same.UncomparableError as e:
-            raise Stop("load_failed", detail=e.kind) from None
-        del loaded
+        copied = result.summary
         diff = loads_same.first_difference(self.summary, copied)
         if diff is not None:
-            raise Stop("load_differs", diff.path, diff.what if diff.line is None else str(diff.line))
+            where = diff.path if diff.path is not None and diff.path.startswith("/") else None  # not `<plugin>`
+            if self.own_plugins:  # their code is not copied (BL-0202): the likely cause, said
+                raise Stop("plugin_modules", where, self.own_plugins[0])
+            raise Stop("load_differs", where, diff.what if diff.line is None or where is None else str(diff.line))
         self._recheck(run)
 
     def _recheck(self, run: Run) -> None:
@@ -427,13 +431,12 @@ def _fold(name: str) -> str:
     return unicodedata.normalize("NFD", unicodedata.normalize("NFD", name).casefold())
 
 
-def _own_workspace(lay: cl.Layout, path: str) -> bool:
-    """A file of the source's own `.finzytrack` folder (the source's folder is a workspace)."""
-    dst = cl.place(lay, path)
-    if not dst or not cl.inside(lay, path):
-        return False
-    top = _fold(dst.split("/")[0])
-    return top == create.MANIFEST_DIR or top.startswith(create.MANIFEST_DIR + create.TEMP_INFIX)
+def _reserved(path: str) -> bool:
+    """Whether a component of `path` is Finzytrack's own (`.finzytrack`, `.finzytrack.ft-*`)."""
+    return any(
+        (c := _fold(part)) == create.MANIFEST_DIR or c.startswith(create.MANIFEST_DIR + create.TEMP_INFIX)
+        for part in path.split("/")
+    )
 
 
 def _placed_or(lay: cl.Layout, p: str) -> str:

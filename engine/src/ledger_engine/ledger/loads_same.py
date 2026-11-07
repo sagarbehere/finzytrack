@@ -11,11 +11,11 @@ loads:
 - **options**, every one, except `input_hash` (Beancount's cache key, from file times and sizes: S0051) and the raw
   strings of `option "documents"` (rewritten on purpose: compared instead as the documents roots they resolve to);
   `include` and `pythonpath`, which Beancount sorts by path, compare as sorted after mapping.
-Every text in the copy's load is first mapped back to the source's places (`back`: `copy_layout.back`), so a file
+Every text in the copy's load is first mapped back to the source's places (`back`: `copy_check.back_of`), so a file
 name in metadata, a `document` entry's file, a path in an error message, `filename`, `include` and `pythonpath`
-compare equal when they name the copied file. A value of a kind this module does not know (an object a plugin put
-there) is not compared by guess: `Uncomparable`, and the copy is refused.
-"""
+compare equal when they name the copied file. A `document` entry's file is compared by its normalized path (Beancount
+keeps an absolute one as written: `/x/a/../a/r.pdf` and `/x/a/r.pdf` are one file). A value of a kind this module does
+not know (an object a plugin put there) is not compared by guess: `Uncomparable`, and the copy is refused."""
 
 from __future__ import annotations
 
@@ -28,6 +28,8 @@ from decimal import Decimal
 from enum import Enum
 from typing import Final, Literal, cast
 
+from ledger_engine.ledger import beancount_port as port
+from ledger_engine.ledger.core.copy_layout import norm_path
 from ledger_engine.ledger.overlay import Loaded, documents_roots
 
 IGNORED_OPTIONS: Final = frozenset({"input_hash", "documents"})
@@ -123,6 +125,8 @@ def summary(loaded: Loaded, back: Back) -> Summary:
     roots = sorted(back(r) for r in documents_roots(loaded.options)) if loaded.options.get("documents") else []
     entries: list[tuple[str, str, int]] = []
     for e in loaded.entries:
+        if isinstance(e, port.Document) and isinstance(cast("object", e.filename), str):  # one file, one name (r2 F3)
+            e = e._replace(filename=norm_path(e.filename))
         meta = cast("dict[str, object]", e.meta or {})
         filename, lineno = meta.get("filename"), meta.get("lineno")
         entries.append(

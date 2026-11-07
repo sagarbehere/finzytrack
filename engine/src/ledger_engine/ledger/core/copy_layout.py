@@ -82,6 +82,20 @@ class Refusal:
     line: int
 
 
+def norm_path(p: str) -> str:
+    """An absolute path as one file has one name: `.` and `..` resolved by text, and a leading `//` made `/` (POSIX
+    keeps it; Beancount keeps an absolute `document` path exactly as written, r2 F3)."""
+    out = posixpath.normpath(p)
+    return "/" + out.lstrip("/") if out.startswith("//") else out
+
+
+def lines_of(data: bytes) -> list[bytes]:
+    """The lines as Beancount numbers them: ended by `\n` only (a lone `\r` is no line break to its lexer; r2 F4),
+    each with its end, so joining them gives `data` back."""
+    out = re.split(rb"(?<=\n)", data)
+    return out[:-1] if out and not out[-1] else out
+
+
 def _under(folder: str, p: str) -> str | None:
     """`p` relative to `folder` ("" for the folder itself), or None when it is not under it."""
     if folder == "/":
@@ -249,7 +263,8 @@ class Rewritten:
 def _new_document(lay: Layout, source_file: str, raw: str, resolved: str) -> str | None:
     """The new text of a `document` directive's `"raw"` (Beancount resolved it to `resolved`), or None when it stays.
     Raises `LookupError` when the text does not name that file or the file has no place in the copy."""
-    named = posixpath.normpath(raw if raw.startswith("/") else posixpath.join(posixpath.dirname(source_file), raw))
+    named = norm_path(raw if raw.startswith("/") else posixpath.join(posixpath.dirname(source_file), raw))
+    resolved = norm_path(resolved)
     to = place(lay, resolved)
     here = place(lay, source_file)
     if named != resolved or to is None or here is None:
@@ -268,7 +283,7 @@ def rewrite(lay: Layout, source_file: str, data: bytes, parsed: Parsed) -> Rewri
         new_opt = [_new_documents(lay, source_file, v) for v in parsed.documents]
     except LookupError:
         return Refusal(source_file, 0)
-    lines = data.splitlines(keepends=True)
+    lines = lines_of(data)
     changes: list[tuple[int, re.Match[bytes], str]] = []
     for lineno, resolved in parsed.document_lines:
         m = _DOCUMENT.match(lines[lineno - 1]) if 0 < lineno <= len(lines) else None

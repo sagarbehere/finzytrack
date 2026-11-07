@@ -28,7 +28,6 @@ Pinned to Beancount 3.2.0 (ADR-0004); `BEANCOUNT_VERSION` is checked by the over
 
 from __future__ import annotations
 
-import importlib
 import sys
 from collections.abc import Generator, Iterable, Sequence
 from contextlib import contextmanager
@@ -125,7 +124,6 @@ __all__ = [
     "run_transformations",
     "sort_entries",
     "sort_order",
-    "user_modules_forgotten",
     "validate",
 ]
 
@@ -161,7 +159,6 @@ WRAPPERS: Final = frozenset(
         "booked_positions",
         "display_precision",
         "is_interpolated",
-        "user_modules_forgotten",
     }
 )
 
@@ -264,60 +261,6 @@ def run_transformations(
     finally:
         sys.path[:] = saved
     return list(transformed), list(all_errors)
-
-
-def _install_roots() -> tuple[str, ...]:
-    """Where the engine's own modules come from: the interpreter's library, the environment, Beancount's site
-    folder and the engine's own package."""
-    import beancount
-
-    import ledger_engine
-
-    folders = {sys.base_prefix, sys.prefix, *(_parent(m.__file__, 2) for m in (beancount, ledger_engine))}
-    return tuple(sorted(f.rstrip("/") + "/" for f in folders if f))
-
-
-def _parent(file: str | None, up: int) -> str:
-    if not file:
-        return ""
-    for _ in range(up):
-        file = file.rpartition("/")[0]
-    return file
-
-
-def _locations(module: object) -> list[str]:
-    """Where a module was loaded from: its file, else the folders of a package (a namespace package has no file,
-    only `__path__`). Empty for a module built into the interpreter."""
-    file = getattr(module, "__file__", None)
-    if isinstance(file, str):
-        return [file]
-    path = getattr(module, "__path__", None)
-    try:
-        return [p for p in path if isinstance(p, str)] if path is not None else []
-    except TypeError:
-        return ["<unknown>"]  # a `__path__` we cannot read: never taken for the engine's own
-
-
-@contextmanager
-def user_modules_forgotten() -> Generator[list[str]]:
-    """Yields a list that, when the block ends, names every module first imported inside it from outside the engine's
-    install (a ledger's plugin from its `insert_pythonpath` folder, a namespace package with no `__init__.py`
-    included, and what such a plugin imported): one location each. Those modules are forgotten too, so the next load
-    in this process imports its own. A copy refuses a ledger whose load imported any (S0081 r1 F1: a ledger's own
-    plugins are not copied, BL-0202). What a plugin changed in modules it did not make is not undone: the sidecar
-    retires an engine that ran user code (engine-jobs §5.1)."""
-    before = set(sys.modules)
-    found: list[str] = []
-    try:
-        yield found
-    finally:
-        roots = _install_roots()
-        for name in sorted(set(sys.modules) - before):
-            places = _locations(sys.modules[name])
-            if places and not all(p.startswith(roots) for p in places):
-                found.append(next(p for p in places if not p.startswith(roots)))
-                del sys.modules[name]
-        importlib.invalidate_caches()
 
 
 def validate(entries: list[Directive], options: OptionsMap) -> list[BeancountError]:

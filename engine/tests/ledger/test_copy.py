@@ -29,7 +29,7 @@ from dataclasses import dataclass, field
 import pytest
 
 from ledger_engine.fs.port import AclEntry, LegacyAbsent, LegacyHeld
-from ledger_engine.ledger import overlay
+from ledger_engine.ledger import copy_check, overlay
 from ledger_engine.ledger.copy import CopyPlan, CopyPorts, outcome, run
 from ledger_engine.ledger.core import journal
 from ledger_engine.ledger.core.journal import FileEntry, Record, State
@@ -121,7 +121,7 @@ class World:
     copy_title: bytes | None = None
     copy_parses: tuple[str, ...] = ()
     copy_documents: tuple[str, ...] = ()  # the files of `document` entries the copy's load checked
-    imports: list[tuple[str, ...]] = field(default_factory=lambda: [])  # per load: the user modules it imported
+    plugins: tuple[tuple[str, None], ...] = ()  # the `plugin` directives the ledger names
     ledger_files: tuple[str, ...] = LEDGER_FILES
 
     # -- the ports ------------------------------------------------------------------------------------------------
@@ -163,11 +163,16 @@ class World:
         assert ledger_set == self.fingerprint().ledger_set
         return self.fingerprint()
 
-    def load(self, root: str) -> tuple[overlay.LoadResult, tuple[str, ...]]:
+    def load(self, root: str) -> overlay.LoadResult:
         """Beancount's load as far as the comparison reads it: the options (the title read from the root's bytes, the
-        files parsed, the documents root), with the user modules it imported (`imports`)."""
+        files parsed, the documents root, the plugins named)."""
         self.log.append(f"load {root}")
-        return self.load_result(root), self.imports.pop(0) if self.imports else ()
+        return self.load_result(root)
+
+    def check(self, request: copy_check.CheckRequest) -> copy_check.CheckResult:
+        """The copy's load in its fresh process, as the check reads it (`copy_check.check_loaded`, the child's own)."""
+        self.log.append(f"check {request.root}")
+        return copy_check.check_loaded(self.load_result(request.root), request)
 
     def load_result(self, root: str) -> overlay.LoadResult:
         if root == ROOT:
@@ -177,6 +182,7 @@ class World:
                 "include": sorted(self.ledger_files),
                 "documents": ["../docs"],
                 "title": title.group(1).decode() if title else "",
+                "plugin": list(self.plugins),
             }
             return overlay.Loaded([], [], options, self.fingerprint())
         if self.on_copy_load is not None:
@@ -189,6 +195,7 @@ class World:
             "include": sorted(files),
             "documents": ["documents"],
             "title": self.copy_title.decode() if self.copy_title else (title.group(1).decode() if title else ""),
+            "plugin": list(self.plugins),
         }
         documents = {p: True for p in self.copy_documents}
         fp = Fingerprint.of(root, {p: Content(sha(self.fs.file(p) or b"")) for p in files}, {}, {}, documents)
@@ -203,11 +210,12 @@ class World:
             observe=self.observe,
             file_state=self.file_state,
             regular=lambda path: path in self.src,
+            check=self.check,
         )
 
 
-def new_world(*, target: str = "absent", no_excl: bool = False) -> World:
-    fs = MemFS()
+def new_world(*, target: str = "absent", no_excl: bool = False, case_insensitive: bool = True) -> World:
+    fs = MemFS(case_insensitive=case_insensitive)
     fs.outside_mkdirs(U, no_swap=no_excl, no_excl=no_excl)
     fs.outside_mkdirs(f"{ALD}/local")
     if target == "empty":
@@ -279,7 +287,7 @@ def test_a_free_legacy_lock_is_held_through_the_reads_and_released_before_the_co
     assert out == Created(T)
     release = w.log.index(f"release {LOCK}")
     assert all(i < release for i, e in enumerate(w.log) if e.startswith("read"))
-    assert release < w.log.index(f"load {T}/main.beancount")
+    assert release < w.log.index(f"check {T}/main.beancount")
     assert not w.held
 
 
@@ -358,22 +366,39 @@ def test_a_refusal_of_step_2_makes_nothing_not_even_the_target_folder() -> None:
     assert w.fs.effects == []
 
 
-@pytest.mark.parametrize("which", ["source", "copy"])
-def test_a_load_that_imported_a_module_of_the_ledgers_own_refuses_the_copy(which: str) -> None:
-    """r1 F1: a ledger's own plugin (a namespace package included) is not copied (BL-0202), so the copy could never
-    load the same; whichever load imported one, nothing is told "copied"."""
+def test_a_copy_that_does_not_load_the_same_of_a_ledger_with_its_own_plugin_says_so() -> None:
+    """r2 (the owner's "Fresh process"): the copy's load runs in a fresh process, so a plugin of the ledger's own that
+    was not copied (BL-0202) makes it differ; the text names the plugin, never "the same"."""
     w = new_world()
-    w.imports = [(f"{B}/plug",)] if which == "source" else [(), (f"{T}/documents/plug.py",)]
+    w.plugins = (("my_fx_rates", None), ("beancount.plugins.auto_accounts", None))
+    w.copy_title = b"Other"
     out, job = go(w)
     nc = not_copied(out, "plugin_modules")
-    assert nc.path == (f"{B}/plug" if which == "source" else f"{T}/documents/plug.py")
+    assert nc.detail == "my_fx_rates"
     assert job.gated == 0
     assert not exists(w.fs, T)
+    assert f"check {T}/main.beancount" in w.log, "the copy's load is the check's (a fresh process), not this one"
+
+
+def test_a_ledger_with_only_beancounts_own_plugins_that_differs_is_load_differs() -> None:
+    w = new_world()
+    w.plugins = (("beancount.plugins.auto_accounts", None),)
+    w.copy_title = b"Other"
+    not_copied(go(w)[0], "load_differs")
+
+
+def test_a_ledger_with_its_own_plugin_that_loads_the_same_is_copied() -> None:
+    """A plugin that is not Beancount's (absent from the engine: an error on both sides, or copied in as a document)
+    blocks nothing when the copy loads the same."""
+    w = new_world()
+    w.plugins = (("my_fx_rates", None),)
+    assert go(w)[0] == Created(T)
 
 
 def test_two_sources_that_would_take_one_name_refuse_and_none_is_dropped() -> None:
-    """r1 F2: a path two different sources want is a refusal, naming the second, never a silent drop."""
-    w = new_world()
+    """r1 F2: a path two different sources want is a refusal, naming the second, never a silent drop. (The sources are
+    on a case-sensitive volume: two files; the target folds case.)"""
+    w = new_world(case_insensitive=False)
     upper = f"{B}/Prices/p.beancount"  # another file on a case-sensitive source, the same name on the target
     w.src[upper] = b"2026-01-02 price EUR 1.20 USD\n"
     w.ledger_files = (*LEDGER_FILES, upper)
@@ -394,6 +419,18 @@ def test_a_new_folder_inside_the_legacy_root_is_refused_before_anything_is_made(
     )
     assert (nc.path, nc.detail) == (f"{U}/legacy", "inside_legacy")
     assert w.fs.names_in(f"{U}/legacy") == ["data"]
+    assert w.fs.effects == []
+
+
+def test_a_path_that_cannot_be_resolved_refuses_never_compared_by_its_text() -> None:
+    """r2 F10: fail closed. A legacy root whose folder cannot be searched cannot be compared with the target."""
+    w = new_world()
+    w.fs.outside_mkdirs("/z/legacy/data")
+    w.fs.outside_acl("/z", AclEntry(deny=True, perms=frozenset({"search"})))
+    lock = "/z/legacy/data/.write.lock"
+    w.locks[lock] = ["absent"]
+    nc = not_copied(go(w, plan=CopyPlan("j8", T, ROOT, PLAN.manifest, ALD, (lock,)))[0], "source_unreadable")
+    assert nc.path == "/z/legacy"
     assert w.fs.effects == []
 
 
@@ -698,6 +735,8 @@ def test_the_outcome_of_a_target_that_does_not_exist_names_nothing() -> None:
         CopyPlan("J8", T, ROOT, PLAN.manifest, ALD, ()),
         CopyPlan("j8", "u/copy", ROOT, PLAN.manifest, ALD, ()),
         CopyPlan("j8", T, f"{B}/../x.beancount", PLAN.manifest, ALD, ()),
+        CopyPlan("j8", T, ROOT, PLAN.manifest, ALD, ("/x.lock",)),  # r2 F9: `<root>/data/.write.lock` only
+        CopyPlan("j8", T, ROOT, PLAN.manifest, ALD, ("/legacy/write.lock",)),
     ],
 )
 def test_a_malformed_plan_is_refused_before_anything_is_read_or_written(plan: CopyPlan) -> None:
