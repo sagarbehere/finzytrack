@@ -91,6 +91,17 @@ def test_read_refuses_a_link_and_a_directory_and_answers_none_for_no_entry(fs: D
             d.read("sub")
 
 
+def test_a_bounded_read_reads_at_most_its_limit(fs: DarwinFS, tmp_path: Path) -> None:
+    """S0080 r2: the create's checks never read a file whole to learn it is not theirs."""
+    (tmp_path / "big").write_bytes(b"x" * (3 << 20))
+    with fs.open_dir(str(tmp_path)) as h:
+        assert h.read("big", limit=5) == b"xxxxx"
+        assert h.read("big", limit=(1 << 20) + 7) == b"x" * ((1 << 20) + 7)
+        assert h.read("big", limit=0) == b""
+        assert h.read("none", limit=5) is None
+        assert h.read("big") == b"x" * (3 << 20)
+
+
 def test_a_handles_path_follows_its_folder_when_it_moves_and_a_link_put_in_its_place_is_not_followed(
     fs: DarwinFS,
     tmp_path: Path,

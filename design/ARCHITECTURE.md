@@ -162,7 +162,7 @@ backend/src/app/
     engine_jobs/create.py  the create job's work: one `create` op; after an engine death, a refusal or a bad
                  reply, the outcome read from disk by a fresh engine (`create_outcome`) and decided by the pure
                  `create_outcome` (engine-jobs §1, §8.2, S0080); create_text.py §11's texts for a create that did
-                 not end "created", with the delete advice
+                 not end "created", naming what the job left
     adapters/    the only place that does real I/O: real fs (atomic replace, fsync_dir), portalocker
                  locks (incl. the legacy-lock detection, ADR-0062), httpx, imaplib+TLS,
                  Pydantic AI gateway, .env resolver,
@@ -267,7 +267,8 @@ engine/src/ledger_engine/
                  to try next; protocol/rebuild.py its op rebuild (the publish: BL-0113)
     create.py    the create job in the engine (engine-jobs §8.2, S0080): an empty target, exclusive writes, read-back,
                  Beancount's own load of the new ledger (no error, only the job's files), the commit point,
-                 `.finzytrack/` last by an exclusive rename; the delete advice from one listing; and `outcome`,
+                 `.finzytrack/` last by an exclusive rename, read back; a stop removes only what the run made and names what
+                 it keeps (owner, 2026-11-07); and `outcome`,
                  §1's "resolved from disk" after a death; protocol/create.py its ops create, create_outcome
     history.py   the history trim after a landed save, in the save's engine (engine-jobs §6.5, S0074): the newest
                  16 of each kind kept in the key's journal and backups folders; never an `.open` or `.part`

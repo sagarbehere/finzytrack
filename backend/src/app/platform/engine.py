@@ -285,16 +285,15 @@ class RebuildAnswer:
 
 
 type CreateOutcomeKind = Literal["created", "not_created"]
-type CreateAdvice = Literal["none", "delete", "others", "check"]
-"""The delete advice (engine-jobs §8.2): `none` (nothing to say), `delete` (the folder holds only the job's own files),
-`others` (it holds another program's entry), `check` (it may, or it was not listed)."""
 
 
 @dataclass(frozen=True, slots=True)
 class CreateAnswer:
     """The engine's `create` result (engine-jobs §8.2, §11; S0080): `created` (`.finzytrack/` holds the plan's bytes
     and is durable) or `not_created` with its `reason`; `folder` the target as requested, `path` the entry it is
-    about, `detail` the ACL entry or how many load errors, `errno` the system's answer; `advice` the delete advice."""
+    about, `detail` the ACL entry or how many load errors, `errno` the system's answer; `left` what the job left in the
+    folder because it could not be sure each is only its own, by path relative to it (None: not cleaned up or
+    listed)."""
 
     outcome: CreateOutcomeKind
     reason: str | None
@@ -302,7 +301,7 @@ class CreateAnswer:
     path: str | None
     detail: str | None
     errno: int | None
-    advice: CreateAdvice
+    left: tuple[str, ...] | None
 
 
 type ManifestSeen = Literal["ours", "foreign", "absent", "unknown"]
@@ -311,10 +310,10 @@ type ManifestSeen = Literal["ours", "foreign", "absent", "unknown"]
 @dataclass(frozen=True, slots=True)
 class CreateFacts:
     """The engine's `create_outcome` result (§1 "resolved from disk"; S0080): what stands at `.finzytrack` after the
-    target's sync, and the delete advice."""
+    target's sync, and the entries at the job's names that may be its own (None: not listed)."""
 
     manifest: ManifestSeen
-    advice: CreateAdvice
+    left: tuple[str, ...] | None
     errno: int | None
 
 

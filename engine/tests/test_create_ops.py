@@ -13,6 +13,9 @@ from typing import Any, override
 
 import pytest
 
+from ledger_engine.fs import darwin
+from ledger_engine.fs.darwin import for_this_os
+from ledger_engine.ledger import create as cr
 from ledger_engine.protocol.server import InputEnded
 from tests.test_save_ops import Channel as SaveChannel
 from tests.test_save_ops import engine, request
@@ -73,7 +76,7 @@ def test_a_create_loads_its_ledger_gates_and_writes_the_manifest_last(ald: Path,
         "path": None,
         "detail": None,
         "errno": None,
-        "advice": "none",
+        "left": [],
     }
     assert events == ["saving", "checking_change", "gate"]
     assert (target / ".finzytrack" / "workspace.json").read_text() == WS_JSON
@@ -95,7 +98,8 @@ def test_a_ledger_with_beancount_errors_is_not_created(ald: Path, tmp_path: Path
     failing = "2026-01-01 open Assets:Cash EUR\n2026-01-02 balance Assets:Cash 5 EUR\n"
     reply, events = create(ald, params(target, failing))
     r = reply["result"]
-    assert (r["outcome"], r["reason"], r["advice"]) == ("not_created", "load_errors", "delete")
+    assert (r["outcome"], r["reason"], r["left"]) == ("not_created", "load_errors", [])
+    assert not target.exists(), "the job removes what it made, the target folder included"
     assert "gate" not in events
     assert not (target / ".finzytrack").exists()
 
@@ -115,7 +119,7 @@ def test_a_non_empty_folder_is_refused_and_left_as_it_is(ald: Path, tmp_path: Pa
     (target / "mine.txt").write_text("mine\n")
     reply, events = create(ald, params(target))
     r = reply["result"]
-    assert (r["outcome"], r["reason"], r["advice"]) == ("not_created", "not_empty", "none")
+    assert (r["outcome"], r["reason"], r["left"]) == ("not_created", "not_empty", [])
     assert events == []
     assert sorted(p.name for p in target.iterdir()) == ["mine.txt"]
 
@@ -125,9 +129,9 @@ def test_create_outcome_reads_what_the_create_left(ald: Path, tmp_path: Path) ->
     e = engine(ald)
     assert json.loads(e.handle(request("create", params(target)), Channel(1, proceed=True)))["ok"]
     reply = json.loads(e.handle(request("create_outcome", params(target), 2)))
-    assert reply["result"] == {"manifest": "ours", "advice": "delete", "errno": None}
+    assert reply["result"] == {"manifest": "ours", "left": [], "errno": None}
     gone = json.loads(e.handle(request("create_outcome", params(tmp_path / "Nothing"), 3)))
-    assert gone["result"] == {"manifest": "absent", "advice": "none", "errno": None}
+    assert gone["result"] == {"manifest": "absent", "left": [], "errno": None}
 
 
 @pytest.mark.parametrize("op", ["create", "create_outcome"])
@@ -153,3 +157,58 @@ def test_malformed_params_are_refused_and_nothing_is_written(ald: Path, tmp_path
     reply, _ = create(ald, {**params(target), **bad})
     assert reply["error"]["key"] == "protocol.invalid_params", reply
     assert not target.exists()
+
+
+def test_on_apfs_the_cleanup_never_removes_another_programs_file_or_folder_in_the_temp_folder(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Red team r2 F1 on a real disk: another program's empty `workspace.json` and empty `rules/` stand in the job's
+    temp folder before the job's own; the job stops `taken` and its cleanup leaves both (it made neither)."""
+    target = tmp_path.resolve() / "Books"
+    temp = target / ".finzytrack.ft-j1"
+    plan = cr.CreatePlan(
+        "j1",
+        str(target),
+        (cr.NewFile("main.beancount", MAIN.encode()),),
+        "main.beancount",
+        (cr.NewFile("rules/r.yaml", b"a: 1\n"), cr.NewFile("workspace.json", WS_JSON.encode())),
+    )
+    real_mkdir = darwin.DarwinDir.mkdir
+    real_create = darwin.DarwinDir.create
+
+    def mkdir(self: darwin.DarwinDir, name: str) -> None:
+        if name == "rules":
+            (temp / "rules").mkdir()
+        real_mkdir(self, name)
+
+    other = tmp_path.resolve() / "Other"
+
+    def create(self: darwin.DarwinDir, name: str, data: bytes, mode: int, like: str | None = None) -> None:
+        if name == "workspace.json":
+            (other / ".finzytrack.ft-j1" / "workspace.json").write_bytes(b"")
+        real_create(self, name, data, mode, like)
+
+    monkeypatch.setattr(darwin.DarwinDir, "mkdir", mkdir)
+    out = cr.run(plan, cr.Ports(for_this_os(), lambda root: cr.LoadResult(0, (root,))), _Gate())
+    assert isinstance(out, cr.NotCreated)
+    assert out.reason == "taken"
+    assert (temp / "rules").is_dir(), "another program's folder stays"
+    assert not (target / "main.beancount").exists(), "what the job made is removed"
+    monkeypatch.setattr(darwin.DarwinDir, "create", create)
+    monkeypatch.setattr(darwin.DarwinDir, "mkdir", real_mkdir)
+    out = cr.run(
+        cr.CreatePlan("j1", str(other), plan.files, plan.root, plan.manifest),
+        cr.Ports(for_this_os(), lambda root: cr.LoadResult(0, (root,))),
+        _Gate(),
+    )
+    assert isinstance(out, cr.NotCreated)
+    assert out.reason == "taken"
+    assert (other / ".finzytrack.ft-j1" / "workspace.json").read_bytes() == b"", "another program's file stays"
+
+
+class _Gate:
+    def progress(self, phase: str) -> None:
+        pass
+
+    def gate(self) -> None:
+        pass

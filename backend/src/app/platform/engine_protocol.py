@@ -25,7 +25,6 @@ from app.platform.engine import (
     ActOutcome,
     ActOutcomeKind,
     Committed,
-    CreateAdvice,
     CreateAnswer,
     CreateFacts,
     CreateOutcomeKind,
@@ -544,8 +543,23 @@ def decode_rebuild(result: Mapping[str, object]) -> RebuildAnswer | Violation:
     return _decoded(_rebuild, result)
 
 
-_CREATE = frozenset({"outcome", "reason", "folder", "path", "detail", "errno", "advice"})
-_ADVICE: frozenset[str] = frozenset({"none", "delete", "others", "check"})
+_CREATE = frozenset({"outcome", "reason", "folder", "path", "detail", "errno", "left"})
+
+
+def _left(value: object) -> tuple[str, ...] | None:
+    """`left`: null, or a list of relative paths (the schema's `RelPath`: 1 to 1024 characters, the first neither `/`
+    nor NUL)."""
+    if value is None:
+        return None
+    out: list[str] = []
+    for item in _list(value, "left"):
+        if not isinstance(item, str) or not item or item[0] in "/\x00" or len(item) > 1024:
+            msg = "left must hold relative paths"
+            raise _Bad(msg)
+        out.append(item)
+    return tuple(out)
+
+
 _CREATE_OUTCOMES: frozenset[str] = frozenset({"created", "not_created"})
 
 
@@ -558,7 +572,7 @@ def _create(result: Mapping[str, object]) -> CreateAnswer:
         path=_path(o["path"], "path", nullable=True),
         detail=_text(o["detail"], "detail", nullable=True),
         errno=_int(o["errno"], "errno", nullable=True),
-        advice=cast("CreateAdvice", _choice(o["advice"], _ADVICE, "advice")),
+        left=_left(o["left"]),
     )
 
 
@@ -567,7 +581,7 @@ def decode_create(result: Mapping[str, object]) -> CreateAnswer | Violation:
     return _decoded(_create, result)
 
 
-_CREATE_FACTS = frozenset({"manifest", "advice", "errno"})
+_CREATE_FACTS = frozenset({"manifest", "left", "errno"})
 _MANIFESTS: frozenset[str] = frozenset({"ours", "foreign", "absent", "unknown"})
 
 
@@ -575,7 +589,7 @@ def _create_facts(result: Mapping[str, object]) -> CreateFacts:
     o = _keys(dict(result), _CREATE_FACTS, "the create_outcome result")
     return CreateFacts(
         manifest=cast("ManifestSeen", _choice(o["manifest"], _MANIFESTS, "manifest")),
-        advice=cast("CreateAdvice", _choice(o["advice"], _ADVICE, "advice")),
+        left=_left(o["left"]),
         errno=_int(o["errno"], "errno", nullable=True),
     )
 

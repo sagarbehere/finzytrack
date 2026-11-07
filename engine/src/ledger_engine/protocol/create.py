@@ -5,7 +5,8 @@ the engine lock (they write and read user files, engine-jobs §5.1).
 - `create` (`create.run`): the new folder's files, the load check, `gate` (and waits for `proceed`), then
   `.finzytrack/` last. Its load runs the ledger's plugins: the sidecar retires its engine after it.
 - `create_outcome` (`create.outcome`): §1's "resolved from disk" after a create's engine died: the target synced,
-  then what stands at `.finzytrack` and the delete advice. It loads nothing.
+  then what stands at `.finzytrack` and the entries at the job's names that may be its own. It loads and removes
+  nothing.
 """
 
 from __future__ import annotations
@@ -65,7 +66,7 @@ def create(params: Message, ctx: CreateJob) -> Message:
                 path=None,
                 detail=None,
                 errno=None,
-                advice="none",
+                left=[],
             )
         case cr.NotCreated():
             result = CreateResult(
@@ -75,9 +76,14 @@ def create(params: Message, ctx: CreateJob) -> Message:
                 path=out.path,
                 detail=out.detail,
                 errno=out.errno,
-                advice=out.advice,
+                left=None if out.left is None else list(out.left),
             )
-    ctx.decide(TABLE, TABLE_VERSION, {"reason": result.reason, "advice": result.advice}, result.outcome)
+    ctx.decide(
+        TABLE,
+        TABLE_VERSION,
+        {"reason": result.reason, "left": None if result.left is None else len(result.left)},
+        result.outcome,
+    )
     return result
 
 
@@ -87,8 +93,14 @@ def create_outcome(params: Message, ctx: Decider) -> Message:
         facts = cr.outcome(for_this_os(), plan)
     except BadPlanError as e:
         raise BadParamsError(str(e)) from None
-    ctx.decide(TABLE, TABLE_VERSION, {"manifest": facts.manifest, "advice": facts.advice}, "facts")
-    return CreateOutcomeResult(manifest=facts.manifest, advice=facts.advice, errno=facts.errno)
+    ctx.decide(
+        TABLE,
+        TABLE_VERSION,
+        {"manifest": facts.manifest, "left": None if facts.left is None else len(facts.left)},
+        "facts",
+    )
+    left = None if facts.left is None else list(facts.left)
+    return CreateOutcomeResult(manifest=facts.manifest, left=left, errno=facts.errno)
 
 
 CREATE_HANDLERS: Final[dict[str, Callable[[Message, CreateJob], Message]]] = {"create": create}

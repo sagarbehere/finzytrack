@@ -172,7 +172,6 @@ def _entry(st: os.stat_result) -> EntryStat:
         mode=stat.S_IMODE(m),
         locked=bool(getattr(st, "st_flags", 0) & LOCK_FLAGS),
         mtime_ns=st.st_mtime_ns,
-        size=st.st_size,
     )
 
 
@@ -244,15 +243,21 @@ class DarwinDir:
             raise OSError(errno.EINVAL, "changed while opened")
         return fd
 
-    def read(self, name: str) -> bytes | None:
+    def read(self, name: str, limit: int | None = None) -> bytes | None:
         try:
             fd = self._open_regular(check_name(name))
         except FileNotFoundError:
             return None
         try:
             chunks: list[bytes] = []
-            while chunk := os.read(fd, 1 << 20):
+            left = limit
+            while left is None or left > 0:
+                chunk = os.read(fd, 1 << 20 if left is None else min(1 << 20, left))
+                if not chunk:
+                    break
                 chunks.append(chunk)
+                if left is not None:
+                    left -= len(chunk)
             return b"".join(chunks)
         finally:
             os.close(fd)

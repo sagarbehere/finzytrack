@@ -392,9 +392,6 @@ class RebuildResult(Message):
 RelPath = Annotated[str, Field(min_length=1, max_length=1024, pattern=r"^[^/\x00]")]  # relative; checked by the job
 
 
-CreateAdvice = Literal["none", "delete", "others", "check"]
-
-
 class CreateFile(Message):
     """One file of a new workspace: its path relative to the folder it is written in, and its text (UTF-8)."""
 
@@ -419,9 +416,9 @@ class CreateResult(Message):
     no `.finzytrack/` of ours stands there; `reason`: `not_empty`, `not_a_folder`, `no_parent`, `permission`, `taken`,
     `read_back`, `load_failed`, `load_errors`, `load_outside`, `manifest_taken`, `path_moved`, `io_error`. `folder`:
     the target as requested; `path`: the entry it is about; `detail`: the ACL entry, or how many load errors;
-    `errno`: the system's answer. `advice`, the delete advice from one listing when the job stopped: `none` (nothing
-    to say: a refusal of step 1, or an empty folder), `delete` (it holds only the job's own files), `others` (it
-    holds another program's entry), `check` (it may: not listed, or not known)."""
+    `errno`: the system's answer. `left`: what the job left in the folder after removing what it made, by path
+    relative to it, because it could not be sure each is only its own (empty: nothing of its own left; null: the
+    folder could not be cleaned up or listed, so the user is asked to check it)."""
 
     outcome: Literal["created", "not_created"]
     reason: str | None
@@ -429,16 +426,16 @@ class CreateResult(Message):
     path: AbsPath | None
     detail: str | None
     errno: int | None
-    advice: CreateAdvice
+    left: list[RelPath] | None
 
 
 class CreateOutcomeResult(Message):
     """§1 "resolved from disk": `.finzytrack` after the target's sync holds the plan's bytes (`ours`), something else
-    (`foreign`), nothing (`absent`), or could not be read (`unknown`; `errno`); and the delete advice (who made a name
-    is not known here, so an empty file, a prefix of ours or an empty folder at one of our names is `check`)."""
+    (`foreign`), nothing (`absent`), or could not be read (`unknown`; `errno`); and `left`, the entries at the job's
+    names that may be its own (who made a name is not known after a death, so nothing is removed; null: not listed)."""
 
     manifest: Literal["ours", "foreign", "absent", "unknown"]
-    advice: CreateAdvice
+    left: list[RelPath] | None
     errno: int | None
 
 
@@ -590,7 +587,7 @@ OPS: dict[str, OpSpec] = {
             "path": "/ledgers/Books/main.beancount",
             "detail": None,
             "errno": None,
-            "advice": "others",
+            "left": ["prices"],
         },
         _CREATE,
         needs_engine_lock=True,
@@ -598,7 +595,7 @@ OPS: dict[str, OpSpec] = {
     "create_outcome": OpSpec(
         CreateParams,
         CreateOutcomeResult,
-        {"manifest": "ours", "advice": "delete", "errno": None},
+        {"manifest": "absent", "left": ["main.beancount"], "errno": None},
         _CREATE,
         needs_engine_lock=True,
     ),

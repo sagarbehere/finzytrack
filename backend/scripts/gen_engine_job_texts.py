@@ -348,10 +348,10 @@ RECOVERY: tuple[Row, ...] = (
 _seen_create: set[str] = set()
 
 
-def _not_created(reason: str, *, advice: str = "none", **kw: object) -> str:
+def _not_created(reason: str, *, left: tuple[str, ...] | None = (), **kw: object) -> str:
     _seen_create.add(reason)
     d: dict[str, object] = {"path": FILE} | kw
-    return ct.text(NotCreated(reason, FOLDER, advice, **d))  # type: ignore[arg-type]
+    return ct.text(NotCreated(reason, FOLDER, left, **d))  # type: ignore[arg-type]
 
 
 CREATE: tuple[Row, ...] = (
@@ -381,19 +381,19 @@ CREATE: tuple[Row, ...] = (
         lambda: _not_created("manifest_taken"),
     ),
     (
-        "msg:create.unfinished_delete",
-        "added when the folder holds only the job's own files (`delete`)",
-        lambda: _not_created("taken", advice="delete"),
+        "msg:create.left",
+        "added when the job kept entries it could not be sure are only its own (here two)",
+        lambda: _not_created("taken", left=("<name>", "<other name>")),
     ),
     (
-        "msg:create.unfinished_check",
-        "added when the folder also holds another program's entry (`others`)",
-        lambda: _not_created("taken", advice="others"),
+        "msg:create.left_many",
+        "the same with more than five: the first five, then how many more",
+        lambda: _not_created("taken", left=tuple(f"<name {i}>" for i in range(1, 9))),
     ),
     (
         "msg:create.unfinished_unlisted",
-        "added when the folder was not listed, or holds entries whose maker is not known after a death",
-        lambda: _not_created("stopped", advice="check"),
+        "added when the folder was not cleaned up or listed (no engine, an error)",
+        lambda: _not_created("stopped", left=None),
     ),
     (
         "msg:create.cancelled",

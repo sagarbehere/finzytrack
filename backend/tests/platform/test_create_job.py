@@ -60,7 +60,7 @@ BLANK: dict[str, object] = {
     "path": None,
     "detail": None,
     "errno": None,
-    "advice": "none",
+    "left": [],
 }
 
 
@@ -68,8 +68,8 @@ def answer(**kw: object) -> dict[str, object]:
     return {**BLANK, **kw}
 
 
-def facts(manifest: str, *, advice: str = "delete") -> dict[str, object]:
-    return {"manifest": manifest, "advice": advice, "errno": None}
+def facts(manifest: str, *, left: list[str] | None = None) -> dict[str, object]:
+    return {"manifest": manifest, "left": [] if left is None else left, "errno": None}
 
 
 class Rig:
@@ -122,20 +122,20 @@ def test_a_create_that_lands_is_created_and_its_engine_is_retired(make: Any) -> 
     assert params == params_of(REQUEST, params["job"])
 
 
-def test_a_refusal_before_the_commit_point_is_not_created_with_its_advice(make: Any) -> None:
-    rig = make({"create": [answer(outcome="not_created", reason="load_errors", detail="2", advice="delete")]})
+def test_a_refusal_before_the_commit_point_is_not_created_naming_what_it_left(make: Any) -> None:
+    rig = make({"create": [answer(outcome="not_created", reason="load_errors", detail="2", left=["main.beancount"])]})
     value = rig.create()
-    assert value == NotCreated("load_errors", FOLDER, "delete", detail="2")
+    assert value == NotCreated("load_errors", FOLDER, ("main.beancount",), detail="2")
     assert rig.engine.proceeded == 0
-    assert create_text.text(value).endswith("You can delete it.")
+    assert create_text.text(value).endswith("Check them, and remove any you do not need.")
 
 
 @pytest.mark.parametrize(
     ("on_disk", "want"),
     [
         (facts("ours"), Created(FOLDER)),
-        (facts("absent"), NotCreated("stopped", FOLDER, "delete")),
-        (facts("foreign", advice="others"), NotCreated("manifest_taken", FOLDER, "others")),
+        (facts("absent"), NotCreated("stopped", FOLDER, ())),
+        (facts("foreign", left=["main.beancount"]), NotCreated("manifest_taken", FOLDER, ("main.beancount",))),
     ],
 )
 def test_a_create_cut_past_its_commit_point_is_told_what_the_disk_says(
@@ -150,19 +150,19 @@ def test_a_create_cut_past_its_commit_point_is_told_what_the_disk_says(
     assert second[2] == first[2], "the read names the same job, folder and files"
 
 
-def test_an_engine_death_before_the_commit_point_is_read_from_disk_for_the_delete_advice(make: Any) -> None:
-    rig = make({"create": [CRASH], "create_outcome": [facts("absent", advice="others")]})
+def test_an_engine_death_before_the_commit_point_is_read_from_disk_naming_what_may_be_ours(make: Any) -> None:
+    rig = make({"create": [CRASH], "create_outcome": [facts("absent", left=["main.beancount", "prices"])]})
     value = rig.create()
-    assert value == NotCreated("stopped", FOLDER, "others")
+    assert value == NotCreated("stopped", FOLDER, ("main.beancount", "prices"))
     assert create_text.text(value) == (
-        "Not created. Finzytrack stopped before it finished. The folder /u/Books holds an unfinished new workspace. "
-        "It also holds files Finzytrack did not write; check them before you delete anything."
+        "Not created. Finzytrack stopped before it finished. Finzytrack left these in /u/Books because it could not "
+        "be sure they are only its own: main.beancount, prices. Check them, and remove any you do not need."
     )
 
 
 def test_a_foreign_manifest_before_the_commit_point_is_still_not_created(make: Any) -> None:
-    rig = make({"create": [CRASH], "create_outcome": [facts("foreign", advice="others")]})
-    assert rig.create() == NotCreated("stopped", FOLDER, "others")
+    rig = make({"create": [CRASH], "create_outcome": [facts("foreign")]})
+    assert rig.create() == NotCreated("stopped", FOLDER, ())
 
 
 def test_the_outcome_engine_dying_too_asks_for_another(make: Any) -> None:
@@ -185,12 +185,12 @@ def test_no_engine_to_read_the_outcome_before_the_commit_point_is_not_created_un
     listed, so the text says to check it first."""
     rig = make({"create": [CRASH], "create_outcome": [CRASH_TO_BOUND]})
     value = rig.create()
-    assert value == NotCreated("stopped", FOLDER, "check")
+    assert value == NotCreated("stopped", FOLDER, None)
     assert create_text.text(value).endswith("Check it before you delete anything.")
 
 
 def test_an_outcome_that_cannot_be_read_is_unknown_past_the_commit_point(make: Any) -> None:
-    rig = make({"create": [GATE_DIE], "create_outcome": [facts("unknown", advice="check")]})
+    rig = make({"create": [GATE_DIE], "create_outcome": [{"manifest": "unknown", "left": None, "errno": 5}]})
     assert code(rig.create()) == ErrorCode.CHANGE_OUTCOME_UNKNOWN
 
 
@@ -203,8 +203,8 @@ def test_an_engine_refusal_past_the_commit_point_reads_the_disk(make: Any) -> No
 def test_a_folder_that_cannot_be_read_before_the_commit_point_says_to_check_it() -> None:
     """Verifier r1 V2, red team r1 RT3: the engine's `unknown` comes with `check`; the text asks to check the folder,
     it never drops the folder's advice."""
-    value = create_outcome(CreateFacts("unknown", "check", 13), gated=False, folder=FOLDER)
-    assert value == NotCreated("stopped", FOLDER, "check", errno=13)
+    value = create_outcome(CreateFacts("unknown", None, 13), gated=False, folder=FOLDER)
+    assert value == NotCreated("stopped", FOLDER, None, errno=13)
     assert isinstance(value, NotCreated)
     assert create_text.text(value).endswith("Check it before you delete anything.")
 
@@ -225,7 +225,7 @@ def test_a_request_the_engine_would_not_take_is_a_finzytrack_fault_and_reads_not
 def test_an_engine_refusal_before_the_commit_point_reads_the_disk_for_the_advice(make: Any) -> None:
     refusal = EngineRefusal("engine.internal", "boom")
     rig = make({"create": [refusal], "create_outcome": [facts("absent")]})
-    assert rig.create() == NotCreated("stopped", FOLDER, "delete")
+    assert rig.create() == NotCreated("stopped", FOLDER, ())
 
 
 def test_a_reply_of_the_wrong_shape_reads_the_disk(make: Any) -> None:
@@ -235,7 +235,7 @@ def test_a_reply_of_the_wrong_shape_reads_the_disk(make: Any) -> None:
 
 def test_a_create_whose_first_engine_does_not_start_is_answered(make: Any) -> None:
     """The table keeps a writing job whose engine died, a failed start included, so its work must run even then."""
-    rig = make({"create_outcome": [facts("absent", advice="none")]})
+    rig = make({"create_outcome": [facts("absent")]})
     failures = [EngineFailure("start_failed", "the handshake was refused")]
 
     def first_start_fails() -> None:
@@ -247,7 +247,7 @@ def test_a_create_whose_first_engine_does_not_start_is_answered(make: Any) -> No
         if rig.jobs.status().queue.slot == "none":
             break
         threading.Event().wait(0.01)
-    assert rig.create() == NotCreated("stopped", FOLDER, "none")
+    assert rig.create() == NotCreated("stopped", FOLDER, ())
     assert [op for _, op in rig.engine.calls] == ["create_outcome"]
 
 
@@ -292,7 +292,7 @@ def test_a_request_the_client_could_not_send_is_internal() -> None:
     ],
 )
 def test_create_outcome_is_the_disks_answer(manifest: str, gated: bool, want: str) -> None:
-    value = create_outcome(CreateFacts(manifest, "check", None), gated=gated, folder=FOLDER)  # type: ignore[arg-type]
+    value = create_outcome(CreateFacts(manifest, None, None), gated=gated, folder=FOLDER)  # type: ignore[arg-type]
     match value:
         case Created():
             assert want == "created"
@@ -305,15 +305,15 @@ def test_create_outcome_is_the_disks_answer(manifest: str, gated: bool, want: st
 def test_create_outcome_never_says_created_but_for_our_manifest() -> None:
     for manifest in ("absent", "foreign", "unknown"):
         for gated in (False, True):
-            value = create_outcome(CreateFacts(manifest, "delete", None), gated=gated, folder=FOLDER)
+            value = create_outcome(CreateFacts(manifest, ("main.beancount",), None), gated=gated, folder=FOLDER)
             assert not isinstance(value, Created)
 
 
 def test_answer_of_never_says_created_but_for_created() -> None:
     for reason in ("not_empty", "taken", "read_back", "load_errors", "manifest_taken", "io_error"):
-        a = CreateAnswer("not_created", reason, FOLDER, None, None, None, "delete")
+        a = CreateAnswer("not_created", reason, FOLDER, None, None, None, ())
         assert isinstance(answer_of(a), NotCreated)
-    assert answer_of(CreateAnswer("created", None, FOLDER, None, None, None, "none")) == Created(FOLDER)
+    assert answer_of(CreateAnswer("created", None, FOLDER, None, None, None, ())) == Created(FOLDER)
 
 
 def test_the_manifest_a_create_writes_reads_back_with_a_new_lineage() -> None:
@@ -341,34 +341,45 @@ def test_every_create_has_its_own_job_name(make: Any) -> None:
 
 
 def test_a_non_empty_folder_says_to_choose_another() -> None:
-    value = NotCreated("not_empty", FOLDER, "none")
+    value = NotCreated("not_empty", FOLDER, ())
     assert create_text.text(value) == "This folder is not empty. Choose an empty folder or a new name."
 
 
 def test_a_manifest_that_appeared_says_to_check_the_folder() -> None:
-    value = NotCreated("manifest_taken", FOLDER, "others")
+    value = NotCreated("manifest_taken", FOLDER, ())
     assert create_text.text(value) == (
         "Not created. Another program put a Finzytrack workspace file into /u/Books at the same moment. Check the "
         "folder before you use it."
     )
 
 
-def test_the_delete_advice_is_given_only_for_a_folder_holding_only_our_files() -> None:
-    ours = create_text.text(NotCreated("taken", FOLDER, "delete", path="/u/Books/main.beancount"))
-    theirs = create_text.text(NotCreated("taken", FOLDER, "others", path="/u/Books/main.beancount"))
-    unknown = create_text.text(NotCreated("stopped", FOLDER, "check"))
-    nothing = create_text.text(NotCreated("load_failed", FOLDER, "none"))
-    assert ours.endswith("You can delete it.")
-    assert "You can delete it." not in theirs
-    assert theirs.endswith("check them before you delete anything.")
-    assert "You can delete it." not in unknown
+def test_the_text_names_what_the_job_left_and_never_says_to_delete_anything() -> None:
+    """Owner, 2026-11-07 (the middle path): the job removes what it made; what it kept because it could not be sure
+    is named with the advice to check it; nothing left, nothing said of the folder (verifier r2 F1)."""
+    named = create_text.text(NotCreated("taken", FOLDER, ("main.beancount",), path="/u/Books/main.beancount"))
+    unknown = create_text.text(NotCreated("stopped", FOLDER, None))
+    nothing = create_text.text(NotCreated("load_failed", FOLDER, ()))
+    assert named.endswith(
+        "Finzytrack left these in /u/Books because it could not be sure they are only its own: main.beancount. "
+        "Check them, and remove any you do not need."
+    )
+    assert unknown.endswith("Check it before you delete anything.")
     assert nothing == "Not created. Finzytrack could not check the new ledger."
+    for text in (named, unknown, nothing):
+        assert "You can delete it." not in text
+
+
+def test_a_long_list_of_kept_names_shows_five_and_how_many_more() -> None:
+    left = tuple(f"f{i}.beancount" for i in range(8))
+    text = create_text.text(NotCreated("stopped", FOLDER, left))
+    assert "f0.beancount, f1.beancount, f2.beancount, f3.beancount, f4.beancount and 3 more." in text
+    assert "f5.beancount" not in text
 
 
 def test_a_folder_the_job_wrote_into_but_could_not_list_says_to_check_it_and_blames_no_one() -> None:
-    text = create_text.text(NotCreated("io_error", FOLDER, "check", path="/u/Books/x"))
+    text = create_text.text(NotCreated("io_error", FOLDER, None, path="/u/Books/x"))
     assert "You can delete it." not in text
-    assert "did not write" not in text, "it was not listed: it says nothing of other files"
+    assert "left these" not in text, "it was not listed: it names nothing"
     assert text.endswith("Check it before you delete anything.")
 
 
@@ -381,6 +392,6 @@ def test_a_cancelled_create_says_to_check_the_folder_first() -> None:
 
 @pytest.mark.parametrize("reason", sorted(get_args(NotCreatedReason.__value__)))
 def test_every_reason_has_its_words(reason: str) -> None:
-    text = create_text.text(NotCreated(reason, FOLDER, "none", path="/u/Books/x"))  # type: ignore[arg-type]
+    text = create_text.text(NotCreated(reason, FOLDER, (), path="/u/Books/x"))  # type: ignore[arg-type]
     assert text
     assert "None" not in text

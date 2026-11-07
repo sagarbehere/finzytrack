@@ -695,7 +695,7 @@ class MemDir:
         _no_search(d)
         return self._fs._find(d, check_name(name))
 
-    def read(self, name: str) -> bytes | None:
+    def read(self, name: str, limit: int | None = None) -> bytes | None:
         hit = self._entry(name)
         if hit is None:
             return None
@@ -708,7 +708,7 @@ class MemDir:
             raise OSError(errno.EINVAL, "not a regular file")
         if _denies(node, "read"):
             raise PermissionError(errno.EACCES, "read denied")
-        return node.data
+        return node.data if limit is None else node.data[:limit]
 
     def sync_file(self, name: str) -> None:
         """`durable_sync` of the regular file `name`'s data, refused as `read` refuses (one effect)."""
@@ -746,7 +746,6 @@ class MemDir:
             mode=mode,
             locked=locked,
             mtime_ns=self._fs.mtimes.get(hit[1], 0),
-            size=len(node.data) if isinstance(node, _File) else 0,
         )
 
     def _unlocked(self, key: str) -> None:

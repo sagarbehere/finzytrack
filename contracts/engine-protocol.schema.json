@@ -114,9 +114,11 @@
           "ok": true,
           "op": "create_outcome",
           "result": {
-            "advice": "delete",
             "errno": null,
-            "manifest": "ours"
+            "left": [
+              "main.beancount"
+            ],
+            "manifest": "absent"
           },
           "v": 2
         }
@@ -227,7 +229,7 @@
     },
     "CreateOutcomeResult": {
       "additionalProperties": false,
-      "description": "§1 \"resolved from disk\": `.finzytrack` after the target's sync holds the plan's bytes (`ours`), something else\n(`foreign`), nothing (`absent`), or could not be read (`unknown`; `errno`); and the delete advice (who made a name\nis not known here, so an empty file, a prefix of ours or an empty folder at one of our names is `check`).",
+      "description": "§1 \"resolved from disk\": `.finzytrack` after the target's sync holds the plan's bytes (`ours`), something else\n(`foreign`), nothing (`absent`), or could not be read (`unknown`; `errno`); and `left`, the entries at the job's\nnames that may be its own (who made a name is not known after a death, so nothing is removed; null: not listed).",
       "properties": {
         "manifest": {
           "enum": [
@@ -239,15 +241,22 @@
           "title": "Manifest",
           "type": "string"
         },
-        "advice": {
-          "enum": [
-            "none",
-            "delete",
-            "others",
-            "check"
+        "left": {
+          "anyOf": [
+            {
+              "items": {
+                "maxLength": 1024,
+                "minLength": 1,
+                "pattern": "^[^/\\x00]",
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
           ],
-          "title": "Advice",
-          "type": "string"
+          "title": "Left"
         },
         "errno": {
           "anyOf": [
@@ -263,7 +272,7 @@
       },
       "required": [
         "manifest",
-        "advice",
+        "left",
         "errno"
       ],
       "title": "CreateOutcomeResult",
@@ -327,10 +336,12 @@
           "ok": true,
           "op": "create",
           "result": {
-            "advice": "others",
             "detail": null,
             "errno": null,
             "folder": "/ledgers/Books",
+            "left": [
+              "prices"
+            ],
             "outcome": "not_created",
             "path": "/ledgers/Books/main.beancount",
             "reason": "taken"
@@ -444,7 +455,7 @@
     },
     "CreateResult": {
       "additionalProperties": false,
-      "description": "How the create ended (§8.2, §11). `created`: `.finzytrack/` holds the plan's bytes and is durable. `not_created`:\nno `.finzytrack/` of ours stands there; `reason`: `not_empty`, `not_a_folder`, `no_parent`, `permission`, `taken`,\n`read_back`, `load_failed`, `load_errors`, `load_outside`, `manifest_taken`, `path_moved`, `io_error`. `folder`:\nthe target as requested; `path`: the entry it is about; `detail`: the ACL entry, or how many load errors;\n`errno`: the system's answer. `advice`, the delete advice from one listing when the job stopped: `none` (nothing\nto say: a refusal of step 1, or an empty folder), `delete` (it holds only the job's own files), `others` (it\nholds another program's entry), `check` (it may: not listed, or not known).",
+      "description": "How the create ended (§8.2, §11). `created`: `.finzytrack/` holds the plan's bytes and is durable. `not_created`:\nno `.finzytrack/` of ours stands there; `reason`: `not_empty`, `not_a_folder`, `no_parent`, `permission`, `taken`,\n`read_back`, `load_failed`, `load_errors`, `load_outside`, `manifest_taken`, `path_moved`, `io_error`. `folder`:\nthe target as requested; `path`: the entry it is about; `detail`: the ACL entry, or how many load errors;\n`errno`: the system's answer. `left`: what the job left in the folder after removing what it made, by path\nrelative to it, because it could not be sure each is only its own (empty: nothing of its own left; null: the\nfolder could not be cleaned up or listed, so the user is asked to check it).",
       "properties": {
         "outcome": {
           "enum": [
@@ -506,15 +517,22 @@
           ],
           "title": "Errno"
         },
-        "advice": {
-          "enum": [
-            "none",
-            "delete",
-            "others",
-            "check"
+        "left": {
+          "anyOf": [
+            {
+              "items": {
+                "maxLength": 1024,
+                "minLength": 1,
+                "pattern": "^[^/\\x00]",
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
           ],
-          "title": "Advice",
-          "type": "string"
+          "title": "Left"
         }
       },
       "required": [
@@ -524,7 +542,7 @@
         "path",
         "detail",
         "errno",
-        "advice"
+        "left"
       ],
       "title": "CreateResult",
       "type": "object"

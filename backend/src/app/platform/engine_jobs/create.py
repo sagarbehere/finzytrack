@@ -1,24 +1,23 @@
-"""The create job, the sidecar's side (S0080; `design/specs/engine-jobs.md` §1 "Commit point", §2's `create`, §4,
-§5.3, §8.2, §11; ADR-0064 P2, ADR-0063 decision 1).
+"""The create job, the sidecar's side (S0080; `design/specs/engine-jobs.md` §1 "Commit point", §2's `create`, §4, §5.3,
+§8.2, §11; ADR-0064 P2, ADR-0063 decision 1).
 
-The work of a `create` job: one `create` request to the job's engine, which writes the new folder's files, checks
-that its ledger loads with no error, sends `gate`, and writes `.finzytrack/` last (`ledger_engine.ledger.create`);
-the sidecar never reads the folder itself. Its answer becomes the job's value:
+The work of a `create` job: one `create` request to the job's engine, which writes the new folder's files, checks that
+its ledger loads with no error, sends `gate`, and writes `.finzytrack/` last (`ledger_engine.ledger.create`); the
+sidecar never reads the folder itself. Its answer becomes the job's value:
 
-- **`Created(folder)`** once the engine said so, or once the disk said so after the engine died. Registering the
-  new workspace (§8.2 step 8, after `assess_workspace` says `READY`, INV-29) is the caller's: the registry is
-  BL-0102's.
-- **`NotCreated`** with its reason and the delete advice (`create_text` words it): no `.finzytrack/` of ours stands
-  in the folder.
-- **`NotDone(error)`**: `CHANGE_OUTCOME_UNKNOWN` when no engine could read the disk past the commit point (the
-  folder may be a workspace: no Retry), `INTERNAL` for a request the client could not send (nothing written).
+- **`Created(folder)`** once the engine said so, or once the disk said so after the engine died. Registering the new
+  workspace (§8.2 step 8, after `assess_workspace` says `READY`, INV-29) is the caller's: the registry is BL-0102's.
+- **`NotCreated`** with its reason and what the job left in the folder (`create_text` words it): no `.finzytrack/` of
+  ours stands in the folder.
+- **`NotDone(error)`**: `CHANGE_OUTCOME_UNKNOWN` when no engine could read the disk past the commit point (the folder
+  may be a workspace: no Retry), `INTERNAL` for a request the client could not send (nothing written).
 
-**After the engine died without its final reply**, before or past its commit point (§1: "After the commit point the
-job finishes or is resolved from disk"; §8.2: "an engine death leaves the job to register the workspace"), and after
-an engine refusal or a reply of the wrong shape, the queue keeps the job (`outcome_owed`) and the work asks a fresh
-engine for `create_outcome`: the folder synced, then `.finzytrack` read (`create_outcome` below decides), with the
-listing for the delete advice. A death of that engine asks for another (the client's bounded restart ends it).
-"""
+**After the engine died without its final reply**, before or past its commit point (§1: "After the commit point the job
+finishes or is resolved from disk"; §8.2: "an engine death leaves the job to register the workspace"), and after an
+engine refusal or a reply of the wrong shape, the queue keeps the job (`outcome_owed`) and the work asks a fresh engine
+for `create_outcome`: the folder synced, then `.finzytrack` read (`create_outcome` below decides), with the entries at
+the job's names that may be its own (nothing is removed after a death). A death of that engine asks for another (the
+client's bounded restart ends it)."""
 
 from __future__ import annotations
 
@@ -28,7 +27,6 @@ from dataclasses import dataclass
 from typing import Final, Literal, cast
 
 from app.platform.engine import (
-    CreateAdvice,
     CreateAnswer,
     CreateFacts,
     EngineEvent,
@@ -106,12 +104,14 @@ class Created:
 
 @dataclass(frozen=True, slots=True)
 class NotCreated:
-    """No `.finzytrack/` of ours stands in `folder` (the target as requested). `advice`: the delete advice
-    (`CreateAdvice`): `check` whenever the folder was not listed or what it holds is not known (S0080 r1 RT3)."""
+    """No `.finzytrack/` of ours stands in `folder` (the target as requested). `left`: what the job left there
+    because it could not be sure each is only its own, by path relative to the folder (it removed the rest of what
+    it made; after a death it removes nothing and names what may be its own); None when the folder was not cleaned
+    up or listed (a Cancel, no engine, an error): the user is asked to check it (owner, 2026-11-07)."""
 
     reason: NotCreatedReason
     folder: str
-    advice: CreateAdvice
+    left: tuple[str, ...] | None
     path: str | None = None
     detail: str | None = None
     errno: int | None = None
@@ -145,7 +145,7 @@ def answer_of(a: CreateAnswer) -> CreateValue:
     if a.outcome == "created":
         return Created(a.folder)
     reason = a.reason if a.reason in REASONS else "io_error"
-    return NotCreated(cast("NotCreatedReason", reason), a.folder, a.advice, a.path, a.detail, a.errno)
+    return NotCreated(cast("NotCreatedReason", reason), a.folder, a.left, a.path, a.detail, a.errno)
 
 
 def create_outcome(facts: CreateFacts, *, gated: bool, folder: str) -> CreateValue:
@@ -158,7 +158,7 @@ def create_outcome(facts: CreateFacts, *, gated: bool, folder: str) -> CreateVal
     if gated and facts.manifest == "unknown":
         return NotDone(error(ErrorCode.CHANGE_OUTCOME_UNKNOWN))
     reason: NotCreatedReason = "manifest_taken" if gated and facts.manifest == "foreign" else "stopped"
-    return NotCreated(reason, folder, facts.advice, errno=facts.errno)
+    return NotCreated(reason, folder, facts.left, errno=facts.errno)
 
 
 def create_work(request: CreateRequest) -> Work:
@@ -208,7 +208,7 @@ class _Run:
     def _no_engine(self) -> WorkResult:
         if self.gated:
             return WorkResult(NotDone(error(ErrorCode.CHANGE_OUTCOME_UNKNOWN)), ran_user_code=False)
-        value = NotCreated("stopped", self._r.target, "check")  # no `.finzytrack` before the gate; not listed
+        value = NotCreated("stopped", self._r.target, None)  # no `.finzytrack` before the gate; not listed
         return WorkResult(value, ran_user_code=False)
 
     def _from_disk(self) -> WorkResult:

@@ -13,8 +13,10 @@
 - step 5 the load check on the files in the target; step 6 the commit point; step 7 the manifest written under a temp
   name, synced, renamed exclusively; a `.finzytrack` that appeared meanwhile is left as it is and the job's own temp
   removed;
-- the delete advice: "You can delete it." only when the folder, listed when the job stops, holds nothing but the
-  job's own files;
+- the cleanup (owner, 2026-11-07, the middle path): a job that stops removes what it made in this run, and only that
+  (a name whose exclusive create or mkdir succeeded, still the same entry, a file still holding the job's bytes),
+  and names what it kept because it could not be sure it is only its own; after a death nothing is removed, and the
+  entries at the job's names that may be its own are named;
 - §1 "After the commit point the job finishes or is resolved from disk": `outcome` reads the target after a
   `durable_sync` of it, so what it tells is what a power loss keeps.
 """
@@ -117,6 +119,11 @@ def go(fs: MemFS, job: Job | None = None, *, load: Callable[[str], LoadResult] |
     return run(plan, Ports(fs, load or good_load(fs)), job), job
 
 
+def names(fs: MemFS, path: str) -> list[str]:
+    """The names in the folder at `path`, or none when there is no folder there."""
+    return fs.names_in(path) if any(p == path and v == ("dir",) for p, v in fs.snapshot().items()) else []
+
+
 def created_whole(fs: MemFS) -> bool:
     return all(fs.file(p) == b for p, b in {**OURS, **MANIFEST}.items())
 
@@ -164,7 +171,7 @@ def test_a_non_empty_target_is_refused_before_anything_is_written() -> None:
     fs.outside_write(f"{T}/notes.txt", FOREIGN)
     before = fs.snapshot()
     out, job = go(fs)
-    assert out == NotCreated("not_empty", T, "none")
+    assert out == NotCreated("not_empty", T, ())
     assert fs.effects == []
     assert fs.snapshot() == before
     assert job.gated == 0
@@ -184,7 +191,7 @@ def test_a_file_at_the_target_is_not_a_folder() -> None:
     fs = new_fs()
     fs.outside_write(T, FOREIGN)
     out, _ = go(fs)
-    assert out == NotCreated("not_a_folder", T, "none")
+    assert out == NotCreated("not_a_folder", T, ())
     assert fs.effects == []
     assert fs.file(T) == FOREIGN
 
@@ -194,7 +201,7 @@ def test_a_target_whose_folder_does_not_exist_is_refused() -> None:
     out, _ = go(fs)
     assert isinstance(out, NotCreated)
     assert out.reason == "no_parent"
-    assert out.advice == "none"
+    assert out.left == ()
     assert fs.effects == []
 
 
@@ -231,9 +238,9 @@ def test_a_file_dropped_under_a_name_the_job_writes_is_never_replaced() -> None:
     drop_at(fs, f"create {T}:main.beancount", f"{T}/main.beancount")
     out, job = go(fs)
     assert isinstance(out, NotCreated)
-    assert (out.reason, out.path, out.advice) == ("taken", f"{T}/main.beancount", "others")
+    assert (out.reason, out.path, out.left) == ("taken", f"{T}/main.beancount", ()), "never names another's"
     assert fs.file(f"{T}/main.beancount") == FOREIGN
-    assert MANIFEST_DIR not in fs.names_in(T)
+    assert MANIFEST_DIR not in names(fs, T)
     assert job.gated == 0
 
 
@@ -244,10 +251,10 @@ def test_a_folder_dropped_under_a_folder_name_the_job_makes_stops_it() -> None:
     assert isinstance(out, NotCreated)
     assert (out.reason, out.path) == ("taken", f"{T}/prices")
     assert fs.names_in(f"{T}/prices") == []
-    assert MANIFEST_DIR not in fs.names_in(T)
+    assert MANIFEST_DIR not in names(fs, T)
 
 
-def test_a_file_under_another_name_is_left_alone_and_only_spoils_the_delete_advice() -> None:
+def test_a_file_under_another_name_is_left_alone() -> None:
     fs = new_fs()
     drop_at(fs, f"create {T}:main.beancount", f"{T}/.DS_Store")
     out, _ = go(fs)
@@ -269,9 +276,9 @@ def test_a_foreign_overwrite_before_the_read_back_stops_the_job_before_its_manif
     fs.on_effect = overwrite
     out, job = go(fs)
     assert isinstance(out, NotCreated)
-    assert (out.reason, out.path, out.advice) == ("read_back", f"{T}/main.beancount", "others")
+    assert (out.reason, out.path, out.left) == ("read_back", f"{T}/main.beancount", ("main.beancount",))
     assert fs.file(f"{T}/main.beancount") == FOREIGN
-    assert MANIFEST_DIR not in fs.names_in(T)
+    assert MANIFEST_DIR not in names(fs, T)
     assert job.gated == 0
 
 
@@ -282,8 +289,8 @@ def test_a_ledger_that_loads_with_errors_is_not_created() -> None:
     fs = new_fs()
     out, job = go(fs, load=lambda _root: LoadResult(errors=2, parsed=(f"{T}/main.beancount",)))
     assert isinstance(out, NotCreated)
-    assert (out.reason, out.detail, out.advice) == ("load_errors", "2", "delete")
-    assert MANIFEST_DIR not in fs.names_in(T)
+    assert (out.reason, out.detail, out.left) == ("load_errors", "2", ())
+    assert names(fs, U) == [], "everything the job made is removed, the target folder it made included"
     assert job.gated == 0
 
 
@@ -292,7 +299,7 @@ def test_a_load_that_parses_a_file_the_job_did_not_write_is_not_created() -> Non
     out, _ = go(fs, load=lambda _root: LoadResult(errors=0, parsed=(f"{T}/main.beancount", "/u/other.beancount")))
     assert isinstance(out, NotCreated)
     assert (out.reason, out.path) == ("load_outside", "/u/other.beancount")
-    assert MANIFEST_DIR not in fs.names_in(T)
+    assert MANIFEST_DIR not in names(fs, T)
 
 
 @pytest.mark.parametrize("exc", [RuntimeError("a plugin raised"), OSError(errno.EIO, "io")])
@@ -305,7 +312,7 @@ def test_a_load_that_cannot_run_is_not_created(exc: Exception) -> None:
     out, _ = go(fs, load=load)
     assert isinstance(out, NotCreated)
     assert out.reason == "load_failed"
-    assert MANIFEST_DIR not in fs.names_in(T)
+    assert MANIFEST_DIR not in names(fs, T)
 
 
 # -- step 7: the manifest last ----------------------------------------------------------------------------------
@@ -327,7 +334,7 @@ def test_a_finzytrack_folder_that_appears_at_the_commit_point_is_left_and_ours_r
     assert fs.file(theirs) == FOREIGN
     assert fs.names_in(f"{T}/{MANIFEST_DIR}") == ["workspace.json"]
     assert f"{MANIFEST_DIR}.ft-j7" not in fs.names_in(T), "the job removes its own temp folder"
-    assert all(fs.file(p) == b for p, b in OURS.items()), "the job's ledger files stay"
+    assert all(fs.file(p) is None for p in OURS), "the job removes what it made, its ledger files included"
     assert outcome(fs, PLAN).manifest == "foreign", "a folder holding other bytes is not ours"
 
 
@@ -342,9 +349,9 @@ def test_a_foreign_temp_folder_of_the_jobs_name_is_never_removed() -> None:
 
     out, _ = go(fs, Job(at_gate=put_theirs))
     assert isinstance(out, NotCreated)
-    assert (out.reason, out.path, out.advice) == ("taken", TEMP, "others")
+    assert (out.reason, out.path, out.left) == ("taken", TEMP, ())
     assert fs.file(theirs) == FOREIGN
-    assert MANIFEST_DIR not in fs.names_in(T)
+    assert MANIFEST_DIR not in names(fs, T)
 
 
 @pytest.mark.parametrize("inside", [[], ["rules"]])
@@ -370,9 +377,9 @@ def test_a_foreign_file_put_into_the_temp_folder_stops_the_job_and_is_never_remo
     drop_at(fs, f"create {TEMP}:workspace.json", theirs)
     out, _ = go(fs)
     assert isinstance(out, NotCreated)
-    assert (out.reason, out.path, out.advice) == ("taken", theirs, "others")
+    assert (out.reason, out.path, out.left) == ("taken", theirs, (f"{MANIFEST_DIR}.ft-j7",))
     assert fs.file(theirs) == FOREIGN
-    assert MANIFEST_DIR not in fs.names_in(T)
+    assert MANIFEST_DIR not in names(fs, T)
 
 
 def test_a_foreign_file_beside_ours_in_the_temp_folder_stays_when_ours_are_removed() -> None:
@@ -397,17 +404,18 @@ def test_a_finzytrack_file_that_appears_at_the_commit_point_is_left_as_it_is(no_
     assert fs.file(f"{T}/{MANIFEST_DIR}") == FOREIGN
 
 
-# -- the delete advice -------------------------------------------------------------------------------------------
+# -- the cleanup --------------------------------------------------------------------------------------------------
 
 
-def test_the_delete_advice_says_only_ours_when_the_folder_holds_only_the_jobs_files() -> None:
+def test_a_stop_in_a_users_empty_folder_removes_all_the_job_made_and_names_nothing() -> None:
     fs = new_fs(target="empty")
     out, _ = go(fs, load=lambda _root: LoadResult(errors=1, parsed=()))
     assert isinstance(out, NotCreated)
-    assert out.advice == "delete"
+    assert out.left == ()
+    assert names(fs, T) == [], "the user's folder is left as it was: empty"
 
 
-def test_a_file_another_program_added_spoils_the_delete_advice() -> None:
+def test_a_file_another_program_added_stays_with_the_folder_that_holds_it() -> None:
     fs = new_fs()
 
     def load(_root: str) -> LoadResult:
@@ -416,10 +424,11 @@ def test_a_file_another_program_added_spoils_the_delete_advice() -> None:
 
     out, _ = go(fs, load=load)
     assert isinstance(out, NotCreated)
-    assert out.advice == "others"
+    assert out.left == ("prices",), "the job's folder stays, holding another program's file"
+    assert fs.file(f"{T}/prices/notes.txt") == FOREIGN
 
 
-def test_a_file_of_ours_changed_by_another_program_spoils_the_delete_advice() -> None:
+def test_a_file_of_ours_changed_by_another_program_is_kept_and_named() -> None:
     fs = new_fs()
 
     def load(_root: str) -> LoadResult:
@@ -428,7 +437,8 @@ def test_a_file_of_ours_changed_by_another_program_spoils_the_delete_advice() ->
 
     out, _ = go(fs, load=load)
     assert isinstance(out, NotCreated)
-    assert out.advice == "others"
+    assert out.left == ("prices/p.beancount",)
+    assert fs.file(f"{T}/prices/p.beancount") == PRICES + b"; my own line\n"
 
 
 # -- the plan ----------------------------------------------------------------------------------------------------
@@ -512,7 +522,7 @@ def test_a_crash_at_every_effect_never_leaves_a_manifest_over_an_incomplete_fold
             check_disk(state)
         check_told(fs)
         if _exists(fs, T) and MANIFEST_DIR not in fs.names_in(T):
-            assert outcome(fs, PLAN).advice in ("delete", "check", "none"), (i, fs.effects[i], fs.snapshot())
+            assert outcome(fs, PLAN).left is not None, (i, fs.effects[i], fs.snapshot())
 
 
 @pytest.mark.parametrize("no_excl", [False, True])
@@ -551,7 +561,7 @@ def test_a_power_loss_after_a_create_keeps_it_or_leaves_no_manifest() -> None:
 
 def test_the_outcome_of_a_target_that_does_not_exist_is_no_manifest() -> None:
     facts = outcome(new_fs(), PLAN)
-    assert (facts.manifest, facts.advice) == ("absent", "none")
+    assert (facts.manifest, facts.left) == ("absent", ())
 
 
 def test_the_outcome_of_a_created_workspace_is_ours() -> None:
@@ -561,11 +571,16 @@ def test_the_outcome_of_a_created_workspace_is_ours() -> None:
 
 
 def test_the_outcome_of_a_foreign_finzytrack_folder_is_foreign() -> None:
-    fs = new_fs()
-    go(fs, Job(at_gate=lambda: fs.outside_write(f"{T}/{MANIFEST_DIR}", FOREIGN)))
+    """After a death the job's files stay where they are; a `.finzytrack` that is not ours is `foreign`, and the
+    job's full copies are named for the user to check, never removed."""
+    fs = new_fs(target="empty")
+    for path, data in OURS.items():
+        fs.outside_mkdirs(path.rpartition("/")[0])
+        fs.outside_write(path, data)
+    fs.outside_write(f"{T}/{MANIFEST_DIR}", FOREIGN)
     facts = outcome(fs, PLAN)
     assert facts.manifest == "foreign"
-    assert facts.advice == "others"
+    assert facts.left == ("main.beancount", "prices/p.beancount")
 
 
 def test_the_outcome_of_a_finzytrack_folder_with_our_names_but_other_bytes_is_foreign() -> None:
@@ -583,7 +598,7 @@ def test_the_outcome_of_a_finzytrack_folder_with_our_names_but_other_bytes_is_fo
     assert outcome(fs, PLAN).manifest == "ours"
 
 
-def test_a_file_cut_short_after_a_death_asks_to_check_the_folder() -> None:
+def test_a_file_cut_short_after_a_death_is_named_for_the_user_to_check() -> None:
     fs = new_fs()
     i = clean_effects(False).index(f"write {T}:main.beancount")
     fs.inject(i, cut=5)
@@ -591,7 +606,8 @@ def test_a_file_cut_short_after_a_death_asks_to_check_the_folder() -> None:
         go(fs)
     assert fs.file(f"{T}/main.beancount") == MAIN[:5]
     facts = outcome(fs, PLAN)
-    assert (facts.manifest, facts.advice) == ("absent", "check"), "who wrote a cut file is not known after a death"
+    assert facts.manifest == "absent"
+    assert facts.left == ("main.beancount", "prices"), "who made these is not known after a death: named"
 
 
 def test_the_outcome_syncs_the_target_before_it_reads() -> None:
@@ -605,7 +621,7 @@ def test_the_outcome_syncs_the_target_before_it_reads() -> None:
     assert fs.effects[before:] == [f"sync {T}:"]
 
 
-def test_the_temp_folder_of_a_job_cut_in_its_manifest_write_asks_to_check_the_folder() -> None:
+def test_the_temp_folder_of_a_job_cut_in_its_manifest_write_is_named_for_the_user_to_check() -> None:
     fs = new_fs()
     k = next(k for k, e in enumerate(clean_effects(False)) if e.startswith(f"create {TEMP}:workspace.json"))
     fs.inject(k + 1)
@@ -613,7 +629,9 @@ def test_the_temp_folder_of_a_job_cut_in_its_manifest_write_asks_to_check_the_fo
         go(fs)
     assert f"{MANIFEST_DIR}.ft-j7" in fs.names_in(T)
     facts = outcome(fs, PLAN)
-    assert (facts.manifest, facts.advice) == ("absent", "check")
+    assert facts.manifest == "absent"
+    assert facts.left is not None
+    assert f"{MANIFEST_DIR}.ft-j7/workspace.json" in facts.left
 
 
 def test_the_target_moved_away_during_the_writes_stops_the_job() -> None:
@@ -671,7 +689,8 @@ def test_a_name_another_program_took_first_is_never_called_ours_whatever_it_hold
     out, _ = go(fs)
     assert isinstance(out, NotCreated)
     assert out.reason == "taken", what
-    assert out.advice == "others", what
+    assert out.left == (), "another program's entry is never named as maybe ours"
+    assert any(p == f"{T}/main.beancount" for p in fs.snapshot()), "and never removed"
 
 
 @pytest.mark.parametrize(
@@ -683,13 +702,15 @@ def test_a_name_another_program_took_first_is_never_called_ours_whatever_it_hold
         ("folder", f"{T}/{MANIFEST_DIR}"),
     ],
 )
-def test_the_outcome_read_never_calls_an_entry_it_cannot_tell_ours(what: str, path: str) -> None:
+def test_the_outcome_read_names_every_entry_that_may_be_the_jobs_and_removes_none(what: str, path: str) -> None:
     """Verifier r1 V4, red team r1 RT7: after a death, who made a name is not known; an entry that holds less than
-    all of the job's bytes may be the user's, so the advice is to check, never to delete."""
+    all of the job's bytes may be the user's: it is named for the user to check, and never removed."""
     fs = new_fs(target="empty")
     put(fs, what, path)
     facts = outcome(fs, PLAN)
-    assert facts.advice == "check", (what, path)
+    assert facts.left is not None
+    assert path[len(T) + 1 :] in facts.left, (what, path)
+    assert any(p == path for p in fs.snapshot()), "never removed"
 
 
 def test_a_manifest_changed_in_its_temp_folder_before_the_rename_is_never_created() -> None:
@@ -758,8 +779,8 @@ def test_the_listing_never_reads_a_file_longer_than_the_jobs_own() -> None:
     read: list[int] = []
     original = MemDir.read
 
-    def counting(self: MemDir, name: str) -> bytes | None:
-        out = original(self, name)
+    def counting(self: MemDir, name: str, limit: int | None = None) -> bytes | None:
+        out = original(self, name, limit)
         read.append(len(out or b""))
         return out
 
@@ -775,19 +796,20 @@ def test_the_listing_never_reads_a_file_longer_than_the_jobs_own() -> None:
         out, _ = go(fs)
         facts = outcome(fs, PLAN)
     assert isinstance(out, NotCreated)
-    assert (out.advice, facts.advice) == ("others", "others")
+    assert (out.left, facts.left) == ((), ())
     assert max(read, default=0) < len(big)
 
 
-def test_a_folder_the_job_made_and_left_empty_is_its_own_to_delete() -> None:
+def test_a_target_folder_the_job_made_is_removed_with_what_it_holds_of_the_jobs() -> None:
     fs = new_fs()
     fs.inject(clean_effects(False).index(f"mkdir {T}:prices"), crash=False, err=errno.EIO)
     out, _ = go(fs)
     assert isinstance(out, NotCreated)
-    assert (out.reason, out.advice) == ("io_error", "delete")
+    assert (out.reason, out.left) == ("io_error", ())
+    assert names(fs, U) == [], "the target folder the job made is removed too"
 
 
-def test_a_target_that_cannot_be_listed_after_a_stop_asks_to_check_it() -> None:
+def test_a_cleanup_that_cannot_finish_asks_to_check_the_folder() -> None:
     """Verifier r1 V2 (engine side): a listing that fails is `check`, never "nothing written"."""
     fs = new_fs()
 
@@ -798,7 +820,7 @@ def test_a_target_that_cannot_be_listed_after_a_stop_asks_to_check_it() -> None:
 
     out, _ = go(fs, load=load)
     assert isinstance(out, NotCreated)
-    assert out.advice == "check"
+    assert out.left is None, "the cleanup could not finish: the user is asked to check the folder"
 
 
 def test_every_answer_names_the_target_as_requested() -> None:
@@ -827,3 +849,212 @@ def test_a_target_moved_after_the_temp_folder_is_written_gets_no_manifest_anywhe
     assert isinstance(out, NotCreated)
     assert out.reason == "path_moved"
     assert MANIFEST_DIR not in fs.names_in("/u/elsewhere")
+
+
+# -- S0080 round 2 (red team F1, F2, F4, F5, K; verifier F1, F2, F4): the owner's middle path --------------------------
+
+
+def hook_at(fs: MemFS, label: str, act: Callable[[], None]) -> None:
+    """Another program acts just before the effect `label` (once)."""
+
+    def hook(_i: int, lab: str) -> None:
+        if lab == label:
+            fs.on_effect = None
+            act()
+
+    fs.on_effect = hook
+
+
+@pytest.mark.parametrize("data", [b"", WS_JSON[:10]])
+def test_another_programs_file_in_the_temp_folder_is_never_removed_whatever_it_holds(data: bytes) -> None:
+    """Red team r2 F1 (`test_A*`): the cleanup removes only what this run made, never judged by bytes."""
+    fs = new_fs()
+    hook_at(fs, f"create {TEMP}:workspace.json", lambda: fs.outside_write(f"{TEMP}/workspace.json", data))
+    out, _ = go(fs)
+    assert isinstance(out, NotCreated)
+    assert out.reason == "taken"
+    assert fs.file(f"{TEMP}/workspace.json") == data
+    assert out.left == (f"{MANIFEST_DIR}.ft-j7",), "the job's temp folder stays, holding another program's file"
+
+
+def test_another_programs_empty_folder_in_the_temp_folder_is_never_removed() -> None:
+    """Red team r2 F1 (`test_B*`)."""
+    fs = new_fs()
+    hook_at(fs, f"mkdir {TEMP}:rules", lambda: fs.outside_mkdirs(f"{TEMP}/rules"))
+    out, _ = go(fs)
+    assert isinstance(out, NotCreated)
+    assert out.reason == "taken"
+    assert names(fs, TEMP) == ["rules"]
+
+
+def test_a_name_whose_create_failed_but_that_stands_there_is_kept_and_named() -> None:
+    """Red team r2 F2 (`test_D_*`): a create that failed otherwise than `EEXIST` may have made its entry, or another
+    program may have: kept, never removed, and named for the user to check."""
+    fs = new_fs()
+    label = f"create {T}:main.beancount"
+
+    def hook(i: int, lab: str) -> None:
+        if lab == label:
+            fs.on_effect = None
+            fs.outside_write(f"{T}/main.beancount", b"")
+            fs.inject(i, crash=False, err=errno.ENOSPC)
+
+    fs.on_effect = hook
+    out, _ = go(fs)
+    assert isinstance(out, NotCreated)
+    assert out.reason == "io_error"
+    assert out.left == ("main.beancount",)
+    assert fs.file(f"{T}/main.beancount") == b""
+
+
+def test_a_file_saved_by_rename_over_one_the_job_made_is_kept_and_named() -> None:
+    """Red team r2 `test_K_*`: another program saves its own file by rename at a name the job made, before the
+    cleanup checks it; the identity the job recorded at its create no longer matches, so it is kept and named, even
+    holding the job's own bytes. (A save in the instant between the check and the removal is the stated Limit
+    (cleanup race).)"""
+    fs = new_fs()
+
+    def taken_and_swapped() -> None:
+        fs.outside_mkdirs(f"{T}/{MANIFEST_DIR}")
+        fs.outside_write(f"{TEMP}/workspace.json", WS_JSON, new_inode=True)
+
+    hook_at(fs, f"rename {T}:{MANIFEST_DIR}.ft-j7,{MANIFEST_DIR}", taken_and_swapped)
+    out, _ = go(fs)
+    assert isinstance(out, NotCreated)
+    assert out.reason == "manifest_taken"
+    assert fs.file(f"{TEMP}/workspace.json") == WS_JSON, "another program's save is never removed"
+    assert out.left == (f"{MANIFEST_DIR}.ft-j7/workspace.json",)
+
+
+def test_a_file_that_grows_after_its_stat_is_never_read_past_the_jobs_bytes(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Red team r2 F4 (`test_J_*`), verifier r2 F3: every read that decides whether a file is ours is bounded."""
+    fs = new_fs()
+    big = b"x" * 5_000_000
+    original = MemDir.read
+    longest = {"n": 0}
+
+    def read(self: MemDir, name: str, limit: int | None = None) -> bytes | None:
+        if name == "main.beancount" and longest.get("grow"):
+            fs.outside_write(f"{T}/main.beancount", big)
+        out = original(self, name, limit)
+        longest["n"] = max(longest["n"], len(out or b""))
+        return out
+
+    def load(_root: str) -> LoadResult:
+        longest["grow"] = 1
+        return LoadResult(errors=1, parsed=())
+
+    monkeypatch.setattr(MemDir, "read", read)
+    out, _ = go(fs, load=load)
+    facts = outcome(fs, PLAN)
+    assert isinstance(out, NotCreated)
+    assert out.left == ("main.beancount",), "it grew: kept and named"
+    assert facts.left is not None
+    assert longest["n"] <= len(MAIN) + 1
+
+
+def test_an_empty_file_of_the_plan_is_only_named_after_a_death_never_counted_ours() -> None:
+    """Red team r2 F5 (`test_L_*`): after a death an empty file at an empty file's name may be anyone's: named."""
+    plan = replace(PLAN, files=(*PLAN.files, NewFile("documents/.keep", b"")))
+    fs = new_fs(target="empty")
+    fs.outside_mkdirs(f"{T}/documents")
+    fs.outside_write(f"{T}/documents/.keep", b"")
+    facts = outcome(fs, plan)
+    assert facts.left == ("documents/.keep",)
+    assert fs.file(f"{T}/documents/.keep") == b""
+
+
+def test_a_job_that_made_nothing_in_an_existing_folder_says_nothing_of_it() -> None:
+    """Verifier r2 F1: another program takes the job's first names; the job made nothing, so it names nothing."""
+    fs = new_fs(target="empty")
+
+    def take() -> None:
+        fs.outside_write(f"{T}/main.beancount", FOREIGN)
+
+    def first() -> None:
+        fs.outside_mkdirs(f"{T}/prices")
+        take()
+
+    hook_at(fs, f"mkdir {T}:prices", first)
+    out, _ = go(fs)
+    assert isinstance(out, NotCreated)
+    assert out.left == ()
+
+
+def test_a_file_at_the_target_after_a_death_names_nothing() -> None:
+    """Verifier r2 F4: no workspace was begun there."""
+    fs = new_fs()
+    fs.outside_write(T, FOREIGN)
+    assert outcome(fs, PLAN).left == ()
+
+
+def test_the_cleanup_never_follows_a_link_put_in_place_of_the_temp_folder() -> None:
+    """Verifier r2 F2: the cleanup reaches every folder through the path guard, so a user's folder behind a link put
+    in place of the temp folder keeps its files (reverting to an unguarded `open_dir` fails this)."""
+    fs = new_fs()
+    fs.outside_mkdirs("/u/victim/rules")
+    fs.outside_write("/u/victim/workspace.json", b"")
+    labels = clean_effects(False)
+    k = next(i for i, e in enumerate(labels) if e.startswith(f"create {TEMP}/rules:"))
+    fs.inject(k, crash=False, err=errno.EIO)
+
+    def swap(_i: int, lab: str) -> None:
+        if lab.startswith(f"create {TEMP}/rules:"):
+            fs.on_effect = None
+            fs.outside_move(TEMP, "/u/stash")
+            fs.outside_symlink(TEMP, "/u/victim")
+
+    fs.on_effect = swap
+    out, _ = go(fs)
+    assert isinstance(out, NotCreated)
+    assert fs.file("/u/victim/workspace.json") == b""
+    assert "rules" in fs.names_in("/u/victim")
+
+
+def test_a_file_whose_create_failed_after_its_bytes_were_written_is_kept_and_named() -> None:
+    """The owner's middle path: only a create that succeeded counts as made; one that failed (here its data sync)
+    may hold the job's bytes, but it is kept and named, never removed."""
+    fs = new_fs()
+    fs.inject(clean_effects(False).index(f"fsync {T}:main.beancount"), crash=False, err=errno.EIO)
+    out, _ = go(fs)
+    assert isinstance(out, NotCreated)
+    assert out.reason == "io_error"
+    assert out.left == ("main.beancount",)
+    assert fs.file(f"{T}/main.beancount") == MAIN
+
+
+def test_a_target_folder_swapped_for_another_programs_is_never_removed() -> None:
+    """@regression-guard (S0080 r2: the job removed no target folder before; the rule is new and this guards it).
+    The cleanup removes the target folder only while it is still the one the job made (its identity)."""
+    fs = new_fs()
+    label = f"mkdir {T}:prices"
+
+    def swap(i: int, lab: str) -> None:
+        if lab == label:
+            fs.on_effect = None
+            fs.outside_move(T, "/u/old")
+            fs.outside_mkdirs(T)
+            fs.inject(i, crash=False, err=errno.EIO)
+
+    fs.on_effect = swap
+    out, _ = go(fs)
+    assert isinstance(out, NotCreated)
+    assert names(fs, U) == ["new", "old"], "another program's folder at the target's name stays"
+
+
+def test_the_outcome_never_reads_a_manifest_file_past_the_jobs_bytes(monkeypatch: pytest.MonkeyPatch) -> None:
+    fs = new_fs(target="empty")
+    big = b"x" * 5_000_000
+    fs.outside_mkdirs(f"{T}/{MANIFEST_DIR}")
+    fs.outside_write(f"{T}/{MANIFEST_DIR}/workspace.json", big)
+    original = MemDir.read
+    longest = {"n": 0}
+
+    def read(self: MemDir, name: str, limit: int | None = None) -> bytes | None:
+        out = original(self, name, limit)
+        longest["n"] = max(longest["n"], len(out or b""))
+        return out
+
+    monkeypatch.setattr(MemDir, "read", read)
+    assert outcome(fs, PLAN).manifest == "foreign"
+    assert longest["n"] <= len(WS_JSON) + 1

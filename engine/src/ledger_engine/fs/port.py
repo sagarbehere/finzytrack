@@ -95,8 +95,7 @@ class EntryStat:
     """One entry, not followed through a link (`lstat`). `locked`: an immutable or append-only flag is set
     (`uchg`, `schg`, `uappnd`, `sappnd`): the entry cannot be swapped, renamed or removed. `mtime_ns`: its modification
     time (`st_mtime_ns`; a rename keeps it, a folder's moves when its entries change); only the history trim reads it,
-    to tell older history from newer (S0074; spec §6.5), never to decide what may be deleted. `size`: its length in
-    bytes (`st_size`); the create's listing reads it so that it never reads a file longer than its own (S0080)."""
+    to tell older history from newer (S0074; spec §6.5), never to decide what may be deleted."""
 
     kind: Kind
     dev: int
@@ -105,7 +104,6 @@ class EntryStat:
     mode: int
     locked: bool
     mtime_ns: int = 0
-    size: int = 0
 
     @property
     def identity(self) -> tuple[int, int]:
@@ -119,9 +117,11 @@ class DirHandle(Protocol):
         """The directory's canonical path now (`F_GETPATH`): after the directory moved, its new place."""
         ...
 
-    def read(self, name: str) -> bytes | None:
+    def read(self, name: str, limit: int | None = None) -> bytes | None:
         """The bytes of the regular file `name`, or None when there is no entry of that name. A link, a directory or
-        any other kind of entry (a FIFO included: it never blocks) raises `OSError`."""
+        any other kind of entry (a FIFO included: it never blocks) raises `OSError`. With `limit`, at most its first
+        `limit` bytes, however long the file is (or grows) by then (S0080 r2: a file is never read whole only to
+        learn that it is not ours)."""
         ...
 
     def stat(self, name: str) -> EntryStat | None:
