@@ -668,10 +668,18 @@ class EngineClient:
         """Record `close` and signal the engine's group once, without waiting for a call; then wait for the drain of
         every engine that is ending (BL-0194) and for the close's own step, which a call in flight runs on its thread
         once it sees our end (`engine.closed` written; BL-0176), together for at most `close_wait` (§9.3 step 4). A
-        close deferred past a job's commit point waits for neither: the job finishes and settles the close."""
+        close deferred past a job's commit point waits for neither while that engine runs: the job finishes and settles
+        the close; once that engine has exited by itself, its drain and the close step are waited for as for any other
+        (`_ending`'s rule). Never call it from a call's own `on_event`: that call settles the close only after `close()`
+        returns, so it would wait the whole bound (a nested call is refused for the same reason, `_call`)."""
         with self._signals:
             current = self._run
-            deferred = current is not None and current.past_commit and current.reason is None  # as `_mark_ended`
+            deferred = (  # as `_mark_ended` (past the commit point, not ended by us) and `_ending` (still running)
+                current is not None
+                and current.past_commit
+                and current.reason is None
+                and not (current.group.exited.is_set() or current.group.leader_exited())
+            )
             self._closing = True
             self._mark_ended("close")
             self._needs_settle = True

@@ -36,7 +36,7 @@ REGISTRY: tuple[StateEntry, ...] = (
         "drained, one request in flight, the last 200 stderr lines, one bytecode fill at a time, one supervision "
         "state (app.platform.engine_supervision) holding at most max_crashes stop times",
         "close() when the user container closes (it signals the engine's group and waits for the drain of the engines "
-        "that are ending, at most CLOSE_WAIT); a "
+        "that are ending and for its own engine.closed line, at most CLOSE_WAIT); a "
         "stopped engine is restarted by the next request, bounded by RestartPolicy",
     ),
     StateEntry(

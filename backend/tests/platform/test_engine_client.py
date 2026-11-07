@@ -61,8 +61,10 @@ from app.platform.engine_supervision import (
     Handshaking,
     Idle,
     Ready,
+    Restarting,
     RestartPolicy,
     Send,
+    Starting,
     SupervisionEvent,
     Unavailable,
 )
@@ -1439,7 +1441,7 @@ def test_close_waits_for_the_drain_of_the_engine_of_a_call_in_flight() -> None:
         ops.release.set()
 
 
-class HeldClose:
+class Held:
     """An `EventSink` that holds the `engine.closed` line until released, as a slow thread would."""
 
     def __init__(self) -> None:
@@ -1460,27 +1462,97 @@ sys.stdin.readline()
 sys.stdin.read()
 """
 
+# Answers the handshake; for the request, one write holds a progress message and the reply, so both are in the pipe
+# before the close's signal can end the engine.
+ANSWERS_WITH_PROGRESS = r"""
+import json, sys
+req = json.loads(sys.stdin.readline())
+sys.stdout.write(json.dumps({"v": 2, "id": req["id"], "op": "handshake", "ok": True,
+    "result": {"protocol": 2, "engine_version": "0", "beancount_version": "3.2.0"}}) + "\n")
+sys.stdout.flush()
+req = json.loads(sys.stdin.readline())
+rid, op = req["id"], req["op"]
+sys.stdout.write(json.dumps({"v": 2, "id": rid, "op": op, "event": "progress", "phase": "reading"}) + "\n"
+    + json.dumps({"v": 2, "id": rid, "op": op, "ok": True, "result": {"done": True}}) + "\n")
+sys.stdout.flush()
+sys.stdin.read()
+"""
 
-@pytest.mark.parametrize("where", ["handshake", "request"])
+CLOSE_BOUND = 4 * DEADLINE  # far beyond the joins below: a close that is never woken shows as one that did not return
+
+
+@dataclasses.dataclass
+class CallInFlight:
+    """A client with a call in flight in a given state, and the closer thread that `close()`s it."""
+
+    client: EngineClient
+    call: threading.Thread
+    out: list[Any]
+    closer: threading.Thread
+    before_line: Callable[[], None] = lambda: None  # what the close waits for besides its line (a held drain)
+
+
+def call_in_flight(where: str, sink: Held) -> CallInFlight:
+    closer: list[threading.Thread] = []
+    if where == "handshake":  # the boot's first engine, before it has answered
+        c = EngineClient(stand_in(NO_HANDSHAKE), log=sink, close_wait=CLOSE_BOUND)
+        t, out = in_thread(c.start)
+        assert wait_until(lambda: isinstance(c.state, Handshaking))
+    elif where == "request":
+        c = EngineClient(engine_command(), log=sink, close_wait=CLOSE_BOUND)
+        t, out = stall(c)
+    elif where == "starting":  # a fresh start waits for the previous engine's drain, held here
+        ops = RecordingOps(hold_reap=True)
+        c = EngineClient(engine_command(), group_ops=ops, log=sink, close_wait=CLOSE_BOUND)
+        assert isinstance(c.start(), EngineInfo)
+        c.end("retire")
+        assert wait_until(lambda: "reap" in ops.calls)
+        t, out = in_thread(c.start)
+        assert wait_until(lambda: isinstance(c.state, Starting))
+        call = CallInFlight(c, t, out, threading.Thread(target=c.close, daemon=True), ops.release.set)
+        call.closer.start()
+        return call
+    elif where == "restarting":  # the backoff before a restart, longer than the test
+        c = EngineClient(
+            stand_in("import sys; sys.exit(3)"), RestartPolicy(delays=(CLOSE_BOUND,)), log=sink, close_wait=CLOSE_BOUND
+        )
+        first = c.start()
+        assert isinstance(first, EngineFailure)
+        t, out = in_thread(c.start)
+        assert wait_until(lambda: isinstance(c.state, Restarting))
+    else:  # "answered": the reply is in, the call has not settled yet when the close comes
+        ops = RecordingOps()
+        c = EngineClient(stand_in(ANSWERS_WITH_PROGRESS), group_ops=ops, log=sink, close_wait=CLOSE_BOUND)
+        assert isinstance(c.start(), EngineInfo)
+
+        def on_event(event: EngineEvent) -> None:
+            if isinstance(event, Progress) and not closer:
+                closer.append(threading.Thread(target=c.close, daemon=True))
+                closer[0].start()
+                assert wait_until(lambda: "kill" in ops.calls)  # the close has signalled the engine
+
+        t, out = in_thread(lambda: c.call("job", {}, on_event=on_event))
+        assert wait_until(lambda: bool(closer))
+        return CallInFlight(c, t, out, closer[0])
+    call = CallInFlight(c, t, out, threading.Thread(target=c.close, daemon=True))
+    call.closer.start()
+    return call
+
+
+@pytest.mark.parametrize("where", ["handshake", "request", "starting", "restarting", "answered"])
 def test_close_returns_only_once_engine_closed_is_logged_by_the_call_in_flight(where: str) -> None:
     """BL-0176 (S0078): `close()` takes no call lock, so the call in flight feeds the close to the table and logs
     `engine.closed` on its own thread. A sidecar exits right after `close()` returns and its daemon threads die with
     it, so a close that returned before that line was written lost it: the start storm of `test_main.py` found a
     sidecar whose log had no line at all. The line is held here until released; `close()` waits for it, still bounded
-    by `close_wait` (§9.3 step 4)."""
-    sink = HeldClose()
-    bound = 4 * DEADLINE  # far beyond the joins below: a close that is never woken shows as one that did not return
-    if where == "handshake":  # the boot's first engine, before it has answered
-        c = EngineClient(stand_in(NO_HANDSHAKE), log=sink, close_wait=bound)
-        t, out = in_thread(c.start)
-        assert wait_until(lambda: isinstance(c.state, Handshaking))
-    else:
-        c = EngineClient(engine_command(), log=sink, close_wait=bound)
-        t, out = stall(c)
+    by `close_wait` (§9.3 step 4). In `answered` the reply came before the close: the call settles the close only at
+    its end, after a step to `Ready` (S0078 verifier L1)."""
+    sink = Held()
+    call = call_in_flight(where, sink)
+    c, closer = call.client, call.closer
     try:
-        closer = threading.Thread(target=c.close, daemon=True)
-        closer.start()
         assert sink.entered.wait(DEADLINE), "the call in flight never logged the close"
+        call.before_line()
         closer.join(ABSENCE)
         assert closer.is_alive(), "close() returned before engine.closed was written"
         sink.release.set()
@@ -1488,12 +1560,95 @@ def test_close_returns_only_once_engine_closed_is_logged_by_the_call_in_flight(w
         assert not closer.is_alive(), "close() was not woken once engine.closed was written"
         assert sink.names.count("engine.closed") == 1
         assert isinstance(c.state, Closed)
+        call.call.join(DEADLINE)
+        [result] = call.out
+        if where == "answered":
+            assert result == {"done": True}
+        else:
+            assert isinstance(result, EngineFailure)
+            assert result.kind == "closed"
+    finally:
+        sink.release.set()
+        call.before_line()
+        c.close()
+
+
+def test_close_stops_waiting_for_its_line_at_the_bound() -> None:
+    """§9.3 step 4: a call that never writes the close's line (a thread stuck elsewhere) cannot hold the quit."""
+    sink = Held()
+    c = EngineClient(engine_command(), log=sink, close_wait=ABSENCE)
+    t, _ = stall(c)
+    try:
+        closer = threading.Thread(target=c.close, daemon=True)
+        closer.start()
+        assert sink.entered.wait(DEADLINE)
+        closer.join(DEADLINE)
+        assert not closer.is_alive(), "close() waited past its bound for its line"
+        assert "engine.closed" not in sink.names  # still held: the bound ended the wait, not the line
+    finally:
+        sink.release.set()
+        t.join(DEADLINE)
+
+
+# Past the commit point, the engine writes and exits by itself before the reply.
+EXITS_PAST_COMMIT = r"""
+import json, sys
+def send(o):
+    sys.stdout.write(json.dumps(o) + "\n")
+    sys.stdout.flush()
+req = json.loads(sys.stdin.readline())
+send({"v": 2, "id": req["id"], "op": "handshake", "ok": True,
+      "result": {"protocol": 2, "engine_version": "0", "beancount_version": "3.2.0"}})
+req = json.loads(sys.stdin.readline())
+send({"v": 2, "id": req["id"], "op": req["op"], "event": "gate"})
+assert json.loads(sys.stdin.readline())["control"] == "proceed"
+"""
+
+
+@pytest.mark.skipif(os.name != "posix", reason="process groups are POSIX; Windows is BL-0087")
+def test_a_close_past_the_commit_point_waits_for_its_line_once_that_engine_has_exited() -> None:
+    """S0078 verifier Q1: a close past a job's commit point is deferred while that engine runs, but once the engine
+    has exited by itself there is no job left to wait for: the close's drain and its step are waited for, as
+    `_ending` already does for the drain. The call is held where it has seen the end of the engine's output (its
+    group drained) and reads the clock for the stop it is about to feed, so the close comes before the call has
+    observed the exit."""
+    call_thread: list[threading.Thread] = []
+    seen_end = threading.Event()
+    release = threading.Event()
+    proceeded = threading.Event()
+
+    def monotonic() -> float:
+        if proceeded.is_set() and call_thread and threading.current_thread() is call_thread[0]:
+            seen_end.set()
+            release.wait(DEADLINE)
+        return time.monotonic()
+
+    sink = Events()
+    c = EngineClient(stand_in(EXITS_PAST_COMMIT), log=sink, monotonic=monotonic, close_wait=CLOSE_BOUND)
+    try:
+        assert isinstance(c.start(), EngineInfo)
+
+        def on_event(event: EngineEvent) -> None:
+            if isinstance(event, GateReached):
+                assert c.proceed()
+                proceeded.set()
+
+        t, out = in_thread(lambda: c.call("save", {}, on_event=on_event))
+        call_thread.append(t)
+        assert seen_end.wait(DEADLINE), "the call never saw the engine's exit"
+        closer = threading.Thread(target=c.close, daemon=True)
+        closer.start()
+        closer.join(ABSENCE)
+        assert closer.is_alive(), "close() did not wait for the close of an exited engine past its commit point"
+        release.set()
+        closer.join(DEADLINE)
+        assert not closer.is_alive()
+        assert sink.names.count("engine.closed") == 1
         t.join(DEADLINE)
         [failure] = out
         assert isinstance(failure, EngineFailure)
-        assert failure.kind == "closed"
     finally:
-        sink.release.set()
+        release.set()
         c.close()
 
 
