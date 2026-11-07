@@ -22,5 +22,12 @@
 - Population: the slices S0075 to S0082, from `design/journal/` and `git log` between the S0074 journal and 5ac7890b (8 slices in, 8 named in §1).
 
 ## Verifier
+- Round 1, head 8e508f7a: passed with findings, 0 High, 1 Medium, 3 Low. Attacks: 10 (every slice, backlog ID, quote and date checked against journals, backlog and git; spec Orientation cross-check; nothing landed in the range missing; gates).
+- F1 Medium: the "Next:" line read as the whole rest of M1a while about 22 M1a rows are open. Fixed: it names BL-0164 and BL-0110 and points to `FT_MILESTONE_EXIT=M1a` for the full list.
+- F2 Low: the edited sentence still said every L world passes except `L_save_deep` (pre-S0072), with a stray ")" and ",,". Fixed: BL-0110, none run on the S0072 model yet; punctuation fixed.
+- F3 Low: the final-round rule was first applied in S0080, not S0081, and lived only in journals. Fixed: the roadmap says S0080; the rule is now in PROCESS.md §3 step 7 with the owner's words (IMP-0052).
+- F4 Low: the 2026-11-01 answer also kept the lineage match. Fixed: BL-0191 named.
+- Docs-only slice: one round (PROCESS.md §3 step 5); the fixes are wording, not re-verified.
 
 ## Retro
+- Build 15 min, fix 10 min, 1 verifier round, findings 0H/1M/3L. Cheaper gate: run the M1a exit listing (`FT_MILESTONE_EXIT=M1a`) before writing any "what remains" sentence, and reread the whole sentence an edit lands in.

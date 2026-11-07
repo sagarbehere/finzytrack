@@ -508,3 +508,11 @@ Format:
 - Why: S0066 and S0067 took four plus four rounds and four High findings, all in machinery that ADR-0067 then made advisory and ADR-0068 removes; S0065 took three plus three rounds on one rule family after IMP-0049; S0061 spent rounds 5 to 7 on permission corners that lose no byte.
 - Expected effect: fewer rounds on advisory machinery; the owner sees the trade-off before a mechanism draws a second round. Metric: verifier and red-team rounds per slice on write-path slices, and rounds whose findings touch no byte.
 - Status: kept (owner-approved; S0069). (c), the engine-jobs spec rewritten to rules only, is S0073 (BL-0181).
+
+## IMP-0052: a final review round's no-byte findings become backlog rows (2026-11-07)
+- Trigger: owner decision, 2026-11-07, in session, in S0080 round 3 ("Fix, then land": "anything it finds that loses no bytes becomes a backlog row instead of another round") and again in S0081 round 2 ("anything that loses no bytes becomes a backlog row"). Applied in S0080's and S0081's final rounds; recorded here by S0083 (verifier F3: the rule lived only in journals).
+- What changed: process. After the last fix round on a slice, the final review round's findings that lose, tear or overwrite no byte and give no false "saved", "undone" or "unchanged" become backlog rows; they do not start another fix round.
+- PROCESS.md section: §3 step 7 (land).
+- Why: S0080 and S0081 took three and four review rounds, the later ones on findings that lost no byte.
+- Expected effect: write-path slices end after their last fix round plus one verifier round. Metric: review rounds per write-path slice.
+- Status: kept (owner-approved; S0083 records it).
