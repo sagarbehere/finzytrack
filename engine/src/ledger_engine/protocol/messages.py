@@ -192,10 +192,13 @@ class ListedJournal(Message):
 
 
 class UnlistedFolder(Message):
-    """A journal folder that could not be synced, opened or listed: it blocks every open."""
+    """A journal folder that could not be synced, opened or listed: it blocks every open. `linked`: a link stands in
+    place of the key or journal folder (`folder` names the link) and it holds an `.open` record or could not be listed
+    through (S0077)."""
 
     folder: AbsPath
     errno: int | None
+    linked: bool
 
 
 class RecoverListResult(Message):
@@ -318,11 +321,12 @@ class SaveResult(Message):
     never yet, BL-0113). `refused`: before the commit point, nothing written (`reason`: `unfinished_save`,
     `ledger_changed`, `mirror_stale`, `encrypted_file`).
     `not_saved`: the writer's `NotSaved` (`reason` its own: `hard_linked`, `locked`, `not_a_file`, `permission`,
-    `changed`, `path_moved`, `read_back`, `io_error`, `name_not_utf8`; `open_journal`: writes are
+    `changed`, `path_moved`, `read_back`, `io_error`, `name_not_utf8`, `linked_folder`; `open_journal`: writes are
     paused until recovery). `unfinished`: a file may have been replaced and the rollback stopped (`cause`, and
     `cause_path` its file: after `created_path_taken` the undo will ask about that file). `unchanged`: every file the
     save would write was hashed again and equals its pre bytes. `path`: the file it is about; `entry`: the folder a
-    `permission` refusal is about, `detail`: the ACL entry that blocks it."""
+    `permission` refusal is about, or the link a `linked_folder` refusal names; `detail`: the ACL entry that blocks
+    it."""
 
     outcome: SaveOutcomeKind
     reason: str | None
@@ -423,7 +427,7 @@ OPS: dict[str, OpSpec] = {
                     "errno": None,
                 }
             ],
-            "unlisted": [],
+            "unlisted": [{"folder": f"{_ALD}/local/k2/journal", "errno": None, "linked": True}],
             "parts_removed": 0,
         },
         {"app_local_data": _ALD},

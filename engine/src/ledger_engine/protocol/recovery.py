@@ -138,7 +138,7 @@ def recover_list(params: Message, ctx: Decider) -> Message:
     listing = ra.list_journals(fs, app_local_data_of(fs, params.app_local_data, ctx))
     return RecoverListResult(
         journals=[_listed(j) for j in listing.journals],
-        unlisted=[UnlistedFolder(folder=u.folder, errno=u.errno) for u in listing.unlisted],
+        unlisted=[UnlistedFolder(folder=u.folder, errno=u.errno, linked=u.linked) for u in listing.unlisted],
         parts_removed=listing.parts_removed,
     )
 

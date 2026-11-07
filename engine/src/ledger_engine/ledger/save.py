@@ -21,8 +21,11 @@ retires its engine after it (the safe default). Its steps:
    after it) are removed (ADR-0068 D1): an outside save after step 4 is met by the swap's displaced check.
 7. **The commit point:** `job.gate()` (§4: the sidecar's one table step answers `proceed` or ends the engine).
 8. `writer.durable_commit` (§6.1 step 8), after the workspace's journal and backups folders exist and every folder
-   from `app_local_data` down to them has a durable entry (its parent synced, whether it was made now or not). The
-   record carries no prediction (journal format 4).
+   from `app_local_data` down to them has a durable entry (its parent synced, whether it was made now or not). A link
+   in place of `local/<key>`, its `journal` or its `backups` is `NotSaved(linked_folder)` naming the link, before
+   anything is made or synced in or through it (S0077, BL-0193: recover-all reads no record through such a link, nor
+   does the trim, so a record or backups there would never be recovered). The record carries no prediction (journal
+   format 4).
 9. `job.committed()` once it `Landed`; then the history trim of this workspace key (§6.5, `ledger.history`: the
    newest 16 of each kind kept; never an `.open` journal or its backups, nor this save's record), whose errors never
    change the outcome. It runs before the final reply, which is what the sidecar answers the user from, so it is
@@ -52,7 +55,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Final, Literal, Protocol
 
-from ledger_engine.fs.port import FileSystem
+from ledger_engine.fs.port import FileSystem, Kind
 from ledger_engine.ledger import fingerprint as _fingerprint
 from ledger_engine.ledger import history, overlay
 from ledger_engine.ledger.core import journal
@@ -277,15 +280,26 @@ def _unchanged(fs: FileSystem, changes: tuple[Change, ...]) -> bool:
     return True
 
 
-def _ensure_dir(fs: FileSystem, parent: str, name: str) -> str:
+class _LinkedFolder(Exception):
+    def __init__(self, path: str) -> None:
+        super().__init__(path)
+        self.path = path
+
+
+def _ensure_dir(fs: FileSystem, parent: str, name: str, *, no_link: bool = False) -> str:
     """The folder `name` in `parent`, its entry durable: `parent` is synced whether or not the folder was made now. A
     folder that was there already may be the mkdir of an earlier engine that died before its sync; a power loss could
     then drop it, with the `.open` journal or the backups in it, while the ledger files stay swapped (round 1, verifier
-    F1). A sync with nothing to flush costs nothing (§6.2)."""
+    F1). A sync with nothing to flush costs nothing (§6.2). `no_link`: a link in place of the folder raises
+    `_LinkedFolder` (the workspace's own folders, S0077); the app's folder and `local/` may be links, which recover-all
+    follows too."""
     path = join(parent, name)
     with fs.open_dir(parent) as h:
-        if h.stat(name) is None:
+        st = h.stat(name)
+        if st is None:
             h.mkdir(name)
+        elif no_link and st.kind is Kind.LINK:
+            raise _LinkedFolder(path)
         h.sync()
     return path
 
@@ -373,9 +387,11 @@ def _gated(
         # every folder from the app's own down, its entry durable before the first write (round 1, verifier F1)
         app_parent, _, app_name = plan.app_local_data.rstrip("/").rpartition("/")
         ald = _ensure_dir(ports.fs, app_parent or "/", app_name)
-        key_dir = _ensure_dir(ports.fs, _ensure_dir(ports.fs, ald, LOCAL), plan.workspace_key)
-        _ensure_dir(ports.fs, key_dir, JOURNAL)
-        bd = _ensure_dir(ports.fs, key_dir, BACKUPS)
+        key_dir = _ensure_dir(ports.fs, _ensure_dir(ports.fs, ald, LOCAL), plan.workspace_key, no_link=True)
+        _ensure_dir(ports.fs, key_dir, JOURNAL, no_link=True)
+        bd = _ensure_dir(ports.fs, key_dir, BACKUPS, no_link=True)
+    except _LinkedFolder as e:
+        return NotSaved(Step.BACKUP, Reason.LINKED_FOLDER, _unchanged(ports.fs, plan.changes), entry=e.path)
     except OSError:
         return NotSaved(Step.BACKUP, Reason.IO_ERROR, _unchanged(ports.fs, plan.changes))
     commit = Commit(

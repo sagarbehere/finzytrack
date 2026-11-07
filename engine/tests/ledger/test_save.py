@@ -439,6 +439,28 @@ def test_a_journal_folder_that_cannot_be_listed_refuses(led: Ledger) -> None:
     assert out.reason == "unfinished_save"
 
 
+@pytest.mark.parametrize("folder", ["key", "journal", "backups"])
+def test_a_link_in_place_of_the_workspaces_own_folder_is_not_saved_through(led: Ledger, folder: str) -> None:
+    """S0077 (BL-0193): recover-all reads no record through a link in place of `local/<key>`, its `journal` or its
+    `backups` (nor does the history trim), so the save does not write through one: its record or its backups would be
+    where recovery never undoes them. Not saved, naming the link; the ledger unchanged; nothing written there."""
+    key_dir = led.ald / "local" / KEY
+    elsewhere = led.tmp / "elsewhere"
+    elsewhere.mkdir()
+    if folder == "key":
+        link = key_dir
+        key_dir.parent.mkdir(parents=True)
+    else:
+        link = key_dir / folder
+        key_dir.mkdir(parents=True)
+    link.symlink_to(elsewhere)
+    out = sv.run(plan_for(led), ports_for(led), FakeJob())
+    assert isinstance(out, NotSaved), out
+    assert (out.reason, out.entry, out.unchanged, out.open_journal) == (Reason.LINKED_FOLDER, str(link), True, False)
+    assert (led.main.read_bytes(), led.inc.read_bytes()) == (MAIN, INC)
+    assert os.listdir(elsewhere) == []
+
+
 def test_a_record_written_after_step_1_refuses_at_the_gate(led: Ledger) -> None:
     """@regression-guard (spec §6.1 step 4): the gate reads the `.open` journals again; the step-1 read is not
     trusted."""

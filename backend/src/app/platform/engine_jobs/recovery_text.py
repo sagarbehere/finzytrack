@@ -221,6 +221,14 @@ def blocked_screen(b: Blocking, workspace: str) -> Screen:
 
 def not_recovered_screen(n: NotRecovered) -> Screen:
     """Every open is blocked: a journal folder could not be listed, or recover-all never listed (fail closed)."""
+    if n.folder is not None and n.linked:  # S0077 (BL-0193): the way out is the user's, so the screen names it
+        answer = f" ({system_answer(n.errno)})" if n.errno is not None else ""
+        return Screen(
+            f"{n.folder} is a link to another place{answer}. Finzytrack does not use its save records through a link, "
+            "and it may hold an unfinished save. No workspace opens until it is a real folder again. "
+            "Put the real folder back in its place, then press Retry.",
+            ("retry",),
+        )
     if n.folder is not None:
         answer = f": {system_answer(n.errno)}" if n.errno is not None else ""
         return Screen(

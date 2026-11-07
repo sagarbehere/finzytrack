@@ -178,6 +178,11 @@ def test_a_save_that_lands_is_saved_and_its_engine_is_retired(make: Any) -> None
             "CHANGE_NOT_SAVED",
             ChangeNotSavedDetails("permission", None, "/L", "deny delete_child", True),
         ),
+        (  # S0077 (BL-0193): a link in place of the workspace's own journal, backups or key folder
+            answer(outcome="not_saved", reason="linked_folder", entry="/app/local/k1/journal", unchanged=True),
+            "CHANGE_NOT_SAVED",
+            ChangeNotSavedDetails("linked_folder", None, "/app/local/k1/journal", None, True),
+        ),
         (
             answer(
                 outcome="unfinished",
@@ -374,6 +379,10 @@ def test_not_saved_says_unchanged_only_after_the_rehash() -> None:
         (
             ChangeNotSavedDetails("io_error", MAIN, None, None, True),
             "Your change was not saved. Your ledger is unchanged.",
+        ),
+        (
+            ChangeNotSavedDetails("linked_folder", None, "/app/local/k1/journal", None, True),
+            "The folder /app/local/k1/journal is a link to another place.",
         ),
     ],
 )

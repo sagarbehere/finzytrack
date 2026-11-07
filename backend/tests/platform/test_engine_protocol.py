@@ -430,6 +430,8 @@ def test_the_listing_decodes_to_its_fields() -> None:
     [j] = out.journals
     assert (j.name, j.readable, j.workspace_key, j.lineage) == ("s1-j7", True, "k1", "lin1")
     assert j.files[0].created is False
+    [u] = out.unlisted  # S0077 (BL-0193): a link in place of a journal folder is named as one
+    assert (u.folder.endswith("/local/k2/journal"), u.errno, u.linked) == (True, None, True)
 
 
 def test_no_engine_lock_is_a_refusal_key() -> None:

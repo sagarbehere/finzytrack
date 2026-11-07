@@ -188,6 +188,94 @@ def test_a_try_whose_last_sync_failed_is_not_listed_again() -> None:
         assert state.file(f"{KJD}/{NAME}.resolved") is not None
 
 
+# -- S0077 (BL-0193): a link in place of a key or journal folder -----------------------------------------------------
+
+
+def _behind_a_link(at: int, folder: str) -> World:
+    """The keyed world with its save cut at effect `at`, then `folder` (`local/k1` or its `journal`) moved to
+    `/elsewhere` and a link to it put in its place (the writer and the gate follow such a link)."""
+    w = keyed(at=at)
+    w.fs.outside_mkdirs("/elsewhere")
+    moved = f"/elsewhere/{folder.rpartition('/')[2]}"
+    w.fs.outside_move(folder, moved)
+    w.fs.outside_symlink(folder, moved)
+    return w
+
+
+@pytest.mark.parametrize("folder", [KJD, "/w/local/k1"])
+def test_an_open_record_behind_a_linked_folder_blocks_every_open_and_nothing_is_written_through_it(
+    folder: str,
+) -> None:
+    """BL-0193: the listing skipped a linked `local/<key>` or `journal` folder while the save's gate read the `.open`
+    record through it, so the workspace stayed paused and nothing recovered it. Now the folder is `Unlisted(linked)`:
+    every open is blocked with its cause named. Its names are listed read-only: no `.part` is removed through it."""
+    w = _behind_a_link(AFTER_CREATE, folder)
+    w.fs.outside_write(f"{KJD}/s0-j0.part", b"{}")
+    n = len(w.fs.effects)
+    listing = list_journals(w.fs, ALD)
+    assert [(u.folder, u.errno, u.linked) for u in listing.unlisted] == [(folder, None, True)]  # the link, named
+    assert listing.journals == ()
+    assert listing.parts_removed == 0
+    assert len(w.fs.effects) == n, "the listing wrote through a link"
+    assert "s0-j0.part" in w.fs.names_in(KJD)
+
+
+def test_the_real_folder_put_back_lets_the_retry_list_and_undo_the_save() -> None:
+    """The way out the blocked screen names: the real folder back in its place, then Retry recovers the save."""
+    w = _behind_a_link(AFTER_CREATE, KJD)
+    assert list_journals(w.fs, ALD).unlisted
+    w.fs.outside_remove(KJD)
+    w.fs.outside_move("/elsewhere/journal", KJD)
+    w.fs.outside_remove("/w/L/prices.bean")  # the created path empty: the try can resolve
+    listing = list_journals(w.fs, ALD)
+    assert listing.unlisted == ()
+    assert [(j.journal_dir, j.name) for j in listing.journals] == [(KJD, NAME)]
+    assert isinstance(recover_journal(w.fs, KJD, NAME), Resolved)
+
+
+def test_a_linked_journal_folder_that_cannot_be_listed_through_the_link_blocks_every_open() -> None:
+    """Fail closed: a link to a folder that is not there (an unplugged disk) may hold an `.open` record nobody can
+    see, as a journal folder that cannot be listed may."""
+    w = keyed(at=AFTER_CREATE)
+    w.fs.outside_mkdirs("/w/local/k2")
+    w.fs.outside_symlink("/w/local/k2/journal", "/unplugged/journal")
+    listing = list_journals(w.fs, ALD)
+    assert [(u.folder, u.errno, u.linked) for u in listing.unlisted] == [("/w/local/k2/journal", errno.ENOENT, True)]
+    assert [j.name for j in listing.journals] == [NAME]  # the real folder's record is listed as before
+
+
+def test_a_linked_key_folder_that_cannot_be_opened_through_the_link_blocks_every_open() -> None:
+    fs = MemFS()
+    fs.outside_mkdirs("/w/local")
+    fs.outside_symlink("/w/local/k2", "/unplugged/k2")
+    listing = list_journals(fs, ALD)
+    assert [(u.folder, u.errno, u.linked) for u in listing.unlisted] == [("/w/local/k2", errno.ENOENT, True)]
+
+
+def test_a_linked_folder_with_no_open_record_blocks_nothing() -> None:
+    """@regression-guard (ff3d883f skipped every link): a link that holds history only (`.closed`, `.part`) has
+    nothing to recover, so it blocks no open; the save refuses to write through it (S0077)."""
+    w = _behind_a_link(PART_WRITE, KJD)
+    w.fs.outside_write(f"{KJD}/s0-j1.closed", b"{}")
+    w.fs.outside_mkdirs("/w/local/k3")
+    w.fs.outside_symlink("/w/local/k3/journal", "/elsewhere")  # a link to a folder with no journal names in it
+    listing = list_journals(w.fs, ALD)
+    assert (listing.journals, listing.unlisted, listing.parts_removed) == ((), (), 0)
+    assert f"{NAME}.part" in w.fs.names_in(KJD)
+
+
+def test_a_file_or_a_link_to_a_file_in_local_is_not_a_workspace_folder() -> None:
+    """A file in `local/` is skipped as before; a link there that leads to a file fails closed (it is not ours, and
+    cannot be listed)."""
+    fs = MemFS()
+    fs.outside_mkdirs("/w/local")
+    fs.outside_write("/w/notes.txt", b"mine")
+    fs.outside_write("/w/local/k3", b"a file")
+    fs.outside_symlink("/w/local/k4", "/w/notes.txt")
+    listing = list_journals(fs, ALD)
+    assert [(u.folder, u.errno, u.linked) for u in listing.unlisted] == [("/w/local/k4", errno.ENOTDIR, True)]
+
+
 # -- inspect --------------------------------------------------------------------------------------------------------
 
 

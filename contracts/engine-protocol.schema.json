@@ -1274,7 +1274,13 @@
               }
             ],
             "parts_removed": 0,
-            "unlisted": []
+            "unlisted": [
+              {
+                "errno": null,
+                "folder": "/app-data/com.finzytrack.desktop/local/k2/journal",
+                "linked": true
+              }
+            ]
           },
           "v": 2
         }
@@ -2307,7 +2313,7 @@
     },
     "SaveResult": {
       "additionalProperties": false,
-      "description": "How the save ended (§6.1, §11). `saved`: the closed record is durable (`published`: the mirror was published,\nnever yet, BL-0113). `refused`: before the commit point, nothing written (`reason`: `unfinished_save`,\n`ledger_changed`, `mirror_stale`, `encrypted_file`).\n`not_saved`: the writer's `NotSaved` (`reason` its own: `hard_linked`, `locked`, `not_a_file`, `permission`,\n`changed`, `path_moved`, `read_back`, `io_error`, `name_not_utf8`; `open_journal`: writes are\npaused until recovery). `unfinished`: a file may have been replaced and the rollback stopped (`cause`, and\n`cause_path` its file: after `created_path_taken` the undo will ask about that file). `unchanged`: every file the\nsave would write was hashed again and equals its pre bytes. `path`: the file it is about; `entry`: the folder a\n`permission` refusal is about, `detail`: the ACL entry that blocks it.",
+      "description": "How the save ended (§6.1, §11). `saved`: the closed record is durable (`published`: the mirror was published,\nnever yet, BL-0113). `refused`: before the commit point, nothing written (`reason`: `unfinished_save`,\n`ledger_changed`, `mirror_stale`, `encrypted_file`).\n`not_saved`: the writer's `NotSaved` (`reason` its own: `hard_linked`, `locked`, `not_a_file`, `permission`,\n`changed`, `path_moved`, `read_back`, `io_error`, `name_not_utf8`, `linked_folder`; `open_journal`: writes are\npaused until recovery). `unfinished`: a file may have been replaced and the rollback stopped (`cause`, and\n`cause_path` its file: after `created_path_taken` the undo will ask about that file). `unchanged`: every file the\nsave would write was hashed again and equals its pre bytes. `path`: the file it is about; `entry`: the folder a\n`permission` refusal is about, or the link a `linked_folder` refusal names; `detail`: the ACL entry that blocks\nit.",
       "properties": {
         "outcome": {
           "$ref": "#/$defs/SaveOutcomeKind"
@@ -2443,7 +2449,7 @@
     },
     "UnlistedFolder": {
       "additionalProperties": false,
-      "description": "A journal folder that could not be synced, opened or listed: it blocks every open.",
+      "description": "A journal folder that could not be synced, opened or listed: it blocks every open. `linked`: a link stands in\nplace of the key or journal folder (`folder` names the link) and it holds an `.open` record or could not be listed\nthrough (S0077).",
       "properties": {
         "folder": {
           "minLength": 1,
@@ -2461,11 +2467,16 @@
             }
           ],
           "title": "Errno"
+        },
+        "linked": {
+          "title": "Linked",
+          "type": "boolean"
         }
       },
       "required": [
         "folder",
-        "errno"
+        "errno",
+        "linked"
       ],
       "title": "UnlistedFolder",
       "type": "object"

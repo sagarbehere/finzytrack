@@ -11,7 +11,12 @@ earlier session caught between its handshake and its `flock` can never run besid
   (`Listed.record` None when it cannot be: torn, foreign, newer, of another name, or a read error; such a journal
   names nothing it can be matched on and blocks every open, ADR-0063). A journal folder that cannot be synced,
   opened or listed is `Unlisted`: it may hold an `.open` record nobody can see, so it blocks every open too (fails
-  closed). Only real folders are walked (a link or a file in `local/` is not ours and is skipped).
+  closed). Only real folders are walked; a file in `local/` is not ours and is skipped. **A link in place of a
+  `local/<key>` or `local/<key>/journal` folder** (S0077, BL-0193) is never walked as ours (no sync, no `.part` removed,
+  no record read through it: the save refuses to write through one, `save._ensure_dir`), but it is never skipped
+  blindly either, since the save's gate reads through it: its names are listed through the link, read-only, and one
+  that holds an `.open` record, or cannot be opened or listed through the link (it may lead to an unplugged disk), is
+  `Unlisted(linked=True)`: it blocks every open, and the screen says to put the real folder back.
 - **`inspect`**: what stands at each file a record names now, and every kept copy of this journal beside it (by
   `journal.is_kept_name`), each by its kind, SHA-256 and size; it writes nothing. The blocked screen shows these
   ("Show both", "Show it", Keep's list of the files it releases) and a delete names the SHA-256 it showed.
@@ -70,10 +75,13 @@ class Listed:
 
 @dataclass(frozen=True, slots=True)
 class Unlisted:
-    """A journal folder (or `local/` itself) that could not be synced, opened or listed: blocks every open."""
+    """A journal folder (or `local/` itself) that could not be synced, opened or listed: blocks every open. `linked`:
+    a link stands in place of the folder (`folder`: the link) and holds an `.open` record or could not be listed
+    through (`errno`); S0077."""
 
     folder: str
     errno: int | None
+    linked: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -88,9 +96,27 @@ def _parent(canonical: str) -> tuple[str, str]:
     return head or "/", base
 
 
-def _sub_dir(h: DirHandle, name: str) -> bool:
+def _kind(h: DirHandle, name: str) -> Kind | None:
     st = h.stat(name)
-    return st is not None and st.kind is Kind.DIR
+    return None if st is None else st.kind
+
+
+def _through_link(fs: FileSystem, key_dir: str, linked: str) -> Unlisted | None:
+    """A link in place of a key folder (`linked` is `key_dir`) or of its journal folder (`linked` is the journal
+    folder): the journal folder's names listed through the link, read-only. None when it holds no `.open` record."""
+    folder = _join(key_dir, JOURNAL)
+    try:
+        if linked == key_dir:
+            with fs.open_dir(key_dir) as kd:
+                if kd.stat(JOURNAL) is None:
+                    return None  # the linked key folder holds no journal folder
+        with fs.open_dir(folder) as jd:
+            names = jd.names()
+    except OSError as e:
+        return Unlisted(linked, e.errno, linked=True)
+    if any((p := journal.parse_file_name(n)) is not None and p[1] is State.OPEN for n in names):
+        return Unlisted(linked, None, linked=True)
+    return None
 
 
 def list_journals(fs: FileSystem, app_local_data: str) -> Listing:
@@ -106,13 +132,24 @@ def list_journals(fs: FileSystem, app_local_data: str) -> Listing:
             if r.rest:
                 return Listing((), (), 0)  # no `local/` yet: no save was ever journalled here
             local = core_paths.canonical_path(r)
-            keys = [k for k in handles.at(local).names() if _sub_dir(handles.at(local), k)]
+            root = handles.at(local)
+            keys = [(k, kind) for k in root.names() if (kind := _kind(root, k)) in (Kind.DIR, Kind.LINK)]
         except (OSError, PathMovedError) as e:
             return Listing((), (Unlisted(local, getattr(e, "errno", None)),), 0)
-        for key in keys:
-            folder = _join(_join(local, key), JOURNAL)
+        for key, kind in keys:
+            key_dir = _join(local, key)
+            folder = _join(key_dir, JOURNAL)
             try:
-                if not _sub_dir(handles.at(_join(local, key)), JOURNAL):
+                if kind is Kind.LINK:
+                    linked: str | None = key_dir
+                else:
+                    jkind = _kind(handles.at(key_dir), JOURNAL)
+                    if jkind not in (Kind.DIR, Kind.LINK):
+                        continue
+                    linked = folder if jkind is Kind.LINK else None
+                if linked is not None:
+                    if (u := _through_link(fs, key_dir, linked)) is not None:
+                        unlisted.append(u)
                     continue
                 jd = handles.at(folder)
                 jd.sync()  # §8.1: list only what a power loss keeps

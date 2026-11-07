@@ -25,8 +25,9 @@ export interface components {
          * ChangeNotSavedDetails
          * @description A save that did not happen, and why (engine-jobs §6.1 step 8's refusals, §6.4, §6.6, §11; S0063). `path`: the
          *     file it is about; `folder` and `acl_entry`: for `permission`, the folder and the ACL entry (in `chmod`'s words, no
-         *     subject) that stop it; `unchanged`: every file the save would write was hashed again and equals its bytes before
-         *     the save (only then may the user read "Your ledger is unchanged"). The UI words each reason
+         *     subject) that stop it, and for `linked_folder` the link in place of the save's own folder; `unchanged`: every file
+         *     the save would write was hashed again and equals its bytes before the save (only then may the user read "Your
+         *     ledger is unchanged"). The UI words each reason
          *     (`app.platform.engine_jobs.save_text.not_saved_text`).
          */
         ChangeNotSavedDetails: {
@@ -348,7 +349,7 @@ export interface components {
         /** @constant */
         NotReadyPhase: "WARMING";
         /** @enum {string} */
-        NotSavedReason: "hard_linked" | "locked" | "not_a_file" | "permission" | "io_error" | "read_back" | "name_not_utf8" | "engine_stopped";
+        NotSavedReason: "hard_linked" | "locked" | "not_a_file" | "permission" | "io_error" | "read_back" | "name_not_utf8" | "linked_folder" | "engine_stopped";
         /** @constant */
         PausedReason: "unfinished_save";
         /** RouteNotFoundError */

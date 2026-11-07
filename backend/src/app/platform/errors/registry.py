@@ -121,6 +121,7 @@ type NotSavedReason = Literal[
     "io_error",  # the disk answered an error (a full disk, an I/O error)
     "read_back",  # a written file did not read back as written (the save was rolled back)
     "name_not_utf8",  # a path is not valid UTF-8
+    "linked_folder",  # a link stands in place of the workspace's own journal, backups or key folder (S0077, BL-0193)
     "engine_stopped",  # the save's engine stopped, and the disk shows the change was not saved (§6.6)
 ]
 
@@ -129,8 +130,9 @@ type NotSavedReason = Literal[
 class ChangeNotSavedDetails:
     """A save that did not happen, and why (engine-jobs §6.1 step 8's refusals, §6.4, §6.6, §11; S0063). `path`: the
     file it is about; `folder` and `acl_entry`: for `permission`, the folder and the ACL entry (in `chmod`'s words, no
-    subject) that stop it; `unchanged`: every file the save would write was hashed again and equals its bytes before
-    the save (only then may the user read "Your ledger is unchanged"). The UI words each reason
+    subject) that stop it, and for `linked_folder` the link in place of the save's own folder; `unchanged`: every file
+    the save would write was hashed again and equals its bytes before the save (only then may the user read "Your
+    ledger is unchanged"). The UI words each reason
     (`app.platform.engine_jobs.save_text.not_saved_text`)."""
 
     reason: NotSavedReason

@@ -290,6 +290,28 @@ def test_a_try_through_a_linked_key_or_journal_folder_is_refused_path_moved(ald:
     assert (ledger / "prices.bean").exists()
 
 
+def test_the_listing_names_a_linked_journal_folder_holding_an_open_record_and_writes_nothing_through_it(
+    ald: Path, tmp_path: Path
+) -> None:
+    """S0077 (BL-0193), on the real disk through the op: the journal folder moved away and a link put in its place.
+    The listing reads no record through the link and removes no `.part` there; it names the link (`linked`), which
+    blocks every open until the real folder is back."""
+    ledger, jd, name = journalled(ald)
+    (jd / "s0-j1.part").write_bytes(b"torn")
+    link = ald / "local" / "k1" / "journal"
+    moved = tmp_path / "elsewhere"
+    os.rename(link, moved)
+    link.symlink_to(moved)
+    reply = Rig(held(ald)).send("recover_list", {"app_local_data": str(ald)})
+    assert reply["ok"], reply
+    result = reply["result"]
+    assert (result["journals"], result["parts_removed"]) == ([], 0)
+    [u] = result["unlisted"]
+    assert (u["folder"].endswith("/local/k1/journal"), u["errno"], u["linked"]) == (True, None, True)
+    assert sorted(p.name for p in moved.iterdir()) == ["s0-j1.part", f"{name}.open"]
+    assert (ledger / "main.bean").read_bytes() == POST
+
+
 # -- the gap: an engine whose lock another process holds ---------------------------------------------------------
 
 

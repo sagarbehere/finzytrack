@@ -245,8 +245,10 @@ engine/src/ledger_engine/
                  mode without it, with move, ADR-0068 D2, S0071), and displaced/keep: an outside save a swap or a clean-up
                  meets goes to a kept name beside the file, never swapped back (ADR-0013 amendment, S0061 r1)
     recover_all.py  recover-all on disk inside an engine that holds the engine lock: list_journals (each journal
-                 folder synced first, `.part` removed), inspect, keep, delete_kept, delete_created (engine-jobs
-                 §8.1 "Afterwards", S0062); protocol/recovery.py its ops recover_list, recover_try, recover_act
+                 folder synced first, `.part` removed; a link in place of a key or journal folder listed read-only
+                 and unlisted `linked` when it holds an `.open` record, S0077), inspect, keep, delete_kept,
+                 delete_created (engine-jobs §8.1 "Afterwards", S0062); protocol/recovery.py its ops recover_list,
+                 recover_try, recover_act
     save.py      the save job in the engine (engine-jobs §6.1 steps 1-7 and 9-11 around `writer.durable_commit`):
                  an encrypted file name refused first, this workspace's records, no lock of its own (ADR-0068
                  D3, D4, S0071: the engine lock is the guard), the gate, the commit point; no Beancount load (ADR-0068 D1, S0070);

@@ -65,6 +65,12 @@ def not_saved_text(d: ChangeNotSavedDetails) -> str:
                 f"{did_not} Your Mac does not allow changes to {where}. Check its permissions (Finder: Get Info), "
                 "then try again."
             )
+        case "linked_folder":  # S0077 (BL-0193): recovery never reads a save record through such a link
+            return (
+                f"{did_not} The folder {d.folder or 'of its save records'} is a link to another place. Finzytrack "
+                "keeps its save records and backups only in a real folder. Put the real folder back in its place, "
+                "then try again."
+            )
         case "io_error" | "read_back" | "name_not_utf8" | "engine_stopped":
             return _unchanged_or_not(d)
 

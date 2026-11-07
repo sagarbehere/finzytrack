@@ -382,8 +382,12 @@ def _listed(value: object) -> ListedJournal:
 
 
 def _unlisted(value: object) -> UnlistedFolder:
-    o = _keys(value, frozenset({"folder", "errno"}), "an unlisted folder")
-    return UnlistedFolder(cast("str", _path(o["folder"], "folder")), _int(o["errno"], "errno", nullable=True))
+    o = _keys(value, frozenset({"folder", "errno", "linked"}), "an unlisted folder")
+    return UnlistedFolder(
+        cast("str", _path(o["folder"], "folder")),
+        _int(o["errno"], "errno", nullable=True),
+        _bool(o["linked"], "linked"),
+    )
 
 
 def _listing(result: Mapping[str, object]) -> JournalListing:

@@ -174,6 +174,17 @@ def test_nothing_listed_blocks_every_open_with_retry() -> None:
     assert os.strerror(5) in message
 
 
+def test_a_linked_journal_folder_says_to_put_the_real_folder_back() -> None:
+    """S0077 (BL-0193): the cause is named, and the way out; "could not read" would send the user to Retry alone."""
+    screen = not_recovered_screen(NotRecovered("/app/local/k1/journal", None, linked=True))
+    assert screen.actions == ("retry",)
+    assert "/app/local/k1/journal is a link to another place" in screen.message
+    assert "Put the real folder back in its place, then press Retry." in screen.message
+    assert "could not read" not in screen.message
+    unreachable = not_recovered_screen(NotRecovered("/app/local/k1/journal", 2, linked=True)).message
+    assert os.strerror(2) in unreachable
+
+
 @pytest.mark.parametrize(("reason", "retry_may"), [("stopped", False), ("cancelled", True), ("failed", True)])
 def test_the_keep_confirmation(reason: str, retry_may: bool) -> None:
     b = Blocking(J, reason, None, None, inspection=kept_inspection("accounts.beancount.kept-s1-j7"))  # type: ignore[arg-type]

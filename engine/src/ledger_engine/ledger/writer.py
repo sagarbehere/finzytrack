@@ -144,6 +144,8 @@ class Reason(StrEnum):
     HARD_LINKED = "hard_linked"  # a replaced file has more than one hard link (`_hard_links`)
     PERMISSION = "permission"  # the system would not allow the swap or its clean-up (a mode, an ACL)
     NAME_NOT_UTF8 = "name_not_utf8"  # a path is not valid UTF-8 (the journal cannot name it)
+    LINKED_FOLDER = "linked_folder"  # a link stands in place of the workspace's key, journal or backups folder (the
+    # save's folder step, `save._ensure_dir`; S0077, BL-0193): recovery reads no record through it
 
 
 class Step(StrEnum):

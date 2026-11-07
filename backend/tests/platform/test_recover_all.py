@@ -80,10 +80,12 @@ def unreadable(name: str, jd: str = JD1) -> dict[str, Any]:
     }
 
 
-def listing(*journals: dict[str, Any], unlisted: tuple[tuple[str, int | None], ...] = ()) -> dict[str, Any]:
+def listing(
+    *journals: dict[str, Any], unlisted: tuple[tuple[str, int | None], ...] = (), linked: bool = False
+) -> dict[str, Any]:
     return {
         "journals": list(journals),
-        "unlisted": [{"folder": f, "errno": e} for f, e in unlisted],
+        "unlisted": [{"folder": f, "errno": e, "linked": linked} for f, e in unlisted],
         "parts_removed": 0,
     }
 
@@ -405,10 +407,10 @@ def test_retry_runs_the_work_again_from_a_fresh_listing() -> None:
 # -- which journal blocks which open (§8.1 "Afterwards", ADR-0063) ---------------------------------------------------
 
 
-def report_with(*blocking: Blocking, unlisted: tuple[tuple[str, int | None], ...] = ()) -> Report:
+def report_with(*blocking: Blocking, unlisted: tuple[tuple[str, int | None], ...] = (), linked: bool = False) -> Report:
     from app.platform.engine import UnlistedFolder
 
-    return Report(listed=True, blocking=blocking, unlisted=tuple(UnlistedFolder(f, e) for f, e in unlisted))
+    return Report(listed=True, blocking=blocking, unlisted=tuple(UnlistedFolder(f, e, linked) for f, e in unlisted))
 
 
 def journal(key: str | None = "k1", lineage: str | None = "lin1", keys: tuple[str, ...] = ("/l/prices",)) -> Journal:
@@ -445,6 +447,20 @@ def test_a_journal_whose_file_list_cannot_be_read_blocks_every_open() -> None:
 def test_a_journal_folder_that_could_not_be_listed_blocks_every_open() -> None:
     out = blocking_for(report_with(unlisted=((JD2, 5),)), workspace_key="k7", lineage="lin7", ledger_keys={"/x"})
     assert out == (NotRecovered(JD2, 5),)
+
+
+def test_a_linked_journal_folder_blocks_every_open_and_says_it_is_a_link() -> None:
+    """S0077 (BL-0193): the engine's `linked` reaches the screen's input."""
+    out = blocking_for(
+        report_with(unlisted=((JD2, None),), linked=True), workspace_key="k7", lineage="lin7", ledger_keys={"/x"}
+    )
+    assert out == (NotRecovered(JD2, None, linked=True),)
+
+
+def test_the_listings_linked_folder_reaches_the_report() -> None:
+    s = Script({"recover_list": [listing(unlisted=((JD2, None),), linked=True)]})
+    report = run(s)
+    assert [(u.folder, u.errno, u.linked) for u in report.unlisted] == [(JD2, None, True)]
 
 
 @pytest.mark.parametrize("report", [None, Report(listed=False, why_not_listed="unavailable")])

@@ -3,7 +3,7 @@
   "components": {
     "schemas": {
       "ChangeNotSavedDetails": {
-        "description": "A save that did not happen, and why (engine-jobs §6.1 step 8's refusals, §6.4, §6.6, §11; S0063). `path`: the\nfile it is about; `folder` and `acl_entry`: for `permission`, the folder and the ACL entry (in `chmod`'s words, no\nsubject) that stop it; `unchanged`: every file the save would write was hashed again and equals its bytes before\nthe save (only then may the user read \"Your ledger is unchanged\"). The UI words each reason\n(`app.platform.engine_jobs.save_text.not_saved_text`).",
+        "description": "A save that did not happen, and why (engine-jobs §6.1 step 8's refusals, §6.4, §6.6, §11; S0063). `path`: the\nfile it is about; `folder` and `acl_entry`: for `permission`, the folder and the ACL entry (in `chmod`'s words, no\nsubject) that stop it, and for `linked_folder` the link in place of the save's own folder; `unchanged`: every file\nthe save would write was hashed again and equals its bytes before the save (only then may the user read \"Your\nledger is unchanged\"). The UI words each reason\n(`app.platform.engine_jobs.save_text.not_saved_text`).",
         "properties": {
           "acl_entry": {
             "anyOf": [
@@ -859,6 +859,7 @@
           "io_error",
           "read_back",
           "name_not_utf8",
+          "linked_folder",
           "engine_stopped"
         ],
         "type": "string"

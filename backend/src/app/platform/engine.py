@@ -171,10 +171,13 @@ class ListedJournal:
 
 @dataclass(frozen=True, slots=True)
 class UnlistedFolder:
-    """A journal folder that could not be synced, opened or listed (blocks every open)."""
+    """A journal folder that could not be synced, opened or listed (blocks every open). `linked`: a link stands in
+    its place (or in place of its key folder; `folder` names the link) and holds an `.open` record or could not be
+    listed through (S0077)."""
 
     folder: str
     errno: int | None
+    linked: bool = False
 
 
 @dataclass(frozen=True, slots=True)

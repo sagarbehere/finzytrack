@@ -193,11 +193,13 @@ class Report:
 
 @dataclass(frozen=True, slots=True)
 class NotRecovered:
-    """Every open is blocked: the run never listed (`folder` None), or a journal folder could not be listed."""
+    """Every open is blocked: the run never listed (`folder` None), or a journal folder could not be listed.
+    `linked`: a link stands in place of the folder (S0077)."""
 
     folder: str | None
     errno: int | None
     why: str | None = None
+    linked: bool = False
 
 
 def _journal(j: ListedJournal) -> Journal:
@@ -220,7 +222,7 @@ def blocking_for(
     if not report.listed:
         return (NotRecovered(None, None, report.why_not_listed),)
     keys = frozenset(ledger_keys)
-    out: list[Blocking | NotRecovered] = [NotRecovered(u.folder, u.errno) for u in report.unlisted]
+    out: list[Blocking | NotRecovered] = [NotRecovered(u.folder, u.errno, linked=u.linked) for u in report.unlisted]
     for b in report.blocking:
         j = b.journal
         if (
