@@ -12,6 +12,7 @@ too (§5.2), and it holds no lock and writes nothing (its load reads the copy).
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import subprocess
@@ -46,19 +47,33 @@ def environment() -> dict[str, str]:
 
 
 def check(request: CheckRequest) -> CheckResult:
-    """The copy's load in a fresh process, and its answer; `failed` when the child did not answer."""
+    """The copy's load in a fresh process, and its answer; `failed` when the child did not answer.
+
+    The parent reads one answer line, then waits for the child's exit, never for the end of the pipe: a process a
+    plugin forked can hold the pipe open after the child has answered and ended (BL-0203). The child ends itself
+    once it has answered (`copy_check.main`); one that never answers is ended with the engine's group (§5.2)."""
     line = json.dumps({"path": list(sys.path), "request": request.encode()}).encode("utf-8") + b"\n"
-    done = subprocess.run(  # noqa: S603 (our own interpreter and code, no shell)
+    with subprocess.Popen(  # noqa: S603 (our own interpreter and code, no shell)
         command(),
-        input=line,
+        stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
         env=environment(),
         close_fds=True,
-        check=False,
-    )
-    if done.returncode != 0:
-        return CheckResult("failed", subject=f"exit {done.returncode}")
+    ) as child:
+        assert child.stdin is not None  # noqa: S101 (PIPE)
+        assert child.stdout is not None  # noqa: S101 (PIPE)
+        try:
+            child.stdin.write(line)
+            child.stdin.close()
+        except BrokenPipeError:  # a child that ended before it read: its exit status tells
+            with contextlib.suppress(OSError):
+                child.stdin.close()
+        answer = child.stdout.readline()
+        child.stdout.close()
+        code = child.wait()
+    if code != 0:
+        return CheckResult("failed", subject=f"exit {code}")
     try:
-        return CheckResult.decode(cast("dict[str, object]", json.loads(done.stdout)))
+        return CheckResult.decode(cast("dict[str, object]", json.loads(answer)))
     except (ValueError, KeyError, TypeError):
         return CheckResult("failed", subject="answer")

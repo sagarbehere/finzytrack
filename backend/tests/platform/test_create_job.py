@@ -160,6 +160,30 @@ def test_an_engine_death_before_the_commit_point_is_read_from_disk_naming_what_m
     )
 
 
+def test_an_engine_death_that_finds_only_the_folder_never_says_finzytrack_left_it(make: Any) -> None:
+    """BL-0199: after a death the read names the folder itself (`.`) when nothing at the job's names is in it; the
+    job may never have made it (the user's own empty folder, or one holding only another program's file), so the
+    text says only that Finzytrack may have made it (`msg:create.maybe_made_folder`)."""
+    rig = make({"create": [CRASH], "create_outcome": [facts("absent", left=["."])]})
+    value = rig.create()
+    assert value == NotCreated("stopped", FOLDER, (".",))
+    assert isinstance(value, NotCreated)
+    text = create_text.text(value)
+    assert text == (
+        "Not created. Finzytrack stopped before it finished. Finzytrack may have made the folder /u/Books. Check it, "
+        "and remove it if you do not need it."
+    )
+    assert "left the folder" not in text
+
+
+def test_a_foreign_manifest_after_a_death_with_only_the_folder_never_says_finzytrack_left_it() -> None:
+    value = create_outcome(CreateFacts("foreign", (".",), None), gated=True, folder=FOLDER)
+    assert isinstance(value, NotCreated)
+    assert create_text.text(value).endswith(
+        "Finzytrack may have made the folder /u/Books. Check it, and remove it if you do not need it."
+    )
+
+
 def test_a_foreign_manifest_before_the_commit_point_is_still_not_created(make: Any) -> None:
     rig = make({"create": [CRASH], "create_outcome": [facts("foreign")]})
     assert rig.create() == NotCreated("stopped", FOLDER, ())
@@ -375,6 +399,17 @@ def test_a_manifest_taken_stop_names_what_the_job_kept() -> None:
     assert text.startswith("Not created. Another program put a Finzytrack workspace file into /u/Books")
     assert text.endswith(
         "could not be sure they are only its own: main.beancount. Check them, and remove any you do not need."
+    )
+
+
+def test_a_manifest_taken_stop_whose_folder_was_not_cleaned_up_says_to_check_it() -> None:
+    """@regression-guard (BL-0199: untested on the base): `manifest_taken` with `left=None` (the cleanup could not
+    finish) says what appeared, then that the folder may hold an unfinished new workspace."""
+    text = create_text.text(NotCreated("manifest_taken", FOLDER, None))
+    assert text == (
+        "Not created. Another program put a Finzytrack workspace file into /u/Books at the same moment. Check the "
+        "folder before you use it. The folder /u/Books may hold an unfinished new workspace. Check it before you "
+        "delete anything."
     )
 
 

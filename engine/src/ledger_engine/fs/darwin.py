@@ -289,9 +289,7 @@ class DarwinDir:
         finally:
             os.close(fd)
 
-    def create(
-        self, name: str, data: bytes | Iterable[bytes], mode: int, like: str | None = None
-    ) -> tuple[int, int] | None:
+    def create(self, name: str, data: bytes | Iterable[bytes], mode: int, like: str | None = None) -> tuple[int, int]:
         flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC
         fd = os.open(check_name(name), flags, mode & 0o7777, dir_fd=self.fd)
         try:

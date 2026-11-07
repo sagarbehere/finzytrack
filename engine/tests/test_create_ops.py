@@ -134,6 +134,23 @@ def test_create_outcome_reads_what_the_create_left(ald: Path, tmp_path: Path) ->
     assert gone["result"] == {"manifest": "absent", "left": [], "errno": None}
 
 
+def test_create_outcome_names_a_users_empty_folder_as_the_folder_itself(ald: Path, tmp_path: Path) -> None:
+    """@regression-guard (BL-0199: untested on the base): after a death the read names the target itself (`.`) when
+    nothing of the job's names is in it, here the user's own empty folder that the job never wrote, across the
+    protocol on APFS; the sidecar words it without claiming the folder (`msg:create.maybe_made_folder`)."""
+    target = tmp_path / "Books"
+    target.mkdir()
+    (tmp_path / "Other").mkdir()
+    (tmp_path / "Other" / "theirs.txt").write_text("theirs\n")
+    e = engine(ald)
+    reply = json.loads(e.handle(request("create_outcome", params(target), 2)))
+    assert reply["result"] == {"manifest": "absent", "left": ["."], "errno": None}
+    theirs = json.loads(e.handle(request("create_outcome", params(tmp_path / "Other"), 3)))
+    assert theirs["result"] == {"manifest": "absent", "left": ["."], "errno": None}, "another program's file: unnamed"
+    assert sorted(p.name for p in target.iterdir()) == []
+    assert (tmp_path / "Other" / "theirs.txt").read_text() == "theirs\n"
+
+
 @pytest.mark.parametrize("op", ["create", "create_outcome"])
 def test_no_create_op_runs_in_an_engine_without_the_engine_lock(tmp_path: Path, op: str) -> None:
     target = tmp_path / "Books"
@@ -183,10 +200,10 @@ def test_on_apfs_the_cleanup_never_removes_another_programs_file_or_folder_in_th
 
     other = tmp_path.resolve() / "Other"
 
-    def create(self: darwin.DarwinDir, name: str, data: bytes, mode: int, like: str | None = None) -> None:
+    def create(self: darwin.DarwinDir, name: str, data: bytes, mode: int, like: str | None = None) -> tuple[int, int]:
         if name == "workspace.json":
             (other / ".finzytrack.ft-j1" / "workspace.json").write_bytes(b"")
-        real_create(self, name, data, mode, like)
+        return real_create(self, name, data, mode, like)
 
     monkeypatch.setattr(darwin.DarwinDir, "mkdir", mkdir)
     out = cr.run(plan, cr.Ports(for_this_os(), lambda root: cr.LoadResult(0, (root,))), _Gate())

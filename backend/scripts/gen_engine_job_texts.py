@@ -395,8 +395,15 @@ CREATE: tuple[Row, ...] = (
     ),
     (
         "msg:create.left_folder",
-        "added when only the folder the job made is kept (another program's entry is in it)",
+        "added when a stopped job kept only the folder it made (another program's entry is in it, or its identity "
+        "could not be read)",
         lambda: _not_created("load_errors", left=(".",)),
+    ),
+    (
+        "msg:create.maybe_made_folder",
+        "added after an engine death when the read finds nothing at the job's names in the folder (the job may not "
+        "have made it)",
+        lambda: _not_created("stopped", left=(".",)),
     ),
     (
         "msg:create.unfinished_unlisted",
@@ -531,6 +538,11 @@ COPY: tuple[Row, ...] = (
         "msg:copy.left",
         "added when the job kept entries it could not be sure are only its own (`msg:create.left`'s words)",
         lambda: _not_copied("taken", left=("<name>", "<other name>")),
+    ),
+    (
+        "msg:copy.maybe_made_folder",
+        "added after an engine death when the read finds the folder empty (`msg:create.maybe_made_folder`'s words)",
+        lambda: _not_copied("stopped", left=(".",)),
     ),
     (
         "msg:copy.unfinished_unlisted",

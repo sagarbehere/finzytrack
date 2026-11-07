@@ -4,7 +4,8 @@ S0080). Plain text for non-native readers; the screens are BL-0092's and M3's.
 A text is "Not created.", then why (one sentence, when there is one), then what the job left in the folder
 (`NotCreated.left`; owner, 2026-11-07, the middle path): the job removes what it made itself, so usually nothing is left
 and nothing more is said; entries it kept because it could not be sure they are only its own are named, with the advice
-to check them; when the folder was not cleaned up or listed (a Cancel ended the engine, no engine could read it, an
+to check them (after an engine death, a folder with nothing of the job's in it is only said to be one Finzytrack may
+have made); when the folder was not cleaned up or listed (a Cancel ended the engine, no engine could read it, an
 error), the text says the folder may hold files of an unfinished new workspace and to check it first. It never tells the
 user to delete anything. Two refusals have whole texts of their own: a folder that is not empty (§11) and a
 `.finzytrack` another program put there at the same moment (§8.2 step 7)."""
@@ -76,10 +77,18 @@ TARGET: Final = "."
 """In `NotCreated.left`, the folder itself (`ledger_engine.ledger.create.TARGET`)."""
 
 
-def kept(folder: str, left: tuple[str, ...]) -> str:
+def maybe_made(folder: str) -> str:
+    """After an engine death, only the folder itself is named (nothing at the job's names is in it): the job may not
+    have made it (the user's own empty folder), so the text never says Finzytrack left it (BL-0199)."""
+    return f"Finzytrack may have made the folder {folder}. Check it, and remove it if you do not need it."
+
+
+def kept(folder: str, left: tuple[str, ...], *, after_death: bool = False) -> str:
     """The entries the job left because it could not be sure they are only its own, the first `SHOWN` by name; the
-    folder itself when it is all that is named."""
+    folder itself when it is all that is named (after a death: `maybe_made`)."""
     if left == (TARGET,):
+        if after_death:
+            return maybe_made(folder)
         return (
             f"Finzytrack left the folder {folder} because it could not be sure everything in it is its own. Check it, "
             "and remove it if you do not need it."
@@ -92,15 +101,22 @@ def kept(folder: str, left: tuple[str, ...]) -> str:
     )
 
 
-def folder_text(folder: str, left: tuple[str, ...] | None, unfinished: str = UNFINISHED) -> str | None:
-    """What the job left in the folder (`NotCreated.left`), or None when it left nothing of its own."""
+def folder_text(
+    folder: str, left: tuple[str, ...] | None, unfinished: str = UNFINISHED, *, after_death: bool = False
+) -> str | None:
+    """What the job left in the folder (`NotCreated.left`), or None when it left nothing of its own. `after_death`:
+    `left` is the outcome read's after an engine death (reason `stopped`, the sidecar's own), not the job's cleanup."""
     if left is None:
         return unknown_folder(folder, unfinished)
-    return kept(folder, left) if left else None
+    return kept(folder, left, after_death=after_death) if left else None
+
+
+STOPPED: Final = "stopped"
+"""The sidecar's reason for a job whose engine stopped before its answer: its `left` is the outcome read's."""
 
 
 def _folder(v: NotCreated) -> str | None:
-    return folder_text(v.folder, v.left)
+    return folder_text(v.folder, v.left, after_death=v.reason == STOPPED)
 
 
 def text(v: NotCreated) -> str:

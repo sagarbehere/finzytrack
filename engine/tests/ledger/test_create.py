@@ -1132,7 +1132,7 @@ def test_a_files_identity_is_its_own_descriptors_never_a_later_stat(monkeypatch:
     fs = new_fs()
     original = MemDir.create
 
-    def create(self: MemDir, name: str, data: bytes, mode: int, like: str | None = None) -> tuple[int, int] | None:
+    def create(self: MemDir, name: str, data: bytes, mode: int, like: str | None = None) -> tuple[int, int]:
         identity = original(self, name, data, mode, like)
         if name == "main.beancount":
             fs.outside_write(f"{T}/main.beancount", data, new_inode=True)
@@ -1143,6 +1143,58 @@ def test_a_files_identity_is_its_own_descriptors_never_a_later_stat(monkeypatch:
     assert isinstance(out, NotCreated)
     assert out.left == ("main.beancount",)
     assert fs.file(f"{T}/main.beancount") == MAIN
+
+
+def test_a_file_with_no_identity_from_its_create_is_kept_never_matched_by_a_later_stat(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """BL-0200: an adapter that broke the contract (no identity from its create) while another program saved its own
+    file by rename at the name, with the job's own bytes: the job never takes a later `stat` for the file's identity,
+    so it keeps and names the file instead of removing another program's save."""
+    fs = new_fs()
+    original = MemDir.create
+
+    def create(self: MemDir, name: str, data: bytes, mode: int, like: str | None = None) -> tuple[int, int]:
+        original(self, name, data, mode, like)
+        if name == "main.beancount":
+            fs.outside_write(f"{T}/main.beancount", data, new_inode=True)
+        return None  # type: ignore[return-value]  # the broken adapter
+
+    monkeypatch.setattr(MemDir, "create", create)
+    out, _ = go(fs, load=lambda _root: LoadResult(errors=1, parsed=()))
+    assert isinstance(out, NotCreated)
+    assert "main.beancount" in (out.left or ()), out
+    assert fs.file(f"{T}/main.beancount") == MAIN, "another program's save stays"
+
+
+@pytest.mark.parametrize("holds", [None, "theirs.txt"])
+def test_a_folder_replaced_between_its_mkdir_and_its_stat_is_the_stated_limit(
+    monkeypatch: pytest.MonkeyPatch, holds: str | None
+) -> None:
+    """@regression-guard (spec §8.2 Limit (cleanup race), BL-0200): another program replaces the folder the job just
+    made with its own, between the job's `mkdir` and its `stat`. Its empty folder is removed with the job's (nothing in
+    it is lost); one that holds a file of its own is kept and named, the file with it."""
+    fs = new_fs()
+    original = MemDir.mkdir
+
+    def mkdir(self: MemDir, name: str) -> None:
+        original(self, name)
+        if name == "prices":
+            fs.outside_remove(f"{T}/prices")
+            fs.outside_mkdirs(f"{T}/prices")
+            if holds is not None:
+                fs.outside_write(f"{T}/prices/{holds}", FOREIGN)
+
+    monkeypatch.setattr(MemDir, "mkdir", mkdir)
+    out, _ = go(fs, load=lambda _root: LoadResult(errors=1, parsed=()))
+    assert isinstance(out, NotCreated)
+    if holds is None:
+        assert out.left == ()
+        assert names(fs, U) == [], "the other program's empty folder went with the job's: the stated Limit"
+    else:
+        assert out.left == ("prices",)
+        assert names(fs, f"{T}/prices") == [holds]
+        assert fs.file(f"{T}/prices/{holds}") == FOREIGN
 
 
 def test_a_target_the_job_made_that_holds_a_finder_file_is_named() -> None:

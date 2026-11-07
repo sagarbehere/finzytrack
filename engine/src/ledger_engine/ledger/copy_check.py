@@ -7,19 +7,22 @@ source's load can reach it, whatever a plugin does. `check_loaded` is the pure p
 copy's load reduced to what `loads_same` compares, with its texts mapped back to the source's places, and every path
 the load read (its files, its documents roots, its `document` entries' files), for the `load_outside` check.
 
-`main` is the child's entry: it reads one JSON request line from its standard input, loads the copy, and writes one
-JSON answer to the standard output it was started with; anything a plugin prints goes to standard error.
+`main` is the child's entry: it reads one JSON request line from its standard input, loads the copy, writes one JSON
+answer line to the standard output it was started with (anything a plugin prints goes to standard error), and ends
+the process itself, whatever a plugin left running (BL-0203).
 """
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import re
 import sys
+import traceback
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Literal, cast
+from typing import Literal, NoReturn, cast
 
 from ledger_engine.ledger import loads_same, overlay
 from ledger_engine.ledger.core import copy_layout as cl
@@ -129,15 +132,32 @@ def check_loaded(loaded: overlay.LoadResult, request: CheckRequest) -> CheckResu
     return CheckResult("checked", summary, tuple(read))
 
 
-def main(raw: Mapping[str, object]) -> None:
-    """The child's work (the module's docstring)."""
+def main(raw: Mapping[str, object]) -> NoReturn:
+    """The child's work (the module's docstring). It ends the process itself once its answer is written (BL-0203):
+    a plugin can leave anything behind that a normal exit waits for (a thread that never ends, an `atexit` handler),
+    and the copy job waits for this process to end. Nothing here needs a clean exit: the child holds no lock and
+    writes no file, the answer is closed and the standard streams flushed before it ends. Exit status 0 only once
+    the answer is written."""
+    answered = False
+    try:
+        answered = _answer(raw)
+    except BaseException:  # noqa: BLE001 (a fault of the channel itself: said on standard error, then the exit)
+        traceback.print_exc()
+    finally:
+        for stream in (sys.stdout, sys.stderr):
+            with contextlib.suppress(Exception):
+                stream.flush()
+        os._exit(0 if answered else 1)
+
+
+def _answer(raw: Mapping[str, object]) -> bool:
     out = os.dup(1)
     os.dup2(2, 1)  # what a plugin prints goes to standard error, never into the answer
     request = CheckRequest.decode(cast("Mapping[str, object]", raw["request"]))
     try:
         result = check_loaded(overlay.load(request.root, {}, DESKTOP), request)
-    except Exception as e:  # noqa: BLE001 (the load could not run: a plugin, the disk)
+    except BaseException as e:  # noqa: BLE001 (the load could not run: a plugin, its `SystemExit` included, the disk)
         result = CheckResult("failed", subject=type(e).__name__)
     with os.fdopen(out, "wb") as f:
-        f.write(json.dumps(result.encode()).encode("utf-8"))
-    sys.stdout.flush()
+        f.write(json.dumps(result.encode()).encode("utf-8") + b"\n")  # one line: the parent reads up to it
+    return True

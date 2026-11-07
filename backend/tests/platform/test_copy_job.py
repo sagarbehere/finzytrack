@@ -163,6 +163,21 @@ def test_an_engine_death_before_the_commit_point_names_every_entry_it_found(make
     assert copy_text.text(value).startswith("Not copied. Finzytrack stopped before it finished. Finzytrack left these")
 
 
+def test_an_engine_death_that_finds_only_the_folder_never_says_finzytrack_left_it(make: Any) -> None:
+    """BL-0199: after a death the read names the folder itself when nothing is in it; the job may never have made it
+    (the user's own empty folder), so the text says only that Finzytrack may have made it."""
+    rig = make({"copy": [CRASH], "copy_outcome": [facts("absent", left=["."])]})
+    value = rig.copy()
+    assert value == NotCopied("stopped", FOLDER, (".",))
+    assert isinstance(value, NotCopied)
+    text = copy_text.text(value)
+    assert text == (
+        "Not copied. Finzytrack stopped before it finished. Finzytrack may have made the folder /u/Books copy. Check "
+        "it, and remove it if you do not need it."
+    )
+    assert "left the folder" not in text
+
+
 def test_no_engine_past_the_commit_point_is_change_outcome_unknown(make: Any) -> None:
     rig = make({"copy": [GATE_DIE], "copy_outcome": [CRASH_TO_BOUND]})
     value = rig.copy()

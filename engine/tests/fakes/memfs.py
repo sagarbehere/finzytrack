@@ -836,9 +836,7 @@ class MemDir:
             return None
         return hashlib.sha256(data).hexdigest(), len(data)
 
-    def create(
-        self, name: str, data: bytes | Iterable[bytes], mode: int, like: str | None = None
-    ) -> tuple[int, int] | None:
+    def create(self, name: str, data: bytes | Iterable[bytes], mode: int, like: str | None = None) -> tuple[int, int]:
         d = self._d
         key = _key(check_name(name), d.ci)
         source: _File | None = None

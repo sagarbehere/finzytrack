@@ -115,7 +115,7 @@ def _why(v: NotCopied) -> str | None:
 
 def text(v: NotCopied) -> str:
     """The copy's §11 text for `v`."""
-    left = create_text.folder_text(v.folder, v.left, UNFINISHED)
+    left = create_text.folder_text(v.folder, v.left, UNFINISHED, after_death=v.reason == create_text.STOPPED)
     match v.reason:
         case "not_empty":
             return create_text.NOT_EMPTY

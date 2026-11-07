@@ -490,10 +490,10 @@ class Run:
         self.handles.on = path
         rel = path[len(self.folder) + 1 :]
         feed: _Feed | None = None
+        identity: tuple[int, int] | None = None
         try:
             if mkdir:
                 h.mkdir(name)
-                identity = None
             elif isinstance(data, bytes):
                 identity = h.create(name, data, FILE_MODE)  # read from the create's own descriptor (r3 F4)
             else:
@@ -504,8 +504,10 @@ class Run:
         except OSError:
             self._unsure_if_there(h, name, rel)  # ours cut short, or another program's: kept and named (r2 F2)
             raise
-        if identity is None:
-            # a folder (no descriptor: the instant between the mkdir and this stat is the stated Limit (cleanup race))
+        if mkdir:
+            # a folder has no descriptor: the instant between the mkdir and this stat is the stated Limit (cleanup
+            # race). A file's identity is only ever its create's own (BL-0200): one without it is never matched by a
+            # later `stat`, so the cleanup keeps and names it.
             try:
                 st = h.stat(name)
             except OSError:
@@ -628,10 +630,10 @@ def _load_check(r: Run) -> None:
 
 @dataclass(frozen=True, slots=True)
 class _Made:
-    """An entry this run made: its identity then, and the SHA-256 and length of the bytes it wrote (None: a
-    folder)."""
+    """An entry this run made: its identity then (None: not known, which no entry matches, so the cleanup keeps and
+    names it; BL-0200), and the SHA-256 and length of the bytes it wrote (None: a folder)."""
 
-    identity: tuple[int, int]
+    identity: tuple[int, int] | None
     data: tuple[str, int] | None
 
 

@@ -145,16 +145,15 @@ class DirHandle(Protocol):
         there is no entry of that name. Refused as `read` refuses."""
         ...
 
-    def create(
-        self, name: str, data: bytes | Iterable[bytes], mode: int, like: str | None = None
-    ) -> tuple[int, int] | None:
+    def create(self, name: str, data: bytes | Iterable[bytes], mode: int, like: str | None = None) -> tuple[int, int]:
         """Create the file `name` exclusively (it fails if any entry of that name exists), write `data` (the bytes,
         or each chunk an iterable gives, in order: S0081's streamed copy; the iterable is read only after the entry
         is made), give it
         `mode` and, with `like`, the extended attributes of the regular file `like` in this directory (a replaced file
         keeps its Finder tags; not its ACL: owner, 2026-10-29), and sync its data. The entry is durable only after
         `sync`. Returns the identity `(st_dev, st_ino)` of the file it made, read from its own descriptor (`fstat`),
-        so no other program's entry can be taken for it (S0080 r3); None from an adapter that does not read it."""
+        so no other program's entry can be taken for it (S0080 r3). Every adapter reads it: the create's cleanup never
+        takes a later `stat` for a file's identity (BL-0200)."""
         ...
 
     def allowed(self, name: str, right: Right) -> bool:

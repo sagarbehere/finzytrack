@@ -1032,10 +1032,10 @@ def test_R6_a_folder_whose_acl_denies_us_anything_the_save_or_its_undo_needs_is_
 class _FailingCreate(_DyingDir):
     """An I/O error at the staging create of `b.bean` (red team r6 F3's injection)."""
 
-    def create(self, name: str, data: bytes, mode: int, like: str | None = None) -> None:
+    def create(self, name: str, data: bytes, mode: int, like: str | None = None) -> tuple[int, int]:
         if name.startswith(".b.bean.ft-") and name.endswith(".new"):
             raise OSError(errno.EIO, "injected")
-        self._inner.create(name, data, mode, like=like)  # type: ignore[attr-defined]
+        return self._inner.create(name, data, mode, like=like)  # type: ignore[attr-defined]
 
 
 class _FailingCreateFS(_DyingFS):
@@ -1274,10 +1274,10 @@ def test_R6_O3_a_locked_ledger_folder_is_refused_and_a_locked_folder_the_save_ma
         c = _commit(tmp_path, Change(str(made / "b.bean"), None, b"new\n"))
 
         class _Dies(_DyingDir):
-            def create(self, name: str, data: bytes, mode: int, like: str | None = None) -> None:
+            def create(self, name: str, data: bytes, mode: int, like: str | None = None) -> tuple[int, int]:
                 if name.endswith(".new"):
                     raise _Died
-                self._inner.create(name, data, mode, like=like)  # type: ignore[attr-defined]
+                return self._inner.create(name, data, mode, like=like)  # type: ignore[attr-defined]
 
         class _DiesFS(_DyingFS):
             @override
@@ -1497,10 +1497,10 @@ class _AclAtStaging(_DyingDir):
         super().__init__(inner, "<none>")
         self._folder, self._ace = folder, ace
 
-    def create(self, name: str, data: bytes, mode: int, like: str | None = None) -> None:
+    def create(self, name: str, data: bytes, mode: int, like: str | None = None) -> tuple[int, int]:
         if name.endswith(".new") and self._inner.path() == self._folder:  # type: ignore[attr-defined]
             _run("/bin/chmod", "+a", self._ace, self._folder)
-        self._inner.create(name, data, mode, like=like)  # type: ignore[attr-defined]
+        return self._inner.create(name, data, mode, like=like)  # type: ignore[attr-defined]
 
 
 class _AclAtStagingFS(_DyingFS):
