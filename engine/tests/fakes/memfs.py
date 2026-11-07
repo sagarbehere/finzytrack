@@ -827,7 +827,7 @@ class MemDir:
     def acl(self) -> tuple[AclEntry, ...]:
         return tuple(a.entry for a in self._d.acl)
 
-    def create(self, name: str, data: bytes, mode: int, like: str | None = None) -> None:
+    def create(self, name: str, data: bytes, mode: int, like: str | None = None) -> tuple[int, int] | None:
         d = self._d
         key = _key(check_name(name), d.ci)
         source: _File | None = None
@@ -873,6 +873,7 @@ class MemDir:
         self._fs._effect(self._label("create", name), link)
         self._fs._effect(self._label("write", name), write, cut)
         self._fs._effect(self._label("fsync", name), fsync)
+        return (1, made[0])  # as `fstat` on its own descriptor would
 
     def swap(self, a: str, b: str) -> None:
         d = self._d

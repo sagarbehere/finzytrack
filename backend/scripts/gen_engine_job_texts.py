@@ -391,6 +391,11 @@ CREATE: tuple[Row, ...] = (
         lambda: _not_created("taken", left=tuple(f"<name {i}>" for i in range(1, 9))),
     ),
     (
+        "msg:create.left_folder",
+        "added when only the folder the job made is kept (another program's entry is in it)",
+        lambda: _not_created("load_errors", left=(".",)),
+    ),
+    (
         "msg:create.unfinished_unlisted",
         "added when the folder was not cleaned up or listed (no engine, an error)",
         lambda: _not_created("stopped", left=None),

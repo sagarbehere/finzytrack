@@ -68,8 +68,18 @@ def _why(v: NotCreated) -> str | None:
             return None
 
 
+TARGET: Final = "."
+"""In `NotCreated.left`, the folder itself (`ledger_engine.ledger.create.TARGET`)."""
+
+
 def kept(folder: str, left: tuple[str, ...]) -> str:
-    """The entries the job left because it could not be sure they are only its own, the first `SHOWN` by name."""
+    """The entries the job left because it could not be sure they are only its own, the first `SHOWN` by name; the
+    folder itself when it is all that is named."""
+    if left == (TARGET,):
+        return (
+            f"Finzytrack left the folder {folder} because it could not be sure everything in it is its own. Check it, "
+            "and remove it if you do not need it."
+        )
     shown = ", ".join(left[:SHOWN])
     more = f" and {len(left) - SHOWN} more" if len(left) > SHOWN else ""
     return (
@@ -89,7 +99,8 @@ def text(v: NotCreated) -> str:
     if v.reason == "not_empty":
         return NOT_EMPTY
     if v.reason == "manifest_taken":
-        return manifest_taken(v.folder)
+        left = _folder(v)  # what the job kept is named here too (r3 F2, V4)
+        return manifest_taken(v.folder) if left is None else f"{manifest_taken(v.folder)} {left}"
     return " ".join(part for part in (NOT_CREATED, _why(v), _folder(v)) if part)
 
 

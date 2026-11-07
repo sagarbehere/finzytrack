@@ -432,7 +432,7 @@ class CreateResult(Message):
 class CreateOutcomeResult(Message):
     """§1 "resolved from disk": `.finzytrack` after the target's sync holds the plan's bytes (`ours`), something else
     (`foreign`), nothing (`absent`), or could not be read (`unknown`; `errno`); and `left`, the entries at the job's
-    names that may be its own (who made a name is not known after a death, so nothing is removed; null: not listed)."""
+    names, whatever they hold (who made a name is not known after a death, so nothing is removed; null: not listed)."""
 
     manifest: Literal["ours", "foreign", "absent", "unknown"]
     left: list[RelPath] | None

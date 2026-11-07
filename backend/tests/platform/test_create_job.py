@@ -135,7 +135,7 @@ def test_a_refusal_before_the_commit_point_is_not_created_naming_what_it_left(ma
     [
         (facts("ours"), Created(FOLDER)),
         (facts("absent"), NotCreated("stopped", FOLDER, ())),
-        (facts("foreign", left=["main.beancount"]), NotCreated("manifest_taken", FOLDER, ("main.beancount",))),
+        (facts("foreign", left=["main.beancount"]), NotCreated("stopped", FOLDER, ("main.beancount",))),
     ],
 )
 def test_a_create_cut_past_its_commit_point_is_told_what_the_disk_says(
@@ -285,7 +285,7 @@ def test_a_request_the_client_could_not_send_is_internal() -> None:
         ("ours", False, "created"),
         ("absent", True, "stopped"),
         ("absent", False, "stopped"),
-        ("foreign", True, "manifest_taken"),
+        ("foreign", True, "stopped"),
         ("foreign", False, "stopped"),
         ("unknown", True, "CHANGE_OUTCOME_UNKNOWN"),
         ("unknown", False, "stopped"),
@@ -367,6 +367,35 @@ def test_the_text_names_what_the_job_left_and_never_says_to_delete_anything() ->
     assert nothing == "Not created. Finzytrack could not check the new ledger."
     for text in (named, unknown, nothing):
         assert "You can delete it." not in text
+
+
+def test_a_manifest_taken_stop_names_what_the_job_kept() -> None:
+    """Red team r3 F2, verifier r3 V4: every stop that keeps something says so, `manifest_taken` included."""
+    text = create_text.text(NotCreated("manifest_taken", FOLDER, ("main.beancount",)))
+    assert text.startswith("Not created. Another program put a Finzytrack workspace file into /u/Books")
+    assert text.endswith(
+        "could not be sure they are only its own: main.beancount. Check them, and remove any you do not need."
+    )
+
+
+def test_a_foreign_finzytrack_after_a_death_blames_no_one_and_names_what_is_there() -> None:
+    """Red team r3 note: after a death a `.finzytrack` that is not ours may be a part of ours a death cut in the
+    cleanup, so the text says the job stopped and names what stands at its names."""
+    value = create_outcome(CreateFacts("foreign", (".finzytrack", "main.beancount"), None), gated=True, folder=FOLDER)
+    assert value == NotCreated("stopped", FOLDER, (".finzytrack", "main.beancount"))
+    assert isinstance(value, NotCreated)
+    text = create_text.text(value)
+    assert "Another program" not in text
+    assert ".finzytrack, main.beancount" in text
+
+
+def test_the_folder_itself_kept_is_named_as_the_folder() -> None:
+    """Verifier r3 V1: the folder the job made stays (another program's entry in it)."""
+    text = create_text.text(NotCreated("load_errors", FOLDER, (".",)))
+    assert text.endswith(
+        "Finzytrack left the folder /u/Books because it could not be sure everything in it is its own. Check it, and "
+        "remove it if you do not need it."
+    )
 
 
 def test_a_long_list_of_kept_names_shows_five_and_how_many_more() -> None:

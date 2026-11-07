@@ -269,7 +269,7 @@ class DarwinDir:
         finally:
             os.close(fd)
 
-    def create(self, name: str, data: bytes, mode: int, like: str | None = None) -> None:
+    def create(self, name: str, data: bytes, mode: int, like: str | None = None) -> tuple[int, int] | None:
         flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC
         fd = os.open(check_name(name), flags, mode & 0o7777, dir_fd=self.fd)
         try:
@@ -285,6 +285,8 @@ class DarwinDir:
                     os.close(src)
             os.fchmod(fd, mode & 0o7777)  # the mode as asked, not cut by the umask (a preserved mode)
             self._fs.durable_sync(fd)
+            st = os.fstat(fd)
+            return (st.st_dev, st.st_ino)
         finally:
             os.close(fd)
 

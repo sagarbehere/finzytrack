@@ -150,15 +150,16 @@ def answer_of(a: CreateAnswer) -> CreateValue:
 
 def create_outcome(facts: CreateFacts, *, gated: bool, folder: str) -> CreateValue:
     """§1 "resolved from disk", a pure function of what the disk says: `.finzytrack` holding our bytes is created
-    (only the job's step 7 puts it there, after the commit point); anything else is not. Past the commit point a
-    foreign `.finzytrack` is step 7's collision, and a folder that could not be read is unknown (it may be a
-    workspace); before it, nothing of ours was put there, so it is not created."""
+    (only the job's step 7 puts it there, after the commit point); anything else is not created, naming what stands at
+    the job's names. Past the commit point a folder that could not be read is unknown (it may be a workspace); before
+    it, nothing of ours was put there, so it is not created."""
     if facts.manifest == "ours":
         return Created(folder)
     if gated and facts.manifest == "unknown":
         return NotDone(error(ErrorCode.CHANGE_OUTCOME_UNKNOWN))
-    reason: NotCreatedReason = "manifest_taken" if gated and facts.manifest == "foreign" else "stopped"
-    return NotCreated(reason, folder, facts.left, errno=facts.errno)
+    # A `.finzytrack` that is not ours after a death may be another program's or a part of ours a death cut in the
+    # cleanup (S0080 r3): "stopped", naming what stands at the job's names, never blaming another program.
+    return NotCreated("stopped", folder, facts.left, errno=facts.errno)
 
 
 def create_work(request: CreateRequest) -> Work:

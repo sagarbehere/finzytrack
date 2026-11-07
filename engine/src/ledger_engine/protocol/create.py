@@ -5,7 +5,7 @@ the engine lock (they write and read user files, engine-jobs §5.1).
 - `create` (`create.run`): the new folder's files, the load check, `gate` (and waits for `proceed`), then
   `.finzytrack/` last. Its load runs the ledger's plugins: the sidecar retires its engine after it.
 - `create_outcome` (`create.outcome`): §1's "resolved from disk" after a create's engine died: the target synced,
-  then what stands at `.finzytrack` and the entries at the job's names that may be its own. It loads and removes
+  then what stands at `.finzytrack` and every entry at the job's names, whatever it holds. It loads and removes
   nothing.
 """
 

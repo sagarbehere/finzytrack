@@ -238,7 +238,7 @@ def test_a_file_dropped_under_a_name_the_job_writes_is_never_replaced() -> None:
     drop_at(fs, f"create {T}:main.beancount", f"{T}/main.beancount")
     out, job = go(fs)
     assert isinstance(out, NotCreated)
-    assert (out.reason, out.path, out.left) == ("taken", f"{T}/main.beancount", ()), "never names another's"
+    assert (out.reason, out.path, out.left) == ("taken", f"{T}/main.beancount", (".",)), "only the folder it made"
     assert fs.file(f"{T}/main.beancount") == FOREIGN
     assert MANIFEST_DIR not in names(fs, T)
     assert job.gated == 0
@@ -349,7 +349,7 @@ def test_a_foreign_temp_folder_of_the_jobs_name_is_never_removed() -> None:
 
     out, _ = go(fs, Job(at_gate=put_theirs))
     assert isinstance(out, NotCreated)
-    assert (out.reason, out.path, out.left) == ("taken", TEMP, ())
+    assert (out.reason, out.path, out.left) == ("taken", TEMP, (".",)), "the folder it made, holding theirs"
     assert fs.file(theirs) == FOREIGN
     assert MANIFEST_DIR not in names(fs, T)
 
@@ -580,7 +580,7 @@ def test_the_outcome_of_a_foreign_finzytrack_folder_is_foreign() -> None:
     fs.outside_write(f"{T}/{MANIFEST_DIR}", FOREIGN)
     facts = outcome(fs, PLAN)
     assert facts.manifest == "foreign"
-    assert facts.left == ("main.beancount", "prices/p.beancount")
+    assert facts.left == (MANIFEST_DIR, "main.beancount", "prices/p.beancount"), "every entry at our names"
 
 
 def test_the_outcome_of_a_finzytrack_folder_with_our_names_but_other_bytes_is_foreign() -> None:
@@ -689,7 +689,7 @@ def test_a_name_another_program_took_first_is_never_called_ours_whatever_it_hold
     out, _ = go(fs)
     assert isinstance(out, NotCreated)
     assert out.reason == "taken", what
-    assert out.left == (), "another program's entry is never named as maybe ours"
+    assert out.left == (".",), "only the folder the job made, holding another program's entry, is named"
     assert any(p == f"{T}/main.beancount" for p in fs.snapshot()), "and never removed"
 
 
@@ -796,7 +796,7 @@ def test_the_listing_never_reads_a_file_longer_than_the_jobs_own() -> None:
         out, _ = go(fs)
         facts = outcome(fs, PLAN)
     assert isinstance(out, NotCreated)
-    assert (out.left, facts.left) == ((), ())
+    assert (out.left, facts.left) == ((".",), ("main.beancount",))
     assert max(read, default=0) < len(big)
 
 
@@ -1058,3 +1058,167 @@ def test_the_outcome_never_reads_a_manifest_file_past_the_jobs_bytes(monkeypatch
     monkeypatch.setattr(MemDir, "read", read)
     assert outcome(fs, PLAN).manifest == "foreign"
     assert longest["n"] <= len(WS_JSON) + 1
+
+
+# -- S0080 round 3 (red team F1-F5, verifier V1-V3; owner, 2026-11-07: "Fix, then land (Recommended)") -------------
+
+
+def test_after_a_death_every_entry_at_the_jobs_names_is_named_whatever_it_holds() -> None:
+    """Red team r3 F1: after a power loss a file of ours may be torn to zeros of its length; the outcome read names
+    every entry at the job's names, never guessing by content."""
+    fs = new_fs()
+    fs.inject(clean_effects(False).index(f"fsync {T}:main.beancount"))
+    with pytest.raises(Crash):
+        go(fs)
+    seen = 0
+    for state in fs.power_loss_states():
+        if state.file(f"{T}/main.beancount") is None:
+            continue
+        seen += 1
+        facts = outcome(state, PLAN)
+        assert facts.manifest == "absent"
+        assert "main.beancount" in (facts.left or ()), state.file(f"{T}/main.beancount")
+    assert seen > 1, "the sweep met torn states"
+
+
+def test_after_a_death_a_file_with_other_bytes_at_the_jobs_name_is_named_too() -> None:
+    fs = new_fs(target="empty")
+    fs.outside_write(f"{T}/main.beancount", FOREIGN)
+    fs.outside_write(f"{T}/notes.txt", FOREIGN)
+    assert outcome(fs, PLAN).left == ("main.beancount",), "only names the job writes are named"
+
+
+def test_after_a_death_an_empty_target_is_named_as_the_folder_itself() -> None:
+    fs = new_fs(target="empty")
+    assert outcome(fs, PLAN).left == (".",)
+
+
+def _stat_fails_once(monkeypatch: pytest.MonkeyPatch, fs: MemFS, name: str) -> None:
+    original = MemDir.stat
+    state = {"fired": False}
+
+    def stat(self: MemDir, entry: str) -> object:
+        if entry == name and not state["fired"] and any(p.endswith(f"/{name}") for p in fs.snapshot()):
+            state["fired"] = True
+            raise OSError(errno.EIO, "the stat after the mkdir failed")
+        return original(self, entry)
+
+    monkeypatch.setattr(MemDir, "stat", stat)
+
+
+def test_a_folder_whose_stat_failed_after_its_mkdir_is_kept_and_named(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Red team r3 F3, verifier r3 V2: made, but its identity not read: never removed, never dropped."""
+    fs = new_fs()
+    _stat_fails_once(monkeypatch, fs, "prices")
+    out, _ = go(fs, load=lambda _root: LoadResult(errors=1, parsed=()))
+    assert isinstance(out, NotCreated)
+    assert out.left == ("prices",)
+    assert names(fs, f"{T}/prices") == []
+
+
+def test_a_target_whose_stat_failed_after_its_mkdir_is_kept_and_named(monkeypatch: pytest.MonkeyPatch) -> None:
+    fs = new_fs()
+    _stat_fails_once(monkeypatch, fs, "new")
+    out, _ = go(fs, load=lambda _root: LoadResult(errors=1, parsed=()))
+    assert isinstance(out, NotCreated)
+    assert out.reason == "load_errors", "a stat that fails stops nothing: the folder is only not known as ours"
+    assert out.left == (".",)
+    assert names(fs, U) == ["new"]
+
+
+def test_a_files_identity_is_its_own_descriptors_never_a_later_stat(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Red team r3 F4: another program saves its own file by rename right after the job's create; the job recorded
+    the identity of the file it made (`fstat`), so the other program's file is kept and named."""
+    fs = new_fs()
+    original = MemDir.create
+
+    def create(self: MemDir, name: str, data: bytes, mode: int, like: str | None = None) -> tuple[int, int] | None:
+        identity = original(self, name, data, mode, like)
+        if name == "main.beancount":
+            fs.outside_write(f"{T}/main.beancount", data, new_inode=True)
+        return identity
+
+    monkeypatch.setattr(MemDir, "create", create)
+    out, _ = go(fs, load=lambda _root: LoadResult(errors=1, parsed=()))
+    assert isinstance(out, NotCreated)
+    assert out.left == ("main.beancount",)
+    assert fs.file(f"{T}/main.beancount") == MAIN
+
+
+def test_a_target_the_job_made_that_holds_a_finder_file_is_named() -> None:
+    """Verifier r3 V1: the folder the job made stays (Finder put `.DS_Store` in it), and the answer says so."""
+    fs = new_fs()
+
+    def load(_root: str) -> LoadResult:
+        fs.outside_write(f"{T}/.DS_Store", FOREIGN)
+        return LoadResult(errors=1, parsed=())
+
+    out, _ = go(fs, load=load)
+    assert isinstance(out, NotCreated)
+    assert out.left == (".",)
+    assert names(fs, T) == [".DS_Store"]
+
+
+def test_a_read_back_stop_after_the_rename_removes_ours_and_names_the_changed_manifest_file() -> None:
+    """@regression-guard (verifier r3 V3: it held on 477f5b83; it kills the mutant that drops the temp-to-`.finzytrack`
+    remap). The cleanup after `.finzytrack` failed its read-back at the target's path."""
+    fs = new_fs()
+    seen = {"n": 0}
+
+    def hook(_i: int, lab: str) -> None:
+        if lab == f"sync {T}:":
+            seen["n"] += 1
+            if seen["n"] == 2:
+                fs.on_effect = None
+                fs.outside_write(f"{T}/{MANIFEST_DIR}/workspace.json", FOREIGN)
+
+    fs.on_effect = hook
+    out, _ = go(fs)
+    assert isinstance(out, NotCreated)
+    assert out.reason == "read_back"
+    assert out.left == (f"{MANIFEST_DIR}/workspace.json",)
+    assert fs.file(f"{T}/main.beancount") is None
+    assert fs.file(f"{T}/{MANIFEST_DIR}/rules/r.yaml") is None
+
+
+def test_a_death_during_the_cleanup_names_what_stands_at_the_jobs_names() -> None:
+    """@regression-guard (red team r3 note: the engine side held on 477f5b83; the sidecar's wording is what changed,
+    `test_create_job.py`). A crash in the cleanup after `manifest_taken` leaves part of the job's files; the outcome
+    read names them (the sidecar then says the job stopped, blaming no one)."""
+    probe = new_fs()
+    hook_at(
+        probe, f"rename {T}:{MANIFEST_DIR}.ft-j7,{MANIFEST_DIR}", lambda: probe.outside_mkdirs(f"{T}/{MANIFEST_DIR}")
+    )
+    go(probe)
+    k = next(n for n, e in enumerate(probe.effects) if e.startswith(f"remove {T}:"))
+    fs = new_fs()
+    hook_at(fs, f"rename {T}:{MANIFEST_DIR}.ft-j7,{MANIFEST_DIR}", lambda: fs.outside_mkdirs(f"{T}/{MANIFEST_DIR}"))
+    fs.inject(k)
+    with pytest.raises(Crash):
+        go(fs)
+    facts = outcome(fs, PLAN)
+    assert facts.manifest == "foreign"
+    assert facts.left is not None
+    assert "main.beancount" in facts.left
+
+
+def test_a_failed_create_whose_name_cannot_be_checked_is_named(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A create that failed otherwise than `EEXIST`, and a `stat` that cannot tell whether its name stands there:
+    named, for the user to check (it may be ours)."""
+    fs = new_fs()
+    fs.inject(clean_effects(False).index(f"write {T}:main.beancount"), crash=False, err=errno.EIO)
+    original = MemDir.stat
+    state = {"fired": False}
+
+    def stat(self: MemDir, name: str) -> object:
+        if name == "main.beancount" and not state["fired"]:
+            state["fired"] = True
+            raise OSError(errno.EIO, "cannot tell")
+        return original(self, name)
+
+    monkeypatch.setattr(MemDir, "stat", stat)
+    out, _ = go(fs)
+    assert isinstance(out, NotCreated)
+    assert out.reason == "io_error"
+    assert out.left is not None
+    assert "main.beancount" in out.left

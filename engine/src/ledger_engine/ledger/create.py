@@ -32,16 +32,18 @@ half-made workspace. Every byte of a create is Finzytrack's own text. Its steps:
 
 Step 2 (reading sources) is copy's (BL-0196). **Every stop removes what this run made, and only that** (`_cleanup`;
 owner, 2026-11-07, the middle path): a name whose exclusive create or `mkdir` succeeded in this run, still the same
-entry (the identity recorded at its create) and, for a file, still holding exactly the job's bytes (a bounded read); a
-folder only by `rmdir`; the target folder last, when the job made it. Whatever fails a check, and a name whose create
-failed otherwise than `EEXIST` but that stands there now, is kept and named (`NotCreated.left`); another program's
-entry at a name the job never made is neither removed nor named. None when the cleanup could not finish.
+entry (a file's identity read from the create's own descriptor, a folder's by a `stat` right after its `mkdir`) and,
+for a file, still holding exactly the job's bytes (a bounded read); a folder only by `rmdir`; the target folder last,
+when the job made it. Whatever fails a check, a name whose identity could not be read, a name whose create failed
+otherwise than `EEXIST` but that stands there now, and the target folder the job made when it cannot be removed (`.`)
+are kept and named (`NotCreated.left`); another program's entry at a name the job never made is neither removed nor
+named. None when the cleanup could not finish.
 
 `outcome(fs, plan)` is §1's "resolved from disk" for a create whose engine died: the target `durable_sync`ed first, so
 what it reads is what a power loss keeps, then whether `.finzytrack` holds the plan's bytes (`ours`), something else
-(`foreign`) or nothing (`absent`), and the entries at the job's names that may be its own (`_maybe_ours`). It removes
-nothing and writes nothing but the sync. Every read that decides whether a file is the job's reads at most the job's
-bytes for it plus one (`DirHandle.read`'s `limit`).
+(`foreign`) or nothing (`absent`), and every entry at the job's names, whatever it holds (`_at_our_names`). It
+removes nothing and writes nothing but the sync. Every read that decides whether a file is the job's reads at most
+the job's bytes for it plus one (`DirHandle.read`'s `limit`).
 
 A malformed plan raises `writer.BadPlanError` before anything is read (a name the job reserves, a path outside the
 target, two names one volume could take for one, an encrypted file name: ADR-0059). Python's garbage collector is
@@ -309,9 +311,10 @@ class _Run:
         a name whose exclusive create or mkdir succeeded in this run, never judged by its bytes alone. Just before
         each removal the entry must still be the one the job made (its identity, `(st_dev, st_ino)`, as recorded at
         its create) and, for a file, still hold exactly the job's bytes (a bounded read); a folder goes only by
-        `rmdir`, which fails on a non-empty one; the target folder last, when the job made it. Anything that fails a
-        check is kept and named, with every name whose create failed otherwise than `EEXIST` but that stands there
-        now (it may be ours or another program's). Every folder is reached through the path guard. Returns the names
+        `rmdir`, which fails on a non-empty one; the target folder last, when the job made it (named `.` when it
+        stays, r3 V1). Anything that fails a check is kept and named, with every name in `unsure` (a create that
+        failed otherwise than `EEXIST` but whose name stands there now, a made name whose identity could not be read;
+        it may be ours or another program's). Every folder is reached through the path guard. Returns the names
         kept (relative to the target, a folder only when nothing kept is inside it), or None when the cleanup could
         not finish (a folder moved, an error): the user is asked to check the folder."""
         kept = list(self.unsure)
@@ -337,20 +340,22 @@ class _Run:
                     kept.append(rel)
                     continue
                 h.sync()
-            if self.made_target:  # its rmdir fails while anything kept is in it
+            if self.made_target:  # its rmdir fails while anything is in it
                 parent, _, name = self.folder.rpartition("/")
                 ph = self.handles.at(parent or "/")
                 st = ph.stat(name)
-                if st is not None and st.identity == self.target_identity:
-                    self.handles.release(self.folder)
+                if st is not None and self.target_identity is None:
+                    kept.append(TARGET)  # not known as the job's: named, never removed
+                elif st is not None and st.identity == self.target_identity:
                     try:
-                        ph.rmdir(name)  # fails when another program's entry is in it: it stays, theirs
+                        self.handles.release(self.folder)
+                        ph.rmdir(name)
                         ph.sync()
                     except OSError:
-                        pass
+                        kept.append(TARGET)  # the folder the job made stays (another program's entry in it): named
         except (OSError, PathMovedError):
             return None
-        return tuple(sorted(k for k in set(kept) if not any(o.startswith(k + "/") for o in kept)))
+        return _named(kept)
 
     # step 1 ------------------------------------------------------------------------------------------------------
     def _target(self) -> None:
@@ -365,7 +370,10 @@ class _Run:
                 self._folder_rule(h, parent)
                 h.mkdir(name)
                 self.made_target = True
-                st = h.stat(name)
+                try:
+                    st = h.stat(name)
+                except OSError:
+                    st = None  # its identity unknown: the cleanup names it, never removes it (r3 F3, V2)
                 self.target_identity = None if st is None else st.identity
                 h.sync()
             return
@@ -399,17 +407,35 @@ class _Run:
         try:
             if mkdir:
                 h.mkdir(name)
+                identity = None
             else:
-                h.create(name, data, FILE_MODE)
+                identity = h.create(name, data, FILE_MODE)  # read from the create's own descriptor (r3 F4)
         except FileExistsError:
             raise _Stop("taken", path) from None  # another program's entry: never touched, never named
         except OSError:
-            if h.stat(name) is not None:
-                self.unsure.append(rel)  # ours cut short, or another program's: kept and named (r2 F2)
+            self._unsure_if_there(h, name, rel)  # ours cut short, or another program's: kept and named (r2 F2)
             raise
-        st = h.stat(name)
-        if st is not None:
-            self.made[rel] = _Made(st.identity, None if mkdir else data)
+        if identity is None:
+            # a folder (no descriptor: the instant between the mkdir and this stat is the stated Limit (cleanup race))
+            try:
+                st = h.stat(name)
+            except OSError:
+                st = None
+            if st is None:
+                self.unsure.append(rel)  # made, but not known as ours: kept and named, never dropped (r3 F3, V2)
+                return
+            identity = st.identity
+        self.made[rel] = _Made(identity, None if mkdir else data)
+
+    def _unsure_if_there(self, h: DirHandle, name: str, rel: str) -> None:
+        """A name whose create or mkdir failed otherwise than `EEXIST`: named when it stands there now, or when that
+        cannot be told."""
+        try:
+            there = h.stat(name) is not None
+        except OSError:
+            there = True
+        if there:
+            self.unsure.append(rel)
 
     def _sync(self) -> None:
         for d in reversed(_folders(self.plan.files)):
@@ -507,6 +533,19 @@ class _Made:
 # -- the outcome after a death ---------------------------------------------------------------------------------------
 
 
+TARGET: Final = "."
+"""In `NotCreated.left`, the target folder itself (the job made it and could not remove it; r3 V1)."""
+
+
+def _named(entries: list[str]) -> tuple[str, ...]:
+    """The names to show: each once, a folder (the target included) only when nothing named is inside it."""
+    names = set(entries)
+    inner = {e for e in names if e != TARGET}
+    return tuple(
+        sorted(e for e in names if not (e == TARGET and inner) and not any(o.startswith(e + "/") for o in inner))
+    )
+
+
 def _nfd(path: str) -> str:
     """A name as every volume we write on compares it at least (§6.3: NFD); case is kept, so on a case-sensitive
     volume another program's `MAIN.beancount` is not at one of our names."""
@@ -527,15 +566,15 @@ def _ours(plan: CreatePlan) -> tuple[dict[str, bytes], set[str]]:
     return files, folders
 
 
-def _maybe_ours(handles: Handles, plan: CreatePlan, folder: str) -> tuple[str, ...] | None:
-    """After a death, who made a name is not known, so nothing is removed (owner, 2026-11-07): the entries at the
-    job's names that may be its own, for the user to check. A file holding no bytes, a prefix or all of the job's
-    bytes for its name (an empty file of the plan's included, r2 F5); a folder of the job's names that is empty (a
-    non-empty one is walked, and its entries named). A file holding other bytes, or any other entry, is not the
-    job's and is not named. Never follows a link (the path guard) and never reads more than the job's bytes plus one.
-    None when the folder cannot be listed; empty when there is no folder."""
+def _at_our_names(handles: Handles, plan: CreatePlan, folder: str) -> tuple[str, ...] | None:
+    """After a death, who made a name is not known, so nothing is removed (owner, 2026-11-07) and every entry at one
+    of the job's names is named for the user to check, whatever it holds (r3: no guessing by content; a torn file of
+    ours holds anything): the plan's files and folders, the temp folder and `.finzytrack`'s names, and the target
+    itself when it holds nothing else of them. A folder of the job's names is walked (never through a link: the path
+    guard) and named only when nothing named is inside it. None when the folder cannot be listed; empty when there is
+    no folder."""
     files, folders = _ours(plan)
-    found: list[str] = []
+    found: list[str] = [TARGET]
     todo = [""]
     try:
         while todo:
@@ -546,30 +585,24 @@ def _maybe_ours(handles: Handles, plan: CreatePlan, folder: str) -> tuple[str, .
                 if rel:
                     raise
                 return ()
-            names = h.names()
-            if rel and not names:
-                found.append(rel)
-            for name in names:
+            for name in h.names():
                 st = h.stat(name)
                 path = _under(rel, name) if rel else name
                 key = _nfd(path)
-                if st is None:
+                if st is None or (key not in files and key not in folders):
                     continue
+                found.append(path)
                 if st.kind is Kind.DIR and key in folders:
                     todo.append(path)
-                elif st.kind is Kind.FILE and key in files:
-                    data = h.read(name, limit=len(files[key]) + 1)
-                    if data is not None and files[key].startswith(data):
-                        found.append(path)
     except (OSError, PathMovedError):
         return None
-    return tuple(sorted(found))
+    return _named(found)
 
 
 @dataclass(frozen=True, slots=True)
 class Facts:
     """What the disk says about a create (§1): `.finzytrack` after the target's sync (`unknown`: it could not be read;
-    `errno`), and the entries that may be the job's (`_maybe_ours`; None: not listed)."""
+    `errno`), and every entry at the job's names (`_at_our_names`; None: not listed)."""
 
     manifest: ManifestSeen
     left: tuple[str, ...] | None
@@ -608,7 +641,7 @@ def outcome(fs: FileSystem, plan: CreatePlan) -> Facts:
         folder = core_paths.canonical_path(r)
         handles.at(folder).sync()  # what is read below is what a power loss keeps
         seen = _manifest_seen(handles, plan, folder)
-        return Facts(seen, () if seen == "ours" else _maybe_ours(handles, plan, folder))
+        return Facts(seen, () if seen == "ours" else _at_our_names(handles, plan, folder))
     except NotADirectoryError:
         return Facts("absent", ())  # a file stands at the target: no workspace was begun there (r2 verifier F4)
     except (OSError, PathMovedError) as e:
