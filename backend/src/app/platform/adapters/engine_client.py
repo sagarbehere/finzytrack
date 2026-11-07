@@ -21,8 +21,13 @@ ARCHITECTURE.md §2.0, §5, §7; `design/specs/engine-jobs.md` §5.1-§5.5 since
   goes to the group. Once drained, the end is reported to `on_engine_ended` (its spawn serial, pid, our reason, exit,
   peak memory). A new engine is spawned only after the previous one is drained (§5.1). Windows has no groups: the
   engine is ended and waited for alone until its nested Job Object (BL-0087).
-- **`close()`** (§5.5, §9.3 step 4) records `close`, signals the group once and returns: it takes no call lock (a call
-  to a hung engine cannot hold it) and never waits for the reap. The call in flight fails `closed`.
+- **`close()`** (§5.5, §9.3 step 4) records `close` and signals the group once; it takes no call lock (a call to a
+  hung engine cannot hold it), and the call in flight fails `closed`. Then it **waits for the drain** of every engine
+  that is ending (the one it signalled, one that had already exited or been ended, a previous one still draining),
+  for at most `close_wait` (`CLOSE_WAIT`), so that at a quit the drain's later signals reach a member forked during
+  the first one before the sidecar exits (BL-0194; owner, 2026-11-07: "Yes, make quit wait for the drain."). An
+  engine it did not signal (a job past its commit point, §4) is not waited for. A drain still going at the bound is
+  left to the reaper thread, which ends with the sidecar: a stuck process cannot hold the quit.
 - **Spawn** (§5.1). `EngineCommand` names the interpreter and environment: `for_venv` in development and tests,
   `for_packaged` in the bundle (S0038), where one interpreter serves both processes with two separate
   site-packages (ADR-0056). Both run `python -s -S -B -P -c <bootstrap> <engine site>`: `-S` keeps the interpreter's
@@ -146,6 +151,11 @@ from app.platform.observability import Event, EventSink
 from app.platform.observability.events import ENGINE_BYTECODE
 
 STDERR_LINES = 200
+# How long `close()` waits for the drain of the engines that are ending (BL-0194; engine-jobs §9.3 step 4): the display
+# delay (`app.platform.engine_jobs.scheduler.DISPLAY_DELAY`, the same number, kept equal by a test), the moment after
+# which the app treats a signalled process that has not ended as possibly stuck (§5.2's advice). A drain normally ends
+# within a few milliseconds; one that has not ended by then is waiting for a process that may never end.
+CLOSE_WAIT = 2.0
 STDERR_LINE_BYTES = 64 * 1024
 DROPPED_ENV_PREFIXES = ("FT_", "PYTHON")
 HASH_SEED = "0"
@@ -575,8 +585,10 @@ class EngineClient:
         group_ops: GroupOps | None = None,
         on_engine_ended: Callable[[EngineEnd], None] | None = None,
         on_engine_spawned: Callable[[int], None] | None = None,
+        close_wait: float = CLOSE_WAIT,
     ) -> None:
         self._command = command
+        self._close_wait = close_wait
         self._on_stderr = on_stderr
         self._log: EventSink = log or _no_log
         self._policy = policy or RestartPolicy()
@@ -649,15 +661,28 @@ class EngineClient:
         self._settle_if_idle()
 
     def close(self) -> None:
-        """Record `close`, signal the engine's group once and return, without waiting for a call or the reap."""
+        """Record `close` and signal the engine's group once, without waiting for a call; then wait for the drain of
+        every engine that is ending, for at most `close_wait` (BL-0194, §9.3 step 4)."""
         with self._signals:
             self._closing = True
             self._mark_ended("close")
             self._needs_settle = True
             filler = self._filler
+            ending = self._ending()
         if filler is not None:
             filler.stop()
         self._settle_if_idle()
+        with self._signals:
+            self._signals.wait_for(lambda: all(run.drained.is_set() for run in ending), timeout=self._close_wait)
+
+    def _ending(self) -> list[_Running]:
+        """Under `_signals`: the engines whose drain a close waits for: the previous one, and the running one if we
+        ended it or it has exited. Not one running a job past its commit point that the close left alone (§4)."""
+        runs = [self._previous] if self._previous is not None else []
+        run = self._run
+        if run is not None and (run.reason is not None or run.group.exited.is_set() or run.group.leader_exited()):
+            runs.append(run)
+        return [run for run in runs if not run.drained.is_set()]
 
     # -- diagnostics ------------------------------------------------------------------------------------------
 

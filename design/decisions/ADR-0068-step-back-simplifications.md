@@ -135,3 +135,7 @@ S0073's reviews found that two D7 cuts had a cost the step-back review had not s
 ## Note (2026-11-01): the drain's member listing restored (S0075)
 
 Built (`design/journal/S0075-drain-listing.md`, BL-0190, BL-0158): the drain of dfe3aee8 is back (hold the exited leader, signal the group and list its members until none but the leader is left, reap, never signal after the reap), with one change: on macOS a listed member whose status reads zombie (`sysctl(KERN_PROC_PID)`, `p_stat == SZOMB`) is not counted, so a zombie whose parent left the group no longer keeps the drain going. The engine's own end when the sidecar is gone stays one signal, a limit of the spec's §15 (BL-0194); so does a quit's end, since the sidecar exits without waiting for the drain (S0075 verifier r1 F3).
+
+## Note (2026-11-07): a quit waits for the drain (S0076)
+
+The previous note's "so does a quit's end" no longer holds: owner, 2026-11-07, in session: "Yes, make quit wait for the drain." `close()` now waits for the drain of the engines that are ending, at most the display delay (ADR-0063 amendment of 2026-11-07; `design/journal/S0076-quit-drain.md`). The engine's own end when the sidecar is gone stays one signal (BL-0194).

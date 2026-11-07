@@ -1360,6 +1360,7 @@ class RecordingOps(PosixGroupOps):
     def __init__(self, *, hold_reap: bool = False) -> None:
         self.calls: list[str] = []
         self.release = threading.Event()
+        self.reaped = threading.Event()
         if not hold_reap:
             self.release.set()
 
@@ -1372,7 +1373,9 @@ class RecordingOps(PosixGroupOps):
     def reap(self, pid: int) -> Reaped:
         self.calls.append("reap")
         self.release.wait()
-        return super().reap(pid)
+        reaped = super().reap(pid)
+        self.reaped.set()
+        return reaped
 
 
 @pytest.mark.skipif(os.name != "posix", reason="process groups are POSIX; Windows is BL-0087")
@@ -1392,25 +1395,129 @@ def test_no_signal_reaches_the_group_after_the_reap() -> None:
 
 
 @pytest.mark.skipif(os.name != "posix", reason="process groups are POSIX; Windows is BL-0087")
-def test_close_returns_without_waiting_for_the_reap() -> None:
-    """§5.5: "`close()` ... signals the engine's group once and returns without waiting for a call in flight or for
-    the reap" (§14: "`close()` and Quit anyway never wait for the reap"), here while a fake port's reap never
-    returns."""
+def test_close_waits_for_the_drain_of_the_engine_it_ended() -> None:
+    """BL-0194 (owner, 2026-11-07: "Yes, make quit wait for the drain."; §9.3 step 4): `close()` returns only once the
+    drain of the engine it ended is done, so the drain's later signals reach a member forked during the first one
+    before the sidecar exits. Here a fake reap is held until released."""
     ops = RecordingOps(hold_reap=True)
-    c = EngineClient(engine_command(), group_ops=ops)
+    c = EngineClient(engine_command(), group_ops=ops, close_wait=DEADLINE)
+    try:
+        assert isinstance(c.start(), EngineInfo)
+        closer = threading.Thread(target=c.close, daemon=True)
+        closer.start()
+        assert wait_until(lambda: "reap" in ops.calls)
+        closer.join(ABSENCE)
+        assert closer.is_alive(), "close() returned before the drain was done"
+        ops.release.set()
+        closer.join(DEADLINE)
+        assert not closer.is_alive()
+        assert ops.reaped.is_set()
+        assert isinstance(c.state, Closed)
+    finally:
+        ops.release.set()
+
+
+@pytest.mark.skipif(os.name != "posix", reason="process groups are POSIX; Windows is BL-0087")
+def test_close_waits_for_a_previous_engine_still_draining() -> None:
+    """BL-0194: an engine already ended (here retired after its job) whose drain is still under way is waited for
+    too: the quit is the last chance to finish its drain."""
+    ops = RecordingOps(hold_reap=True)
+    c = EngineClient(engine_command(), group_ops=ops, close_wait=DEADLINE)
+    try:
+        assert isinstance(c.start(), EngineInfo)
+        c.end("retire")
+        assert wait_until(lambda: "reap" in ops.calls)
+        assert c.pid is None
+        closer = threading.Thread(target=c.close, daemon=True)
+        closer.start()
+        closer.join(ABSENCE)
+        assert closer.is_alive(), "close() did not wait for the previous engine's drain"
+        ops.release.set()
+        closer.join(DEADLINE)
+        assert not closer.is_alive()
+    finally:
+        ops.release.set()
+
+
+@pytest.mark.skipif(os.name != "posix", reason="process groups are POSIX; Windows is BL-0087")
+def test_close_waits_for_the_drain_of_an_engine_that_died_by_itself() -> None:
+    """BL-0194: an engine that died between requests (not ended by us, so no reason is recorded) is drained like any
+    other (§5.2: "this also ends the members of an engine that died by itself"), and the close waits for that drain."""
+    ops = RecordingOps(hold_reap=True)
+    c = EngineClient(engine_command(), group_ops=ops, close_wait=DEADLINE)
     try:
         assert isinstance(c.start(), EngineInfo)
         pid = c.pid
         assert pid is not None
+        kill(pid)
+        assert wait_until(lambda: "reap" in ops.calls)
+        closer = threading.Thread(target=c.close, daemon=True)
+        closer.start()
+        closer.join(ABSENCE)
+        assert closer.is_alive(), "close() did not wait for the drain of an engine that died by itself"
+        ops.release.set()
+        closer.join(DEADLINE)
+        assert not closer.is_alive()
+    finally:
+        ops.release.set()
+
+
+@pytest.mark.skipif(os.name != "posix", reason="process groups are POSIX; Windows is BL-0087")
+def test_close_stops_waiting_for_a_drain_that_does_not_end() -> None:
+    """§9.3 step 4: a stuck process cannot hold the quit. `close()` waits for the drain at most `close_wait`, then
+    returns while the drain goes on (here a fake reap that never returns). Replaces S0057's "returns without waiting
+    for the reap"; on the base it fails the lower bound (the close did not wait at all)."""
+    ops = RecordingOps(hold_reap=True)
+    c = EngineClient(engine_command(), group_ops=ops, close_wait=ABSENCE)
+    try:
+        assert isinstance(c.start(), EngineInfo)
+        began = time.monotonic()
         closer = threading.Thread(target=c.close, daemon=True)
         closer.start()
         closer.join(DEADLINE)
-        assert not closer.is_alive(), "close() waited for the reap"
+        took = time.monotonic() - began
+        assert not closer.is_alive(), "close() waited for a drain that does not end"
+        assert took >= ABSENCE * 0.9, f"close() did not wait for the drain ({took:.3f} s)"
         assert isinstance(c.state, Closed)
-        assert wait_until(lambda: "reap" in ops.calls)
-        assert ops.calls.count("kill") >= 1
+        assert "reap" in ops.calls
+        assert not ops.reaped.is_set()
     finally:
         ops.release.set()
+
+
+def test_the_quit_waits_for_the_drain_at_most_the_display_delay() -> None:
+    """BL-0194: the bound is the display delay, the moment after which the app treats a signalled process that has
+    not ended as possibly stuck (§5.2's advice). Imported here, so the file still loads on the base."""
+    from app.platform.adapters.engine_client import CLOSE_WAIT
+    from app.platform.engine_jobs.scheduler import DISPLAY_DELAY
+
+    assert CLOSE_WAIT == DISPLAY_DELAY
+
+
+@pytest.mark.skipif(os.name != "posix", reason="process groups and flock are POSIX; Windows is BL-0087")
+@pytest.mark.parametrize("how", ["close", "quit anyway, then close"])
+def test_after_a_close_the_plugins_child_is_gone_and_the_lock_free(tmp_path: Path, how: str) -> None:
+    """BL-0194, on the real engine: at `close()`'s return (the sidecar exits right after it) a plugin's child that
+    inherited a lock is gone and the lock is free; before S0076 the close returned after one signal, while the
+    child was still exiting. Five runs each."""
+    for run in range(5):
+        lock = tmp_path / f"lock-{run}"
+        child: int | None = None
+        c = EngineClient(engine_command())
+        try:
+            out = c.call("test.child", {"lock": str(lock)})
+            assert isinstance(out, dict)
+            child = int(out["pid"])  # pyright: ignore[reportArgumentType]
+            assert not lock_free(lock)
+            if how != "close":
+                c.end("quit_anyway")
+            c.close()
+            free = lock_free(lock)  # first: the lock check takes microseconds, `gone` runs `ps`
+            assert (free, gone(child)) == (True, True), f"run {run}: the close returned before the drain"
+        finally:
+            c.close()
+            if child is not None and not gone(child):
+                kill(child)
 
 
 @pytest.mark.skipif(os.name != "posix", reason="process groups are POSIX; Windows is BL-0087")
@@ -1893,6 +2000,8 @@ def test_a_cancel_or_close_past_the_commit_point_lets_the_job_finish(tmp_path: P
             closer.start()
             closer.join(DEADLINE)
             assert not closer.is_alive(), "close() waited for the job"
+            # BL-0194: the close signalled nothing, so it waits for no drain either (the quiesce, BL-0154, waits).
+            assert t.is_alive(), "close() waited for the job past its commit point"
         t.join(DEADLINE)
         assert not t.is_alive()
         assert out == [{}], "the job past its commit point did not finish"

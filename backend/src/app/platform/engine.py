@@ -330,5 +330,6 @@ class EnginePort(Protocol):
         ...
 
     def close(self) -> None:
-        """Signal the engine's group once and return, without waiting for the reap; later calls fail with `closed`."""
+        """Signal the engine's group once, then wait for the drain of the engines that are ending, for a bounded time
+        (engine-jobs §9.3 step 4); later calls fail with `closed`."""
         ...
