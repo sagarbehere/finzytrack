@@ -74,6 +74,9 @@
 - Verifier V5 Low (`top_ignores_journals` survived): test added, `test_a_journal_the_cleanup_cannot_remove_still_raises_the_next_number` (fake, a locked journal).
 - RT O1 (no publish until the open's rebuild, so a fresh install or an outside edit refuses every save `mirror_stale`): named in BL-0152's row as the loop the open must close. RT O3 and the other overflow items: recorded by the red team; nothing in them loses, tears or overwrites a byte (the journal-link probe `e_jl.py`: SQLite removes a link at a journal's name and leaves its target).
 
+### Round 2 (final), head 9fec910a (verifier)
+Passed with findings, 0 High, 2 Medium, 2 Low; every gate run in full (backend 2378 passed, engine 9427 passed with the real-mount tests run). Attacks: 8 (mounts at each level, `path_key` for case, Unicode and links, the stamp's glob rule, edits between load, stamp and re-check, the 12-digit bound, an engine without `--app-cache`, the moved-aside folder, the two changed existing tests). No finding loses a byte or gives a false outcome, so under the owner's final-round rule (IMP-0052) V1 to V4 are BL-0212; engine-jobs §6.7's "Limit (rebuild glob)" was corrected to say what V1 showed. The I4 integrity test still uses names that predate the design: BL-0213.
+
 ## Golden changes
 - `engine/tests/mirror/test_rows.py::test_meta`: two new keys `engine_build`, `as_of` (publish.md §8).
 - `backend/tests/mirror/test_query.py`: a join over `m_meta` counts 32 rows, not 24 (8 keys).
@@ -84,4 +87,4 @@
 - `backend/tests/platform/test_engine_scheduler.py`: the real-engine save test publishes the disk first (else its gate refuses: the old test passed only because the plan sent its own digest).
 
 ## Retro
-- Pending: four Medium fixes in round 1 call for a fresh round on the fix range (PROCESS.md §3 step 5, ADR-0058); the retro line follows it.
+- Build about 55 min, fix about 23 min; 2 review rounds (round 1 verifier 0H/1M/4L and data-safety red team 0H/3M/3L + 4 overflow; round 2 verifier 0H/2M/2L, to BL-0212). Cheaper gate: an inventory of what the engine trusts from the request (a cache folder, a root, a key) and of what lies under the folder it deletes in (other volumes), made before coding, would have caught red team F1 and F3; and "which set is stamped" deserved a line in the spec's §8 before the build (V1 of both rounds).
