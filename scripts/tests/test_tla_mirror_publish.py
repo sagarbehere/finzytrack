@@ -8,7 +8,7 @@ run TLC (formal/tla/mirror-publish/run_all.sh does); they check that the names l
 - every property has a mutant that must break it, every mutant has a switch in the model;
 - every vacuity witness is a predicate of the model, run on a small world;
 - MAPPING.md lists exactly the actions of the model's Next relation, and each row names a rule of the spec (a §
-  number) and a code function (built, or planned for S0086);
+  number) and a code function (built, or planned for BL-0113);
 - every rule of publish.md that MAPPING.md §1 cites exists in the spec;
 - the generated configurations are in step with gen_cfgs.py.
 """

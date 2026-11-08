@@ -539,5 +539,5 @@ def test_meta(tmp_path: Path) -> None:
         "fingerprint": STAMP.fingerprint,
         "export_version": hashlib.sha256(schema.ddl().encode("utf-8")).hexdigest(),
         "built_at": STAMP.built_at,
-        "build_complete": "0",  # no `commodities` rows yet (BL-0120)
+        "build_complete": "1",  # every table has its rows (BL-0120, S0086)
     }

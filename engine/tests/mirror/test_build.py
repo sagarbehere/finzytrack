@@ -226,15 +226,29 @@ def test_the_rows_do_no_arithmetic_in_the_default_context(tmp_path: Path) -> Non
 # ---- completeness (S0050 verifier F2; BL-0120, BL-0113) --------------------------------------------------------------
 
 
-def test_a_build_without_commodity_rows_is_marked_incomplete(tmp_path: Path) -> None:
-    # The `commodities` rows wait for BL-0120; until then no build may say it is complete, so the publish can refuse
-    # it (BL-0113). Both places say so: the result the caller checks and the `meta` row a reader checks.
+def test_a_build_with_every_table_is_complete(tmp_path: Path) -> None:
+    # Every table has its rows since BL-0120 (S0086), so a build says it is complete in both places the publish and
+    # readers check (BL-0113): the result the caller checks and the `meta` row a reader checks.
     loaded = load_root(write_ledger(tmp_path / "ledger", "2020-01-01 commodity VTI\n2020-01-01 open Assets:Bank\n"))
+    result = build(loaded, str(tmp_path / "mirror.db"), TODAY, STAMP)
+    assert isinstance(result, Built), result
+    assert result.complete is True
+    assert result.rows["commodities"] == 1
+    con = sqlite3.connect(f"file:{tmp_path / 'mirror.db'}?mode=ro", uri=True)
+    assert rows(con, "SELECT code FROM commodities") == [("VTI",)]
+    assert rows(con, "SELECT value FROM meta WHERE key = 'build_complete'") == [("1",)]
+
+
+def test_a_build_that_leaves_a_table_out_says_it_is_incomplete(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """@regression-guard (it held on a195dbf3; S0086 verifier F2; it kills `complete-ignored`)."""
+    # No build leaves a table out today, but the marker the publish refuses must still work in
+    # both places if one does (BL-0113).
+    monkeypatch.setattr(row_builders, "COMPLETE", False)
+    loaded = load_root(write_ledger(tmp_path / "ledger", "2020-01-01 commodity VTI\n"))
     result = build(loaded, str(tmp_path / "mirror.db"), TODAY, STAMP)
     assert isinstance(result, Built), result
     assert result.complete is False
     con = sqlite3.connect(f"file:{tmp_path / 'mirror.db'}?mode=ro", uri=True)
-    assert rows(con, "SELECT count(*) FROM commodities") == [(0,)]
     assert rows(con, "SELECT value FROM meta WHERE key = 'build_complete'") == [("0",)]
 
 

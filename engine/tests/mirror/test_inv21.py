@@ -27,10 +27,14 @@ pytestmark = pytest.mark.inv("INV-21")
 
 CORPUS = Path(__file__).resolve().parents[3] / "corpora" / "ledgers" / "inv21"
 GOLDENS: dict[str, Any] = json.loads((CORPUS / "goldens.json").read_text(encoding="utf-8"))
-# The directive types the metadata-keys case pins, and the table and key columns that hold their metadata. `Close`
-# has no table in the surface; `Commodity` rows wait for the owner's ISO list (BL-0120).
-DIRECTIVE_TABLES = {"Open": ("m_accounts", "metadata_json")}
-NO_ROWS_YET = {"Close", "Commodity"}
+# The directive types the metadata-keys case pins, the table and column that hold their metadata, and the order that
+# matches the goldens' (file order). `commodities` is sorted by code and has rows for used, never declared codes (NULL
+# metadata), so its declared rows are read in line order. `Close` has no table in the surface.
+DIRECTIVE_TABLES = {
+    "Open": ("m_accounts", "metadata_json", "rowid"),
+    "Commodity": ("m_commodities", "metadata_json", "json_extract(metadata_json, '$.lineno')"),
+}
+NO_TABLE = {"Close"}
 
 
 def relative(text: str | None, root: str) -> str | None:
@@ -83,9 +87,10 @@ def test_every_case_passes_its_goldens(tmp_path: Path) -> None:
 
 def test_the_directive_metadata_goldens(tmp_path: Path) -> None:
     golden = GOLDENS["cases"]["metadata-keys"]["directives"]
-    assert {d["type"] for d in golden} == set(DIRECTIVE_TABLES) | NO_ROWS_YET
+    assert {d["type"] for d in golden} == set(DIRECTIVE_TABLES) | NO_TABLE
     con, root = build_case("metadata-keys", tmp_path)
-    for kind, (table, column) in DIRECTIVE_TABLES.items():
+    for kind, (table, column, order) in DIRECTIVE_TABLES.items():
         want = [d["metadata_json"] for d in golden if d["type"] == kind]
-        have = [relative(r[0], root) for r in rows(con, f"SELECT {column} FROM {table} ORDER BY rowid")]  # noqa: S608
+        sql = f"SELECT {column} FROM {table} WHERE {column} IS NOT NULL ORDER BY {order}"  # noqa: S608
+        have = [relative(r[0], root) for r in rows(con, sql)]
         assert have == want, kind

@@ -31,8 +31,8 @@ FILE_MODE = 0o600  # the ledger's content: readable by the user's own tools only
 
 @dataclass(frozen=True, slots=True)
 class Built:
-    """The file was written. `complete` is False while a table is not built yet (BL-0120): such a file says so in
-    `meta.build_complete` too, and the publish must refuse it (BL-0113)."""
+    """The file was written. `complete` is False when the build left a table out (none does since S0086, BL-0120):
+    such a file says so in `meta.build_complete` too, and the publish must refuse it (BL-0113)."""
 
     path: str
     rows: dict[str, int]

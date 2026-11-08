@@ -30,7 +30,7 @@ from typing import Any, Final, cast
 
 from ledger_engine.ledger import beancount_port as port
 from ledger_engine.ledger import grammar
-from ledger_engine.mirror.core import schema
+from ledger_engine.mirror.core import iso4217, schema
 
 type Value = str | int | None
 type Row = tuple[Value, ...]
@@ -42,6 +42,8 @@ EXACT: Final = decimal.Context(
 SOURCE_PREFIXES: Final = ("Assets:", "Liabilities:")  # v0.2.2's literal text (README "Ids")
 SOURCE_ROOTS: Final = ("Assets", "Liabilities")  # v0.2.2's `_compute_source_account` (README "`source_account`")
 CATEGORY_KINDS: Final = ("Income", "Expenses")
+HOLDING_KINDS: Final = ("Assets", "Liabilities")  # the account kinds that can hold a balance (`only_at_cost`)
+CASH_CLASSES: Final = frozenset({"cash", "currency"})  # `asset-class` values that mean cash (README "`is_currency`")
 KINDS: Final = ("Assets", "Liabilities", "Equity", "Income", "Expenses")
 
 
@@ -253,6 +255,97 @@ def posting_rows(txns: Sequence[port.Transaction], kind_of: Mapping[str, str]) -
                     None if cost is None else cost.label,
                 )
             )
+    return out
+
+
+def is_currency(code: str, asset_class: str | None, operating: frozenset[str], at_cost: frozenset[str]) -> int:
+    """README "`is_currency`" (ADR-0025 and its amendments of 2026-10-25 and 2026-11-08), first rule that applies:
+    1. an operating currency is cash (a reporting currency is never demoted);
+    2. a declared `asset-class` (text, trimmed, not empty) decides: 1 for `cash` or `currency` in any case, else 0;
+    3. a code the ledger only ever holds at cost (`only_at_cost`) is a holding: 0;
+    4. a code that was ever a country's money in ISO 4217 (`iso4217.CASH`) is cash: 1;
+    5. anything else is a holding: 0."""
+    if code in operating:
+        return 1
+    declared = (asset_class or "").strip()
+    if declared:
+        return 1 if declared.lower() in CASH_CLASSES else 0
+    if code in at_cost:
+        return 0
+    return 1 if code in iso4217.CASH else 0
+
+
+def only_at_cost(entries: Iterable[port.Directive], kind_of: Mapping[str, str]) -> frozenset[str]:
+    """The codes the ledger holds at cost and never plainly elsewhere (owner, 2026-11-08: "a posting without cost
+    counts only in an account that never holds that code at cost"), over every transaction, future-dated and
+    Beancount's padding transactions included.
+
+    A posting holds its units currency at cost when it carries a cost after booking (`{...}` or `{}`, a purchase or
+    a sale from a lot); an account holds a code at cost when any of its postings does. A posting without cost (`100
+    USD`, `10 BEL @ 250 INR`: a price is not a cost) shows the code held plainly only when its account can hold a
+    balance (kind `Assets` or `Liabilities`, by the ledger's `name_*` options; ADR-0024) and never holds that code at
+    cost. So a sale or a split written without `{}` in the lot's own account, an RSU's income leg in shares, and a
+    pad into a lot account (its `Equity` leg) leave the ticker a holding, while a forex lot `100 USD {83 INR}` beside
+    a plain USD bank account, or a ticker moved without its cost into another asset account, leave the code cash.
+    The currency a cost or price is stated in is not held by that posting."""
+    with_cost: dict[str, set[str]] = {}  # code -> accounts that hold it at cost
+    plain: list[tuple[str, str]] = []  # (code, account) of postings without cost in balance-sheet accounts
+    for e in entries:
+        if not isinstance(e, port.Transaction):
+            continue
+        for p in e.postings:
+            if p.units is None:
+                continue
+            if p.cost is not None:
+                with_cost.setdefault(p.units.currency, set()).add(p.account)
+            elif kind_of.get(root(p.account)) in HOLDING_KINDS:
+                plain.append((p.units.currency, p.account))
+    held_plainly = {code for code, account in plain if account not in with_cost.get(code, ())}
+    # A plugin may hand over a currency that is not text (None): it names no commodity.
+    return frozenset(c for c in with_cost.keys() - held_plainly if isinstance(c, str))  # pyright: ignore[reportUnnecessaryIsInstance]
+
+
+def used_codes(entries: Iterable[port.Directive]) -> set[str]:
+    """Every code a posting uses as units, cost or price currency, a `price` directive names on either side, or a
+    `balance` assertion counts in (surface.toml `commodities.row`)."""
+    out: set[str] = set()
+    for e in entries:
+        match e:
+            case port.Transaction():
+                for p in e.postings:
+                    cost = p.cost if isinstance(p.cost, port.Cost) else None
+                    out.update(a.currency for a in (p.units, cost, p.price) if a is not None)
+            case port.Price():
+                out.update((e.currency, e.amount.currency))
+            case port.Balance():
+                out.add(e.amount.currency)
+            case _:
+                pass
+    # A plugin may hand over an amount whose currency is not text (None): it names no commodity.
+    return {code for code in out if isinstance(code, str)}  # pyright: ignore[reportUnnecessaryIsInstance]
+
+
+def commodity_rows(entries: Sequence[port.Directive], options: port.OptionsMap) -> list[Row]:
+    """One row per declared or used code, sorted by code. A code declared twice keeps the last declaration in entry
+    order (Beancount reports the duplicate; its `getters.get_commodity_directives` and v0.2.2 keep the last too)."""
+    declared = {e.currency: e for e in entries if isinstance(e, port.Commodity)}
+    operating = frozenset(options.get("operating_currency") or ())
+    at_cost = only_at_cost(entries, kinds(options))
+    out: list[Row] = []
+    for code in sorted(declared.keys() | used_codes(entries)):
+        entry = declared.get(code)
+        meta = (entry.meta or {}) if entry is not None else {}
+        name, asset_class = (None if meta.get(k) is None else meta_text(meta[k]) for k in ("name", "asset-class"))
+        out.append(
+            (
+                code,
+                None if entry is None else entry.date.isoformat(),
+                name,
+                asset_class,
+                is_currency(code, asset_class, operating, at_cost),
+                None if entry is None else meta_json(entry.meta),
+            )
+        )
     return out
 
 
@@ -481,9 +574,10 @@ def training_rows(txns: Iterable[port.Transaction], kind_of: Mapping[str, str]) 
     return out
 
 
-# TODO(BL-0120): True once the `commodities` rows are built. A build says it is incomplete in its result and in
-# `meta.build_complete`, and the publish refuses it (BL-0113).
-COMPLETE: Final = False
+# Every table of the surface has its rows (the last, `commodities`, since BL-0120, S0086). A build that left a table
+# out would set this False: it says so in its result (`Built.complete`) and in `meta.build_complete`, and the publish
+# refuses it (BL-0113; publish.md §4 step 4).
+COMPLETE: Final = True
 
 
 def meta_rows(stamp: Stamp) -> list[Row]:
@@ -511,9 +605,7 @@ def table_rows(
     tables: dict[str, list[Row]] = {
         "postings": posting_rows(txns, kind_of),
         "accounts": account_rows(entries, kind_of),
-        # TODO(BL-0120): the commodities rows, once the owner has said which ISO 4217 codes count as cash
-        # (design/inbox/20261028-iso-currency-list.md). Until then the build is marked incomplete (`COMPLETE`).
-        "commodities": [],
+        "commodities": commodity_rows(entries, options),
         "balance_assertions": balance_rows(entries),
         **directive_rows(entries),
         "ledger_options": option_rows(options),

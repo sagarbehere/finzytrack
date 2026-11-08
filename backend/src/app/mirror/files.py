@@ -63,8 +63,8 @@ class MirrorUnavailable:
 
 @dataclass(frozen=True, slots=True)
 class MirrorInfo:
-    """The mirror's `meta` (surface.toml `meta` note). `build_complete` is False while a table is not built yet
-    (BL-0120); a published generation is always complete (BL-0113)."""
+    """The mirror's `meta` (surface.toml `meta` note). `build_complete` is False in a build that left a table out
+    (none does since S0086, BL-0120); a published generation is always complete (BL-0113)."""
 
     surface_version: int
     ledger_version: str

@@ -538,12 +538,12 @@ status = "decided"
 [[table]]
 name = "commodities"
 base = "m_commodities"
-row = "One commodity: every one declared with a `commodity` directive, and every one a posting uses as units, cost or price currency or a `price` directive names on either side."
+row = "One commodity: every one declared with a `commodity` directive, and every one a posting uses as units, cost or price currency, a `price` directive names on either side, or a `balance` assertion counts in. Sorted by code. A code declared twice keeps the last declaration in entry order (Beancount reports the duplicate as an error; its own `getters.get_commodity_directives` and v0.2.2 keep the last too)."
 as_of = "entry"
 origin = "v0.2.2"
-status = "draft"
+status = "decided"
 cites = ["ADR-0025", "ADR-0048"]
-note = "v0.2.2 added only commodities used as posting units; v0.4 also adds those seen only as a cost, price or price-directive currency, so a join on any currency column finds its row. Beancount 3.2.0's `options[\"commodities\"]` is empty, so it cannot serve as the list."
+note = "v0.2.2 added only commodities used as posting units; v0.4 also adds those seen only as a cost, price, price-directive or balance-assertion currency, so a join on any currency column finds its row. A code named only in metadata, an `open` directive's currency list or a `custom` directive has no row. Beancount 3.2.0's `options[\"commodities\"]` is empty, so it cannot serve as the list. Built since S0086 (BL-0120)."
 
 [[table.column]]
 name = "code"
@@ -577,13 +577,13 @@ status = "decided"
 name = "name"
 type = "TEXT"
 format = "text"
-meaning = "The commodity's `name` metadata; NULL when absent or never declared."
-source = "Commodity meta `name`."
+meaning = "The commodity's `name` metadata, as text; NULL when absent or never declared."
+source = "Commodity meta `name`, as its Python text."
 sign = "n/a"
 origin = "v0.2.2"
-change = "same"
-cites = []
-why = ""
+change = "changed"
+cites = ["ADR-0048"]
+why = "v0.2.2 bound the metadata value itself: a number (`name: 42`, a Decimal to Beancount) failed its whole export, and a flag `TRUE` was stored as the text `1` (the column's TEXT affinity). v0.4 stores the value's Python text (`42`, `True`); a text value is unchanged."
 user_sql = true
 status = "decided"
 
@@ -591,13 +591,13 @@ status = "decided"
 name = "asset_class"
 type = "TEXT"
 format = "text"
-meaning = "The commodity's `asset-class` metadata (for example `cash`, `stock`, `etf`, `mutual-fund`); NULL when absent."
-source = "Commodity meta `asset-class`."
+meaning = "The commodity's `asset-class` metadata as written, as text (for example `cash`, `stock`, `etf`, `mutual-fund`); NULL when absent or never declared."
+source = "Commodity meta `asset-class`, as its Python text."
 sign = "n/a"
 origin = "v0.2.2"
-change = "same"
-cites = []
-why = ""
+change = "changed"
+cites = ["ADR-0048"]
+why = "v0.2.2 bound the metadata value itself: a flag `TRUE` was stored as the text `1` (the column's TEXT affinity), a number (a Decimal to Beancount) failed its whole export. v0.4 stores the value's Python text (`True`, `5`); a text value is unchanged."
 user_sql = true
 status = "decided"
 
@@ -606,12 +606,12 @@ name = "is_currency"
 type = "INTEGER"
 format = "bool"
 meaning = "1 when the commodity is cash (a unit of account), 0 when it is a holding such as a stock or fund."
-source = "First rule that applies: a declared `asset-class` decides (1 for `cash` or `currency`, compared trimmed and case-insensitive; 0 otherwise); else 1 for an ISO 4217 currency code or a code listed in `operating_currency`; else 0."
+source = "One value per code for the whole ledger, first rule that applies (ADR-0025 and its amendments of 2026-10-25 and 2026-11-08): 1 for a code listed in `operating_currency`, whatever its `asset-class`; else a declared `asset-class` (its text, trimmed, not empty) decides: 1 for `cash` or `currency` in any case, 0 for anything else; else 0 for a code the ledger holds only at cost: the units of some posting with a cost (`{...}`, `{}` included), and of no posting without cost in an account of kind Assets or Liabilities (by the `name_*` options) that never holds that code at cost, over every transaction (future-dated and padding ones included; a price `@` is not a cost); else 1 for a code that was ever a country's money in ISO 4217, current or historic; else 0. The ISO codes are the engine's pinned list (`ledger_engine.mirror.core.iso4217`: 277 codes derived from the ISO 4217 Maintenance Agency's List One of 2026-09-17 and List Three of 2026-01-01, whose SHA-256 the module records); precious metals (`XAU`), funds (`CLF`), accounting units (`XDR`) and the test and no-currency codes are not in it (owner, 2026-10-29)."
 sign = "n/a"
 origin = "v0.2.2"
 change = "changed"
 cites = ["ADR-0025", "L3-13"]
-why = "v0.2.2 used `operating_currency` as the list of currencies, so in an INR ledger a USD bank account counted as a holding (0); v0.4 counts USD as cash (1). A code with no `asset-class` that is neither an ISO code nor an operating currency (for example an undeclared `VTI`) was 1 in v0.2.2 and is 0 now; a non-ISO operating currency such as `RMB` stays 1 (ADR-0025 amendment, 2026-10-25). This is ADR-0025's one-time reclassification."
+why = "ADR-0025's one-time reclassification. v0.2.2: with `operating_currency` set, only the operating currencies were 1 (`asset-class` was not read); with none set, a declared `asset-class` decided (any value that was not empty, spaces included) and everything else was 1. v0.4, in a ledger with `operating_currency` (say INR): a code with no `asset-class` that is an ISO 4217 country's money and that the ledger does not hold only at cost moves 0 to 1: a USD bank account or USD credit card, also when a forex lot `USD {65 INR}` sits in another account (then the lot's USD counts as cash too, and leaves the holdings and gains views); an ISO code seen only as a cost or price currency, in a `price` directive or in a `balance` assertion; and a ticker spelt like an ISO code and held without cost in an asset account that never holds it at cost (bought there with only a price `10 BEL @ 250 INR`, padded there, or moved there without its cost); a code with `asset-class: \"cash\"` that is not an operating currency moves 0 to 1, a fund so tagged included (it then shows as units in the cash views); everything else keeps its value (a stock, a fund, gold, a ticker whose sales or splits are written without `{}` in its lot account or whose RSU income leg is in shares, and a currency held only at cost such as `USD {83 INR}` with no plain USD in another balance-sheet account stay 0). v0.4, in a ledger with no `operating_currency`: a code with no `asset-class` that is held only at cost or is not an ISO 4217 country's money moves 1 to 0 (a stock `VTI`, gold `XAU`, a currency held only as lots at cost, and non-ISO money such as `RMB`, `NTD`, `NIS`, `CNH`, a stablecoin, or a sub-unit such as `GBX`); an ISO currency held somewhere without cost stays 1; an `asset-class` of only spaces was a declaration in v0.2.2 (0) and is not one now, so the other rules decide. A declared `asset-class` decides as before, except on an operating currency, which is now always 1."
 user_sql = true
 status = "decided"
 
@@ -1940,7 +1940,7 @@ as_of = "load"
 origin = "v0.2.2"
 status = "draft"
 cites = ["ADR-0015"]
-note = "Internal in v0.2.2 too (not in its user docs, not on ADR-0048's list); its name is still served. v0.4 keys: `surface_version`, `ledger_version`, `fingerprint`, `export_version` (a hash of this DDL), `built_at`, `build_complete` (`1` when every table has its rows; `0` while a table is not built yet, such as `commodities` before BL-0120: the build reports it in its result too, and the publish must refuse such a file, so a published generation always says `1`). v0.2.2's `ledger_files` key is replaced by `fingerprint`."
+note = "Internal in v0.2.2 too (not in its user docs, not on ADR-0048's list); its name is still served. v0.4 keys: `surface_version`, `ledger_version`, `fingerprint`, `export_version` (a hash of this DDL), `built_at`, `build_complete` (`1` when every table has its rows, which every build gives since S0086 built the `commodities` rows (BL-0120); `0` would mark a build that left a table out: the build reports it in its result too, and the publish must refuse such a file, so a published generation always says `1`). v0.2.2's `ledger_files` key is replaced by `fingerprint`."
 
 [[table.column]]
 name = "key"

@@ -4,7 +4,7 @@
 
 Every user-visible capability of Finzytrack, with its status: `planned`, `partial`, `built`, `cut` (absent on purpose) or `deferred` (not in v0.4.0). This page is the index; each row's full description, what changes in v0.4, where it lived in v0.3, its doc page, backlog items, ADRs, code and tests are in `design/capabilities.toml` (search for the ID). Edit the `.toml`, then run `python3 scripts/gen_capabilities.py`. Rules: `design/process/PROCESS.md` ("Project memory").
 
-**Totals:** cut 16, deferred 13, partial 2, planned 311; 342 rows; release-blocking 308.
+**Totals:** cut 16, deferred 13, partial 3, planned 310; 342 rows; release-blocking 308.
 
 ## Setup and workspaces
 
@@ -321,7 +321,7 @@ Every user-visible capability of Finzytrack, with its status: `planned`, `partia
 |---|---|---|---|---|---|
 | CAP-INV-SETUP-META | Setup & Metadata tab: per holding (`asset-class`, `name`, `fetch-symbol`, I-bond… | change | planned | M8 | yes |
 | CAP-INV-AMFI-FINDER | Find an Indian mutual fund's AMFI scheme code (search by name; NAV older than 30 days flagged) and… | keep | planned | M8 | yes |
-| CAP-INV-ASSET-CLASS | Cash vs holding decided by operating currencies (`is_currency`) and `asset-class` | change | planned | M8 | yes |
+| CAP-INV-ASSET-CLASS | Cash vs holding (`is_currency`), decided by operating currencies, `asset-class`, codes held only at… | change | partial | M8 | yes |
 | CAP-INV-EXPOSURE | `exposure` metadata (equity, debt, hybrid, gold, cash, real-estate), filled from the CAS/SEBI… | new | planned | M8 | yes |
 | CAP-INV-INCOME-TYPE | Income kind from `income-type` on the Income account's `open`, never from account names | keep | planned | M8 | yes |
 | CAP-INV-INTEREST-ATTR | Interest attributed to the instrument that earned it (`interest-account` link (per 28, owner… | keep | planned | M8 | yes |
