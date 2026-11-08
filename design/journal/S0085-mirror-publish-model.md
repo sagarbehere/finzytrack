@@ -62,3 +62,4 @@
 - Owner's disk answer applied: the cap of 2 extra generations (spec §6, BL-0113).
 
 ## Retro
+- Build about 30 min, fix about 25 min, 1 review round (design review 0H/2M/3L, fidelity review 0H/1M/3L) plus the fix round; no fresh round (no High, two Medium fixes; PROCESS.md §3 "Designs checked by a formal model": later findings become tests or backlog rows). Cheaper gate: model the outside readers as separate processes and the OS purge from the start ("which readers outlive which crash, and what can remove a name?"): both Mediums came from a reader the model ended too early and a purge it left out.
