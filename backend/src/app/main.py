@@ -47,7 +47,7 @@ import signal
 import socket
 import sys
 from collections.abc import Generator
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from importlib.metadata import version
 from pathlib import Path
@@ -179,15 +179,18 @@ def parse_args(argv: list[str] | None) -> Args:
 def engine_command(args: Args, app_version: str) -> EngineCommand:
     """The venv engine when one is named, else the packaged engine beside this interpreter (ADR-0056 layout); every
     engine holds the engine lock in this app-local-data folder (engine-jobs §5.1, S0053) and reads the bytecode of
-    its build from `app_local_data/engine/bytecode/<build>/` (§5.1, S0057)."""
+    its build from `app_local_data/engine/bytecode/<build>/` (§5.1, S0057), and publishes the mirror only under the
+    app cache folder it is started with (S0087)."""
     lock = engine_lock_path(args.app_local_data)
     if args.engine_venv is not None:
         python = args.engine_venv / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
         bytecode = bytecode_build_dir(args.app_local_data, python, venv_site(args.engine_venv), app_version)
-        return EngineCommand.for_venv(args.engine_venv, engine_lock=lock, bytecode_dir=bytecode)
-    python, site = Path(sys.executable), packaged_engine_site(Path(sys.prefix))
-    bytecode = bytecode_build_dir(args.app_local_data, python, site, app_version)
-    return EngineCommand.for_packaged(python, site, engine_lock=lock, bytecode_dir=bytecode)
+        command = EngineCommand.for_venv(args.engine_venv, engine_lock=lock, bytecode_dir=bytecode)
+    else:
+        python, site = Path(sys.executable), packaged_engine_site(Path(sys.prefix))
+        bytecode = bytecode_build_dir(args.app_local_data, python, site, app_version)
+        command = EngineCommand.for_packaged(python, site, engine_lock=lock, bytecode_dir=bytecode)
+    return replace(command, app_cache=args.app_cache)  # the mirror's only place (S0087; publish.md §2)
 
 
 def wire(args: Args, log: EventSink, app_version: str) -> Wiring:

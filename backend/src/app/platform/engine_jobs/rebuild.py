@@ -14,7 +14,8 @@ is no stop toward the bound that makes the engine unavailable, so a plugin that 
 saving off (§5.3; step-back area review F2). The result is logged, counts only (INV-23).
 
 **The publish** (S0087, BL-0113; `design/specs/mirror/publish.md` §4): the engine publishes a loaded result into the
-workspace's mirror folder (`<app_cache>/workspaces/<key>/mirror/`) and answers its generation's number and
+workspace's mirror folder (`<app cache>/workspaces/<key>/mirror/`, under the cache folder the engine was started with,
+`EngineCommand.app_cache`) and answers its generation's number and
 `ledger_version`; a `fresh` answer means the published generation already describes the disk; `paused` means an
 unfinished save's `.open` journal was seen at the re-check (no try again: only recovery ends it). The request carries
 the civil date and the instant from the sidecar's clock (the engine reads none, INV-07) and the floor for the
@@ -43,16 +44,15 @@ MAX_TRIES: Final = 3
 @dataclass(frozen=True, slots=True)
 class RebuildTarget:
     """What a landed save leaves to rebuild: its workspace's registry key, the ledger's root, the plan's fingerprint
-    (its canonical encoding, opaque here), the workspace's lineage id and the app's folders (the engine looks for an
-    `.open` journal under `app_local_data`, and publishes under `app_cache`), and the floor for the generation number
-    (publish.md §3)."""
+    (its canonical encoding, opaque here), the workspace's lineage id and the app's machine-local folder (the engine
+    looks for an `.open` journal under it; it publishes under the app cache folder it was started with), and the
+    floor for the generation number (publish.md §3)."""
 
     workspace_key: str
     root: str
     fingerprint: str
     lineage: str
     app_local_data: Path
-    app_cache: Path
     floor: int = 0
 
 
@@ -107,7 +107,6 @@ def params_of(target: RebuildTarget, fingerprint: str, clock: Clock) -> dict[str
         "root": target.root,
         "fingerprint": fingerprint,
         "app_local_data": str(target.app_local_data),
-        "app_cache": str(target.app_cache),
         "workspace_key": target.workspace_key,
         "lineage": target.lineage,
         "floor": target.floor,

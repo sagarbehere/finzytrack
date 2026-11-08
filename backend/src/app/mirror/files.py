@@ -70,7 +70,7 @@ META_KEYS: Final = (
     "as_of",
 )  # publish.md §8; a file an older build left without the last two is not a mirror of this app: it is rebuilt
 CURRENT: Final = "current.db"
-GENERATION: Final = re.compile(r"gen-[1-9][0-9]{0,17}-[0-9a-f]{16}\.db")  # publish.md §3
+GENERATION: Final = re.compile(r"gen-[1-9][0-9]{0,11}-[0-9a-f]{16}\.db")  # publish.md §3: N has at most 12 digits
 SURFACE_VERSION: Final = re.compile(r"[0-9]{1,9}")  # ASCII digits only; `int()` would also take other scripts' digits
 
 

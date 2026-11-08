@@ -59,11 +59,10 @@ FP = '{"document_files":[],"documents":[],"files":[],"globs":[],"root":"/L/main.
 FP2 = (
     '{"document_files":[],"documents":[],"files":[["/L/main.bean",["absent"]]],"globs":[],"root":"/L/main.bean","v":1}'
 )
-CACHE = Path("/cache")
 LV = "1/sha256:" + "1" * 64
 CLOCK = FrozenClock(datetime(2026, 11, 8, 23, 30, tzinfo=UTC))
 TODAY = CLOCK.now().astimezone().date().isoformat()  # the civil date where the app runs (INV-07)
-TARGET = RebuildTarget("k1", MAIN, FP, lineage="lin1", app_local_data=ALD, app_cache=CACHE)
+TARGET = RebuildTarget("k1", MAIN, FP, lineage="lin1", app_local_data=ALD)
 REQUEST = SaveRequest(
     session="a1b2",
     workspace_key="k1",
@@ -71,14 +70,12 @@ REQUEST = SaveRequest(
     root=MAIN,
     changes=(ChangeText(MAIN, "0" * 64, "post\n"),),
     fingerprint=FP,
-    app_cache=CACHE,
     app_local_data=ALD,
 )
 PARAMS: dict[str, object] = {
     "root": MAIN,
     "fingerprint": FP,
     "app_local_data": str(ALD),
-    "app_cache": str(CACHE),
     "workspace_key": "k1",
     "lineage": "lin1",
     "floor": 0,

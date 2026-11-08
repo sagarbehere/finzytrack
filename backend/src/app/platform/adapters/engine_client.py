@@ -246,12 +246,15 @@ class EngineCommand:
     """How to start the engine: the argv (without `--parent-pid`, which the client adds), the environment (None:
     inherit unchanged, for stand-in engines in tests), the engine lock every engine holds for its life (S0053;
     engine-jobs §5.1: the composition root names `app_local_data/locks/engine.lock`; None for the packaged
-    self-check, which does no ledger work, and for stand-ins), and the bytecode directory (None: none used)."""
+    self-check, which does no ledger work, and for stand-ins), the bytecode directory (None: none used), and the app's
+    cache folder (S0087: the only place the mirror's publish writes; given at the start, `--app-cache`, never named
+    by a request; None for the self-check and stand-ins)."""
 
     argv: tuple[str, ...]
     env: Mapping[str, str] | None
     engine_lock: Path | None = None
     bytecode: EngineBytecode | None = None
+    app_cache: Path | None = None
 
     @classmethod
     def for_venv(
@@ -306,7 +309,8 @@ class EngineCommand:
         the parent's pid for the engine's watchdog, and the engine lock."""
         prefix = ["-X", f"pycache_prefix={pycache}"] if pycache is not None else []
         lock = ["--engine-lock", str(self.engine_lock)] if self.engine_lock is not None else []
-        return [self.argv[0], *prefix, *self.argv[1:], "--parent-pid", str(parent_pid), *lock]
+        cache = ["--app-cache", str(self.app_cache)] if self.app_cache is not None else []
+        return [self.argv[0], *prefix, *self.argv[1:], "--parent-pid", str(parent_pid), *lock, *cache]
 
 
 def _no_log(event: Event, /, **fields: object) -> None:

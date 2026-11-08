@@ -389,7 +389,11 @@ def _gated(
     if ports.observe(plan.fingerprint) != plan.fingerprint:  # step 4
         return refused("ledger_changed")
     published = publish.read_published(ports.fs, plan.app_cache, plan.workspace_key, ports.store)
-    if published is None or not publish.fresh_on_disk(published.meta, ports.observe):
+
+    def ours(root: str) -> bool:  # the generation is of this ledger (round 1, red team F2)
+        return publish.same_ledger(ports.fs, root, plan.root)
+
+    if published is None or not publish.fresh_on_disk(published.meta, ports.observe, ours):
         return refused("mirror_stale")
     open_journal = _open_journal(ports.fs, plan)
     if open_journal is not None:

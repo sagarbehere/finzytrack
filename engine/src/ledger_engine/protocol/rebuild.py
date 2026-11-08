@@ -6,7 +6,8 @@ files, engine-jobs §5.1).
   after it, and its publish into the workspace's mirror folder in the app cache (S0087, BL-0113;
   `design/specs/mirror/publish.md` §4). It writes nothing else. It runs the ledger's plugins: the sidecar retires its
   engine after it. `app_local_data` must be the folder of this engine's lock (as for the save); the mirror folder is
-  always `<app_cache>/workspaces/<workspace_key>/mirror/`, so no request names another folder to clean.
+  always `<app cache>/workspaces/<workspace_key>/mirror/` under the cache folder the engine was started with
+  (`--app-cache`, S0087 round 1), so no request names another folder to clean.
 
 An encrypted file met (`EncryptedFileMet`, never decrypted) and any `OSError` reach the server as `engine.internal`:
 the rebuild did not run to a result, which the sidecar logs.
@@ -24,7 +25,7 @@ from ledger_engine.ledger.core.ledger_set import UndecodableError, decode, encod
 from ledger_engine.mirror import publish as pb
 from ledger_engine.protocol.messages import Message, Publish, RebuildParams, RebuildResult
 from ledger_engine.protocol.recovery import BadParamsError, Decider, app_local_data_of
-from ledger_engine.protocol.save import engine_build
+from ledger_engine.protocol.save import app_cache_of, engine_build
 
 TABLE: Final = "engine.rebuild"
 EPOCH: Final = datetime(1970, 1, 1, tzinfo=UTC)
@@ -33,6 +34,9 @@ TABLE_VERSION: Final = 2  # 1 (S0070): the rebuild after a save (ADR-0068 D1); 2
 
 class RebuildJob(Decider, Protocol):
     def progress(self, phase: rebuild.Phase) -> None: ...
+
+    @property
+    def app_cache(self) -> str | None: ...
 
 
 def run(params: Message, ctx: RebuildJob) -> Message:
@@ -62,7 +66,7 @@ def run(params: Message, ctx: RebuildJob) -> Message:
         raise BadParamsError(msg)
     fs = for_this_os()
     target = rebuild.Target(
-        app_cache=params.app_cache,
+        app_cache=app_cache_of(ctx),
         workspace_key=params.workspace_key,
         app_local_data=app_local_data_of(fs, params.app_local_data, ctx),
         lineage=params.lineage,

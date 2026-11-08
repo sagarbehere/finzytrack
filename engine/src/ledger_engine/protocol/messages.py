@@ -298,8 +298,9 @@ class SaveChange(Message):
 
 class SaveParams(Message):
     """A confirmed plan (§2's `save`): who saves (`session`, `job`, the workspace's registry key and lineage id), the
-    ledger's root, the changes, the plan's fingerprint (`ledger_set.encode`'s text), the app's cache folder (the gate
-    reads the published mirror there, `design/specs/mirror/publish.md` §7; S0087) and the app's machine-local folder."""
+    ledger's root, the changes, the plan's fingerprint (`ledger_set.encode`'s text) and the app's machine-local folder.
+    The gate reads the published mirror in the app's cache folder the engine was started with (`--app-cache`;
+    `design/specs/mirror/publish.md` §7; S0087): no request names it."""
 
     session: SessionId
     job: JobName
@@ -308,7 +309,6 @@ class SaveParams(Message):
     root: AbsPath
     changes: list[SaveChange] = Field(min_length=1)
     fingerprint: str = Field(min_length=1)
-    app_cache: AbsPath
     app_local_data: AbsPath
 
 
@@ -374,17 +374,17 @@ class RebuildParams(Message):
     """`rebuild` (S0070; engine-jobs §6.7, §7; ADR-0068 D1): Beancount's own load of the ledger rooted at `root`, the
     ledger set named by `fingerprint` (`ledger_set.encode`'s text: the saved plan's, or the last try's answer)
     observed before and after it, and its publish (S0087, BL-0113; `design/specs/mirror/publish.md` §4) into
-    `<app_cache>/workspaces/<workspace_key>/mirror/`: `app_local_data` and `lineage` name the `.open` journals looked
+    `<app cache>/workspaces/<workspace_key>/mirror/`, the app cache being the folder the engine was started with
+    (`--app-cache`; no request names it): `app_local_data` and `lineage` name the `.open` journals looked
     for at the re-check, `floor` is the highest generation number the sidecar saw this session (§3), `today` the
     user's civil date (`meta.as_of`, INV-07) and `built_at` the instant."""
 
     root: AbsPath
     fingerprint: str = Field(min_length=1)
     app_local_data: AbsPath
-    app_cache: AbsPath
     workspace_key: Component
     lineage: str = Field(min_length=1, max_length=128)
-    floor: int = Field(ge=0, le=999_999_999_999)
+    floor: int = Field(ge=0, le=999_999_999_999)  # `mirror.publish.MAX_NUMBER`
     today: IsoDate
     built_at: str = Field(min_length=1, max_length=64)
 
@@ -407,7 +407,7 @@ class RebuildResult(Message):
     entries: int = Field(ge=0)
     errors: int = Field(ge=0)
     publish: Publish | None
-    number: int | None = Field(ge=1)
+    number: int | None = Field(ge=1, le=999_999_999_999)
     ledger_version: str | None = Field(pattern=r"^[1-9][0-9]*/sha256:[0-9a-f]{64}$")
     removed: int = Field(ge=0)
     remove_failed: int = Field(ge=0)
@@ -608,7 +608,6 @@ OPS: dict[str, OpSpec] = {
             "root": "/ledgers/L/main.bean",
             "changes": [{"path": "/ledgers/L/main.bean", "pre": "0" * 64, "post": "2026-01-01 open Assets:Cash\n"}],
             "fingerprint": _FP,
-            "app_cache": "/cache",
             "app_local_data": _ALD,
         },
         needs_engine_lock=True,
@@ -644,7 +643,6 @@ OPS: dict[str, OpSpec] = {
             "root": "/ledgers/L/main.bean",
             "fingerprint": _FP,
             "app_local_data": _ALD,
-            "app_cache": "/cache",
             "workspace_key": "k1",
             "lineage": "lin1",
             "floor": 0,

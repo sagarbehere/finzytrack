@@ -38,6 +38,7 @@ from typing import Final, Literal, Protocol
 
 from ledger_engine.fs.port import DirHandle, FileSystem, Kind, check_name, split_absolute
 from ledger_engine.ledger.beancount_port import ParseResult
+from ledger_engine.ledger.core import paths as core_paths
 from ledger_engine.ledger.core.ledger_set import Fingerprint, UndecodableError, decode, digest, encode
 from ledger_engine.mirror.build import BuildFailed, Built, Stamp
 from ledger_engine.mirror.core import schema
@@ -53,7 +54,10 @@ EXTRA: Final = 2
 """§6: at most 2 generations besides the current and the previous one (owner, 2026-11-08, "At most 2 extra")."""
 MAX_DEPTH: Final = 32
 """How deep the cleanup goes into a folder someone left inside; deeper is a failed removal, tried again next time."""
-GEN_NAME: Final = re.compile(r"gen-([1-9][0-9]{0,17})-([0-9a-f]{16})\.db")
+MAX_NUMBER: Final = 999_999_999_999
+"""The largest `N` (12 digits; the rebuild's `floor` has the same bound): naming and recognition agree on it (round 1,
+verifier V2). Only a name another program made can bring the folder near it; `new_name` then stays at it."""
+GEN_NAME: Final = re.compile(r"gen-([1-9][0-9]{0,11})-([0-9a-f]{16})\.db")
 JOURNALS: Final = ("-journal", "-wal", "-shm")
 """The names SQLite gives the files beside a database (a rollback journal; a WAL and its index, which our builds never
 make but an outside writer could)."""
@@ -184,7 +188,11 @@ def open_folder(fs: FileSystem, app_cache: str, key: str) -> DirHandle:
         if st is None:
             parent.mkdir(FOLDER, FOLDER_MODE)
         parent.sync()
-        return parent.open_child(FOLDER)
+        d = parent.open_child(FOLDER)
+        if d.device() != parent.device():  # another volume mounted at `mirror/`: not ours (round 1, red team F1)
+            d.close()
+            raise OSError(errno.EXDEV, "another volume is mounted at the mirror folder")
+        return d
 
 
 def current(d: DirHandle) -> Gen | None:
@@ -243,18 +251,21 @@ def _keep(d: DirHandle, store: Store, names: set[str], now_ns: int, grace_ns: in
     return {CURRENT, *gens, *(f"{g}{s}" for g in gens for s in JOURNALS if f"{g}{s}" in names)}
 
 
-def _remove_tree(d: DirHandle, name: str, depth: int) -> None:
+def _remove_tree(d: DirHandle, name: str, depth: int, dev: int) -> None:
     """Remove the folder `name` and everything in it, through handles that follow no link (a link is removed as a
-    link)."""
+    link), never crossing into another volume (`dev`: the mirror folder's): what another volume holds is left, so the
+    folders above it stay and the removal fails (as `rm -x`; round 1, red team F1)."""
     if depth > MAX_DEPTH:
         raise OSError(errno.ELOOP, "too deep")
     with d.open_child(name) as c:
+        if c.device() != dev:
+            raise OSError(errno.EXDEV, "another volume")
         for entry in c.names():
             st = c.stat(entry)
-            if st is None:
-                continue
+            if st is None or st.dev != dev:
+                continue  # another volume's mount point: left
             if st.kind is Kind.DIR:
-                _remove_tree(c, entry, depth + 1)
+                _remove_tree(c, entry, depth + 1, dev)
             else:
                 c.remove(entry)
     d.rmdir(name)
@@ -268,17 +279,22 @@ def clean(d: DirHandle, store: Store, now_ns: int, *, grace_ns: int = GRACE_NS, 
     than `grace_ns` before `now_ns`, the newest first; a journal beside a kept generation is left. Everything else
     is removed: generations above the current one (never published), other generations and journals, temporary links,
     `current.db` when it is not a kept link, `current.db-*`, any other file, link or folder. A removal that fails is
-    counted and skipped (the next cleanup tries again)."""
+    counted and skipped (the next cleanup tries again). Another volume mounted in the folder is never entered or
+    removed: counted as failed (round 1, red team F1: "the folder is ours" never meant another volume's files)."""
     names = set(d.names())
     keep = _keep(d, store, names, now_ns, grace_ns, extra)
+    dev = d.device()
     removed = failed = 0
     for name in sorted(names - keep):
         try:
             st = d.stat(name)
             if st is None:
                 continue
+            if st.dev != dev:  # another volume's mount point: never entered or removed (round 1, red team F1)
+                failed += 1
+                continue
             if st.kind is Kind.DIR:
-                _remove_tree(d, name, 0)
+                _remove_tree(d, name, 0, dev)
             else:
                 d.remove(name)
             removed += 1
@@ -303,7 +319,7 @@ def new_name(top: int, floor: int, tag: str) -> Gen:
     if not re.fullmatch(r"[0-9a-f]{16}", tag):
         msg = "tag: not 16 lowercase hexadecimal digits"
         raise ValueError(msg)
-    number = 1 + max(top, floor, 0)
+    number = min(1 + max(top, floor, 0), MAX_NUMBER)  # at the bound the order is lost, never a name (the tag)
     return Gen(number, f"gen-{number}-{tag}.db")
 
 
@@ -378,10 +394,15 @@ def swap(d: DirHandle, gen: Gen) -> None:
     st = d.stat(tmp)
     if st is not None:  # ours: whatever stands there goes
         if st.kind is Kind.DIR:
-            _remove_tree(d, tmp, 0)
+            _remove_tree(d, tmp, 0, d.device())
         else:
             d.remove(tmp)
     d.symlink(gen.name, tmp)
+    cur = d.stat(CURRENT)
+    if cur is not None and cur.kind is Kind.DIR:
+        # a folder the cleanup could not remove (round 1, red team F6): moved aside whole, for the next cleanup, so a
+        # link can replace it; renaming a folder needs no right inside it
+        d.rename(CURRENT, f"{CURRENT}.{tmp[len(CURRENT) + 1 : -len('.tmp')]}.aside")
     d.rename(tmp, CURRENT)
 
 
@@ -410,22 +431,34 @@ def read_published(fs: FileSystem, app_cache: str, key: str, store: Store) -> Cu
     return Current(gen, facts)
 
 
-def fresh_on_disk(meta: Meta, observe: Observe) -> bool:
-    """§7, the gate's check: the ledger set in the generation's own `fingerprint`, observed now, has the generation's
-    digest. Only the ledger's bytes count. An undecodable fingerprint, or one that cannot be observed, is not fresh."""
+def same_ledger(fs: FileSystem, a: str, b: str) -> bool:
+    """Whether two root paths name one ledger root: their `path_key`s are equal (links resolved, names folded as the
+    volume compares them). A path that cannot be resolved names none."""
+    try:
+        return core_paths.path_key(fs.resolve(a)) == core_paths.path_key(fs.resolve(b))
+    except (OSError, ValueError):
+        return False
+
+
+def fresh_on_disk(meta: Meta, observe: Observe, root_ok: Callable[[str], bool]) -> bool:
+    """§7, the gate's check: the generation is of this ledger (`root_ok` of its fingerprint's root: the caller's root,
+    compared by `same_ledger`; S0087 round 1, red team F2: a generation of another ledger under this key, or of the
+    ledger's old place after it was located elsewhere, is not this ledger's), and the ledger set in its own
+    `fingerprint`, observed now, has its digest. Only the ledger's bytes count. An undecodable fingerprint, or one
+    that cannot be observed, is not fresh."""
     try:
         fp = decode(meta.fingerprint.encode("ascii"))
-        return digest(observe(fp)) == digest(fp)
+        return root_ok(fp.root) and digest(observe(fp)) == digest(fp)
     except (UnicodeEncodeError, UndecodableError, OSError):
         return False
 
 
-def fresh(meta: Meta, observe: Observe, *, engine_build: str, today: date) -> bool:
-    """§8: fresh on disk, built with this engine's DDL and row logic, as of today, and complete."""
+def fresh(meta: Meta, observe: Observe, root_ok: Callable[[str], bool], *, engine_build: str, today: date) -> bool:
+    """§8: fresh on disk (this ledger's), built with this engine's DDL and row logic, as of today, and complete."""
     return (
         meta.build_complete
         and meta.export_version == schema.EXPORT_VERSION
         and meta.engine_build == engine_build
         and meta.as_of == today.isoformat()
-        and fresh_on_disk(meta, observe)
+        and fresh_on_disk(meta, observe, root_ok)
     )

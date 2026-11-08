@@ -122,6 +122,11 @@ class DirHandle(Protocol):
         """The directory's canonical path now (`F_GETPATH`): after the directory moved, its new place."""
         ...
 
+    def device(self) -> int:
+        """The volume this directory is on (`fstat`'s `st_dev`; S0087: the mirror's cleanup never crosses a mount
+        point)."""
+        ...
+
     def read(self, name: str, limit: int | None = None) -> bytes | None:
         """The bytes of the regular file `name`, or None when there is no entry of that name. A link, a directory or
         any other kind of entry (a FIFO included: it never blocks) raises `OSError`. With `limit`, at most its first

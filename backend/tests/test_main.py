@@ -20,7 +20,7 @@ import threading
 import time
 import uuid
 from collections.abc import Callable, Iterator
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
 from typing import cast, override
@@ -223,7 +223,7 @@ def test_engine_venv_selects_the_venv_engine(dirs: tuple[Path, Path]) -> None:
     python = ENGINE_VENV / "bin" / "python"
     bytecode = bytecode_build_dir(dirs[0], python, venv_site(ENGINE_VENV), VERSION)
     expected = EngineCommand.for_venv(ENGINE_VENV, engine_lock=lock, bytecode_dir=bytecode)
-    assert main.engine_command(args, VERSION) == expected
+    assert main.engine_command(args, VERSION) == replace(expected, app_cache=dirs[1])  # S0087: the mirror's place
 
 
 def test_without_engine_venv_the_engine_is_the_packaged_one_beside_this_interpreter(dirs: tuple[Path, Path]) -> None:
@@ -233,7 +233,7 @@ def test_without_engine_venv_the_engine_is_the_packaged_one_beside_this_interpre
     site = packaged_engine_site(Path(sys.prefix))
     bytecode = bytecode_build_dir(dirs[0], Path(sys.executable), site, VERSION)
     expected = EngineCommand.for_packaged(Path(sys.executable), site, engine_lock=lock, bytecode_dir=bytecode)
-    assert main.engine_command(args, VERSION) == expected
+    assert main.engine_command(args, VERSION) == replace(expected, app_cache=dirs[1])  # S0087: the mirror's place
 
 
 def test_the_bytecode_directory_is_per_build_in_app_local_data(dirs: tuple[Path, Path]) -> None:

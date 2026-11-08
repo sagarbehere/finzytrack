@@ -77,9 +77,9 @@ class ChangeText:
 @dataclass(frozen=True, slots=True)
 class SaveRequest:
     """A confirmed plan (the preview's, BL-0106): who saves, the root, the changes, the plan's
-    fingerprint (its canonical encoding, opaque here), the app's cache folder (the engine's gate reads the published
-    mirror there itself, publish.md §7; S0087) and the app's machine-local folder (no legacy lock: a save tries none,
-    ADR-0068 D4).
+    fingerprint (its canonical encoding, opaque here) and the app's machine-local folder (no legacy lock: a save tries
+    none, ADR-0068 D4). The engine's gate reads the published mirror in the app cache folder the engine was started
+    with (publish.md §7; S0087): no request names it.
 
     It names no job: the record's name `<session>-<job>` must be this save's alone (§6.5 "One save, one name"), since
     §6.6 tells a dead save's outcome by that name; `save_work` makes a new job part for every save it runs, so a
@@ -91,7 +91,6 @@ class SaveRequest:
     root: str
     changes: tuple[ChangeText, ...]
     fingerprint: str
-    app_cache: Path
     app_local_data: Path
 
 
@@ -135,7 +134,6 @@ def params_of(r: SaveRequest, job: str) -> dict[str, object]:
         "root": r.root,
         "changes": [{"path": c.path, "pre": c.pre, "post": c.post} for c in r.changes],
         "fingerprint": r.fingerprint,
-        "app_cache": str(r.app_cache),
         "app_local_data": str(r.app_local_data),
     }
 
@@ -259,9 +257,7 @@ class _Run:
     def _answered(self, value: SaveValue, *, ran_user_code: bool = True) -> WorkResult:
         if isinstance(value, Saved) and self._after_saved is not None:
             r = self._r
-            self._after_saved(
-                RebuildTarget(r.workspace_key, r.root, r.fingerprint, r.lineage, r.app_local_data, r.app_cache)
-            )
+            self._after_saved(RebuildTarget(r.workspace_key, r.root, r.fingerprint, r.lineage, r.app_local_data))
         return WorkResult(value, ran_user_code=ran_user_code)
 
     def _no_engine(self) -> WorkResult:

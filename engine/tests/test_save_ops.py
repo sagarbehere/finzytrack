@@ -75,14 +75,20 @@ def setup(tmp_path: Path) -> tuple[Path, Path, dict[str, Any]]:
         "root": str(main),
         "changes": [{"path": str(main), "pre": sha(PRE), "post": POST}],
         "fingerprint": encode(loaded.fingerprint).decode("ascii"),
-        "app_cache": str(cache),
         "app_local_data": str(ald),
     }
     return main, ald, params
 
 
-def engine(ald: Path | None) -> Engine:
-    e = Engine(engine_lock_held=None if ald is None else str(ald / "locks" / "engine.lock"))
+def engine(ald: Path | None, cache: Path | None = None) -> Engine:
+    """An engine holding the lock under `ald`, started with the app cache `cache` (default: `ald`'s sibling `cache`,
+    the setup's; S0087: the cache is anchored at the start, never named by a request)."""
+    if cache is None and ald is not None:
+        cache = ald.parent / "cache"
+    e = Engine(
+        engine_lock_held=None if ald is None else str(ald / "locks" / "engine.lock"),
+        app_cache=None if cache is None else str(cache),
+    )
     assert json.loads(e.handle(b'{"v":2,"id":0,"op":"handshake","params":{}}'))["ok"]
     return e
 

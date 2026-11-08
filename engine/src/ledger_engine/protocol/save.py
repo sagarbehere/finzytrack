@@ -34,7 +34,11 @@ TABLE_VERSION: Final = 4  # 2 (S0068): no `check_pending` or `check_failed` refu
 
 
 class SaveJob(Decider, Protocol):
-    """The request's job context as the save sees it (`server.JobContext`)."""
+    """The request's job context as the save sees it (`server.JobContext`): also the app cache folder this engine was
+    started with (`--app-cache`), where the gate reads the published mirror (S0087)."""
+
+    @property
+    def app_cache(self) -> str | None: ...
 
     def progress(self, phase: sv.Phase) -> None: ...
 
@@ -46,6 +50,20 @@ class SaveJob(Decider, Protocol):
 def engine_build() -> str:
     """The engine build a closed record names (§6.5: which build wrote the save)."""
     return f"finzytrack-engine {version('finzytrack-engine')}; beancount {version('beancount')}"
+
+
+class HasAppCache(Protocol):
+    @property
+    def app_cache(self) -> str | None: ...
+
+
+def app_cache_of(ctx: HasAppCache) -> str:
+    """The app cache folder this engine was started with (S0087: anchored at the start, never named by a request,
+    so no request can make a job read or clean another folder); an engine started without one refuses."""
+    if ctx.app_cache is None:
+        msg = "this engine was started without the app's cache folder (--app-cache)"
+        raise BadParamsError(msg)
+    return ctx.app_cache
 
 
 def _key(workspace_key: str) -> str:
@@ -115,7 +133,7 @@ def save(params: Message, ctx: SaveJob) -> Message:
         root=params.root,
         changes=tuple(Change(c.path, c.pre, _post(c.post)) for c in params.changes),
         fingerprint=fingerprint,
-        app_cache=params.app_cache,
+        app_cache=app_cache_of(ctx),
         app_local_data=ald,
     )
     ports = sv.Ports(fs)

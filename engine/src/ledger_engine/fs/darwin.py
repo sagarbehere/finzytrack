@@ -224,6 +224,9 @@ class DarwinDir:
     def path(self) -> str:
         return _getpath(self.fd)
 
+    def device(self) -> int:
+        return os.fstat(self.fd).st_dev
+
     def stat(self, name: str) -> EntryStat | None:
         try:
             return _entry(os.stat(check_name(name), dir_fd=self.fd, follow_symlinks=False))

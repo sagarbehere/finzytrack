@@ -2810,3 +2810,17 @@ def test_an_uncounted_requests_engine_death_records_no_stop() -> None:
     after a save, whose every try is sent uncounted, never moves the engine toward `Unavailable` (spec §5.3, §6.7)."""
     assert _stops_after_a_death(counted=True) == 1
     assert _stops_after_a_death(counted=False) == 0
+
+
+def test_the_spawned_engine_is_told_its_app_cache_folder() -> None:
+    """S0087 round 1 (red team F3): the mirror's folder is anchored at the engine's start, never named by a request."""
+    cache = Path("/data/cache")
+    command = EngineCommand(argv=("python",), env=None, app_cache=cache)
+    assert command.spawn_argv(7) == ["python", "--parent-pid", "7", "--app-cache", str(cache)]
+
+
+def test_the_product_starts_its_engines_with_its_app_cache(tmp_path: Path) -> None:
+    from app.main import Args, engine_command
+
+    args = Args(tmp_path / "local", tmp_path / "cache", 0, None, None, tmp_path / "venv", None)
+    assert engine_command(args, "0.4.0").app_cache == tmp_path / "cache"

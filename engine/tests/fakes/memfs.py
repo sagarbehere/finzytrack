@@ -133,6 +133,7 @@ class _Dir:
     no_excl: bool = False  # a volume without RENAME_EXCL (exFAT, FAT, network shares); its replace may be split
     acl: list[_Ace] = field(default_factory=lambda: [])
     locked: bool = False  # `uchg`: no entry may be added, removed or renamed in it, and it may not be removed
+    dev: int = 1  # its volume (S0087: `outside_mount` puts another volume at a folder)
 
 
 _Node = _File | _Dir | _Link | _Other
@@ -505,6 +506,17 @@ class MemFS:
         d.durable = dict(d.entries)
         d.pending = []
 
+    def outside_mount(self, path: str, dev: int) -> None:
+        """Another volume mounted at the folder `path` (S0087): it and every folder in it report `dev`, as `stat` of
+        a mount point and of what is under it does (red team F1)."""
+        _, ino, rest, _ = self._walk(path)
+        assert not rest
+        stack = [ino]
+        while stack:
+            d = self._dir(stack.pop())
+            d.dev = dev
+            stack.extend(i for _, i in d.entries.values() if isinstance(self.nodes[i], _Dir))
+
     def outside_fifo(self, path: str) -> None:
         d, name = self._parent_and_name(path)
         d.entries[_key(name, d.ci)] = (name, self._new(_Other()))
@@ -636,6 +648,7 @@ class MemFS:
                 no_excl=d.no_excl,
                 acl=list(d.acl),
                 locked=d.locked,
+                dev=d.dev,
             )
         for ino in reach:
             for _, child in tables[ino].values():
@@ -691,6 +704,9 @@ class MemDir:
         except FileNotFoundError:
             where = "<removed>"
         return f"{what} {where}:" + ",".join(names)
+
+    def device(self) -> int:
+        return self._d.dev
 
     def path(self) -> str:
         """The folder's path now; for a folder removed meanwhile, its last path (probed on APFS, S0061 red team L5)."""
@@ -748,7 +764,7 @@ class MemDir:
         locked = isinstance(node, _File | _Dir) and node.locked
         return EntryStat(
             kind=kind,
-            dev=1,
+            dev=node.dev if isinstance(node, _Dir) else self._d.dev,
             ino=hit[1],
             nlink=self._fs.nlink(hit[1]),
             mode=mode,
@@ -1002,6 +1018,7 @@ class MemDir:
                     ci=d.ci,
                     parent=self._ino,
                     mode=mode & 0o7777,
+                    dev=d.dev,
                     no_swap=d.no_swap,
                     no_excl=d.no_excl,
                     acl=_inherited(d, "directory_inherit"),

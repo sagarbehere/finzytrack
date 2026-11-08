@@ -18,6 +18,7 @@ import os
 import re
 import sqlite3
 import stat
+import subprocess
 import sys
 import threading
 import time
@@ -530,15 +531,24 @@ def test_fresh_needs_the_disk_the_engine_build_the_ddl_and_today(fs: FileSystem,
     def obs(fp: Any) -> Any:
         return observe(fp.ledger_set)
 
-    assert pb.fresh(m, obs, engine_build=ENGINE_BUILD, today=TODAY)
-    assert pb.fresh_on_disk(m, obs)
-    assert not pb.fresh(m, obs, engine_build="another build", today=TODAY)
-    assert not pb.fresh(m, obs, engine_build=ENGINE_BUILD, today=TODAY.replace(day=9))
-    assert not pb.fresh(replace(m, export_version="sha256:other"), obs, engine_build=ENGINE_BUILD, today=TODAY)
+    def ours(r: str) -> bool:
+        return pb.same_ledger(fs, r, str(root))
+
+    def theirs(r: str) -> bool:
+        return pb.same_ledger(fs, r, str(root.parent / "other.bean"))
+
+    assert not pb.fresh_on_disk(m, obs, theirs)  # another ledger's generation (round 1, red team F2)
+    assert not pb.fresh(m, obs, theirs, engine_build=ENGINE_BUILD, today=TODAY)
+
+    assert pb.fresh(m, obs, ours, engine_build=ENGINE_BUILD, today=TODAY)
+    assert pb.fresh_on_disk(m, obs, ours)
+    assert not pb.fresh(m, obs, ours, engine_build="another build", today=TODAY)
+    assert not pb.fresh(m, obs, ours, engine_build=ENGINE_BUILD, today=TODAY.replace(day=9))
+    assert not pb.fresh(replace(m, export_version="sha256:other"), obs, ours, engine_build=ENGINE_BUILD, today=TODAY)
     (root.parent / "inc.bean").write_bytes(b"; edited\n")
-    assert not pb.fresh_on_disk(m, obs)
-    assert not pb.fresh(m, obs, engine_build=ENGINE_BUILD, today=TODAY)
-    assert not pb.fresh_on_disk(replace(m, fingerprint="not a fingerprint"), obs)
+    assert not pb.fresh_on_disk(m, obs, ours)
+    assert not pb.fresh(m, obs, ours, engine_build=ENGINE_BUILD, today=TODAY)
+    assert not pb.fresh_on_disk(replace(m, fingerprint="not a fingerprint"), obs, ours)
     assert encode(observe(ledger_set(root)))  # the set it observes is the generation's own
 
 
@@ -632,3 +642,132 @@ def test_a_journal_sqlite_does_not_find_hot_does_not_hide_a_whole_generation(
     got = pb.read_published(fs, str(cache), KEY, SqliteStore())
     assert got is not None
     assert got.gen == out.gen
+
+
+def test_same_ledger_compares_roots_as_the_volume_does(fs: FileSystem, root: Path, tmp_path: Path) -> None:
+    link = tmp_path / "link.bean"
+    link.symlink_to(root)
+    assert pb.same_ledger(fs, str(root), str(root))
+    assert pb.same_ledger(fs, str(link), str(root))  # a link to the root names the same ledger
+    assert pb.same_ledger(fs, str(root).upper(), str(root)) == (os.path.exists(str(root).upper()))
+    assert not pb.same_ledger(fs, str(tmp_path / "other.bean"), str(root))
+    assert not pb.same_ledger(fs, "relative", str(root))
+
+
+# -- round 1 (S0087): the review's cases ------------------------------------------------------------------------------
+
+
+def test_naming_and_recognition_agree_on_the_largest_number(fs: FileSystem, cache: Path, root: Path) -> None:
+    """Verifier V2: `N` has at most 12 digits; a name with more is not a generation, and the next name never has
+    more."""
+    assert pb.new_name(pb.MAX_NUMBER, 0, "a" * 16).number == pb.MAX_NUMBER
+    assert pb.gen_of(pb.new_name(pb.MAX_NUMBER, pb.MAX_NUMBER, "a" * 16).name) is not None
+    assert pb.gen_of(f"gen-{pb.MAX_NUMBER + 1}-{'a' * 16}.db") is None
+    first = published(publish_job(fs, cache, root)).gen
+    m = mirror_of(cache)
+    big = f"gen-{pb.MAX_NUMBER}-{'b' * 16}.db"
+    (m / big).write_bytes((m / first.name).read_bytes())
+    (m / pb.CURRENT).unlink()
+    (m / pb.CURRENT).symlink_to(big)  # another program made the current one the largest number
+    out = published(publish_job(fs, cache, root))
+    assert out.gen.number == pb.MAX_NUMBER
+    assert current(cache) == out.gen.name != big
+
+
+def test_a_folder_at_current_db_the_cleanup_cannot_remove_is_moved_aside(
+    fs: FileSystem, cache: Path, root: Path
+) -> None:
+    """Red team F6: such a folder would stop every publish; the swap moves it aside whole for the next cleanup."""
+    m = mirror_of(cache)
+    stuck = m / pb.CURRENT / "inner"
+    stuck.mkdir(parents=True)
+    (stuck / "x").write_bytes(b"x")
+    stuck.chmod(0o500)  # its entries cannot be removed
+    try:
+        out = published(publish_job(fs, cache, root))
+        assert current(cache) == out.gen.name
+        aside = [p for p in m.iterdir() if p.name.endswith(".aside")]
+        assert len(aside) == 1
+        assert (aside[0] / "inner" / "x").read_bytes() == b"x"
+    finally:
+        for p in m.rglob("inner"):
+            p.chmod(0o700)
+
+
+def test_an_incomplete_generation_below_current_is_not_previous(fs: FileSystem, cache: Path, root: Path) -> None:
+    """Verifier V4 (`prev_ignores_complete`): previous is complete as well as whole."""
+    gens = publish_n(fs, cache, root, 3)
+    con = sqlite3.connect(mirror_of(cache) / gens[1].name)
+    con.execute("UPDATE m_meta SET value = '0' WHERE key = 'build_complete'")
+    con.commit()
+    con.close()
+    clean_at(fs, cache, fs_now(cache) + 11 * MINUTE_NS)
+    assert names(cache) == {pb.CURRENT, gens[2].name, gens[0].name}
+
+
+def test_a_generation_with_any_journal_beside_it_is_not_previous(fs: FileSystem, cache: Path, root: Path) -> None:
+    """Verifier V4 (`prev_ignores_journal`): §1 "no journal beside it", even one SQLite does not find hot."""
+    gens = publish_n(fs, cache, root, 3)
+    (mirror_of(cache) / f"{gens[1].name}-journal").write_bytes(b"")
+    clean_at(fs, cache, fs_now(cache) + 11 * MINUTE_NS)
+    assert names(cache) == {pb.CURRENT, gens[2].name, gens[0].name}
+
+
+def hdiutil(*args: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(["/usr/bin/hdiutil", *args], capture_output=True, text=True, check=False)  # noqa: S603
+
+
+@pytest.fixture
+def mounted(tmp_path: Path) -> Any:
+    """A small disk image mounted at a folder (macOS `hdiutil`, no root needed); skipped where it cannot be made."""
+    image = tmp_path / "vol.dmg"
+    made = hdiutil("create", "-size", "4m", "-fs", "HFS+", "-volname", "ftvol", "-quiet", str(image))
+    if made.returncode != 0:
+        pytest.skip(f"hdiutil cannot make a disk image here: {made.stderr.strip()[:120]}")
+    points: list[Path] = []
+
+    def mount_at(point: Path) -> Path:
+        point.mkdir(parents=True, exist_ok=True)
+        out = hdiutil("attach", "-nobrowse", "-quiet", "-mountpoint", str(point), str(image))
+        if out.returncode != 0:
+            pytest.skip(f"hdiutil cannot mount here: {out.stderr.strip()[:120]}")
+        points.append(point)
+        (point / "volume-file.txt").write_bytes(b"another volume's file")
+        return point
+
+    yield mount_at
+    for p in points:
+        hdiutil("detach", "-force", "-quiet", str(p))
+
+
+def test_the_cleanup_never_enters_or_removes_another_volume_mounted_inside(
+    fs: FileSystem, cache: Path, root: Path, mounted: Any
+) -> None:
+    """Red team F1: `open_child` with O_NOFOLLOW still enters a mount point; the cleanup compares devices instead."""
+    gens = publish_n(fs, cache, root, 1)
+    point = mounted(mirror_of(cache) / "mnt")
+    cleaned = clean_at(fs, cache, fs_now(cache))
+    assert (point / "volume-file.txt").read_bytes() == b"another volume's file"
+    assert cleaned.failed == 1
+    assert names(cache) == {pb.CURRENT, gens[0].name, "mnt"}
+
+
+def test_a_volume_mounted_deeper_in_a_folder_is_left_and_the_folder_stays(
+    fs: FileSystem, cache: Path, root: Path, mounted: Any
+) -> None:
+    publish_n(fs, cache, root, 1)
+    point = mounted(mirror_of(cache) / "junk" / "deep")
+    (mirror_of(cache) / "junk" / "own.txt").write_bytes(b"ours")
+    cleaned = clean_at(fs, cache, fs_now(cache))
+    assert (point / "volume-file.txt").read_bytes() == b"another volume's file"
+    assert not (mirror_of(cache) / "junk" / "own.txt").exists()  # what is ours on our volume goes
+    assert cleaned.failed == 1  # the folder above the mount point cannot go
+
+
+def test_no_job_runs_in_a_mirror_folder_that_is_another_volume(
+    fs: FileSystem, cache: Path, root: Path, mounted: Any
+) -> None:
+    point = mounted(mirror_of(cache))
+    with pytest.raises(OSError, match="another volume"):
+        publish_job(fs, cache, root, now_ns=0)
+    assert (point / "volume-file.txt").read_bytes() == b"another volume's file"

@@ -545,6 +545,17 @@ PUBLISH: frozenset[str] = frozenset({"published", "fresh", "inexact", "replaced"
 _LEDGER_VERSION = re.compile(r"[1-9][0-9]*/sha256:[0-9a-f]{64}")
 
 
+MAX_NUMBER = 999_999_999_999  # the engine's `mirror.publish.MAX_NUMBER`, as the schema bounds it
+
+
+def _number(value: object) -> int | None:
+    number = _int(value, "number", nullable=True, low=1)
+    if number is not None and number > MAX_NUMBER:
+        msg = f"number must be at most {MAX_NUMBER}"
+        raise _Bad(msg)
+    return number
+
+
 def _rebuild(result: Mapping[str, object]) -> RebuildAnswer:
     """S0087: the publish's fields are each checked as the schema checks them; nothing gates on them (they are
     logged), so how they go together is the engine's (`ledger_engine.protocol.rebuild`)."""
@@ -559,7 +570,7 @@ def _rebuild(result: Mapping[str, object]) -> RebuildAnswer:
         entries=cast("int", _int(o["entries"], "entries", low=0)),
         errors=cast("int", _int(o["errors"], "errors", low=0)),
         publish=None if o["publish"] is None else cast("Publish", _choice(o["publish"], PUBLISH, "publish")),
-        number=_int(o["number"], "number", nullable=True, low=1),
+        number=_number(o["number"]),
         ledger_version=version,
         removed=cast("int", _int(o["removed"], "removed", low=0)),
         remove_failed=cast("int", _int(o["remove_failed"], "remove_failed", low=0)),

@@ -594,10 +594,10 @@ def ports(fs: MemFS, driver: Driver) -> sv.Ports:
 
     def observe(fp: Fingerprint) -> Fingerprint:
         """The save's observations at its gate (step 4): the plan's set (the model's `S_Gate`), then the published
-        mirror's own set (S0087; the engine-jobs model has no mirror: a generation published from no file, so it is
-        always fresh and the check never decides a replay)."""
+        mirror's own set (S0087; the engine-jobs model has no mirror: a generation of this ledger's root published
+        from no file, so it is always fresh and the check never decides a replay)."""
         seen["observe"] += 1
-        if fp.root == MIRROR_ROOT:
+        if not fp.files:  # the published generation's own set (`world`): no file, always fresh
             return fp
         driver.reach("s_gate")
         files = tuple((p, _state_of(fs, p)) for p, _ in fp.files)
@@ -678,14 +678,11 @@ class Tally:
     branches: Counter[str] = field(default_factory=lambda: Counter[str]())
 
 
-MIRROR_ROOT = "/mirror-published-from-no-file"
-
-
 def world() -> MemFS:
     fs = MemFS()
     for d in (LEDGER, JD, BD):
         fs.outside_mkdirs(d)
-    outside_publish(fs, Fingerprint(MIRROR_ROOT, (), (), (), ()), KEY)
+    outside_publish(fs, Fingerprint(PATH["R"], (), (), (), ()), KEY)
     return fs
 
 

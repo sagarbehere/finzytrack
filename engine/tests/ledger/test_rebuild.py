@@ -15,6 +15,7 @@ the spec's lines:
 from __future__ import annotations
 
 import os
+import shutil
 import sys
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field, replace
@@ -24,9 +25,10 @@ from typing import Any, override
 
 import pytest
 
+from ledger_engine.fs.darwin import for_this_os
 from ledger_engine.ledger import beancount_port as port
 from ledger_engine.ledger import overlay, rebuild
-from ledger_engine.ledger.core.ledger_set import Fingerprint, LedgerSet, digest
+from ledger_engine.ledger.core.ledger_set import Fingerprint, LedgerSet, decode, digest
 from ledger_engine.ledger.fingerprint import observe
 from ledger_engine.ledger.policy import DesktopPolicy
 from ledger_engine.mirror import publish as pb
@@ -332,3 +334,76 @@ def test_the_cleanup_runs_first_even_when_the_load_then_moves(root: Path, cache:
     assert a.cleaned is not None
     assert a.cleaned.removed == 1
     assert not (m / "junk").exists()
+
+
+def test_after_the_ledger_is_located_elsewhere_the_old_places_generation_is_not_fresh(
+    root: Path, cache: Path, tmp_path: Path
+) -> None:
+    """S0087 round 1 (red team F2): a copy of the ledger located under the same key, saved there: the generation of
+    the old place is another ledger's, so the rebuild loads and publishes the new place."""
+    assert go(rebuild.Ports(), hint_of(root), FakeJob()).outcome == "loaded"
+    new = tmp_path / "New"
+    shutil.copytree(root.parent, new)
+    (new / "main.bean").write_bytes(MAIN + b'2026-02-01 * "Saved there"\n  Expenses:Food  9 USD\n  Assets:Cash\n')
+    b = go(rebuild.Ports(), hint_of(new / "main.bean"), FakeJob())
+    assert b.outcome == "loaded"
+    assert isinstance(b.published, pb.Published)
+    assert b.published.gen.number == 2
+
+
+def test_the_generation_is_stamped_with_what_the_load_read_not_the_hint(root: Path, cache: Path) -> None:
+    """S0087 round 1 (verifier V1; publish.md §8): a hint that names a file the ledger no longer includes (the queued
+    rebuild of an earlier save) does not put that file in the generation's fingerprint, so deleting it later does not
+    make every save refused."""
+    hint = hint_of(root)  # names inc.bean
+    root.write_bytes(b'option "operating_currency" "USD"\n2026-01-01 open Assets:Cash\n')  # a save dropped the include
+    a = go(rebuild.Ports(), hint, FakeJob())
+    assert a.outcome == "loaded"
+    got = pb.read_published(for_this_os(), str(cache), KEY, SqliteStore())
+    assert got is not None
+    stamped = decode(got.meta.fingerprint.encode("ascii"))
+    assert str(root.parent / "inc.bean") not in dict(stamped.files)
+    assert str(root) in dict(stamped.files)
+    (root.parent / "inc.bean").unlink()  # no longer part of the ledger
+    assert pb.fresh_on_disk(
+        got.meta, lambda fp: observe(fp.ledger_set), lambda r: pb.same_ledger(for_this_os(), r, str(root))
+    )
+
+
+def test_a_glob_the_ledger_still_includes_stays_in_the_stamp(root: Path, cache: Path) -> None:
+    """The other side of V1: a file appearing under a glob the ledger includes makes the generation not fresh."""
+    sub = root.parent / "sub"
+    sub.mkdir()
+    (sub / "a.bean").write_bytes(b"2026-01-01 open Assets:A\n")
+    root.write_bytes(MAIN + b'include "sub/*.bean"\n')
+    assert go(rebuild.Ports(), hint_of(root), FakeJob()).outcome == "loaded"
+    got = pb.read_published(for_this_os(), str(cache), KEY, SqliteStore())
+    assert got is not None
+
+    def ours(r: str) -> bool:
+        return pb.same_ledger(for_this_os(), r, str(root))
+
+    def obs(fp: Fingerprint) -> Fingerprint:
+        return observe(fp.ledger_set)
+
+    assert pb.fresh_on_disk(got.meta, obs, ours)
+    (sub / "b.bean").write_bytes(b"2026-01-01 open Assets:B\n")
+    assert not pb.fresh_on_disk(got.meta, obs, ours)
+
+
+def test_an_edit_between_the_load_and_the_stamp_is_moved_never_published(root: Path, cache: Path) -> None:
+    """Round 1 (the stamp is observed after the load): an edit just before that observation would stamp the edited
+    state on rows of the earlier one; the hint's set observed once more sees it, and nothing is published."""
+    calls: list[int] = []
+    inc = root.parent / "inc.bean"
+
+    def observe_with_edit(s: LedgerSet) -> Fingerprint:
+        calls.append(1)
+        if len(calls) == 3:  # before, after, then the stamp's observation (no generation yet: no freshness check)
+            inc.write_bytes(INC + b"; edited\n")
+        return observe(s)
+
+    a = go(rebuild.Ports(observe=observe_with_edit), hint_of(root), FakeJob())
+    assert a.outcome == "moved"
+    assert a.published is None
+    assert not (mirror(cache) / pb.CURRENT).exists()

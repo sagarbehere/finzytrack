@@ -25,6 +25,7 @@ import sys
 import threading
 import time
 from collections.abc import Callable, Iterator, Mapping
+from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, override
@@ -410,7 +411,6 @@ def test_a_second_background_save_of_the_products_plain_work_is_refused(rig: Rig
         root=str(tmp_path / "main.bean"),
         changes=(ChangeText(str(tmp_path / "main.bean"), None, "x"),),
         fingerprint="fp",
-        app_cache=tmp_path / "cache",
         app_local_data=tmp_path,
     )
     save = submit_save(rig.jobs, W1, request, clock=CLOCK, background=True)
@@ -1258,7 +1258,7 @@ def real_rig(tmp_path: Path, ends: list[EngineEnd] | None = None) -> tuple[Engin
         holder[0].engine_ended(end)
 
     client = EngineClient(
-        EngineCommand.for_venv(ENGINE_VENV, test_ops=True, engine_lock=lock),
+        replace(EngineCommand.for_venv(ENGINE_VENV, test_ops=True, engine_lock=lock), app_cache=tmp_path / "cache"),
         on_engine_spawned=lambda s: holder[0].engine_spawned(s),
         on_engine_ended=ended,
     )
@@ -1364,7 +1364,7 @@ def test_with_the_real_engine_a_retire_during_another_client_call_does_not_wedge
         holder[0].engine_ended(end)
 
     client = ResetHeld(
-        EngineCommand.for_venv(ENGINE_VENV, test_ops=True, engine_lock=lock),
+        replace(EngineCommand.for_venv(ENGINE_VENV, test_ops=True, engine_lock=lock), app_cache=tmp_path / "cache"),
         on_engine_spawned=spawned,
         on_engine_ended=ended,
     )
@@ -1471,7 +1471,6 @@ def test_with_the_real_engine_a_save_job_lands_and_retires_its_engine(tmp_path: 
     post = pre + b'2026-01-02 * "Lunch"\n  Expenses:Food  5 USD\n  Assets:Cash\n'
     fp = _plan_fingerprint(main)
     app = tmp_path  # the engine lock's folder: the engine refuses another `app_local_data`
-    cache = tmp_path / "cache"
     ends: list[EngineEnd] = []
     jobs, client = real_rig(tmp_path, ends)
     try:
@@ -1480,7 +1479,7 @@ def test_with_the_real_engine_a_save_job_lands_and_retires_its_engine(tmp_path: 
         assert outcome(boot) == Done(None)
         wait_until(lambda: not jobs.status().queue.exclusive)
         jobs.workspace_opened(W1)
-        target = RebuildTarget("k1", str(main), fp, lineage="lineage-1", app_local_data=app, app_cache=cache)
+        target = RebuildTarget("k1", str(main), fp, lineage="lineage-1", app_local_data=app)
         first_ticket = jobs.submit(rebuild_spec(W1), rebuild_work(target, CLOCK))
         assert isinstance(first_ticket, JobTicket)
         first = outcome(first_ticket)
@@ -1496,7 +1495,6 @@ def test_with_the_real_engine_a_save_job_lands_and_retires_its_engine(tmp_path: 
             root=str(main),
             changes=(ChangeText(str(main), hashlib.sha256(pre).hexdigest(), post.decode()),),
             fingerprint=fp,
-            app_cache=cache,
             app_local_data=app,
         )
         # the save's work alone (no rebuild after it): the only engine retired below is the save's own (S0069 V6)
@@ -1537,7 +1535,6 @@ def test_with_the_real_engine_a_landed_save_is_published_and_a_pinned_read_sees_
         root=str(main),
         changes=(ChangeText(str(main), hashlib.sha256(pre).hexdigest(), post.decode()),),
         fingerprint=fp,
-        app_cache=cache,
         app_local_data=tmp_path,
     )
     jobs, client = real_rig(tmp_path)
@@ -1554,7 +1551,7 @@ def test_with_the_real_engine_a_landed_save_is_published_and_a_pinned_read_sees_
         assert isinstance(refused.value, NotDone)
         assert refused.value.error.code == ErrorCode.WORKSPACE_NOT_READY
         assert main.read_bytes() == pre
-        target = RebuildTarget("k1", str(main), fp, lineage="lineage-1", app_local_data=tmp_path, app_cache=cache)
+        target = RebuildTarget("k1", str(main), fp, lineage="lineage-1", app_local_data=tmp_path)
         rebuilt = jobs.submit(rebuild_spec(W1), rebuild_work(target, CLOCK))
         assert isinstance(rebuilt, JobTicket)
         assert isinstance(outcome(rebuilt), Done)

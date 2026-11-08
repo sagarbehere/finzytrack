@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import gc
 import os
+import shutil
 import sqlite3
 import sys
 from collections.abc import Callable
@@ -385,6 +386,20 @@ def test_a_plan_made_after_an_outside_edit_on_a_generation_from_before_it_is_ref
     assert out == sv.Refused("mirror_stale", unchanged=True)
     assert "gate" not in job.events
     assert_nothing_written(led, before, out)
+
+
+def test_a_generation_of_another_ledger_under_this_key_is_refused(led: Ledger, tmp_path: Path) -> None:
+    """S0087 round 1 (red team F2): the gate ties the generation to this ledger's root by `path_key`."""
+    other = tmp_path / "B"
+    other.mkdir()
+    (other / "main.bean").write_bytes(b'option "operating_currency" "EUR"\n2020-01-01 open Assets:Other\n')
+    shutil.rmtree(led.cache / "workspaces")
+    out = publish_job(for_this_os(), led.cache, other / "main.bean", ledger=ledger_set_of(other / "main.bean"))
+    assert isinstance(out, pb.Published)
+    plan = plan_for(led)
+    before = led.tree()
+    assert sv.run(plan, ports_for(led), FakeJob()) == sv.Refused("mirror_stale", unchanged=True)
+    assert_nothing_written(led, before, None)
 
 
 def test_a_fresh_generation_after_the_outside_edit_lets_the_same_plan_pass(led: Ledger) -> None:

@@ -137,11 +137,14 @@ class _NoChannel:
 class JobContext:
     """One request's job messages (engine-jobs §4, §5.4, §6.1 steps 7 and 9, §12)."""
 
-    def __init__(self, rid: int, op: str, channel: JobChannel, *, engine_lock: str | None = None) -> None:
+    def __init__(
+        self, rid: int, op: str, channel: JobChannel, *, engine_lock: str | None = None, app_cache: str | None = None
+    ) -> None:
         self._rid = rid
         self._op = op
         self._channel = channel
         self.engine_lock = engine_lock  # the engine lock this engine holds (recover-all's ops check their folder)
+        self.app_cache = app_cache  # the app's cache folder this engine was started with (S0087: the mirror's)
         self._gated = False
         self._proceeded = False
         self.decision: Decision | None = None
@@ -386,10 +389,13 @@ class Engine:
     hold it (S0062; engine-jobs §5.1): so no such work ever runs beside an engine of an earlier session, which may
     have answered its handshake and not yet taken its `flock` when the sidecar waited (BL-0151's gap)."""
 
-    def __init__(self, *, test_ops: bool = False, engine_lock_held: str | None = None) -> None:
+    def __init__(
+        self, *, test_ops: bool = False, engine_lock_held: str | None = None, app_cache: str | None = None
+    ) -> None:
         self._handlers = {**PRODUCTION, **(TEST_OPS if test_ops else {})}
         self._ready = False
         self._locked = engine_lock_held  # the path of the engine lock this engine holds
+        self._app_cache = app_cache  # S0087: the mirror's folders live under it; no request names another
 
     def took_engine_lock(self, path: str) -> None:
         self._locked = path
@@ -448,7 +454,7 @@ class Engine:
             return _refusal(rid, op, "protocol.invalid_params", where or "Invalid params.")
         if handler.needs_engine_lock and self._locked is None:
             return _refusal(rid, op, "engine.no_engine_lock", "This engine does not hold the engine lock.")
-        ctx = JobContext(rid, op, channel, engine_lock=self._locked)
+        ctx = JobContext(rid, op, channel, engine_lock=self._locked, app_cache=self._app_cache)
         try:
             reply = _accepted(rid, op, handler.run(params, ctx), ctx.decision)
         except InputEnded:
@@ -648,6 +654,13 @@ def _pid(text: str) -> int:
     return value
 
 
+def _absolute(text: str) -> str:
+    if not text.startswith("/"):
+        msg = f"{text} is not an absolute path"
+        raise argparse.ArgumentTypeError(msg)
+    return text
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="ledger_engine", description="Finzytrack ledger engine (ADR-0054)")
     parser.add_argument(
@@ -658,6 +671,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--engine-lock", help="hold this lock file from the handshake on, for the engine's life (engine-jobs §5.1)"
     )
+    parser.add_argument(
+        "--app-cache",
+        type=_absolute,
+        help="the app's cache folder: the only place the mirror's publish writes (S0087; publish.md §2)",
+    )
     parser.add_argument("--test-ops", action="store_true", help="test only: add the test.* ops")
     args = parser.parse_args(argv)
     parent = args.parent_pid if args.parent_pid is not None else os.getppid()
@@ -667,7 +685,7 @@ def main(argv: list[str] | None = None) -> int:
     else:
         _log(f"the parent is pid {parent}; the engine ends on stdin EOF only")
     lock: str | None = args.engine_lock
-    engine = Engine(test_ops=args.test_ops)
+    engine = Engine(test_ops=args.test_ops, app_cache=args.app_cache)
 
     def hold() -> None:
         assert lock is not None  # noqa: S101 (only passed with a lock)

@@ -1565,7 +1565,7 @@
     },
     "RebuildParams": {
       "additionalProperties": false,
-      "description": "`rebuild` (S0070; engine-jobs §6.7, §7; ADR-0068 D1): Beancount's own load of the ledger rooted at `root`, the\nledger set named by `fingerprint` (`ledger_set.encode`'s text: the saved plan's, or the last try's answer)\nobserved before and after it, and its publish (S0087, BL-0113; `design/specs/mirror/publish.md` §4) into\n`<app_cache>/workspaces/<workspace_key>/mirror/`: `app_local_data` and `lineage` name the `.open` journals looked\nfor at the re-check, `floor` is the highest generation number the sidecar saw this session (§3), `today` the\nuser's civil date (`meta.as_of`, INV-07) and `built_at` the instant.",
+      "description": "`rebuild` (S0070; engine-jobs §6.7, §7; ADR-0068 D1): Beancount's own load of the ledger rooted at `root`, the\nledger set named by `fingerprint` (`ledger_set.encode`'s text: the saved plan's, or the last try's answer)\nobserved before and after it, and its publish (S0087, BL-0113; `design/specs/mirror/publish.md` §4) into\n`<app cache>/workspaces/<workspace_key>/mirror/`, the app cache being the folder the engine was started with\n(`--app-cache`; no request names it): `app_local_data` and `lineage` name the `.open` journals looked\nfor at the re-check, `floor` is the highest generation number the sidecar saw this session (§3), `today` the\nuser's civil date (`meta.as_of`, INV-07) and `built_at` the instant.",
       "properties": {
         "root": {
           "minLength": 1,
@@ -1582,12 +1582,6 @@
           "minLength": 1,
           "pattern": "^/",
           "title": "App Local Data",
-          "type": "string"
-        },
-        "app_cache": {
-          "minLength": 1,
-          "pattern": "^/",
-          "title": "App Cache",
           "type": "string"
         },
         "workspace_key": {
@@ -1625,7 +1619,6 @@
         "root",
         "fingerprint",
         "app_local_data",
-        "app_cache",
         "workspace_key",
         "lineage",
         "floor",
@@ -1712,7 +1705,6 @@
           "id": 1,
           "op": "rebuild",
           "params": {
-            "app_cache": "/cache",
             "app_local_data": "/app-data/com.finzytrack.desktop",
             "built_at": "2026-11-08T10:00:00+05:30",
             "fingerprint": "{\"document_files\":[],\"documents\":[],\"files\":[],\"globs\":[],\"root\":\"/ledgers/L/main.bean\",\"v\":1}",
@@ -1797,6 +1789,7 @@
         "number": {
           "anyOf": [
             {
+              "maximum": 999999999999,
               "minimum": 1,
               "type": "integer"
             },
@@ -3017,7 +3010,7 @@
     },
     "SaveParams": {
       "additionalProperties": false,
-      "description": "A confirmed plan (§2's `save`): who saves (`session`, `job`, the workspace's registry key and lineage id), the\nledger's root, the changes, the plan's fingerprint (`ledger_set.encode`'s text), the app's cache folder (the gate\nreads the published mirror there, `design/specs/mirror/publish.md` §7; S0087) and the app's machine-local folder.",
+      "description": "A confirmed plan (§2's `save`): who saves (`session`, `job`, the workspace's registry key and lineage id), the\nledger's root, the changes, the plan's fingerprint (`ledger_set.encode`'s text) and the app's machine-local folder.\nThe gate reads the published mirror in the app's cache folder the engine was started with (`--app-cache`;\n`design/specs/mirror/publish.md` §7; S0087): no request names it.",
       "properties": {
         "session": {
           "pattern": "^[a-z0-9_]{1,64}$",
@@ -3061,12 +3054,6 @@
           "title": "Fingerprint",
           "type": "string"
         },
-        "app_cache": {
-          "minLength": 1,
-          "pattern": "^/",
-          "title": "App Cache",
-          "type": "string"
-        },
         "app_local_data": {
           "minLength": 1,
           "pattern": "^/",
@@ -3082,7 +3069,6 @@
         "root",
         "changes",
         "fingerprint",
-        "app_cache",
         "app_local_data"
       ],
       "title": "SaveParams",
@@ -3166,7 +3152,6 @@
           "id": 1,
           "op": "save",
           "params": {
-            "app_cache": "/cache",
             "app_local_data": "/app-data/com.finzytrack.desktop",
             "changes": [
               {

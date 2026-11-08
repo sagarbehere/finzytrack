@@ -14,6 +14,7 @@ from typing import Any
 
 import pytest
 
+from ledger_engine.protocol.server import Engine
 from tests.test_save_ops import Channel, engine, request
 from tests.test_save_ops import setup as setup  # the fixture, shared
 
@@ -30,7 +31,6 @@ def saved(ald: Path, params: dict[str, Any]) -> dict[str, Any]:
         "root": params["root"],
         "fingerprint": params["fingerprint"],
         "app_local_data": params["app_local_data"],
-        "app_cache": params["app_cache"],
         "workspace_key": params["workspace_key"],
         "lineage": params["lineage"],
         "floor": 0,
@@ -59,7 +59,7 @@ def test_a_saved_ledger_is_rebuilt_through_the_protocol(setup: tuple[Path, Path,
     assert (reply["decision"]["table"], reply["decision"]["version"]) == ("engine.rebuild", 2)
     # S0087 (BL-0113): published after the save's generation (number 1, the setup's), the save's change in it
     assert (result["publish"], result["number"]) == ("published", 2)
-    mirror = Path(target["app_cache"]) / "workspaces" / "k1" / "mirror"
+    mirror = ald.parent / "cache" / "workspaces" / "k1" / "mirror"
     name = os.readlink(mirror / "current.db")
     assert result["ledger_version"].startswith("2/sha256:")
     con = sqlite3.connect(f"{(mirror / name).as_uri()}?mode=ro", uri=True)
@@ -98,7 +98,7 @@ def test_no_rebuild_runs_in_an_engine_without_the_engine_lock(setup: tuple[Path,
         {"root": "relative"},
         {"fingerprint": ""},
         {"app_local_data": "/elsewhere"},  # not the folder of this engine's lock
-        {"app_cache": "relative"},
+        {"app_cache": "/elsewhere"},  # no request names the cache folder: it is the engine's from its start
         {"workspace_key": ".."},
         {"workspace_key": "a/b"},
         {"floor": -1},
@@ -110,4 +110,31 @@ def test_malformed_params_are_refused(setup: tuple[Path, Path, dict[str, Any]], 
     target = saved(ald, params)
     reply = call(ald, "rebuild", {**target, **bad})
     assert not reply["ok"], reply
+    assert reply["error"]["key"] == "protocol.invalid_params"
+
+
+def test_a_rebuild_never_cleans_a_folder_a_request_names(
+    setup: tuple[Path, Path, dict[str, Any]], tmp_path: Path
+) -> None:
+    """S0087 round 1 (red team F3): the mirror folder is under the cache folder the engine was started with; a request
+    that names another one is refused before anything is read, made or removed there."""
+    _, ald, params = setup
+    target = saved(ald, params)
+    other = tmp_path / "Documents"
+    (other / "workspaces" / "k1" / "mirror").mkdir(parents=True)
+    (other / "workspaces" / "k1" / "mirror" / "keep.txt").write_bytes(b"the user's")
+    reply = call(ald, "rebuild", {**target, "app_cache": str(other)})
+    assert reply["error"]["key"] == "protocol.invalid_params"
+    assert (other / "workspaces" / "k1" / "mirror" / "keep.txt").read_bytes() == b"the user's"
+
+
+def test_an_engine_started_without_its_cache_folder_publishes_nothing(
+    setup: tuple[Path, Path, dict[str, Any]],
+) -> None:
+    _, ald, params = setup
+    target = saved(ald, params)
+    events = Channel(2, proceed=False)
+    e = Engine(engine_lock_held=str(ald / "locks" / "engine.lock"))
+    assert json.loads(e.handle(b'{"v":2,"id":0,"op":"handshake","params":{}}'))["ok"]
+    reply = json.loads(e.handle(request("rebuild", target, 2), events))
     assert reply["error"]["key"] == "protocol.invalid_params"

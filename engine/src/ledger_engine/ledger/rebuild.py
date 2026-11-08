@@ -14,8 +14,10 @@ nothing. Nothing gates on it and nothing compares it with anything.
 3. the same set observed again.
 `loaded` when the two observations are equal and the load parsed no file and used no documents root outside the set:
 the result is Beancount's own for the disk as observed, and it is published (publish.md §4 steps 2 to 8,
-`mirror.publish.publish`): built into a new generation stamped with that observation, then, just before the swap,
-the set observed again (a change: `moved`, not published) and this workspace's `.open` journal looked for (one, or a
+`mirror.publish.publish`): built into a new generation stamped with an observation of the set the load read (its
+files, documents roots and `document` files, and the hint's globs that still lead to them, `_read_by`; S0087 round
+1), then, just before the swap,
+that set observed again (a change: `moved`, not published) and this workspace's `.open` journal looked for (one, or a
 journal folder that cannot be listed: `paused`, not published; engine-jobs §7). Otherwise `moved`, with the
 fingerprint to try with next: the set observed after the load, widened by the files, documents roots and `document`
 files the load used outside it. The sidecar tries again in a fresh engine, at most 3 tries in a row (§7's load rule).
@@ -131,6 +133,20 @@ def _under(file: str, roots: tuple[str, ...]) -> bool:
     return any(file.startswith(root.rstrip("/") + "/") for root in roots)
 
 
+def _read_by(observed: Fingerprint, used: LedgerSet) -> LedgerSet:
+    """The set a loaded result is stamped with (publish.md §8): the files, documents roots and `document` files the
+    load used (a `document` file under a used root is in the set through the root's listing), and of the hint's
+    `include` globs (a plain path is one too) those whose matches, as observed, include a file the load read, or that
+    matched nothing (Beancount's loader does not report its patterns: an include the ledger dropped matched only files
+    the load no longer reads, and goes; one that matches nothing stays, since it may still be in the ledger)."""
+    roots = tuple(sorted(set(used.documents)))
+    files = tuple(sorted(set(used.files)))
+    read = set(files)
+    globs = tuple(g for g, matches in observed.globs if not matches or read & set(matches))
+    document_files = tuple(sorted({f for f in used.document_files if not _under(f, roots)}))
+    return LedgerSet(observed.root, files, globs, roots, document_files)
+
+
 def _wider(a: LedgerSet, b: LedgerSet) -> LedgerSet | None:
     """`a` widened by what `b` names outside it, or None when `b` names nothing outside it."""
     files = set(b.files) - set(a.files)
@@ -159,7 +175,13 @@ def run(ports: Ports, hint: Fingerprint, job: Job, target: Target) -> Answer:
         cleaned = pb.clean(d, ports.store, target.now_ns)
         if cleaned.current is not None:
             facts = ports.store.meta(d, cleaned.current.name)
-            if facts is not None and pb.fresh(facts, observe, engine_build=target.engine_build, today=target.today):
+
+            def ours(root: str) -> bool:  # the generation is of this ledger (round 1, red team F2)
+                return pb.same_ledger(ports.fs, root, hint.root)
+
+            if facts is not None and pb.fresh(
+                facts, observe, ours, engine_build=target.engine_build, today=target.today
+            ):
                 done = pb.Published(cleaned.current, facts.ledger_version)
                 return Answer("fresh", decode(facts.fingerprint.encode("ascii")), published=done, cleaned=cleaned)
         ledger_set = hint.ledger_set
@@ -173,12 +195,22 @@ def run(ports: Ports, hint: Fingerprint, job: Job, target: Target) -> Answer:
             return Answer("moved", ports.observe(wider), cleaned=cleaned)
         if after != before:
             return Answer("moved", after, cleaned=cleaned)
+        # The generation is stamped with what the load read (publish.md §8; round 1, verifier V1), not the hint: a
+        # hint can name files the ledger no longer includes (the queued rebuild of an earlier save), and a stamp
+        # naming them would make the gate refuse every save once such a file changes (`_read_by` says which globs
+        # stay). Observed now, then the hint's set once more: unchanged, so the stamp describes the state the load
+        # read.
+        stamped_set = _read_by(after, _used(entries, options))
+        stamp = ports.observe(stamped_set)
+        again = ports.observe(ledger_set)
+        if again != after:
+            return Answer("moved", again, cleaned=cleaned)
         seen: list[Fingerprint] = []
 
         def recheck() -> pb.Recheck:  # publish.md §4 step 7, engine-jobs §7
-            now = ports.observe(ledger_set)
-            if now != after:
-                seen.append(now)
+            now = ports.observe(stamped_set)
+            if now != stamp:
+                seen.append(ports.observe(ledger_set))
                 return "moved"
             try:
                 unfinished = records(ports.fs, target.app_local_data, target.workspace_key, target.lineage)
@@ -191,7 +223,7 @@ def run(ports: Ports, hint: Fingerprint, job: Job, target: Target) -> Answer:
             cleaned,
             ports.store,
             result,
-            after,
+            stamp,
             floor=target.floor,
             today=target.today,
             built_at=target.built_at,
@@ -203,4 +235,4 @@ def run(ports: Ports, hint: Fingerprint, job: Job, target: Target) -> Answer:
         return Answer("moved", seen[-1], cleaned=cleaned)
     if isinstance(out, pb.NotPublished) and out.why == "paused":
         return Answer("paused", after, cleaned=cleaned)
-    return Answer("loaded", after, len(entries), len(errors), published=out, cleaned=cleaned)
+    return Answer("loaded", stamp, len(entries), len(errors), published=out, cleaned=cleaned)
