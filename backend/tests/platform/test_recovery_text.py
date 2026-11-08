@@ -280,3 +280,35 @@ def test_the_reopen_text_after_a_created_path_does_not_promise_an_undo() -> None
     text = reopen_after_created("/L/prices.bean")
     assert "undo" not in text
     assert "It will ask you about prices.bean, which it was creating." in text
+
+
+@pytest.mark.parametrize(
+    ("cause", "says"),
+    [
+        ("wrong_drive", "The drive at /mnt/USB/L is not the drive that held accounts.beancount."),
+        ("unknown_drive", "Finzytrack cannot identify the drive at /mnt/USB/L"),
+    ],
+)
+def test_a_journal_on_another_drive_says_to_plug_in_the_drive_that_held_the_ledger(cause: str, says: str) -> None:
+    """S0089 (BL-0188; owner, 2026-11-08: "blocks that workspace with a message naming the drive ('plug in the drive
+    that held your ledger, then Retry')"): the drive is named by the folder at which it is mounted now."""
+    b = Blocking(J, "stopped", cause, "/mnt/USB/L/accounts.beancount", "/mnt/USB/L")
+    screen = blocked_screen(b, WS)
+    assert says in screen.message
+    assert screen.message.startswith("Finzytrack could not undo an unfinished save in Personal.")
+    assert screen.message.endswith("Plug in the drive that held your ledger, then press Retry.")
+    assert screen.actions == ("retry", "stay_or_back", "keep")
+
+
+@pytest.mark.parametrize("cause", ["wrong_drive", "unknown_drive"])
+def test_keep_on_another_drive_says_the_save_will_not_be_undone_there(cause: str) -> None:
+    text = keep_confirmation(Blocking(J, "stopped", cause, "/L/accounts.beancount", "/L"), WS)
+    assert "Finzytrack cannot reach the drive that held these files" in text
+    assert "will not undo the save there, now or later" in text
+
+
+@pytest.mark.parametrize("reason", ["wrong_drive", "unknown_drive"])
+def test_a_delete_refused_on_another_drive_says_to_plug_in_the_right_one(reason: str) -> None:
+    text = action_text(ActOutcome("refused", reason, "/L", None, None))
+    assert text is not None
+    assert text.endswith("Plug in the drive that held your ledger, then press Retry.")

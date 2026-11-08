@@ -182,6 +182,11 @@ def test_a_save_that_lands_is_saved_and_its_engine_is_retired(make: Any) -> None
             "CHANGE_NOT_SAVED",
             ChangeNotSavedDetails("linked_folder", None, "/app/local/k1/journal", None, True),
         ),
+        (  # S0089 (BL-0188): a drive with no volume UUID; its journal could never be undone
+            answer(outcome="not_saved", reason="no_drive_id", path=MAIN, unchanged=True),
+            "CHANGE_NOT_SAVED",
+            ChangeNotSavedDetails("no_drive_id", MAIN, None, None, True),
+        ),
         (
             answer(
                 outcome="unfinished",
@@ -383,6 +388,11 @@ def test_not_saved_says_unchanged_only_after_the_rehash() -> None:
             ChangeNotSavedDetails("linked_folder", None, "/app/local/k1/journal", None, True),
             "The folder /app/local/k1/journal is a link to another place. Finzytrack keeps its save records and "
             "backups only in a real folder. Put the real folder back in its place, or remove the link, then try again.",
+        ),
+        (
+            ChangeNotSavedDetails("no_drive_id", MAIN, None, None, True),
+            f"Finzytrack cannot identify the drive that holds {MAIN.rpartition('/')[2]}, so it could not undo the "
+            "change if saving were interrupted.",
         ),
     ],
 )

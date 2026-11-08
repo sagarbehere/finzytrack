@@ -934,6 +934,7 @@
           "read_back",
           "name_not_utf8",
           "linked_folder",
+          "no_drive_id",
           "engine_stopped"
         ],
         "type": "string"

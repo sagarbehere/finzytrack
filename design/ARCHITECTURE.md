@@ -258,7 +258,8 @@ engine/src/ledger_engine/
                  durable_commit, the durable order of engine-jobs §6.1 step 8 through `fs.port` (S0060), with
                  the rollback of §6.4 on any failure from the `.open` journal on (S0061)
     restore.py   the restore shared by the rollback (§6.4) and recovery's per-journal try (§8.1 steps 2-4):
-                 restore, recover_journal (S0061); handles.py the per-folder handles with the path guard, the
+                 restore, recover_journal (S0061); handles.py the per-folder handles with the path guard and,
+                 for the undo, the drive check (each folder on the drive its journal records, S0089), the
                  owner's hard-link rule, the write mode per volume (write_mode: the swap, or the best-effort
                  mode without it, with move, ADR-0068 D2, S0071), and displaced/keep: an outside save a swap or a clean-up
                  meets goes to a kept name beside the file, never swapped back (ADR-0013 amendment, S0061 r1)
@@ -305,7 +306,7 @@ engine/src/ledger_engine/
   fs/            the file-system port for writes (S0060): port.py (FileSystem.resolve with the object's identity,
                  open_dir -> DirHandle: read, stat, sync_file, create exclusively with the xattrs of the file it replaces and
                  sync, swap, exclusive rename, plain rename (S0065), remove, mkdir, rmdir, sync, path by F_GETPATH,
-                 allowed (access(2) with ACLs), caps (the volume's RENAME_SWAP and RENAME_EXCL, S0065), acl (the folder's ACL entries, each
+                 allowed (access(2) with ACLs), caps (the volume's RENAME_SWAP and RENAME_EXCL, S0065), volume_id (the drive's volume UUID, S0089), acl (the folder's ACL entries, each
                  with its kind, bits and flags, never its subject, S0061 r6-r7; judged by ledger/handles.blocking_entry); LegacyLocks, the legacy app's
                  write lock for Copy (BL-0026); same_path, the path guard's comparison), darwin.py (F_FULLFSYNC, renameatx_np on the folder's
                  descriptor, a file resolved through its folder and stored name, never F_GETPATH on a hard-linked

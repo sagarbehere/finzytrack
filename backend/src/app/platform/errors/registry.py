@@ -123,6 +123,7 @@ type NotSavedReason = Literal[
     "read_back",  # a written file did not read back as written (the save was rolled back)
     "name_not_utf8",  # a path is not valid UTF-8
     "linked_folder",  # a link stands in place of the workspace's own journal, backups or key folder (S0077, BL-0193)
+    "no_drive_id",  # the ledger's drive reports no volume UUID: a save there could never be undone (S0089, BL-0188)
     "engine_stopped",  # the save's engine stopped, and the disk shows the change was not saved (§6.6)
 ]
 

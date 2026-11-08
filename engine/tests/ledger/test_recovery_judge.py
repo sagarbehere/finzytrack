@@ -39,8 +39,18 @@ pytestmark = [pytest.mark.inv("INV-01"), pytest.mark.inv("INV-32")]
 
 PRE, POST, FOREIGN = b"pre bytes\n", b"post bytes\n", b"; an editor's save\n"
 HELD = (sha256(PRE), sha256(POST))
-REPLACED = FileEntry("/w/L/main.bean", "/w/l/main.bean", sha256(PRE), sha256(POST), "2-main.bean", ".m.ft-s1-j.tmp")
-CREATED = FileEntry("/w/L/new.bean", "/w/l/new.bean", None, sha256(POST), None, ".n.ft-s1-j.tmp")
+REPLACED = FileEntry(
+    "/w/L/main.bean",
+    "/w/l/main.bean",
+    sha256(PRE),
+    sha256(POST),
+    "2-main.bean",
+    ".m.ft-s1-j.tmp",
+    "1e0c8a4b-2f6d-4b9e-8c37-5a1d0e9f7b26",
+)
+CREATED = FileEntry(
+    "/w/L/new.bean", "/w/l/new.bean", None, sha256(POST), None, ".n.ft-s1-j.tmp", "1e0c8a4b-2f6d-4b9e-8c37-5a1d0e9f7b26"
+)
 OTHER, DIR, LINK = Seen(Kind.OTHER), Seen(Kind.DIR), Seen(Kind.LINK)
 GOOD_BACKUP = seen_file(PRE)
 A, OK, F, U = TempState.ABSENT, TempState.OURS, TempState.FOREIGN, TempState.UNREADABLE

@@ -173,6 +173,7 @@ SAVE: tuple[Row, ...] = (
     ("msg:save.ledger_changed", "`LEDGER_EXTERNALLY_CHANGED`", lambda: st.LEDGER_CHANGED),
     ("msg:save.hard_linked", "`CHANGE_NOT_SAVED {hard_linked}`", lambda: _not_saved("hard_linked")),
     ("msg:save.locked", "`CHANGE_NOT_SAVED {locked}`", lambda: _not_saved("locked")),
+    ("msg:save.no_drive_id", "`CHANGE_NOT_SAVED {no_drive_id}` (S0089)", lambda: _not_saved("no_drive_id")),
     ("msg:save.not_a_file", "`CHANGE_NOT_SAVED {not_a_file}`", lambda: _not_saved("not_a_file")),
     ("msg:save.permission", "`CHANGE_NOT_SAVED {permission}`", lambda: _not_saved("permission")),
     (
@@ -255,6 +256,16 @@ RECOVERY: tuple[Row, ...] = (
         "`stopped`, `permission`, no entry known",
         lambda: _screen(_blocking("stopped", rt.PERMISSION)),
     ),
+    (
+        "msg:recovery.wrong_drive",
+        "`stopped`, `wrong_drive` (S0089)",
+        lambda: _screen(_blocking("stopped", "wrong_drive", entry=FOLDER)),
+    ),
+    (
+        "msg:recovery.unknown_drive",
+        "`stopped`, `unknown_drive` (S0089)",
+        lambda: _screen(_blocking("stopped", "unknown_drive", entry=FOLDER)),
+    ),
     ("msg:recovery.unreadable", "`stopped`, `unreadable` record", lambda: _screen(_blocking("stopped", UNREADABLE))),
     ("msg:recovery.stopped", "`stopped`, any other cause", lambda: _screen(_blocking("stopped", "backup_bad"))),
     *_missing_rows("msg:recovery.missing", "added to a stop screen, replaced files absent (§6.8)", rt._missing_now),
@@ -328,6 +339,11 @@ RECOVERY: tuple[Row, ...] = (
     ),
     *_missing_rows(
         "msg:recovery.keep_missing", "added to Keep's confirmation, replaced files absent", rt._missing_kept
+    ),
+    (
+        "msg:recovery.keep_other_drive",
+        "Keep's confirmation for `wrong_drive`, `unknown_drive` (S0089)",
+        lambda: rt.keep_confirmation(_blocking("stopped", "wrong_drive", entry=FOLDER), WS),
     ),
     (
         "msg:recovery.keep_kept_copy",

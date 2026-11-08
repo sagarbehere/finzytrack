@@ -790,3 +790,20 @@ def test_meta_names_the_job_that_published_it(by: str) -> None:
     assert (got is not None) == (by in ("open", "rebuild"))
     if got is not None:
         assert got.published_by == by
+
+
+def test_a_generation_without_published_by_is_not_a_mirror_of_this_kind() -> None:
+    """@regression-guard (it held on 3e47593c; BL-0217, the S0088 verifier's final-round test): a generation an earlier
+    build wrote, without `published_by`, is not a whole mirror of this kind, so no open keeps it (publish.md §8
+    `published_by`). Kills the mutant `facts.get("published_by", "open")` (a back-compat default)."""
+    facts = {
+        "ledger_version": "1/sha256:" + "0" * 64,
+        "fingerprint": "{}",
+        "export_version": "x",
+        "engine_build": "b",
+        "as_of": "2026-11-08",
+        "build_complete": "1",
+    }
+    assert set(pb.META_KEYS) == {*facts, "published_by"}
+    assert pb.meta_of(facts) is None
+    assert pb.meta_of({**facts, "published_by": "open"}) is not None

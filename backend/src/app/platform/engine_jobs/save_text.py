@@ -71,6 +71,12 @@ def not_saved_text(d: ChangeNotSavedDetails) -> str:
                 "keeps its save records and backups only in a real folder. Put the real folder back in its place, "
                 "or remove the link, then try again."
             )
+        case "no_drive_id":  # S0089 (BL-0188): its journal could never be undone (owner, 2026-11-08)
+            return (
+                f"{did_not} Finzytrack cannot identify the drive that holds {_name(d.path)}, so it could not undo "
+                "the change if saving were interrupted. Keep your ledger on a drive Finzytrack can identify, such as "
+                "your Mac's own disk or a USB drive."
+            )
         case "io_error" | "read_back" | "name_not_utf8" | "engine_stopped":
             return _unchanged_or_not(d)
 

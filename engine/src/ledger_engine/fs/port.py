@@ -127,6 +127,13 @@ class DirHandle(Protocol):
         point)."""
         ...
 
+    def volume_id(self) -> str | None:
+        """The UUID of the drive this directory is on, in lower case (`8-4-4-4-12` hex digits), or None when the drive
+        reports none (S0089, BL-0188: the journal names each folder's drive by it, and the undo writes only on that
+        drive). Asking writes nothing; an error raises `OSError`. macOS: `ATTR_VOL_UUID` (APFS, HFS+, exFAT and FAT
+        report one; probed). TODO(BL-0218): Windows (the volume GUID) and Linux (the file system UUID)."""
+        ...
+
     def read(self, name: str, limit: int | None = None) -> bytes | None:
         """The bytes of the regular file `name`, or None when there is no entry of that name. A link, a directory or
         any other kind of entry (a FIFO included: it never blocks) raises `OSError`. With `limit`, at most its first

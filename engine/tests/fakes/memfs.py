@@ -26,27 +26,31 @@ rollback's, S0061): `Crash` (a `BaseException`, as a process death that no `exce
 runs before each effect, for an outside program to act between two effects (`outside_*`: durable, as an editor that
 syncs its save; they are not effects); `on_read(label)` before each `sha256` read (S0084).
 
-**Resolution, as the macOS adapter does it:** links are followed, a dangling link counts as absent (its own name is
-the first missing component), and `Resolved.identity` is `(1, inode)`. Files may have several hard links
-(`outside_link`); `stat` gives the link count, and a locked file (`outside_lock`, `uchg`) refuses a swap, a rename
-and a remove. `create(..., like=...)` copies `like`'s extended attributes (`outside_setxattr`). With `stores_nfd`
-the volume keeps every name in NFD, as HFS+ does (S0061 probe). `outside_acl` adds an ACL entry (`AclEntry`:
-whether it denies, its permissions and flags, in `chmod`'s words) to a file or a folder, with whether the kernel
-applies it to us (`applies`: the fake's own knowledge, as the kernel's; the port never reports it, S0061 r7), and
-`outside_acl_clear` removes them all (`chmod -N`). A deny entry that applies to us and is not `only_inherit` acts as
-on APFS (probed, S0061 r6): on a folder, `add_file` refuses a create or a rename into it, `add_subdirectory` a
-`mkdir`, `delete_child` every removal or rename away, `search` every lookup in it (`stat`, `read`, a path through
-it), `list` its opening and listing; on an entry, `delete` its removal or rename away, `readattr` and `readsecurity`
-its `stat`, `read` its bytes, `readextattr` the copy of its extended attributes, `writeextattr` the copy into it.
-A new file inherits a folder's `file_inherit` entries, a new folder its `directory_inherit` ones (as APFS does: a
-`file_inherit`-only entry is not passed to a subfolder). Allow entries are not weighed (a deny always denies: the
-fake fails closed where APFS would let an earlier allow win). `outside_lock` locks a file or a folder (`uchg`);
-`outside_remove` is the user deleting an entry, durably.
+**Resolution, as the macOS adapter does it:** links are followed, a dangling link counts as absent (its own name is the
+first missing component), and `Resolved.identity` is `(dev, inode)`, `dev` that of the entry's drive. Files may have
+several hard links (`outside_link`); `stat` gives the link count, and a locked file (`outside_lock`, `uchg`) refuses a
+swap, a rename and a remove. `create(..., like=...)` copies `like`'s extended attributes (`outside_setxattr`). With
+`stores_nfd` the volume keeps every name in NFD, as HFS+ does (S0061 probe). `outside_acl` adds an ACL entry
+(`AclEntry`: whether it denies, its permissions and flags, in `chmod`'s words) to a file or a folder, with whether the
+kernel applies it to us (`applies`: the fake's own knowledge, as the kernel's; the port never reports it, S0061 r7), and
+`outside_acl_clear` removes them all (`chmod -N`). A deny entry that applies to us and is not `only_inherit` acts as on
+APFS (probed, S0061 r6): on a folder, `add_file` refuses a create or a rename into it, `add_subdirectory` a `mkdir`,
+`delete_child` every removal or rename away, `search` every lookup in it (`stat`, `read`, a path through it), `list` its
+opening and listing; on an entry, `delete` its removal or rename away, `readattr` and `readsecurity` its `stat`, `read`
+its bytes, `readextattr` the copy of its extended attributes, `writeextattr` the copy into it. A new file inherits a
+folder's `file_inherit` entries, a new folder its `directory_inherit` ones (as APFS does: a `file_inherit`-only entry is
+not passed to a subfolder). Allow entries are not weighed (a deny always denies: the fake fails closed where APFS would
+let an earlier allow win). `outside_lock` locks a file or a folder (`uchg`); `outside_remove` is the user deleting an
+entry, durably.
 
 **Modification times** (S0074): a logical clock (`tick`): an inode's time is set when it is made, a file's when its
 data is written, a folder's when the port makes, renames or removes an entry in it (an outside program's changes to
 a folder's entries leave its time); a rename keeps a file's. `outside_mtime` sets any time (a clock set back). A
 power-loss state keeps the times as they were.
+
+**Drives** (S0089): a folder's drive is its `dev` (`outside_mount`); `volume_id` answers the UUID that drive reports
+(`volume_of`: derived from `dev` unless `outside_volume_id` set another, or None), or `EIO` after
+`outside_volume_error`. Asking is not an effect.
 
 **Volumes without the swap** (S0065, probed on exFAT, FAT and HFS+ disk images): `outside_no_swap` (or
 `outside_mkdirs(..., no_swap=True, no_excl=...)`) puts a folder, and every folder made in it, on a volume without
@@ -226,6 +230,8 @@ class MemFS:
         self.largest_chunk = 0  # the largest chunk a streamed create was given (S0081: never a whole document)
         self.mtimes: dict[int, int] = {}  # inode -> modification time, from a logical clock (`tick`)
         self._clock = 0
+        self.volume_ids: dict[int, str | None] = {}  # dev -> the drive's UUID (None: it reports none); S0089
+        self.volume_errors: set[int] = set()  # devs whose UUID cannot be read (`volume_id` raises `EIO`)
 
     def stored(self, name: str) -> str:
         """The spelling the volume keeps for a name it is given."""
@@ -341,7 +347,11 @@ class MemFS:
     def resolve(self, path: str) -> Resolved:
         names, ino, rest, cis = self._walk(path, search=True)
         rules = tuple(FoldRule(nfd=True, casefold=ci) for ci in cis)
-        return Resolved(existing=tuple(names), rest=tuple(rest), rules=rules, identity=(1, ino))
+        last = self.nodes[ino]
+        # a file is on its folder's drive, as `stat` answers (S0089: a ledger on a mounted drive)
+        holder = last if isinstance(last, _Dir) else self._dir(self._walk("/" + "/".join(names[:-1]))[1])
+        dev = holder.dev
+        return Resolved(existing=tuple(names), rest=tuple(rest), rules=rules, identity=(dev, ino))
 
     def open_dir(self, path: str) -> MemDir:
         _, ino, rest, _ = self._walk(path, search=True)
@@ -517,6 +527,20 @@ class MemFS:
             d.dev = dev
             stack.extend(i for _, i in d.entries.values() if isinstance(self.nodes[i], _Dir))
 
+    def volume_of(self, dev: int) -> str | None:
+        """The UUID the drive `dev` reports (S0089): set by `outside_volume_id`, else one derived from `dev`, so two
+        volumes of the fake never share one."""
+        return self.volume_ids.get(dev, f"00000000-0000-4000-8000-{dev:012x}")
+
+    def outside_volume_id(self, dev: int, uuid: str | None) -> None:
+        """The drive `dev` now reports `uuid` (None: none at all): another drive mounted at the same path, with the
+        same folders and files (a cloned stick), or a volume kind that has no UUID (S0089)."""
+        self.volume_ids[dev] = uuid
+
+    def outside_volume_error(self, dev: int) -> None:
+        """Asking the drive `dev` for its UUID now fails (`EIO`; S0089)."""
+        self.volume_errors.add(dev)
+
     def outside_fifo(self, path: str) -> None:
         d, name = self._parent_and_name(path)
         d.entries[_key(name, d.ci)] = (name, self._new(_Other()))
@@ -634,6 +658,8 @@ class MemFS:
         out._next = self._next
         out.mtimes = dict(self.mtimes)
         out._clock = self._clock
+        out.volume_ids = dict(self.volume_ids)
+        out.volume_errors = set(self.volume_errors)
         for ino in reach:
             d = self.nodes[ino]
             assert isinstance(d, _Dir)
@@ -707,6 +733,14 @@ class MemDir:
 
     def device(self) -> int:
         return self._d.dev
+
+    def volume_id(self) -> str | None:
+        """The UUID of this folder's drive (`DirHandle.volume_id`; S0089): `MemFS.volume_of`; `EIO` when it cannot
+        be read (`outside_volume_error`). Asking writes nothing and is not an effect."""
+        dev = self._d.dev
+        if dev in self._fs.volume_errors:
+            raise OSError(errno.EIO, "injected: the volume UUID cannot be read")
+        return self._fs.volume_of(dev)
 
     def path(self) -> str:
         """The folder's path now; for a folder removed meanwhile, its last path (probed on APFS, S0061 red team L5)."""

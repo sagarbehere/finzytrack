@@ -59,7 +59,7 @@ from ledger_engine.fs.port import DirHandle, EntryStat, FileSystem, Kind
 from ledger_engine.ledger.core import journal
 from ledger_engine.ledger.core import paths as core_paths
 from ledger_engine.ledger.core.journal import FileEntry, Record, State
-from ledger_engine.ledger.handles import Handles, PathMovedError, folder_blocked, sha256
+from ledger_engine.ledger.handles import Handles, PathMovedError, WrongDriveError, folder_blocked, sha256
 from ledger_engine.ledger.handles import join as _join
 
 LOCAL: Final = "local"
@@ -271,7 +271,7 @@ def _backup_good(handles: Handles, record: Record, f: FileEntry) -> bool:
 def inspect(fs: FileSystem, record: Record) -> tuple[Inspected, ...]:
     """What the blocked screen shows for a journal (the module's docstring); writes nothing."""
     out: list[Inspected] = []
-    handles = Handles(fs)
+    handles = Handles(fs, volumes=journal.volumes(record))
     try:
         for f in record.files:
             parent, base = _parent(f.canonical_path)
@@ -279,7 +279,8 @@ def inspect(fs: FileSystem, record: Record) -> tuple[Inspected, ...]:
             good = _backup_good(handles, record, f)
             try:
                 h = handles.at(parent)
-            except (PathMovedError, FileNotFoundError, NotADirectoryError):
+            except (PathMovedError, WrongDriveError, FileNotFoundError, NotADirectoryError):  # S0089: never another
+                # drive's files shown as this save's
                 out.append(Inspected(f.canonical_path, created, False, None, (), backup_good=good))
                 continue
             except OSError as e:
@@ -316,7 +317,8 @@ class Refused:
     """Nothing was written. `reason`: `not_open` (no `.open` record of that name), `unreadable` (a delete needs the
     record's file list), `not_in_record`, `not_kept_name`, `not_created`, `absent`, `not_a_file`, `changed` (the bytes
     differ from those the user was shown), `path_moved`, `permission` (the journal folder's rule: `path` the folder,
-    `detail` the ACL entry, as for a save)."""
+    `detail` the ACL entry, as for a save), `wrong_drive` and `unknown_drive` (the file's folder is on another drive
+    than the record names, or on one with no UUID: S0089; `path` the folder)."""
 
     reason: str
     path: str | None = None
@@ -375,6 +377,8 @@ def keep(fs: FileSystem, journal_dir: str, name: str) -> ActOutcome:
             return opened
         jd, record = opened
         files = record.files if record is not None else ()
+        if record is not None:
+            handles.volumes = journal.volumes(record)  # S0089: nothing synced on another drive
         at: str | None = None
         try:
             folders: dict[str, DirHandle] = {}
@@ -408,11 +412,13 @@ def keep(fs: FileSystem, journal_dir: str, name: str) -> ActOutcome:
 
 
 def _present(handles: Handles, folder: str) -> DirHandle | None:
-    """The folder's handle, or None when it is not there (`ENOENT`, `ENOTDIR`: nothing to sync). A folder no longer
-    at its recorded path raises `PathMovedError`: something stands there whose bytes Keep cannot sync."""
+    """The folder's handle, or None when it is not there (`ENOENT`, `ENOTDIR`: nothing to sync) or on another drive than
+    the record names, or one with no UUID (S0089: Keep writes no ledger byte and syncs nothing there, as for a drive
+    that is not plugged in; the user chose to stop undoing this save). A folder no longer at its recorded path raises
+    `PathMovedError`: something stands there whose bytes Keep cannot sync."""
     try:
         return handles.at(folder)
-    except (FileNotFoundError, NotADirectoryError):
+    except (FileNotFoundError, NotADirectoryError, WrongDriveError):
         return None
 
 
@@ -477,10 +483,13 @@ def _delete_one(
         f, entry = pick
         parent, _ = _parent(f.canonical_path)
         target = _join(parent, entry)
+        handles.volumes = journal.volumes(record)  # S0089: a removal only on the drive the record names
         try:
             h = handles.at(parent)
         except PathMovedError:
             return Refused("path_moved", parent)
+        except WrongDriveError as e:
+            return Refused(str(e), parent)
         except (FileNotFoundError, NotADirectoryError):
             return Refused("absent", target)
         except OSError as e:

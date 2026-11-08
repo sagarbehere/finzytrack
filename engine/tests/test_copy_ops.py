@@ -405,6 +405,7 @@ def write_open_journal(ald: Path, file: Path) -> None:
                 post="1" * 64,
                 backup=journal.backup_name(0, file.name),
                 temp=journal.temp_name(file.name, "s1-j1"),
+                volume="1e0c8a4b-2f6d-4b9e-8c37-5a1d0e9f7b26",
             ),
         ),
         created_dirs=(),

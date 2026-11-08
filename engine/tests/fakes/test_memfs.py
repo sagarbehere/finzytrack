@@ -754,3 +754,28 @@ def test_touch_is_an_effect_on_the_entry_itself_and_child_folders_open_without_f
     st = fs.open_dir("/d").stat("f")
     assert st is not None
     assert st.mtime_ns > 3
+
+
+def test_a_folders_drive_reports_its_uuid_and_asking_is_not_an_effect() -> None:
+    """S0089: `volume_id` is the UUID of the folder's drive (`outside_mount`), another drive's differs, a drive may
+    report none or fail to answer, and power-loss states keep it."""
+    fs = MemFS()
+    fs.outside_mkdirs("/a/b")
+    fs.outside_mkdirs("/u")
+    fs.outside_mount("/u", 7)
+    with fs.open_dir("/a/b") as ab, fs.open_dir("/u") as u:
+        assert ab.volume_id() == fs.volume_of(1)
+        assert u.volume_id() == fs.volume_of(7) != ab.volume_id()
+        fs.outside_volume_id(7, None)
+        assert u.volume_id() is None
+        fs.outside_volume_error(7)
+        with pytest.raises(OSError, match="volume UUID"):
+            u.volume_id()
+    assert fs.effects == []
+    fs.outside_volume_id(1, "6d3f0a52-8b1c-4e7a-9f20-3c5b7d9e1a40")
+    for state in fs.power_loss_states():
+        with state.open_dir("/a") as a:
+            assert a.volume_id() == "6d3f0a52-8b1c-4e7a-9f20-3c5b7d9e1a40"
+    identity = fs.resolve("/u").identity
+    assert identity is not None
+    assert identity[0] == 7

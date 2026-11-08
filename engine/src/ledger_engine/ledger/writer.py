@@ -146,6 +146,8 @@ class Reason(StrEnum):
     NAME_NOT_UTF8 = "name_not_utf8"  # a path is not valid UTF-8 (the journal cannot name it)
     LINKED_FOLDER = "linked_folder"  # a link stands in place of the workspace's key, journal or backups folder (the
     # save's folder step, `save._ensure_dir`; S0077, BL-0193): recovery reads no record through it
+    NO_DRIVE_ID = "no_drive_id"  # a folder the save writes in is on a drive that reports no volume UUID: its journal
+    # could never be undone (S0089, BL-0188; owner: "one without it is refused the same way")
 
 
 class Step(StrEnum):
@@ -220,6 +222,7 @@ class _Target:
     rest: tuple[str, ...]  # the components that did not exist at resolution
     tag: str = ""  # the record's name `<session>-<job>`, which every name derived from the save carries
     mode: Mode = Mode.SWAP  # its folder's write mode, chosen before the first effect (`_prepare`, `handles.write_mode`)
+    volume: str = ""  # the UUID of its folder's drive (of the folder a folder the save makes is made in), `_prepare`
 
     def kept_free(self, h: DirHandle) -> bool:
         """No entry in its folder is one of this file's kept names (a stranger there would stop recovery for ever)."""
@@ -232,6 +235,7 @@ class _Plan:
     dirs: tuple[tuple[str, str], ...]  # every folder the save makes, once, parents first
     journal_dir: str
     backups_dir: str
+    drives: dict[str, str] = field(default_factory=lambda: {})  # each folder the save makes: its drive (S0089)
 
 
 class _Stop(Exception):
@@ -344,8 +348,19 @@ def _check_app_folder(h: DirHandle, folder: str) -> None:
         raise _Stop(Reason.PERMISSION, None, folder, blocked.detail)
 
 
-def _check_target(handles: Handles, t: _Target) -> Mode:
-    """One target against the disk, before the first effect; its folder's write mode."""
+def _drive(h: DirHandle, canonical: str) -> str:
+    """The UUID of the drive of the folder `h`, which the journal records (S0089, BL-0188): the undo writes only on
+    that drive. A drive that reports none refuses the save before its first effect (`no_drive_id`), since its
+    journal could never be undone (owner, 2026-11-08: "one without it is refused the same way"); an error asking
+    raises (`io_error`). Asked through the descriptor the save's writes in that folder use."""
+    volume = h.volume_id()
+    if volume is None:
+        raise _Stop(Reason.NO_DRIVE_ID, canonical)
+    return volume
+
+
+def _check_target(handles: Handles, t: _Target) -> tuple[Mode, str]:
+    """One target against the disk, before the first effect; its folder's write mode and drive."""
     handles.on = t.canonical
     if not t.rest:
         if t.change.pre is None:
@@ -359,7 +374,7 @@ def _check_target(handles: Handles, t: _Target) -> Mode:
             raise _Stop(Reason.PERMISSION, t.canonical)  # its extended attributes could not be copied to the temp
         if any(h.stat(n) is not None for n in t.scratch) or not t.kept_free(h):
             raise _Stop(Reason.CHANGED, t.canonical)  # an entry stands at our temp name (S0060 red team r2 L2)
-        return mode
+        return mode, _drive(h, t.canonical)
     if t.change.pre is not None:
         raise _Stop(Reason.CHANGED, t.canonical)  # a file the save replaces vanished
     depth = len(split_absolute(t.canonical)) - len(t.rest)
@@ -373,12 +388,12 @@ def _check_target(handles: Handles, t: _Target) -> Mode:
     mode = _check_folder(holder, t.canonical, existing)
     if len(t.rest) == 1 and (any(holder.stat(n) is not None for n in t.scratch) or not t.kept_free(holder)):
         raise _Stop(Reason.CHANGED, t.canonical)  # an entry stands at our temp name
-    return mode  # a folder the save makes is on the volume of the folder it is made in
+    return mode, _drive(holder, t.canonical)  # a folder the save makes is on the drive of the folder it is made in
 
 
 def _prepare(fs: FileSystem, handles: Handles, c: Commit, targets: tuple[_Target, ...]) -> _Plan:
     """Step 0: check each target and the plan as a whole before the first effect (the module's docstring)."""
-    targets = tuple(replace(t, mode=_check_target(handles, t)) for t in targets)
+    targets = tuple(replace(t, mode=m, volume=v) for t in targets for m, v in (_check_target(handles, t),))
     handles.on = None
     keys = [t.key for t in targets]
     if len(set(keys)) != len(keys):
@@ -399,10 +414,12 @@ def _prepare(fs: FileSystem, handles: Handles, c: Commit, targets: tuple[_Target
                 raise BadPlanError("temp_name_taken")  # recovery deletes temps (S0060 red team 7, r2 L1); a folder the
                 # save makes at a temp name is covered too: a target file is inside it
     dirs: dict[str, str] = {}
+    drives: dict[str, str] = {}
     for t in targets:
         for canonical, key in t.new_dirs:
             if dirs.setdefault(key, canonical) != canonical:
                 raise BadPlanError("created_folders_differ_in_case")
+            drives[canonical] = t.volume
     journal_dir, journal_key = _app_folder(fs, c.journal_dir)
     backups_dir, backups_key = _app_folder(fs, c.backups_dir)
     for folder in (journal_key, backups_key):
@@ -411,7 +428,7 @@ def _prepare(fs: FileSystem, handles: Handles, c: Commit, targets: tuple[_Target
                 raise BadPlanError("app_folder_and_ledger_folder_overlap")  # INV-27, INV-30
     for folder in (journal_dir, backups_dir):
         _check_app_folder(handles.at(folder), folder)
-    return _Plan(targets, tuple((cn, k) for k, cn in dirs.items()), journal_dir, backups_dir)
+    return _Plan(targets, tuple((cn, k) for k, cn in dirs.items()), journal_dir, backups_dir, drives)
 
 
 def _unchanged(handles: Handles, targets: tuple[_Target, ...]) -> bool:
@@ -480,10 +497,11 @@ def _record(c: Commit, plan: _Plan, name: str, backups: dict[str, str]) -> Recor
                 post=sha256(t.change.post),
                 backup=backups.get(t.key),
                 temp=t.temp,
+                volume=t.volume,
             )
             for t in plan.targets
         ),
-        created_dirs=tuple(DirEntry(canonical_path=cn, path_key=k) for cn, k in plan.dirs),
+        created_dirs=tuple(DirEntry(canonical_path=cn, path_key=k, volume=plan.drives[cn]) for cn, k in plan.dirs),
     )
 
 

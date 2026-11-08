@@ -113,14 +113,6 @@ def _used(entries: list[port.Directive], options: port.OptionsMap) -> LedgerSet:
     return LedgerSet(str(options["filename"]), tuple(options["include"]), (), tuple(roots), tuple(docs))
 
 
-def _under(file: str, roots: tuple[str, ...]) -> bool:
-    """Whether a documents root's listing names `file` (S0070 r1 F1): the listing holds every file under its root,
-    by the name `os.walk` joins to the root's own string (`root/...`), the same join Beancount's documents step makes
-    for the `Document` entries it creates. Such a file is in the set through its root, not as a `document` file."""
-    file = posixpath.normpath(file)  # `docs/../x` is not under `docs` (S0088 round 1, red team F2)
-    return any(file.startswith(posixpath.normpath(root).rstrip("/") + "/") for root in roots)
-
-
 def _read_by(observed: Fingerprint, used: LedgerSet) -> LedgerSet:
     """The set a loaded result is stamped with (publish.md §8): the files, documents roots and `document` files the
     load used (every `document` file by itself, also one whose path starts with a used root: the root's listing need not
@@ -136,12 +128,25 @@ def _read_by(observed: Fingerprint, used: LedgerSet) -> LedgerSet:
     return LedgerSet(observed.root, files, globs, roots, document_files)
 
 
-def _wider(a: LedgerSet, b: LedgerSet) -> LedgerSet | None:
-    """`a` widened by what `b` names outside it, or None when `b` names nothing outside it."""
+def _listed(observed: Fingerprint) -> frozenset[str]:
+    """Every file a documents root's listing named in `observed`, by the name `os.walk` joins to the root's own string
+    (`root/...`), the same join Beancount's documents step makes for the `Document` entries it creates (S0070 r1 F1)."""
+    return frozenset(
+        posixpath.join(root, name) for root, listing in observed.documents if listing is not None for name, _ in listing
+    )
+
+
+def _wider(a: LedgerSet, b: LedgerSet, listed: frozenset[str]) -> LedgerSet | None:
+    """`a` widened by what `b` names outside it, or None when `b` names nothing outside it. A `document` file is in `a`
+    when `a` names it, or when the listing of one of `a`'s documents roots observed before the load named it
+    (`listed`); never by its path alone (BL-0217, S0088 red team r2 F1): a file in a folder under the root that can be
+    entered but not listed, or with a `..` in its path, starts with the root's path but no listing names it, so the
+    hint never observed it, and a load that used it is a moved disk (such a file deleted during the load was stamped
+    only after it, and the generation stayed fresh). Each one counts by itself, as `_read_by` and
+    `publishing.within` count it."""
     files = set(b.files) - set(a.files)
     documents = set(b.documents) - set(a.documents)
-    roots = (*a.documents, *sorted(documents))
-    document_files = {f for f in set(b.document_files) - set(a.document_files) if not _under(f, roots)}
+    document_files = {f for f in set(b.document_files) - set(a.document_files) if f not in listed}
     if not (files or documents or document_files):
         return None
     return LedgerSet(
@@ -174,7 +179,7 @@ def run(ports: Ports, hint: Fingerprint, job: Job, target: Target) -> Answer:
         result = ports.load(ledger_set.root)  # step 2: Beancount's own loader (user code)
         entries, errors, options = result
         after = ports.observe(ledger_set)  # step 3
-        wider = _wider(ledger_set, _used(entries, options))
+        wider = _wider(ledger_set, _used(entries, options), _listed(before))
         if wider is not None:
             return Answer("moved", ports.observe(wider), cleaned=cleaned)
         if after != before:

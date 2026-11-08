@@ -31,6 +31,10 @@ pytestmark = [
 ]
 
 
+def _volumes_env() -> list[str]:
+    return [v for v in os.environ.get("FT_TEST_VOLUMES", "").split(":") if v]
+
+
 @pytest.fixture
 def fs() -> DarwinFS:
     return DarwinFS()
@@ -461,6 +465,53 @@ def test_a_plain_rename_replaces_its_target(fs: DarwinFS, tmp_path: Path) -> Non
         d.rename("t", "f")
     assert sorted(os.listdir(tmp_path)) == ["f"]
     assert (tmp_path / "f").read_bytes() == b"T"
+
+
+UUID_SHAPE = r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
+
+
+def test_volume_id_names_the_drive_a_folder_is_on(fs: DarwinFS, tmp_path: Path) -> None:
+    """S0089 (BL-0188): `volume_id` is the drive's volume UUID (`fgetattrlist` `ATTR_VOL_UUID`), in lower case; two
+    folders of one drive answer the same, the sealed system volume another (probed: its `st_dev` can equal the data
+    volume's, so `st_dev` alone would not tell them apart)."""
+    import re
+
+    (tmp_path / "a").mkdir()
+    with fs.open_dir(str(tmp_path)) as d, fs.open_dir(str(tmp_path / "a")) as a, fs.open_dir("/") as root:
+        here = d.volume_id()
+        assert here is not None
+        assert re.fullmatch(UUID_SHAPE, here)
+        assert a.volume_id() == here
+        assert root.volume_id() not in (None, here)
+
+
+def test_a_volume_that_reports_no_uuid_answers_none(fs: DarwinFS) -> None:
+    """devfs (probed, S0089) returns no `ATTR_VOL_UUID`: `volume_id` is None, never a made-up or nil UUID."""
+    with fs.open_dir("/dev") as d:
+        assert d.volume_id() is None
+
+
+def test_uuid_from_reads_only_a_returned_non_nil_uuid() -> None:
+    from ledger_engine.fs.darwin import ATTR_VOL_UUID, uuid_from
+
+    raw = bytes(range(16))
+    assert uuid_from(ATTR_VOL_UUID, raw) == "00010203-0405-0607-0809-0a0b0c0d0e0f"
+    assert uuid_from(0, raw) is None  # not returned: the volume has none
+    assert uuid_from(ATTR_VOL_UUID, bytes(16)) is None  # the nil UUID names no drive
+
+
+@pytest.mark.skipif(not _volumes_env(), reason="no scratch volumes given (FT_TEST_VOLUMES)")
+@pytest.mark.parametrize("volume", _volumes_env() or ["-"])
+def test_a_real_volume_reports_its_own_uuid(fs: DarwinFS, tmp_path: Path, volume: str) -> None:
+    """S0089 probe, opt-in: exFAT, FAT and HFS+ disk images each report a volume UUID (stable across a detach and
+    attach, probed by hand), unlike the Mac's own disk."""
+    import re
+
+    with fs.open_dir(volume) as v, fs.open_dir(str(tmp_path)) as d:
+        uuid = v.volume_id()
+        assert uuid is not None
+        assert re.fullmatch(UUID_SHAPE, uuid)
+        assert uuid != d.volume_id()
 
 
 def _volumes() -> list[str]:

@@ -57,7 +57,7 @@ ROLLBACK: Final = 1  # header bytes 18 and 19, the file format's write and read 
 
 OUT_OF_MEMORY: Final = "SQLite's heap limit was reached (shared by every read of the process)"
 TABLE_SQL: Final[LiteralString] = "SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = ?"
-MAX_META_ROWS: Final = 64  # the build writes eight keys; a later build may add some, never this many
+MAX_META_ROWS: Final = 64  # the build writes nine keys (`rows.meta_rows`); a later build may add some, never this many
 META_SQL: Final[LiteralString] = "SELECT key, value FROM m_meta LIMIT 65"  # MAX_META_ROWS + 1: one more says "too many"
 META_KEYS: Final = (
     "surface_version",

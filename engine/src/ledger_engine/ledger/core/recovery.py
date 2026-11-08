@@ -122,6 +122,8 @@ class Cause(StrEnum):
     UNREADABLE = "unreadable"  # the record cannot be read: torn, foreign, newer, or not this name's
     CREATED_PATH_TAKEN = "created_path_taken"  # something stands at a path the save was creating: left alone (§11)
     IO_ERROR = "io_error"  # an operation failed while restoring (`Failed`)
+    WRONG_DRIVE = "wrong_drive"  # a folder the journal names is on another drive than the recorded one (S0089)
+    UNKNOWN_DRIVE = "unknown_drive"  # ... or on a drive that reports no UUID: refused the same way (S0089)
 
 
 @dataclass(frozen=True, slots=True)

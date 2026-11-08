@@ -564,3 +564,32 @@ def test_a_document_file_outside_its_roots_by_a_dotdot_is_moved_with_it(root: Pa
     a = go(rebuild.Ports(), hint, FakeJob())
     assert a.outcome == "moved"
     assert f"{docs}/../receipt.pdf" in dict(a.fingerprint.document_files)
+
+
+def test_a_document_file_under_its_root_added_after_the_plan_and_deleted_during_the_load_is_moved(
+    root: Path, cache: Path
+) -> None:
+    """BL-0217 (S0088 final round, red team r2 F1; its repro `a3_late_stamp.py`): an outside edit adds a `document`
+    directive after the plan, its file under the documents root in a folder that can be entered but not listed. The
+    hint never observed it; `_wider` skipped it because its path starts with the root's (`_under`), so the load's use
+    of it was not a moved disk, and the stamp observed it only after the load, when it was already deleted: the
+    generation was published with rows lacking Beancount's "File does not exist" error and stayed fresh. Every
+    `document` file the load used and the hint lacks is now counted by itself: the try is `moved`, nothing published."""
+    docs = root.parent / "docs"
+    (docs / "priv").mkdir(parents=True)
+    doc = docs / "priv" / "r.pdf"
+    doc.write_bytes(b"x")
+    (docs / "priv").chmod(0o311)
+    try:
+        base = MAIN + b'option "documents" "docs"\n'
+        root.write_bytes(base)
+        hint = hint_of(root)  # the save's plan
+        root.write_bytes(
+            base + f'2026-01-02 document Assets:Cash "{doc}"\n'.encode()
+        )  # outside edit, before the rebuild
+        a = go(with_load(doc.unlink), hint, FakeJob())
+        assert a.outcome == "moved", a
+        assert str(doc) in dict(a.fingerprint.document_files)
+        assert generations(cache) == []
+    finally:
+        (docs / "priv").chmod(0o700)

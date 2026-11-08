@@ -102,6 +102,7 @@ from ledger_engine.ledger.handles import (
     Handles,
     Mode,
     PathMovedError,
+    WrongDriveError,
     acl_denial,
     displaced,
     folder_blocked,
@@ -167,6 +168,30 @@ class _Halt(Exception):
         self.path = path
         self.entry = entry
         self.detail = detail
+
+
+def _wrong_drive(e: WrongDriveError, handles: Handles) -> Stopped:
+    """A folder of the record on another drive, or on one with no UUID (S0089): the try stops, nothing written."""
+    cause = Cause.WRONG_DRIVE if e.found is not None else Cause.UNKNOWN_DRIVE
+    return Stopped(cause, handles.on, e.canonical)
+
+
+def _drives(handles: Handles, record: Record) -> None:
+    """Step 2's first check (S0089, BL-0188; owner, 2026-11-08: on any mismatch, a missing UUID or one that cannot be
+    read, "it writes nothing"): every folder the record names that is there is opened through the path guard, which
+    checks its drive (`Handles.at` with the record's `journal.volumes`), before any check of step 2 may write (a kept
+    copy's move) and before step 3. A folder that is not there is left to the checks that follow (`unreachable`, or a
+    folder the save made); one opened later is checked when it is opened. The outcome names the first file of the
+    record in or under the folder (`handles.on`) and the folder (`handles.entry`)."""
+    for folder in handles.volumes:
+        inside = [f.canonical_path for f in record.files if f.canonical_path.startswith(folder.rstrip("/") + "/")]
+        handles.on = next((p for p in inside if _parent(p)[0] == folder), inside[0] if inside else None)
+        handles.entry = folder
+        try:
+            handles.at(folder)
+        except (FileNotFoundError, NotADirectoryError):
+            continue
+    handles.on = handles.entry = None
 
 
 class _Fail(_Halt):
@@ -560,7 +585,7 @@ def restore(
     """§8.1 steps 2-4 and §6.4 for one record (the module's docstring). `journal_dir`: the canonical path of its
     journal folder. `closed`: the record may be `.closed` (the rollback after a failed close). `made`: the `path_key`s
     of the folders the save really made (the rollback; recovery: every recorded one)."""
-    handles = Handles(fs)
+    handles = Handles(fs, volumes=journal.volumes(record))
     name = record.name
     created = frozenset(d.canonical_path for d in record.created_dirs)
     removable = (
@@ -581,8 +606,11 @@ def restore(
             return Failed(Cause.IO_ERROR, None, e.errno, journal_dir)
         for again in (False, True):
             try:
+                _drives(handles, record)
                 checked = [_check(handles, record, f, created=created) for f in record.files]
                 _check_folders(handles, record, removable)
+            except WrongDriveError as e:
+                return _wrong_drive(e, handles)
             except _Fail as e:
                 return Failed(e.cause, e.path, e.errno, e.entry or handles.entry)
             except _Halt as e:
@@ -602,6 +630,8 @@ def restore(
                 jd = handles.at(journal_dir)
                 jd.rename_excl(journal.file_name(name, State.OPEN), journal.file_name(name, State.RESOLVED))
                 jd.sync()
+            except WrongDriveError as e:  # a folder first opened in step 3 (made meanwhile): nothing written in it
+                return _wrong_drive(e, handles)
             except _Fail as e:
                 return Failed(e.cause, e.path, e.errno, e.entry or handles.entry)
             except _Halt as e:

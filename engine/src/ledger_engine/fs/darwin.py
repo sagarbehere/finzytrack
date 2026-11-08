@@ -20,7 +20,8 @@
   with `COPYFILE_XATTR` only: the ACL is not kept, owner, 2026-10-29; not `COPYFILE_STAT`, which would copy the old
   modification time). `allowed` is `access(2)` with the extended bits (`_DELETE_OK`, `_REXT_OK`), which apply ACLs;
   `caps` reads the volume's `VOL_CAP_INT_RENAME_SWAP` and `_EXCL` (`fgetattrlist`; probed S0065: exFAT and FAT
-  neither, HFS+ only the exclusive rename).
+  neither, HFS+ only the exclusive rename). `volume_id` reads the volume's UUID (`ATTR_VOL_UUID`, with
+  `ATTR_CMN_RETURNED_ATTRS`: None when the volume returns none; S0089).
   `acl` reads the folder's extended ACL (`acl_get_fd_np`), each entry's kind and every permission and flag bit
   (S0061 r6, probed on APFS); never whom it names (owner, 2026-10-30: "Any subject (Recommended)", S0061 r7: the
   membership lookup answered "not a member" for macOS's `owner` and `group` subjects, which the kernel applies).
@@ -42,6 +43,7 @@ import os
 import stat
 import struct
 import sys
+import uuid
 from collections.abc import Callable, Iterable
 from typing import Final, Self
 
@@ -68,6 +70,8 @@ ACCESS_DELETE: Final = 1 << 12  # <sys/unistd.h> _DELETE_OK: access(2) answers i
 ACCESS_READ_XATTRS: Final = 1 << 17  # _REXT_OK
 ATTR_VOL_INFO: Final = 0x80000000
 ATTR_VOL_CAPABILITIES: Final = 0x00020000
+ATTR_VOL_UUID: Final = 0x00040000  # <sys/attr.h>, checked against the macOS 26 SDK and probed (S0089)
+ATTR_CMN_RETURNED_ATTRS: Final = 0x80000000  # the attributes the volume really returned come first
 VOL_CAP_INT_RENAME_SWAP: Final = 0x00040000
 VOL_CAP_INT_RENAME_EXCL: Final = 0x00080000
 LOCK_FLAGS: Final = stat.UF_IMMUTABLE | stat.UF_APPEND | stat.SF_IMMUTABLE | stat.SF_APPEND
@@ -334,6 +338,18 @@ class DarwinDir:
         _, _, interfaces, _, _, _, valid, _, _ = struct.unpack("<9I", buf.raw[:36])
         return caps_from(interfaces, valid)
 
+    def volume_id(self) -> str | None:
+        """`fgetattrlist(ATTR_VOL_UUID)` on the folder's descriptor, with `ATTR_CMN_RETURNED_ATTRS` so a volume that
+        has no UUID is told from one that has (S0089 probe: APFS, HFS+, exFAT and FAT return one; devfs and autofs
+        do not)."""
+        attrs = _AttrList(5, 0, ATTR_CMN_RETURNED_ATTRS, ATTR_VOL_INFO | ATTR_VOL_UUID, 0, 0, 0)
+        buf = ctypes.create_string_buffer(64)
+        if self._fs.libc.fgetattrlist(self.fd, ctypes.byref(attrs), buf, len(buf), 0) != 0:
+            _errno_raise()
+        # u_int32 length, then attribute_set_t (common, vol, dir, file, fork), then the uuid_t when returned
+        returned_vol = struct.unpack_from("<I", buf.raw, 8)[0]
+        return uuid_from(returned_vol, buf.raw[24:40])
+
     def acl(self) -> tuple[AclEntry, ...]:
         """`acl_get_fd_np(ACL_TYPE_EXTENDED)` on the folder's descriptor, each entry read in full: its kind and its
         permission and flag bits by name (not its subject: S0061 r7). A bit libc does not name is
@@ -582,6 +598,14 @@ def caps_from(interfaces: int, valid: int) -> Caps:
         return bool(interfaces & bit and valid & bit)
 
     return Caps(swap=offers(VOL_CAP_INT_RENAME_SWAP), excl=offers(VOL_CAP_INT_RENAME_EXCL))
+
+
+def uuid_from(returned_vol: int, raw: bytes) -> str | None:
+    """The volume UUID in lower case (`8-4-4-4-12` hex digits), or None when the volume did not return one
+    (`returned_vol` lacks `ATTR_VOL_UUID`) or returned the nil UUID, which names no drive (S0089)."""
+    if not returned_vol & ATTR_VOL_UUID or raw == bytes(16):
+        return None
+    return str(uuid.UUID(bytes=raw))
 
 
 def _identity(st: os.stat_result) -> tuple[int, int]:

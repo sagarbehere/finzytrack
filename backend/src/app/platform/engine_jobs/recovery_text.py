@@ -46,6 +46,9 @@ KEPT_COPY_CAUSES: Final = frozenset({"kept_copy", "displaced", "outside_save_in_
 """Causes whose screen is the kept-copy row: an outside save Finzytrack moved to a kept name (§6.4)."""
 CREATED: Final = "created_path_taken"
 PERMISSION: Final = "permission"
+DRIVE_CAUSES: Final = frozenset({"wrong_drive", "unknown_drive"})
+"""A folder of the journal is on another drive than the one the save wrote on, or on one with no UUID (S0089)."""
+PLUG_IN: Final = "Plug in the drive that held your ledger, then press Retry."
 
 
 def undone_notice(workspace: str) -> str:
@@ -155,6 +158,20 @@ def _permission(b: Blocking, workspace: str) -> Screen:
     )
 
 
+def _drive(b: Blocking, workspace: str) -> Screen:
+    """The owner's row for a journal whose drive is not at its path (2026-11-08, "Volume ID in journal
+    (Recommended)": "blocks that workspace with a message naming the drive ('plug in the drive that held your ledger,
+    then Retry')"). The drive is named by the folder where it is mounted now (`entry`)."""
+    head = f"Finzytrack could not undo an unfinished save in {workspace}."
+    where = b.entry or "its folder"
+    file = _name(_file_of(b))
+    if b.cause == "wrong_drive":
+        middle = f"The drive at {where} is not the drive that held {file}."
+    else:
+        middle = f"Finzytrack cannot identify the drive at {where}, so it cannot tell whether it held {file}."
+    return Screen(f"{head} {middle} {PLUG_IN}", BASE)
+
+
 def _stopped(b: Blocking, workspace: str) -> Screen:
     """ADR-0063's text for a journal that could not be undone."""
     if b.cause == UNREADABLE:
@@ -214,6 +231,8 @@ def blocked_screen(b: Blocking, workspace: str) -> Screen:
         screen = _created(b)
     elif b.cause == PERMISSION:
         screen = _permission(b, workspace)
+    elif b.cause in DRIVE_CAUSES:
+        screen = _drive(b, workspace)
     else:
         screen = _stopped(b, workspace)
     return Screen(screen.message + _missing_now(b), screen.actions)
@@ -258,6 +277,11 @@ def keep_confirmation(b: Blocking, workspace: str) -> str:
     )
     if b.reason in ("cancelled", "failed", "not_tried"):
         text += " Finzytrack has not tried, or not finished, undoing this save. Retry may still undo it."
+    if b.cause in DRIVE_CAUSES:  # S0089: Keep stops the undo for good, the drive that held the files included
+        text += (
+            " Finzytrack cannot reach the drive that held these files, so it will not undo the save there, "
+            "now or later."
+        )
     text += _missing_kept(b)
     kept = _kept_names(b)
     if kept:
@@ -280,6 +304,16 @@ ACTION_REFUSED: Final[tuple[tuple[str, str], ...]] = (
     ("unlisted", "Finzytrack could not read the folder of this unfinished save, so it did not do this. Press Retry."),
     ("path_moved", "The folder moved. Press Retry."),
     ("permission", "Your Mac does not allow Finzytrack to change this folder."),
+    (
+        "wrong_drive",
+        "This file is on another drive than the one that held your ledger. "
+        "Plug in the drive that held your ledger, then press Retry.",
+    ),
+    (
+        "unknown_drive",
+        "Finzytrack cannot identify the drive with this file. "
+        "Plug in the drive that held your ledger, then press Retry.",
+    ),
 )
 """What a refused action tells (`ActOutcome.reason`); any other reason gets `ACTION_REFUSED_OTHER`."""
 ACTION_REFUSED_OTHER: Final = "Finzytrack did not do this, and changed nothing. Press Retry."

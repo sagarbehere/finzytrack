@@ -470,7 +470,17 @@ def _record(led: Ledger, key: str, name: str, state: State, *, lineage: str = LI
         lineage=lineage,
         engine_build="b",
         backup_dir="/b/" + name,
-        files=(FileEntry("/x/a.bean", "/x/a.bean", "1" * 64, "2" * 64, "0-a.bean", f".a.bean.ft-{name}.tmp"),),
+        files=(
+            FileEntry(
+                "/x/a.bean",
+                "/x/a.bean",
+                "1" * 64,
+                "2" * 64,
+                "0-a.bean",
+                f".a.bean.ft-{name}.tmp",
+                "1e0c8a4b-2f6d-4b9e-8c37-5a1d0e9f7b26",
+            ),
+        ),
         created_dirs=(),
     )
     path.write_bytes(journal.encode(rec))
@@ -512,7 +522,17 @@ def test_records_a_development_build_left_do_not_refuse(led: Ledger, suffix: str
                 lineage=LINEAGE,
                 engine_build="b",
                 backup_dir="/b/s0-j1",
-                files=(FileEntry("/x/a.bean", "/x/a.bean", "1" * 64, "2" * 64, "0-a.bean", ".a.bean.ft-s0-j1.tmp"),),
+                files=(
+                    FileEntry(
+                        "/x/a.bean",
+                        "/x/a.bean",
+                        "1" * 64,
+                        "2" * 64,
+                        "0-a.bean",
+                        ".a.bean.ft-s0-j1.tmp",
+                        "1e0c8a4b-2f6d-4b9e-8c37-5a1d0e9f7b26",
+                    ),
+                ),
                 created_dirs=(),
             )
         )

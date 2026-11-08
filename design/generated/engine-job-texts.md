@@ -35,6 +35,7 @@ What the user reads about engine jobs, saves and recovery, rendered from the cod
 | `msg:save.ledger_changed` | `LEDGER_EXTERNALLY_CHANGED` | Your ledger changed after this preview, so Finzytrack did not save your change. Review it again. |
 | `msg:save.hard_linked` | `CHANGE_NOT_SAVED {hard_linked}` | Finzytrack did not save your change. <file> has a second name on disk (a hard link). Remove the extra link, or replace the file with a copy, then try again. |
 | `msg:save.locked` | `CHANGE_NOT_SAVED {locked}` | Finzytrack did not save your change. <file> is locked. Unlock it (Finder: Get Info), then try again. |
+| `msg:save.no_drive_id` | `CHANGE_NOT_SAVED {no_drive_id}` (S0089) | Finzytrack did not save your change. Finzytrack cannot identify the drive that holds <file>, so it could not undo the change if saving were interrupted. Keep your ledger on a drive Finzytrack can identify, such as your Mac's own disk or a USB drive. |
 | `msg:save.not_a_file` | `CHANGE_NOT_SAVED {not_a_file}` | Finzytrack did not save your change. <file> is not a normal file. |
 | `msg:save.permission` | `CHANGE_NOT_SAVED {permission}` | Finzytrack did not save your change. Your Mac does not allow changes to <file>. Check its permissions (Finder: Get Info), then try again. |
 | `msg:save.permission_acl` | `CHANGE_NOT_SAVED {permission}` with a folder and its ACL entry | Finzytrack did not save your change. The folder <folder> has a permission entry (ACL) that stops Finzytrack from saving safely: <entry>. Remove that entry, then try again. |
@@ -60,6 +61,8 @@ Each blocked screen's actions are `Screen.actions` (§11).
 | `msg:recovery.created` | `stopped`, `created_path_taken` | Finzytrack was creating <file> when the save was interrupted. It cannot tell whether this file holds that unfinished change or another program's file, so it left it alone. Look at it; if you don't want it, delete it and press Retry, or choose Keep the files as they are now. |
 | `msg:recovery.permission_acl` | `stopped`, `permission`, a folder's ACL entry | Finzytrack could not undo an unfinished save in <workspace>. The folder <folder> has a permission entry (ACL) that stops Finzytrack from saving safely: <entry>. Remove that entry, then press Retry. |
 | `msg:recovery.permission` | `stopped`, `permission`, no entry known | Finzytrack could not undo an unfinished save in <workspace>. Your Mac does not allow Finzytrack to change <path>/<file>. If it has a permission entry (ACL), remove it (Terminal: chmod -N "<path>/<file>"), then press Retry. |
+| `msg:recovery.wrong_drive` | `stopped`, `wrong_drive` (S0089) | Finzytrack could not undo an unfinished save in <workspace>. The drive at <folder> is not the drive that held <file>. Plug in the drive that held your ledger, then press Retry. |
+| `msg:recovery.unknown_drive` | `stopped`, `unknown_drive` (S0089) | Finzytrack could not undo an unfinished save in <workspace>. Finzytrack cannot identify the drive at <folder>, so it cannot tell whether it held <file>. Plug in the drive that held your ledger, then press Retry. |
 | `msg:recovery.unreadable` | `stopped`, `unreadable` record | Finzytrack cannot read the record of an unfinished save, so it cannot tell which files it changed. No workspace opens until you press Retry or choose Keep the files as they are now. |
 | `msg:recovery.stopped` | `stopped`, any other cause | <file> has an unfinished save from <workspace> that could not be undone. |
 | `msg:recovery.missing_backup` | added to a stop screen, replaced files absent (§6.8): one file, its backup checked good | <file> is missing now. Finzytrack has its old version in its backup. |
@@ -88,6 +91,7 @@ Each blocked screen's actions are `Screen.actions` (§11).
 | `msg:recovery.keep_missing` | added to Keep's confirmation, replaced files absent: one file, its backup not checked | <file> is missing now and will stay missing. |
 | `msg:recovery.keep_missing_several` | added to Keep's confirmation, replaced files absent: several files, their backups not checked | <file>, <other file> and <third file> are missing now and will stay missing. |
 | `msg:recovery.keep_missing_mixed` | added to Keep's confirmation, replaced files absent: both kinds: the checked sentence, then the other | <file> is missing now and will stay missing. Its old version is only in Finzytrack's backup. <other file> is missing now and will stay missing. |
+| `msg:recovery.keep_other_drive` | Keep's confirmation for `wrong_drive`, `unknown_drive` (S0089) | Keep the files as they are now? Finzytrack will stop trying to undo the unfinished save in <workspace> and will not change these files: <file>. Finzytrack cannot reach the drive that held these files, so it will not undo the save there, now or later. |
 | `msg:recovery.keep_kept_copy` | Keep's confirmation with a kept copy | Keep the files as they are now? Finzytrack will stop trying to undo the unfinished save in <workspace> and will not change these files: <file>. The kept copy <kept copy> stays. Delete or move it before you use the ledger. |
 | `msg:recovery.delete_kept` | the confirmation of Delete the kept copy | Delete <kept copy>? It holds the other program's version of <file>. This cannot be undone. |
 | `msg:recovery.delete_created` | the confirmation of Delete it | Delete <file>? This cannot be undone. |
@@ -97,6 +101,8 @@ Each blocked screen's actions are `Screen.actions` (§11).
 | `msg:recovery.refused_unlisted` | an action refused `unlisted` | Finzytrack could not read the folder of this unfinished save, so it did not do this. Press Retry. |
 | `msg:recovery.refused_path_moved` | an action refused `path_moved` | The folder moved. Press Retry. |
 | `msg:recovery.refused_permission` | an action refused `permission` | Your Mac does not allow Finzytrack to change this folder. |
+| `msg:recovery.refused_wrong_drive` | an action refused `wrong_drive` | This file is on another drive than the one that held your ledger. Plug in the drive that held your ledger, then press Retry. |
+| `msg:recovery.refused_unknown_drive` | an action refused `unknown_drive` | Finzytrack cannot identify the drive with this file. Plug in the drive that held your ledger, then press Retry. |
 | `msg:recovery.refused_other` | an action refused for another reason | Finzytrack did not do this, and changed nothing. Press Retry. |
 | `msg:recovery.action_failed` | an action that failed | Finzytrack could not do this. Press Retry. |
 

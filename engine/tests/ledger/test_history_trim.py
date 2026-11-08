@@ -219,6 +219,7 @@ def _record(t: str, backup_dir: str) -> bytes:
                 post=sha256(b"y"),
                 backup=journal.backup_name(0, "a.bean"),
                 temp=journal.temp_name("a.bean", t),
+                volume="1e0c8a4b-2f6d-4b9e-8c37-5a1d0e9f7b26",
             ),
         ),
         created_dirs=(),

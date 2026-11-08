@@ -541,6 +541,7 @@ def put_journal(fs: MemFS, j: str, st: str) -> None:
             post="1" * 64,
             backup=journal.backup_name(i, posixpath.basename(FILE_OF.get(f, f))),
             temp=journal.temp_name(posixpath.basename(FILE_OF.get(f, f)), name),
+            volume="1e0c8a4b-2f6d-4b9e-8c37-5a1d0e9f7b26",
         )
         for i, f in enumerate(JFILES[j])
     )

@@ -8,6 +8,7 @@ that follows use one descriptor.
 from __future__ import annotations
 
 import hashlib
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Final
@@ -32,22 +33,50 @@ class PathMovedError(Exception):
         self.canonical = canonical
 
 
+class WrongDriveError(Exception):
+    """A folder the undo would write in is on another drive than the one its journal names (`found` its UUID now), or
+    on a drive that reports none (`found` None): S0089, BL-0188. Nothing was written through it."""
+
+    def __init__(self, canonical: str, found: str | None) -> None:
+        super().__init__("wrong_drive" if found is not None else "unknown_drive")
+        self.canonical = canonical
+        self.found = found
+
+
 @dataclass
 class Handles:
     """One handle per folder, opened once and checked at every use (§6.3: the check and the write go through one
     descriptor). `at` raises `PathMovedError` when the folder's path now does not name the recorded canonical path,
-    compared as the volume compares names (`fs.port.same_path`)."""
+    compared as the volume compares names (`fs.port.same_path`).
+
+    **The drive** (S0089, BL-0188; owner, 2026-11-08: "Volume ID in journal (Recommended)"): with `volumes` (the
+    journal's `journal.volumes`, by canonical path), a folder named there is checked when its handle is opened: its
+    drive's UUID (`DirHandle.volume_id`, asked through the same descriptor every later write uses, which stays on that
+    drive) must be the recorded one, else `WrongDriveError` (another UUID, or none) and the handle is not kept; a UUID
+    that cannot be read raises the `OSError`. A descriptor never changes drive, so the check at its opening holds for
+    every write through it. Folders not named there (the app's journal and backups folders) are not checked."""
 
     fs: FileSystem
     open: dict[str, DirHandle] = field(default_factory=lambda: {})
     on: str | None = None  # the canonical path of the file being worked on, for the outcome
     entry: str | None = None  # the entry being checked or written when it is not that file (a name of ours, the
     # backup, a folder), for the outcome (S0061 verifier r6 F3)
+    volumes: Mapping[str, str] = field(default_factory=lambda: {})
 
     def at(self, canonical: str) -> DirHandle:
         h = self.open.get(canonical)
         if h is None:
             h = self.fs.open_dir(canonical)
+            expected = self.volumes.get(canonical)
+            if expected is not None:
+                try:
+                    found = h.volume_id()
+                except BaseException:
+                    h.close()
+                    raise
+                if found != expected:
+                    h.close()
+                    raise WrongDriveError(canonical, found)
             self.open[canonical] = h
         if not same_path(h.path(), canonical):
             raise PathMovedError(canonical)

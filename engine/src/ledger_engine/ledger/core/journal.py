@@ -28,14 +28,18 @@ from typing import Final, cast
 from ledger_engine.fs.port import FoldRule, check_name, fold, split_absolute
 
 FORMAT: Final = "finzytrack-save-journal"
-VERSION: Final = 4
-"""4 since S0070: no `post_fingerprint` and no `adopted_digest` (ADR-0068 D1: the save makes no prediction). Formats 2
+VERSION: Final = 5
+"""5 since S0089: every file and every folder the save makes names its drive by a volume UUID (`volume`; ADR-0012
+amendment of 2026-11-08, owner: "Volume ID in journal (Recommended)"), so the undo writes only on that drive. 4 since
+S0070: no `post_fingerprint` and no `adopted_digest` (ADR-0068 D1: the save makes no prediction). Formats 2
 (S0066) and 3 (S0067) carried them. Older records were written only by tests and development builds (nothing in the
 product saves yet) and read as `Unreadable`, never as a record of this format: recovery cannot roll back an older
 `.open` journal, which blocks its workspace on the recovery screen instead (fail closed; its Keep or delete ends
 the block), a save counts one as this workspace's `.open` journal (`ledger.save.records`), and an older `.closed`
 record is read by its name alone (§6.6), so it still says "saved"."""
 _SHA256: Final = re.compile(r"[0-9a-f]{64}")
+_UUID: Final = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
+NIL_UUID: Final = "00000000-0000-0000-0000-000000000000"
 _ID: Final = re.compile(r"[A-Za-z0-9_]{1,64}")  # no "-": it joins session and job
 
 
@@ -67,7 +71,8 @@ class Unreadable:
 class FileEntry:
     """One file the save replaces or creates (§6.1 step 8.2). `pre` is None for a file the save creates (absent
     before). `backup` is the backup's name in the save's backup folder (None for a created file), `temp` the temp's
-    name beside the file."""
+    name beside the file. `volume`: the UUID of the drive its folder is on (S0089; for a file in a folder the save
+    makes, the drive of the folder it is made in)."""
 
     canonical_path: str
     path_key: str
@@ -75,14 +80,17 @@ class FileEntry:
     post: str
     backup: str | None
     temp: str
+    volume: str
 
 
 @dataclass(frozen=True, slots=True)
 class DirEntry:
-    """A directory the save creates (§6.1 step 8.3), parents first."""
+    """A directory the save creates (§6.1 step 8.3), parents first. `volume`: the UUID of the drive of the folder it is
+    made in, which is its own drive (S0089)."""
 
     canonical_path: str
     path_key: str
+    volume: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -263,6 +271,36 @@ def _sha(value: object) -> str:
     return value
 
 
+def _volume(value: object) -> str:
+    if not isinstance(value, str) or not _UUID.fullmatch(value) or value == NIL_UUID:
+        raise BadRecordError("volume")
+    return value
+
+
+def _folder(canonical: str) -> str:
+    head = canonical.rpartition("/")[0]
+    return head or "/"
+
+
+def volumes(record: Record) -> dict[str, str]:
+    """The drive (volume UUID) of every folder the undo may write in or make a folder in, by its canonical path
+    (S0089, BL-0188): each file's folder, each folder the save made, and the folder each was made in. `ValueError`
+    (`volume_conflict`) when one folder is named on two drives: no save of ours writes such a record. The undo opens
+    each of these folders through the path guard and writes there only on this drive (`ledger.handles.Handles`)."""
+    out: dict[str, str] = {}
+
+    def put(folder: str, volume: str) -> None:
+        if out.setdefault(folder, volume) != volume:
+            raise BadRecordError("volume_conflict")
+
+    for f in record.files:  # in the record's order, so a check over them meets the files' folders first
+        put(_folder(f.canonical_path), f.volume)
+    for d in record.created_dirs:
+        put(d.canonical_path, d.volume)
+        put(_folder(d.canonical_path), d.volume)
+    return out
+
+
 def _str(value: object) -> str:
     if not isinstance(value, str) or not value:
         raise BadRecordError("string")
@@ -296,6 +334,7 @@ def _check(record: Record) -> None:
         if f.backup is not None and f.backup != backup_name(i, canonical[-1]):
             raise BadRecordError("backup_name")
         check_name(f.temp)
+        _volume(f.volume)
         files.append((canonical, key))
     dir_keys: set[str] = set()
     for d in record.created_dirs:
@@ -306,8 +345,15 @@ def _check(record: Record) -> None:
         if d.path_key in dir_keys:
             raise BadRecordError("duplicate_dir_key")
         dir_keys.add(d.path_key)
+        _volume(d.volume)
+        if any(
+            len(fc) > n and fc[:n] == canonical and f.volume != d.volume
+            for (fc, _), f in zip(files, record.files, strict=True)
+        ):
+            raise BadRecordError("volume_conflict")  # a file under a folder the save made is on that folder's drive
     if not record.files:
         raise BadRecordError("no_files")
+    volumes(record)
     # every temp, staging name and restore temp is its own name, never a file's or a created folder's path, nor inside
     # one (S0060 red team r2 L1; the staging names, S0061 r3);
     # compared folded the widest way, so two names a volume may treat as one count as one
@@ -362,10 +408,14 @@ def encode(record: Record) -> bytes:
                 "post": f.post,
                 "backup": f.backup,
                 "temp": f.temp,
+                "volume": f.volume,
             }
             for f in record.files
         ],
-        "created_dirs": [{"canonical_path": d.canonical_path, "path_key": d.path_key} for d in record.created_dirs],
+        "created_dirs": [
+            {"canonical_path": d.canonical_path, "path_key": d.path_key, "volume": d.volume}
+            for d in record.created_dirs
+        ],
     }
     return (json.dumps(obj, sort_keys=True, separators=(",", ":"), ensure_ascii=False) + "\n").encode()
 
@@ -384,8 +434,8 @@ _TOP: Final = frozenset(
         "created_dirs",
     }
 )
-_FILE: Final = frozenset({"canonical_path", "path_key", "pre", "post", "backup", "temp"})
-_DIR: Final = frozenset({"canonical_path", "path_key"})
+_FILE: Final = frozenset({"canonical_path", "path_key", "pre", "post", "backup", "temp", "volume"})
+_DIR: Final = frozenset({"canonical_path", "path_key", "volume"})
 
 
 def _obj(value: object, keys: frozenset[str]) -> dict[str, object]:
@@ -437,10 +487,11 @@ def decode(data: bytes) -> Record | Unreadable:
                     post=_str(f["post"]),
                     backup=_opt(f["backup"]),
                     temp=_str(f["temp"]),
+                    volume=_str(f["volume"]),
                 )
             )
         dirs = [
-            DirEntry(canonical_path=_str(d["canonical_path"]), path_key=_str(d["path_key"]))
+            DirEntry(canonical_path=_str(d["canonical_path"]), path_key=_str(d["path_key"]), volume=_str(d["volume"]))
             for d in (_obj(item, _DIR) for item in _list(top["created_dirs"]))
         ]
         record = Record(
