@@ -516,3 +516,11 @@ Format:
 - Why: S0080 and S0081 took three and four review rounds, the later ones on findings that lost no byte.
 - Expected effect: write-path slices end after their last fix round plus one verifier round. Metric: review rounds per write-path slice.
 - Status: kept (owner-approved; S0083 records it).
+
+## IMP-0053: a slice that changes `contracts/` runs the frontend gates (2026-11-08)
+- Trigger: escape in S0088. `LEDGER_CHANGING` joined the error registry and the generated frontend types, but the frontend test that pins the registry's codes was not updated; the implementer's and two verifiers' gate runs covered engine and backend only, and the pre-push hook's `vue-tsc` caught it at push.
+- What changed: process (tightening, agent-approved). The slice skill's step 5 names the gates of every touched package, and the frontend's `pnpm typecheck` and `pnpm test` whenever `contracts/` changes.
+- PROCESS.md section: none (the slice skill's checklist; PROCESS.md §3 step 4 already requires the gates green).
+- Why: the root cause class is "a generated artifact crosses a package boundary the slice's gate list does not name"; the pre-push hook catches it, but only after review, costing a landing commit.
+- Expected effect: no slice reaches the push with a frontend type failure from a contract change. Metric: pre-push failures by package.
+- Status: kept (agent-approved tightening; S0088's landing).
