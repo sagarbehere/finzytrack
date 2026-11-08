@@ -2,13 +2,14 @@
 # <config> <expected: PASS | VIOLATE:<property>> <tier: S | M | L> <kind: base | mutant | witness> <mode: check | simulate>
 S_publish                    PASS                                       S base    check
 S_power                      PASS                                       S base    check
+S_purge                      PASS                                       S base    check
 S_ledger                     PASS                                       S base    check
 M_all                        PASS                                       M base    check
 L_all                        PASS                                       L base    check
 MUT_no_file_sync             VIOLATE:ReadersSeeCompleteGeneration       S mutant  check
 MUT_publish_incomplete       VIOLATE:ReadersSeeCompleteGeneration       S mutant  check
 MUT_build_in_place           VIOLATE:ReadersSeeCompleteGeneration       S mutant  check
-MUT_reuse_number             VIOLATE:ReadersSeeCompleteGeneration       S mutant  check
+MUT_no_tag                   VIOLATE:SnapshotIsSomeCommittedState       S mutant  check
 MUT_no_recheck               VIOLATE:SnapshotIsSomeCommittedState       S mutant  check
 MUT_no_open_check            VIOLATE:SnapshotIsSomeCommittedState       S mutant  check
 MUT_reresolve_per_read       VIOLATE:SnapshotIsSomeCommittedState       S mutant  check
@@ -19,5 +20,7 @@ WIT_IncompleteRefused        VIOLATE:W_IncompleteRefused                S witnes
 WIT_ReadAfterPower           VIOLATE:W_ReadAfterPower                   S witness check
 WIT_TornLeft                 VIOLATE:W_TornLeft                         S witness check
 WIT_LinkReverted             VIOLATE:W_LinkReverted                     S witness check
+WIT_ReadAcrossPurge          VIOLATE:W_ReadAcrossPurge                  S witness check
+WIT_OutsideAfterCrash        VIOLATE:W_OutsideAfterCrash                S witness check
 WIT_MovedRefused             VIOLATE:W_MovedRefused                     S witness check
 WIT_OpenRefused              VIOLATE:W_OpenRefused                      S witness check

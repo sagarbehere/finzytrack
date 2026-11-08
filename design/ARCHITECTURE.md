@@ -306,7 +306,7 @@ engine/src/ledger_engine/
     core/        schema.py: the tables, the DDL, the r_* and compatibility views (S0050); rows.py: the row
                  builders, pure (S0050)
     build.py     build(loaded, path, today, stamp) -> Built | BuildFailed: a fresh file or none (S0050)
-    publish.py   generation publish: clean, next_generation, publish, swap, read_published
+    publish.py   generation publish: clean, new_name, publish, swap, read_published
                  (design/specs/mirror/publish.md, S0085; built by BL-0113; Windows pointer file BL-0206)
 ```
 

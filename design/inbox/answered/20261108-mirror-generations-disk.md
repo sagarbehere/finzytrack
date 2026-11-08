@@ -20,3 +20,4 @@ On macOS and Linux, deleting a file that a reader has open is harmless: the read
 Option 2. It keeps what the 10 minutes are for (a request in flight, a tool that just looked the file up) and bounds the disk to a few files whatever the editing pace. Nothing is lost in any option: the mirror is a copy that is rebuilt from the ledger.
 
 ## Answer (owner, verbatim, with date)
+Owner, 2026-11-08, in session, chose "At most 2 extra (Recommended)": keep the 10 minutes, but at most 2 old copies besides the current and previous ones (oldest goes first).

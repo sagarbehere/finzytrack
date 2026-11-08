@@ -15,8 +15,9 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 CFG_DIR = os.path.join(HERE, "cfg")
 
 DEFAULTS = {
-    "MUTANT": '"none"', "Readers": '{"r1"}', "MaxGen": "3", "MaxBuilds": "0", "MaxReqs": "0", "MaxEdits": "0",
-    "MaxCuts": "0", "MaxCrash": "0", "MaxAppCrash": "0", "MaxPower": "0", "MayIncomplete": "FALSE",
+    "MUTANT": '"none"', "Readers": '{"r1"}', "OutReaders": "{}", "MaxGen": "3", "MaxBuilds": "0", "MaxReqs": "0", "MaxEdits": "0",
+    "MaxCuts": "0", "MaxCrash": "0", "MaxAppCrash": "0", "MaxPower": "0", "MaxPurge": "0",
+    "MayIncomplete": "FALSE",
 }
 
 # publish.md §10: the two properties of BL-0113 (state invariants)
@@ -33,12 +34,15 @@ WORLDS = {
     "S_publish": ("S", S(MaxGen=4, MaxBuilds=4, MaxReqs=2, MaxCrash=1, MayIncomplete=True)),
     # a power loss at any step of a publish, then reads of what the next start finds
     "S_power": ("S", S(MaxGen=4, MaxBuilds=3, MaxReqs=2, MaxPower=1, MaxAppCrash=1, MaxCrash=1)),
+    # the OS purges the cache folder under a running app and an outside tool (which outlives the app's crash)
+    "S_purge": ("S", S(OutReaders='{"r1"}', MaxGen=3, MaxBuilds=2, MaxReqs=2, MaxEdits=1, MaxPurge=1,
+                       MaxAppCrash=1)),
     # the ledger moves during a build: an outside editor, a save of ours cut with its `.open` journal, recovery
     "S_ledger": ("S", S(MaxGen=3, MaxBuilds=2, MaxReqs=1, MaxEdits=2, MaxCuts=1)),
     # medium and large: actors combined (the owner's runs, BL-0110's row)
     "M_all": ("M", S(MaxGen=4, MaxBuilds=3, MaxReqs=2, MaxEdits=1, MaxCuts=1, MaxCrash=1, MaxPower=1,
-                     MayIncomplete=True)),
-    "L_all": ("L", S(Readers='{"r1", "r2"}', MaxGen=5, MaxBuilds=4, MaxReqs=2, MaxEdits=2, MaxCuts=1, MaxCrash=1,
+                     MaxPurge=1, MayIncomplete=True)),
+    "L_all": ("L", S(Readers='{"r1", "r2"}', OutReaders='{"r2"}', MaxPurge=1, MaxGen=5, MaxBuilds=4, MaxReqs=2, MaxEdits=2, MaxCuts=1, MaxCrash=1,
                      MaxAppCrash=1, MaxPower=2, MayIncomplete=True)),
 }
 
@@ -47,7 +51,7 @@ MUTANTS = [
     ("no_file_sync", "S_power", "ReadersSeeCompleteGeneration", {}),
     ("publish_incomplete", "S_publish", "ReadersSeeCompleteGeneration", {}),
     ("build_in_place", "S_publish", "ReadersSeeCompleteGeneration", {}),
-    ("reuse_number", "S_publish", "ReadersSeeCompleteGeneration", {}),
+    ("no_tag", "S_purge", "SnapshotIsSomeCommittedState", {}),
     ("no_recheck", "S_ledger", "SnapshotIsSomeCommittedState", {}),
     ("no_open_check", "S_ledger", "SnapshotIsSomeCommittedState", {}),
     ("reresolve_per_read", "S_ledger", "SnapshotIsSomeCommittedState", {}),
@@ -62,6 +66,8 @@ WITNESSES = [
     ("W_ReadAfterPower", "S_power"),
     ("W_TornLeft", "S_power"),
     ("W_LinkReverted", "S_power"),
+    ("W_ReadAcrossPurge", "S_purge"),
+    ("W_OutsideAfterCrash", "S_purge"),
     ("W_MovedRefused", "S_ledger"),
     ("W_OpenRefused", "S_ledger"),
 ]

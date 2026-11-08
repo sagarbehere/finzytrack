@@ -121,6 +121,16 @@ class MirrorPublishModel(unittest.TestCase):
         for name in actions:
             self.assertTrue(self.defined(name), f"{name} is in Next but not defined")
 
+    def test_mapping_lists_every_mutant_and_witness_with_its_world(self) -> None:
+        mapping = (DIR / "MAPPING.md").read_text(encoding="utf-8")
+        rows: dict[str, str] = {}
+        for line in mapping.split("### 4.1 Mutants", 1)[1].splitlines():  # §4 is the last section
+            cells = [c.strip() for c in line.split("|")]
+            if len(cells) > 3 and cells[1].startswith("`"):
+                rows[cells[1].strip("`")] = cells[2].strip("`")
+        expected = {m[0]: m[1] for m in self.gen.MUTANTS} | dict(self.gen.WITNESSES)
+        self.assertEqual(rows, expected, "MAPPING.md §4 must list exactly the mutants and witnesses, each with its world")
+
     def test_every_rule_the_mapping_cites_exists_in_the_spec(self) -> None:
         mapping = (DIR / "MAPPING.md").read_text(encoding="utf-8")
         sections = set(re.findall(r"^## (\d+)\. ", self.spec, re.M))

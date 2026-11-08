@@ -14,10 +14,13 @@
 (* outside editor writes a fresh version (it never writes back bytes a    *)
 (* file held before: publish.md §11, the A-B-A limit); a save of ours cut *)
 (* after its first file leaves an `.open` journal until recovery. The     *)
-(* mirror folder holds generations 1..MaxGen (a database file and its     *)
-(* rollback journal each) and the link `current.db`. One engine job at a  *)
-(* time (ADR-0064): a publish job, or a save. Readers (the screens' reads,*)
-(* an outside tool, the save's gate) resolve the link and read.           *)
+(* mirror folder holds generation names 1..MaxGen (a database file and   *)
+(* its rollback journal each) and the link `current.db`. A name is never  *)
+(* used twice (§3: the random tag), even after the OS purges the folder.  *)
+(* One engine job at a time (ADR-0064): a publish job, or a save. Readers *)
+(* (the screens' reads, an outside tool, the save's gate) resolve the     *)
+(* link once and open the generation by its name; an outside tool also    *)
+(* outlives a crash of the app (OutReaders).                              *)
 (*                                                                         *)
 (* Durability: each generation holds its current state and the set of     *)
 (* states a power loss may leave (`pl`); the link likewise (`lkpl`). An   *)
@@ -32,11 +35,12 @@ EXTENDS Integers, FiniteSets, Sequences, TLC
 CONSTANTS
     MUTANT,         \* "none" or the name of one seeded bug (MAPPING.md §4)
     Readers,        \* the readers (each one request at a time)
-    MaxGen,         \* generation numbers 1..MaxGen
-    MaxBuilds, MaxReqs, MaxEdits, MaxCuts, MaxCrash, MaxAppCrash, MaxPower,
+    OutReaders,     \* the readers that are outside tools: they outlive a crash of the app
+    MaxGen,         \* generation names 1..MaxGen, in the order of their numbers
+    MaxBuilds, MaxReqs, MaxEdits, MaxCuts, MaxCrash, MaxAppCrash, MaxPower, MaxPurge,
     MayIncomplete   \* TRUE: a build may report itself incomplete (`build_complete = 0`)
 
-ASSUME MUTANT \in STRING /\ MaxGen \in Nat /\ MaxGen >= 1 /\ MayIncomplete \in BOOLEAN
+ASSUME MUTANT \in STRING /\ MaxGen \in Nat /\ MaxGen >= 1 /\ MayIncomplete \in BOOLEAN /\ OutReaders \subseteq Readers
 
 ----------------------------------------------------------------------------
 (* Basic sets and values                                                   *)
@@ -54,10 +58,11 @@ Empty  == Ct(ABS, NoRows, NoRows)
 Torn   == Ct(TORN, NoRows, NoRows)
 Part   == Ct(PART, NoRows, NoRows)
 Max(S) == CHOOSE x \in S : \A y \in S : y <= x
+Min(S) == CHOOSE x \in S : \A y \in S : x <= y
 
-NoGen == [c |-> Empty, jl |-> FALSE, pl |-> {<<Empty, FALSE>>}, inc |-> 0]
-NoCtl == [pc |-> "none", g |-> 0, lab |-> NoRows, rows |-> NoRows, stale |-> FALSE]
-NoRd  == [st |-> "idle", g |-> 0, inc |-> 0, s1 |-> Empty, s2 |-> Empty]
+NoGen == [c |-> Empty, jl |-> FALSE, pl |-> {<<Empty, FALSE>>}]
+NoCtl == [pc |-> "none", g |-> 0, lab |-> NoRows, rows |-> NoRows]
+NoRd  == [st |-> "idle", g |-> 0, s1 |-> Empty, s2 |-> Empty]
 
 ----------------------------------------------------------------------------
 VARIABLES
@@ -67,8 +72,9 @@ VARIABLES
     jpost,  \* the version it wrote into file 1
     nv,     \* the next fresh version
     hist,   \* ghost: every ledger state the disk had while no `.open` journal existed (the committed states)
-    gens,   \* per generation: database content `c`, journal present `jl`, power-loss outcomes `pl` (pairs
-            \* <<content, journal present>>), incarnation `inc` (a new file at the name is a new inode)
+    gens,   \* per generation name: database content `c`, journal present `jl`, power-loss outcomes `pl`
+            \* (pairs <<content, journal present>>)
+    used,   \* the names ever created (a tagged name is never created twice)
     lk,     \* the generation `current.db` names (0: no link)
     lkpl,   \* what a power loss may leave at `current.db`
     ctl,    \* the publish job's progress
@@ -76,27 +82,29 @@ VARIABLES
     n,      \* counters that bound the environment, the user and the readers
     gh      \* ghost: branches reached (for the vacuity witnesses)
 
-vars == <<disk, jopen, jpre, jpost, nv, hist, gens, lk, lkpl, ctl, rd, n, gh>>
+vars == <<disk, jopen, jpre, jpost, nv, hist, gens, used, lk, lkpl, ctl, rd, n, gh>>
 ledger == <<disk, jopen, jpre, jpost, nv, hist>>
 
 Init ==
     /\ disk = <<1, 1>> /\ jopen = FALSE /\ jpre = <<1, 1>> /\ jpost = 0 /\ nv = 2
     /\ hist = {<<1, 1>>}
-    /\ gens = [g \in Gens |-> NoGen]
+    /\ gens = [g \in Gens |-> NoGen] /\ used = {}
     /\ lk = 0 /\ lkpl = {0}
     /\ ctl = NoCtl
     /\ rd = [r \in Readers |-> NoRd]
-    /\ n = [b |-> 0, e |-> 0, c |-> 0, cr |-> 0, ac |-> 0, pw |-> 0, q |-> [r \in Readers |-> 0]]
-    /\ gh = [moved |-> FALSE, jref |-> FALSE, incref |-> FALSE, power |-> FALSE]
+    /\ n = [b |-> 0, e |-> 0, c |-> 0, cr |-> 0, ac |-> 0, pw |-> 0, pg |-> 0, q |-> [r \in Readers |-> 0]]
+    /\ gh = [moved |-> FALSE, jref |-> FALSE, incref |-> FALSE, power |-> FALSE, purged |-> FALSE, crashed |-> FALSE]
 
 ----------------------------------------------------------------------------
 (* Helpers                                                                 *)
 Named(g)  == gens[g].c.k # ABS \/ gens[g].jl                   \* a name of generation g is in the folder
-\* §3: the next number is above every number any name in the folder carries, and above the link's
-NextGen   == IF MUTANT = "reuse_number" THEN lk + 1
-             ELSE 1 + Max({lk} \cup {g \in Gens : Named(g)})
-\* §6: the previous generation: the highest-numbered file below the current one
-Prev      == LET below == {g \in Gens : g < lk /\ gens[g].c.k # ABS} IN IF below = {} THEN 0 ELSE Max(below)
+\* §3: a name never created before (the random tag), ordered after every name there is. The mutant names
+\* files by number only: above every name in the folder, so a number comes again after a purge.
+NextGen   == IF MUTANT = "no_tag" THEN 1 + Max({lk} \cup {g \in Gens : Named(g)})
+             ELSE IF Gens \ used = {} THEN MaxGen + 1 ELSE Min(Gens \ used)
+\* §6: the previous generation: the highest-numbered whole, complete file below the current one, with no journal
+Prev      == LET below == {g \in Gens : g < lk /\ gens[g].c.k = DONE /\ ~gens[g].jl}
+             IN IF below = {} THEN 0 ELSE Max(below)
 Keep      == {lk, Prev} \ {0}
 AddHist(d, jo) == IF jo THEN hist ELSE hist \cup {d}
 \* a directory sync of the mirror folder: every entry (file, journal, link) durable as it is now; a file's data
@@ -114,35 +122,33 @@ StartPublish ==
     /\ ctl.pc = "none" /\ n.b < MaxBuilds
     /\ ctl' = [NoCtl EXCEPT !.pc = "clean"]
     /\ n' = [n EXCEPT !.b = @ + 1]
-    /\ UNCHANGED <<ledger, gens, lk, lkpl, rd, gh>>
+    /\ UNCHANGED <<ledger, gens, used, lk, lkpl, rd, gh>>
 
-\* §6: the cleanup, first in every job: any database file not kept, then its journal once the file is gone. It
-\* may stop anywhere (an I/O error, or the grace period keeps a file): any subset of the deletions happens.
+\* §6: the cleanup, first in every job (every try): any database file or journal not kept, in any order. It
+\* may stop anywhere (an I/O error, the grace period, the cap): any subset of the removals happens.
 P_CleanDb(g) ==
     /\ ctl.pc = "clean" /\ g \notin Keep /\ gens[g].c.k # ABS
-    /\ gens' = [gens EXCEPT ![g] = [c |-> Empty, jl |-> @.jl, inc |-> @.inc + 1,
-                                    pl |-> @.pl \cup {<<Empty, p[2]>> : p \in @.pl}]]
-    /\ UNCHANGED <<ledger, lk, lkpl, ctl, rd, n, gh>>
+    /\ gens' = [gens EXCEPT ![g] = [@ EXCEPT !.c = Empty, !.pl = @ \cup {<<Empty, p[2]>> : p \in @}]]
+    /\ UNCHANGED <<ledger, used, lk, lkpl, ctl, rd, n, gh>>
 P_CleanJl(g) ==
-    /\ ctl.pc = "clean" /\ g \notin Keep /\ gens[g].c.k = ABS /\ gens[g].jl
+    /\ ctl.pc = "clean" /\ g \notin Keep /\ gens[g].jl
     /\ gens' = [gens EXCEPT ![g] = [@ EXCEPT !.jl = FALSE, !.pl = @ \cup {<<p[1], FALSE>> : p \in @}]]
-    /\ UNCHANGED <<ledger, lk, lkpl, ctl, rd, n, gh>>
+    /\ UNCHANGED <<ledger, used, lk, lkpl, ctl, rd, n, gh>>
 P_CleanDone ==
     /\ ctl.pc = "clean" /\ Go("obs1")
-    /\ UNCHANGED <<ledger, gens, lk, lkpl, rd, n, gh>>
+    /\ UNCHANGED <<ledger, gens, used, lk, lkpl, rd, n, gh>>
 
 \* §4 (the load, engine-jobs §6.7): the ledger set observed file by file, then each file read
 P_Obs(i) ==
     /\ ctl.pc = "obs" \o ToString(i)
     /\ ctl' = [ctl EXCEPT !.lab[i] = disk[i], !.pc = IF i = 1 THEN "obs2" ELSE "read1"]
-    /\ UNCHANGED <<ledger, gens, lk, lkpl, rd, n, gh>>
+    /\ UNCHANGED <<ledger, gens, used, lk, lkpl, rd, n, gh>>
 P_Read(i) ==
     /\ ctl.pc = "read" \o ToString(i)
     /\ ctl' = [ctl EXCEPT !.rows[i] = disk[i], !.pc = IF i = 1 THEN "read2" ELSE "create"]
-    /\ UNCHANGED <<ledger, gens, lk, lkpl, rd, n, gh>>
+    /\ UNCHANGED <<ledger, gens, used, lk, lkpl, rd, n, gh>>
 
-\* §4: the build creates its own file under the next number (exclusive: a file at the name refuses it); a
-\* journal left at that name would be played back into the new file (the stale-journal rule, §5)
+\* §4: the build creates its own file under a new name (exclusive: a file at the name refuses it)
 P_Create ==
     /\ ctl.pc = "create"
     /\ IF MUTANT = "build_in_place" /\ lk # 0
@@ -150,13 +156,15 @@ P_Create ==
             \* committed one by one, so a reader in between finds a whole file with some tables missing
             /\ gens' = [gens EXCEPT ![lk] = [@ EXCEPT !.c = Ct(INC, @.rows, @.lab),
                                                       !.pl = @ \cup {<<Ct(INC, gens[lk].c.rows, gens[lk].c.lab), FALSE>>, <<Torn, FALSE>>}]]
-            /\ ctl' = [ctl EXCEPT !.pc = "commit", !.g = lk, !.stale = FALSE]
+            /\ ctl' = [ctl EXCEPT !.pc = "commit", !.g = lk]
+            /\ used' = used
        ELSE LET N == NextGen IN
             IF N > MaxGen \/ gens[N].c.k # ABS
-            THEN /\ ctl' = NoCtl /\ gens' = gens        \* out of names in this world, or the exclusive create refused
-            ELSE /\ gens' = [gens EXCEPT ![N] = [c |-> Part, jl |-> TRUE, inc |-> @.inc + 1,
+            THEN /\ ctl' = NoCtl /\ gens' = gens /\ used' = used  \* out of names in this world, or the create refused
+            ELSE /\ gens' = [gens EXCEPT ![N] = [c |-> Part, jl |-> TRUE,
                                                   pl |-> @.pl \cup {<<Part, TRUE>>, <<Torn, FALSE>>, <<Torn, TRUE>>}]]
-                 /\ ctl' = [ctl EXCEPT !.pc = "commit", !.g = N, !.stale = gens[N].jl]
+                 /\ used' = used \cup {N}
+                 /\ ctl' = [ctl EXCEPT !.pc = "commit", !.g = N]
     /\ UNCHANGED <<ledger, lk, lkpl, rd, n, gh>>
 
 \* the build's one transaction commits: SQLite deletes the journal (not yet durable); `build_complete` is 1, or
@@ -164,12 +172,11 @@ P_Create ==
 P_Commit ==
     /\ ctl.pc = "commit"
     /\ \E complete \in (IF MayIncomplete THEN BOOLEAN ELSE {TRUE}) :
-         LET c == IF ctl.stale THEN Torn
-                  ELSE Ct(IF complete THEN DONE ELSE INC, ctl.rows, ctl.lab)
+         LET c == Ct(IF complete THEN DONE ELSE INC, ctl.rows, ctl.lab)
          IN gens' = [gens EXCEPT ![ctl.g] = [@ EXCEPT !.c = c, !.jl = FALSE,
                         !.pl = @ \cup {<<Torn, FALSE>>, <<Torn, TRUE>>, <<c, FALSE>>, <<c, TRUE>>}]]
     /\ Go("check")
-    /\ UNCHANGED <<ledger, lk, lkpl, rd, n, gh>>
+    /\ UNCHANGED <<ledger, used, lk, lkpl, rd, n, gh>>
 
 \* §4: a build that says it is incomplete is never published; its file is left for the cleanup
 P_Check ==
@@ -177,7 +184,7 @@ P_Check ==
     /\ IF gens[ctl.g].c.k = INC /\ MUTANT # "publish_incomplete"
        THEN ctl' = NoCtl /\ gh' = [gh EXCEPT !.incref = TRUE]
        ELSE Go(IF MUTANT = "no_file_sync" THEN "dsync" ELSE "sync") /\ gh' = gh
-    /\ UNCHANGED <<ledger, gens, lk, lkpl, rd, n>>
+    /\ UNCHANGED <<ledger, gens, used, lk, lkpl, rd, n>>
 
 \* §4: the file's data synced (F_FULLFSYNC on macOS): every outcome in which the file exists holds these bytes
 P_SyncFile ==
@@ -185,13 +192,14 @@ P_SyncFile ==
     /\ LET g == ctl.g IN
        gens' = [gens EXCEPT ![g] = [@ EXCEPT !.pl = {<<IF p[1].k = ABS THEN p[1] ELSE gens[g].c, p[2]>> : p \in @}]]
     /\ Go("dsync")
-    /\ UNCHANGED <<ledger, lk, lkpl, rd, n, gh>>
+    /\ UNCHANGED <<ledger, used, lk, lkpl, rd, n, gh>>
 
-\* §4: the folder synced: the new file's name and its journal's deletion durable
+\* §4: the folder synced: the new file's name and its journal's deletion durable. Availability only (§4 step 6):
+\* without it a power loss can leave `current.db` naming no file, which neither property counts
 P_DirSync ==
     /\ ctl.pc = "dsync" /\ DirSync
     /\ Go(IF MUTANT = "no_recheck" THEN "jcheck" ELSE "re1")
-    /\ UNCHANGED <<ledger, lk, rd, n, gh>>
+    /\ UNCHANGED <<ledger, used, lk, rd, n, gh>>
 
 \* §4 (engine-jobs §7): just before the swap, the ledger set observed again; a moved file ends the job
 P_ReObs(i) ==
@@ -199,7 +207,7 @@ P_ReObs(i) ==
     /\ IF disk[i] # ctl.lab[i]
        THEN ctl' = NoCtl /\ gh' = [gh EXCEPT !.moved = TRUE]
        ELSE Go(IF i = 1 THEN "re2" ELSE "jcheck") /\ gh' = gh
-    /\ UNCHANGED <<ledger, gens, lk, lkpl, rd, n>>
+    /\ UNCHANGED <<ledger, gens, used, lk, lkpl, rd, n>>
 
 \* §4 (engine-jobs §7): no `.open` journal of this workspace, else the job ends (`WRITES_PAUSED`)
 P_JCheck ==
@@ -207,21 +215,16 @@ P_JCheck ==
     /\ IF jopen /\ MUTANT # "no_open_check"
        THEN ctl' = NoCtl /\ gh' = [gh EXCEPT !.jref = TRUE]
        ELSE Go("swap") /\ gh' = gh
-    /\ UNCHANGED <<ledger, gens, lk, lkpl, rd, n>>
+    /\ UNCHANGED <<ledger, gens, used, lk, lkpl, rd, n>>
 
-\* §4: a temporary link to the new file, renamed over `current.db` (one step: the temporary link alone is
-\* never read); until the folder's sync a power loss may keep the old link
+\* §4 step 8: a temporary link to the new file, renamed over `current.db` (one step: the temporary link alone
+\* is never read); the job answers "published". The rename becomes durable at the next job's folder sync (step 6)
+\* or the OS's own; until then a power loss may keep the old link
 P_Swap ==
     /\ ctl.pc = "swap"
     /\ lk' = ctl.g /\ lkpl' = lkpl \cup {ctl.g}
-    /\ Go("lsync")
-    /\ UNCHANGED <<ledger, gens, rd, n, gh>>
-
-\* §4: the folder synced again; then the job answers "published"
-P_LinkSync ==
-    /\ ctl.pc = "lsync" /\ DirSync
     /\ ctl' = NoCtl
-    /\ UNCHANGED <<ledger, lk, rd, n, gh>>
+    /\ UNCHANGED <<ledger, gens, used, rd, n, gh>>
 
 ----------------------------------------------------------------------------
 (* The ledger: our cut save, its recovery, the outside editor              *)
@@ -233,14 +236,14 @@ SaveCut ==
     /\ jopen' = TRUE /\ jpre' = disk /\ jpost' = nv
     /\ disk' = [disk EXCEPT ![1] = nv] /\ nv' = nv + 1
     /\ n' = [n EXCEPT !.c = @ + 1]
-    /\ UNCHANGED <<hist, gens, lk, lkpl, ctl, rd, gh>>
+    /\ UNCHANGED <<hist, gens, used, lk, lkpl, ctl, rd, gh>>
 
 \* recovery (a job): file 1 back to its pre bytes, the journal resolved; it stops (and the journal stays) when
 \* another program changed a file the journal names
 Recover ==
     /\ ctl.pc = "none" /\ jopen /\ disk[1] = jpost /\ disk[2] = jpre[2]
     /\ disk' = jpre /\ jopen' = FALSE /\ hist' = hist \cup {jpre}
-    /\ UNCHANGED <<jpre, jpost, nv, gens, lk, lkpl, ctl, rd, n, gh>>
+    /\ UNCHANGED <<jpre, jpost, nv, gens, used, lk, lkpl, ctl, rd, n, gh>>
 
 \* an outside program writes a file at any time, with bytes the file never held before
 Editor(i) ==
@@ -248,7 +251,7 @@ Editor(i) ==
     /\ disk' = [disk EXCEPT ![i] = nv] /\ nv' = nv + 1
     /\ hist' = AddHist(disk', jopen)
     /\ n' = [n EXCEPT !.e = @ + 1]
-    /\ UNCHANGED <<jopen, jpre, jpost, gens, lk, lkpl, ctl, rd, gh>>
+    /\ UNCHANGED <<jopen, jpre, jpost, gens, used, lk, lkpl, ctl, rd, gh>>
 
 ----------------------------------------------------------------------------
 (* Readers (§7): the screens' reads, an outside tool, the save's gate      *)
@@ -256,46 +259,55 @@ Editor(i) ==
 \* a request resolves `current.db` once (one `readlink`) and pins that generation's name
 R_Resolve(r) ==
     /\ rd[r].st = "idle" /\ n.q[r] < MaxReqs /\ lk # 0
-    /\ rd' = [rd EXCEPT ![r] = [NoRd EXCEPT !.st = "res", !.g = lk, !.inc = gens[lk].inc]]
+    /\ rd' = [rd EXCEPT ![r] = [NoRd EXCEPT !.st = "res", !.g = lk]]
     /\ n' = [n EXCEPT !.q[r] = @ + 1]
-    /\ UNCHANGED <<ledger, gens, lk, lkpl, ctl, gh>>
+    /\ UNCHANGED <<ledger, gens, used, lk, lkpl, ctl, gh>>
 
-\* opening a file read-only: gone (no file, or another file at the name), refused (a journal beside it: SQLite
-\* finds it hot and a read-only connection may not roll it back), or read (an open descriptor: what it reads
-\* never changes while it is open, even when the name is deleted)
-Opens(g, inc) == g # 0 /\ gens[g].inc = inc /\ gens[g].c.k \notin {ABS, PART} /\ ~gens[g].jl
+\* opening a file read-only, by its name: gone (no file), refused (a file a build is still writing, or a journal
+\* beside it: SQLite finds it hot and a read-only connection may not roll it back), or read: whatever file is at
+\* that name now (an open descriptor then reads what it opened, even after the name is removed)
+Opens(g) == g # 0 /\ gens[g].c.k \notin {ABS, PART} /\ ~gens[g].jl
 
 R_Read1(r) ==
     /\ rd[r].st = "res"
-    /\ rd' = [rd EXCEPT ![r] = IF Opens(rd[r].g, rd[r].inc)
+    /\ rd' = [rd EXCEPT ![r] = IF Opens(rd[r].g)
                                THEN [@ EXCEPT !.st = "one", !.s1 = gens[rd[r].g].c]
                                ELSE NoRd]
-    /\ UNCHANGED <<ledger, gens, lk, lkpl, ctl, n, gh>>
+    /\ UNCHANGED <<ledger, gens, used, lk, lkpl, ctl, n, gh>>
 
 \* the request's second read opens the pinned name again (a new connection)
 R_Read2(r) ==
     /\ rd[r].st = "one"
-    /\ LET g   == IF MUTANT = "reresolve_per_read" THEN lk ELSE rd[r].g
-           inc == IF MUTANT # "reresolve_per_read" THEN rd[r].inc ELSE IF lk = 0 THEN 0 ELSE gens[lk].inc
-       IN rd' = [rd EXCEPT ![r] = IF Opens(g, inc) THEN [@ EXCEPT !.st = "two", !.s2 = gens[g].c] ELSE NoRd]
-    /\ UNCHANGED <<ledger, gens, lk, lkpl, ctl, n, gh>>
+    /\ LET g == IF MUTANT = "reresolve_per_read" THEN lk ELSE rd[r].g
+       IN rd' = [rd EXCEPT ![r] = IF Opens(g) THEN [@ EXCEPT !.st = "two", !.s2 = gens[g].c] ELSE NoRd]
+    /\ UNCHANGED <<ledger, gens, used, lk, lkpl, ctl, n, gh>>
 
 R_End(r) ==
     /\ rd[r].st = "two" /\ rd' = [rd EXCEPT ![r] = NoRd]
-    /\ UNCHANGED <<ledger, gens, lk, lkpl, ctl, n, gh>>
+    /\ UNCHANGED <<ledger, gens, used, lk, lkpl, ctl, n, gh>>
 
 ----------------------------------------------------------------------------
 (* The OS                                                                  *)
 EngineCrash ==
     /\ ctl.pc # "none" /\ n.cr < MaxCrash
     /\ ctl' = NoCtl /\ n' = [n EXCEPT !.cr = @ + 1]
-    /\ UNCHANGED <<ledger, gens, lk, lkpl, rd, gh>>
+    /\ UNCHANGED <<ledger, gens, used, lk, lkpl, rd, gh>>
 
-\* the app (sidecar and engine) dies: its readers go; the folder stays as it is
+\* the app (sidecar and engine) dies: its readers go, an outside tool goes on; the folder stays as it is
 AppCrash ==
     /\ n.ac < MaxAppCrash
-    /\ ctl' = NoCtl /\ rd' = [r \in Readers |-> NoRd] /\ n' = [n EXCEPT !.ac = @ + 1]
-    /\ UNCHANGED <<ledger, gens, lk, lkpl, gh>>
+    /\ ctl' = NoCtl /\ rd' = [r \in Readers |-> IF r \in OutReaders THEN rd[r] ELSE NoRd]
+    /\ n' = [n EXCEPT !.ac = @ + 1] /\ gh' = [gh EXCEPT !.crashed = TRUE]
+    /\ UNCHANGED <<ledger, gens, used, lk, lkpl>>
+
+\* the OS purges the cache: the mirror folder and everything in it go at once, durably; a running job's later
+\* writes go into the removed folder, which nobody can reach (modelled as the job's end); open descriptors keep
+\* reading what they opened, a pinned name is gone
+Purge ==
+    /\ n.pg < MaxPurge
+    /\ gens' = [g \in Gens |-> NoGen] /\ lk' = 0 /\ lkpl' = {0} /\ ctl' = NoCtl
+    /\ n' = [n EXCEPT !.pg = @ + 1] /\ gh' = [gh EXCEPT !.purged = TRUE]
+    /\ UNCHANGED <<ledger, used, rd>>
 
 \* the machine loses power: every reader goes (outside tools too); each generation and the link keep one of
 \* their possible outcomes, chosen independently. The ledger's own durability is engine-jobs' model.
@@ -303,16 +315,16 @@ PowerLoss ==
     /\ n.pw < MaxPower
     /\ \E pick \in [Gens -> UNION {gens[g].pl : g \in Gens}], l \in lkpl :
          /\ \A g \in Gens : pick[g] \in gens[g].pl
-         /\ gens' = [g \in Gens |-> [c |-> pick[g][1], jl |-> pick[g][2], pl |-> {pick[g]}, inc |-> gens[g].inc + 1]]
+         /\ gens' = [g \in Gens |-> [c |-> pick[g][1], jl |-> pick[g][2], pl |-> {pick[g]}]]
          /\ lk' = l /\ lkpl' = {l}
     /\ ctl' = NoCtl /\ rd' = [r \in Readers |-> NoRd]
     /\ n' = [n EXCEPT !.pw = @ + 1] /\ gh' = [gh EXCEPT !.power = TRUE]
-    /\ UNCHANGED ledger
+    /\ UNCHANGED <<ledger, used>>
 
 ----------------------------------------------------------------------------
 EngineStep ==
     \/ StartPublish \/ P_CleanDone \/ P_Create \/ P_Commit \/ P_Check \/ P_SyncFile \/ P_DirSync
-    \/ P_JCheck \/ P_Swap \/ P_LinkSync \/ SaveCut \/ Recover
+    \/ P_JCheck \/ P_Swap \/ SaveCut \/ Recover
     \/ \E g \in Gens : P_CleanDb(g) \/ P_CleanJl(g)
     \/ \E i \in Files : P_Obs(i) \/ P_Read(i) \/ P_ReObs(i)
 
@@ -320,7 +332,7 @@ ReaderStep ==
     \E r \in Readers : R_Resolve(r) \/ R_Read1(r) \/ R_Read2(r) \/ R_End(r)
 
 EnvStep ==
-    \/ EngineCrash \/ AppCrash \/ PowerLoss
+    \/ EngineCrash \/ AppCrash \/ PowerLoss \/ Purge
     \/ \E i \in Files : Editor(i)
 
 Next == EngineStep \/ ReaderStep \/ EnvStep
@@ -357,4 +369,6 @@ W_LinkReverted    == ~(gh.power /\ lk # 0 /\ \E g \in Gens : g > lk /\ gens[g].c
 W_MovedRefused    == ~gh.moved
 W_OpenRefused     == ~gh.jref
 W_IncompleteRefused == ~gh.incref
+W_ReadAcrossPurge == ~\E r \in Readers : rd[r].st \in {"one", "two"} /\ gh.purged /\ gens[rd[r].g].c.k = ABS
+W_OutsideAfterCrash == ~\E r \in OutReaders : rd[r].st \in {"one", "two"} /\ gh.crashed
 =============================================================================

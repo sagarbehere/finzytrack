@@ -25,18 +25,19 @@ Results go to `results/` (not committed), with `results/SUMMARY.md`.
 
 ## How long it takes
 
-Measured on the owner's Mac (Apple M4 Pro) on 2026-11-08 with 8 TLC workers, on the model of S0085:
+Measured on the owner's Mac (Apple M4 Pro) on 2026-11-08 with 8 TLC workers, on the model of S0085's round 1 fixes
+(model sha256 90acfd933696):
 
 | Tier | Configurations | Result | Size | Wall time |
 |---|---|---|---|---|
-| S | `S_publish`, `S_power`, `S_ledger` | all PASS | 53,342, 80,227 and 28,450 distinct states | 1 s each |
-| S | 7 mutants | each violates its property | 240 to 24,736 distinct states | 0-1 s each |
-| S | 9 witnesses | each reached | | 0-2 s each |
-| S | all 19 | **all as expected** | | about 20 s together |
+| S | `S_publish`, `S_power`, `S_purge`, `S_ledger` | all PASS | 48,572, 85,363, 11,792 and 26,542 distinct states | 0-2 s each |
+| S | 7 mutants | each violates its property | 294 to 23,481 distinct states | 0-1 s each |
+| S | 11 witnesses | each reached | 136 to 17,831 distinct states | 0-1 s each |
+| S | all 22 | **all as expected** | | about 18 s together |
 | M | `M_all` | not run (the owner's, BL-0110) | | |
 | L | `L_all` | not run (the owner's, BL-0110) | | |
 
-Model sha256 4ef12f36ab63. Each run rewrites `results/SUMMARY.md` with the numbers per configuration.
+Each run rewrites `results/SUMMARY.md` with the numbers per configuration.
 
 ## Changing the model
 
