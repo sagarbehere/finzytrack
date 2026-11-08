@@ -71,8 +71,14 @@
 - V F6 Low (ARCHITECTURE's log-level table lacked the open's events): fixed: `open.not_loaded` at warning, `open.loaded` at info.
 - RT overflow (an `include` or documents root inside the workspace's own mirror folder): stated in the same limit, not refused (Decisions).
 
+### Round 2 (final), head c600d538 (verifier and data-safety red team)
+Verifier: passed with findings, 0 High, 0 Medium, 1 Low (every gate run in full; every round-1 test fails on dda1cc1f; mutants on `published_by`, document files, `normpath`, `within` and `names_its_generation` killed). Red team: 1 High by the brief's letter, very narrow: `rebuild._wider` still skips a `document` file under a documents root, so a document in an unlistable subfolder, added by an outside edit before the rebuild and deleted during its load, lets the save's gate pass rows that lack one "File does not exist" error until the next open; no byte lost, no false save outcome, so under the owner's final-round rule (IMP-0052) it is BL-0217 with the verifier's Low (no test of a generation without `published_by`) and a stale comment. All of round 1's repros now behave as intended.
+
 ## Golden changes
 - `engine/tests/mirror/test_rows.py::test_meta`: a ninth key, `published_by` (round 1; publish.md §8), from the stamp; `engine/tests/mirror/support.py`, `fake_store.py`, `publish_support.py`, `test_publish_crash.py` give their stamps and fake generations one (`rebuild`).
 - `backend/tests/platform/test_open_job.py::test_a_fresh_generation_is_opened_without_a_load`: its scripted answer named generation 4 with generation 1's version, which round 1's check now refuses; the answer is consistent now (`4/sha256:…`).
 - `backend/tests/api/test_engine_job_codes.py`: `LEDGER_CHANGING`'s words are the owner's (round 1).
 - Round 1 gates (the owner's Mac): engine ruff, pyright, pytest 9487 passed, 2 skipped, 1 xfailed; backend ruff, pyright, lint-imports, deptry, pytest 2550 passed, 23 xfailed; `run_meta_tests` 847 OK; `check_invariants`, `check_capabilities`, `check_generated`, `check_retired_terms` green. The red team's r1, r1b, r2, r2b and the verifier's `test_s0088_verifier.py` (V_A, V_B) run against the fix: the open loads in each case, and V_A and V_B pass.
+
+## Retro
+- Build about 26 min, fix about 9 min; 2 review rounds (round 1 verifier 0H/1M/5L and red team 1H/1M/1L, two owner decisions; round 2 verifier 0H/0M/1L and red team 1H (narrow, to BL-0217)). Cheaper gate: the stamp has now drawn findings in S0087 and S0088 from one cause, an observation that names less than the load read; one table, made before coding, of the four parts of a ledger set against each place that observes, stamps, widens or compares them (`_read_by`, `_wider`, `within`, the gate) would have shown the missing `document` cases in one pass.
