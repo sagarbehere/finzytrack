@@ -720,8 +720,8 @@ The target makes the log good enough to analyse a user's report and safe enough 
 | Level | Event classes |
 |---|---|
 | `error` | a failed operation with an `INTERNAL` or unexpected code; a contract step that failed closed; a sidecar crash; the ledger engine failing to start or `unavailable` (`engine.start_failed`, `engine.unavailable`: no ledger write, BQL query or mirror rebuild can run until it is back; S0040) |
-| `warning` | a refused write (`ContractRefused`, `Conflict`); a degraded dependency (`Unavailable`; for the engine, one stop that the next request restarts, `engine.stopped`); a port call over its slow threshold; a rebuild after a save that reached no result (`rebuild.not_loaded`, ADR-0068 D1); a migration rolled back |
-| `info` | lifecycle: boot phases, workspace open/close and phase, a commit done (mutator, files touched, counts, `duration_ms`), import session state changes, plan confirmed or rejected, update steps, a mirror generation published |
+| `warning` | a refused write (`ContractRefused`, `Conflict`); a degraded dependency (`Unavailable`; for the engine, one stop that the next request restarts, `engine.stopped`); a port call over its slow threshold; a rebuild after a save that reached no result (`rebuild.not_loaded`, ADR-0068 D1); an open that reached no result (`open.not_loaded`: the ledger kept changing, an unfinished save, an encrypted file, a broken answer; S0088); a migration rolled back |
+| `info` | lifecycle: boot phases, workspace open/close and phase, a commit done (mutator, files touched, counts, `duration_ms`), import session state changes, plan confirmed or rejected, update steps, a mirror generation published (`rebuild.loaded`, `open.loaded`: counts only) |
 | `debug` | port calls with timing (`port`, `op`, `duration_ms`); recipe step timings and memo hits; query plans; anything in debug mode |
 
 ### 6A.6 Tests

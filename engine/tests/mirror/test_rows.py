@@ -542,4 +542,5 @@ def test_meta(tmp_path: Path) -> None:
         "build_complete": "1",  # every table has its rows (BL-0120, S0086)
         "engine_build": STAMP.engine_build,  # publish.md §8 (S0087, BL-0113)
         "as_of": TODAY.isoformat(),  # the build's today: account_balances and lots stop at it
+        "published_by": STAMP.published_by,  # S0088 round 1: the job that published it (publish.md §8)
     }

@@ -14,6 +14,7 @@ spec's lines:
 from __future__ import annotations
 
 import json
+import time
 from collections.abc import Iterator
 from dataclasses import replace
 from datetime import UTC, datetime
@@ -46,8 +47,9 @@ W2 = "ws-2"
 MAIN = "/L/main.bean"
 ALD = Path("/app")
 LV = "1/sha256:" + "1" * 64
-CLOCK = FrozenClock(datetime(2026, 11, 8, 23, 30, tzinfo=UTC))
-TODAY = CLOCK.now().astimezone().date().isoformat()  # the civil date where the app runs (INV-07)
+CLOCK = FrozenClock(datetime(2026, 11, 9, 3, 30, tzinfo=UTC))
+TZ = "America/Los_Angeles"  # west of UTC: there it is still 8 November
+TODAY = "2026-11-08"  # the civil date where the app runs, not UTC's 9 November (INV-07; S0088 round 1, verifier F3)
 TARGET = OpenTarget(workspace_key="k2", root=MAIN, lineage="lin2", app_local_data=ALD)
 PARAMS: dict[str, object] = {
     "root": MAIN,
@@ -116,6 +118,16 @@ class Rig:
         return [op for _, op in self.engine.calls]
 
 
+@pytest.fixture(autouse=True)
+def zone(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    """The app's machine in a time zone west of UTC (the engine reads no clock: the sidecar sends the civil date)."""
+    monkeypatch.setenv("TZ", TZ)
+    time.tzset()
+    yield
+    monkeypatch.undo()
+    time.tzset()
+
+
 @pytest.fixture
 def make() -> Iterator[Any]:
     rigs: list[Rig] = []
@@ -177,9 +189,10 @@ def test_a_loaded_open_is_opened_with_its_published_mirror_and_logs_counts_only(
 
 
 def test_a_fresh_generation_is_opened_without_a_load(make: Any) -> None:
-    rig = make({"open": [outcome("fresh", publish="fresh", number=4, ledger_version=LV)]})
+    lv4 = "4/sha256:" + "4" * 64
+    rig = make({"open": [outcome("fresh", publish="fresh", number=4, ledger_version=lv4)]})
     value = rig.value()
-    assert value == Opened(0, 0, 1, "fresh", 4, LV)
+    assert value == Opened(0, 0, 1, "fresh", 4, lv4)
     assert isinstance(value, Opened)
     assert value.mirror_ready
 
@@ -242,6 +255,11 @@ def test_an_encrypted_file_is_refused_and_named_but_never_logged(make: Any) -> N
         outcome("fresh", publish="published", number=1, ledger_version=LV),
         outcome("refused"),  # a refusal names its file
         loaded(refused="/L/x.gpg"),  # only a refusal does
+        loaded(number=None),  # S0088 round 1 (verifier F5): a published generation is named by its number
+        loaded(ledger_version=None),  # and by its version
+        loaded(number=2),  # whose N is that number (LV is 1/...)
+        outcome("fresh", publish="fresh", number=None, ledger_version=None),
+        loaded(publish="inexact"),  # a build not published names no generation
         {"outcome": "pass"},
     ],
 )

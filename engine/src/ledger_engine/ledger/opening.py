@@ -10,8 +10,11 @@ the job that publishes it. It reads the ledger and writes only the workspace's m
 0. the mirror folder and its cleanup (publish.md §4 step 1), first in every try, whatever follows;
 1. this workspace's `.open` journal (one, or a journal folder that cannot be listed: `paused`; §7, ADR-0012 F-6: no
    result is returned over an unfinished save, and nothing is loaded);
-2. a published generation that is already fresh (§8: this ledger's, its own set unchanged on disk, this engine build
-   and DDL, today) ends the job: `fresh`, nothing loaded or built;
+2. a published generation that an open published (its `meta.published_by`) and that is still fresh (§8: this
+   ledger's, its own set unchanged on disk, this engine build and DDL, today) ends the job: `fresh`, nothing loaded
+   or built. A generation the rebuild after a save published is never taken: its stamp is what Beancount's loader
+   read, which can lack an `include` an outside edit added before that rebuild (publish.md §11), so after any save the
+   next open loads once (owner, 2026-11-08, "Open reloads after saves");
 3. the overlay load of `root` (`overlay.load`, nothing in its overlay: Beancount's own result, its errors included,
    and the fingerprint of exactly the bytes it parsed, its `include` patterns, absent paths, documents roots and
    `document` files included); an encrypted file is refused (`refused`, the file named; ADR-0059: never decrypted);
@@ -22,7 +25,8 @@ the job that publishes it. It reads the ledger and writes only the workspace's m
 
 The answer carries counts, the generation's number and `ledger_version`, and for a refusal the file's path (the
 sidecar never logs it, INV-23). Unlike the rebuild, the open needs no hint: the overlay load finds the ledger set
-itself, so its stamp names every pattern the ledger includes (the rebuild's limit "the stamp's globs" does not apply).
+itself, so its stamp names every pattern the ledger includes (the rebuild's limit "the stamp's globs" does not apply
+to a generation an open published).
 Any port operation may raise `OSError`, and a policy refusal other than an encrypted file cannot happen under the
 desktop policy: the server answers both `engine.internal`.
 """
@@ -110,7 +114,7 @@ def run(ports: Ports, root: str, job: Job, target: Target) -> Answer:
         cleaned = pb.clean(d, ports.store, target.now_ns)
         if publishing.unfinished(ports.fs, target):  # step 1 (engine-jobs §7)
             return Answer("paused", cleaned=cleaned)
-        cur = publishing.fresh_current(d, ports.store, cleaned, observe, ports.fs, root, target)  # step 2
+        cur = publishing.fresh_current(d, ports.store, cleaned, observe, ports.fs, root, target, by="open")  # step 2
         if cur is not None:
             return Answer("fresh", published=pb.Published(cur.gen, cur.meta.ledger_version), cleaned=cleaned)
         job.progress(PHASE)
@@ -132,6 +136,7 @@ def run(ports: Ports, root: str, job: Job, target: Target) -> Answer:
             built_at=target.built_at,
             engine_build=target.engine_build,
             recheck=publishing.recheck(ports.fs, ports.observe, stamp, target),
+            by="open",
             tag=ports.tag(),
         )
     if isinstance(out, pb.NotPublished) and out.why in ("moved", "paused"):

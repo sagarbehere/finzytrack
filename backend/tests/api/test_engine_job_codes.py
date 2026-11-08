@@ -319,7 +319,7 @@ def test_a_save_refused_for_an_unfinished_save_is_writes_paused_with_its_reason(
 @pytest.mark.error_code("LEDGER_CHANGING")
 def test_an_open_whose_ledger_keeps_changing_is_ledger_changing_and_retryable(scenarios: Scenarios) -> None:
     """§7, §11 "the ledger keeps changing": after 3 tries, `LEDGER_CHANGING` with Try again; nothing was written to
-    the ledger, and the words promise no update by itself (the open does not try again on its own)."""
+    the ledger; the words promise no update by itself and blame no one program (S0088 round 1, owner)."""
     status, payload, app = answer(scenarios, "ledger_changing")
     assert status == 503
     error = payload["error"]
@@ -330,8 +330,12 @@ def test_an_open_whose_ledger_keeps_changing_is_ledger_changing_and_retryable(sc
         True,
     )
     assert error["details"] is None
-    assert error["message"] == "Another program keeps changing your ledger, so Finzytrack could not read it."
-    assert error["next_step"] == "Wait until the other program has finished, then try again."
+    # owner, 2026-11-08, "Reword + state limit": "Your ledger kept changing while Finzytrack read it (another
+    # program, or one of the ledger's own plugins). Wait until it stops, then try again."
+    assert error["message"] == (
+        "Your ledger kept changing while Finzytrack read it (another program, or one of the ledger's own plugins)."
+    )
+    assert error["next_step"] == "Wait until it stops, then try again."
     conforms(app, payload)
 
 

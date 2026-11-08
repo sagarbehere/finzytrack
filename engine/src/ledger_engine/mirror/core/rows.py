@@ -51,12 +51,15 @@ KINDS: Final = ("Assets", "Liabilities", "Equity", "Income", "Expenses")
 class Stamp:
     """The facts about this mirror that the caller owns (surface.toml `meta`; `design/specs/mirror/publish.md` §8):
     `ledger_version` (`<N>/<digest>`), `fingerprint` (`ledger_set.encode`), `built_at`, and `engine_build`, the build of
-    the engine that wrote the rows (a change in the row logic with the same DDL rebuilds, BL-0125)."""
+    the engine that wrote the rows (a change in the row logic with the same DDL rebuilds, BL-0125), and `published_by`,
+    the job that published it (`open` or `rebuild`: only a generation an open published, stamped with exactly the
+    bytes its load parsed, may let a later open skip its load; S0088 round 1, owner 2026-11-08)."""
 
     ledger_version: str
     fingerprint: str
     built_at: str
     engine_build: str
+    published_by: str
 
 
 class InexactError(Exception):
@@ -594,6 +597,7 @@ def meta_rows(stamp: Stamp, today: date) -> list[Row]:
         ("build_complete", "1" if COMPLETE else "0"),
         ("engine_build", stamp.engine_build),
         ("as_of", today.isoformat()),
+        ("published_by", stamp.published_by),
     ]
 
 

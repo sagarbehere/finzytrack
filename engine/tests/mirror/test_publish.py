@@ -771,3 +771,22 @@ def test_no_job_runs_in_a_mirror_folder_that_is_another_volume(
     with pytest.raises(OSError, match="another volume"):
         publish_job(fs, cache, root, now_ns=0)
     assert (point / "volume-file.txt").read_bytes() == b"another volume's file"
+
+
+@pytest.mark.parametrize("by", ["open", "rebuild", "someone", ""])
+def test_meta_names_the_job_that_published_it(by: str) -> None:
+    """S0088 round 1 (publish.md §8 `published_by`): only `open` or `rebuild`; anything else is not a whole mirror of
+    this kind (mutant `meta-any-publisher`)."""
+    facts = {
+        "ledger_version": "1/sha256:" + "0" * 64,
+        "fingerprint": "{}",
+        "export_version": "x",
+        "engine_build": "b",
+        "as_of": "2026-11-08",
+        "build_complete": "1",
+        "published_by": by,
+    }
+    got = pb.meta_of(facts)
+    assert (got is not None) == (by in ("open", "rebuild"))
+    if got is not None:
+        assert got.published_by == by

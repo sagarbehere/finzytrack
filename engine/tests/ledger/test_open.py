@@ -409,3 +409,53 @@ def test_the_open_writes_nothing_outside_its_own_mirror_folder(w: World, case: s
         after.pop(str(w.root.parent / "sub"))
         after.pop(str(w.root.parent / "sub" / "late.bean"))
     assert after == before
+
+
+# -- S0088 round 1: the open's fresh shortcut takes only a generation an open published (owner, 2026-11-08) -----------
+
+
+def test_a_generation_an_open_published_says_so(w: World) -> None:
+    a = w.go()
+    assert isinstance(a.published, pb.Published)
+    assert meta(w.mirror / a.published.gen.name)["published_by"] == "open"
+
+
+def _rebuild_published(w: World, hint: Any) -> None:
+    """The rebuild after a save publishes a generation (stamped with what its real load read)."""
+    from ledger_engine.ledger import rebuild
+
+    class Job:
+        def progress(self, phase: rebuild.Phase) -> None:
+            pass
+
+    assert rebuild.run(rebuild.Ports(), hint, Job(), w.target()).outcome == "loaded"
+    assert meta(w.mirror / str(w.current()))["published_by"] == "rebuild"
+
+
+def test_after_a_rebuild_published_the_next_open_reloads_once(w: World) -> None:
+    """Owner, 2026-11-08 ("Open reloads after saves"): after any save the next open loads, even when nothing changed;
+    the open after that keeps its own generation."""
+    _rebuild_published(w, overlay_fp(w.root))
+    loads: list[str] = []
+    assert w.go(counting(loads)).outcome == "loaded"
+    assert loads == [str(w.root)]
+    assert w.go(counting(loads)).outcome == "fresh"
+    assert len(loads) == 1
+
+
+@pytest.mark.parametrize("include", [b'include "extra/*.bean"\n', b'include "2027.bean"\n'])
+def test_an_include_added_before_the_rebuild_is_seen_by_the_next_open(w: World, include: bytes) -> None:
+    """S0088 round 1, red team F1 (r1, r1b) and verifier F1 (V_A): an outside edit adds an include, matching nothing
+    yet, between a save and its rebuild; the rebuild's stamp lacks it (its hint did not name it); a file then appears
+    under it. The open must not keep that generation: it loads and its stamp names the file."""
+    hint = overlay_fp(w.root)  # the save's plan: no such include
+    (w.root.parent / "extra").mkdir()
+    w.root.write_bytes(MAIN + include)
+    _rebuild_published(w, hint)
+    new = w.root.parent / ("extra/a.bean" if b"extra" in include else "2027.bean")
+    new.write_bytes(b'2026-01-01 open Expenses:Rent\n2026-01-03 * "Rent"\n  Expenses:Rent  999 USD\n  Assets:Cash\n')
+    a = w.go()
+    assert a.outcome == "loaded"
+    got = pb.read_published(for_this_os(), str(w.cache), KEY, SqliteStore())
+    assert got is not None
+    assert str(new) in dict(decode(got.meta.fingerprint.encode("ascii")).files)

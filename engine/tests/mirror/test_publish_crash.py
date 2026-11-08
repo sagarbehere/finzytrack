@@ -57,6 +57,7 @@ def job(fs: MemFS, recheck: pb.Recheck = "same") -> pb.Published | pb.NotPublish
             built_at=BUILT_AT,
             engine_build=ENGINE_BUILD,
             recheck=lambda: recheck,
+            by="rebuild",
         )
 
 

@@ -402,6 +402,10 @@ def test_cleanup_counts_ride_on_the_log_line(make: Any) -> None:
         {"publish": "eaten"},
         {"number": 0},
         {"ledger_version": "1/not a digest"},
+        {"number": None},  # S0088 round 1 (verifier F5, red team F3): a published generation is named by its number
+        {"ledger_version": None},
+        {"number": 2},  # and its version's N is that number
+        {"publish": "inexact"},  # a build not published names no generation
     ],
 )
 def test_a_publish_answer_that_does_not_hold_together_is_a_violation(make: Any, bad: dict[str, object]) -> None:

@@ -52,19 +52,17 @@ def unfinished(fs: FileSystem, target: Target) -> bool:
         return True
 
 
-def _under(file: str, roots: tuple[str, ...]) -> bool:
-    return any(file.startswith(root.rstrip("/") + "/") for root in roots)
-
-
 def within(inner: LedgerSet, outer: LedgerSet) -> bool:
     """Whether `outer` names everything `inner` names (BL-0212 V1): its files, its `include` patterns, its documents
-    roots, and its `document` files (one under a documents root of `outer` is named through that root's listing). The
-    roots are compared by the caller (`publish.same_ledger`)."""
+    roots and its `document` files. A `document` file counts only when `outer` names it itself, never through a
+    documents root whose path it starts with: the root's listing need not name it (a `..` in its path, a folder that
+    can be entered but not listed; S0088 round 1, red team F2). The roots are compared by the caller
+    (`publish.same_ledger`)."""
     return (
         set(inner.files) <= set(outer.files)
         and set(inner.globs) <= set(outer.globs)
         and set(inner.documents) <= set(outer.documents)
-        and all(f in outer.document_files or _under(f, outer.documents) for f in inner.document_files)
+        and set(inner.document_files) <= set(outer.document_files)
     )
 
 
@@ -77,15 +75,19 @@ def fresh_current(
     root: str,
     target: Target,
     hint: LedgerSet | None = None,
+    *,
+    by: pb.PublishedBy | None = None,
 ) -> pb.Current | None:
     """The published generation when it is fresh (publish.md §8: this ledger's, its own set unchanged on disk, this
-    engine's build and DDL, today) and, given a `hint` (the rebuild's), its stamp names all the hint names: a hint that
-    names a glob or a file the stamp lacks (an outside edit added it before an earlier rebuild, whose hint did not
-    know it) means the generation may not describe the disk (BL-0212 V1). Otherwise None: the job loads."""
+    engine's build and DDL, today); given `by`, only a generation that job published (the open's: `open`, since only
+    its stamp names every pattern the ledger includes; S0088 round 1, owner 2026-11-08); and given a `hint` (the
+    rebuild's), its stamp names all the hint names: a hint that names a glob or a file the stamp lacks (an outside edit
+    added it before an earlier rebuild, whose hint did not know it) means the generation may not describe the disk
+    (BL-0212 V1). Otherwise None: the job loads."""
     if cleaned.current is None:
         return None
     facts = store.meta(d, cleaned.current.name)
-    if facts is None:
+    if facts is None or (by is not None and facts.published_by != by):
         return None
 
     def ours(r: str) -> bool:  # the generation is of this ledger (S0087 round 1, red team F2)

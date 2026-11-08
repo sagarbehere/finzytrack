@@ -499,3 +499,68 @@ def test_a_glob_the_hint_names_that_matches_nothing_and_the_stamp_lacks_is_not_f
     assert got is not None
     stamped = decode(got.meta.fingerprint.encode("ascii"))
     assert any(g.endswith("extra/*.bean") for g, _ in stamped.globs)
+
+
+# -- S0088 round 1: `document` files are stamped whatever their path (red team F2) ------------------------------------
+
+
+def _document_ledger(root: Path, doc: str) -> None:
+    root.write_bytes(
+        b'option "operating_currency" "USD"\noption "documents" "docs"\n2026-01-01 open Assets:Cash\n'
+        + f'2026-01-02 document Assets:Cash "{doc}"\n'.encode()
+    )
+
+
+@pytest.mark.parametrize("case", ["dotdot", "unlistable"])
+def test_a_document_file_the_roots_listing_does_not_name_stays_in_the_stamp(root: Path, cache: Path, case: str) -> None:
+    """S0088 round 1, red team F2 (r2, r2b): a `document` path under a documents root by its string but not named by
+    the root's listing (a `..` in it; a file in a folder that can be entered but not listed) was dropped from the stamp,
+    so deleting the file left the generation fresh. It is stamped now, and its deletion makes the generation stale."""
+    docs = root.parent / "docs"
+    docs.mkdir()
+    if case == "dotdot":
+        target = root.parent / "receipt.pdf"
+        doc = f"{docs}/../receipt.pdf"
+    else:
+        (docs / "priv").mkdir()
+        target = docs / "priv" / "receipt.pdf"
+        doc = "docs/priv/receipt.pdf"
+    target.write_bytes(b"%PDF-1.4\n")
+    _document_ledger(root, doc)
+    if case == "unlistable":
+        (docs / "priv").chmod(0o311)
+    try:
+        plan = hint_of(root)
+        assert go(rebuild.Ports(), plan, FakeJob()).outcome == "loaded"
+        got = pb.read_published(for_this_os(), str(cache), KEY, SqliteStore())
+        assert got is not None
+        if case == "unlistable":
+            (docs / "priv").chmod(0o711)
+        target.unlink()
+        if case == "unlistable":
+            (docs / "priv").chmod(0o311)
+        assert not pb.fresh_on_disk(
+            got.meta, lambda fp: observe(fp.ledger_set), lambda r: pb.same_ledger(for_this_os(), r, str(root))
+        )
+        assert go(rebuild.Ports(), plan, FakeJob()).outcome == "loaded"
+    finally:
+        if case == "unlistable":
+            (docs / "priv").chmod(0o700)
+
+
+def test_a_document_file_outside_its_roots_by_a_dotdot_is_moved_with_it(root: Path) -> None:
+    """S0088 round 1 (mutant `under-not-normalized`): a `document` path that starts with a documents root's string
+    but leaves it by `..` is outside the root's listing, so a load that used it while the set did not name it is moved
+    with it in the set (its bytes were not observed before the load)."""
+    docs = root.parent / "docs"
+    docs.mkdir()
+    receipt = root.parent / "receipt.pdf"
+    receipt.write_bytes(b"%PDF-1.4\n")
+    root.write_bytes(MAIN + b'option "documents" "docs"\n')
+    hint = hint_of(root)
+    root.write_bytes(
+        MAIN + b'option "documents" "docs"\n' + f'2026-01-03 document Assets:Cash "{docs}/../receipt.pdf"\n'.encode()
+    )
+    a = go(rebuild.Ports(), hint, FakeJob())
+    assert a.outcome == "moved"
+    assert f"{docs}/../receipt.pdf" in dict(a.fingerprint.document_files)

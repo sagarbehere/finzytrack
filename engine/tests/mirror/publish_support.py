@@ -88,6 +88,7 @@ def publish_job(
             built_at=BUILT_AT,
             engine_build=ENGINE_BUILD,
             recheck=recheck,
+            by="rebuild",
         )
 
 

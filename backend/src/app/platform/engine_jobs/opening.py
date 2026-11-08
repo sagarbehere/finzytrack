@@ -36,6 +36,7 @@ from app.domain.errors import DomainError
 from app.platform.clock import Clock
 from app.platform.engine import EngineFailure, EngineRefusal, OpenAnswer, Publish
 from app.platform.engine_jobs.queue import JobSpec
+from app.platform.engine_jobs.rebuild import names_its_generation
 from app.platform.engine_jobs.scheduler import EngineJobs, Failed, JobContext, JobTicket, Work, WorkResult
 from app.platform.engine_protocol import Violation, decode_open
 from app.platform.errors import ErrorCode, WritesPausedDetails, error
@@ -117,9 +118,12 @@ def params_of(target: OpenTarget, clock: Clock) -> dict[str, object]:
 
 
 def _holds_together(a: OpenAnswer) -> bool:
-    """A loaded answer says what became of its build (never `fresh`); a fresh one says `fresh`; only a refusal, and
-    every refusal, names its file."""
+    """A loaded answer says what became of its build (never `fresh`); a fresh one says `fresh`; a published or fresh
+    generation is named by its number and `ledger_version` (`names_its_generation`); only a refusal, and every
+    refusal, names its file."""
     if (a.outcome == "refused") != (a.refused is not None):
+        return False
+    if not names_its_generation(a.publish, a.number, a.ledger_version):
         return False
     if a.outcome == "loaded":
         return a.publish is not None and a.publish != "fresh"

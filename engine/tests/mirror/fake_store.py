@@ -45,6 +45,7 @@ class FakeStore:
             "build_complete": "1" if self.complete else "0",
             "engine_build": stamp.engine_build,
             "as_of": today.isoformat(),
+            "published_by": stamp.published_by,
         }
         journal = f"{name}-journal"
         made = d.create(name, b"", 0o600)
@@ -94,6 +95,7 @@ def outside_publish(fs: MemFS, fp: Fingerprint, key: str, cache: str = "/cache")
         "engine_build": "b",
         "as_of": "2026-11-08",
         "build_complete": "1",
+        "published_by": "rebuild",
     }
     fs.outside_write(f"{folder}/{name}", MAGIC + json.dumps(facts, sort_keys=True).encode(), mode=0o600)
     fs.outside_symlink(f"{folder}/{pb.CURRENT}", name)

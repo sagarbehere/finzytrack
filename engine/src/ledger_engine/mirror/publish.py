@@ -66,6 +66,10 @@ type Recheck = Literal["same", "moved", "paused"]
 type Observe = Callable[[Fingerprint], Fingerprint]
 """Observe the ledger set a fingerprint names, now (`ledger_engine.ledger.fingerprint.observe`)."""
 type NotPublishedWhy = Literal["inexact", "replaced", "incomplete", "moved", "paused"]
+type PublishedBy = Literal["open", "rebuild"]
+"""§8: the job that published a generation. The open stamps exactly the bytes its overlay load parsed, every `include`
+pattern included; the rebuild stamps what its real load read, which can miss a pattern (§11 "the stamp's globs"). So
+only a generation an open published lets a later open skip its load (S0088 round 1; owner, 2026-11-08)."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -99,9 +103,18 @@ class Meta:
     engine_build: str
     as_of: str
     build_complete: bool
+    published_by: PublishedBy
 
 
-META_KEYS: Final = ("ledger_version", "fingerprint", "export_version", "engine_build", "as_of", "build_complete")
+META_KEYS: Final = (
+    "ledger_version",
+    "fingerprint",
+    "export_version",
+    "engine_build",
+    "as_of",
+    "build_complete",
+    "published_by",
+)
 
 
 def meta_of(facts: Mapping[str, object]) -> Meta | None:
@@ -115,6 +128,9 @@ def meta_of(facts: Mapping[str, object]) -> Meta | None:
         got[key] = value
     if got["build_complete"] not in ("0", "1"):
         return None
+    by = got["published_by"]
+    if by != "open" and by != "rebuild":
+        return None
     return Meta(
         ledger_version=got["ledger_version"],
         fingerprint=got["fingerprint"],
@@ -122,6 +138,7 @@ def meta_of(facts: Mapping[str, object]) -> Meta | None:
         engine_build=got["engine_build"],
         as_of=got["as_of"],
         build_complete=got["build_complete"] == "1",
+        published_by=by,
     )
 
 
@@ -354,6 +371,7 @@ def publish(
     built_at: str,
     engine_build: str,
     recheck: Callable[[], Recheck],
+    by: PublishedBy,
     tag: str | None = None,
 ) -> Published | NotPublished:
     """§4 steps 2 to 8, after the load (`result`, stamped with `fingerprint`: the observation before it, equal to the
@@ -361,7 +379,7 @@ def publish(
     workspace has no `.open` journal (else `paused`); it runs after the syncs, just before the swap."""
     gen = new_name(cleaned.top, floor, tag or new_tag())
     version = f"{gen.number}/{digest(fingerprint)}"
-    stamp = Stamp(version, encode(fingerprint).decode("ascii"), built_at, engine_build)
+    stamp = Stamp(version, encode(fingerprint).decode("ascii"), built_at, engine_build, by)
     built = store.build(d, gen.name, result, today, stamp)  # step 3
     if isinstance(built, BuildFailed):
         return NotPublished("inexact")

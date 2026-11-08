@@ -34,6 +34,7 @@ rebuild did not run to a result, which the sidecar logs.
 from __future__ import annotations
 
 import gc
+import posixpath
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Final, Literal, Protocol
@@ -116,12 +117,14 @@ def _under(file: str, roots: tuple[str, ...]) -> bool:
     """Whether a documents root's listing names `file` (S0070 r1 F1): the listing holds every file under its root,
     by the name `os.walk` joins to the root's own string (`root/...`), the same join Beancount's documents step makes
     for the `Document` entries it creates. Such a file is in the set through its root, not as a `document` file."""
-    return any(file.startswith(root.rstrip("/") + "/") for root in roots)
+    file = posixpath.normpath(file)  # `docs/../x` is not under `docs` (S0088 round 1, red team F2)
+    return any(file.startswith(posixpath.normpath(root).rstrip("/") + "/") for root in roots)
 
 
 def _read_by(observed: Fingerprint, used: LedgerSet) -> LedgerSet:
     """The set a loaded result is stamped with (publish.md §8): the files, documents roots and `document` files the
-    load used (a `document` file under a used root is in the set through the root's listing), and of the hint's
+    load used (every `document` file by itself, also one whose path starts with a used root: the root's listing need not
+    name it, a `..` in its path or a folder that cannot be listed; S0088 round 1, red team F2), and of the hint's
     `include` globs (a plain path is one too) those whose matches, as observed, include a file the load read, or that
     matched nothing (Beancount's loader does not report its patterns: an include the ledger dropped matched only files
     the load no longer reads, and goes; one that matches nothing stays, since it may still be in the ledger)."""
@@ -129,7 +132,7 @@ def _read_by(observed: Fingerprint, used: LedgerSet) -> LedgerSet:
     files = tuple(sorted(set(used.files)))
     read = set(files)
     globs = tuple(g for g, matches in observed.globs if not matches or read & set(matches))
-    document_files = tuple(sorted({f for f in used.document_files if not _under(f, roots)}))
+    document_files = tuple(sorted(set(used.document_files)))  # each one itself (S0088 round 1, red team F2)
     return LedgerSet(observed.root, files, globs, roots, document_files)
 
 
@@ -206,6 +209,7 @@ def run(ports: Ports, hint: Fingerprint, job: Job, target: Target) -> Answer:
             built_at=target.built_at,
             engine_build=target.engine_build,
             recheck=recheck,
+            by="rebuild",
             tag=ports.tag(),
         )
     if isinstance(out, pb.NotPublished) and out.why == "moved":

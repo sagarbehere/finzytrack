@@ -115,10 +115,21 @@ def params_of(target: RebuildTarget, fingerprint: str, clock: Clock) -> dict[str
     }
 
 
+def names_its_generation(publish: Publish | None, number: int | None, ledger_version: str | None) -> bool:
+    """A published or fresh generation is named by its number and its `ledger_version`, whose `N` is that number;
+    anything else names none (S0088 round 1, verifier F5, red team F3: an answer that does not hold together is a
+    violation, never logged or shown as a generation)."""
+    if publish in ("published", "fresh"):
+        return number is not None and ledger_version is not None and ledger_version.startswith(f"{number}/")
+    return number is None and ledger_version is None
+
+
 def _loaded(answer: RebuildAnswer, tries: int) -> Loaded | NotLoaded:
     publish = answer.publish
     if publish is None or (publish == "fresh") != (answer.outcome == "fresh"):
         return NotLoaded("violation")  # a loaded or fresh answer always says what became of it
+    if not names_its_generation(publish, answer.number, answer.ledger_version):
+        return NotLoaded("violation")
     return Loaded(
         answer.entries,
         answer.errors,

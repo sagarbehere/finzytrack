@@ -18,6 +18,7 @@ STAMP = Stamp(
     fingerprint='{"root": "main.beancount"}',
     built_at="2026-10-28T09:30:00+05:30",
     engine_build="test build",
+    published_by="rebuild",
 )
 
 

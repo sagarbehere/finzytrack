@@ -261,10 +261,12 @@ def specs() -> tuple[ErrorSpec, ...]:
             ErrorCode.LEDGER_CHANGING,
             ErrorClass.UNAVAILABLE,
             retryable=True,  # engine-jobs §7, §11: Try again once the other program has stopped
-            # the words promise no update by itself: the open does not try again on its own (S0088)
-            message="Another program keeps changing your ledger, so Finzytrack could not read it.",
+            # owner, 2026-11-08 ("Reword + state limit"): it blames no one program, since a ledger's own plugin that
+            # writes into its files or documents on every load gives it too (engine-jobs §15 "own plugin writes")
+            message="Your ledger kept changing while Finzytrack read it (another program, or one of the ledger's own "
+            "plugins).",
             data_safe=True,  # a read: nothing was written to the ledger (only the app's cache, never half a mirror)
-            next_step="Wait until the other program has finished, then try again.",
+            next_step="Wait until it stops, then try again.",
             details=None,
         ),
         ErrorSpec(
