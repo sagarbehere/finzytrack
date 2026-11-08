@@ -20,6 +20,8 @@ WRITE_PATH = (
     "ledger/recover_all.py",
     "ledger/save.py",  # S0063: its writes go through the port; it reads only through the load and the fingerprint
     "ledger/rebuild.py",  # S0070: it reads through the real load and the fingerprint, and writes nothing
+    "ledger/opening.py",  # S0088: the open reads through the overlay load and writes only through the publish
+    "ledger/publishing.py",  # S0088: what the open and the rebuild share; reads through the port
     "ledger/create.py",  # S0080: the create writes only through the port; it reads through the real load
     "ledger/copy.py",  # S0081: the copy writes through the create's writer; it reads sources through its ports
     "ledger/loads_same.py",  # S0081: compares two loads' results; reads nothing

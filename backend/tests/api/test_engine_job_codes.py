@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import threading
 from collections.abc import Callable, Iterator
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -19,6 +20,8 @@ from jsonschema import Draft202012Validator
 
 from app.api.envelope import Envelope
 from app.api.routes import declare
+from app.platform.clock import FrozenClock
+from app.platform.engine_jobs.opening import NotOpened, OpenTarget, submit_open
 from app.platform.engine_jobs.queue import JobSpec, QueuePolicy
 from app.platform.engine_jobs.save import ChangeText, NotDone, SaveRequest, save_spec, save_work
 from app.platform.engine_jobs.save_text import paused_text
@@ -69,11 +72,11 @@ class Scenarios:
     def close(self) -> None:
         self.jobs.close()
 
-    def run(self, name: str) -> Failed | NotDone:
+    def run(self, name: str) -> Failed | NotDone | NotOpened:
         out = getattr(self, name)()
         if isinstance(out, Done):
             out = out.value
-        assert isinstance(out, Failed | NotDone), out
+        assert isinstance(out, Failed | NotDone | NotOpened), out
         return out
 
     def _save(self, answer: dict[str, object]) -> object:
@@ -88,6 +91,27 @@ class Scenarios:
 
     def writes_paused(self) -> object:
         return self._save({"outcome": "refused", "reason": "unfinished_save", "unchanged": True})
+
+    def ledger_changing(self) -> object:
+        """An open (S0088) whose ledger moved in each of its 3 tries (engine-jobs §7)."""
+        moved = {
+            "outcome": "moved",
+            "entries": 0,
+            "errors": 0,
+            "publish": None,
+            "number": None,
+            "ledger_version": None,
+            "removed": 0,
+            "remove_failed": 0,
+            "refused": None,
+        }
+        self.engine.scripted["open"] = [moved, moved, moved]
+        self.jobs.workspace_closed()  # a switch past its close: only its own jobs start (§3, BL-0154)
+        self.jobs.exclusive_began()
+        target = OpenTarget(workspace_key="k2", root="/L/main.bean", lineage="lin2", app_local_data=Path("/app"))
+        ticket = submit_open(self.jobs, "ws-2", target, clock=FrozenClock(datetime(2026, 11, 8, tzinfo=UTC)))
+        assert isinstance(ticket, JobTicket)
+        return self._outcome(ticket)
 
     def not_saved(self) -> object:
         return self._save({"outcome": "not_saved", "reason": "hard_linked", "path": "/L/main.bean", "unchanged": True})
@@ -289,6 +313,25 @@ def test_a_save_refused_for_an_unfinished_save_is_writes_paused_with_its_reason(
         "Reopen the workspace so Finzytrack can check your files. It undoes the unfinished change, "
         "or asks you about a file it was creating."
     )
+    conforms(app, payload)
+
+
+@pytest.mark.error_code("LEDGER_CHANGING")
+def test_an_open_whose_ledger_keeps_changing_is_ledger_changing_and_retryable(scenarios: Scenarios) -> None:
+    """§7, §11 "the ledger keeps changing": after 3 tries, `LEDGER_CHANGING` with Try again; nothing was written to
+    the ledger, and the words promise no update by itself (the open does not try again on its own)."""
+    status, payload, app = answer(scenarios, "ledger_changing")
+    assert status == 503
+    error = payload["error"]
+    assert (error["code"], error["class"], error["retryable"], error["data_safe"]) == (
+        "LEDGER_CHANGING",
+        "unavailable",
+        True,
+        True,
+    )
+    assert error["details"] is None
+    assert error["message"] == "Another program keeps changing your ledger, so Finzytrack could not read it."
+    assert error["next_step"] == "Wait until the other program has finished, then try again."
     conforms(app, payload)
 
 

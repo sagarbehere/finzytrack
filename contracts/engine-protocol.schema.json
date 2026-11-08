@@ -14,6 +14,7 @@
     "save",
     "save_outcome",
     "rebuild",
+    "open",
     "create",
     "create_outcome",
     "copy",
@@ -1335,6 +1336,281 @@
       "description": "An op that takes no parameters.",
       "properties": {},
       "title": "NoParams",
+      "type": "object"
+    },
+    "OpenParams": {
+      "additionalProperties": false,
+      "description": "`open` (S0088; engine-jobs §2, §7; BL-0152): the overlay load of the ledger rooted at `root` and its publish\n(`design/specs/mirror/publish.md` §4) into `<app cache>/workspaces/<workspace_key>/mirror/`, the app cache being\nthe folder the engine was started with (`--app-cache`; no request names it). No fingerprint: the load finds the\nledger set itself. `app_local_data` and `lineage` name the `.open` journals looked for; `floor`, `today` and\n`built_at` as for `rebuild`.",
+      "properties": {
+        "root": {
+          "minLength": 1,
+          "pattern": "^/",
+          "title": "Root",
+          "type": "string"
+        },
+        "app_local_data": {
+          "minLength": 1,
+          "pattern": "^/",
+          "title": "App Local Data",
+          "type": "string"
+        },
+        "workspace_key": {
+          "maxLength": 255,
+          "minLength": 1,
+          "pattern": "^[^/\\x00]+$",
+          "title": "Workspace Key",
+          "type": "string"
+        },
+        "lineage": {
+          "maxLength": 128,
+          "minLength": 1,
+          "title": "Lineage",
+          "type": "string"
+        },
+        "floor": {
+          "maximum": 999999999999,
+          "minimum": 0,
+          "title": "Floor",
+          "type": "integer"
+        },
+        "today": {
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$",
+          "title": "Today",
+          "type": "string"
+        },
+        "built_at": {
+          "maxLength": 64,
+          "minLength": 1,
+          "title": "Built At",
+          "type": "string"
+        }
+      },
+      "required": [
+        "root",
+        "app_local_data",
+        "workspace_key",
+        "lineage",
+        "floor",
+        "today",
+        "built_at"
+      ],
+      "title": "OpenParams",
+      "type": "object"
+    },
+    "OpenReply": {
+      "additionalProperties": false,
+      "description": "The accepted reply to `open`.",
+      "examples": [
+        {
+          "id": 1,
+          "ok": true,
+          "op": "open",
+          "result": {
+            "entries": 3,
+            "errors": 0,
+            "ledger_version": "2/sha256:0000000000000000000000000000000000000000000000000000000000000000",
+            "number": 2,
+            "outcome": "loaded",
+            "publish": "published",
+            "refused": null,
+            "remove_failed": 0,
+            "removed": 1
+          },
+          "v": 2
+        }
+      ],
+      "properties": {
+        "v": {
+          "const": 2,
+          "title": "V",
+          "type": "integer"
+        },
+        "id": {
+          "maximum": 2147483647,
+          "minimum": 0,
+          "title": "Id",
+          "type": "integer"
+        },
+        "op": {
+          "const": "open",
+          "title": "Op",
+          "type": "string"
+        },
+        "ok": {
+          "const": true,
+          "title": "Ok",
+          "type": "boolean"
+        },
+        "result": {
+          "$ref": "#/$defs/OpenResult"
+        },
+        "decision": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Decision"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "v",
+        "id",
+        "op",
+        "ok",
+        "result"
+      ],
+      "title": "OpenReply",
+      "type": "object"
+    },
+    "OpenRequest": {
+      "additionalProperties": false,
+      "description": "The `open` request.",
+      "examples": [
+        {
+          "id": 1,
+          "op": "open",
+          "params": {
+            "app_local_data": "/app-data/com.finzytrack.desktop",
+            "built_at": "2026-11-08T10:00:00+05:30",
+            "floor": 0,
+            "lineage": "lin1",
+            "root": "/ledgers/L/main.bean",
+            "today": "2026-11-08",
+            "workspace_key": "k1"
+          },
+          "v": 2
+        }
+      ],
+      "properties": {
+        "v": {
+          "const": 2,
+          "title": "V",
+          "type": "integer"
+        },
+        "id": {
+          "maximum": 2147483647,
+          "minimum": 0,
+          "title": "Id",
+          "type": "integer"
+        },
+        "op": {
+          "const": "open",
+          "title": "Op",
+          "type": "string"
+        },
+        "params": {
+          "$ref": "#/$defs/OpenParams"
+        }
+      },
+      "required": [
+        "v",
+        "id",
+        "op",
+        "params"
+      ],
+      "title": "OpenRequest",
+      "type": "object"
+    },
+    "OpenResult": {
+      "additionalProperties": false,
+      "description": "`open`'s answer: `loaded` (Beancount's result for the disk the load parsed; `entries` and `errors` its counts),\n`moved` (the disk changed before the swap: nothing published; the sidecar runs the job again), `fresh` (the\npublished generation already describes the disk: nothing loaded), `paused` (an unfinished save's `.open` journal:\nnothing published) or `refused` (an encrypted file, `refused` its path; ADR-0059). `publish`: what became of a\n`loaded` result (`published`, or why not), `fresh` for `fresh`, null otherwise. `number` and `ledger_version`: the\ncurrent generation's when `publish` is `published` or `fresh`, else null. `removed`, `remove_failed`: the\ncleanup's counts. It runs the ledger's plugins, so the engine is retired after it.",
+      "properties": {
+        "outcome": {
+          "enum": [
+            "loaded",
+            "moved",
+            "fresh",
+            "paused",
+            "refused"
+          ],
+          "title": "Outcome",
+          "type": "string"
+        },
+        "entries": {
+          "minimum": 0,
+          "title": "Entries",
+          "type": "integer"
+        },
+        "errors": {
+          "minimum": 0,
+          "title": "Errors",
+          "type": "integer"
+        },
+        "publish": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Publish"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "number": {
+          "anyOf": [
+            {
+              "maximum": 999999999999,
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Number"
+        },
+        "ledger_version": {
+          "anyOf": [
+            {
+              "pattern": "^[1-9][0-9]*/sha256:[0-9a-f]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Ledger Version"
+        },
+        "removed": {
+          "minimum": 0,
+          "title": "Removed",
+          "type": "integer"
+        },
+        "remove_failed": {
+          "minimum": 0,
+          "title": "Remove Failed",
+          "type": "integer"
+        },
+        "refused": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "pattern": "^/",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Refused"
+        }
+      },
+      "required": [
+        "outcome",
+        "entries",
+        "errors",
+        "publish",
+        "number",
+        "ledger_version",
+        "removed",
+        "remove_failed",
+        "refused"
+      ],
+      "title": "OpenResult",
       "type": "object"
     },
     "Phase": {
@@ -2693,6 +2969,9 @@
           "$ref": "#/$defs/RebuildReply"
         },
         {
+          "$ref": "#/$defs/OpenReply"
+        },
+        {
           "$ref": "#/$defs/CreateReply"
         },
         {
@@ -2735,6 +3014,9 @@
         },
         {
           "$ref": "#/$defs/RebuildRequest"
+        },
+        {
+          "$ref": "#/$defs/OpenRequest"
         },
         {
           "$ref": "#/$defs/CreateRequest"

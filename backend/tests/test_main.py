@@ -236,6 +236,19 @@ def test_without_engine_venv_the_engine_is_the_packaged_one_beside_this_interpre
     assert main.engine_command(args, VERSION) == replace(expected, app_cache=dirs[1])  # S0087: the mirror's place
 
 
+def test_a_relative_app_cache_reaches_the_engine_as_an_absolute_path(
+    dirs: tuple[Path, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """BL-0212 V4 (S0087 final verifier): the engine refuses a relative `--app-cache`, so every engine start would
+    exit; the composition root resolves it, as `open_log` does."""
+    monkeypatch.chdir(dirs[1].parent)
+    args = main.parse_args(argv(dirs[0], Path(dirs[1].name)))
+    command = main.engine_command(args, VERSION)
+    assert command.app_cache == dirs[1].resolve()
+    assert command.app_cache is not None
+    assert command.app_cache.is_absolute()
+
+
 def test_the_bytecode_directory_is_per_build_in_app_local_data(dirs: tuple[Path, Path]) -> None:
     """engine-jobs §5.1: "in app-local data (`app_local_data/engine/bytecode/<build>/`, never inside the packaged
     install)", which may be read-only; another app version is another build."""

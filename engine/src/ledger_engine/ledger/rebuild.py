@@ -7,8 +7,10 @@ nothing. Nothing gates on it and nothing compares it with anything.
 
 `run(ports, hint, job, target)` (it runs the ledger's plugins, so the sidecar retires its engine after it):
 0. the mirror folder and its cleanup (`design/specs/mirror/publish.md` §4 step 1, S0087, BL-0113): first in every
-   try, whatever follows; a published generation that is already fresh (§8: the disk, this engine build, its DDL,
-   today) ends the job here: `fresh`, nothing loaded or built;
+   try, whatever follows; then this workspace's `.open` journal (one, or a journal folder that cannot be listed:
+   `paused`, engine-jobs §7, before any result is returned; S0088); a published generation that is already fresh (§8:
+   the disk, this engine build, its DDL, today) and whose stamp names all the hint names (BL-0212 V1: a glob or a file
+   the hint names and the stamp lacks may have changed unseen) ends the job here: `fresh`, nothing loaded or built;
 1. the ledger set named by `hint` (the saved plan's fingerprint, or the previous try's answer) observed;
 2. Beancount's real load of its root;
 3. the same set observed again.
@@ -34,16 +36,15 @@ from __future__ import annotations
 import gc
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from datetime import date
 from typing import Final, Literal, Protocol
 
 from ledger_engine.fs.darwin import for_this_os
 from ledger_engine.fs.port import FileSystem
 from ledger_engine.ledger import beancount_port as port
 from ledger_engine.ledger import fingerprint as _fingerprint
+from ledger_engine.ledger import publishing
 from ledger_engine.ledger.core.ledger_set import Fingerprint, LedgerSet, decode
 from ledger_engine.ledger.overlay import documents_roots
-from ledger_engine.ledger.save import records
 from ledger_engine.mirror import publish as pb
 from ledger_engine.mirror.store import SqliteStore
 from ledger_engine.tla import tla_action
@@ -84,23 +85,8 @@ class Ports:
     tag: Callable[[], str] = pb.new_tag
 
 
-@dataclass(frozen=True, slots=True)
-class Target:
-    """Where and as of when the result is published (publish.md §3, §8): the app's cache folder and the workspace's
-    registry key (`<app_cache>/workspaces/<key>/mirror/`), the app's machine-local folder and the lineage id (the
-    `.open` journal looked for at the re-check), the sidecar's floor for `N`, the user's civil date (`as_of`, INV-07),
-    the instant (`built_at`, and `now_ns` the same instant in nanoseconds since the epoch, which the cleanup's grace
-    period counts from: the engine reads no clock, INV-07, EP-10) and this engine's build (`engine_build`)."""
-
-    app_cache: str
-    workspace_key: str
-    app_local_data: str
-    lineage: str
-    floor: int
-    today: date
-    built_at: str
-    now_ns: int
-    engine_build: str
+Target = publishing.Target
+"""Where and as of when the result is published (shared with the open, `publishing.Target`)."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -173,17 +159,12 @@ def run(ports: Ports, hint: Fingerprint, job: Job, target: Target) -> Answer:
 
     with pb.open_folder(ports.fs, target.app_cache, target.workspace_key) as d:  # step 0 (publish.md §4 step 1)
         cleaned = pb.clean(d, ports.store, target.now_ns)
-        if cleaned.current is not None:
-            facts = ports.store.meta(d, cleaned.current.name)
-
-            def ours(root: str) -> bool:  # the generation is of this ledger (round 1, red team F2)
-                return pb.same_ledger(ports.fs, root, hint.root)
-
-            if facts is not None and pb.fresh(
-                facts, observe, ours, engine_build=target.engine_build, today=target.today
-            ):
-                done = pb.Published(cleaned.current, facts.ledger_version)
-                return Answer("fresh", decode(facts.fingerprint.encode("ascii")), published=done, cleaned=cleaned)
+        if publishing.unfinished(ports.fs, target):  # engine-jobs §7: before any result (S0088)
+            return Answer("paused", hint, cleaned=cleaned)
+        cur = publishing.fresh_current(d, ports.store, cleaned, observe, ports.fs, hint.root, target, hint.ledger_set)
+        if cur is not None:
+            done = pb.Published(cur.gen, cur.meta.ledger_version)
+            return Answer("fresh", decode(cur.meta.fingerprint.encode("ascii")), published=done, cleaned=cleaned)
         ledger_set = hint.ledger_set
         before = ports.observe(ledger_set)  # step 1
         job.progress(PHASE)
@@ -206,17 +187,13 @@ def run(ports: Ports, hint: Fingerprint, job: Job, target: Target) -> Answer:
         if again != after:
             return Answer("moved", again, cleaned=cleaned)
         seen: list[Fingerprint] = []
+        check = publishing.recheck(ports.fs, ports.observe, stamp, target)
 
         def recheck() -> pb.Recheck:  # publish.md §4 step 7, engine-jobs §7
-            now = ports.observe(stamped_set)
-            if now != stamp:
-                seen.append(ports.observe(ledger_set))
-                return "moved"
-            try:
-                unfinished = records(ports.fs, target.app_local_data, target.workspace_key, target.lineage)
-            except OSError:
-                return "paused"  # a journal folder that cannot be listed may hold one: fail closed
-            return "same" if unfinished is None else "paused"
+            verdict = check()
+            if verdict == "moved":
+                seen.append(ports.observe(ledger_set))  # the next try starts from the hint's set as it is now
+            return verdict
 
         out = pb.publish(
             d,

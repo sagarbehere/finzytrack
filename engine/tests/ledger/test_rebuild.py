@@ -407,3 +407,95 @@ def test_an_edit_between_the_load_and_the_stamp_is_moved_never_published(root: P
     assert a.outcome == "moved"
     assert a.published is None
     assert not (mirror(cache) / pb.CURRENT).exists()
+
+
+# -- S0088: BL-0212 (the stamp and the fresh shortcut) and §7 before a fresh answer ------------------------------------
+
+
+def test_a_glob_the_hint_names_and_the_stamp_lacks_is_not_fresh(root: Path, cache: Path) -> None:
+    """BL-0212 V1 (the S0087 final verifier's repro): a glob `include` an outside edit added before the queued rebuild
+    is not in that rebuild's stamp (its hint did not name it); once a file matches it, a later rebuild whose hint names
+    the glob must not take the generation for fresh: it loads, and the new generation shows the file."""
+    hint = hint_of(root)  # the save's plan: no glob
+    sub = root.parent / "extra"
+    sub.mkdir()
+    root.write_bytes(MAIN + b'include "extra/*.bean"\n')  # an outside edit before the queued rebuild
+    assert go(rebuild.Ports(), hint, FakeJob()).outcome == "loaded"
+    (sub / "a.bean").write_bytes(b"2026-03-01 open Assets:Bank\n")
+    b = go(rebuild.Ports(), hint_of(root), FakeJob())  # the next save's plan names the glob and its file
+    assert b.outcome == "loaded"
+    assert isinstance(b.published, pb.Published)
+    got = pb.read_published(for_this_os(), str(cache), KEY, SqliteStore())
+    assert got is not None
+    assert str(sub / "a.bean") in dict(decode(got.meta.fingerprint.encode("ascii")).files)
+
+
+def test_a_hint_naming_only_what_the_stamp_names_still_finds_it_fresh(root: Path) -> None:
+    """@regression-guard (it held on 5893da6f): the other side of V1, the condition costs nothing when the hint is
+    within the stamp."""
+    assert go(rebuild.Ports(), hint_of(root), FakeJob()).outcome == "loaded"
+    assert go(rebuild.Ports(), hint_of(root), FakeJob()).outcome == "fresh"
+
+
+def test_a_glob_of_the_hint_that_matches_nothing_stays_in_the_stamp(root: Path, cache: Path) -> None:
+    """@regression-guard (it held on 5893da6f; it kills mutant `if read & set(matches)`). BL-0212 V2 (the clause "or
+    that match nothing" of `rebuild._read_by`): such a glob may still be in the ledger,
+    so a file appearing under it later makes the generation not fresh."""
+    (root.parent / "extra").mkdir()
+    root.write_bytes(MAIN + b'include "extra/*.bean"\n')
+    assert go(rebuild.Ports(), hint_of(root), FakeJob()).outcome == "loaded"
+    got = pb.read_published(for_this_os(), str(cache), KEY, SqliteStore())
+    assert got is not None
+
+    def ours(r: str) -> bool:
+        return pb.same_ledger(for_this_os(), r, str(root))
+
+    def obs(fp: Fingerprint) -> Fingerprint:
+        return observe(fp.ledger_set)
+
+    assert pb.fresh_on_disk(got.meta, obs, ours)
+    (root.parent / "extra" / "a.bean").write_bytes(b"2026-01-01 open Assets:A\n")
+    assert not pb.fresh_on_disk(got.meta, obs, ours)
+
+
+def test_a_file_the_ledger_no_longer_reads_changing_during_the_build_does_not_stop_the_publish(
+    root: Path, cache: Path
+) -> None:
+    """@regression-guard (it held on 5893da6f). BL-0212 V3: the re-check before the swap observes the stamped set
+    (what the load read), not the hint: a file the hint names that the ledger dropped may change during the build, and
+    the generation is still published."""
+    hint = hint_of(root)  # names inc.bean
+    root.write_bytes(b'option "operating_currency" "USD"\n2026-01-01 open Assets:Cash\n')  # a save dropped the include
+    inc = root.parent / "inc.bean"
+    a = go(rebuild.Ports(store=EditingStore(lambda: inc.write_bytes(INC + b"; edited\n"))), hint, FakeJob())
+    assert a.outcome == "loaded"
+    assert isinstance(a.published, pb.Published)
+    assert os.readlink(mirror(cache) / pb.CURRENT) == a.published.gen.name
+
+
+def test_an_open_journal_beside_a_fresh_generation_is_paused_not_fresh(root: Path, cache: Path) -> None:
+    """engine-jobs §7: "Before returning a result ... the job checks that this workspace has no `.open` journal", a
+    fresh answer included (S0088)."""
+    assert go(rebuild.Ports(), hint_of(root), FakeJob()).outcome == "loaded"
+    journal = cache.parent / "app" / "local" / KEY / "journal"
+    journal.mkdir(parents=True)
+    (journal / "s1-j1.open").write_bytes(b"{}")
+    a = go(rebuild.Ports(), hint_of(root), FakeJob())
+    assert a.outcome == "paused"
+    assert a.published is None
+
+
+def test_a_glob_the_hint_names_that_matches_nothing_and_the_stamp_lacks_is_not_fresh(root: Path, cache: Path) -> None:
+    """BL-0212 V1, its glob half (S0088 mutant `within-ignores-globs`): the pattern matches nothing yet, so only the
+    pattern itself tells the stamp lacks it; the rebuild loads and the new stamp names it, so a file appearing under
+    it later makes the generation not fresh."""
+    hint = hint_of(root)  # no glob
+    (root.parent / "extra").mkdir()
+    root.write_bytes(MAIN + b'include "extra/*.bean"\n')  # an outside edit before the queued rebuild
+    assert go(rebuild.Ports(), hint, FakeJob()).outcome == "loaded"  # its stamp lacks the pattern
+    b = go(rebuild.Ports(), hint_of(root), FakeJob())  # a hint that names the pattern (still matching nothing)
+    assert b.outcome == "loaded"
+    got = pb.read_published(for_this_os(), str(cache), KEY, SqliteStore())
+    assert got is not None
+    stamped = decode(got.meta.fingerprint.encode("ascii"))
+    assert any(g.endswith("extra/*.bean") for g, _ in stamped.globs)

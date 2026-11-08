@@ -16,11 +16,13 @@ the rebuild did not run to a result, which the sidecar logs.
 from __future__ import annotations
 
 from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from typing import Final, Protocol
 
 from ledger_engine.fs.darwin import for_this_os
-from ledger_engine.ledger import rebuild
+from ledger_engine.fs.port import FileSystem
+from ledger_engine.ledger import publishing, rebuild
 from ledger_engine.ledger.core.ledger_set import UndecodableError, decode, encode
 from ledger_engine.mirror import publish as pb
 from ledger_engine.protocol.messages import Message, Publish, RebuildParams, RebuildResult
@@ -32,23 +34,39 @@ EPOCH: Final = datetime(1970, 1, 1, tzinfo=UTC)
 TABLE_VERSION: Final = 2  # 1 (S0070): the rebuild after a save (ADR-0068 D1); 2 (S0087): its publish
 
 
-class RebuildJob(Decider, Protocol):
-    def progress(self, phase: rebuild.Phase) -> None: ...
+class Publisher(Decider, Protocol):
+    """What the open and the rebuild need of the request's job context besides its phases: the engine lock, the
+    decision record and the cache folder the engine was started with."""
 
     @property
     def app_cache(self) -> str | None: ...
 
 
-def run(params: Message, ctx: RebuildJob) -> Message:
-    assert isinstance(params, RebuildParams)  # noqa: S101 (the handler's own params model)
-    try:
-        hint = decode(params.fingerprint.encode("ascii"))
-    except (UnicodeEncodeError, UndecodableError):
-        msg = "params.fingerprint: not a fingerprint's encoding"
-        raise BadParamsError(msg) from None
-    if hint.root != params.root:
-        msg = "params.root: not the fingerprint's root"
-        raise BadParamsError(msg)
+class RebuildJob(Publisher, Protocol):
+    def progress(self, phase: rebuild.Phase) -> None: ...
+
+
+class TargetParams(Protocol):
+    """The params the open and the rebuild share: where and as of when they publish."""
+
+    @property
+    def app_local_data(self) -> str: ...
+    @property
+    def workspace_key(self) -> str: ...
+    @property
+    def lineage(self) -> str: ...
+    @property
+    def floor(self) -> int: ...
+    @property
+    def today(self) -> str: ...
+    @property
+    def built_at(self) -> str: ...
+
+
+def target_of(params: TargetParams, ctx: Publisher, fs: FileSystem) -> publishing.Target:
+    """Where and as of when to publish (publish.md §3, §8): the cache folder this engine was started with, the
+    request's key (never `.` or `..`), the lock's own `app_local_data`, the civil date and the instant with its offset
+    (the engine reads no clock, INV-07)."""
     if params.workspace_key in (".", ".."):
         msg = "params.workspace_key: not a folder name"
         raise BadParamsError(msg)
@@ -64,8 +82,7 @@ def run(params: Message, ctx: RebuildJob) -> Message:
     if at is None or at.utcoffset() is None:
         msg = "params.built_at: not an instant with a UTC offset"
         raise BadParamsError(msg)
-    fs = for_this_os()
-    target = rebuild.Target(
+    return publishing.Target(
         app_cache=app_cache_of(ctx),
         workspace_key=params.workspace_key,
         app_local_data=app_local_data_of(fs, params.app_local_data, ctx),
@@ -76,30 +93,64 @@ def run(params: Message, ctx: RebuildJob) -> Message:
         now_ns=(at - EPOCH) // timedelta(microseconds=1) * 1000,
         engine_build=engine_build(),
     )
-    a = rebuild.run(rebuild.Ports(fs=fs), hint, ctx, target)
-    p = a.published
+
+
+@dataclass(frozen=True, slots=True)
+class Fields:
+    """The publish's fields of an answer (the open's and the rebuild's): what became of a loaded result, the current
+    generation's number and `ledger_version` when published or fresh, the cleanup's counts."""
+
+    publish: Publish | None
+    number: int | None
+    ledger_version: str | None
+    removed: int
+    remove_failed: int
+
+
+def fields_of(outcome: str, p: pb.Published | pb.NotPublished | None, cleaned: pb.Cleaned | None) -> Fields:
     done = p if isinstance(p, pb.Published) else None
     publish: Publish | None = None
-    if a.outcome == "fresh":
+    if outcome == "fresh":
         publish = "fresh"
     elif isinstance(p, pb.Published):
         publish = "published"
     elif isinstance(p, pb.NotPublished) and p.why != "moved" and p.why != "paused":  # those two are outcomes
         publish = p.why
-    removed = 0 if a.cleaned is None else a.cleaned.removed
-    failed = 0 if a.cleaned is None else a.cleaned.failed
-    inputs = {"errors": a.errors, "publish": publish, "removed": removed, "remove_failed": failed}
+    return Fields(
+        publish,
+        None if done is None else done.gen.number,
+        None if done is None else done.ledger_version,
+        0 if cleaned is None else cleaned.removed,
+        0 if cleaned is None else cleaned.failed,
+    )
+
+
+def run(params: Message, ctx: RebuildJob) -> Message:
+    assert isinstance(params, RebuildParams)  # noqa: S101 (the handler's own params model)
+    try:
+        hint = decode(params.fingerprint.encode("ascii"))
+    except (UnicodeEncodeError, UndecodableError):
+        msg = "params.fingerprint: not a fingerprint's encoding"
+        raise BadParamsError(msg) from None
+    if hint.root != params.root:
+        msg = "params.root: not the fingerprint's root"
+        raise BadParamsError(msg)
+    fs = for_this_os()
+    target = target_of(params, ctx, fs)
+    a = rebuild.run(rebuild.Ports(fs=fs), hint, ctx, target)
+    f = fields_of(a.outcome, a.published, a.cleaned)
+    inputs = {"errors": a.errors, "publish": f.publish, "removed": f.removed, "remove_failed": f.remove_failed}
     ctx.decide(TABLE, TABLE_VERSION, inputs, a.outcome)
     return RebuildResult(
         outcome=a.outcome,
         fingerprint=encode(a.fingerprint).decode("ascii"),
         entries=a.entries,
         errors=a.errors,
-        publish=publish,
-        number=None if done is None else done.gen.number,
-        ledger_version=None if done is None else done.ledger_version,
-        removed=removed,
-        remove_failed=failed,
+        publish=f.publish,
+        number=f.number,
+        ledger_version=f.ledger_version,
+        removed=f.removed,
+        remove_failed=f.remove_failed,
     )
 
 

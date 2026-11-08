@@ -294,6 +294,30 @@ class RebuildAnswer:
     remove_failed: int
 
 
+type OpenOutcome = Literal["loaded", "moved", "fresh", "paused", "refused"]
+
+
+@dataclass(frozen=True, slots=True)
+class OpenAnswer:
+    """The result of the engine's `open` (engine-jobs §2, §7; S0088, BL-0152) and its publish
+    (`design/specs/mirror/publish.md` §4): `loaded` (Beancount's result for the disk the overlay load parsed;
+    `entries` and `errors` its counts), `moved` (the disk changed before the swap: run it again), `fresh` (the
+    published generation already describes the disk: nothing loaded), `paused` (an unfinished save's `.open`
+    journal) or `refused` (an encrypted file: `refused` is its path; ADR-0059). `publish`, `number`,
+    `ledger_version`, `removed`, `remove_failed`: as for the rebuild. It wrote only the workspace's mirror folder; the
+    ledger's plugins ran in that engine."""
+
+    outcome: OpenOutcome
+    entries: int
+    errors: int
+    publish: Publish | None
+    number: int | None
+    ledger_version: str | None
+    removed: int
+    remove_failed: int
+    refused: str | None
+
+
 type CreateOutcomeKind = Literal["created", "not_created"]
 
 

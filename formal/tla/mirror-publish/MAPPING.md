@@ -51,10 +51,10 @@
 
 | Action | Rule | Code |
 |---|---|---|
-| `StartPublish` | §4 (an `open` or `rebuild` job starts) | `ledger_engine.ledger.rebuild.run` (the open's: BL-0152), which opens the folder, cleans it, loads and calls `ledger_engine.mirror.publish.publish` |
+| `StartPublish` | §4 (an `open` or `rebuild` job starts) | `ledger_engine.ledger.rebuild.run` and the open's `ledger_engine.ledger.opening.run` (S0088), each of which opens the folder, cleans it, loads and calls `ledger_engine.mirror.publish.publish` |
 | `P_CleanDb`, `P_CleanJl`, `P_CleanDone` | §6, §2 | `ledger_engine.mirror.publish.clean` |
-| `P_Obs` | §4 (the load), engine-jobs 6.7 | `ledger_engine.ledger.fingerprint.observe`, in `ledger_engine.ledger.rebuild.run` |
-| `P_Read` | §4 (the load) | `ledger_engine.ledger.beancount_port.real_load`, in `ledger_engine.ledger.rebuild.run` |
+| `P_Obs` | §4 (the load), engine-jobs 6.7 | `ledger_engine.ledger.fingerprint.observe`, in `ledger_engine.ledger.rebuild.run`; in `ledger_engine.ledger.opening.run` the overlay load's own fingerprint (`P_Obs` = `P_Read`) |
+| `P_Read` | §4 (the load) | `ledger_engine.ledger.beancount_port.real_load`, in `ledger_engine.ledger.rebuild.run`; `ledger_engine.ledger.overlay.load`, in `ledger_engine.ledger.opening.run` |
 | `P_Create` | §3, §4 step 3, §5 | `ledger_engine.mirror.publish.new_name`, then `ledger_engine.mirror.store.SqliteStore.build` (the exclusive create through the folder's handle, SQLite's `mode=rw` open, the identity check) |
 | `P_Commit` | §4 step 3 | `ledger_engine.mirror.store.SqliteStore.build` (`ledger_engine.mirror.build.write`: one transaction) |
 | `P_Check` | §4 step 4 | `ledger_engine.mirror.publish.publish` (refuses `Built.complete` false) |

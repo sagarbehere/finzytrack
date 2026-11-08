@@ -41,6 +41,8 @@ from app.platform.engine import (
     KeptCopySeen,
     ListedJournal,
     ManifestSeen,
+    OpenAnswer,
+    OpenOutcome,
     OutcomeFacts,
     Phase,
     Pong,
@@ -69,6 +71,7 @@ OPS = (
     "save",
     "save_outcome",
     "rebuild",
+    "open",
     "create",
     "create_outcome",
     "copy",
@@ -580,6 +583,48 @@ def _rebuild(result: Mapping[str, object]) -> RebuildAnswer:
 def decode_rebuild(result: Mapping[str, object]) -> RebuildAnswer | Violation:
     """The `rebuild` result (S0070)."""
     return _decoded(_rebuild, result)
+
+
+_OPEN = frozenset(
+    {
+        "outcome",
+        "entries",
+        "errors",
+        "publish",
+        "number",
+        "ledger_version",
+        "removed",
+        "remove_failed",
+        "refused",
+    }
+)
+OPEN_OUTCOMES: frozenset[str] = frozenset({"loaded", "moved", "fresh", "paused", "refused"})
+
+
+def _open(result: Mapping[str, object]) -> OpenAnswer:
+    """S0088: each field checked as the schema checks it; how they go together is the job's
+    (`app.platform.engine_jobs.opening`), which treats an answer that does not hold together as a violation."""
+    o = _keys(dict(result), _OPEN, "the open result")
+    version = _text(o["ledger_version"], "ledger_version", nullable=True)
+    if version is not None and _LEDGER_VERSION.fullmatch(version) is None:
+        msg = "ledger_version must be <number>/sha256:<digest>"
+        raise _Bad(msg)
+    return OpenAnswer(
+        outcome=cast("OpenOutcome", _choice(o["outcome"], OPEN_OUTCOMES, "outcome")),
+        entries=cast("int", _int(o["entries"], "entries", low=0)),
+        errors=cast("int", _int(o["errors"], "errors", low=0)),
+        publish=None if o["publish"] is None else cast("Publish", _choice(o["publish"], PUBLISH, "publish")),
+        number=_number(o["number"]),
+        ledger_version=version,
+        removed=cast("int", _int(o["removed"], "removed", low=0)),
+        remove_failed=cast("int", _int(o["remove_failed"], "remove_failed", low=0)),
+        refused=_path(o["refused"], "refused", nullable=True),
+    )
+
+
+def decode_open(result: Mapping[str, object]) -> OpenAnswer | Violation:
+    """The `open` result (S0088)."""
+    return _decoded(_open, result)
 
 
 _CREATE = frozenset({"outcome", "reason", "folder", "path", "detail", "errno", "left"})

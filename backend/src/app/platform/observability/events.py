@@ -210,6 +210,43 @@ REBUILD_NOT_LOADED = Event(
     ),
 )
 
+
+OPEN_LOADED = Event(
+    "open.loaded",
+    "info",
+    "platform",
+    (
+        Field("job", Kind.ID),  # the open job's id in the queue
+        Field("workspace_key", Kind.ID),  # the workspace's registry key
+        Field("entries", Kind.COUNT),  # Beancount's entries (0 when `fresh`: nothing was loaded)
+        Field("errors", Kind.COUNT),  # Beancount's errors
+        Field("tries", Kind.COUNT),  # the loads it took (engine-jobs §7: at most 3)
+        Field(
+            "published",
+            Kind.ENUM,  # S0088 (BL-0152): the mirror's publish, or why not (publish.md §4)
+            frozenset({"published", "fresh", "inexact", "replaced", "incomplete"}),
+        ),
+        Field("number", Kind.COUNT),  # the current generation's number when published or fresh
+        Field("removed", Kind.COUNT),  # the cleanup's removals
+        Field("remove_failed", Kind.COUNT),
+    ),
+)
+
+OPEN_NOT_LOADED = Event(
+    "open.not_loaded",
+    "warning",
+    "platform",
+    (
+        Field("job", Kind.ID),
+        Field("workspace_key", Kind.ID),
+        Field(
+            "why",
+            Kind.ENUM,  # `changing`: the disk moved in every try; `paused`: an `.open` journal; `encrypted`: ADR-0059
+            frozenset({"changing", "paused", "encrypted", "refused", "violation"}),
+        ),
+    ),
+)
+
 # -- The API edge (S0046; ARCHITECTURE.md §6.3) ------------------------------------------------------------------------
 
 API_INTERNAL_ERROR = Event(
@@ -271,6 +308,8 @@ EVENTS = (
     JOB_INTERNAL_ERROR,
     REBUILD_LOADED,
     REBUILD_NOT_LOADED,
+    OPEN_LOADED,
+    OPEN_NOT_LOADED,
     LIB_RECORD,
     UNCAUGHT,
     UNREGISTERED,

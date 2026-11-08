@@ -105,6 +105,8 @@ def test_the_codes_of_architecture_6_1_this_slice_raises_have_their_classes() ->
         "LEDGER_EXTERNALLY_CHANGED": ErrorClass.CONFLICT,
         "WRITES_PAUSED": ErrorClass.CONFLICT,
         "CHANGE_NOT_SAVED": ErrorClass.CONFLICT,
+        # S0088 (engine-jobs §7, §11; ARCHITECTURE §6.1's `Unavailable` row: busy, Try again): the open's tries
+        "LEDGER_CHANGING": ErrorClass.UNAVAILABLE,
         "INTERNAL": ErrorClass.INTERNAL,
     }
     assert {s.code: s.error_class for s in specs()} == expected
@@ -139,6 +141,7 @@ def test_not_ready_is_retryable_and_the_others_are_not() -> None:
         "ENGINE_QUEUE_FULL",
         "ENGINE_STOPPED",
         "ENGINE_UNAVAILABLE",
+        "LEDGER_CHANGING",  # S0088: §11's Try again, once the other program has stopped
     }
     assert {s.code for s in specs() if s.retryable} == retryable
 

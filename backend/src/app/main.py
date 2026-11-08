@@ -190,7 +190,7 @@ def engine_command(args: Args, app_version: str) -> EngineCommand:
         python, site = Path(sys.executable), packaged_engine_site(Path(sys.prefix))
         bytecode = bytecode_build_dir(args.app_local_data, python, site, app_version)
         command = EngineCommand.for_packaged(python, site, engine_lock=lock, bytecode_dir=bytecode)
-    return replace(command, app_cache=args.app_cache)  # the mirror's only place (S0087; publish.md §2)
+    return replace(command, app_cache=args.app_cache.resolve())  # the mirror's only place (S0087; BL-0212 V4)
 
 
 def wire(args: Args, log: EventSink, app_version: str) -> Wiring:

@@ -216,7 +216,7 @@ export interface components {
         /** ErrorEnvelope */
         ErrorEnvelope: {
             /** Error */
-            error: components["schemas"]["ValidationFailedError"] | components["schemas"]["RouteNotFoundError"] | components["schemas"]["WorkspaceUnknownError"] | components["schemas"]["WorkspaceNotOpenError"] | components["schemas"]["WorkspaceNotReadyError"] | components["schemas"]["EngineQueueFullError"] | components["schemas"]["JobCancelledError"] | components["schemas"]["EngineStoppedError"] | components["schemas"]["EngineUnavailableError"] | components["schemas"]["ChangeOutcomeUnknownError"] | components["schemas"]["LedgerExternallyChangedError"] | components["schemas"]["WritesPausedError"] | components["schemas"]["ChangeNotSavedError"] | components["schemas"]["InternalError"];
+            error: components["schemas"]["ValidationFailedError"] | components["schemas"]["RouteNotFoundError"] | components["schemas"]["WorkspaceUnknownError"] | components["schemas"]["WorkspaceNotOpenError"] | components["schemas"]["WorkspaceNotReadyError"] | components["schemas"]["EngineQueueFullError"] | components["schemas"]["JobCancelledError"] | components["schemas"]["EngineStoppedError"] | components["schemas"]["EngineUnavailableError"] | components["schemas"]["ChangeOutcomeUnknownError"] | components["schemas"]["LedgerExternallyChangedError"] | components["schemas"]["LedgerChangingError"] | components["schemas"]["WritesPausedError"] | components["schemas"]["ChangeNotSavedError"] | components["schemas"]["InternalError"];
             meta: components["schemas"]["Meta"];
         };
         /** HealthData */
@@ -295,6 +295,35 @@ export interface components {
             /** Data Safe */
             data_safe: boolean;
             details: components["schemas"]["JobCancelledDetails"];
+            /** Issues */
+            issues: components["schemas"]["Issue"][];
+            /** Message */
+            message: string;
+            /** Next Step */
+            next_step: string;
+            /** Retry After Ms */
+            retry_after_ms: number | null;
+            /** Retryable */
+            retryable: boolean;
+        };
+        /** LedgerChangingError */
+        LedgerChangingError: {
+            /**
+             * Class
+             * @constant
+             */
+            class: "unavailable";
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            code: "LEDGER_CHANGING";
+            /** Correlation Id */
+            correlation_id: string;
+            /** Data Safe */
+            data_safe: boolean;
+            /** Details */
+            details: null;
             /** Issues */
             issues: components["schemas"]["Issue"][];
             /** Message */

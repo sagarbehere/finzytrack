@@ -413,6 +413,42 @@ class RebuildResult(Message):
     remove_failed: int = Field(ge=0)
 
 
+class OpenParams(Message):
+    """`open` (S0088; engine-jobs §2, §7; BL-0152): the overlay load of the ledger rooted at `root` and its publish
+    (`design/specs/mirror/publish.md` §4) into `<app cache>/workspaces/<workspace_key>/mirror/`, the app cache being
+    the folder the engine was started with (`--app-cache`; no request names it). No fingerprint: the load finds the
+    ledger set itself. `app_local_data` and `lineage` name the `.open` journals looked for; `floor`, `today` and
+    `built_at` as for `rebuild`."""
+
+    root: AbsPath
+    app_local_data: AbsPath
+    workspace_key: Component
+    lineage: str = Field(min_length=1, max_length=128)
+    floor: int = Field(ge=0, le=999_999_999_999)  # `mirror.publish.MAX_NUMBER`
+    today: IsoDate
+    built_at: str = Field(min_length=1, max_length=64)
+
+
+class OpenResult(Message):
+    """`open`'s answer: `loaded` (Beancount's result for the disk the load parsed; `entries` and `errors` its counts),
+    `moved` (the disk changed before the swap: nothing published; the sidecar runs the job again), `fresh` (the
+    published generation already describes the disk: nothing loaded), `paused` (an unfinished save's `.open` journal:
+    nothing published) or `refused` (an encrypted file, `refused` its path; ADR-0059). `publish`: what became of a
+    `loaded` result (`published`, or why not), `fresh` for `fresh`, null otherwise. `number` and `ledger_version`: the
+    current generation's when `publish` is `published` or `fresh`, else null. `removed`, `remove_failed`: the
+    cleanup's counts. It runs the ledger's plugins, so the engine is retired after it."""
+
+    outcome: Literal["loaded", "moved", "fresh", "paused", "refused"]
+    entries: int = Field(ge=0)
+    errors: int = Field(ge=0)
+    publish: Publish | None
+    number: int | None = Field(ge=1, le=999_999_999_999)
+    ledger_version: str | None = Field(pattern=r"^[1-9][0-9]*/sha256:[0-9a-f]{64}$")
+    removed: int = Field(ge=0)
+    remove_failed: int = Field(ge=0)
+    refused: AbsPath | None
+
+
 # -- The create (S0080; engine-jobs §1, §4, §8.2) ---------------------------------------------------------------------
 
 RelPath = Annotated[str, Field(min_length=1, max_length=1024, pattern=r"^[^/\x00]")]  # relative; checked by the job
@@ -642,6 +678,31 @@ OPS: dict[str, OpSpec] = {
         {
             "root": "/ledgers/L/main.bean",
             "fingerprint": _FP,
+            "app_local_data": _ALD,
+            "workspace_key": "k1",
+            "lineage": "lin1",
+            "floor": 0,
+            "today": "2026-11-08",
+            "built_at": "2026-11-08T10:00:00+05:30",
+        },
+        needs_engine_lock=True,
+    ),
+    "open": OpSpec(
+        OpenParams,
+        OpenResult,
+        {
+            "outcome": "loaded",
+            "entries": 3,
+            "errors": 0,
+            "publish": "published",
+            "number": 2,
+            "ledger_version": "2/sha256:" + "0" * 64,
+            "removed": 1,
+            "remove_failed": 0,
+            "refused": None,
+        },
+        {
+            "root": "/ledgers/L/main.bean",
             "app_local_data": _ALD,
             "workspace_key": "k1",
             "lineage": "lin1",

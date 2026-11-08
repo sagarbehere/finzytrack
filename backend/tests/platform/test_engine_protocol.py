@@ -40,6 +40,7 @@ from app.platform.engine_protocol import (
     decode_create,
     decode_create_outcome,
     decode_info,
+    decode_open,
     decode_pong,
     decode_rebuild,
     decode_recover_act,
@@ -118,6 +119,7 @@ DECODERS: dict[str, Any] = {
     "save": decode_save,
     "save_outcome": decode_save_outcome,
     "rebuild": decode_rebuild,
+    "open": decode_open,
     "create": decode_create,
     "create_outcome": decode_create_outcome,
 }
@@ -195,6 +197,7 @@ def mutations(example: dict[str, Any]) -> list[dict[str, Any]]:
         ("SaveReply", "save"),
         ("SaveOutcomeReply", "save_outcome"),
         ("RebuildReply", "rebuild"),
+        ("OpenReply", "open"),
         ("CreateReply", "create"),
         ("CreateOutcomeReply", "create_outcome"),
     ],
@@ -360,6 +363,7 @@ RECOVER_OPS = (  # and the save's (S0063), the rebuild's (S0070) and the create'
     "save",
     "save_outcome",
     "rebuild",
+    "open",
     "create",
     "create_outcome",
 )

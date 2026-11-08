@@ -51,6 +51,7 @@ class ErrorCode(StrEnum):
     ENGINE_UNAVAILABLE = "ENGINE_UNAVAILABLE"
     CHANGE_OUTCOME_UNKNOWN = "CHANGE_OUTCOME_UNKNOWN"
     LEDGER_EXTERNALLY_CHANGED = "LEDGER_EXTERNALLY_CHANGED"
+    LEDGER_CHANGING = "LEDGER_CHANGING"
     WRITES_PAUSED = "WRITES_PAUSED"
     CHANGE_NOT_SAVED = "CHANGE_NOT_SAVED"
     INTERNAL = "INTERNAL"
@@ -254,6 +255,16 @@ def specs() -> tuple[ErrorSpec, ...]:
             message="Your ledger changed after this preview, so Finzytrack did not save your change.",
             data_safe=True,  # nothing of this change was written; the other change is the other program's
             next_step="Review it again.",
+            details=None,
+        ),
+        ErrorSpec(
+            ErrorCode.LEDGER_CHANGING,
+            ErrorClass.UNAVAILABLE,
+            retryable=True,  # engine-jobs §7, §11: Try again once the other program has stopped
+            # the words promise no update by itself: the open does not try again on its own (S0088)
+            message="Another program keeps changing your ledger, so Finzytrack could not read it.",
+            data_safe=True,  # a read: nothing was written to the ledger (only the app's cache, never half a mirror)
+            next_step="Wait until the other program has finished, then try again.",
             details=None,
         ),
         ErrorSpec(

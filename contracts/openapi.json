@@ -469,6 +469,7 @@
                 "ENGINE_UNAVAILABLE": "#/components/schemas/EngineUnavailableError",
                 "INTERNAL": "#/components/schemas/InternalError",
                 "JOB_CANCELLED": "#/components/schemas/JobCancelledError",
+                "LEDGER_CHANGING": "#/components/schemas/LedgerChangingError",
                 "LEDGER_EXTERNALLY_CHANGED": "#/components/schemas/LedgerExternallyChangedError",
                 "ROUTE_NOT_FOUND": "#/components/schemas/RouteNotFoundError",
                 "VALIDATION_FAILED": "#/components/schemas/ValidationFailedError",
@@ -512,6 +513,9 @@
               },
               {
                 "$ref": "#/components/schemas/LedgerExternallyChangedError"
+              },
+              {
+                "$ref": "#/components/schemas/LedgerChangingError"
               },
               {
                 "$ref": "#/components/schemas/WritesPausedError"
@@ -725,6 +729,76 @@
           "correlation_id"
         ],
         "title": "JobCancelledError",
+        "type": "object"
+      },
+      "LedgerChangingError": {
+        "properties": {
+          "class": {
+            "const": "unavailable",
+            "title": "Class",
+            "type": "string"
+          },
+          "code": {
+            "const": "LEDGER_CHANGING",
+            "title": "Code",
+            "type": "string"
+          },
+          "correlation_id": {
+            "title": "Correlation Id",
+            "type": "string"
+          },
+          "data_safe": {
+            "title": "Data Safe",
+            "type": "boolean"
+          },
+          "details": {
+            "title": "Details",
+            "type": "null"
+          },
+          "issues": {
+            "items": {
+              "$ref": "#/components/schemas/Issue"
+            },
+            "title": "Issues",
+            "type": "array"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "next_step": {
+            "title": "Next Step",
+            "type": "string"
+          },
+          "retry_after_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Retry After Ms"
+          },
+          "retryable": {
+            "title": "Retryable",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "code",
+          "class",
+          "message",
+          "data_safe",
+          "next_step",
+          "issues",
+          "retryable",
+          "retry_after_ms",
+          "details",
+          "correlation_id"
+        ],
+        "title": "LedgerChangingError",
         "type": "object"
       },
       "LedgerExternallyChangedError": {
