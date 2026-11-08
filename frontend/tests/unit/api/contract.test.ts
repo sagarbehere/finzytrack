@@ -52,6 +52,7 @@ describe('[S0046] the generated API types', () => {
       | 'ENGINE_UNAVAILABLE'
       | 'CHANGE_OUTCOME_UNKNOWN'
       | 'LEDGER_EXTERNALLY_CHANGED'
+      | 'LEDGER_CHANGING'
       | 'WRITES_PAUSED'
       | 'CHANGE_NOT_SAVED'
       | 'INTERNAL'
