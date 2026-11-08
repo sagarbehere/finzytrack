@@ -5,15 +5,21 @@ After every landed save the sidecar queues a background `rebuild`: Beancount's o
 decrypted), so the screens show Beancount's result and its errors, not a prediction. It reads the ledger and writes
 nothing. Nothing gates on it and nothing compares it with anything.
 
-`run(ports, hint, job)` (it runs the ledger's plugins, so the sidecar retires its engine after it):
+`run(ports, hint, job, target)` (it runs the ledger's plugins, so the sidecar retires its engine after it):
+0. the mirror folder and its cleanup (`design/specs/mirror/publish.md` §4 step 1, S0087, BL-0113): first in every
+   try, whatever follows; a published generation that is already fresh (§8: the disk, this engine build, its DDL,
+   today) ends the job here: `fresh`, nothing loaded or built;
 1. the ledger set named by `hint` (the saved plan's fingerprint, or the previous try's answer) observed;
 2. Beancount's real load of its root;
 3. the same set observed again.
 `loaded` when the two observations are equal and the load parsed no file and used no documents root outside the set:
-the result is Beancount's own for the disk as observed. Otherwise `moved`, with the fingerprint to try with next: the
-set observed after the load, widened by the files, documents roots and `document` files the load used outside it. The
-sidecar tries again in a fresh engine, at most 3 tries in a row (§7's load rule). The answer carries the result's
-counts only (INV-23).
+the result is Beancount's own for the disk as observed, and it is published (publish.md §4 steps 2 to 8,
+`mirror.publish.publish`): built into a new generation stamped with that observation, then, just before the swap,
+the set observed again (a change: `moved`, not published) and this workspace's `.open` journal looked for (one, or a
+journal folder that cannot be listed: `paused`, not published; engine-jobs §7). Otherwise `moved`, with the
+fingerprint to try with next: the set observed after the load, widened by the files, documents roots and `document`
+files the load used outside it. The sidecar tries again in a fresh engine, at most 3 tries in a row (§7's load rule).
+The answer carries counts, the generation's number and `ledger_version` only (INV-23).
 
 Limit (spec §15): a glob `include` the set does not name (an outside edit added it after the save) is not observed as
 a glob; the files it matched are, so only a match that appears or goes during the load is missed, and the next rebuild
@@ -25,17 +31,24 @@ from __future__ import annotations
 
 import gc
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from datetime import date
 from typing import Final, Literal, Protocol
 
+from ledger_engine.fs.darwin import for_this_os
+from ledger_engine.fs.port import FileSystem
 from ledger_engine.ledger import beancount_port as port
 from ledger_engine.ledger import fingerprint as _fingerprint
-from ledger_engine.ledger.core.ledger_set import Fingerprint, LedgerSet
+from ledger_engine.ledger.core.ledger_set import Fingerprint, LedgerSet, decode
 from ledger_engine.ledger.overlay import documents_roots
+from ledger_engine.ledger.save import records
+from ledger_engine.mirror import publish as pb
+from ledger_engine.mirror.store import SqliteStore
+from ledger_engine.tla import tla_action
 
 type Phase = Literal["updating_views"]
 PHASE: Final[Phase] = "updating_views"
-type Outcome = Literal["loaded", "moved"]
+type Outcome = Literal["loaded", "moved", "fresh", "paused"]
 
 
 class Job(Protocol):
@@ -59,21 +72,49 @@ def _real_load(root: str) -> port.ParseResult:
 
 @dataclass(frozen=True, slots=True)
 class Ports:
-    """The rebuild's effects: Beancount's real load of a root, and the observation of a ledger set."""
+    """The rebuild's effects: Beancount's real load of a root, the observation of a ledger set, and the publish's:
+    the file-system port, the mirror's store and the name's random tag."""
 
     load: Callable[[str], port.ParseResult] = _real_load
     observe: Callable[[LedgerSet], Fingerprint] = _observe
+    fs: FileSystem = field(default_factory=for_this_os)
+    store: pb.Store = field(default_factory=SqliteStore)
+    tag: Callable[[], str] = pb.new_tag
+
+
+@dataclass(frozen=True, slots=True)
+class Target:
+    """Where and as of when the result is published (publish.md §3, §8): the app's cache folder and the workspace's
+    registry key (`<app_cache>/workspaces/<key>/mirror/`), the app's machine-local folder and the lineage id (the
+    `.open` journal looked for at the re-check), the sidecar's floor for `N`, the user's civil date (`as_of`, INV-07),
+    the instant (`built_at`, and `now_ns` the same instant in nanoseconds since the epoch, which the cleanup's grace
+    period counts from: the engine reads no clock, INV-07, EP-10) and this engine's build (`engine_build`)."""
+
+    app_cache: str
+    workspace_key: str
+    app_local_data: str
+    lineage: str
+    floor: int
+    today: date
+    built_at: str
+    now_ns: int
+    engine_build: str
 
 
 @dataclass(frozen=True, slots=True)
 class Answer:
-    """`loaded` (Beancount's result for the disk as `fingerprint` observed it) or `moved` (`fingerprint` names the set
-    to try with next); `entries` and `errors`: the counts of the load's result (`loaded` only, else 0)."""
+    """`loaded` (Beancount's result for the disk as `fingerprint` observed it; `published` says what became of it),
+    `moved` (`fingerprint` names the set to try with next), `fresh` (the published generation already describes the
+    disk: nothing loaded; `published` is it) or `paused` (an unfinished save's `.open` journal at the re-check: not
+    published). `entries` and `errors`: the counts of the load's result (`loaded` only, else 0). `cleaned`: what the
+    cleanup did (None when it did not run)."""
 
     outcome: Outcome
     fingerprint: Fingerprint
     entries: int = 0
     errors: int = 0
+    published: pb.Published | pb.NotPublished | None = None
+    cleaned: pb.Cleaned | None = None
 
 
 def _used(entries: list[port.Directive], options: port.OptionsMap) -> LedgerSet:
@@ -107,17 +148,59 @@ def _wider(a: LedgerSet, b: LedgerSet) -> LedgerSet | None:
     )
 
 
-def run(ports: Ports, hint: Fingerprint, job: Job) -> Answer:
-    """The module's docstring: reads the ledger, writes nothing."""
-    ledger_set = hint.ledger_set
-    before = ports.observe(ledger_set)  # step 1
-    job.progress(PHASE)
-    entries, errors, options = ports.load(ledger_set.root)  # step 2: Beancount's own loader (user code)
-    after = ports.observe(ledger_set)  # step 3
-    wider = _wider(ledger_set, _used(entries, options))
-    if wider is not None:
-        return Answer("moved", ports.observe(wider))
-    if after != before:
-        return Answer("moved", after)
-    # TODO(BL-0113): build the mirror from this result and publish it, after §7's `.open` check.
-    return Answer("loaded", after, len(entries), len(errors))
+@tla_action("StartPublish", "P_Obs", "P_Read", model="mirror-publish")
+def run(ports: Ports, hint: Fingerprint, job: Job, target: Target) -> Answer:
+    """The module's docstring: reads the ledger; writes only the workspace's mirror folder in the app's cache."""
+
+    def observe(fp: Fingerprint) -> Fingerprint:
+        return ports.observe(fp.ledger_set)
+
+    with pb.open_folder(ports.fs, target.app_cache, target.workspace_key) as d:  # step 0 (publish.md §4 step 1)
+        cleaned = pb.clean(d, ports.store, target.now_ns)
+        if cleaned.current is not None:
+            facts = ports.store.meta(d, cleaned.current.name)
+            if facts is not None and pb.fresh(facts, observe, engine_build=target.engine_build, today=target.today):
+                done = pb.Published(cleaned.current, facts.ledger_version)
+                return Answer("fresh", decode(facts.fingerprint.encode("ascii")), published=done, cleaned=cleaned)
+        ledger_set = hint.ledger_set
+        before = ports.observe(ledger_set)  # step 1
+        job.progress(PHASE)
+        result = ports.load(ledger_set.root)  # step 2: Beancount's own loader (user code)
+        entries, errors, options = result
+        after = ports.observe(ledger_set)  # step 3
+        wider = _wider(ledger_set, _used(entries, options))
+        if wider is not None:
+            return Answer("moved", ports.observe(wider), cleaned=cleaned)
+        if after != before:
+            return Answer("moved", after, cleaned=cleaned)
+        seen: list[Fingerprint] = []
+
+        def recheck() -> pb.Recheck:  # publish.md §4 step 7, engine-jobs §7
+            now = ports.observe(ledger_set)
+            if now != after:
+                seen.append(now)
+                return "moved"
+            try:
+                unfinished = records(ports.fs, target.app_local_data, target.workspace_key, target.lineage)
+            except OSError:
+                return "paused"  # a journal folder that cannot be listed may hold one: fail closed
+            return "same" if unfinished is None else "paused"
+
+        out = pb.publish(
+            d,
+            cleaned,
+            ports.store,
+            result,
+            after,
+            floor=target.floor,
+            today=target.today,
+            built_at=target.built_at,
+            engine_build=target.engine_build,
+            recheck=recheck,
+            tag=ports.tag(),
+        )
+    if isinstance(out, pb.NotPublished) and out.why == "moved":
+        return Answer("moved", seen[-1], cleaned=cleaned)
+    if isinstance(out, pb.NotPublished) and out.why == "paused":
+        return Answer("paused", after, cleaned=cleaned)
+    return Answer("loaded", after, len(entries), len(errors), published=out, cleaned=cleaned)

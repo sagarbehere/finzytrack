@@ -15,12 +15,17 @@ R4 is gone: no `r4_check`, no notice, no `r4.*` log line.
 
 from __future__ import annotations
 
+import json
 from collections.abc import Iterator
+from dataclasses import replace
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 import pytest
+from jsonschema import Draft202012Validator
 
+from app.platform.clock import FrozenClock
 from app.platform.engine import EngineRefusal
 from app.platform.engine_jobs.rebuild import (
     MAX_TRIES,
@@ -46,6 +51,7 @@ from app.platform.observability import Event as LogEvent
 from tests.platform.fake_job_engine import BLOCK, CRASH, CRASH_TO_BOUND, GATE_DIE, FakeEngine, Gated
 
 DEADLINE = 20.0
+REPO = Path(__file__).resolve().parents[3]
 W1 = "ws-1"
 MAIN = "/L/main.bean"
 ALD = Path("/app")
@@ -53,7 +59,11 @@ FP = '{"document_files":[],"documents":[],"files":[],"globs":[],"root":"/L/main.
 FP2 = (
     '{"document_files":[],"documents":[],"files":[["/L/main.bean",["absent"]]],"globs":[],"root":"/L/main.bean","v":1}'
 )
-TARGET = RebuildTarget("k1", MAIN, FP)
+CACHE = Path("/cache")
+LV = "1/sha256:" + "1" * 64
+CLOCK = FrozenClock(datetime(2026, 11, 8, 23, 30, tzinfo=UTC))
+TODAY = CLOCK.now().astimezone().date().isoformat()  # the civil date where the app runs (INV-07)
+TARGET = RebuildTarget("k1", MAIN, FP, lineage="lin1", app_local_data=ALD, app_cache=CACHE)
 REQUEST = SaveRequest(
     session="a1b2",
     workspace_key="k1",
@@ -61,9 +71,20 @@ REQUEST = SaveRequest(
     root=MAIN,
     changes=(ChangeText(MAIN, "0" * 64, "post\n"),),
     fingerprint=FP,
-    mirror=None,
+    app_cache=CACHE,
     app_local_data=ALD,
 )
+PARAMS: dict[str, object] = {
+    "root": MAIN,
+    "fingerprint": FP,
+    "app_local_data": str(ALD),
+    "app_cache": str(CACHE),
+    "workspace_key": "k1",
+    "lineage": "lin1",
+    "floor": 0,
+    "today": TODAY,
+    "built_at": CLOCK.now().isoformat(),
+}
 BLANK: dict[str, object] = {
     "outcome": "saved",
     "reason": None,
@@ -82,12 +103,22 @@ def answer(**kw: object) -> dict[str, object]:
     return {**BLANK, **kw}
 
 
-def loaded(entries: int = 7, errors: int = 0, fingerprint: str = FP) -> dict[str, object]:
-    return {"outcome": "loaded", "fingerprint": fingerprint, "entries": entries, "errors": errors}
+NOT_PUBLISHED: dict[str, object] = {
+    "publish": None,
+    "number": None,
+    "ledger_version": None,
+    "removed": 0,
+    "remove_failed": 0,
+}
+
+
+def loaded(entries: int = 7, errors: int = 0, fingerprint: str = FP, **kw: object) -> dict[str, object]:
+    out: dict[str, object] = {"outcome": "loaded", "fingerprint": fingerprint, "entries": entries, "errors": errors}
+    return {**out, **NOT_PUBLISHED, "publish": "published", "number": 1, "ledger_version": LV, **kw}
 
 
 def moved(fingerprint: str = FP2) -> dict[str, object]:
-    return {"outcome": "moved", "fingerprint": fingerprint, "entries": 0, "errors": 0}
+    return {"outcome": "moved", "fingerprint": fingerprint, "entries": 0, "errors": 0, **NOT_PUBLISHED}
 
 
 class Rig:
@@ -151,7 +182,7 @@ def make() -> Iterator[Any]:
 
 
 def background(rig: Any, target: RebuildTarget = TARGET) -> object:
-    out = rig.run(rig.jobs.submit(rebuild_spec(W1), rebuild_work(target)))
+    out = rig.run(rig.jobs.submit(rebuild_spec(W1), rebuild_work(target, CLOCK)))
     assert isinstance(out, Done), out
     return out.value
 
@@ -161,11 +192,11 @@ def background(rig: Any, target: RebuildTarget = TARGET) -> object:
 
 def test_a_landed_save_queues_a_background_rebuild_of_its_ledger(make: Any) -> None:
     rig = make({"save": [Gated(answer())], "rebuild": [loaded()]})
-    out = rig.run(submit_save(rig.jobs, W1, REQUEST))
+    out = rig.run(submit_save(rig.jobs, W1, REQUEST, clock=CLOCK))
     assert isinstance(out, Done), out
     assert out.value == Saved(published=False)
     rig.called("rebuild")
-    assert rig.engine.params[1][1:] == ("rebuild", {"root": MAIN, "fingerprint": FP})
+    assert rig.engine.params[1][1:] == ("rebuild", PARAMS)
     assert rig.ops() == ["save", "rebuild"]  # no `r4_check` (ADR-0068 D1)
 
 
@@ -176,7 +207,7 @@ def test_the_rebuild_is_background_unconfirmed_and_the_apps() -> None:
 
 def test_a_save_that_did_not_land_queues_no_rebuild(make: Any) -> None:
     rig = make({"save": [answer(outcome="refused", reason="ledger_changed")]})
-    rig.run(submit_save(rig.jobs, W1, REQUEST))
+    rig.run(submit_save(rig.jobs, W1, REQUEST, clock=CLOCK))
     assert not rig.rebuild_queued()  # queued, if at all, before the save's work returned
     assert rig.ops() == ["save"]
 
@@ -184,7 +215,7 @@ def test_a_save_that_did_not_land_queues_no_rebuild(make: Any) -> None:
 def test_a_save_read_from_disk_as_saved_queues_its_rebuild_too(make: Any) -> None:
     facts = {"record": "closed", "unchanged": None, "path": None, "errno": None}
     rig = make({"save": [GATE_DIE], "save_outcome": [facts], "rebuild": [loaded()]})
-    out = rig.run(submit_save(rig.jobs, W1, REQUEST))
+    out = rig.run(submit_save(rig.jobs, W1, REQUEST, clock=CLOCK))
     assert isinstance(out, Done), out
     assert out.value == Saved(published=False)
     rig.called("rebuild")
@@ -193,7 +224,7 @@ def test_a_save_read_from_disk_as_saved_queues_its_rebuild_too(make: Any) -> Non
 def test_a_save_read_from_disk_as_not_saved_queues_none(make: Any) -> None:
     facts = {"record": "none", "unchanged": True, "path": None, "errno": None}
     rig = make({"save": [GATE_DIE], "save_outcome": [facts]})
-    out = rig.run(submit_save(rig.jobs, W1, REQUEST))
+    out = rig.run(submit_save(rig.jobs, W1, REQUEST, clock=CLOCK))
     assert isinstance(out, Done), out
     assert isinstance(out.value, NotDone)
     assert not rig.rebuild_queued()
@@ -203,11 +234,11 @@ def test_one_background_rebuild_waits_per_workspace(make: Any) -> None:
     """§3, INV-10: a newer save's rebuild finds the queued one and gets its ticket; the queued one loads the disk
     when it runs, so it shows the newer save too."""
     rig = make({"rebuild": [BLOCK, loaded(), loaded()]})
-    first = rig.jobs.submit(rebuild_spec(W1), rebuild_work(TARGET))  # running, blocked
+    first = rig.jobs.submit(rebuild_spec(W1), rebuild_work(TARGET, CLOCK))  # running, blocked
     assert isinstance(first, JobTicket)
     rig.called("rebuild")
-    older = rig.jobs.submit(rebuild_spec(W1), rebuild_work(TARGET))
-    newer = rig.jobs.submit(rebuild_spec(W1), rebuild_work(RebuildTarget("k1", MAIN, FP2)))
+    older = rig.jobs.submit(rebuild_spec(W1), rebuild_work(TARGET, CLOCK))
+    newer = rig.jobs.submit(rebuild_spec(W1), rebuild_work(replace(TARGET, fingerprint=FP2), CLOCK))
     assert isinstance(older, JobTicket)
     assert isinstance(newer, JobTicket)
     assert newer.id == older.id
@@ -222,7 +253,7 @@ def test_one_background_rebuild_waits_per_workspace(make: Any) -> None:
 
 def test_a_loaded_rebuild_is_one_load_and_logs_counts_only(make: Any) -> None:
     rig = make({"rebuild": [loaded(entries=9, errors=2)]})
-    assert background(rig) == Loaded(9, 2, 1)
+    assert background(rig) == Loaded(9, 2, 1, "published", 1, LV)
     ((name, fields),) = rig.lines()
     assert name == "rebuild.loaded"
     assert {k: v for k, v in fields.items() if k != "job"} == {
@@ -230,13 +261,16 @@ def test_a_loaded_rebuild_is_one_load_and_logs_counts_only(make: Any) -> None:
         "entries": 9,
         "errors": 2,
         "tries": 1,
-    }
-    assert set(fields) == {"job", "workspace_key", "entries", "errors", "tries"}  # nothing of the ledger (INV-23)
+        "published": "published",
+        "number": 1,
+        "removed": 0,
+        "remove_failed": 0,
+    }  # nothing of the ledger (INV-23); the version's digest is not logged either
 
 
 def test_a_moved_disk_tries_again_with_the_answers_fingerprint_in_a_fresh_engine(make: Any) -> None:
     rig = make({"rebuild": [moved(FP2), loaded()]})
-    assert background(rig) == Loaded(7, 0, 2)
+    assert background(rig) == Loaded(7, 0, 2, "published", 1, LV)
     (s1, _, p1), (s2, _, p2) = rig.engine.params
     assert (p1["fingerprint"], p2["fingerprint"]) == (FP, FP2)
     assert s2 != s1  # §5.1: the first try ran user code, the second gets a fresh engine
@@ -270,7 +304,7 @@ def test_a_save_is_sent_counted(make: Any) -> None:
 def test_a_death_of_the_rebuilds_engine_is_lost_like_a_read(make: Any, death: str) -> None:
     """The queue loses it (`EngineLost`, §5.3): no outcome read from disk, nobody told "saved" or "not saved"."""
     rig = make({"rebuild": [death]})
-    out = rig.run(rig.jobs.submit(rebuild_spec(W1), rebuild_work(TARGET)))
+    out = rig.run(rig.jobs.submit(rebuild_spec(W1), rebuild_work(TARGET, CLOCK)))
     assert isinstance(out, Failed), out
     assert out.error.code == ErrorCode.ENGINE_STOPPED
     assert rig.ops() == ["rebuild"]
@@ -292,7 +326,7 @@ def test_the_background_rebuild_is_not_ended_by_another_jobs_cancel(make: Any) -
     """§4, ADR-0068 D7: a Cancel only ever ends your own job. The waiting save's Cancel removes only that save; the
     rebuild running ahead of it finishes."""
     rig = make({"rebuild": [BLOCK, loaded()], "save": [Gated(answer())]})
-    bg = rig.jobs.submit(rebuild_spec(W1), rebuild_work(TARGET))
+    bg = rig.jobs.submit(rebuild_spec(W1), rebuild_work(TARGET, CLOCK))
     assert isinstance(bg, JobTicket)
     rig.called("rebuild")
     waiting = rig.jobs.submit(save_spec(W1), save_work(REQUEST))
@@ -310,7 +344,7 @@ def test_the_background_rebuild_is_not_ended_by_another_jobs_cancel(make: Any) -
 def test_a_save_waits_for_a_running_rebuild(make: Any) -> None:
     """§3: a running job is never interrupted; the save asked for while the previous save's rebuild runs waits."""
     rig = make({"rebuild": [BLOCK, loaded()], "save": [Gated(answer())]})
-    bg = rig.jobs.submit(rebuild_spec(W1), rebuild_work(TARGET))
+    bg = rig.jobs.submit(rebuild_spec(W1), rebuild_work(TARGET, CLOCK))
     assert isinstance(bg, JobTicket)
     rig.called("rebuild")
     t = rig.jobs.submit(save_spec(W1), save_work(REQUEST))
@@ -322,3 +356,66 @@ def test_a_save_waits_for_a_running_rebuild(make: Any) -> None:
     rig.engine.release("rebuild")
     assert isinstance(rig.run(t), Done)
     assert rig.ops() == ["rebuild", "save"]
+
+
+# -- the publish's answer (S0087, BL-0113; publish.md §4, engine-jobs §6.7, §7) ------------------------------------
+
+
+def test_the_rebuild_sends_where_to_publish_and_the_civil_date(make: Any) -> None:
+    rig = make({"rebuild": [loaded()]})
+    background(rig)
+    ((_, op, params),) = rig.engine.params
+    assert (op, params) == ("rebuild", PARAMS)
+
+
+def test_a_fresh_generation_is_logged_as_fresh(make: Any) -> None:
+    fresh: dict[str, object] = {**loaded(entries=0), "outcome": "fresh", "publish": "fresh"}
+    rig = make({"rebuild": [fresh]})
+    assert background(rig) == Loaded(0, 0, 1, "fresh", 1, LV)
+    assert [f["published"] for _, f in rig.lines()] == ["fresh"]
+
+
+@pytest.mark.parametrize("why", ["inexact", "incomplete", "replaced"])
+def test_a_build_not_published_is_logged_with_why(make: Any, why: str) -> None:
+    rig = make({"rebuild": [loaded(publish=why, number=None, ledger_version=None)]})
+    assert background(rig) == Loaded(7, 0, 1, why)  # type: ignore[arg-type]
+    assert [f["published"] for _, f in rig.lines()] == [why]
+
+
+def test_an_unfinished_save_seen_at_the_recheck_stops_the_rebuild(make: Any) -> None:
+    """engine-jobs §7: an `.open` journal refuses the job; no try again (only recovery ends it)."""
+    rig = make({"rebuild": [{**moved(), "outcome": "paused"}, loaded()]})
+    assert background(rig) == NotLoaded("paused")
+    assert rig.ops() == ["rebuild"]
+    assert [(n, f["why"]) for n, f in rig.lines()] == [("rebuild.not_loaded", "paused")]
+
+
+def test_cleanup_counts_ride_on_the_log_line(make: Any) -> None:
+    rig = make({"rebuild": [loaded(removed=3, remove_failed=1)]})
+    background(rig)
+    ((_, fields),) = rig.lines()
+    assert (fields["removed"], fields["remove_failed"]) == (3, 1)
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        {"publish": None},  # a loaded answer always says what became of it
+        {"publish": "fresh"},  # only a fresh answer is fresh
+        {"publish": "eaten"},
+        {"number": 0},
+        {"ledger_version": "1/not a digest"},
+    ],
+)
+def test_a_publish_answer_that_does_not_hold_together_is_a_violation(make: Any, bad: dict[str, object]) -> None:
+    rig = make({"rebuild": [{**loaded(), **bad}]})
+    assert background(rig) == NotLoaded("violation")
+
+
+def test_the_rebuild_request_is_what_the_engine_protocol_takes() -> None:
+    schema = json.loads((REPO / "contracts" / "engine-protocol.schema.json").read_text(encoding="utf-8"))
+    validator = Draft202012Validator({"$ref": "#/$defs/RebuildRequest", "$defs": schema["$defs"]})
+    request: Any = {"v": 2, "id": 1, "op": "rebuild", "params": PARAMS}
+    assert list(validator.iter_errors(request)) == []  # pyright: ignore[reportUnknownMemberType]
+    late: Any = {**request, "params": {**PARAMS, "floor": -1}}
+    assert list(validator.iter_errors(late)) != []  # pyright: ignore[reportUnknownMemberType]

@@ -298,8 +298,8 @@ class SaveChange(Message):
 
 class SaveParams(Message):
     """A confirmed plan (§2's `save`): who saves (`session`, `job`, the workspace's registry key and lineage id), the
-    ledger's root, the changes, the plan's fingerprint (`ledger_set.encode`'s text), the published mirror's
-    fingerprint digest (null: none) and the app's machine-local folder."""
+    ledger's root, the changes, the plan's fingerprint (`ledger_set.encode`'s text), the app's cache folder (the gate
+    reads the published mirror there, `design/specs/mirror/publish.md` §7; S0087) and the app's machine-local folder."""
 
     session: SessionId
     job: JobName
@@ -308,7 +308,7 @@ class SaveParams(Message):
     root: AbsPath
     changes: list[SaveChange] = Field(min_length=1)
     fingerprint: str = Field(min_length=1)
-    mirror: str | None
+    app_cache: AbsPath
     app_local_data: AbsPath
 
 
@@ -367,24 +367,50 @@ class SaveOutcomeResult(Message):
     errno: int | None
 
 
+IsoDate = Annotated[str, Field(pattern=r"^[0-9]{4}-[0-9]{2}-[0-9]{2}$")]
+
+
 class RebuildParams(Message):
     """`rebuild` (S0070; engine-jobs §6.7, §7; ADR-0068 D1): Beancount's own load of the ledger rooted at `root`, the
     ledger set named by `fingerprint` (`ledger_set.encode`'s text: the saved plan's, or the last try's answer)
-    observed before and after it."""
+    observed before and after it, and its publish (S0087, BL-0113; `design/specs/mirror/publish.md` §4) into
+    `<app_cache>/workspaces/<workspace_key>/mirror/`: `app_local_data` and `lineage` name the `.open` journals looked
+    for at the re-check, `floor` is the highest generation number the sidecar saw this session (§3), `today` the
+    user's civil date (`meta.as_of`, INV-07) and `built_at` the instant."""
 
     root: AbsPath
     fingerprint: str = Field(min_length=1)
+    app_local_data: AbsPath
+    app_cache: AbsPath
+    workspace_key: Component
+    lineage: str = Field(min_length=1, max_length=128)
+    floor: int = Field(ge=0, le=999_999_999_999)
+    today: IsoDate
+    built_at: str = Field(min_length=1, max_length=64)
+
+
+type Publish = Literal["published", "fresh", "inexact", "replaced", "incomplete"]
 
 
 class RebuildResult(Message):
-    """`rebuild`'s answer: `loaded` (Beancount's result for the disk as observed; `entries` and `errors` its counts)
-    or `moved` (the disk changed during the load, or the load used files outside the set: `fingerprint` is the set to
-    try with next). It writes nothing; it runs the ledger's plugins, so the engine is retired after it."""
+    """`rebuild`'s answer: `loaded` (Beancount's result for the disk as observed; `entries` and `errors` its counts),
+    `moved` (the disk changed during the load or before the swap, or the load used files outside the set:
+    `fingerprint` is the set to try with next), `fresh` (the published generation already describes the disk: nothing
+    loaded or built) or `paused` (an unfinished save's `.open` journal at the re-check: not published). `publish`:
+    what became of a `loaded` result (`published`, or why not: `inexact`, `replaced`, `incomplete`), `fresh` for
+    `fresh`, null otherwise. `number` and `ledger_version`: the current generation's when `publish` is `published` or
+    `fresh`, else null. `removed`, `remove_failed`: the cleanup's counts. It runs the ledger's plugins, so the engine
+    is retired after it."""
 
-    outcome: Literal["loaded", "moved"]
+    outcome: Literal["loaded", "moved", "fresh", "paused"]
     fingerprint: str = Field(min_length=1)
     entries: int = Field(ge=0)
     errors: int = Field(ge=0)
+    publish: Publish | None
+    number: int | None = Field(ge=1)
+    ledger_version: str | None = Field(pattern=r"^[1-9][0-9]*/sha256:[0-9a-f]{64}$")
+    removed: int = Field(ge=0)
+    remove_failed: int = Field(ge=0)
 
 
 # -- The create (S0080; engine-jobs §1, §4, §8.2) ---------------------------------------------------------------------
@@ -582,7 +608,7 @@ OPS: dict[str, OpSpec] = {
             "root": "/ledgers/L/main.bean",
             "changes": [{"path": "/ledgers/L/main.bean", "pre": "0" * 64, "post": "2026-01-01 open Assets:Cash\n"}],
             "fingerprint": _FP,
-            "mirror": None,
+            "app_cache": "/cache",
             "app_local_data": _ALD,
         },
         needs_engine_lock=True,
@@ -603,8 +629,28 @@ OPS: dict[str, OpSpec] = {
     "rebuild": OpSpec(
         RebuildParams,
         RebuildResult,
-        {"outcome": "loaded", "fingerprint": _FP, "entries": 3, "errors": 0},
-        {"root": "/ledgers/L/main.bean", "fingerprint": _FP},
+        {
+            "outcome": "loaded",
+            "fingerprint": _FP,
+            "entries": 3,
+            "errors": 0,
+            "publish": "published",
+            "number": 2,
+            "ledger_version": "2/sha256:" + "0" * 64,
+            "removed": 1,
+            "remove_failed": 0,
+        },
+        {
+            "root": "/ledgers/L/main.bean",
+            "fingerprint": _FP,
+            "app_local_data": _ALD,
+            "app_cache": "/cache",
+            "workspace_key": "k1",
+            "lineage": "lin1",
+            "floor": 0,
+            "today": "2026-11-08",
+            "built_at": "2026-11-08T10:00:00+05:30",
+        },
         needs_engine_lock=True,
     ),
     "create": OpSpec(

@@ -269,19 +269,29 @@ class SaveAnswer:
     published: bool
 
 
-type RebuildOutcome = Literal["loaded", "moved"]
+type RebuildOutcome = Literal["loaded", "moved", "fresh", "paused"]
+type Publish = Literal["published", "fresh", "inexact", "replaced", "incomplete"]
 
 
 @dataclass(frozen=True, slots=True)
 class RebuildAnswer:
-    """The result of the engine's `rebuild` (engine-jobs §6.7, §7; ADR-0068 D1; S0070): `loaded` (Beancount's own result
-    for the disk as observed; `entries` and `errors` its counts) or `moved` (try again with `fingerprint`, opaque here).
-    It wrote nothing; the ledger's plugins ran in that engine."""
+    """The result of the engine's `rebuild` (engine-jobs §6.7, §7; ADR-0068 D1; S0070) and its publish
+    (`design/specs/mirror/publish.md` §4; S0087, BL-0113): `loaded` (Beancount's own result for the disk as observed;
+    `entries` and `errors` its counts), `moved` (try again with `fingerprint`, opaque here), `fresh` (the published
+    generation already describes the disk: nothing loaded) or `paused` (an unfinished save's `.open` journal: not
+    published). `publish`: what became of a loaded result (`published`, or why not), `fresh`, or None. `number` and
+    `ledger_version` name the current generation when published or fresh. `removed`, `remove_failed`: the cleanup's
+    counts. It wrote only the workspace's mirror folder; the ledger's plugins ran in that engine."""
 
     outcome: RebuildOutcome
     fingerprint: str
     entries: int
     errors: int
+    publish: Publish | None
+    number: int | None
+    ledger_version: str | None
+    removed: int
+    remove_failed: int
 
 
 type CreateOutcomeKind = Literal["created", "not_created"]

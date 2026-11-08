@@ -49,11 +49,14 @@ KINDS: Final = ("Assets", "Liabilities", "Equity", "Income", "Expenses")
 
 @dataclass(frozen=True, slots=True)
 class Stamp:
-    """The facts about this mirror that the caller owns (surface.toml `meta`)."""
+    """The facts about this mirror that the caller owns (surface.toml `meta`; `design/specs/mirror/publish.md` §8):
+    `ledger_version` (`<N>/<digest>`), `fingerprint` (`ledger_set.encode`), `built_at`, and `engine_build`, the build of
+    the engine that wrote the rows (a change in the row logic with the same DDL rebuilds, BL-0125)."""
 
     ledger_version: str
     fingerprint: str
     built_at: str
+    engine_build: str
 
 
 class InexactError(Exception):
@@ -580,7 +583,8 @@ def training_rows(txns: Iterable[port.Transaction], kind_of: Mapping[str, str]) 
 COMPLETE: Final = True
 
 
-def meta_rows(stamp: Stamp) -> list[Row]:
+def meta_rows(stamp: Stamp, today: date) -> list[Row]:
+    """`as_of` is the build's today (the user's civil date, INV-07): `account_balances` and `lots` stop at it."""
     return [
         ("surface_version", str(schema.SURFACE_VERSION)),
         ("ledger_version", stamp.ledger_version),
@@ -588,6 +592,8 @@ def meta_rows(stamp: Stamp) -> list[Row]:
         ("export_version", schema.EXPORT_VERSION),
         ("built_at", stamp.built_at),
         ("build_complete", "1" if COMPLETE else "0"),
+        ("engine_build", stamp.engine_build),
+        ("as_of", today.isoformat()),
     ]
 
 
@@ -614,7 +620,7 @@ def table_rows(
         "commodity_usage": usage_rows(txns),
         "ledger_errors": error_rows(errors),
         "training_data": training_rows(txns, kind_of),
-        "meta": meta_rows(stamp),
+        "meta": meta_rows(stamp, today),
     }
     # TODO(BL-0121): the price sidecar's prices after the ledger's (ADR-0030), when the sidecar is built.
     return tables

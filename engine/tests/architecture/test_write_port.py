@@ -31,6 +31,7 @@ WRITE_PATH = (
     "ledger/core/paths.py",
     "ledger/core/recovery.py",
     "ledger/core/history.py",
+    "mirror/publish.py",  # S0087: the publish and its cleanup act only through one folder handle of the port
 )
 DISK = frozenset({"os", "io", "shutil", "pathlib", "tempfile", "fcntl", "ctypes", "posix", "mmap", "glob"})
 OS_LEVEL = frozenset({"ctypes", "fcntl"})

@@ -24,6 +24,8 @@ META: tuple[tuple[str, str], ...] = (
     ("export_version", "e1"),
     ("built_at", "2026-10-28T09:00:00+00:00"),
     ("build_complete", "0"),
+    ("engine_build", "finzytrack-engine 0.4.0.dev0; beancount 3.2.0"),
+    ("as_of", "2026-10-28"),
 )
 
 # (account, number, currency, narration): the money is TEXT, as the build writes it (ADR-0023).

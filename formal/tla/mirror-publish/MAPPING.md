@@ -4,7 +4,7 @@
 - **Model:** `MirrorPublish.tla`, one module, durability only (EP-19): BL-0113's two properties and nothing else. Its own module, not an extension of `formal/tla/engine-jobs/`: the two share no state but "one engine job at a time" (here `ctl.pc`) and the `.open` journal (here `jopen`); the save's durability is engine-jobs' model, and the publish's world (generations, a link, readers, a purge) would multiply that model's states for nothing. BL-0110's row already said so.
 - **Configurations:** `gen_cfgs.py` (`cfg/*.cfg`, `configs.txt`); `run_all.sh` runs them (HOW_TO_RUN.md).
 - **State:** the small tier ran to completion on the model of S0085's round 1 fixes, all as expected: 4 base worlds pass, 7 mutants each break their property, 11 witnesses are each reached. The medium and large tiers are the owner's (BL-0110).
-- **Code:** nothing of the publish is built yet. "planned (BL-0113)" names the function BL-0113's code slice builds; a row whose code exists names it. When BL-0113's code lands, it marks its functions and updates this column.
+- **Code:** built in S0087 (BL-0113). Each function named in §2.1 carries `@tla_action("<Action>", model="mirror-publish")` (the engine's `ledger_engine.tla`, the sidecar's `app.mirror.model_map`); `backend/tests/architecture/test_tla_mapping_mirror_publish.py` checks the map both ways (every engine and reader action marked or codeless with its reason: `R_End`). The marked functions are walked by the crash, power-loss and I/O-error sweeps at every effect (`engine/tests/mirror/test_publish_crash.py`), not by a replay of this model's traces (BL-0210).
 - `scripts/tests/test_tla_mirror_publish.py` keeps this file honest: every action in `Next` has a row in §2.1 with a rule of the spec and a code function (or "environment"), every row names an action, every `§n` here exists in the spec, and the properties and mutants are the spec's §10, both ways.
 
 ## 1. Spec → model
@@ -51,23 +51,23 @@
 
 | Action | Rule | Code |
 |---|---|---|
-| `StartPublish` | §4 (an `open` or `rebuild` job starts) | `ledger_engine.ledger.rebuild.run` (built; the open's: planned, BL-0152) calling `ledger_engine.mirror.publish.publish` (planned, BL-0113) |
-| `P_CleanDb`, `P_CleanJl`, `P_CleanDone` | §6, §2 | `ledger_engine.mirror.publish.clean` (planned, BL-0113) |
-| `P_Obs` | §4 (the load), engine-jobs 6.7 | `ledger_engine.ledger.fingerprint.observe` (built), in `ledger_engine.ledger.rebuild.run` (built) |
-| `P_Read` | §4 (the load) | `ledger_engine.ledger.beancount_port.real_load` (built), in `ledger_engine.ledger.rebuild.run` |
-| `P_Create` | §3, §4 step 3, §5 | `ledger_engine.mirror.publish.new_name` (planned, BL-0113), then `ledger_engine.mirror.build.build` (built: exclusive create; BL-0113's code adds the `mode=rw` open of §2) |
-| `P_Commit` | §4 step 3 | `ledger_engine.mirror.build.build` (built: one transaction) |
-| `P_Check` | §4 step 4 | `ledger_engine.mirror.publish.publish` (planned, BL-0113: refuses `Built.complete` false) |
-| `P_SyncFile` | §4 step 5 | `ledger_engine.mirror.publish.publish` (planned) through `ledger_engine.fs.port.DirHandle.sync_file` (built) |
-| `P_DirSync` | §4 step 6 | `ledger_engine.mirror.publish.publish` (planned) through `ledger_engine.fs.port.DirHandle.sync` (built) |
-| `P_ReObs` | §4 step 7 | `ledger_engine.ledger.fingerprint.observe` (built), called by `ledger_engine.mirror.publish.publish` (planned) |
-| `P_JCheck` | §4 step 7 | `ledger_engine.ledger.save.records` (built), called by `ledger_engine.mirror.publish.publish` (planned) |
-| `P_Swap` | §4 step 8 | `ledger_engine.mirror.publish.swap` (planned, BL-0113; the file-system port gains a link, `readlink` and `utime`) |
-| `SaveCut` | §1, §4 step 7 | `ledger_engine.ledger.save.run` (built) ended by an engine death |
-| `Recover` | §1 | `ledger_engine.ledger.restore.recover_journal` (built) |
-| `R_Resolve` | §7 | `app.mirror.files.pin` (planned, BL-0113); the gate's `ledger_engine.mirror.publish.read_published` (planned, BL-0113) |
-| `R_Read1`, `R_Read2` | §7 | `app.mirror.files.open_mirror` (built) on the pinned path |
-| `R_End` | §7 | the request's end (`app.mirror.files.pin`'s scope, planned, BL-0113) |
+| `StartPublish` | §4 (an `open` or `rebuild` job starts) | `ledger_engine.ledger.rebuild.run` (the open's: BL-0152), which opens the folder, cleans it, loads and calls `ledger_engine.mirror.publish.publish` |
+| `P_CleanDb`, `P_CleanJl`, `P_CleanDone` | §6, §2 | `ledger_engine.mirror.publish.clean` |
+| `P_Obs` | §4 (the load), engine-jobs 6.7 | `ledger_engine.ledger.fingerprint.observe`, in `ledger_engine.ledger.rebuild.run` |
+| `P_Read` | §4 (the load) | `ledger_engine.ledger.beancount_port.real_load`, in `ledger_engine.ledger.rebuild.run` |
+| `P_Create` | §3, §4 step 3, §5 | `ledger_engine.mirror.publish.new_name`, then `ledger_engine.mirror.store.SqliteStore.build` (the exclusive create through the folder's handle, SQLite's `mode=rw` open, the identity check) |
+| `P_Commit` | §4 step 3 | `ledger_engine.mirror.store.SqliteStore.build` (`ledger_engine.mirror.build.write`: one transaction) |
+| `P_Check` | §4 step 4 | `ledger_engine.mirror.publish.publish` (refuses `Built.complete` false) |
+| `P_SyncFile` | §4 step 5 | `ledger_engine.mirror.publish.publish` through `ledger_engine.fs.port.DirHandle.sync_file` |
+| `P_DirSync` | §4 step 6 | `ledger_engine.mirror.publish.publish` through `ledger_engine.fs.port.DirHandle.sync` |
+| `P_ReObs` | §4 step 7 | `ledger_engine.ledger.fingerprint.observe`, called by `ledger_engine.mirror.publish.publish` (the rebuild's re-check) |
+| `P_JCheck` | §4 step 7 | `ledger_engine.ledger.save.records`, called by `ledger_engine.mirror.publish.publish` (the rebuild's re-check) |
+| `P_Swap` | §4 step 8 | `ledger_engine.mirror.publish.swap` (the port's `touch`, `symlink`, `rename`) |
+| `SaveCut` | §1, §4 step 7 | `ledger_engine.ledger.save.run` ended by an engine death |
+| `Recover` | §1 | `ledger_engine.ledger.restore.recover_journal` |
+| `R_Resolve` | §7 | `app.mirror.files.pin`; the gate's `ledger_engine.mirror.publish.read_published` |
+| `R_Read1`, `R_Read2` | §7 | `app.mirror.files.open_mirror` on the pinned path |
+| `R_End` | §7 | the request's end (`app.mirror.files.pin`'s scope; no code: the map's `CODELESS`) |
 | `Editor` | §11 (A-B-A), §1 | environment: another program writes a ledger file |
 | `EngineCrash`, `AppCrash`, `PowerLoss`, `Purge` | §9 | environment: the OS |
 
@@ -87,10 +87,10 @@
 
 ## 3. What the model abstracts away
 
-- **The folder's own shape** (§2): a link at `mirror/` or inside it, the folder descriptor, the build's `mode=rw` open and identity check, unknown files and folders, the temporary link, `current.db-*` names. They protect files outside the folder, which is not a durability property of the mirror; readers resolve `current.db` and open generation names only. BL-0113's tests check them (must-not-pass: a link at `mirror/`, a link and a folder inside it, `current.db` a file or a folder, `mirror/` swapped for a link during the build).
+- **The folder's own shape** (§2): a link at `mirror/` or inside it, the folder descriptor, the build's `mode=rw` open and identity check, unknown files and folders, the temporary link, `current.db-*` names. They protect files outside the folder, which is not a durability property of the mirror; readers resolve `current.db` and open generation names only. S0087's tests check them (`engine/tests/mirror/test_publish.py`, must-not-pass: a link at `mirror/`, a link and a folder inside it, `current.db` a file or a folder, `mirror/` swapped for a link during the job and just before SQLite's open).
 - **Time and the cap** (§6): the cleanup may remove any file it does not keep at any moment of its step, which covers every timing and every cap. A removal under a reader is shown harmless by `W_ReadDeleted`, a purge under a reader by `W_ReadAcrossPurge`.
 - **The floor** (§3) and the freshness check (§8): they keep `ledger_version` ordered and decide when to build; neither changes what a reader reads. The model orders names by their creation, which equals their order by `N` among the names present, since a purge removes every name at once.
-- **The gate's comparison** (§7): the published generation fresh against the disk on its own set, beside the disk equal to the plan. It decides whether a save may go on; it changes nothing a reader reads, and the model's fingerprints are whole ledger states with no sets. BL-0113's tests in `engine/tests/ledger/test_save.py`, listed in §7, cover it.
+- **The gate's comparison** (§7): the published generation fresh against the disk on its own set, beside the disk equal to the plan. It decides whether a save may go on; it changes nothing a reader reads, and the model's fingerprints are whole ledger states with no sets. S0087's tests in `engine/tests/ledger/test_save.py`, listed in §7, cover it.
 - **Availability:** a read that finds no file, or a refused one, ends its request (`NoRd`); "try again", the open's rebuild, and §4 step 6's requirement are tests of the code.
 - **The load:** two files with version numbers. The open's overlay load (stamped with the bytes it parsed) is the case `P_Obs` = `P_Read`; the rebuild's real load (stamped with its observation before the load) is the general case modelled.
 - **SQLite** is reduced to: one transaction whose commit deletes the journal; a read-only open that refuses a file a build is still writing or a file with a journal beside it; a read of whatever file is at the opened name. No assumption about stale journals is needed: names are never reused.

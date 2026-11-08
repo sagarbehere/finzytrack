@@ -32,8 +32,8 @@ when SQLite's process-wide heap is used up by the queries running at the same mo
 query runs (also inside the authorizer) it is `too_large`, before it (the open, the setup) `MirrorUnavailable(
 "out_of_memory")`; neither raises. Limits are configuration values (INV-10 style), not development targets.
 
-TODO(BL-0113): the runner reads the generation file it is given; with the publish it reads the generation the
-request pinned, and the freshness check against the disk is BL-0125's.
+A request's runner reads the generation it pinned (`files.pin`, publish.md §7; S0087): the path it is given, for the
+request's whole life.
 """
 
 from __future__ import annotations

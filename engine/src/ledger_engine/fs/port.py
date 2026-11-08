@@ -190,8 +190,30 @@ class DirHandle(Protocol):
         """Remove the file `name` (not a directory)."""
         ...
 
-    def mkdir(self, name: str) -> None:
-        """Make the directory `name`; it fails if any entry of that name exists."""
+    def mkdir(self, name: str, mode: int = 0o755) -> None:
+        """Make the directory `name` with `mode` (the umask may clear bits); it fails if any entry of that name
+        exists."""
+        ...
+
+    def symlink(self, target: str, name: str) -> None:
+        """Make the symbolic link `name` whose target is `target`, itself one name of this directory (S0087: the
+        mirror's `current.db`, publish.md §4 step 8; never a path, so the link can only lead to an entry of this
+        folder). It fails if any entry of that name exists. Durable only after `sync`."""
+        ...
+
+    def readlink(self, name: str) -> str | None:
+        """The target of the link `name`, as stored; None when there is no entry of that name. Any other kind of entry
+        raises `OSError` (`EINVAL`)."""
+        ...
+
+    def touch(self, name: str) -> None:
+        """Set the modification time of the entry `name` itself to now, never through a link (S0087: a replaced
+        generation's replacement time, publish.md §4 step 8). Writes no data."""
+        ...
+
+    def open_child(self, name: str) -> DirHandle:
+        """Open the directory `name` of this directory, relative to this handle and never through a link: a link, a
+        file or no entry raises `OSError` (S0087: the mirror folder and the cleanup of folders in it, publish.md §2)."""
         ...
 
     def rmdir(self, name: str) -> None:

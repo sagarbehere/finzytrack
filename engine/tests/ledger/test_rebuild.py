@@ -6,23 +6,32 @@ the spec's lines:
   BL-0118: Beancount's own loader, never the replica, and no pickle cache read or written;
 - §7 "record the fingerprint of the bytes they read ... A moved fingerprint discards the result and runs the job
   again": the set observed before and after the load; a load that used a file outside the set is a moved disk too;
-- ADR-0059: no encrypted file is decrypted.
+- ADR-0059: no encrypted file is decrypted;
+- §6.7 "Its publish ... follows `design/specs/mirror/publish.md` §4" (S0087, BL-0113): the folder and the cleanup
+  first, then the build, the re-check just before the swap (§7: the set observed again, no `.open` journal), the swap;
+  a job that finds the published generation fresh (§8) builds nothing.
 """
 
 from __future__ import annotations
 
+import os
 import sys
-from collections.abc import Callable
-from dataclasses import dataclass, field
+from collections.abc import Callable, Iterator
+from dataclasses import dataclass, field, replace
+from datetime import date
 from pathlib import Path
+from typing import Any, override
 
 import pytest
 
 from ledger_engine.ledger import beancount_port as port
 from ledger_engine.ledger import overlay, rebuild
-from ledger_engine.ledger.core.ledger_set import Fingerprint, LedgerSet
+from ledger_engine.ledger.core.ledger_set import Fingerprint, LedgerSet, digest
 from ledger_engine.ledger.fingerprint import observe
 from ledger_engine.ledger.policy import DesktopPolicy
+from ledger_engine.mirror import publish as pb
+from ledger_engine.mirror.store import SqliteStore
+from tests.mirror.publish_support import BUILT_AT, ENGINE_BUILD, KEY, TODAY, fs_now, meta
 
 pytestmark = [
     pytest.mark.inv("INV-22"),
@@ -39,6 +48,39 @@ class FakeJob:
 
     def progress(self, phase: rebuild.Phase) -> None:
         self.events.append(phase)
+
+
+CACHE: list[Path] = []
+"""The current test's cache folder (`go`'s target), set by the autouse fixture below."""
+
+
+@pytest.fixture(autouse=True)
+def cache(tmp_path: Path) -> Iterator[Path]:
+    c = tmp_path / "cache"
+    c.mkdir()
+    CACHE.append(c)
+    yield c
+    CACHE.pop()
+
+
+def target(**kw: Any) -> rebuild.Target:
+    t = rebuild.Target(
+        app_cache=str(CACHE[-1]),
+        workspace_key=KEY,
+        app_local_data=str(CACHE[-1].parent / "app"),
+        lineage="lin1",
+        floor=0,
+        today=TODAY,
+        built_at=BUILT_AT,
+        now_ns=fs_now(CACHE[-1]),
+        engine_build=ENGINE_BUILD,
+    )
+    return replace(t, **kw)
+
+
+def go(ports: rebuild.Ports, hint: Fingerprint, job: FakeJob, **kw: Any) -> rebuild.Answer:
+    """The rebuild with its publish into the test's cache folder (publish.md §4)."""
+    return rebuild.run(ports, hint, job, target(**kw))
 
 
 @pytest.fixture
@@ -71,7 +113,7 @@ def with_load(around: Callable[[], object]) -> rebuild.Ports:
 def test_the_rebuild_is_beancounts_own_load_and_writes_nothing(root: Path) -> None:
     before = sorted(p.name for p in root.parent.iterdir())
     job = FakeJob()
-    a = rebuild.run(rebuild.Ports(), hint_of(root), job)
+    a = go(rebuild.Ports(), hint_of(root), job)
     real_entries, real_errors, _ = port.real_load(str(root))
     assert (a.outcome, a.entries, a.errors) == ("loaded", len(real_entries), len(real_errors))
     assert a.entries > 0
@@ -87,19 +129,19 @@ def test_the_load_is_never_the_replica(root: Path, monkeypatch: pytest.MonkeyPat
 
     monkeypatch.setattr(overlay, "load", no_replica)
     hint = observe(LedgerSet(str(root), (str(root), str(root.parent / "inc.bean")), (), (), ()))
-    assert rebuild.run(rebuild.Ports(), hint, FakeJob()).outcome == "loaded"
+    assert go(rebuild.Ports(), hint, FakeJob()).outcome == "loaded"
 
 
 def test_beancounts_errors_are_counted(root: Path) -> None:
     (root.parent / "inc.bean").write_bytes(INC + b'2026-01-03 * "Bad"\n  Expenses:Unknown  1 USD\n  Assets:Cash\n')
-    a = rebuild.run(rebuild.Ports(), hint_of(root), FakeJob())
+    a = go(rebuild.Ports(), hint_of(root), FakeJob())
     assert a.outcome == "loaded"
     assert a.errors == 1
 
 
 def test_a_file_edited_during_the_load_is_a_moved_disk(root: Path) -> None:
     inc = root.parent / "inc.bean"
-    a = rebuild.run(with_load(lambda: inc.write_bytes(INC + b"; edited\n")), hint_of(root), FakeJob())
+    a = go(with_load(lambda: inc.write_bytes(INC + b"; edited\n")), hint_of(root), FakeJob())
     assert a.outcome == "moved"
     assert a.fingerprint == observe(hint_of(root).ledger_set)  # the next try observes the disk as it is now
     assert (a.entries, a.errors) == (0, 0)
@@ -113,7 +155,7 @@ def test_an_edit_reverted_during_the_load_is_not_seen_and_the_disk_is_the_same(r
         inc.write_bytes(INC + b"; edited\n")
         inc.write_bytes(INC)
 
-    assert rebuild.run(with_load(edit_and_revert), hint_of(root), FakeJob()).outcome == "loaded"
+    assert go(with_load(edit_and_revert), hint_of(root), FakeJob()).outcome == "loaded"
 
 
 def test_a_load_that_read_a_file_outside_the_set_is_moved_with_the_wider_set(root: Path) -> None:
@@ -123,10 +165,10 @@ def test_a_load_that_read_a_file_outside_the_set_is_moved_with_the_wider_set(roo
     new = root.parent / "more.bean"
     new.write_bytes(b"2026-01-01 open Assets:Bank\n")
     root.write_bytes(MAIN + b'include "more.bean"\n')
-    a = rebuild.run(rebuild.Ports(), hint, FakeJob())
+    a = go(rebuild.Ports(), hint, FakeJob())
     assert a.outcome == "moved"
     assert str(new) in dict(a.fingerprint.files)
-    assert rebuild.run(rebuild.Ports(), a.fingerprint, FakeJob()).outcome == "loaded"
+    assert go(rebuild.Ports(), a.fingerprint, FakeJob()).outcome == "loaded"
 
 
 def test_a_documents_root_outside_the_set_is_moved_with_it(root: Path) -> None:
@@ -134,10 +176,10 @@ def test_a_documents_root_outside_the_set_is_moved_with_it(root: Path) -> None:
     docs = root.parent / "docs"
     (docs / "Assets" / "Cash").mkdir(parents=True)
     root.write_bytes(MAIN + b'option "documents" "docs"\n')
-    a = rebuild.run(rebuild.Ports(), hint, FakeJob())
+    a = go(rebuild.Ports(), hint, FakeJob())
     assert a.outcome == "moved"
     assert str(docs) in dict(a.fingerprint.documents)
-    assert rebuild.run(rebuild.Ports(), a.fingerprint, FakeJob()).outcome == "loaded"
+    assert go(rebuild.Ports(), a.fingerprint, FakeJob()).outcome == "loaded"
 
 
 def test_a_document_file_outside_the_set_is_moved_with_it(root: Path) -> None:
@@ -147,10 +189,10 @@ def test_a_document_file_outside_the_set_is_moved_with_it(root: Path) -> None:
     receipt = root.parent / "receipt.pdf"
     receipt.write_bytes(b"%PDF-1.4\n")
     root.write_bytes(MAIN + b'2026-01-03 document Assets:Cash "receipt.pdf"\n')
-    a = rebuild.run(rebuild.Ports(), hint, FakeJob())
+    a = go(rebuild.Ports(), hint, FakeJob())
     assert a.outcome == "moved"
     assert str(receipt) in dict(a.fingerprint.document_files)
-    assert rebuild.run(rebuild.Ports(), a.fingerprint, FakeJob()).outcome == "loaded"
+    assert go(rebuild.Ports(), a.fingerprint, FakeJob()).outcome == "loaded"
 
 
 def test_an_encrypted_file_is_never_decrypted(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -159,7 +201,7 @@ def test_an_encrypted_file_is_never_decrypted(root: Path, monkeypatch: pytest.Mo
     root.write_bytes(MAIN + b'include "secret.bean.gpg"\n')
     hint = observe(LedgerSet(str(root), (str(root),), (), (), ()))
     with pytest.raises(port.EncryptedFileMet):
-        rebuild.run(rebuild.Ports(), hint, FakeJob())
+        go(rebuild.Ports(), hint, FakeJob())
 
 
 def test_a_dated_file_under_a_documents_root_in_the_set_is_loaded_on_the_first_try(root: Path) -> None:
@@ -175,6 +217,118 @@ def test_a_dated_file_under_a_documents_root_in_the_set_is_loaded_on_the_first_t
         loads.append(r)
         return port.real_load(r)
 
-    a = rebuild.run(rebuild.Ports(load=load), hint_of(root), FakeJob())
+    a = go(rebuild.Ports(load=load), hint_of(root), FakeJob())
     assert (a.outcome, len(loads)) == ("loaded", 1)
     assert a.entries > 0
+
+
+# -- the publish (S0087, BL-0113; publish.md §4, §8) ------------------------------------------------------------------
+
+
+def mirror(cache: Path) -> Path:
+    return cache / "workspaces" / KEY / "mirror"
+
+
+def generations(cache: Path) -> list[str]:
+    return sorted(p.name for p in mirror(cache).iterdir() if pb.gen_of(p.name) is not None)
+
+
+def test_a_loaded_result_is_published_with_its_number_and_ledger_version(root: Path, cache: Path) -> None:
+    a = go(rebuild.Ports(), hint_of(root), FakeJob())
+    assert a.outcome == "loaded"
+    assert isinstance(a.published, pb.Published), a
+    name = os.readlink(mirror(cache) / pb.CURRENT)
+    assert a.published.gen == pb.Gen(1, name)
+    facts = meta(mirror(cache) / name)
+    assert facts["ledger_version"] == a.published.ledger_version == f"1/{digest(a.fingerprint)}"
+    assert facts["as_of"] == TODAY.isoformat()
+
+
+def test_a_rebuild_that_finds_the_published_generation_fresh_builds_nothing(root: Path, cache: Path) -> None:
+    first = go(rebuild.Ports(), hint_of(root), FakeJob())
+    assert isinstance(first.published, pb.Published)
+    loads: list[str] = []
+
+    def load(r: str) -> port.ParseResult:
+        loads.append(r)
+        return port.real_load(r)
+
+    again = go(rebuild.Ports(load=load), hint_of(root), FakeJob())
+    assert again.outcome == "fresh"
+    assert again.published == first.published
+    assert loads == []
+    assert len(generations(cache)) == 1
+
+
+@pytest.mark.parametrize("change", ["today", "engine_build", "disk"])
+def test_a_generation_that_is_not_fresh_is_rebuilt(root: Path, cache: Path, change: str) -> None:
+    go(rebuild.Ports(), hint_of(root), FakeJob())
+    kw: dict[str, Any] = {}
+    if change == "today":
+        kw["today"] = date(2026, 11, 9)
+    elif change == "engine_build":
+        kw["engine_build"] = "a newer engine"
+    else:
+        (root.parent / "inc.bean").write_bytes(INC + b"; edited\n")
+    a = go(rebuild.Ports(), hint_of(root), FakeJob(), **kw)
+    assert a.outcome == "loaded"
+    assert isinstance(a.published, pb.Published)
+    assert a.published.gen.number == 2
+
+
+def test_the_number_is_above_the_sidecars_floor(root: Path) -> None:
+    a = go(rebuild.Ports(), hint_of(root), FakeJob(), floor=41)
+    assert isinstance(a.published, pb.Published)
+    assert a.published.gen.number == 42
+
+
+def test_an_open_journal_seen_at_the_recheck_publishes_nothing(root: Path, cache: Path) -> None:
+    """engine-jobs §7: "A `.open` journal refuses the job"; publish.md §4 step 7."""
+    journal = cache.parent / "app" / "local" / KEY / "journal"
+
+    def cut_save() -> None:
+        journal.mkdir(parents=True)
+        (journal / "s1-j1.open").write_bytes(b"{}")
+
+    a = go(with_load(cut_save), hint_of(root), FakeJob())
+    assert a.outcome == "paused"
+    assert a.published is None
+    assert not (mirror(cache) / pb.CURRENT).exists()
+
+
+class EditingStore(SqliteStore):
+    """An outside edit while the build writes the generation."""
+
+    def __init__(self, edit: Callable[[], object]) -> None:
+        self._edit = edit
+
+    @override
+    def build(self, *args: Any, **kw: Any) -> Any:
+        out = super().build(*args, **kw)
+        self._edit()
+        return out
+
+
+def test_an_edit_during_the_build_is_moved_and_not_published(root: Path, cache: Path) -> None:
+    inc = root.parent / "inc.bean"
+    first = go(rebuild.Ports(), hint_of(root), FakeJob())
+    assert isinstance(first.published, pb.Published)
+    inc.write_bytes(INC + b"; one\n")
+    ports = rebuild.Ports(store=EditingStore(lambda: inc.write_bytes(INC + b"; two\n")))
+    a = go(ports, hint_of(root), FakeJob())
+    assert a.outcome == "moved"
+    assert a.fingerprint == observe(hint_of(root).ledger_set)  # the next try starts from the disk as it is now
+    assert os.readlink(mirror(cache) / pb.CURRENT) == first.published.gen.name
+    assert len(generations(cache)) == 2  # the unpublished build waits for the next cleanup
+
+
+def test_the_cleanup_runs_first_even_when_the_load_then_moves(root: Path, cache: Path) -> None:
+    m = mirror(cache)
+    m.mkdir(parents=True)
+    (m / "junk").write_bytes(b"x")
+    inc = root.parent / "inc.bean"
+    a = go(with_load(lambda: inc.write_bytes(INC + b"; edited\n")), hint_of(root), FakeJob())
+    assert a.outcome == "moved"
+    assert a.cleaned is not None
+    assert a.cleaned.removed == 1
+    assert not (m / "junk").exists()

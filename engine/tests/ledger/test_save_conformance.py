@@ -64,9 +64,10 @@ from typing import Any, Final, cast
 import pytest
 
 from ledger_engine.ledger import save as sv
-from ledger_engine.ledger.core.ledger_set import Absent, Content, FileState, Fingerprint, digest
+from ledger_engine.ledger.core.ledger_set import Absent, Content, FileState, Fingerprint
 from ledger_engine.ledger.writer import Change, NotSaved, Reason, Step, Unfinished, sha256
 from tests.fakes.memfs import Crash, MemFS
+from tests.mirror.fake_store import FakeStore, outside_publish
 
 pytestmark = [pytest.mark.inv("INV-22"), pytest.mark.inv("INV-01")]
 
@@ -592,13 +593,17 @@ def ports(fs: MemFS, driver: Driver) -> sv.Ports:
     seen = Counter[str]()
 
     def observe(fp: Fingerprint) -> Fingerprint:
-        """The save's one observation (step 4, the gate): the model's `S_Gate`."""
+        """The save's observations at its gate (step 4): the plan's set (the model's `S_Gate`), then the published
+        mirror's own set (S0087; the engine-jobs model has no mirror: a generation published from no file, so it is
+        always fresh and the check never decides a replay)."""
         seen["observe"] += 1
+        if fp.root == MIRROR_ROOT:
+            return fp
         driver.reach("s_gate")
         files = tuple((p, _state_of(fs, p)) for p, _ in fp.files)
         return Fingerprint(fp.root, files, fp.globs, fp.documents, fp.document_files)
 
-    return sv.Ports(fs, observe)
+    return sv.Ports(fs, observe, store=FakeStore())
 
 
 def plan_of(ep: Episode) -> sv.SavePlan:
@@ -612,7 +617,7 @@ def plan_of(ep: Episode) -> sv.SavePlan:
 
     fp = Fingerprint.of(PATH["R"], {PATH[f]: state(f) for f in FILES}, {}, {}, {})
     changes = tuple(Change(PATH[f], pre(f), content(f, POST[ep.s])) for f in WORD)
-    return sv.SavePlan(SESSION, ep.s, KEY, "lin1", "b", PATH["R"], changes, fp, digest(fp), ALD)
+    return sv.SavePlan(SESSION, ep.s, KEY, "lin1", "b", PATH["R"], changes, fp, "/cache", ALD)
 
 
 def disk_answer(end: State, s: str, plan: Mapping[str, int]) -> str:
@@ -673,10 +678,14 @@ class Tally:
     branches: Counter[str] = field(default_factory=lambda: Counter[str]())
 
 
+MIRROR_ROOT = "/mirror-published-from-no-file"
+
+
 def world() -> MemFS:
     fs = MemFS()
     for d in (LEDGER, JD, BD):
         fs.outside_mkdirs(d)
+    outside_publish(fs, Fingerprint(MIRROR_ROOT, (), (), (), ()), KEY)
     return fs
 
 

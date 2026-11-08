@@ -45,6 +45,7 @@ from app.platform.engine import (
     Phase,
     Pong,
     Progress,
+    Publish,
     RebuildAnswer,
     RebuildOutcome,
     RecordSeen,
@@ -526,17 +527,42 @@ def decode_save(result: Mapping[str, object]) -> SaveAnswer | Violation:
     return _decoded(_save, result)
 
 
-_REBUILD = frozenset({"outcome", "fingerprint", "entries", "errors"})
-REBUILD_OUTCOMES: frozenset[str] = frozenset({"loaded", "moved"})
+_REBUILD = frozenset(
+    {
+        "outcome",
+        "fingerprint",
+        "entries",
+        "errors",
+        "publish",
+        "number",
+        "ledger_version",
+        "removed",
+        "remove_failed",
+    }
+)
+REBUILD_OUTCOMES: frozenset[str] = frozenset({"loaded", "moved", "fresh", "paused"})
+PUBLISH: frozenset[str] = frozenset({"published", "fresh", "inexact", "replaced", "incomplete"})
+_LEDGER_VERSION = re.compile(r"[1-9][0-9]*/sha256:[0-9a-f]{64}")
 
 
 def _rebuild(result: Mapping[str, object]) -> RebuildAnswer:
+    """S0087: the publish's fields are each checked as the schema checks them; nothing gates on them (they are
+    logged), so how they go together is the engine's (`ledger_engine.protocol.rebuild`)."""
     o = _keys(dict(result), _REBUILD, "the rebuild result")
+    version = _text(o["ledger_version"], "ledger_version", nullable=True)
+    if version is not None and _LEDGER_VERSION.fullmatch(version) is None:
+        msg = "ledger_version must be <number>/sha256:<digest>"
+        raise _Bad(msg)
     return RebuildAnswer(
         outcome=cast("RebuildOutcome", _choice(o["outcome"], REBUILD_OUTCOMES, "outcome")),
         fingerprint=_name(o["fingerprint"], "fingerprint"),
         entries=cast("int", _int(o["entries"], "entries", low=0)),
         errors=cast("int", _int(o["errors"], "errors", low=0)),
+        publish=None if o["publish"] is None else cast("Publish", _choice(o["publish"], PUBLISH, "publish")),
+        number=_int(o["number"], "number", nullable=True, low=1),
+        ledger_version=version,
+        removed=cast("int", _int(o["removed"], "removed", low=0)),
+        remove_failed=cast("int", _int(o["remove_failed"], "remove_failed", low=0)),
     )
 
 

@@ -34,6 +34,7 @@ from pathlib import Path
 from typing import Final, cast
 
 from app.domain.errors import DomainError
+from app.platform.clock import Clock
 from app.platform.engine import EngineEvent, EngineFailure, EngineRefusal, GateReached, OutcomeFacts, SaveAnswer
 from app.platform.engine_jobs.queue import JobSpec
 from app.platform.engine_jobs.rebuild import RebuildTarget, rebuild_spec, rebuild_work
@@ -76,8 +77,9 @@ class ChangeText:
 @dataclass(frozen=True, slots=True)
 class SaveRequest:
     """A confirmed plan (the preview's, BL-0106): who saves, the root, the changes, the plan's
-    fingerprint (its canonical encoding, opaque here), the published mirror's fingerprint digest (None: none published)
-    and the app's machine-local folder (no legacy lock: a save tries none, ADR-0068 D4).
+    fingerprint (its canonical encoding, opaque here), the app's cache folder (the engine's gate reads the published
+    mirror there itself, publish.md §7; S0087) and the app's machine-local folder (no legacy lock: a save tries none,
+    ADR-0068 D4).
 
     It names no job: the record's name `<session>-<job>` must be this save's alone (§6.5 "One save, one name"), since
     §6.6 tells a dead save's outcome by that name; `save_work` makes a new job part for every save it runs, so a
@@ -89,13 +91,14 @@ class SaveRequest:
     root: str
     changes: tuple[ChangeText, ...]
     fingerprint: str
-    mirror: str | None
+    app_cache: Path
     app_local_data: Path
 
 
 @dataclass(frozen=True, slots=True)
 class Saved:
-    """The change is saved (its closed record is durable). `published`: the views were updated from it (BL-0113)."""
+    """The change is saved (its closed record is durable). `published`: the save itself updated the views (never: the
+    rebuild after it publishes, §6.7; S0087)."""
 
     published: bool
 
@@ -132,7 +135,7 @@ def params_of(r: SaveRequest, job: str) -> dict[str, object]:
         "root": r.root,
         "changes": [{"path": c.path, "pre": c.pre, "post": c.post} for c in r.changes],
         "fingerprint": r.fingerprint,
-        "mirror": r.mirror,
+        "app_cache": str(r.app_cache),
         "app_local_data": str(r.app_local_data),
     }
 
@@ -208,7 +211,7 @@ def save_work(request: SaveRequest, *, after_saved: AfterSaved | None = None) ->
 
 
 def submit_save(
-    jobs: EngineJobs, workspace: str, request: SaveRequest, *, background: bool = False
+    jobs: EngineJobs, workspace: str, request: SaveRequest, *, clock: Clock, background: bool = False
 ) -> JobTicket | Failed:
     """Queue a save (the user's, or the app's own in the background) whose landing queues the background rebuild
     (§6.1 step 10, ADR-0068 D1). A background save of a fixed request cannot join a queued one (ADR-0068 D8: only a
@@ -218,7 +221,7 @@ def submit_save(
     added makes it try once more with the wider set, `ledger_engine.ledger.rebuild`)."""
 
     def queue_rebuild(target: RebuildTarget) -> None:
-        jobs.submit(rebuild_spec(workspace), rebuild_work(target))
+        jobs.submit(rebuild_spec(workspace), rebuild_work(target, clock))
 
     work = save_work(request, after_saved=queue_rebuild)
     return jobs.submit_background_save(workspace, work) if background else jobs.submit(save_spec(workspace), work)
@@ -255,7 +258,10 @@ class _Run:
 
     def _answered(self, value: SaveValue, *, ran_user_code: bool = True) -> WorkResult:
         if isinstance(value, Saved) and self._after_saved is not None:
-            self._after_saved(RebuildTarget(self._r.workspace_key, self._r.root, self._r.fingerprint))
+            r = self._r
+            self._after_saved(
+                RebuildTarget(r.workspace_key, r.root, r.fingerprint, r.lineage, r.app_local_data, r.app_cache)
+            )
         return WorkResult(value, ran_user_code=ran_user_code)
 
     def _no_engine(self) -> WorkResult:

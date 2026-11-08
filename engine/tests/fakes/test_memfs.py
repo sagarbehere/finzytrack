@@ -698,3 +698,59 @@ def test_an_outside_program_may_set_any_modification_time_and_a_power_loss_keeps
     assert _mtime(fs, "/d", "a") == 7
     for state in fs.power_loss_states():
         assert _mtime(state, "/d", "a") == 7
+
+
+# -- S0087 (BL-0113): links of ours, modification times set, child folders (publish.md §2, §9) -----------------------
+
+
+def test_a_link_of_ours_is_an_entry_operation_durable_after_its_folders_sync() -> None:
+    fs = fs_with("/d")
+    fs.outside_write("/d/gen", b"G")
+    with fs.open_dir("/d") as d:
+        d.symlink("gen", "cur")
+        assert d.readlink("cur") == "gen"
+        assert {s.snapshot().get("/d/cur") for s in fs.power_loss_states()} == {None, ("link", "gen")}
+        d.sync()
+    assert {s.snapshot().get("/d/cur") for s in fs.power_loss_states()} == {("link", "gen")}
+    assert fs.file("/d/cur") == b"G"  # a relative link resolves in its own folder
+    with fs.open_dir("/d") as d:
+        assert d.readlink("missing") is None
+        with pytest.raises(OSError, match=r"."):
+            d.readlink("gen")
+        with pytest.raises(ValueError, match="not_one_component"):
+            d.symlink("../x", "y")
+
+
+def test_a_link_renamed_over_another_is_kept_or_dropped_whole_by_a_power_loss() -> None:
+    fs = fs_with("/d")
+    with fs.open_dir("/d") as d:
+        d.symlink("a", "cur")
+        d.sync()
+        d.symlink("b", "tmp")
+        d.rename("tmp", "cur")
+        assert d.readlink("cur") == "b"
+    states = {(s.snapshot().get("/d/cur"), s.snapshot().get("/d/tmp")) for s in fs.power_loss_states()}
+    assert ("link", "a") in {c for c, _ in states}
+    assert ("link", "b") in {c for c, _ in states}
+    assert all(c is not None for c, _ in states)  # `current.db` is never lost by the rename
+
+
+def test_touch_is_an_effect_on_the_entry_itself_and_child_folders_open_without_following_links() -> None:
+    fs = fs_with("/d", "/d/sub", "/e")
+    fs.outside_write("/d/f", b"F")
+    fs.outside_symlink("/d/lnk", "/e")
+    fs.outside_mtime("/d/f", 3)
+    with fs.open_dir("/d") as d:
+        n = len(fs.effects)
+        d.touch("f")
+        assert len(fs.effects) == n + 1
+        assert fs.effects[n].startswith("touch")
+        with d.open_child("sub") as c:
+            assert c.names() == []
+        for name in ("lnk", "f", "missing"):
+            with pytest.raises(OSError, match=r"."):
+                d.open_child(name)
+        d.mkdir("m", 0o700)
+    st = fs.open_dir("/d").stat("f")
+    assert st is not None
+    assert st.mtime_ns > 3

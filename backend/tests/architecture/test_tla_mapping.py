@@ -53,10 +53,16 @@ PLANNED: Mapping[str, str] = {
 PARTIAL: Mapping[str, str] = {}
 
 
+ENGINE_JOBS = "engine-jobs"
+"""A marker's model when it names none (`ledger_engine.tla.tla_action`'s default). Since S0087 a marker may name the
+mirror-publish model (`model="mirror-publish"`), whose map `test_tla_mapping_mirror_publish.py` checks."""
+
+
 @dataclass(frozen=True, slots=True)
 class Marker:
     action: str
     where: str
+    model: str = ENGINE_JOBS
 
 
 DISJUNCT = re.compile(r"(?:\\E\s+[^:]+:\s*)*([A-Za-z_][A-Za-z0-9_]*)(?:\([^()]*\))?")
@@ -124,12 +130,19 @@ def markers(roots: Iterable[Path]) -> list[Marker]:
                         continue
                     shown = path.relative_to(REPO) if path.is_relative_to(REPO) else path
                     where = f"{shown}:{node.lineno} {node.name}"
+                    model = ENGINE_JOBS
+                    for kw in deco.keywords:
+                        literal = isinstance(kw.value, ast.Constant) and isinstance(kw.value.value, str)
+                        assert kw.arg == "model", f"{where}: a marker takes only `model=` as a literal"
+                        assert literal, f"{where}: a marker takes only `model=` as a literal"
+                        assert isinstance(kw.value, ast.Constant)
+                        model = str(kw.value.value)
                     for arg in deco.args:
                         literal = isinstance(arg, ast.Constant) and isinstance(arg.value, str)
                         assert literal, f"{where}: a marker names actions as string literals"
                         assert isinstance(arg, ast.Constant)
                         assert isinstance(arg.value, str)
-                        found.append(Marker(arg.value, where))
+                        found.append(Marker(arg.value, where, model))
     return found
 
 
@@ -184,9 +197,13 @@ def problems(
 # -- the real repository ----------------------------------------------------------------------------------------------
 
 
+def of_model(found: Iterable[Marker], model: str) -> list[Marker]:
+    return [m for m in found if m.model == model]
+
+
 def test_the_code_map_holds_both_ways() -> None:
     model = MODEL.read_text(encoding="utf-8")
-    found = markers(SOURCES)
+    found = of_model(markers(SOURCES), ENGINE_JOBS)
     assert problems(model, found, PLANNED, PARTIAL, open_rows(BACKLOG.read_text(encoding="utf-8"))) == []
     assert found, "no marker found: the scan is broken"
 
@@ -360,3 +377,18 @@ def test_open_rows_reads_only_open_and_in_progress_rows() -> None:
         "| BL-0003 | c | x | M1a | in-progress | — |\n"
     )
     assert open_rows(text) == {"BL-0001", "BL-0003"}
+
+
+def test_a_marker_names_its_model_by_a_literal_keyword_and_each_map_reads_only_its_own(tmp_path: Path) -> None:
+    """S0087: the mirror-publish model's markers sit in the same sources; the engine-jobs map must not read them as its
+    own (they would name no action of its `Next`), and a marker's model is read only from a literal `model=`."""
+    (tmp_path / "x.py").write_text(
+        "@tla_action('A')\ndef f() -> None: ...\n@tla_action('P_Swap', model='mirror-publish')\ndef g() -> None: ...\n",
+        encoding="utf-8",
+    )
+    found = markers([tmp_path])
+    assert [(x.action, x.model) for x in of_model(found, ENGINE_JOBS)] == [("A", ENGINE_JOBS)]
+    assert [x.action for x in of_model(found, "mirror-publish")] == ["P_Swap"]
+    (tmp_path / "y.py").write_text("M = 'm'\n@tla_action('A', model=M)\ndef f() -> None: ...\n", encoding="utf-8")
+    with pytest.raises(AssertionError, match="literal"):
+        markers([tmp_path])

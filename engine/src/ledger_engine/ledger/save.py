@@ -16,8 +16,13 @@ retires its engine after it (the safe default). Its steps:
    first; one that cannot be (a folder that denies looking names up in it, §15) is `NotSaved(io_error)` naming it,
    with the re-hash; nothing was written.
 4. **The gate** (ADR-0008 step 4), the last check before the commit point: the disk's fingerprint
-   equals the plan's (else `ledger_changed`); the published mirror's equals the plan's (else `mirror_stale`,
-   `WORKSPACE_NOT_READY {WARMING}`); the `.open` check again. Steps 5 and 6 (the save's own load and the re-check
+   equals the plan's (else `ledger_changed`); the published mirror is fresh against the disk: `current.db` resolved
+   once in `<app_cache>/workspaces/<key>/mirror/` (`mirror.publish.read_published`), and the ledger set in that
+   generation's own `meta.fingerprint` observed now has its digest (`mirror.publish.fresh_on_disk`; publish.md §7;
+   S0087, BL-0113); no published generation, an unreadable one or one that is not fresh is `mirror_stale`
+   (`WORKSPACE_NOT_READY {WARMING}`). The plan's set is not compared with the generation's: a save that creates or
+   includes a file names files the generation never read. One job at a time (ADR-0064): no publish runs between this
+   read and the commit point. Then the `.open` check again. Steps 5 and 6 (the save's own load and the re-check
    after it) are removed (ADR-0068 D1): an outside save after step 4 is met by the swap's displaced check.
 7. **The commit point:** `job.gate()` (§4: the sidecar's one table step answers `proceed` or ends the engine).
 8. `writer.durable_commit` (§6.1 step 8), after the workspace's journal and backups folders exist and every folder
@@ -52,16 +57,16 @@ import gc
 import posixpath
 import re
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Final, Literal, Protocol
 
-from ledger_engine.fs.port import FileSystem, Kind
+from ledger_engine.fs.port import FileSystem, Kind, split_absolute
 from ledger_engine.ledger import fingerprint as _fingerprint
 from ledger_engine.ledger import history, overlay
 from ledger_engine.ledger.core import journal
 from ledger_engine.ledger.core import paths as core_paths
 from ledger_engine.ledger.core.journal import Record, State
-from ledger_engine.ledger.core.ledger_set import Absent, Content, Fingerprint, digest
+from ledger_engine.ledger.core.ledger_set import Absent, Content, Fingerprint
 from ledger_engine.ledger.handles import join, sha256
 from ledger_engine.ledger.writer import (
     BadPlanError,
@@ -74,6 +79,8 @@ from ledger_engine.ledger.writer import (
     Unfinished,
     durable_commit,
 )
+from ledger_engine.mirror import publish
+from ledger_engine.mirror.store import SqliteStore
 from ledger_engine.tla import tla_action
 
 LOCAL: Final = "local"
@@ -87,17 +94,17 @@ type Phase = Literal["saving"]
 type RefusedReason = Literal[
     "unfinished_save",  # an `.open` journal of this workspace (WRITES_PAUSED)
     "ledger_changed",  # the disk moved since the plan (LEDGER_EXTERNALLY_CHANGED)
-    "mirror_stale",  # the published mirror is not the plan's (WORKSPACE_NOT_READY {WARMING})
+    "mirror_stale",  # no published mirror, or it does not describe the disk (WORKSPACE_NOT_READY {WARMING})
     "encrypted_file",  # a change names an encrypted file (ADR-0059; the preview refuses it first, BL-0106)
 ]
 
 
 @dataclass(frozen=True, slots=True)
 class SavePlan:
-    """A confirmed plan (§2's `save`). `fingerprint`: the plan's, of the ledger set before the save; `mirror`: the
-    digest of the published mirror's fingerprint (None: none is published); `changes`: each file as the ledger names
-    it (absolute, normalized), its pre SHA-256 (None: the save creates it) and its post bytes; `app_local_data`: the
-    app's machine-local folder (journals, backups).
+    """A confirmed plan (§2's `save`). `fingerprint`: the plan's, of the ledger set before the save; `changes`: each
+    file as the ledger names it (absolute, normalized), its pre SHA-256 (None: the save creates it) and its post bytes;
+    `app_cache`: the app's cache folder, where the gate reads the published mirror (publish.md §7); `app_local_data`:
+    the app's machine-local folder (journals, backups).
     `session`-`job` names this save alone (§6.5 "One save, one name"; the sidecar makes a new job part for every save):
     a name that already has a record or a backups folder in this key raises `BadPlanError("name_taken")`."""
 
@@ -109,7 +116,7 @@ class SavePlan:
     root: str
     changes: tuple[Change, ...]
     fingerprint: Fingerprint
-    mirror: str | None
+    app_cache: str
     app_local_data: str
 
 
@@ -132,11 +139,13 @@ def _observe(fp: Fingerprint) -> Fingerprint:
 
 @dataclass(frozen=True, slots=True)
 class Ports:
-    """The save's effects: the file-system port (every write) and the observation, which reads the disk with the
-    loader's own calls (`fingerprint`)."""
+    """The save's effects: the file-system port (every write), the observation, which reads the disk with the
+    loader's own calls (`fingerprint`), and the mirror's store, through which the gate reads the published
+    generation's `meta` (read only)."""
 
     fs: FileSystem
     observe: Observe = _observe
+    store: publish.Store = field(default_factory=SqliteStore)
 
 
 @dataclass(frozen=True, slots=True)
@@ -186,6 +195,10 @@ def _check(plan: SavePlan) -> dict[str, str | None]:
         pre[c.path] = c.pre
     if not plan.changes:
         raise BadPlanError("no_changes")
+    try:
+        split_absolute(plan.app_cache)
+    except ValueError:
+        raise BadPlanError("app_cache") from None
     return pre
 
 
@@ -327,8 +340,10 @@ def _paused(path: str, ports: Ports, plan: SavePlan) -> Refused:
     return Refused("unfinished_save", _unchanged(ports.fs, plan.changes), path)
 
 
+@tla_action("SaveCut", model="mirror-publish")
 def run(plan: SavePlan, ports: Ports, job: Job) -> SaveOutcome:
-    """§6.1 steps 1-11 in this engine (the module's docstring)."""
+    """§6.1 steps 1-11 in this engine (the module's docstring). For the mirror-publish model, `SaveCut` is this run
+    ended by an engine death past its commit point (its `.open` journal stays until recovery)."""
     pre = _check(plan)
     if _name_taken(ports.fs, plan):
         raise BadPlanError("name_taken")
@@ -373,9 +388,8 @@ def _gated(
 ) -> SaveOutcome:
     if ports.observe(plan.fingerprint) != plan.fingerprint:  # step 4
         return refused("ledger_changed")
-    # TODO(BL-0125): compare with the published generation read at this gate; until a mirror is published
-    # (BL-0113) this compares two values of the plan, both sent with it (verifier r1 Q1).
-    if plan.mirror != digest(plan.fingerprint):
+    published = publish.read_published(ports.fs, plan.app_cache, plan.workspace_key, ports.store)
+    if published is None or not publish.fresh_on_disk(published.meta, ports.observe):
         return refused("mirror_stale")
     open_journal = _open_journal(ports.fs, plan)
     if open_journal is not None:

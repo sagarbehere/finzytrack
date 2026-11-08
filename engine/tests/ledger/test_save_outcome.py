@@ -14,9 +14,10 @@ from dataclasses import replace
 import pytest
 
 from ledger_engine.ledger import save as sv
-from ledger_engine.ledger.core.ledger_set import Content, Fingerprint, digest
+from ledger_engine.ledger.core.ledger_set import Content, Fingerprint
 from ledger_engine.ledger.writer import Change, sha256
 from tests.fakes.memfs import Crash, MemFS
+from tests.mirror.fake_store import FakeStore, outside_publish
 
 pytestmark = [pytest.mark.inv("INV-22"), pytest.mark.inv("INV-01")]
 
@@ -138,6 +139,7 @@ def save_world(not_durable: str) -> MemFS:
     fs.outside_mkdirs("/L")
     fs.outside_write("/L/a.bean", A)
     fs.outside_write("/L/b.bean", B)
+    outside_publish(fs, FP, "k1")  # the gate's fresh mirror (S0087)
     parent, _, name = not_durable.rpartition("/")
     fs.outside_mkdirs(parent or "/")
     with fs.open_dir(parent or "/") as h:
@@ -155,14 +157,14 @@ def two_file_plan(**kw: object) -> sv.SavePlan:
         root="/L/a.bean",
         changes=(Change("/L/a.bean", sha256(A), b"a post\n"), Change("/L/b.bean", sha256(B), b"b post\n")),
         fingerprint=FP,
-        mirror=digest(FP),
+        app_cache="/cache",
         app_local_data=ALD,
     )
     return replace(plan, **kw)
 
 
 def save_ports(fs: MemFS) -> sv.Ports:
-    return sv.Ports(fs, observe=lambda fp: fp)
+    return sv.Ports(fs, observe=lambda fp: fp, store=FakeStore())
 
 
 @pytest.mark.parametrize("not_durable", CHAIN)

@@ -16,7 +16,7 @@ from beancount.loader import LoadError
 from ledger_engine.mirror.core import schema
 from ledger_engine.mirror.core.rows import error_rows
 
-from .support import STAMP, build_text, one, rows
+from .support import STAMP, TODAY, build_text, one, rows
 
 pytestmark = pytest.mark.inv("INV-06")
 
@@ -540,4 +540,6 @@ def test_meta(tmp_path: Path) -> None:
         "export_version": hashlib.sha256(schema.ddl().encode("utf-8")).hexdigest(),
         "built_at": STAMP.built_at,
         "build_complete": "1",  # every table has its rows (BL-0120, S0086)
+        "engine_build": STAMP.engine_build,  # publish.md §8 (S0087, BL-0113)
+        "as_of": TODAY.isoformat(),  # the build's today: account_balances and lots stop at it
     }

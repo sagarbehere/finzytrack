@@ -1645,3 +1645,62 @@ def test_stat_gives_the_entrys_own_modification_time_not_a_links_target(fs: Darw
     assert link is not None
     assert f.mtime_ns == 2_000_000_000
     assert link.mtime_ns == os.lstat(tmp_path / "l").st_mtime_ns != 2_000_000_000
+
+
+# -- S0087 (BL-0113): the mirror publish's operations, relative to one folder descriptor (publish.md §2) -------------
+
+
+def test_a_link_is_made_and_read_through_the_handle_and_names_one_entry(fs: DarwinFS, tmp_path: Path) -> None:
+    (tmp_path / "gen").write_bytes(b"G")
+    with fs.open_dir(str(tmp_path)) as d:
+        d.symlink("gen", "cur")
+        assert os.readlink(tmp_path / "cur") == "gen"  # a relative target: the folder can move with its links
+        assert d.readlink("cur") == "gen"
+        st = d.stat("cur")
+        assert st is not None
+        assert st.kind.value == "link"
+        assert d.readlink("missing") is None
+        with pytest.raises(OSError, match=r"."):
+            d.readlink("gen")  # a file is not a link
+        with pytest.raises(FileExistsError):
+            d.symlink("x", "cur")
+        with pytest.raises(ValueError, match="not_one_component"):
+            d.symlink("../outside", "y")  # a link of ours names an entry of this folder only
+    assert not (tmp_path / "y").exists()
+
+
+def test_touch_sets_the_modification_time_of_the_entry_itself_never_through_a_link(
+    fs: DarwinFS, tmp_path: Path
+) -> None:
+    f = tmp_path / "f"
+    f.write_bytes(b"F")
+    os.utime(f, ns=(10**9, 10**9))
+    (tmp_path / "l").symlink_to("f")
+    os.utime(tmp_path / "l", ns=(10**9, 10**9), follow_symlinks=False)
+    with fs.open_dir(str(tmp_path)) as d:
+        d.touch("l")
+        assert f.stat().st_mtime_ns == 10**9  # the link's target is untouched
+        assert (tmp_path / "l").lstat().st_mtime_ns > 10**9
+        d.touch("f")
+    assert f.stat().st_mtime_ns > 10**9
+
+
+def test_a_child_folder_is_opened_relative_to_the_handle_and_never_through_a_link(fs: DarwinFS, tmp_path: Path) -> None:
+    (tmp_path / "real").mkdir()
+    (tmp_path / "real" / "x").write_bytes(b"X")
+    (tmp_path / "lnk").symlink_to(tmp_path / "real")
+    (tmp_path / "file").write_bytes(b"F")
+    with fs.open_dir(str(tmp_path)) as d:
+        with d.open_child("real") as c:
+            assert c.names() == ["x"]
+        for name in ("lnk", "file", "missing"):
+            with pytest.raises(OSError, match=r"."):
+                d.open_child(name)
+
+
+def test_mkdir_takes_the_mode_asked_for(fs: DarwinFS, tmp_path: Path) -> None:
+    with fs.open_dir(str(tmp_path)) as d:
+        d.mkdir("m", 0o700)
+        d.mkdir("n")
+    assert stat.S_IMODE((tmp_path / "m").stat().st_mode) == 0o700
+    assert stat.S_IMODE((tmp_path / "n").stat().st_mode) & 0o700 == 0o700

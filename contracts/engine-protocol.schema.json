@@ -1553,9 +1553,19 @@
       "title": "ProgressEvent",
       "type": "object"
     },
+    "Publish": {
+      "enum": [
+        "published",
+        "fresh",
+        "inexact",
+        "replaced",
+        "incomplete"
+      ],
+      "type": "string"
+    },
     "RebuildParams": {
       "additionalProperties": false,
-      "description": "`rebuild` (S0070; engine-jobs §6.7, §7; ADR-0068 D1): Beancount's own load of the ledger rooted at `root`, the\nledger set named by `fingerprint` (`ledger_set.encode`'s text: the saved plan's, or the last try's answer)\nobserved before and after it.",
+      "description": "`rebuild` (S0070; engine-jobs §6.7, §7; ADR-0068 D1): Beancount's own load of the ledger rooted at `root`, the\nledger set named by `fingerprint` (`ledger_set.encode`'s text: the saved plan's, or the last try's answer)\nobserved before and after it, and its publish (S0087, BL-0113; `design/specs/mirror/publish.md` §4) into\n`<app_cache>/workspaces/<workspace_key>/mirror/`: `app_local_data` and `lineage` name the `.open` journals looked\nfor at the re-check, `floor` is the highest generation number the sidecar saw this session (§3), `today` the\nuser's civil date (`meta.as_of`, INV-07) and `built_at` the instant.",
       "properties": {
         "root": {
           "minLength": 1,
@@ -1567,11 +1577,60 @@
           "minLength": 1,
           "title": "Fingerprint",
           "type": "string"
+        },
+        "app_local_data": {
+          "minLength": 1,
+          "pattern": "^/",
+          "title": "App Local Data",
+          "type": "string"
+        },
+        "app_cache": {
+          "minLength": 1,
+          "pattern": "^/",
+          "title": "App Cache",
+          "type": "string"
+        },
+        "workspace_key": {
+          "maxLength": 255,
+          "minLength": 1,
+          "pattern": "^[^/\\x00]+$",
+          "title": "Workspace Key",
+          "type": "string"
+        },
+        "lineage": {
+          "maxLength": 128,
+          "minLength": 1,
+          "title": "Lineage",
+          "type": "string"
+        },
+        "floor": {
+          "maximum": 999999999999,
+          "minimum": 0,
+          "title": "Floor",
+          "type": "integer"
+        },
+        "today": {
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$",
+          "title": "Today",
+          "type": "string"
+        },
+        "built_at": {
+          "maxLength": 64,
+          "minLength": 1,
+          "title": "Built At",
+          "type": "string"
         }
       },
       "required": [
         "root",
-        "fingerprint"
+        "fingerprint",
+        "app_local_data",
+        "app_cache",
+        "workspace_key",
+        "lineage",
+        "floor",
+        "today",
+        "built_at"
       ],
       "title": "RebuildParams",
       "type": "object"
@@ -1588,7 +1647,12 @@
             "entries": 3,
             "errors": 0,
             "fingerprint": "{\"document_files\":[],\"documents\":[],\"files\":[],\"globs\":[],\"root\":\"/ledgers/L/main.bean\",\"v\":1}",
-            "outcome": "loaded"
+            "ledger_version": "2/sha256:0000000000000000000000000000000000000000000000000000000000000000",
+            "number": 2,
+            "outcome": "loaded",
+            "publish": "published",
+            "remove_failed": 0,
+            "removed": 1
           },
           "v": 2
         }
@@ -1648,8 +1712,15 @@
           "id": 1,
           "op": "rebuild",
           "params": {
+            "app_cache": "/cache",
+            "app_local_data": "/app-data/com.finzytrack.desktop",
+            "built_at": "2026-11-08T10:00:00+05:30",
             "fingerprint": "{\"document_files\":[],\"documents\":[],\"files\":[],\"globs\":[],\"root\":\"/ledgers/L/main.bean\",\"v\":1}",
-            "root": "/ledgers/L/main.bean"
+            "floor": 0,
+            "lineage": "lin1",
+            "root": "/ledgers/L/main.bean",
+            "today": "2026-11-08",
+            "workspace_key": "k1"
           },
           "v": 2
         }
@@ -1686,12 +1757,14 @@
     },
     "RebuildResult": {
       "additionalProperties": false,
-      "description": "`rebuild`'s answer: `loaded` (Beancount's result for the disk as observed; `entries` and `errors` its counts)\nor `moved` (the disk changed during the load, or the load used files outside the set: `fingerprint` is the set to\ntry with next). It writes nothing; it runs the ledger's plugins, so the engine is retired after it.",
+      "description": "`rebuild`'s answer: `loaded` (Beancount's result for the disk as observed; `entries` and `errors` its counts),\n`moved` (the disk changed during the load or before the swap, or the load used files outside the set:\n`fingerprint` is the set to try with next), `fresh` (the published generation already describes the disk: nothing\nloaded or built) or `paused` (an unfinished save's `.open` journal at the re-check: not published). `publish`:\nwhat became of a `loaded` result (`published`, or why not: `inexact`, `replaced`, `incomplete`), `fresh` for\n`fresh`, null otherwise. `number` and `ledger_version`: the current generation's when `publish` is `published` or\n`fresh`, else null. `removed`, `remove_failed`: the cleanup's counts. It runs the ledger's plugins, so the engine\nis retired after it.",
       "properties": {
         "outcome": {
           "enum": [
             "loaded",
-            "moved"
+            "moved",
+            "fresh",
+            "paused"
           ],
           "title": "Outcome",
           "type": "string"
@@ -1710,13 +1783,62 @@
           "minimum": 0,
           "title": "Errors",
           "type": "integer"
+        },
+        "publish": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Publish"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "number": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Number"
+        },
+        "ledger_version": {
+          "anyOf": [
+            {
+              "pattern": "^[1-9][0-9]*/sha256:[0-9a-f]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Ledger Version"
+        },
+        "removed": {
+          "minimum": 0,
+          "title": "Removed",
+          "type": "integer"
+        },
+        "remove_failed": {
+          "minimum": 0,
+          "title": "Remove Failed",
+          "type": "integer"
         }
       },
       "required": [
         "outcome",
         "fingerprint",
         "entries",
-        "errors"
+        "errors",
+        "publish",
+        "number",
+        "ledger_version",
+        "removed",
+        "remove_failed"
       ],
       "title": "RebuildResult",
       "type": "object"
@@ -2895,7 +3017,7 @@
     },
     "SaveParams": {
       "additionalProperties": false,
-      "description": "A confirmed plan (§2's `save`): who saves (`session`, `job`, the workspace's registry key and lineage id), the\nledger's root, the changes, the plan's fingerprint (`ledger_set.encode`'s text), the published mirror's\nfingerprint digest (null: none) and the app's machine-local folder.",
+      "description": "A confirmed plan (§2's `save`): who saves (`session`, `job`, the workspace's registry key and lineage id), the\nledger's root, the changes, the plan's fingerprint (`ledger_set.encode`'s text), the app's cache folder (the gate\nreads the published mirror there, `design/specs/mirror/publish.md` §7; S0087) and the app's machine-local folder.",
       "properties": {
         "session": {
           "pattern": "^[a-z0-9_]{1,64}$",
@@ -2939,16 +3061,11 @@
           "title": "Fingerprint",
           "type": "string"
         },
-        "mirror": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "title": "Mirror"
+        "app_cache": {
+          "minLength": 1,
+          "pattern": "^/",
+          "title": "App Cache",
+          "type": "string"
         },
         "app_local_data": {
           "minLength": 1,
@@ -2965,7 +3082,7 @@
         "root",
         "changes",
         "fingerprint",
-        "mirror",
+        "app_cache",
         "app_local_data"
       ],
       "title": "SaveParams",
@@ -3049,6 +3166,7 @@
           "id": 1,
           "op": "save",
           "params": {
+            "app_cache": "/cache",
             "app_local_data": "/app-data/com.finzytrack.desktop",
             "changes": [
               {
@@ -3060,7 +3178,6 @@
             "fingerprint": "{\"document_files\":[],\"documents\":[],\"files\":[],\"globs\":[],\"root\":\"/ledgers/L/main.bean\",\"v\":1}",
             "job": "j7",
             "lineage": "lin1",
-            "mirror": null,
             "root": "/ledgers/L/main.bean",
             "session": "s1",
             "workspace_key": "k1"

@@ -13,7 +13,12 @@ from ledger_engine.ledger.policy import DESKTOP
 from ledger_engine.mirror.build import BuildFailed, Built, Stamp, build
 
 TODAY = date(2026, 10, 28)
-STAMP = Stamp(ledger_version="7:5f3a", fingerprint='{"root": "main.beancount"}', built_at="2026-10-28T09:30:00+05:30")
+STAMP = Stamp(
+    ledger_version="7:5f3a",
+    fingerprint='{"root": "main.beancount"}',
+    built_at="2026-10-28T09:30:00+05:30",
+    engine_build="test build",
+)
 
 
 def write_ledger(folder: Path, text: str, files: dict[str, str] | None = None) -> Path:

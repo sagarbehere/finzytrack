@@ -182,9 +182,17 @@ REBUILD_LOADED = Event(
     (
         Field("job", Kind.ID),  # the rebuild job's id in the queue
         Field("workspace_key", Kind.ID),  # the workspace's registry key (`local/<key>/`)
-        Field("entries", Kind.COUNT),  # Beancount's entries
+        Field("entries", Kind.COUNT),  # Beancount's entries (0 when `fresh`: nothing was loaded)
         Field("errors", Kind.COUNT),  # Beancount's errors
         Field("tries", Kind.COUNT),  # the loads it took (§7: at most 3)
+        Field(
+            "published",
+            Kind.ENUM,  # S0087 (BL-0113): the mirror's publish, or why not (publish.md §4)
+            frozenset({"published", "fresh", "inexact", "replaced", "incomplete"}),
+        ),
+        Field("number", Kind.COUNT),  # the current generation's number (publish.md §3); none when not published
+        Field("removed", Kind.COUNT),  # entries the cleanup removed (publish.md §6)
+        Field("remove_failed", Kind.COUNT),  # removals that failed: skipped, tried again by the next cleanup
     ),
 )
 REBUILD_NOT_LOADED = Event(
@@ -197,7 +205,7 @@ REBUILD_NOT_LOADED = Event(
         Field(
             "why",
             Kind.ENUM,  # `changing`: the disk moved in every try; the rest: why no try reached a result
-            frozenset({"changing", "engine_failed", "refused", "violation"}),
+            frozenset({"changing", "engine_failed", "refused", "violation", "paused"}),  # paused: an `.open` journal
         ),
     ),
 )

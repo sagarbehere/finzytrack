@@ -31,9 +31,10 @@ from ledger_engine.ledger import save as sv
 from ledger_engine.ledger.core import history as core
 from ledger_engine.ledger.core import journal
 from ledger_engine.ledger.core.journal import FileEntry, Record
-from ledger_engine.ledger.core.ledger_set import Content, Fingerprint, digest
+from ledger_engine.ledger.core.ledger_set import Content, Fingerprint
 from ledger_engine.ledger.writer import Change, sha256
 from tests.fakes.memfs import Crash, MemFS
+from tests.mirror.fake_store import FakeStore, outside_publish
 
 pytestmark = [pytest.mark.inv("INV-32"), pytest.mark.inv("INV-27")]
 
@@ -611,13 +612,13 @@ def plan_for(data: bytes, job: str) -> sv.SavePlan:
         root="/L/a.bean",
         changes=(Change("/L/a.bean", sha256(data), data + b"; x\n"),),
         fingerprint=fp,
-        mirror=digest(fp),
+        app_cache="/cache",
         app_local_data=ALD,
     )
 
 
 def ports(fs: MemFS) -> sv.Ports:
-    return sv.Ports(fs, observe=lambda fp: fp)
+    return sv.Ports(fs, observe=lambda fp: fp, store=FakeStore())
 
 
 def save_world() -> MemFS:
@@ -626,6 +627,7 @@ def save_world() -> MemFS:
     fs.outside_mkdirs(BD)
     fs.outside_mkdirs("/L")
     fs.outside_write("/L/a.bean", A0)
+    outside_publish(fs, plan_for(A0, "j00").fingerprint, "k1")  # the gate's fresh mirror (S0087)
     return fs
 
 
@@ -671,7 +673,9 @@ def test_a_save_that_does_not_land_trims_nothing() -> None:
         seed(fs, tag(i), "closed")
     before = fs.snapshot()
     moved = Fingerprint("/L/a.bean", (("/L/a.bean", Content(sha256(b"moved"))),), (), (), ())
-    out = sv.run(plan_for(A0, "j01"), sv.Ports(fs, observe=lambda fp: moved), Job())  # the disk moved: refused
+    out = sv.run(
+        plan_for(A0, "j01"), sv.Ports(fs, observe=lambda fp: moved, store=FakeStore()), Job()
+    )  # the disk moved: refused
     assert not isinstance(out, sv.Saved)
     assert {p: v for p, v in fs.snapshot().items() if p.startswith(KD)} == {
         p: v for p, v in before.items() if p.startswith(KD)

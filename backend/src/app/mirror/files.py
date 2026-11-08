@@ -12,17 +12,25 @@ well-formed `m_meta` is an expected outcome (the OS may purge the cache, ADR-001
 or reads (`out_of_memory`): its hard heap limit is process-wide (`query.QueryLimits`), so the queries running at the
 same moment can use it up; that says nothing about the file, so the caller tries again later and never rebuilds.
 
-TODO(BL-0113): the path is a generation file the caller names; once the publish exists, a request pins the current
-generation and reads that path for its whole life.
+**The pin** (`design/specs/mirror/publish.md` §7; S0087, BL-0113): a request resolves the workspace's `current.db`
+once (`pin`: one `readlink`; a link at `mirror/` is not followed) and reads that generation's path
+for its whole life (`Reader`, `QueryRunner` take it), so all its reads come from one generation, the one built under
+that name: a name is never used twice (§3). A pinned file that is gone (the cleanup removed it, or the OS purged the
+cache) is `cannot_open`: the route answers "try again" and the next request pins again. No `current.db`, or one that
+does not name a generation of the folder, is `not_published`: the caller decides on a build.
 """
 
 from __future__ import annotations
 
+import os
 import re
 import sqlite3
+import stat
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Final, Literal, LiteralString
+
+from app.mirror.model_map import tla_action
 
 __all__ = [
     "OUT_OF_MEMORY",
@@ -32,6 +40,7 @@ __all__ = [
     "OpenMirror",
     "absolute",
     "open_mirror",
+    "pin",
     "unavailable",
 ]
 
@@ -39,6 +48,7 @@ type UnavailableReason = Literal[
     "cannot_open",  # no file there, or the process may not read it
     "not_a_mirror",  # a file, but not an SQLite database in rollback mode, a stopped build, or no well-formed m_meta
     "out_of_memory",  # SQLite's process-wide heap was used up at that moment (by queries running at once): try again
+    "not_published",  # no `current.db` naming a generation of the mirror folder (publish.md §7): a build is due
 ]
 
 HEADER: Final = b"SQLite format 3\x00"
@@ -47,9 +57,20 @@ ROLLBACK: Final = 1  # header bytes 18 and 19, the file format's write and read 
 
 OUT_OF_MEMORY: Final = "SQLite's heap limit was reached (shared by every read of the process)"
 TABLE_SQL: Final[LiteralString] = "SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = ?"
-MAX_META_ROWS: Final = 64  # the build writes six keys; a later build may add some, never this many
+MAX_META_ROWS: Final = 64  # the build writes eight keys; a later build may add some, never this many
 META_SQL: Final[LiteralString] = "SELECT key, value FROM m_meta LIMIT 65"  # MAX_META_ROWS + 1: one more says "too many"
-META_KEYS: Final = ("surface_version", "ledger_version", "fingerprint", "export_version", "built_at", "build_complete")
+META_KEYS: Final = (
+    "surface_version",
+    "ledger_version",
+    "fingerprint",
+    "export_version",
+    "built_at",
+    "build_complete",
+    "engine_build",
+    "as_of",
+)  # publish.md §8; a file an older build left without the last two is not a mirror of this app: it is rebuilt
+CURRENT: Final = "current.db"
+GENERATION: Final = re.compile(r"gen-[1-9][0-9]{0,17}-[0-9a-f]{16}\.db")  # publish.md §3
 SURFACE_VERSION: Final = re.compile(r"[0-9]{1,9}")  # ASCII digits only; `int()` would also take other scripts' digits
 
 
@@ -72,6 +93,8 @@ class MirrorInfo:
     export_version: str
     built_at: str
     build_complete: bool
+    engine_build: str
+    as_of: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -138,6 +161,27 @@ def _check_header(path: Path) -> MirrorUnavailable | None:
     return None
 
 
+@tla_action("R_Resolve", model="mirror-publish")
+def pin(mirror_dir: str) -> str | MirrorUnavailable:
+    """The path of the generation `current.db` names now, for one request to read all its life (the module's
+    docstring). `mirror_dir` is the workspace's mirror folder (absolute; a relative one is a caller error,
+    `ValueError`). A link at `mirror/` is not followed: no published mirror. `current.db` is read once.
+
+    Limit: the sidecar only reads, so `mirror/` is looked at (`lstat`) and then `current.db` read by path; a link put
+    at `mirror/` in between leads this one read elsewhere, where the open's header and `meta` checks still apply."""
+    folder = absolute(mirror_dir)
+    try:
+        if stat.S_ISLNK(os.lstat(folder).st_mode):
+            return MirrorUnavailable("not_published", "a link stands at the mirror folder")
+        target = os.readlink(folder / CURRENT)
+    except OSError as e:
+        return MirrorUnavailable("not_published", e.strerror or type(e).__name__)
+    if not GENERATION.fullmatch(target):
+        return MirrorUnavailable("not_published", "current.db names no generation of the folder")
+    return str(folder / target)
+
+
+@tla_action("R_Read1", "R_Read2", model="mirror-publish")
 def open_mirror(path: str) -> OpenMirror | MirrorUnavailable:
     """A read-only connection to the mirror file at `path` (absolute), with its `meta` read and checked.
 
@@ -212,4 +256,6 @@ def read_info(con: sqlite3.Connection) -> MirrorInfo:
         export_version=found["export_version"],
         built_at=found["built_at"],
         build_complete=found["build_complete"] == "1",
+        engine_build=found["engine_build"],
+        as_of=found["as_of"],
     )

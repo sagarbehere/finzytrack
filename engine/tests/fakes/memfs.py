@@ -302,9 +302,9 @@ class MemFS:
                 hops += 1
                 if hops + depth > 40:
                     raise OSError(errno.ELOOP, "too many links")
-                if self._walk(target.target, depth + hops, search=search)[2]:
+                if self._walk(self._absolute(target.target, names), depth + hops, search=search)[2]:
                     break  # a dangling link is absent, as `stat` (macOS) sees it: its own name is missing
-                todo = list(split_absolute(target.target)) + todo[1:]
+                todo = list(split_absolute(self._absolute(target.target, names))) + todo[1:]
                 names, cis, ino = [], [], ROOT
                 continue
             names.append(stored)
@@ -314,6 +314,11 @@ class MemFS:
         last = self.nodes[ino]
         rest_ci = last.ci if isinstance(last, _Dir) else self._dir(parent).ci
         return names, ino, todo, cis + [rest_ci] * len(todo)
+
+    @staticmethod
+    def _absolute(target: str, folder: list[str]) -> str:
+        """A link's target as an absolute path: a relative one (one name, a link of ours) is in the link's folder."""
+        return target if target.startswith("/") else "/" + "/".join([*folder, target])
 
     def nlink(self, ino: int) -> int:
         return sum(1 for d in self.nodes.values() if isinstance(d, _Dir) for _, i in d.entries.values() if i == ino)
@@ -983,7 +988,7 @@ class MemDir:
 
         self._fs._effect(self._label("remove", name), do)
 
-    def mkdir(self, name: str) -> None:
+    def mkdir(self, name: str, mode: int = 0o755) -> None:
         d = self._d
         key = _key(check_name(name), d.ci)
 
@@ -996,6 +1001,7 @@ class MemDir:
                 _Dir(
                     ci=d.ci,
                     parent=self._ino,
+                    mode=mode & 0o7777,
                     no_swap=d.no_swap,
                     no_excl=d.no_excl,
                     acl=_inherited(d, "directory_inherit"),
@@ -1029,6 +1035,79 @@ class MemDir:
             self._fs.tick(self._ino)
 
         self._fs._effect(self._label("rmdir", name), do)
+
+    def symlink(self, target: str, name: str) -> None:
+        """A link of ours (S0087): one entry operation, durable after `sync`; its target is one name of this folder."""
+        d = self._d
+        key = _key(check_name(name), d.ci)
+        check_name(target)
+
+        def do() -> None:
+            self._writable()
+            if key in d.entries:
+                raise FileExistsError(errno.EEXIST, "exists")
+            self._may_add()
+            ino = self._fs._new(_Link(target=target))
+            stored = self._fs.stored(name)
+            d.entries[key] = (stored, ino)
+            d.pending.append(("link", key, stored, str(ino)))
+            self._fs.tick(self._ino)
+
+        self._fs._effect(self._label("symlink", name), do)
+
+    def readlink(self, name: str) -> str | None:
+        hit = self._entry(name)
+        if hit is None:
+            return None
+        node = self._fs.nodes[hit[1]]
+        if not isinstance(node, _Link):
+            raise OSError(errno.EINVAL, "not a link")
+        return node.target
+
+    def touch(self, name: str) -> None:
+        """The entry's own modification time set to now (one effect, `touch`); a power loss keeps the times as they
+        were set (the module's docstring)."""
+        key = _key(check_name(name), self._d.ci)
+
+        def do() -> None:
+            hit = self._d.entries.get(key)
+            if hit is None:
+                raise FileNotFoundError(errno.ENOENT, "no entry")
+            self._fs.tick(hit[1])
+
+        self._fs._effect(self._label("touch", name), do)
+
+    def open_child(self, name: str) -> MemDir:
+        hit = self._entry(name)
+        if hit is None:
+            raise FileNotFoundError(errno.ENOENT, "no entry")
+        node = self._fs.nodes[hit[1]]
+        if isinstance(node, _Link):
+            raise OSError(errno.ELOOP, "a link")  # O_NOFOLLOW
+        if not isinstance(node, _Dir):
+            raise NotADirectoryError(errno.ENOTDIR, "not a directory")
+        if _denies(node, "list"):
+            raise PermissionError(errno.EACCES, "list denied")
+        return MemDir(self._fs, hit[1])
+
+    def write_in(self, name: str, data: bytes) -> None:
+        """Test only (the fake store, S0087): write `data` over the regular file `name`'s bytes without a sync, as
+        SQLite writes into the file it opened (one effect, `write`; a cut writes a prefix)."""
+        hit = self._entry(name)
+        if hit is None:
+            raise FileNotFoundError(errno.ENOENT, "no entry")
+        f = self._fs.nodes[hit[1]]
+        if not isinstance(f, _File):
+            raise OSError(errno.EINVAL, "not a regular file")
+
+        def do() -> None:
+            f.data = data
+            self._fs.tick(hit[1])
+
+        def cut(n: int) -> None:
+            f.data = data[:n]
+
+        self._fs._effect(self._label("write", name), do, cut)
 
     def names(self) -> list[str]:
         d = self._d

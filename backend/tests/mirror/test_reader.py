@@ -29,6 +29,8 @@ def test_info_decodes_the_builds_meta(tmp_path: Path) -> None:
         export_version="e1",
         built_at="2026-10-28T09:00:00+00:00",
         build_complete=False,
+        engine_build="finzytrack-engine 0.4.0.dev0; beancount 3.2.0",
+        as_of="2026-10-28",
     )
     complete = [(k, "1" if k == "build_complete" else v) for k, v in META]
     assert isinstance(i := info_of(make_mirror(tmp_path / "c.db", meta=complete)), MirrorInfo)

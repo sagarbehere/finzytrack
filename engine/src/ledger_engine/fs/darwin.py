@@ -200,9 +200,9 @@ def _getpath(fd: int) -> str:
 class DarwinDir:
     """A handle on one directory (`ledger_engine.fs.port.DirHandle`)."""
 
-    def __init__(self, fs: DarwinFS, path: str) -> None:
+    def __init__(self, fs: DarwinFS, path: str, *, fd: int | None = None) -> None:
         self._fs = fs
-        self._fd: int | None = os.open(path, os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC)
+        self._fd: int | None = fd if fd is not None else os.open(path, os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC)
 
     def __enter__(self) -> Self:
         return self
@@ -389,8 +389,24 @@ class DarwinDir:
     def remove(self, name: str) -> None:
         os.unlink(check_name(name), dir_fd=self.fd)
 
-    def mkdir(self, name: str) -> None:
-        os.mkdir(check_name(name), 0o755, dir_fd=self.fd)
+    def mkdir(self, name: str, mode: int = 0o755) -> None:
+        os.mkdir(check_name(name), mode, dir_fd=self.fd)
+
+    def symlink(self, target: str, name: str) -> None:
+        os.symlink(check_name(target), check_name(name), dir_fd=self.fd)
+
+    def readlink(self, name: str) -> str | None:
+        try:
+            return os.readlink(check_name(name), dir_fd=self.fd)
+        except FileNotFoundError:
+            return None
+
+    def touch(self, name: str) -> None:
+        os.utime(check_name(name), dir_fd=self.fd, follow_symlinks=False)
+
+    def open_child(self, name: str) -> DarwinDir:
+        fd = os.open(check_name(name), os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC, dir_fd=self.fd)
+        return DarwinDir(self._fs, "", fd=fd)
 
     def rmdir(self, name: str) -> None:
         os.rmdir(check_name(name), dir_fd=self.fd)

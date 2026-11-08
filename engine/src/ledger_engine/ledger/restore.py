@@ -616,6 +616,7 @@ def restore(
         handles.close()
 
 
+@tla_action("Recover", model="mirror-publish")
 def recover_journal(fs: FileSystem, journal_dir: str, name: str) -> RestoreOutcome:
     """Recovery's try of one `.open` journal (§8.1 steps 2-4): the record `<name>.open` in `journal_dir` read and
     decoded strictly (a torn, foreign or newer record, or one of another name, is `Stopped(unreadable)`), then

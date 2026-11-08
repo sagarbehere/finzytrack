@@ -7,7 +7,9 @@ them; the durable order's crash sweeps are `test_writer.py`'s and `test_restore.
   `WRITES_PAUSED {unfinished_save}` ... No other record gates a save" (ADR-0067); step 4 "this workspace has no `.open`
   journal (matched as §6.5 says)": by registry key or lineage id, in any `local/*/journal/`;
 - steps 2 and 3 are removed (ADR-0068 D3, D4; S0071): the save takes no per-file lock and tries no legacy lock;
-- step 4 "the disk's fingerprint equals the plan's; the published mirror's equals the plan's";
+- step 4 "the disk's fingerprint equals the plan's; the published mirror is fresh against the disk (its own ledger set
+  observed now gives its digest, `design/specs/mirror/publish.md` §7)"; publish.md §7's four gate tests (S0087,
+  BL-0113): the generation is published by the real publish into a scratch cache folder;
 - steps 5 and 6 are removed (ADR-0068 D1, S0070): "The save does no Beancount load"; the plan's fingerprint is what
   the preview's load read (BL-0106), so the save runs no plugin and refuses no candidate a load would refuse; it still
   refuses to write an encrypted file (ADR-0059);
@@ -18,6 +20,7 @@ from __future__ import annotations
 
 import gc
 import os
+import sqlite3
 import sys
 from collections.abc import Callable
 from dataclasses import dataclass, field, fields, replace
@@ -31,10 +34,12 @@ from ledger_engine.ledger import overlay, writer
 from ledger_engine.ledger import save as sv
 from ledger_engine.ledger.core import journal
 from ledger_engine.ledger.core.journal import FileEntry, Record, State
-from ledger_engine.ledger.core.ledger_set import Fingerprint, as_before, digest
+from ledger_engine.ledger.core.ledger_set import Fingerprint, LedgerSet, as_before
 from ledger_engine.ledger.fingerprint import observe as observe_set
 from ledger_engine.ledger.policy import DesktopPolicy
 from ledger_engine.ledger.writer import BadPlanError, Change, NotSaved, Reason, sha256
+from ledger_engine.mirror import publish as pb
+from tests.mirror.publish_support import publish_job
 
 pytestmark = [
     pytest.mark.inv("INV-01"),
@@ -85,6 +90,7 @@ class Ledger:
     main: Path
     inc: Path
     ald: Path
+    cache: Path
 
     def tree(self) -> dict[str, bytes | None]:
         """Every entry under the scratch folder."""
@@ -109,7 +115,24 @@ def led(tmp_path: Path) -> Ledger:
     (root / "inc.bean").write_bytes(INC)
     ald = tmp_path / "app"
     (ald / "locks").mkdir(parents=True)
-    return Ledger(tmp_path, root, root / "main.bean", root / "inc.bean", ald)
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    led = Ledger(tmp_path, root, root / "main.bean", root / "inc.bean", ald, cache)
+    publish_disk(led)
+    return led
+
+
+def publish_disk(led: Ledger) -> pb.Published:
+    """The disk as it is now, published as the rebuild publishes it (§6.7; publish.md §4)."""
+    out = publish_job(for_this_os(), led.cache, led.main, ledger=ledger_set_of(led.main))
+    assert isinstance(out, pb.Published), out
+    return out
+
+
+def ledger_set_of(main: Path) -> LedgerSet:
+    loaded = overlay.load(str(main), {}, POLICY)
+    assert isinstance(loaded, overlay.Loaded)
+    return loaded.fingerprint.ledger_set
 
 
 POLICY = DesktopPolicy()
@@ -136,7 +159,7 @@ def plan_for(led: Ledger, changes: tuple[Change, ...] | None = None, /, **kw: An
         root=str(led.main),
         changes=changes,
         fingerprint=fp,
-        mirror=digest(fp),
+        app_cache=str(led.cache),
         app_local_data=str(led.ald),
     )
     return replace(plan, **kw)
@@ -178,7 +201,7 @@ def test_a_save_lands_after_its_gate_with_no_load_and_its_record_carries_no_pred
     job = FakeJob()
     out = sv.run(plan, ports_for(led), job)
     assert isinstance(out, sv.Saved), out
-    assert not out.published  # TODO(BL-0113)
+    assert not out.published  # the save never publishes: the rebuild after it does (§6.7; S0087)
     assert job.events == ["gate", "saving", "committed"]  # no "checking_change": the save does no load (S0070)
     assert (led.main.read_bytes(), led.inc.read_bytes()) == (MAIN + TXN, INC)
     assert sorted(os.listdir(led.journal())) == ["s1-j7.closed"]
@@ -194,7 +217,7 @@ def test_a_save_takes_no_lock_of_its_own(led: Ledger) -> None:
     """ADR-0068 D3, D4: no per-file lock file is made (the engine lock is the guard) and the plan names no legacy
     lock to try (only Copy tries one, INV-26)."""
     assert "legacy_locks" not in {f.name for f in fields(sv.SavePlan)}
-    assert {f.name for f in fields(sv.Ports)} == {"fs", "observe"}
+    assert {f.name for f in fields(sv.Ports)} == {"fs", "observe", "store"}  # the store only reads (S0087)
     out = sv.run(plan_for(led), ports_for(led), FakeJob())
     assert isinstance(out, sv.Saved), out
     assert os.listdir(led.ald / "locks") == []
@@ -216,6 +239,7 @@ def test_the_save_runs_no_plugin_of_the_ledger(led: Ledger) -> None:
     main = b'option "insert_pythonpath" "TRUE"\nplugin "ft_s0070_mark"\n' + MAIN
     led.main.write_bytes(main)
     (led.root / "ft_s0070_mark.py").write_text(PLUGIN)
+    publish_disk(led)  # the rebuild's load runs the ledger's plugins; the save's gate only reads its result
     plan = plan_for(led, (Change(str(led.main), sha256(main), main + TXN),))
     mark = led.root / "plugin-ran"
     assert mark.exists()  # the preview's load ran it
@@ -298,7 +322,7 @@ def test_the_garbage_collector_is_paused_for_the_job_and_back_after_it(led: Ledg
     states: list[bool] = []
     out = sv.run(plan_for(led), ports_for(led, observe=hooked(before=lambda: states.append(gc.isenabled()))), FakeJob())
     assert isinstance(out, sv.Saved)
-    assert states == [False]
+    assert states == [False, False]  # the plan's set, then the published generation's own set (S0087)
     assert gc.isenabled()
 
 
@@ -324,13 +348,98 @@ def test_an_include_edited_right_up_to_the_gates_observation_refuses(led: Ledger
     assert (led.inc.read_bytes(), led.main.read_bytes()) == (EDIT, MAIN)
 
 
-@pytest.mark.parametrize("mirror", [None, "sha256:" + "0" * 64])
-def test_a_mirror_that_is_not_the_plans_refuses(led: Ledger, mirror: str | None) -> None:
-    plan = plan_for(led, mirror=mirror)
+# -- the gate's mirror check (publish.md §7; S0087, BL-0113) -------------------------------------------------------
+
+
+def test_a_save_that_creates_and_includes_a_file_passes_on_a_fresh_generation(led: Ledger) -> None:
+    """The plan's set names `prices.bean`, which the published generation never read: only the generation's own set
+    is compared with the disk (S0085 review, design F1)."""
+    new = led.root / "prices.bean"
+    changes = (
+        Change(str(led.main), sha256(MAIN), MAIN + b'include "prices.bean"\n'),
+        Change(str(new), None, b"2026-01-02 price USD 1 USD\n"),
+    )
+    plan = plan_for(led, changes)
+    assert str(new) in dict(plan.fingerprint.files)
+    out = sv.run(plan, ports_for(led), FakeJob())
+    assert isinstance(out, sv.Saved), out
+
+
+def test_a_save_that_adds_an_include_of_an_existing_file_passes(led: Ledger) -> None:
+    other = led.root / "other.bean"
+    other.write_bytes(b"2026-01-01 open Assets:Bank\n")
+    publish_disk(led)  # the disk with `other.bean` beside it, not included: the generation's set does not name it
+    changes = (Change(str(led.main), sha256(MAIN), MAIN + b'include "other.bean"\n'),)
+    plan = plan_for(led, changes)
+    assert str(other) in dict(plan.fingerprint.files)
+    out = sv.run(plan, ports_for(led), FakeJob())
+    assert isinstance(out, sv.Saved), out
+
+
+def test_a_plan_made_after_an_outside_edit_on_a_generation_from_before_it_is_refused(led: Ledger) -> None:
+    led.inc.write_bytes(EDIT)  # an outside edit; the published generation is from before it
+    plan = plan_for(led)  # the preview read the edited disk: the disk equals the plan
+    before = led.tree()
+    job = FakeJob()
+    out = sv.run(plan, ports_for(led), job)
+    assert out == sv.Refused("mirror_stale", unchanged=True)
+    assert "gate" not in job.events
+    assert_nothing_written(led, before, out)
+
+
+def test_a_fresh_generation_after_the_outside_edit_lets_the_same_plan_pass(led: Ledger) -> None:
+    led.inc.write_bytes(EDIT)
+    plan = plan_for(led)
+    publish_disk(led)
+    assert isinstance(sv.run(plan, ports_for(led), FakeJob()), sv.Saved)
+
+
+@pytest.mark.parametrize(
+    "damage", ["no_folder", "no_link", "garbage", "journal", "link_at_mirror", "missing_file", "incomplete"]
+)
+def test_no_published_generation_or_an_unreadable_one_is_refused(led: Ledger, damage: str) -> None:
+    m = led.cache / "workspaces" / KEY / "mirror"
+    name = os.readlink(m / "current.db")
+    if damage == "no_folder":
+        for p in m.iterdir():
+            p.unlink()
+        m.rmdir()
+    elif damage == "no_link":
+        (m / "current.db").unlink()
+    elif damage == "garbage":
+        (m / name).write_bytes(b"SQLite format 3\x00" + bytes(200))
+    elif damage == "journal":
+        (m / f"{name}-journal").write_bytes(b"hot")
+    elif damage == "missing_file":
+        (m / name).unlink()
+    elif damage == "incomplete":
+        con = sqlite3.connect(m / name)
+        con.execute("UPDATE m_meta SET value = '0' WHERE key = 'build_complete'")
+        con.commit()
+        con.close()
+    else:
+        m.rename(m.parent / "away")
+        m.symlink_to(m.parent / "away")  # a fresh generation behind a link at `mirror/`: never followed
+    plan = plan_for(led)
     before = led.tree()
     out = sv.run(plan, ports_for(led), FakeJob())
     assert out == sv.Refused("mirror_stale", unchanged=True)
     assert_nothing_written(led, before, out)
+
+
+def test_the_gate_reads_the_published_generation_once_after_the_disk_check(led: Ledger) -> None:
+    """One job at a time (ADR-0064): no publish runs between the gate's read and the commit point; the read comes after
+    the disk's check, so an edit just before the check is the disk's refusal, not the mirror's."""
+    plan = plan_for(led)
+    calls: list[str] = []
+
+    def observe(fp: Fingerprint) -> Fingerprint:
+        calls.append(fp.root)
+        return observe_set(fp.ledger_set)
+
+    out = sv.run(plan, ports_for(led, observe=observe), FakeJob())
+    assert isinstance(out, sv.Saved)
+    assert len(calls) == 2  # the plan's set, then the generation's own set
 
 
 def _record(led: Ledger, key: str, name: str, state: State, *, lineage: str = LINEAGE, owner: str = KEY) -> Path:

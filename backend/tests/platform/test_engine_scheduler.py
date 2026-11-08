@@ -25,17 +25,23 @@ import sys
 import threading
 import time
 from collections.abc import Callable, Iterator, Mapping
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, override
 
 import pytest
 
+from app.mirror.files import MirrorInfo, pin
+from app.mirror.reader import Reader
 from app.platform.adapters.engine_client import EngineClient, EngineCommand
 from app.platform.adapters.engine_lock import engine_lock_path, wait_engine_lock
+from app.platform.clock import FrozenClock
 from app.platform.engine import EndReason, EngineEnd, EngineEvent, EngineFailure, EngineRefusal, GateReached
 from app.platform.engine_jobs.queue import JobKind, JobSpec, QueuePolicy
+from app.platform.engine_jobs.rebuild import Loaded, RebuildTarget, rebuild_spec, rebuild_work
 from app.platform.engine_jobs.save import (
     ChangeText,
+    NotDone,
     Saved,
     SaveRequest,
     new_session_id,
@@ -404,11 +410,11 @@ def test_a_second_background_save_of_the_products_plain_work_is_refused(rig: Rig
         root=str(tmp_path / "main.bean"),
         changes=(ChangeText(str(tmp_path / "main.bean"), None, "x"),),
         fingerprint="fp",
-        mirror=None,
+        app_cache=tmp_path / "cache",
         app_local_data=tmp_path,
     )
-    save = submit_save(rig.jobs, W1, request, background=True)
-    again = submit_save(rig.jobs, W1, request, background=True)
+    save = submit_save(rig.jobs, W1, request, clock=CLOCK, background=True)
+    again = submit_save(rig.jobs, W1, request, clock=CLOCK, background=True)
     assert isinstance(save, JobTicket)
     assert code_of(again) == ErrorCode.ENGINE_QUEUE_FULL
     plain = rig.jobs.submit_background_save(W1, calls("ok"))
@@ -1429,11 +1435,25 @@ def test_with_the_real_engine_try_again_pressed_while_jobs_run_never_wedges_the_
 _FINGERPRINT = """
 import json, sys
 from ledger_engine.ledger import overlay
-from ledger_engine.ledger.core.ledger_set import digest, encode
+from ledger_engine.ledger.core.ledger_set import encode
 from ledger_engine.ledger.policy import DesktopPolicy
 r = overlay.load(sys.argv[1], {}, DesktopPolicy())
-print(json.dumps({"fp": encode(r.fingerprint).decode(), "mirror": digest(r.fingerprint)}))
+print(json.dumps({"fp": encode(r.fingerprint).decode()}))
 """
+
+
+def _plan_fingerprint(main: Path) -> str:
+    return json.loads(
+        subprocess.run(  # noqa: S603 (the engine's own interpreter, a fixed script, a test path)
+            [str(ENGINE_VENV / "bin" / "python"), "-c", _FINGERPRINT, str(main)],
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout
+    )["fp"]
+
+
+CLOCK = FrozenClock(datetime(2026, 11, 8, 12, 0, tzinfo=UTC))
 
 
 @pytest.mark.skipif(sys.platform != "darwin", reason="the save's swap and its checks are built for macOS first")
@@ -1441,22 +1461,17 @@ def test_with_the_real_engine_a_save_job_lands_and_retires_its_engine(tmp_path: 
     """@regression-guard (S0069; it passes on the base: the path works, it had no test). Step-back area review F6: the
     sidecar's save job through the real client and engine, end to end, on a scratch
     ledger: `Saved`, the disk at the post bytes, one `.closed` record, and the engine that loaded the ledger (user
-    code, §5.1) is not reused by the next job. The fingerprint is the one a preview would plan with (BL-0106)."""
+    code, §5.1) is not reused by the next job. The fingerprint is the one a preview would plan with (BL-0106).
+    Since S0087 the gate reads the published generation: a rebuild job publishes the disk first (publish.md §7)."""
     ledger = tmp_path / "ledger"
     ledger.mkdir()
     main = ledger / "main.bean"
     pre = b'option "operating_currency" "USD"\n2026-01-01 open Assets:Cash\n2026-01-01 open Expenses:Food\n'
     main.write_bytes(pre)
     post = pre + b'2026-01-02 * "Lunch"\n  Expenses:Food  5 USD\n  Assets:Cash\n'
-    fp = json.loads(
-        subprocess.run(  # noqa: S603 (the engine's own interpreter, a fixed script, a test path)
-            [str(ENGINE_VENV / "bin" / "python"), "-c", _FINGERPRINT, str(main)],
-            check=True,
-            capture_output=True,
-            text=True,
-        ).stdout
-    )
+    fp = _plan_fingerprint(main)
     app = tmp_path  # the engine lock's folder: the engine refuses another `app_local_data`
+    cache = tmp_path / "cache"
     ends: list[EngineEnd] = []
     jobs, client = real_rig(tmp_path, ends)
     try:
@@ -1465,6 +1480,14 @@ def test_with_the_real_engine_a_save_job_lands_and_retires_its_engine(tmp_path: 
         assert outcome(boot) == Done(None)
         wait_until(lambda: not jobs.status().queue.exclusive)
         jobs.workspace_opened(W1)
+        target = RebuildTarget("k1", str(main), fp, lineage="lineage-1", app_local_data=app, app_cache=cache)
+        first_ticket = jobs.submit(rebuild_spec(W1), rebuild_work(target, CLOCK))
+        assert isinstance(first_ticket, JobTicket)
+        first = outcome(first_ticket)
+        assert isinstance(first, Done)
+        assert isinstance(first.value, Loaded)
+        assert first.value.publish == "published"
+        wait_until(lambda: (q := jobs.status().queue).running is None and not q.queued)
         retired = sum(1 for e in ends if e.reason == "retire")
         request = SaveRequest(
             session=new_session_id(),
@@ -1472,8 +1495,8 @@ def test_with_the_real_engine_a_save_job_lands_and_retires_its_engine(tmp_path: 
             lineage="lineage-1",
             root=str(main),
             changes=(ChangeText(str(main), hashlib.sha256(pre).hexdigest(), post.decode()),),
-            fingerprint=fp["fp"],
-            mirror=fp["mirror"],
+            fingerprint=fp,
+            app_cache=cache,
             app_local_data=app,
         )
         # the save's work alone (no rebuild after it): the only engine retired below is the save's own (S0069 V6)
@@ -1488,6 +1511,68 @@ def test_with_the_real_engine_a_save_job_lands_and_retires_its_engine(tmp_path: 
         assert len(records) == 1
         assert records[0].endswith(".closed")
         wait_until(lambda: sum(1 for e in ends if e.reason == "retire") > retired)
+    finally:
+        jobs.close()
+        client.close()
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="the save's swap and its checks are built for macOS first")
+def test_with_the_real_engine_a_landed_save_is_published_and_a_pinned_read_sees_it(tmp_path: Path) -> None:
+    """S0087 (BL-0113), end to end: a save with no published generation is refused `WORKSPACE_NOT_READY {WARMING}`
+    (publish.md §7); once a rebuild published the disk it lands; its background rebuild publishes the saved state; a
+    request pinned before that publish still reads the earlier generation, the next one reads the new."""
+    ledger = tmp_path / "ledger"
+    ledger.mkdir()
+    main = ledger / "main.bean"
+    pre = b'option "operating_currency" "USD"\n2026-01-01 open Assets:Cash\n2026-01-01 open Expenses:Food\n'
+    main.write_bytes(pre)
+    post = pre + b'2026-01-02 * "Lunch"\n  Expenses:Food  5 USD\n  Assets:Cash\n'
+    fp = _plan_fingerprint(main)
+    cache = tmp_path / "cache"
+    folder = cache / "workspaces" / "k1" / "mirror"
+    request = SaveRequest(
+        session=new_session_id(),
+        workspace_key="k1",
+        lineage="lineage-1",
+        root=str(main),
+        changes=(ChangeText(str(main), hashlib.sha256(pre).hexdigest(), post.decode()),),
+        fingerprint=fp,
+        app_cache=cache,
+        app_local_data=tmp_path,
+    )
+    jobs, client = real_rig(tmp_path)
+    try:
+        boot = jobs.start()
+        assert isinstance(boot, JobTicket)
+        assert outcome(boot) == Done(None)
+        wait_until(lambda: not jobs.status().queue.exclusive)
+        jobs.workspace_opened(W1)
+        refused_ticket = jobs.submit(save_spec(W1), save_work(request))
+        assert isinstance(refused_ticket, JobTicket)
+        refused = outcome(refused_ticket)
+        assert isinstance(refused, Done)
+        assert isinstance(refused.value, NotDone)
+        assert refused.value.error.code == ErrorCode.WORKSPACE_NOT_READY
+        assert main.read_bytes() == pre
+        target = RebuildTarget("k1", str(main), fp, lineage="lineage-1", app_local_data=tmp_path, app_cache=cache)
+        rebuilt = jobs.submit(rebuild_spec(W1), rebuild_work(target, CLOCK))
+        assert isinstance(rebuilt, JobTicket)
+        assert isinstance(outcome(rebuilt), Done)
+        before = pin(str(folder))
+        assert isinstance(before, str)
+        saving = submit_save(jobs, W1, request, clock=CLOCK)
+        assert isinstance(saving, JobTicket)
+        saved = outcome(saving)
+        assert isinstance(saved, Done)
+        assert isinstance(saved.value, Saved)
+        wait_until(lambda: pin(str(folder)) != before)
+        after = pin(str(folder))
+        assert isinstance(after, str)
+        old, new = Reader(before).info(), Reader(after).info()
+        assert isinstance(old, MirrorInfo)
+        assert isinstance(new, MirrorInfo)
+        assert (old.ledger_version.split("/")[0], new.ledger_version.split("/")[0]) == ("1", "2")
+        assert old.as_of == new.as_of == CLOCK.now().astimezone().date().isoformat()
     finally:
         jobs.close()
         client.close()

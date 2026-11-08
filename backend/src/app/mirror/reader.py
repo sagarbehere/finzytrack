@@ -13,9 +13,11 @@ The first reads are the ones the open needs: the mirror's own facts (`info`: its
 §9.1 step 4, and whether the build was complete) and the load's errors (`ledger_errors`: the notice of
 CAP-NOTIFY-SERVER, M2).
 
-TODO(BL-0113): the reader reads the generation file it is given; with the publish it reads the pinned generation.
-TODO(BL-0125): the freshness check compares `info().fingerprint` with the disk, and `export_version` with this
-build's.
+A request's reader reads the generation it pinned (`files.pin`, publish.md §7; S0087): the path it is given, for the
+request's whole life.
+Whether a generation is fresh (its fingerprint against the disk, its `export_version`, `engine_build` and `as_of`) is
+the engine's check (`ledger_engine.mirror.publish.fresh`, publish.md §8; the sidecar never reads the ledger): the
+rebuild uses it since S0087. TODO(BL-0152): the open and the focus check run it before reading.
 """
 
 from __future__ import annotations

@@ -40,8 +40,8 @@ Origin: accepted by the owner as a starting point on 2026-10-24 (review:20 §2),
 ### INV-05: The mirror is a rebuildable cache
 - **Rule:** The mirror is a rebuildable cache, published atomically. Its versioned views are the public SQL surface.
 - **Why:** Users and dashboards query the mirror; a half-built or unrebuildable mirror shows wrong numbers (review:10 I4).
-- **Enforced by:** planned: a mirror rebuild test; the view-contract golden.
-- **Status:** pending (BL-0005, by M1a)
+- **Enforced by:** `engine/tests/mirror/test_publish_crash.py` (a death, an I/O error or a power loss at every step of a publish never leaves `current.db` on a partial, incomplete or torn generation, and the next job rebuilds a clean folder; S0087); `engine/tests/mirror/test_surface.py` (the versioned views and their DDL equal the surface spec, S0050). Also, macOS-only so not counted here: the publish's tests on the real file system (the swap under concurrent reads with 0 errors, the link rules), in the engine's test_publish.py beside it.
+- **Status:** enforced
 
 ### INV-06: Money is exact
 - **Rule:** Money is `Decimal` / `TEXT` / string / `Money`. Float appears only at display and in documented aggregation. The written scale is preserved.

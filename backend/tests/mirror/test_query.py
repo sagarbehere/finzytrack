@@ -193,7 +193,9 @@ def test_a_read_without_columns_of_the_querys_own_cte_or_a_mirror_table_answers(
     assert answered(run(mirror, cte)).rows == (("a",), ("a",), ("a",))
     assert answered(run(mirror, "WITH c AS (SELECT 1) SELECT EXISTS (SELECT 1 FROM c)")).rows == ((1,),)
     assert answered(run(mirror, "SELECT count(*) FROM postings")).rows == ((4,),)
-    assert answered(run(mirror, "SELECT count(*) FROM m_postings p JOIN m_meta m")).rows == ((24,),)
+    assert answered(run(mirror, "SELECT count(*) FROM m_postings p JOIN m_meta m")).rows == (
+        (32,),
+    )  # 4 postings x 8 meta keys (S0087)
     assert answered(run(mirror, "SELECT count(*) FROM json_each('[1, 2]')")).rows == ((2,),)
 
 

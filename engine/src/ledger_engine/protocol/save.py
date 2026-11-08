@@ -115,7 +115,7 @@ def save(params: Message, ctx: SaveJob) -> Message:
         root=params.root,
         changes=tuple(Change(c.path, c.pre, _post(c.post)) for c in params.changes),
         fingerprint=fingerprint,
-        mirror=params.mirror,
+        app_cache=params.app_cache,
         app_local_data=ald,
     )
     ports = sv.Ports(fs)

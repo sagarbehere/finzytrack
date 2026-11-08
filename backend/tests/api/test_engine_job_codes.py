@@ -49,7 +49,7 @@ REQUEST = SaveRequest(
     root="/L/main.bean",
     changes=(ChangeText("/L/main.bean", "0" * 64, "x"),),
     fingerprint="{}",
-    mirror=None,
+    app_cache=Path("/cache"),
     app_local_data=Path("/app"),
 )
 

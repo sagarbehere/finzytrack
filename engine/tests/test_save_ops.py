@@ -15,10 +15,13 @@ from typing import Any
 
 import pytest
 
+from ledger_engine.fs.darwin import for_this_os
 from ledger_engine.ledger import overlay
-from ledger_engine.ledger.core.ledger_set import digest, encode
+from ledger_engine.ledger.core.ledger_set import encode
 from ledger_engine.ledger.policy import DesktopPolicy
+from ledger_engine.mirror import publish as pb
 from ledger_engine.protocol.server import Engine, InputEnded
+from tests.mirror.publish_support import publish_job
 
 pytestmark = [
     pytest.mark.skipif(sys.platform != "darwin", reason="the write path's port is macOS-only until BL-0087"),
@@ -60,6 +63,10 @@ def setup(tmp_path: Path) -> tuple[Path, Path, dict[str, Any]]:
     (ald / "locks").mkdir(parents=True)
     loaded = overlay.load(str(main), {}, DesktopPolicy())
     assert isinstance(loaded, overlay.Loaded)
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    published = publish_job(for_this_os(), cache, main, ledger=loaded.fingerprint.ledger_set)  # the gate reads it
+    assert isinstance(published, pb.Published), published
     params: dict[str, Any] = {
         "session": "s1",
         "job": "j7",
@@ -68,7 +75,7 @@ def setup(tmp_path: Path) -> tuple[Path, Path, dict[str, Any]]:
         "root": str(main),
         "changes": [{"path": str(main), "pre": sha(PRE), "post": POST}],
         "fingerprint": encode(loaded.fingerprint).decode("ascii"),
-        "mirror": digest(loaded.fingerprint),
+        "app_cache": str(cache),
         "app_local_data": str(ald),
     }
     return main, ald, params

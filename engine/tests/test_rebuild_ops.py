@@ -6,6 +6,8 @@ engine that holds the engine lock, and only for a fingerprint of its root. The R
 from __future__ import annotations
 
 import json
+import os
+import sqlite3
 import sys
 from pathlib import Path
 from typing import Any
@@ -24,7 +26,17 @@ pytestmark = [
 def saved(ald: Path, params: dict[str, Any]) -> dict[str, Any]:
     reply = json.loads(engine(ald).handle(request("save", params), Channel(1, proceed=True)))
     assert reply["result"]["outcome"] == "saved", reply
-    return {"root": params["root"], "fingerprint": params["fingerprint"]}
+    return {
+        "root": params["root"],
+        "fingerprint": params["fingerprint"],
+        "app_local_data": params["app_local_data"],
+        "app_cache": params["app_cache"],
+        "workspace_key": params["workspace_key"],
+        "lineage": params["lineage"],
+        "floor": 0,
+        "today": "2026-11-08",
+        "built_at": "2026-11-08T10:00:00+05:30",
+    }
 
 
 def call(ald: Path | None, op: str, params: dict[str, Any]) -> dict[str, Any]:
@@ -44,7 +56,23 @@ def test_a_saved_ledger_is_rebuilt_through_the_protocol(setup: tuple[Path, Path,
     assert (result["outcome"], result["errors"]) == ("loaded", 0)
     assert result["entries"] > 0
     assert reply["events"] == ["updating_views"]
-    assert reply["decision"]["table"] == "engine.rebuild"
+    assert (reply["decision"]["table"], reply["decision"]["version"]) == ("engine.rebuild", 2)
+    # S0087 (BL-0113): published after the save's generation (number 1, the setup's), the save's change in it
+    assert (result["publish"], result["number"]) == ("published", 2)
+    mirror = Path(target["app_cache"]) / "workspaces" / "k1" / "mirror"
+    name = os.readlink(mirror / "current.db")
+    assert result["ledger_version"].startswith("2/sha256:")
+    con = sqlite3.connect(f"{(mirror / name).as_uri()}?mode=ro", uri=True)
+    try:
+        accounts = {a for (a,) in con.execute("SELECT name FROM r_accounts")}
+        facts = dict(con.execute("SELECT key, value FROM m_meta").fetchall())
+    finally:
+        con.close()
+    assert "Expenses:Food" in accounts  # the saved change
+    assert facts["ledger_version"] == result["ledger_version"]
+    assert facts["as_of"] == "2026-11-08"
+    again = call(ald, "rebuild", target)["result"]
+    assert (again["outcome"], again["publish"], again["number"]) == ("fresh", "fresh", 2)
     assert sorted(str(p) for p in main.parent.rglob("*")) == before  # it writes nothing (no pickle cache either)
 
 
@@ -64,7 +92,18 @@ def test_no_rebuild_runs_in_an_engine_without_the_engine_lock(setup: tuple[Path,
 
 @pytest.mark.parametrize(
     "bad",
-    [{"fingerprint": "not a fingerprint"}, {"root": "/elsewhere/main.bean"}, {"root": "relative"}, {"fingerprint": ""}],
+    [
+        {"fingerprint": "not a fingerprint"},
+        {"root": "/elsewhere/main.bean"},
+        {"root": "relative"},
+        {"fingerprint": ""},
+        {"app_local_data": "/elsewhere"},  # not the folder of this engine's lock
+        {"app_cache": "relative"},
+        {"workspace_key": ".."},
+        {"workspace_key": "a/b"},
+        {"floor": -1},
+        {"today": "08/11/2026"},
+    ],
 )
 def test_malformed_params_are_refused(setup: tuple[Path, Path, dict[str, Any]], bad: dict[str, Any]) -> None:
     _, ald, params = setup
