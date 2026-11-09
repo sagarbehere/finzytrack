@@ -284,7 +284,7 @@ Not walked: `CR_Register` (the registry's, BL-0102). `PowerLoss` stays out of th
 | `RS_Sync`, `RS_All` | the try's first and second round of syncs of every folder the record names |
 | `RS_Clean`, `RS_Write`, `RS_Swap`, `RS_Compare`, `RS_Temp` | the restore's effects (its names of ours, its staging and restore temp names, the swap, what it displaced, the save's temp after the put-back; `RS_Write`, `RS_Swap` and `RS_Resolve` must each include their folder's sync, `FUSED_SYNC`) |
 | `RS_Resolve` | the record's `.resolved` rename and the journal folder's sync |
-| `Keep` | `recover_all.keep` between runs (the record `.kept`, and nothing a power loss takes back) |
+| `Keep` | `recover_all.keep` between runs (the record `.kept` and its rename's sync; Keep's file and folder syncs are not checked by the replay, whose outside edits are durable where the model's are not, and are covered by `tests/ledger/test_recover_all.py::test_keep_syncs_every_file_and_folder_before_its_rename`, BL-0225) |
 | `EngineCrash`, `AppCrash` | a death raised at the code's hook; after the code's last effect, its answer lost (the journal failed) |
 | `IOFail` | an `OSError` raised at the code's hook, only where the code always writes (`io_at_restore_write`) |
 | `Editor`, `Unreach`, `PathChange` | an outside write of R; K's folder moved away and back; R's folder moved away and a link to a copy of it put in its place |
