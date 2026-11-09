@@ -44,11 +44,12 @@
 - Gates (the owner's Mac): engine ruff format and check, pyright 0 errors, pytest 9623 passed, 9 skipped, 1 xfailed (the full suite after the survivor's test: rerun before the commit); opt-in real images (`FT_TEST_DISK_IMAGES=1`) for the new and the twin tests pass, every image detached; backend ruff, pyright, lint-imports (8 kept), pytest 2564 passed, 23 xfailed; frontend `pnpm typecheck`, `pnpm test` 117 passed, 9 expected fail (IMP-0053: `contracts/engine-protocol.schema.json` changed); `run_meta_tests` 849 OK; `check_generated`, `check_invariants`, `check_capabilities`, `check_retired_terms` green.
 
 ## Verifier
-- (pending: the orchestrator runs the verifier and the data-safety red team on this range)
+- Round 1 (final), head 6a3e3c41. Verifier: passed with findings, 0 High, 0 Medium, 1 Low (every gate in full, frontend and lint-imports included; 15 new tests fail on dc656deb; the real exFAT image test fails on the base with `wrong_drive` and passes at head; 9 mutants on `same_birth`, `folder_verdict` and the backup text killed). V3-1 Low: engine-jobs §11 still named `backup_good`; fixed at landing.
+- Data-safety red team: 0 new High. Its High-class case (two exFAT sticks with one serial, ledger folders made in the same second, a copy of another save file at pre bytes) is inside the owner's decision ("a twin stick must now match to the second ... which in practice means a clone"); without evidence the rule holds (`missing_unconfirmed`, nothing written). Three Lows on the backup sentence's wording: under the owner's final-round rule (IMP-0052), BL-0223.
 
 ## Golden changes
 - `engine/tests/ledger/test_volume_identity.py::test_a_folders_birth_read_any_other_way_is_another_folder`: its exFAT case with a 1 ns shift expected `wrong_drive`; under the owner's BL-0221 decision a shift within the same second on exFAT is the same folder, so that case is dropped (covered by the new accepting and must-not-pass tests); HFS+ added to the others. Verifier verdict: pending.
 - `engine/tests/ledger/test_writer_best_effort.py::test_the_inspection_says_a_backup_is_good_only_when_it_holds_the_old_version`, `engine/tests/test_recover_ops.py`, `backend/tests/platform/test_engine_protocol.py`, `backend/tests/platform/test_recovery_text.py` (`_with_missing`): `backup_good: bool` became `backup`, the path (V2-3); the same cases, now asserting the path. Verifier verdict: pending.
 
 ## Retro
-- (after the review rounds)
+- Build about 25 min, fix 2 min; 1 review round, findings verifier 0H/0M/1L, red team 0H (one High-class case inside the owner's decision)/0M/3L. Cheaper gate: S0089's probes read creation times while the image was still mounted; reading every identity both mounted and after a remount, before choosing a comparison rule, would have caught the exFAT difference in S0089 instead of here.
