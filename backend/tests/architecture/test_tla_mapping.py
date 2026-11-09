@@ -16,8 +16,9 @@ refuses a disjunct it cannot read rather than dropping it (S0053 verifier F9).
 
 Limit: the check sees which actions are marked, not whether the marked function is the one that carries the action
 out. A marker on the wrong function passes; the conformance replays (S0064,
-`engine/tests/ledger/test_save_conformance.py`; S0084, `engine/tests/ledger/test_create_conformance.py`) run the
-model's saves, creates and copies through the engine and catch wrong behaviour, whichever function holds it.
+`engine/tests/ledger/test_save_conformance.py`; S0084, `engine/tests/ledger/test_create_conformance.py`; S0091,
+`engine/tests/ledger/test_recover_conformance.py`) run the model's saves, creates, copies and recover-all through the
+engine and catch wrong behaviour, whichever function holds it.
 """
 
 from __future__ import annotations
@@ -39,16 +40,16 @@ FREE_GROUPS = ("UserStep", "EnvStep")  # user, OS and outside-editor actions: no
 MUTANT_ONLY = frozenset({"RS_Late"})  # a step only a seeded bug takes (`resolve_before_restores_synced`): no code
 
 REGISTER = "BL-0102"  # registering a created workspace needs the registry
-RECOVER_ALL = "BL-0164"  # recover-all's per-journal tries replayed through the engine
 
 PLANNED: Mapping[str, str] = {
-    **{a: RECOVER_ALL for a in ["RC_Init", "RC_Next"]},
     "CR_Register": REGISTER,
 }
 """Since S0064 (BL-0151 slice 5) the save's steps, its rollback and the restore are marked in the engine
 (`ledger_engine.tla`); `engine/tests/ledger/test_save_conformance.py` walks them through the code (its `WALKED`, and
 `NOT_WALKED` with its reasons). Since S0084 (BL-0201) the create's and the copy's steps are marked too, walked by
-`engine/tests/ledger/test_create_conformance.py`; `CR_Register` is the sidecar's registry's (BL-0102)."""
+`engine/tests/ledger/test_create_conformance.py`; since S0091 (BL-0164) recover-all's (`RC_Init` on
+`recover_all.list_journals`, `RC_Next` on `restore.recover_journal`), walked by
+`engine/tests/ledger/test_recover_conformance.py`. `CR_Register` is the sidecar's registry's (BL-0102)."""
 
 PARTIAL: Mapping[str, str] = {}
 

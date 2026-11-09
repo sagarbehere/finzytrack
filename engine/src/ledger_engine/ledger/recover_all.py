@@ -61,6 +61,7 @@ from ledger_engine.ledger.core import paths as core_paths
 from ledger_engine.ledger.core.journal import FileEntry, Record, State
 from ledger_engine.ledger.handles import Handles, PathMovedError, WrongDriveError, folder_blocked, sha256
 from ledger_engine.ledger.handles import join as _join
+from ledger_engine.tla import tla_action
 
 LOCAL: Final = "local"
 JOURNAL: Final = "journal"
@@ -133,6 +134,7 @@ def _through_link(fs: FileSystem, key_dir: str, linked: str) -> Unlisted | None:
     return None
 
 
+@tla_action("RC_Init")
 def list_journals(fs: FileSystem, app_local_data: str) -> Listing:
     """§8.1 "What" (the module's docstring)."""
     found: list[Listed] = []

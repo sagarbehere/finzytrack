@@ -44,3 +44,15 @@ Each run rewrites `results/SUMMARY.md` with the numbers per configuration.
 - Edit `MirrorPublish.tla`; edit the worlds, mutants and witnesses in `gen_cfgs.py`, then run
   `python3 formal/tla/mirror-publish/gen_cfgs.py` (it rewrites `cfg/` and `configs.txt`).
 - `python3 -m unittest scripts/tests/test_tla_mirror_publish.py` checks the names against the spec and MAPPING.md.
+
+## The conformance traces (S0091)
+
+`traces/corpus.json` holds TLC-simulated traces of small worlds that `engine/tests/mirror/test_publish_conformance.py`
+replays through the rebuild and the publish over the in-memory file system (no Java at test time; MAPPING.md §5).
+Regenerate it after any change to `MirrorPublish.tla`, to a `.cfg` it uses, to its generator or to the engine-jobs
+generator it imports (the test and `scripts/tests/test_tla_mirror_traces.py` fail until then, naming this command):
+
+```sh
+python3 formal/tla/mirror-publish/gen_traces.py           # about 15 s (3 worlds); Java 21 and the pinned jar
+python3 formal/tla/mirror-publish/gen_traces.py --check   # is the corpus current? (no Java)
+```

@@ -7,8 +7,9 @@ it returns the function unchanged. `backend/tests/architecture/test_tla_mapping.
 the markers from the source (never importing the engine, ADR-0054) and check each map both ways against its model's
 `Next` relation. An engine-jobs marker is placed only on an action a conformance replay walks through the code
 (`tests/ledger/test_save_conformance.py`, the save; `tests/ledger/test_create_conformance.py`, the create and the
-copy, S0084; S0060's rule). The mirror-publish model has no trace replay yet (BL-0210): its marked functions are
-walked by the crash, power-loss and I/O-error sweeps at every effect (`tests/mirror/test_publish_crash.py`).
+copy, S0084; `tests/ledger/test_recover_conformance.py`, recover-all, S0091; S0060's rule). Since S0091 (BL-0210) the
+mirror-publish model's markers follow the same rule: `tests/mirror/test_publish_conformance.py` replays its traces
+through the rebuild and the publish; the sidecar's reads are walked by its own tests.
 """
 
 from __future__ import annotations

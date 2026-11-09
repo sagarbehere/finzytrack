@@ -88,7 +88,7 @@ INV = state invariant, ACT = action property (`[][...]_vars`).
 | `StartSave` | §6.1, a confirmed save planned on the preview's fingerprint | the sidecar's save job (user action) |
 | `StartCreate`, `StartCopy` | §8.2 | user actions: `app.platform.engine_jobs.create.submit_create` (S0080), `app.platform.engine_jobs.copy.submit_copy` (S0081) |
 | `StartRecover` | §8.1, §9.1: Retry, Back and a switch recover first | the sidecar (user action) |
-| `Keep` | §8.1 "Afterwards" | `ledger.recover_all` (user action) |
+| `Keep` | §8.1 "Afterwards" | `ledger.recover_all.keep` (user action; replayed by `test_recover_conformance.py`, S0091) |
 | `Relaunch` | §9.2: the next start recovers first | the sidecar's boot (user action) |
 | `S_Gate` | §6.1 steps 1-4, 7 | `ledger.save._gated` (with `S_Saved`) |
 | `S_Backup`, `S_BackupSync` | §6.1 step 8.0-8.1 | `writer._backups` |
@@ -106,7 +106,8 @@ INV = state invariant, ACT = action property (`[][...]_vars`).
 | `RS_Compare` | §8.1 step 3, §6.4 | `restore._settle` |
 | `RS_Resolve` | §8.1 step 4 | `restore.restore` |
 | `RS_Late` | none: the seeded bug `resolve_before_restores_synced`'s own step | none (`MUTANT_ONLY`) |
-| `RC_Init`, `RC_Next` | §8.1 | BL-0164 (recover-all's tries through the engine) |
+| `RC_Init` | §8.1 | `ledger.recover_all.list_journals` (each journal folder synced, `.part` removed, `.open` read) |
+| `RC_Next` | §8.1 | `ledger.restore.recover_journal` (the record read, unreadable: a stop; else the restore); the order of the tries and a torn record's stop without a try are the sidecar's (`app.platform.engine_jobs.recovery`), which the replay plays (S0091) |
 | `CP_Check` | §8.2 copy step 2c | `copy._CopySteps._journals` |
 | `CP_Load` | §8.2 copy steps 2, 3-5 | `copy._CopySteps.prepare` (the reads, the layout), `copy._CopySteps.check` (loads the same, the re-check); its writes are the create's (`CR_WriteA` .. `CR_ReadBack`) |
 | `CP_Manifest` | §8.2 copy step 7 | `create.Run._manifest` (with `CR_ManifestRename`, `CR_ManifestSync`) |
@@ -160,6 +161,11 @@ INV = state invariant, ACT = action property (`[][...]_vars`).
 | The create's load check (step 5) and its commit point (step 6); the copy's legacy locks, layout and "loads the same" | write nothing: not durability (EP-19); `test_create.py`, `test_copy.py`, `test_create_ops.py`, `test_copy_ops.py` |
 | The copy's writes (`CP_Load`, `CP_Manifest` have no effect on `tgt`) | the copy writes with the create's writer (`create.run_steps`), whose steps the create replay walks; the copy replay checks that it writes only in its target and leaves no `.finzytrack` of ours after a death |
 | The copy checks the journals before it reads the sources (`CP_Check`, then `CP_Load`); the code loads the source first (step 2b), then reads the journals (2c) | both only read, and a refusal comes before any write in both; the copy replay places the code's source load at `CP_Check` |
+| The drive check (S0089, BL-0188): the try opens every folder the record names through the path guard and checks its drive, file system and creation time first (`restore._drives`), before it judges any file; the model judges file by file in the record's order and stops at the first that stops | both write nothing before a stop but a kept copy's move, which only protects bytes. The model's drives are never swapped, so `wrong_drive` and `unknown_drive` have no counterpart; they are `test_restore.py`'s and `test_volume_identity.py`'s. Where both a folder's path guard and an earlier file of the record stop, the code stops at the folder and the model at the file: no trace of the corpus meets it (no foreign temp at J beside R's link) |
+| The evidence rule for a missing file on FAT or exFAT (S0089 round 2: `missing_unconfirmed`) | not covered: the model assumes the swap (above), where a replaced file is never missing. `test_restore.py`'s sweeps on the fake's no-swap volumes |
+| K's disk becomes unreachable during a try past its check: the model's restore goes on writing K (only `Stops` reads `env.unr`); the code's next operation on that disk fails (`Failed`), or, where the folder is still there under another path, its path guard stops the try (`path_moved`) | the code writes less, never more; its next try is idempotent. The recover replay walks the unreachable disk at a try's check and between tries (`gen_traces.py` `unreach_outside_try`) |
+| Keep while a folder the journal names is not at its recorded path (R's folder replaced by a link): the code refuses it (`path_moved`, red team r1 R1-3), the model's `Keep(j)` has no such condition | the code writes nothing and the journal stays blocking: no byte is lost, but the model explores states (a kept journal over R's link) the code never reaches. BL-0224 (the model's Keep to gain the refusal); the link worlds leave that Keep out (`keep_not_over_link`) and `test_recover_conformance.py` `test_keep_over_a_link_is_refused_where_the_models_keep_is_not` pins the difference |
+| The sidecar's part of recover-all (the order of the tries, a torn record stopped without a try, a death marking the journal in hand failed, a fresh listing after a death in it) | the queue's and the sidecar's table tests (`backend/tests/platform/test_recover_all.py`); the recover replay plays it as the model's `RC_Next` and `EngineCrash` say, and checks the engine's listing and tries against it |
 
 ## 4. Interpretations where the spec is still silent
 
@@ -235,9 +241,9 @@ Every mutant runs on a small world and checks only the property it must break (`
 
 A base world that passes could pass because it never reaches the branch a property is about. Each witness (`W_*` in `EngineJobs.tla`, `gen_cfgs.py` `WITNESSES`, configurations `WIT_*`, kind `witness`) is the negation of a branch as an invariant on a small world; TLC must report it violated, so the branch is reached. The branches: a save lands (`W_Saved`), a rollback resolves (`W_RollbackResolved`), puts pre bytes back (`W_RollbackPutsBack`), cannot resolve (`W_RollbackUnfinished`), keeps an outside save met at the swap (`W_KeptCopySave`), stops on a taken created path with the other files undone (`W_CreatedPathTaken`); an outside save after the gate is displaced into the temp (`W_EditorAfterGate`); recovery resolves a boot journal (`W_RecoverResolves`), keeps an outside save (`W_RecoverKeptCopy`), fails a try (`W_RecoverFailed`), stops on the path guard (`W_LinkStop`); Keep (`W_Keep`) and Keep of a torn journal (`W_KeepTorn`); a cut staging write meets recovery (`W_StagingCutSeen`) and the save cut by a power loss is undone (`W_CutStagingDeleted`, `W_PowerAfterSaveRecovered`); a copy reaches its manifest (`W_CopyDone`) and meets an in-session `.open` journal (`W_CopyRefusedInsession`); a create registers (`W_CreateDone`); the second save lands (`W_SecondSaved`) and its rollback puts both files back (`W_SecondRollbackTwoFiles`); on the weaker file system an unsynced outside save is that program's loss (`W_WeakLossAccepted`) and an outside save is kept (`W_WeakRecoverKept`).
 
-## 7. The code's conformance (S0064, S0072, S0084)
+## 7. The code's conformance (S0064, S0072, S0084, S0091)
 
-`traces/corpus.json` holds TLC-simulated traces of small save worlds, and since S0084 of create and copy worlds (`gen_traces.py`: the worlds, the seed, the depth, and the actions left out: recover-all again, Keep, the next start, the app's crash, a power loss, the path changer). `engine/tests/ledger/test_save_conformance.py` replays each save through `ledger.save.run` over the in-memory file system and compares, at each step the code reaches, the files, the save's record, its temps and staging files, restore temps, kept copies and backup with the model's; at the end it checks what the code answered against the model's disk (§6.6's table over the save's record, else the re-hash: `told_on_disk`), never against `gh.told`, whose truth no property checks (EP-19; S0072 verifier r1 F1).
+`traces/corpus.json` holds TLC-simulated traces of small save worlds, since S0084 of create and copy worlds and since S0091 of recover worlds (`gen_traces.py`: the worlds, the seed, the depth, the action left out everywhere, a power loss, and the actions walked only in the worlds that name their job: the create's, the copy's, and recover-all's Retry, Keep, the app's crash, the next start, the path changer and the unreachable disk). `engine/tests/ledger/test_save_conformance.py` replays each save through `ledger.save.run` over the in-memory file system and compares, at each step the code reaches, the files, the save's record, its temps and staging files, restore temps, kept copies and backup with the model's; at the end it checks what the code answered against the model's disk (§6.6's table over the save's record, else the re-hash: `told_on_disk`), never against `gh.told`, whose truth no property checks (EP-19; S0072 verifier r1 F1).
 
 | Model | Code hook |
 |---|---|
@@ -251,7 +257,7 @@ A base world that passes could pass because it never reaches the branch a proper
 | `EngineCrash` | an engine death raised at the code's hook; the outcome read by `save.outcome` (`DISK`) |
 | `IOFail` | an `OSError` raised at the code's hook, before the effect; at the swap or exclusive rename after it, when the model's `IOFail` took the swap's effect (`MemFS.inject(after=True)`) |
 
-No save path step stops the replay (S0072): only a save the walk cut is not followed. Not replayed: recover-all's tries over boot journals (BL-0164).
+No save path step stops the replay (S0072): only a save the walk cut is not followed. Recover-all over boot journals is the recover replay's (below).
 
 **The create and the copy** (S0084, BL-0201). The corpus also walks create worlds (`S_create_*`: an absent, empty or non-empty target, files dropped into it or written over the one the job wrote, an engine death) and copy worlds (`S_copy*`: a boot journal recover-all could not resolve or whose file list cannot be read, a save's journal left `.open` in the session, none, an engine death in the copy); their actions are walked only in worlds that name the job (`gen_traces.py` `JOB_ACTIONS`), so the save worlds' traces stay as they were. `engine/tests/ledger/test_create_conformance.py` replays each through `create.run` and `copy.run` over the fake. The create: the model's names `a`, `m`, `o`, `x` are `main.beancount`, `.finzytrack`, `other.txt`, `prior.txt` in `/u/new`; at each hook the fake is compared with `tgt`: whether the folder exists, what each name holds, and what a power loss may leave there (every state of `MemFS.power_loss_states()` must be one `tgt.pl` allows, so the sync steps cannot be passed); the answer must be the stop of the model's last step, or created at `CR_Register`; after a death the fake is exactly `tgt`. The copy: the fake's journals are the model's at the copy's start; it refuses (`recovery_blocked`) exactly when `CP_Check` ends the job, writes only in its target, leaves no `.finzytrack` of ours after a death, and answers created exactly when `CP_Manifest` ran.
 
@@ -266,4 +272,21 @@ No save path step stops the replay (S0072): only a save the walk cut is not foll
 | `CP_Load`, `CP_Manifest` | the effects in the copy's target before the manifest's temp; the manifest's |
 | `EngineCrash` | an engine death raised at the code's hook |
 
-Not walked: `CR_Register` (the registry's, BL-0102). `PowerLoss` and `AppCrash` stay out of the traces (each ends the session; the next start is recover-all's, BL-0164): a power loss at every step is the durable comparison above, and an app crash leaves the target as an engine death does.
+Not walked: `CR_Register` (the registry's, BL-0102). `PowerLoss` stays out of the traces (the fake cannot be steered to the model's pick): a power loss at every step is the durable comparison above; an app crash is walked only in the recover worlds and leaves the target as an engine death does.
+
+**Recover-all** (S0091, BL-0164). The recover worlds (`S_recover*`, `jobs: ["recover"]`: no save, create or copy) walk recover-all over the boot journals b2 (R, J) and b3 (K on the disk that may become unreachable): outside edits of R, what a crashed save left beside a file (`BootTemps`), a torn record (`BootTorn`), R's folder replaced by a link (`BootLink`, `PathChange`), an engine death, an I/O error in a try, the app's crash and the next start, Keep and Retry. The corpus keeps, in those worlds only, the boot journals' files, names of ours, records and reasons, recover-all's progress and the environment (`rc`); every save, create and copy trace stays byte for byte as S0084 left it (`scripts/tests/test_tla_traces.py` pins it). `engine/tests/ledger/test_recover_conformance.py` replays each trace over the fake, playing the sidecar (the listing, the tries in its order, a death marking the journal in hand failed): at each hook it compares the files R, J, K, each boot journal's record and the names of ours and kept copies beside each file; each try's answer must be the model's (resolved, stopped, failed), the listing must name the model's unresolved journals (one that cannot be read exactly where the model's is torn); after a resolve every power-loss state of the fake holds `.resolved` over files at their pre bytes; an outside edit of R is never lost (at R, a name of ours or a kept copy, in every state and every power-loss state at a try's end); nothing is written through R's link.
+
+| Model | Code hook (recover-all) |
+|---|---|
+| `RC_Init` | the listing's sync of each journal folder |
+| `RC_Next` | the sidecar's next try (the code's listing order), or a torn record stopped without a try (the listing could not read it) |
+| `RS_Check` | the try's answer when it stops at its checks (no effect); a move to a kept name |
+| `RS_Sync`, `RS_All` | the try's first and second round of syncs of every folder the record names |
+| `RS_Clean`, `RS_Write`, `RS_Swap`, `RS_Compare`, `RS_Temp` | the restore's effects (its names of ours, its staging and restore temp names, the swap, what it displaced, the save's temp after the put-back; `RS_Write`, `RS_Swap` and `RS_Resolve` must each include their folder's sync, `FUSED_SYNC`) |
+| `RS_Resolve` | the record's `.resolved` rename and the journal folder's sync |
+| `Keep` | `recover_all.keep` between runs (the record `.kept`, and nothing a power loss takes back) |
+| `EngineCrash`, `AppCrash` | a death raised at the code's hook; after the code's last effect, its answer lost (the journal failed) |
+| `IOFail` | an `OSError` raised at the code's hook, only where the code always writes (`io_at_restore_write`) |
+| `Editor`, `Unreach`, `PathChange` | an outside write of R; K's folder moved away and back; R's folder moved away and a link to a copy of it put in its place |
+
+Not walked: `RS_Late` (a seeded bug's step). The differences are in §3: the drive check first, the evidence rule, the unreachable disk during a try, Keep over a link (BL-0224), the sidecar's part.

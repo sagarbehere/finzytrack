@@ -45,7 +45,7 @@ engine death no `.finzytrack` of ours stands there; `created` exactly when the m
 folders are the same before and after.
 
 Not replayed: a create or a copy the walk cut before it ended (`STOPS`). A power loss ends the session (its next start
-is recover-all's, BL-0164); the durable layer is compared at every step instead.
+is recover-all's, `test_recover_conformance.py`); the durable layer is compared at every step instead.
 """
 
 from __future__ import annotations

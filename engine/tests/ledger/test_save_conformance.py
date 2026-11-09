@@ -42,7 +42,8 @@ effect, `test_writer.py`); the restore's staging write, rename and sync are one 
 and sync are (`RS_Swap`), so their syncs are checked as `FUSED_SYNC`. The replay stops a save only where its walk was
 cut (`STOPS`), and never compares past it.
 
-Not replayed here: traces with boot journals (recover-all's per-journal tries over their files, BL-0164), and a save
+Not replayed here: traces with boot journals (recover-all's per-journal tries over their files: S0091,
+`test_recover_conformance.py`), and a save
 the walk cut before it ended. The durable layer (what a power loss would keep) is
 not compared: the writer's and the restore's own tests check every power-loss state against one oracle
 (`tests/ledger/worlds.py`).
@@ -159,8 +160,8 @@ def corpus() -> tuple[State, tuple[State, ...]]:
 
 
 def worlds() -> list[str]:
-    """The save worlds: no boot journal (recover-all's tries, BL-0164), no create and no copy (their replay is
-    `test_create_conformance.py`, S0084)."""
+    """The save worlds: no boot journal (recover-all's tries, `test_recover_conformance.py`, S0091), no create and no
+    copy (their replay is `test_create_conformance.py`, S0084)."""
     meta, _ = corpus()
     return sorted(
         w

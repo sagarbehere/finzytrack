@@ -76,15 +76,16 @@ than before (`S_save_crash`: 2,711,371 distinct states before, 21,236 now). The 
 faults (two or three saves, two power losses, three starts, every boot journal with its temps); they are expected to
 take minutes to an hour each, not measured yet.
 
-## The conformance traces (S0064, S0072)
+## The conformance traces (S0064, S0072, S0084, S0091)
 
-`traces/corpus.json` holds TLC-simulated traces of small save worlds that `engine/tests/ledger/test_save_conformance.py`
-replays through the engine's save over the in-memory file system (no Java at test time). Each trace is stored as
+`traces/corpus.json` holds TLC-simulated traces of small save, create, copy and recover worlds that
+`engine/tests/ledger/test_save_conformance.py`, `test_create_conformance.py` and `test_recover_conformance.py` replay
+through the engine over the in-memory file system (no Java at test time). Each trace is stored as
 steps that name only the variables that changed (`gen_traces.delta`). Regenerate it after any change to
 `EngineJobs.tla`, to a `.cfg` it uses or to the generator (the test fails until then, naming this command):
 
 ```sh
-python3 formal/tla/engine-jobs/gen_traces.py           # a minute or two (13 worlds); Java 21 and the pinned jar
+python3 formal/tla/engine-jobs/gen_traces.py           # about two minutes (29 worlds); Java 21 and the pinned jar
 python3 formal/tla/engine-jobs/gen_traces.py --check   # is the corpus current? (no Java)
 ```
 

@@ -11,13 +11,15 @@ model in two ways only, and every step it takes is a step of the model's `Next`,
 `Spec`:
 
 - each step is labelled with its action (`act`), so the replay knows what happened;
-- the actions in OUT are left out (their behaviour is replayed elsewhere or later; the replay could only stop there),
-  and so are the create's and the copy's (`JOB_ACTIONS`) in a world that does not name the job (S0084).
+- the actions in OUT are left out (the replay could only stop there), and so are the create's, the copy's and
+  recover-all's (`JOB_ACTIONS`) in a world that does not name the job (S0084, S0091).
 
 The corpus keeps, per state, only the variables the replays read (`KEEP_VARS`; around saves and copies the file
-system, the records and what the save was told, `prune`; the create's target always, `target`;
+system, the records and what the save was told, `prune`; the create's target always, `target`; in a recover world
+the boot journals' files, names of ours, records and reasons, recover-all's progress and the environment, `recover`;
 `engine/tests/ledger/test_save_conformance.py` replays the saves through the engine,
-`engine/tests/ledger/test_create_conformance.py` the creates and copies, S0084), each trace as deltas, and records
+`engine/tests/ledger/test_create_conformance.py` the creates and copies, S0084,
+`engine/tests/ledger/test_recover_conformance.py` recover-all, S0091), each trace as deltas, and records
 the SHA-256 of the model, of each world's `.cfg`, of this script and of the TLA+ tools, so the replay fails on a
 stale corpus with this command in its message. The reader of TLC's trace values below reads only the shapes those
 variables use (records, sequences, sets, functions, strings, integers, booleans) and refuses anything else.
@@ -164,6 +166,42 @@ WORLDS: dict[str, dict[str, Any]] = {
         "jobs": ["copy"], "base": "S_copy", "set": {"BootJ": "{}"}, "traces": 6, "depth": 40, "least": 8,
         "leave": ["crash_open_journal"],
     },
+    # S0091 (BL-0164): recover-all over the boot journals (`engine/tests/ledger/test_recover_conformance.py`): b2
+    # (R, J) and b3 (K, on the disk that may become unreachable), an outside edit of R, an engine death, Keep and
+    # Retry (`StartRecover`); no save, create or copy
+    "S_recover": {
+        "jobs": ["recover"], "base": "S_recover", "set": {}, "traces": 16, "depth": 30, "least": 6,
+        "leave": ["unreach_outside_try"],
+    },
+    # what a crashed save left beside b2's files (a cut staging write, a synced temp, the old object at the temp
+    # name), an I/O error in the try, the app's crash and the next start
+    "S_recover_temps": {
+        "jobs": ["recover"], "base": "S_recover_link",
+        "set": {"BootLink": "FALSE", "MaxIO": "1", "MaxCrash": "1"}, "traces": 16, "depth": 30, "least": 6,
+        "leave": ["io_at_restore_write"],
+    },
+    # R's folder replaced by a link before the start (the path guard), then Keep, the app's crash and the next start
+    "S_recover_link": {
+        "jobs": ["recover"], "base": "S_recover_link", "set": {}, "traces": 6, "depth": 30, "least": 4,
+        "leave": ["keep_not_over_link"],
+    },
+    # the link put in after the app's crash (`PathChange`), then the next start
+    "S_recover_relink": {
+        "jobs": ["recover"], "base": "S_recover_power",
+        "set": {"MaxPower": "0", "MaxAppCrash": "1", "MaxIO": "0", "MaxEdits": "0"}, "traces": 6, "depth": 30,
+        "least": 6, "leave": ["app_crash_in_recover", "keep_not_over_link"],
+    },
+    # b3's record cannot be read: it blocks until Keep
+    "S_recover_torn": {
+        "jobs": ["recover"], "base": "S_recover_torn", "set": {"DoCopy": "FALSE", "MaxCrash": "1"}, "traces": 4,
+        "depth": 20, "least": 4, "leave": [],
+    },
+    # an outside save of R between the try's check and its restore swap: displaced into the restore temp, kept
+    "S_recover_displaced": {
+        "jobs": ["recover"], "base": "S_recover",
+        "set": {"BootJ": '{"b2"}', "MaxUnreach": "0", "MaxCrash": "0"}, "traces": 4, "depth": 30, "least": 6,
+        "leave": ["edit_at_restore_swap"],
+    },
 }  # fmt: skip
 CANDIDATES = 20
 SEED = 20261029
@@ -171,15 +209,24 @@ SEED = 20261029
 # cannot be taken in any other world (its constants never start the job: `CreateTarget = "none"`, `DoCopy = FALSE`,
 # `MaxDrop = 0`), so leaving them out there changes no behaviour; it keeps TLC's walk of the save worlds, and so their
 # traces, as they were.
+# S0091 (BL-0164): recover-all's actions likewise, walked only in the recover worlds: Retry (`StartRecover`), Keep,
+# the app's crash and the next start, the path changer and the unreachable disk. Unlike the create's and the copy's,
+# some of them could be taken in the save worlds (an app crash, Keep of a save's stopped journal): there they stay
+# left out, as they were in OUT before S0091 (each trace is still a behaviour of Spec), so the save, create and copy
+# traces stay byte for byte as they were (`INERT_ELSEWHERE` names the jobs whose actions no other world can take).
 JOB_ACTIONS: dict[str, frozenset[str]] = {
     "create": frozenset({"StartCreate", "EditorDrop", "EditorOverwrite"}),
     "copy": frozenset({"StartCopy"}),
+    "recover": frozenset({"StartRecover", "Keep", "Relaunch", "AppCrash", "PathChange", "Unreach"}),
 }
+INERT_ELSEWHERE = frozenset({"create", "copy"})
 OUT = frozenset(
     {
-        # BL-0164: recover-all through the engine, and Keep; the app's crash and a power loss end the session, whose
-        # next start is recover-all's; the path changer and the unreachable disk act on boot journals only
-        "StartRecover", "Keep", "Relaunch", "AppCrash", "PowerLoss", "PathChange", "Unreach",
+        # S0091: a power loss picks one outcome per name from the model's `pl` sets; the fake cannot be steered to the
+        # model's pick (where the code is more durable than the model it does not exist). The replays check the
+        # durable layer instead: every sync step of the model is a sync of the code's, and recover-all's ends and
+        # Keep are compared over every power-loss state of the fake (`test_recover_conformance.py`)
+        "PowerLoss",
     }
 )  # fmt: skip
 # Branches of an action that belong to a later piece, left out the same way (none since S0072).
@@ -219,8 +266,20 @@ LEAVE: dict[str, dict[str, str]] = {
     "crash_late_create": {"EngineCrash": 'run.k = "create" /\\ ctl.pc \\in {"cr_ms", "cr_reg"}'},
     "crash_open_journal": {"EngineCrash": 'run.k = "save" /\\ jr[run.id].st = "open"'},
     "drop_in_create": {"EditorDrop": 'run.k = "create"', "EditorOverwrite": 'run.k = "create"'},
+    # S0091: the app's crash only while recover-all runs (so the next start meets a journal left in hand), and an
+    # outside save of R only between the try's check and its restore swap
+    "app_crash_in_recover": {"AppCrash": 'run.k = "recover"'},
+    "edit_at_restore_swap": {"Editor": 'run.k = "recover" /\\ ctl.pc = "rs_x"'},
+    # no Keep of a journal naming R while R's folder is a link: the code refuses it (`path_moved`, red team r1 R1-3),
+    # the model's Keep does not (MAPPING.md §3, BL-0224; `test_recover_conformance.py` pins the difference)
+    "keep_not_over_link": {"Keep": '~(env.lnk /\\ "R" \\in jr[j].files)'},
+    # K's disk goes or comes back only outside a try, or at its check: the model lets a try past its check go on
+    # writing on a disk that went (only `Stops` reads `env.unr`); the code's next operation there fails (MAPPING.md §3)
+    "unreach_outside_try": {"Unreach": '~(run.k = "recover" /\\ ctl.rj # "none" /\\ ctl.pc # "rs_chk")'},
+    # an I/O error only at a step where the code always writes (its effect is the hook the error is raised at)
+    "io_at_restore_write": {"IOFail": 'ctl.pc \\in {"rs_sync", "rs_w", "rs_x", "rs_all", "rs_res"}'},
 }  # fmt: skip
-KEEP_VARS = ("act", "app", "run", "ctl", "fs", "jr", "gh", "tgt")
+KEEP_VARS = ("act", "app", "run", "ctl", "fs", "jr", "gh", "tgt", "env")
 
 # -- the model's Next, read from its source --------------------------------------------------------------------------
 
@@ -420,8 +479,8 @@ def read_trace(text: str) -> list[dict[str, Any]]:
     return states
 
 
-def compact(state: dict[str, Any]) -> dict[str, Any]:
-    """Only the fields the replay reads, sets as sorted lists."""
+def compact(state: dict[str, Any], recover: bool = False) -> dict[str, Any]:
+    """Only the fields the replay reads, sets as sorted lists; in a recover world also `recover_state` (S0091)."""
     run = state["run"]
     return {
         "act": state["act"],
@@ -430,7 +489,31 @@ def compact(state: dict[str, Any]) -> dict[str, Any]:
         "ctl": {"pc": state["ctl"]["pc"]},
         "tgt": target(state["tgt"]),
         **save_state(state),
+        **({"rc": recover_state(state)} if recover else {}),
     }
+
+
+def recover_state(state: dict[str, Any]) -> dict[str, Any]:
+    """S0091 (BL-0164): what `engine/tests/ledger/test_recover_conformance.py` reads: the boot journals' files (R and
+    J of b2, K of b3), per boot journal and file its temp, staging file, restore temp and kept copies, each boot
+    journal's state and blocking reason, recover-all's progress (the journal in hand `rj`, the file index `fi`, the
+    journals tried, the files to put back, whether a created path is taken) and the environment (R's folder a link,
+    K's disk unreachable, bytes written outside the recorded paths)."""
+    fs, ctl, env = state["fs"], state["ctl"], state["env"]
+
+    def slots(fn: dict[str, Any]) -> dict[str, Any]:
+        return {f"{k[0]}/{k[1]}": v for k, v in fn["fn"] if k[0] in ("b2", "b3")}
+
+    return {
+        "cur": {f: fs["cur"][f] for f in ("R", "J", "K")},
+        "tc": slots(fs["tc"]), "sg": slots(fs["sg"]), "rt": slots(fs["rt"]),
+        "kp": {k: sorted(v["set"]) for k, v in slots(fs["kp"]).items()},
+        "jr": {j: state["jr"][j]["st"] for j in ("b2", "b3")},
+        "why": {j: state["jr"][j]["why"] for j in ("b2", "b3")},
+        "rj": ctl["rj"], "fi": ctl["fi"], "tried": sorted(ctl["tried"]["set"]), "put": sorted(ctl["put"]["set"]),
+        "taken": ctl["taken"],
+        "lnk": env["lnk"], "unr": env["unr"], "outside": env["outside"],
+    }  # fmt: skip
 
 
 def target(tgt: dict[str, Any]) -> dict[str, Any]:
@@ -496,6 +579,7 @@ def header() -> dict[str, Any]:
         "leave": LEAVE,
         "out": sorted(OUT),
         "job_actions": {k: sorted(v) for k, v in JOB_ACTIONS.items()},
+        "inert_elsewhere": sorted(INERT_ELSEWHERE),
         "command": COMMAND,
     }
 
@@ -520,7 +604,8 @@ def simulate(world: str, traces: int, depth: int, work: Path) -> list[list[dict[
     files = sorted(folder.glob("trace_*"), key=lambda p: [int(x) for x in p.name.split("_")[1:]])
     if len(files) != traces:
         raise SystemExit(f"{world}: TLC wrote {len(files)} traces, not {traces}")
-    return [prune([compact(s) for s in read_trace(f.read_text(encoding="utf-8"))]) for f in files]
+    recover = "recover" in w.get("jobs", [])
+    return [prune([compact(s, recover) for s in read_trace(f.read_text(encoding="utf-8"))]) for f in files]
 
 
 SAVE_KEYS = ("fs", "jr", "sv", "told")

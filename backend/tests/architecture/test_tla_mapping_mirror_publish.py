@@ -10,8 +10,9 @@ none. An action with no step of ours is in `CODELESS` with its reason. The check
 - on an engine or reader action with neither a marker nor a `CODELESS` row;
 - on a `CODELESS` action that is marked, or that is no action of `Next`.
 The markers are read from the source (AST) of both packages, never imported (ADR-0054). Same limit as the engine-jobs
-map: it sees which actions are marked, not whether the marked function does what the action does; the publish's
-sweeps (`engine/tests/mirror/test_publish_crash.py`) test that.
+map: it sees which actions are marked, not whether the marked function does what the action does; the replay of the
+model's traces (`engine/tests/mirror/test_publish_conformance.py`, S0091) and the publish's sweeps
+(`engine/tests/mirror/test_publish_crash.py`) test that.
 """
 
 from __future__ import annotations
