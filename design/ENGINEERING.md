@@ -200,8 +200,8 @@ created = clock.now(); pid = ids.new_plan_id()   # TransactionIds are derived, n
 
 **Enforcement.**
 - ruff `TID251` banned APIs outside `platform/adapters`: `datetime.datetime.now`, `datetime.date.today`, `time.time`, `uuid.uuid4`, `random.*`, `secrets.*`; plus ruff `DTZ`.
-- `scripts/check_money_dates.py` over `backend/src` and `engine/src` (S0092): a date without a zone (`.date()`, `.astimezone()`) only in `app.domain.dates.civil_date`, and no `.today()`, `.utcnow()` or `.utcfromtimestamp()` on anything, an alias of the class included; with it the float-money bans of INV-06.
-- ESLint `no-restricted-syntax` / `no-restricted-properties`: `new Date()`, `Date.now`, `Math.random` and `crypto.randomUUID` outside `platform/`; in `src/` outside `src/platform/`, the `Date` class itself (`no-restricted-globals`) and `.Now` (S0092).
+- `scripts/check_money_dates.py` over `backend/src` and `engine/src` (S0092): a date without a zone (`.date()`, `.astimezone()`) or from an instant's text or fields (`.strftime`, a slice of `.isoformat()`, `.year`/`.month`/`.day`) only in `app.domain.dates.civil_date`, and no `.today()`, `.utcnow()` or `.utcfromtimestamp()` on anything, an alias of the class included; with it the float-money bans of INV-06.
+- ESLint `no-restricted-syntax` / `no-restricted-properties`: `new Date()`, `Date.now`, `Math.random` and `crypto.randomUUID` outside `platform/`; in `src/` outside `src/platform/`, the `Date` class itself (`no-restricted-globals`), `.Now` and a date formatter's `format()` with no date (S0092).
 - Acceptance runs with `TZ` west of UTC and a frozen clock on both sides; the backend's and the engine's unit suites run west of UTC too (their `tests/conftest.py`, S0092).
 
 ### EP-11 Vertical slices over a shared kernel, dependency direction enforced

@@ -177,7 +177,7 @@ def _fixed_events(span: Span, rng: SeededRng) -> tuple[list[_Event], list[date]]
 def _purchases(span: Span, rng: SeededRng, count: int) -> list[_Event]:
     """*count* everyday card purchases on uniformly drawn days; the year's budget sets the typical amount."""
     days = (span.end - span.start).days + 1
-    per_month = Decimal(count) / len(_months(span))
+    per_month = Decimal(count) / len(_months(span))  # exact: count is an int
     out: list[_Event] = []
     for _ in range(count):
         d = date.fromordinal(span.start.toordinal() + rng.below(days))

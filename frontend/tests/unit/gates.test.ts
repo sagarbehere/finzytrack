@@ -99,6 +99,23 @@ describe('[INV-06][INV-07] lint bans', () => {
       'declare const T: { Now: unknown }\nexport const n = T.Now\n',
       'no-restricted-properties',
     ],
+    // S0092 verifier V3: a date formatter with no date formats the system clock's now.
+    [
+      'Intl.DateTimeFormat().format() (now, here in UTC)',
+      "export const t = new Intl.DateTimeFormat('en-CA', { timeZone: 'UTC' }).format()\n",
+      'no-restricted-syntax',
+    ],
+    ['formatToParts() of now', 'export const t = Intl.DateTimeFormat().formatToParts()\n', 'no-restricted-syntax'],
+    [
+      'format() of now through a variable',
+      'const f = new Intl.DateTimeFormat()\nexport const t = f.format()\n',
+      'no-restricted-syntax',
+    ],
+    [
+      "Reflect.get(globalThis, 'Date')",
+      "export const D: unknown = Reflect.get(globalThis, 'Date')\n",
+      'no-restricted-syntax',
+    ],
   ])('refuses %s in src', async (_label, code, rule) => {
     expect(await ruleIds(code)).toContain(rule)
   })
@@ -136,6 +153,12 @@ describe('[INV-06][INV-07] lint bans', () => {
   })
 
   // @regression-guard (S0092): the must-pass beside the bans above (a field `.now`, a shadowing parameter).
+  // @regression-guard (S0092 round 1): the must-pass beside the format-of-now ban.
+  it('accepts formatting a given date', async () => {
+    const code = "declare const when: number\nexport const t = new Intl.DateTimeFormat('en-CA').format(when)\n"
+    expect(await ruleIds(code)).toEqual([])
+  })
+
   it('accepts a field or a local of the same name', async () => {
     expect(await ruleIds('export const o = { date: 1, now: 2 }\nexport const n = o.now + o.date\n')).toEqual([])
     expect(await ruleIds('export function f(Date: number): number {\n  return Date\n}\n')).toEqual([])
@@ -144,15 +167,26 @@ describe('[INV-06][INV-07] lint bans', () => {
   const sfc = (expr: string) =>
     `<script setup lang="ts">\nconst amount = 1.5\n</script>\n\n<template>\n  <p>{{ amount }} {{ ${expr} }}</p>\n</template>\n`
 
-  it.each(['amount.toFixed(2)', 'new Date()', 'Date.now()', 'Date()', 'new Date(2026, 9, 25)', "parseFloat('1.5')"])(
-    'refuses %s in a template',
-    async (expr) => {
-      expect(await ruleIds(sfc(expr), 'App.vue')).toContain('vue/no-restricted-syntax')
-    },
-  )
+  it.each([
+    'amount.toFixed(2)',
+    'new Date()',
+    'Date.now()',
+    'Date()',
+    'new Date(2026, 9, 25)',
+    "parseFloat('1.5')",
+    'Intl.DateTimeFormat().format()',
+  ])('refuses %s in a template', async (expr) => {
+    expect(await ruleIds(sfc(expr), 'App.vue')).toContain('vue/no-restricted-syntax')
+  })
 
   it('accepts a plain template expression', async () => {
     expect(await ruleIds(sfc('amount'), 'App.vue')).toEqual([])
+  })
+
+  it('accepts a field named Date or parseFloat in a template (S0092 verifier V6)', async () => {
+    const code =
+      '<script setup lang="ts">\nconst row = { Date: "2026-01-01", parseFloat: 1 }\n</script>\n\n<template>\n  <p>{{ row.Date }} {{ row.parseFloat }}</p>\n</template>\n'
+    expect(await ruleIds(code, 'App.vue')).toEqual([])
   })
 })
 

@@ -10,7 +10,7 @@ select = ["E", "W", "F", "I", "UP", "B", "BLE", "DTZ", "S", "TRY", "TID", "PT", 
 "**/tests/**" = ["S101"]
 
 [lint.flake8-tidy-imports.banned-api]
-"datetime.date.today".msg = "INV-07: there is no UTC or system 'today'; use domain.today(tz, clock)"
+"datetime.date.today".msg = "INV-07: there is no UTC or system 'today'; use app.domain.dates.civil_date(clock.now())"
 "datetime.datetime.now".msg = "INV-07, EP-10: time comes from the injected Clock port"
 "datetime.datetime.utcnow".msg = "INV-07, EP-10: time comes from the injected Clock port"
 "time.sleep".msg = "EP-28: no sleeps; wait on a condition or use the injected Clock"

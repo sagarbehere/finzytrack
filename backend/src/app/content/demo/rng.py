@@ -61,4 +61,4 @@ class SeededRng:
 
     def cents(self, lo: Decimal, hi: Decimal) -> Decimal:
         """A uniform amount in [lo, hi], in whole cents."""
-        return Decimal(self.between(int(lo * 100), int(hi * 100))).scaleb(-2)
+        return Decimal(self.between(int(lo * 100), int(hi * 100))).scaleb(-2)  # exact: an int of cents

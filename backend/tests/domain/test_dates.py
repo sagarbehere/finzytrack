@@ -6,12 +6,19 @@ boundary where the two differ, so a UTC "today" cannot pass.
 
 from __future__ import annotations
 
+import time
+from collections.abc import Iterator
 from datetime import UTC, date, datetime, timedelta, timezone
+from pathlib import Path
 from zoneinfo import ZoneInfo
 
 import pytest
 
 from app.domain.dates import civil_date
+from app.platform.clock import FrozenClock
+from app.platform.engine_jobs import opening, rebuild
+from app.platform.engine_jobs.opening import OpenTarget
+from app.platform.engine_jobs.rebuild import RebuildTarget
 
 pytestmark = pytest.mark.inv("INV-07")
 
@@ -43,3 +50,25 @@ def test_a_naive_instant_is_refused() -> None:
     # Must not pass: a wall time without an offset is not an instant (it would be read in the machine's zone).
     with pytest.raises(ValueError, match="offset"):
         civil_date(datetime(2026, 4, 1, 4, 30))  # noqa: DTZ001 (the naive value is the case under test)
+
+
+# ADR-0023 Consequences: one run east of UTC (S0092 verifier V5). The whole suite runs in Los Angeles; here every
+# sidecar "today" is also taken in Kolkata, after local midnight, where the civil date is already UTC's next day.
+@pytest.fixture
+def kolkata(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    monkeypatch.setenv("TZ", "Asia/Kolkata")
+    time.tzset()
+    yield
+    monkeypatch.undo()
+    time.tzset()
+
+
+@pytest.mark.usefixtures("kolkata")
+def test_east_of_utc_every_sidecar_today_is_the_local_date() -> None:
+    # 19:00 UTC on 31 March is 00:30 on 1 April in Kolkata: a UTC "today" would send 31 March.
+    clock = FrozenClock(EVENING)
+    assert civil_date(EVENING) == date(2026, 4, 1)
+    open_target = OpenTarget(workspace_key="k", root="/L/main.bean", lineage="lin", app_local_data=Path("/app"))
+    assert opening.params_of(open_target, clock)["today"] == "2026-04-01"
+    rebuild_target = RebuildTarget("k", "/L/main.bean", "{}", lineage="lin", app_local_data=Path("/app"))
+    assert rebuild.params_of(rebuild_target, "{}", clock)["today"] == "2026-04-01"

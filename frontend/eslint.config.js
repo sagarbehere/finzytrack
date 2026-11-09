@@ -20,6 +20,20 @@ const systemTime = [
   { selector: "CallExpression[callee.object.property.name='Date'][callee.property.name='now']", message: today },
 ]
 
+// S0092 verifier V3: a date formatter with no date formats now (the system clock), whatever its time zone; and the
+// class reached by name through Reflect.
+const clockByFormat = {
+  selector: 'CallExpression[callee.property.name=/^(format|formatToParts)$/][arguments.length=0]',
+  message: today,
+}
+const appClock = [
+  clockByFormat,
+  {
+    selector: "CallExpression[callee.object.name='Reflect'][callee.property.name='get'][arguments.1.value='Date']",
+    message: today,
+  },
+]
+
 // L9.M-7: tests stub components by import (vi.mock of the module, findComponent(ImportedComponent)), never by
 // name: a name-keyed stub or lookup keeps passing after the component is renamed and silently tests nothing.
 const byName = 'L9.M-7: stub by import (vi.mock the module; findComponent(Imported)), never by component name'
@@ -115,9 +129,17 @@ export default tseslint.config(
           selector: "CallExpression[callee.property.name='toFixed']",
           message: 'INV-06: format money through src/domain',
         },
-        // INV-07 (S0092): templates may not name Date at all; INV-06: nor parse money as a float.
-        { selector: "Identifier[name='Date']", message: today },
-        { selector: "Identifier[name='parseFloat']", message: floatParse },
+        // INV-07 (S0092): templates may not name the Date class (a field `row.Date` is not it), nor format now;
+        // INV-06: nor parse money as a float.
+        {
+          selector: "Identifier[name='Date']:not(MemberExpression[computed=false] > Identifier.property)",
+          message: today,
+        },
+        clockByFormat,
+        {
+          selector: "Identifier[name='parseFloat']:not(MemberExpression[computed=false] > Identifier.property)",
+          message: floatParse,
+        },
       ],
     },
   },
@@ -129,6 +151,7 @@ export default tseslint.config(
     files: ['src/**/*.ts', 'src/**/*.vue'],
     ignores: ['src/platform/**'],
     rules: {
+      'no-restricted-syntax': ['error', ...systemTime, ...appClock],
       'no-restricted-globals': ['error', { name: 'Date', message: today }, { name: 'parseFloat', message: floatParse }],
       'no-restricted-properties': [
         'error',

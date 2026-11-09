@@ -532,3 +532,11 @@ Format:
 - Why: the invariants' enforcement was planned only; S0009's frontend ban missed aliasing (BL-0007), and the sidecar had two copies of "today" with a test that took its expected date from the code.
 - Expected effect: a float conversion of money or a UTC "today" fails a gate in the change that adds it. Metric: false-positive marks (`# not money:`) per slice, verifier findings on INV-06/INV-07.
 - Status: kept (agent-approved tightening; S0092).
+
+## IMP-0055: the gates' self-defence freeze does not hold back an invariant's due enforcement (2026-11-09)
+- Trigger: S0092 verifier round 1, V4: the new `scripts/check_money_dates.py` against PROCESS.md §9's "a new check script or meta-test class only after a real escape". Owner, 2026-11-09, in session, choosing "Allow: planned enforcement (Recommended)": "Keep the script. Record that the freeze is about the gates defending themselves, not about building the enforcement an invariant is due to get at its milestone; PROCESS.md §9 gets that one clarifying clause, with your words."
+- What changed: process wording (clarification, owner-approved). PROCESS.md §9's freeze sentence gains one clause: the freeze is about the gates defending themselves, not about building the enforcement an invariant is due to get at its milestone. A separate entry from IMP-0054, which records the gate itself.
+- PROCESS.md section: §9 (guardrails, "The gates' self-defence is frozen").
+- Why: read literally, the freeze would block every pending invariant's planned check script (INV-06, INV-07 in S0092), which the owner never meant.
+- Expected effect: a pending invariant's enforcement is built at its milestone without an escape first; hardening of the gates against deliberate bypass stays frozen.
+- Status: kept (owner-approved; the S0092 commit that lands round 1's fixes, on top of 50882bb4).

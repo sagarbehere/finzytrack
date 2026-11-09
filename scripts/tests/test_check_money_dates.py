@@ -36,6 +36,17 @@ FROM_FLOAT = (
     "import decimal\nx = decimal.getcontext().create_decimal_from_float(0.1)\n",
     "from decimal import Decimal\nmake = Decimal.from_float\n",
 )
+DECIMAL_OF_A_VALUE = (
+    # S0092 verifier V1: pyright and RUF032 accept these
+    "from decimal import Decimal\ndef f(x: float) -> Decimal:\n    return Decimal(x)\n",
+    "from decimal import Decimal\ndef f(cents: int) -> Decimal:\n    return Decimal(cents / 100)\n",
+    "import decimal\nx = decimal.Decimal(rate)\n",
+    "import decimal as d\nx = d.Decimal(value=rate)\n",
+    "from decimal import Decimal as D\nx = D(rate)\n",
+    "import decimal\nx = decimal.getcontext().create_decimal(rate)\n",
+    "from decimal import Decimal\nx = Decimal(int(rate))\n",
+    "from decimal import Decimal\nx = Decimal(rate)  # exact:\n",
+)
 JSON_AS_FLOAT = (
     "import json\nx = json.loads('{\"amount\": 10.50}')\n",
     "import json\nwith open('f') as fh:\n    x = json.load(fh)\n",
@@ -44,6 +55,11 @@ JSON_AS_FLOAT = (
     "from json import loads as read\nx = read(text)\n",
     "import json\nd = json.JSONDecoder()\n",
     "from json import JSONDecoder\nd = JSONDecoder(strict=True)\n",
+    # S0092 verifier V7
+    "from json.decoder import JSONDecoder\nx = JSONDecoder().decode(t)\n",
+    "import json\nx = json.decoder.JSONDecoder().decode(t)\n",
+    "import json\nclass D(json.JSONDecoder):\n    pass\n",
+    "from json import JSONDecoder\nclass D(JSONDecoder):\n    pass\n",
 )
 MATH_FLOAT = (
     "import math\nx = math.fsum(amounts)\n",
@@ -57,6 +73,14 @@ ZONELESS = (
     "def f(clock):\n    return clock.now().date()\n",
     "def f(now):\n    return now.astimezone().date()\n",
     "def f(now):\n    return now.astimezone()\n",
+    # S0092 verifier V2: the date through the instant's text or fields
+    "def f(clock):\n    return clock.now().strftime('%Y-%m-%d')\n",
+    "def f(clock):\n    return clock.now().isoformat()[:10]\n",
+    "def f(clock):\n    return clock.now().isoformat().split('T')[0]\n",
+    "def f(clock):\n    return clock.now().isoformat().partition('T')\n",
+    "from datetime import date\ndef f(clock):\n    n = clock.now()\n    return date(n.year, n.month, n.day)\n",
+    "def f(clock):\n    return clock.now().timetuple()\n",
+    "def f(clock):\n    return clock.now().utctimetuple()\n",
 )
 SYSTEM_DAY = (
     "from datetime import date\nd = date\nx = d.today()\n",
@@ -77,6 +101,9 @@ ALLOWED = (
     "from typing import Callable\nnow: Callable[[], float]\n",
     # Decimal from text, JSON with Decimal, math's checks on a float
     "from decimal import Decimal\nx = Decimal('10.50')\n",
+    "from decimal import Decimal\nx = (Decimal(), Decimal(0), Decimal(-1), Decimal(f'{n}'), Decimal(str(n)))\n",
+    "from decimal import Decimal\nx = Decimal(count)  # exact: count is an int\n",
+    "from decimal import Decimal\nimport json\nx = json.loads(t, parse_float=Decimal)\n",
     "import json\nfrom decimal import Decimal\nx = json.loads(text, parse_float=Decimal)\n",
     "import json\nx = json.dumps({'a': '10.50'})\n",
     "import math\nok = math.isfinite(0.5) and not math.isnan(0.5) and math.inf > 0\n",
@@ -88,6 +115,8 @@ ALLOWED = (
     "from datetime import date\nx = date.fromisoformat('2026-03-31')\n",
     "def f(target):\n    return target.today\n",
     "def f(params):\n    return {'today': params.today}\n",
+    "def f(d):\n    return (d.isoformat(), d.isoformat().encode(), f'{d.year}-{d.month}')\n",
+    "def f(d, span):\n    return pay(d.year, span.end.year)\n",
     "import datetime\ndef f(v: object) -> bool:\n    match v:\n        case datetime.date():\n            return True\n"
     "        case _:\n            return False\n",
 )
@@ -107,6 +136,11 @@ class Money(unittest.TestCase):
         for source in FROM_FLOAT:
             with self.subTest(source=source):
                 self.assertTrue(any("from_float" in p for p in found(source)), found(source))
+
+    def test_a_decimal_of_a_value_that_may_be_a_float_is_refused(self) -> None:
+        for source in DECIMAL_OF_A_VALUE:
+            with self.subTest(source=source):
+                self.assertTrue(any("a Decimal from a value" in p for p in found(source)), found(source))
 
     def test_a_json_decode_without_parse_float_is_refused(self) -> None:
         for source in JSON_AS_FLOAT:
@@ -143,6 +177,10 @@ class Dates(unittest.TestCase):
         for source in SYSTEM_DAY:
             with self.subTest(source=source):
                 self.assertTrue(any("INV-07" in p for p in found(source)), found(source))
+
+    def test_the_home_may_take_the_date_through_text_or_fields(self) -> None:
+        source = "from datetime import date\ndef f(n):\n    return (n.isoformat()[:10], date(n.year, n.month, n.day))\n"
+        self.assertEqual(found(source, HOME), [])
 
     def test_the_systems_day_is_refused_in_the_home_too(self) -> None:
         self.assertTrue(found("from datetime import date\nd = date\nx = d.today()\n", HOME))
