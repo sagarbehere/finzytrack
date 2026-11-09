@@ -548,3 +548,11 @@ Format:
 - Why: the globals test (INV-11) sees module and class state only; a cache kept on a long-lived object's attribute, or in the engine (never scanned), passed every gate.
 - Expected effect: a cache added to any long-lived object or to the engine fails until it is registered with a bound. Metric: registry entries added per slice against findings on INV-10.
 - Status: kept (agent-approved tightening; S0093).
+
+## IMP-0057: an invariant is marked enforced when everything that exists today is guarded (2026-11-09)
+- Trigger: S0093 (INV-10's status), after S0092 (INV-06, INV-07). Owner, 2026-11-09, in session, choosing "Yes, standing rule (Recommended)": "INV-10 enforced. From now on an invariant is marked enforced when everything that exists today is guarded, with the unbuilt parts listed as planned under their rows; recorded once in INVARIANTS.md's rules with your words. You still see each one in the slice summary."
+- What changed: process wording (owner-approved). `design/INVARIANTS.md` "Status values" gains the standing rule, with both of the owner's quotes; INV-06, INV-07 and INV-10 point to it instead of repeating the quote. Each such status change is still named in the slice's summary to the owner.
+- PROCESS.md section: none (the rule lives with the status values in INVARIANTS.md).
+- Why: the same question (pending until every planned part exists, or enforced with the planned parts listed) came to the owner for each invariant.
+- Expected effect: no owner question per invariant for this status choice; the planned parts stay visible on each Enforced-by line under their rows. Metric: invariants marked enforced with planned parts, and verifier findings on unguarded existing code.
+- Status: kept (owner-approved; S0093 round 1).
