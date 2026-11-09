@@ -19,6 +19,7 @@ import selectors
 import subprocess
 import sys
 import threading
+from decimal import Decimal
 from typing import Final, cast
 
 from ledger_engine.ledger.copy_check import CheckRequest, CheckResult
@@ -76,7 +77,7 @@ def check(request: CheckRequest) -> CheckResult:
     if code != 0:
         return CheckResult("failed", subject=f"exit {code}")
     try:
-        return CheckResult.decode(cast("dict[str, object]", json.loads(answer)))
+        return CheckResult.decode(cast("dict[str, object]", json.loads(answer, parse_float=Decimal)))
     except (ValueError, KeyError, TypeError):
         return CheckResult("failed", subject="answer")
 

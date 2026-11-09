@@ -18,6 +18,7 @@ import json
 import re
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
+from decimal import Decimal
 from typing import Any, cast
 
 from app.platform.engine import (
@@ -154,7 +155,7 @@ def foreign_version(line: bytes) -> int | None:
     `PROTOCOL_VERSION` is read no further: its shape belongs to a protocol this side does not know.
     """
     try:
-        data: object = json.loads(line.decode("utf-8"))
+        data: object = json.loads(line.decode("utf-8"), parse_float=Decimal)
     except (ValueError, RecursionError):
         return None
     if not isinstance(data, dict):
@@ -173,7 +174,10 @@ def decode_reply(
         return Violation(f"the reply is longer than {MAX_LINE_BYTES} bytes")
     try:
         data: object = json.loads(
-            line.decode("utf-8"), object_pairs_hook=_refuse_duplicates, parse_constant=_refuse_constant
+            line.decode("utf-8"),
+            object_pairs_hook=_refuse_duplicates,
+            parse_constant=_refuse_constant,
+            parse_float=Decimal,
         )
     except ValueError:  # UnicodeDecodeError and JSONDecodeError are ValueErrors
         return Violation("the reply is not one JSON value in UTF-8")

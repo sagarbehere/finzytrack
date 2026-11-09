@@ -40,6 +40,7 @@ import posixpath
 import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from decimal import Decimal
 from itertools import pairwise
 from typing import Final, cast
 
@@ -235,7 +236,7 @@ def decode(data: bytes) -> Fingerprint:
     """The strict inverse of `encode` (S0063: the plan's fingerprint crosses the engine protocol as its encoding):
     exactly the bytes `encode` would make for the value, or `UndecodableError`."""
     try:
-        value = json.loads(data.decode("ascii"))
+        value = json.loads(data.decode("ascii"), parse_float=Decimal)
     except (UnicodeDecodeError, ValueError, RecursionError):
         raise UndecodableError("json") from None
     if not isinstance(value, dict):

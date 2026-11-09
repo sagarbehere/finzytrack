@@ -22,6 +22,7 @@ import json
 import re
 import unicodedata
 from dataclasses import dataclass
+from decimal import Decimal
 from enum import StrEnum
 from typing import Final, cast
 
@@ -520,7 +521,7 @@ def decode(data: bytes) -> Record | Unreadable:
     if not data.endswith(b"\n"):
         return Unreadable("cut off")
     try:
-        raw: object = json.loads(data.decode())
+        raw: object = json.loads(data.decode(), parse_float=Decimal)
     except (UnicodeDecodeError, ValueError):
         return Unreadable("not json")
     if not isinstance(raw, dict) or raw.get("format") != FORMAT:  # pyright: ignore[reportUnknownMemberType]

@@ -69,17 +69,87 @@ describe('[INV-06][INV-07] lint bans', () => {
     expect(await ruleIds(code)).toContain(rule)
   })
 
-  it('accepts a date built from given parts', async () => {
-    expect(await ruleIds('export const d = new Date(2026, 9, 25)\n')).toEqual([])
-    expect(await ruleIds('export const d = new globalThis.Date(2026, 9, 25)\n')).toEqual([])
+  // BL-0007: outside src/platform the class itself is refused, so no alias of it can read the system clock
+  // (`const D = Date; new D()`), and Temporal's system clock (`Temporal.Now`) is refused with it (S0092).
+  it.each([
+    ['an alias of Date', 'const D = Date\nexport const d = new D()\n', 'no-restricted-globals'],
+    [
+      'Date passed as a value',
+      'export const make = (f: () => unknown) => f\nmake(() => Date)\n',
+      'no-restricted-globals',
+    ],
+    ['a date from parts in app code', 'export const d = new Date(2026, 9, 25)\n', 'no-restricted-globals'],
+    ['Date.UTC', 'export const t = Date.UTC(2026, 9, 25)\n', 'no-restricted-globals'],
+    ['globalThis.Date', 'export const D = globalThis.Date\n', 'no-restricted-properties'],
+    ["globalThis['Date']", "export const D = globalThis['Date']\n", 'no-restricted-properties'],
+    ['window.Date', 'export const D = window.Date\n', 'no-restricted-properties'],
+    ['self.Date', 'export const D = self.Date\n', 'no-restricted-properties'],
+    [
+      'Date taken by destructuring',
+      'const { Date: D } = globalThis\nexport const d = new D()\n',
+      'no-restricted-properties',
+    ],
+    [
+      'Temporal.Now',
+      'declare const Temporal: { Now: { plainDateISO(): unknown } }\nexport const d = Temporal.Now.plainDateISO()\n',
+      'no-restricted-properties',
+    ],
+    [
+      'an alias of Temporal.Now',
+      'declare const T: { Now: unknown }\nexport const n = T.Now\n',
+      'no-restricted-properties',
+    ],
+  ])('refuses %s in src', async (_label, code, rule) => {
+    expect(await ruleIds(code)).toContain(rule)
+  })
+
+  it.each([
+    ['parseFloat', "export const n = parseFloat('10.50')\n", 'no-restricted-globals'],
+    ['Number.parseFloat', "export const n = Number.parseFloat('10.50')\n", 'no-restricted-properties'],
+    ['an alias of parseFloat', 'const p = parseFloat\nexport const n = p("1.5")\n', 'no-restricted-globals'],
+  ])('refuses %s, a float parse of money, in src', async (_label, code, rule) => {
+    expect(await ruleIds(code)).toContain(rule)
+  })
+
+  // src/platform has no file yet, and typed linting needs one: its rules are read from the resolved config.
+  async function rulesFor(file: string): Promise<Partial<Linter.RulesRecord>> {
+    const config = (await eslint.calculateConfigForFile(`${root}/${file}`)) as Linter.Config
+    return config.rules ?? {}
+  }
+
+  it('lets src/platform (the home of the clock adapter) name Date, and still refuses the system clock there', async () => {
+    const platform = await rulesFor('src/platform/clock.ts')
+    const app = await rulesFor('src/main.ts')
+    expect(JSON.stringify(app['no-restricted-globals'])).toContain('"Date"')
+    expect(JSON.stringify(platform['no-restricted-globals'] ?? 'off')).not.toContain('"Date"')
+    expect(JSON.stringify(platform['no-restricted-syntax'])).toContain(
+      "callee.object.name='Date'][callee.property.name='now']",
+    )
+    expect(JSON.stringify(platform['no-restricted-syntax'])).toContain(
+      "NewExpression[callee.name='Date'][arguments.length=0]",
+    )
+  })
+
+  // @regression-guard (S0092): the must-pass beside the app-code ban; tests and e2e keep S0009's selectors.
+  it('accepts a date built from given parts outside src (tests, the acceptance harness)', async () => {
+    expect(await ruleIds('export const d = new Date(2026, 9, 25)\n', 'App.test.ts', 'tests/unit')).toEqual([])
+  })
+
+  // @regression-guard (S0092): the must-pass beside the bans above (a field `.now`, a shadowing parameter).
+  it('accepts a field or a local of the same name', async () => {
+    expect(await ruleIds('export const o = { date: 1, now: 2 }\nexport const n = o.now + o.date\n')).toEqual([])
+    expect(await ruleIds('export function f(Date: number): number {\n  return Date\n}\n')).toEqual([])
   })
 
   const sfc = (expr: string) =>
     `<script setup lang="ts">\nconst amount = 1.5\n</script>\n\n<template>\n  <p>{{ amount }} {{ ${expr} }}</p>\n</template>\n`
 
-  it.each(['amount.toFixed(2)', 'new Date()', 'Date.now()', 'Date()'])('refuses %s in a template', async (expr) => {
-    expect(await ruleIds(sfc(expr), 'App.vue')).toContain('vue/no-restricted-syntax')
-  })
+  it.each(['amount.toFixed(2)', 'new Date()', 'Date.now()', 'Date()', 'new Date(2026, 9, 25)', "parseFloat('1.5')"])(
+    'refuses %s in a template',
+    async (expr) => {
+      expect(await ruleIds(sfc(expr), 'App.vue')).toContain('vue/no-restricted-syntax')
+    },
+  )
 
   it('accepts a plain template expression', async () => {
     expect(await ruleIds(sfc('amount'), 'App.vue')).toEqual([])

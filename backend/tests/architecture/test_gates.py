@@ -1,4 +1,4 @@
-"""The backend's type gate and lint bans cannot be loosened silently (EP-22, INV-07, EP-10, EP-28).
+"""The backend's type gate and lint bans cannot be loosened silently (EP-22, INV-06, INV-07, EP-10, EP-28).
 
 The pyright settings are pinned here; each ruff ban is checked on a planted file, beside a file that must pass.
 """
@@ -104,6 +104,34 @@ def test_banned_time_apis_are_refused(tmp_path: Path, source: str) -> None:
 def test_system_time_is_refused_outside_domain_too(tmp_path: Path, source: str) -> None:
     # Verifier S0006 R2-F2: layers that may import `time` (api, boot, ...) still get no system clock.
     assert "TID251" in ruff_codes(tmp_path, source, layer="api")
+
+
+@pytest.mark.parametrize(
+    ("source", "code"),
+    [
+        ("from datetime import datetime\n\nx = datetime(2026, 3, 31, 21, 30)\n", "DTZ001"),  # a naive datetime
+        ("from datetime import datetime\n\nx = datetime.now()\n", "DTZ005"),  # a naive "now"
+        ("from datetime import datetime\n\nx = datetime.strptime('2026-03-31', '%Y-%m-%d')\n", "DTZ007"),
+        ("from datetime import date\n\nx = date.fromtimestamp(0)\n", "DTZ012"),
+    ],
+)
+def test_naive_datetimes_are_refused(tmp_path: Path, source: str, code: str) -> None:
+    """@regression-guard (S0092): `DTZ` is selected in `backend/ruff.toml`; nothing held it until now."""
+    # INV-07: a wall time without an offset is not an instant; the `DTZ` rules must stay selected.
+    assert code in ruff_codes(tmp_path, source, layer="platform")
+
+
+def test_a_decimal_from_a_float_literal_is_refused(tmp_path: Path) -> None:
+    """@regression-guard (S0092): `RUF` is selected in `backend/ruff.toml`."""
+    # INV-06: `Decimal(0.1)` is 0.1000000000000000055511151231257827...; RUF032 must stay selected.
+    assert "RUF032" in ruff_codes(tmp_path, "from decimal import Decimal\n\nx = Decimal(0.1)\n")
+
+
+def test_a_decimal_from_text_passes(tmp_path: Path) -> None:
+    """@regression-guard (S0092): the must-pass beside the ban above."""
+    # Must pass: the written text is the exact value (INV-06).
+    source = "from decimal import Decimal\n\nx = Decimal('0.10')\n"
+    assert ruff_codes(tmp_path, source).strip() in ("", "All checks passed!")
 
 
 def test_blanket_type_ignore_is_refused(tmp_path: Path) -> None:

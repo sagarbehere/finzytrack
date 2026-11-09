@@ -32,6 +32,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Final, Literal
 
+from app.domain.dates import civil_date
 from app.domain.errors import DomainError
 from app.platform.clock import Clock
 from app.platform.engine import EngineFailure, EngineRefusal, OpenAnswer, Publish
@@ -112,7 +113,7 @@ def params_of(target: OpenTarget, clock: Clock) -> dict[str, object]:
         "workspace_key": target.workspace_key,
         "lineage": target.lineage,
         "floor": target.floor,
-        "today": now.astimezone().date().isoformat(),
+        "today": civil_date(now).isoformat(),
         "built_at": now.isoformat(),
     }
 

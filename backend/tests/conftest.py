@@ -2,9 +2,19 @@
 
 from __future__ import annotations
 
+import os
+import time
+
 import pytest
 
 from tests.integrity.planned import PlannedMissing
+
+# INV-07 (ADR-0023 Consequences): the suite runs in a time zone west of UTC, set before any test and inherited by
+# every process a test starts, so a UTC "today" taken for the local one fails instead of passing by coincidence.
+# `tests/test_runs_west_of_utc.py` fails if this is lost.
+WEST_OF_UTC = "America/Los_Angeles"
+os.environ["TZ"] = WEST_OF_UTC
+time.tzset()
 
 
 def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:

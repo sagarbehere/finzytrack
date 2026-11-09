@@ -30,6 +30,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Final, Literal
 
+from app.domain.dates import civil_date
 from app.platform.clock import Clock
 from app.platform.engine import EngineFailure, EngineRefusal, Publish, RebuildAnswer
 from app.platform.engine_jobs.queue import JobSpec
@@ -110,7 +111,7 @@ def params_of(target: RebuildTarget, fingerprint: str, clock: Clock) -> dict[str
         "workspace_key": target.workspace_key,
         "lineage": target.lineage,
         "floor": target.floor,
-        "today": now.astimezone().date().isoformat(),
+        "today": civil_date(now).isoformat(),
         "built_at": now.isoformat(),
     }
 

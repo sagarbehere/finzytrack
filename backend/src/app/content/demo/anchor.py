@@ -10,6 +10,8 @@ from __future__ import annotations
 import re
 from datetime import UTC, date, datetime
 
+from app.domain.dates import civil_date
+
 _EPOCH = re.compile(r"[0-9]+")
 _ISO_DATE = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}")
 
@@ -20,7 +22,7 @@ def anchor_from_epoch(value: str) -> date:
         msg = f"SOURCE_DATE_EPOCH must be whole seconds since 1970 in decimal digits, got {value!r}"
         raise ValueError(msg)
     try:
-        return datetime.fromtimestamp(int(value), UTC).date()
+        return civil_date(datetime.fromtimestamp(int(value), UTC), UTC)
     except (OverflowError, OSError, ValueError) as e:
         msg = f"SOURCE_DATE_EPOCH is out of range: {value!r}"
         raise ValueError(msg) from e

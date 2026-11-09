@@ -188,7 +188,7 @@ execute(plan, consent, fs, journal)                                             
 - Route-scope test: GET routes declare `x-ft-writes: none`.
 
 ### EP-10 Determinism
-**Rule.** Time, ids and randomness are injected (`Clock`, `Ids`, `Rng`). "Today" is always `today(tz, clock)` (INV-07). Output order is defined (sorted keys, stable sort keys). The demo generator is seeded per fragment name and anchored at `SOURCE_DATE_EPOCH` (ADR-0022).
+**Rule.** Time, ids and randomness are injected (`Clock`, `Ids`, `Rng`). "Today" is always the civil date of the injected clock's instant in the user's zone, `domain.dates.civil_date(clock.now(), tz)` (ADR-0023's `today(tz, clock)`; INV-07). Output order is defined (sorted keys, stable sort keys). The demo generator is seeded per fragment name and anchored at `SOURCE_DATE_EPOCH` (ADR-0022).
 **Why.** Golden tests, model-based tests, the oracle comparison and reproducible builds all need it. Twelve UTC "today" bugs came from ad-hoc clocks (L3-10).
 
 ```python
@@ -200,8 +200,9 @@ created = clock.now(); pid = ids.new_plan_id()   # TransactionIds are derived, n
 
 **Enforcement.**
 - ruff `TID251` banned APIs outside `platform/adapters`: `datetime.datetime.now`, `datetime.date.today`, `time.time`, `uuid.uuid4`, `random.*`, `secrets.*`; plus ruff `DTZ`.
-- ESLint `no-restricted-syntax` / `no-restricted-properties`: `new Date()`, `Date.now`, `Math.random` and `crypto.randomUUID` outside `platform/`.
-- Acceptance runs with `TZ` west of UTC and a frozen clock on both sides.
+- `scripts/check_money_dates.py` over `backend/src` and `engine/src` (S0092): a date without a zone (`.date()`, `.astimezone()`) only in `app.domain.dates.civil_date`, and no `.today()`, `.utcnow()` or `.utcfromtimestamp()` on anything, an alias of the class included; with it the float-money bans of INV-06.
+- ESLint `no-restricted-syntax` / `no-restricted-properties`: `new Date()`, `Date.now`, `Math.random` and `crypto.randomUUID` outside `platform/`; in `src/` outside `src/platform/`, the `Date` class itself (`no-restricted-globals`) and `.Now` (S0092).
+- Acceptance runs with `TZ` west of UTC and a frozen clock on both sides; the backend's and the engine's unit suites run west of UTC too (their `tests/conftest.py`, S0092).
 
 ### EP-11 Vertical slices over a shared kernel, dependency direction enforced
 **Rule.** Each capability is one slice (ARCHITECTURE §2.2, §3.1) with its own core/usecases/http/capabilities (backend) or queries/machines/composables/views (frontend). Slices depend on the kernel, never on each other except through declared, ADR-referenced edges. The kernel never depends on slices.

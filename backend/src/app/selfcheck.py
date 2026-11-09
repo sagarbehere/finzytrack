@@ -19,6 +19,7 @@ import json
 import site
 import subprocess
 import sys
+from decimal import Decimal
 from importlib.util import find_spec
 from pathlib import Path
 
@@ -49,7 +50,7 @@ def _engine_view(python: Path, engine_site: Path) -> tuple[list[str] | None, boo
             timeout=VIEW_HANG_SECONDS,
             check=True,
         )
-        view = json.loads(out.stdout)
+        view = json.loads(out.stdout, parse_float=Decimal)
         return [str(p) for p in view["path"]], view["app"] is True, None
     except (OSError, subprocess.SubprocessError, ValueError, KeyError, TypeError) as e:
         return None, None, f"engine view: {type(e).__name__}"

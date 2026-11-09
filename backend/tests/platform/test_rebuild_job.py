@@ -60,8 +60,10 @@ FP2 = (
     '{"document_files":[],"documents":[],"files":[["/L/main.bean",["absent"]]],"globs":[],"root":"/L/main.bean","v":1}'
 )
 LV = "1/sha256:" + "1" * 64
-CLOCK = FrozenClock(datetime(2026, 11, 8, 23, 30, tzinfo=UTC))
-TODAY = CLOCK.now().astimezone().date().isoformat()  # the civil date where the app runs (INV-07)
+CLOCK = FrozenClock(datetime(2026, 11, 9, 3, 30, tzinfo=UTC))
+# The civil date where the app runs (INV-07): the suite runs in Los Angeles (tests/conftest.py), where 03:30 UTC on
+# 9 November is still 8 November; a UTC "today" would send 9 November.
+TODAY = "2026-11-08"
 TARGET = RebuildTarget("k1", MAIN, FP, lineage="lin1", app_local_data=ALD)
 REQUEST = SaveRequest(
     session="a1b2",

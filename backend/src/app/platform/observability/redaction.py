@@ -106,7 +106,7 @@ def _safe(kind: Kind, values: frozenset[str], value: object, roots: Roots) -> Js
                 return int(value)
         case Kind.DURATION_MS:
             if isinstance(value, int | float) and math.isfinite(value) and value >= 0:
-                return int(value) if isinstance(value, int) else float(value)
+                return int(value) if isinstance(value, int) else float(value)  # not money: a duration
         case Kind.ENUM | Kind.SAFE_TEXT:
             if isinstance(value, str) and str.__str__(value) in values:
                 return str.__str__(value)
@@ -125,7 +125,7 @@ def _debug_value(value: object, roots: Roots) -> Json:
     if isinstance(value, int) and not isinstance(value, bool):
         return int(value)
     if isinstance(value, float) and math.isfinite(value):
-        return float(value)
+        return float(value)  # not money: a float already (a Decimal is a string above)
     return by_type(value, roots)
 
 

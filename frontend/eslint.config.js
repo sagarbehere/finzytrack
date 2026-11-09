@@ -8,7 +8,9 @@ import tseslint from 'typescript-eslint'
 import boundaries from './eslint.boundaries.js'
 
 const today = 'INV-07: no system "today" or clock; use src/domain dates'
-// Deliberate aliasing (`const D = Date; new D()`) is left to review (BL-0007).
+const floatParse = 'INV-06: money is never parsed as a float; parse it through src/domain'
+// In src/ outside src/platform the Date class itself is refused (below, S0092), which closes aliasing there; in tests,
+// e2e and tooling these selectors are the ban, and an alias (`const D = Date; new D()`) is left to review.
 const systemTime = [
   { selector: "NewExpression[callee.name='Date'][arguments.length=0]", message: today },
   { selector: "CallExpression[callee.name='Date']", message: today },
@@ -98,9 +100,9 @@ export default tseslint.config(
   ...boundaries,
   {
     rules: {
-      // INV-07 (pending, BL-0007): there is no UTC or system "today"; dates come from src/domain (Temporal).
+      // INV-07: there is no UTC or system "today"; dates come from src/domain (Temporal).
       'no-restricted-syntax': ['error', ...systemTime],
-      // INV-06 (pending, BL-0006): money is never a float string.
+      // INV-06: money is never a float string.
       'no-restricted-properties': [
         'error',
         { property: 'toFixed', message: 'INV-06: format money through src/domain' },
@@ -113,6 +115,29 @@ export default tseslint.config(
           selector: "CallExpression[callee.property.name='toFixed']",
           message: 'INV-06: format money through src/domain',
         },
+        // INV-07 (S0092): templates may not name Date at all; INV-06: nor parse money as a float.
+        { selector: "Identifier[name='Date']", message: today },
+        { selector: "Identifier[name='parseFloat']", message: floatParse },
+      ],
+    },
+  },
+  {
+    // INV-06, INV-07 (S0092, BL-0006, BL-0007): in app code the Date class itself is refused, so no alias of it
+    // (`const D = Date; new D()`) can read the system clock; only src/platform, the clock adapter's home, names it
+    // (the system-clock forms above stay refused there too). Temporal's system clock (`.Now`) and float parsing of
+    // money are refused with it. Later config replaces a rule's options, so the toFixed ban is repeated.
+    files: ['src/**/*.ts', 'src/**/*.vue'],
+    ignores: ['src/platform/**'],
+    rules: {
+      'no-restricted-globals': ['error', { name: 'Date', message: today }, { name: 'parseFloat', message: floatParse }],
+      'no-restricted-properties': [
+        'error',
+        { property: 'toFixed', message: 'INV-06: format money through src/domain' },
+        { object: 'globalThis', property: 'Date', message: today },
+        { object: 'window', property: 'Date', message: today },
+        { object: 'self', property: 'Date', message: today },
+        { property: 'Now', message: today },
+        { object: 'Number', property: 'parseFloat', message: floatParse },
       ],
     },
   },

@@ -46,14 +46,14 @@ Origin: accepted by the owner as a starting point on 2026-10-24 (review:20 §2),
 ### INV-06: Money is exact
 - **Rule:** Money is `Decimal` / `TEXT` / string / `Money`. Float appears only at display and in documented aggregation. The written scale is preserved.
 - **Why:** Float money loses cents and changes what was written (review:11).
-- **Enforced by:** planned: lint bans; the `Money` type brand; golden tests.
-- **Status:** pending (BL-0006, by M1a)
+- **Enforced by:** the float bans in the product's Python, `scripts/check_money_dates.py` with its planted cases in `scripts/tests/test_check_money_dates.py` (float used as a value, a `Decimal` made from a float, a JSON decode without `parse_float=`, `math` beyond its checks), with ruff's `RUF032` held by `backend/tests/architecture/test_gates.py` and `engine/tests/architecture/test_lint_bans.py`, and pyright strict refusing `Decimal`-float arithmetic (S0092); the frontend's bans on `toFixed` and float parsing, `frontend/tests/unit/gates.test.ts`; the written scale kept by the mirror, `engine/tests/mirror/test_rows.py`, and returned unchanged as text by the main sidecar's QueryRunner (its query tests, S0052). Planned: the frontend `Money` brand over decimal.js with the first frontend money value (BL-0226); the written scale on the write path with it (L3-05, BL-0001). *(Enforcement list and status set in S0092, BL-0006; the rule unchanged.)*
+- **Status:** enforced
 
 ### INV-07: Civil dates, never a UTC "today"
 - **Rule:** Dates are civil dates in the user's time zone (Temporal on the frontend). There is never a UTC "today".
 - **Why:** A UTC "today" moves entries to the wrong day for users west or east of UTC (review:11).
-- **Enforced by:** planned: a lint ban; tests run under a `TZ` west of UTC.
-- **Status:** pending (BL-0007, by M1a)
+- **Enforced by:** the bans in the product's Python, `scripts/check_money_dates.py` with its planted cases in `scripts/tests/test_check_money_dates.py` (a date without a zone outside `app.domain.dates`, the system's day also through an alias of the class), and ruff's `TID251` and `DTZ` rules held by `backend/tests/architecture/test_gates.py` and `engine/tests/architecture/test_lint_bans.py`; the one civil date of the main sidecar, `backend/tests/domain/test_dates.py`; the backend's and the engine's suites run in Los Angeles, `backend/tests/test_runs_west_of_utc.py` and `engine/tests/test_runs_west_of_utc.py`, as the acceptance flows do (`scripts/acceptance/launcher.py`); the frontend's bans on the system clock and, in app code, on the `Date` class itself, `frontend/tests/unit/gates.test.ts` (S0092). Planned: the frontend's `today` on Temporal in `src/domain` (L3-10). *(Enforcement list and status set in S0092, BL-0007; the rule unchanged.)*
+- **Status:** enforced
 
 ### INV-08: Dashboards are recipes
 - **Rule:** Dashboards are user-authored, non-executable JSON recipes over self-describing catalogs. SQL is a first-class escape hatch.

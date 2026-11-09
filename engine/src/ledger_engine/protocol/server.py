@@ -65,6 +65,7 @@ import threading
 import traceback
 from collections.abc import Callable
 from dataclasses import dataclass
+from decimal import Decimal
 from importlib.metadata import version
 from typing import IO, Any, Protocol
 
@@ -418,7 +419,10 @@ class Engine:
             return _refusal(None, None, "protocol.malformed", f"The line is longer than {MAX_LINE_BYTES} bytes.")
         try:
             obj = json.loads(
-                content.decode("utf-8"), object_pairs_hook=_refuse_duplicates, parse_constant=_refuse_constant
+                content.decode("utf-8"),
+                object_pairs_hook=_refuse_duplicates,
+                parse_constant=_refuse_constant,
+                parse_float=Decimal,
             )
         except UnicodeDecodeError:
             return _refusal(None, None, "protocol.malformed", "The line is not UTF-8.")

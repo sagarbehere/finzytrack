@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
+from decimal import Decimal
 from typing import Annotated, Any, Final, Literal, NewType
 
 from pydantic import AfterValidator, BaseModel, Field, ValidationError
@@ -146,7 +147,9 @@ def read_manifest(data: bytes) -> ManifestRead:
     except UnicodeDecodeError:
         return ManifestInvalid(None, "not-utf8")
     try:
-        raw: object = json.loads(text, object_pairs_hook=_no_duplicates, parse_constant=_no_constant)
+        raw: object = json.loads(
+            text, object_pairs_hook=_no_duplicates, parse_constant=_no_constant, parse_float=Decimal
+        )
     except _DuplicateKeyError:
         return ManifestInvalid(None, "duplicate-key")
     except (ValueError, RecursionError):

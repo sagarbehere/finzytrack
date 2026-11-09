@@ -524,3 +524,11 @@ Format:
 - Why: the root cause class is "a generated artifact crosses a package boundary the slice's gate list does not name"; the pre-push hook catches it, but only after review, costing a landing commit.
 - Expected effect: no slice reaches the push with a frontend type failure from a contract change. Metric: pre-push failures by package.
 - Status: kept (agent-approved tightening; S0088's landing).
+
+## IMP-0054: money and date bans on the product code (2026-11-09)
+- Trigger: BL-0006 and BL-0007 (INV-06, INV-07 pending since the seed, review:20 §2), S0092.
+- What changed: gates (tightening, agent-approved). `scripts/check_money_dates.py` over `backend/src` and `engine/src`, run with its planted cases by the meta-tests (pre-push, T1): float used as a value unless marked `# not money: <reason>`, a `Decimal` from a float, a JSON decode without `parse_float=`, `math` beyond its checks, a date without a zone outside `app.domain.dates`, `.today()`/`.utcnow()`/`.utcfromtimestamp()` on anything. Must-not-pass tests now hold ruff's `DTZ` and `RUF032` in both packages and the engine's `TID251` bans. The backend's and the engine's suites run under `TZ=America/Los_Angeles`. In frontend `src/` outside `src/platform/`, `no-restricted-globals` on `Date` and `parseFloat`, and `.Now`, `globalThis.Date`, `window.Date`, `self.Date`, `Number.parseFloat` refused; templates refuse `Date` and `parseFloat`. A `new Date(parts)` in app code, accepted before, is now refused (S0009's must-pass case moved to `src/platform`).
+- PROCESS.md section: none.
+- Why: the invariants' enforcement was planned only; S0009's frontend ban missed aliasing (BL-0007), and the sidecar had two copies of "today" with a test that took its expected date from the code.
+- Expected effect: a float conversion of money or a UTC "today" fails a gate in the change that adds it. Metric: false-positive marks (`# not money:`) per slice, verifier findings on INV-06/INV-07.
+- Status: kept (agent-approved tightening; S0092).
