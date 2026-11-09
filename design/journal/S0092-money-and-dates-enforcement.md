@@ -78,3 +78,7 @@
 - V7 Low: `json.decoder` spellings and subclasses. Fixed: both refused; an `object_hook` that makes floats is a stated limit in the script.
 - V8 Low: `backend/ruff.toml`'s `TID251` message named `domain.today(tz, clock)`. Fixed: it names `app.domain.dates.civil_date(clock.now())`.
 - Questions (zone default, pydantic float fields): answered in Decisions.
+- No further round: tooling and gates that touch no ledger or user data, no High fix (PROCESS.md §3 step 5, ADR-0058).
+
+## Retro
+- Build about 18 min, fix about 7 min, 1 verifier round, findings 0H/4M/4L (one Medium the owner's). Cheaper gate: write each ban's must-not-pass list from the ways people really write the forbidden thing (a UTC "today" through `strftime` or `isoformat()[:10]`, a Decimal from any float expression, a formatter reading "now"), not from the API names alone; three of the four Mediums were such spellings.
