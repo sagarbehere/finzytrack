@@ -540,3 +540,11 @@ Format:
 - Why: read literally, the freeze would block every pending invariant's planned check script (INV-06, INV-07 in S0092), which the owner never meant.
 - Expected effect: a pending invariant's enforcement is built at its milestone without an escape first; hardening of the gates against deliberate bypass stays frozen.
 - Status: kept (owner-approved; the S0092 commit that lands round 1's fixes, on top of 50882bb4).
+
+## IMP-0056: the cache registry test and the no-resident-ledger probe (2026-11-09)
+- Trigger: BL-0010 (INV-10 pending since the seed, review:20 §2), S0093.
+- What changed: gates (tightening, agent-approved). `backend/tests/architecture/test_caches.py`: the composition root's long-lived graph is walked at run time against `app.platform.state_registry` (anything that can change outside a registered holder fails, an entry nothing holds fails, a bound or eviction that says "none" fails); the engine's source is scanned for memoizers, `global`/`nonlocal` and module-level names written after import. `engine/tests/architecture/test_no_resident_ledger.py`: after the open, a save and the rebuild in one engine, no Beancount directive they loaded is alive. Both run in the package suites (pre-push, T1). No new check script.
+- PROCESS.md section: none.
+- Why: the globals test (INV-11) sees module and class state only; a cache kept on a long-lived object's attribute, or in the engine (never scanned), passed every gate.
+- Expected effect: a cache added to any long-lived object or to the engine fails until it is registered with a bound. Metric: registry entries added per slice against findings on INV-10.
+- Status: kept (agent-approved tightening; S0093).

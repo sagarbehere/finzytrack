@@ -10,5 +10,7 @@ import uuid_utils
 
 
 class Uuid7Ids:
+    __slots__ = ()  # stateless: kept for the process's life, so it holds nothing (INV-10, S0093)
+
     def new_id(self) -> str:
         return str(uuid_utils.uuid7())

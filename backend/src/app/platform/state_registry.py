@@ -1,12 +1,14 @@
 """The registry of every stateful part of the main sidecar (ARCHITECTURE.md §2.5; EP-04; INV-10, INV-11).
 
 State that outlives a request lives only in the places listed here, each with its owner, bound and eviction.
-Every entry is owned by a container: a `UserContainer` or `WorkspaceContainer` entry names the class or factory
-whose instances the container holds. There is no process-wide state (ADR-0064 retired the heavy-load semaphore,
+Every entry is owned by a container: a `UserContainer` or `WorkspaceContainer` entry names the class whose
+instances the container holds. There is no process-wide state (ADR-0064 retired the heavy-load semaphore,
 the one process-wide entry ADR-0041 allowed; the engine job queue hangs off `UserContainer`, INV-11, since S0058).
 `tests/architecture/test_globals.py` scans every module and fails on module-level or class-level state,
-`global` writes or memoizing decorators, and on a process-wide, duplicate, incomplete or stale entry. The slices
-that add the stores register them here.
+`global` writes or memoizing decorators, and on a process-wide, duplicate, incomplete or stale entry.
+`tests/architecture/test_caches.py` (INV-10, S0093) walks what the composition root keeps at run time and fails on
+anything that can change outside a registered class, on an entry nothing holds, and on a bound or eviction that says
+there is none. The slices that add the stores register them here.
 """
 
 from dataclasses import dataclass
@@ -17,7 +19,7 @@ type Owner = Literal["UserContainer", "WorkspaceContainer"]
 
 @dataclass(frozen=True, slots=True)
 class StateEntry:
-    """One stateful part: `module.name` (the class or factory a container holds), its owner, how big it may grow
+    """One stateful part: `module.name` (the class a container holds), its owner, how big it may grow
     and how it shrinks."""
 
     module: str

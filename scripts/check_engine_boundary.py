@@ -5,6 +5,7 @@
 
 1. `beancount` and `beanquery` are imported only inside `engine/`, `scripts/oracle/` (the oracle harness, its own
    Beancount environment, never shipped) and `corpora/` (plugin fixtures that run inside Beancount's loader).
+   So the main sidecar cannot hold a parsed ledger (INV-10: no resident parsed ledger; S0093).
 2. Inside `engine/`, only `src/ledger_engine/ledger/beancount_port.py` imports them (INV-02's single gateway);
    the engine's tests may too (Beancount is their oracle).
 3. Nothing in `engine/` imports the main sidecar's package `app`.

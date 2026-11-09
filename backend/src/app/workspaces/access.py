@@ -57,5 +57,7 @@ class WorkspaceAccess(Protocol):
 class NoWorkspaces:
     """The gate of an instance with no registered workspace; the only one until the registry exists (BL-0102)."""
 
+    __slots__ = ()  # stateless: kept for the process's life, so it holds nothing (INV-10, S0093)
+
     def access(self, key: str) -> Access:
         return Unknown()

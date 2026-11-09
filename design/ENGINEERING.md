@@ -110,8 +110,8 @@ class PlanStore: ...
 
 **Enforcement.**
 - Globals test: AST scan for module-level mutable containers and `global` writes, compared against `platform/state_registry.py`.
-- Cache-registry test (every cache declares a bound and an eviction).
-- 54k memory regression test (T2).
+- Cache-registry test (every cache declares a bound and an eviction): `backend/tests/architecture/test_caches.py`, the long-lived graph walked at run time and the engine's source scanned (S0093); no resident ledger in the engine: `engine/tests/architecture/test_no_resident_ledger.py`.
+- 54k memory regression test (T2; planned with BL-0020's baselines).
 - ESLint `no-restricted-syntax` for module-level `ref`/`reactive` outside `catalog/` and the stores that are explicitly listed.
 
 ### EP-05 Extensibility only where variation is real

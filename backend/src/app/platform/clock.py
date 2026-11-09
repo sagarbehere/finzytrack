@@ -6,6 +6,7 @@ argument (S0030). The system clock is the adapter `app.platform.adapters.clock.S
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Protocol
 
@@ -16,16 +17,17 @@ class Clock(Protocol):
         ...
 
 
+@dataclass(frozen=True, slots=True)
 class FrozenClock:
-    """A clock that always returns one instant. A wall time with no UTC offset is refused: it is not an instant."""
+    """A clock that always returns one instant. A wall time with no UTC offset is refused: it is not an instant.
+    Frozen: the composition root keeps it for the process's life (INV-10, S0093)."""
 
-    __slots__ = ("_at",)
+    at: datetime
 
-    def __init__(self, at: datetime) -> None:
-        if at.tzinfo is None or at.utcoffset() is None:
-            msg = f"a frozen clock needs an instant with a UTC offset, not {at.isoformat()}"
+    def __post_init__(self) -> None:
+        if self.at.tzinfo is None or self.at.utcoffset() is None:
+            msg = f"a frozen clock needs an instant with a UTC offset, not {self.at.isoformat()}"
             raise ValueError(msg)
-        self._at = at
 
     def now(self) -> datetime:
-        return self._at
+        return self.at
