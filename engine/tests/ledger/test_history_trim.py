@@ -30,10 +30,11 @@ from ledger_engine.ledger import history
 from ledger_engine.ledger import save as sv
 from ledger_engine.ledger.core import history as core
 from ledger_engine.ledger.core import journal
-from ledger_engine.ledger.core.journal import FileEntry, Record
+from ledger_engine.ledger.core.journal import FileEntry
 from ledger_engine.ledger.core.ledger_set import Content, Fingerprint
 from ledger_engine.ledger.writer import Change, sha256
 from tests.fakes.memfs import Crash, MemFS
+from tests.ledger.worlds import with_folders
 from tests.mirror.fake_store import FakeStore, outside_publish
 
 pytestmark = [pytest.mark.inv("INV-32"), pytest.mark.inv("INV-27")]
@@ -204,7 +205,7 @@ def test_an_open_journal_beside_older_history_of_its_own_name_keeps_all_of_it() 
 
 def _record(t: str, backup_dir: str) -> bytes:
     session, _, job = t.partition("-")
-    rec = Record(
+    rec = with_folders(
         session=session,
         job=job,
         workspace_key="k2",
@@ -219,7 +220,6 @@ def _record(t: str, backup_dir: str) -> bytes:
                 post=sha256(b"y"),
                 backup=journal.backup_name(0, "a.bean"),
                 temp=journal.temp_name("a.bean", t),
-                volume="1e0c8a4b-2f6d-4b9e-8c37-5a1d0e9f7b26",
             ),
         ),
         created_dirs=(),

@@ -318,14 +318,13 @@ type SaveOutcomeKind = Literal["saved", "refused", "not_saved", "unfinished"]
 class SaveResult(Message):
     """How the save ended (§6.1, §11). `saved`: the closed record is durable (`published`: the mirror was published,
     never yet, BL-0113). `refused`: before the commit point, nothing written (`reason`: `unfinished_save`,
-    `ledger_changed`, `mirror_stale`, `encrypted_file`).
-    `not_saved`: the writer's `NotSaved` (`reason` its own: `hard_linked`, `locked`, `not_a_file`, `permission`,
-    `changed`, `path_moved`, `read_back`, `io_error`, `name_not_utf8`, `linked_folder`; `open_journal`: writes are
-    paused until recovery). `unfinished`: a file may have been replaced and the rollback stopped (`cause`, and
-    `cause_path` its file: after `created_path_taken` the undo will ask about that file). `unchanged`: every file the
-    save would write was hashed again and equals its pre bytes. `path`: the file it is about; `entry`: the folder a
-    `permission` refusal is about, or the link a `linked_folder` refusal names; `detail`: the ACL entry that blocks
-    it."""
+    `ledger_changed`, `mirror_stale`, `encrypted_file`). `not_saved`: the writer's `NotSaved` (`reason` its own:
+    `hard_linked`, `locked`, `not_a_file`, `permission`, `changed`, `path_moved`, `read_back`, `io_error`,
+    `name_not_utf8`, `linked_folder`, `no_drive_id`, `no_folder_id`; `open_journal`: writes are paused until
+    recovery). `unfinished`: a file may have been replaced and the rollback stopped (`cause`, and `cause_path` its
+    file: after `created_path_taken` the undo will ask about that file). `unchanged`: every file the save would write
+    was hashed again and equals its pre bytes. `path`: the file it is about; `entry`: the folder a `permission`
+    refusal is about, or the link a `linked_folder` refusal names; `detail`: the ACL entry that blocks it."""
 
     outcome: SaveOutcomeKind
     reason: str | None

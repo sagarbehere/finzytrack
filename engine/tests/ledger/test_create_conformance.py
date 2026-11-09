@@ -64,13 +64,14 @@ from ledger_engine.ledger import copy as cp
 from ledger_engine.ledger import create as cr
 from ledger_engine.ledger import overlay
 from ledger_engine.ledger.core import journal
-from ledger_engine.ledger.core.journal import FileEntry, Record
+from ledger_engine.ledger.core.journal import FileEntry
 from ledger_engine.ledger.core.journal import State as JState
 from ledger_engine.ledger.create import MANIFEST_DIR, Created, CreateOutcome, CreatePlan, NewFile, NotCreated
 from ledger_engine.ledger.paths import path_key
 from tests.fakes.memfs import Crash, MemFS
 from tests.ledger import test_copy as tc
 from tests.ledger.test_save_conformance import REPO, Divergence, State, corpus
+from tests.ledger.worlds import with_folders
 
 pytestmark = [pytest.mark.inv("INV-22"), pytest.mark.inv("INV-01"), pytest.mark.inv("INV-32")]
 
@@ -541,12 +542,11 @@ def put_journal(fs: MemFS, j: str, st: str) -> None:
             post="1" * 64,
             backup=journal.backup_name(i, posixpath.basename(FILE_OF.get(f, f))),
             temp=journal.temp_name(posixpath.basename(FILE_OF.get(f, f)), name),
-            volume="1e0c8a4b-2f6d-4b9e-8c37-5a1d0e9f7b26",
         )
         for i, f in enumerate(JFILES[j])
     )
     key = KEY_OF[j]
-    rec = Record(
+    rec = with_folders(
         session=j,
         job="job",
         workspace_key=key,

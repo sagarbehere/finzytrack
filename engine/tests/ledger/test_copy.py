@@ -32,11 +32,12 @@ from ledger_engine.fs.port import AclEntry, LegacyAbsent, LegacyHeld
 from ledger_engine.ledger import copy_check, overlay
 from ledger_engine.ledger.copy import CopyPlan, CopyPorts, outcome, run
 from ledger_engine.ledger.core import journal
-from ledger_engine.ledger.core.journal import FileEntry, Record, State
+from ledger_engine.ledger.core.journal import FileEntry, State
 from ledger_engine.ledger.core.ledger_set import Absent, Content, FileState, Fingerprint, LedgerSet
 from ledger_engine.ledger.create import MANIFEST_DIR, Created, CreateOutcome, NewFile, NotCreated
 from ledger_engine.ledger.paths import path_key
 from tests.fakes.memfs import Crash, MemFS
+from tests.ledger.worlds import with_folders
 
 pytestmark = [pytest.mark.inv("INV-01"), pytest.mark.inv("INV-22"), pytest.mark.inv("INV-32")]
 
@@ -439,7 +440,7 @@ def test_a_path_that_cannot_be_resolved_refuses_never_compared_by_its_text() -> 
 
 def put_journal(w: World, file: str, state: State, *, data: bytes | None = None) -> None:
     name = journal.record_name("s1", "j1")
-    rec = Record(
+    rec = with_folders(
         session="s1",
         job="j1",
         workspace_key="k1",
@@ -454,7 +455,6 @@ def put_journal(w: World, file: str, state: State, *, data: bytes | None = None)
                 post="1" * 64,
                 backup=journal.backup_name(0, posixpath.basename(file)),
                 temp=journal.temp_name(posixpath.basename(file), name),
-                volume="1e0c8a4b-2f6d-4b9e-8c37-5a1d0e9f7b26",
             ),
         ),
         created_dirs=(),

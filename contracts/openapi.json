@@ -935,6 +935,7 @@
           "name_not_utf8",
           "linked_folder",
           "no_drive_id",
+          "no_folder_id",
           "engine_stopped"
         ],
         "type": "string"

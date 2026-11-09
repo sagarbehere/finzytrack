@@ -34,6 +34,7 @@ from ledger_engine.ledger import fingerprint
 from ledger_engine.ledger.core import journal
 from ledger_engine.protocol import copy as protocol_copy
 from ledger_engine.protocol.server import InputEnded
+from tests.ledger.worlds import with_folders
 from tests.test_save_ops import Channel as SaveChannel
 from tests.test_save_ops import engine, request
 
@@ -390,7 +391,7 @@ def test_an_encrypted_ledger_file_is_refused(ald: Path, tmp_path: Path) -> None:
 
 
 def write_open_journal(ald: Path, file: Path) -> None:
-    rec = journal.Record(
+    rec = with_folders(
         session="s1",
         job="j1",
         workspace_key="k1",
@@ -405,7 +406,6 @@ def write_open_journal(ald: Path, file: Path) -> None:
                 post="1" * 64,
                 backup=journal.backup_name(0, file.name),
                 temp=journal.temp_name(file.name, "s1-j1"),
-                volume="1e0c8a4b-2f6d-4b9e-8c37-5a1d0e9f7b26",
             ),
         ),
         created_dirs=(),

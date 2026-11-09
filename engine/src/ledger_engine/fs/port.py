@@ -88,6 +88,19 @@ class Caps:
     excl: bool
 
 
+@dataclass(frozen=True, slots=True)
+class FolderMark:
+    """What tells a folder on one drive from a folder at the same path on another (S0089; spec §6.3 "Drive identity"):
+    `volume`, its drive's volume UUID (None: the drive reports none); `fs_type`, the file system's type name
+    (`f_fstypename`); `born`, the folder's creation time in nanoseconds since the epoch, at the resolution the file
+    system keeps (probed: APFS nanoseconds, HFS+ 1 s, exFAT 10 ms, FAT 2 s; 0 for the root of a FAT or exFAT drive,
+    which keeps none)."""
+
+    volume: str | None
+    fs_type: str
+    born: int
+
+
 class Kind(StrEnum):
     FILE = "file"
     DIR = "dir"
@@ -132,6 +145,11 @@ class DirHandle(Protocol):
         reports none (S0089, BL-0188: the journal names each folder's drive by it, and the undo writes only on that
         drive). Asking writes nothing; an error raises `OSError`. macOS: `ATTR_VOL_UUID` (APFS, HFS+, exFAT and FAT
         report one; probed). TODO(BL-0218): Windows (the volume GUID) and Linux (the file system UUID)."""
+        ...
+
+    def mark(self) -> FolderMark:
+        """This folder's `FolderMark`: `volume_id`, its file system's type and its creation time, all asked through this
+        descriptor (S0089 round 1). Asking writes nothing; an error raises `OSError`."""
         ...
 
     def read(self, name: str, limit: int | None = None) -> bytes | None:

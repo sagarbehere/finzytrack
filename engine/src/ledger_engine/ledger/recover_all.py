@@ -271,7 +271,7 @@ def _backup_good(handles: Handles, record: Record, f: FileEntry) -> bool:
 def inspect(fs: FileSystem, record: Record) -> tuple[Inspected, ...]:
     """What the blocked screen shows for a journal (the module's docstring); writes nothing."""
     out: list[Inspected] = []
-    handles = Handles(fs, volumes=journal.volumes(record))
+    handles = Handles(fs, folders=journal.folders(record))
     try:
         for f in record.files:
             parent, base = _parent(f.canonical_path)
@@ -378,7 +378,7 @@ def keep(fs: FileSystem, journal_dir: str, name: str) -> ActOutcome:
         jd, record = opened
         files = record.files if record is not None else ()
         if record is not None:
-            handles.volumes = journal.volumes(record)  # S0089: nothing synced on another drive
+            handles.folders = journal.folders(record)  # S0089: nothing synced on another drive
         at: str | None = None
         try:
             folders: dict[str, DirHandle] = {}
@@ -483,13 +483,13 @@ def _delete_one(
         f, entry = pick
         parent, _ = _parent(f.canonical_path)
         target = _join(parent, entry)
-        handles.volumes = journal.volumes(record)  # S0089: a removal only on the drive the record names
+        handles.folders = journal.folders(record)  # S0089: a removal only on the drive the record names
         try:
             h = handles.at(parent)
         except PathMovedError:
             return Refused("path_moved", parent)
         except WrongDriveError as e:
-            return Refused(str(e), parent)
+            return Refused(e.verdict, parent)
         except (FileNotFoundError, NotADirectoryError):
             return Refused("absent", target)
         except OSError as e:

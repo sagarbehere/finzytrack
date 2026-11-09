@@ -65,6 +65,7 @@ WRITER_REASONS: Final[frozenset[str]] = frozenset(
         "name_not_utf8",
         "linked_folder",
         "no_drive_id",
+        "no_folder_id",
     }
 )
 OUTSIDE: Final[frozenset[str]] = frozenset({"changed", "path_moved"})

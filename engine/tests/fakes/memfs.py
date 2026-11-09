@@ -50,7 +50,8 @@ power-loss state keeps the times as they were.
 
 **Drives** (S0089): a folder's drive is its `dev` (`outside_mount`); `volume_id` answers the UUID that drive reports
 (`volume_of`: derived from `dev` unless `outside_volume_id` set another, or None), or `EIO` after
-`outside_volume_error`. Asking is not an effect.
+`outside_volume_error`; `mark` adds the drive's file system (`outside_fs_type`, `apfs` by default) and the folder's
+creation time (distinct per folder; `outside_born` sets another). Asking is not an effect.
 
 **Volumes without the swap** (S0065, probed on exFAT, FAT and HFS+ disk images): `outside_no_swap` (or
 `outside_mkdirs(..., no_swap=True, no_excl=...)`) puts a folder, and every folder made in it, on a volume without
@@ -81,6 +82,7 @@ from ledger_engine.fs.port import (
     AclEntry,
     Caps,
     EntryStat,
+    FolderMark,
     FoldRule,
     Kind,
     MalformedPathError,
@@ -91,6 +93,7 @@ from ledger_engine.fs.port import (
 )
 
 ROOT = 1
+BORN_BASE = 1_790_000_000 * 1_000_000_000  # folders' creation times start here (S0089)
 MAX_STATES = 200_000
 
 
@@ -138,6 +141,7 @@ class _Dir:
     acl: list[_Ace] = field(default_factory=lambda: [])
     locked: bool = False  # `uchg`: no entry may be added, removed or renamed in it, and it may not be removed
     dev: int = 1  # its volume (S0087: `outside_mount` puts another volume at a folder)
+    born: int = 0  # its creation time in ns (S0089): set by `MemFS._new` from its inode, unless given
 
 
 _Node = _File | _Dir | _Link | _Other
@@ -232,6 +236,7 @@ class MemFS:
         self._clock = 0
         self.volume_ids: dict[int, str | None] = {}  # dev -> the drive's UUID (None: it reports none); S0089
         self.volume_errors: set[int] = set()  # devs whose UUID cannot be read (`volume_id` raises `EIO`)
+        self.fs_types: dict[int, str] = {}  # dev -> its file-system type name (default `apfs`; S0089 round 1)
 
     def stored(self, name: str) -> str:
         """The spelling the volume keeps for a name it is given."""
@@ -272,6 +277,8 @@ class MemFS:
     def _new(self, node: _Node) -> int:
         ino = self._next
         self._next += 1
+        if isinstance(node, _Dir) and node.born == 0:
+            node.born = BORN_BASE + ino * 1_000_000_007  # distinct per folder, with nanoseconds
         self.nodes[ino] = node
         self.tick(ino)
         return ino
@@ -530,12 +537,23 @@ class MemFS:
     def volume_of(self, dev: int) -> str | None:
         """The UUID the drive `dev` reports (S0089): set by `outside_volume_id`, else one derived from `dev`, so two
         volumes of the fake never share one."""
-        return self.volume_ids.get(dev, f"00000000-0000-4000-8000-{dev:012x}")
+        return self.volume_ids.get(dev, f"00000000-0000-3000-8000-{dev:012x}")  # version 3, as FAT's
 
     def outside_volume_id(self, dev: int, uuid: str | None) -> None:
         """The drive `dev` now reports `uuid` (None: none at all): another drive mounted at the same path, with the
         same folders and files (a cloned stick), or a volume kind that has no UUID (S0089)."""
         self.volume_ids[dev] = uuid
+
+    def outside_fs_type(self, dev: int, fs_type: str) -> None:
+        """The drive `dev`'s file system is `fs_type` (`msdos`, `exfat`, ...; S0089 round 1)."""
+        self.fs_types[dev] = fs_type
+
+    def outside_born(self, path: str, born: int) -> None:
+        """The folder `path` now reports the creation time `born` (ns): a FAT drive read in another time zone, or
+        another drive's folder (S0089 round 1)."""
+        node = self._at(path)
+        assert isinstance(node, _Dir)
+        node.born = born
 
     def outside_volume_error(self, dev: int) -> None:
         """Asking the drive `dev` for its UUID now fails (`EIO`; S0089)."""
@@ -660,6 +678,7 @@ class MemFS:
         out._clock = self._clock
         out.volume_ids = dict(self.volume_ids)
         out.volume_errors = set(self.volume_errors)
+        out.fs_types = dict(self.fs_types)
         for ino in reach:
             d = self.nodes[ino]
             assert isinstance(d, _Dir)
@@ -675,6 +694,7 @@ class MemFS:
                 acl=list(d.acl),
                 locked=d.locked,
                 dev=d.dev,
+                born=d.born,
             )
         for ino in reach:
             for _, child in tables[ino].values():
@@ -741,6 +761,12 @@ class MemDir:
         if dev in self._fs.volume_errors:
             raise OSError(errno.EIO, "injected: the volume UUID cannot be read")
         return self._fs.volume_of(dev)
+
+    def mark(self) -> FolderMark:
+        """`DirHandle.mark` (S0089 round 1): `volume_id`, the drive's `fs_types` entry (`apfs` by default) and the
+        folder's `born`. Asking writes nothing and is not an effect."""
+        d = self._d
+        return FolderMark(self.volume_id(), self._fs.fs_types.get(d.dev, "apfs"), d.born)
 
     def path(self) -> str:
         """The folder's path now; for a folder removed meanwhile, its last path (probed on APFS, S0061 red team L5)."""

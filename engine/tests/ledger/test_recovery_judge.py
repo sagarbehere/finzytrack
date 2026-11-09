@@ -46,11 +46,8 @@ REPLACED = FileEntry(
     sha256(POST),
     "2-main.bean",
     ".m.ft-s1-j.tmp",
-    "1e0c8a4b-2f6d-4b9e-8c37-5a1d0e9f7b26",
 )
-CREATED = FileEntry(
-    "/w/L/new.bean", "/w/l/new.bean", None, sha256(POST), None, ".n.ft-s1-j.tmp", "1e0c8a4b-2f6d-4b9e-8c37-5a1d0e9f7b26"
-)
+CREATED = FileEntry("/w/L/new.bean", "/w/l/new.bean", None, sha256(POST), None, ".n.ft-s1-j.tmp")
 OTHER, DIR, LINK = Seen(Kind.OTHER), Seen(Kind.DIR), Seen(Kind.LINK)
 GOOD_BACKUP = seen_file(PRE)
 A, OK, F, U = TempState.ABSENT, TempState.OURS, TempState.FOREIGN, TempState.UNREADABLE

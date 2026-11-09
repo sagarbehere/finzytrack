@@ -300,10 +300,18 @@ def test_a_journal_on_another_drive_says_to_plug_in_the_drive_that_held_the_ledg
     assert screen.actions == ("retry", "stay_or_back", "keep")
 
 
-@pytest.mark.parametrize("cause", ["wrong_drive", "unknown_drive"])
-def test_keep_on_another_drive_says_the_save_will_not_be_undone_there(cause: str) -> None:
+@pytest.mark.parametrize(
+    ("cause", "says"),
+    [
+        ("wrong_drive", "At least one of these files is on a drive that is not the one that held it"),
+        ("unknown_drive", "Finzytrack cannot identify the drive with at least one of these files"),
+    ],
+)
+def test_keep_on_another_drive_says_the_save_will_not_be_undone_there(cause: str, says: str) -> None:
+    """Verifier questions (S0089 round 1): `unknown_drive` says "cannot identify", not "cannot reach"; a journal may
+    name folders on several drives, so the sentence does not speak of one drive for all of its files."""
     text = keep_confirmation(Blocking(J, "stopped", cause, "/L/accounts.beancount", "/L"), WS)
-    assert "Finzytrack cannot reach the drive that held these files" in text
+    assert says in text
     assert "will not undo the save there, now or later" in text
 
 

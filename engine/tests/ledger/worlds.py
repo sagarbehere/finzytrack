@@ -29,11 +29,28 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from ledger_engine.ledger.core import journal
-from ledger_engine.ledger.core.journal import Record, State
+from ledger_engine.ledger.core.journal import DirEntry, FileEntry, FolderEntry, Record, State, needed_folders
 from ledger_engine.ledger.core.recovery import Cause
 from ledger_engine.ledger.restore import Failed, Resolved, RestoreOutcome, Stopped, recover_journal
 from ledger_engine.ledger.writer import Change, Commit, sha256
 from tests.fakes.memfs import MemFS
+
+VOLUME = "1e0c8a4b-2f6d-4b9e-8c37-5a1d0e9f7b26"  # a drive UUID for records a test writes by hand (S0089)
+BORN = 1_794_000_000_123_456_789  # a folder creation time for them
+
+
+def with_folders(
+    *, files: tuple[FileEntry, ...], created_dirs: tuple[DirEntry, ...], volume: str = VOLUME, **kw: str
+) -> Record:
+    """A record a test writes by hand, with the `folders` a save would record (journal format 6, S0089): every
+    folder the undo may write in, on `volume` (`apfs`), each with the creation time `BORN`, a folder the save makes
+    with none."""
+    made = {d.canonical_path for d in created_dirs}
+    folders = tuple(
+        FolderEntry(p, volume, "apfs", None if p in made else BORN) for p in sorted(needed_folders(files, created_dirs))
+    )
+    return Record(files=files, created_dirs=created_dirs, folders=folders, **kw)
+
 
 JD = "/w/local/journal"
 BD = "/w/local/backups"

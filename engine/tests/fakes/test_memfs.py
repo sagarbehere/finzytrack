@@ -779,3 +779,21 @@ def test_a_folders_drive_reports_its_uuid_and_asking_is_not_an_effect() -> None:
     identity = fs.resolve("/u").identity
     assert identity is not None
     assert identity[0] == 7
+
+
+def test_a_folders_mark_is_its_drive_file_system_and_birth() -> None:
+    """S0089 round 1: `mark` adds the drive's file system (`apfs` unless set) and the folder's creation time, distinct
+    per folder, kept by a power loss and set by `outside_born`; asking is not an effect."""
+    fs = MemFS()
+    fs.outside_mkdirs("/a/b")
+    fs.outside_mount("/a", 4)
+    fs.outside_fs_type(4, "msdos")
+    a, b = fs.open_dir("/a").mark(), fs.open_dir("/a/b").mark()
+    assert (a.volume, a.fs_type) == (fs.volume_of(4), "msdos")
+    assert a.born != b.born
+    assert a.born > 0
+    fs.outside_born("/a/b", 7)
+    assert fs.open_dir("/a/b").mark().born == 7
+    assert fs.effects == []
+    for state in fs.power_loss_states():
+        assert state.open_dir("/a/b").mark() == fs.open_dir("/a/b").mark()

@@ -53,6 +53,7 @@ from ledger_engine.fs.port import (
     Caps,
     EntryStat,
     FileSystem,
+    FolderMark,
     FoldRule,
     Kind,
     LegacyAbsent,
@@ -72,6 +73,10 @@ ATTR_VOL_INFO: Final = 0x80000000
 ATTR_VOL_CAPABILITIES: Final = 0x00020000
 ATTR_VOL_UUID: Final = 0x00040000  # <sys/attr.h>, checked against the macOS 26 SDK and probed (S0089)
 ATTR_CMN_RETURNED_ATTRS: Final = 0x80000000  # the attributes the volume really returned come first
+ATTR_CMN_CRTIME: Final = 0x00000200  # <sys/attr.h>: the creation time, a `struct timespec` (S0089 round 1)
+MFSTYPENAMELEN: Final = 16
+STATFS_SIZE: Final = 2168  # `struct statfs` (64-bit inodes, the only layout on arm64 and macOS 11+), checked: SDK 26
+STATFS_FSTYPENAME: Final = 72  # offset of `f_fstypename` in it
 VOL_CAP_INT_RENAME_SWAP: Final = 0x00040000
 VOL_CAP_INT_RENAME_EXCL: Final = 0x00080000
 LOCK_FLAGS: Final = stat.UF_IMMUTABLE | stat.UF_APPEND | stat.SF_IMMUTABLE | stat.SF_APPEND
@@ -129,6 +134,8 @@ def _libc() -> ctypes.CDLL:
     ga = lib.fgetattrlist
     ga.argtypes = [ctypes.c_int, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_size_t, ctypes.c_uint32]
     ga.restype = ctypes.c_int
+    lib.fstatfs.argtypes = [ctypes.c_int, ctypes.c_void_p]
+    lib.fstatfs.restype = ctypes.c_int
     lib.acl_get_fd_np.argtypes = [ctypes.c_int, ctypes.c_int]
     lib.acl_get_fd_np.restype = ctypes.c_void_p
     lib.acl_get_entry.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.POINTER(ctypes.c_void_p)]
@@ -349,6 +356,23 @@ class DarwinDir:
         # u_int32 length, then attribute_set_t (common, vol, dir, file, fork), then the uuid_t when returned
         returned_vol = struct.unpack_from("<I", buf.raw, 8)[0]
         return uuid_from(returned_vol, buf.raw[24:40])
+
+    def mark(self) -> FolderMark:
+        """`volume_id`; the type name from `fstatfs` (`f_fstypename`); the creation time from `fgetattrlist`
+        (`ATTR_CMN_CRTIME`, a `timespec`: whole precision; `fstat`'s `st_birthtime` is a float). A file system that does
+        not return a creation time raises `ENOTSUP` (S0089 round 1)."""
+        buf = ctypes.create_string_buffer(STATFS_SIZE)
+        if self._fs.libc.fstatfs(self.fd, buf) != 0:
+            _errno_raise()
+        fs_type = buf.raw[STATFS_FSTYPENAME : STATFS_FSTYPENAME + MFSTYPENAMELEN].split(b"\0", 1)[0].decode("ascii")
+        attrs = _AttrList(5, 0, ATTR_CMN_RETURNED_ATTRS | ATTR_CMN_CRTIME, 0, 0, 0, 0)
+        out = ctypes.create_string_buffer(64)
+        if self._fs.libc.fgetattrlist(self.fd, ctypes.byref(attrs), out, len(out), 0) != 0:
+            _errno_raise()
+        if not struct.unpack_from("<I", out.raw, 4)[0] & ATTR_CMN_CRTIME:
+            raise OSError(errno.ENOTSUP, "the file system keeps no creation time")
+        sec, nsec = struct.unpack_from("<qq", out.raw, 24)
+        return FolderMark(self.volume_id(), fs_type, sec * 1_000_000_000 + nsec)
 
     def acl(self) -> tuple[AclEntry, ...]:
         """`acl_get_fd_np(ACL_TYPE_EXTENDED)` on the folder's descriptor, each entry read in full: its kind and its

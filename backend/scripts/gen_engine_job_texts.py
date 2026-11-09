@@ -174,6 +174,7 @@ SAVE: tuple[Row, ...] = (
     ("msg:save.hard_linked", "`CHANGE_NOT_SAVED {hard_linked}`", lambda: _not_saved("hard_linked")),
     ("msg:save.locked", "`CHANGE_NOT_SAVED {locked}`", lambda: _not_saved("locked")),
     ("msg:save.no_drive_id", "`CHANGE_NOT_SAVED {no_drive_id}` (S0089)", lambda: _not_saved("no_drive_id")),
+    ("msg:save.no_folder_id", "`CHANGE_NOT_SAVED {no_folder_id}` (S0089)", lambda: _not_saved("no_folder_id")),
     ("msg:save.not_a_file", "`CHANGE_NOT_SAVED {not_a_file}`", lambda: _not_saved("not_a_file")),
     ("msg:save.permission", "`CHANGE_NOT_SAVED {permission}`", lambda: _not_saved("permission")),
     (
@@ -342,8 +343,13 @@ RECOVERY: tuple[Row, ...] = (
     ),
     (
         "msg:recovery.keep_other_drive",
-        "Keep's confirmation for `wrong_drive`, `unknown_drive` (S0089)",
+        "Keep's confirmation for `wrong_drive` (S0089)",
         lambda: rt.keep_confirmation(_blocking("stopped", "wrong_drive", entry=FOLDER), WS),
+    ),
+    (
+        "msg:recovery.keep_unknown_drive",
+        "Keep's confirmation for `unknown_drive` (S0089)",
+        lambda: rt.keep_confirmation(_blocking("stopped", "unknown_drive", entry=FOLDER), WS),
     ),
     (
         "msg:recovery.keep_kept_copy",

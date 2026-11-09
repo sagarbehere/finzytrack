@@ -20,3 +20,6 @@ S0089 refuses a save on a drive with no ID before writing anything ("Finzytrack 
 Option 3, then option 1 unless your shares report no ID. Keeping the refusal costs nothing on the drives most people use, and it never risks writing on the wrong drive.
 
 ## Answer (owner, verbatim, with date)
+Owner, 2026-11-09, in session, choosing "Probe, then keep refusal (Recommended)": "Ship the refusal now (fails closed, never writes on a wrong drive). You run a 1-minute script on a network share you use; if it reports an ID, nothing changes; if not, we decide then whether to add a share identity (server + share name). Network shares stay best-effort where they have an ID."
+
+Recorded in S0089 (round 1): the refusal stays (`no_drive_id`, ADR-0012 amendment of 2026-11-08); the probe is `scripts/probe_drive_id.py` (read-only); the follow-up decision is BL-0219.

@@ -485,6 +485,37 @@ def test_volume_id_names_the_drive_a_folder_is_on(fs: DarwinFS, tmp_path: Path) 
         assert root.volume_id() not in (None, here)
 
 
+def _mount_point(path: Path) -> str:
+    return _run("/bin/df", "-P", str(path)).splitlines()[-1].split()[-1]
+
+
+def test_volume_id_is_the_uuid_diskutil_reports(fs: DarwinFS, tmp_path: Path) -> None:
+    """Verifier F2: `volume_id` pinned to an independent source, `diskutil info -plist <mount point>`'s `VolumeUUID`
+    (upper case there), so a wrong offset in the attribute buffer cannot pass."""
+    import plistlib
+
+    info = plistlib.loads(
+        subprocess.run(  # noqa: S603 (a fixed system tool)
+            ["/usr/sbin/diskutil", "info", "-plist", _mount_point(tmp_path)], capture_output=True, check=True
+        ).stdout
+    )
+    with fs.open_dir(str(tmp_path)) as d:
+        assert d.volume_id() == str(info["VolumeUUID"]).lower()
+
+
+def test_mark_reads_the_file_system_and_the_folders_creation_time(fs: DarwinFS, tmp_path: Path) -> None:
+    """S0089 round 1: `mark` is `volume_id`, `f_fstypename` and `ATTR_CMN_CRTIME` at full precision (APFS keeps
+    nanoseconds; `st_birthtime` is a float, so it agrees to the microsecond)."""
+    (tmp_path / "a").mkdir()
+    with fs.open_dir(str(tmp_path / "a")) as a, fs.open_dir(str(tmp_path)) as d:
+        m = a.mark()
+        assert (m.volume, m.fs_type) == (a.volume_id(), "apfs")
+        assert abs(m.born - round(os.stat(tmp_path / "a").st_birthtime * 1e9)) < 1000
+        assert m.born != d.mark().born
+    with fs.open_dir(str(tmp_path / "a")) as again:
+        assert again.mark() == m
+
+
 def test_a_volume_that_reports_no_uuid_answers_none(fs: DarwinFS) -> None:
     """devfs (probed, S0089) returns no `ATTR_VOL_UUID`: `volume_id` is None, never a made-up or nil UUID."""
     with fs.open_dir("/dev") as d:
@@ -1755,3 +1786,77 @@ def test_mkdir_takes_the_mode_asked_for(fs: DarwinFS, tmp_path: Path) -> None:
         d.mkdir("n")
     assert stat.S_IMODE((tmp_path / "m").stat().st_mode) == 0o700
     assert stat.S_IMODE((tmp_path / "n").stat().st_mode) & 0o700 == 0o700
+
+
+def _fat_twins() -> list[str]:
+    """`FT_TEST_FAT_TWINS`: two raw FAT32 images formatted with one serial (`newfs_msdos -I`), each holding a folder
+    `Finance` made at a different moment (the S0089 red team's images), separated by `:`. Not in the gate: the test
+    attaches disk images."""
+    return [v for v in os.environ.get("FT_TEST_FAT_TWINS", "").split(":") if v]
+
+
+@pytest.mark.skipif(len(_fat_twins()) != 2, reason="no FAT twins given (FT_TEST_FAT_TWINS)")
+def test_h1_a_twin_fat_stick_at_the_ledgers_mount_point_is_never_written(fs: DarwinFS, tmp_path: Path) -> None:
+    """S0089 red team H1, on real FAT32: two sticks formatted with one serial report one drive UUID (macOS derives it
+    from the serial). A save in stick A's `Finance` is cut before its close; stick B is mounted at the same mount point
+    with its own `Finance` (another creation time) and no `main.bean`. Recovery writes nothing on B (before round 1
+    it put the pre bytes there and resolved the journal); with A back, it undoes the save. Copies of the images."""
+    import shutil
+
+    from ledger_engine.ledger.core.recovery import Cause
+    from ledger_engine.ledger.restore import Resolved, Stopped, recover_journal
+
+    a, b = (tmp_path / "a.img", tmp_path / "b.img")
+    for src, dst in zip(_fat_twins(), (a, b), strict=True):
+        shutil.copyfile(src, dst)
+    mnt = tmp_path / "mnt"
+    mnt.mkdir()
+    led = mnt / "Finance"
+
+    def attach(img: Path) -> None:
+        _run(
+            "/usr/bin/hdiutil",
+            "attach",
+            "-quiet",
+            "-nobrowse",
+            "-imagekey",
+            "diskimage-class=CRawDiskImage",
+            "-mountpoint",
+            str(mnt),
+            str(img),
+        )
+
+    def detach() -> None:
+        _run("/usr/bin/hdiutil", "detach", "-quiet", str(mnt))
+
+    attach(b)
+    try:
+        (led / "main.bean").unlink(missing_ok=True)  # the red team's case: nothing at the path on B
+        detach()
+        attach(a)
+        (led / "main.bean").write_bytes(b"pre\n")
+        c = _commit(tmp_path / "app", Change(str(led / "main.bean"), sha256(b"pre\n"), b"post\n"))
+        with pytest.raises(_Died):
+            durable_commit(_DyingFS(fs, ".closed"), c)  # type: ignore[arg-type]
+        with fs.open_dir(str(led)) as h:
+            mark_a = h.mark()
+        detach()
+        attach(b)
+        with fs.open_dir(str(led)) as h:
+            mark_b = h.mark()
+        assert (mark_b.volume, mark_b.fs_type) == (mark_a.volume, "msdos")  # the twin: one drive UUID
+        assert mark_b.born != mark_a.born
+        before = sorted(os.listdir(led))
+        out = recover_journal(fs, c.journal_dir, "s1-j1")
+        assert isinstance(out, Stopped), out
+        assert out.cause is Cause.WRONG_DRIVE
+        assert sorted(os.listdir(led)) == before
+        assert not (led / "main.bean").exists()
+        assert (Path(c.journal_dir) / "s1-j1.open").exists()
+        detach()
+        attach(a)
+        assert recover_journal(fs, c.journal_dir, "s1-j1") == Resolved("s1-j1")
+        assert (led / "main.bean").read_bytes() == b"pre\n"
+    finally:
+        with contextlib.suppress(subprocess.CalledProcessError):
+            detach()

@@ -51,7 +51,8 @@ from ledger_engine.protocol.messages import (
 )
 
 TABLE: Final = "engine.recovery"
-TABLE_VERSION: Final = 2  # 2 (S0071): no `lock_held` cause (ADR-0068 D3)
+TABLE_VERSION: Final = 3  # 2 (S0071): no `lock_held` cause (ADR-0068 D3); 3 (S0089): causes `wrong_drive` and
+# `unknown_drive` (a version names the table's rule, so a new cause is a new version)
 
 
 class BadParamsError(ValueError):

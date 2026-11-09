@@ -171,19 +171,21 @@ class _Halt(Exception):
 
 
 def _wrong_drive(e: WrongDriveError, handles: Handles) -> Stopped:
-    """A folder of the record on another drive, or on one with no UUID (S0089): the try stops, nothing written."""
-    cause = Cause.WRONG_DRIVE if e.found is not None else Cause.UNKNOWN_DRIVE
+    """A folder of the record that is not the one the save saw (another drive, or one with no reliable UUID; S0089): the
+    try stops, nothing written."""
+    cause = Cause.WRONG_DRIVE if e.verdict == "wrong_drive" else Cause.UNKNOWN_DRIVE
     return Stopped(cause, handles.on, e.canonical)
 
 
 def _drives(handles: Handles, record: Record) -> None:
     """Step 2's first check (S0089, BL-0188; owner, 2026-11-08: on any mismatch, a missing UUID or one that cannot be
     read, "it writes nothing"): every folder the record names that is there is opened through the path guard, which
-    checks its drive (`Handles.at` with the record's `journal.volumes`), before any check of step 2 may write (a kept
+    checks it is the folder the save saw (`Handles.at` with the record's `journal.folders`: its drive, file system and
+    creation time), before any check of step 2 may write (a kept
     copy's move) and before step 3. A folder that is not there is left to the checks that follow (`unreachable`, or a
     folder the save made); one opened later is checked when it is opened. The outcome names the first file of the
     record in or under the folder (`handles.on`) and the folder (`handles.entry`)."""
-    for folder in handles.volumes:
+    for folder in handles.folders:
         inside = [f.canonical_path for f in record.files if f.canonical_path.startswith(folder.rstrip("/") + "/")]
         handles.on = next((p for p in inside if _parent(p)[0] == folder), inside[0] if inside else None)
         handles.entry = folder
@@ -585,7 +587,7 @@ def restore(
     """§8.1 steps 2-4 and §6.4 for one record (the module's docstring). `journal_dir`: the canonical path of its
     journal folder. `closed`: the record may be `.closed` (the rollback after a failed close). `made`: the `path_key`s
     of the folders the save really made (the rollback; recovery: every recorded one)."""
-    handles = Handles(fs, volumes=journal.volumes(record))
+    handles = Handles(fs, folders=journal.folders(record))
     name = record.name
     created = frozenset(d.canonical_path for d in record.created_dirs)
     removable = (

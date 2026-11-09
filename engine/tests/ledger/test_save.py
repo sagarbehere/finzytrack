@@ -40,6 +40,7 @@ from ledger_engine.ledger.fingerprint import observe as observe_set
 from ledger_engine.ledger.policy import DesktopPolicy
 from ledger_engine.ledger.writer import BadPlanError, Change, NotSaved, Reason, sha256
 from ledger_engine.mirror import publish as pb
+from tests.ledger.worlds import with_folders
 from tests.mirror.publish_support import publish_job
 
 pytestmark = [
@@ -463,7 +464,7 @@ def _record(led: Ledger, key: str, name: str, state: State, *, lineage: str = LI
     folder.mkdir(parents=True, exist_ok=True)
     path = folder / journal.file_name(name, state)
     session, job = name.split("-")
-    rec = Record(
+    rec = with_folders(
         session=session,
         job=job,
         workspace_key=owner,
@@ -478,7 +479,6 @@ def _record(led: Ledger, key: str, name: str, state: State, *, lineage: str = LI
                 "2" * 64,
                 "0-a.bean",
                 f".a.bean.ft-{name}.tmp",
-                "1e0c8a4b-2f6d-4b9e-8c37-5a1d0e9f7b26",
             ),
         ),
         created_dirs=(),
@@ -515,7 +515,7 @@ def test_records_a_development_build_left_do_not_refuse(led: Ledger, suffix: str
     folder.mkdir(parents=True)
     (folder / f"s0-j1.{suffix}").write_bytes(
         journal.encode(
-            Record(
+            with_folders(
                 session="s0",
                 job="j1",
                 workspace_key=KEY,
@@ -530,7 +530,6 @@ def test_records_a_development_build_left_do_not_refuse(led: Ledger, suffix: str
                         "2" * 64,
                         "0-a.bean",
                         ".a.bean.ft-s0-j1.tmp",
-                        "1e0c8a4b-2f6d-4b9e-8c37-5a1d0e9f7b26",
                     ),
                 ),
                 created_dirs=(),

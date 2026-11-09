@@ -8,13 +8,14 @@ that follows use one descriptor.
 from __future__ import annotations
 
 import hashlib
+import uuid
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from enum import StrEnum
-from typing import Final
+from typing import Final, Literal
 
-from ledger_engine.fs.port import AclEntry, DirHandle, EntryStat, FileSystem, Kind, Right, same_path
-from ledger_engine.ledger.core.journal import MAX_KEPT, kept_name
+from ledger_engine.fs.port import AclEntry, DirHandle, EntryStat, FileSystem, FolderMark, Kind, Right, same_path
+from ledger_engine.ledger.core.journal import MAX_KEPT, FolderEntry, kept_name
 
 
 def sha256(data: bytes) -> str:
@@ -33,14 +34,69 @@ class PathMovedError(Exception):
         self.canonical = canonical
 
 
-class WrongDriveError(Exception):
-    """A folder the undo would write in is on another drive than the one its journal names (`found` its UUID now), or
-    on a drive that reports none (`found` None): S0089, BL-0188. Nothing was written through it."""
+UUID_UNSTABLE_ON: Final = frozenset({"msdos", "exfat"})
+"""File systems whose drive UUID macOS derives from a 32-bit format serial (a version 3 UUID); a drive whose serial
+clashes with one already mounted gets a random version 4 UUID instead, which changes at every mount (S0089 red team
+M1, probed on FAT): such a UUID names no drive."""
+ZONE_STEP: Final = 15 * 60 * 1_000_000_000
+ZONE_MAX: Final = 14 * 3600 * 1_000_000_000
 
-    def __init__(self, canonical: str, found: str | None) -> None:
-        super().__init__("wrong_drive" if found is not None else "unknown_drive")
+
+def drive_of(mark: FolderMark) -> str | None:
+    """The UUID that names `mark`'s drive, or None when it has none Finzytrack can rely on: none reported, or a
+    version 4 UUID on FAT or exFAT (`UUID_UNSTABLE_ON`). The one place this rule lives (S0089)."""
+    if mark.volume is None:
+        return None
+    if mark.fs_type in UUID_UNSTABLE_ON and uuid.UUID(mark.volume).version == 4:
+        return None
+    return mark.volume
+
+
+def birth_known(mark: FolderMark) -> bool:
+    """Whether `mark`'s creation time tells this folder from one at the same path on another drive: not on FAT or
+    exFAT when it is 0, which is what those drives answer for their top level (they keep no time for it; probed), and
+    what a device that never sets creation times leaves. Two such drives formatted with one serial share their UUID
+    (red team H1), so nothing would tell them apart (S0089 round 1). The one place this rule lives."""
+    return not (mark.fs_type in UUID_UNSTABLE_ON and mark.born == 0)
+
+
+def same_birth(recorded: int, now: int, fs_type: str) -> bool:
+    """A folder's creation time now is the recorded one. FAT keeps local time without a zone, so macOS reads it in the
+    Mac's time zone of the moment: on FAT (`msdos`) a shift by a whole time zone (a multiple of 15 minutes, at most 14
+    hours) is the same time (S0089 round 1; the Mac's zone may change between the save and recovery: travel)."""
+    if fs_type != "msdos":
+        return now == recorded
+    d = now - recorded
+    return d % ZONE_STEP == 0 and abs(d) <= ZONE_MAX
+
+
+type FolderVerdict = Literal["same", "wrong_drive", "unknown_drive"]
+
+
+def folder_verdict(recorded: FolderEntry, mark: FolderMark) -> FolderVerdict:
+    """Whether the folder found at a recorded path is the one the save wrote in (owner, 2026-11-08: "Volume ID in
+    journal (Recommended)", then "Drive ID + folder birth (Recommended)"): a drive Finzytrack cannot identify is
+    `unknown_drive`; another drive UUID, another file-system type, or another creation time (for a folder that was there
+    before the save) is `wrong_drive`. The one place this rule lives."""
+    found = drive_of(mark)
+    if found is None:
+        return "unknown_drive"
+    if found != recorded.volume or mark.fs_type != recorded.fs_type:
+        return "wrong_drive"
+    if recorded.born is not None and not same_birth(recorded.born, mark.born, mark.fs_type):
+        return "wrong_drive"
+    return "same"
+
+
+class WrongDriveError(Exception):
+    """A folder the undo would write in is not the folder the journal names: another drive (or the same drive UUID
+    with another file system or another folder creation time) is `wrong_drive`, a drive with no reliable UUID
+    `unknown_drive` (S0089, BL-0188). Nothing was written through it."""
+
+    def __init__(self, canonical: str, verdict: FolderVerdict) -> None:
+        super().__init__(verdict)
         self.canonical = canonical
-        self.found = found
+        self.verdict = verdict
 
 
 @dataclass
@@ -49,38 +105,44 @@ class Handles:
     descriptor). `at` raises `PathMovedError` when the folder's path now does not name the recorded canonical path,
     compared as the volume compares names (`fs.port.same_path`).
 
-    **The drive** (S0089, BL-0188; owner, 2026-11-08: "Volume ID in journal (Recommended)"): with `volumes` (the
-    journal's `journal.volumes`, by canonical path), a folder named there is checked when its handle is opened: its
-    drive's UUID (`DirHandle.volume_id`, asked through the same descriptor every later write uses, which stays on that
-    drive) must be the recorded one, else `WrongDriveError` (another UUID, or none) and the handle is not kept; a UUID
-    that cannot be read raises the `OSError`. A descriptor never changes drive, so the check at its opening holds for
-    every write through it. Folders not named there (the app's journal and backups folders) are not checked."""
+    **The drive** (S0089, BL-0188; owner, 2026-11-08: "Volume ID in journal (Recommended)", then "Drive ID + folder
+    birth (Recommended)"): with `folders` (the journal's `journal.folders`, by canonical path), a folder named there is
+    checked when its handle is opened, after the path guard (so a link in its place is `path_moved`, S0089 red team L1):
+    its `FolderMark`, asked through the same descriptor every later write uses (a descriptor never changes drive), must
+    be the recorded folder's (`folder_verdict`), else `WrongDriveError` and the handle is not kept; a mark that cannot
+    be read raises the `OSError`. Folders not named there (the app's journal and backups folders) are not checked."""
 
     fs: FileSystem
     open: dict[str, DirHandle] = field(default_factory=lambda: {})
     on: str | None = None  # the canonical path of the file being worked on, for the outcome
     entry: str | None = None  # the entry being checked or written when it is not that file (a name of ours, the
     # backup, a folder), for the outcome (S0061 verifier r6 F3)
-    volumes: Mapping[str, str] = field(default_factory=lambda: {})
+    folders: Mapping[str, FolderEntry] = field(default_factory=lambda: {})
 
     def at(self, canonical: str) -> DirHandle:
         h = self.open.get(canonical)
         if h is None:
             h = self.fs.open_dir(canonical)
-            expected = self.volumes.get(canonical)
-            if expected is not None:
-                try:
-                    found = h.volume_id()
-                except BaseException:
-                    h.close()
-                    raise
-                if found != expected:
-                    h.close()
-                    raise WrongDriveError(canonical, found)
+            try:
+                self._check_new(h, canonical)
+            except BaseException:
+                h.close()
+                raise
             self.open[canonical] = h
+            return h
         if not same_path(h.path(), canonical):
             raise PathMovedError(canonical)
         return h
+
+    def _check_new(self, h: DirHandle, canonical: str) -> None:
+        """A handle just opened: the path guard first, then, for a recorded folder, `folder_verdict`."""
+        if not same_path(h.path(), canonical):
+            raise PathMovedError(canonical)
+        recorded = self.folders.get(canonical)
+        if recorded is not None:
+            verdict = folder_verdict(recorded, h.mark())
+            if verdict != "same":
+                raise WrongDriveError(canonical, verdict)
 
     def release(self, canonical: str) -> None:
         """Close the handle of `canonical` if one is open (a folder the caller is done with; the next `at` opens and

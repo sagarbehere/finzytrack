@@ -187,6 +187,11 @@ def test_a_save_that_lands_is_saved_and_its_engine_is_retired(make: Any) -> None
             "CHANGE_NOT_SAVED",
             ChangeNotSavedDetails("no_drive_id", MAIN, None, None, True),
         ),
+        (  # S0089 round 1: the top level of a FAT or exFAT drive
+            answer(outcome="not_saved", reason="no_folder_id", path=MAIN, unchanged=True),
+            "CHANGE_NOT_SAVED",
+            ChangeNotSavedDetails("no_folder_id", MAIN, None, None, True),
+        ),
         (
             answer(
                 outcome="unfinished",
@@ -388,6 +393,11 @@ def test_not_saved_says_unchanged_only_after_the_rehash() -> None:
             ChangeNotSavedDetails("linked_folder", None, "/app/local/k1/journal", None, True),
             "The folder /app/local/k1/journal is a link to another place. Finzytrack keeps its save records and "
             "backups only in a real folder. Put the real folder back in its place, or remove the link, then try again.",
+        ),
+        (
+            ChangeNotSavedDetails("no_folder_id", MAIN, None, None, True),
+            "is at the top level of its drive, where Finzytrack cannot tell this drive from another one formatted "
+            "the same way",
         ),
         (
             ChangeNotSavedDetails("no_drive_id", MAIN, None, None, True),

@@ -277,10 +277,15 @@ def keep_confirmation(b: Blocking, workspace: str) -> str:
     )
     if b.reason in ("cancelled", "failed", "not_tried"):
         text += " Finzytrack has not tried, or not finished, undoing this save. Retry may still undo it."
-    if b.cause in DRIVE_CAUSES:  # S0089: Keep stops the undo for good, the drive that held the files included
+    if b.cause == "wrong_drive":  # S0089: Keep stops the undo for good, on the drive that held the files too
         text += (
-            " Finzytrack cannot reach the drive that held these files, so it will not undo the save there, "
-            "now or later."
+            " At least one of these files is on a drive that is not the one that held it, so Finzytrack will not "
+            "undo the save there, now or later."
+        )
+    elif b.cause == "unknown_drive":
+        text += (
+            " Finzytrack cannot identify the drive with at least one of these files, so it will not undo the save "
+            "there, now or later."
         )
     text += _missing_kept(b)
     kept = _kept_names(b)
