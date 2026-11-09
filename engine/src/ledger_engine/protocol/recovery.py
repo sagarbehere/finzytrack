@@ -51,8 +51,9 @@ from ledger_engine.protocol.messages import (
 )
 
 TABLE: Final = "engine.recovery"
-TABLE_VERSION: Final = 3  # 2 (S0071): no `lock_held` cause (ADR-0068 D3); 3 (S0089): causes `wrong_drive` and
-# `unknown_drive` (a version names the table's rule, so a new cause is a new version)
+TABLE_VERSION: Final = 3  # 2 (S0071): no `lock_held` cause (ADR-0068 D3); 3 (S0089): causes `wrong_drive`,
+# `unknown_drive` and `missing_unconfirmed` (a version names the table's rule, so a new cause is a new version; S0089
+# added all three before it landed)
 
 
 class BadParamsError(ValueError):
@@ -183,7 +184,7 @@ def _inspection(fs: FileSystem, journal_dir: str, name: str) -> list[InspectedFi
             now=None if i.now is None else _seen(i.now),
             kept=[KeptCopySeen(name=k.name, path=k.path, seen=_seen(k.seen)) for k in i.kept],
             errno=i.errno,
-            backup_good=i.backup_good,
+            backup=i.backup,
         )
         for i in ra.inspect(fs, record)
     ]

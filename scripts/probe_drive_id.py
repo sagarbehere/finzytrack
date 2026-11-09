@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import ctypes
 import os
+import re
 import struct
 import sys
 import uuid
@@ -29,6 +30,7 @@ STATFS_SIZE = 2168  # `struct statfs` on macOS 11+ (64-bit inodes)
 STATFS_FSTYPENAME = 72
 SERIAL = ("msdos", "exfat")  # their UUID comes from a 32-bit format serial; no creation time at their top level
 UNSTABLE = ("msdos",)  # a version 4 UUID there is made up at each mount (a serial clash)
+FS_TYPE = re.compile(r"[A-Za-z0-9_.-]{1,15}")  # a type name the save's record holds (`journal.FS_TYPE`; S0090)
 
 
 class _AttrList(ctypes.Structure):
@@ -93,6 +95,8 @@ def verdict(kind: str, volume: str | None, born: tuple[int, int] | None) -> str:
     `handles.known_birth`): no drive ID or a made-up one is `no_drive_id`, before any look at the creation time."""
     if volume is None:
         return "NO: the drive reports no ID (Finzytrack refuses to save here: no_drive_id)"
+    if not FS_TYPE.fullmatch(kind):
+        return "NO: Finzytrack cannot record this drive's kind (refused: no_drive_id)"
     if kind in UNSTABLE and uuid.UUID(volume).version == 4:
         return "NO: this ID changes at every mount (refused: no_drive_id)"
     if born is None:

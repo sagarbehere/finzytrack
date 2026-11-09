@@ -366,7 +366,7 @@ class DarwinDir:
         buf = ctypes.create_string_buffer(STATFS_SIZE)
         if self._fs.libc.fstatfs(self.fd, buf) != 0:
             _errno_raise()
-        fs_type = buf.raw[STATFS_FSTYPENAME : STATFS_FSTYPENAME + MFSTYPENAMELEN].split(b"\0", 1)[0].decode("ascii")
+        fs_type = fs_type_from(buf.raw[STATFS_FSTYPENAME : STATFS_FSTYPENAME + MFSTYPENAMELEN])
         attrs = _AttrList(5, 0, ATTR_CMN_RETURNED_ATTRS | ATTR_CMN_CRTIME, 0, 0, 0, 0)
         out = ctypes.create_string_buffer(64)
         if self._fs.libc.fgetattrlist(self.fd, ctypes.byref(attrs), out, len(out), 0) != 0:
@@ -624,6 +624,13 @@ def caps_from(interfaces: int, valid: int) -> Caps:
         return bool(interfaces & bit and valid & bit)
 
     return Caps(swap=offers(VOL_CAP_INT_RENAME_SWAP), excl=offers(VOL_CAP_INT_RENAME_EXCL))
+
+
+def fs_type_from(raw: bytes) -> str:
+    """`f_fstypename` up to its NUL; a byte that is not ASCII becomes U+FFFD, never an exception out of `mark` (S0090,
+    BL-0221's overflow): the record refuses such a name, so the drive is one Finzytrack cannot identify
+    (`ledger.handles.drive_of`: `no_drive_id`, `unknown_drive`)."""
+    return raw.split(b"\0", 1)[0].decode("ascii", errors="replace")
 
 
 def uuid_from(returned_vol: int, raw: bytes) -> str | None:

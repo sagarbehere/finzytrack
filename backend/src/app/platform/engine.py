@@ -204,8 +204,9 @@ class KeptCopySeen:
 @dataclass(frozen=True, slots=True)
 class InspectedFile:
     """What stands at one file of a stopped journal now, and its kept copies (§11: Show both, Show it).
-    `backup_good`: a replaced file's backup is there and holds its old version, hashed again by the engine; False
-    whenever that is not known (the text then promises no backup)."""
+    `backup`: the path of a replaced file's backup when it is there and holds its old version, hashed again by the
+    engine; None whenever that is not known (the text then promises no backup; S0090: a path, so a drive stop can say
+    where the old version is)."""
 
     path: str
     created: bool
@@ -213,7 +214,7 @@ class InspectedFile:
     now: EntrySeen | None
     kept: tuple[KeptCopySeen, ...]
     errno: int | None
-    backup_good: bool = False
+    backup: str | None = None
 
 
 type TryOutcomeKind = Literal["resolved", "stopped", "failed"]

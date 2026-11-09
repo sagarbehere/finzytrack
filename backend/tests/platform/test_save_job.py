@@ -396,8 +396,14 @@ def test_not_saved_says_unchanged_only_after_the_rehash() -> None:
         ),
         (
             ChangeNotSavedDetails("no_folder_id", MAIN, None, None, True),
-            "is at the top level of its drive, where Finzytrack cannot tell this drive from another one formatted "
-            "the same way",
+            f"The folder that holds {MAIN.rpartition('/')[2]} has no creation time that Finzytrack can read, so "
+            "Finzytrack cannot tell it from a folder at the same place on another drive.",
+        ),
+        (  # S0090 (BL-0220 V2-1): a drive that keeps no creation time at all gets a way out that works there too
+            ChangeNotSavedDetails("no_folder_id", MAIN, None, None, True),
+            f"If {MAIN.rpartition('/')[2]} is at the top level of a USB drive, make a folder on the drive, move your "
+            "ledger into it, and open it from there. Otherwise keep your ledger on another drive, such as your "
+            "Mac's own disk.",
         ),
         (
             ChangeNotSavedDetails("no_drive_id", MAIN, None, None, True),

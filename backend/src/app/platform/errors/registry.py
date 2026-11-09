@@ -123,8 +123,8 @@ type NotSavedReason = Literal[
     "read_back",  # a written file did not read back as written (the save was rolled back)
     "name_not_utf8",  # a path is not valid UTF-8
     "linked_folder",  # a link stands in place of the workspace's own journal, backups or key folder (S0077, BL-0193)
-    "no_drive_id",  # the ledger's drive reports no volume UUID: a save there could never be undone (S0089, BL-0188)
-    "no_folder_id",  # the ledger is at the top level of a FAT or exFAT drive: no folder creation time (S0089)
+    "no_drive_id",  # a drive Finzytrack cannot identify: a save there could never be undone (S0089, BL-0188; S0090)
+    "no_folder_id",  # a folder with no creation time: a FAT or exFAT drive's top level, or a drive keeping none (S0089)
     "engine_stopped",  # the save's engine stopped, and the disk shows the change was not saved (§6.6)
 ]
 

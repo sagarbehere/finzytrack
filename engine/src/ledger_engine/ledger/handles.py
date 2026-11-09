@@ -15,7 +15,7 @@ from enum import StrEnum
 from typing import Final, Literal
 
 from ledger_engine.fs.port import AclEntry, DirHandle, EntryStat, FileSystem, FolderMark, Kind, Right, same_path
-from ledger_engine.ledger.core.journal import MAX_KEPT, FolderEntry, kept_name
+from ledger_engine.ledger.core.journal import FS_TYPE, MAX_KEPT, FolderEntry, kept_name
 
 
 def sha256(data: bytes) -> str:
@@ -44,13 +44,35 @@ UUID names no drive."""
 
 
 def drive_of(mark: FolderMark) -> str | None:
-    """The UUID that names `mark`'s drive, or None when it has none Finzytrack can rely on: none reported, or a
-    version 4 UUID on FAT or exFAT (`UUID_UNSTABLE_ON`). The one place this rule lives (S0089)."""
-    if mark.volume is None:
+    """The UUID that names `mark`'s drive, or None when it has none Finzytrack can rely on: none reported, a version 4
+    UUID on FAT (`UUID_UNSTABLE_ON`; exFAT keeps its serial's), or a file-system type name the record cannot hold
+    (`journal.FS_TYPE`: the drive is then not one Finzytrack can identify; S0090, BL-0221's overflow, where it passed
+    through to the record check and was told as if the UUID were missing). The one place this rule lives (S0089)."""
+    if mark.volume is None or not FS_TYPE.fullmatch(mark.fs_type):
         return None
     if mark.fs_type in UUID_UNSTABLE_ON and uuid.UUID(mark.volume).version == 4:
         return None
     return mark.volume
+
+
+WHOLE_SECONDS_ON: Final = frozenset({"exfat"})
+"""File systems whose folder creation time is compared to the whole second (S0090, BL-0221; owner, 2026-11-09: "On
+exFAT, folder creation times are compared to the second, not 10 ms. The right stick is always recognized; a twin stick
+must now match to the second instead of 10 ms (still needs the same format serial, which in practice means a clone).
+Small change."). exFAT keeps 10 ms, but a time set with `setattrlist` (Finder's copy of a folder) reads as whole
+seconds until the drive is mounted again, then as the stored 10 ms value (probed: X.995 reads X.000, then X.990).
+FAT (2 s), HFS+ (1 s) and APFS (1 ns) read the same either way and are compared exactly."""
+SECOND_NS: Final = 1_000_000_000
+
+
+def same_birth(fs_type: str, recorded: int, found: int) -> bool:
+    """Whether a folder's creation time read now (`found`, ns) is the one the journal recorded: on `WHOLE_SECONDS_ON`
+    the same second, each time reduced to the **floor** of its second (what exFAT answers while mounted is the floor
+    of its stored value, never a rounding; `//` floors a time before 1970 too); elsewhere exactly. The one place this
+    rule lives."""
+    if fs_type in WHOLE_SECONDS_ON:
+        return recorded // SECOND_NS == found // SECOND_NS
+    return recorded == found
 
 
 def known_birth(mark: FolderMark) -> int | None:
@@ -71,14 +93,15 @@ def folder_verdict(recorded: FolderEntry, mark: FolderMark) -> FolderVerdict:
     """Whether the folder found at a recorded path is the one the save wrote in (owner, 2026-11-08: "Volume ID in
     journal (Recommended)", then "Drive ID + folder birth (Recommended)"): a drive Finzytrack cannot identify is
     `unknown_drive`; another drive UUID, another file-system type, or another creation time (for a folder that was there
-    before the save) is `wrong_drive`. The one place this rule lives."""
+    before the save; `same_birth`: exFAT's to the second) is `wrong_drive`. The one place this rule lives."""
     found = drive_of(mark)
     if found is None:
         return "unknown_drive"
     if found != recorded.volume or mark.fs_type != recorded.fs_type:
         return "wrong_drive"
-    if recorded.born is not None and mark.born != recorded.born:  # exact, at the volume's resolution (owner,
-        # 2026-11-09: "Drop the time-zone tolerance"): a FAT folder read after the Mac's zone changed fails closed
+    if recorded.born is not None and (mark.born is None or not same_birth(mark.fs_type, recorded.born, mark.born)):
+        # at the volume's resolution, exFAT's to the second (`same_birth`; owner, 2026-11-09: "Drop the time-zone
+        # tolerance"): a FAT folder read after the Mac's zone or summer time changed fails closed
         return "wrong_drive"
     return "same"
 

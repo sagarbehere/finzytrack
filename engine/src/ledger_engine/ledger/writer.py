@@ -148,10 +148,12 @@ class Reason(StrEnum):
     NAME_NOT_UTF8 = "name_not_utf8"  # a path is not valid UTF-8 (the journal cannot name it)
     LINKED_FOLDER = "linked_folder"  # a link stands in place of the workspace's key, journal or backups folder (the
     # save's folder step, `save._ensure_dir`; S0077, BL-0193): recovery reads no record through it
-    NO_FOLDER_ID = "no_folder_id"  # a folder the save writes in, on FAT or exFAT, has no creation time (the drive's
-    # top level): it could not be told from the same folder on a drive formatted with the same serial (S0089 round 1)
-    NO_DRIVE_ID = "no_drive_id"  # a folder the save writes in is on a drive with no reliable volume UUID: its journal
-    # could never be undone (S0089, BL-0188; owner: "one without it is refused the same way")
+    NO_FOLDER_ID = "no_folder_id"  # a folder the save writes in has no creation time: the top level of a FAT or
+    # exFAT drive, or a drive that keeps none at all; it could not be told from a folder at the same path on another
+    # drive (S0089 rounds 1 and 2; `handles.known_birth`)
+    NO_DRIVE_ID = "no_drive_id"  # a folder the save writes in is on a drive Finzytrack cannot identify (no reliable
+    # volume UUID, or a file-system type name the record cannot hold: `handles.drive_of`): its journal could never be
+    # undone (S0089, BL-0188; owner: "one without it is refused the same way"; S0090)
 
 
 class Step(StrEnum):
@@ -357,11 +359,11 @@ def _seen(h: DirHandle, folder: str, canonical: str) -> FolderEntry:
     """The folder `folder` as the journal records it (S0089, BL-0188; owner, 2026-11-08: "Volume ID in journal
     (Recommended)", "Drive ID + folder birth (Recommended)"): its drive's UUID, its file system and its creation time,
     asked through the descriptor the save's writes in it use; the undo writes there only when all three still match.
-    A drive with no UUID Finzytrack can rely on (`handles.drive_of`: none, or a version 4 UUID on FAT or exFAT) refuses
-    the save before its first effect (`no_drive_id`), since its journal could never be undone (owner: "one without it
-    is refused the same way"; confirmed for network shares, 2026-11-09). A folder on FAT or exFAT with no creation time
-    (the drive's top level) refuses it too (`no_folder_id`, `handles.known_birth`). An error asking raises
-    (`io_error`)."""
+    A drive Finzytrack cannot identify (`handles.drive_of`: no UUID, a version 4 UUID on FAT, or a file-system type
+    name the record cannot hold) refuses the save before its first effect (`no_drive_id`), since its journal could
+    never be undone (owner: "one without it is refused the same way"; confirmed for network shares, 2026-11-09). A
+    folder with no creation time (a drive that keeps none, or the top level of a FAT or exFAT drive) refuses it too
+    (`no_folder_id`, `handles.known_birth`). An error asking raises (`io_error`)."""
     mark = h.mark()
     volume = drive_of(mark)
     if volume is None:
@@ -372,8 +374,9 @@ def _seen(h: DirHandle, folder: str, canonical: str) -> FolderEntry:
     entry = FolderEntry(folder, volume, mark.fs_type, born)
     try:
         journal.check_folder(entry)
-    except BadRecordError:
-        raise _Stop(Reason.NO_DRIVE_ID, canonical) from None  # a mark the record cannot hold (verifier F3)
+    except BadRecordError:  # verifier F3: never an exception after the backups. `drive_of` already refuses a type
+        # name the record cannot hold; left is a UUID spelled otherwise than the record takes: still no drive ID
+        raise _Stop(Reason.NO_DRIVE_ID, canonical) from None
     return entry
 
 

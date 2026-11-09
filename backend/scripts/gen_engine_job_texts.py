@@ -85,7 +85,10 @@ def _missing(good: int, other: int) -> Blocking:
     without that check."""
     names = ("<path>/<file>", "<path>/<other file>", "<path>/<third file>", "<path>/<fourth file>")
     kinds = [True] * good + [False] * other
-    files = tuple(InspectedFile(n, False, True, None, (), None, k) for n, k in zip(names, kinds, strict=False))
+    files = tuple(
+        InspectedFile(n, False, True, None, (), None, "<backup file>" if k else None)
+        for n, k in zip(names, kinds, strict=False)
+    )
     return _blocking("stopped", "backup_bad", inspection=files)
 
 
@@ -102,6 +105,12 @@ def _missing_rows(prefix: str, where: str, render: Callable[[Blocking], str]) ->
         (f"{prefix}{suffix}", f"{where}: {what}", lambda g=good, o=other: render(_missing(g, o)).strip())
         for suffix, what, good, other in cases
     )
+
+
+def _behind_drive() -> Blocking:
+    """A `wrong_drive` stop whose folder the engine did not look into, with the file's backup checked good (S0090)."""
+    inspection = (InspectedFile(FILE, False, False, None, (), None, "<backup file>"),)
+    return _blocking("stopped", "wrong_drive", entry=FOLDER, inspection=inspection)
 
 
 def _kept(cause: str, *, named: bool) -> Blocking:
@@ -272,6 +281,12 @@ RECOVERY: tuple[Row, ...] = (
         "`stopped`, `unknown_drive` (S0089)",
         lambda: _screen(_blocking("stopped", "unknown_drive", entry=FOLDER)),
     ),
+    (
+        "msg:recovery.drive_backup",
+        "added to a `wrong_drive` or `unknown_drive` stop, per replaced file behind that drive with its backup checked "
+        "good (S0090)",
+        lambda: rt._drive_backups(_behind_drive()).strip(),
+    ),
     ("msg:recovery.unreadable", "`stopped`, `unreadable` record", lambda: _screen(_blocking("stopped", UNREADABLE))),
     ("msg:recovery.stopped", "`stopped`, any other cause", lambda: _screen(_blocking("stopped", "backup_bad"))),
     *_missing_rows("msg:recovery.missing", "added to a stop screen, replaced files absent (§6.8)", rt._missing_now),
@@ -355,6 +370,12 @@ RECOVERY: tuple[Row, ...] = (
         "msg:recovery.keep_unknown_drive",
         "Keep's confirmation for `unknown_drive` (S0089)",
         lambda: rt.keep_confirmation(_blocking("stopped", "unknown_drive", entry=FOLDER), WS),
+    ),
+    (
+        "msg:recovery.keep_drive_backup",
+        "added to Keep's confirmation after a `wrong_drive` or `unknown_drive` stop, per replaced file behind that "
+        "drive with its backup checked good (S0090)",
+        lambda: rt._drive_backups_kept(_behind_drive()).strip(),
     ),
     (
         "msg:recovery.keep_kept_copy",

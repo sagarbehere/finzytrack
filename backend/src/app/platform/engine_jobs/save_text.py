@@ -77,11 +77,14 @@ def not_saved_text(d: ChangeNotSavedDetails) -> str:
                 "the change if saving were interrupted. Keep your ledger on a drive Finzytrack can identify, such as "
                 "your Mac's own disk or a USB drive."
             )
-        case "no_folder_id":  # S0089 round 1 (red team H1): the top level of a FAT or exFAT drive
+        case "no_folder_id":  # S0089 rounds 1, 2: the top level of a FAT or exFAT drive, or a drive that keeps no
+            # folder creation time at all (S0090, BL-0220 V2-1: the way out names both)
             return (
-                f"{did_not} {_name(d.path)} is at the top level of its drive, where Finzytrack cannot tell this drive "
-                "from another one formatted the same way, so it could not undo the change safely if saving were "
-                "interrupted. Make a folder on the drive, move your ledger into it, and open it from there."
+                f"{did_not} The folder that holds {_name(d.path)} has no creation time that Finzytrack can read, so "
+                "Finzytrack cannot tell it from a folder at the same place on another drive. It could not undo the "
+                f"change safely if saving were interrupted. If {_name(d.path)} is at the top level of a USB drive, "
+                "make a folder on the drive, move your ledger into it, and open it from there. Otherwise keep your "
+                "ledger on another drive, such as your Mac's own disk."
             )
         case "io_error" | "read_back" | "name_not_utf8" | "engine_stopped":
             return _unchanged_or_not(d)

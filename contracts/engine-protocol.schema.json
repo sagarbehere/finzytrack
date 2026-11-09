@@ -1129,7 +1129,7 @@
     },
     "InspectedFile": {
       "additionalProperties": false,
-      "description": "What stands at one file of a stopped journal now, and its kept copies (§11: Show both, Show it).\n`backup_good`: a replaced file's backup is there and holds its old version (`recover_all.Inspected`).",
+      "description": "What stands at one file of a stopped journal now, and its kept copies (§11: Show both, Show it).\n`backup`: the path of a replaced file's backup when it is there and holds its old version, else null\n(`recover_all.Inspected`; S0090).",
       "properties": {
         "path": {
           "minLength": 1,
@@ -1173,9 +1173,18 @@
           ],
           "title": "Errno"
         },
-        "backup_good": {
-          "title": "Backup Good",
-          "type": "boolean"
+        "backup": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "pattern": "^/",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Backup"
         }
       },
       "required": [
@@ -1185,7 +1194,7 @@
         "now",
         "kept",
         "errno",
-        "backup_good"
+        "backup"
       ],
       "title": "InspectedFile",
       "type": "object"
@@ -2605,7 +2614,7 @@
             "errno": null,
             "inspection": [
               {
-                "backup_good": true,
+                "backup": "/app/local/k1/backups/s1-j7/0-main.bean",
                 "created": false,
                 "errno": null,
                 "kept": [

@@ -146,7 +146,10 @@ def test_a_try_stops_at_the_created_path_with_what_stands_there_then_delete_it_a
     }
     seen = {i["path"].rpartition("/")[2]: i for i in out["inspection"]}
     assert seen["prices.bean"]["now"] == {"kind": "file", "sha256": sha(b"p\n"), "size": 2}
-    assert (seen["prices.bean"]["backup_good"], seen["main.bean"]["backup_good"]) == (False, True), "S0071 r2"
+    assert seen["prices.bean"]["backup"] is None, "S0071 r2: a created file has no backup"
+    assert seen["main.bean"]["backup"] == f"{os.path.realpath(ald)}/local/k1/backups/{name}/0-main.bean", (
+        "S0090: the backup's path"
+    )
     assert (ledger / "main.bean").read_bytes() == PRE, "the other file was not undone"
     wrong = rig.send("recover_act", {**base, "action": "delete_created", "file": out["path"], "sha256": sha(b"x")})
     assert wrong["result"]["outcome"] == "refused"

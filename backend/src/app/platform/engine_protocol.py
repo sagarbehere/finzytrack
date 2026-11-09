@@ -431,7 +431,7 @@ def _kept(value: object) -> KeptCopySeen:
     return KeptCopySeen(_name(o["name"], "name"), cast("str", _path(o["path"], "path")), _seen(o["seen"]))
 
 
-_INSPECTED = frozenset({"path", "created", "reachable", "now", "kept", "errno", "backup_good"})
+_INSPECTED = frozenset({"path", "created", "reachable", "now", "kept", "errno", "backup"})
 
 
 def _inspected(value: object) -> InspectedFile:
@@ -443,7 +443,7 @@ def _inspected(value: object) -> InspectedFile:
         now=None if o["now"] is None else _seen(o["now"]),
         kept=tuple(_kept(k) for k in _list(o["kept"], "kept")),
         errno=_int(o["errno"], "errno", nullable=True),
-        backup_good=_bool(o["backup_good"], "backup_good"),
+        backup=_path(o["backup"], "backup", nullable=True),
     )
 
 

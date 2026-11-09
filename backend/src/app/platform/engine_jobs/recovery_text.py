@@ -69,12 +69,12 @@ def _kept_names(b: Blocking) -> list[str]:
 
 def _missing(b: Blocking) -> tuple[list[str], list[str]]:
     """The replaced files a stopped try found absent, by name: those whose backup the engine found holding the old
-    version (`InspectedFile.backup_good`), then the others. On a drive without the swap a power loss can leave a file
+    version (`InspectedFile.backup`), then the others. On a drive without the swap a power loss can leave a file
     missing (§6.8); Keep leaves it missing, so the screen and the Keep confirmation name it (S0071 red team F2), and
     they promise the backup only where it was checked (round 2, R2-1: a try that stops `backup_bad` there). A file the
     save was creating, or one whose folder is not there or could not be read, is not counted."""
     absent = [i for i in b.inspection or () if not i.created and i.reachable and i.now is None and i.errno is None]
-    return [_name(i.path) for i in absent if i.backup_good], [_name(i.path) for i in absent if not i.backup_good]
+    return [_name(i.path) for i in absent if i.backup], [_name(i.path) for i in absent if not i.backup]
 
 
 def _are(names: list[str]) -> str:
@@ -106,6 +106,31 @@ def _missing_kept(b: Blocking) -> str:
     if other:
         text += f" {_are(other)} missing now and will stay missing."
     return text
+
+
+def _behind_the_drive(b: Blocking) -> list[tuple[str, str]]:
+    """For a drive stop (`wrong_drive`, `unknown_drive`): each replaced file in a folder the engine did not look into
+    (`reachable` False), with the backup it read again and found holding the old version (S0090, BL-0220 V2-3). The
+    engine cannot say whether such a file is missing (the folder may be another drive's), but on the right drive (a
+    FAT stick read after a time-zone change) it may be, and Keep then leaves it missing: so the texts say where its
+    old version is, as a condition. A file whose backup is not known good is not named."""
+    if b.cause not in ("wrong_drive", "unknown_drive"):
+        return []
+    return [(_name(i.path), i.backup) for i in b.inspection or () if not i.reachable and not i.created and i.backup]
+
+
+def _drive_backups(b: Blocking) -> str:
+    return "".join(
+        f" If {name} is missing on the drive that held your ledger, its old version is in {backup}."
+        for name, backup in _behind_the_drive(b)
+    )
+
+
+def _drive_backups_kept(b: Blocking) -> str:
+    return "".join(
+        f" If {name} is missing on the drive that held it, it will stay missing. Its old version is in {backup}."
+        for name, backup in _behind_the_drive(b)
+    )
 
 
 def _kept_copy(b: Blocking, workspace: str) -> Screen:
@@ -237,7 +262,8 @@ def _not_undone(b: Blocking, workspace: str) -> Screen:
 
 def blocked_screen(b: Blocking, workspace: str) -> Screen:
     """The blocked screen for one blocking journal (§11), `workspace` the display name of the journal's own
-    workspace. A stopped try that found a replaced file absent says so after its row's text (`_missing_now`)."""
+    workspace. A stopped try that found a replaced file absent says so after its row's text (`_missing_now`); a drive
+    stop names each backup behind that drive (`_drive_backups`; S0090)."""
     if b.reason != "stopped":
         return _not_undone(b, workspace)
     if b.cause in KEPT_COPY_CAUSES:
@@ -250,7 +276,7 @@ def blocked_screen(b: Blocking, workspace: str) -> Screen:
         screen = _drive(b, workspace)
     else:
         screen = _stopped(b, workspace)
-    return Screen(screen.message + _missing_now(b), screen.actions)
+    return Screen(screen.message + _missing_now(b) + _drive_backups(b), screen.actions)
 
 
 def not_recovered_screen(n: NotRecovered) -> Screen:
@@ -284,7 +310,8 @@ def keep_confirmation(b: Blocking, workspace: str) -> str:
     """§8.1 "Afterwards", ADR-0063: it lists the files it releases; for `cancelled`, `failed` and `not_tried` it says
     Retry may still undo the save (review 7 L6); a kept copy stays and must be deleted or moved first (owner,
     2026-10-29); a replaced file a stopped try found absent stays missing, and its old version is only in the backup
-    when the engine found it there (`_missing_kept`; S0071 red team F2, round 2 R2-1)."""
+    when the engine found it there (`_missing_kept`; S0071 red team F2, round 2 R2-1); after a drive stop, where each
+    file's old version is if it is missing on the right drive (`_drive_backups_kept`; S0090)."""
     files = ", ".join(_name(f.path) for f in b.journal.files) or "the files of this save"
     text = (
         f"Keep the files as they are now? Finzytrack will stop trying to undo the unfinished save in {workspace} "
@@ -302,7 +329,7 @@ def keep_confirmation(b: Blocking, workspace: str) -> str:
             " Finzytrack cannot identify the drive with at least one of these files, so it will not undo the save "
             "there, now or later."
         )
-    text += _missing_kept(b)
+    text += _missing_kept(b) + _drive_backups_kept(b)
     kept = _kept_names(b)
     if kept:
         text += f" The kept copy {' and '.join(kept)} stays. Delete or move it before you use the ledger."

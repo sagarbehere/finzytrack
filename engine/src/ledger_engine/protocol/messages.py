@@ -230,7 +230,8 @@ class KeptCopySeen(Message):
 
 class InspectedFile(Message):
     """What stands at one file of a stopped journal now, and its kept copies (§11: Show both, Show it).
-    `backup_good`: a replaced file's backup is there and holds its old version (`recover_all.Inspected`)."""
+    `backup`: the path of a replaced file's backup when it is there and holds its old version, else null
+    (`recover_all.Inspected`; S0090)."""
 
     path: AbsPath
     created: bool
@@ -238,7 +239,7 @@ class InspectedFile(Message):
     now: EntrySeen | None
     kept: list[KeptCopySeen]
     errno: int | None
-    backup_good: bool
+    backup: AbsPath | None
 
 
 class RecoverTryResult(Message):
@@ -606,7 +607,7 @@ OPS: dict[str, OpSpec] = {
                         }
                     ],
                     "errno": None,
-                    "backup_good": True,
+                    "backup": "/app/local/k1/backups/s1-j7/0-main.bean",
                 }
             ],
         },

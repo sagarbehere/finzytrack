@@ -293,6 +293,9 @@ def test_inspect_shows_a_file_on_another_drive_as_not_reachable() -> None:
         ("/w/L/prices.bean", False, None, ()),
         ("/w/L/main.bean", False, None, ()),
     ]  # the screen never shows the other drive's files as this save's
+    # S0090 (BL-0220 V2-3): but it names each replaced file's backup, which is on the Mac's own disk, so the user can
+    # copy the old version back by hand if this is the right drive and the file is missing there (Keep's way out)
+    assert [i.backup for i in seen] == [f"{BD}/{NAME}/0-a.bean", None, f"{BD}/{NAME}/2-main.bean"]
 
 
 def test_the_drives_are_checked_before_step_2_moves_an_outside_save_to_its_kept_name() -> None:
@@ -386,12 +389,20 @@ def test_a_folder_made_again_at_the_same_path_on_the_same_drive_is_another_folde
     assert state_of(w.fs) == before
 
 
-@pytest.mark.parametrize("fs_type", ["msdos", "exfat", "apfs"])
-@pytest.mark.parametrize("shift", [3600 * 10**9, -(5 * 3600 + 45 * 60) * 10**9, 1])
+@pytest.mark.parametrize(
+    ("fs_type", "shift"),
+    [
+        (f, s)
+        for f in ("msdos", "exfat", "apfs", "hfs")
+        for s in (3600 * 10**9, -(5 * 3600 + 45 * 60) * 10**9, 1)
+        if not (f == "exfat" and s == 1)  # S0090 (BL-0221): exFAT is compared to the second (the tests below)
+    ],
+)
 def test_a_folders_birth_read_any_other_way_is_another_folder(fs_type: str, shift: int) -> None:
     """Round 2 (owner, 2026-11-09: "Drop the time-zone tolerance (fails closed after a real zone change; Keep is the
     way out)"): the verifier's F1 twin made exactly one hour later, and a FAT folder read after the Mac's zone moved,
-    are both another folder: nothing written, the journal kept."""
+    are both another folder: nothing written, the journal kept. On exFAT a shift within the same second is the same
+    folder since S0090 (`test_an_exfat_folder_read_to_the_second_then_to_10_ms_is_the_same_folder`)."""
     w = on_drive(volume="plain")
     w.fs.outside_fs_type(USB, fs_type)
     w.fs.inject(AFTER_CREATE_PLAIN, crash=True)
@@ -664,3 +675,119 @@ def test_a_drive_that_keeps_no_creation_time_is_not_saved_on() -> None:
     assert isinstance(out, NotSaved)
     assert out.reason is Reason.NO_DRIVE_ID
     assert w.fs.effects == []
+
+
+# -- S0090 (BL-0221): exFAT folder births compared to the second -------------------------------------------------
+
+SECOND = 10**9
+X = 1_794_000_000 * SECOND  # a whole second (2026-11-08)
+INC = X + 7 * SECOND  # `inc/`, made 7 s later
+
+
+def _cut_with_births(fs_type: str, l_born: int, inc_born: int) -> World:
+    """A save on a best-effort drive of `fs_type` whose folders read `l_born` and `inc_born` (ns), cut just after the
+    created file is placed (`a.bean` at post, `main.bean` at pre)."""
+    w = on_drive(volume="plain")
+    w.fs.outside_fs_type(USB, fs_type)
+    w.fs.outside_born("/w/L", l_born)
+    w.fs.outside_born("/w/L/inc", inc_born)
+    w.fs.inject(AFTER_CREATE_PLAIN, crash=True)
+    with pytest.raises(Crash):
+        durable_commit(w.fs, w.commit)
+    return w
+
+
+@pytest.mark.parametrize(
+    ("saved", "found"),
+    [(0, 990_000_000), (990_000_000, 0), (0, 999_999_999), (390_000_000, 0)],
+    ids=["mounted_then_remounted", "remounted_then_mounted", "last_nanosecond", "red_team_x39"],
+)
+def test_an_exfat_folder_read_to_the_second_then_to_10_ms_is_the_same_folder(saved: int, found: int) -> None:
+    """BL-0221 (S0089 red team r3 F3; owner, 2026-11-09: "On exFAT, folder creation times are compared to the second,
+    not 10 ms. The right stick is always recognized"): a folder given a creation time with a fraction (Finder's copy)
+    reads whole seconds while that mount lasts and its stored 10 ms value after a remount (probed, S0090). A save in one
+    of those reads and recovery in the other is the same folder: recovery undoes the save (before: `wrong_drive`, and
+    Keep left the ledger half-changed)."""
+    w = _cut_with_births("exfat", X + saved, INC + saved)
+    w.fs.outside_born("/w/L", X + found)
+    w.fs.outside_born("/w/L/inc", INC + found)
+    check_recovered(w.fs, w, recover_journal(w.fs, JD, NAME))
+
+
+@pytest.mark.parametrize(
+    ("fs_type", "saved", "found"),
+    [
+        ("exfat", 0, SECOND),  # one second apart
+        ("exfat", 990_000_000, SECOND),  # 10 ms apart, but in two seconds
+        ("exfat", 0, -1),  # the last nanosecond of the second before
+        ("msdos", 0, 990_000_000),  # FAT stays exact (2 s): never loosened to the second by mistake
+        ("msdos", 0, 1),
+        ("hfs", 0, 990_000_000),  # HFS+ (1 s) and APFS (1 ns) stay exact
+        ("apfs", 0, 1),
+        ("apfs", 0, 990_000_000),
+    ],
+)
+def test_a_birth_in_another_second_or_on_another_file_system_within_the_second_is_another_folder(
+    fs_type: str, saved: int, found: int
+) -> None:
+    """@regression-guard (every case held on dc656deb; they kill the mutants that loosen FAT, HFS+ or APFS to the second
+    and exFAT beyond its second). Must not pass: nothing written, the journal kept, `wrong_drive`."""
+    w = _cut_with_births(fs_type, X + saved, INC + saved)
+    w.fs.outside_born("/w/L", X + found)
+    w.fs.outside_born("/w/L/inc", INC + found)
+    before = state_of(w.fs)
+    out = recover_journal(w.fs, JD, NAME)
+    assert isinstance(out, Stopped), out
+    assert out.cause is Cause.WRONG_DRIVE
+    assert state_of(w.fs) == before
+    assert State.OPEN in journals(w.fs)
+
+
+@pytest.mark.parametrize(
+    ("recorded", "found", "same"),
+    [
+        (X, X + 999_999_999, True),
+        (X + 999_999_999, X, True),
+        (X - 1, X, False),
+        (-SECOND // 2, -1, True),  # before 1970: -0.5 s and -1 ns are both in the second [-1 s, 0)
+        (-1, 0, False),
+    ],
+)
+def test_the_exfat_rule_takes_the_floor_of_the_second(recorded: int, found: int, same: bool) -> None:
+    """The `False` cases are @regression-guard (they held on dc656deb). The reduction to the second is the floor of the
+    time read (what the drive answers while mounted, X.000, is the
+    floor of its stored X.390: probed), never a rounding (X.6 would round to the next second)."""
+    from ledger_engine.fs.port import FolderMark
+    from ledger_engine.ledger.handles import folder_verdict
+
+    vol = "4e386abb-6e49-38eb-8ef8-a36ba10a34aa"
+    entry = FolderEntry("/w/L", vol, "exfat", recorded)
+    assert (folder_verdict(entry, FolderMark(vol, "exfat", found)) == "same") is same
+
+
+@pytest.mark.parametrize("name", ["my fs", "\ufffdxfat", ""])
+def test_a_drive_whose_file_system_name_the_record_cannot_hold_is_unknown(name: str) -> None:
+    """BL-0221's overflow: a file-system type name the record cannot hold (a space, a byte the adapter could not read
+    as ASCII, none) names no drive Finzytrack can identify: the save refuses `no_drive_id` before its first effect,
+    and recovery meeting one is `unknown_drive` (it was `wrong_drive`, "the folder is not the one saved in")."""
+    w = crashed(CLOSE)
+    w.fs.outside_fs_type(USB, name)
+    before = state_of(w.fs)
+    out = recover_journal(w.fs, JD, NAME)
+    assert isinstance(out, Stopped), out
+    assert out.cause is Cause.UNKNOWN_DRIVE
+    assert state_of(w.fs) == before
+
+
+def test_a_recorded_folder_that_now_reports_no_creation_time_is_another_folder() -> None:
+    """@regression-guard (it held on dc656deb; S0090 mutant `missing-born-accepted`, which survived until this test):
+    a folder whose creation time the journal recorded, found on a drive with the same UUID and file system but now
+    reporting none, is not the folder the save saw: nothing written, the journal kept."""
+    w = crashed(CLOSE)
+    w.fs.no_crtime.add(USB)
+    before = state_of(w.fs)
+    out = recover_journal(w.fs, JD, NAME)
+    assert isinstance(out, Stopped), out
+    assert out.cause is Cause.WRONG_DRIVE
+    assert state_of(w.fs) == before
+    assert State.OPEN in journals(w.fs)

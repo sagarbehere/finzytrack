@@ -526,6 +526,20 @@ def test_a_mark_without_a_uuid_or_a_creation_time_is_none_not_an_error(fs: Darwi
         assert d.mark() == FolderMark(None, "devfs", None)
 
 
+def test_a_file_system_type_name_is_read_without_raising_whatever_its_bytes() -> None:
+    """S0090 (BL-0221's overflow): `f_fstypename` is read up to its NUL; a byte that is not ASCII becomes U+FFFD (a
+    name the record refuses, so the drive is one Finzytrack cannot identify: `no_drive_id`), never an exception out of
+    `mark`."""
+    from ledger_engine.fs.darwin import fs_type_from
+    from ledger_engine.ledger.handles import drive_of
+
+    assert fs_type_from(b"exfat\0junk".ljust(16, b"\0")) == "exfat"
+    odd = fs_type_from(b"\xc3\xa9fs\0".ljust(16, b"\0"))
+    assert "\ufffd" in odd
+    assert fs_type_from(b"\0" * 16) == ""
+    assert drive_of(FolderMark("4e386abb-6e49-38eb-8ef8-a36ba10a34aa", odd, 1)) is None
+
+
 def test_a_volume_that_reports_no_uuid_answers_none(fs: DarwinFS) -> None:
     """devfs (probed, S0089) returns no `ATTR_VOL_UUID`: `volume_id` is None, never a made-up or nil UUID."""
     with fs.open_dir("/dev") as d:
@@ -1885,8 +1899,8 @@ def test_twin_sticks_on_real_fat_and_exfat_are_never_written(
     b = _Stick(tmp_path / "b.img", fs_type, serial, mnt)
     with a as m:
         (m / "Finance").mkdir()
-        _set_crtime(m / "Finance", 1_794_000_000 * 10**9)  # a whole even second: `setattrlist` keeps no finer on
-        # exFAT, and FAT keeps 2 s, so B's folder can be given exactly this time (the red team's same-tick twins)
+        _set_crtime(m / "Finance", 1_794_000_000 * 10**9)  # a whole even second: FAT keeps 2 s, and exFAT reads a
+        # time set by `setattrlist` as whole seconds until a remount (S0090), so both twins read exactly this time
         (m / "Finance" / "main.bean").write_bytes(b"pre\n")
         c = _commit(tmp_path / "app", Change(str(m / "Finance" / "main.bean"), sha256(b"pre\n"), b"post\n"))
         with pytest.raises(_Died):
@@ -1907,6 +1921,39 @@ def test_twin_sticks_on_real_fat_and_exfat_are_never_written(
         assert sorted(os.listdir(m / "Finance")) == []
         assert (Path(c.journal_dir) / "s1-j1.open").exists()
     with a as m:
+        assert (m / "Finance" / "main.bean").read_bytes() == b"post\n"
+        assert recover_journal(fs, c.journal_dir, "s1-j1") == Resolved("s1-j1")
+        assert (m / "Finance" / "main.bean").read_bytes() == b"pre\n"
+
+
+@pytest.mark.skipif(not _images_on(), reason="disk images not asked for (FT_TEST_DISK_IMAGES=1)")
+@pytest.mark.parametrize("fraction", [390_000_000, 995_000_000])
+def test_an_exfat_folder_finder_copied_is_still_the_right_folder_after_a_remount(
+    fs: DarwinFS, tmp_path: Path, fraction: int
+) -> None:
+    """BL-0221 (S0089 red team r3 F3) on a real exFAT image, without Finder: Finder's copy sets the folder's creation
+    time with `setattrlist`, and exFAT then reads it as whole seconds while that mount lasts and as its stored 10 ms
+    value after a remount (probed in S0090: X.995 reads X.000, then X.990). A save made in that mount session is cut
+    before its close; after a remount recovery undoes it (owner, 2026-11-09: "On exFAT, folder creation times are
+    compared to the second, not 10 ms. The right stick is always recognized"). Before S0090: `wrong_drive`."""
+    from ledger_engine.ledger.restore import Resolved, recover_journal
+
+    mnt = tmp_path / "mnt"
+    mnt.mkdir()
+    stick = _Stick(tmp_path / "a.img", "exfat", "0x2468ace0", mnt)
+    born = 1_794_000_001 * 10**9 + fraction
+    with stick as m:
+        (m / "Finance").mkdir()
+        _set_crtime(m / "Finance", born)
+        with fs.open_dir(str(m / "Finance")) as h:
+            assert h.mark().born == born - fraction  # whole seconds while this mount lasts
+        (m / "Finance" / "main.bean").write_bytes(b"pre\n")
+        c = _commit(tmp_path / "app", Change(str(m / "Finance" / "main.bean"), sha256(b"pre\n"), b"post\n"))
+        with pytest.raises(_Died):
+            durable_commit(_DyingFS(fs, ".closed"), c)  # type: ignore[arg-type]
+    with stick as m:
+        with fs.open_dir(str(m / "Finance")) as h:
+            assert h.mark().born == born - fraction % 10_000_000  # its stored 10 ms value after the remount
         assert (m / "Finance" / "main.bean").read_bytes() == b"post\n"
         assert recover_journal(fs, c.journal_dir, "s1-j1") == Resolved("s1-j1")
         assert (m / "Finance" / "main.bean").read_bytes() == b"pre\n"

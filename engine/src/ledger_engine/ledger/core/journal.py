@@ -285,7 +285,9 @@ def _sha(value: object) -> str:
     return value
 
 
-_FS_TYPE: Final = re.compile(r"[A-Za-z0-9_.-]{1,15}")
+FS_TYPE: Final = re.compile(r"[A-Za-z0-9_.-]{1,15}")
+"""A file-system type name the record holds (`f_fstypename`: at most 15 bytes; S0089). A name outside it names no drive
+Finzytrack can identify (`ledger.handles.drive_of`, S0090)."""
 
 
 def _volume(value: object) -> str:
@@ -323,7 +325,7 @@ def check_folder(f: FolderEntry) -> None:
     could not record refuses the save instead of failing after the backups."""
     _abs(f.canonical_path)
     _volume(f.volume)
-    if not _FS_TYPE.fullmatch(f.fs_type):
+    if not FS_TYPE.fullmatch(f.fs_type):
         raise BadRecordError("fs_type")
 
 

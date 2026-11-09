@@ -195,18 +195,22 @@ def test_the_keep_confirmation(reason: str, retry_may: bool) -> None:
     assert "The kept copy /L/accounts.beancount.kept-s1-j7 stays. Delete or move it before you use the ledger." in text
 
 
+def _backup(path: str) -> str:
+    return f"/app/local/k1/backups/s1-j7/0-{path.rpartition('/')[2]}"
+
+
 def _with_missing(*missing: str, good: bool = True, cause: str = "foreign") -> Blocking:
     """A try stopped on a.bean (another program's file) while the files `missing` are absent: on a drive without the
     swap a power loss in the middle of a replace can leave them so (§6.8; S0071 red team F2). `good`: the engine found
-    their backups holding the old versions (`backup_good`)."""
+    their backups holding the old versions (`backup`: its path, when the engine found it good)."""
     files = ("/L/inc/a.bean", "/L/prices.bean", "/L/elsewhere/b.bean", "/L/d.bean", *(f"/L/{m}" for m in missing))
     journal = Journal(J.journal_dir, J.name, True, "k1", "lin1", tuple(JournalFile(f, f, False) for f in files))
     inspection = (
-        InspectedFile("/L/inc/a.bean", False, True, SEEN, (), None, True),
+        InspectedFile("/L/inc/a.bean", False, True, SEEN, (), None, _backup("a.bean")),
         InspectedFile("/L/prices.bean", True, True, None, (), None),  # created, not there: never "missing"
-        *(InspectedFile(f"/L/{m}", False, True, None, (), None, good) for m in missing),
-        InspectedFile("/L/elsewhere/b.bean", False, False, None, (), None, True),  # its folder is not there: unknown
-        InspectedFile("/L/d.bean", False, True, None, (), errno.EIO, True),  # the look failed: not known to be missing
+        *(InspectedFile(f"/L/{m}", False, True, None, (), None, _backup(m) if good else None) for m in missing),
+        InspectedFile("/L/elsewhere/b.bean", False, False, None, (), None, _backup("b")),  # folder not there: unknown
+        InspectedFile("/L/d.bean", False, True, None, (), errno.EIO, _backup("d")),  # the look failed: not known
     )
     return Blocking(journal, "stopped", cause, "/L/inc/a.bean", inspection=inspection)
 
@@ -237,7 +241,7 @@ def test_a_replaced_file_found_missing_is_named_on_the_screen_and_in_the_keep_co
 @pytest.mark.parametrize("cause", ["foreign", "backup_bad"])
 def test_a_missing_file_whose_backup_is_not_known_good_is_named_without_promising_the_backup(cause: str) -> None:
     """S0071 round 2 (R2-1): a try that stops `backup_bad` at the missing file, or never reached its backup; the
-    engine's `backup_good` is False, so neither text claims a backup (and nothing else says "backup")."""
+    engine names no `backup`, so neither text claims one (and nothing else says "backup")."""
     b = _with_missing("main.bean", good=False, cause=cause)
     screen, keep = blocked_screen(b, WS).message, keep_confirmation(b, WS)
     assert screen.endswith(" main.bean is missing now."), screen
@@ -250,7 +254,9 @@ def test_a_missing_file_whose_backup_is_not_known_good_is_named_without_promisin
         "stopped",
         "foreign",
         mixed.path,
-        inspection=tuple(replace(i, backup_good=True) if i.path == "/L/c.bean" else i for i in mixed.inspection or ()),
+        inspection=tuple(
+            replace(i, backup=_backup("c.bean")) if i.path == "/L/c.bean" else i for i in mixed.inspection or ()
+        ),
     )
     assert blocked_screen(mixed, WS).message.endswith(
         " c.bean is missing now. Finzytrack has its old version in its backup. main.bean is missing now."
@@ -345,3 +351,41 @@ def test_a_delete_refused_on_another_drive_says_to_plug_in_the_right_one(reason:
     assert text.endswith("Plug in the drive that held your ledger, then press Retry.")
     if reason == "wrong_drive":  # round 2: the folder, not only the drive, may be another
         assert text.startswith("This file is not in the folder Finzytrack saved it in")
+
+
+def _on_another_drive(cause: str) -> Blocking:
+    """BL-0220 V2-3 (S0089 final verifier): the right FAT stick read after a UTC-offset change is `wrong_drive`, and a
+    power loss may have left `main.bean` missing on it. The folder is not checked, so the engine shows no file there
+    (`reachable` False), but it read each backup again: `main.bean`'s holds the old version (`backup`), `a.bean`'s
+    could not be confirmed, `prices.bean` was being created (no backup); `/mnt/finance/b.bean` is on a drive that
+    matches and is there."""
+    files = ("/mnt/USB/L/main.bean", "/mnt/USB/L/a.bean", "/mnt/USB/L/prices.bean", "/mnt/finance/b.bean")
+    journal = Journal(J.journal_dir, J.name, True, "k1", "lin1", tuple(JournalFile(f, f, False) for f in files))
+    inspection = (
+        InspectedFile("/mnt/USB/L/main.bean", False, False, None, (), None, _backup("main.bean")),
+        InspectedFile("/mnt/USB/L/a.bean", False, False, None, (), None, None),
+        InspectedFile("/mnt/USB/L/prices.bean", True, False, None, (), None),
+        InspectedFile("/mnt/finance/b.bean", False, True, SEEN, (), None, _backup("b.bean")),
+    )
+    return Blocking(journal, "stopped", cause, "/mnt/USB/L/main.bean", "/mnt/USB/L", inspection=inspection)
+
+
+@pytest.mark.parametrize("cause", ["wrong_drive", "unknown_drive"])
+def test_a_drive_stop_names_the_backup_of_each_file_on_that_drive(cause: str) -> None:
+    """BL-0220 V2-3: Keep is the way out of a drive stop on the right stick (a zone change on FAT), and a file a power
+    loss left missing there stays missing, so the screen and Keep's confirmation say where its old version is. Only a
+    backup the engine read again and found holding the old version is named; a file on a drive that matches is not
+    concerned, and a file the save was creating has none."""
+    b = _on_another_drive(cause)
+    where = _backup("main.bean")
+    screen, keep = blocked_screen(b, WS).message, keep_confirmation(b, WS)
+    assert screen.endswith(
+        f" If main.bean is missing on the drive that held your ledger, its old version is in {where}."
+    ), screen
+    assert keep.endswith(
+        f" If main.bean is missing on the drive that held it, it will stay missing. Its old version is in {where}."
+    ), keep
+    for text in (screen, keep):
+        assert text.count("/app/local/k1/backups/") == 1, text  # not a.bean's (not confirmed), not b.bean's
+        assert "a.bean is missing" not in text
+        assert "prices.bean is missing" not in text

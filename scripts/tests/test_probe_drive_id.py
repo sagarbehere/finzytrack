@@ -25,6 +25,8 @@ class Verdict(unittest.TestCase):
             (("msdos", V4, (1, 0)), "no_drive_id"),
             (("msdos", V3, (0, 0)), "no_folder_id"),
             (("exfat", V3, (0, 0)), "no_folder_id"),
+            (("my fs", V3, (1, 0)), "no_drive_id"),  # S0090: a type name the record cannot hold
+            (("\ufffdfs", V3, (1, 0)), "no_drive_id"),
         ]
         for args, refusal in cases:
             with self.subTest(args=args):

@@ -93,8 +93,8 @@ class FolderMark:
     """What tells a folder on one drive from a folder at the same path on another (S0089; spec §6.3 "Drive identity"):
     `volume`, its drive's volume UUID (None: the drive reports none); `fs_type`, the file system's type name
     (`f_fstypename`); `born`, the folder's creation time in nanoseconds since the epoch, at the resolution the file
-    system keeps (probed: APFS nanoseconds, HFS+ 1 s, exFAT 10 ms, FAT 2 s; 0 for the root of a FAT or exFAT drive,
-    which keeps none)."""
+    system keeps (probed: APFS nanoseconds, HFS+ 1 s, exFAT 10 ms but whole seconds until a remount for a time set with
+    `setattrlist`, FAT 2 s; 0 for the root of a FAT or exFAT drive, which keeps none)."""
 
     volume: str | None
     fs_type: str
