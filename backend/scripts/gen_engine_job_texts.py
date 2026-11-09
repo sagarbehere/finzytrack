@@ -263,6 +263,11 @@ RECOVERY: tuple[Row, ...] = (
         lambda: _screen(_blocking("stopped", "wrong_drive", entry=FOLDER)),
     ),
     (
+        "msg:recovery.missing_unconfirmed",
+        "`stopped`, `missing_unconfirmed` (S0089 round 2)",
+        lambda: _screen(_blocking("stopped", "missing_unconfirmed", entry="<backup file>")),
+    ),
+    (
         "msg:recovery.unknown_drive",
         "`stopped`, `unknown_drive` (S0089)",
         lambda: _screen(_blocking("stopped", "unknown_drive", entry=FOLDER)),

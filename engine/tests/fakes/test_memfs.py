@@ -791,6 +791,7 @@ def test_a_folders_mark_is_its_drive_file_system_and_birth() -> None:
     a, b = fs.open_dir("/a").mark(), fs.open_dir("/a/b").mark()
     assert (a.volume, a.fs_type) == (fs.volume_of(4), "msdos")
     assert a.born != b.born
+    assert a.born is not None
     assert a.born > 0
     fs.outside_born("/a/b", 7)
     assert fs.open_dir("/a/b").mark().born == 7

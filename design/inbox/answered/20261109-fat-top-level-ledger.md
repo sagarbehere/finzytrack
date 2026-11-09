@@ -19,3 +19,6 @@ Round 1 refuses a save there before anything is written: "main.beancount is at t
 Option 1. It matches your rule for network shares ("fails closed, never writes on a wrong drive"), and moving the ledger into a folder is a one-time step with a clear message.
 
 ## Answer (owner, verbatim, with date)
+Owner, 2026-11-09, in session, choosing "Keep the refusal (Recommended)": "Never writes on the wrong stick. A user with main.beancount at the top of a FAT/exFAT stick moves it into a folder once (clear message). Ledgers in a folder on the stick, and on APFS/HFS+ drives, are unaffected."
+
+Recorded in S0089 (round 2): `no_folder_id` stays as built (ADR-0012 amendment of 2026-11-08, round 2).

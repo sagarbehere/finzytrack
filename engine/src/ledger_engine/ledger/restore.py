@@ -98,6 +98,7 @@ from ledger_engine.ledger.core.recovery import (
     seen_file,
 )
 from ledger_engine.ledger.handles import (
+    SERIAL_IDENTIFIED,
     Displaced,
     Handles,
     Mode,
@@ -194,6 +195,34 @@ def _drives(handles: Handles, record: Record) -> None:
         except (FileNotFoundError, NotADirectoryError):
             continue
     handles.on = handles.entry = None
+
+
+def _unconfirmed(handles: Handles, record: Record, checked: list[_Checked]) -> None:
+    """Step 2's last check (S0089 round 2; owner, 2026-11-09: "Evidence for missing (Recommended)"): a missing file is
+    put back on a FAT or exFAT drive (`handles.SERIAL_IDENTIFIED`: two sticks formatted with one serial share the drive
+    ID, and their folders' creation times can match) only when another replaced file of this journal, in a folder on
+    that same drive, holds its old or new bytes (read and hashed by step 2: `AT_PRE`, `AT_POST`). Otherwise nothing is
+    written: `Stopped(missing_unconfirmed)` naming the file and, as `entry`, the backup that holds its old version, so
+    the user can copy it there by hand if this is the right drive (or choose Keep). It is the one write of the undo not
+    gated by our own names or by bytes we hold (the inventory in the S0089 journal)."""
+    for x in checked:
+        if x.verdict is not Verdict.MISSING:
+            continue
+        here = handles.folders.get(x.parent)
+        if here is None or here.fs_type not in SERIAL_IDENTIFIED:
+            continue  # recorded, so never None in a try; a drive identified by more than a serial
+        evidence = any(
+            y is not x
+            and y.entry.pre is not None
+            and not y.folder_absent
+            and y.verdict in (Verdict.AT_PRE, Verdict.AT_POST)
+            and (there := handles.folders.get(y.parent)) is not None
+            and there.volume == here.volume
+            for y in checked
+        )
+        if not evidence:
+            assert x.entry.backup is not None  # noqa: S101 (a missing file is a replaced one)
+            raise _Halt(Cause.MISSING_UNCONFIRMED, x.entry.canonical_path, _join(record.backup_dir, x.entry.backup))
 
 
 class _Fail(_Halt):
@@ -611,6 +640,7 @@ def restore(
                 _drives(handles, record)
                 checked = [_check(handles, record, f, created=created) for f in record.files]
                 _check_folders(handles, record, removable)
+                _unconfirmed(handles, record, checked)
             except WrongDriveError as e:
                 return _wrong_drive(e, handles)
             except _Fail as e:

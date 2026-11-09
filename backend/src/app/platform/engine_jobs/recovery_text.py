@@ -46,7 +46,8 @@ KEPT_COPY_CAUSES: Final = frozenset({"kept_copy", "displaced", "outside_save_in_
 """Causes whose screen is the kept-copy row: an outside save Finzytrack moved to a kept name (§6.4)."""
 CREATED: Final = "created_path_taken"
 PERMISSION: Final = "permission"
-DRIVE_CAUSES: Final = frozenset({"wrong_drive", "unknown_drive"})
+MISSING_UNCONFIRMED: Final = "missing_unconfirmed"
+DRIVE_CAUSES: Final = frozenset({"wrong_drive", "unknown_drive", MISSING_UNCONFIRMED})
 """A folder of the journal is on another drive than the one the save wrote on, or on one with no UUID (S0089)."""
 PLUG_IN: Final = "Plug in the drive that held your ledger, then press Retry."
 
@@ -165,10 +166,24 @@ def _drive(b: Blocking, workspace: str) -> Screen:
     head = f"Finzytrack could not undo an unfinished save in {workspace}."
     where = b.entry or "its folder"
     file = _name(_file_of(b))
-    if b.cause == "wrong_drive":
-        middle = f"The drive at {where} is not the drive that held {file}."
-    else:
-        middle = f"Finzytrack cannot identify the drive at {where}, so it cannot tell whether it held {file}."
+    if b.cause == "wrong_drive":  # round 2 (red team M1, verifier F4): another drive, or the folder made or changed
+        return Screen(
+            f"{head} The folder {where} is not the one Finzytrack saved {file} in: it is on another drive, or the "
+            "folder was made again or changed since. If the drive that held your ledger is not plugged in, plug it "
+            "in, then press Retry. Otherwise choose Keep the files as they are now.",
+            BASE,
+        )
+    if b.cause == MISSING_UNCONFIRMED:  # round 2 (owner, 2026-11-09: "Evidence for missing (Recommended)")
+        path = b.path or "the file"
+        folder = path.rpartition("/")[0] or "its folder"
+        return Screen(
+            f"{head} {file} is missing on the drive at {folder}, and nothing else on that drive shows that it is the "
+            "drive that held your ledger, so Finzytrack did not put the file back. If it is that drive, copy "
+            f"{b.entry or 'its backup'} (the old version Finzytrack kept) to {path}, then press Retry. Otherwise plug "
+            "in the drive that held your ledger, then press Retry, or choose Keep the files as they are now.",
+            BASE,
+        )
+    middle = f"Finzytrack cannot identify the drive at {where}, so it cannot tell whether it held {file}."
     return Screen(f"{head} {middle} {PLUG_IN}", BASE)
 
 
@@ -279,7 +294,7 @@ def keep_confirmation(b: Blocking, workspace: str) -> str:
         text += " Finzytrack has not tried, or not finished, undoing this save. Retry may still undo it."
     if b.cause == "wrong_drive":  # S0089: Keep stops the undo for good, on the drive that held the files too
         text += (
-            " At least one of these files is on a drive that is not the one that held it, so Finzytrack will not "
+            " At least one of these files is not in the folder Finzytrack saved it in, so Finzytrack will not "
             "undo the save there, now or later."
         )
     elif b.cause == "unknown_drive":
@@ -311,7 +326,7 @@ ACTION_REFUSED: Final[tuple[tuple[str, str], ...]] = (
     ("permission", "Your Mac does not allow Finzytrack to change this folder."),
     (
         "wrong_drive",
-        "This file is on another drive than the one that held your ledger. "
+        "This file is not in the folder Finzytrack saved it in (another drive, or the folder changed). "
         "Plug in the drive that held your ledger, then press Retry.",
     ),
     (

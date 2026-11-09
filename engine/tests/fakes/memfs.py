@@ -51,7 +51,8 @@ power-loss state keeps the times as they were.
 **Drives** (S0089): a folder's drive is its `dev` (`outside_mount`); `volume_id` answers the UUID that drive reports
 (`volume_of`: derived from `dev` unless `outside_volume_id` set another, or None), or `EIO` after
 `outside_volume_error`; `mark` adds the drive's file system (`outside_fs_type`, `apfs` by default) and the folder's
-creation time (distinct per folder; `outside_born` sets another). Asking is not an effect.
+creation time (distinct per folder; `outside_born` sets another; None on a dev in `no_crtime`). Asking is not an
+effect.
 
 **Volumes without the swap** (S0065, probed on exFAT, FAT and HFS+ disk images): `outside_no_swap` (or
 `outside_mkdirs(..., no_swap=True, no_excl=...)`) puts a folder, and every folder made in it, on a volume without
@@ -237,6 +238,7 @@ class MemFS:
         self.volume_ids: dict[int, str | None] = {}  # dev -> the drive's UUID (None: it reports none); S0089
         self.volume_errors: set[int] = set()  # devs whose UUID cannot be read (`volume_id` raises `EIO`)
         self.fs_types: dict[int, str] = {}  # dev -> its file-system type name (default `apfs`; S0089 round 1)
+        self.no_crtime: set[int] = set()  # devs whose file system keeps no creation time (`mark`: None; round 2)
 
     def stored(self, name: str) -> str:
         """The spelling the volume keeps for a name it is given."""
@@ -679,6 +681,7 @@ class MemFS:
         out.volume_ids = dict(self.volume_ids)
         out.volume_errors = set(self.volume_errors)
         out.fs_types = dict(self.fs_types)
+        out.no_crtime = set(self.no_crtime)
         for ino in reach:
             d = self.nodes[ino]
             assert isinstance(d, _Dir)
@@ -766,7 +769,8 @@ class MemDir:
         """`DirHandle.mark` (S0089 round 1): `volume_id`, the drive's `fs_types` entry (`apfs` by default) and the
         folder's `born`. Asking writes nothing and is not an effect."""
         d = self._d
-        return FolderMark(self.volume_id(), self._fs.fs_types.get(d.dev, "apfs"), d.born)
+        born = None if d.dev in self._fs.no_crtime else d.born
+        return FolderMark(self.volume_id(), self._fs.fs_types.get(d.dev, "apfs"), born)
 
     def path(self) -> str:
         """The folder's path now; for a folder removed meanwhile, its last path (probed on APFS, S0061 red team L5)."""

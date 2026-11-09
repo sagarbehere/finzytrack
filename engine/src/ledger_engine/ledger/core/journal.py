@@ -316,6 +316,17 @@ def folders(record: Record) -> dict[str, FolderEntry]:
     return {p: by[p] for p in needed_folders(record.files, record.created_dirs)}
 
 
+def check_folder(f: FolderEntry) -> None:
+    """One folder entry's own rules (`BadRecordError`): an absolute path, a lower-case non-nil UUID, a file-system type
+    name. Any creation time is taken, a negative one included (a folder made before 1970, which HFS+ and APFS keep;
+    S0089 round 2, verifier F3). The save checks each entry before its first effect (`writer._seen`), so a folder it
+    could not record refuses the save instead of failing after the backups."""
+    _abs(f.canonical_path)
+    _volume(f.volume)
+    if not _FS_TYPE.fullmatch(f.fs_type):
+        raise BadRecordError("fs_type")
+
+
 def _check_folders(record: Record) -> None:
     """`folders` names exactly the needed folders, sorted, each once; a folder the save makes (and only such a folder)
     has no creation time, and is on the drive and file system of the folder it is made in (`volume_conflict`)."""
@@ -325,13 +336,8 @@ def _check_folders(record: Record) -> None:
     created = {d.canonical_path for d in record.created_dirs}
     by = {f.canonical_path: f for f in record.folders}
     for f in record.folders:
-        _abs(f.canonical_path)
-        _volume(f.volume)
-        if not _FS_TYPE.fullmatch(f.fs_type):
-            raise BadRecordError("fs_type")
+        check_folder(f)
         if (f.born is None) != (f.canonical_path in created):
-            raise BadRecordError("born")
-        if f.born is not None and f.born < 0:  # decode refuses a non-integer (`_born`)
             raise BadRecordError("born")
     for d in record.created_dirs:
         mine, parent = by[d.canonical_path], by[_folder(d.canonical_path)]

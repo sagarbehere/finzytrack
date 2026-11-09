@@ -98,7 +98,7 @@ class FolderMark:
 
     volume: str | None
     fs_type: str
-    born: int
+    born: int | None  # None: the file system keeps no creation time (S0089 round 2, verifier F2)
 
 
 class Kind(StrEnum):

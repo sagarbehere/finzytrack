@@ -359,8 +359,10 @@ class DarwinDir:
 
     def mark(self) -> FolderMark:
         """`volume_id`; the type name from `fstatfs` (`f_fstypename`); the creation time from `fgetattrlist`
-        (`ATTR_CMN_CRTIME`, a `timespec`: whole precision; `fstat`'s `st_birthtime` is a float). A file system that does
-        not return a creation time raises `ENOTSUP` (S0089 round 1)."""
+        (`ATTR_CMN_CRTIME`, a `timespec`: whole precision; `fstat`'s `st_birthtime` is a float), None when the file
+        system returns none (S0089 round 2, verifier F2: never an error, so a drive with no UUID is still told
+        `no_drive_id`)."""
+        volume = self.volume_id()
         buf = ctypes.create_string_buffer(STATFS_SIZE)
         if self._fs.libc.fstatfs(self.fd, buf) != 0:
             _errno_raise()
@@ -370,9 +372,9 @@ class DarwinDir:
         if self._fs.libc.fgetattrlist(self.fd, ctypes.byref(attrs), out, len(out), 0) != 0:
             _errno_raise()
         if not struct.unpack_from("<I", out.raw, 4)[0] & ATTR_CMN_CRTIME:
-            raise OSError(errno.ENOTSUP, "the file system keeps no creation time")
+            return FolderMark(volume, fs_type, None)
         sec, nsec = struct.unpack_from("<qq", out.raw, 24)
-        return FolderMark(self.volume_id(), fs_type, sec * 1_000_000_000 + nsec)
+        return FolderMark(volume, fs_type, sec * 1_000_000_000 + nsec)
 
     def acl(self) -> tuple[AclEntry, ...]:
         """`acl_get_fd_np(ACL_TYPE_EXTENDED)` on the folder's descriptor, each entry read in full: its kind and its

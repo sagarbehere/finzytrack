@@ -26,7 +26,7 @@ from ledger_engine.ledger.recover_all import Done, Refused, delete_created, dele
 from ledger_engine.ledger.restore import Failed, Resolved, Stopped, recover_journal
 from ledger_engine.ledger.writer import Landed, NotSaved, Reason, Unfinished, durable_commit, sha256
 from tests.fakes.memfs import Crash, MemFS
-from tests.ledger.worlds import JD, NAME, World, check_recovered, journals, world
+from tests.ledger.worlds import BD, JD, NAME, Target, World, check_recovered, commit_for, journals, world
 
 pytestmark = [pytest.mark.inv("INV-32"), pytest.mark.inv("INV-22"), pytest.mark.inv("INV-01")]
 
@@ -73,6 +73,12 @@ def crashed(at: int, *, new_dir: bool = False, inc_drive: int | None = None) -> 
 def state_of(fs: MemFS) -> tuple[object, ...]:
     """Everything a write could change: every entry with its bytes, the modification times, the effects made."""
     return (fs.snapshot(), dict(fs.mtimes), len(fs.effects), [s.snapshot() for s in fs.power_loss_states()])
+
+
+def born_of(fs: MemFS, path: str) -> int:
+    born = fs.open_dir(path).mark().born
+    assert born is not None
+    return born
 
 
 def record_of(fs: MemFS) -> Record:
@@ -312,10 +318,10 @@ def _twin_stick(w: World, *, born: int | None, fs_type: str, main: bytes | None)
     and the same file system, with its own `L` folder made at `born` (None: the same moment, a block-for-block clone).
     `main`: its `main.bean`, or none at all (the red team's case: recovery put the pre bytes there)."""
     usb = w.fs.volume_of(USB)
-    l_born = w.fs.open_dir("/w/L").mark().born
-    inc_born = w.fs.open_dir("/w/L/inc").mark().born
+    l_born, inc_born = born_of(w.fs, "/w/L"), born_of(w.fs, "/w/L/inc")
     w.fs.outside_mkdirs("/away")
     w.fs.outside_move("/w/L", "/away/L")
+    w.fs.outside_mkdirs("/w/L", no_swap=True, no_excl=True)  # a FAT or exFAT stick: no swap, no exclusive rename
     w.fs.outside_mkdirs("/w/L/inc")
     w.fs.outside_mount("/w/L", 9)
     w.fs.outside_volume_id(9, usb)
@@ -372,7 +378,7 @@ def test_a_folder_made_again_at_the_same_path_on_the_same_drive_is_another_folde
     """The ledger folder deleted and made again (another program's, a restore from a copy) after the save was cut:
     another creation time, so the undo writes nothing there (fails closed; Keep stays the way out)."""
     w = crashed(CLOSE)
-    w.fs.outside_born("/w/L/inc", w.fs.open_dir("/w/L/inc").mark().born + 1)
+    w.fs.outside_born("/w/L/inc", born_of(w.fs, "/w/L/inc") + 1)
     before = state_of(w.fs)
     out = recover_journal(w.fs, JD, NAME)
     assert isinstance(out, Stopped)
@@ -380,55 +386,41 @@ def test_a_folder_made_again_at_the_same_path_on_the_same_drive_is_another_folde
     assert state_of(w.fs) == before
 
 
-@pytest.mark.parametrize(
-    ("fs_type", "shift", "same"),
-    [
-        ("msdos", 3600 * 10**9, True),  # the Mac's time zone moved one hour: FAT keeps local time
-        ("msdos", -(5 * 3600 + 45 * 60) * 10**9, True),  # Nepal
-        ("msdos", 14 * 3600 * 10**9, True),
-        ("msdos", (14 * 3600 + 15 * 60) * 10**9, False),  # beyond any zone
-        ("msdos", (3600 + 1) * 10**9, False),  # not a whole zone
-        ("msdos", 1, False),
-        ("exfat", 3600 * 10**9, False),  # exFAT keeps the zone: an hour is another folder
-        ("apfs", 3600 * 10**9, False),
-    ],
-)
-def test_a_fat_folders_birth_read_in_another_time_zone_is_the_same_folder(fs_type: str, shift: int, same: bool) -> None:
+@pytest.mark.parametrize("fs_type", ["msdos", "exfat", "apfs"])
+@pytest.mark.parametrize("shift", [3600 * 10**9, -(5 * 3600 + 45 * 60) * 10**9, 1])
+def test_a_folders_birth_read_any_other_way_is_another_folder(fs_type: str, shift: int) -> None:
+    """Round 2 (owner, 2026-11-09: "Drop the time-zone tolerance (fails closed after a real zone change; Keep is the
+    way out)"): the verifier's F1 twin made exactly one hour later, and a FAT folder read after the Mac's zone moved,
+    are both another folder: nothing written, the journal kept."""
     w = on_drive(volume="plain")
     w.fs.outside_fs_type(USB, fs_type)
     w.fs.inject(AFTER_CREATE_PLAIN, crash=True)
     with pytest.raises(Crash):
         durable_commit(w.fs, w.commit)
     for p in ("/w/L", "/w/L/inc"):
-        w.fs.outside_born(p, w.fs.open_dir(p).mark().born + shift)
+        born = w.fs.open_dir(p).mark().born
+        assert born is not None
+        w.fs.outside_born(p, born + shift)
     before = state_of(w.fs)
     out = recover_journal(w.fs, JD, NAME)
-    if same:
-        if isinstance(out, Stopped) and out.cause is Cause.CREATED_PATH_TAKEN:
-            assert out.path is not None
-            w.fs.outside_remove(out.path)
-            out = recover_journal(w.fs, JD, NAME)
-        assert isinstance(out, Resolved), out
-    else:
-        assert isinstance(out, Stopped)
-        assert out.cause is Cause.WRONG_DRIVE
-        assert state_of(w.fs) == before
+    assert isinstance(out, Stopped)
+    assert out.cause is Cause.WRONG_DRIVE
+    assert state_of(w.fs) == before
 
 
-@pytest.mark.parametrize("fs_type", ["msdos", "exfat"])
-def test_a_version_4_uuid_on_fat_or_exfat_names_no_drive(fs_type: str) -> None:
-    """Red team M1: macOS gives a FAT or exFAT drive whose serial clashes with a mounted one a random version 4 UUID,
-    new at every mount. A save there is refused before anything is written (`no_drive_id`); recovery meeting one is
-    `unknown_drive` (the right stick, mounted beside its twin, cannot be told by its UUID)."""
+def test_a_version_4_uuid_on_fat_names_no_drive() -> None:
+    """Red team M1 (round 1) and L1 (round 2): macOS gives a FAT drive whose serial clashes with a mounted one a random
+    version 4 UUID, new at every mount (exFAT keeps the serial's UUID). A save there is refused before anything is
+    written (`no_drive_id`); recovery meeting one is `unknown_drive`."""
     w = on_drive(volume="plain")
-    w.fs.outside_fs_type(USB, fs_type)
+    w.fs.outside_fs_type(USB, "msdos")
     w.fs.outside_volume_id(USB, "5b0f3c2e-8d1a-4e6b-9c7f-2a4d6e8b0c1d")  # version 4
     out = durable_commit(w.fs, w.commit)
     assert isinstance(out, NotSaved)
     assert (out.reason, out.unchanged) == (Reason.NO_DRIVE_ID, True)
     assert w.fs.effects == []
     w2 = on_drive(volume="plain")
-    w2.fs.outside_fs_type(USB, fs_type)
+    w2.fs.outside_fs_type(USB, "msdos")
     w2.fs.outside_volume_id(USB, "4e386abb-6e49-38eb-8ef8-a36ba10a34aa")  # version 3: from the serial
     w2.fs.inject(AFTER_CREATE_PLAIN, crash=True)
     with pytest.raises(Crash):
@@ -441,9 +433,11 @@ def test_a_version_4_uuid_on_fat_or_exfat_names_no_drive(fs_type: str) -> None:
     assert state_of(w2.fs) == before
 
 
-def test_a_version_4_uuid_on_apfs_is_a_drive_id() -> None:
-    """APFS's own volume UUIDs are random (version 4) and stable: they name the drive."""
+@pytest.mark.parametrize("fs_type", ["exfat", "apfs"])
+def test_a_version_4_uuid_on_apfs_or_exfat_is_a_drive_id(fs_type: str) -> None:
+    """APFS's own volume UUIDs are random (version 4) and stable: they name the drive; exFAT gets no made-up one."""
     w = on_drive()
+    w.fs.outside_fs_type(USB, fs_type)
     w.fs.outside_volume_id(USB, "5b0f3c2e-8d1a-4e6b-9c7f-2a4d6e8b0c1d")
     assert isinstance(durable_commit(w.fs, w.commit), Landed)
 
@@ -500,3 +494,173 @@ def test_a_ledger_at_the_top_level_of_a_fat_or_exfat_drive_is_not_saved(fs_type:
     w2 = on_drive()
     w2.fs.outside_born("/w/L", 0)
     assert isinstance(durable_commit(w2.fs, w2.commit), Landed)
+
+
+# -- S0089 round 2: a missing file on a FAT or exFAT drive needs evidence (owner, 2026-11-09) ----------------------
+
+MAIN_PRE, MAIN_POST = b'include "inc/a.bean"\n', b'include "inc/a.bean"\n2026-02-01 *\n'
+A_PRE, A_POST = b"2026-01-01 open Assets:A\n", b"2026-01-01 open Assets:A\n2026-01-02 *\n"
+BACKUP_OF_MAIN = f"{BD}/{NAME}/0-main.bean"  # the one-file save's
+
+
+def stick(fs_type: str, *targets: Target) -> World:
+    """The test world on a best-effort drive (`USB`) of `fs_type`, saving `targets` (all replaced files), cut just
+    before the close (every file at post)."""
+    w = on_drive(volume="plain")
+    w.fs.outside_fs_type(USB, fs_type)
+    w = replace(w, commit=commit_for(targets), targets=targets)
+    cut = w.fs.effects.__len__()
+    durable_commit(w.fs, w.commit)  # learn the close's effect number on a twin world, then cut there
+    close = w.fs.effects.index(f"rename {JD}:{NAME}.open,{NAME}.closed", cut)
+    v = on_drive(volume="plain")
+    v.fs.outside_fs_type(USB, fs_type)
+    v = replace(v, commit=commit_for(targets), targets=targets)
+    v.fs.inject(close, crash=True)
+    with pytest.raises(Crash):
+        durable_commit(v.fs, v.commit)
+    return v
+
+
+ONE = (Target("/w/L/main.bean", MAIN_PRE, MAIN_POST),)
+TWO = (Target("/w/L/inc/a.bean", A_PRE, A_POST), Target("/w/L/main.bean", MAIN_PRE, MAIN_POST))
+
+
+@pytest.mark.parametrize("fs_type", ["msdos", "exfat"])
+def test_a_one_file_save_missing_its_file_on_fat_puts_nothing_back_and_names_the_backup(fs_type: str) -> None:
+    """Round 2 (owner: "on FAT/exFAT, recovery re-creates a missing file only if another file of the same save is on
+    that drive at its before or after bytes; otherwise it writes nothing and blocks, telling the user where the kept
+    copy is"): the right stick, its only file missing after a cut in the unsafe window. Nothing is written; the stop
+    names the file and the backup; the user copies the backup there, and Retry resolves."""
+    w = stick(fs_type, *ONE)
+    w.fs.outside_remove("/w/L/main.bean")
+    before = state_of(w.fs)
+    out = recover_journal(w.fs, JD, NAME)
+    assert out == Stopped(Cause.MISSING_UNCONFIRMED, "/w/L/main.bean", BACKUP_OF_MAIN), out
+    assert state_of(w.fs) == before
+    assert State.OPEN in journals(w.fs)
+    backup = w.fs.file(BACKUP_OF_MAIN)
+    assert backup == MAIN_PRE
+    w.fs.outside_write("/w/L/main.bean", backup)  # the user's manual copy
+    assert isinstance(recover_journal(w.fs, JD, NAME), Resolved)
+    assert w.fs.file("/w/L/main.bean") == MAIN_PRE
+
+
+@pytest.mark.parametrize("fs_type", ["msdos", "exfat"])
+@pytest.mark.parametrize("other", [A_POST, A_PRE], ids=["other_at_post", "other_at_pre"])
+def test_a_missing_file_with_another_file_of_the_save_on_the_drive_is_put_back(fs_type: str, other: bytes) -> None:
+    """The evidence: `inc/a.bean`, on the same stick, holds its new (or old) bytes, so this is the stick that held the
+    ledger: the missing `main.bean` is put back from its backup and the journal resolves."""
+    w = stick(fs_type, *TWO)
+    w.fs.outside_remove("/w/L/main.bean")
+    w.fs.outside_write("/w/L/inc/a.bean", other)
+    out = recover_journal(w.fs, JD, NAME)
+    assert isinstance(out, Resolved), out
+    assert (w.fs.file("/w/L/main.bean"), w.fs.file("/w/L/inc/a.bean")) == (MAIN_PRE, A_PRE)
+
+
+@pytest.mark.parametrize("fs_type", ["msdos", "exfat"])
+def test_a_twin_stick_with_matching_folder_births_and_missing_files_is_never_written(fs_type: str) -> None:
+    """Red team H1/H2 within the stated limit (round 2): a twin stick (one format serial) whose folders read the
+    same creation times (exFAT within 10 ms, FAT within 2 s, a clone), holding neither file: both are missing there,
+    neither is evidence, so nothing is written on it and the journal stays `.open`."""
+    w = stick(fs_type, *TWO)
+    _twin_stick(w, born=None, fs_type=fs_type, main=None)
+    before = state_of(w.fs)
+    out = recover_journal(w.fs, JD, NAME)
+    assert isinstance(out, Stopped), out
+    assert out.cause is Cause.MISSING_UNCONFIRMED
+    assert state_of(w.fs) == before
+    assert w.fs.names_in("/w/L") == ["inc"]
+
+
+def test_evidence_on_another_drive_does_not_count() -> None:
+    """`inc/` on a stick of its own, its file at post: that proves its own stick, not the one `main.bean` is missing
+    on. Nothing is written."""
+    w = on_drive(volume="plain", inc_drive=3)
+    for dev in (USB, 3):
+        w.fs.outside_fs_type(dev, "msdos")
+    w = replace(w, commit=commit_for(TWO), targets=TWO)
+    n = len(w.fs.effects)
+    probe = on_drive(volume="plain", inc_drive=3)
+    for dev in (USB, 3):
+        probe.fs.outside_fs_type(dev, "msdos")
+    durable_commit(probe.fs, commit_for(TWO))
+    w.fs.inject(probe.fs.effects.index(f"rename {JD}:{NAME}.open,{NAME}.closed", n), crash=True)
+    with pytest.raises(Crash):
+        durable_commit(w.fs, w.commit)
+    w.fs.outside_remove("/w/L/main.bean")
+    before = state_of(w.fs)
+    out = recover_journal(w.fs, JD, NAME)
+    assert isinstance(out, Stopped)
+    assert (out.cause, out.path) == (Cause.MISSING_UNCONFIRMED, "/w/L/main.bean")
+    assert state_of(w.fs) == before
+
+
+@pytest.mark.parametrize("fs_type", ["apfs", "hfs"])
+def test_a_missing_file_on_a_drive_identified_by_more_than_a_serial_is_put_back_alone(fs_type: str) -> None:
+    """HFS+ (and any drive without the swap whose UUID is not a format serial's): a one-file save's missing file is put
+    back from its backup as before (S0071)."""
+    w = stick(fs_type, *ONE)
+    w.fs.outside_remove("/w/L/main.bean")
+    assert isinstance(recover_journal(w.fs, JD, NAME), Resolved)
+    assert w.fs.file("/w/L/main.bean") == MAIN_PRE
+
+
+def test_a_folder_made_before_1970_saves_and_recovers() -> None:
+    """S0089 round 2, verifier F3: a negative creation time (HFS+ and APFS keep dates before 1970) is recorded; the save
+    lands, and a cut save recovers."""
+    w = on_drive()
+    w.fs.outside_born("/w/L", -315_619_200 * 10**9)
+    assert isinstance(durable_commit(w.fs, w.commit), Landed)
+    v = on_drive()
+    v.fs.outside_born("/w/L", -315_619_200 * 10**9)
+    v.fs.inject(CLOSE, crash=True)
+    with pytest.raises(Crash):
+        durable_commit(v.fs, v.commit)
+    out = recover_journal(v.fs, JD, NAME)
+    if isinstance(out, Stopped) and out.cause is Cause.CREATED_PATH_TAKEN:
+        assert out.path is not None
+        v.fs.outside_remove(out.path)
+        out = recover_journal(v.fs, JD, NAME)
+    assert isinstance(out, Resolved), out
+
+
+def test_a_mark_the_record_cannot_hold_refuses_the_save_before_any_write() -> None:
+    """Verifier F3's class: whatever a drive reports, a folder entry the journal could not encode refuses the save
+    before its first effect (`no_drive_id`), never an exception after the backups were written."""
+    w = on_drive()
+    w.fs.outside_fs_type(USB, "my fs")  # not a type name the record takes
+    out = durable_commit(w.fs, w.commit)
+    assert isinstance(out, NotSaved)
+    assert (out.reason, out.unchanged) == (Reason.NO_DRIVE_ID, True)
+    assert w.fs.effects == []
+
+
+@pytest.mark.parametrize("fs_type", ["msdos", "exfat"])
+def test_a_created_file_absent_on_the_drive_is_no_evidence(fs_type: str) -> None:
+    """A path the save was creating, found empty, says nothing about which stick this is (round 2 mutant
+    `evidence-created-file-counts`): a twin with the created file absent and the replaced one missing gets nothing."""
+    targets = (Target("/w/L/prices.bean", None, b"2026-01-03 price X 1 EUR\n"), *ONE)
+    w = stick(fs_type, *targets)
+    _twin_stick(w, born=None, fs_type=fs_type, main=None)
+    before = state_of(w.fs)
+    out = recover_journal(w.fs, JD, NAME)
+    assert isinstance(out, Stopped), out
+    assert (out.cause, out.path) == (Cause.MISSING_UNCONFIRMED, "/w/L/main.bean")
+    assert state_of(w.fs) == before
+
+
+def test_a_drive_that_keeps_no_creation_time_is_not_saved_on() -> None:
+    """Round 2, verifier F2: a drive with a UUID but no folder creation time (some network shares may be so) refuses
+    the save before writing (`no_folder_id`); one with neither tells `no_drive_id` first."""
+    w = on_drive()
+    w.fs.no_crtime.add(USB)
+    out = durable_commit(w.fs, w.commit)
+    assert isinstance(out, NotSaved)
+    assert (out.reason, out.unchanged) == (Reason.NO_FOLDER_ID, True)
+    assert w.fs.effects == []
+    w.fs.outside_volume_id(USB, None)
+    out = durable_commit(w.fs, w.commit)
+    assert isinstance(out, NotSaved)
+    assert out.reason is Reason.NO_DRIVE_ID
+    assert w.fs.effects == []

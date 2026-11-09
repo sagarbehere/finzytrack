@@ -282,28 +282,51 @@ def test_the_reopen_text_after_a_created_path_does_not_promise_an_undo() -> None
     assert "It will ask you about prices.bean, which it was creating." in text
 
 
-@pytest.mark.parametrize(
-    ("cause", "says"),
-    [
-        ("wrong_drive", "The drive at /mnt/USB/L is not the drive that held accounts.beancount."),
-        ("unknown_drive", "Finzytrack cannot identify the drive at /mnt/USB/L"),
-    ],
-)
-def test_a_journal_on_another_drive_says_to_plug_in_the_drive_that_held_the_ledger(cause: str, says: str) -> None:
+def test_a_folder_that_is_not_the_one_saved_in_says_drive_or_folder() -> None:
+    """S0089 round 2 (red team M1, verifier F4): `wrong_drive` covers another drive, a folder made again on the same
+    drive, and a creation time moved back by a copy tool; one text for all, naming the folder, with both ways out."""
+    b = Blocking(J, "stopped", "wrong_drive", "/mnt/USB/L/accounts.beancount", "/mnt/USB/L")
+    screen = blocked_screen(b, WS)
+    assert screen.message == (
+        "Finzytrack could not undo an unfinished save in Personal. The folder /mnt/USB/L is not the one Finzytrack "
+        "saved accounts.beancount in: it is on another drive, or the folder was made again or changed since. If the "
+        "drive that held your ledger is not plugged in, plug it in, then press Retry. Otherwise choose Keep the files "
+        "as they are now."
+    )
+    assert screen.actions == ("retry", "stay_or_back", "keep")
+
+
+def test_a_drive_finzytrack_cannot_identify_says_to_plug_in_the_right_one() -> None:
     """S0089 (BL-0188; owner, 2026-11-08: "blocks that workspace with a message naming the drive ('plug in the drive
     that held your ledger, then Retry')"): the drive is named by the folder at which it is mounted now."""
-    b = Blocking(J, "stopped", cause, "/mnt/USB/L/accounts.beancount", "/mnt/USB/L")
+    b = Blocking(J, "stopped", "unknown_drive", "/mnt/USB/L/accounts.beancount", "/mnt/USB/L")
     screen = blocked_screen(b, WS)
-    assert says in screen.message
+    assert "Finzytrack cannot identify the drive at /mnt/USB/L" in screen.message
     assert screen.message.startswith("Finzytrack could not undo an unfinished save in Personal.")
     assert screen.message.endswith("Plug in the drive that held your ledger, then press Retry.")
+
+
+def test_a_missing_file_without_evidence_names_where_its_old_version_is() -> None:
+    """S0089 round 2 (owner, 2026-11-09: "otherwise it writes nothing and blocks, telling the user where the kept copy
+    is"): the file, its drive's folder, and the backup to copy by hand; Keep stays offered."""
+    b = Blocking(
+        J, "stopped", "missing_unconfirmed", "/mnt/USB/L/accounts.beancount", "/app/local/k1/backups/s1-j7/0-a"
+    )
+    screen = blocked_screen(b, WS)
+    assert screen.message == (
+        "Finzytrack could not undo an unfinished save in Personal. accounts.beancount is missing on the drive at "
+        "/mnt/USB/L, and nothing else on that drive shows that it is the drive that held your ledger, so Finzytrack "
+        "did not put the file back. If it is that drive, copy /app/local/k1/backups/s1-j7/0-a "
+        "(the old version Finzytrack kept) to /mnt/USB/L/accounts.beancount, then press Retry. Otherwise plug in "
+        "the drive that held your ledger, then press Retry, or choose Keep the files as they are now."
+    )
     assert screen.actions == ("retry", "stay_or_back", "keep")
 
 
 @pytest.mark.parametrize(
     ("cause", "says"),
     [
-        ("wrong_drive", "At least one of these files is on a drive that is not the one that held it"),
+        ("wrong_drive", "At least one of these files is not in the folder Finzytrack saved it in"),
         ("unknown_drive", "Finzytrack cannot identify the drive with at least one of these files"),
     ],
 )
@@ -320,3 +343,5 @@ def test_a_delete_refused_on_another_drive_says_to_plug_in_the_right_one(reason:
     text = action_text(ActOutcome("refused", reason, "/L", None, None))
     assert text is not None
     assert text.endswith("Plug in the drive that held your ledger, then press Retry.")
+    if reason == "wrong_drive":  # round 2: the folder, not only the drive, may be another
+        assert text.startswith("This file is not in the folder Finzytrack saved it in")

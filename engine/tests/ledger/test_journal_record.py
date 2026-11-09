@@ -159,7 +159,6 @@ MUTATIONS: list[Callable[[dict[str, Any]], object]] = [
     lambda o: o["folders"][0].__setitem__("fs_type", "a/b"),
     lambda o: o["folders"][0].__setitem__("fs_type", "x" * 16),
     lambda o: o["folders"][0].__setitem__("born", None),  # a folder that was there has a creation time
-    lambda o: o["folders"][0].__setitem__("born", -1),
     lambda o: o["folders"][0].__setitem__("born", 1.5),
     lambda o: o["folders"][0].__setitem__("born", True),
     lambda o: o["folders"][0].__setitem__("born", "1"),
@@ -469,3 +468,9 @@ def test_a_folder_the_save_makes_is_on_the_drive_it_is_made_in() -> None:
     deep = FileEntry("/w/L/y2026/q/z.bean", "/w/l/y2026/q/z.bean", None, "5" * 64, None, temp_name("z.bean", "s1-j7"))
     with pytest.raises(ValueError, match="folders"):  # its folder `q` is neither recorded nor a folder the save makes
         encode(replace(RECORD, files=(RECORD.files[0], deep)))
+
+
+def test_a_folder_made_before_1970_is_recorded() -> None:
+    """S0089 round 2, verifier F3: HFS+ and APFS keep creation times before 1970 (negative); the record takes them."""
+    rec = replace(RECORD, folders=(replace(RECORD.folders[0], born=-315_619_200_000_000_000), *RECORD.folders[1:]))
+    assert decode(encode(rec)) == rec

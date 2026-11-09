@@ -72,18 +72,18 @@ from ledger_engine.fs.port import DirHandle, EntryStat, FileSystem, Kind, Right,
 from ledger_engine.ledger import restore as _restore
 from ledger_engine.ledger.core import journal
 from ledger_engine.ledger.core import paths as core_paths
-from ledger_engine.ledger.core.journal import DirEntry, FileEntry, FolderEntry, Record, State
+from ledger_engine.ledger.core.journal import BadRecordError, DirEntry, FileEntry, FolderEntry, Record, State
 from ledger_engine.ledger.handles import (
     Displaced,
     Handles,
     Mode,
     PathMovedError,
-    birth_known,
     displaced,
     drive_of,
     folder_blocked,
     hard_links,
     keep,
+    known_birth,
     move,
     sha256,
     write_mode,
@@ -360,15 +360,21 @@ def _seen(h: DirHandle, folder: str, canonical: str) -> FolderEntry:
     A drive with no UUID Finzytrack can rely on (`handles.drive_of`: none, or a version 4 UUID on FAT or exFAT) refuses
     the save before its first effect (`no_drive_id`), since its journal could never be undone (owner: "one without it
     is refused the same way"; confirmed for network shares, 2026-11-09). A folder on FAT or exFAT with no creation time
-    (the drive's top level) refuses it too (`no_folder_id`, `handles.birth_known`). An error asking raises
+    (the drive's top level) refuses it too (`no_folder_id`, `handles.known_birth`). An error asking raises
     (`io_error`)."""
     mark = h.mark()
     volume = drive_of(mark)
     if volume is None:
         raise _Stop(Reason.NO_DRIVE_ID, canonical)
-    if not birth_known(mark):
-        raise _Stop(Reason.NO_FOLDER_ID, canonical)  # a FAT or exFAT drive's top level (red team H1)
-    return FolderEntry(folder, volume, mark.fs_type, mark.born)
+    born = known_birth(mark)
+    if born is None:
+        raise _Stop(Reason.NO_FOLDER_ID, canonical)  # no creation time, or a FAT or exFAT drive's top level (H1)
+    entry = FolderEntry(folder, volume, mark.fs_type, born)
+    try:
+        journal.check_folder(entry)
+    except BadRecordError:
+        raise _Stop(Reason.NO_DRIVE_ID, canonical) from None  # a mark the record cannot hold (verifier F3)
+    return entry
 
 
 def _check_target(handles: Handles, t: _Target) -> tuple[Mode, FolderEntry]:

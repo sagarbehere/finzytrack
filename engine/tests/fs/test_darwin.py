@@ -5,11 +5,13 @@ BL-0087."""
 from __future__ import annotations
 
 import contextlib
+import ctypes
 import errno
 import fcntl
 import hashlib
 import os
 import stat
+import struct
 import subprocess
 import sys
 import threading
@@ -20,7 +22,7 @@ from typing import override
 import pytest
 
 from ledger_engine.fs.darwin import DarwinFS
-from ledger_engine.fs.port import Caps
+from ledger_engine.fs.port import Caps, FolderMark
 from ledger_engine.ledger.handles import acl_denial
 from ledger_engine.ledger.paths import identify
 from ledger_engine.ledger.writer import Change, Commit, Landed, NotSaved, Reason, Step, durable_commit, sha256
@@ -510,10 +512,18 @@ def test_mark_reads_the_file_system_and_the_folders_creation_time(fs: DarwinFS, 
     with fs.open_dir(str(tmp_path / "a")) as a, fs.open_dir(str(tmp_path)) as d:
         m = a.mark()
         assert (m.volume, m.fs_type) == (a.volume_id(), "apfs")
+        assert m.born is not None
         assert abs(m.born - round(os.stat(tmp_path / "a").st_birthtime * 1e9)) < 1000
         assert m.born != d.mark().born
     with fs.open_dir(str(tmp_path / "a")) as again:
         assert again.mark() == m
+
+
+def test_a_mark_without_a_uuid_or_a_creation_time_is_none_not_an_error(fs: DarwinFS) -> None:
+    """S0089 round 2, verifier F2: devfs keeps neither; `mark` says so (None, None) instead of raising, so the save
+    tells `no_drive_id` (the ID is looked at first), never `io_error`."""
+    with fs.open_dir("/dev") as d:
+        assert d.mark() == FolderMark(None, "devfs", None)
 
 
 def test_a_volume_that_reports_no_uuid_answers_none(fs: DarwinFS) -> None:
@@ -1786,6 +1796,120 @@ def test_mkdir_takes_the_mode_asked_for(fs: DarwinFS, tmp_path: Path) -> None:
         d.mkdir("n")
     assert stat.S_IMODE((tmp_path / "m").stat().st_mode) == 0o700
     assert stat.S_IMODE((tmp_path / "n").stat().st_mode) & 0o700 == 0o700
+
+
+def _images_on() -> bool:
+    """`FT_TEST_DISK_IMAGES=1`: the tests that make, format and attach disk images run (not in the gate)."""
+    return os.environ.get("FT_TEST_DISK_IMAGES") == "1"
+
+
+class _AttrList(ctypes.Structure):
+    _fields_ = (
+        ("bitmapcount", ctypes.c_ushort),
+        ("reserved", ctypes.c_uint16),
+        ("commonattr", ctypes.c_uint32),
+        ("volattr", ctypes.c_uint32),
+        ("dirattr", ctypes.c_uint32),
+        ("fileattr", ctypes.c_uint32),
+        ("forkattr", ctypes.c_uint32),
+    )
+
+
+def _set_crtime(path: Path, born_ns: int) -> None:
+    """Set a folder's creation time (`setattrlist` `ATTR_CMN_CRTIME`), as the red team's `SetFile -d` did."""
+    lib = ctypes.CDLL(None, use_errno=True)
+    buf = struct.pack("<qq", *divmod(born_ns, 1_000_000_000))
+    al = _AttrList(5, 0, 0x200, 0, 0, 0, 0)
+    if lib.setattrlist(os.fsencode(path), ctypes.byref(al), buf, len(buf), 0) != 0:
+        raise OSError(ctypes.get_errno(), "setattrlist")
+
+
+class _Stick:
+    """A raw disk image formatted FAT32 or exFAT with a chosen serial, attached at `mnt` only while used."""
+
+    def __init__(self, path: Path, fs_type: str, serial: str, mnt: Path) -> None:
+        self.path, self.mnt = path, mnt
+        with path.open("wb") as f:
+            f.truncate(40 << 20)
+        dev = _run("/usr/bin/hdiutil", "attach", "-nomount", "-imagekey", "diskimage-class=CRawDiskImage", str(path))
+        disk = dev.split()[0]
+        try:
+            if fs_type == "msdos":
+                _run("/sbin/newfs_msdos", "-F", "32", "-I", serial, "-v", "TWIN", disk)
+            else:
+                _run("/sbin/newfs_exfat", "-I", serial, "-v", "TWIN", disk)
+        finally:
+            _run("/usr/bin/hdiutil", "detach", "-quiet", disk)
+
+    def __enter__(self) -> Path:
+        _run(
+            "/usr/bin/hdiutil",
+            "attach",
+            "-quiet",
+            "-nobrowse",
+            "-imagekey",
+            "diskimage-class=CRawDiskImage",
+            "-mountpoint",
+            str(self.mnt),
+            str(self.path),
+        )
+        return self.mnt
+
+    def __exit__(self, *exc: object) -> None:
+        _run("/usr/bin/hdiutil", "detach", "-quiet", str(self.mnt))
+
+
+@pytest.mark.skipif(not _images_on(), reason="disk images not asked for (FT_TEST_DISK_IMAGES=1)")
+@pytest.mark.parametrize(
+    ("fs_type", "shift", "cause"),
+    [
+        ("msdos", 3600 * 10**9, "wrong_drive"),  # S0089 r1 verifier F1 and red team H1: a twin made 1 h later
+        ("msdos", 0, "missing_unconfirmed"),  # the twin's folder made in the same 2 s
+        ("exfat", 0, "missing_unconfirmed"),  # red team H2: exFAT twins in the same 10 ms
+    ],
+)
+def test_twin_sticks_on_real_fat_and_exfat_are_never_written(
+    fs: DarwinFS, tmp_path: Path, fs_type: str, shift: int, cause: str
+) -> None:
+    """S0089 rounds 1 and 2 on real drives: two sticks formatted with one serial share the drive UUID. A one-file save
+    in stick A's `Finance` is cut before its close; on stick B the same folder (its creation time A's plus `shift`) has
+    no `main.bean`. Recovery writes nothing on B and keeps the journal: another birth is `wrong_drive`; the same birth
+    leaves only the missing file, which needs evidence on that drive (owner, 2026-11-09: "Evidence for missing").
+    With A back, Retry undoes the save. Images are made in `tmp_path` and detached at the end."""
+    from ledger_engine.ledger.restore import Resolved, Stopped, recover_journal
+
+    mnt = tmp_path / "mnt"
+    mnt.mkdir()
+    serial = "0x1234abcd"
+    a = _Stick(tmp_path / "a.img", fs_type, serial, mnt)
+    b = _Stick(tmp_path / "b.img", fs_type, serial, mnt)
+    with a as m:
+        (m / "Finance").mkdir()
+        _set_crtime(m / "Finance", 1_794_000_000 * 10**9)  # a whole even second: `setattrlist` keeps no finer on
+        # exFAT, and FAT keeps 2 s, so B's folder can be given exactly this time (the red team's same-tick twins)
+        (m / "Finance" / "main.bean").write_bytes(b"pre\n")
+        c = _commit(tmp_path / "app", Change(str(m / "Finance" / "main.bean"), sha256(b"pre\n"), b"post\n"))
+        with pytest.raises(_Died):
+            durable_commit(_DyingFS(fs, ".closed"), c)  # type: ignore[arg-type]
+        with fs.open_dir(str(m / "Finance")) as h:
+            mark_a = h.mark()
+    assert mark_a.born is not None
+    with b as m:
+        (m / "Finance").mkdir()
+        _set_crtime(m / "Finance", mark_a.born + shift)
+        with fs.open_dir(str(m / "Finance")) as h:
+            mark_b = h.mark()
+        assert (mark_b.volume, mark_b.fs_type) == (mark_a.volume, fs_type)  # the twin: one drive UUID
+        assert (mark_b.born == mark_a.born) == (shift == 0)
+        out = recover_journal(fs, c.journal_dir, "s1-j1")
+        assert isinstance(out, Stopped), out
+        assert out.cause.value == cause
+        assert sorted(os.listdir(m / "Finance")) == []
+        assert (Path(c.journal_dir) / "s1-j1.open").exists()
+    with a as m:
+        assert (m / "Finance" / "main.bean").read_bytes() == b"post\n"
+        assert recover_journal(fs, c.journal_dir, "s1-j1") == Resolved("s1-j1")
+        assert (m / "Finance" / "main.bean").read_bytes() == b"pre\n"
 
 
 def _fat_twins() -> list[str]:

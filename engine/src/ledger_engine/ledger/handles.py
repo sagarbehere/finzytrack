@@ -34,12 +34,13 @@ class PathMovedError(Exception):
         self.canonical = canonical
 
 
-UUID_UNSTABLE_ON: Final = frozenset({"msdos", "exfat"})
-"""File systems whose drive UUID macOS derives from a 32-bit format serial (a version 3 UUID); a drive whose serial
-clashes with one already mounted gets a random version 4 UUID instead, which changes at every mount (S0089 red team
-M1, probed on FAT): such a UUID names no drive."""
-ZONE_STEP: Final = 15 * 60 * 1_000_000_000
-ZONE_MAX: Final = 14 * 3600 * 1_000_000_000
+SERIAL_IDENTIFIED: Final = frozenset({"msdos", "exfat"})
+"""File systems whose drive UUID macOS derives from a 32-bit format serial (a version 3 UUID; S0089 red team H1):
+two sticks formatted with one serial share it, and these keep no creation time for their top level."""
+UUID_UNSTABLE_ON: Final = frozenset({"msdos"})
+"""File systems on which macOS gives a drive whose serial clashes with one already mounted a random version 4 UUID,
+new at every mount (S0089 red team M1; probed: FAT does, exFAT keeps the serial's UUID, round 2 red team L1): such a
+UUID names no drive."""
 
 
 def drive_of(mark: FolderMark) -> str | None:
@@ -52,22 +53,15 @@ def drive_of(mark: FolderMark) -> str | None:
     return mark.volume
 
 
-def birth_known(mark: FolderMark) -> bool:
-    """Whether `mark`'s creation time tells this folder from one at the same path on another drive: not on FAT or
-    exFAT when it is 0, which is what those drives answer for their top level (they keep no time for it; probed), and
-    what a device that never sets creation times leaves. Two such drives formatted with one serial share their UUID
-    (red team H1), so nothing would tell them apart (S0089 round 1). The one place this rule lives."""
-    return not (mark.fs_type in UUID_UNSTABLE_ON and mark.born == 0)
-
-
-def same_birth(recorded: int, now: int, fs_type: str) -> bool:
-    """A folder's creation time now is the recorded one. FAT keeps local time without a zone, so macOS reads it in the
-    Mac's time zone of the moment: on FAT (`msdos`) a shift by a whole time zone (a multiple of 15 minutes, at most 14
-    hours) is the same time (S0089 round 1; the Mac's zone may change between the save and recovery: travel)."""
-    if fs_type != "msdos":
-        return now == recorded
-    d = now - recorded
-    return d % ZONE_STEP == 0 and abs(d) <= ZONE_MAX
+def known_birth(mark: FolderMark) -> int | None:
+    """`mark`'s creation time when it tells this folder from one at the same path on another drive: never when the
+    file system keeps none (`born` None), nor on FAT or exFAT when it is 0, which is what those drives answer for
+    their top level (they keep no time for it; probed), and what a device that never sets creation times leaves. Two
+    such drives formatted with one serial share their UUID (red team H1), so nothing would tell them apart (S0089
+    rounds 1 and 2), else None. The one place this rule lives."""
+    if mark.born is None or (mark.fs_type in SERIAL_IDENTIFIED and mark.born == 0):
+        return None
+    return mark.born
 
 
 type FolderVerdict = Literal["same", "wrong_drive", "unknown_drive"]
@@ -83,7 +77,8 @@ def folder_verdict(recorded: FolderEntry, mark: FolderMark) -> FolderVerdict:
         return "unknown_drive"
     if found != recorded.volume or mark.fs_type != recorded.fs_type:
         return "wrong_drive"
-    if recorded.born is not None and not same_birth(recorded.born, mark.born, mark.fs_type):
+    if recorded.born is not None and mark.born != recorded.born:  # exact, at the volume's resolution (owner,
+        # 2026-11-09: "Drop the time-zone tolerance"): a FAT folder read after the Mac's zone changed fails closed
         return "wrong_drive"
     return "same"
 
