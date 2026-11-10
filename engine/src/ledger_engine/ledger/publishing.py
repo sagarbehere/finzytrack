@@ -54,15 +54,16 @@ def unfinished(fs: FileSystem, target: Target) -> bool:
 
 def within(inner: LedgerSet, outer: LedgerSet) -> bool:
     """Whether `outer` names everything `inner` names (BL-0212 V1): its files, its `include` patterns, its documents
-    roots and its `document` files. A `document` file counts only when `outer` names it itself, never through a
-    documents root whose path it starts with: the root's listing need not name it (a `..` in its path, a folder that
-    can be entered but not listed; S0088 round 1, red team F2). The roots are compared by the caller
-    (`publish.same_ledger`)."""
+    roots, its `document` files and its module lookups (S0099). A `document` file counts only when `outer` names it
+    itself, never through a documents root whose path it starts with: the root's listing need not name it (a `..` in
+    its path, a folder that can be entered but not listed; S0088 round 1, red team F2). The roots are compared by the
+    caller (`publish.same_ledger`)."""
     return (
         set(inner.files) <= set(outer.files)
         and set(inner.globs) <= set(outer.globs)
         and set(inner.documents) <= set(outer.documents)
         and set(inner.document_files) <= set(outer.document_files)
+        and set(inner.modules) <= set(outer.modules)
     )
 
 

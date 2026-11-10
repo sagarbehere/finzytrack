@@ -570,21 +570,63 @@ def test_every_corpus_fingerprint_decodes_to_itself(name: str, tmp_path: Path) -
     [
         b"",
         b"[]",
-        b'{"v":1}',
-        b'{"document_files":[],"documents":[],"files":[],"globs":[],"root":"/r","v":2}',  # another version
-        b'{"document_files":[],"documents":[],"files":[],"globs":[],"root":"/r","v":1,"x":0}',  # an extra key
-        b'{"document_files":[],"documents":[],"files":[["/b",["absent"]],["/a",["absent"]]],"globs":[],"root":"/r","v":1}',
-        b'{"document_files":[],"documents":[],"files":[["/a",["sha256","XX"]]],"globs":[],"root":"/r","v":1}',
-        b'{"document_files":[],"documents":[],"files":[["/a",["gone"]]],"globs":[],"root":"/r","v":1}',
-        b'{"documents":[],"document_files":[],"files":[],"globs":[],"root":"/r","v":1}',  # not canonical key order
-        b'{"document_files":[["/d",1]],"documents":[],"files":[],"globs":[],"root":"/r","v":1}',
-        b'{"document_files":[],"documents":[],"files":[],"globs":[["/g",[1]]],"root":"/r","v":1}',
-        b'{"document_files":[],"documents":[],"files":[],"globs":[],"root":"/r","v":1} ',
+        b'{"v":2}',
+        b'{"document_files":[],"documents":[],"files":[],"globs":[],"modules":[],"root":"/r","v":1}',  # v1: no modules
+        b'{"document_files":[],"documents":[],"files":[],"globs":[],"root":"/r","v":1}',  # an old (v1) encoding
+        b'{"document_files":[],"documents":[],"files":[],"globs":[],"modules":[],"root":"/r","v":3}',  # a newer one
+        b'{"document_files":[],"documents":[],"files":[],"globs":[],"modules":[],"root":"/r","v":2,"x":0}',  # extra
+        b'{"document_files":[],"documents":[],"files":[],"globs":[],"root":"/r","v":2}',  # no modules
+        b'{"document_files":[],"documents":[],"files":[["/b",["absent"]],["/a",["absent"]]],"globs":[],"modules":[],'
+        b'"root":"/r","v":2}',
+        b'{"document_files":[],"documents":[],"files":[["/a",["sha256","XX"]]],"globs":[],"modules":[],"root":"/r","v":2}',
+        b'{"document_files":[],"documents":[],"files":[["/a",["gone"]]],"globs":[],"modules":[],"root":"/r","v":2}',
+        b'{"documents":[],"document_files":[],"files":[],"globs":[],"modules":[],"root":"/r","v":2}',  # key order
+        b'{"document_files":[["/d",1]],"documents":[],"files":[],"globs":[],"modules":[],"root":"/r","v":2}',
+        b'{"document_files":[],"documents":[],"files":[],"globs":[["/g",[1]]],"modules":[],"root":"/r","v":2}',
+        b'{"document_files":[],"documents":[],"files":[],"globs":[],"modules":[],"root":"/r","v":2} ',
+        # the modules part: a name, its search folders, and null or [origin, locations, state]
+        b'{"document_files":[],"documents":[],"files":[],"globs":[],"modules":[["m",["/r"]]],"root":"/r","v":2}',
+        b'{"document_files":[],"documents":[],"files":[],"globs":[],"modules":[[1,["/r"],null]],"root":"/r","v":2}',
+        b'{"document_files":[],"documents":[],"files":[],"globs":[],"modules":[["m","/r",null]],"root":"/r","v":2}',
+        b'{"document_files":[],"documents":[],"files":[],"globs":[],"modules":[["m",[1],null]],"root":"/r","v":2}',
+        b'{"document_files":[],"documents":[],"files":[],"globs":[],"modules":[["m",["/r"],[]]],"root":"/r","v":2}',
+        b'{"document_files":[],"documents":[],"files":[],"globs":[],"modules":[["m",["/r"],[null,null,null]]],'
+        b'"root":"/r","v":2}',
+        b'{"document_files":[],"documents":[],"files":[],"globs":[],"modules":[["m",["/r"],[null,["/r/m"],["absent"]]]],'
+        b'"root":"/r","v":2}',
+        b'{"document_files":[],"documents":[],"files":[],"globs":[],"modules":[["m",["/r"],["/r/m.py",null,["gone"]]]],'
+        b'"root":"/r","v":2}',
+        b'{"document_files":[],"documents":[],"files":[],"globs":[],"modules":[["m",["/r"],[1,null,null]]],'
+        b'"root":"/r","v":2}',
+        b'{"document_files":[],"documents":[],"files":[],"globs":[],"modules":[["m",["/r"],["/r/m.py","/r",null]]],'
+        b'"root":"/r","v":2}',
+        b'{"document_files":[],"documents":[],"files":[],"globs":[],"modules":[["m",["/r"],["/r/m.py",[2],null]]],'
+        b'"root":"/r","v":2}',
+        b'{"document_files":[],"documents":[],"files":[],"globs":[],'
+        b'"modules":[["m",["/r"],null],["a",["/r"],null]],"root":"/r","v":2}',  # not sorted
+        b'{"document_files":[],"documents":[],"files":[],"globs":[],'
+        b'"modules":[["m",["/r"],null],["m",["/r"],null]],"root":"/r","v":2}',  # twice
     ],
 )
 def test_anything_encode_would_not_make_is_refused(data: bytes) -> None:
     with pytest.raises(UndecodableError):
         decode(data)
+
+
+def test_the_smallest_encodings_of_each_module_answer_decode() -> None:
+    """The refusals above differ from these by one defect each (S0099)."""
+    head = b'{"document_files":[],"documents":[],"files":[],"globs":[],"modules":['
+    tail = b'],"root":"/r","v":2}'
+    for answer in (
+        b'["m",["/r"],null]',
+        b'["m",[],null]',
+        b'["m",["/r"],[null,["/r/m"],null]]',
+        b'["m",["/r"],["/r/m.py",null,["absent"]]]',
+        b'["m",["/r"],["/r/m.py",null,null]]',
+        b'["m",["/r"],["/r/m/__init__.py",["/r/m"],["unreadable","EACCES"]]]',
+    ):
+        data = head + answer + tail
+        assert encode(decode(data)) == data
 
 
 def test_as_before_puts_each_candidate_back_at_its_pre_state_and_keeps_every_other_read(tmp_path: Path) -> None:

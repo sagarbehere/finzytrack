@@ -179,7 +179,8 @@ class LoadResult:
 
 
 def _real_load(root: str) -> LoadResult:
-    """Beancount's own load of `root` (user code: the sidecar retires the engine after the job)."""
+    """Beancount's own load of `root` (user code: the sidecar retires the engine after the job). It keeps no
+    fingerprint, so what its imports read is not recorded (`imports`, S0099)."""
     entries, errors, options = port.real_load(root)
     del entries
     return LoadResult(len(errors), (str(options["filename"]), *(str(f) for f in options["include"])))

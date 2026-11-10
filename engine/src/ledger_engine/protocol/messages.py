@@ -559,7 +559,7 @@ class OpSpec:
 
 _ALD = "/app-data/com.finzytrack.desktop"
 _JD = f"{_ALD}/local/k1/journal"
-_FP = '{"document_files":[],"documents":[],"files":[],"globs":[],"root":"/ledgers/L/main.bean","v":1}'
+_FP = '{"document_files":[],"documents":[],"files":[],"globs":[],"modules":[],"root":"/ledgers/L/main.bean","v":2}'
 _SEEN = {"kind": "file", "sha256": "0" * 64, "size": 21}
 _CREATE = {
     "job": "j7",

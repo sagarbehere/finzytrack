@@ -525,3 +525,41 @@ def test_the_warnings_of_numbers_beancount_rounded_are_published_but_are_no_erro
     con = sqlite3.connect(f"file:{w.mirror / a.published.gen.name}?mode=ro", uri=True)
     got = con.execute("SELECT line_number FROM ledger_errors WHERE message LIKE 'Number longer than 28 digits%'")
     assert [r[0] for r in got] == [6, 7]
+
+
+# -- the plugin code the load imports (S0099, BL-0124) ----------------------------------------------------------------
+
+PLUGIN = '__plugins__ = ["keep"]\n\n\ndef keep(entries, options_map):\n    return entries, []\n'
+
+
+@pytest.mark.parametrize("change", ["edit", "appear", "shadow"])
+def test_a_generation_whose_plugin_code_changed_is_not_fresh(w: World, change: str) -> None:
+    """publish.md §8: fresh means the next load would read the same inputs, the plugin code included. `shadow`: a file
+    beside the ledger replaces a standard library module a plugin imports (the `pythonpath` folder comes first)."""
+    name = f"ft_s0099_open_{change}"
+    plugin = w.root.parent / f"{name}.py"
+    try:
+        w.root.write_bytes(b'option "insert_pythonpath" "TRUE"\nplugin "' + name.encode() + b'"\n' + MAIN)
+        if change != "appear":
+            plugin.write_text("import colorsys\n" + PLUGIN)
+        sys.modules.pop("colorsys", None)
+        first = w.go()
+        assert first.outcome == "loaded", first
+        sys.modules.pop(name, None)
+        assert w.go().outcome == "fresh"
+        if change == "edit":
+            plugin.write_text("import colorsys\n" + PLUGIN + "# edited\n")
+        elif change == "appear":
+            plugin.write_text(PLUGIN)
+        else:
+            (w.root.parent / "colorsys.py").write_text("")
+        sys.modules.pop(name, None)  # the next open's engine is fresh (spec §5.1)
+        sys.modules.pop("colorsys", None)
+        a = w.go()
+        assert a.outcome == "loaded", a
+        assert isinstance(a.published, pb.Published)
+        assert a.published.gen.number == 2
+    finally:
+        sys.modules.pop(name, None)
+        sys.modules.pop("colorsys", None)
+        (w.root.parent / "colorsys.py").unlink(missing_ok=True)

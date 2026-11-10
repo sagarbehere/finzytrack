@@ -14,7 +14,9 @@ A documents root's listing holds every file name under it, not only the dated na
 Beancount turns into entries: a superset cannot miss what Beancount reads, and an extra file costs at most one
 rebuild or one re-planned save.
 
-Not observed yet: the source files of plugins from outside the engine's packages (TODO(BL-0124)).
+The modules a load's imports looked up (`ledger.imports`, S0099, BL-0124) are asked again of the import system's path
+search with the same folders (`beancount_port.find_modules`, fresh folder listings, nothing imported or run), and the
+file found is hashed (`module`): the plugin code the next load would run.
 
 A copy streams its sources with `chunks` and checks each with `file_state` (S0081). The save's gate calls it inside
 the save job (`ledger.save`), the rebuild after a save before and after its load (`ledger.rebuild`, S0070); the open's
@@ -31,12 +33,14 @@ import stat
 from collections.abc import Iterator
 from os import path
 
+from ledger_engine.ledger import beancount_port as port
 from ledger_engine.ledger.core.ledger_set import (
     Absent,
     Content,
     FileState,
     Fingerprint,
     LedgerSet,
+    Module,
     Unreadable,
 )
 
@@ -115,6 +119,14 @@ def document_file(p: str) -> bool:
     return path.exists(p)
 
 
+def module(lookup: port.ModuleLookup) -> Module | None:
+    """The path search's answer as the fingerprint holds it: None when not found, else where, with the state of the
+    file the loader reads (`file_state`: its bytes' SHA-256, or why there are none)."""
+    if not lookup.found:
+        return None
+    return Module(lookup.origin, lookup.locations, None if lookup.file is None else file_state(lookup.file))
+
+
 def observe(ledger_set: LedgerSet) -> Fingerprint:
     """The ledger set as the disk has it now."""
     return Fingerprint.of(
@@ -123,4 +135,5 @@ def observe(ledger_set: LedgerSet) -> Fingerprint:
         {g: matches(g) for g in ledger_set.globs},
         {d: listing(d) for d in ledger_set.documents},
         {p: document_file(p) for p in ledger_set.document_files},
+        {(m.name, m.path): module(m) for m in port.find_modules(ledger_set.modules)},
     )

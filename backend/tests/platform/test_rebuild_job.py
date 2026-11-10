@@ -55,9 +55,10 @@ REPO = Path(__file__).resolve().parents[3]
 W1 = "ws-1"
 MAIN = "/L/main.bean"
 ALD = Path("/app")
-FP = '{"document_files":[],"documents":[],"files":[],"globs":[],"root":"/L/main.bean","v":1}'
+FP = '{"document_files":[],"documents":[],"files":[],"globs":[],"modules":[],"root":"/L/main.bean","v":2}'
 FP2 = (
-    '{"document_files":[],"documents":[],"files":[["/L/main.bean",["absent"]]],"globs":[],"root":"/L/main.bean","v":1}'
+    '{"document_files":[],"documents":[],"files":[["/L/main.bean",["absent"]]],"globs":[],"modules":[],'
+    '"root":"/L/main.bean","v":2}'
 )
 LV = "1/sha256:" + "1" * 64
 CLOCK = FrozenClock(datetime(2026, 11, 9, 3, 30, tzinfo=UTC))

@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import os
+import sys
 import time
+from collections.abc import Iterator
 
 import pytest
 
@@ -17,3 +19,19 @@ time.tzset()
 # The overlay's comparison with Beancount's loader lives in a helper module both corpus tests share (S0094); pytest
 # rewrites its asserts too, so a failure shows what differs.
 pytest.register_assert_rewrite("tests.ledger.parity")
+
+
+@pytest.fixture(autouse=True)
+def _forget_ledger_plugins(tmp_path_factory: pytest.TempPathFactory) -> Iterator[None]:
+    """A test's ledger plugins leave the module cache after it, as a fresh engine starts without them (engine-jobs
+    §5.1; S0099): a module imported during the test from a file under the run's temporary folders is dropped, so the
+    next test's load imports its own plugins again (`ledger_engine.ledger.imports`: one load with plugins per engine).
+    Modules still loaded from earlier tests (Beancount's steps, the standard library) are like those a fresh engine
+    imported at its start."""
+    before = set(sys.modules)
+    yield
+    base = str(tmp_path_factory.getbasetemp().resolve())
+    for name in set(sys.modules) - before:
+        file = getattr(sys.modules[name], "__file__", None)
+        if isinstance(file, str) and os.path.realpath(file).startswith(base + os.sep):
+            del sys.modules[name]

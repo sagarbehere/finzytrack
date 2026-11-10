@@ -23,6 +23,12 @@ write path (S0049 journal). The real load calls the loader's internal `_load`, w
 with that cache: they read the ledger files and nothing else (no `.picklecache` is read or written,
 `engine/tests/ledger/test_rebuild.py`).
 
+**Module lookups** (S0099, BL-0124): the only engine module that looks modules up by name. While a load runs,
+`recording_imports` stands a recorder in for the import system's path search (`importlib.machinery.PathFinder` in
+`sys.meta_path`): each answer the import uses is reported first (`ModuleLookup`), so the caller can hash the file it
+names before the loader reads it. `find_modules` asks the same questions again later without importing anything (the
+save's gate runs no user code, ADR-0068 D1).
+
 Pinned to Beancount 3.2.0 (ADR-0004); `BEANCOUNT_VERSION` is checked by the overlay's pin test.
 """
 
@@ -30,13 +36,16 @@ from __future__ import annotations
 
 import datetime
 import decimal
+import importlib.machinery
 import io
 import sys
-from collections.abc import Generator, Iterable, Iterator, Sequence
+import zipimport
+from collections.abc import Callable, Generator, Iterable, Iterator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
 from decimal import Decimal
 from importlib.metadata import version
+from types import ModuleType
 from typing import Any, Final, cast
 
 import beancount.parser.parser as _parser_module
@@ -106,6 +115,7 @@ __all__ = [
     "Document",
     "EncryptedFileMet",
     "Event",
+    "ModuleLookup",
     "Note",
     "Open",
     "OptionsMap",
@@ -129,6 +139,7 @@ __all__ = [
     "display_precision",
     "fill_weight",
     "filled_amount",
+    "find_modules",
     "input_hash",
     "is_encrypted_file",
     "is_interpolated",
@@ -137,6 +148,7 @@ __all__ = [
     "parse_string",
     "quantize_fill",
     "real_load",
+    "recording_imports",
     "run_transformations",
     "sort_entries",
     "sort_order",
@@ -200,6 +212,8 @@ WRAPPERS: Final = frozenset(
         "quantize_fill",
         "filled_amount",
         "with_units_number",
+        "recording_imports",
+        "find_modules",
     }
 )
 
@@ -286,6 +300,94 @@ def beancount_context() -> Generator[None]:
     it for the rest of its own load, as in bean-check, and for nothing after it."""
     with decimal.localcontext(BEANCOUNT_CONTEXT):
         yield
+
+
+# ---- module lookups (S0099, BL-0124) -------------------------------------------------------------------------------
+
+_PATH_FINDER: Final = importlib.machinery.PathFinder
+
+
+@dataclass(frozen=True, slots=True)
+class ModuleLookup:
+    """One answer of the import system's path search: `name` (the module's full name) searched in the folders `path`,
+    in order (`sys.path` for a top-level module, its package's folders for a submodule); `found`; `origin`, the file
+    it is loaded from (None for a namespace package); `locations`, a package's folders; `file`, the file whose bytes
+    the loader reads (`origin`, or the zip archive holding it; None when there is none)."""
+
+    name: str
+    path: tuple[str, ...]
+    found: bool
+    origin: str | None = None
+    locations: tuple[str, ...] | None = None
+    file: str | None = None
+
+
+def _search_path(path: Iterable[object] | None) -> tuple[str, ...]:
+    """The folders the path search asks, in order: `sys.path` for a top-level module. Entries that are not strings are
+    skipped, as the path search skips them."""
+    return tuple(e for e in (sys.path if path is None else path) if isinstance(e, str))
+
+
+def _lookup(name: str, path: tuple[str, ...], spec: Any) -> ModuleLookup:
+    if spec is None:
+        return ModuleLookup(name, path, found=False)
+    locations = spec.submodule_search_locations
+    origin = cast("str | None", spec.origin) if spec.has_location else None
+    loader = spec.loader
+    file = loader.archive if isinstance(loader, zipimport.zipimporter) else origin
+    return ModuleLookup(
+        name,
+        path,
+        found=True,
+        origin=origin,
+        locations=None if locations is None else tuple(str(p) for p in locations),
+        file=file,
+    )
+
+
+class _Recorder:
+    """The path search, recorded: it asks `PathFinder` with the folders it would search and reports the answer before
+    returning it, so the record is the answer the import used."""
+
+    def __init__(self, on_lookup: Callable[[ModuleLookup], None]) -> None:
+        self._on_lookup = on_lookup
+
+    def find_spec(self, fullname: str, path: Iterable[object] | None = None, target: ModuleType | None = None) -> Any:
+        search = _search_path(path)
+        spec = _PATH_FINDER.find_spec(fullname, list(search), target)
+        self._on_lookup(_lookup(fullname, search, spec))
+        return spec
+
+    def invalidate_caches(self) -> None:
+        _PATH_FINDER.invalidate_caches()
+
+
+@contextmanager
+def recording_imports(on_lookup: Callable[[ModuleLookup], None]) -> Generator[None]:
+    """While the block runs, every module the path search looks up is reported to `on_lookup` before it is loaded.
+    The path search's caches (folder listings kept by modification time) are emptied first, so a listing older than
+    the load never answers. The engine runs one job at a time on one thread, so the swap in `sys.meta_path` is safe;
+    the path search is put back wherever the recorder then is (a plugin may have added finders)."""
+    recorder = _Recorder(on_lookup)
+    finders: list[object] = sys.meta_path  # pyright: ignore[reportAssignmentType]
+    finders[finders.index(_PATH_FINDER)] = recorder
+    _PATH_FINDER.invalidate_caches()
+    try:
+        yield
+    finally:
+        for i, finder in enumerate(finders):
+            if finder is recorder:
+                finders[i] = _PATH_FINDER
+
+
+def find_modules(keys: Iterable[tuple[str, tuple[str, ...]]]) -> list[ModuleLookup]:
+    """The path search's answer for each (name, folders) now, from fresh folder listings; nothing is imported or run,
+    and no bytecode is written."""
+    asked = list(keys)
+    if not asked:
+        return []
+    _PATH_FINDER.invalidate_caches()
+    return [_lookup(name, path, _PATH_FINDER.find_spec(name, list(path))) for name, path in asked]
 
 
 # ---- the real loads (only ledger/rebuild.py; BL-0118)-------------------------------------------------------

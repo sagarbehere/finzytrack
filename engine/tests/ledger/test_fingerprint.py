@@ -32,6 +32,8 @@ from ledger_engine.ledger.core.ledger_set import (
     Content,
     FileState,
     Fingerprint,
+    Module,
+    ModuleKey,
     Unreadable,
     digest,
     encode,
@@ -407,6 +409,15 @@ GOLDEN = Fingerprint.of(
         "/books/gone": None,
     },
     {"/books/scans/b.pdf": False, "/books/scans/a.pdf": True},
+    {
+        ("plug", ("/books", "/py/lib")): Module(
+            "/books/plug.py", None, Content("cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd")
+        ),
+        ("missing", ("/books", "/py/lib")): None,
+        ("ns", ("/books", "/py/lib")): Module(None, ("/books/ns",), None),
+        ("pkg.sub", ("/books/pkg",)): Module("/books/pkg/sub.py", None, Absent()),
+        ("pkg", ("/books", "/py/lib")): Module("/books/pkg/__init__.py", ("/books/pkg",), Unreadable("EACCES")),
+    },
 )
 GOLDEN_ENCODING = (
     b'{"document_files":[["/books/scans/a.pdf",true],["/books/scans/b.pdf",false]],'
@@ -416,9 +427,14 @@ GOLDEN_ENCODING = (
     b'["/books/main.beancount",["sha256","abababababababababababababababababababababababababababababababab"]]],'
     b'"globs":[["/books/later.beancount",[]],["/books/linked.beancount",["/books/linked.beancount"]],'
     b'["/books/years/*.beancount",["/books/years/2024.beancount","/books/years/2023.beancount"]]],'
-    b'"root":"/books/main.beancount","v":1}'
+    b'"modules":[["missing",["/books","/py/lib"],null],["ns",["/books","/py/lib"],[null,["/books/ns"],null]],'
+    b'["pkg",["/books","/py/lib"],["/books/pkg/__init__.py",["/books/pkg"],["unreadable","EACCES"]]],'
+    b'["pkg.sub",["/books/pkg"],["/books/pkg/sub.py",null,["absent"]]],'
+    b'["plug",["/books","/py/lib"],["/books/plug.py",null,'
+    b'["sha256","cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd"]]]],'
+    b'"root":"/books/main.beancount","v":2}'
 )
-GOLDEN_DIGEST = "sha256:2bdc7c665539f41bf7537f5e133c84f72dec1af2a14d51e50baf1c5722ef5aa5"
+GOLDEN_DIGEST = "sha256:5d78831a8268f9a581c0ac30ab95087d802b023ae7e3745c93df563e7decc40d"
 
 
 def test_the_encoding_is_pinned() -> None:
@@ -444,6 +460,14 @@ def test_a_fingerprint_is_built_only_in_canonical_order() -> None:
         Fingerprint("/r", (), (), (("/r/d", (("a", True), ("a", False))),), ())
     with pytest.raises(ValueError, match="not canonical"):
         Fingerprint("/r", (), (), (), (("/r/b.pdf", True), ("/r/a.pdf", True)))
+    with pytest.raises(ValueError, match="not canonical"):
+        Fingerprint("/r", (), (), (), (), ((("b", ("/r",)), None), (("a", ("/r",)), None)))
+    with pytest.raises(ValueError, match="not canonical"):
+        Fingerprint("/r", (), (), (), (), ((("a", ("/r",)), None), (("a", ("/r",)), None)))
+    with pytest.raises(ValueError, match="not canonical"):
+        Module(None, None, None)  # found, but neither a file nor a package's folders
+    with pytest.raises(ValueError, match="not canonical"):
+        Module(None, ("/r/ns",), Absent())  # a namespace package has no file to read
 
 
 def test_a_content_state_is_a_sha256() -> None:
@@ -471,6 +495,11 @@ states: st.SearchStrategy[FileState] = st.one_of(
     st.just(Absent()),
     st.sampled_from(["EACCES", "EIO", "ELOOP"]).map(Unreadable),
 )
+module_keys: st.SearchStrategy[ModuleKey] = st.tuples(paths, st.lists(paths, max_size=3).map(tuple))
+modules: st.SearchStrategy[Module] = st.one_of(
+    st.builds(Module, paths, st.one_of(st.none(), st.lists(paths, max_size=2).map(tuple)), states),
+    st.builds(Module, st.none(), st.lists(paths, max_size=2).map(tuple), st.none()),
+)
 fingerprints = st.builds(
     Fingerprint.of,
     paths,
@@ -478,6 +507,7 @@ fingerprints = st.builds(
     st.dictionaries(paths, st.lists(paths, max_size=3).map(tuple), max_size=3),
     st.dictionaries(paths, st.one_of(st.none(), st.dictionaries(paths, st.booleans(), max_size=3)), max_size=3),
     st.dictionaries(paths, st.booleans(), max_size=3),
+    st.dictionaries(module_keys, st.one_of(st.none(), modules), max_size=3),
 )
 WITH_SURROGATES = Fingerprint.of(
     "/b" + LONE_SURROGATE,
@@ -485,14 +515,15 @@ WITH_SURROGATES = Fingerprint.of(
     {"/b/*": ("/b/\ud800x",)},
     {"/b/d": {"\udfff": True}},
     {"/b/\udc80.pdf": False},
+    {("m", ("/b/\udcfe",)): Module("/b/\udcfe/m.py", None, Absent())},
 )
 
 
 def decode(data: bytes) -> Fingerprint:
     """The inverse of `encode`, here only: if every encoding decodes back to its value, no two values share one."""
     raw = json.loads(data)
-    assert set(raw) == {"v", "root", "files", "globs", "documents", "document_files"}
-    assert raw["v"] == 1
+    assert set(raw) == {"v", "root", "files", "globs", "documents", "document_files", "modules"}
+    assert raw["v"] == 2
 
     def state(s: list[str]) -> FileState:
         match s:
@@ -511,6 +542,13 @@ def decode(data: bytes) -> Fingerprint:
         tuple((p, tuple(m)) for p, m in raw["globs"]),
         tuple((p, None if m is None else tuple((n, bool(e)) for n, e in m)) for p, m in raw["documents"]),
         tuple((p, bool(e)) for p, e in raw["document_files"]),
+        tuple(
+            (
+                (n, tuple(path)),
+                None if a is None else Module(a[0], None if a[1] is None else tuple(a[1]), a[2] and state(a[2])),
+            )
+            for n, path, a in raw["modules"]
+        ),
     )
 
 
@@ -524,19 +562,20 @@ def test_the_surrogate_example_holds_lone_surrogates_in_every_kind_of_key() -> N
     """So the undecodable-name path runs on every run, whatever Hypothesis draws: each surrogate is kept as an
     ASCII escape (`ensure_ascii`), never encoded (which would raise)."""
     encoded = encode(WITH_SURROGATES)
-    for escape in (b"\\udcff", b"\\ud800", b"\\udfff", b"\\udc80"):
+    for escape in (b"\\udcff", b"\\ud800", b"\\udfff", b"\\udc80", b"\\udcfe"):
         assert escape in encoded
 
 
 @given(fingerprints, st.randoms())
 def test_the_order_of_the_given_paths_does_not_matter(fp: Fingerprint, rnd: random.Random) -> None:
-    files, globs, documents, document_files = (
+    files, globs, documents, document_files, mods = (
         list(fp.files),
         list(fp.globs),
         list(fp.documents),
         list(fp.document_files),
+        list(fp.modules),
     )
-    for items in (files, globs, documents, document_files):
+    for items in (files, globs, documents, document_files, mods):
         rnd.shuffle(items)
     again = Fingerprint.of(
         fp.root,
@@ -544,6 +583,7 @@ def test_the_order_of_the_given_paths_does_not_matter(fp: Fingerprint, rnd: rand
         dict(globs),
         {k: None if v is None else dict(rnd.sample(v, len(v))) for k, v in documents},
         dict(document_files),
+        dict(mods),
     )
     assert again == fp
     assert digest(again) == digest(fp)

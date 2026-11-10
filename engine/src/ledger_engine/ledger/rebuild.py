@@ -14,7 +14,8 @@ nothing. Nothing gates on it and nothing compares it with anything.
 1. the ledger set named by `hint` (the saved plan's fingerprint, or the previous try's answer) observed;
 2. Beancount's real load of its root;
 3. the same set observed again.
-`loaded` when the two observations are equal and the load parsed no file and used no documents root outside the set:
+`loaded` when the two observations are equal and the load parsed no file, used no documents root and imported no
+code (S0099) outside the set:
 the result is Beancount's own for the disk as observed, and it is published (publish.md §4 steps 2 to 8,
 `mirror.publish.publish`): built into a new generation stamped with an observation of the set the load read (its
 files, documents roots and `document` files, and the hint's globs that still lead to them, `_read_by`; S0087 round
@@ -43,8 +44,8 @@ from ledger_engine.fs.darwin import for_this_os
 from ledger_engine.fs.port import FileSystem
 from ledger_engine.ledger import beancount_port as port
 from ledger_engine.ledger import fingerprint as _fingerprint
-from ledger_engine.ledger import load_failure, precision, publishing
-from ledger_engine.ledger.core.ledger_set import Fingerprint, LedgerSet, decode
+from ledger_engine.ledger import imports, load_failure, precision, publishing
+from ledger_engine.ledger.core.ledger_set import Fingerprint, LedgerSet, Module, ModuleKey, decode
 from ledger_engine.ledger.overlay import documents_roots
 from ledger_engine.mirror import publish as pb
 from ledger_engine.mirror.store import SqliteStore
@@ -112,11 +113,14 @@ class Answer:
     line: int | None = None
 
 
-def _used(entries: list[port.Directive], options: port.OptionsMap) -> LedgerSet:
-    """What the load used of the disk, as a ledger set (its globs are not known: the module's limit)."""
+def _used(entries: list[port.Directive], options: port.OptionsMap, modules: imports.Modules) -> LedgerSet:
+    """What the load used of the disk, as a ledger set (its globs are not known: the module's limit), with the
+    modules its imports looked up (`imports`, S0099)."""
     roots = documents_roots(options) if options.get("documents") else []
     docs = [e.filename for e in entries if isinstance(e, port.Document)]
-    return LedgerSet(str(options["filename"]), tuple(options["include"]), (), tuple(roots), tuple(docs))
+    return LedgerSet(
+        str(options["filename"]), tuple(options["include"]), (), tuple(roots), tuple(docs), tuple(sorted(modules))
+    )
 
 
 def _read_by(observed: Fingerprint, used: LedgerSet) -> LedgerSet:
@@ -131,7 +135,7 @@ def _read_by(observed: Fingerprint, used: LedgerSet) -> LedgerSet:
     read = set(files)
     globs = tuple(g for g, matches in observed.globs if not matches or read & set(matches))
     document_files = tuple(sorted(set(used.document_files)))  # each one itself (S0088 round 1, red team F2)
-    return LedgerSet(observed.root, files, globs, roots, document_files)
+    return LedgerSet(observed.root, files, globs, roots, document_files, tuple(sorted(set(used.modules))))
 
 
 def _listed(observed: Fingerprint) -> frozenset[str]:
@@ -153,7 +157,8 @@ def _wider(a: LedgerSet, b: LedgerSet, listed: frozenset[str]) -> LedgerSet | No
     files = set(b.files) - set(a.files)
     documents = set(b.documents) - set(a.documents)
     document_files = {f for f in set(b.document_files) - set(a.document_files) if f not in listed}
-    if not (files or documents or document_files):
+    modules = set(b.modules) - set(a.modules)  # code the hint never observed (S0099)
+    if not (files or documents or document_files or modules):
         return None
     return LedgerSet(
         a.root,
@@ -161,6 +166,7 @@ def _wider(a: LedgerSet, b: LedgerSet, listed: frozenset[str]) -> LedgerSet | No
         a.globs,
         (*a.documents, *sorted(documents)),
         (*a.document_files, *sorted(document_files)),
+        (*a.modules, *sorted(modules)),
     )
 
 
@@ -183,8 +189,10 @@ def run(ports: Ports, hint: Fingerprint, job: Job, target: Target) -> Answer:
         before = ports.observe(ledger_set)  # step 1
         job.progress(PHASE)
         parsed: list[str] = []
+        modules: dict[ModuleKey, Module | None] = {}
         try:
-            result = ports.load(ledger_set.root, parsed)  # step 2: Beancount's own loader (user code)
+            with imports.recording(modules):  # what its imports read (S0099, BL-0124)
+                result = ports.load(ledger_set.root, parsed)  # step 2: Beancount's own loader (user code)
         except (OSError, port.EncryptedFileMet):
             raise
         except Exception as e:  # Beancount's own load raised on the ledger: refused, never raised
@@ -195,13 +203,15 @@ def run(ports: Ports, hint: Fingerprint, job: Job, target: Target) -> Answer:
             # set was never observed before the load, so the set widened by it is tried again; a disk changed since
             # the load is tried again too. Only an unchanged set is refused.
             outside = sorted(set(parsed) - set(ledger_set.files))
-            if outside:
+            code = sorted(set(modules) - set(ledger_set.modules))  # code it imported that the set never observed
+            if outside or code:
                 widened = LedgerSet(
                     ledger_set.root,
                     (*ledger_set.files, *outside),
                     ledger_set.globs,
                     ledger_set.documents,
                     ledger_set.document_files,
+                    (*ledger_set.modules, *code),
                 )
                 return Answer("moved", ports.observe(widened), cleaned=cleaned)
             again = ports.observe(ledger_set)
@@ -216,7 +226,8 @@ def run(ports: Ports, hint: Fingerprint, job: Job, target: Target) -> Answer:
         except OSError:
             return Answer("moved", ports.observe(ledger_set), cleaned=cleaned)
         after = ports.observe(ledger_set)  # step 3
-        wider = _wider(ledger_set, _used(entries, options), _listed(before))
+        used = _used(entries, options, modules)
+        wider = _wider(ledger_set, used, _listed(before))
         if wider is not None:
             return Answer("moved", ports.observe(wider), cleaned=cleaned)
         if after != before:
@@ -226,7 +237,7 @@ def run(ports: Ports, hint: Fingerprint, job: Job, target: Target) -> Answer:
         # naming them would make the gate refuse every save once such a file changes (`_read_by` says which globs
         # stay). Observed now, then the hint's set once more: unchanged, so the stamp describes the state the load
         # read.
-        stamped_set = _read_by(after, _used(entries, options))
+        stamped_set = _read_by(after, used)
         stamp = ports.observe(stamped_set)
         again = ports.observe(ledger_set)
         if again != after:

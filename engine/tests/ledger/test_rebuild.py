@@ -130,8 +130,8 @@ def test_the_load_is_never_the_replica(root: Path, monkeypatch: pytest.MonkeyPat
         msg = "the overlay replica ran"
         raise AssertionError(msg)
 
+    hint = hint_of(root)  # the plan's: what the preview's load read, its imports included (S0099)
     monkeypatch.setattr(overlay, "load", no_replica)
-    hint = observe(LedgerSet(str(root), (str(root), str(root.parent / "inc.bean")), (), (), ()))
     assert go(rebuild.Ports(), hint, FakeJob()).outcome == "loaded"
 
 
@@ -626,7 +626,8 @@ def test_a_ledger_fixed_while_beancount_failed_on_it_is_moved_not_refused(root: 
 
     a = go(rebuild.Ports(load=load), hint, FakeJob())
     assert a.outcome == "moved"
-    assert a.fingerprint == observe(hint.ledger_set)
+    assert a.fingerprint.files == observe(hint.ledger_set).files
+    assert a.fingerprint == observe(a.fingerprint.ledger_set)
     assert generations(cache) == []
 
 
@@ -747,3 +748,115 @@ def test_the_real_load_reports_the_files_it_parsed(root: Path) -> None:
     parsed: list[str] = []
     port.real_load(str(root), parsed)
     assert parsed == [str(root), str(root.parent / "inc.bean")]
+
+
+# -- the plugin code the load imports (S0099, BL-0124) ----------------------------------------------------------------
+
+PLUGIN = '__plugins__ = ["keep"]\n\n\ndef keep(entries, options_map):\n    return entries, []\n'
+
+
+def with_plugin(root: Path, name: str) -> Path:
+    root.write_bytes(b'option "insert_pythonpath" "TRUE"\nplugin "' + name.encode() + b'"\n' + MAIN)
+    src = root.parent / f"{name}.py"
+    src.write_text(PLUGIN)
+    return src
+
+
+def test_a_plugin_edited_during_the_load_is_moved_and_nothing_is_published(root: Path, cache: Path) -> None:
+    name = "ft_s0099_rebuild_edit"
+    try:
+        src = with_plugin(root, name)
+        hint = hint_of(root)
+        sys.modules.pop(name, None)
+        a = go(with_load(lambda: src.write_text(PLUGIN + "# edited\n")), hint, FakeJob())
+        assert a.outcome == "moved"
+        assert not mirror(cache).exists() or generations(cache) == []
+        assert observe(a.fingerprint.ledger_set) == a.fingerprint  # the next try starts from the disk as it is
+    finally:
+        sys.modules.pop(name, None)
+
+
+def test_the_stamp_names_the_plugin_code_the_load_imported(root: Path) -> None:
+    """publish.md §8: a generation is fresh only while the code its load ran is on disk."""
+    name = "ft_s0099_rebuild_stamp"
+    try:
+        src = with_plugin(root, name)
+        hint = hint_of(root)
+        sys.modules.pop(name, None)
+        a = go(rebuild.Ports(), hint, FakeJob())
+        assert a.outcome == "loaded", a
+        assert any(k[0] == name for k, _ in a.fingerprint.modules)
+        assert observe(a.fingerprint.ledger_set) == a.fingerprint
+        src.write_text(PLUGIN + "# edited\n")
+        assert observe(a.fingerprint.ledger_set) != a.fingerprint
+    finally:
+        sys.modules.pop(name, None)
+
+
+def test_a_load_that_imported_code_the_hint_does_not_name_is_moved_then_loaded(root: Path) -> None:
+    """Like a file outside the set (S0070): the hint never observed that code before the load, so a change during the
+    load could go unseen; the set widened by it is tried again, and then loads."""
+    name = "ft_s0099_rebuild_wider"
+    try:
+        with_plugin(root, name)
+        full = hint_of(root)
+        hint = Fingerprint(full.root, full.files, full.globs, full.documents, full.document_files)
+        sys.modules.pop(name, None)
+        a = go(rebuild.Ports(), hint, FakeJob())
+        assert a.outcome == "moved"
+        assert any(k[0] == name for k, _ in a.fingerprint.modules)
+        sys.modules.pop(name, None)
+        assert go(rebuild.Ports(), a.fingerprint, FakeJob()).outcome == "loaded"
+    finally:
+        sys.modules.pop(name, None)
+
+
+def test_a_refusal_after_the_plugin_was_fixed_is_moved_not_refused(root: Path) -> None:
+    """S0098's rule "only an unchanged set is refused" covers the plugin's code: a plugin that raised at import and
+    was fixed during the load is a moved disk."""
+    name = "ft_s0099_rebuild_fixed"
+    try:
+        src = with_plugin(root, name)
+        src.write_text("raise RuntimeError('broken')\n")
+        hint = hint_of_refused(root)
+        sys.modules.pop(name, None)
+        a = go(with_load_failing(lambda: src.write_text(PLUGIN)), hint, FakeJob())
+        assert a.outcome == "moved", a
+    finally:
+        sys.modules.pop(name, None)
+
+
+def test_a_refusal_whose_plugin_code_the_hint_never_observed_is_moved(root: Path) -> None:
+    """The failed load imported code the set does not name, so a change to it during the load could not be seen: the
+    set widened by it is tried again (as for a file it parsed outside the set, S0098 round 2)."""
+    name = "ft_s0099_rebuild_unseen"
+    try:
+        src = with_plugin(root, name)
+        src.write_text("raise RuntimeError('broken')\n")
+        full = hint_of_refused(root)
+        hint = Fingerprint(full.root, full.files, full.globs, full.documents, full.document_files)
+        sys.modules.pop(name, None)
+        a = go(rebuild.Ports(), hint, FakeJob())
+        assert a.outcome == "moved", a
+        assert any(k[0] == name for k, _ in a.fingerprint.modules)
+    finally:
+        sys.modules.pop(name, None)
+
+
+def hint_of_refused(root: Path) -> Fingerprint:
+    out = overlay.load(str(root), {}, DesktopPolicy())
+    assert isinstance(out, overlay.LoadRefused), out
+    assert out.read is not None
+    return out.read
+
+
+def with_load_failing(after: Callable[[], object]) -> rebuild.Ports:
+    """The real load, which raises; an outside program's act right after it."""
+
+    def load(r: str, parsed: list[str]) -> port.ParseResult:
+        try:
+            return port.real_load(r, parsed)
+        finally:
+            after()
+
+    return rebuild.Ports(load=load)

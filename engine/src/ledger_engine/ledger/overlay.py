@@ -42,7 +42,9 @@ Where it differs from Beancount, on purpose (each refuses the whole load, EP-13;
   each path the loader found missing is recorded absent; each documents root is listed after the policy allowed it
   and before Beancount scans it, and the file of each `document` directive is checked before Beancount checks it,
   so a change during the load makes the next observation differ. The `document` entries a plugin adds are only
-  known after the plugins ran; their record comes from Beancount's own check (`_plugin_documents`).
+  known after the plugins ran; their record comes from Beancount's own check (`_plugin_documents`). Each module the
+  load's imports look up is recorded with the folders searched and the file found, hashed before it is loaded
+  (`imports`, S0099, BL-0124).
 - **The documents step reads the disk**, as in Beancount's own load. A file a save creates under a documents root
   is not in the preview: the preview may miss the `document` entry it makes, and the rebuild after the save shows it
   (S0068 removed S0067's listing swap, whose names a user plugin could see; spec §15).
@@ -63,8 +65,8 @@ from typing import Literal, cast
 
 from ledger_engine.ledger import beancount_port as port
 from ledger_engine.ledger import fingerprint as fp
-from ledger_engine.ledger import load_failure, precision
-from ledger_engine.ledger.core.ledger_set import Absent, FileState, Fingerprint
+from ledger_engine.ledger import imports, load_failure, precision
+from ledger_engine.ledger.core.ledger_set import Absent, FileState, Fingerprint, Module, ModuleKey
 from ledger_engine.ledger.policy import LoadPolicy
 
 type RefusalReason = Literal[
@@ -126,12 +128,13 @@ class NotAbsoluteError(ValueError):
 def load(root: str, overlay: Mapping[str, bytes], policy: LoadPolicy) -> LoadResult:
     """Load the ledger set rooted at `root` (an absolute path) with `overlay`'s bytes in place of the files they
     name (absolute paths), under `policy`. In Beancount's own decimal context, the caller's restored after
-    (`beancount_port.beancount_context`)."""
-    with port.beancount_context():
-        return _load(root, overlay, policy)
+    (`beancount_port.beancount_context`); what its imports read is recorded for its fingerprint (`imports`)."""
+    seen = _Seen()
+    with port.beancount_context(), imports.recording(seen.modules):
+        return _load(root, overlay, policy, seen)
 
 
-def _load(root: str, overlay: Mapping[str, bytes], policy: LoadPolicy) -> LoadResult:
+def _load(root: str, overlay: Mapping[str, bytes], policy: LoadPolicy, seen: _Seen) -> LoadResult:
     if not path.isabs(root):
         raise NotAbsoluteError(root)
     candidates: dict[str, bytes] = {}
@@ -143,7 +146,6 @@ def _load(root: str, overlay: Mapping[str, bytes], policy: LoadPolicy) -> LoadRe
         if name.lower().endswith(ENCRYPTED_SUFFIXES):
             return LoadRefused("encrypted", name)
 
-    seen = _Seen()
     parsed = _parse_recursive(path.normpath(root), candidates, policy, seen)
     if isinstance(parsed, LoadRefused):
         return parsed
@@ -190,7 +192,7 @@ def _load(root: str, overlay: Mapping[str, bytes], policy: LoadPolicy) -> LoadRe
             raise
         return _failed(e, root, seen, documents, document_files)
     options["input_hash"] = port.input_hash(options["include"])
-    fingerprint = Fingerprint.of(path.normpath(root), seen.files, seen.globs, documents, document_files)
+    fingerprint = Fingerprint.of(path.normpath(root), seen.files, seen.globs, documents, document_files, seen.modules)
     warnings: list[port.BeancountError] = [*precision.warnings(seen.data, entries, options)]
     return Loaded(entries, errors, options, fingerprint, warnings)
 
@@ -206,7 +208,9 @@ def _failed(
     """The refusal of a load Beancount failed on, with the fingerprint of what the load had read so far (the caller
     observes it again: a disk that changed meanwhile is a moved disk, not a refusal; S0098 round 1, data-safety F2)."""
     failure = load_failure.of(error, path.normpath(subject))
-    read = Fingerprint.of(path.normpath(root or subject), seen.files, seen.globs, documents, document_files)
+    read = Fingerprint.of(
+        path.normpath(root or subject), seen.files, seen.globs, documents, document_files, seen.modules
+    )
     return LoadRefused(failure.reason, failure.path, failure.line, read)
 
 
@@ -219,6 +223,7 @@ class _Seen:
     files: dict[str, FileState] = field(default_factory=dict[str, FileState])
     globs: dict[str, list[str]] = field(default_factory=dict[str, list[str]])
     data: dict[str, bytes] = field(default_factory=dict[str, bytes])  # every parsed file's bytes, for `precision`
+    modules: dict[ModuleKey, Module | None] = field(default_factory=dict[ModuleKey, Module | None])  # `imports`
 
 
 def _parse_recursive(

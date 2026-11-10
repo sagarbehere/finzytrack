@@ -59,7 +59,7 @@ REQUEST = SaveRequest(
     lineage="lin1",
     root=MAIN,
     changes=(ChangeText(MAIN, "0" * 64, "post\n"), ChangeText(NEW, None, "p\n")),
-    fingerprint='{"document_files":[],"documents":[],"files":[],"globs":[],"root":"/L/main.bean","v":1}',
+    fingerprint='{"document_files":[],"documents":[],"files":[],"globs":[],"modules":[],"root":"/L/main.bean","v":2}',
     app_local_data=Path("/app"),
 )
 BLANK: dict[str, object] = {

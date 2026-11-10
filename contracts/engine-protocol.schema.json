@@ -1965,7 +1965,7 @@
           "result": {
             "entries": 3,
             "errors": 0,
-            "fingerprint": "{\"document_files\":[],\"documents\":[],\"files\":[],\"globs\":[],\"root\":\"/ledgers/L/main.bean\",\"v\":1}",
+            "fingerprint": "{\"document_files\":[],\"documents\":[],\"files\":[],\"globs\":[],\"modules\":[],\"root\":\"/ledgers/L/main.bean\",\"v\":2}",
             "ledger_version": "2/sha256:0000000000000000000000000000000000000000000000000000000000000000",
             "line": null,
             "number": 2,
@@ -2036,7 +2036,7 @@
           "params": {
             "app_local_data": "/app-data/com.finzytrack.desktop",
             "built_at": "2026-11-08T10:00:00+05:30",
-            "fingerprint": "{\"document_files\":[],\"documents\":[],\"files\":[],\"globs\":[],\"root\":\"/ledgers/L/main.bean\",\"v\":1}",
+            "fingerprint": "{\"document_files\":[],\"documents\":[],\"files\":[],\"globs\":[],\"modules\":[],\"root\":\"/ledgers/L/main.bean\",\"v\":2}",
             "floor": 0,
             "lineage": "lin1",
             "root": "/ledgers/L/main.bean",
@@ -3534,7 +3534,7 @@
                 "pre": "0000000000000000000000000000000000000000000000000000000000000000"
               }
             ],
-            "fingerprint": "{\"document_files\":[],\"documents\":[],\"files\":[],\"globs\":[],\"root\":\"/ledgers/L/main.bean\",\"v\":1}",
+            "fingerprint": "{\"document_files\":[],\"documents\":[],\"files\":[],\"globs\":[],\"modules\":[],\"root\":\"/ledgers/L/main.bean\",\"v\":2}",
             "job": "j7",
             "lineage": "lin1",
             "root": "/ledgers/L/main.bean",

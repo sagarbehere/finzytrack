@@ -9,11 +9,12 @@ import copy
 import io
 import json
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import pytest
 from jsonschema import Draft202012Validator
 
+from ledger_engine.ledger.core.ledger_set import decode
 from ledger_engine.protocol.messages import PROTOCOL_VERSION, model_stem
 from ledger_engine.protocol.schema import render
 from ledger_engine.protocol.server import Engine, serve
@@ -212,3 +213,25 @@ def test_the_engines_real_job_messages_validate(tmp_path: Path) -> None:
     assert "decision" in reply
     assert valid("Decision", reply["decision"])
     assert valid("ProceedControl", json.loads(lines[2]))
+
+
+def test_every_example_fingerprint_is_one_the_engine_decodes() -> None:
+    """@regression-guard (it holds on 0c4b1476 too, at version 1; it fails if the examples and `ENCODING_VERSION`
+    part). The examples' `fingerprint` strings are real encodings of the current version (S0099: `v` 2), so the
+    contract never shows the sidecar a fingerprint the engine refuses."""
+    found: list[str] = []
+
+    def walk(node: object) -> None:
+        if isinstance(node, dict):
+            for k, v in cast(dict[str, object], node).items():
+                if k == "fingerprint" and isinstance(v, str):
+                    found.append(v)
+                walk(v)
+        elif isinstance(node, list):
+            for v in cast(list[object], node):
+                walk(v)
+
+    walk(committed())
+    assert found
+    for fp in found:
+        decode(fp.encode("ascii"))

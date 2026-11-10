@@ -1,0 +1,453 @@
+"""The fingerprint covers the plugin code a load imports (BL-0124; `design/specs/engine-jobs.md` §1 "Fingerprint";
+S0099 brief).
+
+Two requirements, as for the ledger's own files (S0051): a change that makes the next load run other code changes the
+fingerprint (else a save lands on a preview made with other plugin code, or the mirror stays stale: INV-01, INV-05,
+INV-22), and unchanged code keeps it (else every open rebuilds and every save is refused). What the next load's
+imports read is the import system's path search: for each module name, the folders it searches in order and the file
+it finds there, then that file's bytes. So the changes below are a plugin file's bytes, a submodule's, a module a
+plugin imports while it runs, a module that was not found and appears, a file that appears earlier on the path and
+shadows the one found, and a namespace package that becomes a regular one. The observation asks the same questions
+without importing anything (the save runs no user code, ADR-0068 D1).
+
+Each test names its plugin modules uniquely and removes them from the process's module cache afterwards, as a fresh
+engine would start without them (spec §5.1: an engine that ran user code is ended after its job).
+"""
+
+from __future__ import annotations
+
+import dataclasses
+import os
+import subprocess
+import sys
+import uuid
+from collections.abc import Callable, Iterator
+from pathlib import Path
+
+import pytest
+
+from ledger_engine.ledger import create, overlay
+from ledger_engine.ledger.core.ledger_set import Content, Fingerprint, Module
+from ledger_engine.ledger.fingerprint import observe
+from ledger_engine.ledger.policy import DESKTOP
+
+pytestmark = pytest.mark.inv("INV-22")
+
+HEAD = 'option "insert_pythonpath" "TRUE"\n'
+BODY = "2026-01-01 open Assets:Cash\n"
+NOOP = '__plugins__ = ["run"]\n\n\ndef run(entries, options_map):\n    return entries, []\n'
+
+type Names = Callable[[str], str]
+
+
+@pytest.fixture
+def names() -> Iterator[Names]:
+    """Unique module names for the test's plugins; each is dropped from the module cache after the test."""
+    made: list[str] = []
+
+    def name(stem: str) -> str:
+        n = f"ft_s0099_{stem}_{uuid.uuid4().hex[:8]}"
+        made.append(n)
+        return n
+
+    yield name
+    forget(*made)
+
+
+def forget(*names: str) -> None:
+    """Drop modules from the process's module cache, as a fresh engine starts without them."""
+    for n in list(sys.modules):
+        if any(n == m or n.startswith(m + ".") for m in names):
+            del sys.modules[n]
+
+
+def ledger(folder: Path, *plugins: str) -> Path:
+    folder.mkdir(parents=True, exist_ok=True)
+    root = folder / "main.beancount"
+    root.write_text(HEAD + "".join(f'plugin "{p}"\n' for p in plugins) + BODY, encoding="utf-8")
+    return root
+
+
+def write(p: Path, text: str) -> Path:
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(text, encoding="utf-8")
+    return p
+
+
+def load(root: Path) -> overlay.Loaded:
+    out = overlay.load(str(root), {}, DESKTOP)
+    assert isinstance(out, overlay.Loaded), out
+    return out
+
+
+def fp_of(root: Path) -> Fingerprint:
+    return load(root).fingerprint
+
+
+def answers(fp: Fingerprint) -> dict[str, Module | None]:
+    """Each module name's answer (the tests use one search path per name)."""
+    return {name: answer for (name, _path), answer in fp.modules}
+
+
+def unchanged(fp: Fingerprint) -> bool:
+    return observe(fp.ledger_set) == fp
+
+
+# ---- what changes it --------------------------------------------------------------------------------------------
+
+
+def test_a_plugin_source_edit_changes_the_fingerprint(tmp_path: Path, names: Names) -> None:
+    plug = names("plug")
+    root = ledger(tmp_path / "L", plug)
+    src = write(tmp_path / "L" / f"{plug}.py", NOOP)
+    fp = fp_of(root)
+    assert unchanged(fp)
+    found = answers(fp)[plug]
+    assert found is not None
+    assert found.origin == str(src)
+    write(src, NOOP.replace("return entries, []", "return entries, [] "))
+    assert not unchanged(fp)
+
+
+def test_an_edit_that_keeps_the_size_and_the_mtime_changes_it(tmp_path: Path, names: Names) -> None:
+    """A stat cannot see it; Python compiles the plugin from its source on every load (spec §5.1), so the next load
+    runs the new code."""
+    plug = names("plug")
+    root = ledger(tmp_path / "L", plug)
+    src = write(tmp_path / "L" / f"{plug}.py", NOOP + "X = 1\n")
+    fp = fp_of(root)
+    st = src.stat()
+    src.write_text(NOOP + "X = 2\n", encoding="utf-8")
+    os.utime(src, ns=(st.st_atime_ns, st.st_mtime_ns))
+    assert src.stat().st_size == st.st_size
+    assert not unchanged(fp)
+
+
+def test_a_submodule_of_a_plugin_package_edited_changes_it(tmp_path: Path, names: Names) -> None:
+    pkg = names("pkg")
+    root = ledger(tmp_path / "L", f"{pkg}.plugin")
+    write(tmp_path / "L" / pkg / "__init__.py", "")
+    write(tmp_path / "L" / pkg / "plugin.py", f"from {pkg} import helper\n" + NOOP)
+    helper = write(tmp_path / "L" / pkg / "helper.py", "VALUE = 1\n")
+    fp = fp_of(root)
+    assert {f"{pkg}", f"{pkg}.plugin", f"{pkg}.helper"} <= set(answers(fp))
+    assert unchanged(fp)
+    write(helper, "VALUE = 2\n")
+    assert not unchanged(fp)
+
+
+def test_a_module_a_plugin_imports_while_it_runs_is_covered(tmp_path: Path, names: Names) -> None:
+    plug, late = names("plug"), names("late")
+    root = ledger(tmp_path / "L", plug)
+    write(
+        tmp_path / "L" / f"{plug}.py",
+        f'__plugins__ = ["run"]\n\n\ndef run(entries, options_map):\n    import {late}\n\n    return entries, []\n',
+    )
+    late_src = write(tmp_path / "L" / f"{late}.py", "A = 1\n")
+    fp = fp_of(root)
+    assert late in answers(fp)
+    write(late_src, "A = 2\n")
+    assert not unchanged(fp)
+
+
+@pytest.mark.parametrize("shape", ["module", "package"])
+def test_a_plugin_not_found_that_appears_changes_it(tmp_path: Path, names: Names, shape: str) -> None:
+    """The load's error "Error importing" goes away in the next load: the same question as an edit (BL-0124)."""
+    plug = names("plug")
+    root = ledger(tmp_path / "L", plug)
+    loaded = load(root)
+    assert any("Error importing" in e.message for e in loaded.errors)
+    fp = loaded.fingerprint
+    assert plug in answers(fp)
+    assert answers(fp)[plug] is None
+    assert unchanged(fp)
+    if shape == "module":
+        write(tmp_path / "L" / f"{plug}.py", NOOP)
+    else:
+        write(tmp_path / "L" / plug / "__init__.py", NOOP)
+    assert not unchanged(fp)
+
+
+def test_a_plugin_appearing_in_a_folder_whose_time_is_put_back_changes_it(tmp_path: Path, names: Names) -> None:
+    """The path search keeps each folder's listing until the folder's modification time changes; on a volume with
+    coarse times (FAT, some network shares) a new file may not change it. The observation lists afresh."""
+    plug = names("plug")
+    root = ledger(tmp_path / "L", plug)
+    folder = tmp_path / "L"
+    fp = fp_of(root)
+    assert unchanged(fp)  # the listing is now cached, without the plugin
+    st = folder.stat()
+    write(folder / f"{plug}.py", NOOP)
+    os.utime(folder, ns=(st.st_atime_ns, st.st_mtime_ns))
+    assert not unchanged(fp)
+
+
+def test_a_found_plugin_that_goes_changes_it(tmp_path: Path, names: Names) -> None:
+    plug = names("plug")
+    root = ledger(tmp_path / "L", plug)
+    src = write(tmp_path / "L" / f"{plug}.py", NOOP)
+    fp = fp_of(root)
+    src.unlink()
+    assert not unchanged(fp)
+
+
+def test_a_file_shadowing_a_standard_library_module_changes_it(tmp_path: Path, names: Names) -> None:
+    """The `pythonpath` folder comes first on `sys.path` while the plugins run, so a `colorsys.py` beside the ledger
+    replaces the standard library's for a plugin that imports it: its lookup is recorded wherever it was found."""
+    plug = names("plug")
+    root = ledger(tmp_path / "L", plug)
+    write(tmp_path / "L" / f"{plug}.py", "import colorsys\n" + NOOP)
+    forget("colorsys")  # a fresh engine has not imported it
+    fp = fp_of(root)
+    found = answers(fp)["colorsys"]
+    assert found is not None
+    assert found.origin is not None
+    assert not found.origin.startswith(str(tmp_path))
+    assert unchanged(fp)
+    write(tmp_path / "L" / "colorsys.py", "")
+    assert not unchanged(fp)
+    forget("colorsys")
+    os.remove(tmp_path / "L" / "colorsys.py")
+
+
+def test_a_shadowing_file_in_an_earlier_pythonpath_folder_changes_it(tmp_path: Path, names: Names) -> None:
+    """Two `insert_pythonpath` folders (Beancount sorts them): a plugin found in the second is replaced by a file of
+    the same name that appears in the first."""
+    plug = names("plug")
+    root = ledger(tmp_path / "b", plug)
+    root.write_text(HEAD + 'include "../a/a.beancount"\n' + f'plugin "{plug}"\n' + BODY, encoding="utf-8")
+    write(tmp_path / "a" / "a.beancount", HEAD)
+    write(tmp_path / "b" / f"{plug}.py", NOOP)
+    fp = fp_of(root)
+    ((_, path),) = [k for k, _ in fp.modules if k[0] == plug]
+    assert path[:2] == (str(tmp_path / "a"), str(tmp_path / "b"))
+    assert unchanged(fp)
+    write(tmp_path / "a" / f"{plug}.py", NOOP)
+    assert not unchanged(fp)
+
+
+def test_a_namespace_package_that_becomes_a_regular_one_changes_it(tmp_path: Path, names: Names) -> None:
+    ns = names("ns")
+    root = ledger(tmp_path / "L", f"{ns}.plugin")
+    write(tmp_path / "L" / ns / "plugin.py", NOOP)
+    fp = fp_of(root)
+    package = answers(fp)[ns]
+    assert package is not None
+    assert package.origin is None
+    assert package.locations == (str(tmp_path / "L" / ns),)
+    assert unchanged(fp)
+    write(tmp_path / "L" / ns / "__init__.py", "")
+    assert not unchanged(fp)
+
+
+def test_a_module_in_a_zip_archive_a_plugin_puts_on_the_path_is_covered(tmp_path: Path, names: Names) -> None:
+    """The loader reads a zipped module from its archive, so the archive's bytes are what is hashed."""
+    import zipfile
+
+    plug, zipped = names("plug"), names("zipped")
+    root = ledger(tmp_path / "L", plug)
+    archive = tmp_path / "L" / "lib.zip"
+    with zipfile.ZipFile(archive, "w") as z:
+        z.writestr(f"{zipped}.py", "A = 1\n")
+    write(
+        tmp_path / "L" / f"{plug}.py",
+        f"import sys\nsys.path.insert(0, {str(archive)!r})\nimport {zipped}\n" + NOOP,
+    )
+    try:
+        fp = fp_of(root)
+    finally:
+        while str(archive) in sys.path:
+            sys.path.remove(str(archive))
+    found = answers(fp)[zipped]
+    assert found is not None
+    assert found.state == Content(__import__("hashlib").sha256(archive.read_bytes()).hexdigest())
+    assert unchanged(fp)
+    with zipfile.ZipFile(archive, "w") as z:
+        z.writestr(f"{zipped}.py", "A = 2\n")
+    assert not unchanged(fp)
+
+
+def test_a_plugin_edited_between_its_lookup_and_its_read_changes_it(
+    tmp_path: Path, names: Names, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The record hashes the file when the path search finds it, before the loader reads it: an edit in between
+    makes the next observation differ (the safe side), never a record of bytes the load did not run."""
+    import importlib.machinery
+
+    plug = names("plug")
+    root = ledger(tmp_path / "L", plug)
+    src = write(tmp_path / "L" / f"{plug}.py", NOOP)
+    real = importlib.machinery.SourceFileLoader.get_data
+
+    def get_data(self: importlib.machinery.SourceFileLoader, path: str) -> bytes:
+        if path == str(src):
+            src.write_text(NOOP + "EDITED = True\n", encoding="utf-8")
+        return real(self, path)
+
+    monkeypatch.setattr(importlib.machinery.SourceFileLoader, "get_data", get_data)
+    fp = fp_of(root)
+    monkeypatch.undo()
+    assert getattr(sys.modules[plug], "EDITED", False)  # the load ran the edited bytes
+    assert not unchanged(fp)
+
+
+def test_a_plugin_not_found_and_then_found_in_one_load_keeps_the_first_answer(tmp_path: Path, names: Names) -> None:
+    """Listed twice, with a plugin between that writes it: the load holds the import error and the plugin's run, which
+    the next load would not give (no error), so the first answer stays and the next observation differs."""
+    late, maker = names("late"), names("maker")
+    root = ledger(tmp_path / "L", late, maker, late)
+    target = tmp_path / "L" / f"{late}.py"
+    write(
+        tmp_path / "L" / f"{maker}.py",
+        f'import pathlib\n__plugins__ = ["run"]\n\n\ndef run(entries, options_map):\n'
+        f"    pathlib.Path({str(target)!r}).write_text({NOOP!r})\n    return entries, []\n",
+    )
+    loaded = load(root)
+    assert any("Error importing" in e.message for e in loaded.errors)
+    assert late in sys.modules  # the second import found it
+    assert answers(loaded.fingerprint)[late] is None
+    assert not unchanged(loaded.fingerprint)
+
+
+def test_the_load_lists_each_folder_afresh(tmp_path: Path, names: Names) -> None:
+    """A listing the process kept from before the load (an observation of the same folder) never answers the load's
+    import: a plugin that appeared with the folder's time put back is found and named."""
+    plug = names("plug")
+    root = ledger(tmp_path / "L", plug)
+    folder = tmp_path / "L"
+    fp = fp_of(root)
+    assert unchanged(fp)  # the folder's listing is now cached, without the plugin
+    st = folder.stat()
+    write(folder / f"{plug}.py", NOOP)
+    os.utime(folder, ns=(st.st_atime_ns, st.st_mtime_ns))
+    again = fp_of(root)
+    found = answers(again)[plug]
+    assert found is not None
+    assert found.origin == str(folder / f"{plug}.py")
+    assert unchanged(again)
+
+
+# ---- what keeps it ----------------------------------------------------------------------------------------------
+
+
+def test_unchanged_plugin_code_observes_unchanged_after_a_touch(tmp_path: Path, names: Names) -> None:
+    plug, pkg = names("plug"), names("pkg")
+    root = ledger(tmp_path / "L", plug, f"{pkg}.sub", names("missing"))
+    src = write(tmp_path / "L" / f"{plug}.py", "import json\n" + NOOP)
+    write(tmp_path / "L" / pkg / "__init__.py", "")
+    write(tmp_path / "L" / pkg / "sub.py", NOOP)
+    fp = fp_of(root)
+    assert observe(fp.ledger_set) == fp
+    os.utime(src, ns=(1, 1))  # a time is no input of the next load
+    assert observe(fp.ledger_set) == fp
+
+
+def test_a_ledger_with_no_plugin_of_its_own_records_only_beancounts_steps(tmp_path: Path) -> None:
+    root = tmp_path / "main.beancount"
+    root.write_text(BODY, encoding="utf-8")
+    fp = fp_of(root)
+    assert all(name.startswith("beancount.") for (name, _), _ in fp.modules), fp.modules
+    assert unchanged(fp)
+
+
+def test_the_observation_imports_nothing_and_runs_no_code(tmp_path: Path, names: Names) -> None:
+    """The save's gate observes (ADR-0068 D1: it runs no user code): a plugin whose import leaves a mark is asked
+    about, not imported."""
+    plug, late = names("plug"), names("late")
+    root = ledger(tmp_path / "L", plug)
+    mark = tmp_path / "imported"
+    body = f"import pathlib\npathlib.Path({str(mark)!r}).touch()\n"
+    write(tmp_path / "L" / f"{plug}.py", body + f"import {late}\n" + NOOP)
+    write(tmp_path / "L" / f"{late}.py", body)
+    fp = fp_of(root)
+    assert mark.exists()
+    mark.unlink()
+    forget(plug, late)
+    before, listing = set(sys.modules), sorted((tmp_path / "L").rglob("*"))
+    assert unchanged(fp)
+    assert set(sys.modules) == before
+    assert not mark.exists()
+    assert sorted((tmp_path / "L").rglob("*")) == listing  # no bytecode written either
+
+
+# ---- the record is the load's own ----------------------------------------------------------------------------------
+
+
+def test_the_record_names_the_file_the_import_used(tmp_path: Path, names: Names) -> None:
+    plug = names("plug")
+    root = ledger(tmp_path / "L", plug)
+    src = write(tmp_path / "L" / f"{plug}.py", NOOP)
+    found = answers(fp_of(root))[plug]
+    assert found is not None
+    assert found.origin == sys.modules[plug].__file__ == str(src)
+    assert found.state == Content(__import__("hashlib").sha256(src.read_bytes()).hexdigest())
+
+
+def test_a_plugin_that_raises_at_import_is_in_the_refusals_read(tmp_path: Path, names: Names) -> None:
+    """A plugin failing at import refuses the load (S0098); what the load read names it, so a fix is a moved disk."""
+    plug = names("plug")
+    root = ledger(tmp_path / "L", plug)
+    src = write(tmp_path / "L" / f"{plug}.py", "raise RuntimeError('broken')\n")
+    out = overlay.load(str(root), {}, DESKTOP)
+    assert isinstance(out, overlay.LoadRefused), out
+    assert out.read is not None
+    assert plug in answers(out.read)
+    assert observe(out.read.ledger_set) == out.read
+    write(src, NOOP)
+    assert observe(out.read.ledger_set) != out.read
+
+
+SCRIPT = """
+import sys
+from ledger_engine.ledger import imports, overlay, rebuild
+from ledger_engine.ledger.core.ledger_set import encode, Fingerprint
+from ledger_engine.ledger.policy import DESKTOP
+root = sys.argv[2]
+if sys.argv[1] == "overlay":
+    modules = dict(overlay.load(root, {}, DESKTOP).fingerprint.modules)
+else:
+    modules = {}
+    with imports.recording(modules):
+        rebuild.Ports().load(root, [])
+print(encode(Fingerprint.of(root, {}, {}, {}, {}, modules)).decode())
+"""
+
+
+def test_the_overlay_load_and_the_real_load_record_the_same_imports(tmp_path: Path) -> None:
+    """Each in a fresh process, as each job runs in a fresh engine: the open's stamp and the rebuild's agree, so a
+    rebuild after a save needs no extra try for its imports."""
+    root = ledger(tmp_path / "L", "ft_s0099_same", "ft_s0099_absent")
+    write(tmp_path / "L" / "ft_s0099_same.py", "import colorsys\n" + NOOP)
+
+    def run(kind: str) -> str:
+        out = subprocess.run(  # noqa: S603 (this interpreter, a literal script, a test path)
+            [sys.executable, "-s", "-B", "-c", SCRIPT, kind, str(root)],
+            capture_output=True,
+            text=True,
+            check=True,
+            cwd=tmp_path,
+        )
+        return out.stdout
+
+    assert run("overlay") == run("real")
+    assert "ft_s0099_same" in run("overlay")
+
+
+ENGINE_SRC = Path(__file__).resolve().parents[2] / "src" / "ledger_engine"
+
+
+def test_every_load_that_runs_plugins_records_its_imports() -> None:
+    """A load whose record misses its imports would stamp a generation, or give a plan, that a plugin edit cannot
+    move. The loads that run plugins are the port's `real_load` and `run_transformations` (the overlay's), found by
+    behaviour: every engine module that calls one of them (S0099). Each whose result carries a fingerprint wraps it in
+    `imports.recording`; the create's load check keeps none (its count and parsed files only)."""
+    callers: set[str] = set()
+    for p in sorted(ENGINE_SRC.rglob("*.py")):
+        text = p.read_text(encoding="utf-8")
+        if "port.real_load(" in text or "port.run_transformations(" in text:
+            callers.add(str(p.relative_to(ENGINE_SRC)))
+    # a new caller fails here until it records its imports and is added
+    assert callers == {"ledger/create.py", "ledger/overlay.py", "ledger/rebuild.py"}
+    for rel in ("ledger/overlay.py", "ledger/rebuild.py"):
+        assert "imports.recording(" in (ENGINE_SRC / rel).read_text(encoding="utf-8"), rel
+    assert {f.name for f in dataclasses.fields(create.LoadResult)} == {"errors", "parsed"}  # no fingerprint

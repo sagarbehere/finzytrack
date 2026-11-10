@@ -3,16 +3,19 @@
 
 A **ledger set** is everything one load looked at: its root, every file it named (read, or looked for and not
 found), every `include` it globbed (plain paths too: the loader globs each), every documents root it scanned, and the
-file of every `document` entry whose existence Beancount checks. A **fingerprint** is one observation of it: per file
+file of every `document` entry whose existence Beancount checks, and every module its imports looked up (S0099,
+BL-0124). A **fingerprint** is one observation of it: per file
 the SHA-256 of its bytes, `absent` (no file: `os.path.exists` is false) or `unreadable {errno}`; per include the
 glob's match list in the loader's order (it decides the order files are parsed in, so it can change entry order; for
 a plain path it is the path or nothing, the glob's `lexists`, which tells "does not exist" from "does not match");
 per documents root its file names, each with whether it leads to a file, or `absent`; per document file whether it
-exists. Equal fingerprints mean the next load reads the same inputs; that is the whole contract, and what the write gate
-(ADR-0008 step 4, ADR-0013) and the mirror's freshness (ADR-0015) rely on. The one input of a load left out on purpose
-is each file's mtime and size, which Beancount reads only into `options["input_hash"]` (its cache key; no entry, error
-or other option depends on it): a fingerprint that held them would change on every `touch`. A digest that compares two
-loads' results must therefore leave `input_hash` out.
+exists; per module lookup (its full name and the folders searched, in order) the import system's answer: not found,
+or the file it would load (with the SHA-256 of the file the loader reads, or `absent`, `unreadable`), and a package's
+folders. Equal fingerprints mean the next load reads the same inputs, its plugin code included; that is the whole
+contract, and what the write gate (ADR-0008 step 4, ADR-0013) and the mirror's freshness (ADR-0015) rely on. The one
+input of a load left out on purpose is each file's mtime and size, which Beancount reads only into
+`options["input_hash"]` (its cache key; no entry, error or other option depends on it): a fingerprint that held them
+would change on every `touch`. A digest that compares two loads' results must therefore leave `input_hash` out.
 
 Content hashes, not `(mtime, size)` as ADR-0015 first wrote: an edit that keeps the size within the clock's
 resolution, or a tool that restores the mtime, would pass a stat (ADR-0064's spec, S0051 journal).
@@ -44,7 +47,9 @@ from decimal import Decimal
 from itertools import pairwise
 from typing import Final, cast
 
-ENCODING_VERSION: Final = 1
+ENCODING_VERSION: Final = 2
+"""2 since S0099 (the `modules` part, BL-0124); a stamp of version 1 does not decode, so its generation is not fresh and
+is built again once."""
 _SHA256_HEX: Final = re.compile(r"[0-9a-f]{64}")
 
 
@@ -80,6 +85,27 @@ class Unreadable:
 
 
 type FileState = Content | Absent | Unreadable
+type ModuleKey = tuple[str, tuple[str, ...]]
+"""One question a load's imports asked the path search: a module's full name and the folders searched, in order
+(`sys.path` while the plugins ran, for a top-level module; its package's folders, for a submodule)."""
+
+
+@dataclass(frozen=True, slots=True)
+class Module:
+    """The path search's answer when it found the module (not found is `None`): `origin`, the file it is loaded from
+    (None for a namespace package, which has no file); `locations`, a package's folders, in order (None for a module
+    that is no package); `state`, the bytes of the file the loader reads (`origin`, or the zip archive holding it),
+    None when there is no such file to read (a namespace package; a finder a plugin installed that names none)."""
+
+    origin: str | None
+    locations: tuple[str, ...] | None
+    state: FileState | None
+
+    def __post_init__(self) -> None:
+        if self.origin is None and (self.locations is None or self.state is not None):
+            raise NotCanonicalError("module")
+
+
 # A documents root's file names (relative, sorted), each with whether it leads to a file (`os.path.exists`: Beancount
 # makes a `document` entry for a dated name and then checks it); None when the root does not exist.
 type Listing = tuple[tuple[str, bool], ...] | None
@@ -94,6 +120,7 @@ class LedgerSet:
     globs: tuple[str, ...]
     documents: tuple[str, ...]
     document_files: tuple[str, ...]
+    modules: tuple[ModuleKey, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -106,6 +133,7 @@ class Fingerprint:
     globs: tuple[tuple[str, tuple[str, ...]], ...]
     documents: tuple[tuple[str, Listing], ...]
     document_files: tuple[tuple[str, bool], ...]
+    modules: tuple[tuple[ModuleKey, Module | None], ...] = ()
 
     def __post_init__(self) -> None:
         for name, keys in (
@@ -116,6 +144,8 @@ class Fingerprint:
         ):
             if not _strictly_sorted(keys):
                 raise NotCanonicalError(name)
+        if not _strictly_sorted([k for k, _ in self.modules]):
+            raise NotCanonicalError("modules")
         for _, listing in self.documents:
             if listing is not None and not _strictly_sorted([name for name, _ in listing]):
                 raise NotCanonicalError("listing")
@@ -128,6 +158,7 @@ class Fingerprint:
         globs: Mapping[str, Sequence[str]],
         documents: Mapping[str, Mapping[str, bool] | None],
         document_files: Mapping[str, bool],
+        modules: Mapping[ModuleKey, Module | None] | None = None,
     ) -> Fingerprint:
         return cls(
             root,
@@ -135,6 +166,7 @@ class Fingerprint:
             tuple((k, tuple(v)) for k, v in sorted(globs.items())),
             tuple((k, None if v is None else tuple(sorted(v.items()))) for k, v in sorted(documents.items())),
             tuple(sorted(document_files.items())),
+            tuple(sorted((modules or {}).items(), key=lambda item: item[0])),
         )
 
     @property
@@ -145,10 +177,11 @@ class Fingerprint:
             tuple(k for k, _ in self.globs),
             tuple(k for k, _ in self.documents),
             tuple(k for k, _ in self.document_files),
+            tuple(k for k, _ in self.modules),
         )
 
 
-def _strictly_sorted(items: Sequence[str]) -> bool:
+def _strictly_sorted[T: (str, ModuleKey)](items: Sequence[T]) -> bool:
     return all(a < b for a, b in pairwise(items))
 
 
@@ -162,6 +195,16 @@ def _state(state: FileState) -> list[str]:
             return ["unreadable", e]
 
 
+def _module(answer: Module | None) -> list[object] | None:
+    if answer is None:
+        return None
+    return [
+        answer.origin,
+        None if answer.locations is None else list(answer.locations),
+        None if answer.state is None else _state(answer.state),
+    ]
+
+
 def encode(fp: Fingerprint) -> bytes:
     """Canonical JSON: fixed key order, no spaces, ASCII only (undecodable file names stay as escapes)."""
     value = {
@@ -171,6 +214,7 @@ def encode(fp: Fingerprint) -> bytes:
         "globs": [[p, list(m)] for p, m in fp.globs],
         "documents": [[p, None if m is None else [[n, e] for n, e in m]] for p, m in fp.documents],
         "document_files": [[p, e] for p, e in fp.document_files],
+        "modules": [[name, list(path), _module(answer)] for (name, path), answer in fp.modules],
     }
     return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode("ascii")
 
@@ -232,6 +276,27 @@ def _listing(value: object) -> Listing:
     return tuple(out)
 
 
+def _optional_strings(value: object, what: str) -> tuple[str, ...] | None:
+    return None if value is None else _strings(value, what)
+
+
+def _decode_module(item: object) -> tuple[ModuleKey, Module | None]:
+    items = _items(item, "modules")
+    if len(items) != 3 or not isinstance(items[0], str):
+        raise UndecodableError("modules")
+    key = (items[0], _strings(items[1], "modules"))
+    if items[2] is None:
+        return key, None
+    answer = _items(items[2], "modules")
+    if len(answer) != 3:
+        raise UndecodableError("modules")
+    state = None if answer[2] is None else _decode_state(answer[2])
+    origin = answer[0]
+    if origin is not None and not isinstance(origin, str):
+        raise UndecodableError("modules")
+    return key, Module(origin, _optional_strings(answer[1], "modules"), state)
+
+
 def decode(data: bytes) -> Fingerprint:
     """The strict inverse of `encode` (S0063: the plan's fingerprint crosses the engine protocol as its encoding):
     exactly the bytes `encode` would make for the value, or `UndecodableError`."""
@@ -242,7 +307,8 @@ def decode(data: bytes) -> Fingerprint:
     if not isinstance(value, dict):
         raise UndecodableError("object")
     obj = cast(dict[str, object], value)
-    if set(obj) != {"v", "root", "files", "globs", "documents", "document_files"} or obj["v"] != ENCODING_VERSION:
+    keys = {"v", "root", "files", "globs", "documents", "document_files", "modules"}
+    if set(obj) != keys or obj["v"] != ENCODING_VERSION:
         raise UndecodableError("keys_or_version")
     root = obj["root"]
     if not isinstance(root, str):
@@ -259,7 +325,8 @@ def decode(data: bytes) -> Fingerprint:
             if not isinstance(e, bool):
                 raise UndecodableError("document_files")
             document_files.append((p, e))
-        fp = Fingerprint(root, files, globs, documents, tuple(document_files))
+        modules = tuple(_decode_module(i) for i in _items(obj["modules"], "modules"))
+        fp = Fingerprint(root, files, globs, documents, tuple(document_files), modules)
     except NotCanonicalError:
         raise UndecodableError("not_canonical") from None
     if encode(fp) != data:
@@ -280,4 +347,4 @@ def as_before(loaded: Fingerprint, pre: Mapping[str, str | None]) -> Fingerprint
     )
     created = {p for p, h in pre.items() if h is None}
     globs = tuple((g, () if not glob.has_magic(g) and posixpath.normpath(g) in created else m) for g, m in loaded.globs)
-    return Fingerprint(loaded.root, files, globs, loaded.documents, loaded.document_files)
+    return Fingerprint(loaded.root, files, globs, loaded.documents, loaded.document_files, loaded.modules)

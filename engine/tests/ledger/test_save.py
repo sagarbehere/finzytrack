@@ -251,6 +251,96 @@ def test_the_save_runs_no_plugin_of_the_ledger(led: Ledger) -> None:
     assert not mark.exists()
 
 
+PLUGIN_V1 = '__plugins__ = ["keep"]\n\n\ndef keep(entries, options_map):\n    return entries, []\n'
+PLUGIN_V2 = PLUGIN_V1.replace("return entries, []", "return entries[:-1], []")
+
+
+def with_plugin(led: Ledger, name: str, source: str | None = PLUGIN_V1) -> bytes:
+    """The ledger names the plugin `name` from its own folder (`insert_pythonpath`); its source written unless None;
+    the disk published (the rebuild after the last save)."""
+    main = b'option "insert_pythonpath" "TRUE"\nplugin "' + name.encode() + b'"\n' + MAIN
+    led.main.write_bytes(main)
+    if source is not None:
+        (led.root / f"{name}.py").write_text(source)
+    publish_disk(led)
+    return main
+
+
+def fresh_engine(*names: str) -> None:
+    """The next job's engine has imported none of the ledger's plugins (spec §5.1)."""
+    for n in names:
+        sys.modules.pop(n, None)
+
+
+@pytest.mark.parametrize("change", ["edit", "delete"])
+def test_a_plugin_changed_after_the_preview_refuses_the_save(led: Ledger, change: str) -> None:
+    """BL-0124, spec §6.1 step 4: the preview's new errors were those of the plugin code it ran; other code on disk
+    is a moved ledger, refused at the gate with nothing written."""
+    name = f"ft_s0099_save_{change}"
+    try:
+        main = with_plugin(led, name)
+        fresh_engine(name)
+        plan = plan_for(led, (Change(str(led.main), sha256(main), main + TXN),))
+        src = led.root / f"{name}.py"
+        if change == "edit":
+            src.write_text(PLUGIN_V2)
+        else:
+            src.unlink()
+        before = led.tree()
+        job = FakeJob()
+        out = sv.run(plan, ports_for(led), job)
+        assert out == sv.Refused("ledger_changed", unchanged=True)
+        assert "gate" not in job.events
+        assert_nothing_written(led, before, out)
+    finally:
+        fresh_engine(name)
+
+
+def test_a_plugin_that_appears_after_the_preview_refuses_the_save(led: Ledger) -> None:
+    """The preview's load did not find the plugin (an import error); the next load would run it."""
+    name = "ft_s0099_save_appears"
+    try:
+        main = with_plugin(led, name, None)
+        plan = plan_for(led, (Change(str(led.main), sha256(main), main + TXN),))
+        (led.root / f"{name}.py").write_text(PLUGIN_V1)
+        out = sv.run(plan, ports_for(led), FakeJob())
+        assert out == sv.Refused("ledger_changed", unchanged=True)
+        assert led.main.read_bytes() == main
+    finally:
+        fresh_engine(name)
+
+
+def test_a_plugin_edited_after_the_publish_refuses_the_save_as_a_stale_mirror(led: Ledger) -> None:
+    """publish.md §7: the preview read the edited plugin (the disk equals the plan), but the published generation
+    describes the old code, so the screens the user planned on are not the ledger's."""
+    name = "ft_s0099_save_stale"
+    try:
+        main = with_plugin(led, name)
+        (led.root / f"{name}.py").write_text(PLUGIN_V2)
+        fresh_engine(name)
+        plan = plan_for(led, (Change(str(led.main), sha256(main), main + TXN),))
+        before = led.tree()
+        out = sv.run(plan, ports_for(led), FakeJob())
+        assert out == sv.Refused("mirror_stale", unchanged=True)
+        assert_nothing_written(led, before, out)
+    finally:
+        fresh_engine(name)
+
+
+def test_unchanged_plugin_code_saves(led: Ledger) -> None:
+    name = "ft_s0099_save_same"
+    try:
+        main = with_plugin(led, name)
+        fresh_engine(name)
+        plan = plan_for(led, (Change(str(led.main), sha256(main), main + TXN),))
+        assert any(k[0] == name for k, _ in plan.fingerprint.modules)
+        (led.root / f"{name}.py").touch()
+        out = sv.run(plan, ports_for(led), FakeJob())
+        assert isinstance(out, sv.Saved), out
+    finally:
+        fresh_engine(name)
+
+
 def test_a_candidate_a_load_would_refuse_is_saved_as_planned(led: Ledger) -> None:
     """The save trusts the plan: a file no include reaches (the overlay's `not-reached`) is the preview's to refuse
     (BL-0106), never the save's."""

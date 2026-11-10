@@ -253,7 +253,11 @@ engine/src/ledger_engine/
     fingerprint.py  observe(ledger_set) -> Fingerprint: the disk asked the loader's own questions (S0051; ADR-0008
                  step 4, ADR-0015; SHA-256 per file per the engine-jobs spec §1, not ADR-0015's mtime and size;
                  also each include's glob answer, plain paths too, documents listings with each name's presence, the
-                 files of the `document` entries Beancount checks)
+                 files of the `document` entries Beancount checks; since S0099 each module the load's imports
+                 looked up, asked again of the path search with the same folders and the file found hashed)
+    imports.py   recording(into): what a load's imports read, for its fingerprint: every path-search lookup with its
+                 folders, its answer and the found file's SHA-256 taken before the loader reads it; one load with
+                 plugins per engine process (S0099, BL-0124)
     policy.py    LoadPolicy: may_read, may_run_plugin, may_add_pythonpath, may_scan_documents (built: the desktop
                  body, which allows all: v0.4.0 has no trust prompt, so a ledger's plugins and insert_pythonpath
                  run as Beancount runs them, as bean-check and Fava do; limit: opening a ledger runs its code, so
