@@ -29,6 +29,7 @@ Pinned to Beancount 3.2.0 (ADR-0004); `BEANCOUNT_VERSION` is checked by the over
 from __future__ import annotations
 
 import datetime
+import decimal
 import io
 import sys
 from collections.abc import Generator, Iterable, Iterator, Sequence
@@ -86,6 +87,7 @@ from beancount.utils import encryption as _encryption
 from beancount.utils.encryption import is_encrypted_file as _is_encrypted_file
 
 __all__ = [
+    "BEANCOUNT_CONTEXT",
     "BEANCOUNT_VERSION",
     "CUSTOM_VALUE_TYPES",
     "LOAD_STAGES",
@@ -114,9 +116,11 @@ __all__ = [
     "Query",
     "Transaction",
     "TransactionCheck",
+    "WrittenNumber",
     "aggregate_options",
     "assertion_balance",
     "balance_tolerance",
+    "beancount_context",
     "book",
     "booked_positions",
     "check_transaction",
@@ -189,6 +193,7 @@ WRAPPERS: Final = frozenset(
         "display_precision",
         "is_interpolated",
         "written_numbers",
+        "beancount_context",
         "fill_weight",
         "quantize_fill",
         "filled_amount",
@@ -211,15 +216,36 @@ def parse_string(data: bytes, report_filename: str | None = None) -> ParseResult
     return list(entries), list(errors), dict(options)
 
 
-def written_numbers(data: bytes) -> Iterator[tuple[int, str, Decimal]]:
-    """Each number written in `data`, as Beancount's own lexer reads it (`lexer.lex_iter`, the parser's lexer): its
-    line, its text as written (thousands separators kept, with the minus when a `-` stands right before it) and its
-    exact value. A number inside an expression counts by itself; strings, comments, dates and names hold none."""
-    minus = False
-    for kind, lineno, text, value in _lex_iter(io.BytesIO(data)):
-        if kind == "NUMBER" and isinstance(value, Decimal):
-            yield lineno, ("-" if minus else "") + text.decode("ascii", "replace"), value
-        minus = kind == "MINUS"
+_OPERATORS: Final = frozenset({"PLUS", "MINUS", "ASTERISK", "SLASH", "LPAREN", "RPAREN"})
+_OPERANDS: Final = frozenset({"NUMBER", "RPAREN"})
+
+
+@dataclass(frozen=True, slots=True)
+class WrittenNumber:
+    """A number as written in a ledger file, read by Beancount's own lexer: its line, its text (thousands separators
+    kept; a sign minus included), its exact value as written (the sign applied, so `-x` is the negative number the
+    user wrote), and whether it stands alone (`alone`: a signed number, not part of an expression such as `(a + b)`)."""
+
+    lineno: int
+    text: str
+    value: Decimal
+    alone: bool
+
+
+def written_numbers(data: bytes) -> Iterator[WrittenNumber]:
+    """Each number written in `data`, as Beancount's own lexer reads it (`lexer.lex_iter`, the parser's lexer). A minus
+    is a sign when no number or `)` stands before it; strings, comments, dates and names hold no number."""
+    tokens = list(_lex_iter(io.BytesIO(data)))
+    for i, (kind, lineno, text, value) in enumerate(tokens):
+        if kind != "NUMBER" or not isinstance(value, Decimal):
+            continue
+        before = tokens[i - 1][0] if i > 0 else ""
+        signed = before == "MINUS" and (i < 2 or tokens[i - 2][0] not in _OPERANDS)
+        first = tokens[i - 2][0] if signed and i > 1 else before
+        after = tokens[i + 1][0] if i + 1 < len(tokens) else ""
+        alone = (signed or before not in _OPERATORS) and first not in _OPERATORS and after not in _OPERATORS
+        shown = ("-" if signed else "") + text.decode("ascii", "replace")
+        yield WrittenNumber(lineno, shown, value.copy_negate() if signed else value, alone)
 
 
 def sort_order(entry: object) -> int:
@@ -231,6 +257,32 @@ def sort_order(entry: object) -> int:
 def is_encrypted_file(path: str) -> bool:
     """Beancount's own test: a `.gpg` name, or an `.asc` name whose file starts with a PGP message header."""
     return _is_encrypted_file(path)
+
+
+# ---- the decimal context every load runs in ------------------------------------------------------------------------
+
+BEANCOUNT_CONTEXT: Final = decimal.Context(
+    prec=28,
+    rounding=decimal.ROUND_HALF_EVEN,
+    Emin=-999_999,
+    Emax=999_999,
+    capitals=1,
+    clamp=0,
+    flags=[],
+    traps=[decimal.InvalidOperation, decimal.DivisionByZero, decimal.Overflow],
+)
+"""Python's default decimal context, the one bean-check and Fava run Beancount in (28 significant digits), spelled out
+so no plugin can change it: `decimal.DefaultContext` is itself a mutable object a plugin could alter
+(`engine/tests/ledger/test_precision.py` holds the two equal)."""
+
+
+@contextmanager
+def beancount_context() -> Generator[None]:
+    """A load's own decimal context (S0098 round 1, finance F1): a fresh copy of `BEANCOUNT_CONTEXT` for the current
+    thread, the caller's context restored after. A plugin that changes the context (`getcontext().prec = 64`) changes
+    it for the rest of its own load, as in bean-check, and for nothing after it."""
+    with decimal.localcontext(BEANCOUNT_CONTEXT):
+        yield
 
 
 # ---- the real loads (only ledger/rebuild.py; BL-0118)-------------------------------------------------------
@@ -269,7 +321,7 @@ def real_load(root: str) -> ParseResult:
     accepted, and its fingerprint checks before and after tell whether the disk is still that set); an encrypted file
     met is not decrypted: `EncryptedFileMet` (the overlay's own refusal, which a file added during the load would
     escape)."""
-    with _never_decrypt():
+    with beancount_context(), _never_decrypt():
         entries, errors, options = _loader_load([(root, True)], None, None, None)
     return list(entries), list(errors), dict(options)
 

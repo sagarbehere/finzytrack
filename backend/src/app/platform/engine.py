@@ -273,8 +273,8 @@ class SaveAnswer:
 type RebuildOutcome = Literal["loaded", "moved", "fresh", "paused", "refused"]
 type Publish = Literal["published", "fresh", "inexact", "replaced", "incomplete"]
 type LoadRefusal = Literal["number_failed", "beancount_failed"]
-"""Beancount's own load raised on the ledger (S0098): its arithmetic failed on a number, or anything else of its load
-failed (a plugin's entry its checks cannot read). bean-check fails on the same ledger."""
+"""Beancount's own load raised on the ledger (S0098): its arithmetic failed on the transaction the line names, or
+anything else of its load failed (a plugin's entry its checks cannot read). bean-check fails on the same ledger."""
 type OpenRefusal = Literal["encrypted", "number_failed", "beancount_failed"]
 
 

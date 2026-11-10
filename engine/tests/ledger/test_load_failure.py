@@ -145,9 +145,70 @@ def test_an_entry_that_names_no_ledger_file_is_never_named(tmp_path: Path) -> No
         assert (got.path, got.line) == (root, None), meta
 
 
-def test_a_decimal_error_is_a_number_failure_and_anything_else_is_beancounts(tmp_path: Path) -> None:
+def raised_on(error: Exception, entry: object) -> Exception:
+    """`error`, raised while a frame holds `entry`."""
+
+    def go(entry: object) -> None:
+        del entry
+        raise error
+
+    try:
+        go(entry)
+    except Exception as e:  # noqa: BLE001 (the test's own raise)
+        return e
+    msg = "no exception"
+    raise AssertionError(msg)
+
+
+def test_a_decimal_error_on_a_named_transaction_is_a_number_failure_and_anything_else_is_beancounts(
+    tmp_path: Path,
+) -> None:
     root = str(tmp_path / "main.beancount")
-    assert load_failure.of(decimal.InvalidOperation(), root).reason == "number-failed"
-    assert load_failure.of(decimal.DivisionByZero(), root).reason == "number-failed"
-    assert load_failure.of(TypeError(), root).reason == "beancount-failed"
-    assert load_failure.of(ZeroDivisionError(), root).reason == "beancount-failed"
+    named = SimpleNamespace(meta={"filename": root, "lineno": 3})
+    for kind in (decimal.InvalidOperation, decimal.DivisionByZero):
+        assert load_failure.of(raised_on(kind(), named), root).reason == "number-failed"
+        assert load_failure.of(kind(), root).reason == "beancount-failed"  # no transaction named: no "line N" text
+    assert load_failure.of(raised_on(TypeError(), named), root).reason == "beancount-failed"
+    assert load_failure.of(raised_on(ZeroDivisionError(), named), root).reason == "beancount-failed"
+
+
+@pytest.mark.parametrize(
+    "posting",
+    ["Assets:Wallet  0 TOK {{10.00 USD}}", "Assets:Wallet  0 TOK @ USD"],
+)
+def test_a_division_by_a_zero_quantity_is_a_number_failure_on_its_transactions_line(
+    tmp_path: Path, posting: str
+) -> None:
+    root = write(tmp_path, OPEN + f'2021-01-01 * "zero"\n  {posting}\n  Equity:Opening  -10.00 USD\n')
+    with pytest.raises(decimal.DecimalException):
+        port.real_load(str(root))  # bean-check fails here too
+    assert load(str(root), {}, DESKTOP) == LoadRefused("number-failed", str(root), 3)
+
+
+def test_a_plugins_own_decimal_error_is_no_number_failure(tmp_path: Path) -> None:
+    root = write(tmp_path, OPEN, "import decimal\nraise decimal.InvalidOperation('a plugin of its own')\n")
+    assert load(str(root), {}, DESKTOP) == LoadRefused("beancount-failed", str(root), None)
+
+
+def test_a_fault_of_the_engines_own_code_stays_the_engines(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """S0098 round 1, finance F8: a refusal tells the user to fix the ledger; a bug of ours, or a full memory, is not
+    the ledger's, so it is raised (`engine.internal`), never `beancount-failed`."""
+    root = write(tmp_path, OPEN + CRASH)
+
+    def nothing(entries: list[port.Directive], options: port.OptionsMap) -> None:
+        del entries, options  # Beancount's booking returning nothing: the wrapper's own unpacking fails, in its frame
+
+    with monkeypatch.context() as m:
+        m.setattr(port, "_book", nothing)
+        with pytest.raises(TypeError):
+            load(str(root), {}, DESKTOP)
+
+    def full(entries: list[port.Directive], options: port.OptionsMap) -> list[port.BeancountError]:
+        raise MemoryError
+
+    plain = write(tmp_path, OPEN)
+    with monkeypatch.context() as m:
+        m.setattr(port, "validate", full)
+        with pytest.raises(MemoryError):
+            load(str(plain), {}, DESKTOP)
+    assert not load_failure.beancounts(MemoryError())

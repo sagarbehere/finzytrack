@@ -96,7 +96,8 @@ class Answer:
     `refused` (nothing loaded: `refusal` says why, `refused` names the file and `line` the line when known: an
     encrypted file, ADR-0059; or Beancount's own load raised on the ledger, `number-failed` or `beancount-failed`,
     `ledger.load_failure`). `entries` and `errors`: the load's counts (`loaded` only; `errors` counts Beancount's
-    errors and the warnings on numbers it rounded, every row of `ledger_errors`). `cleaned`: what the cleanup did."""
+    errors, as bean-check reports them; the warnings on numbers it rounded are rows of `ledger_errors` but not
+    errors: S0098 round 1, finance F6). `cleaned`: what the cleanup did."""
 
     outcome: Outcome
     entries: int = 0
@@ -125,6 +126,8 @@ def run(ports: Ports, root: str, job: Job, target: Target) -> Answer:
         job.progress(PHASE)
         loaded = ports.load(root)  # step 3: Beancount's full load (user code)
         if isinstance(loaded, overlay.LoadRefused):
+            if loaded.read is not None and ports.observe(loaded.read.ledger_set) != loaded.read:
+                return Answer("moved", cleaned=cleaned)  # the disk changed since Beancount failed on it: try again
             if loaded.reason == "encrypted" or loaded.reason == "number-failed" or loaded.reason == "beancount-failed":
                 refusal: Refusal = loaded.reason
                 return Answer("refused", cleaned=cleaned, refused=loaded.subject, refusal=refusal, line=loaded.line)
@@ -147,4 +150,4 @@ def run(ports: Ports, root: str, job: Job, target: Target) -> Answer:
         )
     if isinstance(out, pb.NotPublished) and out.why in ("moved", "paused"):
         return Answer(out.why, cleaned=cleaned)
-    return Answer("loaded", len(loaded.entries), len(loaded.reported), published=out, cleaned=cleaned)
+    return Answer("loaded", len(loaded.entries), len(loaded.errors), published=out, cleaned=cleaned)

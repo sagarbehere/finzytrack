@@ -24,8 +24,11 @@ Where it differs from Beancount, on purpose (each refuses the whole load, EP-13;
   matches only files on disk, as in Beancount, so a new file reached only through a glob is refused (BL-0117).
 - **Beancount's own load raising** on the ledger (its parse, booking, a plugin's import or its validation, as
   bean-check fails on the same ledger) is refused, never raised: `number-failed` or `beancount-failed`, naming the
-  file and line of the entry Beancount was working on when known (`load_failure`; S0049's contract, BL-0123). A disk
-  error stays the caller's (`OSError`).
+  file and line of the transaction Beancount was working on when known (`load_failure`; S0049's contract, BL-0123),
+  with what the load had read (`LoadRefused.read`, which the open observes again). A disk error stays the caller's
+  (`OSError`), and so does a fault of the engine's own code or a full memory (`load_failure.beancounts`).
+- **Its own decimal context**: every load runs in `beancount_port.BEANCOUNT_CONTEXT` (Python's default, as bean-check)
+  and leaves the caller's as it was, so a plugin that changes the context changes only its own load.
 - **Warnings on numbers Beancount rounded** (`precision`; owner, 2026-11-10, "Follow Beancount"): the load keeps
   Beancount's own 28-digit numbers and lists a warning per line it rounded in `Loaded.warnings`, apart from
   `Loaded.errors`, which stay exactly Beancount's (`Loaded.reported` gives both, as the mirror lists them).
@@ -106,6 +109,8 @@ class LoadRefused:
     reason: RefusalReason
     subject: str
     line: int | None = None
+    read: Fingerprint | None = field(default=None, compare=False)
+    """For `number-failed` and `beancount-failed`: what the load had read when Beancount failed."""
 
 
 type LoadResult = Loaded | LoadRefused
@@ -120,7 +125,13 @@ class NotAbsoluteError(ValueError):
 
 def load(root: str, overlay: Mapping[str, bytes], policy: LoadPolicy) -> LoadResult:
     """Load the ledger set rooted at `root` (an absolute path) with `overlay`'s bytes in place of the files they
-    name (absolute paths), under `policy`."""
+    name (absolute paths), under `policy`. In Beancount's own decimal context, the caller's restored after
+    (`beancount_port.beancount_context`)."""
+    with port.beancount_context():
+        return _load(root, overlay, policy)
+
+
+def _load(root: str, overlay: Mapping[str, bytes], policy: LoadPolicy) -> LoadResult:
     if not path.isabs(root):
         raise NotAbsoluteError(root)
     candidates: dict[str, bytes] = {}
@@ -153,8 +164,10 @@ def load(root: str, overlay: Mapping[str, bytes], policy: LoadPolicy) -> LoadRes
         entries, balance_errors = port.book(entries, options)
     except OSError:
         raise
-    except Exception as e:  # noqa: BLE001 (Beancount's booking raised on the ledger: refused, never raised)
-        return _failed(e, root)
+    except Exception as e:  # Beancount's booking raised on the ledger: refused, never raised
+        if not load_failure.beancounts(e):
+            raise
+        return _failed(e, root, seen, documents, document_files)
     parse_errors.extend(balance_errors)
     try:
         entries, errors = port.run_transformations(entries, parse_errors, options)
@@ -162,25 +175,39 @@ def load(root: str, overlay: Mapping[str, bytes], policy: LoadPolicy) -> LoadRes
         return LoadRefused("encrypted", e.path)
     except OSError:
         raise
-    except Exception as e:  # noqa: BLE001 (a plugin raised while it was imported: refused, never raised)
-        return _failed(e, root)
+    except Exception as e:  # a plugin raised while it was imported: refused, never raised
+        if not load_failure.beancounts(e):
+            raise
+        return _failed(e, root, seen, documents, document_files)
     listed = {path.join(d, name) for d, names in documents.items() if names is not None for name in names}
     document_files.update(_plugin_documents(entries, errors, options, listed | set(document_files)))
     try:
         errors.extend(port.validate(entries, options))
     except OSError:
         raise
-    except Exception as e:  # noqa: BLE001 (Beancount's checks raised on an entry: refused, never raised)
-        return _failed(e, root)
+    except Exception as e:  # Beancount's checks raised on an entry: refused, never raised
+        if not load_failure.beancounts(e):
+            raise
+        return _failed(e, root, seen, documents, document_files)
     options["input_hash"] = port.input_hash(options["include"])
     fingerprint = Fingerprint.of(path.normpath(root), seen.files, seen.globs, documents, document_files)
-    warnings = [*precision.written(seen.long), *precision.filled_in(entries, options)]
-    return Loaded(entries, errors, options, fingerprint, list(warnings))
+    warnings: list[port.BeancountError] = [*precision.warnings(seen.data, entries, options)]
+    return Loaded(entries, errors, options, fingerprint, warnings)
 
 
-def _failed(error: Exception, root: str) -> LoadRefused:
-    failure = load_failure.of(error, path.normpath(root))
-    return LoadRefused(failure.reason, failure.path, failure.line)
+def _failed(
+    error: Exception,
+    subject: str,
+    seen: _Seen,
+    documents: Mapping[str, Mapping[str, bool] | None],
+    document_files: Mapping[str, bool],
+    root: str | None = None,
+) -> LoadRefused:
+    """The refusal of a load Beancount failed on, with the fingerprint of what the load had read so far (the caller
+    observes it again: a disk that changed meanwhile is a moved disk, not a refusal; S0098 round 1, data-safety F2)."""
+    failure = load_failure.of(error, path.normpath(subject))
+    read = Fingerprint.of(path.normpath(root or subject), seen.files, seen.globs, documents, document_files)
+    return LoadRefused(failure.reason, failure.path, failure.line, read)
 
 
 @dataclass(slots=True)
@@ -191,7 +218,7 @@ class _Seen:
 
     files: dict[str, FileState] = field(default_factory=dict[str, FileState])
     globs: dict[str, list[str]] = field(default_factory=dict[str, list[str]])
-    long: dict[str, bytes] = field(default_factory=dict[str, bytes])  # parsed bytes that may hold a long number
+    data: dict[str, bytes] = field(default_factory=dict[str, bytes])  # every parsed file's bytes, for `precision`
 
 
 def _parse_recursive(
@@ -233,15 +260,15 @@ def _parse_recursive(
         else:
             data = candidates[filename]
         record.files.setdefault(filename, fp.content(data))
-        if precision.may_round(data):
-            record.long.setdefault(filename, data)
+        record.data.setdefault(filename, data)
         try:
             src_entries, src_errors, src_options = port.parse_string(data, filename)
         except OSError:
             raise
-        except Exception as e:  # noqa: BLE001 (Beancount's parser raised on the file: refused, never raised)
-            failure = load_failure.of(e, filename)
-            return LoadRefused(failure.reason, failure.path, failure.line)
+        except Exception as e:  # Beancount's parser raised on the file: refused, never raised
+            if not load_failure.beancounts(e):
+                raise
+            return _failed(e, filename, record, {}, {}, root=root)
         cwd = path.dirname(filename)
 
         entries.extend(src_entries)

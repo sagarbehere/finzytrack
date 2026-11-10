@@ -612,6 +612,38 @@ def test_a_ledger_beancount_cannot_load_is_refused_naming_its_line_and_nothing_i
     assert generations(cache) == []
 
 
+def test_a_ledger_fixed_while_beancount_failed_on_it_is_moved_not_refused(root: Path, cache: Path) -> None:
+    """S0098 round 1, data-safety F2: the set is observed again before a refusal is answered."""
+    inc = root.parent / "inc.bean"
+    inc.write_bytes(INC + b'2026-01-03 * "Coins"\n  Assets:Cash  12345678901.123456789012345678 ETH\n  Expenses:Food\n')
+    hint = observe(LedgerSet(str(root), (str(root), str(inc)), (), (), ()))
+
+    def load(r: str) -> port.ParseResult:
+        try:
+            return port.real_load(r)
+        finally:
+            inc.write_bytes(INC)  # the outside editor's fix lands while Beancount was failing on the old text
+
+    a = go(rebuild.Ports(load=load), hint, FakeJob())
+    assert a.outcome == "moved"
+    assert a.fingerprint == observe(hint.ledger_set)
+    assert generations(cache) == []
+
+
+@pytest.mark.parametrize("act", ["delete", "unreadable"])
+def test_a_file_gone_or_unreadable_right_after_the_load_is_a_moved_disk(root: Path, cache: Path, act: str) -> None:
+    """S0098 round 1, verifier F3 / data-safety F1: the warnings read the parsed files again; a file gone or unreadable
+    by then is a moved disk, never an exception (whose traceback would also name the path in the engine's log)."""
+    inc = root.parent / "inc.bean"
+    try:
+        a = go(with_load(inc.unlink if act == "delete" else lambda: inc.chmod(0)), hint_of(root), FakeJob())
+    finally:
+        if inc.exists():
+            inc.chmod(0o600)
+    assert a.outcome == "moved"
+    assert generations(cache) == []
+
+
 def test_a_disk_error_in_the_rebuilds_load_is_raised_as_before(root: Path) -> None:
     def load(r: str) -> port.ParseResult:
         raise PermissionError(13, "denied", r)
@@ -621,13 +653,14 @@ def test_a_disk_error_in_the_rebuilds_load_is_raised_as_before(root: Path) -> No
 
 
 def test_the_rebuild_publishes_the_warnings_of_numbers_beancount_rounded(root: Path, cache: Path) -> None:
+    """The warnings are rows of `ledger_errors` but not errors: the count is Beancount's, as bean-check's."""
     long = b"12345678901.123456789012345678"
     (root.parent / "inc.bean").write_bytes(
         INC + b'2026-01-03 * "Coins"\n  Assets:Cash  ' + long + b" ETH\n  Expenses:Food  -" + long + b" ETH\n"
     )
     a = go(rebuild.Ports(), hint_of(root), FakeJob())
     _, real_errors, _ = port.real_load(str(root))
-    assert (a.outcome, a.errors) == ("loaded", len(real_errors) + 2)
+    assert (a.outcome, a.errors) == ("loaded", len(real_errors))
     assert isinstance(a.published, pb.Published)
     con = sqlite3.connect(f"file:{mirror(cache) / a.published.gen.name}?mode=ro", uri=True)
     got = con.execute("SELECT source_file, line_number FROM ledger_errors WHERE message LIKE 'Number longer%'")

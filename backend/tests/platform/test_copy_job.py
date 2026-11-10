@@ -302,8 +302,9 @@ def test_a_source_beancount_cannot_load_names_its_file_and_line(make: Any) -> No
     assert value == NotCopied("number_failed", FOLDER, (), path=SOURCE, detail="3")
     assert isinstance(value, NotCopied)
     assert copy_text.text(value) == (
-        "Not copied. Beancount cannot compute the amounts on line 3 of Main Books.beancount: a number there has more "
-        "than 28 digits. bean-check fails on this ledger too. Shorten the number, or write the other amount too."
+        "Not copied. Beancount cannot compute an amount of the transaction on line 3 of Main Books.beancount, and "
+        "bean-check fails there too. Check its numbers: one with more than 28 digits, or a quantity of 0 with a total "
+        "price or cost. Writing every amount of the transaction can help."
     )
     plugin = NotCopied("beancount_failed", FOLDER, (), path=SOURCE)
     assert copy_text.text(plugin) == (

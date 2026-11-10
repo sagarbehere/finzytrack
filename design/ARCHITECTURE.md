@@ -245,7 +245,8 @@ engine/src/ledger_engine/
                  Beancount's documents step walks the listing it took, with the files the save creates under a
                  root (matched by path_key) added, so the prediction sees the disk after the write (S0067);
                  Beancount's own load raising on the ledger is `LoadRefused` (number-failed, beancount-failed),
-                 never raised; `Loaded.warnings` on numbers Beancount rounded, apart from its errors (S0098)
+                 never raised; `Loaded.warnings` on numbers Beancount rounded, apart from its errors; every load in
+                 `beancount_port.BEANCOUNT_CONTEXT`, the caller's context restored (S0098)
     precision.py the warnings on numbers Beancount's 28 digits rounded: written numbers (its lexer), filled-in
                  amounts (its own fill at 64 digits); divisions never warn (BL-0123, owner 2026-11-10, S0098)
     load_failure.py what a load names when Beancount's own load raises: why, the file and line (S0098)

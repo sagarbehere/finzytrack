@@ -17,7 +17,8 @@ an outside edit. `submit_open` queues it as the switch's own job (waited-for); i
 - **`EncryptedFile(path)`**: the ledger includes an encrypted file, which v0.4.0 never reads (ADR-0059); the open's
   screen names it (BL-0154).
 - **`NotLoadable(why, path, line)`**: Beancount's own load raised on the ledger (S0098, BL-0123): `number_failed`,
-  its arithmetic failed on a number (an amount of more than 28 digits whose other leg it must fill in), or
+  its arithmetic failed on the transaction `line` names (a filled-in amount it cannot quantize, a total price or
+  cost for a quantity of 0), or
   `beancount_failed` (a plugin's entry its checks cannot read, a plugin that fails while imported). bean-check fails on
   the same ledger. `path` and `line` (when known) name the place; the open's screen names them (BL-0154). No try
   again: the same ledger fails the same way.

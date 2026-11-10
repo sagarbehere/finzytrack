@@ -490,6 +490,21 @@ def test_a_plugins_entry_beancount_cannot_check_refuses_the_open(w: World) -> No
     assert w.current() is None
 
 
+def test_a_ledger_fixed_while_beancount_failed_on_it_is_moved_not_refused(w: World) -> None:
+    """S0098 round 1, data-safety F2: the disk is observed again before a refusal is answered."""
+    inc = w.root.parent / "inc.bean"
+    inc.write_bytes(INC + LONG_CRASH)
+
+    def load(r: str) -> overlay.LoadResult:
+        out = overlay.load(r, {}, DESKTOP)
+        inc.write_bytes(INC)  # an outside editor's fix lands while Beancount was failing on the old text
+        return out
+
+    a = w.go(opening.Ports(load=load))
+    assert a.outcome == "moved"
+    assert w.current() is None
+
+
 def test_an_encrypted_file_is_still_its_own_refusal(w: World) -> None:
     secret = w.root.parent / "secret.bean.gpg"
     secret.write_bytes(b"\x85\x01not really")
@@ -498,14 +513,14 @@ def test_an_encrypted_file_is_still_its_own_refusal(w: World) -> None:
     assert (a.outcome, a.refusal, a.refused, a.line) == ("refused", "encrypted", str(secret), None)
 
 
-def test_the_warnings_of_numbers_beancount_rounded_are_published_and_counted(w: World) -> None:
+def test_the_warnings_of_numbers_beancount_rounded_are_published_but_are_no_errors(w: World) -> None:
     long = b"12345678901.123456789012345678"
     (w.root.parent / "inc.bean").write_bytes(
         INC + b'2026-01-03 * "Coins"\n  Assets:Cash  ' + long + b" ETH\n  Expenses:Food  -" + long + b" ETH\n"
     )
     a = w.go()
     _, real_errors, _ = port.real_load(str(w.root))
-    assert (a.outcome, a.errors) == ("loaded", len(real_errors) + 2)
+    assert (a.outcome, a.errors) == ("loaded", len(real_errors))  # Beancount's errors, as bean-check counts them
     assert isinstance(a.published, pb.Published)
     con = sqlite3.connect(f"file:{w.mirror / a.published.gen.name}?mode=ro", uri=True)
     got = con.execute("SELECT line_number FROM ledger_errors WHERE message LIKE 'Number longer than 28 digits%'")

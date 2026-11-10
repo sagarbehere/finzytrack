@@ -393,9 +393,10 @@ type Publish = Literal["published", "fresh", "inexact", "replaced", "incomplete"
 
 
 type LoadRefusal = Literal["number_failed", "beancount_failed"]
-"""Why a load did not happen although Beancount ran (S0098, `ledger.load_failure`): its decimal arithmetic failed on a
-number (an amount of more than 28 digits whose other leg it must fill in), or anything else of its own load raised
-(a plugin's entry its checks cannot read, a plugin that fails while imported). bean-check fails on the same ledger."""
+"""Why a load did not happen although Beancount ran (S0098, `ledger.load_failure`): `number_failed`, its decimal
+arithmetic raised while it worked on the transaction `line` names (a filled-in amount it cannot quantize, a total price
+or cost for a quantity of 0); `beancount_failed`, anything else of its own load raised (a plugin's entry its checks
+cannot read, a plugin that fails while imported). bean-check fails on the same ledger."""
 
 type OpenRefusal = Literal["encrypted", "number_failed", "beancount_failed"]
 
@@ -408,10 +409,11 @@ class RebuildResult(Message):
     what became of a `loaded` result (`published`, or why not: `inexact`, `replaced`, `incomplete`), `fresh` for
     `fresh`, null otherwise. `number` and `ledger_version`: the current generation's when `publish` is `published` or
     `fresh`, else null. `removed`, `remove_failed`: the cleanup's counts. `refused` (S0098): Beancount's own load
-    raised on the ledger, nothing published: `refusal` says why (`number_failed`, its arithmetic failed on a number;
-    `beancount_failed`, any other failure), `refused` names the file and `line` the line when known; all three are
-    null otherwise. `errors` counts every row of `ledger_errors`: Beancount's errors and the warnings on numbers it
-    rounded. It runs the ledger's plugins, so the engine is retired after it."""
+    raised on the ledger, nothing published: `refusal` says why (`number_failed`, its arithmetic failed on the
+    transaction `line` names; `beancount_failed`, any other failure), `refused` names the file and `line` the line
+    when known; all three are null otherwise. `errors` counts Beancount's errors, as bean-check does (the warnings on
+    numbers it rounded are rows of `ledger_errors`, not errors). It runs the ledger's plugins, so the engine is retired
+    after it."""
 
     outcome: Literal["loaded", "moved", "fresh", "paused", "refused"]
     fingerprint: str = Field(min_length=1)

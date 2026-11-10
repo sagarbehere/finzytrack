@@ -184,13 +184,21 @@ def run(ports: Ports, hint: Fingerprint, job: Job, target: Target) -> Answer:
             result = ports.load(ledger_set.root)  # step 2: Beancount's own loader (user code)
         except (OSError, port.EncryptedFileMet):
             raise
-        except Exception as e:  # noqa: BLE001 (Beancount's own load raised on the ledger: refused, never raised)
+        except Exception as e:  # Beancount's own load raised on the ledger: refused, never raised
+            if not load_failure.beancounts(e):
+                raise
             f = load_failure.of(e, ledger_set.root)
+            again = ports.observe(ledger_set)  # a disk changed since the load is tried again, not refused
+            if again != before:
+                return Answer("moved", again, cleaned=cleaned)
             return Answer("refused", hint, cleaned=cleaned, refusal=f.reason, refused=f.path, line=f.line)
         entries, errors, options = result
         # Finzytrack's warnings on numbers Beancount rounded (`precision`): the files read again before the set is
-        # observed again, so a change in between is a moved disk.
-        reported = [*errors, *ports.warnings(entries, options)]
+        # observed again, so a change in between is a moved disk; a file gone or unreadable meanwhile is one too.
+        try:
+            warnings = ports.warnings(entries, options)
+        except OSError:
+            return Answer("moved", ports.observe(ledger_set), cleaned=cleaned)
         after = ports.observe(ledger_set)  # step 3
         wider = _wider(ledger_set, _used(entries, options), _listed(before))
         if wider is not None:
@@ -220,7 +228,7 @@ def run(ports: Ports, hint: Fingerprint, job: Job, target: Target) -> Answer:
             d,
             cleaned,
             ports.store,
-            (entries, reported, options),
+            (entries, [*errors, *warnings], options),
             stamp,
             floor=target.floor,
             today=target.today,
@@ -234,4 +242,4 @@ def run(ports: Ports, hint: Fingerprint, job: Job, target: Target) -> Answer:
         return Answer("moved", seen[-1], cleaned=cleaned)
     if isinstance(out, pb.NotPublished) and out.why == "paused":
         return Answer("paused", after, cleaned=cleaned)
-    return Answer("loaded", stamp, len(entries), len(reported), published=out, cleaned=cleaned)
+    return Answer("loaded", stamp, len(entries), len(errors), published=out, cleaned=cleaned)

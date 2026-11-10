@@ -100,8 +100,9 @@ def _why(v: NotCopied) -> str | None:
             return "Finzytrack could not load your ledger."
         case "number_failed":
             return (
-                f"Beancount cannot compute the amounts{_at_line(v)} of {name_of(v.path)}: a number there has more than "
-                "28 digits. bean-check fails on this ledger too. Shorten the number, or write the other amount too."
+                f"Beancount cannot compute an amount of the transaction{_at_line(v)} of {name_of(v.path)}, and "
+                "bean-check fails there too. Check its numbers: one with more than 28 digits, or a quantity of 0 "
+                "with a total price or cost. Writing every amount of the transaction can help."
             )
         case "beancount_failed":
             return (
