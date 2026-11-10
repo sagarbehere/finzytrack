@@ -18,3 +18,4 @@ Measured on the 54k demo mirror (S0097 journal): an index on `(account, transact
 Option 1. It keeps the row's own reasoning (choose an index against the read that uses it), costs nothing now, and keeps the measurement with the code that needs it. Option 3 loses the S0052/S0097 numbers' home; option 2 builds cost for no reader.
 
 ## Answer (owner, verbatim, with date)
+Owner, 2026-11-10, in session (answer to the orchestrator's question): "Move to M1b (Recommended)". Applied: option 1, BL-0122 moved to M1b (S0097).

@@ -48,3 +48,10 @@ No read that exists at M1a needs an index: both measured gains are on queries no
 ## Decisions
 - Stop after the brief, build no index (agent, under the orchestrator's instruction for this case): no M1a read needs one, measured above.
 - The milestone move is not made here (orchestrator: "do not edit the row's milestone yourself").
+- **Owner's answer** (Owner, 2026-11-10, in session (answer to the orchestrator's question): "Move to M1b (Recommended)"): option 1. BL-0122 moved to M1b with the TransactionId lookup (BL-0059); nothing built in this slice. Inbox file moved to `design/inbox/answered/`.
+
+## Verifier
+- None: no code, check or test changed (a docs-only park and close; the commits are the brief, the evidence and the row move).
+
+## Retro
+- Build about 3 min (inventory and measurement), fix 0 min, 0 verifier rounds, findings 0H/0M/0L. Cheaper gate: a backlog row whose own text says "chosen when the first read that needs it is built" should carry that read's milestone from the start; the M1a/M1b mismatch was visible in the row.
