@@ -46,6 +46,8 @@ Every call into Beancount's load is in `ledger_engine.ledger.beancount_port` (IN
 - **Not mine, left as it is** (orchestrator, to the owner): finance F2, the mirror's own 64-digit sums of two 28-digit token amounts differing from Beancount's 28-digit sums without a warning.
 - **Process slip, undone before commit:** `ruff check --fix --select RUF100` treated every `noqa` for an unselected rule as unused and stripped them across the engine; every file this slice did not touch was checked out again, and the stripped directives in my own files were put back from HEAD (checked by comparing each file's `noqa` comments with HEAD's).
 
+- **Finance red team F2, the mirror's own exact sums vs Fava's 28-digit sums** (orchestrator to the owner, not the implementer): owner, 2026-11-10, in session, to the orchestrator's question on the S0098 finance red team's F2: "Keep exact, no warning". The mirror rule is unchanged; the mirror README's "Exact numbers" states the difference with its example. No code change, no backlog row.
+
 ## Hand-off (PROCESS.md §3 step 4; ADR-0057)
 (The verifier reads only the Brief, so this section does not steer its attacks; it is the implementer's own record.)
 - Checks that accept, tag or refuse, each with its must-not-pass test:
