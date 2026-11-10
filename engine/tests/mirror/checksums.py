@@ -10,23 +10,33 @@ review a change, print a table's rows on the base and on the head (`gen_mirror_c
 
 - **Roots, by behaviour** (`roots`): every case row of the write and parity corpora, the parity corpus's generated
   cases, every INV-21 case, the oracle's ledger, every root the v0.2.2 install's goldens name. `unread_files` holds
-  the cover check: every ledger file under `corpora/` is read by some root's load or sits in a refused case.
+  the cover check, over every file of every case folder whatever its name (`corpus_files`): each is read by some
+  root's load (an include, a document Beancount found, a plugin module it imported), sits in a refused case, or is
+  in `NOT_READ` with its reason.
 - **Normalized** (`normalized`): the case folder's path becomes `<case>` in every text value, and Beancount's
   `input_hash` option (an MD5 over file names and modification times) becomes `<input_hash>`; the build date and the
   stamp are fixed. POSIX paths only (the engine runs on Linux and macOS in CI).
 - **Order**: a table's rows are hashed sorted. SQL row order is not part of the surface; an order the spec defines is
-  a column (`posting_id`, ...) and is hashed with its row. Beancount does not sort an include glob's matches, so the
-  order of entries from different files on the same date and line follows the file system (BL-0234).
+  a column (`posting_id`, ...) and is hashed with its row.
+- **Listing order** (`sorted_listing`, a choice of this harness, not of the product): Beancount does not sort an
+  include glob's matches, so what a load sees depends on the order the file system lists files in (BL-0234): in
+  `parity/includes` the two "Duplicate filename parsed" errors swap their ids, and in `parity/example-split` 12 `open`
+  entries swap their order. The build here answers every glob in sorted order, so the snapshot is the same on every
+  file system; the product keeps Beancount's order.
 """
 
 from __future__ import annotations
 
+import glob
 import hashlib
 import json
 import re
 import shutil
+import sys
+import tempfile
 import tomllib
-from collections.abc import Iterator
+from collections.abc import Callable, Generator, Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
@@ -48,7 +58,22 @@ TODAY = date(2026, 11, 10)
 STAMP = Stamp("1/checksums", "checksums", "2026-11-10T00:00:00+00:00", "checksums", "open")
 CASE = "<case>"
 INPUT_HASH = "<input_hash>"
-LEDGER_SUFFIXES = (".beancount", ".gpg", ".asc")
+
+# Files in case folders that no load reads and that are no ledger, each with its reason (claimed equals found).
+NOT_READ: dict[str, str] = {
+    "ledgers/parity/documents/docs/Assets/Bank/Checking/undated-notes.txt": (
+        "a file in a documents folder without a date in its name: Beancount's scan skips it (the case shows that)"
+    ),
+    "ledgers/parity/documents/docs/Expenses/NotOpened/2024-01-01.receipt.txt": (
+        "in a folder for an account the ledger never opens: Beancount's scan skips it (the case shows that)"
+    ),
+    "ledgers/parity/plugins-raw/docs/Assets/Bank/2020-01-31.statement.txt": (
+        "raw plugin mode does not run the documents step, so the folder is not scanned (the case shows that)"
+    ),
+    "workspaces/legacy/v022-fresh/_data/.write.lock": "the v0.2.2 install's lock file, not a ledger",
+    "workspaces/legacy/v022-fresh/_data/backups/.gitkeep": "keeps the install's empty backups folder in git",
+    "workspaces/legacy/v022-fresh/config/config.yaml": "the v0.2.2 install's app config, not a ledger",
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -118,13 +143,65 @@ def inventory() -> list[str]:
     return sorted(names)
 
 
-def corpus_ledger_files() -> list[str]:
-    """Every ledger file under corpora/, relative to it."""
+def corpus_files() -> list[str]:
+    """Every file of every case folder of the ledger corpora and the install fixtures, relative to corpora/, whatever
+    its name (a ledger reached by `include "private/*"` needs no suffix). The corpus tables beside the case folders
+    (`ledgers/<corpus>/cases.toml`, the goldens, this snapshot) are not in a case folder; caches are left out."""
+
+    def in_case_folder(p: Path) -> bool:
+        if p.is_relative_to(INSTALLS):
+            return len(p.relative_to(INSTALLS).parts) > 1
+        return len(p.relative_to(LEDGERS).parts) > 2
+
     return sorted(
         p.relative_to(CORPORA).as_posix()
-        for p in CORPORA.rglob("*")
-        if p.is_file() and p.name.endswith(LEDGER_SUFFIXES)
+        for base in (LEDGERS, INSTALLS)
+        for p in base.rglob("*")
+        if p.is_file() and in_case_folder(p) and "__pycache__" not in p.parts and not p.name.endswith(".picklecache")
     )
+
+
+# ---- the listing order (BL-0234) ----------------------------------------------------------------------------------
+
+
+@contextmanager
+def sorted_listing() -> Generator[None]:
+    """Every `glob.glob` answer sorted while a case loads (the loader's and the overlay's fingerprint both call it)."""
+    listed = glob.glob
+
+    def in_order(*args: Any, **kwargs: Any) -> list[str]:
+        return sorted(listed(*args, **kwargs))
+
+    setattr(glob, "glob", in_order)  # noqa: B010 (a module attribute, put back below)
+    try:
+        yield
+    finally:
+        setattr(glob, "glob", listed)  # noqa: B010
+
+
+@contextmanager
+def as_listed() -> Generator[None]:
+    yield
+
+
+def forget_copied_modules() -> None:
+    """Forget every module imported from a temp folder (another test's copy of a case), so this copy imports its own
+    plugin modules and `plugin_files` sees them: a module of the same name left by an earlier load would be reused."""
+    temp = Path(tempfile.gettempdir()).resolve()
+    for name, module in list(sys.modules.items()):
+        origin = getattr(module, "__file__", None)
+        if isinstance(origin, str) and Path(origin).resolve().is_relative_to(temp):
+            del sys.modules[name]
+
+
+def plugin_files(folder: Path) -> list[str]:
+    """The files of the modules imported from `folder` (a case's own plugins), while they are still imported."""
+    found: list[str] = []
+    for module in list(sys.modules.values()):
+        origin = getattr(module, "__file__", None)
+        if isinstance(origin, str) and Path(origin).is_relative_to(folder):
+            found.append(origin)
+    return found
 
 
 # ---- normalization and hashing ------------------------------------------------------------------------------------
@@ -179,9 +256,12 @@ class Built:
     read: tuple[str, ...]
 
 
-def build_root(r: Root) -> Built:
-    with parity.fresh_plugins(r.folder):
+def build_root(r: Root, listing: Callable[[], Any] = sorted_listing) -> Built:
+    """`listing` is the glob order the load sees: sorted (the snapshot), or `as_listed` (the file system's)."""
+    forget_copied_modules()
+    with parity.fresh_plugins(r.folder), listing():
         loaded = load(str(r.root), {}, DESKTOP)
+        modules = plugin_files(r.folder)
     if not isinstance(loaded, Loaded):
         subject = Path(loaded.subject)
         where = _relative(subject, r.folder) if subject.is_relative_to(r.folder) else loaded.subject
@@ -191,7 +271,9 @@ def build_root(r: Root) -> Built:
         return Built({"build_failed": made.detail}, None, ())
     rows = normalized(made, r.folder)
     entry = {"tables": {name: {"rows": len(t), "sha256": digest(t)} for name, t in rows.items()}}
-    return Built(entry, rows, tuple(str(f) for f in loaded.options.get("include") or ()))
+    documents = [str(row[3]) for row in made["documents"]]  # (id, date, account, filename, ...)
+    read = [str(f) for f in loaded.options.get("include") or ()] + documents + modules
+    return Built(entry, rows, tuple(read))
 
 
 def read_files(built: dict[Root, Built], files: list[str]) -> set[str]:
@@ -206,10 +288,10 @@ def read_files(built: dict[Root, Built], files: list[str]) -> set[str]:
 
 
 def unread_files(built: dict[Root, Built], files: list[str] | None = None) -> list[str]:
-    """Corpus ledger files that no root's load read."""
-    files = corpus_ledger_files() if files is None else files
+    """Case-folder files that no root's load read and that `NOT_READ` does not name."""
+    files = corpus_files() if files is None else files
     read = read_files(built, files)
-    return [f for f in files if f not in read]
+    return [f for f in files if f not in read and f not in NOT_READ]
 
 
 def empty_tables(built: dict[Root, Built]) -> list[str]:
@@ -217,8 +299,8 @@ def empty_tables(built: dict[Root, Built]) -> list[str]:
     return [n for n in TABLE_NAMES if not any(b.rows and b.rows.get(n) for b in built.values())]
 
 
-def build_all(tmp: Path) -> dict[Root, Built]:
-    return {r: build_root(r) for r in roots(tmp)}
+def build_all(tmp: Path, listing: Callable[[], Any] = sorted_listing) -> dict[Root, Built]:
+    return {r: build_root(r, listing) for r in roots(tmp)}
 
 
 def snapshot(built: dict[Root, Built]) -> dict[str, dict[str, Any]]:

@@ -86,8 +86,8 @@ def iso(value: date | None) -> str | None:
 
 def json_value(value: Any) -> Any:
     """README "Metadata JSON": a Decimal is a string, a date an ISO string, a tuple (an Amount, a Beancount entry)
-    and a set arrays (a set's elements sorted, so the text is the same on every build), anything else not native
-    to JSON its Python text."""
+    and a set arrays (a set's elements sorted by their JSON text, so the text is the same on every build: `{9, 10}`
+    gives `[10, 9]`), anything else not native to JSON its Python text."""
     if isinstance(value, Decimal):
         return str(value)
     if isinstance(value, date | datetime):

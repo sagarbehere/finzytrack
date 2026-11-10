@@ -412,10 +412,11 @@ def test_a_price_is_plain_notation_never_an_exponent(tmp_path: Path) -> None:
 
 def test_a_set_in_metadata_is_a_sorted_array() -> None:
     """@regression-guard (S0096: holds on the base d535b841; an unsorted set passed every other test).
-    README "Metadata JSON": a set becomes an array, its elements sorted, so the text is the same on every build
-    whatever the hash seed (a plugin may put a set in metadata)."""
+    README "Metadata JSON": a set becomes an array, its elements sorted by their JSON text, so the text is the same on
+    every build whatever the hash seed (a plugin may put a set in metadata); numbers sort as text."""
     letters = set("qwertyuiopasdfghjklzxcvbnm")
     assert meta_json({"s": letters}) == json.dumps({"s": sorted(letters)})
+    assert meta_json({"n": {9, 10}}) == '{"n": [10, 9]}'
 
 
 def test_metadata_json_conversion(tmp_path: Path) -> None:

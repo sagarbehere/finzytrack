@@ -141,7 +141,8 @@ class MirrorChecksums(unittest.TestCase):
         cmd, sources = cg.GENERATORS[self.PATH]
         self.assertIn("engine/.venv", cmd[0])  # the build imports Beancount
         self.assertIn("engine/scripts/gen_mirror_checksums.py", cmd)
-        for source in ("engine/src/ledger_engine/", "engine/uv.lock", "corpora/ledgers/", "corpora/workspaces/legacy/",
+        for source in ("engine/src/ledger_engine/", "engine/uv.lock", "engine/.python-version", "corpora/ledgers/",
+                       "corpora/workspaces/legacy/",
                        "engine/tests/ledger/parity.py", "engine/tests/mirror/checksums.py",
                        "engine/scripts/gen_mirror_checksums.py"):
             self.assertIn(source, sources)

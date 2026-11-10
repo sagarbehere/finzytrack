@@ -52,7 +52,7 @@ Every column of an `r_*` or compatibility view is a plain reference to a base-ta
 
 **Metadata JSON** (`json-meta`, and the values inside `json-custom`, `json-entry`, `json-value`), converted as v0.2.2 did:
 - keys are kept as written, including the keys Beancount adds: `filename` (absolute path), `lineno`, `__tolerances__` on transactions, `__automatic__` on postings whose amount Beancount filled in;
-- a Decimal becomes a string (`"10.50"`), a date an ISO string, an Amount a two-element array `["1.25", "USD"]`, `TRUE` a JSON `true`, sets and tuples arrays (a set's elements sorted, so the text is the same on every build); anything else its Python text;
+- a Decimal becomes a string (`"10.50"`), a date an ISO string, an Amount a two-element array `["1.25", "USD"]`, `TRUE` a JSON `true`, sets and tuples arrays (a set's elements sorted by their JSON text, so the text is the same on every build: `{9, 10}` gives `[10, 9]`); anything else its Python text;
 - serialized with Python's `json.dumps` defaults (non-ASCII escaped as `\u....`; `json_extract` decodes it);
 - a kebab-case key needs a quoted path: `json_extract(posting_metadata_json, '$."import-key"')`; a plain key does not: `'$.memo'`;
 - `custom_directives.values_json` is an array of `[value, type-tag]` pairs, the type tag being Beancount's Python type as text (`"<AccountDummy>"`, `"<class 'str'>"`); v0.2.2's budget resolver reads `value` by position, so the shape stays;

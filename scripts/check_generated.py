@@ -63,6 +63,7 @@ GENERATORS: dict[str, tuple[list[str], list[str]]] = {
             "engine/src/ledger_engine/",
             "engine/pyproject.toml",
             "engine/uv.lock",
+            "engine/.python-version",
             "engine/tests/ledger/parity.py",
             "engine/tests/mirror/checksums.py",
             "engine/scripts/gen_mirror_checksums.py",

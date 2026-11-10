@@ -22,24 +22,25 @@ import tempfile
 from pathlib import Path
 
 ENGINE = Path(__file__).resolve().parents[1]
-HASH_SEED = "0"  # the engine's own (`app.platform.adapters.engine_client`): some built-in plugins' output follows it
-
-
-def as_the_engine_runs() -> bool:
-    """Whether this process hashes as the engine does. `-I` (how `check_generated.py` runs generators) ignores
-    `PYTHONHASHSEED`, and Beancount's `onecommodity`, `close_tree` and `commodity_attr` plugins word their errors and
-    order their entries by set order, so the rows depend on the seed."""
-    return os.environ.get("PYTHONHASHSEED") == HASH_SEED and not sys.flags.ignore_environment
-
-
-if __name__ == "__main__" and not as_the_engine_runs():
-    env = {k: v for k, v in os.environ.items() if not k.startswith("PYTHON")} | {"PYTHONHASHSEED": HASH_SEED}
-    again = [sys.executable, "-s", "-P", __file__, *sys.argv[1:]]  # this interpreter, this script, its arguments
-    sys.exit(subprocess.run(again, env=env, check=False).returncode)  # noqa: S603
-
 # The engine's source and its tests beside this script, not whatever the environment has installed: the corpus
 # helpers live in the engine's tests (`tests.ledger.parity`), and the snapshot is of this tree's build.
 sys.path[:0] = [str(ENGINE / "src"), str(ENGINE)]
+
+from ledger_engine.ledger import fresh_load  # noqa: E402
+
+
+def as_the_engine_runs() -> bool:
+    """Whether this process hashes as the engine does: with the environment the engine gives a load it starts
+    (`fresh_load.environment`, the same seed the sidecar gives the engine). `-I` (how `check_generated.py` runs
+    generators) ignores `PYTHONHASHSEED`, and Beancount's `onecommodity`, `close_tree` and `commodity_attr` plugins
+    word their errors and order their entries by set order, so the rows depend on the seed."""
+    seed = fresh_load.environment()["PYTHONHASHSEED"]
+    return os.environ.get("PYTHONHASHSEED") == seed and not sys.flags.ignore_environment
+
+
+if __name__ == "__main__" and not as_the_engine_runs():
+    again = [sys.executable, "-s", "-P", __file__, *sys.argv[1:]]  # this interpreter, this script, its arguments
+    sys.exit(subprocess.run(again, env=fresh_load.environment(), check=False).returncode)  # noqa: S603
 
 from tests.mirror import checksums  # noqa: E402
 
