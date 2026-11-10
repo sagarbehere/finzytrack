@@ -97,6 +97,12 @@ Every call into Beancount's load is in `ledger_engine.ledger.beancount_port` (IN
 - Finance L2: a plugin's import-time context change applies only to its process's first load. BL-0239.
 - Finance L3: odd-expression wording. BL-0238.
 - The orchestrator fixed BL-0215's note in 6e4a5a71: my round-1 note put `"number_failed" | "beancount_failed"` inside a table cell, and `check_invariants.py` went red. This round's backlog edits were checked with `check_invariants.py` and `run_meta_tests.py` before commit.
+- Round 3, the final round (head 8867fe7f, on the fix range 6e4a5a71..8867fe7f): slice verifier 0H/0M/3L, PASS WITH FINDINGS. The verifier marked each as losing no byte and giving no false job outcome, so under IMP-0052 each became a backlog row, not a fix:
+- F1, Low: a plugin that calls `beancount.loader.load_file` on another ledger during the rebuild gets that file recorded as parsed; the rebuild then warns on a file the ledger never includes, and a refusal takes one extra `moved` try that still converges. BL-0240, which also says that engine-jobs §6.7's "files Beancount's loader parsed as ledger text" holds only without such a plugin.
+- F2, Low (regression from base): a run of more than 28 digits on a line inside a narration that spans lines now gives a false "Number longer than 28 digits" warning (the limit was stated only in `Lexed`'s docstring). BL-0240, naming both fixes (lex from the entry's first line, or state the limit in the mirror README).
+- F3, Low: the M1 fix helps only ledgers with few candidates; with common `@@` buys and a blank leg the warnings are still 27% of the load. BL-0240, with the verifier's prefilter (a run of at least 28 digits on the raw line).
+- Test gap: no committed test pins that an unchanged refusal on a ledger of several files or a glob answers `refused`, not `moved` (the verifier's attack showed it holds). BL-0240.
+- Verifier head SHA: 8867fe7f (the final round's head; the landed commit is the one recording this round, its child).
 
 ## Golden changes
 - `corpora/ledgers/mirror-checksums.json`: no change (`check_generated.py --all` green): no corpus ledger has a number Beancount rounds or a load Beancount fails on, and the harness now builds from `Loaded.reported` as the product does.
@@ -109,3 +115,6 @@ Every call into Beancount's load is in `ledger_engine.ledger.beancount_port` (IN
 - `engine/tests/architecture/test_no_resident_ledger.py` (round 2): the planted `real_load` takes the new `parsed` argument; the check itself is unchanged.
 - `engine/tests/ledger/test_rebuild.py` (round 2): each injected load takes the `parsed` list (the rebuild's new port signature).
 - `engine/tests/mirror/test_publish_conformance.py` (round 2): the driver's load and warnings take the new arguments; what the model replays is unchanged.
+
+## Retro
+- Build about 38 min after the owner's answer (17:04 to 17:42, by commit time; the park's spikes before it were not timed), fix about 31 + 32 min (rounds 1 and 2), 3 verifier rounds plus a data-safety and a finance red team, findings round 1 1H/7M/8L (verifier 0H/3M/1L, data-safety 0H/1M/3L, finance 1H/3M/4L), round 2 0H/4M/8L (verifier 0H/1M/4L, finance 0H/3M/4L), round 3 0H/0M/3L. Cheaper gate: run `check_invariants.py` and `run_meta_tests.py` after every backlog edit, as the commit hook does not (my round-1 note put `"number_failed" | "beancount_failed"` inside a BL-0215 table cell and broke the table, fixed by the orchestrator in 6e4a5a71), and never `ruff --fix --select <one rule>`, which stripped every other rule's `noqa` across the engine before I caught it.
