@@ -115,9 +115,9 @@ def exact_sum(numbers: list[str]) -> str:
 
 def test_a_units_number_over_28_digits_is_summed_exactly(tmp_path: Path) -> None:
     # Beancount keeps the written positive number whole; its parser rounds the negated one to 28 digits, so the
-    # oracle reads both legs from the postings table instead of from the text. Reading the rounded leg back is a
-    # known deviation from "Exact numbers" (BL-0123, open owner question): this test pins only the build's own sum;
-    # test_a_written_negative_number_keeps_its_digits holds the written value as a strict xfail.
+    # oracle reads both legs from the postings table instead of from the text. The rounded leg is the load's rounding,
+    # Beancount's own (BL-0123; owner, 2026-11-10: "Follow Beancount"): this test pins only the build's own sum;
+    # test_a_written_negative_number_is_rounded_as_beancount_rounds_it_with_a_warning pins the rounded leg.
     con = build_text(
         tmp_path,
         "2020-01-01 open Assets:Wallet\n2020-01-01 open Equity:Opening\n"
@@ -135,20 +135,25 @@ def test_a_units_number_over_28_digits_is_summed_exactly(tmp_path: Path) -> None
 SHIB_18 = "12345678901.123456789012345678"
 
 
-@pytest.mark.xfail(
-    strict=True,
-    raises=AssertionError,
-    reason="BL-0123: Beancount's parser rounds a written negative number past 28 digits; owner question open",
-)
-def test_a_written_negative_number_keeps_its_digits(tmp_path: Path) -> None:
+def test_a_written_negative_number_is_rounded_as_beancount_rounds_it_with_a_warning(tmp_path: Path) -> None:
+    # BL-0123, owner 2026-11-10 ("Follow Beancount"): the mirror holds Beancount's own number, the one bean-check and
+    # Fava show, and `ledger_errors` holds one warning per line where Beancount rounded a written number.
     con = build_text(
         tmp_path,
         "2020-01-01 open Assets:Wallet\n2020-01-01 open Equity:Opening\n"
         f'2021-01-01 * "buy"\n  Assets:Wallet  {SHIB_18} SHIB\n  Equity:Opening  -{SHIB_18} SHIB\n',
     )
-    assert rows(con, "SELECT count(*) FROM ledger_errors") == [(0,)]
-    assert rows(con, "SELECT amount FROM postings WHERE account = 'Equity:Opening'") == [("-" + SHIB_18,)]
-    assert rows(con, "SELECT balance FROM account_balances WHERE account = 'Equity:Opening'") == [("-" + SHIB_18,)]
+    rounded = "-12345678901.12345678901234568"
+    assert rows(con, "SELECT amount FROM postings WHERE account = 'Equity:Opening'") == [(rounded,)]
+    assert rows(con, "SELECT balance FROM account_balances WHERE account = 'Equity:Opening'") == [(rounded,)]
+    errors = rows(con, "SELECT line_number, message FROM ledger_errors ORDER BY id")
+    # No error of Beancount's: the rounded leg leaves 2E-18 SHIB, within the tolerance it infers from that leg's
+    # 17 decimals (5E-18), as bean-check says too. Then ours, one per line with a long written number.
+    assert [(line, m.split(":")[0]) for line, m in errors] == [
+        (4, "Number longer than 28 digits"),
+        (5, "Number longer than 28 digits"),
+    ]
+    assert f"-{SHIB_18}" in errors[1][1]
 
 
 def test_a_lot_merge_that_needs_rounding_fails_the_build(tmp_path: Path) -> None:

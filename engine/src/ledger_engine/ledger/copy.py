@@ -262,7 +262,16 @@ class _CopySteps:
         except Exception:  # noqa: BLE001 (the load could not run: a plugin, Beancount)
             raise Stop("source_failed") from None
         if isinstance(loaded, overlay.LoadRefused):
-            raise Stop("encrypted" if loaded.reason == "encrypted" else "source_failed", loaded.subject)
+            line = None if loaded.line is None else str(loaded.line)
+            match loaded.reason:
+                case "encrypted":
+                    raise Stop("encrypted", loaded.subject)
+                case "number-failed":  # Beancount's own load raised on the ledger (`ledger.load_failure`)
+                    raise Stop("number_failed", loaded.subject, line)
+                case "beancount-failed":
+                    raise Stop("beancount_failed", loaded.subject, line)
+                case _:
+                    raise Stop("source_failed", loaded.subject)
         if not isinstance(dict(loaded.fingerprint.files).get(root), Content):
             raise Stop("source_missing", root)
         return loaded

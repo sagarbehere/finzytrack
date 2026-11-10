@@ -61,9 +61,9 @@ def test_the_open_loads_and_publishes_through_the_protocol(ws: tuple[Path, Path,
     result = reply["result"]
     assert (result["outcome"], result["errors"], result["publish"], result["number"]) == ("loaded", 0, "published", 1)
     assert result["entries"] > 0
-    assert result["refused"] is None
+    assert (result["refused"], result["refusal"], result["line"]) == (None, None, None)
     assert reply["events"] == ["reading"]
-    assert (reply["decision"]["table"], reply["decision"]["version"]) == ("engine.open", 1)
+    assert (reply["decision"]["table"], reply["decision"]["version"]) == ("engine.open", 2)
     mirror = ald.parent / "cache" / "workspaces" / "k1" / "mirror"
     name = os.readlink(mirror / "current.db")
     con = sqlite3.connect(f"{(mirror / name).as_uri()}?mode=ro", uri=True)
@@ -143,3 +143,21 @@ def test_an_engine_started_without_its_cache_folder_publishes_nothing(ws: tuple[
     reply = json.loads(e.handle(request("open", params, 2), Channel(2, proceed=False)))
     assert reply["error"]["key"] == "protocol.invalid_params"
     assert not (ald.parent / "cache" / "workspaces").exists()
+
+
+def test_a_ledger_beancount_cannot_load_is_refused_through_the_protocol(ws: tuple[Path, Path, dict[str, Any]]) -> None:
+    main, ald, params = ws
+    main.write_bytes(
+        MAIN + b'2026-01-02 * "Coins"\n  Assets:Cash  12345678901.123456789012345678 ETH\n  Expenses:Food\n'
+    )
+    reply = call(ald, params)
+    assert reply["ok"], reply  # a refusal of the ledger, never `engine.internal`
+    result = reply["result"]
+    assert (result["outcome"], result["refusal"], result["refused"], result["line"]) == (
+        "refused",
+        "number_failed",
+        str(main),
+        4,
+    )
+    assert (result["publish"], result["number"]) == (None, None)
+    assert reply["decision"]["inputs"]["refusal"] == "number-failed"

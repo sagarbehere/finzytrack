@@ -29,6 +29,7 @@ from app.platform.engine import EngineRefusal
 from app.platform.engine_jobs.opening import (
     MAX_TRIES,
     EncryptedFile,
+    NotLoadable,
     NotOpened,
     Opened,
     OpenTarget,
@@ -69,6 +70,8 @@ NOTHING: dict[str, object] = {
     "removed": 0,
     "remove_failed": 0,
     "refused": None,
+    "refusal": None,
+    "line": None,
 }
 
 
@@ -239,7 +242,7 @@ def test_an_unfinished_save_is_writes_paused_and_not_tried_again(make: Any) -> N
 
 
 def test_an_encrypted_file_is_refused_and_named_but_never_logged(make: Any) -> None:
-    rig = make({"open": [outcome("refused", refused="/L/secret.bean.gpg")]})
+    rig = make({"open": [outcome("refused", refused="/L/secret.bean.gpg", refusal="encrypted")]})
     assert rig.value() == EncryptedFile("/L/secret.bean.gpg")
     assert rig.ops() == ["open"]
     ((name, fields),) = rig.lines()
@@ -254,7 +257,12 @@ def test_an_encrypted_file_is_refused_and_named_but_never_logged(make: Any) -> N
         loaded(publish="fresh"),  # only a fresh answer is fresh
         outcome("fresh", publish="published", number=1, ledger_version=LV),
         outcome("refused"),  # a refusal names its file
+        outcome("refused", refusal="encrypted"),  # and its file
+        outcome("refused", refused="/L/x.gpg"),  # and why
         loaded(refused="/L/x.gpg"),  # only a refusal does
+        loaded(refusal="number_failed"),  # only a refusal says why
+        outcome("refused", refused="/L/x.gpg", refusal="encrypted", line=3),  # an encrypted file has no line
+        loaded(line=3),  # only a refusal of the ledger names a line
         loaded(number=None),  # S0088 round 1 (verifier F5): a published generation is named by its number
         loaded(ledger_version=None),  # and by its version
         loaded(number=2),  # whose N is that number (LV is 1/...)
@@ -269,6 +277,19 @@ def test_an_answer_that_does_not_hold_together_is_internal(make: Any, bad: dict[
     assert isinstance(value, NotOpened)
     assert value.error.code == ErrorCode.INTERNAL
     assert [(n, f["why"]) for n, f in rig.lines()] == [("open.not_loaded", "violation")]
+
+
+@pytest.mark.parametrize(("why", "line"), [("number_failed", 4), ("beancount_failed", None)])
+def test_a_ledger_beancount_cannot_load_is_named_tried_once_and_never_logged(
+    make: Any, why: str, line: int | None
+) -> None:
+    """S0098 (BL-0123): Beancount's own load raised; bean-check fails the same way, so no try again."""
+    rig = make({"open": [outcome("refused", refused="/L/main.bean", refusal=why, line=line)]})
+    assert rig.value() == NotLoadable(why, "/L/main.bean", line)  # type: ignore[arg-type]
+    assert rig.ops() == ["open"]
+    ((name, fields),) = rig.lines()
+    assert (name, fields["why"]) == ("open.not_loaded", why)
+    assert "/L/main.bean" not in repr(fields)
 
 
 def test_a_refusal_from_the_engine_is_internal(make: Any) -> None:

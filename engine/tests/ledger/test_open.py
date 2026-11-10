@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import os
 import shutil
+import sqlite3
 import stat
 import sys
 from collections.abc import Callable, Iterator
@@ -459,3 +460,53 @@ def test_an_include_added_before_the_rebuild_is_seen_by_the_next_open(w: World, 
     got = pb.read_published(for_this_os(), str(w.cache), KEY, SqliteStore())
     assert got is not None
     assert str(new) in dict(decode(got.meta.fingerprint.encode("ascii")).files)
+
+
+# -- a ledger Beancount's own load fails on, and numbers it rounds (BL-0123, S0098) ----------------------------------
+
+LONG_CRASH = b'2026-01-03 * "Coins"\n  Assets:Cash  12345678901.123456789012345678 ETH\n  Expenses:Food\n'
+DOC_PLUGIN = (
+    b"import datetime\nfrom beancount.core import data\n__plugins__ = ['add']\n"
+    b"def add(entries, options):\n"
+    b"    meta = data.new_metadata('<plugin>', 0)\n"
+    b"    doc = data.Document(meta, datetime.date(2026, 1, 2), 'Assets:Cash', 42, frozenset(), frozenset())\n"
+    b"    return entries + [doc], []\n"
+)
+
+
+def test_a_number_beancount_cannot_compute_refuses_the_open_naming_its_line(w: World) -> None:
+    (w.root.parent / "inc.bean").write_bytes(INC + LONG_CRASH)
+    a = w.go()
+    assert (a.outcome, a.refusal, a.refused, a.line) == ("refused", "number-failed", str(w.root.parent / "inc.bean"), 5)
+    assert a.published is None
+    assert w.current() is None
+
+
+def test_a_plugins_entry_beancount_cannot_check_refuses_the_open(w: World) -> None:
+    (w.root.parent / "plug_doc_open.py").write_bytes(DOC_PLUGIN)
+    w.root.write_bytes(b'option "insert_pythonpath" "TRUE"\nplugin "plug_doc_open"\n' + MAIN)
+    a = w.go()
+    assert (a.outcome, a.refusal, a.refused, a.line) == ("refused", "beancount-failed", str(w.root), None)
+    assert w.current() is None
+
+
+def test_an_encrypted_file_is_still_its_own_refusal(w: World) -> None:
+    secret = w.root.parent / "secret.bean.gpg"
+    secret.write_bytes(b"\x85\x01not really")
+    w.root.write_bytes(MAIN + b'include "secret.bean.gpg"\n')
+    a = w.go()
+    assert (a.outcome, a.refusal, a.refused, a.line) == ("refused", "encrypted", str(secret), None)
+
+
+def test_the_warnings_of_numbers_beancount_rounded_are_published_and_counted(w: World) -> None:
+    long = b"12345678901.123456789012345678"
+    (w.root.parent / "inc.bean").write_bytes(
+        INC + b'2026-01-03 * "Coins"\n  Assets:Cash  ' + long + b" ETH\n  Expenses:Food  -" + long + b" ETH\n"
+    )
+    a = w.go()
+    _, real_errors, _ = port.real_load(str(w.root))
+    assert (a.outcome, a.errors) == ("loaded", len(real_errors) + 2)
+    assert isinstance(a.published, pb.Published)
+    con = sqlite3.connect(f"file:{w.mirror / a.published.gen.name}?mode=ro", uri=True)
+    got = con.execute("SELECT line_number FROM ledger_errors WHERE message LIKE 'Number longer than 28 digits%'")
+    assert [r[0] for r in got] == [6, 7]

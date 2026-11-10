@@ -392,6 +392,14 @@ class RebuildParams(Message):
 type Publish = Literal["published", "fresh", "inexact", "replaced", "incomplete"]
 
 
+type LoadRefusal = Literal["number_failed", "beancount_failed"]
+"""Why a load did not happen although Beancount ran (S0098, `ledger.load_failure`): its decimal arithmetic failed on a
+number (an amount of more than 28 digits whose other leg it must fill in), or anything else of its own load raised
+(a plugin's entry its checks cannot read, a plugin that fails while imported). bean-check fails on the same ledger."""
+
+type OpenRefusal = Literal["encrypted", "number_failed", "beancount_failed"]
+
+
 class RebuildResult(Message):
     """`rebuild`'s answer: `loaded` (Beancount's result for the disk as observed; `entries` and `errors` its counts),
     `moved` (the disk changed during the load or before the swap, or the load used files outside the set:
@@ -399,10 +407,13 @@ class RebuildResult(Message):
     loaded or built) or `paused` (an unfinished save's `.open` journal at the re-check: not published). `publish`:
     what became of a `loaded` result (`published`, or why not: `inexact`, `replaced`, `incomplete`), `fresh` for
     `fresh`, null otherwise. `number` and `ledger_version`: the current generation's when `publish` is `published` or
-    `fresh`, else null. `removed`, `remove_failed`: the cleanup's counts. It runs the ledger's plugins, so the engine
-    is retired after it."""
+    `fresh`, else null. `removed`, `remove_failed`: the cleanup's counts. `refused` (S0098): Beancount's own load
+    raised on the ledger, nothing published: `refusal` says why (`number_failed`, its arithmetic failed on a number;
+    `beancount_failed`, any other failure), `refused` names the file and `line` the line when known; all three are
+    null otherwise. `errors` counts every row of `ledger_errors`: Beancount's errors and the warnings on numbers it
+    rounded. It runs the ledger's plugins, so the engine is retired after it."""
 
-    outcome: Literal["loaded", "moved", "fresh", "paused"]
+    outcome: Literal["loaded", "moved", "fresh", "paused", "refused"]
     fingerprint: str = Field(min_length=1)
     entries: int = Field(ge=0)
     errors: int = Field(ge=0)
@@ -411,6 +422,9 @@ class RebuildResult(Message):
     ledger_version: str | None = Field(pattern=r"^[1-9][0-9]*/sha256:[0-9a-f]{64}$")
     removed: int = Field(ge=0)
     remove_failed: int = Field(ge=0)
+    refusal: LoadRefusal | None
+    refused: AbsPath | None
+    line: int | None = Field(ge=1)
 
 
 class OpenParams(Message):
@@ -433,7 +447,9 @@ class OpenResult(Message):
     """`open`'s answer: `loaded` (Beancount's result for the disk the load parsed; `entries` and `errors` its counts),
     `moved` (the disk changed before the swap: nothing published; the sidecar runs the job again), `fresh` (the
     published generation already describes the disk: nothing loaded), `paused` (an unfinished save's `.open` journal:
-    nothing published) or `refused` (an encrypted file, `refused` its path; ADR-0059). `publish`: what became of a
+    nothing published) or `refused` (nothing loaded: `refusal` says why, `refused` names the file and `line` the line
+    when known: `encrypted`, an encrypted file, ADR-0059; `number_failed` and `beancount_failed`, Beancount's own load
+    raised on the ledger, S0098; all three null otherwise). `publish`: what became of a
     `loaded` result (`published`, or why not), `fresh` for `fresh`, null otherwise. `number` and `ledger_version`: the
     current generation's when `publish` is `published` or `fresh`, else null. `removed`, `remove_failed`: the
     cleanup's counts. It runs the ledger's plugins, so the engine is retired after it."""
@@ -447,6 +463,8 @@ class OpenResult(Message):
     removed: int = Field(ge=0)
     remove_failed: int = Field(ge=0)
     refused: AbsPath | None
+    refusal: OpenRefusal | None
+    line: int | None = Field(ge=1)
 
 
 # -- The create (S0080; engine-jobs §1, §4, §8.2) ---------------------------------------------------------------------
@@ -509,7 +527,9 @@ class CopyParams(Message):
     the user named it), the files of `.finzytrack/` (the manifest, with the copy's new lineage id), the app's local data
     folder (its `local/<key>/journal/` folders are read for `.open` journals) and the legacy write-lock files to try
     (ADR-0062). Its answers are the create's (`CreateResult`, `CreateOutcomeResult`), with the copy's own reasons:
-    `legacy_saving`, `recovery_blocked`, `source_missing`, `source_unreadable`, `source_failed`, `encrypted`,
+    `legacy_saving`, `recovery_blocked`, `source_missing`, `source_unreadable`, `source_failed`, `number_failed` and
+    `beancount_failed` (Beancount's own load raised on the source: `path`, `detail` the line when known; S0098),
+    `encrypted`,
     `source_changed`, `cannot_rewrite`, `cannot_place`, `load_differs`, `plugin_modules` (and `load_failed`,
     `load_outside`). The same
     params name the copy whose outcome `copy_outcome` reads."""
@@ -674,6 +694,9 @@ OPS: dict[str, OpSpec] = {
             "ledger_version": "2/sha256:" + "0" * 64,
             "removed": 1,
             "remove_failed": 0,
+            "refusal": None,
+            "refused": None,
+            "line": None,
         },
         {
             "root": "/ledgers/L/main.bean",
@@ -700,6 +723,8 @@ OPS: dict[str, OpSpec] = {
             "removed": 1,
             "remove_failed": 0,
             "refused": None,
+            "refusal": None,
+            "line": None,
         },
         {
             "root": "/ledgers/L/main.bean",

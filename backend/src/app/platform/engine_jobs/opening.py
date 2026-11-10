@@ -16,6 +16,11 @@ an outside edit. `submit_open` queues it as the switch's own job (waited-for); i
   `INTERNAL` for an engine refusal or an answer that does not hold together.
 - **`EncryptedFile(path)`**: the ledger includes an encrypted file, which v0.4.0 never reads (ADR-0059); the open's
   screen names it (BL-0154).
+- **`NotLoadable(why, path, line)`**: Beancount's own load raised on the ledger (S0098, BL-0123): `number_failed`,
+  its arithmetic failed on a number (an amount of more than 28 digits whose other leg it must fill in), or
+  `beancount_failed` (a plugin's entry its checks cannot read, a plugin that fails while imported). bean-check fails on
+  the same ledger. `path` and `line` (when known) name the place; the open's screen names them (BL-0154). No try
+  again: the same ledger fails the same way.
 
 An engine death ends the job as any waited-for read's (§5.3: `ENGINE_STOPPED` with Try again, from the scheduler;
 each try is counted, since a user waits for it); a Cancel ends it with nothing to undo (§4). Each try after the first
@@ -35,7 +40,7 @@ from typing import Final, Literal
 from app.domain.dates import civil_date
 from app.domain.errors import DomainError
 from app.platform.clock import Clock
-from app.platform.engine import EngineFailure, EngineRefusal, OpenAnswer, Publish
+from app.platform.engine import EngineFailure, EngineRefusal, LoadRefusal, OpenAnswer, Publish
 from app.platform.engine_jobs.queue import JobSpec
 from app.platform.engine_jobs.rebuild import names_its_generation
 from app.platform.engine_jobs.scheduler import EngineJobs, Failed, JobContext, JobTicket, Work, WorkResult
@@ -95,8 +100,20 @@ class EncryptedFile:
     path: str
 
 
-type OpenValue = Opened | NotOpened | EncryptedFile
-type NotLoadedWhy = Literal["changing", "paused", "encrypted", "refused", "violation"]
+@dataclass(frozen=True, slots=True)
+class NotLoadable:
+    """Beancount's own load raised on the ledger (S0098): why, and the file and line (when known) for the open's
+    screen."""
+
+    why: LoadRefusal
+    path: str
+    line: int | None
+
+
+type OpenValue = Opened | NotOpened | EncryptedFile | NotLoadable
+type NotLoadedWhy = Literal[
+    "changing", "paused", "encrypted", "refused", "violation", "number_failed", "beancount_failed"
+]
 
 
 def open_spec(workspace: str) -> JobSpec:
@@ -121,8 +138,11 @@ def params_of(target: OpenTarget, clock: Clock) -> dict[str, object]:
 def _holds_together(a: OpenAnswer) -> bool:
     """A loaded answer says what became of its build (never `fresh`); a fresh one says `fresh`; a published or fresh
     generation is named by its number and `ledger_version` (`names_its_generation`); only a refusal, and every
-    refusal, names its file."""
-    if (a.outcome == "refused") != (a.refused is not None):
+    refusal, names its file and why; only a refusal of the ledger by Beancount names a line."""
+    refused = a.outcome == "refused"
+    if refused != (a.refused is not None) or refused != (a.refusal is not None):
+        return False
+    if a.line is not None and a.refusal not in ("number_failed", "beancount_failed"):
         return False
     if not names_its_generation(a.publish, a.number, a.ledger_version):
         return False
@@ -163,6 +183,8 @@ def run_open(ctx: JobContext, target: OpenTarget, clock: Clock) -> tuple[OpenVal
                 return _not_opened(ErrorCode.WRITES_PAUSED, WritesPausedDetails("unfinished_save", None)), "paused"
             case "refused":
                 assert a.refused is not None  # noqa: S101 (`_holds_together`)
+                if a.refusal == "number_failed" or a.refusal == "beancount_failed":
+                    return NotLoadable(a.refusal, a.refused, a.line), a.refusal
                 return EncryptedFile(a.refused), "encrypted"
             case "moved":
                 continue

@@ -22,6 +22,13 @@ Where it differs from Beancount, on purpose (each refuses the whole load, EP-13;
 - **A candidate the load never reaches** is refused: validating the set without it would validate the wrong text
   (INV-22). A candidate for a file that does not exist yet is reached through a plain `include` of its path; a glob
   matches only files on disk, as in Beancount, so a new file reached only through a glob is refused (BL-0117).
+- **Beancount's own load raising** on the ledger (its parse, booking, a plugin's import or its validation, as
+  bean-check fails on the same ledger) is refused, never raised: `number-failed` or `beancount-failed`, naming the
+  file and line of the entry Beancount was working on when known (`load_failure`; S0049's contract, BL-0123). A disk
+  error stays the caller's (`OSError`).
+- **Warnings on numbers Beancount rounded** (`precision`; owner, 2026-11-10, "Follow Beancount"): the load keeps
+  Beancount's own 28-digit numbers and lists a warning per line it rounded in `Loaded.warnings`, apart from
+  `Loaded.errors`, which stay exactly Beancount's (`Loaded.reported` gives both, as the mirror lists them).
 - **No pickle cache**, no `log_timings`, no `encoding` argument (the engine passes none).
 - **Every file is read once, by us, and parsed from those bytes** (`parse_string` with its path as the report
   filename, as `parse_file` does after opening it), so the load's fingerprint (`Loaded.fingerprint`, S0051) is the
@@ -53,6 +60,7 @@ from typing import Literal, cast
 
 from ledger_engine.ledger import beancount_port as port
 from ledger_engine.ledger import fingerprint as fp
+from ledger_engine.ledger import load_failure, precision
 from ledger_engine.ledger.core.ledger_set import Absent, FileState, Fingerprint
 from ledger_engine.ledger.policy import LoadPolicy
 
@@ -63,6 +71,8 @@ type RefusalReason = Literal[
     "plugin-refused",
     "pythonpath-refused",
     "documents-refused",
+    "number-failed",
+    "beancount-failed",
 ]
 
 ENCRYPTED_SUFFIXES = (".gpg", ".asc")
@@ -72,20 +82,30 @@ DOCUMENTS_PLUGIN = "beancount.ops.documents"
 @dataclass(frozen=True, slots=True)
 class Loaded:
     """Beancount's result: the booked, transformed and validated entries, every error, and the options map; and
-    what the load read (`fingerprint`: observe its `ledger_set` again to learn whether the next load would differ)."""
+    what the load read (`fingerprint`: observe its `ledger_set` again to learn whether the next load would differ);
+    and Finzytrack's own warnings on numbers Beancount rounded (`precision`, BL-0123), kept apart from Beancount's
+    errors so `errors` stays exactly Beancount's. Whoever shows the errors shows both (`reported`)."""
 
     entries: list[port.Directive]
     errors: list[port.BeancountError]
     options: port.OptionsMap
     fingerprint: Fingerprint
+    warnings: list[port.BeancountError] = field(default_factory=list[port.BeancountError])
+
+    @property
+    def reported(self) -> list[port.BeancountError]:
+        """Beancount's errors, then the warnings: what the mirror's `ledger_errors` lists."""
+        return [*self.errors, *self.warnings]
 
 
 @dataclass(frozen=True, slots=True)
 class LoadRefused:
-    """The load did not happen: `subject` is the file, plugin or directory it refused."""
+    """The load did not happen: `subject` is the file, plugin or directory it refused. For `number-failed` and
+    `beancount-failed` (Beancount's own load raised, `load_failure`), `line` is the line in `subject` when known."""
 
     reason: RefusalReason
     subject: str
+    line: int | None = None
 
 
 type LoadResult = Loaded | LoadRefused
@@ -126,20 +146,41 @@ def load(root: str, overlay: Mapping[str, bytes], policy: LoadPolicy) -> LoadRes
     documents = {d: fp.listing(d) for d in documents_roots(options)}
     document_files = {e.filename: fp.document_file(e.filename) for e in entries if isinstance(e, port.Document)}
 
-    # loader._load, after _parse_recursive.
-    port.sort_entries(entries)
-    entries, balance_errors = port.book(entries, options)
+    # loader._load, after _parse_recursive. Each of Beancount's steps that can raise on the ledger refuses instead
+    # (`load_failure`); a disk error stays the caller's.
+    try:
+        port.sort_entries(entries)
+        entries, balance_errors = port.book(entries, options)
+    except OSError:
+        raise
+    except Exception as e:  # noqa: BLE001 (Beancount's booking raised on the ledger: refused, never raised)
+        return _failed(e, root)
     parse_errors.extend(balance_errors)
     try:
         entries, errors = port.run_transformations(entries, parse_errors, options)
     except port.EncryptedFileMet as e:  # raised while a plugin was imported (its calls' errors are Beancount's)
         return LoadRefused("encrypted", e.path)
+    except OSError:
+        raise
+    except Exception as e:  # noqa: BLE001 (a plugin raised while it was imported: refused, never raised)
+        return _failed(e, root)
     listed = {path.join(d, name) for d, names in documents.items() if names is not None for name in names}
     document_files.update(_plugin_documents(entries, errors, options, listed | set(document_files)))
-    errors.extend(port.validate(entries, options))
+    try:
+        errors.extend(port.validate(entries, options))
+    except OSError:
+        raise
+    except Exception as e:  # noqa: BLE001 (Beancount's checks raised on an entry: refused, never raised)
+        return _failed(e, root)
     options["input_hash"] = port.input_hash(options["include"])
     fingerprint = Fingerprint.of(path.normpath(root), seen.files, seen.globs, documents, document_files)
-    return Loaded(entries, errors, options, fingerprint)
+    warnings = [*precision.written(seen.long), *precision.filled_in(entries, options)]
+    return Loaded(entries, errors, options, fingerprint, list(warnings))
+
+
+def _failed(error: Exception, root: str) -> LoadRefused:
+    failure = load_failure.of(error, path.normpath(root))
+    return LoadRefused(failure.reason, failure.path, failure.line)
 
 
 @dataclass(slots=True)
@@ -150,6 +191,7 @@ class _Seen:
 
     files: dict[str, FileState] = field(default_factory=dict[str, FileState])
     globs: dict[str, list[str]] = field(default_factory=dict[str, list[str]])
+    long: dict[str, bytes] = field(default_factory=dict[str, bytes])  # parsed bytes that may hold a long number
 
 
 def _parse_recursive(
@@ -191,7 +233,15 @@ def _parse_recursive(
         else:
             data = candidates[filename]
         record.files.setdefault(filename, fp.content(data))
-        src_entries, src_errors, src_options = port.parse_string(data, filename)
+        if precision.may_round(data):
+            record.long.setdefault(filename, data)
+        try:
+            src_entries, src_errors, src_options = port.parse_string(data, filename)
+        except OSError:
+            raise
+        except Exception as e:  # noqa: BLE001 (Beancount's parser raised on the file: refused, never raised)
+            failure = load_failure.of(e, filename)
+            return LoadRefused(failure.reason, failure.path, failure.line)
         cwd = path.dirname(filename)
 
         entries.extend(src_entries)

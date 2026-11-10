@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import os
 import shutil
+import sqlite3
 import sys
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field, replace
@@ -593,3 +594,41 @@ def test_a_document_file_under_its_root_added_after_the_plan_and_deleted_during_
         assert generations(cache) == []
     finally:
         (docs / "priv").chmod(0o700)
+
+
+# -- a ledger Beancount's own load fails on, and numbers it rounds (BL-0123, S0098) ----------------------------------
+
+
+def test_a_ledger_beancount_cannot_load_is_refused_naming_its_line_and_nothing_is_published(
+    root: Path, cache: Path
+) -> None:
+    hint = hint_of(root)
+    (root.parent / "inc.bean").write_bytes(
+        INC + b'2026-01-03 * "Coins"\n  Assets:Cash  12345678901.123456789012345678 ETH\n  Expenses:Food\n'
+    )
+    a = go(rebuild.Ports(), hint, FakeJob())
+    assert (a.outcome, a.refusal, a.refused, a.line) == ("refused", "number-failed", str(root.parent / "inc.bean"), 5)
+    assert a.published is None
+    assert generations(cache) == []
+
+
+def test_a_disk_error_in_the_rebuilds_load_is_raised_as_before(root: Path) -> None:
+    def load(r: str) -> port.ParseResult:
+        raise PermissionError(13, "denied", r)
+
+    with pytest.raises(PermissionError):
+        go(rebuild.Ports(load=load), hint_of(root), FakeJob())
+
+
+def test_the_rebuild_publishes_the_warnings_of_numbers_beancount_rounded(root: Path, cache: Path) -> None:
+    long = b"12345678901.123456789012345678"
+    (root.parent / "inc.bean").write_bytes(
+        INC + b'2026-01-03 * "Coins"\n  Assets:Cash  ' + long + b" ETH\n  Expenses:Food  -" + long + b" ETH\n"
+    )
+    a = go(rebuild.Ports(), hint_of(root), FakeJob())
+    _, real_errors, _ = port.real_load(str(root))
+    assert (a.outcome, a.errors) == ("loaded", len(real_errors) + 2)
+    assert isinstance(a.published, pb.Published)
+    con = sqlite3.connect(f"file:{mirror(cache) / a.published.gen.name}?mode=ro", uri=True)
+    got = con.execute("SELECT source_file, line_number FROM ledger_errors WHERE message LIKE 'Number longer%'")
+    assert list(got) == [(str(root.parent / "inc.bean"), 6), (str(root.parent / "inc.bean"), 7)]

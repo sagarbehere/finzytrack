@@ -28,3 +28,6 @@ Option 3. The new facts weaken option 1's main argument, "the number in question
 Not a question for you, decided in the slice: a plugin that adds a `document` whose file name is not text makes Beancount's own load raise (`validate_documents_paths`; bean-check crashes too). Finzytrack's load will return a refusal ("Beancount cannot load this ledger") instead of an internal error. Under option 3, the crash above uses the same refusal.
 
 ## Answer (owner, verbatim, with date)
+Owner, 2026-11-10, in session, to the orchestrator's question (option 3 put as: "Load at 28 digits like bean-check and Fava; warn on each line Beancount rounded; the crash becomes a refusal naming the line. No golden, ID or mirror rule changes."): "Follow Beancount (Recommended)"
+
+To apply (BL-0123, S0098): option 3. This supersedes the answer of 2026-10-29 in `20261028-numbers-beyond-28-digits.md` (option 1); that file keeps its text and points here.

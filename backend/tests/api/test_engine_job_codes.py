@@ -104,6 +104,8 @@ class Scenarios:
             "removed": 0,
             "remove_failed": 0,
             "refused": None,
+            "refusal": None,
+            "line": None,
         }
         self.engine.scripted["open"] = [moved, moved, moved]
         self.jobs.workspace_closed()  # a switch past its close: only its own jobs start (§3, BL-0154)

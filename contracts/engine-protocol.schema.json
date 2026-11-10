@@ -205,7 +205,7 @@
     },
     "CopyParams": {
       "additionalProperties": false,
-      "description": "A confirmed copy (§8.2): the job's name (`.finzytrack.ft-<job>`), the target folder, the source ledger's root (as\nthe user named it), the files of `.finzytrack/` (the manifest, with the copy's new lineage id), the app's local data\nfolder (its `local/<key>/journal/` folders are read for `.open` journals) and the legacy write-lock files to try\n(ADR-0062). Its answers are the create's (`CreateResult`, `CreateOutcomeResult`), with the copy's own reasons:\n`legacy_saving`, `recovery_blocked`, `source_missing`, `source_unreadable`, `source_failed`, `encrypted`,\n`source_changed`, `cannot_rewrite`, `cannot_place`, `load_differs`, `plugin_modules` (and `load_failed`,\n`load_outside`). The same\nparams name the copy whose outcome `copy_outcome` reads.",
+      "description": "A confirmed copy (§8.2): the job's name (`.finzytrack.ft-<job>`), the target folder, the source ledger's root (as\nthe user named it), the files of `.finzytrack/` (the manifest, with the copy's new lineage id), the app's local data\nfolder (its `local/<key>/journal/` folders are read for `.open` journals) and the legacy write-lock files to try\n(ADR-0062). Its answers are the create's (`CreateResult`, `CreateOutcomeResult`), with the copy's own reasons:\n`legacy_saving`, `recovery_blocked`, `source_missing`, `source_unreadable`, `source_failed`, `number_failed` and\n`beancount_failed` (Beancount's own load raised on the source: `path`, `detail` the line when known; S0098),\n`encrypted`,\n`source_changed`, `cannot_rewrite`, `cannot_place`, `load_differs`, `plugin_modules` (and `load_failed`,\n`load_outside`). The same\nparams name the copy whose outcome `copy_outcome` reads.",
       "properties": {
         "job": {
           "pattern": "^[a-z0-9_]{1,64}$",
@@ -1340,6 +1340,13 @@
       "title": "ListedJournal",
       "type": "object"
     },
+    "LoadRefusal": {
+      "enum": [
+        "number_failed",
+        "beancount_failed"
+      ],
+      "type": "string"
+    },
     "NoParams": {
       "additionalProperties": false,
       "description": "An op that takes no parameters.",
@@ -1406,6 +1413,14 @@
       "title": "OpenParams",
       "type": "object"
     },
+    "OpenRefusal": {
+      "enum": [
+        "encrypted",
+        "number_failed",
+        "beancount_failed"
+      ],
+      "type": "string"
+    },
     "OpenReply": {
       "additionalProperties": false,
       "description": "The accepted reply to `open`.",
@@ -1418,9 +1433,11 @@
             "entries": 3,
             "errors": 0,
             "ledger_version": "2/sha256:0000000000000000000000000000000000000000000000000000000000000000",
+            "line": null,
             "number": 2,
             "outcome": "loaded",
             "publish": "published",
+            "refusal": null,
             "refused": null,
             "remove_failed": 0,
             "removed": 1
@@ -1526,7 +1543,7 @@
     },
     "OpenResult": {
       "additionalProperties": false,
-      "description": "`open`'s answer: `loaded` (Beancount's result for the disk the load parsed; `entries` and `errors` its counts),\n`moved` (the disk changed before the swap: nothing published; the sidecar runs the job again), `fresh` (the\npublished generation already describes the disk: nothing loaded), `paused` (an unfinished save's `.open` journal:\nnothing published) or `refused` (an encrypted file, `refused` its path; ADR-0059). `publish`: what became of a\n`loaded` result (`published`, or why not), `fresh` for `fresh`, null otherwise. `number` and `ledger_version`: the\ncurrent generation's when `publish` is `published` or `fresh`, else null. `removed`, `remove_failed`: the\ncleanup's counts. It runs the ledger's plugins, so the engine is retired after it.",
+      "description": "`open`'s answer: `loaded` (Beancount's result for the disk the load parsed; `entries` and `errors` its counts),\n`moved` (the disk changed before the swap: nothing published; the sidecar runs the job again), `fresh` (the\npublished generation already describes the disk: nothing loaded), `paused` (an unfinished save's `.open` journal:\nnothing published) or `refused` (nothing loaded: `refusal` says why, `refused` names the file and `line` the line\nwhen known: `encrypted`, an encrypted file, ADR-0059; `number_failed` and `beancount_failed`, Beancount's own load\nraised on the ledger, S0098; all three null otherwise). `publish`: what became of a\n`loaded` result (`published`, or why not), `fresh` for `fresh`, null otherwise. `number` and `ledger_version`: the\ncurrent generation's when `publish` is `published` or `fresh`, else null. `removed`, `remove_failed`: the\ncleanup's counts. It runs the ledger's plugins, so the engine is retired after it.",
       "properties": {
         "outcome": {
           "enum": [
@@ -1606,6 +1623,28 @@
             }
           ],
           "title": "Refused"
+        },
+        "refusal": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/OpenRefusal"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "line": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Line"
         }
       },
       "required": [
@@ -1617,7 +1656,9 @@
         "ledger_version",
         "removed",
         "remove_failed",
-        "refused"
+        "refused",
+        "refusal",
+        "line"
       ],
       "title": "OpenResult",
       "type": "object"
@@ -1926,9 +1967,12 @@
             "errors": 0,
             "fingerprint": "{\"document_files\":[],\"documents\":[],\"files\":[],\"globs\":[],\"root\":\"/ledgers/L/main.bean\",\"v\":1}",
             "ledger_version": "2/sha256:0000000000000000000000000000000000000000000000000000000000000000",
+            "line": null,
             "number": 2,
             "outcome": "loaded",
             "publish": "published",
+            "refusal": null,
+            "refused": null,
             "remove_failed": 0,
             "removed": 1
           },
@@ -2034,14 +2078,15 @@
     },
     "RebuildResult": {
       "additionalProperties": false,
-      "description": "`rebuild`'s answer: `loaded` (Beancount's result for the disk as observed; `entries` and `errors` its counts),\n`moved` (the disk changed during the load or before the swap, or the load used files outside the set:\n`fingerprint` is the set to try with next), `fresh` (the published generation already describes the disk: nothing\nloaded or built) or `paused` (an unfinished save's `.open` journal at the re-check: not published). `publish`:\nwhat became of a `loaded` result (`published`, or why not: `inexact`, `replaced`, `incomplete`), `fresh` for\n`fresh`, null otherwise. `number` and `ledger_version`: the current generation's when `publish` is `published` or\n`fresh`, else null. `removed`, `remove_failed`: the cleanup's counts. It runs the ledger's plugins, so the engine\nis retired after it.",
+      "description": "`rebuild`'s answer: `loaded` (Beancount's result for the disk as observed; `entries` and `errors` its counts),\n`moved` (the disk changed during the load or before the swap, or the load used files outside the set:\n`fingerprint` is the set to try with next), `fresh` (the published generation already describes the disk: nothing\nloaded or built) or `paused` (an unfinished save's `.open` journal at the re-check: not published). `publish`:\nwhat became of a `loaded` result (`published`, or why not: `inexact`, `replaced`, `incomplete`), `fresh` for\n`fresh`, null otherwise. `number` and `ledger_version`: the current generation's when `publish` is `published` or\n`fresh`, else null. `removed`, `remove_failed`: the cleanup's counts. `refused` (S0098): Beancount's own load\nraised on the ledger, nothing published: `refusal` says why (`number_failed`, its arithmetic failed on a number;\n`beancount_failed`, any other failure), `refused` names the file and `line` the line when known; all three are\nnull otherwise. `errors` counts every row of `ledger_errors`: Beancount's errors and the warnings on numbers it\nrounded. It runs the ledger's plugins, so the engine is retired after it.",
       "properties": {
         "outcome": {
           "enum": [
             "loaded",
             "moved",
             "fresh",
-            "paused"
+            "paused",
+            "refused"
           ],
           "title": "Outcome",
           "type": "string"
@@ -2105,6 +2150,41 @@
           "minimum": 0,
           "title": "Remove Failed",
           "type": "integer"
+        },
+        "refusal": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/LoadRefusal"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "refused": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "pattern": "^/",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Refused"
+        },
+        "line": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Line"
         }
       },
       "required": [
@@ -2116,7 +2196,10 @@
         "number",
         "ledger_version",
         "removed",
-        "remove_failed"
+        "remove_failed",
+        "refusal",
+        "refused",
+        "line"
       ],
       "title": "RebuildResult",
       "type": "object"

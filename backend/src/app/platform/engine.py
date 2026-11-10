@@ -270,8 +270,12 @@ class SaveAnswer:
     published: bool
 
 
-type RebuildOutcome = Literal["loaded", "moved", "fresh", "paused"]
+type RebuildOutcome = Literal["loaded", "moved", "fresh", "paused", "refused"]
 type Publish = Literal["published", "fresh", "inexact", "replaced", "incomplete"]
+type LoadRefusal = Literal["number_failed", "beancount_failed"]
+"""Beancount's own load raised on the ledger (S0098): its arithmetic failed on a number, or anything else of its load
+failed (a plugin's entry its checks cannot read). bean-check fails on the same ledger."""
+type OpenRefusal = Literal["encrypted", "number_failed", "beancount_failed"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -279,10 +283,11 @@ class RebuildAnswer:
     """The result of the engine's `rebuild` (engine-jobs §6.7, §7; ADR-0068 D1; S0070) and its publish
     (`design/specs/mirror/publish.md` §4; S0087, BL-0113): `loaded` (Beancount's own result for the disk as observed;
     `entries` and `errors` its counts), `moved` (try again with `fingerprint`, opaque here), `fresh` (the published
-    generation already describes the disk: nothing loaded) or `paused` (an unfinished save's `.open` journal: not
-    published). `publish`: what became of a loaded result (`published`, or why not), `fresh`, or None. `number` and
-    `ledger_version` name the current generation when published or fresh. `removed`, `remove_failed`: the cleanup's
-    counts. It wrote only the workspace's mirror folder; the ledger's plugins ran in that engine."""
+    generation already describes the disk: nothing loaded), `paused` (an unfinished save's `.open` journal: not
+    published) or `refused` (Beancount's own load raised on the ledger: `refusal` why, `refused` the file, `line` the
+    line when known; S0098). `publish`: what became of a loaded result (`published`, or why not), `fresh`, or None.
+    `number` and `ledger_version` name the current generation when published or fresh. `removed`, `remove_failed`:
+    the cleanup's counts. It wrote only the workspace's mirror folder; the ledger's plugins ran in that engine."""
 
     outcome: RebuildOutcome
     fingerprint: str
@@ -293,6 +298,9 @@ class RebuildAnswer:
     ledger_version: str | None
     removed: int
     remove_failed: int
+    refusal: LoadRefusal | None = None
+    refused: str | None = None
+    line: int | None = None
 
 
 type OpenOutcome = Literal["loaded", "moved", "fresh", "paused", "refused"]
@@ -304,7 +312,8 @@ class OpenAnswer:
     (`design/specs/mirror/publish.md` §4): `loaded` (Beancount's result for the disk the overlay load parsed;
     `entries` and `errors` its counts), `moved` (the disk changed before the swap: run it again), `fresh` (the
     published generation already describes the disk: nothing loaded), `paused` (an unfinished save's `.open`
-    journal) or `refused` (an encrypted file: `refused` is its path; ADR-0059). `publish`, `number`,
+    journal) or `refused` (nothing loaded: `refusal` says why, `refused` names the file, `line` the line when known:
+    an encrypted file, ADR-0059; or Beancount's own load raised on the ledger, S0098). `publish`, `number`,
     `ledger_version`, `removed`, `remove_failed`: as for the rebuild. It wrote only the workspace's mirror folder; the
     ledger's plugins ran in that engine."""
 
@@ -317,6 +326,8 @@ class OpenAnswer:
     removed: int
     remove_failed: int
     refused: str | None
+    refusal: OpenRefusal | None = None
+    line: int | None = None
 
 
 type CreateOutcomeKind = Literal["created", "not_created"]

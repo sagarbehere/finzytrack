@@ -22,3 +22,5 @@ Option 1. The mirror's whole rule is exact numbers, and the number in question i
 Owner, 2026-10-29, in session: "Yes, keep numbers beyond 28 digits as exact, with a warning and amend adr-0015 to content hashes"
 
 To apply (BL-0123): option 1. The engine loads with 64-digit precision (the mirror's), so every number is exactly what the ledger says; the load adds a warning naming each line where Finzytrack differs from bean-check and Fava; the load never raises on such numbers.
+
+**Superseded (2026-11-10):** the owner chose option 3, "Follow Beancount (Recommended)", after S0098 showed that 64 digits also changes every number Beancount divides: `design/inbox/answered/20261110-numbers-beyond-28-digits-divisions.md`.

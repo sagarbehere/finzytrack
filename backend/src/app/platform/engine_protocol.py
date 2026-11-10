@@ -41,9 +41,11 @@ from app.platform.engine import (
     JournalListing,
     KeptCopySeen,
     ListedJournal,
+    LoadRefusal,
     ManifestSeen,
     OpenAnswer,
     OpenOutcome,
+    OpenRefusal,
     OutcomeFacts,
     Phase,
     Pong,
@@ -545,9 +547,14 @@ _REBUILD = frozenset(
         "ledger_version",
         "removed",
         "remove_failed",
+        "refusal",
+        "refused",
+        "line",
     }
 )
-REBUILD_OUTCOMES: frozenset[str] = frozenset({"loaded", "moved", "fresh", "paused"})
+REBUILD_OUTCOMES: frozenset[str] = frozenset({"loaded", "moved", "fresh", "paused", "refused"})
+LOAD_REFUSALS: frozenset[str] = frozenset({"number_failed", "beancount_failed"})
+OPEN_REFUSALS: frozenset[str] = frozenset({"encrypted", "number_failed", "beancount_failed"})
 PUBLISH: frozenset[str] = frozenset({"published", "fresh", "inexact", "replaced", "incomplete"})
 _LEDGER_VERSION = re.compile(r"[1-9][0-9]*/sha256:[0-9a-f]{64}")
 
@@ -581,6 +588,9 @@ def _rebuild(result: Mapping[str, object]) -> RebuildAnswer:
         ledger_version=version,
         removed=cast("int", _int(o["removed"], "removed", low=0)),
         remove_failed=cast("int", _int(o["remove_failed"], "remove_failed", low=0)),
+        refusal=None if o["refusal"] is None else cast("LoadRefusal", _choice(o["refusal"], LOAD_REFUSALS, "refusal")),
+        refused=_path(o["refused"], "refused", nullable=True),
+        line=_int(o["line"], "line", nullable=True, low=1),
     )
 
 
@@ -600,6 +610,8 @@ _OPEN = frozenset(
         "removed",
         "remove_failed",
         "refused",
+        "refusal",
+        "line",
     }
 )
 OPEN_OUTCOMES: frozenset[str] = frozenset({"loaded", "moved", "fresh", "paused", "refused"})
@@ -623,6 +635,8 @@ def _open(result: Mapping[str, object]) -> OpenAnswer:
         removed=cast("int", _int(o["removed"], "removed", low=0)),
         remove_failed=cast("int", _int(o["remove_failed"], "remove_failed", low=0)),
         refused=_path(o["refused"], "refused", nullable=True),
+        refusal=None if o["refusal"] is None else cast("OpenRefusal", _choice(o["refusal"], OPEN_REFUSALS, "refusal")),
+        line=_int(o["line"], "line", nullable=True, low=1),
     )
 
 

@@ -98,6 +98,8 @@ type Reason = Literal[
     "source_missing",  # the source's root does not exist (`path`)
     "source_unreadable",  # a source file could not be read (`path`, `errno`)
     "source_failed",  # the source's load could not run
+    "number_failed",  # Beancount's arithmetic failed on a number of the source (`path`, `detail`: the line, if known)
+    "beancount_failed",  # Beancount's own load raised on the source (`path`, `detail`: the line, if known)
     "encrypted",  # the source holds an encrypted ledger file (`path`; ADR-0059)
     "source_changed",  # a source changed while it was copied (`path`)
     "cannot_rewrite",  # a line naming another file could not be pointed at the copy (`path`, `detail`: the line)

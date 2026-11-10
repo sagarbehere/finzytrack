@@ -205,7 +205,10 @@ REBUILD_NOT_LOADED = Event(
         Field(
             "why",
             Kind.ENUM,  # `changing`: the disk moved in every try; the rest: why no try reached a result
-            frozenset({"changing", "engine_failed", "refused", "violation", "paused"}),  # paused: an `.open` journal
+            # paused: an `.open` journal; number_failed, beancount_failed: Beancount's own load raised (S0098)
+            frozenset(
+                {"changing", "engine_failed", "refused", "violation", "paused", "number_failed", "beancount_failed"}
+            ),
         ),
     ),
 )
@@ -241,8 +244,10 @@ OPEN_NOT_LOADED = Event(
         Field("workspace_key", Kind.ID),
         Field(
             "why",
-            Kind.ENUM,  # `changing`: the disk moved in every try; `paused`: an `.open` journal; `encrypted`: ADR-0059
-            frozenset({"changing", "paused", "encrypted", "refused", "violation"}),
+            # `changing`: the disk moved in every try; `paused`: an `.open` journal; `encrypted`: ADR-0059;
+            # `number_failed`, `beancount_failed`: Beancount's own load raised on the ledger (S0098)
+            Kind.ENUM,
+            frozenset({"changing", "paused", "encrypted", "refused", "violation", "number_failed", "beancount_failed"}),
         ),
     ),
 )

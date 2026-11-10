@@ -20,3 +20,5 @@ Option 1. It records what is built and what the engine-jobs spec already require
 Owner, 2026-10-29, in session: "Yes, keep numbers beyond 28 digits as exact, with a warning and amend adr-0015 to content hashes"
 
 Applied: ADR-0015 amendment of 2026-10-29 (option 1).
+
+The same sentence's first half ("keep numbers beyond 28 digits as exact, with a warning") answered `20261028-numbers-beyond-28-digits.md` and is superseded by `20261110-numbers-beyond-28-digits-divisions.md` (2026-11-10, "Follow Beancount"); this file's answer, the content hash, stands.

@@ -108,6 +108,9 @@ NOT_PUBLISHED: dict[str, object] = {
     "ledger_version": None,
     "removed": 0,
     "remove_failed": 0,
+    "refusal": None,
+    "refused": None,
+    "line": None,
 }
 
 
@@ -387,6 +390,36 @@ def test_an_unfinished_save_seen_at_the_recheck_stops_the_rebuild(make: Any) -> 
     assert background(rig) == NotLoaded("paused")
     assert rig.ops() == ["rebuild"]
     assert [(n, f["why"]) for n, f in rig.lines()] == [("rebuild.not_loaded", "paused")]
+
+
+@pytest.mark.parametrize(("why", "line"), [("number_failed", 4), ("beancount_failed", None)])
+def test_a_ledger_beancount_cannot_load_is_logged_with_why_and_not_tried_again(
+    make: Any, why: str, line: int | None
+) -> None:
+    """S0098 (BL-0123): Beancount's own load raised on the ledger; the same ledger fails the same way."""
+    refused = {**moved(), "outcome": "refused", "refusal": why, "refused": "/L/main.bean", "line": line}
+    rig = make({"rebuild": [refused, loaded()]})
+    assert background(rig) == NotLoaded(why)  # type: ignore[arg-type]
+    assert rig.ops() == ["rebuild"]
+    ((name, fields),) = rig.lines()
+    assert (name, fields["why"]) == ("rebuild.not_loaded", why)
+    assert "/L/main.bean" not in repr(fields)  # INV-23: never the path
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        {"outcome": "refused", "refusal": "number_failed"},  # a refusal names its file
+        {"outcome": "refused", "refused": "/L/main.bean"},  # and why
+        {"outcome": "moved", "refused": "/L/main.bean"},  # only a refusal names a file
+        {"outcome": "moved", "line": 3},  # or a line
+        {"outcome": "loaded", "refused": "/L/main.bean", "refusal": "beancount_failed"},
+        {"outcome": "fresh", "publish": "fresh", "number": 1, "ledger_version": LV, "line": 3},
+    ],
+)
+def test_a_refusal_that_does_not_hold_together_is_a_violation(make: Any, bad: dict[str, object]) -> None:
+    rig = make({"rebuild": [{**moved(), **bad}]})
+    assert background(rig) == NotLoaded("violation")
 
 
 def test_cleanup_counts_ride_on_the_log_line(make: Any) -> None:

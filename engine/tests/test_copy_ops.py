@@ -390,6 +390,25 @@ def test_an_encrypted_ledger_file_is_refused(ald: Path, tmp_path: Path) -> None:
     assert (reply["result"]["reason"], reply["result"]["path"]) == ("encrypted", str(books / "secret.beancount.gpg"))
 
 
+def test_a_ledger_beancount_cannot_load_is_refused_naming_its_line(ald: Path, tmp_path: Path) -> None:
+    books = tmp_path / "src"
+    books.mkdir()
+    (books / "main.beancount").write_text(
+        "2020-01-01 open Assets:Wallet\n2020-01-01 open Equity:Opening\n"
+        '2021-01-01 * "buy"\n  Assets:Wallet  12345678901.123456789012345678 ETH\n  Equity:Opening\n'
+    )
+    target = tmp_path / "copy"
+    reply, _ = copy(ald, params(target, books / "main.beancount", ald))
+    r = reply["result"]
+    assert (r["outcome"], r["reason"], r["path"], r["detail"]) == (
+        "not_created",
+        "number_failed",
+        str(books / "main.beancount"),
+        "3",
+    ), r
+    assert not target.exists()
+
+
 def write_open_journal(ald: Path, file: Path) -> None:
     rec = with_folders(
         session="s1",

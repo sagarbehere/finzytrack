@@ -149,6 +149,8 @@ Each blocked screen's actions are `Screen.actions` (§11).
 | `msg:copy.source_missing` | the source's root does not exist | Not copied. <file> does not exist. |
 | `msg:copy.source_unreadable` | a source file could not be read (here `EIO`) | Not copied. Finzytrack could not read <file>. The system answered: <system's answer>. |
 | `msg:copy.source_failed` | the source's load could not run | Not copied. Finzytrack could not load your ledger. |
+| `msg:copy.number_failed` | Beancount's arithmetic failed on a number of the source, line known (S0098) | Not copied. Beancount cannot compute the amounts on line 12 of <file>: a number there has more than 28 digits. bean-check fails on this ledger too. Shorten the number, or write the other amount too. |
+| `msg:copy.beancount_failed` | Beancount's own load raised on the source, no line known (S0098) | Not copied. Beancount cannot load your ledger (<file>). bean-check fails on it too. A plugin of the ledger may have made an entry Beancount cannot check. |
 | `msg:copy.encrypted` | the source holds an encrypted ledger file (ADR-0059) | Not copied. <file> is encrypted. This version of Finzytrack does not read encrypted ledger files. |
 | `msg:copy.source_changed` | a source changed while it was copied, or before the commit point (the owner's words) | Not copied. Your ledger changed while Finzytrack was copying it. Try again. |
 | `msg:copy.cannot_rewrite` | a line naming another file could not be pointed at the copy (here at line 7) | Not copied. Finzytrack could not change a line that names another file in <file> (line 7). |

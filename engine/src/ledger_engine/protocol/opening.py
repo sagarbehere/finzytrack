@@ -18,7 +18,7 @@ from typing import Final, Protocol
 
 from ledger_engine.fs.darwin import for_this_os
 from ledger_engine.ledger import opening
-from ledger_engine.protocol.messages import Message, OpenParams, OpenResult
+from ledger_engine.protocol.messages import Message, OpenParams, OpenRefusal, OpenResult
 from ledger_engine.protocol.rebuild import Publisher, fields_of, target_of
 
 
@@ -26,8 +26,13 @@ class OpenJob(Publisher, Protocol):
     def progress(self, phase: opening.Phase) -> None: ...
 
 
+REFUSAL: Final[dict[opening.Refusal, OpenRefusal]] = {
+    "encrypted": "encrypted",
+    "number-failed": "number_failed",
+    "beancount-failed": "beancount_failed",
+}
 TABLE: Final = "engine.open"
-TABLE_VERSION: Final = 1  # 1 (S0088): the open's load and publish
+TABLE_VERSION: Final = 2  # 1 (S0088): the open's load and publish; 2 (S0098): `refusal` among the inputs
 
 
 def run(params: Message, ctx: OpenJob) -> Message:
@@ -36,7 +41,13 @@ def run(params: Message, ctx: OpenJob) -> Message:
     target = target_of(params, ctx, fs)
     a = opening.run(opening.Ports(fs=fs), params.root, ctx, target)
     f = fields_of(a.outcome, a.published, a.cleaned)
-    inputs = {"errors": a.errors, "publish": f.publish, "removed": f.removed, "remove_failed": f.remove_failed}
+    inputs = {
+        "errors": a.errors,
+        "publish": f.publish,
+        "removed": f.removed,
+        "remove_failed": f.remove_failed,
+        "refusal": a.refusal,
+    }
     ctx.decide(TABLE, TABLE_VERSION, inputs, a.outcome)
     return OpenResult(
         outcome=a.outcome,
@@ -48,6 +59,8 @@ def run(params: Message, ctx: OpenJob) -> Message:
         removed=f.removed,
         remove_failed=f.remove_failed,
         refused=a.refused,
+        refusal=None if a.refusal is None else REFUSAL[a.refusal],
+        line=a.line,
     )
 
 

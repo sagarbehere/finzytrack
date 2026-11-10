@@ -63,6 +63,11 @@ def _blocked(v: NotCopied) -> str:
     )
 
 
+def _at_line(v: NotCopied) -> str:
+    """The words "on line N" when the engine named the line (`detail`), else nothing."""
+    return f" on line {v.detail}" if v.detail else ""
+
+
 def _why(v: NotCopied) -> str | None:
     match v.reason:
         case "not_a_folder":
@@ -93,6 +98,16 @@ def _why(v: NotCopied) -> str | None:
             return f"Finzytrack could not read {name_of(v.path)}.{_system(v.errno)}"
         case "source_failed":
             return "Finzytrack could not load your ledger."
+        case "number_failed":
+            return (
+                f"Beancount cannot compute the amounts{_at_line(v)} of {name_of(v.path)}: a number there has more than "
+                "28 digits. bean-check fails on this ledger too. Shorten the number, or write the other amount too."
+            )
+        case "beancount_failed":
+            return (
+                f"Beancount cannot load your ledger{_at_line(v)} ({name_of(v.path)}). bean-check fails on it too. "
+                "A plugin of the ledger may have made an entry Beancount cannot check."
+            )
         case "encrypted":
             return f"{name_of(v.path)} is encrypted. This version of Finzytrack does not read encrypted ledger files."
         case "source_changed":

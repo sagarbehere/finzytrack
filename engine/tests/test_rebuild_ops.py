@@ -56,7 +56,7 @@ def test_a_saved_ledger_is_rebuilt_through_the_protocol(setup: tuple[Path, Path,
     assert (result["outcome"], result["errors"]) == ("loaded", 0)
     assert result["entries"] > 0
     assert reply["events"] == ["updating_views"]
-    assert (reply["decision"]["table"], reply["decision"]["version"]) == ("engine.rebuild", 2)
+    assert (reply["decision"]["table"], reply["decision"]["version"]) == ("engine.rebuild", 3)
     # S0087 (BL-0113): published after the save's generation (number 1, the setup's), the save's change in it
     assert (result["publish"], result["number"]) == ("published", 2)
     mirror = ald.parent / "cache" / "workspaces" / "k1" / "mirror"
@@ -138,3 +138,24 @@ def test_an_engine_started_without_its_cache_folder_publishes_nothing(
     assert json.loads(e.handle(b'{"v":2,"id":0,"op":"handshake","params":{}}'))["ok"]
     reply = json.loads(e.handle(request("rebuild", target, 2), events))
     assert reply["error"]["key"] == "protocol.invalid_params"
+
+
+def test_a_ledger_beancount_cannot_load_is_refused_through_the_protocol(
+    setup: tuple[Path, Path, dict[str, Any]],
+) -> None:
+    main, ald, params = setup
+    target = saved(ald, params)
+    lines = main.read_bytes().count(b"\n")
+    with main.open("ab") as f:  # an outside edit after the save
+        f.write(b'2026-01-02 * "Coins"\n  Assets:Cash  12345678901.123456789012345678 ETH\n  Expenses:Food\n')
+    reply = call(ald, "rebuild", target)
+    assert reply["ok"], reply  # a refusal of the ledger, never `engine.internal`
+    result = reply["result"]
+    assert (result["outcome"], result["refusal"], result["refused"], result["line"]) == (
+        "refused",
+        "number_failed",
+        str(main),
+        lines + 1,
+    )
+    assert (result["publish"], result["number"]) == (None, None)
+    assert reply["decision"]["inputs"]["refusal"] == "number-failed"

@@ -73,12 +73,16 @@ class Loaded:
     remove_failed: int = 0
 
 
-type NotLoadedWhy = Literal["changing", "engine_failed", "refused", "violation", "paused"]
+type NotLoadedWhy = Literal[
+    "changing", "engine_failed", "refused", "violation", "paused", "number_failed", "beancount_failed"
+]
 
 
 @dataclass(frozen=True, slots=True)
 class NotLoaded:
-    """The rebuild did not reach a result: logged, nothing shown, nothing gated, nothing owed."""
+    """The rebuild did not reach a result: logged, nothing shown, nothing gated, nothing owed. `number_failed` and
+    `beancount_failed`: Beancount's own load raised on the ledger (S0098); the file and line it names are never logged
+    (INV-23), and no screen shows a rebuild's result yet."""
 
     why: NotLoadedWhy
 
@@ -143,6 +147,14 @@ def _loaded(answer: RebuildAnswer, tries: int) -> Loaded | NotLoaded:
     )
 
 
+def _refusal_holds_together(answer: RebuildAnswer) -> bool:
+    """A refusal, and only a refusal, says why and names its file (S0098); only a refusal names a line."""
+    refused = answer.outcome == "refused"
+    if refused != (answer.refusal is not None) or refused != (answer.refused is not None):
+        return False
+    return refused or answer.line is None
+
+
 def run_rebuild(ctx: JobContext, target: RebuildTarget, clock: Clock) -> RebuildResult:
     """The module's docstring: at most `MAX_TRIES` loads, each in a fresh engine, each uncounted."""
     hint = target.fingerprint
@@ -157,12 +169,14 @@ def run_rebuild(ctx: JobContext, target: RebuildTarget, clock: Clock) -> Rebuild
         if isinstance(out, EngineRefusal):
             return NotLoaded("refused")  # an encrypted file met, or an I/O error: logged
         answer = decode_rebuild(out)
-        if isinstance(answer, Violation):
+        if isinstance(answer, Violation) or not _refusal_holds_together(answer):
             return NotLoaded("violation")
         if answer.outcome in ("loaded", "fresh"):
             return _loaded(answer, tries)
         if answer.outcome == "paused":
             return NotLoaded("paused")  # an unfinished save: no try again, only recovery ends it (§7)
+        if answer.refusal is not None:  # Beancount's own load raised on the ledger: the same in every try
+            return NotLoaded(answer.refusal)
         hint = answer.fingerprint
     return NotLoaded("changing")
 

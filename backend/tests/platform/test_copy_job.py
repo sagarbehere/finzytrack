@@ -293,3 +293,20 @@ def test_every_cannot_place_detail_has_its_own_true_sentence(detail: str, path: 
     """r2 F8: one sentence per detail; the writer's own refusal (no path) is Finzytrack's fault, never "same name"."""
     text = copy_text.text(NotCopied("cannot_place", FOLDER, (), path=path, detail=detail))
     assert text.startswith(f"Not copied. {start}"), text
+
+
+def test_a_source_beancount_cannot_load_names_its_file_and_line(make: Any) -> None:
+    """S0098 (BL-0123): Beancount's own load raised on the source; bean-check fails the same way."""
+    rig = make({"copy": [answer(outcome="not_created", reason="number_failed", path=SOURCE, detail="3")]})
+    value = rig.copy()
+    assert value == NotCopied("number_failed", FOLDER, (), path=SOURCE, detail="3")
+    assert isinstance(value, NotCopied)
+    assert copy_text.text(value) == (
+        "Not copied. Beancount cannot compute the amounts on line 3 of Main Books.beancount: a number there has more "
+        "than 28 digits. bean-check fails on this ledger too. Shorten the number, or write the other amount too."
+    )
+    plugin = NotCopied("beancount_failed", FOLDER, (), path=SOURCE)
+    assert copy_text.text(plugin) == (
+        "Not copied. Beancount cannot load your ledger (Main Books.beancount). bean-check fails on it too. A plugin of "
+        "the ledger may have made an entry Beancount cannot check."
+    )

@@ -243,7 +243,12 @@ engine/src/ledger_engine/
                  ADR-0010; encrypted files, unreached candidates and policy refusals refuse the whole load) (S0049);
                  every file parsed from the bytes it read, so `Loaded.fingerprint` is what the load read (S0051);
                  Beancount's documents step walks the listing it took, with the files the save creates under a
-                 root (matched by path_key) added, so the prediction sees the disk after the write (S0067)
+                 root (matched by path_key) added, so the prediction sees the disk after the write (S0067);
+                 Beancount's own load raising on the ledger is `LoadRefused` (number-failed, beancount-failed),
+                 never raised; `Loaded.warnings` on numbers Beancount rounded, apart from its errors (S0098)
+    precision.py the warnings on numbers Beancount's 28 digits rounded: written numbers (its lexer), filled-in
+                 amounts (its own fill at 64 digits); divisions never warn (BL-0123, owner 2026-11-10, S0098)
+    load_failure.py what a load names when Beancount's own load raises: why, the file and line (S0098)
     fingerprint.py  observe(ledger_set) -> Fingerprint: the disk asked the loader's own questions (S0051; ADR-0008
                  step 4, ADR-0015; SHA-256 per file per the engine-jobs spec §1, not ADR-0015's mtime and size;
                  also each include's glob answer, plain paths too, documents listings with each name's presence, the
@@ -275,7 +280,8 @@ engine/src/ledger_engine/
                  protocol/save.py its ops save, save_outcome
     rebuild.py   the rebuild after a save (engine-jobs §6.7, S0070): Beancount's own loader without the pickle
                  cache between two observations of the ledger set; `loaded` with counts, or `moved` with the set
-                 to try next; then the publish (mirror/publish.py, S0087); protocol/rebuild.py its op rebuild
+                 to try next, or `refused` when Beancount's load raises (S0098); then the publish
+                 (mirror/publish.py, S0087) with the precision warnings; protocol/rebuild.py its op rebuild
     opening.py   the open job (engine-jobs §2, §7, S0088): the cleanup, the `.open` journal, a fresh generation
                  kept, else the overlay load and its publish, stamped with exactly what it parsed; it writes only
                  the workspace's mirror folder; protocol/opening.py its op open

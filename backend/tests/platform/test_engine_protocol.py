@@ -451,3 +451,27 @@ def test_the_listing_decodes_to_its_fields() -> None:
 
 def test_no_engine_lock_is_a_refusal_key() -> None:
     assert "engine.no_engine_lock" in REFUSAL_KEYS
+
+
+@pytest.mark.parametrize(("definition", "op"), [("OpenReply", "open"), ("RebuildReply", "rebuild")])
+def test_a_refusals_fields_are_checked_as_the_schema_checks_them(definition: str, op: str) -> None:
+    """S0098: `refusal` is one of its words, `line` a line number from 1, `refused` an absolute path; the decoder and
+    the schema agree on each, and each bad value is refused by both."""
+    for ex in examples(definition):
+        good = [{"refusal": "number_failed", "refused": "/L/main.bean", "line": 3}]
+        bad = [
+            {"refusal": "other"},
+            {"refusal": "Number_failed"},
+            {"line": 0},
+            {"line": -1},
+            {"line": True},
+            {"line": 1.5},
+            {"refused": "main.bean"},
+        ]
+        for fields, expected in [(f, True) for f in good] + [(f, False) for f in bad]:
+            variant = copy.deepcopy(ex)
+            variant["result"] = {**variant["result"], **fields}
+            schema_ok = valid(definition, variant)
+            verdict = decoded(variant, op)
+            assert schema_ok == expected, (fields, "the schema")
+            assert (not isinstance(verdict, Violation)) == expected, (fields, verdict)

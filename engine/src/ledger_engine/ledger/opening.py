@@ -51,6 +51,7 @@ from ledger_engine.tla import tla_action
 type Phase = Literal["reading"]
 PHASE: Final[Phase] = "reading"
 type Outcome = Literal["loaded", "moved", "fresh", "paused", "refused"]
+type Refusal = Literal["encrypted", "number-failed", "beancount-failed"]
 
 Target = publishing.Target
 
@@ -92,8 +93,10 @@ class Answer:
     """`loaded` (Beancount's result for the disk the load parsed; `published` says what became of it), `moved` (the
     disk changed before the swap: nothing published), `fresh` (the published generation already describes the disk:
     nothing loaded; `published` is it), `paused` (an unfinished save's `.open` journal: nothing published) or
-    `refused` (an encrypted file, `refused` its path: nothing loaded). `entries` and `errors`: the load's counts
-    (`loaded` only). `cleaned`: what the cleanup did."""
+    `refused` (nothing loaded: `refusal` says why, `refused` names the file and `line` the line when known: an
+    encrypted file, ADR-0059; or Beancount's own load raised on the ledger, `number-failed` or `beancount-failed`,
+    `ledger.load_failure`). `entries` and `errors`: the load's counts (`loaded` only; `errors` counts Beancount's
+    errors and the warnings on numbers it rounded, every row of `ledger_errors`). `cleaned`: what the cleanup did."""
 
     outcome: Outcome
     entries: int = 0
@@ -101,6 +104,8 @@ class Answer:
     published: pb.Published | pb.NotPublished | None = None
     cleaned: pb.Cleaned | None = None
     refused: str | None = None
+    refusal: Refusal | None = None
+    line: int | None = None
 
 
 @tla_action("StartPublish", "P_Obs", "P_Read", model="mirror-publish")
@@ -120,8 +125,9 @@ def run(ports: Ports, root: str, job: Job, target: Target) -> Answer:
         job.progress(PHASE)
         loaded = ports.load(root)  # step 3: Beancount's full load (user code)
         if isinstance(loaded, overlay.LoadRefused):
-            if loaded.reason == "encrypted":
-                return Answer("refused", cleaned=cleaned, refused=loaded.subject)
+            if loaded.reason == "encrypted" or loaded.reason == "number-failed" or loaded.reason == "beancount-failed":
+                refusal: Refusal = loaded.reason
+                return Answer("refused", cleaned=cleaned, refused=loaded.subject, refusal=refusal, line=loaded.line)
             msg = f"the desktop policy refused a load: {loaded.reason}"
             raise RuntimeError(msg)  # cannot happen under `DESKTOP`; the server answers `engine.internal`
         stamp = loaded.fingerprint  # exactly the bytes the load parsed (the overlay's `Loaded.fingerprint`)
@@ -129,7 +135,7 @@ def run(ports: Ports, root: str, job: Job, target: Target) -> Answer:
             d,
             cleaned,
             ports.store,
-            (loaded.entries, loaded.errors, loaded.options),
+            (loaded.entries, loaded.reported, loaded.options),
             stamp,
             floor=target.floor,
             today=target.today,
@@ -141,4 +147,4 @@ def run(ports: Ports, root: str, job: Job, target: Target) -> Answer:
         )
     if isinstance(out, pb.NotPublished) and out.why in ("moved", "paused"):
         return Answer(out.why, cleaned=cleaned)
-    return Answer("loaded", len(loaded.entries), len(loaded.errors), published=out, cleaned=cleaned)
+    return Answer("loaded", len(loaded.entries), len(loaded.reported), published=out, cleaned=cleaned)

@@ -266,7 +266,7 @@ def build_root(r: Root, listing: Callable[[], Any] = sorted_listing) -> Built:
         subject = Path(loaded.subject)
         where = _relative(subject, r.folder) if subject.is_relative_to(r.folder) else loaded.subject
         return Built({"refused": loaded.reason, "file": where}, None, (loaded.subject,))
-    made = tables(loaded.entries, loaded.errors, loaded.options, TODAY, STAMP)
+    made = tables(loaded.entries, loaded.reported, loaded.options, TODAY, STAMP)
     if isinstance(made, BuildFailed):
         return Built({"build_failed": made.detail}, None, ())
     rows = normalized(made, r.folder)

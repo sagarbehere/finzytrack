@@ -74,7 +74,7 @@ def counts(made: Tables) -> dict[str, int]:
 
 def build(loaded: Loaded, path: str, today: date, stamp: Stamp) -> Built | BuildFailed:
     """Raises `FileExistsError` when `path` exists: a build never writes over a file."""
-    made = tables(loaded.entries, loaded.errors, loaded.options, today, stamp)
+    made = tables(loaded.entries, loaded.reported, loaded.options, today, stamp)
     if isinstance(made, BuildFailed):
         return made
     os.close(os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, FILE_MODE))

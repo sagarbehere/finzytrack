@@ -356,6 +356,19 @@ def test_a_source_load_that_cannot_run_is_refused() -> None:
     not_copied(go(w)[0], "source_failed")
 
 
+@pytest.mark.parametrize(
+    ("refusal", "reason", "line", "detail"),
+    [("number-failed", "number_failed", 3, "3"), ("beancount-failed", "beancount_failed", None, None)],
+)
+def test_a_source_beancount_cannot_load_is_refused_naming_its_file_and_line(
+    refusal: str, reason: str, line: int | None, detail: str | None
+) -> None:
+    w = new_world()
+    w.load_result = lambda root: overlay.LoadRefused(refusal, f"{B}/inc.bean", line)  # type: ignore[arg-type]
+    nc = not_copied(go(w)[0], reason)
+    assert (nc.path, nc.detail) == (f"{B}/inc.bean", detail)
+
+
 # -- r1: a refusal of step 2 makes nothing at all; the ledger's own plugins; a clash -----------------------------
 
 

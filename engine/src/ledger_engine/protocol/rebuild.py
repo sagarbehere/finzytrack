@@ -22,16 +22,22 @@ from typing import Final, Protocol
 
 from ledger_engine.fs.darwin import for_this_os
 from ledger_engine.fs.port import FileSystem
-from ledger_engine.ledger import publishing, rebuild
+from ledger_engine.ledger import load_failure, publishing, rebuild
 from ledger_engine.ledger.core.ledger_set import UndecodableError, decode, encode
 from ledger_engine.mirror import publish as pb
-from ledger_engine.protocol.messages import Message, Publish, RebuildParams, RebuildResult
+from ledger_engine.protocol.messages import LoadRefusal, Message, Publish, RebuildParams, RebuildResult
 from ledger_engine.protocol.recovery import BadParamsError, Decider, app_local_data_of
 from ledger_engine.protocol.save import app_cache_of, engine_build
 
 TABLE: Final = "engine.rebuild"
 EPOCH: Final = datetime(1970, 1, 1, tzinfo=UTC)
-TABLE_VERSION: Final = 2  # 1 (S0070): the rebuild after a save (ADR-0068 D1); 2 (S0087): its publish
+TABLE_VERSION: Final = (
+    3  # 1 (S0070): the rebuild after a save (ADR-0068 D1); 2 (S0087): its publish; 3 (S0098): `refused`
+)
+REFUSAL: Final[dict[load_failure.Reason, LoadRefusal]] = {
+    "number-failed": "number_failed",
+    "beancount-failed": "beancount_failed",
+}
 
 
 class Publisher(Decider, Protocol):
@@ -139,7 +145,13 @@ def run(params: Message, ctx: RebuildJob) -> Message:
     target = target_of(params, ctx, fs)
     a = rebuild.run(rebuild.Ports(fs=fs), hint, ctx, target)
     f = fields_of(a.outcome, a.published, a.cleaned)
-    inputs = {"errors": a.errors, "publish": f.publish, "removed": f.removed, "remove_failed": f.remove_failed}
+    inputs = {
+        "errors": a.errors,
+        "publish": f.publish,
+        "removed": f.removed,
+        "remove_failed": f.remove_failed,
+        "refusal": a.refusal,
+    }
     ctx.decide(TABLE, TABLE_VERSION, inputs, a.outcome)
     return RebuildResult(
         outcome=a.outcome,
@@ -151,6 +163,9 @@ def run(params: Message, ctx: RebuildJob) -> Message:
         ledger_version=f.ledger_version,
         removed=f.removed,
         remove_failed=f.remove_failed,
+        refusal=None if a.refusal is None else REFUSAL[a.refusal],
+        refused=a.refused,
+        line=a.line,
     )
 
 

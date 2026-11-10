@@ -43,7 +43,7 @@ from ledger_engine.fs.darwin import for_this_os
 from ledger_engine.fs.port import FileSystem
 from ledger_engine.ledger import beancount_port as port
 from ledger_engine.ledger import fingerprint as _fingerprint
-from ledger_engine.ledger import publishing
+from ledger_engine.ledger import load_failure, precision, publishing
 from ledger_engine.ledger.core.ledger_set import Fingerprint, LedgerSet, decode
 from ledger_engine.ledger.overlay import documents_roots
 from ledger_engine.mirror import publish as pb
@@ -52,7 +52,7 @@ from ledger_engine.tla import tla_action
 
 type Phase = Literal["updating_views"]
 PHASE: Final[Phase] = "updating_views"
-type Outcome = Literal["loaded", "moved", "fresh", "paused"]
+type Outcome = Literal["loaded", "moved", "fresh", "paused", "refused"]
 
 
 class Job(Protocol):
@@ -80,6 +80,7 @@ class Ports:
     the file-system port, the mirror's store and the name's random tag."""
 
     load: Callable[[str], port.ParseResult] = _real_load
+    warnings: Callable[[list[port.Directive], port.OptionsMap], list[precision.RoundingWarning]] = precision.of_disk
     observe: Callable[[LedgerSet], Fingerprint] = _observe
     fs: FileSystem = field(default_factory=for_this_os)
     store: pb.Store = field(default_factory=SqliteStore)
@@ -104,6 +105,9 @@ class Answer:
     errors: int = 0
     published: pb.Published | pb.NotPublished | None = None
     cleaned: pb.Cleaned | None = None
+    refusal: load_failure.Reason | None = None
+    refused: str | None = None
+    line: int | None = None
 
 
 def _used(entries: list[port.Directive], options: port.OptionsMap) -> LedgerSet:
@@ -176,8 +180,17 @@ def run(ports: Ports, hint: Fingerprint, job: Job, target: Target) -> Answer:
         ledger_set = hint.ledger_set
         before = ports.observe(ledger_set)  # step 1
         job.progress(PHASE)
-        result = ports.load(ledger_set.root)  # step 2: Beancount's own loader (user code)
+        try:
+            result = ports.load(ledger_set.root)  # step 2: Beancount's own loader (user code)
+        except (OSError, port.EncryptedFileMet):
+            raise
+        except Exception as e:  # noqa: BLE001 (Beancount's own load raised on the ledger: refused, never raised)
+            f = load_failure.of(e, ledger_set.root)
+            return Answer("refused", hint, cleaned=cleaned, refusal=f.reason, refused=f.path, line=f.line)
         entries, errors, options = result
+        # Finzytrack's warnings on numbers Beancount rounded (`precision`): the files read again before the set is
+        # observed again, so a change in between is a moved disk.
+        reported = [*errors, *ports.warnings(entries, options)]
         after = ports.observe(ledger_set)  # step 3
         wider = _wider(ledger_set, _used(entries, options), _listed(before))
         if wider is not None:
@@ -207,7 +220,7 @@ def run(ports: Ports, hint: Fingerprint, job: Job, target: Target) -> Answer:
             d,
             cleaned,
             ports.store,
-            result,
+            (entries, reported, options),
             stamp,
             floor=target.floor,
             today=target.today,
@@ -221,4 +234,4 @@ def run(ports: Ports, hint: Fingerprint, job: Job, target: Target) -> Answer:
         return Answer("moved", seen[-1], cleaned=cleaned)
     if isinstance(out, pb.NotPublished) and out.why == "paused":
         return Answer("paused", after, cleaned=cleaned)
-    return Answer("loaded", stamp, len(entries), len(errors), published=out, cleaned=cleaned)
+    return Answer("loaded", stamp, len(entries), len(reported), published=out, cleaned=cleaned)

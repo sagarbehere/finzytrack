@@ -511,6 +511,16 @@ COPY: tuple[Row, ...] = (
         lambda: _not_copied("source_unreadable", errno=errno.EIO),
     ),
     ("msg:copy.source_failed", "the source's load could not run", lambda: _not_copied("source_failed")),
+    (
+        "msg:copy.number_failed",
+        "Beancount's arithmetic failed on a number of the source, line known (S0098)",
+        lambda: _not_copied("number_failed", detail="12"),
+    ),
+    (
+        "msg:copy.beancount_failed",
+        "Beancount's own load raised on the source, no line known (S0098)",
+        lambda: _not_copied("beancount_failed"),
+    ),
     ("msg:copy.encrypted", "the source holds an encrypted ledger file (ADR-0059)", lambda: _not_copied("encrypted")),
     (
         "msg:copy.source_changed",

@@ -29,8 +29,9 @@ Pinned to Beancount 3.2.0 (ADR-0004); `BEANCOUNT_VERSION` is checked by the over
 from __future__ import annotations
 
 import datetime
+import io
 import sys
-from collections.abc import Generator, Iterable, Sequence
+from collections.abc import Generator, Iterable, Iterator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
 from decimal import Decimal
@@ -62,6 +63,7 @@ from beancount.core.display_context import Precision as _Precision
 from beancount.core.interpolate import AUTOMATIC_META as _AUTOMATIC_META
 from beancount.core.interpolate import compute_residual as _compute_residual
 from beancount.core.interpolate import infer_tolerances as _infer_tolerances
+from beancount.core.interpolate import quantize_with_tolerance as _quantize_with_tolerance
 from beancount.core.inventory import Inventory as _Inventory
 from beancount.core.number import MISSING as _MISSING
 from beancount.core.position import Cost, Position
@@ -76,6 +78,7 @@ from beancount.loader import run_transformations as _run_transformations
 from beancount.ops.balance import get_balance_tolerance as _get_balance_tolerance
 from beancount.ops.validation import validate as _validate
 from beancount.parser.booking import book as _book
+from beancount.parser.lexer import lex_iter as _lex_iter
 from beancount.parser.options import OPTIONS_DEFAULTS as _OPTIONS_DEFAULTS
 from beancount.parser.parser import parse_file as _parse_file
 from beancount.parser.parser import parse_string as _parse_string
@@ -119,17 +122,21 @@ __all__ = [
     "check_transaction",
     "default_options",
     "display_precision",
+    "fill_weight",
+    "filled_amount",
     "input_hash",
     "is_encrypted_file",
     "is_interpolated",
     "load_error",
     "parse_file",
     "parse_string",
+    "quantize_fill",
     "real_load",
     "run_transformations",
     "sort_entries",
     "sort_order",
     "validate",
+    "written_numbers",
 ]
 
 BEANCOUNT_VERSION: Final[str] = version("beancount")
@@ -181,6 +188,10 @@ WRAPPERS: Final = frozenset(
         "booked_positions",
         "display_precision",
         "is_interpolated",
+        "written_numbers",
+        "fill_weight",
+        "quantize_fill",
+        "filled_amount",
     }
 )
 
@@ -198,6 +209,17 @@ def parse_string(data: bytes, report_filename: str | None = None) -> ParseResult
     """Parse bytes as if they were the file `report_filename` (its name goes into every entry's metadata)."""
     entries, errors, options = _parse_string(data, report_filename)
     return list(entries), list(errors), dict(options)
+
+
+def written_numbers(data: bytes) -> Iterator[tuple[int, str, Decimal]]:
+    """Each number written in `data`, as Beancount's own lexer reads it (`lexer.lex_iter`, the parser's lexer): its
+    line, its text as written (thousands separators kept, with the minus when a `-` stands right before it) and its
+    exact value. A number inside an expression counts by itself; strings, comments, dates and names hold none."""
+    minus = False
+    for kind, lineno, text, value in _lex_iter(io.BytesIO(data)):
+        if kind == "NUMBER" and isinstance(value, Decimal):
+            yield lineno, ("-" if minus else "") + text.decode("ascii", "replace"), value
+        minus = kind == "MINUS"
 
 
 def sort_order(entry: object) -> int:
@@ -330,6 +352,31 @@ def check_transaction(postings: Sequence[Posting], options: OptionsMap) -> Trans
         residual=dict(sorted(amounts.items())),
         balanced=residual.is_small(tolerances),
     )
+
+
+def fill_weight(others: Sequence[Posting], currency: str) -> Decimal:
+    """The number Beancount fills in for a leg of `currency` that has no cost or price, before quantizing: the negated
+    weight of the transaction's other postings in that currency, as `booking_full.interpolate_group` computes it
+    (`interpolate.compute_residual`; zero when they sum to nothing). In the caller's decimal context."""
+    for position in _compute_residual(list(others)):
+        number = position.units.number
+        if position.units.currency == currency and position.cost is None and number is not None:
+            return -number
+    return Decimal(0)
+
+
+def quantize_fill(others: Sequence[Posting], currency: str, number: Decimal, options: OptionsMap) -> Decimal:
+    """`number` quantized as Beancount quantizes a filled-in amount: to the tolerance it infers for `currency` from
+    the transaction's postings (`interpolate.infer_tolerances`, `quantize_with_tolerance`; a leg left blank has no
+    number, so the other postings infer the same). In the caller's decimal context."""
+    return _quantize_with_tolerance(_infer_tolerances(list(others), options), currency, number)
+
+
+def filled_amount(others: Sequence[Posting], currency: str, options: OptionsMap) -> Decimal:
+    """What Beancount fills in for such a leg: `quantize_fill` of `fill_weight`. In Beancount's own context it is
+    exactly Beancount's number (`engine/tests/ledger/test_precision.py`), so a wider context tells what Beancount's
+    28 digits cut (`ledger.precision`)."""
+    return quantize_fill(others, currency, fill_weight(others, currency), options)
 
 
 def balance_tolerance(assertion: Balance, options: OptionsMap) -> Decimal:
