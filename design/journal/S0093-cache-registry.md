@@ -68,3 +68,5 @@
 - none
 
 ## Retro
+- Owner, 2026-11-10, in session, on F5's open question, chose "Constants allowed (Recommended)": "Small fixed-size diagnostic buffers (a stderr tail, a recent-events ring) may be constants in code; every cache whose size follows the data or the deployment (rows, ledgers, results) must be a setting. INV-10's wording gets that one clarification; BL-0229 covers only the latter." INV-10's rule carries it; BL-0229 narrowed. No ADR for the standing status rule: it decides only when a status may say `enforced`, changes no invariant, and is recorded as IMP-0057 (orchestrator's judgement). No further verifier round: tooling with no ledger or user data, no High fix (PROCESS.md §3 step 5, ADR-0058).
+- Build about 17 min, fix about 13 min, 1 verifier round, findings 0H/2M/3L. Cheaper gate: build a structural check default-deny from the start (refuse any object the walk cannot prove holds nothing) and plant the common shapes of the thing it forbids (deque, defaultdict, class-level memo dicts) before trusting a pass on the real tree.
