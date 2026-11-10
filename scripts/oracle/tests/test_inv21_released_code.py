@@ -28,6 +28,11 @@ class FirstDerivation(unittest.TestCase):
         import gen_inv21_goldens
         self.assertEqual(gen_inv21_goldens.generate(), (inv21.CORPUS / "goldens.json").read_text(encoding="utf-8"))
 
+    def test_the_released_code_still_gives_the_committed_install_goldens(self) -> None:
+        import gen_inv21_goldens
+        self.assertEqual(gen_inv21_goldens.generate_installs(),
+                         (inv21.INSTALLS / "goldens.json").read_text(encoding="utf-8"))
+
     def test_the_released_code_still_gives_the_committed_install(self) -> None:
         import gen_v022_install
         self.assertEqual(gen_v022_install.generate(), gen_v022_install.on_disk())

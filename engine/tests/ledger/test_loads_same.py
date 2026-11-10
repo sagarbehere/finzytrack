@@ -8,6 +8,7 @@ same" means the same as the source, not error-free."
 
 from __future__ import annotations
 
+import datetime
 import decimal
 from collections.abc import Callable
 from decimal import Decimal
@@ -15,6 +16,7 @@ from pathlib import Path
 
 import pytest
 
+from ledger_engine.ledger import beancount_port as port
 from ledger_engine.ledger import overlay
 from ledger_engine.ledger.loads_same import (
     Difference,
@@ -136,9 +138,30 @@ def test_a_custom_directive_is_compared_by_its_values_and_their_types(tmp_path: 
     assert first_difference(summary(a, same), summary(other, mapped(tmp_path / "a", tmp_path / "c"))) is not None
 
 
-def test_a_class_is_compared_by_its_full_name() -> None:
-    other = type("Decimal", (), {"__module__": "elsewhere"})  # another module's class named like decimal.Decimal
-    assert other.__qualname__ == decimal.Decimal.__qualname__
+def test_a_class_is_compared_only_when_the_parser_records_it_as_a_value_type() -> None:
+    # S0095 red team F1: comparing any class by its name let a plugin's class with other contents, or one named like
+    # decimal.Decimal, compare equal. Only the parser's own value types compare, by identity.
     assert canonical(str, same) == canonical(str, same)
-    assert canonical(str, same) != canonical(bytes, same)
-    assert canonical(other, same) != canonical(decimal.Decimal, same)
+    assert canonical(str, same) != canonical(bool, same)
+    assert canonical(decimal.Decimal, same) == ["c", "Decimal"]
+    # Beancount's only other class in a load: the marker of an amount left out, kept in an entry whose booking failed.
+    assert [port.PARSER_CLASSES[c] for c in set(port.PARSER_CLASSES) - set(port.CUSTOM_VALUE_TYPES)] == ["MISSING"]
+    spoofed = type("Decimal", (), {"__module__": "decimal"})
+    assert spoofed.__qualname__ == decimal.Decimal.__qualname__
+    for other in (spoofed, type("Rate", (), {"value": "1.10"}), int, float, datetime.datetime, type, list[int]):
+        with pytest.raises(UncomparableError):
+            canonical(other, same)
+
+
+def test_the_value_types_are_what_the_parser_gives(tmp_path: Path) -> None:
+    # Every value form of Beancount 3.2.0's `custom` grammar: a string, an account, a number (and an expression), an
+    # amount, a date, a flag. The classes it records must be exactly the comparison's list.
+    a = load(
+        tmp_path / "a",
+        "2026-01-01 open Assets:Cash EUR\n"
+        '2026-01-01 custom "k" "s" Assets:Cash 1.5 2 + 3 1.00 EUR 2 * 3 EUR 2026-02-01 TRUE FALSE\n',
+    )
+    assert a.errors == []
+    dtypes = [v.dtype for e in a.entries if isinstance(e, port.Custom) for v in e.values]
+    assert {d for d in dtypes if isinstance(d, type)} == set(port.CUSTOM_VALUE_TYPES)
+    assert [d for d in dtypes if not isinstance(d, type)] == ["<AccountDummy>"]

@@ -621,14 +621,15 @@ COMMITTED_DATA = "_data"  # the repository ignores every folder named `data`, so
 
 
 def kinds_present(case: Case) -> set[tuple[str, str]]:
-    """Every (metadata key, where) on the case's own Open, Commodity, Close and Transaction entries and postings."""
+    """Every (metadata key, where) on the case's own entries of every directive kind (S0095 verifier F4: not only the
+    four kinds `keys.toml` lists), `where` being the kind in lower case (`transaction`, `balance`, `custom`, ...) or
+    `posting`, so a key on any directive that the inventory lacks is reported."""
     internal = {"filename", "lineno", "__tolerances__", "__automatic__"}
-    kinds = {data.Open: "open", data.Commodity: "commodity", data.Close: "close", data.Transaction: "transaction"}
     present: set[tuple[str, str]] = set()
     for e in case.entries:
-        if not case.own(e) or type(e) not in kinds:
+        if not case.own(e):
             continue
-        present |= {(k, kinds[type(e)]) for k in e.meta if k not in internal}
+        present |= {(k, type(e).__name__.lower()) for k in e.meta if k not in internal}
         for p in getattr(e, "postings", []) or []:
             present |= {(k, "posting") for k in (p.meta or {}) if k not in internal}
     return present
@@ -658,15 +659,15 @@ def config_ledger_file(install: Path) -> str:
     return os.path.normpath(str(value)).replace(os.sep, "/")
 
 
-def check_installs(installs: Path = INSTALLS, corpus: Path = CORPUS) -> list[str]:
+def check_installs(installs: Path = INSTALLS, keys_file: Path = CORPUS / "keys.toml") -> list[str]:
     """Each install's goldens: exactly its ledger roots (every `.beancount` file of the folder is loaded by one, none
-    loads another), the root its config names among them (goldens: `installs` in the corpus's `goldens.json`), every value equal to the spec derivation with no v0.4
+    loads another), the root its config names among them (goldens: `goldens.json` beside the installs), every value equal to the spec derivation with no v0.4
     override (no released version wrote `import-key`), each hash the SHA-256 of its input, and every metadata key on
     the install's entries in the inventory (`keys.toml`)."""
-    doc = json.loads((corpus / "goldens.json").read_text(encoding="utf-8"))
-    keys = tomllib.loads((corpus / "keys.toml").read_text(encoding="utf-8")).get("key", [])
+    doc = json.loads((installs / "goldens.json").read_text(encoding="utf-8"))
+    keys = tomllib.loads(keys_file.read_text(encoding="utf-8")).get("key", [])
     inventory = {(k.get("key"), k.get("on")) for k in keys}
-    problems: list[str] = []
+    problems = check_header(doc)
     goldens = doc.get("installs", {})
     folders = sorted(p.name for p in installs.iterdir() if p.is_dir())
     if not folders:

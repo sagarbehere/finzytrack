@@ -556,3 +556,11 @@ Format:
 - Why: the same question (pending until every planned part exists, or enforced with the planned parts listed) came to the owner for each invariant.
 - Expected effect: no owner question per invariant for this status choice; the planned parts stay visible on each Enforced-by line under their rows. Metric: invariants marked enforced with planned parts, and verifier findings on unguarded existing code.
 - Status: kept (owner-approved; S0093 round 1).
+
+## IMP-0058: the staged-file guard names the v0.2.2 install's goldens as a synthetic asset (2026-11-10)
+- Trigger: S0095 verifier round 1, F3: the install's goldens, refused by the guard's statement sniff as a file of their own, had been put inside `corpora/ledgers/inv21/goldens.json`, an exempted path, so the exemption covered content nobody had reviewed for it. Owner, 2026-11-10, in session, choosing "Own file, named exemption (Recommended)": "Move the install goldens to their own file and add that one path to the guard's list of synthetic assets, approved here with your words (a loosening of the guard, so it is yours to approve). The exemption then covers exactly the reviewed content."
+- What changed: gates (loosening, owner-approved). `scripts/check_staged.py` `SYNTHETIC_ASSETS` gains `corpora/workspaces/legacy/goldens.json` (written by `scripts/oracle/gen_inv21_goldens.py`); it must still parse as JSON, and a near or longer name is still sniffed. `scripts/tests/test_check_staged.py` pins the list to exactly its three paths and adds the near names.
+- PROCESS.md section: none (§8 describes the guard and its synthetic assets).
+- Why: the install's goldens hold v0.2.2's content-hash inputs (`date|payee|narration|amount|account`), dated lines with amounts by construction; the sniff cannot tell them from a statement.
+- Expected effect: the exemption covers one reviewed, tool-written file; a statement written over it is still refused (not JSON). Metric: entries in `SYNTHETIC_ASSETS` (3) and false positives of the sniff per slice.
+- Status: kept (owner-approved; S0095 round 1).

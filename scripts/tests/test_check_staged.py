@@ -121,9 +121,18 @@ class Bl0023(unittest.TestCase):
                 self.assertEqual(cs.check([path], blobs({path: as_json})), [])
                 # S0026 verifier F5: the path alone does not vouch: a CSV written over it is refused
                 self.assertTrue(cs.check([path], blobs({path: STATEMENT})))
-        for other in ("corpora/ledgers/inv21/goldens2.json", "corpora/ledgers/inv21/goldens.json.txt"):
+        for other in ("corpora/ledgers/inv21/goldens2.json", "corpora/ledgers/inv21/goldens.json.txt",
+                      "corpora/workspaces/legacy/goldens.json.txt", "corpora/workspaces/legacy/v022-fresh/goldens.json",
+                      "corpora/workspaces/goldens.json"):
             with self.subTest(near=other):  # a near or longer name is not exempt
                 self.assertTrue(cs.check([other], blobs({other: STATEMENT})))
+
+    def test_the_synthetic_assets_are_exactly_the_approved_paths(self) -> None:
+        # Each entry exempts a path from the statement sniff: a new one is a loosening (the third: owner, 2026-11-10,
+        # S0095, IMP-0058).
+        self.assertEqual(cs.SYNTHETIC_ASSETS, ("corpora/ledgers/inv21/goldens.json",
+                                               "corpora/ledgers/oracle/nasty-cases.json",
+                                               "corpora/workspaces/legacy/goldens.json"))
 
     def test_a_reviewed_statement_in_corpora_passes(self) -> None:
         path = "corpora/imports/statement.txt"

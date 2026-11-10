@@ -28,6 +28,7 @@ Pinned to Beancount 3.2.0 (ADR-0004); `BEANCOUNT_VERSION` is checked by the over
 
 from __future__ import annotations
 
+import datetime
 import sys
 from collections.abc import Generator, Iterable, Sequence
 from contextlib import contextmanager
@@ -36,6 +37,7 @@ from decimal import Decimal
 from importlib.metadata import version
 from typing import Any, Final, cast
 
+from beancount.core.amount import Amount as _Amount
 from beancount.core.data import SORT_ORDER as _SORT_ORDER
 from beancount.core.data import (
     Balance,
@@ -61,6 +63,7 @@ from beancount.core.interpolate import AUTOMATIC_META as _AUTOMATIC_META
 from beancount.core.interpolate import compute_residual as _compute_residual
 from beancount.core.interpolate import infer_tolerances as _infer_tolerances
 from beancount.core.inventory import Inventory as _Inventory
+from beancount.core.number import MISSING as _MISSING
 from beancount.core.position import Cost, Position
 from beancount.core.realization import compute_balance as _compute_balance
 from beancount.core.realization import get as _realization_get
@@ -81,7 +84,9 @@ from beancount.utils.encryption import is_encrypted_file as _is_encrypted_file
 
 __all__ = [
     "BEANCOUNT_VERSION",
+    "CUSTOM_VALUE_TYPES",
     "LOAD_STAGES",
+    "PARSER_CLASSES",
     "REAL_LOADS",
     "WRAPPERS",
     "Balance",
@@ -128,6 +133,23 @@ __all__ = [
 ]
 
 BEANCOUNT_VERSION: Final[str] = version("beancount")
+
+CUSTOM_VALUE_TYPES: Final[dict[type, str]] = {
+    str: "str",
+    bool: "bool",
+    Decimal: "Decimal",
+    _Amount: "Amount",
+    datetime.date: "date",
+}
+"""Every class Beancount 3.2.0's parser records as a `custom` value's type (`grammar.Builder.custom_value`: the
+value's own type for a string, a date, a flag, an amount and a number; an account gets the text `account.TYPE`,
+not a class), by identity, each with a fixed name (S0095 red team F1: a class is compared only when it is one of
+these, never by its name). `engine/tests/ledger/test_loads_same.py` holds it equal to what the parser gives."""
+
+PARSER_CLASSES: Final[dict[type, str]] = {**CUSTOM_VALUE_TYPES, _MISSING: "MISSING"}
+"""Every class Beancount itself puts in a load's entries, options or errors as a value: the `custom` value types and
+`number.MISSING`, the parser's marker for an amount left out, which stays in an entry whose booking failed (the
+parity corpus's `options` case). A copy's comparison knows these classes and no other (S0095)."""
 
 type OptionsMap = dict[str, Any]
 """Beancount's options map (Beancount types it as `Any`); its keys are Beancount's option names."""

@@ -468,7 +468,7 @@ class RealInstalls(unittest.TestCase):
         self.assertEqual(inv21.check_installs(), [])
 
     def test_pinned_counts(self) -> None:
-        doc = json.loads((inv21.CORPUS / "goldens.json").read_text(encoding="utf-8"))
+        doc = json.loads((inv21.INSTALLS / "goldens.json").read_text(encoding="utf-8"))
         roots = doc["installs"]["v022-fresh"]["roots"]
         self.assertEqual(sorted(roots), [FAKE_MULTI, ONE])
         self.assertEqual(doc["installs"]["v022-fresh"]["configured_root"], ONE)
@@ -483,17 +483,16 @@ class MutatedInstalls(unittest.TestCase):
         self._tmp = tempfile.TemporaryDirectory()
         self.installs = Path(self._tmp.name) / "legacy"
         shutil.copytree(inv21.INSTALLS, self.installs)
-        self.corpus = Path(self._tmp.name) / "inv21"
-        self.corpus.mkdir()
-        shutil.copy(inv21.CORPUS / "keys.toml", self.corpus / "keys.toml")
-        self.doc = json.loads((inv21.CORPUS / "goldens.json").read_text(encoding="utf-8"))
+        self.doc = json.loads((self.installs / "goldens.json").read_text(encoding="utf-8"))
+        self.keys = Path(self._tmp.name) / "keys.toml"
+        shutil.copy(inv21.CORPUS / "keys.toml", self.keys)
 
     def tearDown(self) -> None:
         self._tmp.cleanup()
 
     def assertReports(self, fragment: str) -> None:
-        (self.corpus / "goldens.json").write_text(json.dumps(self.doc), encoding="utf-8")
-        problems = inv21.check_installs(self.installs, self.corpus)
+        (self.installs / "goldens.json").write_text(json.dumps(self.doc), encoding="utf-8")
+        problems = inv21.check_installs(self.installs, self.keys)
         self.assertTrue(any(fragment in p for p in problems), f"{fragment!r} not in {problems}")
 
     def root(self, rel: str = FAKE_MULTI) -> dict:
@@ -569,6 +568,21 @@ class MutatedInstalls(unittest.TestCase):
         self.edit("data/ledgers/fake-multi/2026/jan.beancount", '  source_account: "Assets:Bank:Checking"\n',
                   '  source_account: "Assets:Bank:Checking"\n  stmt_ref: "x"\n')
         self.assertReports("key 'stmt_ref' (transaction) is not in keys.toml")
+
+    def test_a_key_outside_the_inventory_on_every_other_directive_kind(self) -> None:
+        # S0095 verifier F4: a key on a balance, pad or custom directive was never compared with the inventory.
+        for name, line in (("balance", "2024-12-31 balance Assets:Bank:Savings"), ("pad", " pad "),
+                           ("custom", ' custom "fava-option"')):
+            with self.subTest(kind=name):
+                self.setUp()
+                rel = next(p for p in sorted((self.installs / "v022-fresh" / "_data").rglob("*.beancount"))
+                           if line in p.read_text(encoding="utf-8"))
+                lines = rel.read_text(encoding="utf-8").splitlines(keepends=True)
+                at = next(i for i, text in enumerate(lines) if line in text)
+                lines.insert(at + 1, '  stmt_ref: "x"\n')
+                rel.write_text("".join(lines), encoding="utf-8")
+                self.assertReports(f"key 'stmt_ref' ({name}) is not in keys.toml")
+                self.tearDown()
 
     def test_no_install_at_all(self) -> None:
         shutil.rmtree(self.installs / "v022-fresh")

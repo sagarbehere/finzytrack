@@ -38,7 +38,7 @@ REPO = Path(__file__).resolve().parents[3]
 CORPUS = REPO / "corpora" / "ledgers" / "inv21"
 GOLDENS: dict[str, Any] = json.loads((CORPUS / "goldens.json").read_text(encoding="utf-8"))
 INSTALLS = REPO / "corpora" / "workspaces" / "legacy"
-INSTALL_GOLDENS: dict[str, Any] = GOLDENS["installs"]  # the v0.2.2 install fixtures (S0095)
+INSTALL_GOLDENS: dict[str, Any] = json.loads((INSTALLS / "goldens.json").read_text(encoding="utf-8"))["installs"]
 # The directive types the metadata-keys case pins, the table and column that hold their metadata, and the order that
 # matches the goldens' (file order). `commodities` is sorted by code and has rows for used, never declared codes (NULL
 # metadata), so its declared rows are read in line order. `Close` has no table in the surface.
@@ -180,7 +180,7 @@ def test_a_v022_install_opened_in_place_passes_its_goldens_and_stays_untouched(t
     assert golden["configured_root"] in golden["roots"]
     assert install_failures(install, golden, tmp_path / "out") == []
     assert snapshot(install) == before, "opening a v0.2.2 install writes nothing there (INV-21 (b), INV-30)"
-    assert not (install / "data" / ".write.lock").exists()
+    assert (install / "data" / ".write.lock").read_bytes() == b"", "v0.2.2's empty lock file, left as it is"
     # Not vacuous: the roots hold transactions with v0.2.2's ids and keys, and directives with metadata.
     postings = sum(len(golden_postings(r)) for r in golden["roots"].values())
     assert postings == 46

@@ -60,7 +60,15 @@ EXPORT_PATTERNS = ["*.csv", "*.tsv", "*.xls", "*.xlsx", "*.xlsm", "*.xlsb", "*.o
 MANIFEST = "corpora/MANIFEST.tsv"
 # Synthetic test assets our own tools write, whose dated lines with amounts are not statements (BL-0023). A new
 # statement-like file in corpora/ or fixtures/ needs an owner-reviewed MANIFEST row or an entry here (code review).
-SYNTHETIC_ASSETS = ("corpora/ledgers/inv21/goldens.json", "corpora/ledgers/oracle/nasty-cases.json")
+# The v0.2.2 install's goldens (S0095): a loosening approved by the owner, 2026-11-10, choosing "Own file, named
+# exemption (Recommended)": "Move the install goldens to their own file and add that one path to the guard's list of
+# synthetic assets, approved here with your words (a loosening of the guard, so it is yours to approve). The exemption
+# then covers exactly the reviewed content." (IMP-0058.)
+SYNTHETIC_ASSETS = (
+    "corpora/ledgers/inv21/goldens.json",
+    "corpora/ledgers/oracle/nasty-cases.json",
+    "corpora/workspaces/legacy/goldens.json",
+)
 
 
 def matches(name: str, patterns: list[str]) -> bool:

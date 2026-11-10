@@ -27,3 +27,6 @@ Today's Copy (S0081) copies the receipt into the new workspace as `documents/202
 Option 1. It treats a `document` value like the `document` directive Copy already rewrites, keeps the copy self-contained, and changes only the path text of a key INV-21 reads (the key itself is kept, so INV-21's "remove or rename" does not apply). It would be built with Copy's adoption screens (BL-0026, M3), with a must-not-pass test on the v0.2.2 install fixture.
 
 ## Answer (owner, verbatim, with date)
+Owner, 2026-11-10, in session, choosing "Rewrite the links (Recommended)": "Copy rewrites each `document`/`document:` value that points at a file it moved (to `documents/2026/receipt.pdf`), as it already does for `document` directives; 'loads the same' maps the new path back to the old file. The copy is self-contained; Fava and v0.4 open the receipt. Only the copy's text differs on those lines."
+
+Recorded in S0095 (round 1 fix) and on BL-0231 (M3, built with Copy's adoption screens).

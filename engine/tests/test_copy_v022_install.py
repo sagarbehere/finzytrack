@@ -5,11 +5,12 @@ The install fixture (`corpora/workspaces/legacy/v022-fresh/`, made by v0.2.2's o
 folder, and each ledger root it holds is brought in with the `copy` op, naming the install's `data/.write.lock` as its
 legacy lock, as Copy will for an install whose config names those files (BL-0026). Then:
 - the copy's mirror gives every posting the TransactionId, content hash and metadata JSON v0.2.2's code gave the
-  source (`installs` in `corpora/ledgers/inv21/goldens.json`), file names mapped from the copy's folder back to the
+  source (`corpora/workspaces/legacy/goldens.json`), file names mapped from the copy's folder back to the
   root's folder in the install (Copy keeps a file under the root's folder at its relative path);
 - every ledger file in the copy is byte for byte its source: none of these ledgers names anything outside its folder,
   so Copy has nothing to rewrite, and no key is removed, renamed or changed (INV-21 (b), (c));
-- the install is byte-identical afterwards, and no `.write.lock` is created there (INV-26).
+- the install is byte-identical afterwards: its empty `.write.lock` (v0.2.2's wizard leaves one) is tried, held and
+  released, never written; with the lock file removed, none is created (INV-26).
 The same goldens opened in place, and the seeded changes they catch, are `tests/mirror/test_inv21.py`.
 """
 
@@ -63,11 +64,17 @@ def to_install(rows: list[tuple[object, ...]], base: str) -> list[tuple[object, 
     return [(tid, digest, back(meta), back(pmeta)) for tid, digest, meta, pmeta in rows]
 
 
+@pytest.mark.parametrize("lock_file", ["as the wizard left it", "removed"])
 @pytest.mark.parametrize("rel", sorted(GOLDEN["roots"]))
-def test_a_copy_of_each_v022_root_keeps_its_goldens_and_its_bytes(ald: Path, tmp_path: Path, rel: str) -> None:
+def test_a_copy_of_each_v022_root_keeps_its_goldens_and_its_bytes(
+    ald: Path, tmp_path: Path, rel: str, lock_file: str
+) -> None:
     install = copy_install(tmp_path)
-    before = snapshot(install)
     lock = install / "data" / ".write.lock"
+    assert lock.read_bytes() == b"", "the fixture holds v0.2.2's empty lock file (S0095 verifier F1)"
+    if lock_file == "removed":
+        lock.unlink()
+    before = snapshot(install)
     base = posixpath.dirname(rel)
     target = tmp_path / "Books"
     p = params(target, install / rel, ald, [str(lock)])
@@ -93,4 +100,4 @@ def test_a_copy_of_each_v022_root_keeps_its_goldens_and_its_bytes(ald: Path, tmp
     assert first_difference(rel, have, golden_postings(GOLDEN["roots"][rel])) == []
 
     assert snapshot(install) == before, "Copy only reads the install"
-    assert not lock.exists(), "INV-26: the legacy lock is never created"
+    assert lock.exists() == (lock_file != "removed"), "INV-26: the legacy lock is never created"

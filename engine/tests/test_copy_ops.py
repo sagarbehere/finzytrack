@@ -669,3 +669,52 @@ def test_a_new_folder_in_a_named_legacy_root_is_refused_however_it_is_spelled(
     assert (r["outcome"], r["reason"], r["detail"]) == ("not_created", "cannot_place", "inside_legacy"), r
     assert sorted(p.name for p in legacy.iterdir()) == ["data"]
     assert list((legacy / "data").iterdir()) == []
+
+
+RATE_KINDS: tuple[str, ...] = ("a plugin's own class", "a class named like decimal.Decimal", "the rate as a value")
+RATE_PLUGIN = (
+    "import os\n__plugins__ = ['run']\nfrom beancount.core import data\n"
+    "from beancount.parser.grammar import ValueType\n"
+    "def run(entries, options):\n"
+    "    p = os.path.join(os.path.dirname(options['filename']), '..', 'rates.txt')\n"
+    "    rate = open(p).read() if os.path.exists(p) else 'none'\n"
+    "    Rate = type(NAME, (), {'__module__': MODULE, 'value': rate})\n"
+    "    v = ValueType('EURUSD', Rate)\n"
+    "    return entries + [data.Custom(data.new_metadata('<p>', 0), entries[0].date, 'rate', [v])], []\n"
+)
+
+
+@pytest.mark.parametrize(
+    ("kind", "reason"),
+    [
+        ("a plugin's own class", "load_failed"),
+        ("a class named like decimal.Decimal", "load_failed"),
+        ("the rate as a value", "plugin_modules"),
+    ],
+)
+def test_a_plugins_class_is_never_compared_by_its_name(
+    ald: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, kind: str, reason: str
+) -> None:
+    """S0095 red team F1: the ledger's own plugin reads a rate from beside the ledger's folder, which Copy does not
+    copy, so the copy's load holds another rate. Kept on a class used as a `custom` value's type, the class was
+    compared by its name and the copy was reported created; any class the parser does not record is now an unknown
+    kind (`load_failed`), and the same rate kept as a value is a difference (the control: `plugin_modules`, the copy
+    loads otherwise and names a plugin of its own)."""
+    monkeypatch.setattr(sys, "dont_write_bytecode", True)
+    (tmp_path / "rates.txt").write_text("1.10")
+    books = tmp_path / "src"
+    books.mkdir()
+    name = f"s0095_rate_{sorted(RATE_KINDS).index(kind)}_{os.getpid()}"  # a module name per case and run
+    plugin = RATE_PLUGIN.replace("NAME", "'Decimal'" if "decimal" in kind else "'Rate'").replace(
+        "MODULE", "'decimal'" if "decimal" in kind else "'myrates'"
+    )
+    if kind == "the rate as a value":
+        plugin = plugin.replace("ValueType('EURUSD', Rate)", "ValueType(Rate.value, str)")
+    (books / f"{name}.py").write_text(plugin)
+    (books / "main.beancount").write_text(
+        f'option "insert_pythonpath" "True"\noption "documents" "."\nplugin "{name}"\n2026-01-01 open Assets:Cash EUR\n'
+    )
+    (tmp_path / "out").mkdir()
+    reply, _ = copy(ald, params(tmp_path / "out" / "copy", books / "main.beancount", ald))
+    r = reply["result"]
+    assert (r["outcome"], r["reason"]) == ("not_created", reason), r

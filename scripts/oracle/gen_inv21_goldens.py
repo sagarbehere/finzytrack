@@ -1,7 +1,7 @@
 """Produce the INV-21 goldens from the RELEASED v0.2.2 code (S0022, S0095; EP-29: the oracle, not our code).
 
-One file, `corpora/ledgers/inv21/goldens.json`: `cases` (the ledgers of `cases.toml`) and `installs` (every ledger root
-of the v0.2.2 install fixtures in `corpora/workspaces/legacy/`, made by `gen_v022_install.py`; S0095).
+Two files: `corpora/ledgers/inv21/goldens.json` (the ledgers of `cases.toml`) and `corpora/workspaces/legacy/goldens.json`
+(every ledger root of the v0.2.2 install fixtures beside it, made by `gen_v022_install.py`; S0095).
 
 The functions are read from the `v0.2.2` tag of this repository (`git show`, read-only), extracted verbatim by syntax
 tree and run on the case ledgers (copied to a temp folder) in Beancount 3.2.0:
@@ -244,14 +244,12 @@ def generate() -> str:
     doc = {
         "about": "INV-21 goldens (S0022): the released v0.2.2 code run on these ledgers in Beancount; "
                  "`transaction_id` is v0.4's expected TransactionId (v0.2.2's, except the cases.toml v04_overrides). "
-                 "`installs`: every ledger root of the v0.2.2 install fixtures (corpora/workspaces/legacy/, S0095). "
                  "Written by scripts/oracle/gen_inv21_goldens.py; spec design/specs/mirror/inv21-goldens.md. "
                  "Never edit by hand.",
         "legacy_tag": TAG,
         "legacy_code": oracle.ranges,
         "beancount": beancount.__version__,
         "cases": out,
-        "installs": installs(oracle),
     }
     return json.dumps(doc, indent=1, ensure_ascii=False) + "\n"
 
@@ -324,19 +322,36 @@ def ledger_roots(folder: Path) -> list[str]:
     return [f.relative_to(folder.resolve()).as_posix() for f in files if f not in included]
 
 
+def generate_installs() -> str:
+    oracle = Oracle()
+    doc = {
+        "about": "INV-21 goldens of the v0.2.2 install fixtures (S0095): the released v0.2.2 code run on every ledger "
+                 "root of each install folder beside this file, in Beancount; metadata JSON stored parsed (compare "
+                 "`json.dumps` of it). Written by scripts/oracle/gen_inv21_goldens.py; spec "
+                 "design/specs/mirror/inv21-goldens.md. Never edit by hand.",
+        "legacy_tag": TAG,
+        "legacy_code": oracle.ranges,
+        "beancount": beancount.__version__,
+        "installs": installs(oracle),
+    }
+    return json.dumps(doc, indent=1, ensure_ascii=False) + "\n"
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--check", action="store_true", help="compare with the committed goldens instead of writing")
     args = ap.parse_args()
-    text = generate()
-    target = CORPUS / "goldens.json"
-    if args.check:
-        same = target.read_text(encoding="utf-8") == text
-        print("goldens.json matches v0.2.2" if same else "goldens.json differs from what v0.2.2 gives")
-        return 0 if same else 1
-    target.write_text(text, encoding="utf-8")
-    print(f"wrote {target.relative_to(REPO)}")
-    return 0
+    status = 0
+    for target, text in ((CORPUS / "goldens.json", generate()), (INSTALLS / "goldens.json", generate_installs())):
+        name = target.relative_to(REPO)
+        if args.check:
+            same = target.read_text(encoding="utf-8") == text
+            print(f"{name} matches v0.2.2" if same else f"{name} differs from what v0.2.2 gives")
+            status |= 0 if same else 1
+        else:
+            target.write_text(text, encoding="utf-8")
+            print(f"wrote {name}")
+    return status
 
 
 if __name__ == "__main__":

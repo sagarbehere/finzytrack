@@ -9,15 +9,24 @@ code read from the `v0.2.2` tag of this repository (`git show`, read-only):
                                         accounts.default_currency), merged into the seeded `config/config.yaml` and
                                         written with ruamel.yaml's round trip (the version v0.2.2 locks, 0.18.15), as
                                         `complete_setup` in backend/app/api/routers/setup.py writes it
+  backend/app/write_lock.py             WriteLockManager.acquire: the wizard's first load and export
+                                        (`startup_user_services`, through `SqliteReader._ensure_fresh`) take the write
+                                        lock, which opens `data/.write.lock` in append mode and never writes it: an
+                                        empty file (S0095 verifier F1)
 The install's own location (the platform folder, `Finzytrack` in the user's application-data folder) is never
 written into the folder: v0.2.2 resolves every path in it against that folder at run time.
 
-Left out on purpose (no v0.4 reader, INV-21 covers ledgers only; BL-0026's adoption corpus may add them): the rest of
-the seeded `config/` (bank rule files, dashboard recipes, themes), the wizard's timestamped backup of the old
-`config.yaml` under `data/backups/`, `data/ledger.db` (v0.2.2's mirror cache: v0.4 rebuilds its own and never reads
-it), `logs/`, the upgrade state, and `data/ledgers/fake.beancount` (a build-time output of
-`backend/scripts/generate_fake.py`, not in the tag). There is no `data/.write.lock`: this install never saved, and
-v0.4 must never create one (ADR-0062).
+Not in the fixture, though a real install has them (each a known gap, listed in the spec too):
+- `data/ledger.db`, v0.2.2's mirror, written by that same first export: a SQLite file, which the repository ignores
+  by name (`.gitignore`, INV-23) and the staged-file guard refuses as a binary file and a mirror database. v0.4 never
+  reads it (it builds its own mirror); BL-0026's adoption test must still leave it as it is.
+- `data/ledgers/fake.beancount`, the demo ledger: a build-time output of `backend/scripts/generate_fake.py`, not in
+  the tag. That script is deterministic (seeded, stdlib only); for the release's build month (`--anchor 2026-08`) it
+  gives about 2 MB, 5404 transactions, each with a 64-hex `content_hash` the privacy scan reads as a secret, so it is
+  not committed. It holds the same keys as `fake-multi` (`id`, `content_hash`, `source_account`).
+- The rest of the seeded `config/` (bank rule files, dashboard recipes, themes), the wizard's timestamped backup of
+  the old `config.yaml` under `data/backups/`, `logs/` and the upgrade state: no v0.4 reader, and INV-21 covers
+  ledgers only (BL-0026's adoption corpus may add them).
 
 **Committed as `_data/`, not `data/`.** The repository ignores every folder named `data` (INV-23: real data never
 enters it; `.gitignore` says those lines stay), so the fixture stores the install's `data/` folder as `_data/`, and
@@ -103,6 +112,8 @@ def generate() -> dict[str, bytes]:
     buf = io.StringIO()
     yaml.dump(doc, buf)
     out["config/config.yaml"] = buf.getvalue().encode("utf-8")
+    # WriteLockManager.acquire during the wizard's first export: `open(lock_file, "a")`, locked, never written.
+    out["data/.write.lock"] = b""
     return out
 
 
