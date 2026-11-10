@@ -202,7 +202,7 @@ def generated_cases(tmp: Path) -> list[Case]:
     head, parts = split_by_heading(text)
     files = {"main.beancount": head + 'include "parts/**/*.beancount"\n'}
     files.update({f"parts/{rel}/ledger.beancount": body for rel, body in parts})
-    case("example-split", ("example-ledger", "include-recursive-glob"), files)
+    case("example-split", ("example-ledger", "include-recursive-glob", "precision-merged"), files)
 
     renamed = ROOT_NAME.sub(lambda m: CUSTOM_ROOTS[m.group(1)], text)
     names = "".join(f'option "name_{k.lower()}" "{v}"\n' for k, v in CUSTOM_ROOTS.items())
@@ -214,7 +214,7 @@ def generated_cases(tmp: Path) -> list[Case]:
     receipt = folder / "receipts" / "2024-02-01.receipt.txt"
     case(
         "absolute-paths",
-        ("include-absolute", "documents-root-absolute", "document-directive"),
+        ("include-absolute", "documents-root", "documents-root-absolute", "document-directive"),
         {
             "main.beancount": (
                 f'option "documents" "{docs}"\ninclude "{other}"\n2024-01-01 open Assets:Cash USD\n'
@@ -338,7 +338,9 @@ def _options_of_includes_ignored(x: Facts) -> bool:
 
 
 def _root_parse(x: Facts) -> dict[str, Any]:
-    return x.parsed[str(x.case.root)][2]
+    """The root's own options, as the parser gives them (Beancount's defaults when there is no root file)."""
+    own = x.parsed.get(str(x.case.root))
+    return dict(beancount_options.OPTIONS_DEFAULTS) if own is None else own[2]
 
 
 def _plugin_files(x: Facts) -> dict[str, str]:
@@ -400,6 +402,19 @@ def _decodes(data: bytes) -> bool:
     except UnicodeDecodeError:
         return False
     return True
+
+
+def _example_ledger(x: Facts) -> bool:
+    """`bean-example`'s output: its header (generated, with the fictional birth date and the dates it covers) in the
+    root, and a ledger of its size (over a thousand entries, no error)."""
+    root = x.texts.get("main.beancount", "")
+    header = "THIS FILE HAS BEEN AUTO-GENERATED" in root and re.search(r"^;; Birth: \d{4}-\d{2}-\d{2}$", root, re.M)
+    return bool(header) and x.result is not None and len(x.result[0]) > 1000 and not x.result[1]
+
+
+def applies(feature: str, case: Case) -> bool:
+    """Encrypted features are looked for in refuse cases, every other feature in load cases."""
+    return feature.startswith("encrypted-") == (case.expect == "refuse")
 
 
 def _is_root(x: Facts) -> bool:
@@ -472,7 +487,7 @@ FEATURES: dict[str, Callable[[Facts], bool]] = {
     "encrypted-include-nested": _refused_nested,
     "file-not-utf8": lambda x: any(not _decodes(Path(f).read_bytes()) for f in x.parsed),
     # Beancount's example ledger (`bean-example`), the source Fava's example ledgers are made from
-    "example-ledger": lambda x: "THIS FILE HAS BEEN AUTO-GENERATED" in x.texts.get("main.beancount", ""),
+    "example-ledger": _example_ledger,
 }
 
 

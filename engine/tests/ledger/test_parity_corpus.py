@@ -201,19 +201,21 @@ def test_beancount_gives_each_load_case_the_errors_it_is_written_for(tmp_path: P
 
 
 def claim_problems(cases: list[Case]) -> list[str]:
-    """A feature a case claims that is not in the inventory or that its detector does not find there, and a feature
-    of the inventory no case claims."""
+    """Every case claims exactly the features its detectors find (S0094 round 1, F3): a feature claimed that is not in
+    the inventory or not found, a feature found that the case does not claim, and a feature no case claims. A
+    detector that is too loose ("any include", "any plugin") finds its feature in a case that does not claim it."""
     claimed: set[str] = set()
     problems: list[str] = []
     for case in cases:
         seen = facts(case, beancount(case) if case.expect == "load" else None)
+        found = {f for f, detector in parity.FEATURES.items() if parity.applies(f, case) and detector(seen)}
         for feature in case.features:
             claimed.add(feature)
-            detector = parity.FEATURES.get(feature)
-            if detector is None:
+            if feature not in parity.FEATURES:
                 problems.append(f"{case.name}: {feature} is not in the inventory")
-            elif not detector(seen):
+            elif feature not in found:
                 problems.append(f"{case.name}: {feature} claimed, not found")
+        problems += [f"{case.name}: {f} found, not claimed" for f in sorted(found - set(case.features))]
     problems += [f"{feature}: claimed by no case" for feature in sorted(set(parity.FEATURES) - claimed)]
     return problems
 
@@ -237,30 +239,52 @@ def test_a_false_claim_an_unknown_feature_and_an_unclaimed_one_are_found(tmp_pat
         "include-no-match: claimed by no case",
         "include-parent-folder: claimed by no case",
         "plain-asc: claimed by no case",
-        "precision-merged: claimed by no case",
     ]
-    for case in cases.values():
-        for feature in case.features:  # each detector also refuses a case that does not claim its feature
-            others_lacking = [c for c in cases.values() if feature not in c.features and c.expect == case.expect]
-            assert not all(
-                parity.FEATURES[feature](facts(c, None if c.expect == "refuse" else beancount(c)))
-                for c in others_lacking
-            ), feature
 
 
-BEANCOUNT_OPTIONS = {o.name for group in beancount_options.PUBLIC_OPTION_GROUPS for o in group.options}
+def test_a_feature_a_case_has_but_does_not_claim_is_found(tmp_path: Path) -> None:
+    """The near miss of each loose detector the verifier tried (round 1, F3): a case that has the feature without
+    claiming it, so a detector that fires on more than its feature is seen."""
+    cases = {c.name: c for c in every_case(tmp_path)}
+    includes = replace(cases["includes"], features=tuple(f for f in cases["includes"].features if f != "include-glob"))
+    example = replace(cases["example"], features=())
+    assert claim_problems([includes, example])[:2] == [
+        "includes: include-glob found, not claimed",
+        "example: example-ledger found, not claimed",
+    ]
+    loose: dict[str, Callable[[parity.Facts], bool]] = {
+        "include-plain": lambda x: bool(list(x.includes())),
+        "plugin-config": lambda x: bool(x.options["plugin"]),
+        "example-ledger": lambda x: x.case.generated,
+        "include-parent-folder": lambda x: bool(list(x.includes())),
+    }
+    for feature, detector in loose.items():
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setitem(parity.FEATURES, feature, detector)
+            assert any(p.endswith(f"{feature} found, not claimed") for p in claim_problems(list(cases.values()))), (
+                feature
+            )
+
+
+BEANCOUNT_OPTIONS = {o.name: o for group in beancount_options.PUBLIC_OPTION_GROUPS for o in group.options}
 
 
 def options_missing(cases: list[Case]) -> list[str]:
-    """Each public option of Beancount that no `option` line of a load case sets."""
-    found = {
-        name
-        for case in cases
-        if case.expect == "load"
-        for text in case.texts().values()
-        for name in re.findall(r'^option "([a-z_]+)"', text, re.M)
-    }
-    return sorted(BEANCOUNT_OPTIONS - found)
+    """Each public option of Beancount that no load case ends with a value other than its default, in Beancount's own
+    result (S0094 round 1, F2: a line that sets it is not enough; a later line or a refused value can leave the
+    default). An alias (`inferred_tolerance_multiplier`, renamed `tolerance_multiplier`) never holds a value of its
+    own: it counts when a case's `option` line names it and its target ends non-default in that case."""
+    changed: set[str] = set()
+    for case in cases:
+        if case.expect != "load":
+            continue
+        options = beancount(case)[2]
+        lines = {n for text in case.texts().values() for n in re.findall(r'^option "([a-z_]+)"', text, re.M)}
+        for name, opt in BEANCOUNT_OPTIONS.items():
+            target = opt.alias or name
+            if (opt.alias is None or name in lines) and options[target] != beancount_options.OPTIONS_DEFAULTS[target]:
+                changed.add(name)
+    return sorted(set(BEANCOUNT_OPTIONS) - changed)
 
 
 def test_every_option_beancount_has_is_set_by_a_load_case(tmp_path: Path) -> None:
@@ -279,6 +303,23 @@ def test_an_option_no_case_sets_is_found(tmp_path: Path) -> None:
         "inferred_tolerance_default",
         "inferred_tolerance_multiplier",
         "long_string_maxlines",
+        "render_commas",
+        "tolerance_multiplier",
+    ]
+    # A line that sets an option is not enough: a later line puts render_commas back to its default (the verifier's
+    # round 1 case: "SOMETIMES" reads as false), and the alias's target set elsewhere does not count for the alias.
+    every = {c.name: c for c in every_case(tmp_path / "again")}
+    options = every["options"].root
+    text = options.read_text(encoding="utf-8")
+    options.write_text(
+        text.replace('option "tolerance_multiplier" "0.6"\n', "").replace(
+            'option "inferred_tolerance_multiplier" "0.7"\n', ""
+        )
+        + 'option "render_commas" "SOMETIMES"\n',
+        encoding="utf-8",
+    )
+    assert options_missing(list(every.values())) == [
+        "inferred_tolerance_multiplier",
         "render_commas",
         "tolerance_multiplier",
     ]
@@ -494,6 +535,32 @@ def _refusal_names_the_root(mp: pytest.MonkeyPatch) -> None:
     mp.setattr(overlay_module, "load", load)
 
 
+def _an_error_source_moved(mp: pytest.MonkeyPatch) -> None:
+    real = port.validate
+
+    def validate(entries: list[port.Directive], options: port.OptionsMap) -> list[port.BeancountError]:
+        errors = real(entries, options)
+        first = errors[0]
+        error_type: Any = type(first)  # Beancount's errors are named tuples (source, message, entry)
+        moved: port.BeancountError = error_type(
+            {**first.source, "lineno": first.source["lineno"] + 1}, first.message, first.entry
+        )
+        return [moved, *errors[1:]]  # the same type and message, another line
+
+    mp.setattr(port, "validate", validate)
+
+
+def _errors_reordered(mp: pytest.MonkeyPatch) -> None:
+    real = port.validate
+
+    def validate(entries: list[port.Directive], options: port.OptionsMap) -> list[port.BeancountError]:
+        errors = real(entries, options)
+        assert len(errors) >= 2, "the target case must have two validation errors"
+        return errors[::-1]
+
+    mp.setattr(port, "validate", validate)
+
+
 DIVERGENCES: dict[str, tuple[Callable[[pytest.MonkeyPatch], None], str, Callable[[Case], None]]] = {
     "an entry dropped": (_drop_last_entry, "fava-features", empty_overlay),
     "plugins not run": (_no_plugins, "plugins-local", empty_overlay),
@@ -511,6 +578,8 @@ DIVERGENCES: dict[str, tuple[Callable[[pytest.MonkeyPatch], None], str, Callable
     "display precision of includes not merged": (_precision_not_merged, "includes", empty_overlay),
     "the input hash wrong": (_input_hash_wrong, "fava-features", empty_overlay),
     "a refusal naming another file": (_refusal_names_the_root, "encrypted-nested", refused),
+    "an error's source moved": (_an_error_source_moved, "options", empty_overlay),
+    "the same errors in another order": (_errors_reordered, "options", empty_overlay),
 }
 
 
@@ -527,4 +596,4 @@ def test_each_seeded_divergence_in_the_overlay_is_caught(tmp_path: Path) -> None
         clean = {c.name: c for c in every_case(tmp_path / (re.sub(r"\W+", "-", label) + "-clean"))}
         assert run(check, [clean[target]]) == [], label
     assert survived == []
-    assert len(DIVERGENCES) == 16
+    assert len(DIVERGENCES) == 18

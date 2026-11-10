@@ -7,7 +7,9 @@
 # refused:  for "refuse", the encrypted file the load must name (a file Beancount itself would decrypt).
 
 [custom-roots]
-features = ["custom-roots", "include-plain", "options-of-includes-ignored", "operating-currency-merged"]
+features = [
+    "custom-roots", "include-plain", "options-of-includes-ignored", "operating-currency-merged", "precision-merged",
+]
 expect = "load"
 errors = { ParserError = 1 }
 note = "An included file parses with its own options: one that does not name the roots again gets a ParserError."
@@ -57,8 +59,8 @@ errors = { LoadError = 6 }
 [options]
 features = []
 expect = "load"
-errors = { AmbiguousMatchError = 1, DeprecatedError = 3, ParserError = 1, ValidationError = 1 }
-note = "The options that change parsing, booking and checking; an unknown option, a refused value and a booking error."
+errors = { AmbiguousMatchError = 1, DeprecatedError = 3, ParserError = 2, ValidationError = 2 }
+note = "The options that change parsing, booking and checking, each to a non-default value; an unknown option, a refused value, a booking error and two unbalanced transactions."
 
 [plugins-builtin]
 features = ["plugin-config", "plugin-adds-entries"]
@@ -70,7 +72,7 @@ note = "Every module of beancount.plugins in 3.2.0, in the default mode (documen
 features = [
     "plugin-local", "plugin-config", "plugin-function-object", "plugin-without-plugins-list", "plugin-import-error",
     "plugin-raises", "plugin-in-include-ignored", "pythonpath-from-include", "plugin-adds-entries",
-    "plugin-changes-entries", "include-plain",
+    "plugin-changes-entries", "include-plain", "precision-merged",
 ]
 expect = "load"
 errors = { CountError = 1, LoadError = 2 }

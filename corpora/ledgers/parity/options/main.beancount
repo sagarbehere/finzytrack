@@ -1,5 +1,6 @@
-; Parity corpus (synthetic data, S0094): the options that change how Beancount parses, books and checks, and two
-; option errors (an unknown name, a value Beancount refuses).
+; Parity corpus (synthetic data, S0094): the options that change how Beancount parses, books and checks, each to a
+; value other than its default; two option errors (an unknown name, and a value Beancount refuses: it reports it and
+; keeps the default root name); a booking error and two transactions that do not balance.
 option "title" "Options that change loading"
 option "operating_currency" "USD"
 option "booking_method" "FIFO"
@@ -14,7 +15,7 @@ option "long_string_maxlines" "2"
 option "allow_pipe_separator" "TRUE"
 option "allow_deprecated_none_for_tags_and_links" "TRUE"
 option "no_such_option" "x"
-option "render_commas" "SOMETIMES"
+option "name_assets" "lowercase"
 
 2020-01-01 open Assets:Bank USD
 2020-01-01 open Assets:Broker:Stock STK
@@ -47,6 +48,10 @@ option "render_commas" "SOMETIMES"
 2020-05-02 * "Fee" "outside it"
   Expenses:Fees  1.01 USD
   Assets:Bank  -1.00 USD
+
+2020-05-03 * "Fee" "outside it again"
+  Expenses:Fees  2.05 USD
+  Assets:Bank  -2.00 USD
 
 2020-06-01 note Assets:Bank "a long string
 over three
