@@ -8,7 +8,7 @@
 - Risk class / lane: Low (no index built: a brief with evidence only). Would be Medium, full lane for the build's DDL if an index were needed.
 - Acceptance tests: none written; the slice stops after the brief (below).
 - Expected doc impact: this journal only. The row's milestone is the owner's call (pre-push deferral check), so `design/backlog.md` is not edited here.
-- Open questions: moving BL-0122 from M1a to M1b with the TransactionId lookup (BL-0059) needs the owner's words; returned to the orchestrator, not escalated by this slice.
+- Open questions: moving BL-0122 from M1a to M1b with the TransactionId lookup (BL-0059) needs the owner's words; escalated by the orchestrator in `design/inbox/20261110-mirror-indexes-to-m1b.md`. S0097 is parked until the answer. The broken `measure_mirror_build.py` the slice found is BL-0235.
 
 ### Inventory of mirror reads (by behaviour, ca9d6661)
 Built from every place product code opens a mirror file (`sqlite3.connect` in `backend/src`, `engine/src`) and every SQL text run on it, not from names:
