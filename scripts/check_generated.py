@@ -55,6 +55,21 @@ GENERATORS: dict[str, tuple[list[str], list[str]]] = {
         [str(ENGINE_PYTHON), "-I", "-m", "ledger_engine.mirror.core.schema"],
         ["engine/src/ledger_engine/mirror/core/schema.py"],
     ),
+    # The mirror's per-table checksums over the corpus ledgers (BL-0057, S0096): a change detector. Any module of the
+    # engine, its lockfile (a Beancount upgrade), the corpus or its helpers can change a row.
+    "corpora/ledgers/mirror-checksums.json": (
+        [str(ENGINE_PYTHON), "-I", "engine/scripts/gen_mirror_checksums.py", "--stdout"],
+        [
+            "engine/src/ledger_engine/",
+            "engine/pyproject.toml",
+            "engine/uv.lock",
+            "engine/tests/ledger/parity.py",
+            "engine/tests/mirror/checksums.py",
+            "engine/scripts/gen_mirror_checksums.py",
+            "corpora/ledgers/",
+            "corpora/workspaces/legacy/",
+        ],
+    ),
     "design/generated/statecharts/engine-supervision.md": (
         [str(BACKEND_PYTHON), "-I", "backend/scripts/gen_statecharts.py", "--stdout"],
         ["backend/src/app/platform/engine_supervision.py", "backend/scripts/gen_statecharts.py"],

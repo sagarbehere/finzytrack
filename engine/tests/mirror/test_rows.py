@@ -14,7 +14,7 @@ import pytest
 from beancount.loader import LoadError
 
 from ledger_engine.mirror.core import schema
-from ledger_engine.mirror.core.rows import error_rows
+from ledger_engine.mirror.core.rows import error_rows, meta_json
 
 from .support import STAMP, TODAY, build_text, one, rows
 
@@ -53,6 +53,21 @@ def test_a_two_leg_transaction_gives_two_posting_rows(tmp_path: Path) -> None:
         (1, *common, "Expenses:Food", "Expenses", "Expenses", "10.50", "USD", 2021, 5, 2, "2021-05"),
         (2, *common, "Assets:Bank", "Assets", "Assets", "-10.50", "USD", 2021, 5, 2, "2021-05"),
     ]
+
+
+def test_quarter_is_the_calendar_quarter_at_its_boundaries(tmp_path: Path) -> None:
+    """@regression-guard (S0096: holds on the base d535b841; a formula off by one month passed the May case above).
+    surface.toml `quarter`: "Calendar quarter of `transaction_date`, 1 to 4"; March is the first, April the second,
+    December the fourth."""
+    con = build_text(
+        tmp_path,
+        OPEN
+        + "".join(
+            f'2021-{m:02d}-15 * "m{m}"\n  Expenses:Food  1 USD\n  Assets:Bank\n' for m in (1, 3, 4, 6, 7, 9, 10, 12)
+        ),
+    )
+    got = rows(con, "SELECT DISTINCT month, quarter FROM r_postings ORDER BY month")
+    assert got == [(1, 1), (3, 1), (4, 2), (6, 2), (7, 3), (9, 3), (10, 4), (12, 4)]
 
 
 def test_no_payee_is_null_and_no_tags_are_an_empty_array(tmp_path: Path) -> None:
@@ -383,6 +398,24 @@ def test_prices_include_those_a_plugin_makes(tmp_path: Path) -> None:
     assert rows(con, "SELECT date, base_currency, quote_number, quote_currency FROM prices") == [
         ("2021-02-01", "VTI", "11", "USD")
     ]
+
+
+def test_a_price_is_plain_notation_never_an_exponent(tmp_path: Path) -> None:
+    """@regression-guard (S0096: holds on the base d535b841; `str(Decimal)` passed every other test).
+    README "Exact numbers": plain positional notation, never `1E-8`."""
+    con = build_text(tmp_path, OPEN + "2021-02-01 price SHIB 0.00000001 USD\n2021-02-02 price VTI 100 USD\n")
+    assert rows(con, "SELECT base_currency, quote_number FROM prices ORDER BY id") == [
+        ("SHIB", "0.00000001"),
+        ("VTI", "100"),
+    ]
+
+
+def test_a_set_in_metadata_is_a_sorted_array() -> None:
+    """@regression-guard (S0096: holds on the base d535b841; an unsorted set passed every other test).
+    README "Metadata JSON": a set becomes an array, its elements sorted, so the text is the same on every build
+    whatever the hash seed (a plugin may put a set in metadata)."""
+    letters = set("qwertyuiopasdfghjklzxcvbnm")
+    assert meta_json({"s": letters}) == json.dumps({"s": sorted(letters)})
 
 
 def test_metadata_json_conversion(tmp_path: Path) -> None:

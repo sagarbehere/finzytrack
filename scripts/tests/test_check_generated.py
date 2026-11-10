@@ -131,6 +131,28 @@ class EngineSchema(unittest.TestCase):
         self.assertTrue(any("could not run" in p for p in problems), problems)
 
 
+class MirrorChecksums(unittest.TestCase):
+    """The mirror's per-table checksums over the corpus (BL-0057, S0096): any engine module, the engine's lockfile (a
+    Beancount upgrade) or the corpus can change a row, so each is a source and a staged change regenerates it."""
+
+    PATH = "corpora/ledgers/mirror-checksums.json"
+
+    def test_registered_with_the_engine_and_the_corpus_as_sources(self) -> None:
+        cmd, sources = cg.GENERATORS[self.PATH]
+        self.assertIn("engine/.venv", cmd[0])  # the build imports Beancount
+        self.assertIn("engine/scripts/gen_mirror_checksums.py", cmd)
+        for source in ("engine/src/ledger_engine/", "engine/uv.lock", "corpora/ledgers/", "corpora/workspaces/legacy/",
+                       "engine/tests/ledger/parity.py", "engine/tests/mirror/checksums.py",
+                       "engine/scripts/gen_mirror_checksums.py"):
+            self.assertIn(source, sources)
+
+    def test_a_staged_row_change_in_the_engine_triggers_it(self) -> None:
+        _, sources = cg.GENERATORS[self.PATH]
+        self.assertTrue(cg.triggered({"engine/src/ledger_engine/mirror/core/rows.py"}, self.PATH, sources))
+        self.assertTrue(cg.triggered({"corpora/ledgers/write/tabs/main.beancount"}, self.PATH, sources))
+        self.assertFalse(cg.triggered({"backend/src/app/main.py"}, self.PATH, sources))
+
+
 class Statecharts(unittest.TestCase):
     """The engine supervision reference is generated from the backend's table (S0040; EP-20; ARCHITECTURE.md §7)."""
 
