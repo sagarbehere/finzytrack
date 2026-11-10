@@ -1,0 +1,57 @@
+; Parity corpus (synthetic data, S0094): the options that change how Beancount parses, books and checks, and two
+; option errors (an unknown name, a value Beancount refuses).
+option "title" "Options that change loading"
+option "operating_currency" "USD"
+option "booking_method" "FIFO"
+option "inferred_tolerance_default" "USD:0.003"
+option "inferred_tolerance_default" "*:0.000001"
+option "tolerance_multiplier" "0.6"
+option "inferred_tolerance_multiplier" "0.7"
+option "infer_tolerance_from_cost" "TRUE"
+option "display_precision" "USD:0.01"
+option "render_commas" "TRUE"
+option "long_string_maxlines" "2"
+option "allow_pipe_separator" "TRUE"
+option "allow_deprecated_none_for_tags_and_links" "TRUE"
+option "no_such_option" "x"
+option "render_commas" "SOMETIMES"
+
+2020-01-01 open Assets:Bank USD
+2020-01-01 open Assets:Broker:Stock STK
+2020-01-01 open Assets:Broker:Cash USD
+2020-01-01 open Income:Gains USD
+2020-01-01 open Equity:Opening
+2020-01-01 open Expenses:Fees USD
+
+2020-01-02 * "Opening" | "a pipe between payee and narration"
+  Assets:Bank  10000.00 USD
+  Equity:Opening
+
+2020-02-01 * "Buy" "first lot"
+  Assets:Broker:Stock  10 STK {10.00 USD}
+  Assets:Bank  -100.00 USD
+
+2020-03-01 * "Buy" "second lot"
+  Assets:Broker:Stock  10 STK {12.00 USD}
+  Assets:Bank  -120.00 USD
+
+2020-04-01 * "Sell" "FIFO takes the first lot"
+  Assets:Broker:Stock  -10 STK {} @ 13.00 USD
+  Assets:Broker:Cash  130.00 USD
+  Income:Gains
+
+2020-05-01 * "Fee" "inside the default tolerance"
+  Expenses:Fees  1.002 USD
+  Assets:Bank  -1.00 USD
+
+2020-05-02 * "Fee" "outside it"
+  Expenses:Fees  1.01 USD
+  Assets:Bank  -1.00 USD
+
+2020-06-01 note Assets:Bank "a long string
+over three
+lines"
+
+2020-07-01 * "Sell" "more than is held: Beancount's booking refuses the reduction"
+  Assets:Broker:Stock  -30 STK {}
+  Assets:Broker:Cash  360.00 USD

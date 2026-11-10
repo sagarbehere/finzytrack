@@ -1,0 +1,3 @@
+; Parity corpus (synthetic data, S0094): plain; it includes the encrypted file.
+include "secret.beancount.asc"
+2024-01-01 open Expenses:Food USD

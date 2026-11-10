@@ -1,0 +1,8 @@
+; Parity corpus (synthetic data, S0094): its insert_pythonpath adds this folder to the path; its plugin line is
+; ignored (plugins come from the root file).
+option "insert_pythonpath" "TRUE"
+plugin "parity_s0094_never_listed_in_root"
+
+2020-01-03 * "Shop" "dinner"
+  Expenses:Food  12.00 USD
+  Assets:Cash  -12.00 USD

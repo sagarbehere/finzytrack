@@ -1,0 +1,4 @@
+; Parity corpus (synthetic data, S0094): matched by a glob.
+2023-06-01 * "Shop" "dinner"
+  Expenses:Food  20.00 USD
+  Assets:Bank  -20.00 USD

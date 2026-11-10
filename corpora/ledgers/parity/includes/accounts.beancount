@@ -1,0 +1,10 @@
+; Parity corpus (synthetic data, S0094): a plain include; its display precision joins the ledger's.
+option "operating_currency" "EUR"
+2020-01-01 open Assets:Cash USD
+2020-01-01 open Assets:Bank USD,EUR
+2020-01-01 open Expenses:Food USD
+2020-01-01 open Expenses:Travel EUR
+2020-01-01 open Equity:Opening
+2020-01-02 * "Opening"
+  Assets:Bank  1000.0000 USD
+  Equity:Opening

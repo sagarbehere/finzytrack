@@ -1,0 +1,3 @@
+; Parity corpus (synthetic data, S0094): an included file that does not name the roots again is parsed with the
+; default names, so Beancount refuses its custom-root account (one ParserError, the same in both loaders).
+2024-01-01 open Aktiva:Bar EUR

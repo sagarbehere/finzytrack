@@ -1,0 +1,4 @@
+; Parity corpus (synthetic data, S0094): reached through "../" from a nested file.
+2024-03-02 * "Shop" "breakfast"
+  Expenses:Food  5.25 USD
+  Assets:Cash  -5.25 USD

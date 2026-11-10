@@ -1,0 +1,21 @@
+; Parity corpus (synthetic data, S0094): plugins from the ledger's own folders. The root and an included file each
+; set insert_pythonpath, so both folders are on the path; plugins are taken from the root file only (an included
+; file's plugin line is ignored by Beancount), with and without a configuration; a module without __plugins__ is
+; skipped; a missing module and a plugin that raises each give an error and the load goes on.
+option "title" "Local plugins"
+option "operating_currency" "USD"
+option "insert_pythonpath" "TRUE"
+include "sub/more.beancount"
+plugin "parity_s0094_tagger" "parity"
+plugin "parity_s0094_function_object"
+plugin "parity_s0094_inert"
+plugin "parity_s0094_not_installed"
+plugin "parity_s0094_raises"
+plugin "parity_s0094_from_sub"
+
+2020-01-01 open Assets:Cash USD
+2020-01-01 open Expenses:Food USD
+
+2020-01-02 * "Shop" "lunch"
+  Expenses:Food  7.00 USD
+  Assets:Cash  -7.00 USD

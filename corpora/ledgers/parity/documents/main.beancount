@@ -1,0 +1,17 @@
+; Parity corpus (synthetic data, S0094): two documents roots scanned by Beancount's documents step, a dated file
+; for a nested account and for an account opened in the other root, an undated file it skips, a folder for an
+; account that is not opened, a file found for a closed account, a document directive with a relative path, and one
+; whose file is missing (an error).
+option "title" "Documents roots"
+option "operating_currency" "USD"
+option "documents" "docs"
+option "documents" "archive"
+
+2020-01-01 open Assets:Bank:Checking USD
+2020-01-01 open Assets:Bank:Savings USD
+2020-01-01 open Assets:Closed USD
+2020-01-01 open Liabilities:Card USD
+2024-01-01 close Assets:Closed
+
+2024-01-31 document Assets:Bank:Checking "docs/Assets/Bank/Checking/2024-01-31.statement.txt"
+2024-04-01 document Liabilities:Card "archive/Liabilities/Card/2024-04-01.missing.txt"

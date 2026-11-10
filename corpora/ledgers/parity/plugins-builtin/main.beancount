@@ -1,0 +1,86 @@
+; Parity corpus (synthetic data, S0094): every plugin module Beancount 3.2.0 ships in beancount.plugins, each with a
+; configuration where it takes one, over entries that make most of them report or add something.
+option "title" "Every built-in plugin"
+option "operating_currency" "USD"
+plugin "beancount.plugins.auto_accounts"
+plugin "beancount.plugins.auto"
+plugin "beancount.plugins.implicit_prices"
+plugin "beancount.plugins.check_average_cost" "0.02"
+plugin "beancount.plugins.check_closing"
+plugin "beancount.plugins.check_commodity" "{'Assets:Broker:.*': 'OLD'}"
+plugin "beancount.plugins.check_drained"
+plugin "beancount.plugins.close_tree"
+plugin "beancount.plugins.coherent_cost"
+plugin "beancount.plugins.commodity_attr" "{'sector': ['tech', 'energy'], 'name': None}"
+plugin "beancount.plugins.currency_accounts" "Equity:CurrencyAccounts"
+plugin "beancount.plugins.leafonly"
+plugin "beancount.plugins.noduplicates"
+plugin "beancount.plugins.nounused"
+plugin "beancount.plugins.onecommodity" "Assets:Broker:.*"
+plugin "beancount.plugins.pedantic"
+plugin "beancount.plugins.sellgains"
+plugin "beancount.plugins.unique_prices"
+
+2020-01-01 commodity USD
+  name: "US dollar"
+2020-01-01 commodity STK
+  name: "A stock"
+  sector: "tech"
+2020-01-01 commodity OIL
+  sector: "shipping"
+
+2020-01-01 open Assets:Bank USD
+2020-01-01 open Assets:Bank:Sub USD
+2020-01-01 open Assets:Broker:Stock
+2020-01-01 open Assets:Broker:Cash USD
+2020-01-01 open Assets:Travel
+2020-01-01 open Income:Gains USD
+2020-01-01 open Equity:Opening
+2020-01-01 open Expenses:Food USD
+2020-01-01 open Expenses:Never USD
+
+2020-01-02 * "Opening"
+  Assets:Bank  1000.00 USD
+  Equity:Opening
+
+2020-01-03 * "Shop" "lunch"
+  Expenses:Food  9.00 USD
+  Assets:Bank  -9.00 USD
+
+2020-01-03 * "Shop" "lunch"
+  Expenses:Food  9.00 USD
+  Assets:Bank  -9.00 USD
+
+2020-01-04 * "Shop" "posted to a parent account"
+  Expenses:Food  1.00 USD
+  Assets:Bank  -1.00 USD
+
+2020-02-01 * "Buy" "a lot with a price, so an implicit price"
+  Assets:Broker:Stock  10 STK {10.00 USD} @ 10.00 USD
+  Assets:Bank  -100.00 USD
+
+2020-02-02 * "Buy" "bought at cost, then without it"
+  Assets:Broker:Stock  5 STK {11.00 USD}
+  Assets:Broker:Stock  1 OIL
+  Assets:Bank  -55.00 USD
+  Equity:Opening  -1 OIL
+
+2020-03-01 * "Sell" "the gain does not match the price"
+  Assets:Broker:Stock  -10 STK {10.00 USD} @ 12.00 USD
+  Assets:Broker:Cash  120.00 USD
+  Income:Gains  -10.00 USD
+
+2020-03-02 * "Travel" "a conversion"
+  Assets:Travel  50.00 EUR @ 1.10 USD
+  Assets:Bank  -55.00 USD
+
+2020-03-03 price STK 12.00 USD
+2020-03-03 price STK 12.50 USD
+
+2020-04-01 * "Close-out" "a posting that closes the account"
+  Assets:Broker:Cash  -120.00 USD
+    closing: TRUE
+  Assets:Bank  120.00 USD
+
+2020-04-02 close Assets:Broker
+2020-04-03 close Assets:Broker:Cash

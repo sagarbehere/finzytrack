@@ -1,0 +1,7 @@
+; Parity corpus (synthetic data, S0094): a glob that matches a plain file and an encrypted one; the whole load is
+; refused, the plain file's entries included.
+option "title" "An encrypted file reached by a glob"
+option "operating_currency" "USD"
+include "private/*"
+
+2020-01-01 open Assets:Cash USD

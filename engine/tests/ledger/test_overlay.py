@@ -7,6 +7,8 @@ of the mirrored loader functions are pinned, so an upgrade fails here until the 
 and ADR-0059: encrypted files are refused, never decrypted or partly loaded. The policy seam (ADR-0010; WS-ISOLATION
 L11-02, L11-06, L11.M-1): every file read, user plugin, `pythonpath` directory and documents root is put to the
 policy before any plugin runs, and a refusal refuses the whole load. Each case is loaded from a temp copy (INV-24).
+The comparison (`tests/ledger/parity.same`) is shared with the parity corpus of INV-03 (`test_parity_corpus.py`,
+S0094); this file's D1 equivalence and encrypted refusals enforce INV-03 too.
 """
 
 from __future__ import annotations
@@ -18,19 +20,19 @@ import sys
 import tomllib
 import uuid
 from collections.abc import Callable
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from importlib.util import find_spec
 from pathlib import Path
 from typing import Any
 
 import pytest
-from beancount import loader
 from beancount.utils import encryption
 
 from ledger_engine.ledger import beancount_port as port
 from ledger_engine.ledger import overlay as overlay_module
 from ledger_engine.ledger.overlay import Loaded, LoadRefused, load
 from ledger_engine.ledger.policy import DESKTOP
+from tests.ledger.parity import load_file, same
 
 pytestmark = pytest.mark.inv("INV-02")
 
@@ -51,36 +53,6 @@ def copy_case(name: str, tmp_path: Path) -> Path:
     dest = tmp_path / name
     shutil.copytree(CORPUS / name, dest)
     return dest / "main.beancount"
-
-
-def same(
-    result: Loaded | LoadRefused,
-    expected: tuple[list[Any], list[Any], dict[str, Any]],
-    *,
-    written_after: bool = False,
-) -> None:
-    """`written_after`: the files changed between the two loads, so `input_hash` (a stat of the files on disk, which
-    only Beancount's pickle cache reads) differs by design and is left out."""
-    assert isinstance(result, Loaded), result
-    entries, errors, options = expected
-    if written_after:
-        options = {k: v for k, v in options.items() if k != "input_hash"}
-        result = replace(result, options={k: v for k, v in result.options.items() if k != "input_hash"})
-    assert result.entries == entries
-    assert [(type(e).__name__, e.source, e.message) for e in result.errors] == [
-        (type(e).__name__, e.source, e.message) for e in errors
-    ]
-    assert set(result.options) == set(options)
-    for key, value in options.items():
-        if key == "dcontext":
-            assert str(result.options[key]) == str(value)
-        else:
-            assert result.options[key] == value, key
-
-
-def load_file(root: Path) -> tuple[list[Any], list[Any], dict[str, Any]]:
-    entries, errors, options = loader.load_file(str(root))
-    return list(entries), list(errors), dict(options)
 
 
 # ---- guardrail 1: equivalence with Beancount's loader ------------------------------------------------------------

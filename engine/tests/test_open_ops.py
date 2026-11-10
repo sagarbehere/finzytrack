@@ -100,6 +100,16 @@ def test_an_encrypted_include_is_refused_with_its_file(ws: tuple[Path, Path, dic
     )
 
 
+def test_an_encrypted_root_is_refused_with_its_file(ws: tuple[Path, Path, dict[str, Any]]) -> None:
+    """@regression-guard (S0094: held on the base, pinned for BL-0003): ADR-0059, the root itself encrypted is
+    refused and named, nothing published."""
+    main, ald, params = ws
+    secret = main.parent / "main.bean.gpg"
+    secret.write_bytes(b"\x85\x01not really")
+    result = call(ald, {**params, "root": str(secret)})["result"]
+    assert (result["outcome"], result["refused"], result["publish"]) == ("refused", str(secret), None)
+
+
 def test_no_open_runs_in_an_engine_without_the_engine_lock(ws: tuple[Path, Path, dict[str, Any]]) -> None:
     _, _, params = ws
     assert call(None, params)["error"]["key"] == "engine.no_engine_lock"

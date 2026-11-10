@@ -1,0 +1,43 @@
+; Parity corpus (synthetic data, S0094): the directives and metadata Fava's example ledgers add to Beancount's
+; generated example (Fava reads them; Beancount's loader keeps them as entries): Fava options and budgets as custom
+; directives, a stored query, events, notes, links and tags, metadata on open and commodity directives, and a pad
+; with a balance check.
+option "title" "Fava's additions"
+option "operating_currency" "USD"
+
+2016-01-01 custom "fava-option" "show-accounts-with-zero-balance" "False"
+2016-01-01 custom "fava-option" "fiscal-year-end" "06-30"
+2016-01-01 custom "budget" Expenses:Food "monthly" 300.00 USD
+2016-01-01 custom "fava-extension" "a.module.not.loaded.by.beancount"
+2016-01-01 query "food" "SELECT date, narration, position WHERE account ~ 'Food'"
+
+1792-01-01 commodity USD
+  export: "CASH"
+  name: "US Dollar"
+  precision: 2
+
+2016-01-01 open Assets:Checking USD
+  fava-uptodate-indication: TRUE
+  institution: "Synthetic Bank"
+2016-01-01 open Liabilities:Card USD
+2016-01-01 open Expenses:Food USD
+2016-01-01 open Equity:Opening-Balances
+2016-01-01 event "location" "Boston"
+2016-03-01 event "location" "Lisbon"
+
+2016-01-01 pad Assets:Checking Equity:Opening-Balances
+2016-01-02 balance Assets:Checking  2000.00 USD
+
+2016-01-05 * "Grocer" "weekly shop" #home ^receipt-1
+  receipt: "receipt-1.txt"
+  Expenses:Food  54.30 USD
+    category: "groceries"
+  Liabilities:Card  -54.30 USD
+
+2016-01-20 * "Card" "paid" ^receipt-1
+  Liabilities:Card  54.30 USD
+  Assets:Checking
+
+2016-01-21 note Liabilities:Card "statement checked"
+2016-01-22 price EUR  1.10 USD
+2016-12-31 close Liabilities:Card

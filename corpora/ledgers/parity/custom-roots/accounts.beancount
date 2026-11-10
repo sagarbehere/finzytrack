@@ -1,0 +1,21 @@
+; Parity corpus (synthetic data, S0094): the parser reads each file with its own options, so an included file names
+; the roots again; its other options, but operating_currency, are not merged into the ledger's.
+option "name_assets" "Aktiva"
+option "name_liabilities" "Passiva"
+option "name_equity" "Eigenkapital"
+option "name_income" "Ertrag"
+option "name_expenses" "Aufwand"
+option "title" "Ignored title"
+option "operating_currency" "CHF"
+
+2024-01-01 open Aktiva:Bank:Giro EUR
+2024-01-01 open Aktiva:Bank:Franken CHF
+2024-01-01 open Passiva:Karte EUR
+2024-01-01 open Eigenkapital:Eroeffnung
+2024-01-01 open Eigenkapital:Rundung
+2024-01-01 open Ertrag:Gehalt EUR
+2024-01-01 open Aufwand:Essen EUR
+
+2024-01-01 * "Opening"
+  Aktiva:Bank:Giro  1000.00 EUR
+  Eigenkapital:Eroeffnung

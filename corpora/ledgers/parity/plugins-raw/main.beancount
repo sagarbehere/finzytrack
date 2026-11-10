@@ -1,0 +1,21 @@
+; Parity corpus (synthetic data, S0094): raw plugin mode runs only the plugins the ledger lists, in its order: here
+; pad but not balance, so the wrong assertion is not checked, and not documents, so the folder is not scanned.
+option "title" "Raw plugin mode"
+option "operating_currency" "USD"
+option "plugin_processing_mode" "raw"
+option "documents" "docs"
+plugin "beancount.ops.pad"
+plugin "beancount.plugins.implicit_prices"
+
+2020-01-01 open Assets:Bank USD
+2020-01-01 open Assets:Broker STK
+2020-01-01 open Equity:Opening
+
+2020-01-01 pad Assets:Bank Equity:Opening
+2020-01-02 balance Assets:Bank  500.00 USD
+
+2020-01-03 * "Buy" "a price the implicit_prices plugin adds"
+  Assets:Broker  2 STK {20.00 USD}
+  Assets:Bank  -40.00 USD
+
+2020-02-01 balance Assets:Bank  1.00 USD

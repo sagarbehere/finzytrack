@@ -1,0 +1,15 @@
+; Parity corpus (synthetic data, S0094): every form of include the loader follows, and its errors.
+option "title" "Include forms"
+option "operating_currency" "USD"
+include "accounts.beancount"
+include "years/*.beancount"
+include "deep/**/*.beancount"
+include "nothing-here/*.beancount"
+include "gone.beancount"
+include "accounts.beancount"
+include "*.beancount"
+include "notes.beancount.asc"
+
+2024-01-05 * "Shop" "lunch"
+  Expenses:Food  10.50 USD
+  Assets:Cash  -10.50 USD

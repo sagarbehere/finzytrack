@@ -1,0 +1,6 @@
+; Parity corpus (synthetic data, S0094): an encrypted .asc file two includes down; the whole load is refused.
+option "title" "An encrypted file in a nested include"
+option "operating_currency" "USD"
+include "years/2024.beancount"
+
+2020-01-01 open Assets:Cash USD

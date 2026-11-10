@@ -1,0 +1,81 @@
+# Parity corpus (INV-03, BL-0003; S0094): one table per case folder; the hand-written half of the corpus (the
+# generated half, Beancount's example ledger and its variants, is built at test time: engine/tests/ledger/parity.py).
+# features: what the case exercises, from FEATURES in engine/tests/ledger/parity.py; each one's detector must find it.
+# expect:   "load" (the overlay load equals Beancount's loader) or "refuse" (an encrypted file, ADR-0059: never read).
+# errors:   for "load", Beancount's errors by type, a count each ({} when it reports none).
+# root:     the root file, when it is not main.beancount.
+# refused:  for "refuse", the encrypted file the load must name (a file Beancount itself would decrypt).
+
+[custom-roots]
+features = ["custom-roots", "include-plain", "options-of-includes-ignored", "operating-currency-merged"]
+expect = "load"
+errors = { ParserError = 1 }
+note = "An included file parses with its own options: one that does not name the roots again gets a ParserError."
+
+[documents]
+features = ["documents-root", "documents-roots-several", "document-directive", "document-missing-file"]
+expect = "load"
+errors = { DocumentError = 1 }
+
+[encrypted-glob]
+features = ["encrypted-include-glob"]
+expect = "refuse"
+refused = "private/secret.beancount.gpg"
+
+[encrypted-nested]
+features = ["encrypted-include-nested"]
+expect = "refuse"
+refused = "years/secret.beancount.asc"
+
+[encrypted-root-asc]
+features = ["encrypted-root-asc"]
+expect = "refuse"
+root = "main.beancount.asc"
+refused = "main.beancount.asc"
+
+[encrypted-root-gpg]
+features = ["encrypted-root-gpg"]
+expect = "refuse"
+root = "main.beancount.gpg"
+refused = "main.beancount.gpg"
+
+[fava-features]
+features = []
+expect = "load"
+errors = {}
+note = "Every directive type Beancount 3.2.0 parses but document, with the custom directives and metadata Fava reads."
+
+[includes]
+features = [
+    "include-plain", "include-glob", "include-recursive-glob", "include-nested", "include-parent-folder",
+    "include-no-match", "include-duplicate", "include-cycle", "plain-asc", "operating-currency-merged",
+    "precision-merged",
+]
+expect = "load"
+errors = { LoadError = 6 }
+
+[options]
+features = []
+expect = "load"
+errors = { AmbiguousMatchError = 1, DeprecatedError = 3, ParserError = 1, ValidationError = 1 }
+note = "The options that change parsing, booking and checking; an unknown option, a refused value and a booking error."
+
+[plugins-builtin]
+features = ["plugin-config", "plugin-adds-entries"]
+expect = "load"
+errors = { BalanceError = 2, CheckCommodityError = 2, CommodityError = 3, CompareError = 2, LeafOnlyError = 4, OneCommodityError = 3, UniquePricesError = 2, UnusedAccountError = 4, ValidationError = 1 }
+note = "Every module of beancount.plugins in 3.2.0, in the default mode (documents first, pad and balance last)."
+
+[plugins-local]
+features = [
+    "plugin-local", "plugin-config", "plugin-function-object", "plugin-without-plugins-list", "plugin-import-error",
+    "plugin-raises", "plugin-in-include-ignored", "pythonpath-from-include", "plugin-adds-entries",
+    "plugin-changes-entries", "include-plain",
+]
+expect = "load"
+errors = { CountError = 1, LoadError = 2 }
+
+[plugins-raw]
+features = ["plugin-raw-mode"]
+expect = "load"
+errors = {}

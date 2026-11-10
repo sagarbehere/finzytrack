@@ -1,0 +1,7 @@
+; Parity corpus (synthetic data, S0094): matched by a glob; it includes a file in a parent folder and the root again
+; (a cycle: Beancount reports the root as parsed twice and goes on).
+include "../extra/back.beancount"
+include "../main.beancount"
+2024-03-01 * "Train" "ticket"
+  Expenses:Travel  42.00 EUR
+  Assets:Bank  -42.00 EUR

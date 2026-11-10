@@ -1,0 +1,32 @@
+; Parity corpus (synthetic data, S0094): the five root names and the special accounts renamed.
+option "title" "Custom root names"
+option "operating_currency" "EUR"
+option "name_assets" "Aktiva"
+option "name_liabilities" "Passiva"
+option "name_equity" "Eigenkapital"
+option "name_income" "Ertrag"
+option "name_expenses" "Aufwand"
+option "account_previous_balances" "Eroeffnung"
+option "account_previous_earnings" "Gewinnvortrag"
+option "account_previous_conversions" "Umrechnung-Vorjahr"
+option "account_current_earnings" "Jahresergebnis"
+option "account_current_conversions" "Umrechnung"
+option "account_unrealized_gains" "Unrealisiert"
+option "account_rounding" "Rundung"
+option "conversion_currency" "NICHTS"
+include "accounts.beancount"
+include "forgot-the-roots.beancount"
+
+2024-01-02 * "Bakery" "bread"
+  Aufwand:Essen  3.20 EUR
+  Aktiva:Bank:Giro
+
+2024-01-03 * "Card" "a residual inside the tolerance"
+  Aufwand:Essen  10.004 EUR
+  Passiva:Karte  -10.00 EUR
+
+2024-01-04 * "Exchange" "francs bought, the euro leg left to Beancount"
+  Aktiva:Bank:Franken  33.33 CHF @ 1.0507 EUR
+  Aktiva:Bank:Giro
+
+2024-01-31 balance Aktiva:Bank:Giro  961.78 EUR
