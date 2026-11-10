@@ -1,14 +1,16 @@
 """The INV-21 goldens (S0022; spec design/specs/mirror/inv21-goldens.md; INV-21, ADR-0026, ADR-0055, BL-0021).
 
 The real corpus passes every check in `inv21`; each check has a must-not-pass test (EP-29): a corrupted copy of the
-corpus that the check refuses, naming the specific rule, and a near-miss ledger per feature detector.
+corpus that the check refuses, naming the specific rule, and a near-miss ledger per feature detector. The first
+derivation (the released code run again from the `v0.2.2` tag) is `test_inv21_released_code.py`: it needs the tag,
+so it may skip, and an INV-21 enforcement file may not (S0095).
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
 import shutil
-import subprocess
 import sys
 import tempfile
 import textwrap
@@ -33,18 +35,6 @@ class RealCorpus(unittest.TestCase):
         self.assertEqual(sum(len(c["transactions"]) for c in doc["cases"].values()), 77)
         self.assertEqual(len(keys), 22)
         self.assertEqual(sum(k["class"] == "read" for k in keys), 18)
-
-
-def have_tag(tag: str) -> bool:
-    return subprocess.run(["git", "-C", str(inv21.REPO), "rev-parse", "-q", "--verify", f"refs/tags/{tag}"],
-                          capture_output=True).returncode == 0
-
-
-class FirstDerivation(unittest.TestCase):
-    @unittest.skipUnless(have_tag(inv21.LEGACY_TAG), "the v0.2.2 tag is not in this clone")
-    def test_the_released_code_still_gives_the_committed_goldens(self) -> None:
-        import gen_inv21_goldens
-        self.assertEqual(gen_inv21_goldens.generate(), (inv21.CORPUS / "goldens.json").read_text(encoding="utf-8"))
 
 
 class Mutated(unittest.TestCase):
@@ -464,3 +454,129 @@ class SpecDerivation(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+# ---------------------------------------------------------------------------------------------------------------------
+# The v0.2.2 install fixtures (S0095, BL-0021): `corpora/workspaces/legacy/`.
+
+FAKE_MULTI = "data/ledgers/fake-multi/main.beancount"
+ONE = "data/ledgers/one.beancount"
+
+
+class RealInstalls(unittest.TestCase):
+    def test_the_install_goldens_agree_with_the_spec_and_every_check_passes(self) -> None:
+        self.assertEqual(inv21.check_installs(), [])
+
+    def test_pinned_counts(self) -> None:
+        doc = json.loads((inv21.CORPUS / "goldens.json").read_text(encoding="utf-8"))
+        roots = doc["installs"]["v022-fresh"]["roots"]
+        self.assertEqual(sorted(roots), [FAKE_MULTI, ONE])
+        self.assertEqual(doc["installs"]["v022-fresh"]["configured_root"], ONE)
+        self.assertEqual({r: (len(c["transactions"]), len(c["directives"])) for r, c in roots.items()},
+                         {FAKE_MULTI: (23, 16), ONE: (0, 34)})
+
+
+class MutatedInstalls(unittest.TestCase):
+    """A copy of the install fixtures with one corruption; check_installs must report the named rule."""
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.installs = Path(self._tmp.name) / "legacy"
+        shutil.copytree(inv21.INSTALLS, self.installs)
+        self.corpus = Path(self._tmp.name) / "inv21"
+        self.corpus.mkdir()
+        shutil.copy(inv21.CORPUS / "keys.toml", self.corpus / "keys.toml")
+        self.doc = json.loads((inv21.CORPUS / "goldens.json").read_text(encoding="utf-8"))
+
+    def tearDown(self) -> None:
+        self._tmp.cleanup()
+
+    def assertReports(self, fragment: str) -> None:
+        (self.corpus / "goldens.json").write_text(json.dumps(self.doc), encoding="utf-8")
+        problems = inv21.check_installs(self.installs, self.corpus)
+        self.assertTrue(any(fragment in p for p in problems), f"{fragment!r} not in {problems}")
+
+    def root(self, rel: str = FAKE_MULTI) -> dict:
+        return self.doc["installs"]["v022-fresh"]["roots"][rel]
+
+    def edit(self, rel: str, old: str, new: str) -> None:
+        if rel.startswith("data/"):  # the fixture stores the install's `data/` as `_data/` (gen_v022_install.py)
+            rel = inv21.COMMITTED_DATA + rel[len("data") :]
+        p = self.installs / "v022-fresh" / rel
+        text = p.read_text(encoding="utf-8")
+        self.assertIn(old, text)
+        p.write_text(text.replace(old, new, 1), encoding="utf-8")
+
+    def test_a_changed_id(self) -> None:
+        row = self.root()["transactions"][0]
+        row["transaction_id"] = row["v022_transaction_id"] = "019fa1ed-2024-7001-8000-00000000000x"
+        self.assertReports("golden differs from the spec derivation")
+
+    def test_a_v04_id_that_is_not_v022s(self) -> None:
+        self.root()["transactions"][0]["transaction_id"] = "k:v1:ofx:X"
+        self.assertReports("a v0.4 id differs from v0.2.2's")
+
+    def test_hash_and_input_changed_together(self) -> None:
+        row = self.root()["transactions"][1]
+        row["hash_input"] = row["hash_input"].replace("|Assets:", "|Liabilities:")
+        row["sha256"] = hashlib.sha256(row["hash_input"].encode("utf-8")).hexdigest()
+        self.assertReports("golden differs from the spec derivation")
+
+    def test_a_hash_that_is_not_the_hash_of_its_input(self) -> None:
+        self.root()["transactions"][1]["sha256"] = "0" * 64
+        self.assertReports("sha256 is not the SHA-256 of hash_input")
+
+    def test_a_metadata_key_renamed_in_the_goldens(self) -> None:
+        row = self.root()["transactions"][2]
+        row["metadata_json"] = {("source-account" if k == "source_account" else k): v
+                                for k, v in row["metadata_json"].items()}
+        self.assertReports("golden differs from the spec derivation")
+
+    def test_metadata_keys_reordered_in_the_goldens(self) -> None:
+        # The goldens hold metadata JSON parsed; it is compared as its text, so the key order still counts.
+        row = self.root()["transactions"][2]
+        row["metadata_json"] = dict(reversed(list(row["metadata_json"].items())))
+        self.assertReports("golden differs from the spec derivation")
+
+    def test_a_dropped_transaction(self) -> None:
+        self.root()["transactions"].pop()
+        self.assertReports("not list exactly Beancount's transactions")
+
+    def test_directive_metadata_changed(self) -> None:
+        self.root(ONE)["directives"].pop(0)
+        self.assertReports("directive metadata JSON differs")
+
+    def test_a_dropped_root(self) -> None:
+        del self.doc["installs"]["v022-fresh"]["roots"][FAKE_MULTI]
+        self.assertReports("is loaded by no golden root")
+
+    def test_an_included_file_claimed_as_a_root(self) -> None:
+        sub = "data/ledgers/fake-multi/2026/jan.beancount"
+        self.doc["installs"]["v022-fresh"]["roots"][sub] = {"transactions": [], "directives": []}
+        self.assertReports("is loaded by another root")
+
+    def test_the_config_names_another_ledger(self) -> None:
+        self.edit("config/config.yaml", "ledger_file: ./data/ledgers/one.beancount",
+                  "ledger_file: ./data/ledgers/fake-multi/main.beancount")
+        self.assertReports("configured_root is not the config's ledger_file")
+
+    def test_a_ledger_id_changed_on_disk(self) -> None:
+        self.edit("data/ledgers/fake-multi/2026/jan.beancount", '"019fa1ed-2026-7001-8000-000000000001"',
+                  '"019fa1ed-2026-7001-8000-000000000009"')
+        self.assertReports("golden differs from the spec derivation")
+
+    def test_a_key_outside_the_inventory(self) -> None:
+        self.edit("data/ledgers/fake-multi/2026/jan.beancount", '  source_account: "Assets:Bank:Checking"\n',
+                  '  source_account: "Assets:Bank:Checking"\n  stmt_ref: "x"\n')
+        self.assertReports("key 'stmt_ref' (transaction) is not in keys.toml")
+
+    def test_no_install_at_all(self) -> None:
+        shutil.rmtree(self.installs / "v022-fresh")
+        self.doc["installs"] = {}
+        self.assertReports("no install fixture")
+
+    def test_the_committed_data_folder_is_not_named_data(self) -> None:
+        # `.gitignore` ignores every folder named `data` (INV-23), so a fixture that used that name would lose its
+        # ledgers at commit time and the tests would pass on a checkout that has them only locally.
+        self.assertFalse((inv21.INSTALLS / "v022-fresh" / "data").exists())
+        self.assertTrue((inv21.INSTALLS / "v022-fresh" / inv21.COMMITTED_DATA / "ledgers" / "one.beancount").is_file())

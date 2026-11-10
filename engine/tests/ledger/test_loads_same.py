@@ -8,6 +8,7 @@ same" means the same as the source, not error-free."
 
 from __future__ import annotations
 
+import decimal
 from collections.abc import Callable
 from decimal import Decimal
 from pathlib import Path
@@ -117,3 +118,27 @@ def test_a_value_of_an_unknown_kind_is_never_compared_by_guess() -> None:
 
     with pytest.raises(UncomparableError):
         canonical({"meta": PluginThing()}, same)
+
+
+def test_a_custom_directive_is_compared_by_its_values_and_their_types(tmp_path: Path) -> None:
+    # S0095: a `custom` entry's values are `ValueType(value, dtype)`, and `dtype` is a class (`str`, `Amount`,
+    # `Decimal`, ...) or Beancount's account marker. Refusing a class as an unknown kind refused every ledger with a
+    # `custom` directive (Fava's options, budgets), v0.2.2's own demo ledger among them.
+    text = (
+        "2026-01-01 open Assets:Cash EUR\n"
+        '2026-01-01 custom "fava-option" "insert-entry" "Expenses:Food"\n'
+        '2026-01-01 custom "budget" Assets:Cash "monthly" 90 EUR TRUE 2026-02-01 3.5\n'
+    )
+    a = load(tmp_path / "a", text)
+    b = load(tmp_path / "b", text)
+    assert first_difference(summary(a, same), summary(b, mapped(tmp_path / "a", tmp_path / "b"))) is None
+    other = load(tmp_path / "c", text.replace('"monthly" 90 EUR', '"monthly" 91 EUR'))
+    assert first_difference(summary(a, same), summary(other, mapped(tmp_path / "a", tmp_path / "c"))) is not None
+
+
+def test_a_class_is_compared_by_its_full_name() -> None:
+    other = type("Decimal", (), {"__module__": "elsewhere"})  # another module's class named like decimal.Decimal
+    assert other.__qualname__ == decimal.Decimal.__qualname__
+    assert canonical(str, same) == canonical(str, same)
+    assert canonical(str, same) != canonical(bytes, same)
+    assert canonical(other, same) != canonical(decimal.Decimal, same)

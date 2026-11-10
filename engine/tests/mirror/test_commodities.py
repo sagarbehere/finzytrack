@@ -124,6 +124,7 @@ def test_a_code_used_many_ways_has_one_row(tmp_path: Path) -> None:
 # ---- the declaration's columns -------------------------------------------------------------------------------------
 
 
+@pytest.mark.inv("INV-21")  # `name` and `asset-class`, keys v0.2.x wrote, read forever (S0095)
 def test_a_declared_commodity_carries_its_directive(tmp_path: Path) -> None:
     con = build_clean(
         tmp_path,
@@ -163,6 +164,7 @@ def test_a_second_declaration_replaces_the_first(tmp_path: Path) -> None:
     assert "Duplicate commodity directives for 'GLD'" in one(con, "SELECT message FROM ledger_errors")[0]
 
 
+@pytest.mark.inv("INV-21")  # `name` and `asset-class`, keys v0.2.x wrote, read forever (S0095)
 def test_metadata_that_is_not_text_is_written_as_its_text(tmp_path: Path) -> None:
     # `name` and `asset-class` are TEXT columns; a number or a flag is stored as its Python text, never as a number.
     con = build_clean(tmp_path, "2020-01-01 commodity ODD\n  name: 42\n  asset-class: TRUE\n")

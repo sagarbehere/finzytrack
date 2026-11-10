@@ -1,0 +1,16 @@
+2026-02-15 * "Employer" "February salary"
+  id: "019fa1ed-2026-7004-8000-000000000004"
+  content_hash: "44cc44cc44cc44cc44cc44cc44cc44cc44cc44cc44cc44cc44cc44cc44cc44cc"
+  source_account: "Assets:Bank:Checking"
+  Assets:Bank:Checking   5000.00 USD
+  Income:Salary         -5000.00 USD
+
+
+2026-02-18 * "Landlord" "February rent"
+  id: "019fa1ed-2026-7005-8000-000000000005"
+  content_hash: "55cc55cc55cc55cc55cc55cc55cc55cc55cc55cc55cc55cc55cc55cc55cc55cc"
+  source_account: "Assets:Bank:Checking"
+  Expenses:Rent          1700.00 USD
+  Assets:Bank:Checking  -1700.00 USD
+
+

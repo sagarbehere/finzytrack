@@ -14,7 +14,8 @@ loads:
 Every text in the copy's load is first mapped back to the source's places (`back`: `copy_check.back_of`), so a file
 name in metadata, a `document` entry's file, a path in an error message, `filename`, `include` and `pythonpath`
 compare equal when they name the copied file. A `document` entry's file is compared by its normalized path (Beancount
-keeps an absolute one as written: `/x/a/../a/r.pdf` and `/x/a/r.pdf` are one file). A value of a kind this module does
+keeps an absolute one as written: `/x/a/../a/r.pdf` and `/x/a/r.pdf` are one file). A class (a `custom` entry's value
+type, such as `str` or `Amount`) is compared by its module and name (S0095). A value of a kind this module does
 not know (an object a plugin put there) is not compared by guess: `Uncomparable`, and the copy is refused."""
 
 from __future__ import annotations
@@ -89,6 +90,8 @@ def canonical(v: object, back: Back) -> object:
             return ["e", type(v).__qualname__, v.name]
         case bytes():
             return ["b", v.hex()]
+        case type():  # a `custom` value's dtype (`str`, `Amount`, ...): the class itself, by its full name (S0095)
+            return ["c", f"{v.__module__}.{v.__qualname__}"]
         case tuple() if _named(cast("object", v)):  # Beancount's entries, postings, amounts, costs: named tuples
             named = cast("object", v)
             fields = cast("tuple[str, ...]", getattr(named, "_fields"))  # noqa: B009

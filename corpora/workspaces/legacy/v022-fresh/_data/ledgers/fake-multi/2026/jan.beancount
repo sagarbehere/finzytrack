@@ -1,0 +1,24 @@
+2026-01-15 * "Employer" "January salary"
+  id: "019fa1ed-2026-7001-8000-000000000001"
+  content_hash: "11cc11cc11cc11cc11cc11cc11cc11cc11cc11cc11cc11cc11cc11cc11cc11cc"
+  source_account: "Assets:Bank:Checking"
+  Assets:Bank:Checking   5000.00 USD
+  Income:Salary         -5000.00 USD
+
+
+2026-01-18 * "Landlord" "January rent"
+  id: "019fa1ed-2026-7002-8000-000000000002"
+  content_hash: "22cc22cc22cc22cc22cc22cc22cc22cc22cc22cc22cc22cc22cc22cc22cc22cc"
+  source_account: "Assets:Bank:Checking"
+  Expenses:Rent          1700.00 USD
+  Assets:Bank:Checking  -1700.00 USD
+
+
+2026-01-26 * "Grocery Store" "Pantry restock"
+  id: "019fa1ed-2026-7003-8000-000000000003"
+  content_hash: "33cc33cc33cc33cc33cc33cc33cc33cc33cc33cc33cc33cc33cc33cc33cc33cc"
+  source_account: "Assets:Bank:Checking"
+  Expenses:Food          134.50 USD
+  Assets:Bank:Checking  -134.50 USD
+
+

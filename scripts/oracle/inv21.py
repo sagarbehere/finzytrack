@@ -30,6 +30,7 @@ from beancount.core import account_types, amount, data
 
 REPO = Path(__file__).resolve().parents[2]
 CORPUS = REPO / "corpora" / "ledgers" / "inv21"
+INSTALLS = REPO / "corpora" / "workspaces" / "legacy"
 LEGACY_TAG = "v0.2.2"
 BEANCOUNT = "3.2.0"
 SOURCE_PREFIXES = ("Assets:", "Liabilities:")  # the literal text v0.2.2 matches (README "Ids")
@@ -153,11 +154,12 @@ class Case:
         return str(entry.meta.get("filename", "")).startswith(self.root + os.sep)
 
 
-def load_case(folder: Path, tmp: Path) -> Case:
+def load_case(folder: Path, tmp: Path, root_file: str = "main.beancount") -> Case:
     dst = tmp / folder.name
-    shutil.copytree(folder, dst)
+    if not dst.exists():
+        shutil.copytree(folder, dst)
     root = os.path.abspath(dst)
-    entries, errors, options = loader.load_file(os.path.join(root, "main.beancount"))
+    entries, errors, options = loader.load_file(os.path.join(root, root_file))
     files = {p.relative_to(dst).as_posix(): p.read_text(encoding="utf-8") for p in sorted(dst.rglob("*.beancount"))}
     return Case(folder.name, root, entries, errors, options, files)
 
@@ -609,4 +611,102 @@ def run_all(corpus: Path = CORPUS, invariants: Path = REPO / "design" / "INVARIA
                 problems += check_case(case, cases_cfg[n], goldens[n], cases, goldens)
             if cases_cfg[n].get("directive_metadata"):
                 problems += check_key_coverage(case, cases_cfg[n], keys)
+    return problems
+
+
+# ---------------------------------------------------------------------------------------------------------------------
+# The v0.2.2 install fixtures (S0095): `corpora/workspaces/legacy/<install>/`, goldens in its `goldens.json`.
+
+COMMITTED_DATA = "_data"  # the repository ignores every folder named `data`, so the fixture stores it as `_data`
+
+
+def kinds_present(case: Case) -> set[tuple[str, str]]:
+    """Every (metadata key, where) on the case's own Open, Commodity, Close and Transaction entries and postings."""
+    internal = {"filename", "lineno", "__tolerances__", "__automatic__"}
+    kinds = {data.Open: "open", data.Commodity: "commodity", data.Close: "close", data.Transaction: "transaction"}
+    present: set[tuple[str, str]] = set()
+    for e in case.entries:
+        if not case.own(e) or type(e) not in kinds:
+            continue
+        present |= {(k, kinds[type(e)]) for k in e.meta if k not in internal}
+        for p in getattr(e, "postings", []) or []:
+            present |= {(k, "posting") for k in (p.meta or {}) if k not in internal}
+    return present
+
+
+def as_text(root: dict[str, Any]) -> dict[str, Any]:
+    """An install root's goldens with each parsed metadata JSON written back as its text (`json.dumps`, the form
+    v0.2.2 and the mirror write; the generator checks the round trip)."""
+
+    def text(value: Any) -> Any:
+        return value if value is None or isinstance(value, str) else json.dumps(value)
+
+    return {
+        "transactions": [{**t, "metadata_json": text(t.get("metadata_json")),
+                          "posting_metadata_json": [text(p) for p in t.get("posting_metadata_json", [])]}
+                         for t in root.get("transactions", [])],
+        "directives": [{**d, "metadata_json": text(d.get("metadata_json"))} for d in root.get("directives", [])],
+    }
+
+
+def config_ledger_file(install: Path) -> str:
+    """The `ledger_file` of the install's `config/config.yaml`, resolved as v0.2.2's Config does (relative to the
+    install folder), relative with `/`."""
+    from ruamel.yaml import YAML
+
+    value = YAML(typ="safe").load((install / "config" / "config.yaml").read_text(encoding="utf-8"))["ledger_file"]
+    return os.path.normpath(str(value)).replace(os.sep, "/")
+
+
+def check_installs(installs: Path = INSTALLS, corpus: Path = CORPUS) -> list[str]:
+    """Each install's goldens: exactly its ledger roots (every `.beancount` file of the folder is loaded by one, none
+    loads another), the root its config names among them (goldens: `installs` in the corpus's `goldens.json`), every value equal to the spec derivation with no v0.4
+    override (no released version wrote `import-key`), each hash the SHA-256 of its input, and every metadata key on
+    the install's entries in the inventory (`keys.toml`)."""
+    doc = json.loads((corpus / "goldens.json").read_text(encoding="utf-8"))
+    keys = tomllib.loads((corpus / "keys.toml").read_text(encoding="utf-8")).get("key", [])
+    inventory = {(k.get("key"), k.get("on")) for k in keys}
+    problems: list[str] = []
+    goldens = doc.get("installs", {})
+    folders = sorted(p.name for p in installs.iterdir() if p.is_dir())
+    if not folders:
+        problems.append(f"{installs}: no install fixture")
+    for name in sorted(set(folders) ^ set(goldens)):
+        problems.append(f"{name}: an install folder without goldens, or the reverse")
+    with tempfile.TemporaryDirectory() as tmp:
+        for name in sorted(set(folders) & set(goldens)):
+            golden = goldens[name]
+            folder = Path(tmp) / name
+            shutil.copytree(installs / name, folder)
+            (folder / COMMITTED_DATA).rename(folder / "data")  # the install as it is (gen_v022_install.py)
+            roots = golden.get("roots", {})
+            if config_ledger_file(folder) != golden.get("configured_root") or golden.get("configured_root") not in roots:
+                problems.append(f"{name}: configured_root is not the config's ledger_file, or has no goldens")
+            loaded: dict[str, set[str]] = {}
+            for rel, want in roots.items():
+                case = load_case(folder, Path(tmp), rel)
+                loaded[rel] = {os.path.relpath(f, case.root).replace(os.sep, "/") for f in case.options["include"]}
+                problems += [f"{name}/{rel}: Beancount reports {type(e).__name__}: {e.message}" for e in case.errors]
+                derived = derive(case, True)
+                want = as_text(want)
+                for i, row in enumerate(want.get("transactions", [])):
+                    if row.get("transaction_id") != row.get("v022_transaction_id"):
+                        problems.append(f"{name}/{rel} {row.get('at')}: a v0.4 id differs from v0.2.2's")
+                    if hashlib.sha256(str(row.get("hash_input")).encode("utf-8")).hexdigest() != row.get("sha256"):
+                        problems.append(f"{name}/{rel} {row.get('at')}: sha256 is not the SHA-256 of hash_input")
+                    row = {k: v for k, v in row.items() if k != "v022_transaction_id"}
+                    if i >= len(derived["transactions"]) or row != derived["transactions"][i]:
+                        problems.append(f"{name}/{rel} {row.get('at')}: golden differs from the spec derivation")
+                if len(want.get("transactions", [])) != len(derived["transactions"]):
+                    problems.append(f"{name}/{rel}: the goldens do not list exactly Beancount's transactions")
+                if want.get("directives") != derived["directives"]:
+                    problems.append(f"{name}/{rel}: directive metadata JSON differs from the spec, or one is missing")
+                for key, on in sorted(kinds_present(case) - inventory):
+                    problems.append(f"{name}/{rel}: key {key!r} ({on}) is not in keys.toml")
+            files = {p.relative_to(folder).as_posix() for p in folder.rglob("*.beancount")}
+            for f in sorted(files - set().union(*loaded.values(), set())):
+                problems.append(f"{name}: {f} is loaded by no golden root")
+            for rel in roots:
+                if any(rel in other for r, other in loaded.items() if r != rel):
+                    problems.append(f"{name}: {rel} is loaded by another root, so it is no root")
     return problems

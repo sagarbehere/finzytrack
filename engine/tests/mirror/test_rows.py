@@ -19,6 +19,8 @@ from ledger_engine.mirror.core.rows import error_rows
 from .support import STAMP, TODAY, build_text, one, rows
 
 pytestmark = pytest.mark.inv("INV-06")
+# The tests of the readers of keys v0.2.x wrote (`source_account` for the column, `document*` for the document count,
+# `memo`/`ofx_memo` for the training text) also carry INV-21: those keys are read forever (S0095).
 
 OPEN = """option "operating_currency" "USD"
 2020-01-01 open Assets:Bank
@@ -122,6 +124,7 @@ def test_custom_root_names_keep_the_written_root_and_map_the_kind(tmp_path: Path
     assert rows(con, "SELECT description, category FROM training_data") == [("Mercado compra", "Gastos:Comida")]
 
 
+@pytest.mark.inv("INV-21")
 def test_document_count_counts_meta_keys_starting_with_document(tmp_path: Path) -> None:
     con = build_text(
         tmp_path,
@@ -144,6 +147,7 @@ def source_accounts(tmp_path: Path, body: str) -> list[tuple[str, str | None, st
     ]
 
 
+@pytest.mark.inv("INV-21")
 def test_source_account_rule_1_the_legacy_key_on_every_row(tmp_path: Path) -> None:
     body = (
         '2021-01-01 * "x"\n  source_account: "Assets:Card"\n'
@@ -156,11 +160,13 @@ def test_source_account_rule_1_the_legacy_key_on_every_row(tmp_path: Path) -> No
     ]
 
 
+@pytest.mark.inv("INV-21")
 def test_source_account_rule_1_keeps_an_empty_value(tmp_path: Path) -> None:
     body = '2021-01-01 * "x"\n  source_account: ""\n  Expenses:Food  6 USD\n  Assets:Bank\n'
     assert source_accounts(tmp_path, body) == [("Expenses:Food", "", ""), ("Assets:Bank", "", "")]
 
 
+@pytest.mark.inv("INV-21")
 def test_source_account_rule_2_the_leg_with_an_import_key(tmp_path: Path) -> None:
     body = (
         '2021-01-01 * "x"\n  Expenses:Food  6 USD\n  Expenses:Fees  1 USD\n'
@@ -173,6 +179,7 @@ def test_source_account_rule_2_the_leg_with_an_import_key(tmp_path: Path) -> Non
     ]
 
 
+@pytest.mark.inv("INV-21")
 def test_source_account_rule_2_comes_before_the_other_leg_of_two(tmp_path: Path) -> None:
     # Every v0.4 import's shape (S0050 verifier F3): two legs, the key on the bank leg. Rule 3 would give the bank
     # row Expenses:Food.
@@ -183,6 +190,7 @@ def test_source_account_rule_2_comes_before_the_other_leg_of_two(tmp_path: Path)
     ]
 
 
+@pytest.mark.inv("INV-21")
 def test_source_account_rule_3_the_other_leg_of_two(tmp_path: Path) -> None:
     body = '2021-01-01 * "x"\n  Expenses:Food  6 USD\n  Income:Salary\n'
     assert source_accounts(tmp_path, body) == [
@@ -191,6 +199,7 @@ def test_source_account_rule_3_the_other_leg_of_two(tmp_path: Path) -> None:
     ]
 
 
+@pytest.mark.inv("INV-21")
 def test_source_account_rule_4_the_first_other_balance_sheet_leg_else_null(tmp_path: Path) -> None:
     body = (
         '2021-01-01 * "x"\n  Expenses:Food  6 USD\n  Expenses:Fees  1 USD\n'
@@ -210,6 +219,7 @@ def test_source_account_rule_4_the_first_other_balance_sheet_leg_else_null(tmp_p
     ]
 
 
+@pytest.mark.inv("INV-21")
 def test_source_account_rule_4_matches_the_literal_prefixes(tmp_path: Path) -> None:
     # v0.2.2's literal `Assets:`/`Liabilities:`: a custom asset root is not found.
     con = build_text(
@@ -514,6 +524,7 @@ def test_commodity_usage_runs_to_the_ledger_end(tmp_path: Path) -> None:
 # ---- training data and meta ---------------------------------------------------------------------------------------
 
 
+@pytest.mark.inv("INV-21")
 def test_training_data(tmp_path: Path) -> None:
     con = build_text(
         tmp_path,

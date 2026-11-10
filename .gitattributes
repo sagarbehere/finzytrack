@@ -4,3 +4,5 @@ corpora/ledgers/write/** -text
 corpora/ledgers/inv21/** -text
 # The Beancount domain vectors are compared byte for byte with a fresh run of the generator (S0024).
 corpora/vectors/** -text
+# The v0.2.2 install fixture is compared byte for byte with a fresh run of its generator (S0095).
+corpora/workspaces/legacy/** -text

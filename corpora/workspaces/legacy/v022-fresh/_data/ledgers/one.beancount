@@ -1,0 +1,64 @@
+;; Finzytrack Ledger File
+
+;; Operating currencies — the currencies you track balances and net worth in.
+;; Finzytrack uses this list to tell currencies apart from investment holdings
+;; (stocks, funds, etc.) in totals and currency pickers. Add a line per
+;; currency you use.
+option "operating_currency" "EUR"
+
+;; Base accounts - modify as needed
+1970-01-01 open Assets:Cash                EUR
+1970-01-01 open Assets:Bank:Checking       EUR
+1970-01-01 open Assets:Bank:Savings        EUR
+1970-01-01 open Liabilities:Bank:CreditCard EUR
+1970-01-01 open Income:Salary              EUR
+1970-01-01 open Equity:Opening-Balances    EUR
+
+;; Housing
+1970-01-01 open Expenses:HouseRent         EUR
+1970-01-01 open Expenses:HouseCleaning     EUR
+1970-01-01 open Expenses:HouseholdItems    EUR
+1970-01-01 open Expenses:Utilities         EUR
+
+;; Food
+1970-01-01 open Expenses:Groceries         EUR
+1970-01-01 open Expenses:EatingOut         EUR
+
+;; Transportation
+1970-01-01 open Expenses:Car               EUR
+1970-01-01 open Expenses:AutoInsurance     EUR
+1970-01-01 open Expenses:Gas               EUR
+1970-01-01 open Expenses:Parking           EUR
+
+;; Health
+1970-01-01 open Expenses:Healthcare        EUR
+;; Lifestyle
+1970-01-01 open Expenses:Entertainment     EUR
+1970-01-01 open Expenses:Hobbies           EUR
+1970-01-01 open Expenses:Travel            EUR
+1970-01-01 open Expenses:Grooming          EUR
+1970-01-01 open Expenses:PersonalItems     EUR
+1970-01-01 open Expenses:Gadgets           EUR
+
+;; Communication & Tech
+1970-01-01 open Expenses:Internet          EUR
+1970-01-01 open Expenses:Phone             EUR
+1970-01-01 open Expenses:CloudServices     EUR
+
+;; Education
+1970-01-01 open Expenses:School            EUR
+
+;; Giving
+1970-01-01 open Expenses:Donations         EUR
+1970-01-01 open Expenses:Gifts             EUR
+
+;; Fees
+1970-01-01 open Expenses:Fees:Banking      EUR
+1970-01-01 open Expenses:Fees:CreditCard   EUR
+
+;; Cash & Misc
+1970-01-01 open Expenses:Cash              EUR
+1970-01-01 open Expenses:Miscellaneous     EUR
+1970-01-01 open Expenses:Unknown           EUR
+
+;; Your transactions will appear below this line

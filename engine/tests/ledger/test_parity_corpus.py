@@ -37,6 +37,7 @@ from beancount.parser import options as beancount_options
 from beancount.utils import encryption
 
 from ledger_engine.ledger import beancount_port as port
+from ledger_engine.ledger import loads_same
 from ledger_engine.ledger import overlay as overlay_module
 from ledger_engine.ledger.overlay import Loaded, LoadRefused
 from ledger_engine.ledger.policy import DESKTOP
@@ -175,6 +176,21 @@ def test_the_mirror_rows_build_from_every_load_case(tmp_path: Path) -> None:
 
 
 NO_TRANSACTIONS = {"absolute-paths", "documents", "not-utf8", "root-missing"}
+
+
+def test_the_copys_comparison_reads_every_load_case(tmp_path: Path) -> None:
+    # INV-03 "Finzytrack handles it": a copy's "loads the same" check (`loads_same.summary`) consumes the load too, and
+    # refuses a value of a kind it does not know. Every load case, every directive type among them, must reduce to a
+    # summary (S0095: a `custom` directive's value types were refused, so no ledger with one could be copied).
+    failures: list[str] = []
+    for case in load_cases(tmp_path):
+        loaded = overlay(case, {})
+        assert isinstance(loaded, Loaded), case.name
+        try:
+            loads_same.summary(loaded, lambda text: text)
+        except loads_same.UncomparableError as e:
+            failures.append(f"{case.name}: {e.kind}")
+    assert failures == []
 
 
 # ---- the populations ---------------------------------------------------------------------------------------------
