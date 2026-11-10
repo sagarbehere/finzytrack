@@ -48,6 +48,13 @@ Every call into Beancount's load is in `ledger_engine.ledger.beancount_port` (IN
 
 - **Finance red team F2, the mirror's own exact sums vs Fava's 28-digit sums** (orchestrator to the owner, not the implementer): owner, 2026-11-10, in session, to the orchestrator's question on the S0098 finance red team's F2: "Keep exact, no warning". The mirror rule is unchanged; the mirror README's "Exact numbers" states the difference with its example. No code change, no backlog row.
 
+### Changed in round 2 (a second fix round on one mechanism: the owner's options note, PROCESS.md §3 step 7)
+- **The owner's choice** (owner, 2026-11-10, in session, to the orchestrator's options note): "F1, F2, M1, M2 (Recommended)". The option as put: "Fix the two false outcomes plus the common slowdown and the slice's own token case; the other 8 no-byte findings become backlog rows; then one verifier round on the fix range." The eight are BL-0238 and BL-0239.
+- **The rebuild's warnings read only what Beancount parsed** (agent; verifier F1): `beancount_port.real_load(root, parsed)` records each file the loader parses (its `parser.parse_file`, swapped for the call as `_never_decrypt` swaps the decrypt), and `precision.of_disk` lexes those, skipping a path that is no regular file. A missing file or a folder a plugin adds to `options["include"]` no longer makes the rebuild answer `moved` forever, and a data file a plugin names (a CSV) is not lexed as ledger text, so the rebuild sees the same files as the open's warnings.
+- **The second look covers what the failed load parsed** (agent; verifier F2): a file parsed outside the set is `moved` with the widened set; the copy observes `LoadRefused.read` again too (a few lines), so a source fixed during its load is `source_changed`, not `number_failed`.
+- **Only the lines needed are lexed** (agent; finance M1): `precision.Lexed` lexes a single line, once, when asked (a candidate posting's line, a long digit run's line), never a whole file, and counts them (`lexed`). The 54k demo with one `@@` purchase and a blank leg: 1.034 times the plain load (was 1.32); with a 29-digit run in a comment: 1.032. Limit, in `Lexed`'s docstring: a long digit run on a line inside a string that spans lines may warn (advice only).
+- **A negative written number Beancount cut counts as written** (agent; finance M2): `Lexed.as_written` accepts Beancount's 28-digit negation of a number written on the line, and the exact fill uses the number as written for both the weight and the tolerance Beancount infers (the cut also coarsens that tolerance). Both the owner's token cases warn on the filled line: the token sold at a price, and the 18-decimal ETH amount with the other leg blank. So does the token with a fee: from the numbers as written the fill is `...677`, while Beancount gives `...568`. My first round-2 test expected no warning there; that expectation was wrong, and the test now expects the warning, with both amounts.
+
 ## Hand-off (PROCESS.md §3 step 4; ADR-0057)
 (The verifier reads only the Brief, so this section does not steer its attacks; it is the implementer's own record.)
 - Checks that accept, tag or refuse, each with its must-not-pass test:
@@ -60,6 +67,9 @@ Every call into Beancount's load is in `ledger_engine.ledger.beancount_port` (IN
 - Population: the load entry points, by behaviour (every caller of the port's `LOAD_STAGES` and `REAL_LOADS`, listed above: 5 callers; 3 changed, the create's unchanged with its reason, the copy check unchanged since a refusal there is already `refused`). Beancount's raising steps in a load: parse, sort, booking, plugin import, validation (`overlay.load` mirrors `loader._load`); each is guarded but `sort_entries` (it runs on the parse result before any plugin and compares dates and Beancount's own sort keys) and `input_hash` (a disk call).
 - Self-mutation, round 1 fixes (plan `round1.toml`, same scratchpad): 14 loosening mutants (no load context; a 29-digit load context; `real_load` without its context; the written-on-line test always and never true; the bound one digit looser; trailing zeros counted; the used value dropped; `number-failed` without a place; our own frames and a `MemoryError` taken as Beancount's; no second look in the open and the rebuild; the rebuild's second read raising): 12 killed at once; 2 survived (`real_load` without its context, the looser bound), killed by the new `test_a_plugin_that_changes_the_context_in_beancounts_own_load_changes_only_that_load` and `test_a_carry_past_28_digits_warns`.
 - Round 1's new must-not-pass tests: `test_a_plugin_that_changes_the_context_changes_only_its_own_load` (and its real-load twin), `test_a_written_28_digit_token_amount_is_judged` (must tag) with the `{{ }}`-then-`{}` never-warn case, `test_a_cut_before_the_quantize_warns`, `test_a_carry_past_28_digits_warns`, trailing-zero numbers in `test_numbers_beancount_does_not_round_never_warn`, `test_a_division_by_a_zero_quantity_is_a_number_failure_on_its_transactions_line`, `test_a_plugins_own_decimal_error_is_no_number_failure`, `test_a_fault_of_the_engines_own_code_stays_the_engines`, `test_a_ledger_fixed_while_beancount_failed_on_it_is_moved_not_refused` (open and rebuild), `test_a_file_gone_or_unreadable_right_after_the_load_is_a_moved_disk`.
+
+- Self-mutation, round 2 (plan `round2.toml`): 8 loosening mutants (the negation not accepted as written; the exact fill from Beancount's stored numbers; `of_disk` reading `options["include"]`, or with no regular-file check; the whole file lexed; the parsed-outside second look dropped; the copy's second look dropped; `real_load` recording nothing): 8 killed.
+- Round 2's new tests: `test_a_path_a_plugin_adds_is_never_read_as_ledger_text` (a missing file, a folder), `test_a_data_file_a_plugin_adds_gives_no_warning`, `test_a_new_included_file_fixed_while_beancount_failed_on_it_is_moved_not_refused`, `test_the_real_load_reports_the_files_it_parsed`, `test_a_source_fixed_while_beancount_failed_on_it_is_a_changed_source` (fixed and unfixed), `test_only_the_lines_needed_are_lexed` (counted, not timed), `test_a_written_negative_long_number_feeds_a_judged_fill` (cases A and B), `test_a_fill_from_a_cut_written_number_warns_with_the_fill_as_written`.
 
 ## Verifier
 - Round 1, head c17f5317: three reports. Slice verifier 0H/3M/1L; data-safety red team 0H/1M/3L; finance red team 1H/3M/4L. The repros are in the session scratchpad (`s0098/`, `rt/`). Dispositions:
@@ -74,6 +84,19 @@ Every call into Beancount's load is in `ledger_engine.ledger.beancount_port` (IN
 - Finance F7, Low: a plugin's `sys.exit()` at import escapes as `SystemExit`. Backlog BL-0237 (same family as BL-0236).
 - Data-safety F4, Low: the workspace stays `WARMING` after a rebuild refusal. Pointer added on BL-0215 (the cause is now known; its answer should name it).
 - Finance F2: the mirror's own 64-digit sums of two 28-digit token amounts differ from Beancount's 28-digit sums with no warning. Not mine: the orchestrator takes it to the owner; nothing changed.
+- Round 2 (head 7e096cca, code at 3445793f): slice verifier 0H/1M/4L, finance red team 0H/3M/4L. A second fix round on one mechanism, so the owner chose what to fix (above). Dispositions:
+- Verifier F1, Medium (regression, a false `moved` loop): a plugin that adds a missing file or a folder to `options["include"]` made the rebuild answer `moved` three times. Fixed (only the files parsed are read).
+- Verifier F2, Low (a false refusal): the rebuild's second look covered only the hint's set. Fixed (and in the copy).
+- Verifier F3, Low = finance L4: the `number_failed` guidance (`0 TOK @@ 10 USD` is not refused; the two-28-digit-sum crash). BL-0238.
+- Verifier F4, Low: a written 28-digit cost sold with `{}` is not judged. BL-0239.
+- Verifier F5, Low: surviving mutants of `alone` and the sign minus; `1 - X`, `(X + 1)` texts untested. BL-0238.
+- Finance M1 (regression, no false number): the whole-file lex. Fixed.
+- Finance M2: a written negative long number made its filled leg look like a cut quotient. Fixed.
+- Finance M3: a trailing zero Beancount drops changes a filled leg's precision, unwarned. BL-0239.
+- Finance L1: a false "more than 64 digits" warning from another currency's overflow. BL-0239.
+- Finance L2: a plugin's import-time context change applies only to its process's first load. BL-0239.
+- Finance L3: odd-expression wording. BL-0238.
+- The orchestrator fixed BL-0215's note in 6e4a5a71: my round-1 note put `"number_failed" | "beancount_failed"` inside a table cell, and `check_invariants.py` went red. This round's backlog edits were checked with `check_invariants.py` and `run_meta_tests.py` before commit.
 
 ## Golden changes
 - `corpora/ledgers/mirror-checksums.json`: no change (`check_generated.py --all` green): no corpus ledger has a number Beancount rounds or a load Beancount fails on, and the harness now builds from `Loaded.reported` as the product does.
@@ -83,3 +106,6 @@ Every call into Beancount's load is in `ledger_engine.ledger.beancount_port` (IN
 - `engine/tests/ledger/test_precision.py` (round 1): `1.0000000000000000000000000000` moved from the must-warn list to the never-warn list (its value is 1, which Beancount never changes); the never-warn case built on the false double-rounding claim is gone, replaced by `test_a_cut_before_the_quantize_warns`.
 - `engine/tests/ledger/test_load_failure.py` (round 1): a bare `decimal.InvalidOperation` with no transaction named is `beancount-failed`, no longer `number-failed` (the text needs the transaction's line).
 - `backend/tests/platform/test_copy_job.py` (round 1): the `number_failed` text, reworded (verifier F4).
+- `engine/tests/architecture/test_no_resident_ledger.py` (round 2): the planted `real_load` takes the new `parsed` argument; the check itself is unchanged.
+- `engine/tests/ledger/test_rebuild.py` (round 2): each injected load takes the `parsed` list (the rebuild's new port signature).
+- `engine/tests/mirror/test_publish_conformance.py` (round 2): the driver's load and warnings take the new arguments; what the model replays is unchanged.

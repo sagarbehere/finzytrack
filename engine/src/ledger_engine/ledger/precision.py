@@ -13,9 +13,11 @@ Beancount rounded one, with a warning in the mirror's `ledger_errors` (never one
   every sum with it is cut; one inside an expression is computed with 28 digits.
 - **A filled-in amount** (`filled_in`, key `FILLED_KEY`): a leg Beancount filled in (no cost or price on it) whose
   number differs from the exact one. The exact number is Beancount's own fill (`beancount_port.filled_amount`: the
-  negated residual, then the quantize to the transaction's tolerance) of Beancount's own booked numbers, computed with
-  64 digits and quantized the same way, so a cut before the quantize shows too (`1234567890123456789012345.67 USD`,
-  `0.0049999 USD` and a blank leg: Beancount fills `-…45.68`, exactly it is `-…45.67`). Only a transaction whose
+  negated residual, then the quantize to the tolerance it infers) of the postings as written, computed with 64 digits:
+  Beancount's booked numbers, but a negative written number it cut to 28 digits put back as written (its cut also
+  coarsens the tolerance Beancount infers; S0098 round 2, finance M2). A cut before the quantize shows too
+  (`1234567890123456789012345.67 USD`, `0.0049999 USD` and a blank leg: Beancount fills `-…45.68`, exactly it is
+  `-…45.67`). Only a transaction whose
   weights may need more than 28 digits is computed again (`_may_round`, a bound from the numbers' digits).
 
 **Not warned, on purpose: a number Beancount cut by dividing.** A total price (`@@`), a total cost (`{{ }}`), and a
@@ -39,6 +41,7 @@ import decimal
 import re
 from collections.abc import Mapping, Sequence
 from decimal import Decimal
+from os import path
 from typing import Any, Final, NamedTuple
 
 from ledger_engine.ledger import beancount_port as port
@@ -81,33 +84,69 @@ def _significant(number: Decimal) -> int:
     return _digits(number.normalize(_NORMAL)) if number.is_finite() else 0
 
 
-class _Lexed:
-    """Each file's written numbers by line, lexed once, when first asked (Beancount's own lexer)."""
+class Lexed:
+    """Written numbers by file and line, each line lexed alone and once, only when asked (Beancount's own lexer): a
+    long digit run's line for `written`, a candidate posting's line for `filled_in`, never a whole file (S0098 round 2,
+    finance M1: a whole-file lex cost a third of a 54k load). `lexed` counts the lines lexed. A line lexed alone reads
+    as Beancount reads it, but for a line inside a string that spans lines: a long digit run there may warn
+    (a narration of several lines holding a number of more than 28 digits; rare, and only advice)."""
 
     def __init__(self, files: Mapping[str, bytes]) -> None:
         self._files = files
-        self._lines: dict[str, dict[int, list[port.WrittenNumber]]] = {}
+        self._split: dict[str, list[bytes]] = {}
+        self._lines: dict[tuple[str, int], list[port.WrittenNumber]] = {}
+        self.lexed = 0
 
-    def lines(self, name: str) -> dict[int, list[port.WrittenNumber]]:
-        known = self._lines.get(name)
+    def _text(self, name: str) -> list[bytes]:
+        known = self._split.get(name)
+        if known is None:
+            data = self._files.get(name)
+            known = [] if data is None else data.split(b"\n")  # Beancount counts lines by `\n` only
+            self._split[name] = known
+        return known
+
+    def line(self, name: str, lineno: int) -> list[port.WrittenNumber]:
+        """The numbers written on line `lineno` (from 1) of file `name`, numbered as that line."""
+        key = (name, lineno)
+        known = self._lines.get(key)
         if known is not None:
             return known
-        got: dict[int, list[port.WrittenNumber]] = {}
-        data = self._files.get(name)
-        for number in port.written_numbers(data) if data is not None else ():
-            got.setdefault(number.lineno, []).append(number)
-        self._lines[name] = got
+        text = self._text(name)
+        got: list[port.WrittenNumber] = []
+        if 1 <= lineno <= len(text):
+            self.lexed += 1
+            got = [port.WrittenNumber(lineno, w.text, w.value, w.alone) for w in port.written_numbers(text[lineno - 1])]
+        self._lines[key] = got
         return got
 
-    def on_line(self, meta: Mapping[str, Any] | None, number: Decimal) -> bool:
-        """Whether `number` is written, as a number by itself, on the line `meta` names (sign aside)."""
+    def long_lines(self, name: str) -> list[int]:
+        """The lines of `name` holding a run of more than 28 digits, separators and points (in order, once each)."""
+        data = self._files.get(name, b"")
+        out: list[int] = []
+        lineno, at = 1, 0
+        for match in _LONG_RUN.finditer(data):
+            lineno += data.count(b"\n", at, match.start())
+            at = match.start()
+            if not out or out[-1] != lineno:
+                out.append(lineno)
+        return out
+
+    def as_written(self, meta: Mapping[str, Any] | None, number: Decimal) -> Decimal | None:
+        """The number as written on the line `meta` names, when `number` is one written there (sign aside) or
+        Beancount's 28-digit negation of one (S0098 round 2, finance M2: `-12345678901.123456789012345678` is stored as
+        `-12345678901.12345678901234568`), with `number`'s sign; None when it is written nowhere on that line."""
         if not meta:
-            return False
+            return None
         name, lineno = meta.get("filename"), meta.get("lineno")
         if not isinstance(name, str) or not isinstance(lineno, int):
-            return False
+            return None
         target = number.copy_abs()
-        return any(w.value.copy_abs() == target for w in self.lines(name).get(lineno, ()))
+        beancount = port.BEANCOUNT_CONTEXT.copy()  # a copy: the shared constant collects no flags
+        for w in self.line(name, lineno):
+            written = w.value.copy_abs()
+            if written == target or beancount.plus(written) == target:
+                return written.copy_sign(number)
+        return None
 
 
 def _part(w: port.WrittenNumber) -> str:
@@ -120,15 +159,13 @@ def _part(w: port.WrittenNumber) -> str:
     return f"{w.text}, kept as written, but every sum with it is cut to 28 digits"
 
 
-def written(files: Mapping[str, bytes], lexed: _Lexed | None = None) -> list[RoundingWarning]:
+def written(files: Mapping[str, bytes], lexed: Lexed | None = None) -> list[RoundingWarning]:
     """One warning per line holding a written number of more than 28 significant digits, by file name, then line."""
-    lexed = lexed or _Lexed(files)
+    lexed = lexed or Lexed(files)
     out: list[RoundingWarning] = []
     for name in sorted(files):
-        if _LONG_RUN.search(files[name]) is None:
-            continue
-        for lineno, numbers in sorted(lexed.lines(name).items()):
-            long = [w for w in numbers if _significant(w.value) > DIGITS]
+        for lineno in lexed.long_lines(name):
+            long = [w for w in lexed.line(name, lineno) if _significant(w.value) > DIGITS]
             if not long:
                 continue
             message = (
@@ -172,15 +209,25 @@ def _may_round(weights: Sequence[list[Decimal]]) -> bool:
     return high + len(weights).bit_length() - low + 1 > DIGITS
 
 
-def _exact(others: Sequence[port.Posting], currency: str, options: port.OptionsMap) -> Decimal | None:
-    """Beancount's fill of `currency` with 64 digits; None when even that needs more digits."""
+def _exact(written: Sequence[port.Posting], currency: str, options: port.OptionsMap) -> Decimal | None:
+    """Beancount's fill of `currency` with 64 digits, from the postings as written (the weight and the tolerance it
+    infers both: a number Beancount cut also coarsens the tolerance it infers); None when 64 digits are too few."""
     try:
         with decimal.localcontext(_SUM):
-            weight = port.fill_weight(others, currency)
+            weight = port.fill_weight(written, currency)
         with decimal.localcontext(_QUANTIZE):
-            return port.quantize_fill(others, currency, weight, options)
+            return port.quantize_fill(written, currency, weight, options)
     except decimal.DecimalException:
         return None
+
+
+def _as_written(p: port.Posting, lexed: Lexed) -> port.Posting:
+    """`p` with its units as written, when Beancount stored a negative written number cut to 28 digits."""
+    number: object = getattr(p.units, "number", None)
+    if not isinstance(number, Decimal) or _digits(number) != DIGITS:
+        return p
+    written = lexed.as_written(p.meta, number)
+    return p if written is None or written == number else port.with_units_number(p, written)
 
 
 def _filled(p: port.Posting) -> tuple[Decimal, str] | None:
@@ -192,10 +239,10 @@ def _filled(p: port.Posting) -> tuple[Decimal, str] | None:
 
 
 def filled_in(
-    entries: Sequence[port.Directive], options: port.OptionsMap, lexed: _Lexed | None = None
+    entries: Sequence[port.Directive], options: port.OptionsMap, lexed: Lexed | None = None
 ) -> list[RoundingWarning]:
     """One warning per filled-in leg whose exact amount differs from the one Beancount computed, in entry order."""
-    lexed = lexed or _Lexed({})
+    lexed = lexed or Lexed({})
     out: list[RoundingWarning] = []
     for entry in entries:
         if not isinstance(entry, port.Transaction):
@@ -211,13 +258,14 @@ def filled_in(
         if not _may_round(known):
             continue  # every sum and product fits in 28 digits: Beancount's fill is exact
         if any(
-            _digits(n) == DIGITS and not lexed.on_line(p.meta, n)
+            _digits(n) == DIGITS and lexed.as_written(p.meta, n) is None
             for p, ws in zip(others, known, strict=True)
             for n in ws
         ):
             continue  # a number Beancount cut by dividing feeds the sum (the module's docstring)
+        exact_others = [_as_written(p, lexed) for p in others]  # a written number Beancount negated at 28 digits
         for leg, (got, cur) in legs:
-            exact = _exact(others, cur, options)
+            exact = _exact(exact_others, cur, options)
             if exact is not None and exact == got:
                 continue
             told = (
@@ -235,19 +283,28 @@ def filled_in(
 
 
 def warnings(
-    files: Mapping[str, bytes], entries: Sequence[port.Directive], options: port.OptionsMap
+    files: Mapping[str, bytes],
+    entries: Sequence[port.Directive],
+    options: port.OptionsMap,
+    lexed: Lexed | None = None,
 ) -> list[RoundingWarning]:
     """Every warning of a load: the written numbers of `files` (each parsed file's bytes), then the filled-ins."""
-    lexed = _Lexed(files)
+    lexed = lexed or Lexed(files)
     return written(files, lexed) + filled_in(entries, options, lexed)
 
 
-def of_disk(entries: Sequence[port.Directive], options: port.OptionsMap) -> list[RoundingWarning]:
-    """The warnings of a real load (`beancount_port.real_load`): the files it parsed (`options["include"]`) read again.
-    The rebuild reads them before it observes the set again, so a change in between is a moved disk; a file gone or
-    unreadable meanwhile raises `OSError`, which the rebuild answers as a moved disk too."""
+def of_disk(
+    entries: Sequence[port.Directive], options: port.OptionsMap, parsed: Sequence[str]
+) -> list[RoundingWarning]:
+    """The warnings of a real load (`beancount_port.real_load`): the files it parsed as ledger text (`parsed`, as the
+    overlay's warnings see the files it parsed; never what a plugin added to `options["include"]`), read again. A path
+    that is no regular file now holds no number and is skipped (a file gone since the load is a moved disk the
+    rebuild's next observation sees). The rebuild reads them before it observes the set again, so a change in between
+    is a moved disk; a file it cannot read raises `OSError`, which the rebuild answers as a moved disk too."""
     files: dict[str, bytes] = {}
-    for name in options["include"]:
-        with open(str(name), "rb") as f:
-            files[str(name)] = f.read()
+    for name in parsed:
+        if not path.isfile(name):
+            continue
+        with open(name, "rb") as f:
+            files[name] = f.read()
     return warnings(files, entries, options)

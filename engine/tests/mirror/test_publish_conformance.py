@@ -663,7 +663,8 @@ class Replay:
             return raw_observe(self.fs, ledger_set)
 
         # The driver's load names files of the fake disk; the rounding warnings (S0098) read no file of it.
-        ports = rb.Ports(load=lambda root: driver.load(), warnings=lambda entries, options: [], observe=observe,
+        ports = rb.Ports(load=lambda root, parsed: driver.load(), warnings=lambda entries, options, parsed: [],
+                         observe=observe,
                          fs=self.fs, store=self.store, tag=lambda: tag_of(g))  # fmt: skip
         target = publishing.Target(
             app_cache=CACHE, workspace_key=KEY, app_local_data=ALD, lineage=LINEAGE, floor=0,

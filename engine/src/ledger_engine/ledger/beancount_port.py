@@ -39,6 +39,7 @@ from decimal import Decimal
 from importlib.metadata import version
 from typing import Any, Final, cast
 
+import beancount.parser.parser as _parser_module
 from beancount.core.amount import Amount as _Amount
 from beancount.core.data import SORT_ORDER as _SORT_ORDER
 from beancount.core.data import (
@@ -140,6 +141,7 @@ __all__ = [
     "sort_entries",
     "sort_order",
     "validate",
+    "with_units_number",
     "written_numbers",
 ]
 
@@ -197,6 +199,7 @@ WRAPPERS: Final = frozenset(
         "fill_weight",
         "quantize_fill",
         "filled_amount",
+        "with_units_number",
     }
 )
 
@@ -314,14 +317,36 @@ def _never_decrypt() -> Generator[None]:
         setattr(_encryption, "read_encrypted_file", real)  # noqa: B010
 
 
-def real_load(root: str) -> ParseResult:
+@contextmanager
+def _recording(parsed: list[str] | None) -> Generator[None]:
+    """While the real load runs, each file Beancount's loader parses is appended to `parsed` (its `parse_file`, the one
+    call `loader._parse_recursive` reads a ledger file with), so the caller knows the files read as ledger text:
+    `options["include"]` can also hold what a plugin added (S0098 round 2, verifier F1). The same swap as
+    `_never_decrypt`; the engine runs one job at a time."""
+    if parsed is None:
+        yield
+        return
+    real = _parser_module.parse_file
+
+    def record(filename: str, *args: Any, **kwargs: Any) -> Any:
+        parsed.append(filename)
+        return real(filename, *args, **kwargs)
+
+    setattr(_parser_module, "parse_file", record)  # noqa: B010 (the module's attribute, for this call only)
+    try:
+        yield
+    finally:
+        setattr(_parser_module, "parse_file", real)  # noqa: B010
+
+
+def real_load(root: str, parsed: list[str] | None = None) -> ParseResult:
     """Beancount's own full load of the ledger rooted at `root` (an absolute path), as `loader.load_file` runs it but
     without its pickle cache (`loader._load`): parse, sort, booking, plugins with the `pythonpath` first on `sys.path`,
     validation, `input_hash`. No `LoadPolicy` is asked (the rebuild loads only a ledger set the preview's overlay load
     accepted, and its fingerprint checks before and after tell whether the disk is still that set); an encrypted file
     met is not decrypted: `EncryptedFileMet` (the overlay's own refusal, which a file added during the load would
-    escape)."""
-    with beancount_context(), _never_decrypt():
+    escape). `parsed`, when given, receives each file the loader parsed, in its order, also when the load raises."""
+    with beancount_context(), _never_decrypt(), _recording(parsed):
         entries, errors, options = _loader_load([(root, True)], None, None, None)
     return list(entries), list(errors), dict(options)
 
@@ -422,6 +447,13 @@ def quantize_fill(others: Sequence[Posting], currency: str, number: Decimal, opt
     the transaction's postings (`interpolate.infer_tolerances`, `quantize_with_tolerance`; a leg left blank has no
     number, so the other postings infer the same). In the caller's decimal context."""
     return _quantize_with_tolerance(_infer_tolerances(list(others), options), currency, number)
+
+
+def with_units_number(posting: Posting, number: Decimal) -> Posting:
+    """`posting` with `number` in place of its units' number (same currency, cost, price, metadata): a posting as
+    written, for comparing with Beancount's (`ledger.precision`)."""
+    units = posting.units
+    return posting if units is None else posting._replace(units=_Amount(number, units.currency))
 
 
 def filled_amount(others: Sequence[Posting], currency: str, options: OptionsMap) -> Decimal:

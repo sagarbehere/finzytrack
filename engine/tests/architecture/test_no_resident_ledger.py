@@ -101,10 +101,10 @@ def test_no_directive_outlives_its_job(setup: tuple[Path, Path, dict[str, Any]])
 def test_a_kept_load_result_is_seen(setup: tuple[Path, Path, dict[str, Any]], monkeypatch: pytest.MonkeyPatch) -> None:
     """Must not pass: a load result kept after its job (as a memo or a cache would keep it) is a resident ledger."""
     kept: list[object] = []
-    real: Callable[[str], beancount_port.ParseResult] = beancount_port.real_load
+    real: Callable[[str, list[str] | None], beancount_port.ParseResult] = beancount_port.real_load
 
-    def keeping(root: str) -> beancount_port.ParseResult:
-        result = real(root)
+    def keeping(root: str, parsed: list[str] | None = None) -> beancount_port.ParseResult:
+        result = real(root, parsed)
         kept.append(result)
         return result
 

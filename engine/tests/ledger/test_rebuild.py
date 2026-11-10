@@ -105,8 +105,8 @@ def hint_of(root: Path) -> Fingerprint:
 def with_load(around: Callable[[], object]) -> rebuild.Ports:
     """The real load, with an outside program's act right after it."""
 
-    def load(r: str) -> port.ParseResult:
-        out = port.real_load(r)
+    def load(r: str, parsed: list[str]) -> port.ParseResult:
+        out = port.real_load(r, parsed)
         around()
         return out
 
@@ -216,9 +216,9 @@ def test_a_dated_file_under_a_documents_root_in_the_set_is_loaded_on_the_first_t
     root.write_bytes(MAIN + b'option "documents" "docs"\n')
     loads: list[str] = []
 
-    def load(r: str) -> port.ParseResult:
+    def load(r: str, parsed: list[str]) -> port.ParseResult:
         loads.append(r)
-        return port.real_load(r)
+        return port.real_load(r, parsed)
 
     a = go(rebuild.Ports(load=load), hint_of(root), FakeJob())
     assert (a.outcome, len(loads)) == ("loaded", 1)
@@ -252,9 +252,9 @@ def test_a_rebuild_that_finds_the_published_generation_fresh_builds_nothing(root
     assert isinstance(first.published, pb.Published)
     loads: list[str] = []
 
-    def load(r: str) -> port.ParseResult:
+    def load(r: str, parsed: list[str]) -> port.ParseResult:
         loads.append(r)
-        return port.real_load(r)
+        return port.real_load(r, parsed)
 
     again = go(rebuild.Ports(load=load), hint_of(root), FakeJob())
     assert again.outcome == "fresh"
@@ -618,9 +618,9 @@ def test_a_ledger_fixed_while_beancount_failed_on_it_is_moved_not_refused(root: 
     inc.write_bytes(INC + b'2026-01-03 * "Coins"\n  Assets:Cash  12345678901.123456789012345678 ETH\n  Expenses:Food\n')
     hint = observe(LedgerSet(str(root), (str(root), str(inc)), (), (), ()))
 
-    def load(r: str) -> port.ParseResult:
+    def load(r: str, parsed: list[str]) -> port.ParseResult:
         try:
-            return port.real_load(r)
+            return port.real_load(r, parsed)
         finally:
             inc.write_bytes(INC)  # the outside editor's fix lands while Beancount was failing on the old text
 
@@ -645,7 +645,8 @@ def test_a_file_gone_or_unreadable_right_after_the_load_is_a_moved_disk(root: Pa
 
 
 def test_a_disk_error_in_the_rebuilds_load_is_raised_as_before(root: Path) -> None:
-    def load(r: str) -> port.ParseResult:
+    def load(r: str, parsed: list[str]) -> port.ParseResult:
+        del parsed
         raise PermissionError(13, "denied", r)
 
     with pytest.raises(PermissionError):
@@ -665,3 +666,84 @@ def test_the_rebuild_publishes_the_warnings_of_numbers_beancount_rounded(root: P
     con = sqlite3.connect(f"file:{mirror(cache) / a.published.gen.name}?mode=ro", uri=True)
     got = con.execute("SELECT source_file, line_number FROM ledger_errors WHERE message LIKE 'Number longer%'")
     assert list(got) == [(str(root.parent / "inc.bean"), 6), (str(root.parent / "inc.bean"), 7)]
+
+
+# -- round 2: what the real load parsed (S0098 round 2, verifier F1, F2) ---------------------------------------------
+
+WATCH = (
+    "import os\n__plugins__ = ['p']\n"
+    "def p(entries, options):\n"
+    "    options['include'].append(os.path.join(os.path.dirname(options['filename']), '{name}'))\n"
+    "    return entries, []\n"
+)
+
+
+def watching(root: Path, extra: str) -> None:
+    """A plugin that adds a path to `options["include"]` (as plugins do, so Fava reloads when their data file
+    changes); bean-check ignores one that is missing."""
+    mod = "watch_" + root.parent.parent.name.replace("-", "_")
+    (root.parent / f"{mod}.py").write_text(WATCH.replace("{name}", extra))
+    root.write_bytes(f'option "insert_pythonpath" "TRUE"\nplugin "{mod}"\n'.encode() + MAIN)
+
+
+def tries(root: Path) -> list[str]:
+    """The rebuild as the sidecar tries it: each `moved` answer's fingerprint is the next hint, at most 3 tries."""
+    hint, out = hint_of(root), list[str]()
+    for _ in range(3):
+        a = go(rebuild.Ports(), hint, FakeJob())
+        out.append(a.outcome)
+        if a.outcome != "moved":
+            break
+        hint = a.fingerprint
+    return out
+
+
+@pytest.mark.parametrize("extra", ["prices-not-yet-downloaded.csv", ""])
+def test_a_path_a_plugin_adds_is_never_read_as_ledger_text(root: Path, extra: str) -> None:
+    """A missing file or a folder (`""`: the ledger's own) a plugin names is no file the load parsed: the rebuild
+    loads, as the base did, instead of answering `moved` forever."""
+    watching(root, extra)
+    port.real_load(str(root))  # bean-check: loads
+    assert tries(root)[-1] == "loaded"
+
+
+def test_a_data_file_a_plugin_adds_gives_no_warning(root: Path, cache: Path) -> None:
+    """A regular file a plugin names is read by the plugin, not parsed as ledger text: a long digit run in it is no
+    written number, for the rebuild as for the open (whose warnings see only the files it parsed)."""
+    watching(root, "rates.csv")
+    (root.parent / "rates.csv").write_text("date,rate\n2026-01-01,12345678901.123456789012345678\n")
+    a = go(rebuild.Ports(), hint_of(root), FakeJob())
+    assert a.outcome == "moved"  # the load used a file outside the set (the plugin's): tried again with it
+    a = go(rebuild.Ports(), a.fingerprint, FakeJob())
+    assert a.outcome == "loaded"
+    assert isinstance(a.published, pb.Published)
+    con = sqlite3.connect(f"file:{mirror(cache) / a.published.gen.name}?mode=ro", uri=True)
+    assert list(con.execute("SELECT count(*) FROM ledger_errors WHERE message LIKE 'Number longer%'")) == [(0,)]
+    loaded = overlay.load(str(root), {}, DesktopPolicy())
+    assert isinstance(loaded, overlay.Loaded)
+    assert loaded.warnings == []
+
+
+def test_a_new_included_file_fixed_while_beancount_failed_on_it_is_moved_not_refused(root: Path) -> None:
+    """The second look covers what the failed load parsed outside the set (verifier F2)."""
+    hint = hint_of(root)
+    new = root.parent / "new.bean"
+    new.write_bytes(b'2026-01-03 * "Coins"\n  Assets:Cash  12345678901.123456789012345678 ETH\n  Expenses:Food\n')
+    inc = root.parent / "inc.bean"
+    inc.write_bytes(INC + b'include "new.bean"\n')
+
+    def load(r: str, parsed: list[str]) -> port.ParseResult:
+        try:
+            return port.real_load(r, parsed)
+        finally:
+            new.write_bytes(b"")  # the outside editor's fix lands while Beancount was failing on the old text
+
+    a = go(rebuild.Ports(load=load), hint, FakeJob())
+    assert a.outcome == "moved", (a.outcome, a.refusal)
+    assert str(new) in dict(a.fingerprint.files)
+
+
+def test_the_real_load_reports_the_files_it_parsed(root: Path) -> None:
+    parsed: list[str] = []
+    port.real_load(str(root), parsed)
+    assert parsed == [str(root), str(root.parent / "inc.bean")]

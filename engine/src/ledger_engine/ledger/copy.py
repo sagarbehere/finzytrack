@@ -262,6 +262,8 @@ class _CopySteps:
         except Exception:  # noqa: BLE001 (the load could not run: a plugin, Beancount)
             raise Stop("source_failed") from None
         if isinstance(loaded, overlay.LoadRefused):
+            if loaded.read is not None and self.ports.observe(loaded.read.ledger_set) != loaded.read:
+                raise Stop("source_changed")  # changed since Beancount failed on it (S0098 round 2, verifier F2)
             line = None if loaded.line is None else str(loaded.line)
             match loaded.reason:
                 case "encrypted":

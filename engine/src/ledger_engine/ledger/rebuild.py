@@ -35,7 +35,7 @@ from __future__ import annotations
 
 import gc
 import posixpath
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from typing import Final, Literal, Protocol
 
@@ -63,12 +63,12 @@ def _observe(ledger_set: LedgerSet) -> Fingerprint:
     return _fingerprint.observe(ledger_set)
 
 
-def _real_load(root: str) -> port.ParseResult:
+def _real_load(root: str, parsed: list[str]) -> port.ParseResult:
     """Beancount's own loader, the garbage collector paused while it runs (ADR-0008 amendment)."""
     collecting = gc.isenabled()
     gc.disable()
     try:
-        return port.real_load(root)
+        return port.real_load(root, parsed)
     finally:
         if collecting:
             gc.enable()
@@ -79,8 +79,10 @@ class Ports:
     """The rebuild's effects: Beancount's real load of a root, the observation of a ledger set, and the publish's:
     the file-system port, the mirror's store and the name's random tag."""
 
-    load: Callable[[str], port.ParseResult] = _real_load
-    warnings: Callable[[list[port.Directive], port.OptionsMap], list[precision.RoundingWarning]] = precision.of_disk
+    load: Callable[[str, list[str]], port.ParseResult] = _real_load
+    warnings: Callable[[list[port.Directive], port.OptionsMap, Sequence[str]], list[precision.RoundingWarning]] = (
+        precision.of_disk
+    )
     observe: Callable[[LedgerSet], Fingerprint] = _observe
     fs: FileSystem = field(default_factory=for_this_os)
     store: pb.Store = field(default_factory=SqliteStore)
@@ -180,15 +182,29 @@ def run(ports: Ports, hint: Fingerprint, job: Job, target: Target) -> Answer:
         ledger_set = hint.ledger_set
         before = ports.observe(ledger_set)  # step 1
         job.progress(PHASE)
+        parsed: list[str] = []
         try:
-            result = ports.load(ledger_set.root)  # step 2: Beancount's own loader (user code)
+            result = ports.load(ledger_set.root, parsed)  # step 2: Beancount's own loader (user code)
         except (OSError, port.EncryptedFileMet):
             raise
         except Exception as e:  # Beancount's own load raised on the ledger: refused, never raised
             if not load_failure.beancounts(e):
                 raise
             f = load_failure.of(e, ledger_set.root)
-            again = ports.observe(ledger_set)  # a disk changed since the load is tried again, not refused
+            # A second look at what the failed load read (S0098 round 2, verifier F2): a file it parsed outside the
+            # set was never observed before the load, so the set widened by it is tried again; a disk changed since
+            # the load is tried again too. Only an unchanged set is refused.
+            outside = sorted(set(parsed) - set(ledger_set.files))
+            if outside:
+                widened = LedgerSet(
+                    ledger_set.root,
+                    (*ledger_set.files, *outside),
+                    ledger_set.globs,
+                    ledger_set.documents,
+                    ledger_set.document_files,
+                )
+                return Answer("moved", ports.observe(widened), cleaned=cleaned)
+            again = ports.observe(ledger_set)
             if again != before:
                 return Answer("moved", again, cleaned=cleaned)
             return Answer("refused", hint, cleaned=cleaned, refusal=f.reason, refused=f.path, line=f.line)
@@ -196,7 +212,7 @@ def run(ports: Ports, hint: Fingerprint, job: Job, target: Target) -> Answer:
         # Finzytrack's warnings on numbers Beancount rounded (`precision`): the files read again before the set is
         # observed again, so a change in between is a moved disk; a file gone or unreadable meanwhile is one too.
         try:
-            warnings = ports.warnings(entries, options)
+            warnings = ports.warnings(entries, options, parsed)
         except OSError:
             return Answer("moved", ports.observe(ledger_set), cleaned=cleaned)
         after = ports.observe(ledger_set)  # step 3

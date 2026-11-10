@@ -51,9 +51,10 @@ def warned(tmp_path: Path, body: str) -> list[tuple[int, str]]:
     """(line, key) of each warning, after checking that the overlay load and Beancount's own load (the rebuild's
     path, `precision.of_disk`) give the same warnings, and that no warning is among Beancount's errors."""
     got = loaded(tmp_path, body)
-    entries, _, options = port.real_load(str(tmp_path / "main.beancount"))
+    parsed: list[str] = []
+    entries, _, options = port.real_load(str(tmp_path / "main.beancount"), parsed)
     seen = [(w.source, w.message) for w in got.warnings]
-    assert [(w.source, w.message) for w in precision.of_disk(entries, options)] == seen
+    assert [(w.source, w.message) for w in precision.of_disk(entries, options, parsed)] == seen
     assert not any(isinstance(e, precision.RoundingWarning) for e in got.errors)
     out: list[tuple[int, str]] = []
     for w in got.warnings:
@@ -343,3 +344,53 @@ def test_the_fill_the_check_reproduces_is_beancounts_own(tmp_path: Path) -> None
                     assert (filled, str(filled)) == (p.units.number, str(p.units.number)), body
                     checked += 1
     assert checked == 8
+
+
+# ---- round 2 (S0098 round 2, finance M1, M2) ---------------------------------------------------------------------
+
+
+def test_only_the_lines_needed_are_lexed(tmp_path: Path) -> None:
+    """Finance M1: an everyday `@@` purchase with a blank cash leg is a candidate (its cut price's product needs more
+    than 28 digits), and a long digit run in a comment is one for `written`; each costs one line lexed, never the file.
+    Counted, not timed."""
+    buys = "".join(
+        f'2021-01-{1 + i % 28:02d} * "buy {i}"\n  Assets:Broker  7 TOK @@ 10 USD\n  Assets:Bank\n' for i in range(300)
+    )
+    root = tmp_path / "main.beancount"
+    text = OPEN + "; order 123456789012345678901234567890123\n" + buys
+    root.write_text(text, encoding="utf-8")
+    out = load(str(root), {}, DESKTOP)
+    assert isinstance(out, Loaded)
+    lexed = precision.Lexed({str(root): text.encode()})
+    assert precision.warnings({str(root): text.encode()}, out.entries, out.options, lexed) == []
+    assert lexed.lexed == 300 + 1  # each purchase's `@@` line, and the comment's line
+    assert lexed.lexed < text.count("\n") / 3
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        # A: the owner's token sold at a price, the bank leg blank
+        txn("Assets:Wallet  -12345678901.123456789012345678 SHIB @ 0.00001234 USD", "Assets:Bank"),
+        # B: the owner's example (an 18-decimal ETH amount), written negative, the other leg blank
+        txn("Assets:Wallet  -12345678901.123456789012345678 ETH", "Assets:Bank"),
+    ],
+)
+def test_a_written_negative_long_number_feeds_a_judged_fill(tmp_path: Path, body: str) -> None:
+    """Finance M2: Beancount stores the written number as its 28-digit negation, which is no cut quotient; the filled
+    leg is judged and warns, as well as the written number's own line."""
+    got = warned(tmp_path, body)
+    assert (FIRST + 1, WRITTEN) in got
+    assert got[-1][1] == FILLED
+    assert got[-1][0] == FIRST + body.count("\n") - 1  # the blank leg's line
+
+
+def test_a_fill_from_a_cut_written_number_warns_with_the_fill_as_written(tmp_path: Path) -> None:
+    """M2, with a fee: from the numbers as written the exact fill is ...677 (the written number's 18 decimals set the
+    tolerance); Beancount's cut number gives ...568 (its 17 decimals coarsen the tolerance too)."""
+    body = txn(
+        "Assets:Wallet  -12345678901.123456789012345678 SHIB", "Expenses:Fees  0.000000000000000001 SHIB", "Assets:Bank"
+    )
+    assert warned(tmp_path, body) == [(FIRST + 1, WRITTEN), (FIRST + 3, FILLED)]
+    message = loaded(tmp_path, body).warnings[1].message
+    assert "12345678901.12345678901234568 SHIB. The exact amount is 12345678901.123456789012345677 SHIB" in message

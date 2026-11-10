@@ -369,6 +369,23 @@ def test_a_source_beancount_cannot_load_is_refused_naming_its_file_and_line(
     assert (nc.path, nc.detail) == (f"{B}/inc.bean", detail)
 
 
+@pytest.mark.parametrize("fixed", [False, True])
+def test_a_source_fixed_while_beancount_failed_on_it_is_a_changed_source(fixed: bool) -> None:
+    """S0098 round 2 (verifier F2): the refusal's `read` is observed again; a source changed since Beancount failed on
+    it is `source_changed` (Try again), only an unchanged one `number_failed`."""
+    w = new_world()
+
+    def failing(root: str) -> overlay.LoadResult:
+        read = w.fingerprint()
+        if fixed:
+            w.src[ROOT] = w.src[ROOT] + b"; fixed\n"  # an outside editor's fix lands while Beancount was failing
+        return overlay.LoadRefused("number-failed", ROOT, 3, read)
+
+    w.load_result = failing
+    nc = not_copied(go(w)[0], "source_changed" if fixed else "number_failed")
+    assert nc.path == (None if fixed else ROOT)
+
+
 # -- r1: a refusal of step 2 makes nothing at all; the ledger's own plugins; a clash -----------------------------
 
 
