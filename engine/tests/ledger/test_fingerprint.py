@@ -414,9 +414,11 @@ GOLDEN = Fingerprint.of(
             "/books/plug.py", None, Content("cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd")
         ),
         ("missing", ("/books", "/py/lib")): None,
-        ("ns", ("/books", "/py/lib")): Module(None, ("/books/ns",), None),
+        ("ns", ("/books", "/py/lib")): Module(None, ("/books/ns",), None, (("a.py", "sub/"),)),
         ("pkg.sub", ("/books/pkg",)): Module("/books/pkg/sub.py", None, Absent()),
-        ("pkg", ("/books", "/py/lib")): Module("/books/pkg/__init__.py", ("/books/pkg",), Unreadable("EACCES")),
+        ("pkg", ("/books", "/py/lib")): Module(
+            "/books/pkg/__init__.py", ("/books/pkg",), Unreadable("EACCES"), (None,)
+        ),
     },
 )
 GOLDEN_ENCODING = (
@@ -427,14 +429,15 @@ GOLDEN_ENCODING = (
     b'["/books/main.beancount",["sha256","abababababababababababababababababababababababababababababababab"]]],'
     b'"globs":[["/books/later.beancount",[]],["/books/linked.beancount",["/books/linked.beancount"]],'
     b'["/books/years/*.beancount",["/books/years/2024.beancount","/books/years/2023.beancount"]]],'
-    b'"modules":[["missing",["/books","/py/lib"],null],["ns",["/books","/py/lib"],[null,["/books/ns"],null]],'
-    b'["pkg",["/books","/py/lib"],["/books/pkg/__init__.py",["/books/pkg"],["unreadable","EACCES"]]],'
-    b'["pkg.sub",["/books/pkg"],["/books/pkg/sub.py",null,["absent"]]],'
+    b'"modules":[["missing",["/books","/py/lib"],null],'
+    b'["ns",["/books","/py/lib"],[null,["/books/ns"],null,[["a.py","sub/"]]]],'
+    b'["pkg",["/books","/py/lib"],["/books/pkg/__init__.py",["/books/pkg"],["unreadable","EACCES"],[null]]],'
+    b'["pkg.sub",["/books/pkg"],["/books/pkg/sub.py",null,["absent"],null]],'
     b'["plug",["/books","/py/lib"],["/books/plug.py",null,'
-    b'["sha256","cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd"]]]],'
+    b'["sha256","cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd"],null]]],'
     b'"root":"/books/main.beancount","v":2}'
 )
-GOLDEN_DIGEST = "sha256:5d78831a8268f9a581c0ac30ab95087d802b023ae7e3745c93df563e7decc40d"
+GOLDEN_DIGEST = "sha256:80a2bb9c3996ffa15419c091abddd3dc6e7ef6519fd0dcef980367078c399e69"
 
 
 def test_the_encoding_is_pinned() -> None:
@@ -467,7 +470,15 @@ def test_a_fingerprint_is_built_only_in_canonical_order() -> None:
     with pytest.raises(ValueError, match="not canonical"):
         Module(None, None, None)  # found, but neither a file nor a package's folders
     with pytest.raises(ValueError, match="not canonical"):
-        Module(None, ("/r/ns",), Absent())  # a namespace package has no file to read
+        Module(None, ("/r/ns",), Absent(), ((),))  # a namespace package has no file to read
+    with pytest.raises(ValueError, match="not canonical"):
+        Module("/r/p/__init__.py", ("/r/p",), Absent())  # a package without its folders' listings
+    with pytest.raises(ValueError, match="not canonical"):
+        Module("/r/p.py", None, Absent(), ((),))  # listings without folders
+    with pytest.raises(ValueError, match="not canonical"):
+        Module("/r/p/__init__.py", ("/r/p",), Absent(), ((), ()))  # one listing per folder
+    with pytest.raises(ValueError, match="not canonical"):
+        Module("/r/p/__init__.py", ("/r/p",), Absent(), (("b.py", "a.py"),))  # sorted
 
 
 def test_a_content_state_is_a_sha256() -> None:
@@ -496,9 +507,17 @@ states: st.SearchStrategy[FileState] = st.one_of(
     st.sampled_from(["EACCES", "EIO", "ELOOP"]).map(Unreadable),
 )
 module_keys: st.SearchStrategy[ModuleKey] = st.tuples(paths, st.lists(paths, max_size=3).map(tuple))
+listings = st.one_of(st.none(), st.lists(paths, max_size=3, unique=True).map(lambda n: tuple(sorted(n))))
+
+
+def _package(origin: str | None, folders: list[tuple[str, tuple[str, ...] | None]], state: FileState | None) -> Module:
+    return Module(origin, tuple(f for f, _ in folders), state, tuple(n for _, n in folders))
+
+
 modules: st.SearchStrategy[Module] = st.one_of(
-    st.builds(Module, paths, st.one_of(st.none(), st.lists(paths, max_size=2).map(tuple)), states),
-    st.builds(Module, st.none(), st.lists(paths, max_size=2).map(tuple), st.none()),
+    st.builds(Module, paths, st.none(), states),
+    st.builds(_package, paths, st.lists(st.tuples(paths, listings), max_size=2), states),
+    st.builds(_package, st.none(), st.lists(st.tuples(paths, listings), max_size=2), st.none()),
 )
 fingerprints = st.builds(
     Fingerprint.of,
@@ -545,7 +564,14 @@ def decode(data: bytes) -> Fingerprint:
         tuple(
             (
                 (n, tuple(path)),
-                None if a is None else Module(a[0], None if a[1] is None else tuple(a[1]), a[2] and state(a[2])),
+                None
+                if a is None
+                else Module(
+                    a[0],
+                    None if a[1] is None else tuple(a[1]),
+                    a[2] and state(a[2]),
+                    None if a[3] is None else tuple(None if n is None else tuple(n) for n in a[3]),
+                ),
             )
             for n, path, a in raw["modules"]
         ),

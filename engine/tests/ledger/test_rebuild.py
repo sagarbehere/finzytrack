@@ -843,6 +843,28 @@ def test_a_refusal_whose_plugin_code_the_hint_never_observed_is_moved(root: Path
         sys.modules.pop(name, None)
 
 
+def test_plugin_code_changed_and_changed_back_around_the_load_is_moved(root: Path) -> None:
+    """S0099 r1 (red team F5): the observations before and after the load agree, but the load imported other code
+    (its own record, hashed as it imported, says so): the result is not the disk's."""
+    name = "ft_s0099_rebuild_flip"
+    try:
+        src = with_plugin(root, name)
+        hint = hint_of(root)
+        sys.modules.pop(name, None)
+
+        def load(r: str, parsed: list[str]) -> port.ParseResult:
+            src.write_text(PLUGIN + "# other code\n")
+            try:
+                return port.real_load(r, parsed)
+            finally:
+                src.write_text(PLUGIN)
+
+        a = go(rebuild.Ports(load=load), hint, FakeJob())
+        assert a.outcome == "moved", a
+    finally:
+        sys.modules.pop(name, None)
+
+
 def hint_of_refused(root: Path) -> Fingerprint:
     out = overlay.load(str(root), {}, DesktopPolicy())
     assert isinstance(out, overlay.LoadRefused), out

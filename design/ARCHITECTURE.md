@@ -256,7 +256,8 @@ engine/src/ledger_engine/
                  files of the `document` entries Beancount checks; since S0099 each module the load's imports
                  looked up, asked again of the path search with the same folders and the file found hashed)
     imports.py   recording(into): what a load's imports read, for its fingerprint: every path-search lookup with its
-                 folders, its answer and the found file's SHA-256 taken before the loader reads it; one load with
+                 folders, its answer, the found file's SHA-256 taken before the loader reads it and a package's
+                 folders' importable names; sources only, never cached bytecode (S0099 r1); one load with
                  plugins per engine process (S0099, BL-0124)
     policy.py    LoadPolicy: may_read, may_run_plugin, may_add_pythonpath, may_scan_documents (built: the desktop
                  body, which allows all: v0.4.0 has no trust prompt, so a ledger's plugins and insert_pythonpath

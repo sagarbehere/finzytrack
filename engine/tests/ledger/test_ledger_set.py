@@ -590,19 +590,29 @@ def test_every_corpus_fingerprint_decodes_to_itself(name: str, tmp_path: Path) -
         b'{"document_files":[],"documents":[],"files":[],"globs":[],"modules":[["m","/r",null]],"root":"/r","v":2}',
         b'{"document_files":[],"documents":[],"files":[],"globs":[],"modules":[["m",[1],null]],"root":"/r","v":2}',
         b'{"document_files":[],"documents":[],"files":[],"globs":[],"modules":[["m",["/r"],[]]],"root":"/r","v":2}',
-        b'{"document_files":[],"documents":[],"files":[],"globs":[],"modules":[["m",["/r"],[null,null,null]]],'
+        b'{"document_files":[],"documents":[],"files":[],"globs":[],"modules":[["m",["/r"],[null,null,null,null]]],'
         b'"root":"/r","v":2}',
-        b'{"document_files":[],"documents":[],"files":[],"globs":[],"modules":[["m",["/r"],[null,["/r/m"],["absent"]]]],'
+        b'{"document_files":[],"documents":[],"files":[],"globs":[],"modules":[["m",["/r"],[null,["/r/m"],["absent"],[[]]]]],'
         b'"root":"/r","v":2}',
-        b'{"document_files":[],"documents":[],"files":[],"globs":[],"modules":[["m",["/r"],["/r/m.py",null,["gone"]]]],'
+        b'{"document_files":[],"documents":[],"files":[],"globs":[],"modules":[["m",["/r"],["/r/m.py",null,["gone"],null]]],'
         b'"root":"/r","v":2}',
-        b'{"document_files":[],"documents":[],"files":[],"globs":[],"modules":[["m",["/r"],[1,null,null]]],'
+        b'{"document_files":[],"documents":[],"files":[],"globs":[],"modules":[["m",["/r"],[1,null,null,null]]],'
         b'"root":"/r","v":2}',
-        b'{"document_files":[],"documents":[],"files":[],"globs":[],"modules":[["m",["/r"],["/r/m.py","/r",null]]],'
+        b'{"document_files":[],"documents":[],"files":[],"globs":[],"modules":[["m",["/r"],["/r/m.py","/r",null,null]]],'
         b'"root":"/r","v":2}',
-        b'{"document_files":[],"documents":[],"files":[],"globs":[],"modules":[["m",["/r"],["/r/m.py",[2],null]]],'
+        b'{"document_files":[],"documents":[],"files":[],"globs":[],"modules":[["m",["/r"],["/r/m.py",[2],null,[[]]]]],'
         b'"root":"/r","v":2}',
         b'{"document_files":[],"documents":[],"files":[],"globs":[],'
+        b'{"document_files":[],"documents":[],"files":[],"globs":[],"modules":[["m",["/r"],[null,["/r/m"],null]]],'
+        b'"root":"/r","v":2}',  # three parts: the listings missing
+        b'{"document_files":[],"documents":[],"files":[],"globs":[],'
+        b'"modules":[["m",["/r"],[null,["/r/m"],null,[["b.py","a.py"]]]]],"root":"/r","v":2}',  # a listing not sorted
+        b'{"document_files":[],"documents":[],"files":[],"globs":[],'
+        b'"modules":[["m",["/r"],[null,["/r/m"],null,[[],[]]]]],"root":"/r","v":2}',  # a listing per folder
+        b'{"document_files":[],"documents":[],"files":[],"globs":[],'
+        b'"modules":[["m",["/r"],[null,["/r/m"],null,[[1]]]]],"root":"/r","v":2}',  # a name that is no string
+        b'{"document_files":[],"documents":[],"files":[],"globs":[],'
+        b'"modules":[["m",["/r"],["/r/m/__init__.py",["/r/m"],null,null]]],"root":"/r","v":2}',  # no listings
         b'"modules":[["m",["/r"],null],["a",["/r"],null]],"root":"/r","v":2}',  # not sorted
         b'{"document_files":[],"documents":[],"files":[],"globs":[],'
         b'"modules":[["m",["/r"],null],["m",["/r"],null]],"root":"/r","v":2}',  # twice
@@ -620,10 +630,11 @@ def test_the_smallest_encodings_of_each_module_answer_decode() -> None:
     for answer in (
         b'["m",["/r"],null]',
         b'["m",[],null]',
-        b'["m",["/r"],[null,["/r/m"],null]]',
-        b'["m",["/r"],["/r/m.py",null,["absent"]]]',
-        b'["m",["/r"],["/r/m.py",null,null]]',
-        b'["m",["/r"],["/r/m/__init__.py",["/r/m"],["unreadable","EACCES"]]]',
+        b'["m",["/r"],[null,["/r/m"],null,[["a.py","b/"]]]]',
+        b'["m",["/r"],[null,["/r/m"],null,[null]]]',
+        b'["m",["/r"],["/r/m.py",null,["absent"],null]]',
+        b'["m",["/r"],["/r/m.py",null,null,null]]',
+        b'["m",["/r"],["/r/m/__init__.py",["/r/m"],["unreadable","EACCES"],[[]]]]',
     ):
         data = head + answer + tail
         assert encode(decode(data)) == data

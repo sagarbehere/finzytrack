@@ -86,6 +86,9 @@ class Unreadable:
 
 type FileState = Content | Absent | Unreadable
 type ModuleKey = tuple[str, tuple[str, ...]]
+type PackageListing = tuple[str, ...] | None
+"""A package folder's importable names, sorted (a module file by its whole name, a folder with a trailing `/`), or None
+when the folder could not be listed."""
 """One question a load's imports asked the path search: a module's full name and the folders searched, in order
 (`sys.path` while the plugins ran, for a top-level module; its package's folders, for a submodule)."""
 
@@ -95,15 +98,26 @@ class Module:
     """The path search's answer when it found the module (not found is `None`): `origin`, the file it is loaded from
     (None for a namespace package, which has no file); `locations`, a package's folders, in order (None for a module
     that is no package); `state`, the bytes of the file the loader reads (`origin`, or the zip archive holding it),
-    None when there is no such file to read (a namespace package; a finder a plugin installed that names none)."""
+    None when there is no such file to read (a namespace package; a finder a plugin installed that names none);
+    `listings`, for a package, each of its folders' importable names in order with `locations` (S0099 r1, red team
+    F1: a package that finds its own modules, `pkgutil.iter_modules(__path__)`, runs a module added later)."""
 
     origin: str | None
     locations: tuple[str, ...] | None
     state: FileState | None
+    listings: tuple[PackageListing, ...] | None = None
 
     def __post_init__(self) -> None:
         if self.origin is None and (self.locations is None or self.state is not None):
             raise NotCanonicalError("module")
+        if (self.locations is None) != (self.listings is None):
+            raise NotCanonicalError("module")
+        if self.locations is not None and self.listings is not None:
+            if len(self.listings) != len(self.locations):
+                raise NotCanonicalError("module")
+            for names in self.listings:
+                if names is not None and not _strictly_sorted(names):
+                    raise NotCanonicalError("listing")
 
 
 # A documents root's file names (relative, sorted), each with whether it leads to a file (`os.path.exists`: Beancount
@@ -202,6 +216,7 @@ def _module(answer: Module | None) -> list[object] | None:
         answer.origin,
         None if answer.locations is None else list(answer.locations),
         None if answer.state is None else _state(answer.state),
+        None if answer.listings is None else [None if n is None else list(n) for n in answer.listings],
     ]
 
 
@@ -288,13 +303,16 @@ def _decode_module(item: object) -> tuple[ModuleKey, Module | None]:
     if items[2] is None:
         return key, None
     answer = _items(items[2], "modules")
-    if len(answer) != 3:
+    if len(answer) != 4:
         raise UndecodableError("modules")
     state = None if answer[2] is None else _decode_state(answer[2])
     origin = answer[0]
     if origin is not None and not isinstance(origin, str):
         raise UndecodableError("modules")
-    return key, Module(origin, _optional_strings(answer[1], "modules"), state)
+    listings = (
+        None if answer[3] is None else tuple(_optional_strings(n, "modules") for n in _items(answer[3], "modules"))
+    )
+    return key, Module(origin, _optional_strings(answer[1], "modules"), state, listings)
 
 
 def decode(data: bytes) -> Fingerprint:

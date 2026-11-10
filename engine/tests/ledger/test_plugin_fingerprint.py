@@ -17,7 +17,9 @@ engine would start without them (spec §5.1: an engine that ran user code is end
 from __future__ import annotations
 
 import dataclasses
+import json
 import os
+import re
 import subprocess
 import sys
 import uuid
@@ -26,6 +28,7 @@ from pathlib import Path
 
 import pytest
 
+import ledger_engine
 from ledger_engine.ledger import create, overlay
 from ledger_engine.ledger.core.ledger_set import Content, Fingerprint, Module
 from ledger_engine.ledger.fingerprint import observe
@@ -110,8 +113,9 @@ def test_a_plugin_source_edit_changes_the_fingerprint(tmp_path: Path, names: Nam
 
 
 def test_an_edit_that_keeps_the_size_and_the_mtime_changes_it(tmp_path: Path, names: Names) -> None:
-    """A stat cannot see it; Python compiles the plugin from its source on every load (spec §5.1), so the next load
-    runs the new code."""
+    """A stat cannot see it. The fingerprint hashes the source, and a load compiles a module from its source alone,
+    never from cached bytecode (`beancount_port._SourceOnly`), so the next load runs the new code; that it does is
+    `test_equal_fingerprints_mean_the_same_code_ran`."""
     plug = names("plug")
     root = ledger(tmp_path / "L", plug)
     src = write(tmp_path / "L" / f"{plug}.py", NOOP + "X = 1\n")
@@ -327,6 +331,168 @@ def test_the_load_lists_each_folder_afresh(tmp_path: Path, names: Names) -> None
     assert unchanged(again)
 
 
+REPORTS = """__plugins__ = ["run"]
+import collections
+E = collections.namedtuple("E", "source message entry")
+
+
+def run(entries, options_map):
+    return entries, [E({"filename": "<plugin>", "lineno": 0}, "CODE=TAG", None)]
+"""
+
+
+def ran(loaded: overlay.Loaded) -> list[str]:
+    return [e.message for e in loaded.errors if e.message.startswith("CODE=")]
+
+
+@pytest.mark.parametrize("mode", ["unchecked", "same_stat"])
+def test_a_load_never_runs_cached_bytecode(tmp_path: Path, names: Names, mode: str) -> None:
+    """S0099 r1 (verifier F1): a `__pycache__` file beside a plugin (`bean-check` leaves one; it may be compiled from
+    other code) is never what runs: the load compiles the source, the file the fingerprint hashes, and writes no
+    bytecode. `unchecked`: a pyc Python would trust without looking at the source; `same_stat`: a timestamp pyc
+    whose source was edited keeping its size and mtime."""
+    import py_compile
+
+    plug = names("plug")
+    root = ledger(tmp_path / "L", plug)
+    src = write(tmp_path / "L" / f"{plug}.py", REPORTS.replace("TAG", "AAAA"))
+    if mode == "unchecked":
+        write(src, REPORTS.replace("TAG", "BBBB"))
+        py_compile.compile(str(src), invalidation_mode=py_compile.PycInvalidationMode.UNCHECKED_HASH)
+        write(src, REPORTS.replace("TAG", "AAAA"))
+    else:
+        py_compile.compile(str(src))  # a timestamp pyc of AAAA
+        st = src.stat()
+        write(src, REPORTS.replace("TAG", "BBBB"))
+        os.utime(src, ns=(st.st_atime_ns, st.st_mtime_ns))
+    want = "CODE=AAAA" if mode == "unchecked" else "CODE=BBBB"
+    cache = tmp_path / "L" / "__pycache__"
+    cached = {p.name: p.read_bytes() for p in cache.iterdir()}
+    loaded = load(root)
+    assert ran(loaded) == [want]
+    assert {p.name: p.read_bytes() for p in cache.iterdir()} == cached  # nothing written either
+
+
+CONTRACT = """
+import json, sys
+from ledger_engine.ledger import overlay
+from ledger_engine.ledger.core.ledger_set import encode
+from ledger_engine.ledger.policy import DESKTOP
+out = overlay.load(sys.argv[1], {}, DESKTOP)
+codes = [e.message for e in out.errors if e.message.startswith("CODE=")]
+print(json.dumps({"fp": encode(out.fingerprint).decode(), "ran": codes}))
+"""
+
+
+def child_env() -> dict[str, str]:
+    """The child imports the same `ledger_engine` as this test (the sources under test, also from a copy)."""
+    return {**os.environ, "PYTHONPATH": str(Path(ledger_engine.__file__).resolve().parents[1])}
+
+
+def fresh_load(root: Path) -> tuple[str, list[str]]:
+    """One load in a fresh process, with the engine's `-s -B` (each job has a fresh engine, spec §5.1)."""
+    out = subprocess.run(  # noqa: S603 (this interpreter, a literal script, a test path)
+        [sys.executable, "-s", "-B", "-c", CONTRACT, str(root)],
+        capture_output=True,
+        text=True,
+        check=True,
+        cwd=root.parent,
+        env=child_env(),
+    )
+    got = json.loads(out.stdout)
+    return got["fp"], got["ran"]
+
+
+@pytest.mark.parametrize("change", ["edit", "same_size_and_mtime", "unchecked_pyc", "stale_timestamp_pyc", "none"])
+def test_equal_fingerprints_mean_the_same_code_ran(tmp_path: Path, change: str) -> None:
+    """The contract end to end (S0099 r1, verifier T1): two loads in fresh processes, a change between them; equal
+    fingerprints must mean the same plugin code ran. A pyc changed beside an unchanged source runs nothing new."""
+    import py_compile
+
+    name = f"ft_s0099_contract_{change}"
+    root = ledger(tmp_path / "L", name)
+    src = write(tmp_path / "L" / f"{name}.py", REPORTS.replace("TAG", "AAAA"))
+    if change == "stale_timestamp_pyc":
+        py_compile.compile(str(src))
+    fp_a, ran_a = fresh_load(root)
+    st = src.stat()
+    if change == "edit":
+        write(src, REPORTS.replace("TAG", "BBBBB"))
+    elif change in ("same_size_and_mtime", "stale_timestamp_pyc"):
+        write(src, REPORTS.replace("TAG", "BBBB"))
+        os.utime(src, ns=(st.st_atime_ns, st.st_mtime_ns))
+    elif change == "unchecked_pyc":
+        write(src, REPORTS.replace("TAG", "BBBB"))
+        py_compile.compile(str(src), invalidation_mode=py_compile.PycInvalidationMode.UNCHECKED_HASH)
+        write(src, REPORTS.replace("TAG", "AAAA"))
+        os.utime(src, ns=(st.st_atime_ns, st.st_mtime_ns))
+    fp_b, ran_b = fresh_load(root)
+    source = src.read_text(encoding="utf-8")
+    assert ran_a == ["CODE=AAAA"]
+    assert ran_b == re.findall(r"CODE=\w+", source)  # the source on disk is what ran
+    assert fp_a != fp_b or ran_a == ran_b  # equal fingerprints, same code
+    assert (fp_a == fp_b) == (change in ("unchecked_pyc", "none"))
+
+
+DISCOVERS = """import importlib, pkgutil
+__plugins__ = ["run"]
+
+
+def run(entries, options_map):
+    errors = []
+    for info in pkgutil.iter_modules(__path__):
+        errors += importlib.import_module(f"{__name__}.{info.name}").check(entries)
+    return entries, errors
+"""
+
+
+def test_a_module_added_to_a_package_that_finds_its_own_modules_changes_it(tmp_path: Path, names: Names) -> None:
+    """S0099 r1 (red team F1): the package lists its folder and imports what it finds, so a new module runs in the
+    next load; each package folder's importable names are in the fingerprint."""
+    pkg = names("rules")
+    root = ledger(tmp_path / "L", pkg)
+    write(tmp_path / "L" / pkg / "__init__.py", DISCOVERS)
+    write(tmp_path / "L" / pkg / "r1.py", "def check(entries):\n    return []\n")
+    fp = fp_of(root)
+    found = answers(fp)[pkg]
+    assert found is not None
+    assert found.listings == (("__init__.py", "r1.py"),)
+    assert unchanged(fp)
+    write(tmp_path / "L" / pkg / "r2.py", "def check(entries):\n    return []\n")
+    assert not unchanged(fp)
+
+
+@pytest.mark.parametrize(
+    "new",
+    ["L/notes.txt", "L/unrelated.py", "L/sub/x.py", "L/PKG/README.md", "L/PKG/__pycache__/x.cpython-313.pyc"],
+)
+def test_a_file_no_import_can_reach_keeps_it(tmp_path: Path, names: Names, new: str) -> None:
+    """Must not change (S0099 r1): only a package's own folders are listed, by importable names; the ledger's folder
+    (a `pythonpath` folder) is not, so an unrelated file beside the ledger never refuses a save."""
+    pkg = names("rules")
+    root = ledger(tmp_path / "L", pkg)
+    write(tmp_path / "L" / pkg / "__init__.py", DISCOVERS)
+    fp = fp_of(root)
+    write(tmp_path / new.replace("PKG", pkg), "")
+    assert unchanged(fp)
+
+
+def test_a_plugin_that_replaces_the_finder_list_leaves_no_recorder_behind(tmp_path: Path, names: Names) -> None:
+    """S0099 r1 (red team F7): the path search is put back in whatever list `sys.meta_path` names after the load."""
+    import importlib.machinery
+
+    plug = names("plug")
+    root = ledger(tmp_path / "L", plug)
+    write(tmp_path / "L" / f"{plug}.py", "import sys\nsys.meta_path = list(sys.meta_path)\n" + NOOP)
+    saved = sys.meta_path
+    try:
+        load(root)
+        assert importlib.machinery.PathFinder in sys.meta_path
+        assert all(type(f).__name__ != "_Recorder" for f in sys.meta_path)
+    finally:
+        sys.meta_path = saved
+
+
 # ---- what keeps it ----------------------------------------------------------------------------------------------
 
 
@@ -426,6 +592,7 @@ def test_the_overlay_load_and_the_real_load_record_the_same_imports(tmp_path: Pa
             text=True,
             check=True,
             cwd=tmp_path,
+            env=child_env(),
         )
         return out.stdout
 

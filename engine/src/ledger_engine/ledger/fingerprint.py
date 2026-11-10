@@ -15,8 +15,9 @@ Beancount turns into entries: a superset cannot miss what Beancount reads, and a
 rebuild or one re-planned save.
 
 The modules a load's imports looked up (`ledger.imports`, S0099, BL-0124) are asked again of the import system's path
-search with the same folders (`beancount_port.find_modules`, fresh folder listings, nothing imported or run), and the
-file found is hashed (`module`): the plugin code the next load would run.
+search with the same folders (`beancount_port.find_modules`, fresh folder listings, nothing imported or run), the
+file found is hashed and a package's folders listed by importable names (`module`): the plugin code the next load would
+run.
 
 A copy streams its sources with `chunks` and checks each with `file_state` (S0081). The save's gate calls it inside
 the save job (`ledger.save`), the rebuild after a save before and after its load (`ledger.rebuild`, S0070); the open's
@@ -28,10 +29,12 @@ from __future__ import annotations
 import errno
 import glob
 import hashlib
+import importlib.machinery
 import os
 import stat
 from collections.abc import Iterator
 from os import path
+from typing import Final
 
 from ledger_engine.ledger import beancount_port as port
 from ledger_engine.ledger.core.ledger_set import (
@@ -41,6 +44,7 @@ from ledger_engine.ledger.core.ledger_set import (
     Fingerprint,
     LedgerSet,
     Module,
+    PackageListing,
     Unreadable,
 )
 
@@ -119,12 +123,37 @@ def document_file(p: str) -> bool:
     return path.exists(p)
 
 
+_IMPORTABLE: Final = tuple(importlib.machinery.all_suffixes())  # `.py`, `.pyc` and the extension module suffixes
+
+
+def package_listing(folder: str) -> PackageListing:
+    """A package folder's importable names: each module file (a name ending in a source, bytecode or extension module
+    suffix) and each subfolder (`name/`; `__pycache__` holds no module of the package), sorted; None when it cannot be
+    listed. What `pkgutil.iter_modules(__path__)` and a listing a plugin makes itself can find (S0099 r1, red team
+    F1); other files, and the folders above the package (a `pythonpath` folder), are not listed."""
+    try:
+        with os.scandir(folder) as entries:
+            names: list[str] = []
+            for e in entries:
+                if e.is_dir():
+                    if e.name != "__pycache__":
+                        names.append(e.name + "/")
+                elif e.name.endswith(_IMPORTABLE):
+                    names.append(e.name)
+    except OSError:
+        return None
+    return tuple(sorted(names))
+
+
 def module(lookup: port.ModuleLookup) -> Module | None:
     """The path search's answer as the fingerprint holds it: None when not found, else where, with the state of the
-    file the loader reads (`file_state`: its bytes' SHA-256, or why there are none)."""
+    file the loader reads (`file_state`: its bytes' SHA-256, or why there are none) and, for a package, the listing of
+    each of its folders."""
     if not lookup.found:
         return None
-    return Module(lookup.origin, lookup.locations, None if lookup.file is None else file_state(lookup.file))
+    state = None if lookup.file is None else file_state(lookup.file)
+    listings = None if lookup.locations is None else tuple(package_listing(d) for d in lookup.locations)
+    return Module(lookup.origin, lookup.locations, state, listings)
 
 
 def observe(ledger_set: LedgerSet) -> Fingerprint:

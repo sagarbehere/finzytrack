@@ -36,17 +36,18 @@ from __future__ import annotations
 
 import datetime
 import decimal
+import errno
 import importlib.machinery
 import io
 import sys
 import zipimport
-from collections.abc import Callable, Generator, Iterable, Iterator, Sequence
+from collections.abc import Buffer, Callable, Generator, Iterable, Iterator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
 from decimal import Decimal
 from importlib.metadata import version
 from types import ModuleType
-from typing import Any, Final, cast
+from typing import Any, Final, cast, override
 
 import beancount.parser.parser as _parser_module
 from beancount.core.amount import Amount as _Amount
@@ -345,9 +346,27 @@ def _lookup(name: str, path: tuple[str, ...], spec: Any) -> ModuleLookup:
     )
 
 
+class _SourceOnly(importlib.machinery.SourceFileLoader):
+    """A module's source loader that never reads cached bytecode (S0099 r1, verifier F1): a `.pyc` in a `__pycache__`
+    folder beside a plugin (left by `bean-check`, or compiled from other code) or under a `pycache_prefix` would run
+    code the fingerprint does not hash. Every read but the source's own fails, so Python compiles from the source, the
+    file hashed; no bytecode is written either, whatever the interpreter's flags (INV-30)."""
+
+    @override
+    def get_data(self, path: str) -> bytes:
+        if path != self.path:
+            raise OSError(errno.ENOENT, "cached bytecode is not read during a load", path)
+        return super().get_data(path)
+
+    @override
+    def set_data(self, path: str, data: Buffer, *, _mode: int = 0o666) -> None:
+        """Never writes."""
+
+
 class _Recorder:
     """The path search, recorded: it asks `PathFinder` with the folders it would search and reports the answer before
-    returning it, so the record is the answer the import used."""
+    returning it, so the record is the answer the import used. A module found as source is loaded from its source
+    alone (`_SourceOnly`)."""
 
     def __init__(self, on_lookup: Callable[[ModuleLookup], None]) -> None:
         self._on_lookup = on_lookup
@@ -356,6 +375,8 @@ class _Recorder:
         search = _search_path(path)
         spec = _PATH_FINDER.find_spec(fullname, list(search), target)
         self._on_lookup(_lookup(fullname, search, spec))
+        if spec is not None and type(spec.loader) is importlib.machinery.SourceFileLoader:
+            spec.loader = _SourceOnly(spec.loader.name, spec.loader.path)
         return spec
 
     def invalidate_caches(self) -> None:
@@ -367,7 +388,9 @@ def recording_imports(on_lookup: Callable[[ModuleLookup], None]) -> Generator[No
     """While the block runs, every module the path search looks up is reported to `on_lookup` before it is loaded.
     The path search's caches (folder listings kept by modification time) are emptied first, so a listing older than
     the load never answers. The engine runs one job at a time on one thread, so the swap in `sys.meta_path` is safe;
-    the path search is put back wherever the recorder then is (a plugin may have added finders)."""
+    the path search is put back wherever the recorder then is, in the list the load started with and in the one
+    `sys.meta_path` names after it (a plugin may add finders, or replace the list). A plugin that removes the recorder
+    leaves its later imports unrecorded (spec §1, "plugin files")."""
     recorder = _Recorder(on_lookup)
     finders: list[object] = sys.meta_path  # pyright: ignore[reportAssignmentType]
     finders[finders.index(_PATH_FINDER)] = recorder
@@ -375,9 +398,11 @@ def recording_imports(on_lookup: Callable[[ModuleLookup], None]) -> Generator[No
     try:
         yield
     finally:
-        for i, finder in enumerate(finders):
-            if finder is recorder:
-                finders[i] = _PATH_FINDER
+        now: list[object] = sys.meta_path  # pyright: ignore[reportAssignmentType]
+        for listed in (finders, now):
+            for i, finder in enumerate(listed):
+                if finder is recorder:
+                    listed[i] = _PATH_FINDER
 
 
 def find_modules(keys: Iterable[tuple[str, tuple[str, ...]]]) -> list[ModuleLookup]:

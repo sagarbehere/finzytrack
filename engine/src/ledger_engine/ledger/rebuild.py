@@ -138,6 +138,14 @@ def _read_by(observed: Fingerprint, used: LedgerSet) -> LedgerSet:
     return LedgerSet(observed.root, files, globs, roots, document_files, tuple(sorted(set(used.modules))))
 
 
+def _ran_other_code(before: Fingerprint, modules: imports.Modules) -> bool:
+    """Whether the load's own record of an import (its answer and the file's hash, taken as it imported) differs from
+    the observation before the load, for a lookup both name (S0099 r1, red team F5): a plugin changed between the two
+    and changed back before the observation after the load would otherwise pass unseen."""
+    observed = dict(before.modules)
+    return any(k in observed and observed[k] != answer for k, answer in modules.items())
+
+
 def _listed(observed: Fingerprint) -> frozenset[str]:
     """Every file a documents root's listing named in `observed`, by the name `os.walk` joins to the root's own string
     (`root/...`), the same join Beancount's documents step makes for the `Document` entries it creates (S0070 r1 F1)."""
@@ -215,10 +223,12 @@ def run(ports: Ports, hint: Fingerprint, job: Job, target: Target) -> Answer:
                 )
                 return Answer("moved", ports.observe(widened), cleaned=cleaned)
             again = ports.observe(ledger_set)
-            if again != before:
+            if again != before or _ran_other_code(before, modules):
                 return Answer("moved", again, cleaned=cleaned)
             return Answer("refused", hint, cleaned=cleaned, refusal=f.reason, refused=f.path, line=f.line)
         entries, errors, options = result
+        if _ran_other_code(before, modules):  # the code it imported is not the code observed before it (r1 F5)
+            return Answer("moved", ports.observe(ledger_set), cleaned=cleaned)
         # Finzytrack's warnings on numbers Beancount rounded (`precision`): the files read again before the set is
         # observed again, so a change in between is a moved disk; a file gone or unreadable meanwhile is one too.
         try:
