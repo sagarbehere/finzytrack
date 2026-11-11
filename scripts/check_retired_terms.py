@@ -49,10 +49,18 @@ the terms the engine-jobs slice retires (the per-request and handshake time limi
 engine command) are refused too; until then they waited in a second, inactive list.
 
 Exit 0 = nothing refused, 1 = refused or a problem with the check's own lists, 2 = the root cannot be read.
+
+`--source [ROOT]` (S0105, BL-0185) is a report, not a check: it lists the active terms in the product source and the
+models (SOURCE_ROOTS; not the tests, which name removed codes to prove them gone, nor this check and its tests, nor
+Markdown, which the check reads) and exits 0. A slice that adds terms runs it and records the count in its journal,
+instead of a hand grep (S0070, S0072, S0073). A failing source scan was measured and not built: on fb529a9c the terms
+hit 28 lines in 245 files, every one legitimate (dated history comments, Copy's current `legacy_locks`, generator
+commands run under `-I`, the trim's leftover names), so it would need an exemption per hit and caught nothing.
 """
 
 from __future__ import annotations
 
+import os
 import re
 import sys
 from dataclasses import dataclass, field
@@ -512,9 +520,45 @@ def check(root: Path, terms: tuple[Term, ...] = ACTIVE, allow: tuple[Allow, ...]
     return problems
 
 
+# S0105 (BL-0185): the trees `--source` lists, and what it leaves out
+SOURCE_ROOTS = ("engine/src", "backend/src", "frontend/src", "shell/src-tauri/src", "scripts", "formal")
+SOURCE_SKIP_DIRS = frozenset({"node_modules", ".venv", "__pycache__", "target", "results", "tests", "dist"})
+SOURCE_SKIP_FILES = frozenset({"scripts/check_retired_terms.py"})
+SOURCE_SUFFIXES = (".py", ".ts", ".mts", ".js", ".mjs", ".vue", ".rs", ".tla", ".cfg", ".sh", ".toml", ".json")
+
+
+def source_hits(root: Path, terms: tuple[Term, ...] = ACTIVE) -> tuple[list[Hit], int]:
+    """Every line of the source trees that holds an active term, and the number of files read."""
+    hits: list[Hit] = []
+    count = 0
+    for top in SOURCE_ROOTS:
+        for folder, dirs, files in os.walk(root / top):
+            dirs[:] = sorted(d for d in dirs if d not in SOURCE_SKIP_DIRS)
+            for name in sorted(files):
+                rel = (Path(folder) / name).relative_to(root).as_posix()
+                if not name.endswith(SOURCE_SUFFIXES) or rel in SOURCE_SKIP_FILES:
+                    continue
+                count += 1
+                text = (root / rel).read_text(encoding="utf-8", errors="replace")
+                hits += [Hit(rel, n, term, line) for n, line in enumerate(text.splitlines(), 1)
+                         for term in line_hits(line, terms)]
+    return hits, count
+
+
 def main(argv: list[str] | None = None) -> int:
     args = sys.argv[1:] if argv is None else argv
+    source = "--source" in args
+    args = [a for a in args if a != "--source"]
     root = Path(args[0]) if args else ROOT
+    if source:
+        if not root.is_dir():
+            print(f"retired terms: {root} is not a folder", file=sys.stderr)
+            return 2
+        hits, count = source_hits(root)
+        for h in hits:
+            print(f"{h.path}:{h.line}: retired term {h.term!r}: {h.text.strip()[:160]}")
+        print(f"retired terms in source: {count} files, {len(hits)} hits (a report; it never fails)")
+        return 0
     if not (root / "design").is_dir():
         print(f"retired terms: {root}/design is not a folder", file=sys.stderr)
         return 2

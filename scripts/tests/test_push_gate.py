@@ -591,9 +591,31 @@ class HookFiles(unittest.TestCase):
     def test_pre_push_lints_the_whole_tree_and_runs_every_oracle_test(self) -> None:
         for line in ('.venv/bin/ruff format --check --config ruff.toml .', '.venv/bin/ruff check --config ruff.toml .',
                      'node_modules/.bin/eslint --max-warnings 0 .', 'node_modules/.bin/prettier --check .',
-                     'python -m unittest discover -s scripts/oracle/tests -q\n'):
+                     'python scripts/run_meta_tests.py --start scripts/oracle/tests --junit "$reports/oracle.xml"\n'):
             self.assertIn(line, self.pre_push)
         self.assertNotIn("-s scripts/oracle/tests -p", self.pre_push)  # no per-file subset
+        self.assertNotIn("--start scripts/oracle/tests -p", self.pre_push)
+
+    def test_every_runner_writes_its_report_and_the_ran_check_follows_the_last(self) -> None:  # S0105, BL-0078
+        sys.path.insert(0, str(SCRIPTS))
+        import check_invariants
+
+        text = self.pre_push
+        self.assertIn('reports="$(mktemp -d)"\n', text)
+        check = text.index('run "enforcement tests ran" python3 scripts/check_invariants.py --ran "$reports"\n')
+        for report, _, _ in check_invariants.REPORTS.values():
+            with self.subTest(report=report):
+                written = text.index(f"$reports/{report}")
+                self.assertLess(text.index('reports="$(mktemp -d)"'), written)
+                self.assertLess(written, check)
+        for runner in ('run "check-script meta-tests"', 'run "oracle tests"', 'run "backend tests"',
+                       'run "engine tests"', 'run "frontend unit tests"'):
+            self.assertLess(text.index(runner), check, runner)
+        self.assertLess(check, text.index('run "check times"'))
+        self.assertIn("--junitxml='$reports/backend.xml'", text)
+        self.assertIn("--junitxml='$reports/engine.xml'", text)
+        self.assertIn("--reporter=default --reporter=junit --outputFile.junit='$reports/frontend.xml'", text)
+        self.assertIn('python3 scripts/run_meta_tests.py --junit "$reports/scripts.xml"\n', text)
 
     def test_the_manual_ci_can_run_a_milestone_exit(self) -> None:  # S0031, M6
         ci = (REPO / ".github/workflows/ci.yml").read_text()
@@ -662,6 +684,68 @@ class RunnersRefuseWhatAStaticScanMisses(unittest.TestCase):
 
         cfg = tomllib.loads((REPO / "backend/pyproject.toml").read_text())["tool"]["pytest"]["ini_options"]
         self.assertEqual(cfg.get("empty_parameter_set_mark"), "fail_at_collect")
+
+
+class ReportsProveTheFileRan(unittest.TestCase):
+    """S0105 (BL-0078): the runners' real JUnit reports, read by `check_invariants.py --ran`, name each enforcement
+    file, and what the static scan misses fails: a conftest hook that deselects or marks the file's tests, a skip
+    reached by string indirection."""
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.dir = Path(self.tmp.name)
+
+    def tearDown(self) -> None:
+        self.tmp.cleanup()
+
+    def ran(self, files: list[str]) -> list[str]:
+        """check_invariants.ran_problems for one enforced invariant naming `files`, with the reports in self.dir."""
+        sys.path.insert(0, str(SCRIPTS))
+        import check_invariants
+
+        paths = ", ".join(f"`{f}`" for f in files)
+        text = f"### INV-01: Ran\n- **Rule:** r\n- **Why:** w\n- **Enforced by:** {paths}\n- **Status:** enforced\n"
+        return check_invariants.ran_problems(text, self.dir / "reports")
+
+    def put(self, rel: str, text: str) -> None:
+        (self.dir / rel).parent.mkdir(parents=True, exist_ok=True)
+        (self.dir / rel).write_text(text)
+
+    @unittest.skipUnless(BACKEND_PYTEST.is_file(), "needs the backend venv (cd backend && uv sync --locked)")
+    def test_one_pytest_run_maps_a_file_and_fails_a_deselected_and_a_hook_skipped_one(self) -> None:  # BL-0078
+        # one run over three planted files (pytest's start-up is the cost): resolved, since under a symlinked
+        # temporary folder pytest names the tests from another root
+        backend = (self.dir / "backend").resolve()
+        ok, gone, marked = (f"backend/tests/platform/test_{n}.py" for n in ("ok", "gone", "marked"))
+        body = "import pytest\n\n\nclass TestB:\n    @pytest.mark.parametrize('n', [1, 2])\n    def test_x(self, n):\n        pass\n"
+        for rel in (ok, gone, marked):
+            self.put(rel, body)
+        self.put("backend/tests/conftest.py", "import pytest\n\n\ndef pytest_collection_modifyitems(config, items):\n"
+                 "    items[:] = [i for i in items if 'test_gone' not in i.nodeid]\n    for i in items:\n"
+                 "        if 'test_marked' in i.nodeid:\n            i.add_marker(getattr(pytest.mark, 'sk' + 'ip')())\n")
+        (self.dir / "reports").mkdir()
+        subprocess.run([str(BACKEND_PYTEST), "-q", "-c", str(REPO / "backend/pyproject.toml"), "--rootdir", str(backend),
+                        f"--junitxml={self.dir / 'reports/backend.xml'}", "tests"],
+                       cwd=backend, capture_output=True, text=True, check=False,
+                       env={**os.environ, "PYTEST_DISABLE_PLUGIN_AUTOLOAD": "1"})  # the venv's plugins: start-up only
+        problems = self.ran([ok, gone, marked])
+        self.assertEqual([p.split(":")[0] for p in problems], [gone, marked], problems)  # the real classname maps
+        self.assertIn("ran no test", problems[0])
+        self.assertIn("skipped 2 of 2", problems[1])
+
+    @unittest.skipUnless(VITEST.is_file(), "needs the frontend packages (cd frontend && pnpm install --frozen-lockfile)")
+    def test_one_vitest_run_maps_a_file_and_fails_a_skip_by_indirection(self) -> None:  # BL-0078
+        front = self.dir / "frontend"
+        ok, skipped = "frontend/tests/unit/ok.test.ts", "frontend/tests/unit/later.test.ts"
+        self.put(ok, "test('a', () => {})\n")
+        self.put(skipped, "const t = test\nt['sk' + 'ip']('a', () => {})\n")
+        (self.dir / "reports").mkdir()
+        subprocess.run([str(VITEST), "run", "--globals", "--root", str(front), "--allowOnly=false",
+                        "--reporter=junit", f"--outputFile.junit={self.dir / 'reports/frontend.xml'}"],
+                       cwd=REPO / "frontend", capture_output=True, text=True, check=False)
+        problems = self.ran([ok, skipped])
+        self.assertEqual([p.split(":")[0] for p in problems], [skipped], problems)
+
 
 
 class Floor(unittest.TestCase):

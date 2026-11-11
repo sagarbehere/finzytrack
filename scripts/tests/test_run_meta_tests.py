@@ -1,6 +1,8 @@
 """Meta-tests for scripts/run_meta_tests.py (S0034): the parallel runner runs exactly the tests `python3 -m unittest
 discover -s scripts/tests` runs, and fails whenever unittest would, and more: a module process that ends without
-its result, a module that runs other tests than were discovered, no tests at all."""
+its result, a module that runs other tests than were discovered, no tests at all. S0105 (BL-0078): with `--junit`, it
+writes one JUnit testcase per test it ran, named by its file, with the skipped and expected failures marked
+skipped, so the pre-push hook can prove the enforcement tests ran."""
 
 from __future__ import annotations
 
@@ -9,6 +11,7 @@ import sys
 import tempfile
 import textwrap
 import unittest
+import xml.etree.ElementTree as ET
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
@@ -71,7 +74,7 @@ class SameTestsAsUnittestDiscover(unittest.TestCase):
         self.assertGreater(len(ids), 500)
 
     def test_the_hooks_and_ci_run_the_runner(self) -> None:
-        self.assertIn('run "check-script meta-tests" python3 scripts/run_meta_tests.py\n',
+        self.assertIn('run "check-script meta-tests" python3 scripts/run_meta_tests.py --junit "$reports/scripts.xml"\n',
                       (REPO / ".githooks/pre-push").read_text())
         self.assertIn("run: python3 scripts/run_meta_tests.py -v\n", (REPO / ".github/workflows/ci.yml").read_text())
         self.assertIn('["python3", "scripts/run_meta_tests.py"]', (REPO / ".claude/hooks/stop_checks.py").read_text())
@@ -110,6 +113,56 @@ class Fixtures(unittest.TestCase):
         self.assertEqual(len(listed), 15)
         self.assertIn("15 tests in 3 modules (6 processes", r.stderr)
         self.assertIn("skipped=3", r.stderr)
+
+    def junit(self, *extra: str) -> tuple[subprocess.CompletedProcess[str], dict[tuple[str, str], bool]]:
+        """The runner with --junit, run from the fixture's parent; {(classname, name): skipped} of its report."""
+        out = Path(self.tmp.name) / "report.xml"
+        r = subprocess.run([PY, str(RUNNER), "--start", str(self.start), "--junit", str(out), *extra],
+                           cwd=self.tmp.name, capture_output=True, text=True, timeout=300)
+        cases = {(c.get("classname", ""), c.get("name", "")): c.find("skipped") is not None
+                 for c in ET.parse(out).getroot().iter("testcase")}
+        return r, cases
+
+    def test_the_junit_report_names_each_test_by_its_file_and_marks_skips(self) -> None:  # S0105, BL-0078
+        self.put("test_fx_a.py", PASSING)
+        self.put("pkg/__init__.py", "")
+        self.put("pkg/test_fx_c.py", PASSING.replace("class A", "class Z"))
+        self.put("base_fx.py", "import unittest\nclass Base(unittest.TestCase):\n    def test_inherited(self): pass\n")
+        self.put("test_fx_sub.py", "import base_fx\nclass Sub(base_fx.Base):\n    pass\n")
+        r, cases = self.junit()
+        self.assertEqual(r.returncode, 0, r.stderr)
+        a, c, sub = "tests/test_fx_a.py", "tests/pkg/test_fx_c.py", "tests/test_fx_sub.py"
+        self.assertEqual(cases, {
+            (a, "test_fx_a.A.test_one"): False, (a, "test_fx_a.A.test_two"): False,
+            (a, "test_fx_a.A.test_skipped"): True, (a, "test_fx_a.A.test_known"): True,
+            (a, "test_fx_a.B.test_three"): False,
+            (c, "pkg.test_fx_c.Z.test_one"): False, (c, "pkg.test_fx_c.Z.test_two"): False,
+            (c, "pkg.test_fx_c.Z.test_skipped"): True, (c, "pkg.test_fx_c.Z.test_known"): True,
+            (c, "pkg.test_fx_c.B.test_three"): False,
+            (sub, "test_fx_sub.Sub.test_inherited"): False,  # by the file that collected it, not where it is defined
+        })
+
+    def test_a_fixture_skip_is_reported_as_skipped(self) -> None:  # S0105, BL-0078
+        self.put("test_fx_cls.py", """
+            import unittest
+            class A(unittest.TestCase):
+                @classmethod
+                def setUpClass(cls):
+                    raise unittest.SkipTest("tool not installed")
+                def test_x(self): pass
+            class B(unittest.TestCase):
+                def test_y(self): pass
+        """)
+        r, cases = self.junit()
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(cases, {("tests/test_fx_cls.py", "test_fx_cls.A.test_x"): True,
+                                 ("tests/test_fx_cls.py", "test_fx_cls.B.test_y"): False})
+
+    def test_a_failing_run_still_writes_its_report(self) -> None:  # S0105: the push fails on the run itself
+        self.put("test_fx_a.py", "import unittest\nclass A(unittest.TestCase):\n    def test_x(self): self.fail()\n")
+        r, cases = self.junit()
+        self.assertEqual(r.returncode, 1)
+        self.assertEqual(list(cases), [("tests/test_fx_a.py", "test_fx_a.A.test_x")])
 
     def test_load_tests_is_honoured(self) -> None:
         self.put("test_fx_load.py", PASSING + textwrap.dedent("""

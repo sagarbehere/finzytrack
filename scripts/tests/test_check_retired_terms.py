@@ -615,6 +615,48 @@ class RealRepository(unittest.TestCase):
         self.assertIn("design/glossary.md:1", r.stdout + r.stderr)
 
 
+class SourceReport(unittest.TestCase):
+    """S0105 (BL-0185; S0070 verifier r1 F3): `--source` lists the active terms in the product source and the models,
+    for a slice that retires names, and never fails: a failing scan would need an exemption for each of the 28
+    legitimate hits measured on fb529a9c (dated history comments, current names, generator commands) and caught no
+    stale one."""
+
+    def report(self, files: dict[str, str]) -> subprocess.CompletedProcess[str]:
+        root = make_root(self, files)
+        return subprocess.run([sys.executable, str(SCRIPT), "--source", str(root)], capture_output=True, text=True,
+                              check=False)  # noqa: S603
+
+    def test_the_source_trees_are_listed_and_the_report_never_fails(self) -> None:
+        listed = {"engine/src/ledger_engine/a.py": "# the semaphore is gone\n",
+                  "backend/src/app/b.py": "x = 1\nLOCK_HELD = 2\n",
+                  "frontend/src/c.ts": "// React\n",
+                  "shell/src-tauri/src/d.rs": "// engine pool\n",
+                  "formal/tla/engine-jobs/E.tla": "\\* NeedR4\n",
+                  "scripts/e.py": "# admission\n"}
+        r = self.report(listed)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        hits = sorted(line.split(":")[0] for line in r.stdout.splitlines() if ": retired term " in line)
+        self.assertEqual(hits, sorted(listed))
+        self.assertIn("backend/src/app/b.py:2:", r.stdout)
+        self.assertIn("6 hits (a report; it never fails)", r.stdout)
+
+    def test_tests_history_and_the_checks_own_lists_are_not_listed(self) -> None:
+        r = self.report({"backend/tests/test_a.py": "# semaphore\n", "engine/tests/test_b.py": "# semaphore\n",
+                         "scripts/check_retired_terms.py": "# semaphore\n",
+                         "scripts/tests/test_check_retired_terms.py": "# semaphore\n",
+                         "formal/tla/engine-jobs/MAPPING.md": "a semaphore\n",
+                         "formal/tla/engine-jobs/results/run.txt": "a semaphore\n",
+                         "frontend/node_modules/x/index.js": "// semaphore\n",
+                         "engine/.venv/lib/x.py": "# semaphore\n"})
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn(" 0 hits (a report; it never fails)", r.stdout)
+
+    def test_the_repository_report_runs(self) -> None:
+        r = subprocess.run([sys.executable, str(SCRIPT), "--source"], capture_output=True, text=True, check=False)  # noqa: S603
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertRegex(r.stdout, r"retired terms in source: \d{3,} files, \d+ hits")
+
+
 if __name__ == "__main__":
     unittest.main()
 

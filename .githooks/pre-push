@@ -31,6 +31,9 @@ if ! ranges="$(printf '%s\n' "$refs" | python3 scripts/check_push.py "$remote_na
   exit 1
 fi
 head_at_start="$(git rev-parse HEAD)"
+# S0105 (BL-0078): each test runner writes a JUnit report here; after the last runner, check_invariants.py --ran proves
+# that every test file an enforced invariant names ran at least one test and skipped none.
+reports="$(mktemp -d)"
 
 fail=0
 # S0034: the timer exits 0 only for a check that ran and passed; the canary fails the push if it passes `false`.
@@ -56,7 +59,7 @@ done <<< "$ranges"
 # A backstop over the whole pushed tree (S0031 verifier F5): the staged-file guard on every tracked file.
 run "staged-file guard (all tracked files)" bash -c "set -o pipefail; git ls-files -z | xargs -0 python3 scripts/check_staged.py --paths"
 # In parallel, one process per test class; the same tests as `unittest discover -s scripts/tests` (S0034).
-run "check-script meta-tests" python3 scripts/run_meta_tests.py
+run "check-script meta-tests" python3 scripts/run_meta_tests.py --junit "$reports/scripts.xml"
 run "privacy scan (all tracked files)" python3 scripts/privacy_scan.py --all --quiet
 run "invariants" python3 scripts/check_invariants.py
 run "capability map" python3 scripts/check_capabilities.py
@@ -66,8 +69,9 @@ uv_bin="$(command -v uv || echo "$HOME/.local/bin/uv")"
 run "write corpus" python3 scripts/check_write_corpus.py
 # Every oracle test in the oracle environment (Beancount 3.2.0), about 10 s (S0031, M4; it replaced four
 # per-file runs): the write corpus in Beancount (S0020), the INV-21 goldens (S0022), the Beancount domain vectors
-# (S0024), the demo generator at every size (S0027), and the harness's INV-24 copy and launcher guards.
-run "oracle tests" "$uv_bin" run --project scripts/oracle --locked python -m unittest discover -s scripts/oracle/tests -q
+# (S0024), the demo generator at every size (S0027), and the harness's INV-24 copy and launcher guards. Through the
+# meta-test runner since S0105: exactly the tests unittest discover finds, with a JUnit report.
+run "oracle tests" "$uv_bin" run --project scripts/oracle --locked python scripts/run_meta_tests.py --start scripts/oracle/tests --junit "$reports/oracle.xml"
 # ADR-0060: CI no longer runs per push, so new Cargo.lock entries' publish dates are verified here (network only
 # when the lock gained entries since the remote branch; one request a second, so its time grows with them).
 upstream="$(git rev-parse --verify --quiet '@{u}' || echo none)"
@@ -81,7 +85,7 @@ if [[ -f backend/pyproject.toml ]]; then
   run "pyright" bash -c "cd backend && .venv/bin/pyright"
   run "import contracts" bash -c "cd backend && .venv/bin/lint-imports"
   run "declared dependencies" bash -c "cd backend && .venv/bin/deptry src"
-  run "backend tests" bash -c "cd backend && .venv/bin/pytest -q -x"
+  run "backend tests" bash -c "cd backend && .venv/bin/pytest -q -x --junitxml='$reports/backend.xml'"
 fi
 # The ledger engine, its own environment (S0035, ADR-0054): format, lint, strict types and tests, incl. its
 # architecture test (the import boundary). The backend tests above also need engine/.venv: they spawn the engine.
@@ -89,7 +93,7 @@ if [[ -f engine/pyproject.toml ]]; then
   run "ruff format (engine)" bash -c "cd engine && .venv/bin/ruff format --check --config ruff.toml ."
   run "ruff lint (engine)" bash -c "cd engine && .venv/bin/ruff check --config ruff.toml ."
   run "pyright (engine)" bash -c "cd engine && .venv/bin/pyright"
-  run "engine tests" bash -c "cd engine && .venv/bin/python -m pytest -q -x"
+  run "engine tests" bash -c "cd engine && .venv/bin/python -m pytest -q -x --junitxml='$reports/engine.xml'"
 fi
 if [[ -f shell/src-tauri/Cargo.toml ]]; then
   cargo_bin="$(command -v cargo || echo "$HOME/.cargo/bin/cargo")"
@@ -103,12 +107,15 @@ if [[ -f frontend/package.json ]]; then
   run "vue-tsc" bash -c "cd frontend && node_modules/.bin/vue-tsc --noEmit"
   # --allowOnly=false: a `.only` in any spelling (`it.only`, `{ only: true }`, aliases) fails the run instead of
   # skipping the file's other tests (S0031 verifier R2-2).
-  run "frontend unit tests" bash -c "cd frontend && node_modules/.bin/vitest run --allowOnly=false"
+  run "frontend unit tests" bash -c "cd frontend && node_modules/.bin/vitest run --allowOnly=false --reporter=default --reporter=junit --outputFile.junit='$reports/frontend.xml'"
   run "unused code and dependencies (knip)" bash -c "cd frontend && node_modules/.bin/knip"
 fi
+# After the last test runner (S0105, BL-0078): the enforcement tests ran and skipped none.
+run "enforcement tests ran" python3 scripts/check_invariants.py --ran "$reports"
 # Last (S0031 verifier F3): HEAD and the tree are still what the checks started on; a process that changed the
 # tree during the checks changed what they tested.
 # Information only (it never fails): this push's check times against their usual times, and the total (S0034).
 run "check times" python3 scripts/gate_timer.py report pre-push
 run "tree unchanged during the checks" python3 scripts/check_push.py --still "$head_at_start"
+rm -rf "$reports"
 exit "$fail"

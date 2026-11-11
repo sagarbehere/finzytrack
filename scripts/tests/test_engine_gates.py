@@ -122,7 +122,8 @@ class EngineChecksAreWired(unittest.TestCase):
                      'ruff.toml ."',
                      'run "ruff lint (engine)" bash -c "cd engine && .venv/bin/ruff check --config ruff.toml ."',
                      'run "pyright (engine)" bash -c "cd engine && .venv/bin/pyright"',
-                     'run "engine tests" bash -c "cd engine && .venv/bin/python -m pytest -q -x"'):
+                     'run "engine tests" bash -c "cd engine && .venv/bin/python -m pytest -q -x '
+                     "--junitxml='$reports/engine.xml'\""):
             self.assertIn("\n  " + line + "\n", block + "\n")
         # before the final checks: the time report and the tree re-check stay last
         self.assertLess(text.index('run "engine tests"'), text.index('run "check times"'))

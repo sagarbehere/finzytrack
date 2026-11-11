@@ -26,15 +26,24 @@ Rules:
     not by the passage of time (S0023);
   - fixme markers in the test trees (S0029): each names an open or in-progress backlog row with the same
     milestone (so the row keeps a milestone-exit run red), and a milestone-exit run fails on a fixme due by it.
+With `--ran DIR` (S0105, BL-0078; the pre-push hook, after the last test runner) it checks instead that the
+enforcement tests ran: each test file on an `enforced` Enforced-by line ran at least one test and skipped none, read
+from the runners' JUnit reports in DIR (REPORTS: pytest's for the backend and the engine, vitest's, and
+run_meta_tests.py's for the meta-tests and the oracle tests). A report that is missing or does not parse, and an
+enforcement test no report covers, fail. This sees what the static scan cannot: a conftest hook that deselects or
+marks items, the pytest configuration, string indirection.
+Usage: python3 scripts/check_invariants.py [--ran DIR]
 Exit 0 = ok, 1 = problems.
 """
 
 from __future__ import annotations
 
+import argparse
 import ast
 import os
 import re
 import sys
+import xml.etree.ElementTree as ET
 from pathlib import Path, PurePosixPath
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -53,8 +62,20 @@ PUSHED_TEST_ROOTS = {
     "backend/tests/": ".venv/bin/pytest",
     "frontend/tests/": "node_modules/.bin/vitest run",
     "scripts/tests/": "scripts/run_meta_tests.py",  # S0034: the parallel runner of `discover -s scripts/tests`
-    "scripts/oracle/tests/": "discover -s scripts/oracle/tests",
+    "scripts/oracle/tests/": "run_meta_tests.py --start scripts/oracle/tests",  # S0105: the runner, for its report
     "engine/tests/": "cd engine && .venv/bin/python -m pytest",  # S0049: the engine's own environment (S0035)
+}
+
+
+# S0105 (BL-0078): the JUnit report each pushed test folder's runner writes (a file in the hook's report folder), the
+# folder its testcases are named from, and how: `module` is pytest's classname (the test file's dotted path from the
+# package root, then any class), `path` the file's path from that folder (vitest; run_meta_tests.py, run from the root).
+REPORTS = {
+    "backend/tests/": ("backend.xml", "backend/", "module"),
+    "engine/tests/": ("engine.xml", "engine/", "module"),
+    "frontend/tests/": ("frontend.xml", "frontend/", "path"),
+    "scripts/tests/": ("scripts.xml", "", "path"),
+    "scripts/oracle/tests/": ("oracle.xml", "", "path"),
 }
 
 
@@ -288,8 +309,9 @@ def _darwin_only(call: ast.Call | None) -> bool:
             and cond.comparators[0].value == "darwin")
 
 
-def _py_disabling(rel: str, text: str, names: set[str], allow_darwin: bool) -> list[str]:
-    """Every Name, attribute, import or definition in `names` (S0031: an enforcement file, a conftest above one)."""
+def _py_disabling(rel: str, text: str, names: set[str], allow_darwin: bool, parametrize: bool = True) -> list[str]:
+    """Every Name, attribute, import or definition in `names` (S0031: an enforcement file, a conftest above one), and
+    with `parametrize`, every parametrize whose list is not a non-empty literal."""
     try:
         tree = ast.parse(text)
     except SyntaxError as exc:
@@ -316,7 +338,7 @@ def _py_disabling(rel: str, text: str, names: set[str], allow_darwin: bool) -> l
             if allow_darwin and isinstance(node, ast.Attribute) and _darwin_only(calls.get(id(node))):
                 continue
             out.append(f"{rel}:{getattr(node, 'lineno', '?')}: `{name}` switches a test off in an enforcement file")
-    for call in calls.values():  # S0031 verifier F1: an empty parameter list makes pytest skip the test
+    for call in calls.values() if parametrize else ():  # S0031 verifier F1: an empty parameter list skips the test
         func = call.func
         if (func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", "")) != "parametrize":
             continue
@@ -327,12 +349,14 @@ def _py_disabling(rel: str, text: str, names: set[str], allow_darwin: bool) -> l
     return out
 
 
-def switched_off(rel: str, text: str, root: Path) -> list[str]:
-    """S0031 (M2): the ways a test is switched off, in an enforcement file and the conftest.py files above it."""
+def switched_off(rel: str, text: str, root: Path, parametrize: bool = True) -> list[str]:
+    """S0031 (M2): the ways a test is switched off, in an enforcement file and the conftest.py files above it.
+    `parametrize=False` (a capability's tagged test, S0105) leaves out the static parametrize rule: the backend's
+    and the engine's pytest configuration fail an empty parameter set at collection."""
     if not is_test(rel):  # S0031 verifier F8: the name rules are for test files; `skip = None` in a check is fine
         return []
     if rel.endswith(".py"):
-        errors = _py_disabling(rel, text, PY_DISABLE_STRICT, allow_darwin=True)
+        errors = _py_disabling(rel, text, PY_DISABLE_STRICT, allow_darwin=True, parametrize=parametrize)
         parent = PurePosixPath(rel).parent
         for folder in [parent, *parent.parents]:
             conf = root / folder / "conftest.py"
@@ -470,8 +494,69 @@ def check(text: str, root: Path, backlog: str | None, milestone_exit: str | None
     return errors
 
 
-def main(root: Path = ROOT) -> int:
+def enforcement_tests(text: str) -> list[str]:
+    """The test files named on the Enforced-by line of every `enforced` invariant, once each."""
+    out: list[str] = []
+    for inv in parse(text):
+        f = inv["fields"]
+        if f.get("Status", "") == "enforced":
+            out += [t for t in PATH_TOKEN.findall(f.get("Enforced by", "")) if looks_like_path(t) and is_test(t)]
+    return list(dict.fromkeys(out))
+
+
+def report_for(path: str) -> tuple[str, str, str] | None:
+    """The REPORTS entry of the folder that holds `path` (the longest folder that matches), or None."""
+    folders = [f for f in REPORTS if path.startswith(f)]
+    return REPORTS[max(folders, key=len)] if folders else None
+
+
+def _testcase_name(path: str, base: str, kind: str) -> str:
+    rel = path[len(base):]
+    return rel[:-3].replace("/", ".") if kind == "module" and rel.endswith(".py") else rel
+
+
+def ran_problems(text: str, reports: Path) -> list[str]:
+    """S0105 (BL-0078): every enforcement test file ran at least one test and skipped none."""
+    problems: list[str] = []
+    loaded: dict[str, list[ET.Element] | None] = {}
+    for path in enforcement_tests(text):
+        entry = report_for(path)
+        if entry is None:
+            problems.append(f"{path}: no runner report covers this enforcement test, so it is not proven to run")
+            continue
+        report, base, kind = entry
+        if report not in loaded:
+            try:
+                loaded[report] = list(ET.parse(reports / report).getroot().iter("testcase"))
+            except (OSError, ET.ParseError) as e:
+                loaded[report] = None
+                problems.append(f"{report}: the runner's report cannot be read ({e}); the enforcement tests it covers "
+                                "are not proven to run")
+        cases = loaded[report]
+        if cases is None:
+            continue
+        name = _testcase_name(path, base, kind)
+        mine = [c for c in cases if (c.get("classname") or "") == name
+                or kind == "module" and (c.get("classname") or "").startswith(name + ".")]
+        skipped = [c.get("name", "?") for c in mine if c.find("skipped") is not None]
+        if not mine:
+            problems.append(f"{path}: ran no test at this push (not in {report}); an enforcement test must run")
+        elif skipped:
+            problems.append(f"{path}: skipped {len(skipped)} of {len(mine)} tests at this push ({', '.join(skipped[:3])})"
+                            "; an enforcement test may not be skipped")
+    return problems
+
+
+def main(root: Path = ROOT, argv: list[str] | None = None) -> int:
+    ap = argparse.ArgumentParser(description="Invariant coverage check.")
+    ap.add_argument("--ran", type=Path, help="the folder of the test runners' JUnit reports (pre-push, S0105)")
+    args = ap.parse_args([] if argv is None else argv)
     text = (root / "design/INVARIANTS.md").read_text(encoding="utf-8")
+    if args.ran is not None:
+        problems = ran_problems(text, args.ran)
+        for e in problems:
+            print(f"check-invariants: {e}", file=sys.stderr)
+        return 1 if problems else 0
     bl = root / "design/backlog.md"
     backlog = bl.read_text(encoding="utf-8") if bl.exists() else None
     milestone_exit = os.environ.get("FT_MILESTONE_EXIT")
@@ -487,4 +572,4 @@ def main(root: Path = ROOT) -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(main(argv=sys.argv[1:]))

@@ -6,6 +6,7 @@ import re
 import sys
 import tempfile
 import unittest
+import xml.etree.ElementTree as ET
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -734,6 +735,120 @@ class FixmeScanCoversTheScriptTests(unittest.TestCase):
     def test_outside_the_protected_places_a_platform_skip_stays(self) -> None:
         body = "import unittest\n" + "@" + "unittest.skipUnless(False, 'legacy tags not in this clone')\nclass T(unittest.TestCase):\n    pass\n"
         self.assertEqual(self.errors("scripts/tests/test_a.py", body), [])
+
+
+RAN_FILES = {
+    "backend/tests/platform/test_b.py": ("backend.xml", "tests.platform.test_b"),
+    "engine/tests/ledger/test_e.py": ("engine.xml", "tests.ledger.test_e.TestE"),
+    "frontend/tests/unit/f.test.ts": ("frontend.xml", "tests/unit/f.test.ts"),
+    "scripts/tests/test_s.py": ("scripts.xml", "scripts/tests/test_s.py"),
+    "scripts/oracle/tests/test_o.py": ("oracle.xml", "scripts/oracle/tests/test_o.py"),
+}
+RAN_INVARIANTS = """
+### INV-01: Ran
+- **Rule:** r
+- **Why:** w
+- **Enforced by:** {paths}, `scripts/check_x.py`
+- **Status:** enforced
+""".format(paths=", ".join(f"`{p}`" for p in RAN_FILES))
+REPO_ROOT = Path(__file__).resolve().parents[2]
+
+
+class EnforcementTestsRan(unittest.TestCase):
+    """S0105 (BL-0078; S0031 verifier F1 and round 2): at push, every test file an enforced invariant names ran at
+    least one test and skipped none, read from the runners' JUnit reports; what the static scan cannot see (a
+    conftest hook that deselects, the pytest configuration, string indirection) fails here."""
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name) / "repo"
+        self.reports = Path(self.tmp.name) / "reports"
+        self.reports.mkdir()
+        for rel in RAN_FILES:
+            self.put(rel, "# INV-01\n")
+        self.put("scripts/check_x.py", "# INV-01\n")
+        self.cases: dict[str, list[tuple[str, str, bool]]] = {}
+        for rel, (report, classname) in RAN_FILES.items():
+            self.cases.setdefault(report, []).append((classname, "test_a", False))
+
+    def tearDown(self) -> None:
+        self.tmp.cleanup()
+
+    def put(self, rel: str, text: str) -> None:
+        (self.root / rel).parent.mkdir(parents=True, exist_ok=True)
+        (self.root / rel).write_text(text)
+
+    def write(self) -> None:
+        for report, cases in self.cases.items():
+            suite = ET.Element("testsuite")
+            for classname, name, skipped in cases:
+                case = ET.SubElement(suite, "testcase", classname=classname, name=name)
+                if skipped:
+                    ET.SubElement(case, "skipped", message="later")
+            ET.ElementTree(suite).write(self.reports / report)
+
+    def problems(self, text: str = RAN_INVARIANTS) -> list[str]:
+        self.write()
+        return ci.ran_problems(text, self.reports)
+
+    def test_every_file_ran_passes(self) -> None:
+        self.assertEqual(self.problems(), [])
+        self.cases["backend.xml"].append(("tests.platform.test_b", "test_b2[1]", False))  # parametrized
+        self.cases["scripts.xml"].append(("scripts/tests/test_other.py", "test_skipped", True))  # not named
+        self.assertEqual(self.problems(), [])
+
+    def test_reports_that_must_not_pass(self) -> None:
+        cases = {
+            "a backend file that ran nothing": ("backend.xml", [("tests.platform.test_other", "test_a", False)]),
+            "a module name that only starts with the file's": ("backend.xml", [("tests.platform.test_bx", "test_a", False)]),
+            "a file of the same name in another folder": ("backend.xml", [("tests.test_b", "test_a", False)]),
+            "an engine test skipped": ("engine.xml", [("tests.ledger.test_e.TestE", "test_a", True)]),
+            "one of two skipped": ("engine.xml", [("tests.ledger.test_e", "test_a", False),
+                                                  ("tests.ledger.test_e", "test_b", True)]),
+            "a frontend test skipped": ("frontend.xml", [("tests/unit/f.test.ts", "a > b", True)]),
+            "a frontend path given as a module": ("frontend.xml", [("tests.unit.f", "a", False)]),
+            "a meta-test path from another root": ("scripts.xml", [("tests/test_s.py", "test_a", False)]),
+            "an oracle test reported under the meta-tests' name": ("oracle.xml", [("scripts/tests/test_o.py", "t", False)]),
+            "an empty report": ("scripts.xml", []),
+        }
+        for name, (report, entries) in cases.items():
+            with self.subTest(case=name):
+                saved = self.cases[report]
+                self.cases[report] = entries
+                self.assertNotEqual(self.problems(), [], name)
+                self.cases[report] = saved
+
+    def test_a_missing_or_unreadable_report_fails(self) -> None:
+        for report in ("backend.xml", "engine.xml", "frontend.xml", "scripts.xml", "oracle.xml"):
+            with self.subTest(report=report):
+                self.write()
+                (self.reports / report).unlink()
+                self.assertTrue(any(report in p for p in ci.ran_problems(RAN_INVARIANTS, self.reports)))
+                (self.reports / report).write_text("<testsuite><testcase")
+                self.assertTrue(any(report in p for p in ci.ran_problems(RAN_INVARIANTS, self.reports)))
+
+    def test_an_enforcement_test_no_report_covers_fails(self) -> None:
+        self.put("scripts/acceptance/tests/test_x.py", "# INV-01\n")
+        text = RAN_INVARIANTS.replace("`scripts/check_x.py`", "`scripts/acceptance/tests/test_x.py`")
+        self.assertTrue(any("scripts/acceptance/tests/test_x.py" in p for p in self.problems(text)))
+
+    def test_only_enforced_invariants_count(self) -> None:
+        text = RAN_INVARIANTS.replace("- **Status:** enforced", "- **Status:** review-only")
+        self.cases = {}
+        self.assertEqual(self.problems(text), [])
+
+    def test_the_command_line(self) -> None:
+        self.put("design/INVARIANTS.md", RAN_INVARIANTS)
+        self.write()
+        self.assertEqual(ci.main(self.root, ["--ran", str(self.reports)]), 0)
+        (self.reports / "engine.xml").unlink()
+        self.assertEqual(ci.main(self.root, ["--ran", str(self.reports)]), 1)
+
+    def test_every_enforcement_test_of_the_repository_has_a_report(self) -> None:
+        text = (REPO_ROOT / "design/INVARIANTS.md").read_text(encoding="utf-8")
+        tests = ci.enforcement_tests(text)
+        self.assertGreater(len(tests), 20)
+        self.assertEqual([p for p in tests if ci.report_for(p) is None], [])
 
 
 if __name__ == "__main__":
