@@ -242,6 +242,7 @@ class GuardTest(unittest.TestCase):
             f"gh issue comment 12 --body='a `{gc}` in backticks'",
             f"git commit -m 'multi\nline; {gc}\n'",
             f"git commit -m 'a' && git log --oneline -1",
+            f"git commit -q -F - <<'EOF'\nmentions {hp} and {gc}\nEOF",  # a quoted heredoc body is data (S0054)
         ]
         for cmd in allowed:
             with self.subTest(allowed=cmd):
@@ -266,6 +267,15 @@ class GuardTest(unittest.TestCase):
             f"git commit -m \\' -m ' -m '; {gc}; echo '#'",  # an escaped quote shifts every later quote
             f"git commit -m $'x\\' -m '; {gc}; #'",  # in $'...', \' does not end it
             f"git commit -m 'a'; git -C . commit -m '{hp} x'",  # a separator starts a new command
+            # round 1 F1 (High): a heredoc body run as code is never blanked; in an unquoted heredoc, single quotes
+            # are literal and the outer shell runs $(...) and backticks
+            f"bash <<EOF\ngit commit -m 'x $({gc})'\nEOF",
+            f"bash <<EOF\ngit commit -m 'x `{gc}`'\nEOF",
+            f"cat <<EOF | sh\ngit commit -m 'x $({gc})'\nEOF",
+            f"bash <<EOF\ngit tag -m 'v $({gc})' v1\nEOF",
+            f"bash <<EOF\ngh pr create --title 'v `{gc}`'\nEOF",
+            f"cat <<EOF\ngit commit -m 'x $({gc})'",  # no end line: bash still expands the body
+            f"git commit -F - <<EOF\nx\nEOF\ngit commit -m '{hp} x'",  # after a heredoc, nothing is blanked
         ]
         # Not refused today and unchanged (outside the owner's shapes, stated in the hook's docstring): a command
         # after a lone `&`, and a separator inside double quotes or inside a quote of another option (the split

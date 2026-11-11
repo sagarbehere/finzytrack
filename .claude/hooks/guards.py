@@ -136,8 +136,10 @@ def _quoted_messages_as_data(command: str) -> str:
     """`command` with the single-quoted value of a message option blanked to `'MSG'` (BL-0054): `git commit -m`,
     `--message`, `-F`; `git tag -m`; `gh ... --body`, `--title`; as `-m '...'` or `--message='...'`, the command
     starting at the line's start or after `;`, `&`, `|`, `(` or a newline, with nothing before `git` or `gh`. From the
-    first double quote, backslash, `$'`, `$"` or comment on, nothing more is blanked (bash's quoting there is not
-    followed), so every shape bash would execute still reaches the split."""
+    first double quote, backslash, `$'`, `$"`, comment or `<<` on, nothing more is blanked (bash's quoting there is
+    not followed), so every shape bash would execute still reaches the split. The `<<` stop keeps every heredoc body
+    out (S0105 part B round 1, F1): a body fed to a shell, or one without its end line, stays code, and inside an
+    unquoted heredoc single quotes are literal while `$(...)` and backticks run."""
     out: list[str] = []
     words: list[str] = []
     word = ""
@@ -165,7 +167,8 @@ def _quoted_messages_as_data(command: str) -> str:
                 word += command[i + 1:end]
             i = end + 1
             continue
-        elif c in '"\\' or (c == "$" and command[i + 1:i + 2] in ("'", '"')) or (c == "#" and not word):
+        elif c in '"\\' or (c == "$" and command[i + 1:i + 2] in ("'", '"')) or (c == "#" and not word) \
+                or command.startswith("<<", i):
             break
         else:
             word += c

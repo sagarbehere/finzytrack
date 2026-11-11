@@ -77,13 +77,30 @@ class OtherPlatformsAndOptions(unittest.TestCase):
                 self.assertTrue(problems, line)
         reqs, problems = cl.runtime_requirements(EXPORT + "--extra-index-url https://example.org/simple\n")
         self.assertEqual(problems, [])
-        self.assertEqual(set(reqs), {"fastapi", "typing-extensions", "pydantic"})
+        self.assertEqual({r.name for r in reqs}, {"fastapi", "typing-extensions", "pydantic"})
 
     def test_markers_and_versions_are_read(self) -> None:
         reqs, _ = cl.runtime_requirements(MARKED + "pydantic[email]==2.14.0\n")
-        self.assertEqual(reqs["colorama"], cl.Requirement("colorama", "0.4.6", COLORAMA))
-        self.assertEqual(reqs["fastapi"], cl.Requirement("fastapi", "0.143.0", None))
-        self.assertEqual(reqs["pydantic"].version, "2.14.0")
+        self.assertEqual(reqs, [cl.Requirement("fastapi", "0.143.0", None), cl.Requirement("colorama", "0.4.6", COLORAMA),
+                                cl.Requirement("pydantic", "2.14.0", None)])
+
+    def test_every_forked_version_is_judged(self) -> None:  # S0105 part B round 1, F2
+        win, lin = "sys_platform == 'win32'", "sys_platform == 'linux'"
+        export = f"fastapi==0.143.0\nfoo==1.0 ; {win}\nfoo==2.0 ; {lin}\n"
+        reqs, _ = cl.runtime_requirements(export)
+        self.assertEqual([r.version for r in reqs if r.name == "foo"], ["1.0", "2.0"])
+        holds = {win: False, lin: False}
+        for entry in ("2.0", "1.0"):  # an entry for one fork never covers the other
+            with self.subTest(entry=entry), self.assertRaises(SystemExit):
+                cl.bundled([("fastapi", "0.143.0", "MIT")], reqs, "backend", {"foo": cl.Elsewhere(entry, "MIT", "x", "")},
+                           holds, set())
+        # a fork whose version is installed here, the other bundled elsewhere with its entry
+        deps = cl.bundled([("fastapi", "0.143.0", "MIT"), ("foo", "2.0", "MIT")], reqs, "backend",
+                          {"foo": cl.Elsewhere("1.0", "BSD-3-Clause", "x", "")}, {win: False, lin: True}, set())
+        self.assertEqual(deps, [("fastapi", "0.143.0", "MIT"), ("foo", "1.0", "BSD-3-Clause"), ("foo", "2.0", "MIT")])
+        with self.assertRaises(SystemExit):  # the installed version is not the pinned one
+            cl.bundled([("fastapi", "0.143.0", "MIT"), ("foo", "3.0", "MIT")], reqs, "backend",
+                       {"foo": cl.Elsewhere("1.0", "BSD-3-Clause", "x", "")}, {win: False, lin: True}, set())
 
     def bundle(self, holds: dict[str, bool], elsewhere: dict | None = None, export: str = MARKED):
         reqs, _ = cl.runtime_requirements(export)

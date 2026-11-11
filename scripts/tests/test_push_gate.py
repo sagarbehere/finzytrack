@@ -792,6 +792,10 @@ class Floor(unittest.TestCase):
         self.assertEqual(sorted(m for p in parts for m in git_range.commit_messages(p)),
                          sorted(git_range.commit_messages(whole)))
 
+    def test_each_part_has_exactly_one_scanning_class(self) -> None:  # S0105 part B round 1, F3
+        parts = sorted(c.PART for c in _HistoryPart.__subclasses__() if issubclass(c, unittest.TestCase))
+        self.assertEqual(parts, list(range(HISTORY_PARTS)))
+
 
 # S0031 verifier R2-4: the known history from the floor passes the range scan. 796353ab is the commit the round-2
 # verifier read; every older finding is in privacy_scan.HISTORY_BASELINE. S0105 (BL-0080): the range is scanned in

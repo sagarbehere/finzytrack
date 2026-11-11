@@ -85,9 +85,11 @@ class Elsewhere:
 HARMLESS_OPTIONS = ("--index-url", "--extra-index-url")
 
 
-def runtime_requirements(requirements: str) -> tuple[dict[str, Requirement], list[str]]:
-    """The requirements of `uv export` output by normalized name, and the option lines that fail closed."""
-    reqs: dict[str, Requirement] = {}
+def runtime_requirements(requirements: str) -> tuple[list[Requirement], list[str]]:
+    """Every requirement line of `uv export` output, and the option lines that fail closed. A universal resolution
+    may fork a package into one line per platform with different versions, so each line is kept and judged on its
+    own (S0105 part B round 1, F2)."""
+    reqs: list[Requirement] = []
     problems: list[str] = []
     for raw in requirements.splitlines():
         line = raw.split(" #", 1)[0].strip() if not raw.lstrip().startswith("#") else ""
@@ -101,30 +103,31 @@ def runtime_requirements(requirements: str) -> tuple[dict[str, Requirement], lis
         spec, _, marker = line.partition(";")
         name = norm(re.split(r"[=<>!~\[ @]", spec.strip(), maxsplit=1)[0])
         pinned = re.search(r"==\s*([^\s,;]+)", spec)
-        reqs[name] = Requirement(name, pinned.group(1) if pinned else None, marker.strip() or None)
+        reqs.append(Requirement(name, pinned.group(1) if pinned else None, marker.strip() or None))
     return reqs, problems
 
 
 def runtime_names(requirements: str) -> set[str]:
     """Package names in `uv export` requirements output (comments, markers and options ignored)."""
-    return set(runtime_requirements(requirements)[0])
+    return {r.name for r in runtime_requirements(requirements)[0]}
 
 
 def bundled(
-    installed: list[tuple[str, str, str]], runtime: set[str] | dict[str, Requirement], project: str = "backend",
+    installed: list[tuple[str, str, str]], runtime: set[str] | list[Requirement], project: str = "backend",
     elsewhere: dict[str, Elsewhere] | None = None, holds: dict[str, bool] | None = None, used: set[str] | None = None,
 ) -> list[tuple[str, str, str]]:
-    """The bundled packages: the installed runtime packages, and each runtime package bundled on another OS only (its
-    marker does not hold here) as its reviewed `elsewhere` entry for its exact pinned version (named in `used`). Any
-    other runtime package missing from the venv fails closed."""
+    """The bundled packages: for each requirement line, the installed package (of its pinned version), or, when its
+    marker does not hold here, its reviewed `elsewhere` entry for its exact pinned version (named in `used`). Any other
+    line fails closed, so a forked line of another version is never covered by its sibling."""
     by_name = {norm(n): (n, v, lic) for n, v, lic in installed}
-    reqs = runtime if isinstance(runtime, dict) else {n: Requirement(n, None, None) for n in runtime}
+    reqs = runtime if isinstance(runtime, list) else [Requirement(n, None, None) for n in sorted(runtime)]
     out: list[tuple[str, str, str]] = []
     missing: list[str] = []
-    for name in sorted(reqs):
-        req, entry = reqs[name], (elsewhere or {}).get(name)
-        if name in by_name:
-            out.append(by_name[name])
+    for req in reqs:
+        name, entry = req.name, (elsewhere or {}).get(req.name)
+        inst = by_name.get(name)
+        if inst is not None and (req.version is None or inst[1] == req.version):
+            out.append(inst)
         elif req.marker and (holds or {}).get(req.marker) is False and entry is not None \
                 and req.version is not None and entry.version == req.version:
             out.append((name, req.version, entry.spdx))
@@ -135,10 +138,10 @@ def bundled(
                 ": it holds here)" if (holds or {}).get(req.marker) else
                 ": bundled on another OS; add [other_platform] for its exact version)" if entry is None or
                 entry.version != req.version else ": not evaluated)")
-            missing.append(name + why)
+            missing.append(f"{name}{'==' + req.version if req.version else ''}{why}")
     if missing:
         raise SystemExit(f"check-licences: runtime packages not installed in {project}/.venv: {', '.join(missing)}")
-    return out
+    return sorted(dict.fromkeys(out), key=lambda d: (norm(d[0]), d[1]))
 
 
 def evaluate_markers(project: str, markers: list[str]) -> dict[str, bool]:
@@ -182,8 +185,8 @@ def python_deps(project: str = "backend", into: dict[str, str] | None = None,
     if problems:
         raise SystemExit(f"check-licences: {project}: " + "; ".join(problems))
     installed = [(d["Name"], d["Version"], d["License"]) for d in report]
-    present = {norm(n) for n, _, _ in installed}
-    markers = sorted({r.marker for r in reqs.values() if r.marker and r.name not in present})
+    present = {(norm(n), v) for n, v, _ in installed}
+    markers = sorted({r.marker for r in reqs if r.marker and (r.name, r.version) not in present})
     deps = bundled(installed, reqs, project, elsewhere, evaluate_markers(project, markers), used)
     if into is not None:
         # The venv's own interpreter reads its distributions; -I keeps the caller's environment and cwd out.
@@ -534,7 +537,7 @@ def acknowledgments(
             entry, empty = configured.get(key), textless.get(key)
             text = group_texts.get(key)
             other = (elsewhere or {}).get(key)
-            if text is None and other is not None and other.version == version:  # bundled on another OS (BL-0050)
+            if other is not None and other.version == version:  # bundled on another OS (BL-0050); its own entry
                 if other.acknowledgment.strip():
                     notes[(group, key)] = squash(other.acknowledgment)
                 continue
