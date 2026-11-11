@@ -304,17 +304,9 @@ def test_the_generated_for_record_names_the_inputs() -> None:
     )
 
 
-# --- The text builder refuses what Beancount would refuse (the generator's own guard) ---
-
-
-def test_an_unbalanced_transaction_is_refused() -> None:
-    with pytest.raises(ValueError, match="balance"):
-        transaction(
-            ANCHOR,
-            "P",
-            "n",
-            [Posting("Expenses:A", Decimal("1.00"), "USD"), Posting("Assets:B", Decimal("-0.99"), "USD")],
-        )
+# --- The text builder refuses text it cannot write well formed (the generator's own guard). Whether names are valid
+# and a transaction balances is Beancount's to say (INV-02, EP-23, S0104): scripts/oracle/tests/test_demo_generator.py
+# loads every size and plants an unbalanced transaction ---
 
 
 def test_a_long_account_and_a_long_amount_stay_separated() -> None:
@@ -334,10 +326,6 @@ def test_a_long_account_and_a_long_amount_stay_separated() -> None:
     [
         Posting("Expenses:A", Decimal("1.001"), "USD"),
         Posting("Expenses:A", Decimal(1), "USD"),
-        Posting("expenses:A", Decimal("1.00"), "USD"),
-        Posting("Expenses", Decimal("1.00"), "USD"),
-        Posting("Expenses:a", Decimal("1.00"), "USD"),
-        Posting("Expenses:A", Decimal("1.00"), "usd"),
     ],
 )
 def test_a_malformed_posting_is_refused(posting: Posting) -> None:

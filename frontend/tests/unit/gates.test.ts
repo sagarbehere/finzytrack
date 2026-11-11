@@ -190,6 +190,65 @@ describe('[INV-06][INV-07] lint bans', () => {
   })
 })
 
+describe('[EP-23] ledger semantics have one home, in the backend (INV-02, ADR-0024; S0104)', () => {
+  // The shapes scripts/concept_counters.py refuses in Python, as lint bans in src (no frontend home yet).
+  it.each([
+    ['an account regex', 'export const a = /^(Assets|Income)(:[A-Z][\\w-]*)+$/\n'],
+    ['an account regex with a Unicode class', 'export const a = /^\\p{Lu}[^:]*(:\\p{Lu}[^:]*)+$/u\n'],
+    ['an account regex built from a string', "export const a = new RegExp('^[A-Z][a-z]*:[A-Z].*$')\n"],
+    ['RegExp() without new', "export const a = RegExp('[A-Z]+:.*')\n"],
+    ["a name split at ':'", "export const leaf = (n: string) => n.split(':').at(-1)\n"],
+    ["a name joined with ':'", "export const join = (p: string[]) => p.join(':')\n"],
+    ["a name's root found by indexOf", "export const root = (n: string) => n.slice(0, n.indexOf(':'))\n"],
+    ['a currency regex', 'export const c = /^[A-Z]{3}$/\n'],
+    ['a root name compared', "export const isIncome = (r: string) => r === 'Income'\n"],
+    ['a root prefix tested', "export const asset = (n: string) => n.startsWith('Assets:')\n"],
+    ['a list of root names', "export const holding = ['Assets', 'Liabilities']\n"],
+    [
+      'a root name in a switch',
+      "export const k = (r: string) => {\n  switch (r) {\n    case 'Expenses':\n      return 1\n  }\n  return 0\n}\n",
+    ],
+    ['a root option read', "export const r = (o: Record<string, string>) => o['name_assets']\n"],
+    ['a tolerance option read', "export const t = (o: Record<string, string>) => o['inferred_tolerance_default']\n"],
+    ['a power of ten from a scale', 'export const tol = (e: number) => 10 ** e / 2\n'],
+    ['Math.pow of ten from a scale', 'export const tol = (e: number) => Math.pow(10, -e)\n'],
+    ['a magnitude compared', 'export const ok = (r: number, t: number) => Math.abs(r) <= t\n'],
+    [
+      'a decimal magnitude compared',
+      'declare const r: { abs(): { lte(x: number): boolean } }\nexport const ok = r.abs().lte(1)\n',
+    ],
+    ['a value compared with a tolerance', 'export const ok = (r: number, tolerance: number) => r <= tolerance\n'],
+    ['a value compared with a fixed tolerance', 'export const ok = (r: number) => r < 0.005\n'],
+    ['a number regex', 'export const n = /^-?\\d+(\\.\\d+)?$/\n'],
+    ['a number regex with a class', 'export const n = /[0-9]+[.][0-9]*/\n'],
+    ['grouping removed by hand', "export const n = (t: string) => t.replace(',', '')\n"],
+    ['grouping removed everywhere', "export const n = (t: string) => t.replaceAll(',', '')\n"],
+  ])('refuses %s in src', async (_label, code) => {
+    expect(await ruleIds(code)).toContain('no-restricted-syntax')
+  })
+
+  it('refuses a root name compared in a template', async () => {
+    const code =
+      '<script setup lang="ts">\nconst root = \'Income\' as string\n</script>\n\n' +
+      "<template>\n  <p>{{ root === 'Assets' }}</p>\n</template>\n"
+    expect(await ruleIds(code, 'App.vue')).toContain('vue/no-restricted-syntax')
+  })
+
+  it.each([
+    ['a sha regex', 'export const s = /^[0-9a-f]{64}$/\n'],
+    ['a non-capturing group', 'export const s = /(?:-[0-9]{1,3})?/\n'],
+    ['a URL', 'export const u = /^https?:\\/\\/[a-z.]+$/\n'],
+    ['an account name as content', "export const n = 'Assets:Bank:Checking'\n"],
+    ["a test for ':'", "export const has = (t: string) => t.includes(':')\n"],
+    ['a comparison of counts', 'export const ok = (n: number, limit: number) => n > limit\n'],
+    ['a fixed power of ten', 'export const m = 10 ** 6\n'],
+    ['a ratio above one', 'export const ok = (r: number) => r > 1.5\n'],
+    ['help text naming a root', "export const help = 'Assets are what you own'\n"],
+  ])('accepts %s', async (_label, code) => {
+    expect(await ruleIds(code)).not.toContain('no-restricted-syntax')
+  })
+})
+
 describe('[L9.M-7] tests stub components by import, not by name', () => {
   const inTest = (code: string) => ruleIds(code, 'App.test.ts', 'tests/unit')
 

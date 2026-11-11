@@ -124,11 +124,7 @@ def meta_text(value: Any) -> str:
     return value if isinstance(value, str) else str(value)
 
 
-def root(account: str) -> str:
-    """The account's first segment as written."""
-    return account.split(":", 1)[0]
-
-
+# @concept account-kinds
 def kinds(options: port.OptionsMap) -> dict[str, str]:
     """Root name as written -> canonical kind, through the ledger's `name_*` options (ADR-0024)."""
     roots = grammar.account_roots(options)
@@ -206,7 +202,7 @@ def source_account(txn: port.Transaction, posting: port.Posting) -> str | None:
     others = [p for p in txn.postings if p is not posting]
     if len(txn.postings) == 2 and others:
         return others[0].account
-    return next((p.account for p in others if root(p.account) in SOURCE_ROOTS), None)
+    return next((p.account for p in others if grammar.account_root(p.account) in SOURCE_ROOTS), None)
 
 
 # ---- tables -------------------------------------------------------------------------------------------------------
@@ -240,7 +236,7 @@ def posting_rows(txns: Sequence[port.Transaction], kind_of: Mapping[str, str]) -
                     len(out) + 1,
                     *shared,
                     posting.account,
-                    root(posting.account),
+                    grammar.account_root(posting.account),
                     None if units is None else number(units.number),
                     None if units is None else units.currency,
                     None if cost is None else number(cost.number),
@@ -249,7 +245,7 @@ def posting_rows(txns: Sequence[port.Transaction], kind_of: Mapping[str, str]) -
                     None if price is None else number(price.number),
                     None if price is None else price.currency,
                     source,
-                    None if source is None else root(source),
+                    None if source is None else grammar.account_root(source),
                     txn_json,
                     meta_json(posting.meta),
                     documents,
@@ -257,7 +253,7 @@ def posting_rows(txns: Sequence[port.Transaction], kind_of: Mapping[str, str]) -
                     month,
                     (month - 1) // 3 + 1,
                     f"{year}-{month:02d}",
-                    kind_of.get(root(posting.account)),
+                    kind_of.get(grammar.account_root(posting.account)),
                     None if cost is None else cost.label,
                 )
             )
@@ -304,7 +300,7 @@ def only_at_cost(entries: Iterable[port.Directive], kind_of: Mapping[str, str]) 
                 continue
             if p.cost is not None:
                 with_cost.setdefault(p.units.currency, set()).add(p.account)
-            elif kind_of.get(root(p.account)) in HOLDING_KINDS:
+            elif kind_of.get(grammar.account_root(p.account)) in HOLDING_KINDS:
                 plain.append((p.units.currency, p.account))
     held_plainly = {code for code, account in plain if account not in with_cost.get(code, ())}
     # A plugin may hand over a currency that is not text (None): it names no commodity.
@@ -377,7 +373,7 @@ def account_rows(entries: Sequence[port.Directive], kind_of: Mapping[str, str]) 
                 json.dumps(list(entry.currencies or [])),
                 None if entry.booking is None else str(entry.booking.value),
                 meta_json(entry.meta),
-                kind_of.get(root(entry.account)),
+                kind_of.get(grammar.account_root(entry.account)),
             )
         )
     return out
@@ -570,7 +566,9 @@ def training_rows(txns: Iterable[port.Transaction], kind_of: Mapping[str, str]) 
     for txn in txns:
         if not txn.payee:
             continue
-        category = next((p.account for p in txn.postings if kind_of.get(root(p.account)) in CATEGORY_KINDS), None)
+        category = next(
+            (p.account for p in txn.postings if kind_of.get(grammar.account_root(p.account)) in CATEGORY_KINDS), None
+        )
         if category is None:
             continue
         meta = txn.meta or {}

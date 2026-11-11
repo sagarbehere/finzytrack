@@ -250,6 +250,7 @@ class WrittenNumber:
     alone: bool
 
 
+# @concept number-parsing
 def written_numbers(data: bytes) -> Iterator[WrittenNumber]:
     """Each number written in `data`, as Beancount's own lexer reads it (`lexer.lex_iter`, the parser's lexer). A minus
     is a sign when no number or `)` stands before it; strings, comments, dates and names hold no number."""
@@ -554,6 +555,7 @@ class TransactionCheck:
     balanced: bool
 
 
+# @concept tolerance
 def check_transaction(postings: Sequence[Posting], options: OptionsMap) -> TransactionCheck:
     """The inferred tolerances and the residual of booked postings, and whether the residual is within them."""
     tolerances = _infer_tolerances(list(postings), options)

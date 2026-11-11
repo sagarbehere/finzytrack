@@ -43,6 +43,7 @@ class AccountRoots:
     expenses: str
 
 
+# @concept account-roots
 def account_roots(options: port.OptionsMap) -> AccountRoots:
     """The root names from a load's options map."""
     return AccountRoots(*(str(options[key]) for key in ROOT_OPTIONS))
@@ -57,6 +58,7 @@ def _root_options(roots: AccountRoots) -> str:
     return "".join(f'option "{key}" "{value}"\n' for key, value in zip(ROOT_OPTIONS, values, strict=True))
 
 
+# @concept account-grammar
 def parse_account(text: str, roots: AccountRoots) -> AccountName | Invalid:
     entries, errors, _ = port.parse_string(f"{_root_options(roots)}{PROBE_DATE} open {text}\n".encode())
     opened = [e.account for e in entries if isinstance(e, port.Open)]
@@ -65,6 +67,13 @@ def parse_account(text: str, roots: AccountRoots) -> AccountName | Invalid:
     return Invalid(_messages(errors))
 
 
+def account_root(account: str) -> str:
+    """The first component of an account name, as written (Beancount's `account.root(1, name)`, without the port:
+    the separator is the grammar's `:`)."""
+    return account.split(":", 1)[0]
+
+
+# @concept currency-grammar
 def parse_currency(text: str) -> Currency | Invalid:
     as_commodity, commodity_errors, _ = port.parse_string(f"{PROBE_DATE} commodity {text}\n".encode())
     as_price, price_errors, _ = port.parse_string(f"{PROBE_DATE} price {text} 1.00 USD\n".encode())
@@ -75,6 +84,7 @@ def parse_currency(text: str) -> Currency | Invalid:
     return Invalid(_messages(commodity_errors) + _messages(price_errors))
 
 
+# @concept balance-check
 def transaction_balance(transaction: port.Transaction, options: port.OptionsMap) -> port.TransactionCheck:
     """Beancount's balance check of a booked transaction: inferred tolerances, residual, balanced."""
     return port.check_transaction(transaction.postings, options)

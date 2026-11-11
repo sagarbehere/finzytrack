@@ -312,9 +312,11 @@ engine/src/ledger_engine/
     core/recovery.py  the per-file judgement of recovery (pre, post or a stop; the temp rule) (S0061)
     paths.py     canonical_path, path_key over `fs.port` (engine-jobs §6.3; S0060); core/paths.py the folding
     core/journal.py  the write-intent journal's record: fields, versioned encoding, names (ADR-0012; S0060)
-    grammar.py   parse_account(text, roots), parse_currency, transaction_balance, balance_assertion, via
-                 beancount_port (ADR-0024) (S0049)
-    beancount_port.py  the only module that imports beancount.*: typed facade, its LOAD_STAGES and WRAPPERS;
+    grammar.py   parse_account(text, roots), account_root, account_roots, parse_currency, transaction_balance,
+                 balance_assertion, via beancount_port (ADR-0024) (S0049); the one home of the account and currency
+                 grammar, the root names and the balance check (`@concept`, scripts/concept_counters.py, S0104)
+    beancount_port.py  the only module that imports beancount.*: typed facade, its LOAD_STAGES and WRAPPERS; the
+                 one home of the tolerance and of number reading (`@concept`, S0104);
                  untyped Beancount modules have local stubs in engine/typings/ (S0049)
   fs/            the file-system port for writes (S0060): port.py (FileSystem.resolve with the object's identity,
                  open_dir -> DirHandle: read, stat, sync_file, create exclusively with the xattrs of the file it replaces and
@@ -329,7 +331,7 @@ engine/src/ledger_engine/
                  in-memory fake with a durable layer and crash/power-loss injection is engine/tests/fakes/memfs.py
   mirror/        the build half: projection of a LoadResult into SQLite.
     core/        schema.py: the tables, the DDL, the r_* and compatibility views (S0050); rows.py: the row
-                 builders, pure (S0050)
+                 builders, pure (S0050), the one home of the account kind (`@concept`, S0104)
     build.py     build(loaded, path, today, stamp) -> Built | BuildFailed: a fresh file or none (S0050)
     publish.py   generation publish: open_folder, clean, new_name, publish, swap, read_published, fresh
                  (design/specs/mirror/publish.md, S0085; built in S0087; Windows pointer file BL-0206), all

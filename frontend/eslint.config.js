@@ -80,6 +80,91 @@ const deferredAssertions = [
     message: deferred,
   },
 ]
+// EP-23, EP-03, INV-02 (S0104): ledger semantics come from the backend (ADR-0024: the frontend asks; a generated
+// account regex was rejected). The frontend has no home for these concepts yet; the planned tolerance indicator
+// (L3-09) adds its home here as an override and in scripts/concept_counters.py. These are the shapes
+// scripts/concept_counters.py refuses in Python; a pattern built from variables, or a helper defined elsewhere, is
+// left to review.
+const roots = '/^(Assets|Liabilities|Equity|Income|Expenses):?$/'
+const ordering = '/^[<>]=?$/'
+const kernel = (concept) => `EP-23: a second implementation of ${concept}; it comes from the backend (ADR-0024, INV-02)`
+const kernelConcepts = [
+  // account grammar: a regex on account names, a name taken apart or joined by hand
+  {
+    selector: String.raw`Literal[regex.pattern=/[^?]:|^:/][regex.pattern=/A-Z|p[\\]?[{]L|Assets|Liabilities|Equity|Income|Expenses/]`,
+    message: kernel('the account grammar'),
+  },
+  {
+    selector: String.raw`:matches(NewExpression, CallExpression)[callee.name='RegExp'][arguments.0.value=/[^?]:|^:/][arguments.0.value=/A-Z|p[\\]?[{]L|Assets|Liabilities|Equity|Income|Expenses/]`,
+    message: kernel('the account grammar'),
+  },
+  {
+    selector: "CallExpression[callee.property.name=/^(split|indexOf|lastIndexOf|join)$/][arguments.0.value=':']",
+    message: kernel('the account grammar'),
+  },
+  // currency grammar: a regex of upper-case classes with a count
+  {
+    selector: String.raw`Literal[regex.pattern=/A-Z/][regex.pattern=/[{]/]:not([regex.pattern=/a-z/])`,
+    message: kernel('the currency grammar'),
+  },
+  // account roots and kinds: a root name compared, matched or listed; a root option read
+  { selector: `BinaryExpression > Literal[value=${roots}]`, message: kernel('account kinds') },
+  { selector: `SwitchCase > Literal[value=${roots}]`, message: kernel('account kinds') },
+  { selector: `ArrayExpression > Literal[value=${roots}]`, message: kernel('account kinds') },
+  {
+    selector: `CallExpression[callee.property.name=/^(startsWith|endsWith)$/] > Literal[value=${roots}]`,
+    message: kernel('account kinds'),
+  },
+  {
+    selector: 'Literal[value=/^name_(assets|liabilities|equity|income|expenses)$/]',
+    message: kernel('the account roots'),
+  },
+  // tolerance: a power of ten from a scale, a tolerance option read
+  {
+    selector: "BinaryExpression[operator='**'][left.value=10]:not([right.type='Literal'])",
+    message: kernel('the tolerance'),
+  },
+  {
+    selector:
+      "CallExpression[callee.object.name='Math'][callee.property.name='pow'][arguments.0.value=10]:not([arguments.1.type='Literal'])",
+    message: kernel('the tolerance'),
+  },
+  {
+    selector: 'Literal[value=/^(inferred_tolerance_default|inferred_tolerance_multiplier|infer_tolerance_from_cost)$/]',
+    message: kernel('the tolerance'),
+  },
+  // balance check: a magnitude or a tolerance compared, a fraction as a fixed tolerance
+  {
+    selector: `BinaryExpression[operator=${ordering}] > CallExpression[callee.property.name='abs']`,
+    message: kernel('the balance check'),
+  },
+  {
+    selector: `BinaryExpression[operator=${ordering}] > Identifier[name=/^(tol|eps|epsilon)$|toleran/i]`,
+    message: kernel('the balance check'),
+  },
+  {
+    selector: `BinaryExpression[operator=${ordering}] > MemberExpression[property.name=/^(tol|eps|epsilon)$|toleran/i]`,
+    message: kernel('the balance check'),
+  },
+  {
+    selector: `BinaryExpression[operator=${ordering}] > Literal[value>0][value<1]`,
+    message: kernel('the balance check'),
+  },
+  {
+    selector:
+      "CallExpression[callee.property.name=/^(lt|lte|gt|gte|lessThan|lessThanOrEqualTo|greaterThan|greaterThanOrEqualTo|cmp|comparedTo)$/][callee.object.callee.property.name='abs']",
+    message: kernel('the balance check'),
+  },
+  // number parsing: a regex for digits and a point, grouping removed by hand
+  {
+    selector: String.raw`Literal[regex.pattern=/[\\][.]|[[][^\]]*[.][^\]]*[\]]/][regex.pattern=/[\\]d|0-9/]`,
+    message: kernel('number parsing'),
+  },
+  {
+    selector: "CallExpression[callee.property.name=/^replace(All)?$/][arguments.0.value=',']",
+    message: kernel('number parsing'),
+  },
+]
 const testFiles = ['tests/**/*.ts', 'src/**/*.test.ts', 'src/**/*.spec.ts']
 
 export default tseslint.config(
@@ -136,6 +221,7 @@ export default tseslint.config(
           message: today,
         },
         clockByFormat,
+        ...kernelConcepts,
         {
           selector: "Identifier[name='parseFloat']:not(MemberExpression[computed=false] > Identifier.property)",
           message: floatParse,
@@ -151,7 +237,7 @@ export default tseslint.config(
     files: ['src/**/*.ts', 'src/**/*.vue'],
     ignores: ['src/platform/**'],
     rules: {
-      'no-restricted-syntax': ['error', ...systemTime, ...appClock],
+      'no-restricted-syntax': ['error', ...systemTime, ...appClock, ...kernelConcepts],
       'no-restricted-globals': ['error', { name: 'Date', message: today }, { name: 'parseFloat', message: floatParse }],
       'no-restricted-properties': [
         'error',
