@@ -168,9 +168,12 @@ HASH_SEED = "0"
 ENGINE_SITE_PARTS = ("engine", "site-packages")
 # The engine's flags (§5.1): no user site, no `site` import, no bytecode written, no unsafe path first. Never `-I`.
 ENGINE_FLAGS = ("-s", "-S", "-B", "-P")
-# The fill writes bytecode (under `-X pycache_prefix` only); `-E`: no `PYTHON*` variable reaches its path, whatever
-# environment it is given (the hash seed does not matter to it).
-FILL_FLAGS = ("-s", "-S", "-E", "-P")
+# The fill writes bytecode only through `compileall`'s explicit writes, after it entered its build folder: `-B` keeps
+# the imports of its own start (`encodings`, `site`, a module a `.pth` imports) from writing bytecode, which under
+# `-X pycache_prefix=.` from `/` would land beside each source, in the interpreter's install (S0102 round 2, verifier
+# F3; `py_compile` writes under `-B`, probed); `-E`: no `PYTHON*` variable reaches its path, whatever environment it
+# is given (the hash seed does not matter to it).
+FILL_FLAGS = ("-s", "-S", "-B", "-E", "-P")
 # The bootstrap: `-S` left the interpreter's own site-packages out; this adds the engine's site (the first argument
 # after the code), processing its .pth files, and nothing else.
 PATH_SETUP = "import site, sys; site.addsitedir(sys.argv.pop(1))"
@@ -180,7 +183,8 @@ ENGINE_RUN = "import runpy; runpy.run_module('ledger_engine', run_name='__main__
 FILL_IN_BUILD = "import os, sys; os.fchdir(int(sys.argv.pop(1)))"
 """The fill's first step (S0102 round 1, verifier F2, red team F2): the child's working folder is the build folder the
 fill made, by the descriptor it inherits (`pass_fds`, its number the first argument after the site), never by name; its
-`-X pycache_prefix=.` is then relative to that object. It starts in `/`, where it can write nothing."""
+`-X pycache_prefix=.` is then relative to that object. Before this step it runs in `/`, where `.` resolves to each
+source's own folder: there `-B` (`FILL_FLAGS`) keeps it from writing anything (round 2, verifier F3)."""
 BYTECODE_FILL = (
     "import os, sys; os.fchdir(int(sys.argv.pop(1))); import compileall; "  # `FILL_IN_BUILD` first
     "[compileall.compile_dir(p, quiet=2, workers=1) for p in list(sys.path) if os.path.isabs(p) and os.path.isdir(p)]"

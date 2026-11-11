@@ -21,6 +21,7 @@ import pytest
 from app.platform.adapters.app_folder import AppFolder
 from app.platform.adapters.engine_client import (
     BYTECODE_COMPLETE,
+    BYTECODE_FILL,
     FILL_FLAGS,
     FILL_IN_BUILD,
     EngineBytecode,
@@ -328,3 +329,63 @@ def test_S0102_r1_the_fill_enters_its_build_folder_first() -> None:
     from app.platform.adapters.engine_client import BYTECODE_FILL
 
     assert BYTECODE_FILL.startswith(FILL_IN_BUILD + "; ")
+
+
+# -- S0102 round 2 (verifier F3, F4): the fill writes only in its build folder ------------------------------------
+
+
+def probe_site(tmp_path: Path) -> Path:
+    """A site folder whose `.pth` imports a module at the fill's start (`v/site_probe/run.py`)."""
+    site = tmp_path / "site"
+    site.mkdir()
+    (site / "probe.pth").write_text("import pthmod\n", encoding="utf-8")
+    (site / "pthmod.py").write_text("X = 1\n", encoding="utf-8")
+    return site
+
+
+def probe_fill(app: AppFolder, site: Path) -> EngineBytecode:
+    python = ENGINE_VENV / "bin" / "python"
+    directory = bytecode_build_dir(app.path, python, site, "9.9.9")
+    return EngineBytecode(directory, bootstrap_argv(python, site, BYTECODE_FILL, FILL_FLAGS), app)
+
+
+def test_S0102_r2_the_fill_writes_no_file_outside_its_build_folder(app: AppFolder, tmp_path: Path) -> None:
+    """Round 2, verifier F3: before its `fchdir` the child runs in `/` with `-X pycache_prefix=.`, which resolves to
+    each source's own folder: the modules its start imports (here one a `.pth` imports) wrote bytecode beside their
+    sources, in the interpreter's install or the app bundle. Only `compileall`'s explicit writes, in the build folder,
+    make files now."""
+    site = probe_site(tmp_path)
+    bytecode = probe_fill(app, site)
+    assert run_fill(bytecode) == []
+    assert sorted(p.name for p in site.rglob("*")) == ["probe.pth", "pthmod.py"], "the fill wrote beside a source"
+    assert (bytecode.directory / BYTECODE_COMPLETE).is_file()
+    assert [p.name for p in bytecode.directory.rglob("pthmod*.pyc")] == ["pthmod.cpython-313.pyc"], "not compiled"
+
+
+def test_S0102_r2_no_python_variable_reaches_the_fills_path(app: AppFolder, tmp_path: Path) -> None:
+    """Round 2, verifier F4 (`-E`): a `PYTHONPATH` in the environment the fill is given puts nothing on its path, so
+    nothing of it is compiled (a `PYTHONPATH` of `.` from `/` compiled the whole disk: round 1)."""
+    site = probe_site(tmp_path)
+    other = tmp_path / "other"
+    other.mkdir()
+    (other / "extra.py").write_text("Y = 2\n", encoding="utf-8")
+    bytecode = probe_fill(app, site)
+    events: list[dict[str, object]] = []
+
+    def log(event: object, /, **fields: object) -> None:
+        del event
+        events.append(fields)
+
+    env = {**os.environ, "PYTHONPATH": str(other)}
+    _Filler(bytecode, env, PosixGroupOps(), log)._run()  # pyright: ignore[reportPrivateUsage]
+    assert events == []
+    assert list(bytecode.directory.rglob("extra*.pyc")) == []
+    assert any(bytecode.directory.rglob("pthmod*.pyc"))
+
+
+def test_S0102_r2_the_fill_compiles_in_one_process() -> None:
+    """Round 2, verifier F4 (`workers=1`): a structural pin. Worker processes (`workers=0`) `chdir` to the name
+    `os.getcwd()` gives when they start, which names the fill's folder unless it is moved in that instant: a race no
+    test can time, so the text is pinned instead."""
+    assert "workers=1" in BYTECODE_FILL
+    assert "workers=0" not in BYTECODE_FILL
