@@ -21,6 +21,8 @@ import pytest
 from app.platform.adapters.app_folder import AppFolder
 from app.platform.adapters.engine_client import (
     BYTECODE_COMPLETE,
+    FILL_FLAGS,
+    FILL_IN_BUILD,
     EngineBytecode,
     EngineCommand,
     _Filler,  # pyright: ignore[reportPrivateUsage]
@@ -130,7 +132,7 @@ def fill_command(app: AppFolder, code: str | None = None) -> EngineBytecode:
         return command.bytecode
     python = Path(command.bytecode.fill_argv[0])
     site = Path(command.bytecode.fill_argv[-1])
-    return EngineBytecode(directory, bootstrap_argv(python, site, code, ("-s", "-S", "-P")), app)
+    return EngineBytecode(directory, bootstrap_argv(python, site, code, FILL_FLAGS), app)
 
 
 def run_fill(bytecode: EngineBytecode) -> list[dict[str, object]]:
@@ -179,8 +181,9 @@ def test_S0102_r2_the_fills_child_never_makes_the_app_folder_again(
 
 
 SLOW_FILL = (
-    "import time, compileall, os, sys; time.sleep(1.0); "
-    "[compileall.compile_dir(p, quiet=2, workers={workers}) for p in list(sys.path) if os.path.isdir(p)]"
+    f"{FILL_IN_BUILD}; import time, compileall; time.sleep(1.0); "
+    "[compileall.compile_dir(p, quiet=2, workers={workers}) "
+    "for p in list(sys.path) if os.path.isabs(p) and os.path.isdir(p)]"
 )
 
 
@@ -273,3 +276,55 @@ def test_S0102_a_build_moved_into_another_app_folder_is_never_marked(app: AppFol
     assert moved.is_set()
     assert not (bytecode.directory / BYTECODE_COMPLETE).exists(), "marked complete in a folder not of the start"
     assert [f["outcome"] for f in seen] == ["fill_failed"]
+
+
+@pytest.mark.parametrize("replacement", ["folder", "link_outside"])
+def test_S0102_r1_the_fills_child_never_enters_the_build_path_by_name(
+    app: AppFolder, monkeypatch: pytest.MonkeyPatch, replacement: str
+) -> None:
+    """Round 1, verifier F2 (`test_v3_fill_cwd.py`) and red team F2 (`test_F1_build_path_swapped_for_link_...`):
+    after the fill made its build folder and before the child starts, another program puts a folder in place of the
+    app folder holding the same build path, or a link at it to a folder outside the app folder. The child entered the
+    build path by name and wrote about 2200 `.pyc` files there; it enters the folder the fill made by its descriptor
+    now, so nothing lands in the replacement or outside."""
+    from app.platform.adapters import engine_client as ec
+
+    bytecode = fill_command(app)
+    outside = app.path.parent / "outside"
+    outside.mkdir()
+    real = subprocess.Popen
+
+    def popen(*a: object, **k: object) -> object:
+        os.rename(app.path, app.path.with_name("away"))
+        bytecode.directory.parent.mkdir(parents=True)
+        if replacement == "folder":
+            bytecode.directory.mkdir()
+        else:
+            os.symlink(outside, bytecode.directory)
+        return real(*a, **k)  # type: ignore[call-overload]
+
+    monkeypatch.setattr(ec.subprocess, "Popen", popen)
+    seen = run_fill(bytecode)
+    assert list(bytecode.directory.rglob("*.pyc")) == []
+    assert list(outside.rglob("*")) == []
+    assert not (bytecode.directory / BYTECODE_COMPLETE).exists()
+    assert [f["outcome"] for f in seen] == ["fill_failed"]
+    assert any(app.path.with_name("away").rglob("*.pyc")), "the child wrote in the folder the fill made"
+
+
+def test_S0102_r1_a_folder_the_wait_cannot_open_to_judge_is_refused(app: AppFolder) -> None:
+    """Round 1, red team F6: fail closed. A folder that may be searched and written but not read (0300) cannot be
+    opened to read its identity: the wait refuses (quit and reopen) and makes nothing in it."""
+    os.chmod(app.path, 0o300)
+    try:
+        with pytest.raises(AppFolderChangedError):
+            wait_engine_lock(app)
+    finally:
+        os.chmod(app.path, 0o700)
+    assert os.listdir(app.path) == []
+
+
+def test_S0102_r1_the_fill_enters_its_build_folder_first() -> None:
+    from app.platform.adapters.engine_client import BYTECODE_FILL
+
+    assert BYTECODE_FILL.startswith(FILL_IN_BUILD + "; ")

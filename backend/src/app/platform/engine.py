@@ -42,6 +42,7 @@ type FailureKind = Literal[
     "unavailable",  # the engine stopped too often in the restart window; not restarted until the window passes
     "closed",  # the client was closed
     "too_large",  # the request is longer than the protocol's line limit; nothing was sent, the engine is untouched
+    "app_folder_missing",  # no engine for the job's next part: the app folder is not the one of the start (S0102)
 ]
 
 

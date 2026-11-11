@@ -331,11 +331,14 @@ def test_S0102_an_engine_started_with_another_identity_saves_nothing(setup: tupl
 
 
 def test_S0102_the_ops_that_write_in_the_app_folder_are_the_ones_checked() -> None:
-    """The inventory, by behaviour (S0102 Hand-off): the save writes `local/<key>/journal` and `backups`; the listing
-    syncs journal folders and removes `.part`s; a try restores and renames records; an act keeps or deletes. Every
-    other op writes nothing there (the open, rebuild, create, copy and outcomes read it at most)."""
+    """The inventory, by behaviour, of reads, syncs and writes (S0102 Hand-off): the save writes `local/<key>/journal`
+    and `backups`; its outcome syncs the journal folder and reads the record there (round 1, verifier F1); the listing
+    syncs journal folders and removes `.part`s; a try restores and renames records; an act keeps or deletes. The open,
+    rebuild and copy only read the journals (their `.open` gate: §6.1 step 8's Limit) and the create's outcome reads
+    its target only."""
     assert {op for op, spec in OPS.items() if spec.writes_app_folder} == {
         "save",
+        "save_outcome",
         "recover_list",
         "recover_try",
         "recover_act",
@@ -382,3 +385,89 @@ def test_S0102_an_engine_that_holds_the_lock_with_no_identity_saves_nothing(
     assert (r["outcome"], r["reason"]) == ("not_saved", "app_folder_missing")
     assert not (ald / "local").exists()
     assert main.read_bytes() == PRE
+
+
+# -- S0102 round 1 (red team F1): every folder of step 8 checked again up to the first swap ------------------------
+
+
+def _replaced_by_a_copy(ald: Path) -> None:
+    """Another program puts a copy of the app folder in its place (a restore from a backup, a sync tool)."""
+    ald.rename(ald.parent / "moved")
+    shutil.copytree(ald.parent / "moved", ald)
+
+
+def _records(root: Path) -> list[str]:
+    return sorted(p.name for p in root.rglob("s1-j7*"))
+
+
+@pytest.mark.parametrize("when", ["after_step_8", "after_the_backups", "after_the_part"])
+def test_S0102_r1_a_folder_replaced_after_step_8_and_before_the_first_swap_is_app_folder_missing(
+    setup: tuple[Path, Path, dict[str, Any]], monkeypatch: pytest.MonkeyPatch, when: str
+) -> None:
+    """`rt102/test_rt_engine.py::test_A2_swap_after_step8`: the journal and the backups would land in the replacement,
+    and the save would answer `saved`. The writer checks the app folder, the journal and the backups folders by
+    identity before the backups, before the `.part` and before the rename to `.open`: not saved, nothing swapped."""
+    from ledger_engine.ledger import save as sv
+    from ledger_engine.ledger import writer
+
+    main, ald, params = setup
+    if when == "after_step_8":
+        real_ensure = sv._ensure_dir  # pyright: ignore[reportPrivateUsage]
+
+        def ensure(*a: Any, **k: Any) -> Any:
+            out = real_ensure(*a, **k)
+            if a[2] == "backups":
+                _replaced_by_a_copy(ald)
+            return out
+
+        monkeypatch.setattr(sv, "_ensure_dir", ensure)
+    elif when == "after_the_backups":
+        real_backups = writer._backups  # pyright: ignore[reportPrivateUsage]
+
+        def backups(*a: Any, **k: Any) -> Any:
+            out = real_backups(*a, **k)
+            _replaced_by_a_copy(ald)
+            return out
+
+        monkeypatch.setattr(writer, "_backups", backups)
+    else:
+        real_check = writer._check_anchor  # pyright: ignore[reportPrivateUsage]
+        calls: list[int] = []
+
+        def check(*a: Any) -> None:
+            calls.append(1)
+            if len(calls) == 3:  # the last check, right after the `.part` was made
+                _replaced_by_a_copy(ald)
+            real_check(*a)
+
+        monkeypatch.setattr(writer, "_check_anchor", check)
+    r = _save(held(ald, identity(ald)), params)
+    assert (r["outcome"], r["reason"], r["unchanged"]) == ("not_saved", "app_folder_missing", True), r
+    assert main.read_bytes() == PRE
+    # no record that says a swap may have begun, in either folder (the copy holds what was there when it was made)
+    assert not [n for n in _records(ald.parent) if n.endswith((".open", ".closed"))], _records(ald.parent)
+
+
+def test_S0102_r1_a_folder_replaced_after_the_swaps_is_saved_and_never_trimmed(
+    setup: tuple[Path, Path, dict[str, Any]], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """After every file is swapped, synced and read back the save has landed: `saved` is true. Its record and backups
+    stay in the folder it wrote them in; the history trim never runs in the replacement."""
+    from ledger_engine.ledger import history
+    from ledger_engine.ledger import save as sv
+
+    main, ald, params = setup
+    real_commit = sv.durable_commit
+    trimmed: list[str] = []
+
+    def commit(*a: Any) -> Any:
+        out = real_commit(*a)
+        _replaced_by_a_copy(ald)
+        return out
+
+    monkeypatch.setattr(sv, "durable_commit", commit)
+    monkeypatch.setattr(history, "trim", lambda *a: trimmed.append("trim"))  # type: ignore[misc]
+    r = _save(held(ald, identity(ald)), params)
+    assert r["outcome"] == "saved", r
+    assert main.read_bytes() == POST.encode()
+    assert trimmed == []

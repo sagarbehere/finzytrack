@@ -602,7 +602,11 @@ class Job:
     def committed(self) -> None: ...
 
 
-def plan_for(data: bytes, job: str) -> sv.SavePlan:
+def plan_for(data: bytes, job: str, fs: MemFS | None = None) -> sv.SavePlan:
+    """The plan of one save; `fs`: the world whose app folder it runs in (its identity, S0102; None: only the
+    fingerprint is used)."""
+    identity = (0, 0) if fs is None else fs.resolve(ALD).identity
+    assert identity is not None
     fp = Fingerprint("/L/a.bean", (("/L/a.bean", Content(sha256(data))),), (), (), ())
     return sv.SavePlan(
         session="s1",
@@ -615,6 +619,7 @@ def plan_for(data: bytes, job: str) -> sv.SavePlan:
         fingerprint=fp,
         app_cache="/cache",
         app_local_data=ALD,
+        app_folder=identity,
     )
 
 
@@ -638,7 +643,7 @@ def test_twenty_landed_saves_leave_sixteen_records_and_sixteen_backups_folders()
     for job in jobs:
         data = fs.file("/L/a.bean")
         assert data is not None
-        out = sv.run(plan_for(data, job), ports(fs), Job())
+        out = sv.run(plan_for(data, job, fs), ports(fs), Job())
         assert isinstance(out, sv.Saved), out
     assert fs.names_in(JD) == [f"s1-{j}.closed" for j in jobs[4:]]
     assert fs.names_in(BD) == [f"s1-{j}" for j in jobs[4:]]
@@ -648,7 +653,7 @@ def test_the_saved_outcome_carries_what_the_trim_did() -> None:
     fs = save_world()
     for i in range(16):
         seed(fs, tag(i), "closed")
-    out = sv.run(plan_for(A0, "j01"), ports(fs), Job())
+    out = sv.run(plan_for(A0, "j01", fs), ports(fs), Job())
     assert isinstance(out, sv.Saved)
     assert out.trimmed == history.Trimmed(removed=1, left=0, skipped=False)
     assert not present(fs, tag(0))
@@ -660,7 +665,7 @@ def test_the_save_keeps_its_own_record_when_the_clock_was_set_back() -> None:
     for i in range(20):
         seed(fs, tag(i), "closed")
         fs.outside_mtime(f"{JD}/{tag(i)}.closed", 10**18 + i)
-    out = sv.run(plan_for(A0, "j01"), ports(fs), Job())
+    out = sv.run(plan_for(A0, "j01", fs), ports(fs), Job())
     assert isinstance(out, sv.Saved)
     assert fs.file(f"{JD}/s1-j01.closed") is not None
     assert fs.file(f"{BD}/s1-j01/0-a.bean") == A0
@@ -675,7 +680,7 @@ def test_a_save_that_does_not_land_trims_nothing() -> None:
     before = fs.snapshot()
     moved = Fingerprint("/L/a.bean", (("/L/a.bean", Content(sha256(b"moved"))),), (), (), ())
     out = sv.run(
-        plan_for(A0, "j01"), sv.Ports(fs, observe=lambda fp: moved, store=FakeStore()), Job()
+        plan_for(A0, "j01", fs), sv.Ports(fs, observe=lambda fp: moved, store=FakeStore()), Job()
     )  # the disk moved: refused
     assert not isinstance(out, sv.Saved)
     assert {p: v for p, v in fs.snapshot().items() if p.startswith(KD)} == {
@@ -686,7 +691,7 @@ def test_a_save_that_does_not_land_trims_nothing() -> None:
 def _save_effects(fs: MemFS) -> int:
     """How many effects the save itself makes before its trim: the same save in a world with nothing to trim."""
     first = len(fs.effects)
-    out = sv.run(plan_for(A0, "j01"), ports(fs), Job())
+    out = sv.run(plan_for(A0, "j01", fs), ports(fs), Job())
     assert isinstance(out, sv.Saved)
     return len(fs.effects) - first
 
@@ -706,7 +711,7 @@ def test_the_trim_runs_after_the_closed_record_is_durable() -> None:
     labels: list[str] = []
     fs = saved_case()
     fs.on_effect = lambda i, label: labels.append(label)
-    sv.run(plan_for(A0, "j01"), ports(fs), Job())
+    sv.run(plan_for(A0, "j01", fs), ports(fs), Job())
     close = max(i for i, label in enumerate(labels) if label.startswith("rename") and label.endswith(".closed"))
     assert labels[close + 1].startswith("sync")
     assert SAVE_TRIM_EFFECTS > 0
@@ -722,7 +727,7 @@ def test_the_trim_runs_after_the_closed_record_is_durable() -> None:
 def test_an_io_error_in_the_trim_never_changes_the_saves_outcome(at: int) -> None:
     fs = saved_case()
     fs.inject(len(fs.effects) + SAVE_EFFECTS + at, crash=False, err=errno.EIO)
-    out = sv.run(plan_for(A0, "j01"), ports(fs), Job())
+    out = sv.run(plan_for(A0, "j01", fs), ports(fs), Job())
     assert isinstance(out, sv.Saved), out
     assert out.trimmed is not None
     assert out.trimmed.left >= 1
@@ -733,8 +738,8 @@ def test_an_engine_death_in_the_trim_is_read_from_disk_as_saved(at: int) -> None
     fs = saved_case()
     fs.inject(len(fs.effects) + SAVE_EFFECTS + at, crash=True)
     with pytest.raises(Crash):
-        sv.run(plan_for(A0, "j01"), ports(fs), Job())
-    change = plan_for(A0, "j01").changes
+        sv.run(plan_for(A0, "j01", fs), ports(fs), Job())
+    change = plan_for(A0, "j01", fs).changes
     assert sv.outcome(fs, ALD, "k1", "s1", "j01", change) == sv.OutcomeFacts("closed")
     for state in fs.power_loss_states():
         assert sv.outcome(state, ALD, "k1", "s1", "j01", change) == sv.OutcomeFacts("closed")

@@ -695,6 +695,7 @@ OPS: dict[str, OpSpec] = {
             "targets": [{"path": "/ledgers/L/main.bean", "pre": "0" * 64}],
         },
         needs_engine_lock=True,
+        writes_app_folder=True,  # it syncs the journal folder and reads its records (S0102 round 1, verifier F1)
     ),
     "rebuild": OpSpec(
         RebuildParams,

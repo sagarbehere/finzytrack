@@ -56,7 +56,6 @@ then its record's state, and with no record (or a `.part`) every target hashed a
 
 from __future__ import annotations
 
-import errno
 import gc
 import posixpath
 import re
@@ -73,6 +72,7 @@ from ledger_engine.ledger.core.journal import Record, State
 from ledger_engine.ledger.core.ledger_set import Absent, Content, Fingerprint, Unreadable
 from ledger_engine.ledger.handles import join, sha256
 from ledger_engine.ledger.writer import (
+    Anchor,
     BadPlanError,
     Change,
     Commit,
@@ -81,6 +81,7 @@ from ledger_engine.ledger.writer import (
     Reason,
     Step,
     Unfinished,
+    anchored,
     durable_commit,
 )
 from ledger_engine.mirror import publish
@@ -109,9 +110,9 @@ class SavePlan:
     file as the ledger names it (absolute, normalized), its pre SHA-256 (None: the save creates it) and its post bytes;
     `app_cache`: the app's cache folder, where the gate reads the published mirror (publish.md §7); `app_local_data`:
     the app's machine-local folder (journals, backups); `app_folder`: its identity `(st_dev, st_ino)` at the sidecar's
-    start (S0102, BL-0244): step 8 makes `local/` only in a folder of that identity, else `app_folder_missing`. The
-    protocol always passes it (`--app-folder-id`); None, in the tests over the in-memory fake only, takes the folder at
-    `app_local_data` as it is.
+    start (S0102, BL-0244): step 8 makes `local/` only in a folder of that identity, and the writer checks it with the
+    journal and backups folders before each of its writes up to the first swap (`writer.Anchor`), else
+    `app_folder_missing`.
     `session`-`job` names this save alone (§6.5 "One save, one name"; the sidecar makes a new job part for every save):
     a name that already has a record or a backups folder in this key raises `BadPlanError("name_taken")`."""
 
@@ -125,7 +126,7 @@ class SavePlan:
     fingerprint: Fingerprint
     app_cache: str
     app_local_data: str
-    app_folder: tuple[int, int] | None = None
+    app_folder: tuple[int, int]
 
 
 class Job(Protocol):
@@ -325,8 +326,8 @@ class _AppFolderMissing(Exception):
 
 
 def _ensure_dir(
-    fs: FileSystem, parent: str, name: str, *, no_link: bool = False, parent_is: tuple[int, int] | None = None
-) -> str:
+    fs: FileSystem, parent: str, name: str, *, no_link: bool = False, parent_is: tuple[int, int]
+) -> tuple[str, tuple[int, int]]:
     """The folder `name` in `parent`, its entry durable: `parent` is synced whether or not the folder was made now. A
     folder that was there already may be the mkdir of an earlier engine that died before its sync; a power loss could
     then drop it, with the `.open` journal or the backups in it, while the ledger files stay swapped (round 1, verifier
@@ -334,19 +335,28 @@ def _ensure_dir(
     `_LinkedFolder` (the workspace's own folders, S0077); `local/` may be a link, which recover-all follows too.
     `parent` is never above the app's own folder: the sidecar made that one and synced its parent at start (S0100,
     BL-0163 (a); owner, 2026-11-10: "Sidecar makes it once (Recommended)"). `parent_is`: the identity `parent` must
-    have, asked of the handle the folder is then made through (the app folder of the start, S0102, BL-0244): another
-    object raises `FileNotFoundError` before anything is made or synced in it."""
+    have, asked of the handle the folder is then made through (S0102, BL-0244: the app folder of the start for
+    `local/`, the folder just found for the ones below): another object raises `_AppFolderMissing` before anything is
+    made or synced in it. Returns the folder's path and the identity its path leads to now (links followed, as the
+    next level and the writer open it)."""
     path = join(parent, name)
-    with fs.open_dir(parent) as h:
-        if parent_is is not None and h.identity() != parent_is:
-            raise FileNotFoundError(errno.ESTALE, "not the app folder of the start", parent)
+    try:
+        h = fs.open_dir(parent)
+    except FileNotFoundError:
+        raise _AppFolderMissing from None
+    with h:
+        if h.identity() != parent_is:
+            raise _AppFolderMissing
         st = h.stat(name)
         if st is None:
             h.mkdir(name)
         elif no_link and st.kind is Kind.LINK:
             raise _LinkedFolder(path)
         h.sync()
-    return path
+    identity = fs.resolve(path).identity
+    if identity is None:
+        raise _AppFolderMissing
+    return path, identity
 
 
 def _name_taken(fs: FileSystem, plan: SavePlan) -> bool:
@@ -458,24 +468,22 @@ def _gated(
         return _paused(open_journal, ports, plan)
     job.gate()  # step 7: past it, the save finishes (§4)
     job.progress("saving")
-    jd = journal_dir(plan)
     ald = plan.app_local_data.rstrip("/") or "/"
     try:
         # every folder below the app's own, its entry durable before the first write (round 1, verifier F1); the app's
         # folder is the sidecar's, made and its parent synced at start (S0100, BL-0163 (a)): never made or synced above
-        try:
-            local = _ensure_dir(ports.fs, ald, LOCAL, parent_is=plan.app_folder)
-        except FileNotFoundError:
-            raise _AppFolderMissing from None
-        key_dir = _ensure_dir(ports.fs, local, plan.workspace_key, no_link=True)
-        _ensure_dir(ports.fs, key_dir, JOURNAL, no_link=True)
-        bd = _ensure_dir(ports.fs, key_dir, BACKUPS, no_link=True)
+        local, local_id = _ensure_dir(ports.fs, ald, LOCAL, parent_is=plan.app_folder)
+        key_dir, key_id = _ensure_dir(ports.fs, local, plan.workspace_key, no_link=True, parent_is=local_id)
+        jd, jd_id = _ensure_dir(ports.fs, key_dir, JOURNAL, no_link=True, parent_is=key_id)
+        bd, bd_id = _ensure_dir(ports.fs, key_dir, BACKUPS, no_link=True, parent_is=key_id)
     except _AppFolderMissing:
         return _not_saved(ports, plan, Reason.APP_FOLDER_MISSING, entry=ald)
     except _LinkedFolder as e:
         return _not_saved(ports, plan, Reason.LINKED_FOLDER, entry=e.path)
     except OSError:
         return _not_saved(ports, plan, Reason.IO_ERROR)
+    # S0102 round 1 (red team F1): the writer checks these again before each of its writes up to the first swap
+    anchor = Anchor(ald, ((ald, plan.app_folder), (jd, jd_id), (bd, bd_id)))
     commit = Commit(
         session=plan.session,
         job=plan.job,
@@ -485,11 +493,16 @@ def _gated(
         changes=plan.changes,
         journal_dir=jd,
         backups_dir=bd,
+        anchor=anchor,
     )
     out = durable_commit(ports.fs, commit)  # step 8
     if isinstance(out, Landed):
         job.committed()  # step 9
-        # §6.5's history trim, in this engine, before the final reply (inside the user's wait); it never fails the save
+        # §6.5's history trim, in this engine, before the final reply (inside the user's wait); it never fails the save.
+        # Not in a folder put in place of the app folder since step 8 (S0102 round 1, red team F1): the save landed
+        # (every file holds its new bytes, synced and read back), its record and backups stay where it wrote them
+        if not anchored(ports.fs, anchor):
+            return Saved(out.record)
         trimmed = history.trim(ports.fs, plan.app_local_data, plan.workspace_key, out.record.name)
         return Saved(out.record, trimmed=trimmed)
     return out

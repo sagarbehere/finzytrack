@@ -376,7 +376,7 @@ RECOVERY: tuple[Row, ...] = (
     ),
     (
         "msg:recovery.failed_app_folder",
-        "`failed`: the app's data folder was removed or replaced while the app ran (S0102, BL-0244)",
+        "`failed` or `not_tried`: the app's data folder was removed or replaced while the app ran (S0102, BL-0244)",
         lambda: _screen(_blocking("failed", rt.APP_FOLDER_MISSING)),
     ),
     (

@@ -151,7 +151,13 @@ def save_world(not_durable: str) -> MemFS:
     return fs
 
 
-def two_file_plan(**kw: object) -> sv.SavePlan:
+def app_id(fs: MemFS) -> tuple[int, int]:
+    """The app folder's identity in the fake, as the sidecar's start records it (S0102); (0, 0) when it is missing."""
+    r = fs.resolve(ALD)
+    return r.identity if not r.rest and r.identity is not None else (0, 0)
+
+
+def two_file_plan(fs: MemFS, **kw: object) -> sv.SavePlan:
     plan = sv.SavePlan(
         session="s1",
         job="j7",
@@ -163,6 +169,7 @@ def two_file_plan(**kw: object) -> sv.SavePlan:
         fingerprint=FP,
         app_cache="/cache",
         app_local_data=ALD,
+        app_folder=app_id(fs),
     )
     return replace(plan, **kw)
 
@@ -174,7 +181,7 @@ def save_ports(fs: MemFS) -> sv.Ports:
 @pytest.mark.parametrize("not_durable", CHAIN)
 def test_a_landed_save_keeps_its_closed_record_and_backups_through_a_power_loss(not_durable: str) -> None:
     fs = save_world(not_durable)
-    out = sv.run(two_file_plan(), save_ports(fs), Job())
+    out = sv.run(two_file_plan(fs), save_ports(fs), Job())
     assert isinstance(out, sv.Saved), out
     for state in fs.power_loss_states():
         if state.file("/L/a.bean") == b"a post\n" or state.file("/L/b.bean") == b"b post\n":
@@ -191,13 +198,13 @@ def test_a_save_cut_after_its_first_swap_never_leaves_a_half_applied_ledger_with
     fs = save_world(not_durable)
     first = len(fs.effects)
     fs.on_effect = lambda i, label: labels.append(label)
-    sv.run(two_file_plan(), save_ports(fs), Job())
+    sv.run(two_file_plan(fs), save_ports(fs), Job())
     swaps = [i for i, label in enumerate(labels) if "swap" in label]
     assert len(swaps) == 2, labels
     fs = save_world(not_durable)
     fs.inject(first + swaps[1], crash=True)  # the engine dies at the second swap: a.bean is swapped, b.bean is not
     with pytest.raises(Crash):
-        sv.run(two_file_plan(), save_ports(fs), Job())
+        sv.run(two_file_plan(fs), save_ports(fs), Job())
     torn = 0
     for state in fs.power_loss_states():
         if state.file("/L/a.bean") == b"a post\n" and state.file("/L/b.bean") == B:
@@ -219,7 +226,7 @@ def test_S0100_the_save_never_opens_or_syncs_the_app_folders_parent() -> None:
     fs.outside_mkdirs(ALD)
     labels: list[str] = []
     fs.on_effect = lambda _, label: labels.append(label)
-    out = sv.run(two_file_plan(), save_ports(fs), Job())
+    out = sv.run(two_file_plan(fs), save_ports(fs), Job())
     assert isinstance(out, sv.Saved), out
     assert "sync /:" not in labels, labels
     assert [x for x in labels if x.startswith("mkdir /:")] == []
@@ -233,7 +240,7 @@ def test_S0100_a_missing_app_folder_is_not_saved_with_its_own_reason_and_nothing
     fs.outside_write("/L/b.bean", B)
     outside_publish(fs, FP, "k1")
     before = fs.snapshot()
-    out = sv.run(two_file_plan(), save_ports(fs), Job())
+    out = sv.run(two_file_plan(fs), save_ports(fs), Job())
     assert isinstance(out, sv.NotSaved), out
     assert (out.reason.value, out.unchanged, out.entry) == ("app_folder_missing", True, ALD)
     assert fs.snapshot() == before, "nothing made in or above the app folder's parent"
@@ -249,7 +256,7 @@ def test_S0100_BL0163d_a_file_made_unreadable_after_the_preview_is_an_io_error_n
         files = tuple((p, Unreadable("EACCES") if p == "/L/b.bean" else s) for p, s in fp.files)
         return replace(fp, files=files)
 
-    out = sv.run(two_file_plan(), sv.Ports(fs, observe=observe, store=FakeStore()), Job())
+    out = sv.run(two_file_plan(fs), sv.Ports(fs, observe=observe, store=FakeStore()), Job())
     assert isinstance(out, sv.NotSaved), out
     assert (out.reason.value, out.path, out.unchanged) == ("io_error", "/L/b.bean", True)
 
@@ -263,7 +270,7 @@ def test_S0100_BL0163d_a_file_whose_bytes_changed_is_still_ledger_changed() -> N
         files = tuple((p, Content("0" * 64) if p == "/L/b.bean" else s) for p, s in fp.files)
         return replace(fp, files=files)
 
-    out = sv.run(two_file_plan(), sv.Ports(fs, observe=observe, store=FakeStore()), Job())
+    out = sv.run(two_file_plan(fs), sv.Ports(fs, observe=observe, store=FakeStore()), Job())
     assert out == sv.Refused("ledger_changed", True)
 
 
@@ -281,7 +288,7 @@ def test_S0100_BL0163b_a_step_3_io_error_names_the_changed_file_apart(monkeypatc
         return real(path)
 
     monkeypatch.setattr(fs, "resolve", resolve)
-    out = sv.run(two_file_plan(), save_ports(fs), Job())
+    out = sv.run(two_file_plan(fs), save_ports(fs), Job())
     assert isinstance(out, sv.NotSaved), out
     assert (out.reason.value, out.path, out.unchanged, out.changed) == ("io_error", "/L/b.bean", False, "/L/a.bean")
 
@@ -295,7 +302,7 @@ TWO = (Change("/L/a.bean", sha256(A), b""), Change("/L/b.bean", sha256(B), b""))
 def _effects_of_a_clean_save() -> int:
     fs = save_world(f"{ALD}/local")
     first = len(fs.effects)
-    assert isinstance(sv.run(two_file_plan(), save_ports(fs), Job()), sv.Saved)
+    assert isinstance(sv.run(two_file_plan(fs), save_ports(fs), Job()), sv.Saved)
     return len(fs.effects) - first
 
 
@@ -315,7 +322,7 @@ def _resolved_after(fail: int, die: int, edit: int | None) -> tuple[MemFS, sv.Ou
 
         fs.on_effect = editor
     try:
-        sv.run(two_file_plan(), save_ports(fs), Job())
+        sv.run(two_file_plan(fs), save_ports(fs), Job())
     except Crash:
         pass
     else:
@@ -363,10 +370,10 @@ def test_BL0182_a_resolved_record_with_a_changed_file_holds_another_programs_byt
 # -- S0100 round 1 (red team F1 High, verifier F1): the gate's unreadable file never says "unchanged" falsely --------
 
 
-def _gate_with(observe_files: Callable[[Fingerprint], Fingerprint], plan: sv.SavePlan) -> sv.SaveOutcome:
+def _gate_with(observe_files: Callable[[Fingerprint], Fingerprint], **kw: object) -> sv.SaveOutcome:
     fs = save_world(f"{ALD}/local")
     fs.outside_mkdirs(ALD)
-    return sv.run(plan, sv.Ports(fs, observe=observe_files, store=FakeStore()), Job())
+    return sv.run(two_file_plan(fs, **kw), sv.Ports(fs, observe=observe_files, store=FakeStore()), Job())
 
 
 ONLY_B = (Change("/L/b.bean", sha256(B), b"b post\n"),)  # a.bean is in the set; this save does not write it
@@ -380,7 +387,7 @@ def test_S0100_r1_an_unreadable_include_the_plan_never_named_after_an_edit_is_le
         files = tuple((p, Content("0" * 64) if p == "/L/a.bean" else s) for p, s in fp.files)
         return replace(fp, files=(*files, ("/L/new.bean", Unreadable("EACCES"))))
 
-    out = _gate_with(observe, two_file_plan(changes=ONLY_B))
+    out = _gate_with(observe, changes=ONLY_B)
     assert out == sv.Refused("ledger_changed", True)
 
 
@@ -391,7 +398,7 @@ def test_S0100_r1_an_include_this_save_does_not_write_made_unreadable_is_ledger_
     def observe(fp: Fingerprint) -> Fingerprint:
         return replace(fp, files=tuple((p, Unreadable("EACCES") if p == "/L/a.bean" else s) for p, s in fp.files))
 
-    out = _gate_with(observe, two_file_plan(changes=ONLY_B))
+    out = _gate_with(observe, changes=ONLY_B)
     assert out == sv.Refused("ledger_changed", True)
 
 
@@ -402,7 +409,7 @@ def test_S0100_r1_an_unreadable_target_with_another_file_changed_is_ledger_chang
         files = tuple((p, Unreadable("EACCES") if p == "/L/b.bean" else s) for p, s in fp.files)
         return replace(fp, files=files, globs=(("/L/*.bean", ("/L/a.bean", "/L/b.bean", "/L/c.bean")),))
 
-    out = _gate_with(observe, two_file_plan(changes=ONLY_B))
+    out = _gate_with(observe, changes=ONLY_B)
     assert out == sv.Refused("ledger_changed", True)
 
 
@@ -411,11 +418,11 @@ def test_S0100_r1_a_file_standing_unreadable_where_the_save_creates_one_is_ledge
     appeared where the save creates one, unreadable, is a change of the ledger (the plan saw nothing there)."""
     created = Change("/L/c.bean", None, b"c\n")
     fp = replace(FP, files=(*FP.files, ("/L/c.bean", Absent())))
-    plan = two_file_plan(changes=(*two_file_plan().changes, created), fingerprint=fp)
+    changes = (Change("/L/a.bean", sha256(A), b"a post\n"), Change("/L/b.bean", sha256(B), b"b post\n"), created)
 
     def observe(seen: Fingerprint) -> Fingerprint:
         return replace(seen, files=tuple((p, Unreadable("EACCES") if p == "/L/c.bean" else s) for p, s in seen.files))
 
-    out = _gate_with(observe, plan)
+    out = _gate_with(observe, changes=changes, fingerprint=fp)
     assert isinstance(out, sv.Refused), out
     assert out.reason == "ledger_changed", out

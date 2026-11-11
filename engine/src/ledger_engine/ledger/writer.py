@@ -128,6 +128,37 @@ class Commit:
     changes: tuple[Change, ...]
     journal_dir: str
     backups_dir: str
+    anchor: Anchor | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class Anchor:
+    """Where a save's journal and backups must be (S0102 round 1, red team F1): the app folder of the sidecar's start
+    and the journal and backups folders step 8 made in it, each a path and the identity `(st_dev, st_ino)` it had
+    then. The writer checks every one by path before the backups, before the `.part` and before the rename to `.open`
+    (`anchored`): another folder put in place of any of them stops the save before its first swap,
+    `app_folder_missing` naming `app_local_data`. None (the writer called outside a save: tests staging a journal):
+    no check."""
+
+    app_local_data: str
+    folders: tuple[tuple[str, tuple[int, int]], ...]
+
+
+def anchored(fs: FileSystem, anchor: Anchor) -> bool:
+    """Every folder of `anchor` is at its path with its identity now (links followed, as the writer follows them)."""
+    for path, identity in anchor.folders:
+        try:
+            r = fs.resolve(path)
+        except (OSError, ValueError):
+            return False
+        if r.rest or r.identity != identity:
+            return False
+    return True
+
+
+def _check_anchor(fs: FileSystem, anchor: Anchor | None) -> None:
+    if anchor is not None and not anchored(fs, anchor):
+        raise _Stop(Reason.APP_FOLDER_MISSING, None, anchor.app_local_data)
 
 
 ENCRYPTED_SUFFIXES: Final = (".gpg", ".asc")
@@ -742,11 +773,14 @@ def durable_commit(fs: FileSystem, c: Commit) -> Outcome:
             backups = _backup_names(plan)
             record = _record(c, plan, name, backups)
             data = _encoded(record)
+            _check_anchor(fs, c.anchor)  # S0102 round 1 (red team F1): the folders of step 8, before each write
             _backups(handles, plan, name, backups)
             step = Step.JOURNAL
             handles.on = None
+            _check_anchor(fs, c.anchor)
             jd = handles.at(plan.journal_dir)
             jd.create(journal.file_name(name, State.PART), data, JOURNAL_MODE)
+            _check_anchor(fs, c.anchor)  # last, before the record is `.open` and the first swap
         except (OSError, _Stop, PathMovedError) as e:
             reason, path = _why(e, handles)
             entry, detail = _where(e)

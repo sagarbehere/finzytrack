@@ -706,3 +706,20 @@ def test_a_retry_after_a_boot_whose_engine_could_not_start_lists_once_the_engine
     assert isinstance(ticket, JobTicket)
     retry = report_of(ticket)
     assert [j.name for j in retry.undone] == ["s1-j1"]
+
+
+def test_S0102_r1_a_journal_not_tried_because_the_app_folder_changed_says_quit_and_reopen() -> None:
+    """BL-0248 (S0102 round 1): the fresh engine after a death is refused because the app folder was removed or
+    replaced: the journals not yet tried name that cause, and their screen says to quit and reopen, not Retry."""
+    from app.platform.engine_jobs.recovery_text import blocked_screen
+
+    s = Script(
+        {"recover_list": [listing(listed("s1-j1"), listed("s1-j2"))], "recover_try": [CRASHED]},
+        fresh=[EngineFailure("app_folder_missing", "no engine for the job's next part (app_folder)")],
+    )
+    report = run(s)
+    blocked = next(b for b in report.blocking if b.journal.name == "s1-j2")
+    assert (blocked.reason, blocked.cause) == ("not_tried", "app_folder_missing")
+    message = blocked_screen(blocked, "Books").message
+    assert "Quit Finzytrack and open it again" in message
+    assert "Retry" not in message

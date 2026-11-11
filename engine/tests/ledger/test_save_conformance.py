@@ -614,7 +614,7 @@ def ports(fs: MemFS, driver: Driver) -> sv.Ports:
     return sv.Ports(fs, observe, store=FakeStore())
 
 
-def plan_of(ep: Episode) -> sv.SavePlan:
+def plan_of(ep: Episode, fs: MemFS) -> sv.SavePlan:
     def state(f: str) -> FileState:
         v = ep.plan[f]
         return Absent() if v == ABS else Content(sha256(content(f, v)))
@@ -625,7 +625,9 @@ def plan_of(ep: Episode) -> sv.SavePlan:
 
     fp = Fingerprint.of(PATH["R"], {PATH[f]: state(f) for f in FILES}, {}, {}, {})
     changes = tuple(Change(PATH[f], pre(f), content(f, POST[ep.s])) for f in WORD)
-    return sv.SavePlan(SESSION, ep.s, KEY, "lin1", "b", PATH["R"], changes, fp, "/cache", ALD)
+    identity = fs.resolve(ALD).identity  # the app folder of the start (S0102)
+    assert identity is not None
+    return sv.SavePlan(SESSION, ep.s, KEY, "lin1", "b", PATH["R"], changes, fp, "/cache", ALD, identity)
 
 
 def disk_answer(end: State, s: str, plan: Mapping[str, int]) -> str:
@@ -712,7 +714,7 @@ def sync_world(fs: MemFS, st: State, where: str) -> None:
 
 def replay_save(fs: MemFS, ep: Episode, where: str, tally: Tally) -> None:
     driver = Driver(fs, ep, where)
-    plan = plan_of(ep)
+    plan = plan_of(ep, fs)
     fs.on_effect = driver.on_effect
     out: sv.SaveOutcome | None = None
     try:

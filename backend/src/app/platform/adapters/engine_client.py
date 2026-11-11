@@ -168,17 +168,24 @@ HASH_SEED = "0"
 ENGINE_SITE_PARTS = ("engine", "site-packages")
 # The engine's flags (§5.1): no user site, no `site` import, no bytecode written, no unsafe path first. Never `-I`.
 ENGINE_FLAGS = ("-s", "-S", "-B", "-P")
-FILL_FLAGS = ("-s", "-S", "-P")  # the bytecode fill writes bytecode (under `-X pycache_prefix` only)
+# The fill writes bytecode (under `-X pycache_prefix` only); `-E`: no `PYTHON*` variable reaches its path, whatever
+# environment it is given (the hash seed does not matter to it).
+FILL_FLAGS = ("-s", "-S", "-E", "-P")
 # The bootstrap: `-S` left the interpreter's own site-packages out; this adds the engine's site (the first argument
 # after the code), processing its .pth files, and nothing else.
 PATH_SETUP = "import site, sys; site.addsitedir(sys.argv.pop(1))"
 ENGINE_RUN = "import runpy; runpy.run_module('ledger_engine', run_name='__main__', alter_sys=True)"
 # The fill compiles every folder on the engine's path (the interpreter's library, the engine's site-packages and, in
 # development, its source through the venv's .pth); a file that does not compile is left to its source.
+FILL_IN_BUILD = "import os, sys; os.fchdir(int(sys.argv.pop(1)))"
+"""The fill's first step (S0102 round 1, verifier F2, red team F2): the child's working folder is the build folder the
+fill made, by the descriptor it inherits (`pass_fds`, its number the first argument after the site), never by name; its
+`-X pycache_prefix=.` is then relative to that object. It starts in `/`, where it can write nothing."""
 BYTECODE_FILL = (
-    "import compileall, os, sys; "
-    "[compileall.compile_dir(p, quiet=2, workers=0) for p in list(sys.path) if os.path.isdir(p)]"
+    "import os, sys; os.fchdir(int(sys.argv.pop(1))); import compileall; "  # `FILL_IN_BUILD` first
+    "[compileall.compile_dir(p, quiet=2, workers=1) for p in list(sys.path) if os.path.isabs(p) and os.path.isdir(p)]"
 )
+"""`workers=1`: no worker processes, which would `chdir` to the working folder by its name when they start."""
 BYTECODE_COMPLETE = ".complete"
 CREATE_NO_WINDOW = 0x08000000  # Windows process creation flag: a console program opens no window
 
@@ -611,8 +618,9 @@ class _Filler:
 
     def _run(self) -> None:
         """The fill (S0102, BL-0244): `engine/`, `bytecode/` and the build folder are made through descriptors, from
-        the app folder checked to be the object of the start; the compiler child runs in the build folder with
-        `-X pycache_prefix=.`, so every folder and file it makes is relative to that object (in a removed folder its
+        the app folder checked to be the object of the start; the compiler child runs in the build folder, entered by
+        the descriptor it inherits (`FILL_IN_BUILD`, round 1), with `-X pycache_prefix=.`, so every folder and file it
+        makes is relative to that object (in a removed folder its
         `mkdir`s fail; it can never make the app folder again, as `os.makedirs` under an absolute prefix did: S0100
         round 2). `.complete` is written only when, after the child, the app folder and the build folder at their
         paths are still the objects made; otherwise nothing is marked or removed (what the fill made is gone with the
@@ -643,12 +651,13 @@ class _Filler:
             if self._stopped:
                 return None
             proc = subprocess.Popen(  # noqa: S603 (argv from EngineCommand, built by the composition root)
-                [argv[0], "-X", "pycache_prefix=.", *argv[1:]],
+                [argv[0], "-X", "pycache_prefix=.", *argv[1:], str(build)],
                 stdin=subprocess.DEVNULL,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
                 env=self._env,
-                cwd=bytecode.directory,
+                cwd="/",
+                pass_fds=(build,),
                 close_fds=True,
                 start_new_session=os.name == "posix",
                 creationflags=creation_flags(os.name),

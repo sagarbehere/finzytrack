@@ -44,6 +44,7 @@ from app.platform.engine_protocol import Violation, decode_save, decode_save_out
 from app.platform.errors import (
     ChangeNotSavedDetails,
     EngineStoppedDetails,
+    EngineUnavailableDetails,
     ErrorCode,
     NotSavedReason,
     WorkspaceNotReadyDetails,
@@ -279,9 +280,16 @@ class _Run:
             self._after_saved(RebuildTarget(r.workspace_key, r.root, r.fingerprint, r.lineage, r.app_local_data))
         return WorkResult(value, ran_user_code=ran_user_code)
 
-    def _no_engine(self) -> WorkResult:
+    def _no_engine(self, *, app_folder: bool = False) -> WorkResult:
+        """No engine read the outcome. Past the gate the change may have landed: `CHANGE_OUTCOME_UNKNOWN` (check the
+        ledger before making it again), also when the app folder holding its record was removed or replaced (S0102
+        round 1, verifier F1: never "not saved"). Before the gate nothing was written; a folder that is not the one of
+        the start then says so (quit and reopen)."""
         if self.gated:
             return WorkResult(_not_done(ErrorCode.CHANGE_OUTCOME_UNKNOWN), ran_user_code=False)
+        if app_folder:
+            details = EngineUnavailableDetails(reason="app_folder_missing")
+            return WorkResult(_not_done(ErrorCode.ENGINE_UNAVAILABLE, details), ran_user_code=False)
         return WorkResult(
             _not_done(ErrorCode.ENGINE_STOPPED, EngineStoppedDetails(reason="crashed")), ran_user_code=False
         )
@@ -295,15 +303,16 @@ class _Run:
             "targets": [{"path": c.path, "pre": c.pre} for c in self._r.changes],
         }
         while True:
-            if self._ctx.fresh_engine() is not None:
-                return self._no_engine()
+            refused = self._ctx.fresh_engine()
+            if refused is not None:
+                return self._no_engine(app_folder=refused.kind == "app_folder_missing")
             out = self._ctx.call("save_outcome", params)
             if isinstance(out, EngineFailure):
                 if out.kind in GONE:
                     continue  # that engine died too: another, until the client's bound says no
                 return self._no_engine()
             if isinstance(out, EngineRefusal):
-                return self._no_engine()
+                return self._no_engine(app_folder=out.key == "engine.app_folder_missing")
             facts = decode_save_outcome(out)
             if isinstance(facts, Violation):
                 return self._no_engine()

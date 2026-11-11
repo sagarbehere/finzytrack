@@ -905,3 +905,15 @@ def with_load_failing(after: Callable[[], object]) -> rebuild.Ports:
             after()
 
     return rebuild.Ports(load=load)
+
+
+def test_S0102_r1_an_include_its_observation_found_to_be_a_fifo_is_never_loaded(root: Path) -> None:
+    """Round 1, red team F5: the rebuild's own observation before its load sees an include swapped for a FIFO as no
+    regular file; Beancount's real load would open it with a blocking `open` and wait for ever. It raises at once, as
+    a load that cannot read a file does (BL-0249 keeps a FIFO swapped in after this observation)."""
+    hint = hint_of(root)
+    inc = root.parent / "inc.bean"
+    inc.unlink()
+    os.mkfifo(inc)
+    with pytest.raises(OSError, match="not a regular file"):
+        go(rebuild.Ports(), hint, FakeJob())

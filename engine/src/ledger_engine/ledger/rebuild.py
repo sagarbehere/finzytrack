@@ -34,6 +34,7 @@ rebuild did not run to a result, which the sidecar logs.
 
 from __future__ import annotations
 
+import errno
 import gc
 import posixpath
 from collections.abc import Callable, Sequence
@@ -45,7 +46,7 @@ from ledger_engine.fs.port import FileSystem
 from ledger_engine.ledger import beancount_port as port
 from ledger_engine.ledger import fingerprint as _fingerprint
 from ledger_engine.ledger import imports, load_failure, precision, publishing
-from ledger_engine.ledger.core.ledger_set import Fingerprint, LedgerSet, Module, ModuleKey, decode
+from ledger_engine.ledger.core.ledger_set import Fingerprint, LedgerSet, Module, ModuleKey, Unreadable, decode
 from ledger_engine.ledger.overlay import documents_roots
 from ledger_engine.mirror import publish as pb
 from ledger_engine.mirror.store import SqliteStore
@@ -178,6 +179,22 @@ def _wider(a: LedgerSet, b: LedgerSet, listed: frozenset[str]) -> LedgerSet | No
     )
 
 
+NOT_REGULAR: Final = Unreadable(errno.errorcode[errno.EINVAL])
+"""The observed state of a path that is no regular file (a FIFO, a socket, a folder; `fingerprint.file_state`)."""
+
+
+def _refuse_special(seen: Fingerprint) -> None:
+    """A ledger file or plugin module the observation found to be no regular file: raise `OSError` (`EINVAL`), as the
+    load's own read of an unreadable file does, before Beancount's real load opens it with a blocking `open` and waits
+    for ever on a FIFO (BL-0249 keeps the race of one swapped in after this observation)."""
+    states = [(p, st) for p, st in seen.files] + [
+        (m.origin or "", m.state) for _, m in seen.modules if m is not None and m.state is not None
+    ]
+    for p, st in states:
+        if st == NOT_REGULAR:
+            raise OSError(errno.EINVAL, "not a regular file", p)
+
+
 @tla_action("StartPublish", "P_Obs", "P_Read", model="mirror-publish")
 def run(ports: Ports, hint: Fingerprint, job: Job, target: Target) -> Answer:
     """The module's docstring: reads the ledger; writes only the workspace's mirror folder in the app's cache."""
@@ -195,6 +212,7 @@ def run(ports: Ports, hint: Fingerprint, job: Job, target: Target) -> Answer:
             return Answer("fresh", decode(cur.meta.fingerprint.encode("ascii")), published=done, cleaned=cleaned)
         ledger_set = hint.ledger_set
         before = ports.observe(ledger_set)  # step 1
+        _refuse_special(before)  # Beancount's own load would block on it (S0102 round 1, red team F5)
         job.progress(PHASE)
         parsed: list[str] = []
         modules: dict[ModuleKey, Module | None] = {}

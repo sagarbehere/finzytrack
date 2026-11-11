@@ -38,15 +38,13 @@ def parse_identity(text: str) -> Identity:
 
 def changed(lock: str | None, identity: Identity | None, fs: FileSystem | None = None) -> bool:
     """Whether the app folder of the engine lock `lock` is no longer the object of the start (`identity`): gone, not a
-    folder, or another folder. No lock or no identity: True (nothing is known, so nothing is written). A folder that
-    cannot be opened for another reason (a permission taken away) is not called changed: the op then meets that error
-    itself and says so."""
+    folder, or another folder. Fail closed: no lock, no identity, or a folder whose identity cannot be read through its
+    descriptor (a permission taken away, a loop of links: S0102 round 1, red team F6, verifier V1) is changed too, so
+    nothing is written in a folder we cannot judge."""
     if lock is None or identity is None:
         return True
     try:
         with (fs or for_this_os()).open_dir(folder_of_lock(lock)) as h:
             return h.identity() != identity
-    except (FileNotFoundError, NotADirectoryError):
+    except (OSError, ValueError):
         return True
-    except OSError:
-        return False

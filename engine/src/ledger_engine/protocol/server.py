@@ -609,8 +609,8 @@ def hold_engine_lock(path: str, identity: Identity) -> None:
     folder = app_folder.folder_of_lock(path)
     try:
         dfd = os.open(folder, os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC)
-    except (FileNotFoundError, NotADirectoryError) as e:
-        raise AppFolderChangedError(e.errno, "the app folder is missing", folder) from None
+    except OSError as e:  # gone, not a folder, or not ours to judge (fail closed: S0102 round 1, red team F6)
+        raise AppFolderChangedError(e.errno, "the app folder is missing or cannot be read", folder) from None
     try:
         st = os.fstat(dfd)
         if (st.st_dev, st.st_ino) != identity:

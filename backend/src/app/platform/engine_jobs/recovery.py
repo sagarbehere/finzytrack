@@ -63,7 +63,9 @@ type Reason = Literal["stopped", "failed", "cancelled", "not_tried"]
 """Why a journal blocks (§11): its try stopped on a cause found on disk; the try failed (an error the system
 answered, the engine died); the user cancelled it; it was not tried because no engine could run."""
 
-NO_ENGINE: Final[frozenset[str]] = frozenset({"cancelled", "start_failed", "unavailable", "incompatible"})
+NO_ENGINE: Final[frozenset[str]] = frozenset(
+    {"cancelled", "start_failed", "unavailable", "incompatible", "app_folder_missing"}
+)
 """A failed listing call after which no engine is asked for: our Cancel, or a start that failed (the job's first
 engine did not start, S0062 verifier r1 V1; a fresh engine that does not start ends the run the same way)."""
 

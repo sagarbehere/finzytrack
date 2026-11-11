@@ -897,7 +897,13 @@ class EngineJobs:
             case EngineRefused(job_id=job_id, why=why):
                 job = self._jobs.get(job_id)
                 if job is not None and job.worker is not None:
-                    kind: FailureKind = "unavailable" if why == "unavailable" else "start_failed"
+                    kind: FailureKind = (
+                        "unavailable"
+                        if why == "unavailable"
+                        else "app_folder_missing"  # S0102 round 1: its own words (quit and reopen), BL-0248
+                        if why == "app_folder"
+                        else "start_failed"
+                    )
                     job.worker.refuse(EngineFailure(kind, f"no engine for the job's next part ({why})"))
             case Finished(job_id=job_id):
                 job = self._jobs.get(job_id)

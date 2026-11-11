@@ -42,6 +42,7 @@ from app.platform.engine_jobs.scheduler import Done, EngineJobs, JobTicket
 from app.platform.errors import (
     ChangeNotSavedDetails,
     EngineStoppedDetails,
+    EngineUnavailableDetails,
     ErrorCode,
     WorkspaceNotReadyDetails,
     WritesPausedDetails,
@@ -646,3 +647,22 @@ def test_S0100_the_outcome_after_a_death_carries_the_changed_file_in_its_own_fie
 )
 def test_S0100_the_new_reasons_texts(d: ChangeNotSavedDetails, want: str) -> None:
     assert save_text.not_saved_text(d) == want
+
+
+# -- S0102 round 1 (verifier F1): the outcome in an app folder that is not the one of the start -------------------
+
+APP_FOLDER_REFUSAL = EngineRefusal("engine.app_folder_missing", "The app's data folder is missing or was replaced.")
+
+
+def test_S0102_r1_an_outcome_refused_for_the_app_folder_past_the_gate_is_unknown_never_not_saved(make: Any) -> None:
+    """The save may have landed; its record is in a folder the engine no longer reads: never "not saved"."""
+    rig = make({"save": [GATE_DIE], "save_outcome": [APP_FOLDER_REFUSAL]})
+    assert code(rig.save()) == ErrorCode.CHANGE_OUTCOME_UNKNOWN
+
+
+def test_S0102_r1_an_outcome_refused_for_the_app_folder_before_the_gate_says_quit_and_reopen(make: Any) -> None:
+    """Nothing was written before the gate; the next step is the app folder's (quit and reopen)."""
+    rig = make({"save": [CRASH], "save_outcome": [APP_FOLDER_REFUSAL]})
+    value = rig.save()
+    assert code(value) == ErrorCode.ENGINE_UNAVAILABLE
+    assert details(value) == EngineUnavailableDetails(reason="app_folder_missing")

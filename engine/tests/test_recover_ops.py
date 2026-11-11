@@ -14,6 +14,7 @@ import fcntl
 import hashlib
 import json
 import os
+import shutil
 import subprocess
 import sys
 import threading
@@ -434,3 +435,60 @@ def test_S0102_the_recovery_ops_in_the_app_folder_of_their_start_run(tmp_path: P
     journalled(ald)
     reply = Rig(held(ald)).send("recover_list", {"app_local_data": str(ald)})
     assert reply["ok"], reply
+
+
+def _outcome(rig: Rig, ald: Path, ledger: Path) -> dict[str, Any]:
+    params = {
+        "app_local_data": str(ald),
+        "workspace_key": "k1",
+        "session": "s1",
+        "job": "j7",
+        "targets": [{"path": str(ledger / "main.bean"), "pre": sha(PRE)}],
+    }
+    return rig.send("save_outcome", params)
+
+
+def test_S0102_r1_the_outcome_in_a_replaced_app_folder_is_refused(tmp_path: Path) -> None:
+    """Round 1, verifier F1 (V2): the save's engine died after its `.open` record; the app folder, record and all, is
+    moved away and an empty one put in its place. The outcome syncs and reads the journal folder: in the replacement it
+    would find no record and the sidecar would say "not saved", which is false. Refused instead."""
+    ald = tmp_path / "app"
+    ald.mkdir()
+    ledger, _, _ = journalled(ald)
+    rig = Rig(held(ald))
+    os.rename(ald, tmp_path / "moved")
+    (ald / "local" / "k1" / "journal").mkdir(parents=True)
+    reply = _outcome(rig, ald, ledger)
+    assert not reply["ok"], reply
+    assert reply["error"]["key"] == "engine.app_folder_missing"
+
+
+def test_S0102_r1_the_outcome_in_the_app_folder_of_its_start_reads_the_record(tmp_path: Path) -> None:
+    """Must pass: the folder of the start answers with its record."""
+    ald = tmp_path / "app"
+    ald.mkdir()
+    ledger, _, _ = journalled(ald)
+    reply = _outcome(Rig(held(ald)), ald, ledger)
+    assert reply["ok"], reply
+    assert reply["result"]["record"] == "open"
+
+
+def test_S0102_r1_a_replaced_folder_whose_identity_cannot_be_read_is_refused(tmp_path: Path) -> None:
+    """Round 1, verifier V1 and red team F6: a folder put in place of the app folder that may be searched and written
+    but not read (0300): its descriptor cannot be opened, so its identity cannot be judged. Fail closed: refused, and
+    the `.part` in it is left alone (the check used to let it through and the listing removed it)."""
+    ald = tmp_path / "app"
+    ald.mkdir()
+    rig = Rig(held(ald))
+    shutil.rmtree(ald)
+    jd = ald / "local" / "k1" / "journal"
+    jd.mkdir(parents=True)
+    (jd / "s9-j1.part").write_bytes(b"x")
+    os.chmod(ald, 0o300)
+    try:
+        reply = rig.send("recover_list", {"app_local_data": str(ald)})
+    finally:
+        os.chmod(ald, 0o700)
+    assert not reply["ok"], reply
+    assert reply["error"]["key"] == "engine.app_folder_missing"
+    assert os.listdir(jd) == ["s9-j1.part"]

@@ -108,6 +108,7 @@ ENGINE_START_FAILED = Event(
                     "unavailable",
                     "closed",
                     "too_large",
+                    "app_folder_missing",
                 }
             ),
         ),

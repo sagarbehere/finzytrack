@@ -59,11 +59,14 @@ class AppFolder:
 
     def open(self) -> int:
         """A descriptor on the folder, only while it is still the object of the start; the caller closes it and
-        writes only through it (`dir_fd`). Gone, not a folder, or another object: `AppFolderChangedError`."""
+        writes only through it (`dir_fd`). Gone, not a folder, another object, or a folder that cannot be opened to
+        be judged (a permission taken away: fail closed, S0102 round 1, red team F6): `AppFolderChangedError`."""
         try:
             fd = os.open(self.path, directory_flags())
-        except (FileNotFoundError, NotADirectoryError) as e:
-            raise AppFolderChangedError(e.errno, "the app folder is missing", str(self.path)) from None
+        except OSError as e:
+            raise AppFolderChangedError(
+                e.errno, "the app folder is missing or cannot be read", str(self.path)
+            ) from None
         st = os.fstat(fd)
         if (st.st_dev, st.st_ino) != self.identity:
             os.close(fd)

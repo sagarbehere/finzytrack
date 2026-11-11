@@ -157,6 +157,16 @@ def app_folder_missing(params: Message, ctx: SaveJob) -> Message:
     return result
 
 
+def _app_folder_of(ctx: SaveJob) -> tuple[int, int]:
+    """The app folder's identity at the engine's start: the server runs the save only with one (`app_folder.changed`
+    is True without it), so its absence here is a bug."""
+    identity = ctx.app_folder_id
+    if identity is None:
+        msg = "the save ran with no app folder identity"
+        raise RuntimeError(msg)
+    return identity
+
+
 def save(params: Message, ctx: SaveJob) -> Message:
     assert isinstance(params, SaveParams)  # noqa: S101 (the handler's own params model)
     fs = for_this_os()
@@ -177,7 +187,7 @@ def save(params: Message, ctx: SaveJob) -> Message:
         fingerprint=fingerprint,
         app_cache=app_cache_of(ctx),
         app_local_data=ald,
-        app_folder=ctx.app_folder_id,
+        app_folder=_app_folder_of(ctx),
     )
     ports = sv.Ports(fs)
     try:
