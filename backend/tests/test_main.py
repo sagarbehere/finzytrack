@@ -1176,3 +1176,75 @@ def test_S0100_the_sidecar_makes_a_missing_app_folder_and_starts(tmp_path: Path,
         assert (data / "logs").is_dir()
     finally:
         sidecar.stop()
+
+
+def test_S0100_r1_an_app_folder_that_is_a_link_has_both_parents_synced(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Verifier r1 F2: the save and recover-all follow a link at the app folder's path, so the real folder's parent is
+    synced too, beside the link's."""
+    from app.platform.adapters import app_folder
+
+    real = tmp_path / "elsewhere" / "app"
+    real.mkdir(parents=True)
+    (tmp_path / "home").mkdir()
+    link = tmp_path / "home" / "app"
+    link.symlink_to(real, target_is_directory=True)
+    synced: list[str] = []
+    full = app_folder._full_sync  # pyright: ignore[reportPrivateUsage]
+
+    def spy(fd: int) -> None:
+        synced.append(_fd_path(fd))
+        full(fd)
+
+    monkeypatch.setattr(app_folder, "_full_sync", spy)
+    assert app_folder.prepare(link) is None
+    assert sorted(synced) == sorted([str((tmp_path / "home").resolve()), str((tmp_path / "elsewhere").resolve())])
+
+
+@pytest.mark.parametrize("err", [errno.ENOTSUP, errno.EINVAL, errno.ENOTTY])
+def test_S0100_r1_a_volume_that_refuses_the_full_sync_gets_fsync(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, err: int
+) -> None:
+    """Red team r1 F4: the engine's `durable_sync` rule: `F_FULLFSYNC` refused by the volume, then `fsync`."""
+    import fcntl
+
+    from app.platform.adapters import app_folder
+
+    fsynced: list[int] = []
+    real_fcntl, real_fsync = fcntl.fcntl, os.fsync
+
+    def refusing(fd: int, cmd: int, arg: int = 0) -> int:
+        if cmd == fcntl.F_FULLFSYNC:
+            raise OSError(err, "refused")
+        return real_fcntl(fd, cmd, arg)
+
+    def fsync(fd: int) -> None:
+        fsynced.append(fd)
+        real_fsync(fd)
+
+    monkeypatch.setattr(fcntl, "fcntl", refusing)
+    monkeypatch.setattr(os, "fsync", fsync)
+    assert app_folder.prepare(tmp_path / "app") is None
+    assert len(fsynced) == 1
+
+
+def test_S0100_r1_another_full_sync_error_still_refuses_the_start(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Must not pass: an I/O error from the full sync is a refusal, not an `fsync`."""
+    import fcntl
+
+    from app.platform.adapters import app_folder
+
+    real_fcntl = fcntl.fcntl
+
+    def failing(fd: int, cmd: int, arg: int = 0) -> int:
+        if cmd == fcntl.F_FULLFSYNC:
+            raise OSError(errno.EIO, "I/O error")
+        return real_fcntl(fd, cmd, arg)
+
+    monkeypatch.setattr(fcntl, "fcntl", failing)
+    refusal = app_folder.prepare(tmp_path / "app")
+    assert refusal is not None
+    assert refusal.errno == errno.EIO

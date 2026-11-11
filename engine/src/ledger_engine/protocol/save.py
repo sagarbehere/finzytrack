@@ -11,15 +11,18 @@ and the ledger files the plan names.
 
 from __future__ import annotations
 
+import os
 from collections.abc import Callable
 from importlib.metadata import version
 from typing import Final, Protocol
 
 from ledger_engine.fs.darwin import for_this_os
+from ledger_engine.fs.port import FileSystem
 from ledger_engine.ledger import save as sv
 from ledger_engine.ledger.core.ledger_set import UndecodableError, decode
-from ledger_engine.ledger.writer import BadPlanError, Change, NotSaved, Unfinished
+from ledger_engine.ledger.writer import BadPlanError, Change, NotSaved, Reason, Unfinished
 from ledger_engine.protocol.messages import (
+    DecisionScalar,
     Message,
     SaveOutcomeParams,
     SaveOutcomeResult,
@@ -118,9 +121,53 @@ def _result(out: sv.SaveOutcome) -> SaveResult:
     )
 
 
+def _app_folder_gone(fs: FileSystem, app_local_data: str, ctx: Decider) -> bool:
+    """The request names, spelled as this engine's lock names it, the app folder that lock was taken in, and that
+    folder is gone (removed while the app runs): the save's own outcome, not a refused request (S0100 round 1, red
+    team F2)."""
+    lock = ctx.engine_lock
+    if lock is None:
+        return False
+    folder = os.path.dirname(os.path.dirname(os.path.abspath(lock)))
+    if os.path.normpath(app_local_data) != os.path.normpath(folder):
+        return False
+    try:
+        return bool(fs.resolve(app_local_data).rest)
+    except (OSError, ValueError):
+        return False
+
+
+def _app_folder_missing(fs: FileSystem, params: SaveParams, ctx: SaveJob) -> SaveResult:
+    unchanged, changed = sv.rehash(fs, tuple(Change(c.path, c.pre, b"") for c in params.changes))
+    result = SaveResult(
+        outcome="not_saved",
+        reason=Reason.APP_FOLDER_MISSING.value,
+        path=None,
+        entry=params.app_local_data,
+        detail=None,
+        unchanged=unchanged,
+        changed=changed,
+        open_journal=False,
+        cause=None,
+        cause_path=None,
+        published=False,
+    )
+    inputs: dict[str, DecisionScalar] = {
+        "reason": result.reason,
+        "unchanged": unchanged,
+        "trimmed": None,
+        "trim_left": None,
+        "trim_skipped": None,
+    }
+    ctx.decide(TABLE, TABLE_VERSION, inputs, result.outcome)
+    return result
+
+
 def save(params: Message, ctx: SaveJob) -> Message:
     assert isinstance(params, SaveParams)  # noqa: S101 (the handler's own params model)
     fs = for_this_os()
+    if _app_folder_gone(fs, params.app_local_data, ctx):
+        return _app_folder_missing(fs, params, ctx)
     ald = app_local_data_of(fs, params.app_local_data, ctx)
     try:
         fingerprint = decode(params.fingerprint.encode("ascii"))

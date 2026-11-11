@@ -35,8 +35,10 @@ import pytest
 from app.platform.adapters.engine_client import (
     EngineClient,
     EngineCommand,
+    _Filler,  # pyright: ignore[reportPrivateUsage]
     _Lines,  # pyright: ignore[reportPrivateUsage]
     _pump_lines_until_reaped,  # pyright: ignore[reportPrivateUsage]
+    bytecode_build_dir,
     next_request_id,
 )
 from app.platform.adapters.engine_group import PosixGroupOps, Reaped
@@ -2824,3 +2826,23 @@ def test_the_product_starts_its_engines_with_its_app_cache(tmp_path: Path) -> No
 
     args = Args(tmp_path / "local", tmp_path / "cache", 0, None, None, tmp_path / "venv", None)
     assert engine_command(args, "0.4.0").app_cache == tmp_path / "cache"
+
+
+def test_S0100_r1_the_bytecode_fill_never_makes_the_app_folder(tmp_path: Path) -> None:
+    """S0100 round 1 (red team F3; owner, 2026-11-10: "Sidecar makes it once (Recommended)"): the fill makes
+    `engine/`, `bytecode/` and its build folder inside the app folder, never the app folder or anything above it (it
+    used `mkdir(parents=True)`, which made a removed app folder again, unsynced)."""
+    app = tmp_path / "gone" / "app"
+    directory = bytecode_build_dir(app, Path(sys.executable), Path(sys.prefix), "9.9.9")
+    command = EngineCommand.for_venv(ENGINE_VENV, test_ops=True, bytecode_dir=directory)
+    assert command.bytecode is not None
+    seen: list[dict[str, object]] = []
+    (tmp_path / "gone").mkdir()  # the app folder's parent is there; the app folder is not
+
+    def log(event: object, /, **fields: object) -> None:
+        del event
+        seen.append(fields)
+
+    _Filler(command.bytecode, None, PosixGroupOps(), log)._run()  # pyright: ignore[reportPrivateUsage]
+    assert not app.exists(), "the fill made the app folder again"
+    assert [f["outcome"] for f in seen] == ["fill_failed"]

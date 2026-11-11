@@ -9,13 +9,14 @@ the journal and backups folders, and their parents, durable before the commit po
 from __future__ import annotations
 
 import errno
+from collections.abc import Callable
 from dataclasses import replace
 
 import pytest
 
 from ledger_engine.fs.port import Resolved
 from ledger_engine.ledger import save as sv
-from ledger_engine.ledger.core.ledger_set import Content, Fingerprint
+from ledger_engine.ledger.core.ledger_set import Absent, Content, Fingerprint, Unreadable
 from ledger_engine.ledger.writer import Change, sha256
 from tests.fakes.memfs import Crash, MemFS
 from tests.mirror.fake_store import FakeStore, outside_publish
@@ -241,8 +242,6 @@ def test_S0100_a_missing_app_folder_is_not_saved_with_its_own_reason_and_nothing
 def test_S0100_BL0163d_a_file_made_unreadable_after_the_preview_is_an_io_error_naming_it() -> None:
     """BL-0163 (d): the gate's observation finds a file it cannot read (a `chmod 000` after the preview): not saved,
     an I/O error naming that file, never "your ledger changed"."""
-    from ledger_engine.ledger.core.ledger_set import Unreadable
-
     fs = save_world(f"{ALD}/local")
     fs.outside_mkdirs(ALD)
 
@@ -359,3 +358,64 @@ def test_BL0182_a_resolved_record_with_a_changed_file_holds_another_programs_byt
                 assert facts.path is not None
                 assert fs.file(facts.path) != PLANNED[facts.path][1], (fail, die, edit, facts)
     assert changed, "the sweep must reach a resolved record with a changed file"
+
+
+# -- S0100 round 1 (red team F1 High, verifier F1): the gate's unreadable file never says "unchanged" falsely --------
+
+
+def _gate_with(observe_files: Callable[[Fingerprint], Fingerprint], plan: sv.SavePlan) -> sv.SaveOutcome:
+    fs = save_world(f"{ALD}/local")
+    fs.outside_mkdirs(ALD)
+    return sv.run(plan, sv.Ports(fs, observe=observe_files, store=FakeStore()), Job())
+
+
+ONLY_B = (Change("/L/b.bean", sha256(B), b"b post\n"),)  # a.bean is in the set; this save does not write it
+
+
+def test_S0100_r1_an_unreadable_include_the_plan_never_named_after_an_edit_is_ledger_changed() -> None:
+    """Verifier r1 F1: another program edits the root to include `new.bean`, which cannot be read. The re-hash checks
+    only `b.bean`, so "Your ledger is unchanged" would be false: `ledger_changed`."""
+
+    def observe(fp: Fingerprint) -> Fingerprint:
+        files = tuple((p, Content("0" * 64) if p == "/L/a.bean" else s) for p, s in fp.files)
+        return replace(fp, files=(*files, ("/L/new.bean", Unreadable("EACCES"))))
+
+    out = _gate_with(observe, two_file_plan(changes=ONLY_B))
+    assert out == sv.Refused("ledger_changed", True)
+
+
+def test_S0100_r1_an_include_this_save_does_not_write_made_unreadable_is_ledger_changed() -> None:
+    """Red team r1 F1: a file of the set the save does not write, edited then made unreadable: its bytes are not
+    checked by the re-hash, so nothing may say the ledger is unchanged: `ledger_changed`."""
+
+    def observe(fp: Fingerprint) -> Fingerprint:
+        return replace(fp, files=tuple((p, Unreadable("EACCES") if p == "/L/a.bean" else s) for p, s in fp.files))
+
+    out = _gate_with(observe, two_file_plan(changes=ONLY_B))
+    assert out == sv.Refused("ledger_changed", True)
+
+
+def test_S0100_r1_an_unreadable_target_with_another_file_changed_is_ledger_changed() -> None:
+    """Red team r1 F1: a target made unreadable while another file of the set changed readably: `ledger_changed`."""
+
+    def observe(fp: Fingerprint) -> Fingerprint:
+        files = tuple((p, Unreadable("EACCES") if p == "/L/b.bean" else s) for p, s in fp.files)
+        return replace(fp, files=files, globs=(("/L/*.bean", ("/L/a.bean", "/L/b.bean", "/L/c.bean")),))
+
+    out = _gate_with(observe, two_file_plan(changes=ONLY_B))
+    assert out == sv.Refused("ledger_changed", True)
+
+
+def test_S0100_r1_a_file_standing_unreadable_where_the_save_creates_one_is_ledger_changed() -> None:
+    """Round 1: only a file the plan read (at its pre bytes) and now cannot be read is an I/O error; a file that
+    appeared where the save creates one, unreadable, is a change of the ledger (the plan saw nothing there)."""
+    created = Change("/L/c.bean", None, b"c\n")
+    fp = replace(FP, files=(*FP.files, ("/L/c.bean", Absent())))
+    plan = two_file_plan(changes=(*two_file_plan().changes, created), fingerprint=fp)
+
+    def observe(seen: Fingerprint) -> Fingerprint:
+        return replace(seen, files=tuple((p, Unreadable("EACCES") if p == "/L/c.bean" else s) for p, s in seen.files))
+
+    out = _gate_with(observe, plan)
+    assert isinstance(out, sv.Refused), out
+    assert out.reason == "ledger_changed", out

@@ -107,11 +107,12 @@ def not_saved_text(d: ChangeNotSavedDetails) -> str:
                 "make a folder on the drive, move your ledger into it, and open it from there. Otherwise keep your "
                 "ledger on another drive, such as your Mac's own disk."
             )
-        case "case_twins":  # S0100 (BL-0162): a case-sensitive volume; the journal compares names case-folded
+        case "case_twins":  # S0100 (BL-0162): the journal compares names under the widest fold (case, `ß`/`ss`, the
+            # Kelvin sign, HFS+'s own fold), so "only in capital letters" is not always true (round 1, red team F5)
             return (
-                f"{did_not} Another file in this change has the same name as {d.path or 'a ledger file'}, except for "
-                f"capital letters. Finzytrack cannot save both in one change. Rename one of them, then try again. "
-                f"{_rehash(d)}"
+                f"{did_not} {_name(d.path)} and another file in this change have names this drive may treat as the "
+                f"same (for example, they differ only in capital letters). Finzytrack cannot save both in one change. "
+                f"Rename one of them, then try again. {_rehash(d)}"
             )
         case "folder_appeared":  # S0100 (BL-0187): maybe our own retried `mkdir` on a network share
             return (

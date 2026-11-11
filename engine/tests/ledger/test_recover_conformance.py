@@ -36,8 +36,8 @@ every power-loss state at a try's end, they stand at R, at a name of ours beside
 **Where the model and the code differ** (MAPPING.md §3): the code checks every folder's drive first (S0089:
 `restore._drives`, the path guard included), the model file by file; the code's evidence rule for a missing file
 (`missing_unconfirmed`) and its drive stops have no counterpart (the model's files are never missing and its drives
-never swapped); the code refuses Keep while a folder the journal names is a link (`path_moved`, red team r1 R1-3), the
-model's Keep does not: such a Keep stops the trace (`STOPS`), never compared past it.
+never swapped). Since S0100 (BL-0224) the model's Keep refuses while a folder the journal names is not at its path, as
+the code's does (`path_moved`, red team r1 R1-3), so every Keep the model takes must be `Done` in the code.
 
 Not replayed: a power loss (`gen_traces.py` `OUT`: the fake cannot be steered to the model's pick; the restore's own
 sweeps check every power-loss state at every effect, `test_restore.py`), and a run the walk cut before it ended.

@@ -15,16 +15,16 @@ retires its engine after it (the safe default). Its steps:
    holds it, `OpSpec.needs_engine_lock`). Every path of the ledger set and every file the save writes is resolved
    first; one that cannot be (a folder that denies looking names up in it, §15) is `NotSaved(io_error)` naming it,
    with the re-hash (its first changed file in `changed`); nothing was written.
-4. **The gate** (ADR-0008 step 4), the last check before the commit point: the disk's fingerprint
-   equals the plan's (else `ledger_changed`, or `NotSaved(io_error)` naming a file it could not read and the plan
-   could: S0100, BL-0163 (d)); the published mirror is fresh against the disk: `current.db` resolved
-   once in `<app_cache>/workspaces/<key>/mirror/` (`mirror.publish.read_published`), and the ledger set in that
-   generation's own `meta.fingerprint` observed now has its digest (`mirror.publish.fresh_on_disk`; publish.md §7;
-   S0087, BL-0113); no published generation, an unreadable one or one that is not fresh is `mirror_stale`
+4. **The gate** (ADR-0008 step 4), the last check before the commit point: the disk's fingerprint equals the plan's
+   (else `ledger_changed`, or `NotSaved(io_error)` naming a file this save writes that it could not read and the plan
+   could, when nothing else differs: S0100, BL-0163 (d), round 1); the published mirror is fresh against the disk:
+   `current.db` resolved once in `<app_cache>/workspaces/<key>/mirror/` (`mirror.publish.read_published`), and the
+   ledger set in that generation's own `meta.fingerprint` observed now has its digest (`mirror.publish.fresh_on_disk`;
+   publish.md §7; S0087, BL-0113); no published generation, an unreadable one or one that is not fresh is `mirror_stale`
    (`WORKSPACE_NOT_READY {WARMING}`). The plan's set is not compared with the generation's: a save that creates or
    includes a file names files the generation never read. One job at a time (ADR-0064): no publish runs between this
-   read and the commit point. Then the `.open` check again. Steps 5 and 6 (the save's own load and the re-check
-   after it) are removed (ADR-0068 D1): an outside save after step 4 is met by the swap's displaced check.
+   read and the commit point. Then the `.open` check again. Steps 5 and 6 (the save's own load and the re-check after
+   it) are removed (ADR-0068 D1): an outside save after step 4 is met by the swap's displaced check.
 7. **The commit point:** `job.gate()` (§4: the sidecar's one table step answers `proceed` or ends the engine).
 8. `writer.durable_commit` (§6.1 step 8), after the workspace's journal and backups folders exist and every folder
    below `app_local_data` down to them has a durable entry (its parent synced, whether it was made now or not). The
@@ -60,7 +60,7 @@ import gc
 import posixpath
 import re
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Final, Literal, Protocol
 
 from ledger_engine.fs.port import FileSystem, Kind, split_absolute
@@ -304,6 +304,11 @@ def _unchanged(fs: FileSystem, changes: tuple[Change, ...]) -> bool:
     return _rehash(fs, changes)[0]
 
 
+def rehash(fs: FileSystem, changes: tuple[Change, ...]) -> tuple[bool, str | None]:
+    """`_rehash` for the protocol's own stop (a removed app folder, `protocol.save`)."""
+    return _rehash(fs, changes)
+
+
 class _LinkedFolder(Exception):
     def __init__(self, path: str) -> None:
         super().__init__(path)
@@ -364,13 +369,19 @@ def _not_saved(
     return NotSaved(Step.BACKUP, reason, unchanged, path=path, entry=entry, changed=changed)
 
 
-def _unreadable(now: Fingerprint, plan: Fingerprint) -> str | None:
-    """A file of the ledger set that the gate's observation could not read and the plan could (a `chmod 000` after the
-    preview): the gate's refusal is then an I/O error naming it, not `ledger_changed` (S0100, BL-0163 (d))."""
+def _unreadable(now: Fingerprint, plan: Fingerprint, writes: Mapping[str, str | None]) -> str | None:
+    """The one file this save writes that the gate's observation could not read and the plan read (a `chmod 000`
+    after the preview), when nothing else of the observation differs from the plan: the refusal is then an I/O error
+    naming it (S0100, BL-0163 (d)), and the re-hash, which reads that file too, says whether it is unchanged. Any other
+    difference (a file the save does not write, which the re-hash never checks, or a second change beside the
+    unreadable one) stays `ledger_changed`: "Your ledger is unchanged" is never said of a file nobody hashed again
+    (S0100 round 1, red team F1, verifier F1)."""
     planned = dict(plan.files)
     for p, state in now.files:
-        if isinstance(state, Unreadable) and planned.get(p) != state:
-            return p
+        if not isinstance(state, Unreadable) or p not in writes or not isinstance(planned.get(p), Content):
+            continue
+        files = tuple((q, planned[p] if q == p else s) for q, s in now.files)
+        return p if replace(now, files=files) == plan else None
     return None
 
 
@@ -422,7 +433,7 @@ def _gated(
 ) -> SaveOutcome:
     now = ports.observe(plan.fingerprint)  # step 4
     if now != plan.fingerprint:
-        unreadable = _unreadable(now, plan.fingerprint)
+        unreadable = _unreadable(now, plan.fingerprint, {c.path: c.pre for c in plan.changes})
         return refused("ledger_changed") if unreadable is None else io_error(unreadable)
     published = publish.read_published(ports.fs, plan.app_cache, plan.workspace_key, ports.store)
 

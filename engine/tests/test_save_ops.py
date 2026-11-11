@@ -210,3 +210,39 @@ def test_a_landed_save_trims_its_workspaces_history_on_disk(setup: tuple[Path, P
     assert sorted(p.name for p in backups.iterdir()) == sorted([*(f"s0-j{i:02d}" for i in range(2, 17)), "s1-j7"])
     assert not (journal / "s0-j00.closed").exists()
     assert not (journal / "s0-j01.closed").exists()
+
+
+def test_S0100_r1_a_removed_app_folder_is_its_own_outcome_with_nothing_made(
+    setup: tuple[Path, Path, dict[str, Any]],
+) -> None:
+    """S0100 round 1 (red team F2): the app folder this engine's lock was taken in, removed while the app runs, is
+    `not_saved {app_folder_missing}` naming it (the sidecar's `msg:save.app_folder_missing`: quit and reopen), not a
+    refused request; nothing is made in its parent."""
+    import shutil
+
+    main, ald, params = setup
+    e = engine(ald)
+    shutil.rmtree(ald)
+    reply = json.loads(e.handle(request("save", params), Channel(1, proceed=True)))
+    assert reply["ok"], reply
+    r = reply["result"]
+    assert (r["outcome"], r["reason"], r["entry"], r["unchanged"]) == (
+        "not_saved",
+        "app_folder_missing",
+        str(ald),
+        True,
+    )
+    assert not ald.exists()
+    assert main.read_bytes() == PRE
+
+
+def test_S0100_r1_another_missing_folder_is_still_refused(setup: tuple[Path, Path, dict[str, Any]]) -> None:
+    """Must not pass: a request naming a missing folder that is not this engine's app folder is refused as before."""
+    main, ald, params = setup
+    other = ald.parent / "elsewhere"
+    reply = json.loads(
+        engine(ald).handle(request("save", {**params, "app_local_data": str(other)}), Channel(1, proceed=True))
+    )
+    assert not reply["ok"], reply
+    assert not other.exists()
+    assert main.read_bytes() == PRE

@@ -546,7 +546,11 @@ class _Filler:
         try:
             if directory.exists():  # a folder left by a fill that did not finish
                 shutil.rmtree(directory)
-            directory.mkdir(parents=True)
+            # `<app_local_data>/engine/bytecode/<build>`: one `mkdir` each below the app folder, never the app folder or
+            # above it (the sidecar made it and synced its parent at start: S0100 round 1, red team F3)
+            for folder in (directory.parents[1], directory.parent):
+                folder.mkdir(exist_ok=True)
+            directory.mkdir()
             argv = self._bytecode.fill_argv
             with self._lock:
                 if self._stopped:

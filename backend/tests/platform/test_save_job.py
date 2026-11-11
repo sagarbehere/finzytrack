@@ -628,9 +628,9 @@ def test_S0100_the_outcome_after_a_death_carries_the_changed_file_in_its_own_fie
     [
         (
             ChangeNotSavedDetails("case_twins", "/L/A.bean", None, None, True, None),
-            "Finzytrack did not save your change. Another file in this change has the same name as /L/A.bean, "
-            "except for capital letters. Finzytrack cannot save both in one change. Rename one of them, then try "
-            "again. Your ledger is unchanged.",
+            "Finzytrack did not save your change. A.bean and another file in this change have names this drive may "
+            "treat as the same (for example, they differ only in capital letters). Finzytrack cannot save both in "
+            "one change. Rename one of them, then try again. Your ledger is unchanged.",
         ),
         (
             ChangeNotSavedDetails("folder_appeared", NEW, "/L/y2026", None, True, None),

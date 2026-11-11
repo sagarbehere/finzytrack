@@ -9,8 +9,8 @@ the app folder, never in or above its parent."
 is missing (one `mkdir`, mode 0700: never its parents, which belong to the system), and its parent is synced at every
 start, whether the folder was made now or by an earlier start that may have ended before its sync, so the folder's
 entry is durable before any save writes its journal in it (a link at the path: the real folder's parent too, since the
-save and recover-all follow it). The sync is `F_FULLFSYNC` on macOS (the engine's
-`durable_sync`, engine-jobs §6.2), `fsync` elsewhere. Any failure is an `AppFolderRefusal` with its text
+save and recover-all follow it). The sync is the engine's `durable_sync` rule (engine-jobs §6.2): `F_FULLFSYNC` on
+macOS, `fsync` where the volume refuses it, `fsync` elsewhere. Any failure is an `AppFolderRefusal` with its text
 (`msg:start.app_folder`): the sidecar then exits before its handshake.
 """
 
@@ -48,11 +48,21 @@ def refusal_text(folder: str, answer: str | None) -> str:
     )
 
 
+REFUSED_FULL_SYNC = (errno.ENOTSUP, errno.EINVAL, errno.ENOTTY)
+"""What a volume answers when it cannot do `F_FULLFSYNC`: then `fsync`, as the engine's `durable_sync` does
+(`ledger_engine.fs.darwin`; S0100 round 1, red team F4)."""
+
+
 def _full_sync(fd: int) -> None:
     if sys.platform == "darwin":
         import fcntl  # POSIX only
 
-        fcntl.fcntl(fd, fcntl.F_FULLFSYNC)
+        try:
+            fcntl.fcntl(fd, fcntl.F_FULLFSYNC)
+        except OSError as e:
+            if e.errno not in REFUSED_FULL_SYNC:
+                raise
+            os.fsync(fd)
     else:  # pragma: no cover (macOS is the only platform built today)
         os.fsync(fd)
 
