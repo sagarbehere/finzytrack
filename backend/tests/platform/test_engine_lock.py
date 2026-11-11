@@ -86,3 +86,12 @@ def test_the_lock_file_is_never_deleted(tmp_path: Path) -> None:
     for _ in range(2):
         wait_engine_lock(path)
         assert path.is_file()
+
+
+def test_S0100_the_wait_never_makes_the_app_folder_above_its_locks_folder(tmp_path: Path) -> None:
+    """S0100 (BL-0163 (a); owner, 2026-11-10: "Sidecar makes it once (Recommended)"): the app's folder is made at
+    start (`app.main`, its parent synced); the wait makes only `locks/` in it, never a missing app folder."""
+    app = tmp_path / "app"
+    with pytest.raises(FileNotFoundError):
+        wait_engine_lock(engine_lock_path(app))
+    assert not app.exists()

@@ -506,7 +506,9 @@ def test_a_folder_that_appears_before_the_save_makes_it_stops_the_save_and_is_le
     w = world(new_dir=True)
     _hook(w.fs, "mkdir /w/L:y2026", lambda: w.fs.outside_mkdirs("/w/L/y2026"))
     out = durable_commit(w.fs, w.commit)
-    assert out == NotSaved(Step.REPLACE, Reason.CHANGED, True, path="/w/L/y2026")
+    assert out == NotSaved(
+        Step.REPLACE, Reason.FOLDER_APPEARED, True, path="/w/L/y2026/prices.bean", entry="/w/L/y2026"
+    )
     assert w.fs.snapshot()["/w/L/y2026"] == ("dir",), "a folder the save did not make is never removed"
     assert set(journals(w.fs)) == {State.RESOLVED}
     assert [p for p in w.fs.snapshot() if p.startswith("/w/L/y2026/")] == []
@@ -517,7 +519,7 @@ def test_a_file_not_at_its_planned_pre_bytes_refuses_before_anything_is_replaced
     w.fs.outside_write("/w/L/main.bean", b"; edited after the plan\n")
     out = durable_commit(w.fs, w.commit)
     assert out == NotSaved(
-        Step.BACKUP, Reason.CHANGED, False, path="/w/L/main.bean"
+        Step.BACKUP, Reason.CHANGED, False, path="/w/L/main.bean", changed="/w/L/main.bean"
     )  # not "unchanged": a file differs from the plan
     assert journals(w.fs) == {}
     assert w.fs.file("/w/L/inc/a.bean") == w.targets[0].pre
@@ -527,7 +529,7 @@ def test_a_file_the_save_creates_that_already_exists_refuses_before_anything_is_
     w = world()
     w.fs.outside_write("/w/L/prices.bean", b"already here\n")
     out = durable_commit(w.fs, w.commit)
-    assert out == NotSaved(Step.BACKUP, Reason.CHANGED, False, path="/w/L/prices.bean")
+    assert out == NotSaved(Step.BACKUP, Reason.CHANGED, False, path="/w/L/prices.bean", changed="/w/L/prices.bean")
     assert w.fs.effects == []
 
 
@@ -688,7 +690,7 @@ def test_a_failed_exclusive_rename_with_nothing_replaced_is_not_saved() -> None:
     out = durable_commit(w.fs, c)
     # owner, 2026-10-30 ("Never remove it (Recommended)"): the rollback leaves the file and stops; before the first
     # replace, so not saved with the journal open (writes paused until recovery resolves it)
-    assert out == NotSaved(Step.REPLACE, Reason.CHANGED, False, True, "/w/L/prices.bean")
+    assert out == NotSaved(Step.REPLACE, Reason.CHANGED, False, True, "/w/L/prices.bean", changed="/w/L/prices.bean")
     assert set(journals(w.fs)) == {State.OPEN}
     assert w.fs.file("/w/L/prices.bean") == b"x"
     assert w.fs.file("/w/L/.prices.bean.ft-s1-j7.tmp") is None, "our own temp removed by the temp rule"
@@ -826,7 +828,7 @@ def test_a_replaced_file_that_vanished_refuses_before_the_first_effect() -> None
     w.fs.outside_mkdirs("/w/gone")
     w.fs.outside_move("/w/L/inc/a.bean", "/w/gone/a.bean")
     out = durable_commit(w.fs, w.commit)
-    assert out == NotSaved(Step.BACKUP, Reason.CHANGED, False, path="/w/L/inc/a.bean")
+    assert out == NotSaved(Step.BACKUP, Reason.CHANGED, False, path="/w/L/inc/a.bean", changed="/w/L/inc/a.bean")
     assert w.fs.effects == []
 
 
@@ -1820,3 +1822,119 @@ def test_R7_F2_an_entry_added_to_a_ledger_folder_during_the_save_loses_nothing_a
         fs.outside_acl_clear(got.entry)  # the way out (§15): `chmod -N` on that file, then Retry
         got = recover(fs)
     check_recovered(fs, w, got)
+
+
+# ---- S0100: the write-path leftovers (BL-0162, BL-0163 (b), BL-0187) -----------------------------------------------
+
+
+def _case_sensitive_world(*paths: str) -> tuple[MemFS, Commit]:
+    """A ledger on a case-sensitive volume (`/w/L`), the journal and backups on the Mac's own disk; each of `paths`
+    an existing file the save replaces."""
+    fs = MemFS()
+    for d in (JD, BD):
+        fs.outside_mkdirs(d)
+    fs.outside_mkdirs("/w/L", case_insensitive=False)
+    changes: list[Change] = []
+    for i, p in enumerate(paths):
+        fs.outside_mkdirs(p.rpartition("/")[0])
+        pre = f"; file {i}\n".encode()
+        fs.outside_write(p, pre)
+        changes.append(Change(p, sha256(pre), f"; file {i} new\n".encode()))
+    c = Commit("s1", "j7", "k1", "lin1", "build1", tuple(changes), JD, BD)
+    return fs, c
+
+
+@pytest.mark.parametrize(
+    "paths",
+    [
+        ("/w/L/a.bean", "/w/L/A.bean"),  # the file names differ only in case
+        ("/w/L/x/a.bean", "/w/L/X/a.bean"),  # a folder's name does
+    ],
+)
+def test_BL0162_targets_that_differ_only_in_case_are_refused_naming_the_file_before_the_first_effect(
+    paths: tuple[str, str],
+) -> None:
+    """BL-0162 (S0061 red team r4 overflow O2): on a case-sensitive volume two such files are two files, but the
+    journal compares temp names under the widest fold (`journal.encode`: `duplicate_temp`), so the save used to write
+    its backups, then fail with no outcome. Refused before the first effect, naming the second file, by the fold the
+    record's own check uses."""
+    fs, c = _case_sensitive_world(*paths)
+    before = fs.snapshot()
+    out = durable_commit(fs, c)
+    assert out == NotSaved(Step.BACKUP, Reason.CASE_TWINS, True, path=paths[1])
+    assert fs.effects == []
+    assert fs.snapshot() == before
+
+
+def test_BL0162_files_that_differ_in_more_than_case_on_a_case_sensitive_volume_land() -> None:
+    """@regression-guard (holds on 437d6298). Must pass: the refusal is only for names that fold to one under the widest
+    rule."""
+    fs, c = _case_sensitive_world("/w/L/a.bean", "/w/L/b.bean", "/w/L/A2.bean")
+    assert isinstance(durable_commit(fs, c), Landed)
+
+
+def test_BL0162_a_record_the_journal_refuses_is_refused_before_the_backups(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The record is encoded before the first effect: any rule of the record's own check that the writer's plan
+    checks missed stops the save with nothing written (it used to raise after the backups were made)."""
+    w = world()
+
+    def refuse(_: object) -> bytes:
+        raise journal.BadRecordError("temp_is_a_path")
+
+    monkeypatch.setattr(journal, "encode", refuse)
+    with pytest.raises(ValueError, match="temp_is_a_path"):
+        durable_commit(w.fs, w.commit)
+    assert w.fs.effects == []
+
+
+def test_BL0187_a_folder_that_appears_where_the_save_makes_one_has_its_own_reason_naming_the_folder() -> None:
+    """BL-0187 (S0071 red team F3): `mkdir` answered `EEXIST` is not "your ledger changed": on a network share it can
+    be our own retried `mkdir`. Its own reason, the folder named in `entry`, the file in `path`."""
+    w = world(new_dir=True)
+    _hook(w.fs, "mkdir /w/L:y2026", lambda: w.fs.outside_mkdirs("/w/L/y2026"))
+    out = durable_commit(w.fs, w.commit)
+    assert out == NotSaved(
+        Step.REPLACE, Reason.FOLDER_APPEARED, True, path="/w/L/y2026/prices.bean", entry="/w/L/y2026"
+    )
+    assert w.fs.snapshot()["/w/L/y2026"] == ("dir",)
+
+
+def test_BL0163b_an_io_error_after_an_outside_edit_names_the_changed_file_apart_from_the_failed_one() -> None:
+    """BL-0163 (b): `path` is the file the error happened at, `changed` the first file the re-hash found not at its
+    pre bytes, so the text can say which file changed instead of "could not check"."""
+    base, _ = clean_run()
+    w = world()
+    at = base.fs.effects.index(f"fsync {SAVE_DIR}:2-main.bean")
+
+    def edit_then_fail(i: int, _: str) -> None:
+        if i == at - 1:
+            w.fs.on_effect = None
+            w.fs.outside_write("/w/L/inc/a.bean", b"; an editor\n")
+
+    w.fs.on_effect = edit_then_fail
+    w.fs.inject(at, crash=False)
+    out = durable_commit(w.fs, w.commit)
+    assert isinstance(out, NotSaved)
+    assert (out.reason, out.path, out.unchanged, out.changed) == (
+        Reason.IO_ERROR,
+        "/w/L/main.bean",
+        False,
+        "/w/L/inc/a.bean",
+    )
+
+
+def test_BL0163b_unchanged_means_no_changed_file_and_a_failed_rehash_names_none() -> None:
+    """Must pass both ways: unchanged has no `changed`; a re-hash that cannot read a file says neither."""
+    base, _ = clean_run()
+    w = world()
+    w.fs.inject(base.fs.effects.index(f"fsync {SAVE_DIR}:2-main.bean"), crash=False)
+    out = durable_commit(w.fs, w.commit)
+    assert isinstance(out, NotSaved)
+    assert (out.unchanged, out.changed) == (True, None)
+    w = world()
+    at = base.fs.effects.index(f"fsync {SAVE_DIR}:2-main.bean")
+    _hook(w.fs, f"fsync {SAVE_DIR}:2-main.bean", lambda: w.fs.outside_move("/w/L/inc", "/w/L/moved"))
+    w.fs.inject(at, crash=False)
+    out = durable_commit(w.fs, w.commit)
+    assert isinstance(out, NotSaved)
+    assert (out.unchanged, out.changed) == (False, None), "a folder that moved cannot be read again: not checked"

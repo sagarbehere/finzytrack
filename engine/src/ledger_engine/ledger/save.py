@@ -14,9 +14,10 @@ retires its engine after it (the safe default). Its steps:
 3. *(Removed, ADR-0068 D3.)* No per-file lock: the engine lock is the guard (the `save` op runs only in an engine that
    holds it, `OpSpec.needs_engine_lock`). Every path of the ledger set and every file the save writes is resolved
    first; one that cannot be (a folder that denies looking names up in it, §15) is `NotSaved(io_error)` naming it,
-   with the re-hash; nothing was written.
+   with the re-hash (its first changed file in `changed`); nothing was written.
 4. **The gate** (ADR-0008 step 4), the last check before the commit point: the disk's fingerprint
-   equals the plan's (else `ledger_changed`); the published mirror is fresh against the disk: `current.db` resolved
+   equals the plan's (else `ledger_changed`, or `NotSaved(io_error)` naming a file it could not read and the plan
+   could: S0100, BL-0163 (d)); the published mirror is fresh against the disk: `current.db` resolved
    once in `<app_cache>/workspaces/<key>/mirror/` (`mirror.publish.read_published`), and the ledger set in that
    generation's own `meta.fingerprint` observed now has its digest (`mirror.publish.fresh_on_disk`; publish.md §7;
    S0087, BL-0113); no published generation, an unreadable one or one that is not fresh is `mirror_stale`
@@ -26,7 +27,9 @@ retires its engine after it (the safe default). Its steps:
    after it) are removed (ADR-0068 D1): an outside save after step 4 is met by the swap's displaced check.
 7. **The commit point:** `job.gate()` (§4: the sidecar's one table step answers `proceed` or ends the engine).
 8. `writer.durable_commit` (§6.1 step 8), after the workspace's journal and backups folders exist and every folder
-   from `app_local_data` down to them has a durable entry (its parent synced, whether it was made now or not). A link
+   below `app_local_data` down to them has a durable entry (its parent synced, whether it was made now or not). The
+   app's folder itself is given: the sidecar made it and synced its parent at start, and the save never makes or
+   syncs anything in or above that parent; a missing one is `NotSaved(app_folder_missing)` (S0100, BL-0163 (a)). A link
    in place of `local/<key>`, its `journal` or its `backups` is `NotSaved(linked_folder)` naming the link, before
    anything is made or synced in or through it (S0077, BL-0193: recover-all reads no record through such a link, nor
    does the trim, so a record or backups there would never be recovered). The record carries no prediction (journal
@@ -66,7 +69,7 @@ from ledger_engine.ledger import history, overlay
 from ledger_engine.ledger.core import journal
 from ledger_engine.ledger.core import paths as core_paths
 from ledger_engine.ledger.core.journal import Record, State
-from ledger_engine.ledger.core.ledger_set import Absent, Content, Fingerprint
+from ledger_engine.ledger.core.ledger_set import Absent, Content, Fingerprint, Unreadable
 from ledger_engine.ledger.handles import join, sha256
 from ledger_engine.ledger.writer import (
     BadPlanError,
@@ -272,11 +275,14 @@ def _key(fs: FileSystem, path: str) -> str:
 # -- the run -----------------------------------------------------------------------------------------------------------
 
 
-def _unchanged(fs: FileSystem, changes: tuple[Change, ...]) -> bool:
-    """Every file the save would write, hashed again, equals its pre bytes (a created one: absent); any failure says
-    no (§11's rule)."""
-    try:
-        for c in changes:
+def _rehash(fs: FileSystem, changes: tuple[Change, ...]) -> tuple[bool, str | None]:
+    """Every file the save would write, hashed again: whether each equals its pre bytes (a created one: absent), and
+    the first one found not at them, as the ledger names it (S0100, BL-0163 (b)). A file that cannot be read is
+    neither: the answer is then not unchanged (§11's rule), and names a changed file only when another was read and
+    differs."""
+    unread = False
+    for c in changes:
+        try:
             r = fs.resolve(c.path)
             if r.rest:
                 now = None
@@ -286,11 +292,16 @@ def _unchanged(fs: FileSystem, changes: tuple[Change, ...]) -> bool:
                 with fs.open_dir(folder or "/") as h:
                     data = h.read(base)
                 now = None if data is None else sha256(data)
-            if now != c.pre:
-                return False
-    except (OSError, ValueError):
-        return False
-    return True
+        except (OSError, ValueError):
+            unread = True
+            continue
+        if now != c.pre:
+            return False, c.path
+    return not unread, None
+
+
+def _unchanged(fs: FileSystem, changes: tuple[Change, ...]) -> bool:
+    return _rehash(fs, changes)[0]
 
 
 class _LinkedFolder(Exception):
@@ -299,13 +310,18 @@ class _LinkedFolder(Exception):
         self.path = path
 
 
+class _AppFolderMissing(Exception):
+    pass
+
+
 def _ensure_dir(fs: FileSystem, parent: str, name: str, *, no_link: bool = False) -> str:
     """The folder `name` in `parent`, its entry durable: `parent` is synced whether or not the folder was made now. A
     folder that was there already may be the mkdir of an earlier engine that died before its sync; a power loss could
     then drop it, with the `.open` journal or the backups in it, while the ledger files stay swapped (round 1, verifier
     F1). A sync with nothing to flush costs nothing (§6.2). `no_link`: a link in place of the folder raises
-    `_LinkedFolder` (the workspace's own folders, S0077); the app's folder and `local/` may be links, which recover-all
-    follows too."""
+    `_LinkedFolder` (the workspace's own folders, S0077); `local/` may be a link, which recover-all follows too.
+    `parent` is never above the app's own folder: the sidecar made that one and synced its parent at start (S0100,
+    BL-0163 (a); owner, 2026-11-10: "Sidecar makes it once (Recommended)")."""
     path = join(parent, name)
     with fs.open_dir(parent) as h:
         st = h.stat(name)
@@ -340,6 +356,24 @@ def _paused(path: str, ports: Ports, plan: SavePlan) -> Refused:
     return Refused("unfinished_save", _unchanged(ports.fs, plan.changes), path)
 
 
+def _not_saved(
+    ports: Ports, plan: SavePlan, reason: Reason, *, path: str | None = None, entry: str | None = None
+) -> NotSaved:
+    """A stop before the first write (`Step.BACKUP`), with the re-hash's answer (§11's rule) and its changed file."""
+    unchanged, changed = _rehash(ports.fs, plan.changes)
+    return NotSaved(Step.BACKUP, reason, unchanged, path=path, entry=entry, changed=changed)
+
+
+def _unreadable(now: Fingerprint, plan: Fingerprint) -> str | None:
+    """A file of the ledger set that the gate's observation could not read and the plan could (a `chmod 000` after the
+    preview): the gate's refusal is then an I/O error naming it, not `ledger_changed` (S0100, BL-0163 (d))."""
+    planned = dict(plan.files)
+    for p, state in now.files:
+        if isinstance(state, Unreadable) and planned.get(p) != state:
+            return p
+    return None
+
+
 @tla_action("SaveCut", model="mirror-publish")
 def run(plan: SavePlan, ports: Ports, job: Job) -> SaveOutcome:
     """§6.1 steps 1-11 in this engine (the module's docstring). For the mirror-publish model, `SaveCut` is this run
@@ -368,7 +402,7 @@ def _run(plan: SavePlan, ports: Ports, job: Job, pre: Mapping[str, str | None]) 
         return _paused(open_journal, ports, plan)
 
     def io_error(path: str | None) -> NotSaved:
-        return NotSaved(Step.BACKUP, Reason.IO_ERROR, _unchanged(ports.fs, plan.changes), path=path)
+        return _not_saved(ports, plan, Reason.IO_ERROR, path=path)
 
     for p in sorted({*(p for p, _ in plan.fingerprint.files), *pre}):  # step 3: every path resolves
         try:
@@ -386,8 +420,10 @@ def _gated(
     refused: Callable[..., Refused],
     io_error: Callable[[str | None], NotSaved],
 ) -> SaveOutcome:
-    if ports.observe(plan.fingerprint) != plan.fingerprint:  # step 4
-        return refused("ledger_changed")
+    now = ports.observe(plan.fingerprint)  # step 4
+    if now != plan.fingerprint:
+        unreadable = _unreadable(now, plan.fingerprint)
+        return refused("ledger_changed") if unreadable is None else io_error(unreadable)
     published = publish.read_published(ports.fs, plan.app_cache, plan.workspace_key, ports.store)
 
     def ours(root: str) -> bool:  # the generation is of this ledger (round 1, red team F2)
@@ -401,17 +437,23 @@ def _gated(
     job.gate()  # step 7: past it, the save finishes (§4)
     job.progress("saving")
     jd = journal_dir(plan)
+    ald = plan.app_local_data.rstrip("/") or "/"
     try:
-        # every folder from the app's own down, its entry durable before the first write (round 1, verifier F1)
-        app_parent, _, app_name = plan.app_local_data.rstrip("/").rpartition("/")
-        ald = _ensure_dir(ports.fs, app_parent or "/", app_name)
-        key_dir = _ensure_dir(ports.fs, _ensure_dir(ports.fs, ald, LOCAL), plan.workspace_key, no_link=True)
+        # every folder below the app's own, its entry durable before the first write (round 1, verifier F1); the app's
+        # folder is the sidecar's, made and its parent synced at start (S0100, BL-0163 (a)): never made or synced above
+        try:
+            local = _ensure_dir(ports.fs, ald, LOCAL)
+        except FileNotFoundError:
+            raise _AppFolderMissing from None
+        key_dir = _ensure_dir(ports.fs, local, plan.workspace_key, no_link=True)
         _ensure_dir(ports.fs, key_dir, JOURNAL, no_link=True)
         bd = _ensure_dir(ports.fs, key_dir, BACKUPS, no_link=True)
+    except _AppFolderMissing:
+        return _not_saved(ports, plan, Reason.APP_FOLDER_MISSING, entry=ald)
     except _LinkedFolder as e:
-        return NotSaved(Step.BACKUP, Reason.LINKED_FOLDER, _unchanged(ports.fs, plan.changes), entry=e.path)
+        return _not_saved(ports, plan, Reason.LINKED_FOLDER, entry=e.path)
     except OSError:
-        return NotSaved(Step.BACKUP, Reason.IO_ERROR, _unchanged(ports.fs, plan.changes))
+        return _not_saved(ports, plan, Reason.IO_ERROR)
     commit = Commit(
         session=plan.session,
         job=plan.job,

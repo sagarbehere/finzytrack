@@ -28,12 +28,13 @@ def engine_lock_path(app_local_data: Path) -> Path:
 
 def wait_engine_lock(path: Path) -> None:
     """Take the engine lock, waiting for as long as another process holds it, and release it at once. Creates the
-    folder and the file if they are missing; never deletes them."""
+    `locks/` folder and the file if they are missing (never the app's folder above it, made at start by `app.main`:
+    S0100, BL-0163 (a)); never deletes them."""
     if os.name != "posix":  # pragma: no cover (Windows)
         return  # TODO(BL-0087): the Windows lock (LockFileEx), with the engine's nested Job Object.
     import fcntl  # POSIX only
 
-    path.parent.mkdir(parents=True, exist_ok=True)
+    path.parent.mkdir(exist_ok=True)
     fd = os.open(path, os.O_RDWR | os.O_CREAT, 0o600)
     try:
         fcntl.flock(fd, fcntl.LOCK_EX)

@@ -24,15 +24,19 @@ export interface components {
         /**
          * ChangeNotSavedDetails
          * @description A save that did not happen, and why (engine-jobs §6.1 step 8's refusals, §6.4, §6.6, §11; S0063). `path`: the
-         *     file it is about; `folder` and `acl_entry`: for `permission`, the folder and the ACL entry (in `chmod`'s words, no
-         *     subject) that stop it, and for `linked_folder` the link in place of the save's own folder; `unchanged`: every file
+         *     file it is about (an I/O error's file); `folder` and `acl_entry`: for `permission`, the folder and the ACL entry
+         *     (in `chmod`'s words, no subject) that stop it, for `linked_folder` the link in place of the save's own folder, for
+         *     `folder_appeared` the folder that appeared, for `app_folder_missing` the app's folder; `unchanged`: every file
          *     the save would write was hashed again and equals its bytes before the save (only then may the user read "Your
-         *     ledger is unchanged"). The UI words each reason
+         *     ledger is unchanged"); `changed`: the first file that re-hash found not at those bytes (None when none was found,
+         *     or when it could not read a file; S0100, BL-0163 (b)). The UI words each reason
          *     (`app.platform.engine_jobs.save_text.not_saved_text`).
          */
         ChangeNotSavedDetails: {
             /** Acl Entry */
             acl_entry: string | null;
+            /** Changed */
+            changed: string | null;
             /** Folder */
             folder: string | null;
             /** Path */
@@ -378,9 +382,9 @@ export interface components {
         /** @constant */
         NotReadyPhase: "WARMING";
         /** @enum {string} */
-        NotSavedReason: "hard_linked" | "locked" | "not_a_file" | "permission" | "io_error" | "read_back" | "name_not_utf8" | "linked_folder" | "no_drive_id" | "no_folder_id" | "engine_stopped";
-        /** @constant */
-        PausedReason: "unfinished_save";
+        NotSavedReason: "hard_linked" | "locked" | "not_a_file" | "permission" | "io_error" | "read_back" | "name_not_utf8" | "linked_folder" | "no_drive_id" | "no_folder_id" | "engine_stopped" | "case_twins" | "folder_appeared" | "app_folder_missing";
+        /** @enum {string} */
+        PausedReason: "unfinished_save" | "earlier_unfinished";
         /** RouteNotFoundError */
         RouteNotFoundError: {
             /**
@@ -546,9 +550,10 @@ export interface components {
         /**
          * WritesPausedDetails
          * @description This workspace's saves are paused (engine-jobs §6.1 steps 1 and 4, §6.4, §6.6, §11; S0063). `unfinished_save`:
-         *     an unfinished save's journal is open (Reopen recovers it); the only reason since S0068 (ADR-0067: nothing after a
-         *     save pauses saving). `file`: the file the save was creating that the undo will ask about (its Reopen
-         *     text then promises no undo: S0061 red team r8 overflow 1), else None.
+         *     this save's journal was left open (Reopen recovers it); `earlier_unfinished`: refused before anything was written,
+         *     since an earlier save's journal is open (S0100, BL-0183). Nothing else pauses saving since S0068 (ADR-0067).
+         *     `file`: the file the save was creating that the undo will ask about (its Reopen text then promises no undo: S0061
+         *     red team r8 overflow 1), else None.
          */
         WritesPausedDetails: {
             /** File */

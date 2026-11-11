@@ -92,6 +92,7 @@ BLANK: dict[str, object] = {
     "entry": None,
     "detail": None,
     "unchanged": False,
+    "changed": None,
     "open_journal": False,
     "cause": None,
     "cause_path": None,

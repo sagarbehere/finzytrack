@@ -3459,6 +3459,7 @@
           "result": {
             "cause": null,
             "cause_path": null,
+            "changed": null,
             "detail": null,
             "entry": null,
             "open_journal": false,
@@ -3576,7 +3577,7 @@
     },
     "SaveResult": {
       "additionalProperties": false,
-      "description": "How the save ended (§6.1, §11). `saved`: the closed record is durable (`published`: the mirror was published,\nnever yet, BL-0113). `refused`: before the commit point, nothing written (`reason`: `unfinished_save`,\n`ledger_changed`, `mirror_stale`, `encrypted_file`). `not_saved`: the writer's `NotSaved` (`reason` its own:\n`hard_linked`, `locked`, `not_a_file`, `permission`, `changed`, `path_moved`, `read_back`, `io_error`,\n`name_not_utf8`, `linked_folder`, `no_drive_id`, `no_folder_id`; `open_journal`: writes are paused until\nrecovery). `unfinished`: a file may have been replaced and the rollback stopped (`cause`, and `cause_path` its\nfile: after `created_path_taken` the undo will ask about that file). `unchanged`: every file the save would write\nwas hashed again and equals its pre bytes. `path`: the file it is about; `entry`: the folder a `permission`\nrefusal is about, or the link a `linked_folder` refusal names; `detail`: the ACL entry that blocks it.",
+      "description": "How the save ended (§6.1, §11). `saved`: the closed record is durable (`published`: the mirror was published,\nnever yet, BL-0113). `refused`: before the commit point, nothing written (`reason`: `unfinished_save`,\n`ledger_changed`, `mirror_stale`, `encrypted_file`). `not_saved`: the writer's `NotSaved` (`reason` its own:\n`hard_linked`, `locked`, `not_a_file`, `permission`, `changed`, `path_moved`, `read_back`, `io_error`,\n`name_not_utf8`, `linked_folder`, `no_drive_id`, `no_folder_id`, `case_twins`, `folder_appeared`,\n`app_folder_missing`; `open_journal`: writes are paused until\nrecovery). `unfinished`: a file may have been replaced and the rollback stopped (`cause`, and `cause_path` its\nfile: after `created_path_taken` the undo will ask about that file). `unchanged`: every file the save would write\nwas hashed again and equals its pre bytes; `changed`: the first file that re-hash found not at them (None also when\nit could not read a file; S0100, BL-0163 (b)). `path`: the file it is about (the one an I/O error happened at);\n`entry`: the folder a `permission` refusal is about, the link a `linked_folder` refusal names, the folder that\nappeared (`folder_appeared`) or the app's folder that is missing (`app_folder_missing`); `detail`: the ACL entry\nthat blocks it.",
       "properties": {
         "outcome": {
           "$ref": "#/$defs/SaveOutcomeKind"
@@ -3633,6 +3634,19 @@
           "title": "Unchanged",
           "type": "boolean"
         },
+        "changed": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "pattern": "^/",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Changed"
+        },
         "open_journal": {
           "title": "Open Journal",
           "type": "boolean"
@@ -3673,6 +3687,7 @@
         "entry",
         "detail",
         "unchanged",
+        "changed",
         "open_journal",
         "cause",
         "cause_path",

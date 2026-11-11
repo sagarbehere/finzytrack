@@ -255,8 +255,9 @@ class SaveAnswer:
     """The engine's `save` result (engine-jobs §6.1, §11; S0063): `saved`; `refused` before the commit point (nothing
     written); `not_saved` (the writer's refusal or failure; `open_journal`: writes paused until recovery);
     `unfinished` (a file may have been replaced, the rollback stopped: `cause`, `cause_path`). `unchanged`: every file
-    the save would write was hashed again and equals its pre bytes. `entry`, `detail`: the folder and the ACL entry of
-    a `permission` refusal."""
+    the save would write was hashed again and equals its pre bytes; `changed`: the first file it found not at them
+    (S0100). `entry`, `detail`: the folder and the ACL entry of a `permission` refusal (`entry` also the folder of
+    `linked_folder`, `folder_appeared` and `app_folder_missing`)."""
 
     outcome: SaveOutcomeKind
     reason: str | None
@@ -268,6 +269,7 @@ class SaveAnswer:
     cause: str | None
     cause_path: str | None
     published: bool
+    changed: str | None = None
 
 
 type RebuildOutcome = Literal["loaded", "moved", "fresh", "paused", "refused"]

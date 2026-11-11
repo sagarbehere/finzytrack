@@ -198,10 +198,16 @@ StartRecover ==
   /\ app' = "recover" /\ run' = RecJob /\ ctl' = [NoCtl EXCEPT !.pc = "rc_init"]
   /\ UNCHANGED <<fs, jr, env, tgt, n, gh>>
 
+\* the path guard (§6.3): a recorded path that no longer resolves to its canonical path
+PathMoved(f) == env.lnk /\ f = "R"
+Guarded == MUTANT \notin {"no_path_guard", "fb_no_guard"}
 \* "Keep the files as they are now" (§8.1) for a journal recovery stopped: writes nothing to the ledger files;
-\* first durable_syncs every file and folder the journal names, then renames the journal .kept (synced)
+\* first durable_syncs every file and folder the journal names, then renames the journal .kept (synced). Refused
+\* (`path_moved`, writing nothing) while a folder a readable journal names is not at its recorded path: what stands
+\* there may not be what Keep can sync (red team r1 R1-3; S0100, BL-0224); a torn journal names no folder
 Keep(j) ==
   /\ app = "run" /\ ~Busy /\ jr[j].st \in OpenSt /\ jr[j].why # ""
+  /\ jr[j].st = "topen" \/ \A f \in jr[j].files : ~(PathMoved(f) /\ Guarded)
   /\ jr' = [jr EXCEPT ![j].st = "kept", ![j].pl = {"kept"}]
   /\ fs' = IF MUTANT = "keep_no_sync" \/ jr[j].st = "topen" THEN fs   \* a torn journal names nothing to sync
            ELSE LET F == jr[j].files IN
@@ -417,9 +423,6 @@ InRollback == run.k = "save"
 JPre(f)  == jr[RJn].pre[f]
 JPost(f) == jr[RJn].post[f]
 Slot(f) == <<RJn, f>>
-\* the path guard (§6.3): a recorded path that no longer resolves to its canonical path
-PathMoved(f) == env.lnk /\ f = "R"
-Guarded == MUTANT \notin {"no_path_guard", "fb_no_guard"}
 \* the temp rule (owner, 2026-10-30, "Staging name"): a staging file is ours whatever it holds; a temp name (the
 \* save's temp, the restore temp) is ours only when it holds the pre or the post bytes. Seeded bugs: no_temp_check
 \* (recovery takes every temp for ours), rollback_skips_temp_rule (the rollback does), old_temp_rule (a staging file

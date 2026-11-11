@@ -183,13 +183,13 @@ WORLDS: dict[str, dict[str, Any]] = {
     # R's folder replaced by a link before the start (the path guard), then Keep, the app's crash and the next start
     "S_recover_link": {
         "jobs": ["recover"], "base": "S_recover_link", "set": {}, "traces": 6, "depth": 30, "least": 4,
-        "leave": ["keep_not_over_link"],
+        "leave": [],
     },
     # the link put in after the app's crash (`PathChange`), then the next start
     "S_recover_relink": {
         "jobs": ["recover"], "base": "S_recover_power",
         "set": {"MaxPower": "0", "MaxAppCrash": "1", "MaxIO": "0", "MaxEdits": "0"}, "traces": 6, "depth": 30,
-        "least": 6, "leave": ["app_crash_in_recover", "keep_not_over_link"],
+        "least": 6, "leave": ["app_crash_in_recover"],
     },
     # b3's record cannot be read: it blocks until Keep
     "S_recover_torn": {
@@ -270,9 +270,6 @@ LEAVE: dict[str, dict[str, str]] = {
     # outside save of R only between the try's check and its restore swap
     "app_crash_in_recover": {"AppCrash": 'run.k = "recover"'},
     "edit_at_restore_swap": {"Editor": 'run.k = "recover" /\\ ctl.pc = "rs_x"'},
-    # no Keep of a journal naming R while R's folder is a link: the code refuses it (`path_moved`, red team r1 R1-3),
-    # the model's Keep does not (MAPPING.md §3, BL-0224; `test_recover_conformance.py` pins the difference)
-    "keep_not_over_link": {"Keep": '~(env.lnk /\\ "R" \\in jr[j].files)'},
     # K's disk goes or comes back only outside a try, or at its check: the model lets a try past its check go on
     # writing on a disk that went (only `Stops` reads `env.unr`); the code's next operation there fails (MAPPING.md §3)
     "unreach_outside_try": {"Unreach": '~(run.k = "recover" /\\ ctl.rj # "none" /\\ ctl.pc # "rs_chk")'},

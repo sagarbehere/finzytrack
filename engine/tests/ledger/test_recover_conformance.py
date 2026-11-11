@@ -598,10 +598,6 @@ class Tally:
 
 STOPS: Mapping[str, str] = {
     "cut": "the walk ended inside a run or a try (not a difference)",
-    "keep_refused_path_moved": (
-        "the code refuses Keep while a folder the journal names is a link (red team r1 R1-3); the model's Keep has no "
-        "such refusal (MAPPING.md §3, BL-0224; the link worlds leave it out, `keep_not_over_link`)"
-    ),
 }
 
 
@@ -686,10 +682,7 @@ class Replay:
             i += 1
 
     def keep(self, j: str, after: State_, where: str) -> None:
-        out = ra.keep(self.fs, jdir(j), name(j))
-        names_r = "R" in RECORD_ORDER[j]
-        if isinstance(out, ra.Refused) and out.reason == "path_moved" and self.place.linked and names_r:
-            raise StopTrace("keep_refused_path_moved")
+        out = ra.keep(self.fs, jdir(j), name(j))  # the model's Keep is never over R's link since S0100 (BL-0224)
         assert isinstance(out, ra.Done), f"{where}: Keep answered {out}, the model kept {j}"
         assert after["rc"]["jr"][j] == "kept"
         self.tally.walked["Keep"] += 1
@@ -952,7 +945,7 @@ def test_the_recover_steps_are_the_models() -> None:
     assert set(WALKED) | set(NOT_WALKED) == steps
 
 
-STOP_COUNTS: Mapping[str, int] = {"cut": 0, "keep_refused_path_moved": 0}
+STOP_COUNTS: Mapping[str, int] = {"cut": 0}
 """The traces the replay does not follow to their end, by reason (`STOPS`); pinned."""
 
 
@@ -1051,16 +1044,15 @@ def test_an_outside_save_removed_at_the_swap_is_caught(monkeypatch: pytest.Monke
     from ledger_engine.ledger import handles
 
     monkeypatch.setattr(rs, "displaced", _returns(handles.Displaced.OURS))
-    assert re.search(
-        r"the outside edit \d+ of R is gone|the fake holds|rs_[a-z]+ [RJ], which the model's b2 does not reach",
-        _first_failure(),
-    )
+    # S0100 (BL-0225 F5): the try goes on writing J where the model's stops at the displaced outside save
+    assert re.search(r"the code is at rs_w J, which the model's b2 does not reach", _first_failure())
 
 
 def test_a_kept_copy_ignored_is_caught(monkeypatch: pytest.MonkeyPatch) -> None:
     """`RS_Check`'s kept-copy stop: a try that goes on while a kept copy of the journal stands beside a file."""
     monkeypatch.setattr(journal, "is_kept_name", _returns(False))
-    assert re.search(r"the code's try is \w+ .*, the model's stopped|past the model's|does not reach", _first_failure())
+    # S0100 (BL-0225 F5): the try goes on to its syncs where the model's stops at the kept copy
+    assert re.search(r"the code is at rs_sync , which the model's b2 does not reach", _first_failure())
 
 
 def test_an_io_error_swallowed_is_caught(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1073,30 +1065,10 @@ def test_an_io_error_swallowed_is_caught(monkeypatch: pytest.MonkeyPatch) -> Non
             sync_folders(handles, folders)
 
     monkeypatch.setattr(rs, "_sync_folders", swallowed)
-    assert re.search(r"the code's try is resolved .*the model's failed|the model's|the fake holds", _first_failure())
-
-
-def test_keep_over_a_link_is_refused_where_the_models_keep_is_not() -> None:
-    """A difference between the code and the model, pinned (S0091; MAPPING.md §3; BL-0224). The code refuses Keep
-    while a folder the journal names is no longer at its recorded path (`recover_all.keep`: `path_moved`; red team r1
-    R1-3: what stands there may not be what Keep can sync); the model's `Keep(j)` has no such condition, so its traces
-    can keep b2 over R's link, which the code never does (the link worlds leave that Keep out, `keep_not_over_link`).
-    No byte is lost either way (the code writes nothing and the journal stays blocking). When the model gains the
-    refusal, this test fails: drop `keep_not_over_link` and this test with it."""
-    model = MODEL.read_text(encoding="utf-8")
-    body = model[model.index("Keep(j) ==") : model.index("Relaunch ==")]
-    assert "lnk" not in body, "the model's Keep now refuses over a link"
-    assert "PathMoved" not in body, "the model's Keep now refuses over a link"
-    rc = {
-        "cur": dict.fromkeys(FILES, V0), "jr": {"b2": "open", "b3": "none"},
-        "tc": {f"{j}/{f}": ABS for j, f in SLOTS}, "sg": {f"{j}/{f}": ABS for j, f in SLOTS},
-        "rt": {f"{j}/{f}": ABS for j, f in SLOTS},
-    }  # fmt: skip
-    fs, place = build({"rc": rc}, {"BootJ": '{"b2"}', "BootLink": "TRUE"})
-    assert place.linked
-    out = ra.keep(fs, jdir("b2"), name("b2"))
-    assert out == ra.Refused("path_moved", FOLDER["R"]), out
-    assert journal_state(fs, "b2") == "open"
+    # S0100 (BL-0225 F5): in the world with an I/O error, the try goes on writing R where the model's has failed
+    assert re.search(
+        r"S_recover_temps trace \d+, .*the code is at rs_w R, which the model's b2 does not reach", _first_failure()
+    )
 
 
 def test_the_disk_outcome_words_are_the_models() -> None:

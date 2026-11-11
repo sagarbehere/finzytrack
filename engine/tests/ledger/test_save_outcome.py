@@ -13,6 +13,7 @@ from dataclasses import replace
 
 import pytest
 
+from ledger_engine.fs.port import Resolved
 from ledger_engine.ledger import save as sv
 from ledger_engine.ledger.core.ledger_set import Content, Fingerprint
 from ledger_engine.ledger.writer import Change, sha256
@@ -119,12 +120,14 @@ def test_an_open_record_names_a_file_the_save_was_creating_that_stands_there() -
 # Spec §6.1 step 8.2 "an `.open` journal is never torn" and §6.2 "A directory sync with nothing to flush costs
 # nothing": each folder of `<app>/local/<key>/{journal,backups}`, the app's folder included, must be durable before
 # the first swap, also when it was already there but its entry was never synced (an earlier engine died between its
-# `mkdir` and that sync; the app's folder made by a start just before). Otherwise
+# `mkdir` and that sync). The app's folder itself is the sidecar's since S0100 (below). Otherwise
 # a power loss can drop the folder, with the `.open` journal and every backup, while the swapped ledger files stay.
 
 A, B = b"a pre\n", b"b pre\n"
 FP = Fingerprint("/L/a.bean", (("/L/a.bean", Content(sha256(A))), ("/L/b.bean", Content(sha256(B)))), (), (), ())
-CHAIN = (ALD, f"{ALD}/local", f"{ALD}/local/k1", JD, f"{ALD}/local/k1/backups")
+CHAIN = (f"{ALD}/local", f"{ALD}/local/k1", JD, f"{ALD}/local/k1/backups")
+"""The save's own folders. The app's folder itself is not among them since S0100 (BL-0163 (a); owner, 2026-11-10:
+"Sidecar makes it once (Recommended)"): the sidecar makes it and syncs its parent at start (`app.main`)."""
 
 
 class Job:
@@ -201,3 +204,158 @@ def test_a_save_cut_after_its_first_swap_never_leaves_a_half_applied_ledger_with
             assert state.file(f"{JD}/s1-j7.open") is not None, "half applied, and no journal for recover-all"
             assert state.file(f"{ALD}/local/k1/backups/s1-j7/0-a.bean") == A
     assert torn, "the cut must leave a half-applied state to check"
+
+
+# -- S0100: the app folder is the sidecar's (BL-0163 (a)); the gate's unreadable file (BL-0163 (d)) ------------------
+#
+# Owner, 2026-11-10: "Sidecar makes it once (Recommended)": "The sidecar creates the app folder at start and syncs its
+# parent once; if that fails, the app says so at start. The save and recovery then write and sync only inside the app
+# folder, never in or above its parent."
+
+
+def test_S0100_the_save_never_opens_or_syncs_the_app_folders_parent() -> None:
+    fs = save_world(f"{ALD}/local")
+    fs.outside_mkdirs(ALD)
+    labels: list[str] = []
+    fs.on_effect = lambda _, label: labels.append(label)
+    out = sv.run(two_file_plan(), save_ports(fs), Job())
+    assert isinstance(out, sv.Saved), out
+    assert "sync /:" not in labels, labels
+    assert [x for x in labels if x.startswith("mkdir /:")] == []
+    assert f"sync {ALD}:" in labels, "the app folder itself is synced: `local/` is made in it"
+
+
+def test_S0100_a_missing_app_folder_is_not_saved_with_its_own_reason_and_nothing_made_above_it() -> None:
+    fs = MemFS()
+    fs.outside_mkdirs("/L")
+    fs.outside_write("/L/a.bean", A)
+    fs.outside_write("/L/b.bean", B)
+    outside_publish(fs, FP, "k1")
+    before = fs.snapshot()
+    out = sv.run(two_file_plan(), save_ports(fs), Job())
+    assert isinstance(out, sv.NotSaved), out
+    assert (out.reason.value, out.unchanged, out.entry) == ("app_folder_missing", True, ALD)
+    assert fs.snapshot() == before, "nothing made in or above the app folder's parent"
+
+
+def test_S0100_BL0163d_a_file_made_unreadable_after_the_preview_is_an_io_error_naming_it() -> None:
+    """BL-0163 (d): the gate's observation finds a file it cannot read (a `chmod 000` after the preview): not saved,
+    an I/O error naming that file, never "your ledger changed"."""
+    from ledger_engine.ledger.core.ledger_set import Unreadable
+
+    fs = save_world(f"{ALD}/local")
+    fs.outside_mkdirs(ALD)
+
+    def observe(fp: Fingerprint) -> Fingerprint:
+        files = tuple((p, Unreadable("EACCES") if p == "/L/b.bean" else s) for p, s in fp.files)
+        return replace(fp, files=files)
+
+    out = sv.run(two_file_plan(), sv.Ports(fs, observe=observe, store=FakeStore()), Job())
+    assert isinstance(out, sv.NotSaved), out
+    assert (out.reason.value, out.path, out.unchanged) == ("io_error", "/L/b.bean", True)
+
+
+def test_S0100_BL0163d_a_file_whose_bytes_changed_is_still_ledger_changed() -> None:
+    """@regression-guard (holds on 437d6298). Must pass: a readable change of bytes stays `ledger_changed`."""
+    fs = save_world(f"{ALD}/local")
+    fs.outside_mkdirs(ALD)
+
+    def observe(fp: Fingerprint) -> Fingerprint:
+        files = tuple((p, Content("0" * 64) if p == "/L/b.bean" else s) for p, s in fp.files)
+        return replace(fp, files=files)
+
+    out = sv.run(two_file_plan(), sv.Ports(fs, observe=observe, store=FakeStore()), Job())
+    assert out == sv.Refused("ledger_changed", True)
+
+
+def test_S0100_BL0163b_a_step_3_io_error_names_the_changed_file_apart(monkeypatch: pytest.MonkeyPatch) -> None:
+    """BL-0163 (b) at the save's own steps: a path that cannot be resolved is `io_error` naming it; the re-hash's
+    changed file is `changed`."""
+    fs = save_world(f"{ALD}/local")
+    fs.outside_mkdirs(ALD)
+    fs.outside_write("/L/a.bean", b"an editor\n")
+    real = fs.resolve
+
+    def resolve(path: str) -> Resolved:
+        if path == "/L/b.bean":
+            raise PermissionError(errno.EACCES, "search denied")
+        return real(path)
+
+    monkeypatch.setattr(fs, "resolve", resolve)
+    out = sv.run(two_file_plan(), save_ports(fs), Job())
+    assert isinstance(out, sv.NotSaved), out
+    assert (out.reason.value, out.path, out.unchanged, out.changed) == ("io_error", "/L/b.bean", False, "/L/a.bean")
+
+
+# -- S0100, BL-0182: §6.6's "changed by another program" after a `.resolved` record -----------------------------------
+
+PLANNED = {"/L/a.bean": (A, b"a post\n"), "/L/b.bean": (B, b"b post\n")}
+TWO = (Change("/L/a.bean", sha256(A), b""), Change("/L/b.bean", sha256(B), b""))
+
+
+def _effects_of_a_clean_save() -> int:
+    fs = save_world(f"{ALD}/local")
+    first = len(fs.effects)
+    assert isinstance(sv.run(two_file_plan(), save_ports(fs), Job()), sv.Saved)
+    return len(fs.effects) - first
+
+
+def _resolved_after(fail: int, die: int, edit: int | None) -> tuple[MemFS, sv.OutcomeFacts] | None:
+    """A save that fails at its effect `fail` (an I/O error, so it rolls back) and whose engine dies at its effect
+    `die`, with an editor writing `/L/b.bean` just before its effect `edit`; the disk's outcome, when its record is
+    `.resolved`."""
+    fs = save_world(f"{ALD}/local")
+    first = len(fs.effects)
+    fs.inject(first + fail, crash=False, err=errno.EIO)
+    fs.inject(first + die, crash=True)
+    if edit is not None:
+
+        def editor(i: int, _: str) -> None:
+            if i == first + edit:
+                fs.outside_write("/L/b.bean", b"an editor's version\n")
+
+        fs.on_effect = editor
+    try:
+        sv.run(two_file_plan(), save_ports(fs), Job())
+    except Crash:
+        pass
+    else:
+        return None  # the engine did not die there
+    fs.on_effect = None
+    facts = sv.outcome(fs, ALD, "k1", "s1", "j7", TWO)
+    return (fs, facts) if facts.record == "resolved" else None
+
+
+def test_BL0182_without_another_program_a_resolved_record_always_reads_unchanged() -> None:
+    """@regression-guard (BL-0182: it holds on 437d6298; it pins §6.6's text). Spec §6.6: after an engine death a
+    `.resolved` record with a file not at its pre bytes says "changed by another
+    program". Without any other program, every failure point of the save whose rollback resolved, cut by an engine
+    death at every later effect, must read unchanged: our own rollback never leaves a file of ours not at pre."""
+    n = _effects_of_a_clean_save()
+    seen = 0
+    for fail in range(n):
+        for die in range(fail + 1, fail + 40):
+            got = _resolved_after(fail, die, None)
+            if got is not None:
+                seen += 1
+                assert got[1].unchanged is True, (fail, die, got[1])
+    assert seen, "the sweep must reach a resolved record"
+
+
+def test_BL0182_a_resolved_record_with_a_changed_file_holds_another_programs_bytes_never_ours() -> None:
+    """@regression-guard (BL-0182, as above). With an editor writing `/L/b.bean` at any effect: a `.resolved` record
+    whose file is not at its pre bytes holds the editor's bytes, never the save's post bytes (so "changed by another
+    program" is true)."""
+    n = _effects_of_a_clean_save()
+    changed = 0
+    for fail in range(n):
+        for die in range(fail + 1, fail + 40, 3):
+            for edit in range(0, die, 4):
+                got = _resolved_after(fail, die, edit)
+                if got is None or got[1].unchanged:
+                    continue
+                changed += 1
+                fs, facts = got
+                assert facts.path is not None
+                assert fs.file(facts.path) != PLANNED[facts.path][1], (fail, die, edit, facts)
+    assert changed, "the sweep must reach a resolved record with a changed file"

@@ -1126,11 +1126,11 @@ def test_a_wrong_answer_is_caught(monkeypatch: pytest.MonkeyPatch) -> None:
     re-hash) is caught where an outside edit came before an I/O error (`S_save_io_edit`)."""
     from ledger_engine.ledger import writer
 
-    def always_unchanged(handles: object, targets: object) -> bool:
+    def always_unchanged(handles: object, targets: object) -> tuple[bool, str | None]:
         del handles, targets
-        return True
+        return True, None
 
-    monkeypatch.setattr(writer, "_unchanged", always_unchanged)
+    monkeypatch.setattr(writer, "_rehash", always_unchanged)  # `_unchanged` before S0100
     assert "the code tells 'unchanged'" in _first_failure()
 
 

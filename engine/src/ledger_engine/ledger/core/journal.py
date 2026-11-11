@@ -239,7 +239,7 @@ _KEPT_TAIL: Final = re.compile(r"(?:-[0-9]{1,3})?")
 def is_kept_name(entry: str, name: str, tag: str) -> bool:
     """`entry` is a kept name of the file `name` for the save `tag` (any number), compared after the widest folding,
     so a volume's own spelling of it still matches (more matches only stop more journals: fail closed)."""
-    wide = FoldRule(nfd=True, casefold=True)
+    wide = WIDE
     e = fold(entry, wide)
     for stem in (name, _short(name)):
         head = fold(f"{stem}.kept-{tag}", wide)
@@ -361,6 +361,44 @@ def _abs(value: object) -> str:
     return s
 
 
+WIDE: Final = FoldRule(nfd=True, casefold=True)
+"""The widest folding: two names a volume may treat as one are compared as one (a record does not say its volumes'
+rules, so recovery assumes the widest)."""
+
+
+def _temps(record: Record, canonicals: list[tuple[str, ...]]) -> list[tuple[str, ...]]:
+    """Every temp and staging name of the record's files (each file's temp, then each file's other scratch names in
+    the files' order), folded the widest way."""
+    temps = [tuple(fold(c, WIDE) for c in (*fc[:-1], f.temp)) for fc, f in zip(canonicals, record.files, strict=True)]
+    temps += [
+        tuple(fold(c, WIDE) for c in (*fc[:-1], n)) for fc in canonicals for n in scratch_names(fc[-1], record.name)[1:]
+    ]
+    return temps
+
+
+def _clash(temps: list[tuple[str, ...]]) -> int | None:
+    """The index of the first name that an earlier one already takes, or None."""
+    seen: set[tuple[str, ...]] = set()
+    for i, t in enumerate(temps):
+        if t in seen:
+            return i
+        seen.add(t)
+    return None
+
+
+def case_twin(record: Record) -> FileEntry | None:
+    """The record's file whose temp or staging name another of its names takes under the widest folding (`WIDE`), the
+    rule `encode` refuses as `duplicate_temp`; None when there is none. On a case-sensitive volume two files whose
+    paths differ only in case are two files, but their names of ours fold to one (BL-0162): the writer refuses such a
+    plan before its first effect, naming this file."""
+    canonicals = [_parts(_abs(f.canonical_path)) for f in record.files]
+    at = _clash(_temps(record, canonicals))
+    if at is None:
+        return None
+    n = len(record.files)
+    return record.files[at if at < n else (at - n) // 3]  # after the temps, three more names per file
+
+
 def _check(record: Record) -> None:
     """The writer's naming rules (S0060 red team finding 4): recovery acts on these names, so a record that names
     anything else is not a record of ours."""
@@ -396,20 +434,17 @@ def _check(record: Record) -> None:
     # every temp, staging name and restore temp is its own name, never a file's or a created folder's path, nor inside
     # one (S0060 red team r2 L1; the staging names, S0061 r3);
     # compared folded the widest way, so two names a volume may treat as one count as one
-    wide = FoldRule(nfd=True, casefold=True)
+    wide = WIDE
     taken = [tuple(fold(c, wide) for c in fc) for fc, _ in files]
     taken += [tuple(fold(c, wide) for c in _parts(d.canonical_path)) for d in record.created_dirs]
-    temps = [tuple(fold(c, wide) for c in (*fc[:-1], f.temp)) for (fc, _), f in zip(files, record.files, strict=True)]
-    temps += [
-        tuple(fold(c, wide) for c in (*fc[:-1], n)) for fc, _ in files for n in scratch_names(fc[-1], record.name)[1:]
-    ]
+    temps = _temps(record, [fc for fc, _ in files])
     # no file of the record at a file's kept name, nor under one (a created folder at it is always an ancestor of a
     # file: red team r2 L2): recovery would stop on it for ever
     for fc, _ in files:
         for p in (gc for gc, _ in files):
             if p[: len(fc) - 1] == fc[:-1] and len(p) >= len(fc) and is_kept_name(p[len(fc) - 1], fc[-1], record.name):
                 raise BadRecordError("temp_is_a_path")
-    if len(set(temps)) != len(temps):
+    if _clash(temps) is not None:
         raise BadRecordError("duplicate_temp")
     if any(p[: len(tp)] == tp for tp in temps for p in taken):
         raise BadRecordError("temp_is_a_path")

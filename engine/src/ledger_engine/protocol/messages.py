@@ -321,11 +321,15 @@ class SaveResult(Message):
     never yet, BL-0113). `refused`: before the commit point, nothing written (`reason`: `unfinished_save`,
     `ledger_changed`, `mirror_stale`, `encrypted_file`). `not_saved`: the writer's `NotSaved` (`reason` its own:
     `hard_linked`, `locked`, `not_a_file`, `permission`, `changed`, `path_moved`, `read_back`, `io_error`,
-    `name_not_utf8`, `linked_folder`, `no_drive_id`, `no_folder_id`; `open_journal`: writes are paused until
+    `name_not_utf8`, `linked_folder`, `no_drive_id`, `no_folder_id`, `case_twins`, `folder_appeared`,
+    `app_folder_missing`; `open_journal`: writes are paused until
     recovery). `unfinished`: a file may have been replaced and the rollback stopped (`cause`, and `cause_path` its
     file: after `created_path_taken` the undo will ask about that file). `unchanged`: every file the save would write
-    was hashed again and equals its pre bytes. `path`: the file it is about; `entry`: the folder a `permission`
-    refusal is about, or the link a `linked_folder` refusal names; `detail`: the ACL entry that blocks it."""
+    was hashed again and equals its pre bytes; `changed`: the first file that re-hash found not at them (None also when
+    it could not read a file; S0100, BL-0163 (b)). `path`: the file it is about (the one an I/O error happened at);
+    `entry`: the folder a `permission` refusal is about, the link a `linked_folder` refusal names, the folder that
+    appeared (`folder_appeared`) or the app's folder that is missing (`app_folder_missing`); `detail`: the ACL entry
+    that blocks it."""
 
     outcome: SaveOutcomeKind
     reason: str | None
@@ -333,6 +337,7 @@ class SaveResult(Message):
     entry: AbsPath | None
     detail: str | None
     unchanged: bool
+    changed: AbsPath | None
     open_journal: bool
     cause: str | None
     cause_path: AbsPath | None
@@ -653,6 +658,7 @@ OPS: dict[str, OpSpec] = {
             "entry": None,
             "detail": None,
             "unchanged": False,
+            "changed": None,
             "open_journal": False,
             "cause": None,
             "cause_path": None,

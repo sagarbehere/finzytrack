@@ -154,6 +154,12 @@ class Reason(StrEnum):
     NO_DRIVE_ID = "no_drive_id"  # a folder the save writes in is on a drive Finzytrack cannot identify (no reliable
     # volume UUID, or a file-system type name the record cannot hold: `handles.drive_of`): its journal could never be
     # undone (S0089, BL-0188; owner: "one without it is refused the same way"; S0090)
+    CASE_TWINS = "case_twins"  # two files of the plan whose paths differ only in case (a case-sensitive volume): their
+    # names of ours fold to one under the journal's widest rule (`journal.case_twin`; S0100, BL-0162)
+    FOLDER_APPEARED = "folder_appeared"  # a folder stood where the save makes one (`mkdir` answered `EEXIST`): on a
+    # network share possibly our own retried `mkdir`, so not "the ledger changed" (S0100, BL-0187)
+    APP_FOLDER_MISSING = "app_folder_missing"  # the app's own folder is gone: the sidecar makes it at start, the save
+    # never makes it or writes above it (S0100, BL-0163 (a); owner, 2026-11-10: "Sidecar makes it once (Recommended)")
 
 
 class Step(StrEnum):
@@ -177,9 +183,11 @@ class NotSaved:
     save kept holds that outside save). `unchanged`: every target was hashed again and equals its pre bytes.
     `open_journal`: the journal may have been left `.open` (its rename was asked for and the rollback did not resolve
     it), which pauses writes until recovery resolves it. `path`: the canonical path of the file the refusal is about,
-    if any (the message names it: a hard-linked file, a locked one, one that changed). `entry`: the folder a
-    `permission` refusal is about, when it is the folder's (its mode, a lock flag or an ACL entry: §11 names it), and
-    `detail` the ACL entry that blocks it in `chmod`'s words (`handles.acl_denial`; S0061 r6)."""
+    if any (the message names it: a hard-linked file, a locked one, the file an I/O error happened at). `entry`: the
+    folder a `permission` refusal is about, when it is the folder's (its mode, a lock flag or an ACL entry: §11 names
+    it), the folder that appeared (`folder_appeared`), and `detail` the ACL entry that blocks it in `chmod`'s words
+    (`handles.acl_denial`; S0061 r6). `changed`: the first file the re-hash found not at its pre bytes (never with
+    `unchanged`; None also when the re-hash could not read a file), apart from `path` (S0100, BL-0163 (b))."""
 
     step: Step
     reason: Reason
@@ -188,6 +196,7 @@ class NotSaved:
     path: str | None = None
     entry: str | None = None
     detail: str | None = None
+    changed: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -455,13 +464,16 @@ def _prepare(fs: FileSystem, handles: Handles, c: Commit, targets: tuple[_Target
     return _Plan(targets, tuple((cn, k) for k, cn in dirs.items()), journal_dir, backups_dir, folders)
 
 
-def _unchanged(handles: Handles, targets: tuple[_Target, ...]) -> bool:
-    """Every target hashed again equals its pre bytes (absent for a created file); any failure, or targets that
-    could not be resolved, says no."""
+def _rehash(handles: Handles, targets: tuple[_Target, ...]) -> tuple[bool, str | None]:
+    """Every target hashed again: whether each equals its pre bytes (absent for a created file), and the first one
+    found not at them (S0100, BL-0163 (b)). A target that cannot be read is neither: the answer is then not unchanged,
+    and names a changed file only when another one was read and differs. Targets that could not be resolved say
+    (False, None)."""
     if not targets:
-        return False
-    try:
-        for t in targets:
+        return False, None
+    unread = False
+    for t in targets:
+        try:
             try:
                 folder = handles.at(t.parent)
             except FileNotFoundError:
@@ -469,21 +481,26 @@ def _unchanged(handles: Handles, targets: tuple[_Target, ...]) -> bool:
                     continue  # its folder was never made: absent, as planned
                 raise
             data = folder.read(t.base)
-            if (None if data is None else sha256(data)) != t.change.pre:
-                return False
-    except (OSError, _Stop, PathMovedError):
-        return False
-    return True
+        except (OSError, _Stop, PathMovedError):
+            unread = True
+            continue
+        if (None if data is None else sha256(data)) != t.change.pre:
+            return False, t.canonical
+    return not unread, None
+
+
+def _backup_names(plan: _Plan) -> dict[str, str]:
+    """The backup name of each file the save replaces, by its key (`journal.backup_name`)."""
+    return {t.key: journal.backup_name(t.index, t.base) for t in plan.targets if t.change.pre is not None}
 
 
 @tla_action("S_Backup", "S_BackupSync")
-def _backups(handles: Handles, plan: _Plan, name: str) -> dict[str, str]:
-    """Step 8.1. Returns the backup name per target key."""
+def _backups(handles: Handles, plan: _Plan, name: str, names: dict[str, str]) -> None:
+    """Step 8.1, writing each replaced file's backup under its name in `names`."""
     parent = handles.at(plan.backups_dir)
     parent.mkdir(name)
     parent.sync()
     folder = handles.at(_join(plan.backups_dir, name))
-    names: dict[str, str] = {}
     for t in plan.targets:
         if t.change.pre is None:
             continue
@@ -494,15 +511,13 @@ def _backups(handles: Handles, plan: _Plan, name: str) -> dict[str, str]:
         data = h.read(t.base)
         if data is None or sha256(data) != t.change.pre:
             raise _Stop(Reason.CHANGED, t.canonical)
-        bname = journal.backup_name(t.index, t.base)
+        bname = names[t.key]
         folder.create(bname, data, BACKUP_MODE)
         back = folder.read(bname)
         if back is None or sha256(back) != t.change.pre:
             raise _Stop(Reason.IO_ERROR, t.canonical)  # ADR-0012 F-1
-        names[t.key] = bname
     handles.on = None
     folder.sync()
-    return names
 
 
 def _record(c: Commit, plan: _Plan, name: str, backups: dict[str, str]) -> Record:
@@ -602,8 +617,9 @@ def _replace(handles: Handles, t: _Target, progress: _Progress) -> None:
         try:
             h.mkdir(name)
         except FileExistsError:
-            progress.made.discard(key)  # ...except this one: another program's folder stood there, never removed
-            raise _Stop(Reason.CHANGED, canonical) from None
+            progress.made.discard(key)  # ...except this one: a folder stood there (another program's, or on a network
+            # share our own retried `mkdir`), never removed; not "the ledger changed" (S0100, BL-0187)
+            raise _Stop(Reason.FOLDER_APPEARED, t.canonical, canonical) from None
         h.sync()
     h = handles.at(t.parent)
     if t.mode is Mode.BEST_EFFORT:
@@ -701,6 +717,16 @@ def _rollback(
     )
 
 
+def _encoded(record: Record) -> bytes:
+    """The record's bytes, before the first effect (S0100, BL-0162): a plan whose files' names of ours fold to one under
+    the journal's widest rule (two paths that differ only in case, on a case-sensitive volume) stops as `case_twins`,
+    naming the second file; any other rule of the record's own check raises before anything is written."""
+    twin = journal.case_twin(record)
+    if twin is not None:
+        raise _Stop(Reason.CASE_TWINS, twin.canonical_path)
+    return journal.encode(record)
+
+
 @tla_action("S_JPart", "S_JPartSync", "S_JOpen", "S_JDirSync", "S_Close", "S_CloseSync")
 def durable_commit(fs: FileSystem, c: Commit) -> Outcome:
     """§6.1 step 8 for a save past its commit point, with §6.4's rollback (see the module's docstring)."""
@@ -713,9 +739,10 @@ def durable_commit(fs: FileSystem, c: Commit) -> Outcome:
         try:
             targets = tuple(_target(fs, handles, i, c, ch) for i, ch in enumerate(c.changes))
             plan = _prepare(fs, handles, c, targets)
-            backups = _backups(handles, plan, name)
+            backups = _backup_names(plan)
             record = _record(c, plan, name, backups)
-            data = journal.encode(record)
+            data = _encoded(record)
+            _backups(handles, plan, name, backups)
             step = Step.JOURNAL
             handles.on = None
             jd = handles.at(plan.journal_dir)
@@ -723,7 +750,8 @@ def durable_commit(fs: FileSystem, c: Commit) -> Outcome:
         except (OSError, _Stop, PathMovedError) as e:
             reason, path = _why(e, handles)
             entry, detail = _where(e)
-            return NotSaved(step, reason, _unchanged(handles, targets), path=path, entry=entry, detail=detail)
+            unchanged, changed = _rehash(handles, targets)
+            return NotSaved(step, reason, unchanged, path=path, entry=entry, detail=detail, changed=changed)
         progress = _Progress()
         try:
             progress.open_journal = True  # set before the call: a rename that fails may still have happened
@@ -740,11 +768,20 @@ def durable_commit(fs: FileSystem, c: Commit) -> Outcome:
             jd.sync()
         except (OSError, _Stop, PathMovedError) as e:
             reason, path = _why(e, handles)
+            entry, detail = _where(e)
             undo = _rollback(fs, jd, record, plan, step, progress)
-            if undo is None or isinstance(undo, _restore.Resolved):
-                return NotSaved(step, reason, _unchanged(handles, plan.targets), path=path)
-            if not progress.replaced:
-                return NotSaved(step, reason, _unchanged(handles, plan.targets), True, path)
+            if undo is None or isinstance(undo, _restore.Resolved) or not progress.replaced:
+                unchanged, changed = _rehash(handles, plan.targets)
+                return NotSaved(
+                    step,
+                    reason,
+                    unchanged,
+                    open_journal=not (undo is None or isinstance(undo, _restore.Resolved)),
+                    path=path,
+                    entry=entry,
+                    detail=detail,
+                    changed=changed,
+                )
             return Unfinished(step, reason, path, undo.cause.value, undo.path)
         return Landed(record)
     finally:

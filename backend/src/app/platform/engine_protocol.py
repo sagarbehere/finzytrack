@@ -506,6 +506,7 @@ _SAVE = frozenset(
         "entry",
         "detail",
         "unchanged",
+        "changed",
         "open_journal",
         "cause",
         "cause_path",
@@ -528,6 +529,7 @@ def _save(result: Mapping[str, object]) -> SaveAnswer:
         cause=_text(o["cause"], "cause", nullable=True),
         cause_path=_path(o["cause_path"], "cause_path", nullable=True),
         published=_bool(o["published"], "published"),
+        changed=_path(o["changed"], "changed", nullable=True),
     )
 
 

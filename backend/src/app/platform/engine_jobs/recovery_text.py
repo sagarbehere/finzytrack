@@ -119,18 +119,41 @@ def _behind_the_drive(b: Blocking) -> list[tuple[str, str]]:
     return [(_name(i.path), i.backup) for i in b.inspection or () if not i.reachable and not i.created and i.backup]
 
 
+DRIVE_BACKUP_OTHERS: Final = (
+    "Other files of this save may hold its new version, so copying back only a missing file can leave your ledger "
+    "part old, part new."
+)
+"""S0100 (BL-0223 F2): said after the backups when the save has files beside those named."""
+DRIVE_BACKUP_CHECK: Final = "Before you copy a file back, check that the drive is the one you saved on."
+"""S0100 (BL-0223 F3): a twin or backup stick may be plugged in at the same place."""
+
+
+def _drive_backup_tail(b: Blocking, named: int) -> str:
+    """After the backups a drive stop names (S0100, BL-0223): the other files of the save (F2), then the drive to
+    check before copying (F3). No promise that the listed old versions return the whole ledger: some of the other files
+    may have no checked backup, and a created file may stand where the save was making it."""
+    if not named:
+        return ""
+    others = f" {DRIVE_BACKUP_OTHERS}" if len(b.journal.files) > named else ""
+    return f"{others} {DRIVE_BACKUP_CHECK}"
+
+
 def _drive_backups(b: Blocking) -> str:
-    return "".join(
-        f" If {name} is missing on the drive that held your ledger, its old version is in {backup}."
-        for name, backup in _behind_the_drive(b)
+    """F4 (S0100): "from its folder", which holds for a folder on the Mac's own disk too."""
+    named = _behind_the_drive(b)
+    listed = "".join(
+        f" If {name} is missing from its folder, its old version is in {backup}." for name, backup in named
     )
+    return listed + _drive_backup_tail(b, len(named))
 
 
 def _drive_backups_kept(b: Blocking) -> str:
-    return "".join(
-        f" If {name} is missing on the drive that held it, it will stay missing. Its old version is in {backup}."
-        for name, backup in _behind_the_drive(b)
+    named = _behind_the_drive(b)
+    listed = "".join(
+        f" If {name} is missing from its folder, it will stay missing. Its old version is in {backup}."
+        for name, backup in named
     )
+    return listed + _drive_backup_tail(b, len(named))
 
 
 def _kept_copy(b: Blocking, workspace: str) -> Screen:

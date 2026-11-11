@@ -7,11 +7,12 @@ save`); the sidecar never reads a journal or a ledger file itself. Its answer be
 - **`Saved`** once the engine said so (the closed record is durable), or once the disk said so after the engine
   died (§6.6). `published` is False: the save publishes nothing itself. `after_saved` queues the background rebuild
   with Beancount's own loader (`submit_save` wires it: §6.1 step 10; ADR-0068 D1, S0070); it gates nothing.
-- **`NotDone(error)`**, a registry error with §11's text (`save_text`): `WRITES_PAUSED {unfinished_save}`,
+- **`NotDone(error)`**, a registry error with §11's text (`save_text`): `WRITES_PAUSED {unfinished_save}` (this
+  save's journal left open) or `{earlier_unfinished}` (refused at step 1 or 4 by an earlier save's: S0100, BL-0183),
   `LEDGER_EXTERNALLY_CHANGED`, `WORKSPACE_NOT_READY {WARMING}`,
-  `CHANGE_NOT_SAVED {reason, path, folder, acl_entry, unchanged}`; an engine refusal before the engine's `gate` is
-  `INTERNAL` (it wrote nothing; never "saved"), and so is the save's `encrypted_file` refusal until the preview's
-  own refusal exists (BL-0106).
+  `CHANGE_NOT_SAVED {reason, path, folder, acl_entry, unchanged, changed}`; an engine refusal before the engine's
+  `gate` is `INTERNAL` (it wrote nothing; never "saved"), and so is the save's `encrypted_file` refusal until the
+  preview's own refusal exists (BL-0106).
 
 **After the engine died without its final reply** (§5.3, §6.6), the queue keeps the job (the table's `outcome_owed`);
 then, as after a refusal past its `gate` (an exception once it may have written) or a final reply of the wrong
@@ -66,6 +67,9 @@ WRITER_REASONS: Final[frozenset[str]] = frozenset(
         "linked_folder",
         "no_drive_id",
         "no_folder_id",
+        "case_twins",
+        "folder_appeared",
+        "app_folder_missing",
     }
 )
 OUTSIDE: Final[frozenset[str]] = frozenset({"changed", "path_moved"})
@@ -157,6 +161,11 @@ def _paused(file: str | None = None) -> NotDone:
     return _not_done(ErrorCode.WRITES_PAUSED, WritesPausedDetails("unfinished_save", file))
 
 
+def _earlier_unfinished() -> NotDone:
+    """§6.1 steps 1 and 4: an earlier save's `.open` journal refused this one before anything was written (BL-0183)."""
+    return _not_done(ErrorCode.WRITES_PAUSED, WritesPausedDetails("earlier_unfinished", None))
+
+
 def answer_of(a: SaveAnswer) -> SaveValue:
     """The engine's `save` answer as the job's value (§11)."""
     match a.outcome:
@@ -165,7 +174,7 @@ def answer_of(a: SaveAnswer) -> SaveValue:
         case "refused":
             match a.reason:
                 case "unfinished_save":
-                    return _paused()
+                    return _earlier_unfinished()
                 case "ledger_changed":
                     return _not_done(ErrorCode.LEDGER_EXTERNALLY_CHANGED)
                 case "mirror_stale":
@@ -179,9 +188,8 @@ def answer_of(a: SaveAnswer) -> SaveValue:
                 return _not_done(ErrorCode.LEDGER_EXTERNALLY_CHANGED)
             if a.reason in WRITER_REASONS:
                 reason = cast("NotSavedReason", a.reason)
-                return _not_done(
-                    ErrorCode.CHANGE_NOT_SAVED, ChangeNotSavedDetails(reason, a.path, a.entry, a.detail, a.unchanged)
-                )
+                details = ChangeNotSavedDetails(reason, a.path, a.entry, a.detail, a.unchanged, a.changed)
+                return _not_done(ErrorCode.CHANGE_NOT_SAVED, details)
             return _not_done(ErrorCode.INTERNAL)
         case "unfinished":
             return _paused(a.cause_path if a.cause == "created_path_taken" else None)
@@ -197,7 +205,7 @@ def save_outcome(facts: OutcomeFacts, *, gated: bool) -> SaveValue:
             return Saved(published=False)  # its rebuild is queued by `_answered` (§6.6)
         case "none" | "part" | "resolved":
             unchanged = facts.unchanged is True
-            details = ChangeNotSavedDetails("engine_stopped", facts.path, None, None, unchanged)
+            details = ChangeNotSavedDetails("engine_stopped", None, None, None, unchanged, facts.path)
             return _not_done(ErrorCode.CHANGE_NOT_SAVED, details)
         case "open" | "kept":
             return _paused(facts.path)

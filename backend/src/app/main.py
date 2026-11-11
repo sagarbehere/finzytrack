@@ -26,6 +26,11 @@ stderr lines among them, redacted; other libraries' records, warnings and uncaug
 the launch's `--session-id` (the shell's), or one made here. A log path that leads outside the app-local-data folder
 or into the workspace is refused: the process exits with code 2 before the handshake.
 
+**The app-local-data folder** (S0100, BL-0163 (a)) is made here if it is missing (never its parents) and its parent
+synced at every start, before the log is opened in it (`app.platform.adapters.app_folder`): the save and recovery
+write and sync only inside it. A failure exits with code 2 before the handshake, with `msg:start.app_folder` on
+stderr.
+
 **The stop** (failure-modes M7). SIGTERM and SIGINT (and SIGBREAK on Windows) have one handler for the process's
 life, `StopRequest`, installed before the engine can start. It only records: the first signal ends the serve, which
 waits for the requests in flight; a later one closes their connections, so the serve ends (`ApiServer`). It never
@@ -59,6 +64,7 @@ from fastapi import FastAPI
 
 from app.api import ApiContainer, create_app
 from app.domain.text import UntrustedText
+from app.platform.adapters.app_folder import prepare as prepare_app_folder
 from app.platform.adapters.clock import SystemClock
 from app.platform.adapters.engine_client import (
     EngineClient,
@@ -132,6 +138,15 @@ def _folder(text: str) -> Path:
     return path
 
 
+def _app_folder(text: str) -> Path:
+    """The app's machine-local folder: absolute; made at start if it is missing (`app_folder.prepare`, S0100)."""
+    path = Path(text)
+    if not path.is_absolute():
+        msg = f"{text} is not an absolute path"
+        raise argparse.ArgumentTypeError(msg)
+    return path
+
+
 def _port(text: str) -> int:
     try:
         port = int(text)
@@ -163,7 +178,7 @@ def _session_id(text: str) -> str:
 
 def parse_args(argv: list[str] | None) -> Args:
     parser = argparse.ArgumentParser(prog="app.main", description="Finzytrack main sidecar")
-    parser.add_argument("--app-local-data", required=True, type=_folder)
+    parser.add_argument("--app-local-data", required=True, type=_app_folder)
     parser.add_argument("--app-cache", required=True, type=_folder)
     parser.add_argument("--port", type=_port, default=0)
     parser.add_argument("--workspace", type=_folder)
@@ -375,6 +390,13 @@ def server_config(app: FastAPI, sock: socket.socket) -> uvicorn.Config:
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     app_version = version(DISTRIBUTION)
+    # S0100 (BL-0163 (a); owner, 2026-11-10: "Sidecar makes it once (Recommended)"): the app folder made if missing and
+    # its parent synced, before anything is written in it; the save and recovery never write above it
+    folder = prepare_app_folder(args.app_local_data)
+    if folder is not None:
+        # TODO(BL-0095): the shell shows this text in its start failure screen
+        sys.stderr.write(f"app.main: refused: {folder.text}\n")
+        return 2
     log = open_log(args, app_version)
     if isinstance(log, LogRefusal):
         sys.stderr.write(f"app.main: refused: {log.reason}\n")

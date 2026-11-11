@@ -40,6 +40,7 @@ SAVE_ANSWER: dict[str, object] = {
     "entry": None,
     "detail": None,
     "unchanged": False,
+    "changed": None,
     "open_journal": False,
     "cause": None,
     "cause_path": None,
@@ -299,12 +300,14 @@ def test_a_save_whose_ledger_moved_is_ledger_externally_changed(scenarios: Scena
 
 @pytest.mark.error_code("WRITES_PAUSED")
 def test_a_save_refused_for_an_unfinished_save_is_writes_paused_with_its_reason(scenarios: Scenarios) -> None:
-    """S0068 (ADR-0067): `unfinished_save` is the only reason saves pause; nothing after a save pauses them."""
+    """S0068 (ADR-0067): only an unfinished save pauses saves; nothing after a save pauses them. A save refused at
+    step 1 by an earlier save's journal reads `earlier_unfinished` since S0100 (BL-0183): this change was not
+    written."""
     status, payload, app = answer(scenarios, "writes_paused")
     assert status == 409
     error = payload["error"]
     assert error["code"] == "WRITES_PAUSED"
-    assert error["details"] == {"reason": "unfinished_save", "file": None}
+    assert error["details"] == {"reason": "earlier_unfinished", "file": None}
     assert error["data_safe"] is False
     # step-back area review F3: the change may be on disk until Reopen undoes it, so the message never says it was
     # not saved (§11's own text, `save_text.paused_text`, never does)
@@ -353,6 +356,7 @@ def test_a_save_the_writer_refused_is_change_not_saved_with_its_reason_and_file(
         "folder": None,
         "acl_entry": None,
         "unchanged": True,
+        "changed": None,  # S0100 (BL-0163 (b)): the re-hash's changed file, apart from `path`
     }
     conforms(app, payload)
 

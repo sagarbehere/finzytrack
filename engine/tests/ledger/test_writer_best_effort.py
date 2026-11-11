@@ -191,13 +191,13 @@ def test_a_created_file_first_whose_path_was_taken_is_not_saved_and_replaced_not
 
 @pytest.mark.parametrize("volume", BEST_EFFORT)
 def test_a_folder_that_appeared_where_the_save_makes_one_is_never_taken_for_ours(volume: str) -> None:
-    """No network-retry ownership (ADR-0068 D2): a `mkdir` answered `EEXIST` is a stop (`changed`), nothing replaced,
-    and the folder that stands there is left."""
+    """No network-retry ownership (ADR-0068 D2): a `mkdir` answered `EEXIST` is a stop (`folder_appeared` since S0100,
+    BL-0187; `changed` before), nothing replaced, and the folder that stands there is left."""
     w = world(volume=volume, new_dir=True)
     _hook(w.fs, "mkdir /w/L:y2026", lambda: w.fs.outside_mkdirs("/w/L/y2026"))
     out = durable_commit(w.fs, w.commit)
     assert isinstance(out, NotSaved), out
-    assert out.reason is Reason.CHANGED, out
+    assert (out.reason, out.entry) == (Reason.FOLDER_APPEARED, "/w/L/y2026"), out
     assert w.fs.snapshot()["/w/L/y2026"][0] == "dir"
     for t in w.targets:
         if t.pre is not None:

@@ -4,11 +4,12 @@
 `formal/tla/mirror-publish/traces/corpus.json` holds TLC-simulated traces of `MirrorPublish.tla` (`gen_traces.py`).
 Each trace is replayed here over the in-memory file system (`tests/fakes/memfs.py`): every publish job of the model is
 the code's rebuild job, `ledger_engine.ledger.rebuild.run` (the folder, the cleanup, the load, `mirror.publish.publish`
-and its swap), with the ports a test gives it (`Ports`): the fake, a store that writes what the fake store writes and
-the rows the load read (`ReplayStore`), an observation and a load of the model's two ledger files, and the tag of the
-model's generation; a cut save's recovery is `ledger_engine.ledger.restore.recover_journal`; a reader's resolve is the
-gate's `mirror.publish.read_published`, its reads open the pinned name as the sidecar's reader does (§7: the store's
-`meta`, refused with a journal beside it).
+and its swap), and every second one the open's, `ledger_engine.ledger.opening.run` (S0100, BL-0225 F2: no observation
+before its load, the load's own fingerprint as its stamp), with the ports a test gives it (`Ports`): the fake, a store
+that writes what the fake store writes and the rows the load read (`ReplayStore`), an observation and a load of the
+model's two ledger files, and the tag of the model's generation; a cut save's recovery is
+`ledger_engine.ledger.restore.recover_journal`; a reader's resolve is the gate's `mirror.publish.read_published`, its
+reads open the pinned name as the sidecar's reader does (§7: the store's `meta`, refused with a journal beside it).
 
 **The world.** The model's files 1 and 2 are `/L/main.bean` and `/L/two.bean`, a version `v` the bytes `; i v`. The
 mirror folder is `/cache/workspaces/k1/mirror`; the model's generation `g` is `gen-<N>-<g as 16 hex digits>.db`
@@ -42,7 +43,6 @@ state at every effect, `test_publish.py` the purge), and a job the walk cut befo
 
 from __future__ import annotations
 
-import contextlib
 import json
 import re
 from collections import Counter
@@ -55,7 +55,8 @@ from typing import Any, Final, override
 
 import pytest
 
-from ledger_engine.fs.port import DirHandle, Kind
+from ledger_engine.fs.port import DirHandle
+from ledger_engine.ledger import opening as op
 from ledger_engine.ledger import publishing
 from ledger_engine.ledger import rebuild as rb
 from ledger_engine.ledger import restore as rs
@@ -65,6 +66,7 @@ from ledger_engine.ledger.core import paths as core_paths
 from ledger_engine.ledger.core.journal import FileEntry, FolderEntry, Record, State
 from ledger_engine.ledger.core.ledger_set import Absent, Content, FileState, Fingerprint, LedgerSet, decode
 from ledger_engine.ledger.handles import drive_of, known_birth
+from ledger_engine.ledger.overlay import Loaded
 from ledger_engine.ledger.writer import sha256
 from ledger_engine.mirror import publish as pb
 from ledger_engine.mirror.build import BuildFailed, Built, Stamp
@@ -492,7 +494,7 @@ class Tally:
 
 
 class Job:
-    def progress(self, phase: rb.Phase) -> None:
+    def progress(self, phase: rb.Phase | op.Phase) -> None:
         del phase
 
 
@@ -515,7 +517,7 @@ def model_end(points: list[Point]) -> str:
             raise AssertionError(msg)
 
 
-def code_end(out: rb.Answer | None) -> str:
+def code_end(out: rb.Answer | op.Answer | None) -> str:
     if out is None:
         return "crash"
     if out.outcome == "loaded":
@@ -527,6 +529,7 @@ class Replay:
     def __init__(self, trace: St, tally: Tally) -> None:
         self.states: list[St] = trace["states"]
         self.where0 = f"{trace['world']} trace {trace['trace']}"
+        self.parity = int(trace["trace"]) % 2  # which jobs are the open's: each job position is both, across traces
         self.tally = tally
         self.ghosts: set[int] = set()
         self.pins: dict[str, str] = {}
@@ -666,6 +669,17 @@ class Replay:
         ports = rb.Ports(load=lambda root, parsed: driver.load(), warnings=lambda entries, options, parsed: [],
                          observe=observe,
                          fs=self.fs, store=self.store, tag=lambda: tag_of(g))  # fmt: skip
+        # S0100 (BL-0225 F2): every second job is the open's (`opening.run`; the first in odd traces, the second in
+        # even): no observation before its load, the overlay load's own fingerprint as the stamp (the model's `P_Obs` =
+        # `P_Read`, MAPPING.md §3)
+
+        def overlay_load(root: str) -> Loaded:
+            del root
+            entries, errors, options = driver.load()
+            return Loaded(entries, errors, options, raw_observe(self.fs, SET))
+
+        opening = (self.jobs + self.parity) % 2 == 0
+        open_ports = op.Ports(load=overlay_load, observe=observe, fs=self.fs, store=self.store, tag=lambda: tag_of(g))
         target = publishing.Target(
             app_cache=CACHE, workspace_key=KEY, app_local_data=ALD, lineage=LINEAGE, floor=0,
             today=FIRST_DAY + timedelta(days=self.jobs), built_at="2026-01-01T00:00:00Z", now_ns=NOW_NS,
@@ -673,9 +687,9 @@ class Replay:
         )  # fmt: skip
         hint = raw_observe(self.fs, SET)
         self.fs.on_effect = driver.on_effect
-        out: rb.Answer | None = None
+        out: rb.Answer | op.Answer | None = None
         try:
-            out = rb.run(ports, hint, Job(), target)
+            out = op.run(open_ports, PATH[1], Job(), target) if opening else rb.run(ports, hint, Job(), target)
         except Crash:
             assert driver.killed, f"{where}: the code's engine died where the model's did not"
         except Cut:
@@ -696,9 +710,10 @@ class Replay:
             self.tally.walked["P_JCheck"] += int(want == "paused")
         else:
             assert got == want, f"{where}: the code's job ends {got} ({out}), the model's {want}"
-            if isinstance(out, rb.Answer) and isinstance(out.published, pb.Published):
+            if out is not None and isinstance(out.published, pb.Published):
                 assert g_of(out.published.gen.name) == self.states[nxt]["lk"]
             self.tally.branches[f"the job ends {got}"] += 1
+            self.tally.branches[f"{'an open' if opening else 'a rebuild'} ends {got}"] += 1
             if got in ("moved", "paused", "incomplete"):
                 self.tally.walked[{"moved": "P_ReObs", "paused": "P_JCheck", "incomplete": "P_Check"}[got]] += 1
         self.tally.compared += driver.compared
@@ -777,7 +792,7 @@ NOT_WALKED: Mapping[str, str] = {
 def test_the_replay_walks_the_publish() -> None:
     tally = every_world()
     walked = Counter(tally.walked)
-    walked["StartPublish"] = tally.jobs  # each job of the model is a call of `rebuild.run`
+    walked["StartPublish"] = tally.jobs  # each job of the model is a call of `rebuild.run` or `opening.run`
     missing = [a for a in WALKED if walked[a] == 0]
     assert not missing, f"the replay never walks {missing}: widen the worlds in gen_traces.py ({dict(walked)})"
     missing_b = [b for b in BRANCHES if tally.branches[b] == 0]
@@ -794,6 +809,13 @@ BRANCHES: tuple[str, ...] = (
     "a save of ours cut with its `.open` journal",
     "a request read twice, the same generation",
     "a read of an older generation after a newer one is current",
+    # S0100 (BL-0225 F2): the open's job walked as the rebuild's is
+    "an open ends published",
+    "an open ends incomplete",
+    "an open ends crash",
+    "an open ends moved",
+    "a rebuild ends published",
+    "a rebuild ends moved",
 )
 
 
@@ -848,11 +870,7 @@ def test_a_publish_without_the_recheck_is_caught(monkeypatch: pytest.MonkeyPatch
     """§4 step 7 (the model's `no_recheck`, `no_open_check`): the re-check skipped, so a moved or paused build is
     published."""
     monkeypatch.setattr(publishing, "recheck", _returns(_returns("same")))
-    assert re.search(
-        r"the code's job ends published .*the model's (moved|paused)|swap, which the model's job does not "
-        r"reach",
-        _first_failure(),
-    )
+    assert re.search(r"the code is at swap, which the model's job does not reach", _first_failure())  # S0100 F5
 
 
 def test_an_incomplete_build_published_is_caught(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -864,23 +882,24 @@ def test_an_incomplete_build_published_is_caught(monkeypatch: pytest.MonkeyPatch
         return Built(out.path, {}, True) if isinstance(out, Built) else out
 
     monkeypatch.setattr(ReplayStore, "build", says_complete)
-    assert re.search(
-        r"the code's job ends published .*the model's incomplete|sync, which the model's job does not "
-        r"reach",
-        _first_failure(),
-    )
+    assert re.search(r"the code is at sync, which the model's job does not reach", _first_failure())  # S0100 F5
 
 
 def test_a_cleanup_that_removes_the_current_generation_is_caught(monkeypatch: pytest.MonkeyPatch) -> None:
     """§6: the current generation is kept."""
     monkeypatch.setattr(pb, "_keep", _returns(set[str]()))
-    assert re.search(r"the fake holds|does not reach|the reader", _first_failure())
+    # S0100 (BL-0225 F5): the fake has lost the generation the model still holds whole and current
+    assert re.search(
+        r"the fake holds\s+View\(gens=\(\), lk=0,.*where the model has\s+View\(gens=\(\(1, Gen\(k='done'",
+        _first_failure(),
+        re.DOTALL,
+    )
 
 
 def test_a_swap_skipped_is_caught(monkeypatch: pytest.MonkeyPatch) -> None:
     """§4 step 8: a publish that answers published without its swap."""
     monkeypatch.setattr(pb, "swap", _returns(None))
-    assert re.search(r"the code ended before the model's swap \(P_Swap\)|the fake holds|the reader", _first_failure())
+    assert re.search(r"the code ended before the model's swap \(P_Swap\)", _first_failure())  # S0100 F5
 
 
 def test_the_generation_name_is_the_models() -> None:
@@ -895,5 +914,4 @@ def test_a_model_value_round_trips() -> None:
             assert version(i, sha256(content(i, v))) == v
     assert file_content(None) == ("abs", (0, 0), (0, 0))
     assert file_content(b"")[0] == "part"
-    with contextlib.suppress(Exception):
-        assert Kind.FILE
+    assert file_content(b"not a whole mirror") == ("part", (0, 0), (0, 0))  # S0100 (BL-0225 F5): no suppressed assert

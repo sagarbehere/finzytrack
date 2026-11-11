@@ -379,13 +379,46 @@ def test_a_drive_stop_names_the_backup_of_each_file_on_that_drive(cause: str) ->
     b = _on_another_drive(cause)
     where = _backup("main.bean")
     screen, keep = blocked_screen(b, WS).message, keep_confirmation(b, WS)
-    assert screen.endswith(
-        f" If main.bean is missing on the drive that held your ledger, its old version is in {where}."
+    assert screen.endswith(  # S0100 (BL-0223 F2-F4): the folder, the other files, the drive checked first
+        f" If main.bean is missing from its folder, its old version is in {where}. {OTHERS} {CHECK_DRIVE}"
     ), screen
     assert keep.endswith(
-        f" If main.bean is missing on the drive that held it, it will stay missing. Its old version is in {where}."
+        f" If main.bean is missing from its folder, it will stay missing. Its old version is in {where}. {OTHERS} "
+        f"{CHECK_DRIVE}"
     ), keep
     for text in (screen, keep):
         assert text.count("/app/local/k1/backups/") == 1, text  # not a.bean's (not confirmed), not b.bean's
         assert "a.bean is missing" not in text
         assert "prices.bean is missing" not in text
+
+
+OTHERS = (
+    "Other files of this save may hold its new version, so copying back only a missing file can leave your ledger "
+    "part old, part new."
+)
+CHECK_DRIVE = "Before you copy a file back, check that the drive is the one you saved on."
+
+
+@pytest.mark.parametrize("cause", ["wrong_drive", "unknown_drive"])
+def test_S0100_BL0223_a_save_of_one_file_has_no_other_files_sentence(cause: str) -> None:
+    """BL-0223 (F2), must not pass: the warning about the other files is said only when the save has other files."""
+    b = _on_another_drive(cause)
+    assert b.inspection is not None
+    one = replace(b, journal=replace(b.journal, files=b.journal.files[:1]), inspection=b.inspection[:1])
+    screen, keep = blocked_screen(one, WS).message, keep_confirmation(one, WS)
+    for text in (screen, keep):
+        assert OTHERS not in text, text
+        assert text.endswith(CHECK_DRIVE), text
+        assert "on the drive that held your ledger, its old version" not in text  # F4
+
+
+@pytest.mark.parametrize("cause", ["wrong_drive", "unknown_drive"])
+def test_S0100_BL0223_no_backup_sentence_no_drive_check(cause: str) -> None:
+    """@regression-guard (holds on 437d6298). Must not pass: with no backup named there is nothing to copy back, so no
+    check of the drive is asked."""
+    b = _on_another_drive(cause)
+    assert b.inspection is not None
+    none = replace(b, inspection=tuple(replace(i, backup=None) for i in b.inspection))
+    for text in (blocked_screen(none, WS).message, keep_confirmation(none, WS)):
+        assert CHECK_DRIVE not in text
+        assert OTHERS not in text

@@ -100,15 +100,19 @@ class EngineUnavailableDetails:
     reason: Literal["stopped_often", "incompatible", "cannot_start", "closing"]
 
 
-type PausedReason = Literal["unfinished_save"]
+type PausedReason = Literal[
+    "unfinished_save",  # this save's own journal was left open: Reopen recovers it
+    "earlier_unfinished",  # an earlier save's journal is open, so this change was not written (S0100, BL-0183)
+]
 
 
 @dataclass(frozen=True, slots=True)
 class WritesPausedDetails:
     """This workspace's saves are paused (engine-jobs §6.1 steps 1 and 4, §6.4, §6.6, §11; S0063). `unfinished_save`:
-    an unfinished save's journal is open (Reopen recovers it); the only reason since S0068 (ADR-0067: nothing after a
-    save pauses saving). `file`: the file the save was creating that the undo will ask about (its Reopen
-    text then promises no undo: S0061 red team r8 overflow 1), else None."""
+    this save's journal was left open (Reopen recovers it); `earlier_unfinished`: refused before anything was written,
+    since an earlier save's journal is open (S0100, BL-0183). Nothing else pauses saving since S0068 (ADR-0067).
+    `file`: the file the save was creating that the undo will ask about (its Reopen text then promises no undo: S0061
+    red team r8 overflow 1), else None."""
 
     reason: PausedReason
     file: str | None
@@ -126,16 +130,21 @@ type NotSavedReason = Literal[
     "no_drive_id",  # a drive Finzytrack cannot identify: a save there could never be undone (S0089, BL-0188; S0090)
     "no_folder_id",  # a folder with no creation time: a FAT or exFAT drive's top level, or a drive keeping none (S0089)
     "engine_stopped",  # the save's engine stopped, and the disk shows the change was not saved (§6.6)
+    "case_twins",  # two files of the change whose names differ only in capital letters (S0100, BL-0162)
+    "folder_appeared",  # a folder stood where the save makes one (S0100, BL-0187)
+    "app_folder_missing",  # the app's own data folder is gone (S0100, BL-0163 (a))
 ]
 
 
 @dataclass(frozen=True, slots=True)
 class ChangeNotSavedDetails:
     """A save that did not happen, and why (engine-jobs §6.1 step 8's refusals, §6.4, §6.6, §11; S0063). `path`: the
-    file it is about; `folder` and `acl_entry`: for `permission`, the folder and the ACL entry (in `chmod`'s words, no
-    subject) that stop it, and for `linked_folder` the link in place of the save's own folder; `unchanged`: every file
+    file it is about (an I/O error's file); `folder` and `acl_entry`: for `permission`, the folder and the ACL entry
+    (in `chmod`'s words, no subject) that stop it, for `linked_folder` the link in place of the save's own folder, for
+    `folder_appeared` the folder that appeared, for `app_folder_missing` the app's folder; `unchanged`: every file
     the save would write was hashed again and equals its bytes before the save (only then may the user read "Your
-    ledger is unchanged"). The UI words each reason
+    ledger is unchanged"); `changed`: the first file that re-hash found not at those bytes (None when none was found,
+    or when it could not read a file; S0100, BL-0163 (b)). The UI words each reason
     (`app.platform.engine_jobs.save_text.not_saved_text`)."""
 
     reason: NotSavedReason
@@ -143,6 +152,7 @@ class ChangeNotSavedDetails:
     folder: str | None
     acl_entry: str | None
     unchanged: bool
+    changed: str | None
 
 
 @dataclass(frozen=True, slots=True)

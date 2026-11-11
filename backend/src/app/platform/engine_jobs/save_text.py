@@ -33,12 +33,33 @@ def _name(path: str | None) -> str:
     return "A ledger file" if not path else path.rpartition("/")[2]
 
 
+NOT_CHECKED: Final = "Finzytrack could not check whether your ledger changed."
+EARLIER_UNFINISHED: Final = (
+    "Your change was not saved. An earlier change is not finished. Reopen the workspace so Finzytrack can check your "
+    "files and undo the unfinished change, then try again."
+)
+"""§11 "an earlier save is unfinished" (`WRITES_PAUSED {earlier_unfinished}`, S0100, BL-0183): this change was refused
+before anything was written."""
+
+
+def _rehash(d: ChangeNotSavedDetails) -> str:
+    """What the re-hash found (§11's rule): unchanged, the first file another program changed, or nothing known. In a
+    "not saved" outcome no file of the save is left at its new bytes (the rollback put them back), so a file found not
+    at its old bytes was written by another program (BL-0182's test)."""
+    if d.unchanged:
+        return UNCHANGED
+    if d.changed is not None:
+        return f"{_name(d.changed)} was changed by another program."
+    return NOT_CHECKED
+
+
 def _unchanged_or_not(d: ChangeNotSavedDetails) -> str:
+    """After an engine death (§6.6), and for an I/O error with no file known."""
     if d.unchanged:
         return f"{NOT_SAVED} {UNCHANGED}"
-    if d.reason == "engine_stopped" and d.path is not None:  # §6.6's re-hash: the first file not at its pre bytes
-        return f"Your change was not saved, and {_name(d.path)} was changed by another program."
-    return f"{NOT_SAVED} Finzytrack could not check whether your ledger changed."
+    if d.changed is not None:  # the re-hash: the first file not at its pre bytes
+        return f"Your change was not saved, and {_name(d.changed)} was changed by another program."
+    return f"{NOT_SAVED} {NOT_CHECKED}"
 
 
 def not_saved_text(d: ChangeNotSavedDetails) -> str:
@@ -86,6 +107,29 @@ def not_saved_text(d: ChangeNotSavedDetails) -> str:
                 "make a folder on the drive, move your ledger into it, and open it from there. Otherwise keep your "
                 "ledger on another drive, such as your Mac's own disk."
             )
+        case "case_twins":  # S0100 (BL-0162): a case-sensitive volume; the journal compares names case-folded
+            return (
+                f"{did_not} Another file in this change has the same name as {d.path or 'a ledger file'}, except for "
+                f"capital letters. Finzytrack cannot save both in one change. Rename one of them, then try again. "
+                f"{_rehash(d)}"
+            )
+        case "folder_appeared":  # S0100 (BL-0187): maybe our own retried `mkdir` on a network share
+            return (
+                f"{did_not} A folder {d.folder or 'of this change'} appeared where Finzytrack was about to make one. "
+                f"Try again. {_rehash(d)}"
+            )
+        case "app_folder_missing":  # S0100 (BL-0163 (a)): the sidecar makes it again at start
+            folder = "Its data folder" if d.folder is None else f"Its data folder {d.folder}"
+            return f"{did_not} {folder} is missing. Quit Finzytrack and open it again, then try again. {_rehash(d)}"
+        case "io_error" if d.path is not None:  # S0100 (BL-0163 (b)): the file named, the re-hash told apart
+            return f"{NOT_SAVED} Finzytrack could not read or write {_name(d.path)}. {_rehash(d)}"
+        case "read_back" if d.path is not None:
+            return f"{NOT_SAVED} {_name(d.path)} did not read back as Finzytrack wrote it. {_rehash(d)}"
+        case "name_not_utf8" if d.path is not None:
+            return (
+                f"{NOT_SAVED} The name of {_name(d.path)} is not valid text (UTF-8), so Finzytrack cannot record it. "
+                f"{_rehash(d)}"
+            )
         case "io_error" | "read_back" | "name_not_utf8" | "engine_stopped":
             return _unchanged_or_not(d)
 
@@ -95,6 +139,8 @@ def paused_text(d: WritesPausedDetails) -> str:
     match d.reason:
         case "unfinished_save":
             return REOPEN if d.file is None else reopen_after_created(d.file)
+        case "earlier_unfinished":
+            return EARLIER_UNFINISHED
 
 
 def text(err: DomainError) -> str:

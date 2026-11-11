@@ -8,6 +8,7 @@ the port from the handshake line only. `--frozen-clock` is the test-only way to 
 from __future__ import annotations
 
 import asyncio
+import errno
 import http.client
 import json
 import os
@@ -119,7 +120,7 @@ def test_bad_args_are_refused(dirs: tuple[Path, Path], extra: tuple[str, str]) -
 def test_missing_or_non_folder_roots_are_refused(tmp_path: Path, dirs: tuple[Path, Path]) -> None:
     a_file = tmp_path / "file"
     a_file.write_text("x")
-    for data, cache in ((tmp_path / "missing", dirs[1]), (dirs[0], a_file)):
+    for data, cache in ((dirs[0], a_file), (Path("relative"), dirs[1])):  # S0100: a missing app folder is made at start
         with pytest.raises(SystemExit):
             main.parse_args(argv(data, cache))
     with pytest.raises(SystemExit):
@@ -1076,3 +1077,102 @@ def test_a_signal_at_any_line_of_the_stop_after_serving_never_skips_the_engines_
     assert raised == [], "a stop signal raised into the stop path"
     assert lines > 2
     engine_gone(sidecar)
+
+
+# -- S0100: the app folder is made at start, its parent synced (BL-0163 (a)) ------------------------------------------
+# Owner, 2026-11-10, in session: "Sidecar makes it once (Recommended)": "The sidecar creates the app folder at start and
+# syncs its parent once; if that fails, the app says so at start."
+
+
+def _start(data: Path, cache: Path) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(  # noqa: S603 (fixed argv: this interpreter running the entry under test)
+        [sys.executable, "-m", "app.main", *argv(data, cache), "--port", "0"],
+        stdin=subprocess.DEVNULL,
+        capture_output=True,
+        text=True,
+        timeout=DEADLINE,
+        env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"},
+        check=False,
+    )
+
+
+def test_S0100_a_missing_app_folder_is_made_at_start_and_its_parent_synced(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from app.platform.adapters import app_folder
+
+    synced: list[str] = []
+    real = app_folder._full_sync  # pyright: ignore[reportPrivateUsage]
+
+    def spy(fd: int) -> None:
+        synced.append(_fd_path(fd))
+        real(fd)
+
+    monkeypatch.setattr(app_folder, "_full_sync", spy)
+    data = tmp_path / "app"
+    assert app_folder.prepare(data) is None
+    assert data.is_dir()
+    assert oct(data.stat().st_mode & 0o777) == oct(0o700)
+    assert synced == [str(tmp_path.resolve())]
+    synced.clear()
+    assert app_folder.prepare(data) is None, "a folder already there: its parent is synced again"
+    assert synced == [str(tmp_path.resolve())]
+
+
+def _fd_path(fd: int) -> str:
+    import fcntl
+
+    return os.fsdecode(fcntl.fcntl(fd, fcntl.F_GETPATH, bytes(1024)).rstrip(b"\0"))
+
+
+def test_S0100_the_app_folders_parents_are_never_made(tmp_path: Path) -> None:
+    from app.platform.adapters import app_folder
+
+    data = tmp_path / "missing" / "app"
+    refusal = app_folder.prepare(data)
+    assert refusal is not None
+    assert not (tmp_path / "missing").exists()
+    assert refusal.text == (
+        f"Finzytrack cannot start: it could not set up its data folder {data} ({os.strerror(2)}). Check that your "
+        f"user account may write in {data.parent}, then open Finzytrack again."
+    )
+
+
+def test_S0100_a_file_at_the_app_folders_path_is_refused(tmp_path: Path) -> None:
+    from app.platform.adapters import app_folder
+
+    data = tmp_path / "app"
+    data.write_text("x")
+    refusal = app_folder.prepare(data)
+    assert refusal is not None
+    assert refusal.errno == errno.ENOTDIR
+
+
+def test_S0100_a_parent_that_cannot_be_read_refuses_the_start_with_the_text_before_the_handshake(
+    tmp_path: Path, dirs: tuple[Path, Path]
+) -> None:
+    """The owner's "if that fails, the app says so at start": a parent that may be searched but not read (0311) cannot
+    be opened to be synced (S0063 verifier r2 F-B's shape, now met once at start instead of at every save)."""
+    parent = tmp_path / "searchonly"
+    parent.mkdir()
+    (parent / "app").mkdir()
+    parent.chmod(0o311)
+    try:
+        r = _start(parent / "app", dirs[1])
+    finally:
+        parent.chmod(0o755)
+    assert r.returncode == 2, r.stderr
+    assert "FT_READY" not in r.stdout
+    assert "could not set up its data folder" in r.stderr
+    assert not (parent / "app" / "logs").exists(), "nothing written before the refusal"
+
+
+def test_S0100_the_sidecar_makes_a_missing_app_folder_and_starts(tmp_path: Path, dirs: tuple[Path, Path]) -> None:
+    data = tmp_path / "fresh"
+    sidecar = Sidecar((data, dirs[1]))
+    try:
+        sidecar.handshake()
+        assert data.is_dir()
+        assert (data / "logs").is_dir()
+    finally:
+        sidecar.stop()

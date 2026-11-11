@@ -3,7 +3,7 @@
   "components": {
     "schemas": {
       "ChangeNotSavedDetails": {
-        "description": "A save that did not happen, and why (engine-jobs §6.1 step 8's refusals, §6.4, §6.6, §11; S0063). `path`: the\nfile it is about; `folder` and `acl_entry`: for `permission`, the folder and the ACL entry (in `chmod`'s words, no\nsubject) that stop it, and for `linked_folder` the link in place of the save's own folder; `unchanged`: every file\nthe save would write was hashed again and equals its bytes before the save (only then may the user read \"Your\nledger is unchanged\"). The UI words each reason\n(`app.platform.engine_jobs.save_text.not_saved_text`).",
+        "description": "A save that did not happen, and why (engine-jobs §6.1 step 8's refusals, §6.4, §6.6, §11; S0063). `path`: the\nfile it is about (an I/O error's file); `folder` and `acl_entry`: for `permission`, the folder and the ACL entry\n(in `chmod`'s words, no subject) that stop it, for `linked_folder` the link in place of the save's own folder, for\n`folder_appeared` the folder that appeared, for `app_folder_missing` the app's folder; `unchanged`: every file\nthe save would write was hashed again and equals its bytes before the save (only then may the user read \"Your\nledger is unchanged\"); `changed`: the first file that re-hash found not at those bytes (None when none was found,\nor when it could not read a file; S0100, BL-0163 (b)). The UI words each reason\n(`app.platform.engine_jobs.save_text.not_saved_text`).",
         "properties": {
           "acl_entry": {
             "anyOf": [
@@ -15,6 +15,17 @@
               }
             ],
             "title": "Acl Entry"
+          },
+          "changed": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Changed"
           },
           "folder": {
             "anyOf": [
@@ -51,7 +62,8 @@
           "path",
           "folder",
           "acl_entry",
-          "unchanged"
+          "unchanged",
+          "changed"
         ],
         "title": "ChangeNotSavedDetails",
         "type": "object"
@@ -936,12 +948,18 @@
           "linked_folder",
           "no_drive_id",
           "no_folder_id",
-          "engine_stopped"
+          "engine_stopped",
+          "case_twins",
+          "folder_appeared",
+          "app_folder_missing"
         ],
         "type": "string"
       },
       "PausedReason": {
-        "const": "unfinished_save",
+        "enum": [
+          "unfinished_save",
+          "earlier_unfinished"
+        ],
         "type": "string"
       },
       "RouteNotFoundError": {
@@ -1332,7 +1350,7 @@
         "type": "object"
       },
       "WritesPausedDetails": {
-        "description": "This workspace's saves are paused (engine-jobs §6.1 steps 1 and 4, §6.4, §6.6, §11; S0063). `unfinished_save`:\nan unfinished save's journal is open (Reopen recovers it); the only reason since S0068 (ADR-0067: nothing after a\nsave pauses saving). `file`: the file the save was creating that the undo will ask about (its Reopen\ntext then promises no undo: S0061 red team r8 overflow 1), else None.",
+        "description": "This workspace's saves are paused (engine-jobs §6.1 steps 1 and 4, §6.4, §6.6, §11; S0063). `unfinished_save`:\nthis save's journal was left open (Reopen recovers it); `earlier_unfinished`: refused before anything was written,\nsince an earlier save's journal is open (S0100, BL-0183). Nothing else pauses saving since S0068 (ADR-0067).\n`file`: the file the save was creating that the undo will ask about (its Reopen text then promises no undo: S0061\nred team r8 overflow 1), else None.",
         "properties": {
           "file": {
             "anyOf": [

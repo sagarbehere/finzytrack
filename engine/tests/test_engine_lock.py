@@ -176,3 +176,15 @@ def test_an_engine_whose_lock_folder_is_missing_creates_it_and_holds_the_lock(
     assert replies.wait(2), "the engine did not answer after its handshake"
     assert replies[1]["ok"] is True
     assert held_by_another(lock)
+
+
+def test_S0100_the_engine_never_makes_the_app_folder_above_its_locks_folder(tmp_path: Path) -> None:
+    """S0100 (BL-0163 (a); owner, 2026-11-10: "Sidecar makes it once (Recommended)"): the app's folder is the
+    sidecar's, made and its parent synced at start; the engine makes only `locks/` inside it, never a missing app
+    folder in its parent."""
+    from ledger_engine.protocol.server import hold_engine_lock
+
+    app = tmp_path / "app"
+    with pytest.raises(FileNotFoundError):
+        hold_engine_lock(str(app / "locks" / "engine.lock"))
+    assert not app.exists()

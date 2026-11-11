@@ -69,6 +69,7 @@ BLANK: dict[str, object] = {
     "entry": None,
     "detail": None,
     "unchanged": False,
+    "changed": None,
     "open_journal": False,
     "cause": None,
     "cause_path": None,
@@ -144,7 +145,7 @@ def test_a_save_that_lands_is_saved_and_its_engine_is_retired(make: Any) -> None
         (
             answer(outcome="refused", reason="unfinished_save", unchanged=True),
             "WRITES_PAUSED",
-            WritesPausedDetails("unfinished_save", None),
+            WritesPausedDetails("earlier_unfinished", None),  # S0100 (BL-0183): its own reason
         ),
         # S0068 (ADR-0067): nothing after a save refuses one; a reason that came back would be a bug, never a pause
         (answer(outcome="refused", reason="check_pending", unchanged=True), "INTERNAL", None),
@@ -170,27 +171,27 @@ def test_a_save_that_lands_is_saved_and_its_engine_is_retired(make: Any) -> None
         (
             answer(outcome="not_saved", reason="hard_linked", path=MAIN, unchanged=True),
             "CHANGE_NOT_SAVED",
-            ChangeNotSavedDetails("hard_linked", MAIN, None, None, True),
+            ChangeNotSavedDetails("hard_linked", MAIN, None, None, True, None),
         ),
         (
             answer(outcome="not_saved", reason="permission", entry="/L", detail="deny delete_child", unchanged=True),
             "CHANGE_NOT_SAVED",
-            ChangeNotSavedDetails("permission", None, "/L", "deny delete_child", True),
+            ChangeNotSavedDetails("permission", None, "/L", "deny delete_child", True, None),
         ),
         (  # S0077 (BL-0193): a link in place of the workspace's own journal, backups or key folder
             answer(outcome="not_saved", reason="linked_folder", entry="/app/local/k1/journal", unchanged=True),
             "CHANGE_NOT_SAVED",
-            ChangeNotSavedDetails("linked_folder", None, "/app/local/k1/journal", None, True),
+            ChangeNotSavedDetails("linked_folder", None, "/app/local/k1/journal", None, True, None),
         ),
         (  # S0089 (BL-0188): a drive with no volume UUID; its journal could never be undone
             answer(outcome="not_saved", reason="no_drive_id", path=MAIN, unchanged=True),
             "CHANGE_NOT_SAVED",
-            ChangeNotSavedDetails("no_drive_id", MAIN, None, None, True),
+            ChangeNotSavedDetails("no_drive_id", MAIN, None, None, True, None),
         ),
         (  # S0089 round 1: the top level of a FAT or exFAT drive
             answer(outcome="not_saved", reason="no_folder_id", path=MAIN, unchanged=True),
             "CHANGE_NOT_SAVED",
-            ChangeNotSavedDetails("no_folder_id", MAIN, None, None, True),
+            ChangeNotSavedDetails("no_folder_id", MAIN, None, None, True, None),
         ),
         (
             answer(
@@ -275,7 +276,7 @@ def test_a_save_cut_past_its_gate_is_told_what_the_disk_says(
 def test_an_engine_death_before_the_gate_is_read_from_disk_too(make: Any) -> None:
     rig = make({"save": [CRASH], "save_outcome": [facts("none", unchanged=True)]})
     value = rig.save()
-    assert details(value) == ChangeNotSavedDetails("engine_stopped", None, None, None, True)
+    assert details(value) == ChangeNotSavedDetails("engine_stopped", None, None, None, True, None)
     assert save_text.text(value.error) == "Your change was not saved. Your ledger is unchanged."
 
 
@@ -330,7 +331,7 @@ def test_a_save_whose_first_engine_does_not_start_is_answered(make: Any) -> None
     assert isinstance(ticket, JobTicket)
     out = ticket.wait(DEADLINE)
     assert isinstance(out, Done), out
-    assert details(out.value) == ChangeNotSavedDetails("engine_stopped", None, None, None, True)  # type: ignore[arg-type]
+    assert details(out.value) == ChangeNotSavedDetails("engine_stopped", None, None, None, True, None)  # type: ignore[arg-type]
     assert [op for _, op in rig.engine.calls] == ["save_outcome"]
 
 
@@ -362,7 +363,7 @@ def test_not_saved_says_unchanged_only_after_the_rehash() -> None:
     assert "main.bean" in save_text.text(told.error)
     unknown = save_outcome(OutcomeFacts("none", None, None, None), gated=True)
     assert isinstance(unknown, NotDone)
-    assert details(unknown) == ChangeNotSavedDetails("engine_stopped", None, None, None, False)
+    assert details(unknown) == ChangeNotSavedDetails("engine_stopped", None, None, None, False, None)
     assert "is unchanged" not in save_text.text(unknown.error)
 
 
@@ -370,43 +371,49 @@ def test_not_saved_says_unchanged_only_after_the_rehash() -> None:
     ("d", "want"),
     [
         (
-            ChangeNotSavedDetails("hard_linked", MAIN, None, None, True),
+            ChangeNotSavedDetails("hard_linked", MAIN, None, None, True, None),
             "main.bean has a second name on disk (a hard link)",
         ),
-        (ChangeNotSavedDetails("locked", MAIN, None, None, True), "main.bean is locked. Unlock it (Finder: Get Info)"),
-        (ChangeNotSavedDetails("not_a_file", MAIN, None, None, True), "main.bean is not a normal file."),
-        (ChangeNotSavedDetails("permission", MAIN, None, None, True), "Your Mac does not allow changes to main.bean."),
         (
-            ChangeNotSavedDetails("permission", None, "/L", "deny delete_child,directory_inherit", True),
+            ChangeNotSavedDetails("locked", MAIN, None, None, True, None),
+            "main.bean is locked. Unlock it (Finder: Get Info)",
+        ),
+        (ChangeNotSavedDetails("not_a_file", MAIN, None, None, True, None), "main.bean is not a normal file."),
+        (
+            ChangeNotSavedDetails("permission", MAIN, None, None, True, None),
+            "Your Mac does not allow changes to main.bean.",
+        ),
+        (
+            ChangeNotSavedDetails("permission", None, "/L", "deny delete_child,directory_inherit", True, None),
             "The folder /L has a permission entry (ACL) that stops Finzytrack from saving safely: "
             "deny delete_child,directory_inherit. Remove that entry, then try again.",
         ),
         (
-            ChangeNotSavedDetails("permission", None, "/app/local/k1/journal", None, True),
+            ChangeNotSavedDetails("permission", None, "/app/local/k1/journal", None, True, None),
             "allow changes to /app/local/k1/journal.",
         ),
-        (
-            ChangeNotSavedDetails("io_error", MAIN, None, None, True),
-            "Your change was not saved. Your ledger is unchanged.",
+        (  # S0100 (BL-0163 (b)): the file named
+            ChangeNotSavedDetails("io_error", MAIN, None, None, True, None),
+            "Your change was not saved. Finzytrack could not read or write main.bean. Your ledger is unchanged.",
         ),
         (
-            ChangeNotSavedDetails("linked_folder", None, "/app/local/k1/journal", None, True),
+            ChangeNotSavedDetails("linked_folder", None, "/app/local/k1/journal", None, True, None),
             "The folder /app/local/k1/journal is a link to another place. Finzytrack keeps its save records and "
             "backups only in a real folder. Put the real folder back in its place, or remove the link, then try again.",
         ),
         (
-            ChangeNotSavedDetails("no_folder_id", MAIN, None, None, True),
+            ChangeNotSavedDetails("no_folder_id", MAIN, None, None, True, None),
             f"The folder that holds {MAIN.rpartition('/')[2]} has no creation time that Finzytrack can read, so "
             "Finzytrack cannot tell it from a folder at the same place on another drive.",
         ),
         (  # S0090 (BL-0220 V2-1): a drive that keeps no creation time at all gets a way out that works there too
-            ChangeNotSavedDetails("no_folder_id", MAIN, None, None, True),
+            ChangeNotSavedDetails("no_folder_id", MAIN, None, None, True, None),
             f"If {MAIN.rpartition('/')[2]} is at the top level of a USB drive, make a folder on the drive, move your "
             "ledger into it, and open it from there. Otherwise keep your ledger on another drive, such as your "
             "Mac's own disk.",
         ),
         (
-            ChangeNotSavedDetails("no_drive_id", MAIN, None, None, True),
+            ChangeNotSavedDetails("no_drive_id", MAIN, None, None, True, None),
             f"Finzytrack cannot identify the drive that holds {MAIN.rpartition('/')[2]}, so it could not undo the "
             "change if saving were interrupted.",
         ),
@@ -508,13 +515,13 @@ def test_every_save_has_its_own_name_and_its_outcome_is_read_by_that_name(make: 
 
 
 def test_an_io_error_naming_a_file_never_says_another_program_changed_it() -> None:
-    """The writer's and the save's `io_error` name the file the error was about, not one found changed: only the
-    outcome after a death (`engine_stopped`) names a file that differs from its pre bytes (§11)."""
+    """The writer's and the save's `io_error` name the file the error was about, not one found changed: a file that
+    differs from its pre bytes is named only from `changed` (S0100, BL-0163 (b): the re-hash's own field)."""
     for reason in ("io_error", "read_back", "name_not_utf8"):
-        text = save_text.not_saved_text(ChangeNotSavedDetails(reason, MAIN, None, None, False))
+        text = save_text.not_saved_text(ChangeNotSavedDetails(reason, MAIN, None, None, False, None))
         assert "changed by another program" not in text, reason
         assert "is unchanged" not in text, reason
-    stopped = save_text.not_saved_text(ChangeNotSavedDetails("engine_stopped", MAIN, None, None, False))
+    stopped = save_text.not_saved_text(ChangeNotSavedDetails("engine_stopped", None, None, None, False, MAIN))
     assert "main.bean was changed by another program" in stopped
 
 
@@ -528,3 +535,114 @@ def test_the_best_effort_drive_notice_is_the_owners_words_in_the_spec() -> None:
     texts = (REPO / "design" / "generated" / "engine-job-texts.md").read_text(encoding="utf-8")
     rendered = next(ln for ln in texts.splitlines() if ln.startswith("| `msg:save.best_effort_drive` |"))
     assert rendered.endswith(f"| {save_text.BEST_EFFORT_DRIVE} |")
+
+
+# -- S0100: the write-path leftovers (BL-0162, BL-0163, BL-0182, BL-0183, BL-0187) ------------------------------------
+
+A_BEAN = "/L/a.bean"
+
+
+@pytest.mark.parametrize(
+    ("result", "want"),
+    [
+        (  # BL-0162
+            answer(outcome="not_saved", reason="case_twins", path="/L/A.bean", unchanged=True),
+            ChangeNotSavedDetails("case_twins", "/L/A.bean", None, None, True, None),
+        ),
+        (  # BL-0187: never LEDGER_EXTERNALLY_CHANGED
+            answer(outcome="not_saved", reason="folder_appeared", path=NEW, entry="/L/y2026", unchanged=True),
+            ChangeNotSavedDetails("folder_appeared", NEW, "/L/y2026", None, True, None),
+        ),
+        (  # BL-0163 (a)
+            answer(outcome="not_saved", reason="app_folder_missing", entry="/app", unchanged=True),
+            ChangeNotSavedDetails("app_folder_missing", None, "/app", None, True, None),
+        ),
+        (  # BL-0163 (b): the changed file apart from the failed one
+            answer(outcome="not_saved", reason="io_error", path=MAIN, unchanged=False, changed=A_BEAN),
+            ChangeNotSavedDetails("io_error", MAIN, None, None, False, A_BEAN),
+        ),
+    ],
+)
+def test_S0100_each_new_engine_answer_is_its_code(make: Any, result: dict[str, object], want: object) -> None:
+    rig = make({"save": [Gated(result)]})
+    value = rig.save()
+    assert code(value) == "CHANGE_NOT_SAVED"
+    assert details(value) == want
+
+
+def test_S0100_BL0183_an_earlier_unfinished_save_has_its_own_reason_and_says_this_change_was_not_saved() -> None:
+    """BL-0183 (S0069 red team overflow 1): the step-1 refusal is about an earlier save, so this change was certainly
+    not written: not the Reopen text of "could not finish your change"."""
+    value = answer_of(
+        SaveAnswer(
+            "refused", "unfinished_save", "/app/local/k1/journal/x.open", None, None, True, False, None, None, False
+        )
+    )
+    assert details(value) == WritesPausedDetails("earlier_unfinished", None)
+    assert isinstance(value, NotDone)
+    text = save_text.text(value.error)
+    assert text.startswith("Your change was not saved.")
+    assert "earlier change" in text
+    assert "could not finish your change" not in text
+
+
+def test_S0100_BL0183_this_saves_own_open_journal_still_reads_the_reopen_text() -> None:
+    """@regression-guard (its logic holds on 437d6298). Must pass: a journal this save left open (`not_saved` with
+    `open_journal`, `unfinished`) keeps its Reopen text."""
+    for a in (
+        SaveAnswer("not_saved", "io_error", MAIN, None, None, False, True, None, None, False),
+        SaveAnswer("unfinished", "io_error", MAIN, None, None, False, True, None, None, False),
+    ):
+        value = answer_of(a)
+        assert details(value) == WritesPausedDetails("unfinished_save", None)
+        assert isinstance(value, NotDone)
+        assert save_text.text(value.error) == REOPEN
+
+
+def test_S0100_BL0163b_the_texts_name_the_failed_file_and_say_which_file_changed() -> None:
+    """BL-0163 (b): `io_error`, `read_back` and `name_not_utf8` name their file; with the re-hash's changed file they
+    say it changed instead of "could not check" (S0063 verifier r2 F-C)."""
+    for reason in ("io_error", "read_back", "name_not_utf8"):
+        changed = save_text.not_saved_text(ChangeNotSavedDetails(reason, MAIN, None, None, False, A_BEAN))
+        assert "main.bean" in changed, reason
+        assert "a.bean was changed by another program" in changed, reason
+        assert "could not check" not in changed, reason
+        unknown = save_text.not_saved_text(ChangeNotSavedDetails(reason, MAIN, None, None, False, None))
+        assert "could not check whether your ledger changed" in unknown, reason
+        assert "main.bean" in unknown, reason
+        same = save_text.not_saved_text(ChangeNotSavedDetails(reason, MAIN, None, None, True, None))
+        assert same.endswith("Your ledger is unchanged."), reason
+        assert "main.bean" in same, reason
+
+
+def test_S0100_the_outcome_after_a_death_carries_the_changed_file_in_its_own_field() -> None:
+    """§6.6 (BL-0182's text): the re-hash's first changed file is `changed`, not `path`."""
+    told = save_outcome(OutcomeFacts("resolved", False, MAIN, None), gated=True)
+    assert details(told) == ChangeNotSavedDetails("engine_stopped", None, None, None, False, MAIN)
+    assert isinstance(told, NotDone)
+    assert save_text.text(told.error) == "Your change was not saved, and main.bean was changed by another program."
+
+
+@pytest.mark.parametrize(
+    ("d", "want"),
+    [
+        (
+            ChangeNotSavedDetails("case_twins", "/L/A.bean", None, None, True, None),
+            "Finzytrack did not save your change. Another file in this change has the same name as /L/A.bean, "
+            "except for capital letters. Finzytrack cannot save both in one change. Rename one of them, then try "
+            "again. Your ledger is unchanged.",
+        ),
+        (
+            ChangeNotSavedDetails("folder_appeared", NEW, "/L/y2026", None, True, None),
+            "Finzytrack did not save your change. A folder /L/y2026 appeared where Finzytrack was about to make one. "
+            "Try again. Your ledger is unchanged.",
+        ),
+        (
+            ChangeNotSavedDetails("app_folder_missing", None, "/app", None, True, None),
+            "Finzytrack did not save your change. Its data folder /app is missing. Quit Finzytrack and open it "
+            "again, then try again. Your ledger is unchanged.",
+        ),
+    ],
+)
+def test_S0100_the_new_reasons_texts(d: ChangeNotSavedDetails, want: str) -> None:
+    assert save_text.not_saved_text(d) == want

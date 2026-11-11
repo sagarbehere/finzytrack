@@ -85,10 +85,10 @@ def _result(out: sv.SaveOutcome) -> SaveResult:
     match out:
         case sv.Saved(published=published):
             outcome, reason, path, unchanged, open_journal = "saved", None, None, False, False
-            entry = detail = cause = cause_path = None
+            entry = detail = cause = cause_path = changed = None
         case sv.Refused(reason=reason, unchanged=unchanged, path=path):
             outcome, open_journal, published = "refused", False, False
-            entry = detail = cause = cause_path = None
+            entry = detail = cause = cause_path = changed = None
         case NotSaved():
             outcome, reason, path, unchanged, open_journal = (
                 "not_saved",
@@ -98,9 +98,11 @@ def _result(out: sv.SaveOutcome) -> SaveResult:
                 out.open_journal,
             )
             entry, detail, cause, cause_path, published = out.entry, out.detail, None, None, False
+            changed = out.changed
         case Unfinished():
             outcome, reason, path, unchanged, open_journal = "unfinished", out.reason.value, out.path, False, True
             entry, detail, cause, cause_path, published = None, None, out.cause, out.cause_path, False
+            changed = None
     return SaveResult(
         outcome=outcome,
         reason=reason,
@@ -108,6 +110,7 @@ def _result(out: sv.SaveOutcome) -> SaveResult:
         entry=entry,
         detail=detail,
         unchanged=unchanged,
+        changed=changed,
         open_journal=open_journal,
         cause=cause,
         cause_path=cause_path,
