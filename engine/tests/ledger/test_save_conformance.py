@@ -94,10 +94,15 @@ RORD: Final = ("R", "N")  # the model's ROrd: the restore, root first
 SAVES: Final = ("s1", "s2", "s3")
 POST: Final = {"s1": 3, "s2": 4, "s3": 5}
 PER_FILE: Final = frozenset({"s_tw1", "s_tw2", "s_ts", "s_sw", "s_cmp", "s_ds", "rs_w", "rs_x", "rs_c", "rs_t"})
-RESTORE: Final = frozenset({"rs_chk", "rs_sync", "rs_clean", "rs_w", "rs_x", "rs_c", "rs_t", "rs_all", "rs_res"})
-SYNC_STEPS: Final = frozenset(
-    {"S_BackupSync", "S_JPartSync", "S_JDirSync", "S_TempSync", "S_DirSync", "S_CloseSync", "RS_Sync", "RS_All"}
+RESTORE: Final = frozenset(
+    {"rs_chk", "rs_sync", "rs_clean", "rs_w", "rs_x", "rs_c", "rs_t", "rs_all", "rs_fl", "rs_res"}
 )
+SYNC_STEPS: Final = frozenset(
+    {
+        "S_BackupSync", "S_JPartSync", "S_JDirSync", "S_TempSync", "S_DirSync", "S_CloseSync", "RS_Sync", "RS_All",
+        "RS_Flush",
+    }
+)  # fmt: skip
 """The durable steps: each is a sync of the code's (a file's data or a folder), so the code may never pass one
 without it (round 1, verifier F2: a sync changes nothing the view shows, so the passable rule alone let a deleted sync
 through)."""
@@ -472,6 +477,8 @@ class Driver:
         last = self.last_pc
         if folder == f"{BD}/{name}":  # the model backs up R only (N did not exist in its first save)
             return ("s_bks", "") if op == "sync" else ("s_bk", "")  # the copy (data synced), then its folder's sync
+        if op == "sync_file" and folder == LEDGER and self.restoring():
+            return "rs_fl", ""  # step 4's flush of each file found at pre (S0101, BL-0243)
         if op == "sync_file" or ((folder.startswith(ALD) or folder in ("/", "/w")) and folder != JD):
             return "s_bk", ""
         if folder == JD:
@@ -870,7 +877,7 @@ WALKED: tuple[str, ...] = (
     "S_Gate", "S_Backup", "S_BackupSync", "S_JPart", "S_JPartSync", "S_JOpen", "S_JDirSync", "S_TempStart",
     "S_TempDone", "S_TempSync", "S_Swap", "S_Compare", "S_DirSync", "S_RemoveTemps", "S_Close", "S_CloseSync",
     "S_Saved", "RS_Check", "RS_Sync", "RS_Clean", "RS_Write", "RS_Swap", "RS_Compare", "RS_Temp", "RS_All",
-    "RS_Resolve", "IOFail",
+    "RS_Flush", "RS_Resolve", "IOFail",
 )  # fmt: skip
 """The model's save steps the replay walks through the code: the code reached the step at one of its hooks and went
 on (`Driver.reach`, `finish`), or the I/O error raised at a hook. A step the model passes without a hook of the code's
@@ -896,7 +903,7 @@ def test_the_save_steps_are_the_models() -> None:
     assert set(WALKED) | set(NOT_WALKED) == steps
 
 
-STOP_COUNTS: Mapping[str, int] = {"cut": 1}
+STOP_COUNTS: Mapping[str, int] = {}  # S0101: the regenerated corpus has no save the walk cuts
 """The saves of the corpus the replay does not follow, by reason (`STOPS`); pinned, so a regenerated corpus or a
 changed stop rule shows here what it stops."""
 
@@ -972,6 +979,18 @@ def test_a_skipped_sync_is_caught(monkeypatch: pytest.MonkeyPatch) -> None:
 
     monkeypatch.setattr(writer, "_stage", stage_unsynced)
     assert re.search(r"past the model's S_TempSync [RN] without its sync", _first_failure())
+
+
+def test_a_rollback_without_its_flush_is_caught(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`RS_Flush` (S0101, BL-0243): a rollback that resolves without flushing the data of a file it found at pre goes
+    past the model's flush without its sync. Must not pass with the step left out of `SYNC_STEPS`."""
+    from ledger_engine.ledger import restore
+
+    def unflushed(*args: object) -> None:
+        del args
+
+    monkeypatch.setattr(restore, "_flush", unflushed)
+    assert re.search(r"the model's RS_Flush .*without its sync", _first_failure())
 
 
 def test_a_skipped_restore_sync_is_caught(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -6,13 +6,14 @@ Writes act on a **handle on one directory** (`DirHandle`), never on a path: a ch
 between them (§6.3 "Path guard"; `renameatx_np` on macOS). Names given to a handle are single components (no `/`,
 never `.` or `..`); a name is never followed through a link.
 
-Durability (§6.2, §13 "File-system assumptions"): a file's data is durable after `DirHandle.create` returns (it
-syncs the data before it returns), and an existing file's after `DirHandle.sync_file`; an entry made by `create`,
-`swap`, `rename_excl`, `rename`, `remove` or `mkdir` is durable only after the directory's `sync`, which makes
-everything done before it in that directory durable. A swap and an exclusive rename are one operation: a power loss
-keeps or drops each whole; so is a plain rename, except over an existing file on a volume without a journal (exFAT,
-FAT: `rename`). Nothing is assumed about the order in
-which unsynced operations reach the disk. Every sync is `durable_sync`: `F_FULLFSYNC` on macOS.
+Durability (§6.2, §13 "File-system assumptions"): a file's data is durable after `DirHandle.create` returns (it syncs
+the data before it returns), and an existing file's after `DirHandle.sync_file`; an entry made by `create`, `swap`,
+`rename_excl`, `rename`, `remove` or `mkdir` is durable only after the directory's `sync`, which makes every entry
+operation done before it in that directory durable, never the data of the files those entries name (another program's
+unsynced in-place write needs `sync_file`; S0101, BL-0243). A swap and an exclusive rename are one operation: a power
+loss keeps or drops each whole; so is a plain rename, except over an existing file on a volume without a journal (exFAT,
+FAT: `rename`). Nothing is assumed about the order in which unsynced operations reach the disk. Every sync is
+`durable_sync`: `F_FULLFSYNC` on macOS.
 
 Every operation may raise `OSError`. The real adapter is `ledger_engine.fs.darwin` (macOS); the test adapter is the
 in-memory fake `tests/fakes/memfs.py`, with a separate durable layer, crash, I/O-error and power-loss injection.

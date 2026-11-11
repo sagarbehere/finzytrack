@@ -360,6 +360,25 @@ def test_sync_file_makes_an_unsynced_in_place_write_durable_and_refuses_what_is_
     assert outcomes(fs, "/d/f") == {(b"new bytes",)}
 
 
+def test_an_unsynced_in_place_outside_write_may_be_old_new_or_torn_until_the_files_own_sync() -> None:
+    """S0101 (BL-0225 F1): `outside_write_unsynced` changes the bytes now, not what the disk holds
+    (`synced_file`); a folder's sync does not make it durable, `sync_file` does."""
+    fs = fs_with("/d")
+    fs.outside_write("/d/f", b"old bytes")
+    fs.outside_write_unsynced("/d/f", b"new bytes")
+    assert fs.file("/d/f") == b"new bytes"
+    assert fs.synced_file("/d/f") == b"old bytes"
+    with fs.open_dir("/d") as d:
+        d.sync()
+        assert {b"old bytes", b"new bytes"} < {o[0] for o in outcomes(fs, "/d/f")}
+        d.sync_file("f")
+    assert outcomes(fs, "/d/f") == {(b"new bytes",)}
+    assert fs.synced_file("/d/f") == b"new bytes"
+    assert fs.synced_file("/d/missing") is None
+    with pytest.raises(FileNotFoundError):
+        fs.outside_write_unsynced("/d/missing", b"x")
+
+
 def _deny(perms: str, flags: str = "") -> AclEntry:
     return AclEntry(True, frozenset(perms.split(",")), frozenset(f for f in flags.split(",") if f))
 

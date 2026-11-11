@@ -621,6 +621,7 @@ def test_a_save_its_crash_and_its_recovery_on_a_real_volume_without_the_swap(
 
 def _real_volume_run(fs: DarwinFS, tmp_path: Path, ledger: Path) -> None:
     from ledger_engine.ledger.core.recovery import Cause
+    from ledger_engine.ledger.handles import SERIAL_IDENTIFIED
     from ledger_engine.ledger.restore import Resolved, Stopped, recover_journal
 
     with fs.open_dir(str(ledger)) as d:
@@ -648,8 +649,11 @@ def _real_volume_run(fs: DarwinFS, tmp_path: Path, ledger: Path) -> None:
         durable_commit(_DyingFS(fs, ".closed"), c2)  # type: ignore[arg-type]
     assert main.read_bytes() == b"post2\n"
     main.unlink()  # missing in the middle of a replace, as a power loss on a drive without a journal can leave it
+    with inc.open("r+b") as f:  # S0101: an editor puts inc back to its old text in place, without a sync
+        f.write(b"inc2\n")
+        f.truncate()
     out2 = recover_journal(fs, c2.journal_dir, "s1-j1")
-    assert out2 == Resolved("s1-j1"), out2
+    assert out2 == Resolved("s1-j1"), out2  # inc found at pre and flushed (read-only `F_FULLFSYNC`, or `fsync`)
     assert (main.read_bytes(), inc.read_bytes()) == (b"post\n", b"inc2\n"), "restored from the backups"
     assert not [n for n in os.listdir(ledger) + os.listdir(ledger / "inc") if ".ft-" in n]
     root3 = tmp_path / "third"
@@ -675,6 +679,17 @@ def _real_volume_run(fs: DarwinFS, tmp_path: Path, ledger: Path) -> None:
     assert main.read_bytes() == b""
     main.unlink()
     out5 = recover_journal(fs, c4.journal_dir, "s1-j1")
+    with fs.open_dir(str(ledger)) as d:
+        fs_type = d.mark().fs_type
+    if fs_type in SERIAL_IDENTIFIED:
+        # FAT and exFAT: a one-file save's missing file needs evidence (owner, 2026-11-09: "Evidence for missing
+        # (Recommended)"; S0089): nothing is put back, and the user copies the old version by hand, then Retry, which
+        # finds it at pre and flushes it before the resolve (S0101; this test predated S0089 and failed here since)
+        assert isinstance(out5, Stopped), out5
+        assert out5.cause is Cause.MISSING_UNCONFIRMED, out5
+        assert not main.exists()
+        main.write_bytes(b"; an editor\n")
+        out5 = recover_journal(fs, c4.journal_dir, "s1-j1")
     assert out5 == Resolved("s1-j1"), out5
     assert main.read_bytes() == b"; an editor\n"
     assert not [n for n in os.listdir(ledger) if ".ft-" in n]
@@ -818,6 +833,40 @@ def test_a_crashed_saves_journal_is_resolved_on_apfs(fs: DarwinFS, tmp_path: Pat
     assert main.read_bytes() == b"pre\n"
     assert not created.exists()
     assert sorted(p.name for p in (tmp_path / "L").iterdir()) == ["main.bean", "y2026"]
+    assert os.listdir(tmp_path / "local" / "journal") == ["s1-j1.resolved"]
+
+
+def test_S0101_a_file_put_back_to_its_pre_bytes_without_a_sync_is_flushed_read_only_before_resolved_on_apfs(
+    fs: DarwinFS, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """BL-0243 on the real adapter: after a crashed save, an editor writes main.bean back to its old text in place
+    without a sync; recovery resolves only after a `durable_sync` of main.bean itself, through a read-only descriptor
+    on the entry it judged (owner, 2026-11-11: "Flush named files only (Recommended)")."""
+    import fcntl
+
+    from ledger_engine.ledger.restore import Resolved, recover_journal
+
+    c, main, created = _crashed_save_on_apfs(fs, tmp_path)
+    created.unlink()
+    with main.open("r+b") as f:  # the editor's in-place save: no fsync
+        f.write(b"pre\n")
+        f.truncate()
+    flushed: list[tuple[int, int]] = []
+    real = fs.durable_sync
+
+    def recording(fd: int) -> None:
+        st = os.fstat(fd)
+        if stat.S_ISREG(st.st_mode):
+            assert fcntl.fcntl(fd, fcntl.F_GETFL) & os.O_ACCMODE == os.O_RDONLY, "flushed through a writable fd"
+            flushed.append((st.st_dev, st.st_ino))
+        real(fd)
+
+    monkeypatch.setattr(fs, "durable_sync", recording)
+    out = recover_journal(fs, c.journal_dir, "s1-j1")
+    assert out == Resolved("s1-j1"), out
+    st = main.stat()
+    assert flushed == [(st.st_dev, st.st_ino)], flushed
+    assert main.read_bytes() == b"pre\n"
     assert os.listdir(tmp_path / "local" / "journal") == ["s1-j1.resolved"]
 
 

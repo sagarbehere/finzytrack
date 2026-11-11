@@ -60,14 +60,14 @@ of `L_world` (default 200,000 traces of at most 200 steps).
 ## How long it takes
 
 Measured on the owner's Mac (Apple M4 Pro, 14 cores, 48 GB) on 2026-11-01 with 14 TLC workers, on the model of S0072
-round 1 (model sha256 23acd902b1d1). Earlier models' numbers (the queue, the screens and liveness) are in git history.
+round 1 (model sha256 23acd902b1d1); the S tier again on 2026-11-11 on S0101's model (a folder sync covers entries only, `RS_Flush`). Earlier models' numbers (the queue, the screens and liveness) are in git history.
 
 | Tier | Configurations | Result | Size | Wall time |
 |---|---|---|---|---|
-| S | 14 base worlds | all PASS | 20 (`S_create_nonempty`) to 194,461 distinct states (`S_keep`) | 0-3 s each |
-| S | 28 mutants | each violates its property | | 0-2 s each |
-| S | 23 witnesses | each reached | | 0-2 s each |
-| S | all 65 | **all as expected** | | 75 s together |
+| S | 14 base worlds | all PASS | 20 (`S_create_nonempty`) to 235,407 distinct states (`S_keep`) | 0-3 s each |
+| S | 29 mutants | each violates its property | | 0-2 s each |
+| S | 24 witnesses | each reached | | 0-2 s each |
+| S | all 67 | **all as expected** | | 69 s together (S0101) |
 | M | `M_recover_temps` | not run on this model (the owner's) | | |
 | L | `L_save_all`, `L_recover_all`, `L_save_deep`, `L_world` (bounded simulation) | not run on this model (the owner's, BL-0110) | | |
 
@@ -85,7 +85,7 @@ steps that name only the variables that changed (`gen_traces.delta`). Regenerate
 `EngineJobs.tla`, to a `.cfg` it uses or to the generator (the test fails until then, naming this command):
 
 ```sh
-python3 formal/tla/engine-jobs/gen_traces.py           # about two minutes (29 worlds); Java 21 and the pinned jar
+python3 formal/tla/engine-jobs/gen_traces.py           # about two minutes (31 worlds); Java 21 and the pinned jar
 python3 formal/tla/engine-jobs/gen_traces.py --check   # is the corpus current? (no Java)
 ```
 

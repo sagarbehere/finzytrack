@@ -48,6 +48,7 @@ from __future__ import annotations
 import contextlib
 import errno
 import re
+import sys
 from collections import Counter
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
@@ -94,9 +95,10 @@ K_AWAY: Final = "/v/K-away"  # K's folder while its disk is unreachable
 L_MOVED: Final = "/w/L-moved"  # R's folder once a link stands in its place
 L_COPY: Final = "/w/Lc"  # the link's target: a copy of R's folder
 PER_FILE: Final = frozenset({"rs_w", "rs_x", "rs_c", "rs_t"})
-SYNC_STEPS: Final = frozenset({"RC_Init", "RS_Sync", "RS_All"})
+SYNC_STEPS: Final = frozenset({"RC_Init", "RS_Sync", "RS_All", "RS_Flush"})
 """The model's sync steps: the listing's sync of each journal folder, the restore's syncs of every folder the record
-names (before the first removal, and after the last put-back). The code may never pass one without a sync."""
+names (before the first removal, and after the last put-back), and its flush of each file found at pre (S0101). The
+code may never pass one without a sync."""
 FUSED_SYNC: Final = frozenset({"RS_Write", "RS_Swap", "RS_Resolve"})
 """Model steps that include their folder's sync (the restore temp's rename, the restore swap, the record's
 `.resolved` rename): the code must make that sync before its next step."""
@@ -141,6 +143,7 @@ class Place:
 
     k_away: bool = False
     linked: bool = False
+    durable_edits: bool = True  # the model's `EdDurable`: an outside edit syncs its data (else it is left unsynced)
     copy: dict[str, tuple[object, ...]] = field(default_factory=lambda: dict[str, tuple[object, ...]]())
 
     def folder(self, f: str) -> str:
@@ -184,7 +187,7 @@ def build(st: State_, consts: Mapping[str, str]) -> tuple[MemFS, Place]:
             fs.outside_write(f"{bdir(j)}/{journal.backup_name(i, BASE[f])}", content(f, V0))
         data = journal.encode(record(fs, j))
         fs.outside_write(f"{jdir(j)}/{journal.file_name(name(j), State.OPEN)}", data)
-    place = Place()
+    place = Place(durable_edits=consts["EdDurable"] == "TRUE")
     if consts["BootLink"] == "TRUE":
         put_link(fs, place)
     return fs, place
@@ -250,8 +253,14 @@ def unreach(fs: MemFS, place: Place) -> None:
     place.k_away = not place.k_away
 
 
-def edit(fs: MemFS, f: str, v: int) -> None:
-    fs.outside_write(PATH[f], content(f, v))
+def edit(fs: MemFS, place: Place, f: str, v: int) -> None:
+    """The model's `Editor`: an in-place save of `f`, durable (its data synced) or, on §13's weaker file system
+    (`EdDurable` FALSE), left unsynced, so a power loss may keep the old data, the new or a torn file until a sync of
+    that file (S0101, BL-0225 F1)."""
+    if place.durable_edits:
+        fs.outside_write(PATH[f], content(f, v))
+    else:
+        fs.outside_write_unsynced(PATH[f], content(f, v))
 
 
 # -- the views ---------------------------------------------------------------------------------------------------------
@@ -426,7 +435,7 @@ class Driver:
 
     def outside(self, e: Event) -> None:
         if e.kind == "edit":
-            edit(self.fs, e.file, e.value)
+            edit(self.fs, self.place, e.file, e.value)
             self.edits.append(e.value)
         elif e.kind == "unreach":
             unreach(self.fs, self.place)
@@ -544,6 +553,8 @@ class Driver:
     def _ledger(self, op: str, names: list[str], folder: str) -> tuple[str, str]:
         rec = name(self.j)
         last = self.last_pc
+        if op == "sync_file":
+            return "rs_fl", ""  # step 4's flush of each file found at pre (S0101, BL-0243)
         if op == "sync":
             if self.kept_pc:  # the folder's sync after a move to a kept name: the same step
                 pc, self.kept_pc = self.kept_pc, ""
@@ -643,6 +654,16 @@ class Replay:
         held = {value("R", fs.file(f"{folder}/{n}")) for n in fs.names_in(folder)}
         assert self.edited in held, f"{where}: the outside edit {self.edited} of R is gone: {sorted(held)}"
 
+    def edit_durable(self) -> bool:
+        """The editor's latest bytes of R are on the disk at some name in R's folder: its own sync made them durable
+        (`EdDurable`), or one of ours did (the restore's flush, Keep). An outside save not yet durable is that
+        program's loss to a power loss (§13; the model's `PowerLoss` forgets it the same way), so only a durable one
+        is checked after a power loss."""
+        if self.edited is None:
+            return False
+        folder = L_COPY if self.place.linked else FOLDER["R"]
+        return self.edited in {value("R", self.fs.synced_file(f"{folder}/{n}")) for n in self.fs.names_in(folder)}
+
     def note_edits(self, driver: Driver) -> None:
         if driver.edits:
             self.edited = driver.edits[-1]
@@ -663,7 +684,7 @@ class Replay:
             act = nxt["act"]["a"]
             where = f"{self.where0}, step {i + 1} ({act})"
             if act == "Editor":
-                edit(self.fs, "R", nxt["rc"]["cur"]["R"])
+                edit(self.fs, self.place, "R", nxt["rc"]["cur"]["R"])
                 self.edited = nxt["rc"]["cur"]["R"]
             elif act == "Unreach":
                 unreach(self.fs, self.place)
@@ -688,9 +709,13 @@ class Replay:
         self.tally.walked["Keep"] += 1
         torn = self.states[0]["rc"]["jr"][j] == "topen"
         self.tally.branches["Keep of a record that cannot be read" if torn else "Keep"] += 1
+        if not self.place.durable_edits and self.edited is not None:
+            self.tally.branches["Keep over an outside edit left unsynced"] += 1
         for s in self.fs.power_loss_states():  # `KeptFilesDurable`: what Keep released is what a power loss keeps
             assert journal_state(s, j) == "kept", f"{where}: a power loss takes Keep back"
-            assert code_view(s, self.place).files == code_view(self.fs, self.place).files, where
+            assert code_view(s, self.place).files == code_view(self.fs, self.place).files, (
+                f"{where}: a power loss changes the files Keep released"
+            )
 
     def recover_all(self, i: int) -> int:
         """One run of recover-all from `states[i]` (its start); the index of the first state past it."""
@@ -754,7 +779,7 @@ class Replay:
         act = nxt["act"]["a"]
         where = f"{self.where0}, step {i + 1} ({act})"
         if act == "Editor":
-            edit(self.fs, "R", nxt["rc"]["cur"]["R"])
+            edit(self.fs, self.place, "R", nxt["rc"]["cur"]["R"])
             self.edited = nxt["rc"]["cur"]["R"]
         elif act == "Unreach":
             unreach(self.fs, self.place)
@@ -825,8 +850,10 @@ class Replay:
 
     def ends(self, j: str, out: rs.RestoreOutcome | None, driver: Driver, where: str) -> None:
         """The durable layer after a try, and the branches it walked."""
+        durable = self.edit_durable()
         for s in self.fs.power_loss_states():
-            self.check_edit_kept(s, f"{where} (after a power loss)")
+            if durable:
+                self.check_edit_kept(s, f"{where} (after a power loss)")
             if isinstance(out, rs.Resolved):  # `NoTornLedgerAfterRecovery`'s `ResolveDurable`
                 assert journal_state(s, j) == "resolved", f"{where}: a power loss takes `.resolved` back"
                 for f in RECORD_ORDER[j]:
@@ -839,6 +866,8 @@ class Replay:
             b["an I/O error fails the try"] += 1
         if isinstance(out, rs.Resolved):
             b["resolved"] += 1
+            if driver.walked["RS_Flush"] and not self.place.durable_edits and self.edited == V0:
+                b["an outside revert left unsynced, flushed before the resolve"] += 1
         if isinstance(out, rs.Stopped):
             b[f"stopped: {out.cause.value}"] += 1
         if driver.walked["RS_Swap"]:
@@ -866,6 +895,8 @@ BRANCHES: tuple[str, ...] = (
     "the app's crash during a try",
     "Keep",
     "Keep of a record that cannot be read",
+    "Keep over an outside edit left unsynced",
+    "an outside revert left unsynced, flushed before the resolve",
     "Retry: recover-all again",
     "the next start after the app's crash",
     "the path changer: a link after the app's crash",
@@ -914,7 +945,7 @@ def test_recover_all_follows_the_model(world_name: str) -> None:
 
 WALKED: tuple[str, ...] = (
     "RC_Init", "RC_Next", "RS_Check", "RS_Sync", "RS_Clean", "RS_Write", "RS_Swap", "RS_Compare", "RS_Temp", "RS_All",
-    "RS_Resolve", "IOFail", "Keep",
+    "RS_Flush", "RS_Resolve", "IOFail", "Keep",
 )  # fmt: skip
 """The model's recover-all steps the replay walks through the code: the code reached the step at one of its hooks and
 went on, the I/O error raised at a hook, the code's answer that is the step ending the try (`RS_Check`'s stops), the
@@ -1032,6 +1063,30 @@ def test_a_swap_without_its_sync_is_caught(monkeypatch: pytest.MonkeyPatch) -> N
     assert re.search(r"past the model's RS_Swap [RJK] without its sync", _first_failure())
 
 
+def test_a_resolve_without_its_flush_is_caught(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`RS_Flush` (S0101, BL-0243): a try that resolves without flushing the data of the files it found at pre goes
+    past the model's flush without its sync."""
+    monkeypatch.setattr(rs, "_flush", _nothing)
+    assert re.search(r"the model's RS_Flush .*without its sync", _first_failure())
+
+
+def test_a_resolve_without_its_flush_is_caught_after_a_power_loss(monkeypatch: pytest.MonkeyPatch) -> None:
+    """BL-0225 F1: with the flush's sync rule disabled, the durable layer alone catches the missing flush: the weak
+    world's revert left unsynced (S_recover_weak) comes back as R's post bytes, or torn, under `.resolved`."""
+    monkeypatch.setattr(rs, "_flush", _nothing)
+    monkeypatch.setattr(sys.modules[__name__], "SYNC_STEPS", SYNC_STEPS - {"RS_Flush"})
+    assert re.search(
+        r"S_recover_weak trace \d+, .*after a power loss R holds (2|-1) under `\.resolved`", _first_failure()
+    )
+
+
+def test_a_keep_without_its_syncs_is_caught(monkeypatch: pytest.MonkeyPatch) -> None:
+    """BL-0225 F1: Keep releasing the journal without syncing the files it names: the weak world's outside edit left
+    unsynced is not what a power loss keeps (`KeptFilesDurable`)."""
+    monkeypatch.setattr(ra, "_tolerant_sync", _nothing)
+    assert re.search(r"S_recover_weak trace \d+, .*a power loss changes the files Keep released", _first_failure())
+
+
 def test_a_resolve_before_the_put_back_is_caught(monkeypatch: pytest.MonkeyPatch) -> None:
     """A try that resolves without putting anything back (`RS_Write`, `RS_Swap` skipped)."""
     monkeypatch.setattr(rs, "_put_back", _nothing)
@@ -1065,9 +1120,11 @@ def test_an_io_error_swallowed_is_caught(monkeypatch: pytest.MonkeyPatch) -> Non
             sync_folders(handles, folders)
 
     monkeypatch.setattr(rs, "_sync_folders", swallowed)
-    # S0100 (BL-0225 F5): in the world with an I/O error, the try goes on writing R where the model's has failed
+    # S0100 (BL-0225 F5): in the world with an I/O error, the try goes on writing where the model's has failed (S0101:
+    # the corpus regenerated, the first such trace now fails at the folders' first sync, before the clean-up)
     assert re.search(
-        r"S_recover_temps trace \d+, .*the code is at rs_w R, which the model's b2 does not reach", _first_failure()
+        r"S_recover_temps trace \d+, .*the code is at rs_(w R|clean ), which the model's b2 does not reach",
+        _first_failure(),
     )
 
 

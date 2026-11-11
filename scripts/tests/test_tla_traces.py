@@ -246,12 +246,14 @@ class StalenessTest(unittest.TestCase):
         """S0091 added the recover worlds and walks recover-all's actions only there (`JOB_ACTIONS`), so every trace of
         the save, create and copy worlds is byte for byte as S0084 generated it (217 rows; checked against the corpus
         of 06d538f0 when S0091 regenerated it). A change here must be deliberate: a world added or changed, never a
-        side effect of another job's actions (S0084: dropping actions from OUT changed 122 of 144 save traces)."""
+        side effect of another job's actions (S0084: dropping actions from OUT changed 122 of 144 save traces).
+        Changed deliberately by S0101 (BL-0243): the restore's `RS_Flush`, the file system's `dpl` and the editor's
+        revert (`EdVals`) change the save worlds' states and TLC's walk; still 217 rows."""
         lines = GEN.CORPUS.read_text(encoding="utf-8").splitlines()
         worlds = json.loads(lines[0])["header"]["worlds"]
         rows = [r for r in lines[1:] if "recover" not in worlds[json.loads(r)["world"]].get("jobs", [])]
         self.assertEqual(len(rows), 217)
-        sha256 = "dd0547f4c71605fd00214f7d89c56eda484b3a75ac064bba1ec346a33612ed7f"
+        sha256 = "84ba9482f87009e093aa13df00afc60bbd7a9526521c8e04fde4e4334b563062"
         self.assertEqual(hashlib.sha256("\n".join(rows).encode()).hexdigest(), sha256)
 
     def test_a_corpus_of_another_model_is_stale(self) -> None:

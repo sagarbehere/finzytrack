@@ -26,7 +26,10 @@
 (* contents it may hold after a power loss (`pl`, `tpl`, `sgpl`, `bkpl`).  *)
 (* A write that is not synced adds the torn and the absent outcomes; a    *)
 (* swap or rename that is not yet dir-synced keeps the old outcome        *)
-(* possible (a pending swap couples the file and its temp: `cp`).         *)
+(* possible (a pending swap couples the file and its temp: `cp`). A       *)
+(* folder sync makes its entries durable, not the data of the files they  *)
+(* name: a file's data an in-place write left unsynced may fall back      *)
+(* (`dpl`) until that file's own sync (S0101, BL-0243; spec §13).         *)
 (*                                                                         *)
 (* The swap is assumed (spec §13): the best-effort mode on volumes        *)
 (* without it (§6.8, ADR-0068 D2) is outside this model.                  *)
@@ -94,7 +97,8 @@ NoCtl == [pc |-> "none", s |-> "none", plan |-> ZeroFP, fi |-> 1, rj |-> "none",
 ----------------------------------------------------------------------------
 VARIABLES
     fs,    \* ledger files cur/pl; per journal and file: save temps tc/tpl, staging files sg/sgpl, restore temps
-           \* rt, kept copies kp; backups bk/bkpl per save; pending swaps cp/cpn/cpj; ud (seeded bug only)
+           \* rt, kept copies kp; backups bk/bkpl per save; pending swaps cp/cpn/cpj; dpl: per file, what its data may
+           \* fall back to after a power loss once its entry is durable (an unsynced in-place write, S0101)
     jr,    \* the records in local/*/journal/: one per journal id
     env,   \* the path changer's link, the unreachable disk, bytes written outside the ledger
     tgt,   \* the create's target folder: names c/pl, folder exists
@@ -131,7 +135,7 @@ Init ==
              sg |-> [x \in TSlots |-> tp(x)[2]], sgpl |-> [x \in TSlots |-> {tp(x)[2]}],
              rt |-> [x \in TSlots |-> ABS], kp |-> [x \in TSlots |-> {}],
              bk |-> [s \in SaveIds |-> ABS], bkpl |-> [s \in SaveIds |-> {ABS}],
-             ud |-> {},
+             dpl |-> [f \in Files |-> {}],
              cp |-> [f \in Files |-> {}], cpn |-> [f \in Files |-> {}], cpj |-> [f \in Files |-> "none"]]
     /\ jr = [j \in JIds |-> IF j \in BootJ THEN BootJRec(j) ELSE NoJ]
     /\ env = [lnk |-> BootLink, unr |-> FALSE, outside |-> 0]
@@ -215,6 +219,7 @@ Keep(j) ==
                            !.cp = [f \in Files |-> IF f \in F THEN {} ELSE fs.cp[f]],
                            !.cpn = [f \in Files |-> IF f \in F THEN {} ELSE fs.cpn[f]],
                            !.cpj = [f \in Files |-> IF f \in F THEN "none" ELSE fs.cpj[f]],
+                           !.dpl = [f \in Files |-> IF f \in F THEN {} ELSE fs.dpl[f]],
                            !.tpl = [x \in TSlots |-> IF x[2] \in F THEN {fs.tc[x]} ELSE fs.tpl[x]],
                            !.sgpl = [x \in TSlots |-> IF x[2] \in F THEN {fs.sg[x]} ELSE fs.sgpl[x]]]
   /\ UNCHANGED <<env, tgt, app, run, ctl, n, gh>>
@@ -289,7 +294,7 @@ S_Backup ==
   /\ IF \E f \in Tg : fs.cur[f] # Pre(f)
      THEN /\ SetTold(SV, Rehash(SV)) /\ EndJob
           /\ UNCHANGED <<fs, jr, env, tgt, app, n>>
-     ELSE SaveFx([fs EXCEPT !.pl["R"] = IF fs.cp["R"] = {} THEN {fs.cur["R"]} ELSE @,
+     ELSE SaveFx([fs EXCEPT !.pl["R"] = IF fs.cp["R"] = {} THEN {fs.cur["R"]} ELSE @, !.dpl["R"] = {},
                             !.bk[SV] = Pre("R"), !.bkpl[SV] = {ABS, TORN, Pre("R")}],
                  jr, Adv("s_bk"))
 S_BackupSync == Step("s_bks") /\ SaveFx([fs EXCEPT !.bkpl[SV] = {Pre("R")}], jr, Adv("s_bks"))
@@ -346,8 +351,9 @@ SwapFs ==
   LET f == CurF  t == TS  P == Pairs(f, t) IN
   IF Pre(f) # ABS
   THEN [Couple(f, t, P, {<<a, b>> : a \in Seconds(P) \ {ABS}, b \in Firsts(P) \ {ABS}})
-          EXCEPT !.cur[f] = fs.tc[t], !.tc[t] = fs.cur[f]]
-  ELSE [Couple(f, t, P, {<<a, ABS>> : a \in Seconds(P) \ {ABS}}) EXCEPT !.cur[f] = fs.tc[t], !.tc[t] = ABS]
+          EXCEPT !.cur[f] = fs.tc[t], !.tc[t] = fs.cur[f], !.dpl[f] = {}]
+  ELSE [Couple(f, t, P, {<<a, ABS>> : a \in Seconds(P) \ {ABS}})
+          EXCEPT !.cur[f] = fs.tc[t], !.tc[t] = ABS, !.dpl[f] = {}]
 \* the exclusive rename can take place: no entry stands at the created path (seeded bug plain_create: it always can)
 CanSwap == Pre(CurF) # ABS \/ fs.cur[CurF] = ABS \/ MUTANT = "plain_create"
 
@@ -480,10 +486,10 @@ RS_Check ==
           /\ UNCHANGED <<fs, jr, env, tgt, app, run, n, gh>>
 
 \* step 3 begins: every folder the record names synced first (a swap a crashed save left unsynced is durable before
-\* anything it displaced is removed)
+\* anything it displaced is removed). A folder sync makes entries durable: each named file's name now holds its
+\* current object, whose data may still fall back to `dpl` (an unsynced in-place write; spec §13, S0101)
 SyncNamed(F, J) ==
-  [fs EXCEPT !.pl = [f \in Files |-> IF f \in F THEN {fs.cur[f]} \cup (IF f \in fs.ud THEN {TORN} ELSE {})
-                                     ELSE fs.pl[f]],
+  [fs EXCEPT !.pl = [f \in Files |-> IF f \in F THEN {fs.cur[f]} \cup fs.dpl[f] ELSE fs.pl[f]],
              !.cp = [f \in Files |-> IF f \in F THEN {} ELSE fs.cp[f]],
              !.cpn = [f \in Files |-> IF f \in F THEN {} ELSE fs.cpn[f]],
              !.cpj = [f \in Files |-> IF f \in F THEN "none" ELSE fs.cpj[f]],
@@ -547,7 +553,7 @@ RS_Swap ==
                                  !.pl[f] = (IF lazy THEN fs.pl[f] ELSE {}) \cup {nv}
                                            \cup (IF unsynced THEN {TORN} ELSE {}),
                                  !.cp[f] = {}, !.cpn[f] = {}, !.cpj[f] = "none",
-                                 !.ud = IF unsynced THEN @ \cup {f} ELSE @]
+                                 !.dpl[f] = IF unsynced THEN {TORN} ELSE {}]
           /\ ctl' = [ctl EXCEPT !.pc = "rs_c"]
           /\ UNCHANGED <<env, gh>>
   /\ UNCHANGED <<jr, tgt, app, run, n>>
@@ -577,6 +583,8 @@ RS_Temp ==
           /\ RestoreStop("stopped")
   /\ UNCHANGED <<env, tgt, app, n>>
 
+\* the replaced files step 2 found at pre (the rest are put back, or created): what step 4 flushes
+Flushed == {f \in jr[RJn].files : JPre(f) # ABS /\ f \notin ctl.put}
 \* every folder the record names synced; a created path that is taken ends the try here (`created_path_taken`:
 \* the other files durably at pre, the journal .open)
 RS_All ==
@@ -584,9 +592,20 @@ RS_All ==
   /\ fs' = SyncNamed(jr[RJn].files, RJn)
   /\ IF ctl.taken
      THEN RestoreStop("stopped")
-     ELSE /\ ctl' = [ctl EXCEPT !.pc = "rs_res"]
+     ELSE /\ ctl' = [ctl EXCEPT !.pc = IF Flushed = {} THEN "rs_res" ELSE "rs_fl"]
           /\ UNCHANGED <<jr, run, gh>>
   /\ UNCHANGED <<env, tgt, app, n>>
+
+\* step 4's flush (S0101, BL-0243; owner, 2026-11-11: "Flush named files only (Recommended)"): the data of each
+\* replaced file step 2 found at pre synced (read-only), so an unsynced revert to the pre bytes is durable before the
+\* record says resolved; a file put back holds the restore's own synced bytes. Seeded bug rs_no_file_sync: no flush
+RS_Flush ==
+  /\ Step("rs_fl")
+  /\ fs' = IF MUTANT = "rs_no_file_sync" THEN fs
+           ELSE [fs EXCEPT !.pl = [f \in Files |-> IF f \in Flushed /\ fs.cp[f] = {} THEN {fs.cur[f]} ELSE fs.pl[f]],
+                           !.dpl = [f \in Files |-> IF f \in Flushed THEN {} ELSE fs.dpl[f]]]
+  /\ ctl' = [ctl EXCEPT !.pc = "rs_res"]
+  /\ UNCHANGED <<jr, env, tgt, app, run, n, gh>>
 
 \* step 4: only then the journal renamed .resolved and its folder synced
 RestoreDone ==
@@ -728,7 +747,7 @@ EngineCrash ==
 \* elsewhere the error comes before the step's effect (MAPPING.md §3)
 WritePcs == {"s_tw1","s_tw2","s_ts","s_sw","s_cmp","s_ds","s_rbk","s_rmt"}
 PreJournalPcs == {"s_bk","s_bks","s_jp","s_jps"}
-RestPcs  == {"rs_chk","rs_sync","rs_clean","rs_w","rs_x","rs_c","rs_t","rs_all","rs_res"}
+RestPcs  == {"rs_chk","rs_sync","rs_clean","rs_w","rs_x","rs_c","rs_t","rs_all","rs_fl","rs_res"}
 IOFail ==
   /\ app # "dead" /\ Busy /\ n.io < MaxIO
   /\ n' = [n EXCEPT !.io = @ + 1]
@@ -775,7 +794,7 @@ PowerLoss ==
                            !.sg = sg, !.sgpl = [x \in TSlots |-> {sg[x]}],
                            !.bk = bk, !.bkpl = [s \in SaveIds |-> {bk[s]}],
                            !.cp = [f \in Files |-> {}], !.cpn = [f \in Files |-> {}],
-                           !.cpj = [f \in Files |-> "none"], !.ud = {}]
+                           !.cpj = [f \in Files |-> "none"], !.dpl = [f \in Files |-> {}]]
        /\ jr' = [j \in JIds |-> IF js[j] = "none" THEN NoJ
                                 ELSE [jr[j] EXCEPT !.st = js[j], !.pl = {js[j]}, !.why = ""]]
        /\ tgt' = [tgt EXCEPT !.c = tg, !.pl = [x \in Names |-> {tg[x]}]]
@@ -789,11 +808,14 @@ PowerLoss ==
   /\ UNCHANGED env
 
 \* the outside editor: writes any file at any time (durably, or not on the weaker file system)
+\* what it writes: bytes of its own, or the file's initial bytes back (a revert: `git checkout`, an undo; S0101)
+EdVals(f) == {Frn(f, fs.cur[f])} \cup (IF fs.cur[f] \notin {V0, ABS} THEN {V0} ELSE {})
 Editor(f) ==
   /\ f \in EdFiles /\ n.ed < MaxEdits
-  /\ LET v == Frn(f, fs.cur[f])
-         \* §13 file system: a durable save syncs its folder, which makes everything done before it there durable,
-         \* our pending operations in W1's folder included
+  /\ \E v \in EdVals(f) :
+     LET
+         \* §13 file system: a durable save syncs its data and its folder; the folder's sync makes every entry
+         \* operation made there before it durable, our pending ones in W1's folder included
          C  == IF f \in LS(1) THEN {g \in {"R","N"} : fs.cp[g] # {}} ELSE {}
          T  == {<<fs.cpj[g], g>> : g \in C}
          f1 == [fs EXCEPT !.pl = [g \in Files |-> IF g \in C THEN Firsts(fs.cpn[g]) ELSE fs.pl[g]],
@@ -802,14 +824,16 @@ Editor(f) ==
                           !.cpn = [g \in Files |-> IF g \in C THEN {} ELSE fs.cpn[g]],
                           !.cpj = [g \in Files |-> IF g \in C THEN "none" ELSE fs.cpj[g]]]
          \* not durable: kept or dropped by a power loss on its own; a pending exchange of ours on the same name
-         \* stays kept-or-dropped whole
+         \* stays kept-or-dropped whole; the file's data may fall back to what it held before (`dpl`) even after
+         \* its entry is durable, until its own sync (S0101)
          cpE == IF fs.cp[f] # {} THEN fs.cp[f] \cup {<<v, y>> : y \in Seconds(fs.cp[f])} ELSE {}
          f2 == [fs EXCEPT !.cur[f] = v,
                           !.pl[f] = IF fs.cp[f] # {} THEN Firsts(cpE) ELSE @ \cup {v},
                           !.cp[f] = cpE,
-                          !.cpn[f] = {<<v, p[2]>> : p \in fs.cpn[f]}]
+                          !.cpn[f] = {<<v, p[2]>> : p \in fs.cpn[f]},
+                          !.dpl[f] = @ \cup ({fs.cur[f]} \ {ABS})]
      IN
-     /\ fs' = IF EdDurable THEN [f1 EXCEPT !.cur[f] = v, !.pl[f] = {v}] ELSE f2
+     /\ fs' = IF EdDurable THEN [f1 EXCEPT !.cur[f] = v, !.pl[f] = {v}, !.dpl[f] = {}] ELSE f2
      /\ gh' = [gh EXCEPT !.ed[f] = v, !.edSeen[f] = FALSE]
   /\ n' = [n EXCEPT !.ed = @ + 1]
   /\ UNCHANGED <<jr, env, tgt, app, run, ctl>>
@@ -851,7 +875,8 @@ EngineStep ==
   \/ S_Gate \/ S_Backup \/ S_BackupSync \/ S_JPart \/ S_JPartSync \/ S_JOpen \/ S_JDirSync
   \/ S_TempStart \/ S_TempDone \/ S_TempSync \/ S_Swap \/ S_Compare \/ S_DirSync
   \/ S_ReadBack \/ S_RemoveTemps \/ S_Close \/ S_CloseSync \/ S_Saved
-  \/ RS_Check \/ RS_Sync \/ RS_Clean \/ RS_Write \/ RS_Swap \/ RS_Compare \/ RS_Temp \/ RS_All \/ RS_Resolve
+  \/ RS_Check \/ RS_Sync \/ RS_Clean \/ RS_Write \/ RS_Swap \/ RS_Compare \/ RS_Temp \/ RS_All \/ RS_Flush
+  \/ RS_Resolve
   \/ RS_Late
   \/ RC_Init \/ RC_Next
   \/ CP_Check \/ CP_Load \/ CP_Manifest
@@ -894,9 +919,12 @@ PartJournalNeverBlocks ==
 \* the editor's latest bytes of a file are in the file, at a name of ours beside it, or in a kept copy that a journal
 \* still stops on (.open: recovery stops while the copy exists, the save's gate refuses) or that the user chose to keep
 \* (.kept); a kept copy no journal names any more is lost to the user (verifier S0072 r1 F4). Or the user previewed
-\* them and the save replaced them (the backup holds them)
+\* them and the save replaced them (the backup holds them). Or they are a save's pre bytes, which its backup holds
+\* (an editor's revert, S0101): a swap that displaced them took them for ours (§6.4, "deleting it loses nothing";
+\* Limit (same bytes))
 EditKept(f) ==
   \/ gh.ed[f] = fs.cur[f]
+  \/ f = "R" /\ \E s \in SaveIds : fs.bk[s] = gh.ed[f] /\ gh.ed[f] # ABS
   \/ \E j \in JIds : f \in JFiles(j) /\ gh.ed[f] \in {fs.tc[<<j, f>>], fs.rt[<<j, f>>]}
   \/ \E j \in JIds : f \in JFiles(j) /\ jr[j].st \in OpenSt \cup {"kept"} /\ gh.ed[f] \in fs.kp[<<j, f>>]
 ExternalEditNeverSilentlyLost ==
@@ -1017,6 +1045,8 @@ W_LinkStop == jr["b2"].why # "stopped"
 W_WeakLossAccepted == ~(n.ed > 0 /\ \A f \in Files : gh.ed[f] = 0)
 \* an outside save is kept on the weaker file system (S_fs_weak_recover)
 W_WeakRecoverKept == \A x \in TSlots : fs.kp[x] = {}
+\* a revert another program left unsynced meets the restore's flush (S_fs_weak_recover; S0101)
+W_RevertFlushed == ~(Busy /\ ctl.pc = "rs_fl" /\ fs.dpl["R"] # {} /\ "R" \in Flushed)
 \* an outside save after the gate is displaced into the temp (S_save_crash)
 W_EditorAfterGate == ~(Busy /\ run.k = "save" /\ ctl.pc \in {"s_cmp"} /\ fs.tc[<<"s1","R">>] = 11)
 =============================================================================

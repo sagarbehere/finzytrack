@@ -36,6 +36,7 @@ MUT_no_path_guard                    VIOLATE:RecoveryWritesOnlyRecordedPaths    
 MUT_fb_no_guard                      VIOLATE:RecoveryWritesOnlyRecordedPaths              S mutant check
 MUT_resolve_before_restores_synced   VIOLATE:NoTornLedgerAfterRecovery                    S mutant check
 MUT_no_restore_temp_fsync            VIOLATE:NoTornLedgerAfterRecovery                    S mutant check
+MUT_rs_no_file_sync                  VIOLATE:NoTornLedgerAfterRecovery                    S mutant check
 MUT_old_temp_rule                    VIOLATE:CutTempNeverBlocks                           S mutant check
 MUT_block_without_cause              VIOLATE:BlockedOnlyForCause                          S mutant check
 MUT_crash_unmarked                   VIOLATE:EveryJournalRecoveredOrBlocking              S mutant check
@@ -69,4 +70,5 @@ WIT_PowerAfterSaveRecovered          VIOLATE:W_PowerAfterSaveRecovered          
 WIT_LinkStop                         VIOLATE:W_LinkStop                                   S witness check
 WIT_WeakLossAccepted                 VIOLATE:W_WeakLossAccepted                           S witness check
 WIT_WeakRecoverKept                  VIOLATE:W_WeakRecoverKept                            S witness check
+WIT_RevertFlushed                    VIOLATE:W_RevertFlushed                              S witness check
 WIT_EditorAfterGate                  VIOLATE:W_EditorAfterGate                            S witness check

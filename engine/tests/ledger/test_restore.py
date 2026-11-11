@@ -2191,3 +2191,130 @@ def test_R7_vF2_a_listed_record_that_is_gone_fails_naming_the_record() -> None:
     """Mutant `r7_gone_record_entry_none`: a record listed but gone by the time it is looked up names that record."""
     w = crashed(FIRST_REMOVE)
     assert recover_journal(w.fs, JD, "s1-j8") == Failed(Cause.IO_ERROR, None, None, f"{JD}/s1-j8.open")
+
+
+# -- S0101 (BL-0243): `.resolved` only once the data of each file found at pre is durable -------------------------
+# Owner, 2026-11-11: "Flush named files only (Recommended)": recovery may open (read-only) and flush the data of each
+# file the journal names, on the drive the journal records, before `.resolved`; a file it cannot open or flush keeps
+# the journal `.open`.
+
+A_SWAP = EFFECTS.index("swap /w/L/inc:.a.bean.ft-s1-j7.tmp,a.bean")
+A_DURABLE = EFFECTS.index("sync /w/L/inc:", A_SWAP) + 1  # the save dies right after a.bean's swap is durable
+RESOLVE = f"rename {JD}:{NAME}.open,{NAME}.resolved"
+
+
+def _reverted(*, by_rename: bool = False) -> World:
+    """The save died with a.bean durably at post; an editor then put a.bean back to its old text without a sync: in
+    place (the page cache holds the old text, the disk still the post bytes), or by a save by rename whose new file's
+    data is not synced (its entry may be made durable by anyone's folder sync)."""
+    w = crashed(A_DURABLE)
+    t = w.targets[0]
+    assert w.fs.file(t.path) == t.post
+    assert w.fs.file(w.targets[1].path) is None, "the created file is not made yet: recovery can resolve"
+    assert t.pre is not None
+    if by_rename:
+        w.fs.outside_write(t.path, t.pre, new_inode=True)
+        w.fs.outside_unsynced(t.path)  # an entry kept before its data: empty after a power loss
+    else:
+        w.fs.outside_write(t.path, t.pre)
+        w.fs.outside_unsynced(t.path, synced=t.post)
+    return w
+
+
+@pytest.mark.parametrize("by_rename", [False, True])
+def test_S0101_a_file_put_back_to_its_pre_bytes_without_a_sync_is_durably_at_pre_under_resolved(
+    by_rename: bool,
+) -> None:
+    """BL-0243: recovery finds a.bean at its pre bytes and resolves; in every state a power loss leaves after that,
+    a.bean holds its pre bytes, never the save's post bytes or a torn file beside main.bean at pre."""
+    w = _reverted(by_rename=by_rename)
+    out = recover(w.fs)
+    assert isinstance(out, Resolved), out
+    check_recovered(w.fs, w, out)
+
+
+def test_S0101_each_file_found_at_pre_is_flushed_through_its_folder_before_resolved_and_nothing_else_is() -> None:
+    """The order (§8.1 step 4): `sync_file` of each replaced file found at pre, after the last folder sync and before
+    the rename to `.resolved`; never a file the restore put back (its own synced bytes) or a created path."""
+    w = _reverted()
+    n = len(w.fs.effects)
+    assert isinstance(recover(w.fs), Resolved)
+    e = w.fs.effects[n:]
+    flushed = [x for x in e if x.startswith("sync_file ")]
+    assert sorted(flushed) == ["sync_file /w/L/inc:a.bean", "sync_file /w/L:main.bean"], e
+    last_sync = max(i for i, x in enumerate(e) if x.startswith("sync /w/L"))
+    for x in flushed:
+        assert last_sync < e.index(x) < e.index(RESOLVE), e
+
+
+def test_S0101_a_file_put_back_by_the_restore_is_not_flushed_again() -> None:
+    """A file at post is put back from the backup by `create` (its data synced) and the swap: no `sync_file` of it;
+    main.bean, found at pre, is flushed."""
+    w = crashed(A_DURABLE)
+    n = len(w.fs.effects)
+    out = recover(w.fs)
+    assert isinstance(out, Resolved), out
+    assert [x for x in w.fs.effects[n:] if x.startswith("sync_file ")] == ["sync_file /w/L:main.bean"]
+    check_recovered(w.fs, w, out)
+
+
+def test_S0101_an_error_at_the_flush_keeps_the_journal_open_and_a_retry_resolves_durably() -> None:
+    """Fail closed (owner, 2026-11-11): the flush answering an error ends the try `failed`, naming the file and the
+    error, the journal `.open` in every power-loss state; the next try flushes again and resolves."""
+    probe = _reverted()
+    n = len(probe.fs.effects)
+    recover(probe.fs)
+    at = n + probe.fs.effects[n:].index("sync_file /w/L/inc:a.bean")
+    w = _reverted()
+    w.fs.inject(at, crash=False, err=errno.EIO)
+    assert recover(w.fs) == Failed(Cause.IO_ERROR, "/w/L/inc/a.bean", errno.EIO)
+    for state in (w.fs, *w.fs.power_loss_states()):
+        assert set(journals(state)) == {State.OPEN}
+    out = recover(w.fs)
+    assert isinstance(out, Resolved), out
+    check_recovered(w.fs, w, out)
+
+
+def test_S0101_a_link_put_at_the_file_before_its_flush_is_refused_and_never_followed() -> None:
+    """The flush opens the entry it judged read-only and never through a link: a link put at a.bean after the checks
+    fails the try (`ELOOP`), nothing renamed, the journal `.open`."""
+    probe = _reverted()
+    n = len(probe.fs.effects)
+    recover(probe.fs)
+    at = n + probe.fs.effects[n:].index("sync_file /w/L/inc:a.bean")
+    w = _reverted()
+    t = w.targets[0]
+    w.fs.outside_write("/w/elsewhere.bean", b"; another file\n")
+
+    def swap_in_link(i: int, _: str) -> None:
+        if i == at - 1:
+            w.fs.outside_remove(t.path)
+            w.fs.outside_symlink(t.path, "/w/elsewhere.bean")
+
+    w.fs.on_effect = swap_in_link
+    out = recover(w.fs)
+    w.fs.on_effect = None
+    assert out == Failed(Cause.IO_ERROR, t.path, errno.ELOOP), out
+    assert set(journals(w.fs)) == {State.OPEN}
+
+
+def test_S0101_the_rollback_flushes_a_file_an_editor_put_back_to_its_pre_bytes_before_resolved() -> None:
+    """The save's own rollback is the same restore: the save fails right after a.bean's swap is durable, an editor
+    has put a.bean back to its old text in place without a sync; the rollback resolves only over durable pre bytes."""
+    w = world()
+    t = w.targets[0]
+    assert t.pre is not None
+    pre = t.pre
+
+    def revert(i: int, _: str) -> None:
+        if i == A_DURABLE:
+            w.fs.outside_write(t.path, pre)
+            w.fs.outside_unsynced(t.path, synced=t.post)
+
+    w.fs.on_effect = revert
+    w.fs.inject(A_DURABLE, crash=False, err=errno.EIO)
+    durable_commit(w.fs, w.commit)
+    w.fs.on_effect = None
+    assert set(journals(w.fs)) == {State.RESOLVED}, journals(w.fs)
+    for state in w.fs.power_loss_states():
+        check_disk(state, w)

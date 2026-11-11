@@ -6,15 +6,15 @@ their last sync made durable, and the entry operations made since), links (an ab
 to a volume whose names compare by NFD and, when the volume is case-insensitive, by `casefold`; the stored spelling
 is kept.
 
-**Durability, as §13 assumes and no more:** a file's data is durable after its sync; an entry operation (create,
-mkdir, remove, swap, exclusive rename) is durable after its directory's sync, which makes every operation made in that
-directory before it durable. `power_loss_states()` gives every state a power loss may leave: each pending entry
-operation kept or dropped on its own (applied in order; one whose precondition no longer holds does nothing), a swap
-or a rename kept or dropped whole, and each file whose data is not synced at its synced bytes (empty if never synced:
-an entry kept before its data), its current bytes, or torn (`tears`): cut off (the first half of its current
-bytes), its length kept with none of its blocks written (zeros), or its later blocks written before its earlier ones
-(zeros, then the second half). A real volume can tear an unsynced file in any of these shapes (delayed allocation,
-a drive that reorders writes; S0061 red team r3 F3), so nothing may count on a torn file being a prefix.
+**Durability, as §13 assumes and no more:** a file's data is durable after its sync; an entry operation (create, mkdir,
+remove, swap, exclusive rename) is durable after its directory's sync, which makes every entry operation made in that
+directory before it durable, never a file's data (S0101). `power_loss_states()` gives every state a power loss may
+leave: each pending entry operation kept or dropped on its own (applied in order; one whose precondition no longer holds
+does nothing), a swap or a rename kept or dropped whole, and each file whose data is not synced at its synced bytes
+(empty if never synced: an entry kept before its data), its current bytes, or torn (`tears`): cut off (the first half of
+its current bytes), its length kept with none of its blocks written (zeros), or its later blocks written before its
+earlier ones (zeros, then the second half). A real volume can tear an unsynced file in any of these shapes (delayed
+allocation, a drive that reorders writes; S0061 red team r3 F3), so nothing may count on a torn file being a prefix.
 
 **Injection.** Every effect of the port's operations is numbered from 0 (`effects` lists their labels):
 `create` is three effects (the entry, the write, the data sync), every other write one (`rmdir` included), and so is
@@ -433,6 +433,19 @@ class MemFS:
             raise FileNotFoundError(errno.ENOENT, "no entry")
         return self.nodes[ino]
 
+    def outside_write_unsynced(self, path: str, data: bytes) -> None:
+        """An editor's in-place save it did not sync (§13: an outside save need not be durable; S0101, BL-0225 F1): the
+        file at `path` holds `data` now, while its data on the disk stays what its last sync left, so a power loss may
+        keep either, or tear it. Its entry is unchanged."""
+        _, ino, rest, _ = self._walk(path)
+        if rest:
+            raise FileNotFoundError(errno.ENOENT, "no entry")
+        node = self.nodes[ino]
+        if not isinstance(node, _File):
+            raise IsADirectoryError(errno.EISDIR, "not a file")
+        node.data = data
+        self.tick(ino)
+
     def outside_unsynced(self, path: str, synced: bytes = b"") -> None:
         """The file at `path` was last written in place by a program that did not sync it (many editors do not): its
         bytes are in the page cache, and a power loss may leave it at `synced` (empty: an entry kept before its data),
@@ -629,6 +642,15 @@ class MemFS:
             return None
         node = self.nodes[ino]
         return node.data if isinstance(node, _File) else None
+
+    def synced_file(self, path: str) -> bytes | None:
+        """A file's bytes as its last data sync left them (following links), or None when absent: what a power loss
+        keeps of it once its entry is durable (S0101)."""
+        _, ino, rest, _ = self._walk(path)
+        if rest:
+            return None
+        node = self.nodes[ino]
+        return node.synced if isinstance(node, _File) else None
 
     def power_loss_states(self) -> Iterator[MemFS]:
         """Every state a power loss may leave now (see the module's docstring), each a fresh `MemFS` that is fully

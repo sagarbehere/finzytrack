@@ -202,6 +202,13 @@ WORLDS: dict[str, dict[str, Any]] = {
         "set": {"BootJ": '{"b2"}', "MaxUnreach": "0", "MaxCrash": "0"}, "traces": 4, "depth": 30, "least": 6,
         "leave": ["edit_at_restore_swap"],
     },
+    # S0101 (BL-0243, BL-0225 F1): §13's weaker file system: an outside edit of R left unsynced (a revert to its old
+    # bytes included) before or during a try, an I/O error, Keep; the replay leaves the edit unsynced in the fake too,
+    # so the restore's flush and Keep's syncs are what make it durable
+    "S_recover_weak": {
+        "jobs": ["recover"], "base": "S_fs_weak_recover", "set": {}, "traces": 12, "depth": 30, "least": 6,
+        "leave": [],
+    },
 }  # fmt: skip
 CANDIDATES = 20
 SEED = 20261029
@@ -274,7 +281,7 @@ LEAVE: dict[str, dict[str, str]] = {
     # writing on a disk that went (only `Stops` reads `env.unr`); the code's next operation there fails (MAPPING.md §3)
     "unreach_outside_try": {"Unreach": '~(run.k = "recover" /\\ ctl.rj # "none" /\\ ctl.pc # "rs_chk")'},
     # an I/O error only at a step where the code always writes (its effect is the hook the error is raised at)
-    "io_at_restore_write": {"IOFail": 'ctl.pc \\in {"rs_sync", "rs_w", "rs_x", "rs_all", "rs_res"}'},
+    "io_at_restore_write": {"IOFail": 'ctl.pc \\in {"rs_sync", "rs_w", "rs_x", "rs_all", "rs_fl", "rs_res"}'},
 }  # fmt: skip
 KEEP_VARS = ("act", "app", "run", "ctl", "fs", "jr", "gh", "tgt", "env")
 

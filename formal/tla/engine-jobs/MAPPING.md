@@ -27,7 +27,7 @@
 | the user | `StartSave`, `StartCreate`, `StartCopy`, `StartRecover` (Retry, Back or a switch: recover-all again), `Keep`, `Relaunch` (the next start) |
 | the engine | the job steps `S_*`, `RS_*`, `RC_*`, `CP_*`, `CR_*` (one job at a time: `run`) |
 | the OS | `EngineCrash`, `IOFail`, `AppCrash`, `PowerLoss` |
-| an outside editor | `Editor` (any ledger file, durably or not: `EdDurable`), `EditorDrop`, `EditorOverwrite` |
+| an outside editor | `Editor` (any ledger file, durably or not: `EdDurable`; bytes of its own or, since S0101, the file's initial bytes back: `EdVals`), `EditorDrop`, `EditorOverwrite` |
 | a path changer | `PathChange` (after a crash, R's folder replaced by a link) |
 
 ### 1.3 Rules, by section
@@ -47,13 +47,13 @@
 | §8.1 step 2: the per-file judgement (kept copy, temp rule, at pre, at post with a good backup, a created path taken, anything else stops) | `RS_Check`: `Stops`, `AtPost`, `Taken`, `FirstStop`; the outside saves at the stopping file's names moved to its kept name first |
 | the temp rule (owner, 2026-10-30, "Staging name"): a staging file is ours whatever it holds; a temp name only at pre or post | `TempOurs`, `StagingOurs`, `Held` |
 | §8.1 step 3: every folder synced first; names of ours removed but the temp beside a file to put back; root first, the restore temp written, swapped, synced, what it displaced settled, the temp removed; every folder synced; a created path taken stops here | `RS_Sync`, `RS_Clean`, `RS_Write`, `RS_Swap`, `RS_Compare`, `RS_Temp`, `RS_All` |
-| §8.1 step 4: only then `.resolved` | `RS_Resolve` |
+| §8.1 step 4: the data of each replaced file found at pre flushed (S0101, BL-0243; owner, 2026-11-11: "Flush named files only (Recommended)"), only then `.resolved` | `RS_Flush` (`Flushed`: the record's replaced files not put back; skipped when there is none), `RS_Resolve` |
 | §6.3: the path guard | `PathMoved` in `Stops`; `RS_Swap`'s outside write only without it |
 | §8.1: recover-all deletes `.part` journals, tries each `.open` one, a torn one blocks; an engine death marks the journal in hand failed | `RC_Init`, `RC_Next`, `EngineCrash`'s recover branch |
 | §8.1 "Afterwards": Keep syncs every file and folder the journal names, then renames it `.kept`; refused while a folder a readable journal names is not at its recorded path (`path_moved`, red team r1 R1-3; S0100, BL-0224) | `Keep` (enabled only when `~(PathMoved(f) /\ Guarded)` for every file the journal names, or the journal is torn) |
 | §8.2: copy never over a file an unresolved journal names | `CP_Check` |
 | §8.2 create: the target must not exist or be empty; files exclusive; synced; read back; the manifest last, exclusive, synced | `CR_Target`, `CR_WriteA`, `CR_SyncA`, `CR_ReadBack`, `CR_ManifestRename`, `CR_ManifestSync`, `CR_Register` |
-| §13 file-system assumptions | `Couple`, `Pairs`, the `pl` sets; `PowerLoss` picks each unsynced outcome independently; `EdDurable = FALSE` (the weaker file system) |
+| §13 file-system assumptions | `Couple`, `Pairs`, the `pl` sets; a folder sync (`SyncNamed`) makes entries durable, not a file's data: an unsynced in-place write leaves `dpl` (what the data may fall back to) until that file's own sync (`S_Backup`, Keep, `RS_Flush`, a durable editor's save; S0101); `PowerLoss` picks each unsynced outcome independently; `EdDurable = FALSE` (the weaker file system) |
 
 ### 1.4 Properties (§13; names as in the spec)
 
@@ -65,8 +65,8 @@ INV = state invariant, ACT = action property (`[][...]_vars`).
 | `BackupDurableBeforeReplace` | INV | post bytes of R on disk (or possible) before the close ⇒ the backup is durable | `no_backup_sync` |
 | `JournalDurableBeforeFirstReplace` | INV | post bytes on disk before the close ⇒ the journal is durably `.open` | `no_journal_sync` |
 | `PartJournalNeverBlocks` | INV | a journal of ours that never became a durable `.open` is never blocking | `direct_open` |
-| `ExternalEditNeverSilentlyLost` | INV | the editor's latest bytes of a file not previewed by a save are in the file, at a name of ours beside it, or in a kept copy that a journal naming it still stops on (`.open`) or that the user kept (`.kept`) | `no_displaced_check`, `plain_create`, `rollback_skips_temp_rule`, `x_keep_and_go_on` |
-| `NoTornLedgerAfterRecovery` | INV + ACT | a torn ledger file only while an unresolved journal names it; `.resolved` only when every file durably holds neither post nor torn bytes | `no_temp_fsync`, `resolve_before_restores_synced`, `no_restore_temp_fsync` |
+| `ExternalEditNeverSilentlyLost` | INV | the editor's latest bytes of a file not previewed by a save are in the file, at a name of ours beside it, in a kept copy that a journal naming it still stops on (`.open`) or that the user kept (`.kept`), or a save's pre bytes its backup holds (an editor's revert, S0101: a swap that displaced them took them for ours, §6.4 "Limit (same bytes)") | `no_displaced_check`, `plain_create`, `rollback_skips_temp_rule`, `x_keep_and_go_on` |
+| `NoTornLedgerAfterRecovery` | INV + ACT | a torn ledger file only while an unresolved journal names it; `.resolved` only when every file durably holds neither post nor torn bytes | `no_temp_fsync`, `resolve_before_restores_synced`, `no_restore_temp_fsync`, `rs_no_file_sync` |
 | `RecoveryNeverClobbersForeignBytes` | INV | `ExternalEditNeverSilentlyLost` for the files a journal names | `no_temp_check` |
 | `RecoveryWritesOnlyRecordedPaths` | INV | the restore never writes through a replaced folder | `no_path_guard`, `fb_no_guard` |
 | `CutTempNeverBlocks` | ACT + INV | a journal is never stopped when its only fault is a cut write of ours at a staging name; no temp or staging file of a save outlives its journal | `old_temp_rule`, `temps_after_close` |
@@ -104,6 +104,7 @@ INV = state invariant, ACT = action property (`[][...]_vars`).
 | `RS_Sync`, `RS_Clean`, `RS_Temp`, `RS_All` | §8.1 step 3 | `restore._restore_all` |
 | `RS_Write`, `RS_Swap` | §8.1 step 3 | `restore._put_back` |
 | `RS_Compare` | §8.1 step 3, §6.4 | `restore._settle` |
+| `RS_Flush` | §8.1 step 4 | `restore._flush` |
 | `RS_Resolve` | §8.1 step 4 | `restore.restore` |
 | `RS_Late` | none: the seeded bug `resolve_before_restores_synced`'s own step | none (`MUTANT_ONLY`) |
 | `RC_Init` | §8.1 | `ledger.recover_all.list_journals` (each journal folder synced, `.part` removed, `.open` read) |
@@ -126,7 +127,7 @@ INV = state invariant, ACT = action property (`[][...]_vars`).
 
 | Variable | Holds |
 |---|---|
-| `fs` | the files, the names of ours beside them, kept copies, backups and pending swaps (§1.1) |
+| `fs` | the files, the names of ours beside them, kept copies, backups and pending swaps (§1.1); `dpl`, per file, what its data may fall back to once its entry is durable (S0101; it replaced `ud`, which only the seeded bug `no_restore_temp_fsync` set) |
 | `jr` | the records |
 | `env` | `lnk` (R's folder replaced by a link), `unr` (K's disk unreachable), `outside` (bytes the restore wrote through a link: only without the guard) |
 | `tgt` | the create's target folder |
@@ -147,7 +148,9 @@ INV = state invariant, ACT = action property (`[][...]_vars`).
 | The restore's staging write, its rename and that rename's sync are one step (`RS_Write`); a restore temp is durable once written; the restore swap and its folder's sync are one step (`RS_Swap`) | a cut write at the restore's staging name is the staging rule's, as the save's (`S_TempStart`), which the model checks; the two syncs inside these steps are checked in the code by the save replay (`FUSED_SYNC`: the code must make each sync before its next step, `test_a_skipped_restore_sync_is_caught`; S0072 verifier r1 F6) and by `test_restore.py`'s sweeps |
 | `RS_Write` takes the pre bytes from the record (`JPre`), not from the backup | a backup that does not hold the pre bytes stops the journal at the check (`BackupBad` in `Stops`), and the code hashes the backup again before writing it back (`restore._put_back`, `backup_bad`). So `RS_Clean`'s rule that keeps the temp beside a file to put back (it holds the only other copy of the pre bytes until they are back) cannot matter in the model: a clean-up that removes that temp too breaks no property (`x_clean_all`, S0072 verifier r1 F5); the rule is the code's and `test_restore.py`'s |
 | The outside editor writes only the ledger files' own names, never a name of ours | the clean-up's re-checks (`S_RemoveTemps`, `RS_Clean`) then never meet outside bytes but after a seeded bug; a write through a descriptor held on the old object is `test_writer.py`'s and `test_restore.py`'s |
-| An editor's unsynced write is kept or dropped whole, never torn | its own loss if a power loss tears it (§13); the save syncs a replaced file before reading it for the backup (`S_Backup`) |
+| An editor's unsynced write is kept or dropped whole, never torn | its own loss if a power loss tears it (§13); the save syncs a replaced file before reading it for the backup (`S_Backup`). Where a decision of ours rests on it (a file found at pre, then `.resolved`), falling back to the old data is enough to break `ResolveDurable` without the flush (`rs_no_file_sync`); the code's tests tear it too (`test_restore.py` `test_S0101_*`, the fake's `tears`) |
+| The editor's revert writes only the file's initial bytes (`V0`), the pre bytes of the boot journals and of the first save | the case BL-0243 needs (a file put back to a journal's pre bytes); a revert to a later save's pre bytes is the same rule on other bytes (`test_restore.py`). So the rollback never meets a revert over its own post bytes in the model: the first save creates N before it swaps R (`WOrd`), so a rollback after R's swap stops at `created_path_taken` and never resolves, and a second save's pre bytes are not `V0`; the rollback's flush is reached only over an edit made before the swap (fidelity review, S0101: `rs_no_file_sync` breaks nothing in `S_fs_weak`). The code's rollback case is `test_restore.py` `test_S0101_the_rollback_flushes_a_file_an_editor_put_back_to_its_pre_bytes_before_resolved` (there the created file comes after the replaced one) |
+| The data a swap displaces keeps no `dpl` of its own (the old object at the temp name, `tpl` only); a swap gives the file a new object with none | the save syncs a replaced file before its backup (`S_Backup`), so only an editor's write between that sync and the swap is unsynced there: the displaced check keeps it (§6.4), and its durability is that program's (§13) |
 | The save backs up R only | N exists only from the second save; recovery's backup check for N is the code's (`test_restore.py`) |
 | The user's delete of a kept copy or of a file at a created path (the blocked screen's actions) | not modelled: only Keep leaves a stopped journal; deleting is the user's own write |
 | The rollback after a failed close (`.closed` renamed back to `.open`); an I/O error at the journal's renames | `test_writer.py`'s sweeps (every effect, every fault) |
@@ -194,6 +197,8 @@ The model before S0072 (`git show fcf96576:formal/tla/engine-jobs/MAPPING.md`) a
 - Configurations removed (23): `S_save_quit`, `S_save_quit_power`, `S_quit` (quit), `S_cancel_commit`, `S_cancel` (Cancel), `S_r4_ends` (R4; its two saves are `S_save_two`), `S_forget` (forget; Keep's world is `S_keep`), `S_recover_bound` (the stop bound), `S_boot`, `S_stuck_opening`, `S_switch`, `S_switch_fail`, `S_switch_hung_create` (the boot and the switch), `S_create_close` (the requester), `S_queue`, `L_session`, `LS_boot`, `LS_jobs`, `LS_quit`, `LS_free`, `LS_free_cc`, `LS_free_orphan`, `LM_free` (liveness). `S_recover_lock` is `S_recover_link` (the engine lock is not the model's; the path guard and the temps are). Added: `S_save_two`, `S_keep`, and the 23 witnesses (§6.2).
 - The queue's trace replay (`backend/tests/platform/test_engine_jobs_conformance.py`) is removed with the queue's actions; its check that the sidecar's decision after a save's engine death is the model's `DiskOutcome` is the sidecar's own table test (`backend/tests/platform/test_save_job.py` `test_save_outcome_is_the_disks_answer`).
 
+**S0101 (BL-0243, 2026-11-11): a folder sync covers entries only.** `SyncNamed` made every named file's power-loss set its current bytes, as if a folder's sync made the data of the files in it durable; POSIX and APFS do not promise that, and S0100 found the code resolving over an outside revert left unsynced (BL-0243). Now a folder sync leaves `dpl` (what a file's data may fall back to after an unsynced in-place write), a file's own sync clears it, and the restore flushes each replaced file found at pre before `.resolved` (`RS_Flush`; mutant `rs_no_file_sync`, witness `W_RevertFlushed`). `ud` (set only by `no_restore_temp_fsync`) became `dpl`. The editor may also write a file's initial bytes back (`EdVals`), which is how the gap is reached; `EditKept` then counts a save's backup that holds those bytes: the first small-tier run found `S_fs_weak` violating `ExternalEditNeverSilentlyLost` with an editor's unsynced revert to the pre bytes that the save's swap displaced and removed as its own (byte-identical to the backup: §6.4, nothing lost). The corpus gained the recover world `S_recover_weak` (BL-0225 F1).
+
 **S0072 round 1 (verifier F1-F6, 2026-11-01).**
 - F1: the save replay no longer compares the code's answer with `gh.told` (no property checks that it is true since `OutcomeTruthful` left, EP-19; `SavedSurvivesPowerLoss` checks only that a "saved" is durable): it checks it against the model's disk at the end, §6.6's table (§7).
 - F2: `IOFail` at `s_sw` sets `ctl.repl` (the code's `progress.replaced` is set before the call), and a branch after the swap took place was added; the corpus samples both (`S_save_swap_io`). §3 lists the I/O-error limit.
@@ -224,6 +229,7 @@ Every mutant runs on a small world and checks only the property it must break (`
 | `no_path_guard`, `fb_no_guard` | `RecoveryWritesOnlyRecordedPaths` | `S_recover_link` | the restore without the path guard (`fb_no_guard`: model review 1's own, the same bug) |
 | `resolve_before_restores_synced` | `NoTornLedgerAfterRecovery` | `S_recover_power` | the restore swap not synced, `.resolved` before the folders' sync |
 | `no_restore_temp_fsync` | `NoTornLedgerAfterRecovery` | `S_recover_power` | the restore temp's data not synced before its swap |
+| `rs_no_file_sync` | `NoTornLedgerAfterRecovery` | `S_fs_weak_recover` | the restore resolves without flushing the data of a file found at pre: an outside revert left unsynced can come back as the save's post bytes under `.resolved` (S0101, BL-0243) |
 | `old_temp_rule` | `CutTempNeverBlocks` | `S_recover_link` (no link) | a staging file judged by its bytes, as a temp name is (the rule before 2026-10-30) |
 | `block_without_cause` | `BlockedOnlyForCause` | `S_recover_link` (no link) | the old object at pre beside a file at post taken for an outside save |
 | `crash_unmarked` | `EveryJournalRecoveredOrBlocking` | `S_recover` | an engine death in recover-all leaves the journal in hand without a reason |
@@ -238,7 +244,7 @@ Every mutant runs on a small world and checks only the property it must break (`
 
 ### 6.2 Vacuity witnesses
 
-A base world that passes could pass because it never reaches the branch a property is about. Each witness (`W_*` in `EngineJobs.tla`, `gen_cfgs.py` `WITNESSES`, configurations `WIT_*`, kind `witness`) is the negation of a branch as an invariant on a small world; TLC must report it violated, so the branch is reached. The branches: a save lands (`W_Saved`), a rollback resolves (`W_RollbackResolved`), puts pre bytes back (`W_RollbackPutsBack`), cannot resolve (`W_RollbackUnfinished`), keeps an outside save met at the swap (`W_KeptCopySave`), stops on a taken created path with the other files undone (`W_CreatedPathTaken`); an outside save after the gate is displaced into the temp (`W_EditorAfterGate`); recovery resolves a boot journal (`W_RecoverResolves`), keeps an outside save (`W_RecoverKeptCopy`), fails a try (`W_RecoverFailed`), stops on the path guard (`W_LinkStop`); Keep (`W_Keep`) and Keep of a torn journal (`W_KeepTorn`); a cut staging write meets recovery (`W_StagingCutSeen`) and the save cut by a power loss is undone (`W_CutStagingDeleted`, `W_PowerAfterSaveRecovered`); a copy reaches its manifest (`W_CopyDone`) and meets an in-session `.open` journal (`W_CopyRefusedInsession`); a create registers (`W_CreateDone`); the second save lands (`W_SecondSaved`) and its rollback puts both files back (`W_SecondRollbackTwoFiles`); on the weaker file system an unsynced outside save is that program's loss (`W_WeakLossAccepted`) and an outside save is kept (`W_WeakRecoverKept`).
+A base world that passes could pass because it never reaches the branch a property is about. Each witness (`W_*` in `EngineJobs.tla`, `gen_cfgs.py` `WITNESSES`, configurations `WIT_*`, kind `witness`) is the negation of a branch as an invariant on a small world; TLC must report it violated, so the branch is reached. The branches: a save lands (`W_Saved`), a rollback resolves (`W_RollbackResolved`), puts pre bytes back (`W_RollbackPutsBack`), cannot resolve (`W_RollbackUnfinished`), keeps an outside save met at the swap (`W_KeptCopySave`), stops on a taken created path with the other files undone (`W_CreatedPathTaken`); an outside save after the gate is displaced into the temp (`W_EditorAfterGate`); recovery resolves a boot journal (`W_RecoverResolves`), keeps an outside save (`W_RecoverKeptCopy`), fails a try (`W_RecoverFailed`), stops on the path guard (`W_LinkStop`); Keep (`W_Keep`) and Keep of a torn journal (`W_KeepTorn`); a cut staging write meets recovery (`W_StagingCutSeen`) and the save cut by a power loss is undone (`W_CutStagingDeleted`, `W_PowerAfterSaveRecovered`); a copy reaches its manifest (`W_CopyDone`) and meets an in-session `.open` journal (`W_CopyRefusedInsession`); a create registers (`W_CreateDone`); the second save lands (`W_SecondSaved`) and its rollback puts both files back (`W_SecondRollbackTwoFiles`); on the weaker file system an unsynced outside save is that program's loss (`W_WeakLossAccepted`), an outside save is kept (`W_WeakRecoverKept`), and a revert left unsynced meets the restore's flush (`W_RevertFlushed`, S0101).
 
 ## 7. The code's conformance (S0064, S0072, S0084, S0091)
 
@@ -252,6 +258,7 @@ A base world that passes could pass because it never reaches the branch a proper
 | `S_TempStart`, `S_TempDone`, `S_TempSync`, `S_Swap`, `S_DirSync`, `S_RemoveTemps` | the ledger folder's effects on the save's staging and temp names |
 | `S_Compare`, `RS_Check`, `RS_Compare`, `RS_Temp` | a move to a kept name (`<name>.kept-<session>-<job>`) and its sync; otherwise reads, passed when they change nothing |
 | `RS_Sync`, `RS_Clean`, `RS_Write`, `RS_Swap`, `RS_All` | the restore's effects (its staging and restore temp names, the removals, the syncs; `RS_Write` and `RS_Swap` must each include their folder's sync, `FUSED_SYNC`) |
+| `RS_Flush` | the rollback's `sync_file` of each file found at pre (S0101); a sync step (`SYNC_STEPS`), never passed without it |
 | `S_Saved` | `job.committed()` |
 | `EngineCrash` | an engine death raised at the code's hook; the outcome read by `save.outcome` (`DISK`) |
 | `IOFail` | an `OSError` raised at the code's hook, before the effect; at the swap or exclusive rename after it, when the model's `IOFail` took the swap's effect (`MemFS.inject(after=True)`) |
@@ -281,11 +288,12 @@ Not walked: `CR_Register` (the registry's, BL-0102). `PowerLoss` stays out of th
 | `RC_Next` | the sidecar's next try (the code's listing order), or a torn record stopped without a try (the listing could not read it) |
 | `RS_Check` | the try's answer when it stops at its checks (no effect); a move to a kept name |
 | `RS_Sync`, `RS_All` | the try's first and second round of syncs of every folder the record names |
+| `RS_Flush` | the try's `sync_file` of each file found at pre (S0101, BL-0243); a sync step (`SYNC_STEPS`) |
 | `RS_Clean`, `RS_Write`, `RS_Swap`, `RS_Compare`, `RS_Temp` | the restore's effects (its names of ours, its staging and restore temp names, the swap, what it displaced, the save's temp after the put-back; `RS_Write`, `RS_Swap` and `RS_Resolve` must each include their folder's sync, `FUSED_SYNC`) |
 | `RS_Resolve` | the record's `.resolved` rename and the journal folder's sync |
-| `Keep` | `recover_all.keep` between runs (the record `.kept` and its rename's sync; Keep's file and folder syncs are not checked by the replay: its worlds' outside edits are durable (`EdDurable` TRUE, in the model too), so nothing unsynced reaches Keep; a world with `EdDurable` FALSE waits for BL-0243, whose finding it shows (S0100, BL-0225 F1). They are covered by `tests/ledger/test_recover_all.py::test_keep_syncs_every_file_and_folder_before_its_rename`, BL-0225) |
+| `Keep` | `recover_all.keep` between runs: the record `.kept`, its rename's sync, and what a power loss keeps of the files it released (`KeptFilesDurable`). Since S0101 (BL-0225 F1) the weak world `S_recover_weak` (`EdDurable` FALSE) leaves the fake's outside edits unsynced as the model's are, so Keep without its file syncs fails the replay (`test_a_keep_without_its_syncs_is_caught`), and so does a try without its flush, by its sync rule and by the durable check alone (`test_a_resolve_without_its_flush_is_caught*`) |
 | `EngineCrash`, `AppCrash` | a death raised at the code's hook; after the code's last effect, its answer lost (the journal failed) |
 | `IOFail` | an `OSError` raised at the code's hook, only where the code always writes (`io_at_restore_write`) |
-| `Editor`, `Unreach`, `PathChange` | an outside write of R; K's folder moved away and back; R's folder moved away and a link to a copy of it put in its place |
+| `Editor`, `Unreach`, `PathChange` | an outside write of R in place (left unsynced where `EdDurable` is FALSE: `MemFS.outside_write_unsynced`; such an edit is checked after a power loss only once a sync made it durable, as the model's `PowerLoss` forgets it otherwise); K's folder moved away and back; R's folder moved away and a link to a copy of it put in its place |
 
 Not walked: `RS_Late` (a seeded bug's step). The differences are in §3: the drive check first, the evidence rule, the unreachable disk during a try, the sidecar's part. Since S0100 (BL-0224) the model's Keep refuses over a link as the code's does, so no world leaves that Keep out.

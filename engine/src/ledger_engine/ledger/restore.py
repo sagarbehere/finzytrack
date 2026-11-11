@@ -62,7 +62,11 @@ next try can resolve.
    before the rename. The save's temp beside it (none in this mode, unless a swap volume's save left one) is removed
    after that, as beside a file at post.
    Otherwise each folder the save made is removed if it is empty, deepest first, and their parents synced.
-4. **Only then** `.open` renamed `.resolved` and the journal folder synced: `Resolved`.
+4. The data of each replaced file found at pre flushed (`_flush`: `sync_file`, read-only, through its folder's guarded
+   handle; S0101, BL-0243; owner, 2026-11-11: "Flush named files only (Recommended)"): a folder's sync makes entries
+   durable, not the data of the files they name, so an outside revert to the pre bytes left unsynced could otherwise
+   come back as the post bytes, or torn, under `.resolved`. **Only then** `.open` renamed `.resolved` and the journal
+   folder synced: `Resolved`.
 
 **The step rule.** Every port operation may raise `OSError`, and the process may die at any effect. In steps 0-2 an
 `OSError` writes nothing to a ledger folder and is `Failed` (a check that answered an error, step 0's own rename, a
@@ -590,7 +594,25 @@ def _restore_all(handles: Handles, record: Record, checked: list[_Checked], remo
             raise
     handles.entry = None
     _sync_folders(handles, parents)  # every removal of a folder durable, this try's and an earlier one's
+    _flush(handles, checked)
     return None
+
+
+@tla_action("RS_Flush")
+def _flush(handles: Handles, checked: list[_Checked]) -> None:
+    """Step 4's flush (S0101, BL-0243; owner, 2026-11-11: "Flush named files only (Recommended)"): the data of each
+    replaced file step 2 found at its pre bytes, `sync_file`d through its folder's guarded handle (read-only, never
+    through a link: the port refuses one, and a FIFO or a folder), so a revert another program made without a sync
+    (in place, or by a rename whose new file's data is not synced) is durable before the record says resolved. A
+    folder sync makes entries durable, not the data of the files in them (§13). A file step 3 put back holds the
+    restore's own bytes, synced by `create`; a created file judged absent has nothing to flush. Any error: `OSError`,
+    so the try is `Failed(io_error)` with the journal `.open` (fails closed)."""
+    for x in checked:
+        if x.verdict is not Verdict.AT_PRE or x.entry.pre is None or x.folder_absent:
+            continue
+        handles.on, handles.entry = x.entry.canonical_path, None
+        handles.at(x.parent).sync_file(x.base)
+    handles.on = None
 
 
 def _vanished(handles: Handles, checked: list[_Checked]) -> bool:

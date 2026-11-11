@@ -111,6 +111,8 @@ MUTANTS = [
     ("fb_no_guard", "S_recover_link", "RecoveryWritesOnlyRecordedPaths", {}),
     ("resolve_before_restores_synced", "S_recover_power", "NoTornLedgerAfterRecovery", {}),
     ("no_restore_temp_fsync", "S_recover_power", "NoTornLedgerAfterRecovery", {}),
+    # S0101 (BL-0243): the restore resolves without flushing the data of a file found at pre (an unsynced revert)
+    ("rs_no_file_sync", "S_fs_weak_recover", "NoTornLedgerAfterRecovery", {}),
     ("old_temp_rule", "S_recover_link", "CutTempNeverBlocks", S(BootLink=False)),
     ("block_without_cause", "S_recover_link", "BlockedOnlyForCause", S(BootLink=False)),
     ("crash_unmarked", "S_recover", "EveryJournalRecoveredOrBlocking", {}),
@@ -152,6 +154,7 @@ WITNESSES = [
     ("W_LinkStop", "S_recover_link"),
     ("W_WeakLossAccepted", "S_fs_weak"),
     ("W_WeakRecoverKept", "S_fs_weak_recover"),
+    ("W_RevertFlushed", "S_fs_weak_recover"),
     ("W_EditorAfterGate", "S_save_crash"),
 ]
 
