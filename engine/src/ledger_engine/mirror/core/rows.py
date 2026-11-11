@@ -74,6 +74,7 @@ class InexactError(Exception):
 # ---- conversions (README "Exact numbers", "Metadata JSON") ------------------------------------------------------
 
 
+# @concept number-format
 def number(value: Decimal | None) -> str | None:
     """Plain positional notation with the scale the number has (`format(d, "f")`, never `1E-8`)."""
     return None if value is None else format(value, "f")

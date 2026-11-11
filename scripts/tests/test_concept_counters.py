@@ -22,6 +22,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import concept_counters as cc  # noqa: E402
 
 ENGINE = "engine/src/ledger_engine/protocol/planted.py"
+SPLIT = "an account name taken apart by hand (.split)"
 BACKEND = "backend/src/app/platform/planted.py"
 GRAMMAR = "engine/src/ledger_engine/ledger/grammar.py"
 PORT = "engine/src/ledger_engine/ledger/beancount_port.py"
@@ -123,6 +124,62 @@ PLANTED: dict[str, tuple[str, ...]] = {
     ),
 }
 
+# S0104 verifier round 1 (F1-F4, F7): the shapes a person would write that round 1 did not see.
+ROUND_1: dict[str, tuple[str, ...]] = {
+    "account-grammar": (
+        "import re\ndef ok(n):\n    p = r'[A-Z]\\w*(:[A-Z]\\w*)+'\n    return re.fullmatch(p, n)\n",
+        "import re\nclass K:\n    P = r'[A-Z]\\w*(:[A-Z]\\w*)+'\n    A = re.compile(P)\n",
+        "def leaf(n):\n    sep = ':'\n    return n.split(sep)[-1]\n",
+        "def leaf(n):\n    sep = ':'\n    return sep.join(n.split(sep)[:-1])\n",
+        "def is_child(a, b):\n    return a.startswith(b + ':')\n",
+        "def is_child(a, b):\n    return a.startswith(f'{b}:')\n",
+    ),
+    "currency-grammar": ("def ok(c):\n    return len(c) == 3 and c == c.upper()\n",),
+    "account-roots": (
+        "def roots(o):\n    return [o[f'name_{k}'] for k in ('assets', 'income')]\n",
+        "def roots(o, k):\n    return o['name_' + k]\n",
+    ),
+    "account-kinds": (
+        "import enum\nclass Root(enum.Enum):\n    ASSETS = 'Assets'\n    INCOME = 'Income'\n",
+        "from enum import StrEnum\nclass Root(StrEnum):\n    ASSETS = 'Assets'\n",
+        "KIND = {'asset': 'Assets'}\n",
+        "A = 'Assets'\ndef kind(a):\n    return a.startswith(A)\n",
+        "A = 'Income'\ndef kind(r):\n    return r == A\n",
+    ),
+    "tolerance": (
+        "from decimal import Decimal\ndef tol(n):\n    e = n.as_tuple().exponent\n    return Decimal('1e%d' % e) / 2\n",
+        "from decimal import Decimal\ndef tol(n):\n    e = n.as_tuple().exponent\n    return Decimal('1e{}'.format(e))\n",
+    ),
+    "balance-check": (
+        "def ok(ps):\n    total = sum(p.units.number for p in ps)\n    if total:\n        raise ValueError('off')\n",
+        "def ok(ps):\n    return not sum(p.units.number for p in ps)\n",
+        "from collections import defaultdict\ndef off(ps):\n    s = defaultdict(int)\n    for p in ps:\n"
+        "        s[p.currency] += p.units.number\n    return {c: v for c, v in s.items() if v}\n",
+        "from decimal import Decimal\nZERO = Decimal(0)\ndef ok(ps):\n    return sum(p.units.number for p in ps) == ZERO\n",
+        "def ok(r, t):\n    m = abs(r)\n    return m <= t\n",
+        "def ok(r, t):\n    m = r.copy_abs()\n    return m < t\n",
+        "import math\ndef ok(r):\n    return math.isclose(r, 0, abs_tol=0.005)\n",
+        "def ok(r, limit):\n    return r < limit and r > -limit\n",
+        "def ok(r, t):\n    return r <= t and -t <= r\n",
+        "ok = lambda ps: sum(p.units.number for p in ps) == 0\n",
+        "S = sum(p.units.number for p in []) == 0\n",
+    ),
+    "number-parsing": (
+        "import re\nN = re.compile(r'[-+]?[0-9]*\\.?[0-9]+')\n",
+        "import re\nN = re.compile(r'^-?[0-9.]+$')\n",
+        "import re\ndef p(t):\n    return re.sub(',', '', t)\n",
+        "def p(t):\n    return t.translate({ord(','): None})\n",
+        "def p(t):\n    return t.translate(str.maketrans('', '', ','))\n",
+    ),
+    "number-format": (
+        "def f(p):\n    return f'{p.units.number} {p.units.currency}'\n",
+        "def f(x):\n    return format(x, 'f')\n",
+        "def f(p):\n    return f'{p.amount:,.2f}'\n",
+    ),
+}
+for _concept, _sources in ROUND_1.items():
+    PLANTED[_concept] = PLANTED.get(_concept, ()) + _sources
+
 ALLOWED = (
     # regexes that are not about names or numbers; colons that are not an account's
     'import re\nSHA = re.compile(r"[0-9a-f]{64}")\n',
@@ -156,6 +213,11 @@ ALLOWED = (
     "def f(ps):\n    return sum(p.count for p in ps) == 0\n",
     "def f(ps):\n    return sum(p.amount for p in ps)\n",
     "def f(ratio):\n    return ratio > 1.5\n",
+    # round 1: a generation's number, a root read from the Profile, a root name as text only
+    "def f(gen):\n    return f'gen-{gen.number}'\n",
+    "def kind(a, roots):\n    return a == roots.assets\n",
+    "LABEL = 'Assets'\nHELP = LABEL + ' are what you own'\n",
+    "def f(ps):\n    if not ps:\n        return 0\n    return sum(p.units.number for p in ps)\n",
 )
 
 
@@ -301,21 +363,54 @@ class Markers(unittest.TestCase):
 
     def test_a_reviewed_site_passes_and_a_stale_one_fails(self) -> None:
         extra = {"engine/src/ledger_engine/mirror/names.py": 'def leaf(n):\n    return n.split(":")[-1]\n'}
-        site = cc.Site("ledger_engine.mirror.names", "leaf", "account-grammar")
+        site = cc.Site("ledger_engine.mirror.names", "leaf", "account-grammar", SPLIT)
         self.assertEqual(self.run_check(extra, {site: "planted reason"}), [])
         # Must not pass: a reviewed site whose shape is gone, and one reviewed for another concept.
         got = self.run_check({}, {site: "planted reason"})
         self.assertTrue(any("stale" in p and "leaf" in p for p in got), got)
-        other = cc.Site("ledger_engine.mirror.names", "leaf", "tolerance")
+        other = cc.Site("ledger_engine.mirror.names", "leaf", "tolerance", SPLIT)
         got = self.run_check(extra, {other: "planted reason"})
         self.assertTrue(any("EP-23: account-grammar:" in p for p in got), got)
 
     def test_a_reviewed_site_covers_its_function_only(self) -> None:
         source = 'def leaf(n):\n    return n.split(":")[-1]\ndef depth(n):\n    return n.count(":")\n'
-        site = cc.Site("ledger_engine.mirror.names", "leaf", "account-grammar")
+        site = cc.Site("ledger_engine.mirror.names", "leaf", "account-grammar", SPLIT)
         got = self.run_check({"engine/src/ledger_engine/mirror/names.py": source}, {site: "planted reason"})
         self.assertEqual(len(got), 1, got)
         self.assertIn(":4: EP-23: account-grammar:", got[0])
+
+    def test_a_reviewed_site_covers_its_shape_only(self) -> None:
+        # S0104 verifier question: a new shape of the same concept in a reviewed function is not covered.
+        source = 'def leaf(n):\n    if n.count(":") > 3:\n        return n\n    return n.split(":")[-1]\n'
+        site = cc.Site("ledger_engine.mirror.names", "leaf", "account-grammar", SPLIT)
+        got = self.run_check({"engine/src/ledger_engine/mirror/names.py": source}, {site: "planted reason"})
+        self.assertEqual(len(got), 1, got)
+        self.assertIn(":2: EP-23: account-grammar: an account name taken apart by hand (.count)", got[0])
+
+    def test_names_imported_from_modules_of_ours_are_read(self) -> None:
+        # S0104 verifier F1: a pattern or a separator kept in another module of ours.
+        names = 'ACCOUNT_PATTERN = r"[A-Z]\\w*(:[A-Z]\\w*)+"\nSEP = ":"\n'
+        users = {
+            "from ledger_engine.mirror.names import ACCOUNT_PATTERN\nimport re\nA = re.compile(ACCOUNT_PATTERN)\n": 3,
+            "from ledger_engine.mirror import names\nimport re\nA = re.compile(names.ACCOUNT_PATTERN)\n": 3,
+            "import ledger_engine.mirror.names as n\ndef leaf(x):\n    return x.split(n.SEP)\n": 3,
+            "from .names import SEP\ndef leaf(x):\n    return x.split(SEP)\n": 3,
+            "from ledger_engine.ledger import grammar\ndef leaf(x):\n    return x.split(grammar.SEP)\n": 3,
+        }
+        for user, line in users.items():
+            with self.subTest(user=user):
+                got = self.run_check(
+                    {
+                        "engine/src/ledger_engine/mirror/names.py": names,
+                        "engine/src/ledger_engine/ledger/grammar.py": self.HOMES[
+                            "engine/src/ledger_engine/ledger/grammar.py"
+                        ]
+                        + 'SEP = ":"\n',
+                        "engine/src/ledger_engine/mirror/user.py": user,
+                    }
+                )
+                self.assertTrue(any(f"user.py:{line}: EP-23: account-grammar:" in p for p in got), got)
+                self.assertFalse(any("names.py" in p for p in got), got)  # constants alone are no shape
 
     def test_the_command_fails_on_a_problem(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -348,6 +443,7 @@ class RealTrees(unittest.TestCase):
                 "tolerance": {"engine": "ledger_engine.ledger.beancount_port"},
                 "balance-check": {"engine": "ledger_engine.ledger.grammar"},
                 "number-parsing": {"engine": "ledger_engine.ledger.beancount_port"},
+                "number-format": {"engine": "ledger_engine.mirror.core.rows"},
             },
         )
 
@@ -360,11 +456,16 @@ class RealTrees(unittest.TestCase):
         backlog = (cc.ROOT / "design" / "backlog.md").read_text(encoding="utf-8")
         for concept, held in cc.EP23_COVERAGE.items():
             with self.subTest(concept=concept):
-                for row in re.findall(r"BL-\d{4}", held):
+                names, text = held
+                self.assertTrue(names or text, concept)
+                for name in names:
+                    self.assertIn(name, cc.CONCEPTS)
+                for row in re.findall(r"BL-\d{4}", text):
                     line = next(x for x in backlog.splitlines() if x.startswith(f"| {row} |"))
                     self.assertIn("| open |", line)
-                for name in re.findall(r"\b[a-z]+(?:-[a-z]+)+\b(?= here|,)", held):
-                    self.assertIn(name, cc.CONCEPTS)
+        # every concept counted here answers one of EP-23's, or is EP-03's grammar (ADR-0024)
+        counted = {n for names, _ in cc.EP23_COVERAGE.values() for n in names}
+        self.assertEqual(set(cc.CONCEPTS) - counted, {"account-grammar", "currency-grammar"})
 
 
 if __name__ == "__main__":

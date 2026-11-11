@@ -194,6 +194,24 @@ class Generated(unittest.TestCase):
                 self.assertEqual(negative_days(entries, "Assets:Bank:Checking"), [])
 
 
+class OtherAnchors(unittest.TestCase):
+    """Beancount is the demo builder's only check of account names, currencies and balancing (S0104 removed the
+    builder's own copies, INV-02, EP-23), so the smallest size is loaded at anchors whose calendars differ from
+    `ANCHOR`: a month end, a year boundary, a leap day and the day after it (S0104 verifier F9)."""
+
+    ANCHORS = (date(2026, 1, 31), date(2025, 12, 31), date(2027, 1, 1), date(2028, 2, 29), date(2028, 3, 1))
+
+    def test_each_anchor_loads_with_zero_errors_and_its_assertions_hold(self) -> None:
+        size = min(SIZES, key=lambda s: s.transactions)
+        for anchor in self.ANCHORS:
+            entries, errors = load_text(generate(anchor, size, default_fragments()).files["main.beancount"])
+            with self.subTest(anchor=anchor.isoformat()):
+                self.assertEqual([str(e) for e in errors], [])
+                self.assertEqual(sum(isinstance(e, data.Transaction) for e in entries), size.transactions)
+                for fragment in default_fragments():
+                    self.assertEqual(fragment.check(view_of(entries), span_for(anchor, size), size), [])
+
+
 class MustNotPass(unittest.TestCase):
     """Each gate refuses a planted ledger (EP-29), so a green run is not vacuous."""
 

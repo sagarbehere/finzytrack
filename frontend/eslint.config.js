@@ -83,8 +83,9 @@ const deferredAssertions = [
 // EP-23, EP-03, INV-02 (S0104): ledger semantics come from the backend (ADR-0024: the frontend asks; a generated
 // account regex was rejected). The frontend has no home for these concepts yet; the planned tolerance indicator
 // (L3-09) adds its home here as an override and in scripts/concept_counters.py. These are the shapes
-// scripts/concept_counters.py refuses in Python; a pattern built from variables, or a helper defined elsewhere, is
-// left to review.
+// scripts/concept_counters.py refuses in Python. Stated limits (EP-30; left to review): ESLint sees no names, so a
+// pattern or a separator held in a variable, a template-literal `RegExp`, a sum held in a variable before it is
+// tested, and a helper defined elsewhere are not seen.
 const roots = '/^(Assets|Liabilities|Equity|Income|Expenses):?$/'
 const ordering = '/^[<>]=?$/'
 const kernel = (concept) => `EP-23: a second implementation of ${concept}; it comes from the backend (ADR-0024, INV-02)`
@@ -164,7 +165,45 @@ const kernelConcepts = [
     selector: "CallExpression[callee.property.name=/^replace(All)?$/][arguments.0.value=',']",
     message: kernel('number parsing'),
   },
+  // S0104 verifier round 1 (F6): the decimal.js forms the planned tolerance indicator (L3-09) would be written in
+  {
+    selector: String.raw`CallExpression[callee.property.name=/^replace(All)?$/][arguments.0.regex.pattern=/^[[]?,[\]]?[+]?$/]`,
+    message: kernel('number parsing'),
+  },
+  {
+    selector:
+      "CallExpression[callee.property.name='pow'][callee.object.type='NewExpression'][callee.object.arguments.0.value=10]:not([arguments.0.type='Literal'])",
+    message: kernel('the tolerance'),
+  },
+  {
+    selector: "CallExpression[callee.property.name='pow'][arguments.0.value=10]:not([arguments.1.type='Literal'])",
+    message: kernel('the tolerance'),
+  },
+  {
+    selector:
+      ':matches(UnaryExpression, BinaryExpression, CallExpression[callee.property.name=/^(pow|shiftedBy|times|mul|div|toDecimalPlaces|toDP)$/]) > CallExpression[callee.property.name=/^(decimalPlaces|dp)$/]',
+    message: kernel('the tolerance'),
+  },
+  {
+    selector:
+      "CallExpression[callee.property.name=/^(isZero|eq|equals)$/][callee.object.callee.property.name='reduce']",
+    message: kernel('the balance check'),
+  },
+  {
+    selector: "BinaryExpression[operator=/^[!=]==?$/] > CallExpression[callee.property.name='reduce']",
+    message: kernel('the balance check'),
+  },
+  {
+    selector: String.raw`Literal[regex.pattern=/^\^?([[]A-Z[^\]a-z]*[\]][*+?]?)+[$]?$/]`,
+    message: kernel('the currency grammar'),
+  },
+  { selector: `Property[key.name=${roots}]`, message: kernel('account kinds') },
+  { selector: `Property[key.value=${roots}]`, message: kernel('account kinds') },
+  { selector: `Property[value.value=${roots}]`, message: kernel('account kinds') },
+  { selector: `TSEnumMember[initializer.value=${roots}]`, message: kernel('account kinds') },
 ]
+const srcFiles = ['src/**/*.{ts,mts,cts,tsx,js,mjs,cjs,jsx,vue}']
+const srcTests = ['src/**/*.{test,spec}.{ts,mts,cts,tsx,js,mjs,cjs,jsx}']
 const testFiles = ['tests/**/*.ts', 'src/**/*.test.ts', 'src/**/*.spec.ts']
 
 export default tseslint.config(
@@ -234,7 +273,7 @@ export default tseslint.config(
     // (`const D = Date; new D()`) can read the system clock; only src/platform, the clock adapter's home, names it
     // (the system-clock forms above stay refused there too). Temporal's system clock (`.Now`) and float parsing of
     // money are refused with it. Later config replaces a rule's options, so the toFixed ban is repeated.
-    files: ['src/**/*.ts', 'src/**/*.vue'],
+    files: srcFiles,
     ignores: ['src/platform/**'],
     rules: {
       'no-restricted-syntax': ['error', ...systemTime, ...appClock, ...kernelConcepts],
@@ -290,5 +329,17 @@ export default tseslint.config(
     // Later config replaces a rule's options, so the INV-07 bans are repeated here with the stub bans.
     files: testFiles,
     rules: { 'no-restricted-syntax': ['error', ...systemTime, ...stubsByName, ...deferredAssertions] },
+  },
+  {
+    // EP-23 (S0104 verifier F5): every file under src, whatever its suffix, src/platform and src's own tests
+    // included, gets the kernel bans. Later config replaces a rule's options, so each block repeats what it keeps.
+    files: ['src/platform/**/*.{ts,mts,cts,tsx,js,mjs,cjs,jsx,vue}'],
+    rules: { 'no-restricted-syntax': ['error', ...systemTime, ...kernelConcepts] },
+  },
+  {
+    files: srcTests,
+    rules: {
+      'no-restricted-syntax': ['error', ...systemTime, ...stubsByName, ...deferredAssertions, ...kernelConcepts],
+    },
   },
 )

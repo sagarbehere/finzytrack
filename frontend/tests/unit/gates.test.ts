@@ -223,8 +223,53 @@ describe('[EP-23] ledger semantics have one home, in the backend (INV-02, ADR-00
     ['a number regex with a class', 'export const n = /[0-9]+[.][0-9]*/\n'],
     ['grouping removed by hand', "export const n = (t: string) => t.replace(',', '')\n"],
     ['grouping removed everywhere', "export const n = (t: string) => t.replaceAll(',', '')\n"],
+    // S0104 verifier round 1 (F6): decimal.js forms
+    ['grouping removed by a regex', "export const n = (t: string) => t.replace(/,/g, '')\n"],
+    [
+      'a decimal tolerance from a scale',
+      'declare const D: new (x: number) => { pow(e: number): unknown }\ndeclare const n: { decimalPlaces(): number }\nexport const tol = new D(10).pow(-n.decimalPlaces())\n',
+    ],
+    [
+      'Decimal.pow of ten from a scale',
+      'declare const D: { pow(b: number, e: number): unknown }\nexport const tol = (e: number) => D.pow(10, e)\n',
+    ],
+    [
+      'a scale shifted into a tolerance',
+      'declare const one: { shiftedBy(e: number): unknown }\ndeclare const n: { dp(): number }\nexport const tol = one.shiftedBy(-n.dp())\n',
+    ],
+    [
+      'a posting sum tested with isZero',
+      'declare const ps: { reduce(f: unknown, s: unknown): { isZero(): boolean } }\nexport const ok = ps.reduce(0, 0).isZero()\n',
+    ],
+    [
+      'a posting sum compared with zero',
+      'declare const ps: number[]\nexport const ok = ps.reduce((a, b) => a + b, 0) === 0\n',
+    ],
+    ['a currency regex with no count', 'export const c = /^[A-Z][A-Z][A-Z]$/\n'],
+    [
+      'an object keyed by root names',
+      "export const k: Record<string, string> = { Assets: 'asset', Income: 'income' }\n",
+    ],
+    ['an object keyed by quoted root names', "export const k: Record<string, string> = { 'Expenses': 'expense' }\n"],
+    ['an object of root names', "export const k = { asset: 'Assets' }\n"],
+    ['an enum of root names', "export enum Root {\n  Assets = 'Assets',\n}\n"],
   ])('refuses %s in src', async (_label, code) => {
     expect(await ruleIds(code)).toContain('no-restricted-syntax')
+  })
+
+  // S0104 verifier F5: the bans cover all of src, src/platform and src's own tests included, and every script
+  // suffix the counter scans. Typed linting needs an existing file, so the resolved config is read.
+  it.each([
+    'src/main.ts',
+    'src/platform/clock.ts',
+    'src/domain/x.tsx',
+    'src/domain/x.mts',
+    'src/domain/x.js',
+    'src/domain/x.test.ts',
+    'src/App.vue',
+  ])('applies to %s', async (file) => {
+    const config = (await eslint.calculateConfigForFile(`${root}/${file}`)) as Linter.Config
+    expect(JSON.stringify(config.rules?.['no-restricted-syntax'])).toContain('EP-23: a second implementation')
   })
 
   it('refuses a root name compared in a template', async () => {
@@ -244,6 +289,13 @@ describe('[EP-23] ledger semantics have one home, in the backend (INV-02, ADR-00
     ['a fixed power of ten', 'export const m = 10 ** 6\n'],
     ['a ratio above one', 'export const ok = (r: number) => r > 1.5\n'],
     ['help text naming a root', "export const help = 'Assets are what you own'\n"],
+    ['a power of a value', 'export const sq = (n: { pow(e: number): number }) => n.pow(2)\n'],
+    ['a letters regex', 'export const w = /^[A-Za-z]+$/\n'],
+    ['an object of kinds', "export const k = { asset: 'asset' }\n"],
+    [
+      'a sum compared with a limit',
+      'declare const ps: number[]\nexport const big = ps.reduce((a, b) => a + b, 0) > 10\n',
+    ],
   ])('accepts %s', async (_label, code) => {
     expect(await ruleIds(code)).not.toContain('no-restricted-syntax')
   })
