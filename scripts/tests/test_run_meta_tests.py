@@ -158,6 +158,24 @@ class Fixtures(unittest.TestCase):
         self.assertEqual(cases, {("tests/test_fx_cls.py", "test_fx_cls.A.test_x"): True,
                                  ("tests/test_fx_cls.py", "test_fx_cls.B.test_y"): False})
 
+    def test_a_skipped_subtest_marks_its_test_skipped(self) -> None:  # S0105 round 1, F2
+        self.put("test_fx_sub.py", """
+            import unittest
+            class A(unittest.TestCase):
+                def test_inv(self):
+                    for i in range(2):
+                        with self.subTest(i=i):
+                            getattr(self, "skip" + "Test")("indirect")
+                            self.fail("never reached")
+                def test_ok(self):
+                    pass
+        """)
+        r, cases = self.junit()
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(cases, {("tests/test_fx_sub.py", "test_fx_sub.A.test_inv"): True,
+                                 ("tests/test_fx_sub.py", "test_fx_sub.A.test_ok"): False})
+        self.assertIn("skipped=1,", r.stderr)  # the summary counts tests, as the report does
+
     def test_a_failing_run_still_writes_its_report(self) -> None:  # S0105: the push fails on the run itself
         self.put("test_fx_a.py", "import unittest\nclass A(unittest.TestCase):\n    def test_x(self): self.fail()\n")
         r, cases = self.junit()

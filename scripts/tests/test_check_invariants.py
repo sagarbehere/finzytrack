@@ -766,6 +766,8 @@ class EnforcementTestsRan(unittest.TestCase):
         self.reports.mkdir()
         for rel in RAN_FILES:
             self.put(rel, "# INV-01\n")
+        self.put("backend/tests/platform/test_b.py", "# INV-01\ndef test_a():\n    pass\n")
+        self.put("engine/tests/ledger/test_e.py", "# INV-01\nclass TestE:\n    def test_a(self):\n        pass\n")
         self.put("scripts/check_x.py", "# INV-01\n")
         self.cases: dict[str, list[tuple[str, str, bool]]] = {}
         for rel, (report, classname) in RAN_FILES.items():
@@ -789,7 +791,7 @@ class EnforcementTestsRan(unittest.TestCase):
 
     def problems(self, text: str = RAN_INVARIANTS) -> list[str]:
         self.write()
-        return ci.ran_problems(text, self.reports)
+        return ci.ran_problems(text, self.reports, self.root)
 
     def test_every_file_ran_passes(self) -> None:
         self.assertEqual(self.problems(), [])
@@ -818,14 +820,58 @@ class EnforcementTestsRan(unittest.TestCase):
                 self.assertNotEqual(self.problems(), [], name)
                 self.cases[report] = saved
 
+    def test_every_test_the_file_defines_must_run(self) -> None:  # S0105 round 1, F1
+        self.put("backend/tests/platform/test_b.py", "# INV-01\nimport pytest\n\n\ndef test_inv():\n    pass\n\n\n"
+                 "@pytest.mark.parametrize('n', [1, 2])\ndef test_p(n):\n    pass\n\n\nclass TestC:\n"
+                 "    def test_m(self):\n        pass\n\n    def helper(self):\n        pass\n\n\n"
+                 "def test_shadowed():\n    pass\n\n\ndef test_shadowed():\n    pass\n")
+        mod = "tests.platform.test_b"
+        full = [(mod, "test_inv", False), (mod, "test_p[1]", False), (mod, "test_p[2]", False),
+                (f"{mod}.TestC", "test_m", False), (mod, "test_shadowed", False)]
+        self.cases["backend.xml"] = full
+        self.assertEqual(self.problems(), [])
+        for gone in ("test_inv", "test_m", "test_shadowed"):
+            with self.subTest(deselected=gone):
+                self.cases["backend.xml"] = [c for c in full if c[1] != gone]
+                self.assertTrue(any("did not run" in p and gone in p for p in self.problems()), gone)
+        self.cases["backend.xml"] = [c for c in full if not c[1].startswith("test_p")]
+        self.assertTrue(any("test_p" in p for p in self.problems()))
+        self.cases["backend.xml"] = [c for c in full if not c[1].startswith("test_p")] + [(mod, "test_px", False)]
+        self.assertTrue(any("test_p" in p for p in self.problems()), "a longer name is not a case of test_p")
+        # a package named like the module is not the module (round 1: a prefix match credited it)
+        self.cases["backend.xml"] = [(f"{mod}.test_more", "test_inv", False)]
+        self.assertTrue(any("ran no test" in p for p in self.problems()))
+        # a class of another module whose name starts with this one's is not this module's
+        self.cases["backend.xml"] = [c for c in full if c[0] != f"{mod}.TestC"] + [(f"{mod}x.TestC", "test_m", False)]
+        self.assertTrue(any("TestC.test_m" in p for p in self.problems()))
+        # a shadowed class: only the last definition's tests run, and only they are required
+        self.put("backend/tests/platform/test_b.py", "class TestC:\n    def test_gone(self):\n        pass\n\n\n"
+                 "class TestC:\n    def test_m(self):\n        pass\n")
+        self.cases["backend.xml"] = [(f"{mod}.TestC", "test_m", False)]
+        self.assertEqual(self.problems(), [])
+        self.put("backend/tests/platform/test_b.py", "def test_x(:\n")
+        self.cases["backend.xml"] = full
+        self.assertTrue(any("does not parse" in p for p in self.problems()))
+
+    def test_every_unittest_test_the_file_defines_must_run(self) -> None:  # S0105 round 1, F1
+        self.put("scripts/tests/test_s.py", "# INV-01\nimport unittest\n\n\nclass Base(unittest.TestCase):\n"
+                 "    def test_a(self):\n        pass\n\n\nclass More(Base):\n    def test_b(self):\n        pass\n\n\n"
+                 "def test_module_function_unittest_never_runs():\n    pass\n")
+        path = "scripts/tests/test_s.py"
+        full = [(path, "test_s.Base.test_a", False), (path, "test_s.More.test_a", False), (path, "test_s.More.test_b", False)]
+        self.cases["scripts.xml"] = full
+        self.assertEqual(self.problems(), [])
+        self.cases["scripts.xml"] = full[:2]
+        self.assertTrue(any("More.test_b" in p for p in self.problems()))
+
     def test_a_missing_or_unreadable_report_fails(self) -> None:
         for report in ("backend.xml", "engine.xml", "frontend.xml", "scripts.xml", "oracle.xml"):
             with self.subTest(report=report):
                 self.write()
                 (self.reports / report).unlink()
-                self.assertTrue(any(report in p for p in ci.ran_problems(RAN_INVARIANTS, self.reports)))
+                self.assertTrue(any(report in p for p in ci.ran_problems(RAN_INVARIANTS, self.reports, self.root)))
                 (self.reports / report).write_text("<testsuite><testcase")
-                self.assertTrue(any(report in p for p in ci.ran_problems(RAN_INVARIANTS, self.reports)))
+                self.assertTrue(any(report in p for p in ci.ran_problems(RAN_INVARIANTS, self.reports, self.root)))
 
     def test_an_enforcement_test_no_report_covers_fails(self) -> None:
         self.put("scripts/acceptance/tests/test_x.py", "# INV-01\n")

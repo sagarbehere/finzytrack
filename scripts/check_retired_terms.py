@@ -54,8 +54,9 @@ Exit 0 = nothing refused, 1 = refused or a problem with the check's own lists, 2
 models (SOURCE_ROOTS; not the tests, which name removed codes to prove them gone, nor this check and its tests, nor
 Markdown, which the check reads) and exits 0. A slice that adds terms runs it and records the count in its journal,
 instead of a hand grep (S0070, S0072, S0073). A failing source scan was measured and not built: on fb529a9c the terms
-hit 28 lines in 245 files, every one legitimate (dated history comments, Copy's current `legacy_locks`, generator
-commands run under `-I`, the trim's leftover names), so it would need an exemption per hit and caught nothing.
+hit 28 lines in 245 product and model files (33 in the 281 files `--source` reads, `scripts/` included), every one
+legitimate (dated history comments, Copy's current `legacy_locks`, generator commands run under `-I`, the trim's
+leftover names, file-suffix lists naming `.tsx`), so it would need an exemption per hit and caught nothing.
 """
 
 from __future__ import annotations

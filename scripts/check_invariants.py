@@ -349,12 +349,12 @@ def _py_disabling(rel: str, text: str, names: set[str], allow_darwin: bool, para
     return out
 
 
-def switched_off(rel: str, text: str, root: Path, parametrize: bool = True) -> list[str]:
+def switched_off(rel: str, text: str, root: Path, parametrize: bool = True, any_path: bool = False) -> list[str]:
     """S0031 (M2): the ways a test is switched off, in an enforcement file and the conftest.py files above it.
     `parametrize=False` (a capability's tagged test, S0105) leaves out the static parametrize rule: the backend's
     and the engine's pytest configuration fail an empty parameter set at collection."""
-    if not is_test(rel):  # S0031 verifier F8: the name rules are for test files; `skip = None` in a check is fine
-        return []
+    if not is_test(rel) and not any_path:  # S0031 verifier F8: the name rules are for test files; `any_path` (a
+        return []  # capability's tagged test, S0105 round 1 F3) applies them to a test file outside `tests/` too (e2e)
     if rel.endswith(".py"):
         errors = _py_disabling(rel, text, PY_DISABLE_STRICT, allow_darwin=True, parametrize=parametrize)
         parent = PurePosixPath(rel).parent
@@ -515,8 +515,45 @@ def _testcase_name(path: str, base: str, kind: str) -> str:
     return rel[:-3].replace("/", ".") if kind == "module" and rel.endswith(".py") else rel
 
 
-def ran_problems(text: str, reports: Path) -> list[str]:
-    """S0105 (BL-0078): every enforcement test file ran at least one test and skipped none."""
+def _defined_tests(text: str, unittest_only: bool) -> tuple[list[tuple[str | None, str]], set[str]] | None:
+    """(the (class or None, function) pairs of the tests a Python file defines, its top-level class names), or None
+    when it does not parse. pytest collects `test*` functions and the `test*` methods of `Test*` classes and of
+    TestCases; unittest (`unittest_only`) only the TestCases' (a class of the file whose base is one counts). A
+    definition shadowed by a later one of the same name is left out."""
+    try:
+        tree = ast.parse(text)
+    except SyntaxError:
+        return None
+
+    def last(body: list[ast.stmt]) -> list[ast.stmt]:
+        names = {n.name: i for i, n in enumerate(body) if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))}
+        return [n for i, n in enumerate(body) if getattr(n, "name", None) is None or names.get(n.name) == i]
+
+    classes = [n for n in last(tree.body) if isinstance(n, ast.ClassDef)]
+    cases: set[str] = set()
+    changed = True
+    while changed:
+        changed = False
+        for c in classes:
+            bases = [b.attr if isinstance(b, ast.Attribute) else getattr(b, "id", "") for b in c.bases]
+            if c.name not in cases and any(b.endswith("TestCase") or b in cases for b in bases):
+                cases.add(c.name)
+                changed = True
+    out: list[tuple[str | None, str]] = []
+    for n in last(tree.body):
+        if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n.name.startswith("test") and not unittest_only:
+            out.append((None, n.name))
+        elif isinstance(n, ast.ClassDef) and (n.name in cases or not unittest_only and n.name.startswith("Test")):
+            out += [(n.name, f.name) for f in last(n.body)
+                    if isinstance(f, (ast.FunctionDef, ast.AsyncFunctionDef)) and f.name.startswith("test")]
+    return out, {c.name for c in classes}
+
+
+def ran_problems(text: str, reports: Path, root: Path = ROOT) -> list[str]:
+    """S0105 (BL-0078): every enforcement test file ran, and skipped none; for a Python file, every test function and
+    method it defines ran (round 1 F1: a hook that deselects the invariant's own test while another test of the file
+    runs), a parametrized test by any of its cases. A TypeScript file must run at least one test (its tests are not
+    read here)."""
     problems: list[str] = []
     loaded: dict[str, list[ET.Element] | None] = {}
     for path in enforcement_tests(text):
@@ -536,14 +573,44 @@ def ran_problems(text: str, reports: Path) -> list[str]:
         if cases is None:
             continue
         name = _testcase_name(path, base, kind)
-        mine = [c for c in cases if (c.get("classname") or "") == name
-                or kind == "module" and (c.get("classname") or "").startswith(name + ".")]
+        defined: tuple[list[tuple[str | None, str]], set[str]] | None = ([], set())
+        if path.endswith(".py"):
+            try:
+                source = (root / path).read_text(encoding="utf-8", errors="replace")
+            except OSError as e:
+                problems.append(f"{path}: cannot be read ({e}); its tests are not proven to run")
+                continue
+            defined = _defined_tests(source, unittest_only=kind == "path")
+            if defined is None:
+                problems.append(f"{path}: does not parse; its tests are not proven to run")
+                continue
+        tests, classes = defined
+        if kind == "module":  # the module itself, or one of its own classes (never a package of the same name)
+            mine = [c for c in cases if (cn := c.get("classname") or "") == name
+                    or cn.startswith(name + ".") and cn[len(name) + 1:].split(".")[0] in classes]
+        else:
+            mine = [c for c in cases if (c.get("classname") or "") == name]
         skipped = [c.get("name", "?") for c in mine if c.find("skipped") is not None]
         if not mine:
             problems.append(f"{path}: ran no test at this push (not in {report}); an enforcement test must run")
-        elif skipped:
+            continue
+        if skipped:
             problems.append(f"{path}: skipped {len(skipped)} of {len(mine)} tests at this push ({', '.join(skipped[:3])})"
                             "; an enforcement test may not be skipped")
+
+        def ran(cls: str | None, fn: str) -> bool:
+            for c in mine:
+                cn, tn = c.get("classname") or "", c.get("name") or ""
+                if kind == "module" and cn == (f"{name}.{cls}" if cls else name) and (tn == fn or tn.startswith(fn + "[")):
+                    return True
+                if kind == "path" and cls and (tn == f"{cls}.{fn}" or tn.endswith(f".{cls}.{fn}")):
+                    return True
+            return False
+
+        missing = [f"{c}.{f}" if c else f for c, f in tests if not ran(c, f)]
+        if missing:
+            problems.append(f"{path}: {len(missing)} of its {len(tests)} tests did not run at this push "
+                            f"({', '.join(missing[:3])}); every test of an enforcement file must run")
     return problems
 
 
@@ -553,7 +620,7 @@ def main(root: Path = ROOT, argv: list[str] | None = None) -> int:
     args = ap.parse_args([] if argv is None else argv)
     text = (root / "design/INVARIANTS.md").read_text(encoding="utf-8")
     if args.ran is not None:
-        problems = ran_problems(text, args.ran)
+        problems = ran_problems(text, args.ran, root)
         for e in problems:
             print(f"check-invariants: {e}", file=sys.stderr)
         return 1 if problems else 0

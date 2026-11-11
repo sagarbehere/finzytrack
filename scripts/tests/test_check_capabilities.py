@@ -92,10 +92,21 @@ class PathsExist(unittest.TestCase):
             with self.subTest(case=name):
                 self.assertNotEqual(self.errors(**fields), [], name)
 
+    def test_paths_are_compared_with_gits_tracked_files(self) -> None:  # S0105 round 1, L2
+        tracked = {"engine/src/a.py", "engine/tests/test_a.py"}
+        r = {**row("planned", [], milestone="M8", release_blocking="yes")}
+        self.assertEqual(cc.path_errors({**r, "code": ["engine/src/a.py", "engine/src/"]}, self.root, tracked), [])
+        (self.root / "engine/src/ignored.py").write_text("")  # on disk, not tracked (an ignored or new file)
+        for p in ("Engine/src/a.py", "engine/src/A.py", "engine/src/ignored.py", "Engine/src/", "engine/srcx/"):
+            with self.subTest(path=p):
+                self.assertNotEqual(cc.path_errors({**r, "code": [p]}, self.root, tracked), [], p)
+
     def test_every_row_of_the_committed_map_names_existing_paths(self) -> None:
         caps = tomllib.loads((cc.ROOT / "design/capabilities.toml").read_text())["capability"]
+        tracked = cc.tracked_files(cc.ROOT)
+        self.assertIsNotNone(tracked)
         self.assertGreater(sum(len(c.get("code", [])) + len(c.get("tests", [])) for c in caps), 50)
-        self.assertEqual([e for c in caps for e in cc.path_errors(c, cc.ROOT)], [])
+        self.assertEqual([e for c in caps for e in cc.path_errors(c, cc.ROOT, tracked)], [])
 
 
 PY_HEAD = "import pytest\nimport unittest\n\n"
@@ -145,6 +156,14 @@ class TaggedTestsAreRealTests(unittest.TestCase):
             "a vitest describe": ("frontend/tests/unit/a.test.ts", "describe('[CAP-X-Y] the thing', () => {\n"
                                   "  it('works', () => {})\n})\n"),
             "a vitest test, double quotes": ("frontend/tests/unit/a.test.ts", 'test("[CAP-X-Y][INV-01] works", () => {})\n'),
+            "a unittest class through a base of the file": ("scripts/tests/test_a.py", PY_HEAD + "class Base(unittest.TestCase):\n"
+                                                             "    pass\n\n\nclass A(Base):\n    " + AT + mark()
+                                                             + "\n    def test_y(self):\n        pass\n"),
+            "a later, tagged definition": ("backend/tests/test_a.py", PY_HEAD + "def test_x():\n    pass\n\n\n" + AT
+                                           + mark() + "\ndef test_x():\n    pass\n"),
+            "a tagged describe with a test in a nested describe": ("frontend/tests/unit/a.test.ts",
+                                                                   "describe('[CAP-X-Y] x', () => {\n  describe('y', () => {\n"
+                                                                   "    it('a', () => {})\n  })\n})\n"),
             "a Playwright describe": ("frontend/e2e/a.spec.ts", "test.describe(`[CAP-X-Y] flow`, () => {\n"
                                       "  test('a', async () => {})\n})\n"),
         }
@@ -190,6 +209,9 @@ class TaggedTestsAreRealTests(unittest.TestCase):
             "a TypeScript string": ("frontend/tests/unit/a.test.ts", "const s = \"describe('[CAP-X-Y] x'\"\n"
                                     "test('a', () => {})\n"),
             "the ID without brackets": ("frontend/tests/unit/a.test.ts", "describe('CAP-X-Y x', () => {})\n"),
+            "a test titled with the ID without brackets": ("frontend/tests/unit/a.test.ts", "test('CAP-X-Y x', () => {})\n"),
+            "a test call inside a string": ("frontend/tests/unit/a.test.ts", "const s = \"test('[CAP-X-Y] x', () => {})\"\n"
+                                            "test('a', () => {})\n"),
             "a skipped describe": ("frontend/tests/unit/a.test.ts", "describe.skip('[CAP-X-Y] x', () => {\n"
                                    "  it('a', () => {})\n})\n"),
             "a todo test": ("frontend/tests/unit/a.test.ts", "test.todo('[CAP-X-Y] x')\n"),
@@ -197,6 +219,31 @@ class TaggedTestsAreRealTests(unittest.TestCase):
                                       "fixme({ id: 'BL-0001', due: 'M2', reason: 'r' }, '[CAP-X-Y] x', () => {})\n"),
             "a helper call with the title": ("frontend/tests/unit/a.test.ts", "label('[CAP-X-Y] x')\ntest('a', () => {})\n"),
             "a TypeScript file that is not a test": ("frontend/src/a.ts", "describe('[CAP-X-Y] x', () => {})\n"),
+            # S0105 round 1, F3: the switched-off rules apply to e2e files too
+            "a skipped Playwright test under a tagged describe": ("frontend/e2e/a.spec.ts", "test.describe('[CAP-X-Y] flow', "
+                                                                  "() => {\n  test('b', async () => {})\n  test.skip('a', async () => {})\n})\n"),
+            # round 1, L1: the cheap shapes
+            "an empty tagged describe": ("frontend/tests/unit/a.test.ts", "describe('[CAP-X-Y] flow', () => {})\n"
+                                         "test('other', () => {})\n"),
+            "a tagged describe whose only call is in a string": ("frontend/tests/unit/a.test.ts",
+                                                                 "describe('[CAP-X-Y] flow', () => {\n  const s = 'it('\n})\n"
+                                                                 "test('other', () => {})\n"),
+            "a tagged describe in a function": ("frontend/tests/unit/a.test.ts", "function never() {\n  describe("
+                                                "'[CAP-X-Y] flow', () => { it('a', () => {}) })\n}\ntest('other', () => {})\n"),
+            "a tagged test in a function": ("frontend/tests/unit/a.test.ts", "const later = () => {\n  test('[CAP-X-Y] a', "
+                                            "() => {})\n}\ntest('other', () => {})\n"),
+            "a pytest-style class under scripts (unittest runs it not)": ("scripts/tests/test_a.py", PY_HEAD
+                                                                          + "class TestX:\n    " + AT + mark()
+                                                                          + "\n    def test_y(self):\n        pass\n"),
+            "a module function under scripts": ("scripts/tests/test_a.py", PY_HEAD + AT + mark() + "\ndef test_x():\n    pass\n"),
+            "a tagged test shadowed by a later one": ("backend/tests/test_a.py", PY_HEAD + AT + mark()
+                                                      + "\ndef test_x():\n    pass\n\n\ndef test_x():\n    pass\n"),
+            "a tagged method shadowed by a later one": ("backend/tests/test_a.py", PY_HEAD + "class TestX:\n    " + AT
+                                                        + mark() + "\n    def test_y(self):\n        pass\n\n"
+                                                        "    def test_y(self):\n        pass\n"),
+            "a tagged class shadowed by a later one": ("backend/tests/test_a.py", PY_HEAD + AT + mark()
+                                                       + "\nclass TestX:\n    def test_y(self):\n        pass\n\n\n"
+                                                       "class TestX:\n    def test_y(self):\n        pass\n"),
         }
         for name, (rel, text) in cases.items():
             with self.subTest(case=name):

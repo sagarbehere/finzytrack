@@ -104,7 +104,8 @@ def worker(start: Path, unit: str, result_path: Path, verbose: bool) -> int:
     tests, errors = discover(start, module.rsplit(".", 1)[-1] + ".py")
     mine = [t for t in tests if type(t).__module__ == module and (not cls or type(t).__qualname__ == cls)]
     ran: list[str] = []
-    skipped: list[str] = []  # S0105: skipped, expected to fail, or skipped by its fixture
+    skipped: list[str] = []  # S0105: skipped, or skipped by its fixture
+    expected: list[str] = []  # S0105: expected failures (marked skipped in the report too)
 
     class Recorder(unittest.TextTestResult):
         def startTest(self, test: unittest.TestCase) -> None:  # noqa: N802 (unittest's name)
@@ -112,7 +113,7 @@ def worker(start: Path, unit: str, result_path: Path, verbose: bool) -> int:
             super().startTest(test)
 
         def addExpectedFailure(self, test: unittest.TestCase, err) -> None:  # noqa: N802, ANN001 (unittest's)
-            skipped.append(test.id())
+            expected.append(test.id())
             super().addExpectedFailure(test, err)
 
         def addSkip(self, test: unittest.TestCase, reason: str) -> None:  # noqa: N802 (unittest's name)
@@ -126,17 +127,17 @@ def worker(start: Path, unit: str, result_path: Path, verbose: bool) -> int:
                 ids = [t.id() for t in mine if fixture_skipped(kind, name, t)]
                 ran.extend(ids)
                 skipped.extend(ids)
-            else:
-                skipped.append(test.id())
+            else:  # a skipped subTest counts against its test (S0105 round 1 F2: its id never matched one that ran)
+                skipped.append(test.test_case.id() if isinstance(test, unittest.case._SubTest) else test.id())  # noqa: SLF001
             super().addSkip(test, reason)
 
     runner = unittest.TextTestRunner(stream=sys.stderr, verbosity=2 if verbose else 0, resultclass=Recorder)
     result = runner.run(unittest.TestSuite(mine))
     ok = result.wasSuccessful() and not errors
     result_path.write_text(json.dumps({
-        "ran": ran, "skipped_ids": skipped, "ok": ok, "failures": len(result.failures),
+        "ran": ran, "skipped_ids": skipped + expected, "ok": ok, "failures": len(result.failures),
         "errors": len(result.errors) + len(errors),
-        "skipped": len(result.skipped), "unexpected_successes": len(result.unexpectedSuccesses),
+        "skipped": len(set(skipped)), "unexpected_successes": len(result.unexpectedSuccesses),
     }))
     return 0 if ok else 1
 

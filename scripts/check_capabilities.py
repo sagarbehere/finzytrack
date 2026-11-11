@@ -12,9 +12,15 @@ Checks design/capabilities.toml:
     `pytestmark` beside at least one test; or a `describe`, `it`, `test` or `test.describe` call whose literal title
     holds `[<ID>]`, outside comments. The file is a tracked test file (`test_*.py`, `*_test.py`, `*.test.*`,
     `*.spec.*`) in a `tests/` or `e2e/` folder under backend/, frontend/, shell/ or scripts/tests/, and holds no fixme
-    marker and no switched-off test (the enforcement-file rules of check_invariants.py). Stated limits: a TypeScript
-    regex literal holding a quote or a comment opener is not told apart from a string or comment; a mark reached
-    through a name (`cap = pytest.mark.cap`) does not count (fails closed);
+    marker and no switched-off test (the enforcement-file rules of check_invariants.py, e2e files included). Round 1
+    (L1): a function or class shadowed by a later definition of the same name does not count; under scripts/ (run by
+    unittest) only TestCase classes count; a TypeScript tag counts only on a top-level call, and a tagged `describe`
+    only when its callback holds an `it` or `test` call. Paths are compared with git's tracked files (L2). Stated
+    limits: a TypeScript regex literal holding a quote or a comment opener is not told apart from a string or
+    comment; a `describe` whose only test calls are themselves inside a never-called function, a test class named
+    `Test*` that pytest skips for having an `__init__`, and a test whose body asserts nothing are not seen; a tagged
+    `describe` nested in another `describe` does not count (fails closed: tag the outer one); a mark reached through a
+    name (`cap = pytest.mark.cap`) does not count (fails closed);
   - every ADR it cites exists in design/decisions/; every backlog ID it cites exists in design/backlog.md
     (reported, not failed, until the backlog is seeded);
   - design/capabilities.md is up to date (via scripts/check_generated.py).
@@ -80,27 +86,57 @@ def _cap_mark(node: ast.AST) -> str | None:
     return node.args[0].value
 
 
-def _is_test_class(node: ast.ClassDef) -> bool:
-    bases = [b.attr if isinstance(b, ast.Attribute) else getattr(b, "id", "") for b in node.bases]
-    return node.name.startswith("Test") or any(b.endswith("TestCase") for b in bases)
+def _base_names(node: ast.ClassDef) -> list[str]:
+    return [b.attr if isinstance(b, ast.Attribute) else getattr(b, "id", "") for b in node.bases]
+
+
+def _unittest_classes(tree: ast.Module) -> set[str]:
+    """The module's classes that are unittest TestCases: a base named `...TestCase`, or a class of the same module that
+    is one (S0105 round 1 L1)."""
+    found: set[str] = set()
+    classes = [n for n in tree.body if isinstance(n, ast.ClassDef)]
+    changed = True
+    while changed:
+        changed = False
+        for c in classes:
+            if c.name not in found and any(b.endswith("TestCase") or b in found for b in _base_names(c)):
+                found.add(c.name)
+                changed = True
+    return found
+
+
+def _last_definitions(body: list[ast.stmt]) -> list[ast.stmt]:
+    """The statements of `body`, a function or class kept only at its last definition: an earlier one of the same
+    name is shadowed and never runs (S0105 round 1 L1)."""
+    last: dict[str, int] = {}
+    for i, n in enumerate(body):
+        if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            last[n.name] = i
+    return [n for i, n in enumerate(body) if not isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+            or last[n.name] == i]
 
 
 def _test_methods(node: ast.ClassDef) -> list[ast.FunctionDef | ast.AsyncFunctionDef]:
-    return [f for f in node.body if isinstance(f, (ast.FunctionDef, ast.AsyncFunctionDef)) and f.name.startswith("test")]
+    return [f for f in _last_definitions(node.body)
+            if isinstance(f, (ast.FunctionDef, ast.AsyncFunctionDef)) and f.name.startswith("test")]
 
 
-def _py_tags(text: str) -> set[str]:
+def _py_tags(text: str, unittest_only: bool) -> set[str]:
+    """The capability IDs tagged on real tests. `unittest_only`: the file runs under unittest (scripts/), which collects
+    TestCase classes only; pytest also collects `test_*` functions and `Test*` classes."""
     try:
         tree = ast.parse(text)
     except SyntaxError:
         return set()  # fails closed: a file that does not parse holds no test
+    cases = _unittest_classes(tree)
     found: set[str] = set()
     has_test = False
-    for node in tree.body:
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name.startswith("test"):
+    for node in _last_definitions(tree.body):
+        is_class = isinstance(node, ast.ClassDef) and (node.name in cases or not unittest_only and node.name.startswith("Test"))
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name.startswith("test") and not unittest_only:
             has_test = True
             found |= {cid for d in node.decorator_list if (cid := _cap_mark(d))}
-        elif isinstance(node, ast.ClassDef) and _is_test_class(node) and _test_methods(node):
+        elif isinstance(node, ast.ClassDef) and is_class and _test_methods(node):
             has_test = True
             found |= {cid for d in node.decorator_list if (cid := _cap_mark(d))}
             found |= {cid for f in _test_methods(node) for d in f.decorator_list if (cid := _cap_mark(d))}
@@ -143,10 +179,49 @@ def _ts_code(text: str) -> tuple[str, list[tuple[int, int]]]:
     return "".join(out), strings
 
 
+TS_TEST_CALL = re.compile(r"(?<![\w$.])(?:it|test)\s*\(")
+
+
+def _depths(code: str, strings: list[tuple[int, int]]) -> list[int]:
+    """The brace depth before each character of `code`, braces inside strings not counted."""
+    inside = bytearray(len(code))
+    for a, b in strings:
+        inside[a:b] = b"\x01" * (b - a)
+    depths, depth = [], 0
+    for i, c in enumerate(code):
+        depths.append(depth)
+        if not inside[i]:
+            depth += 1 if c == "{" else -1 if c == "}" else 0
+    return depths
+
+
 def _ts_tags(text: str) -> set[str]:
+    """Tagged titles of a top-level `describe`/`it`/`test` call (a call inside a function may never run); a tagged
+    `describe` counts only when its callback body holds an `it` or `test` call (S0105 round 1 L1)."""
     code, strings = _ts_code(text)
-    titles = [m.group(1) for m in TS_TITLE.finditer(code) if not any(a <= m.start() < b for a, b in strings)]
-    return {m.group(0) for title in titles for m in re.finditer(r"CAP-[A-Z0-9-]+", title) if f"[{m.group(0)}]" in title}
+    depths = _depths(code, strings)
+    in_string = bytearray(len(code))
+    for a, b in strings:
+        in_string[a:b] = b"\x01" * (b - a)
+    found: set[str] = set()
+    for m in TS_TITLE.finditer(code):
+        if in_string[m.start()] or depths[m.start()] != 0:
+            continue
+        title = m.group(1)
+        ids = {i.group(0) for i in re.finditer(r"CAP-[A-Z0-9-]+", title) if f"[{i.group(0)}]" in title}
+        if not ids:
+            continue
+        if re.match(r"(?:test\.)?describe\b", m.group(0)):
+            start = code.find("{", m.end())
+            if start < 0:
+                continue
+            end = next((j for j in range(start + 1, len(code)) if depths[j] == depths[start] + 1 and code[j] == "}"
+                        and not in_string[j]), len(code))
+            body = [c for c in TS_TEST_CALL.finditer(code, start, end) if not in_string[c.start()]]
+            if not body:
+                continue
+        found |= ids
+    return found
 
 
 def real_tags(root: Path, files: list[str]) -> dict[str, list[str]]:
@@ -158,16 +233,34 @@ def real_tags(root: Path, files: list[str]) -> dict[str, list[str]]:
             continue
         text = path.read_text(encoding="utf-8", errors="replace")
         if check_invariants._has_fixme(rel, text) \
-                or check_invariants.switched_off(rel, text, root, parametrize=False):  # noqa: SLF001
+                or check_invariants.switched_off(rel, text, root, parametrize=False, any_path=True):  # noqa: SLF001
             continue
-        found = _py_tags(text) if rel.endswith(".py") else _ts_tags(text)
+        found = _py_tags(text, unittest_only=rel.startswith("scripts/")) if rel.endswith(".py") else _ts_tags(text)
         for cid in sorted(found):
             tags.setdefault(cid, []).append(rel)
     return tags
 
 
-def path_errors(c: dict, root: Path) -> list[str]:
-    """BL-0184: each path of the row's `code` and `tests` lists exists, inside the repository."""
+def tracked_files(root: Path) -> set[str] | None:
+    """The files git tracks under `root`, or None outside a git work tree (a fixture: the file system is read)."""
+    r = subprocess.run(["git", "ls-files", "-z"], cwd=root, capture_output=True)
+    if r.returncode != 0:
+        return None
+    return {p for p in r.stdout.decode("utf-8", "surrogateescape").split("\0") if p}
+
+
+def _exists(p: str, root: Path, tracked: set[str] | None) -> tuple[bool, bool]:
+    """(the path is a file, it is a folder): from git's tracked files when given, so a path in the wrong case or an
+    ignored file does not count (S0105 round 1 L2)."""
+    if tracked is None:
+        return (root / p).is_file(), (root / p).is_dir()
+    folder = p.rstrip("/") + "/"
+    return p in tracked, any(f.startswith(folder) for f in tracked)
+
+
+def path_errors(c: dict, root: Path, tracked: set[str] | None = None) -> list[str]:
+    """BL-0184: each path of the row's `code` and `tests` lists exists, inside the repository (tracked by git when
+    `tracked` is given)."""
     where = c.get("id", "a row")
     errors: list[str] = []
     for field in ("code", "tests"):
@@ -182,18 +275,19 @@ def path_errors(c: dict, root: Path) -> list[str]:
             pure = PurePosixPath(p)
             if pure.is_absolute() or ".." in pure.parts or p.startswith("~"):
                 errors.append(f"{where}: {field} path {p} must be relative and inside the repository")
-            elif p.endswith("/") and not (root / p).is_dir():
-                errors.append(f"{where}: {field} folder {p} does not exist")
-            elif not p.endswith("/") and not (root / p).is_file():
-                errors.append(f"{where}: {field} file {p} does not exist" + (
-                    " (a folder is written with a trailing /)" if (root / p).is_dir() else ""))
+            elif p.endswith("/") and not _exists(p, root, tracked)[1]:
+                errors.append(f"{where}: {field} folder {p} does not exist (tracked)")
+            elif not p.endswith("/") and not _exists(p, root, tracked)[0]:
+                errors.append(f"{where}: {field} file {p} does not exist (tracked)" + (
+                    " (a folder is written with a trailing /)" if _exists(p, root, tracked)[1] else ""))
     return errors
 
 
 def check(caps: list[dict], adr_ids: set[str], backlog_text: str | None, root: Path = ROOT,
-          tags: dict[str, list[str]] | None = None) -> tuple[list[str], list[str]]:
-    if tags is None:
+          tags: dict[str, list[str]] | None = None, tracked: set[str] | None = None) -> tuple[list[str], list[str]]:
+    if tags is None:  # a real run: the repository's tagged tests and its tracked files
         tags = real_tags(root, candidate_files(root))
+        tracked = tracked_files(root) if tracked is None else tracked
     errors: list[str] = []
     notes: list[str] = []
     seen: set[str] = set()
@@ -224,7 +318,7 @@ def check(caps: list[dict], adr_ids: set[str], backlog_text: str | None, root: P
         if status == "built" and not tags.get(cid):
             errors.append(f"{cid}: status built but no real test is tagged with {cid} (a test, not a comment, "
                           "helper, fixme or skipped test)")
-        errors += path_errors(c, root)
+        errors += path_errors(c, root, tracked)
         for adr in c.get("adrs", []):
             if adr not in adr_ids:
                 errors.append(f"{where}: cites {adr}, which does not exist in design/decisions/")

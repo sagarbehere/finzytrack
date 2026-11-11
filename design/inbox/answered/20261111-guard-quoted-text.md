@@ -36,3 +36,7 @@ Guard: option 2. It removes the false positives agents actually hit (a single-qu
 Engine tests: option 1. The engine holds most of the tested code; leaving it out would keep the mirror and the write path from ever being `built`. The real-test rule still applies, so a comment or a skipped test still does not count.
 
 ## Answer (owner, verbatim, with date)
+Owner, 2026-11-11, in session (relayed by the orchestrator):
+- BL-0054: "Exact shapes only (Recommended)". The option as put to the owner: "For git commit -m/--message/-F, git tag -m and gh --body/--title, a single-quoted value is data. Double quotes stay as today (bash runs $(...) inside them). Planted tests pin that `git commit -m \"$(git clean -x)\"` and `-m 'x'; git clean -x` are still refused."
+- BL-0252: "Count engine tests (Recommended)". The option as put to the owner: "Add engine/ to the folders and register the cap mark, under the same real-test rule (no comment, skip or fixme counts)."
+Recorded in `design/journal/S0105-gate-tooling.md` and `design/process/IMPROVEMENTS.md`; built in S0105 part B.

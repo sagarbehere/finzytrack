@@ -617,9 +617,9 @@ class RealRepository(unittest.TestCase):
 
 class SourceReport(unittest.TestCase):
     """S0105 (BL-0185; S0070 verifier r1 F3): `--source` lists the active terms in the product source and the models,
-    for a slice that retires names, and never fails: a failing scan would need an exemption for each of the 28
-    legitimate hits measured on fb529a9c (dated history comments, current names, generator commands) and caught no
-    stale one."""
+    for a slice that retires names, and never fails: a failing scan would need an exemption for each legitimate hit
+    (28 in the product and model files on fb529a9c, 33 with `scripts/`: dated history comments, current names,
+    generator commands, suffix lists) and caught no stale one."""
 
     def report(self, files: dict[str, str]) -> subprocess.CompletedProcess[str]:
         root = make_root(self, files)

@@ -705,7 +705,7 @@ class ReportsProveTheFileRan(unittest.TestCase):
 
         paths = ", ".join(f"`{f}`" for f in files)
         text = f"### INV-01: Ran\n- **Rule:** r\n- **Why:** w\n- **Enforced by:** {paths}\n- **Status:** enforced\n"
-        return check_invariants.ran_problems(text, self.dir / "reports")
+        return check_invariants.ran_problems(text, self.dir / "reports", self.dir)
 
     def put(self, rel: str, text: str) -> None:
         (self.dir / rel).parent.mkdir(parents=True, exist_ok=True)
@@ -716,22 +716,25 @@ class ReportsProveTheFileRan(unittest.TestCase):
         # one run over three planted files (pytest's start-up is the cost): resolved, since under a symlinked
         # temporary folder pytest names the tests from another root
         backend = (self.dir / "backend").resolve()
-        ok, gone, marked = (f"backend/tests/platform/test_{n}.py" for n in ("ok", "gone", "marked"))
+        ok, gone, marked, part = (f"backend/tests/platform/test_{n}.py" for n in ("ok", "gone", "marked", "part"))
         body = "import pytest\n\n\nclass TestB:\n    @pytest.mark.parametrize('n', [1, 2])\n    def test_x(self, n):\n        pass\n"
         for rel in (ok, gone, marked):
             self.put(rel, body)
+        self.put(part, "def test_inv():\n    assert False\n\n\ndef test_other():\n    pass\n")  # round 1 F1
         self.put("backend/tests/conftest.py", "import pytest\n\n\ndef pytest_collection_modifyitems(config, items):\n"
-                 "    items[:] = [i for i in items if 'test_gone' not in i.nodeid]\n    for i in items:\n"
+                 "    items[:] = [i for i in items if 'test_gone' not in i.nodeid and 'test_inv' not in i.nodeid]\n"
+                 "    for i in items:\n"
                  "        if 'test_marked' in i.nodeid:\n            i.add_marker(getattr(pytest.mark, 'sk' + 'ip')())\n")
         (self.dir / "reports").mkdir()
         subprocess.run([str(BACKEND_PYTEST), "-q", "-c", str(REPO / "backend/pyproject.toml"), "--rootdir", str(backend),
                         f"--junitxml={self.dir / 'reports/backend.xml'}", "tests"],
                        cwd=backend, capture_output=True, text=True, check=False,
                        env={**os.environ, "PYTEST_DISABLE_PLUGIN_AUTOLOAD": "1"})  # the venv's plugins: start-up only
-        problems = self.ran([ok, gone, marked])
-        self.assertEqual([p.split(":")[0] for p in problems], [gone, marked], problems)  # the real classname maps
+        problems = self.ran([ok, gone, marked, part])
+        self.assertEqual([p.split(":")[0] for p in problems], [gone, marked, part], problems)  # the classname maps
         self.assertIn("ran no test", problems[0])
         self.assertIn("skipped 2 of 2", problems[1])
+        self.assertIn("1 of its 2 tests did not run", problems[2])
 
     @unittest.skipUnless(VITEST.is_file(), "needs the frontend packages (cd frontend && pnpm install --frozen-lockfile)")
     def test_one_vitest_run_maps_a_file_and_fails_a_skip_by_indirection(self) -> None:  # BL-0078
