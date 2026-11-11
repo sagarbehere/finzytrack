@@ -20,7 +20,7 @@ from pathlib import Path
 
 import pytest
 
-from tests.architecture.loop_calls import Walk, index, walk
+from tests.architecture.loop_calls import Walk, index, unindexed_async_defs, walk
 
 pytestmark = pytest.mark.inv("INV-20")
 
@@ -44,9 +44,11 @@ REVIEWED: dict[tuple[str, str], str] = {
     ("app.api.errors:Edge.__call__", "contextlib.ExitStack"): MEMORY,
     ("app.api.errors:Edge.__call__", "binding.enter_context"): "enters `bound_context`: binds context variables",
     ("app.api.errors:_internal", "ctx.container.log"): (
-        "one log line on an INTERNAL answer: `EventLog` appends it under the handler's lock to the local log file, "
-        "buffered, never synced (accepted on the loop, S0103 decision: a bug's line must not be lost to a thread "
-        "that never runs; the log is in the app's own local folder)"
+        "one log line on an INTERNAL answer: `EventLog` formats it and appends it under the handler's lock to the "
+        "local log file, then flushes it to the OS (never a sync); once per 10 MiB the handler rotates (renames up "
+        "to 5 files, opens a new one) on whichever thread writes the line. Accepted on the loop as a small write of "
+        "the log only (S0103 round 1 decision, verifier F3): the log is in the app's own local folder, and a thread "
+        "for it could lose the line of a bug that ends the process"
     ),
     ("app.api.errors:_internal", "traceback.format_exception"): "formats an exception in memory",
     ("app.api.errors:_issue", "e.get"): "a dict read of pydantic's error",
@@ -166,6 +168,99 @@ def site_texts(found: Walk) -> set[str]:
         ),
         ({"app.h": "def outer():\n    async def inner(c):\n        c.execute('x')\n    return inner\n"}, "c.execute"),
         ({"app.h": "async def h(x):\n    print(x)\n"}, "print"),
+        # S0103 round 1 (verifier F1): callables a pure builtin calls, construction, `with`, and every block.
+        ({"app.h": "async def h(ps):\n    return list(map(open, ps))\n"}, "open"),
+        ({"app.h": "import os\n\nasync def h(ps):\n    return sorted(ps, key=os.stat)\n"}, "os.stat"),
+        (
+            {"app.h": "import sqlite3\n\nasync def h(ps):\n    return list(map(lambda p: sqlite3.connect(p), ps))\n"},
+            "sqlite3.connect",
+        ),
+        (
+            {"app.h": "import os.path\n\nasync def h(ps):\n    return list(filter(os.path.exists, ps))\n"},
+            "os.path.exists",
+        ),
+        ({"app.h": "async def h(f):\n    return list(iter(f.read, ''))\n"}, "f.read"),
+        (
+            {
+                "app.h": "from time import sleep\n\nclass C:\n    def sleep(self):\n        return 1\n\n"
+                "    async def h(self):\n        sleep(5)\n"
+            },
+            "sleep",
+        ),
+        (
+            {
+                "app.h": "from dataclasses import dataclass, field\nimport subprocess\n\n"
+                "def load():\n    return subprocess.run(['ls'])\n\n"
+                "@dataclass\nclass S:\n    x: object = field(default_factory=load)\n\nasync def h():\n    S()\n"
+            },
+            "subprocess.run",
+        ),
+        (
+            {
+                "app.h": "from dataclasses import dataclass, field\n\n"
+                "@dataclass\nclass S:\n    x: object = field(default_factory=lambda: open('x'))\n\n"
+                "async def h():\n    S()\n"
+            },
+            "open",
+        ),
+        (
+            {
+                "app.h": "import time\n\nclass Lk:\n    def __enter__(self):\n        time.sleep(1)\n\n"
+                "    def __exit__(self, *a):\n        pass\n\nasync def h():\n    with Lk():\n        pass\n"
+            },
+            "time.sleep",
+        ),
+        (
+            {
+                "app.h": "class Lk:\n    def __enter__(self):\n        return self\n\n"
+                "    def __exit__(self, *a):\n        self.f.flush()\n\nasync def h():\n    with Lk():\n        pass\n"
+            },
+            "self.f.flush",
+        ),
+        ({"app.h": "try:\n    import foo\nexcept ImportError:\n    async def h():\n        open('x')\n"}, "open"),
+        (
+            {
+                "app.h": "def make():\n    for _ in range(1):\n"
+                "        async def h():\n            open('x')\n    return h\n"
+            },
+            "open",
+        ),
+        (
+            {
+                "app.h": "def make(x):\n    match x:\n        case 1:\n"
+                "            async def h():\n                open('x')\n"
+            },
+            "open",
+        ),
+        (
+            {
+                "app.h": "from pydantic import BaseModel, field_validator\nimport time\n\nclass M(BaseModel):\n"
+                "    x: int\n\n    @field_validator('x')\n    @classmethod\n    def v(cls, x):\n"
+                "        time.sleep(1)\n        return x\n\nasync def h():\n    M(x=1)\n"
+            },
+            "time.sleep",
+        ),
+        (
+            {
+                "app.h": "class S:\n    def __post_init__(self):\n        self.f = open('x')\n\n"
+                "async def h():\n    S()\n"
+            },
+            "open",
+        ),
+        (
+            {
+                "app.h": "class S:\n    def __new__(cls):\n        open('x')\n        return object.__new__(cls)\n\n"
+                "async def h():\n    S()\n"
+            },
+            "open",
+        ),
+        (
+            {
+                "app.base": "class Base:\n    def __init__(self):\n        open('x')\n",
+                "app.h": "from app.base import Base\n\nclass S(Base):\n    pass\n\nasync def h():\n    S()\n",
+            },
+            "open",
+        ),
         (  # a nested helper is found before a module-level function of the same name (mutant L02-no-nested-scope)
             {
                 "app.h": "def work():\n    return 1\n\n"
@@ -208,3 +303,19 @@ def test_a_shadowed_builtin_is_not_pure(tmp_path: Path) -> None:
         tmp_path, {"app.h": "from app.io import sorted\n\nasync def h(x):\n    return sorted(x)\n", "app.io": ""}
     )
     assert site_texts(found) == {"sorted"}
+
+
+def test_every_async_def_of_the_tree_is_a_root() -> None:
+    """S0103 round 1 (verifier F1): an `async def` in a block the index does not enter, or two with one name, would
+    never be walked."""
+    assert unindexed_async_defs(index()) == []
+
+
+def test_an_async_def_the_index_cannot_tell_apart_is_reported(tmp_path: Path) -> None:
+    root = tmp_path / "src" / "app"
+    root.mkdir(parents=True)
+    (root / "__init__.py").touch()
+    (root / "h.py").write_text(
+        "if X:\n    async def h():\n        pass\nelse:\n    async def h():\n        open('x')\n"
+    )
+    assert unindexed_async_defs(index(tmp_path / "src", "app")) == ["app.h: 2 async defs, 1 indexed"]

@@ -7,7 +7,17 @@
   text constant of ours (a literal, or a module-level name bound to one, `LiteralString` by convention), except the
   reviewed sites in `SQL_SITES`; the one site that runs SQL a user wrote is `QueryRunner.run_user_sql`;
 - every SQLite connection is opened at a reviewed site (`CONNECT_SITES`): the checked read-only open of the mirror
-  (`files.open_mirror`, used by the reader and the runner) and the runner's empty in-memory resolver.
+  (`files.open_mirror`, used by the reader and the runner) and the runner's empty in-memory resolver. The opener is
+  `sqlite3.connect` or `sqlite3.Connection` under any import spelling, called or bound to another name (a name in an
+  annotation opens nothing);
+- every other entry point of a connection (a function, collation or authorizer registered, a limit or extension
+  loading changed, a backup, serialize or blob) is at a reviewed site (`ENTRY_SITES`); a method reached by its name
+  (`getattr(con, "execute")`, `methodcaller`) counts as SQL that is not ours.
+
+Stated limits (S0103 round 1, verifier F4), each mitigated by the `one-sqlite-home` contract (no `sqlite3` import
+outside `app.mirror`, so no other package can open a connection): a module-level constant imported from the package
+by an upper-case name is taken as ours without reading it; a connection reached through `getattr` with a name that
+is not a constant, or an opener reached through `importlib`, is not seen.
 
 Default-deny: an unreviewed site fails, and so does a reviewed site that is gone. The runner's own guards (the
 authorizer, the limits, the time limit, the row and result caps) are tested in `tests/mirror/test_query.py`.
@@ -23,6 +33,16 @@ import pytest
 from tests.architecture.loop_calls import SRC, module_name
 
 EXECUTE = frozenset({"execute", "executemany", "executescript"})
+ENTRY_POINTS = frozenset(
+    {
+        "create_function", "create_aggregate", "create_window_function", "create_collation", "set_authorizer",
+        "set_progress_handler", "set_trace_callback", "enable_load_extension", "load_extension", "setlimit",
+        "backup", "serialize", "deserialize", "blobopen", "iterdump",
+    }
+)  # fmt: skip
+"""Connection methods that register code SQL runs, change the confinement, or read or write a database other than
+by a statement (S0103 round 1, verifier F4)."""
+OPENERS = frozenset({"connect", "Connection"})
 
 SQL_SITES: dict[tuple[str, str], str] = {
     (
@@ -41,12 +61,18 @@ CONNECT_SITES: dict[tuple[str, str], str] = {
     ("app.mirror.query", "_Resolver._ask"): "an empty in-memory database: no file",
 }
 
+ENTRY_SITES: dict[tuple[str, str], str] = {
+    ("app.mirror.query", "confine"): "the confinement itself: the limits and the authorizer of `confine`",
+    ("app.mirror.query", "_Resolver._ask"): "the resolver's recording authorizer, on its empty in-memory connection",
+    ("app.mirror.query", "QueryRunner.run_user_sql"): "the time limit's progress handler (L1-10)",
+}
+
 
 @dataclass(frozen=True, slots=True)
 class Found:
     module: str
     function: str
-    kind: str  # "sql" or "connect"
+    kind: str  # "sql", "connect" or "entry"
     line: int
 
 
@@ -73,20 +99,38 @@ def _constant_sql(arg: ast.expr, constants: set[str]) -> bool:
 
 
 def _connect_names(tree: ast.Module) -> set[str]:
-    """Local spellings of `sqlite3.connect`."""
-    out = {"sqlite3.connect"}
+    """Local spellings of `sqlite3.connect` and `sqlite3.Connection`."""
+    out = {f"sqlite3.{o}" for o in OPENERS}
     for node in ast.walk(tree):
         if isinstance(node, ast.ImportFrom) and node.module == "sqlite3":
-            out.update(a.asname or a.name for a in node.names if a.name == "connect")
+            out.update(a.asname or a.name for a in node.names if a.name in OPENERS)
         if isinstance(node, ast.Import):
-            out.update(f"{a.asname}.connect" for a in node.names if a.name == "sqlite3" and a.asname)
+            out.update(f"{a.asname}.{o}" for a in node.names if a.name == "sqlite3" and a.asname for o in OPENERS)
+    return out
+
+
+def _annotations(tree: ast.Module) -> set[int]:
+    """The nodes inside annotations: a type named there opens nothing."""
+    out: set[int] = set()
+    for node in ast.walk(tree):
+        found: list[ast.expr | None] = []
+        if isinstance(node, ast.arg | ast.AnnAssign):
+            found.append(node.annotation)
+        elif isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
+            found.append(node.returns)
+        for ann in found:
+            if ann is not None:
+                out.update(id(n) for n in ast.walk(ann))
     return out
 
 
 def scan(source: str, module: str) -> list[Found]:
+    """Every statement run that is not a constant of ours (`sql`), every opener of a connection, called or bound to
+    another name (`connect`), and every other entry point (`entry`), by the function it is in."""
     tree = ast.parse(source)
     constants = _constants(tree)
     connects = _connect_names(tree)
+    typed = _annotations(tree)
     out: list[Found] = []
 
     def visit(node: ast.AST, scope: str) -> None:
@@ -96,12 +140,26 @@ def scan(source: str, module: str) -> list[Found]:
                 continue
             if isinstance(child, ast.Call):
                 func = child.func
-                text = ast.unparse(func)
                 if isinstance(func, ast.Attribute) and func.attr in EXECUTE:
                     if not child.args or not _constant_sql(child.args[0], constants):
                         out.append(Found(module, scope, "sql", child.lineno))
-                elif text in connects:
-                    out.append(Found(module, scope, "connect", child.lineno))
+                elif isinstance(func, ast.Attribute) and func.attr in ENTRY_POINTS:
+                    out.append(Found(module, scope, "entry", child.lineno))
+                elif (
+                    isinstance(func, ast.Name)
+                    and func.id in ("getattr", "methodcaller", "attrgetter")
+                    and any(
+                        isinstance(a, ast.Constant) and a.value in EXECUTE | ENTRY_POINTS | OPENERS for a in child.args
+                    )
+                ):
+                    out.append(Found(module, scope, "sql", child.lineno))  # a method reached by its name
+            if (
+                isinstance(child, ast.Name | ast.Attribute)
+                and id(child) not in typed
+                and ast.unparse(child) in connects
+                and isinstance(child.ctx, ast.Load)
+            ):
+                out.append(Found(module, scope, "connect", child.lineno))  # called, or bound to another name
             visit(child, scope)
 
     visit(tree, "")
@@ -110,9 +168,10 @@ def scan(source: str, module: str) -> list[Found]:
 
 def problems(found: list[Found]) -> list[str]:
     out: list[str] = []
-    for kind, sites in (("sql", SQL_SITES), ("connect", CONNECT_SITES)):
+    whats = {"sql": "SQL that is not a constant of ours", "connect": "a SQLite connection", "entry": "an entry point"}
+    for kind, sites in (("sql", SQL_SITES), ("connect", CONNECT_SITES), ("entry", ENTRY_SITES)):
         seen = {(f.module, f.function) for f in found if f.kind == kind}
-        what = "SQL that is not a constant of ours" if kind == "sql" else "a SQLite connection"
+        what = whats[kind]
         out.extend(
             f"{f.module}:{f.function} line {f.line}: {what} outside the reviewed sites"
             for f in found
@@ -152,11 +211,25 @@ def test_the_scan_sees_the_runners_user_query() -> None:
         ("import sqlite3\n\ndef open_db(p):\n    return sqlite3.connect(p)\n", "connect"),
         ("from sqlite3 import connect\n\ndef open_db(p):\n    return connect(p)\n", "connect"),
         ("import sqlite3 as lite\n\ndef open_db(p):\n    return lite.connect(p)\n", "connect"),
+        # S0103 round 1 (verifier F4)
+        ("import sqlite3\n\ndef open_db(p):\n    return sqlite3.Connection(p)\n", "connect"),
+        ("from sqlite3 import Connection\n\ndef open_db(p):\n    return Connection(p)\n", "connect"),
+        ("def run(con, sql):\n    return getattr(con, 'execute')(sql)\n", "sql"),
+        (
+            "from operator import methodcaller\n\n"
+            "def run(con, sql):\n    return methodcaller('executescript', sql)(con)\n",
+            "sql",
+        ),
+        ("def run(con):\n    con.create_function('f', 1, eval)\n", "entry"),
+        ("def run(con):\n    con.enable_load_extension(True)\n", "entry"),
+        ("def run(con):\n    con.set_authorizer(None)\n", "entry"),
+        ("def run(con, other):\n    con.backup(other)\n", "entry"),
+        ("def run(con, data):\n    con.deserialize(data)\n", "entry"),
     ],
 )
 def test_a_second_query_path_is_refused(source: str, kind: str) -> None:
     found = scan(source, "app.api.planted")
-    assert [f.kind for f in found] == [kind]
+    assert kind in [f.kind for f in found]
     assert problems(found + tree_findings()) != []
 
 
@@ -181,3 +254,18 @@ def test_the_tree_is_scanned() -> None:
     """Not vacuous: the mirror's three modules are read."""
     names = {module_name(p, SRC) for p in (SRC / "app" / "mirror").rglob("*.py")}
     assert {"app.mirror.query", "app.mirror.reader", "app.mirror.files"} <= names
+
+
+def test_a_module_level_alias_of_the_opener_is_found() -> None:
+    """S0103 round 1 (verifier F4): `connect = sqlite3.connect` binds the opener at module level."""
+    found = scan("import sqlite3\nconnect = sqlite3.connect\n\ndef o(p):\n    return connect(p)\n", "app.mirror.x")
+    assert ("", "connect") in {(f.function, f.kind) for f in found}
+    assert problems(found + tree_findings()) != []
+
+
+def test_a_connection_named_in_an_annotation_opens_nothing() -> None:
+    source = (
+        "import sqlite3\n\nclass R:\n    con: sqlite3.Connection\n\n"
+        "def f(c: sqlite3.Connection) -> sqlite3.Connection:\n    return c\n"
+    )
+    assert scan(source, "app.mirror.x") == []

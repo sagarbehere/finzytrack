@@ -165,32 +165,33 @@ forbidden_modules =
 
 [importlinter:contract:http-at-the-edge]
 # Errors are translated once, at the edge: no module below `app.api` knows an HTTP status or raises a framework's
-# HTTP exception (ARCHITECTURE.md §6.2, EP-13; L1-05, S0103). HTTP clients (httpx, for a provider an adapter calls)
-# are not servers and are not listed.
+# HTTP exception (ARCHITECTURE.md §6.2, EP-13; L1-05, S0103). Default-deny (S0103 round 1, verifier F2): every module
+# of `app`, a new package included, except the edge and the entry that serves it. HTTP clients (httpx, for a
+# provider an adapter calls) are not servers and are not listed.
 name = Only the API edge and the entry know HTTP (ARCHITECTURE.md §6.2, EP-13)
 type = forbidden
 source_modules =
-    app.domain
-    app.platform
-    app.mirror
-    app.workspaces
-    app.content
+    app
 forbidden_modules =
     fastapi
     starlette
     uvicorn
+# A planted copy of app.main (test_contracts) no longer imports fastapi; an unmatched ignore warns, never errors.
+unmatched_ignore_imports_alerting = warn
+ignore_imports =
+    app.api.* -> fastapi
+    app.api.* -> starlette
+    app.main -> fastapi
+    app.main -> uvicorn
 
 [importlinter:contract:one-sqlite-home]
 # One hardened runner for user SQL and one reader for the app's own reads, both in `app.mirror` (ADR-0016; L1-10,
-# S0103): no other package opens a SQLite connection of its own.
+# S0103): no other module opens a SQLite connection of its own. Default-deny (S0103 round 1, verifier F2).
 name = SQLite only in the mirror package (ADR-0016)
 type = forbidden
 source_modules =
-    app.main
-    app.api
-    app.workspaces
-    app.platform
-    app.domain
-    app.content
+    app
 forbidden_modules =
     sqlite3
+ignore_imports =
+    app.mirror.* -> sqlite3

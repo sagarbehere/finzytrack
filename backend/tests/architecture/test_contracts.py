@@ -95,6 +95,14 @@ def test_contracts_hold_on_the_tree() -> None:
         ("app.platform.adapters.planted", "from sqlite3 import connect\n", "SQLite only in the mirror package"),
         ("app.workspaces.planted", "import sqlite3\n", "SQLite only in the mirror package"),
         ("app.main", "import sqlite3\n", "SQLite only in the mirror package"),
+        # S0103 round 1 (verifier F2): default-deny, so a package the contract does not name is held too.
+        ("app.services.planted", "import sqlite3\n", "SQLite only in the mirror package"),
+        ("app.selfcheck_twin", "import sqlite3\n", "SQLite only in the mirror package"),
+        ("app.mirror_twin", "import sqlite3\n", "SQLite only in the mirror package"),
+        ("app.boot.planted", "import fastapi\n", "Only the API edge and the entry know HTTP"),
+        ("app.planted", "import starlette\n", "Only the API edge and the entry know HTTP"),
+        ("app.api_twin", "import fastapi\n", "Only the API edge and the entry know HTTP"),
+        ("app.services.planted", "import uvicorn\n", "Only the API edge and the entry know HTTP"),
     ],
 )
 def test_planted_violation_breaks_its_contract(tree: Path, module: str, text: str, contract: str) -> None:

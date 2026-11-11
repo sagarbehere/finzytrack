@@ -11,9 +11,15 @@ change while the app runs is read through a callback on every line (`EventLog(de
 `app.platform.observability`. This file holds, default-deny:
 
 - every call or assignment that configures logging (levels, handlers, filters, formatters, structlog's or the
-  stdlib's global configuration, the process's exception hooks) is in `EventLog.__init__`, `capture_process` (with
-  its undo) or `close` (`CONFIGURES`);
+  stdlib's global configuration, the process's exception hooks; a handler or filter list changed in place; the same
+  attributes through `setattr`; any private attribute of `EventLog`, written from outside it) is in
+  `EventLog.__init__`, `capture_process` (with its undo) or `close` (`CONFIGURES`);
 - `EventLog` is built and `capture_process` called only by the composition root (`BUILDERS`).
+
+Stated limits (S0103 round 1, verifier F4), mitigated by the `one-logger` contract (only
+`app.platform.observability` imports `logging` or `structlog`): the scan matches by method and attribute name, so a
+configuring call through `getattr` with a computed name, or a method of another name that a library adds, is not
+seen.
 """
 
 from __future__ import annotations
@@ -35,8 +41,13 @@ CONFIG_METHODS = frozenset(
     }
 )  # fmt: skip
 CONFIG_ATTRIBUTES = frozenset(
-    {"propagate", "level", "disabled", "handlers", "filters", "excepthook", "unraisablehook", "lastResort"}
-)
+    {
+        "propagate", "level", "disabled", "handlers", "filters", "formatter", "excepthook", "unraisablehook",
+        "lastResort", "manager", "root",
+    }
+)  # fmt: skip
+MUTATORS = frozenset({"append", "extend", "insert", "remove", "clear", "pop", "add", "discard", "update"})
+"""A list or set of logging's (`logger.handlers.append(h)`) changed in place (S0103 round 1, verifier F4)."""
 
 LOG = "app.platform.observability.log"
 CONFIGURES = frozenset(
@@ -57,8 +68,27 @@ class Found:
     line: int
 
 
+def log_state() -> frozenset[str]:
+    """The private attributes `EventLog` sets on itself: written from outside, they reconfigure the log."""
+    tree = ast.parse((SRC / "app" / "platform" / "observability" / "log.py").read_text())
+    names: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ClassDef) and node.name == "EventLog":
+            for n in ast.walk(node):
+                if (
+                    isinstance(n, ast.Attribute)
+                    and isinstance(n.value, ast.Name)
+                    and n.value.id == "self"
+                    and isinstance(n.ctx, ast.Store)
+                ):
+                    names.add(n.attr)
+    return frozenset(names)
+
+
 def scan(source: str, module: str) -> list[Found]:
     out: list[Found] = []
+    private = log_state()
+    watched = CONFIG_ATTRIBUTES | private
 
     def visit(node: ast.AST, scope: str) -> None:
         for child in ast.iter_child_nodes(node):
@@ -71,11 +101,29 @@ def scan(source: str, module: str) -> list[Found]:
                     out.append(Found(module, scope, name, child.lineno))
                 if name in ("EventLog", "capture_process"):
                     out.append(Found(module, scope, name, child.lineno))
+                if (
+                    name in ("setattr", "delattr")
+                    and len(child.args) >= 2
+                    and isinstance(child.args[1], ast.Constant)
+                    and child.args[1].value in watched
+                ):
+                    out.append(Found(module, scope, f"{name} {child.args[1].value}", child.lineno))
+                func = child.func
+                if (
+                    isinstance(func, ast.Attribute)
+                    and func.attr in MUTATORS
+                    and isinstance(func.value, ast.Attribute)
+                    and func.value.attr in CONFIG_ATTRIBUTES
+                ):
+                    out.append(Found(module, scope, f"{func.value.attr}.{func.attr}", child.lineno))
             if isinstance(child, ast.Assign | ast.AugAssign | ast.AnnAssign):
                 targets = child.targets if isinstance(child, ast.Assign) else [child.target]
                 for t in targets:
                     for el in t.elts if isinstance(t, ast.Tuple) else [t]:
-                        if isinstance(el, ast.Attribute) and el.attr in CONFIG_ATTRIBUTES:
+                        if isinstance(el, ast.Attribute) and (
+                            el.attr in CONFIG_ATTRIBUTES
+                            or (el.attr in private and not (isinstance(el.value, ast.Name) and el.value.id == "self"))
+                        ):
                             out.append(Found(module, scope, f"{el.attr} =", child.lineno))
             visit(child, scope)
 
@@ -129,6 +177,13 @@ def test_the_scan_sees_the_logs_own_configuration() -> None:
         "def switch(log):\n    log._handler.level = 10\n",
         "from app.platform.observability import EventLog\n\ndef per_tenant(p, **kw):\n    return EventLog(p, **kw)\n",
         "def again(log):\n    log.capture_process()\n",
+        # S0103 round 1 (verifier F4)
+        "def swap(h, f):\n    h.formatter = f\n",
+        "def more(logger, h):\n    logger.handlers.append(h)\n",
+        "def lvl(logger):\n    setattr(logger, 'level', 50)\n",
+        "def on_settings(log, on):\n    log._debug = lambda: on\n",
+        "def mute(log):\n    log._closed = True\n",
+        "def mute(log):\n    setattr(log, '_closed', True)\n",
     ],
 )
 def test_a_reconfiguration_after_the_start_is_refused(source: str) -> None:
@@ -140,3 +195,8 @@ def test_a_reconfiguration_after_the_start_is_refused(source: str) -> None:
 def test_a_builder_that_is_gone_is_stale() -> None:
     found = [f for f in tree_findings() if f.what != "capture_process"]
     assert "stale builder: ('app.main', 'main', 'capture_process')" in problems(found)
+
+
+def test_the_logs_own_state_is_read_from_its_class() -> None:
+    """Not vacuous: the private attributes a reconfiguration would write are found."""
+    assert {"_debug", "_closed", "_handler", "_logger"} <= log_state()

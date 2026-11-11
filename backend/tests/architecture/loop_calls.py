@@ -7,19 +7,23 @@ when called; a nested `async def` is a root of its own):
 - an awaited call (`await f(...)`) passes; when `f` is a sync function of ours its body runs on the loop before it
   returns the awaitable, so it is walked too;
 - a call that resolves to a function of ours (a module-level or nested function, a method through `self`/`cls`, a
-  name imported from the package, re-exports followed) is walked in turn; a class of ours is walked through its
-  `__init__`, `__post_init__` and `__new__` when it defines them (a generated dataclass or pydantic `__init__` only
-  builds a value in memory);
-- a call of a pure builtin (`PURE_BUILTINS`) passes;
+  name imported from the package, re-exports followed; a bare name never resolves to a class attribute, as in
+  Python) is walked in turn. Building a class of ours walks what its construction runs: `__init__`, `__post_init__`
+  and `__new__`, its pydantic validators (`VALIDATORS`) and each `default_factory` (a generated dataclass or pydantic
+  `__init__` calls them), its bases of ours alike; entering it in a `with` also walks `__enter__` and `__exit__`;
+- a call of a pure builtin (`PURE_BUILTINS`) passes, but the callables it calls are walked as calls: `map`'s and
+  `filter`'s function, the `key=` of `sorted`, `min` and `max`, `iter`'s callable; a lambda there is walked inline;
 - anything else is a **site** `(function, callee text)` that must be reviewed (`test_async_edge.REVIEWED`), with
   its reason. Default-deny: an unreviewed site fails, and so does a reviewed site the walk no longer meets.
 
 A `with` whose context is not a call (`with lock:`) is a site too (`with <text>`): entering it may wait.
 
-Stated limits: a property or descriptor runs code without a call node; iterating an object (`for x in it`) calls
-its `__next__`; operators call dunders; a callable passed in and called (`handler(request)`) is a site by its text,
-so its body is the reason's word. Library code (FastAPI, Starlette, uvicorn, pydantic) is not walked: it is the
-framework that runs the loop.
+Stated limits: a property or descriptor runs code without a call node, and so do `__str__`, `__repr__`, `__format__`
+(`str(x)`, an f-string) and the other dunders (operators, `__next__` when iterating, `__eq__`, `__hash__`); a
+callable passed in and called (`handler(request)`) is a site by its text, so its body is the reason's word; a
+callable handed to an awaited call or to a site is that call's word too (`await anyio.to_thread.run_sync(work)` is
+the rule's own shape); the object a function of ours returns and a `with` then enters is not followed. Library code
+(FastAPI, Starlette, uvicorn, pydantic) is not walked: it is the framework that runs the loop.
 """
 
 from __future__ import annotations
@@ -45,6 +49,12 @@ PURE_BUILTINS = frozenset(
 and `help` are not here: each would be a site."""
 
 INIT_METHODS = ("__init__", "__post_init__", "__new__")
+ENTER_METHODS = ("__enter__", "__exit__")
+VALIDATORS = frozenset({"field_validator", "model_validator", "validator", "root_validator"})
+FACTORY_CALLS = frozenset({"field", "dataclasses.field", "Field", "pydantic.Field"})
+CALLABLE_ARGS: dict[str, tuple[int, ...]] = {"map": (0,), "filter": (0,), "iter": (0,)}
+"""Pure builtins that call a positional argument (`iter` only in its two-argument form)."""
+KEY_CALLERS = frozenset({"sorted", "min", "max"})
 
 
 @dataclass(frozen=True, slots=True)
@@ -75,24 +85,36 @@ def module_name(path: Path, root: Path) -> str:
     return ".".join(parts)
 
 
-def _index_defs(mod: Module, body: list[ast.stmt], prefix: str) -> None:
-    for node in body:
-        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
-            qual = f"{prefix}{node.name}"
-            mod.functions[qual] = node
-            _index_defs(mod, node.body, qual + ".")
-        elif isinstance(node, ast.ClassDef):
-            qual = f"{prefix}{node.name}"
-            mod.classes[qual] = node
-            _index_defs(mod, node.body, qual + ".")
-        elif isinstance(node, ast.If | ast.Try | ast.With):
-            for part in (getattr(node, "body", []), getattr(node, "orelse", []), getattr(node, "finalbody", [])):
-                _index_defs(mod, part, prefix)
+def _index_defs(mod: Module, node: ast.AST, prefix: str) -> None:
+    """Every function and class under `node`, whatever block holds it (`if`, `try` and its handlers, `for`, `while`,
+    `with`, `match`, `try*`)."""
+    for child in ast.iter_child_nodes(node):
+        if isinstance(child, ast.FunctionDef | ast.AsyncFunctionDef):
+            qual = f"{prefix}{child.name}"
+            mod.functions[qual] = child
+            _index_defs(mod, child, qual + ".")
+        elif isinstance(child, ast.ClassDef):
+            qual = f"{prefix}{child.name}"
+            mod.classes[qual] = child
+            _index_defs(mod, child, qual + ".")
+        else:
+            _index_defs(mod, child, prefix)
+
+
+def unindexed_async_defs(mods: dict[str, Module]) -> list[str]:
+    """Modules where an `async def` is not a root: two with one qualified name, or one the index did not reach."""
+    out: list[str] = []
+    for mod in mods.values():
+        found = sum(isinstance(n, ast.AsyncFunctionDef) for n in ast.walk(mod.tree))
+        indexed = sum(isinstance(n, ast.AsyncFunctionDef) for n in mod.functions.values())
+        if found != indexed:
+            out.append(f"{mod.name}: {found} async defs, {indexed} indexed")
+    return out
 
 
 def _imports(tree: ast.Module, name: str, is_package: bool) -> dict[str, str]:
     out: dict[str, str] = {}
-    for node in tree.body:
+    for node in ast.walk(tree):  # an import in any block counts, so it can shadow a builtin
         if isinstance(node, ast.ImportFrom):
             base = node.module or ""
             if node.level:
@@ -118,7 +140,7 @@ def index(root: Path = SRC, package: str = PACKAGE) -> dict[str, Module]:
         tree = ast.parse(path.read_text(), filename=str(path))
         is_package = path.name == "__init__.py"
         mod = Module(name, tree, imports=_imports(tree, name, is_package), is_package=is_package)
-        _index_defs(mod, tree.body, "")
+        _index_defs(mod, tree, "")
         mods[name] = mod
     return mods
 
@@ -166,6 +188,8 @@ class _Resolver:
         if isinstance(func, ast.Name):
             parts = scope.split(".") if scope else []
             for i in range(len(parts), -1, -1):  # nested functions of the enclosing scopes, then the module
+                if i and ".".join(parts[:i]) in mod.classes:
+                    continue  # a class body is no enclosing scope of its methods
                 qual = ".".join([*parts[:i], func.id])
                 if qual in mod.functions:
                     return Fn(mod.name, qual)
@@ -196,11 +220,30 @@ def _own_class(mod: Module, qualname: str) -> str | None:
     return None
 
 
-def _calls(body: list[ast.stmt]) -> Iterator[tuple[ast.Call | ast.withitem, bool]]:
-    """Every call in `body` (and `with` items that are not calls), with whether it is awaited; nested function,
-    lambda and class bodies are skipped (their decorators and defaults run here and are kept)."""
+type Kind = str  # "call", "with" (the context of a `with`), "bare" (a `with` that is not a call)
+
+
+def _callable_args(call: ast.Call) -> list[ast.expr]:
+    """The arguments a pure higher-order builtin calls (by its name; `walk` checks it is the builtin)."""
+    if not isinstance(call.func, ast.Name):
+        return []
+    name = call.func.id
+    out: list[ast.expr] = []
+    if name in CALLABLE_ARGS and not (name == "iter" and len(call.args) != 2):
+        out.extend(call.args[i] for i in CALLABLE_ARGS[name] if i < len(call.args))
+    if name in KEY_CALLERS:
+        out.extend(k.value for k in call.keywords if k.arg == "key")
+    return out
+
+
+def _calls(body: list[ast.AST]) -> Iterator[tuple[ast.Call | ast.withitem, bool, Kind]]:
+    """Every call in `body` (and `with` items that are not calls), with whether it is awaited and how it is used;
+    nested function, lambda and class bodies are skipped (their decorators and defaults run here and are kept). A
+    callable a pure higher-order builtin calls is yielded as a call of its own; a lambda there is walked inline."""
     stack: list[ast.AST] = list(reversed(body))
     awaited: set[int] = set()
+    contexts: set[int] = set()
+    inline: set[int] = set()
     while stack:
         node = stack.pop()
         if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
@@ -210,6 +253,8 @@ def _calls(body: list[ast.stmt]) -> Iterator[tuple[ast.Call | ast.withitem, bool
             continue
         if isinstance(node, ast.Lambda):
             stack.extend(node.args.defaults)
+            if id(node) in inline:
+                stack.append(node.body)
             continue
         if isinstance(node, ast.ClassDef):
             stack.extend(node.decorator_list)
@@ -219,10 +264,19 @@ def _calls(body: list[ast.stmt]) -> Iterator[tuple[ast.Call | ast.withitem, bool
             awaited.add(id(node.value))
         if isinstance(node, ast.With):
             for item in node.items:
-                if not isinstance(item.context_expr, ast.Call):
-                    yield item, False
+                if isinstance(item.context_expr, ast.Call):
+                    contexts.add(id(item.context_expr))
+                else:
+                    yield item, False, "bare"
         if isinstance(node, ast.Call):
-            yield node, id(node) in awaited
+            yield node, id(node) in awaited, "with" if id(node) in contexts else "call"
+            for arg in _callable_args(node):
+                if isinstance(arg, ast.Lambda):
+                    inline.add(id(arg))
+                elif isinstance(arg, ast.Name | ast.Attribute):
+                    synthetic = ast.Call(func=arg, args=[], keywords=[])
+                    ast.copy_location(synthetic, arg)
+                    yield synthetic, False, "call"
         stack.extend(reversed(list(ast.iter_child_nodes(node))))
 
 
@@ -241,6 +295,43 @@ def _str_method(func: ast.expr) -> bool:
     )
 
 
+def _decorator_name(node: ast.expr) -> str:
+    target = node.func if isinstance(node, ast.Call) else node
+    return target.attr if isinstance(target, ast.Attribute) else target.id if isinstance(target, ast.Name) else ""
+
+
+@dataclass(frozen=True, slots=True)
+class _Construction:
+    """What building (and, `entered`, entering) a class of ours runs, beside its methods: the `default_factory`
+    callables of its fields, scanned in the class's module scope."""
+
+    methods: list[Fn]
+    factories: list[ast.expr]
+
+
+def _construction(res: _Resolver, cmod: str, cqual: str, entered: bool, depth: int = 0) -> _Construction:
+    mod = res.mods[cmod]
+    cls = mod.classes[cqual]
+    names = INIT_METHODS + (ENTER_METHODS if entered else ())
+    methods = [Fn(cmod, f"{cqual}.{m}") for m in names if f"{cqual}.{m}" in mod.functions]
+    factories: list[ast.expr] = []
+    for stmt in cls.body:
+        if isinstance(stmt, ast.FunctionDef) and any(_decorator_name(d) in VALIDATORS for d in stmt.decorator_list):
+            methods.append(Fn(cmod, f"{cqual}.{stmt.name}"))
+        value = stmt.value if isinstance(stmt, ast.Assign | ast.AnnAssign) else None
+        if isinstance(value, ast.Call) and ast.unparse(value.func) in FACTORY_CALLS:
+            factories.extend(k.value for k in value.keywords if k.arg == "default_factory")
+    if depth < 10:
+        scope = cqual.rpartition(".")[0]
+        for base in cls.bases:
+            target = res.call(mod, scope, None, base)
+            if isinstance(target, tuple):
+                inner = _construction(res, target[0], target[1], entered, depth + 1)
+                methods.extend(inner.methods)
+                factories.extend(inner.factories)
+    return _Construction(methods, factories)
+
+
 def walk(mods: dict[str, Module], extra_roots: tuple[str, ...] = ()) -> Walk:
     res = _Resolver(mods)
     out = Walk()
@@ -253,27 +344,50 @@ def walk(mods: dict[str, Module], extra_roots: tuple[str, ...] = ()) -> Walk:
         m, _, q = key.partition(":")
         todo.append(Fn(m, q))
     out.roots = set(todo)
-    while todo:
-        fn = todo.pop()
+    # A unit of work: (the function it belongs to, its module, the scope names resolve in, its class, the nodes).
+    work: list[tuple[str, Module, str, str | None, list[ast.AST]]] = []
+    seen_factories: set[int] = set()
+
+    def visit(fn: Fn) -> None:
         if fn in out.reached:
-            continue
+            return
         out.reached.add(fn)
         mod = mods[fn.module]
-        node = mod.functions[fn.qualname]
-        cls = _own_class(mod, fn.qualname)
-        for call, is_awaited in _calls(node.body):
-            if isinstance(call, ast.withitem):
-                out.sites.append(Site(fn.key, f"with {ast.unparse(call.context_expr)}", call.context_expr.lineno))
+        work.append((fn.key, mod, fn.qualname, _own_class(mod, fn.qualname), list(mod.functions[fn.qualname].body)))
+
+    def construct(key: str, cmod: str, cqual: str, entered: bool) -> None:
+        built = _construction(res, cmod, cqual, entered)
+        for m in built.methods:
+            visit(m)
+        for factory in built.factories:
+            if id(factory) in seen_factories:
                 continue
-            target = res.call(mod, fn.qualname, cls, call.func)
+            seen_factories.add(id(factory))
+            node = (
+                factory.body
+                if isinstance(factory, ast.Lambda)
+                else ast.copy_location(ast.Call(func=factory, args=[], keywords=[]), factory)
+            )
+            work.append((f"{cmod}:{cqual}.<default_factory>", mods[cmod], cqual, None, [node]))
+
+    while todo or work:
+        while todo:
+            visit(todo.pop())
+        if not work:
+            break
+        key, mod, scope, cls, nodes = work.pop()
+        for call, is_awaited, kind in _calls(nodes):
+            if isinstance(call, ast.withitem):
+                out.sites.append(Site(key, f"with {ast.unparse(call.context_expr)}", call.context_expr.lineno))
+                continue
+            target = res.call(mod, scope, cls, call.func)
             if isinstance(target, Fn):
                 out.calls_of_ours += 1
-                todo.append(target)
+                visit(target)
                 continue
             if isinstance(target, tuple):
                 out.calls_of_ours += 1
-                cmod, cqual = target
-                todo.extend(Fn(cmod, f"{cqual}.{m}") for m in INIT_METHODS if f"{cqual}.{m}" in mods[cmod].functions)
+                construct(key, target[0], target[1], entered=kind == "with")
                 continue
             if is_awaited:
                 out.awaited += 1
@@ -281,5 +395,5 @@ def walk(mods: dict[str, Module], extra_roots: tuple[str, ...] = ()) -> Walk:
             if _pure_builtin(mod, call.func) or _str_method(call.func):
                 out.builtin_calls += 1
                 continue
-            out.sites.append(Site(fn.key, ast.unparse(call.func), call.lineno))
+            out.sites.append(Site(key, ast.unparse(call.func), call.lineno))
     return out

@@ -84,9 +84,10 @@ CATCH_ALL: dict[tuple[str, str, str], tuple[int, str]] = {
         1,
         "feeds the supervision table `Interrupted`, then re-raises",
     ),
-    ("app.mirror.files", "open_mirror", "reraise"): (
+    ("app.mirror.files", "open_mirror", "swallow"): (
         1,
-        "closes the connection; the expected outcomes become values, anything else is re-raised",
+        "closes the connection; only the named outcomes become values (`NotAMirrorError`, `MemoryError`, a SQLite "
+        "error `app_read_outcome` names), anything else is re-raised (a swallow by type, never by message)",
     ),
 }
 """(module, function, kind) -> (how many such handlers, why)."""
@@ -133,10 +134,27 @@ def _suppresses_all(node: ast.expr) -> bool:
 
 
 def _reraises(handler: ast.ExceptHandler) -> bool:
+    """Every way out of the handler re-raises what it caught: it ends with a bare `raise` (or `raise e`), and nothing
+    in it returns, breaks, continues or raises something else (S0103 round 1, verifier F5)."""
     last = handler.body[-1]
-    return isinstance(last, ast.Raise) and (
-        last.exc is None or (isinstance(last.exc, ast.Name) and last.exc.id == handler.name)
-    )
+    if not (
+        isinstance(last, ast.Raise)
+        and (last.exc is None or (isinstance(last.exc, ast.Name) and last.exc.id == handler.name))
+    ):
+        return False
+    stack: list[ast.AST] = list(handler.body[:-1])
+    while stack:
+        node = stack.pop()
+        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef | ast.Lambda | ast.ClassDef):
+            continue
+        if isinstance(node, ast.Return | ast.Break | ast.Continue):
+            return False
+        if isinstance(node, ast.Raise) and not (
+            node.exc is None or (isinstance(node.exc, ast.Name) and node.exc.id == handler.name)
+        ):
+            return False
+        stack.extend(ast.iter_child_nodes(node))
+    return True
 
 
 def _exception_annotation(node: ast.expr | None) -> bool:
@@ -199,6 +217,10 @@ class _Function:
                 return any(self.text_of(a) for a in node.args)
         if isinstance(node, ast.Match):
             return self.text_of(node.subject)
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr in ("get", "pop"):
+            return any(self.text_of(a) for a in node.args[:1])  # a table keyed on the message (verifier F5)
+        if isinstance(node, ast.Subscript) and isinstance(node.ctx, ast.Load) and not self.text_of(node.value):
+            return self.text_of(node.slice)
         return False
 
 
@@ -284,6 +306,16 @@ def handler(caught: str, *lines: str) -> str:
         (handler("(ValueError, BaseException) as e", "log(e)"), "swallow"),
         (handler("BaseException as e", "raise RuntimeError() from e"), "swallow"),
         (handler("BaseException", "close()", "raise"), "reraise"),
+        # S0103 round 1 (verifier F5): one path swallows, so it is no re-raise.
+        (
+            handler(
+                "BaseException as e", "close()", "if isinstance(e, KeyboardInterrupt):", "    return None", "raise"
+            ),
+            "swallow",
+        ),
+        (handler("BaseException", "raise RuntimeError('x')", "raise"), "swallow"),
+        (handler("OSError as e", "return MESSAGES.get(str(e))"), "match"),
+        (handler("OSError as e", "return MESSAGES[str(e)]"), "match"),
         ("import contextlib\n\ndef f():\n    with contextlib.suppress(Exception):\n        g()\n", "suppress"),
         (
             "from contextlib import suppress\n\ndef f():\n    with suppress(OSError, BaseException):\n        g()\n",
