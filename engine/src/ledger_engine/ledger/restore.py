@@ -250,6 +250,7 @@ class _Checked:
     mode: int  # the file's mode, for its restore copy
     folder_absent: bool  # its folder is one the save made, and it is not there
     write: Mode = Mode.SWAP  # its folder's write mode (`handles.write_mode`, ADR-0068 D2)
+    identity: tuple[int, int] | None = None  # the object whose bytes were judged (`read_identified`; S0101 round 1)
 
 
 def _parent(canonical: str) -> tuple[str, str]:
@@ -265,20 +266,27 @@ def _read(h: DirHandle, name: str, path: str) -> bytes | None:
         raise _Fail(Cause.IO_ERROR, path, e.errno) from None
 
 
-def _look(h: DirHandle, name: str, path: str, *, read: bool = True) -> tuple[Seen, EntryStat | None]:
-    """What stands at `name`: one `stat` for its kind, then its bytes (S0061 red team L3). A file gone between the two
-    is absent ("no such entry" keeps its meaning, verifier r6 F5): the judgement then takes a replaced file as foreign
-    and a backup as bad. A read error fails the try (`_Fail`). Without `read` (a created path, where anything is
-    `taken` whatever it holds: verifier r6 F4), the `stat` alone."""
+def _look(
+    h: DirHandle, name: str, path: str, *, read: bool = True
+) -> tuple[Seen, EntryStat | None, tuple[int, int] | None]:
+    """What stands at `name`: one `stat` for its kind, then its bytes (S0061 red team L3), with the identity of the
+    object they were read from (`read_identified`: the reading descriptor's, never the earlier `stat`'s, so a rename
+    between the two cannot pair one object's bytes with another's identity; S0101 round 1). A file gone between the
+    two is absent ("no such entry" keeps its meaning, verifier r6 F5): the judgement then takes a replaced file as
+    foreign and a backup as bad. A read error fails the try (`_Fail`). Without `read` (a created path, where anything
+    is `taken` whatever it holds: verifier r6 F4), the `stat` alone."""
     st = h.stat(name)
     if st is None:
-        return ABSENT, None
+        return ABSENT, None, None
     if st.kind is not Kind.FILE or not read:
-        return Seen(st.kind), st
-    data = _read(h, name, path)
-    if data is None:
-        return ABSENT, None  # vanished since its `stat`
-    return seen_file(data), st
+        return Seen(st.kind), st, None
+    try:
+        got = h.read_identified(name)
+    except OSError as e:
+        raise _Fail(Cause.IO_ERROR, path, e.errno) from None
+    if got is None:
+        return ABSENT, None, None  # vanished since its `stat`
+    return seen_file(got[0]), st, got[1]
 
 
 def _temp_state(
@@ -340,7 +348,7 @@ def _journal_folder(h: DirHandle, journal_dir: str) -> None:
 
 def _look_file(
     handles: Handles, h: DirHandle, base: str, path: str, parent: str, *, read: bool
-) -> tuple[Seen, EntryStat | None]:
+) -> tuple[Seen, EntryStat | None, tuple[int, int] | None]:
     """`_look` at the file itself; when that fails because its folder denies us looking names up in it (a direct
     `deny search`), the error names the folder (`entry`; S0061 verifier r7 F2), not the file."""
     try:
@@ -369,7 +377,7 @@ def _check(handles: Handles, record: Record, f: FileEntry, *, created: frozenset
         raise _Halt(Cause.KEPT_COPY, path)  # the user has not dealt with the kept copy yet (§11)
     write = write_mode(h)  # the swap, or the best-effort mode without it (ADR-0068 D2)
     handles.entry = None
-    file, st = _look_file(handles, h, base, path, parent, read=f.pre is not None)
+    file, st, identity = _look_file(handles, h, base, path, parent, read=f.pre is not None)
     names = journal.scratch_names(base, record.name)
     looked: list[tuple[TempState, EntryStat | None]] = []
     for n, staged in zip(names, _STAGED, strict=True):
@@ -382,7 +390,7 @@ def _check(handles: Handles, record: Record, f: FileEntry, *, created: frozenset
     if f.pre is not None and f.backup is not None and (file == Seen(Kind.FILE, f.post) or absent):
         handles.entry = _join(record.backup_dir, f.backup)
         try:
-            backup, _ = _look(handles.at(record.backup_dir), f.backup, path)
+            backup, _, _ = _look(handles.at(record.backup_dir), f.backup, path)
         except PathMovedError:
             raise _Halt(Cause.BACKUP_BAD, path) from None
         except (FileNotFoundError, NotADirectoryError):
@@ -405,7 +413,7 @@ def _check(handles: Handles, record: Record, f: FileEntry, *, created: frozenset
         if (nst is not None and nst.locked) or not h.allowed(n, Right.DELETE):
             raise _Halt(Cause.PERMISSION, path, _join(parent, n))
     if v not in _PUT_BACK:
-        return _Checked(f, parent, base, v, 0, False, write)
+        return _Checked(f, parent, base, v, 0, False, write, identity)
     if not h.allowed(".", Right.CHANGE_ENTRIES):
         raise _Halt(Cause.PERMISSION, path, parent)  # the restore temp is made here (`deny add_file` allows removals)
     if v is Verdict.MISSING:
@@ -606,12 +614,22 @@ def _flush(handles: Handles, checked: list[_Checked]) -> None:
     (in place, or by a rename whose new file's data is not synced) is durable before the record says resolved. A
     folder sync makes entries durable, not the data of the files in them (§13). A file step 3 put back holds the
     restore's own bytes, synced by `create`; a created file judged absent has nothing to flush. Any error: `OSError`,
-    so the try is `Failed(io_error)` with the journal `.open` (fails closed)."""
+    so the try is `Failed(io_error)` with the journal `.open` (fails closed).
+
+    **The object judged** (S0101 round 1: red team F1, verifier F1): the flush must make durable the object whose
+    bytes step 2 judged, not whatever the name holds by then. Another program's save by rename after the last folder
+    sync puts a new object at the name whose entry is not durable: flushing that one and resolving would let a power
+    loss drop the rename and bring back the judged object, its data never flushed (the post bytes, or torn). So the
+    identity of the object it synced (`sync_file`'s, from its own descriptor) must be step 2's (`read_identified`);
+    otherwise the try fails, `Failed(io_error)` with no error number (§11: "Press Retry to try again"), the journal
+    `.open`, and the next try judges the file again."""
     for x in checked:
         if x.verdict is not Verdict.AT_PRE or x.entry.pre is None or x.folder_absent:
             continue
         handles.on, handles.entry = x.entry.canonical_path, None
-        handles.at(x.parent).sync_file(x.base)
+        synced = handles.at(x.parent).sync_file(x.base)
+        if x.identity is None or synced != x.identity:
+            raise _Fail(Cause.IO_ERROR, x.entry.canonical_path)  # another object at the name since it was judged
     handles.on = None
 
 

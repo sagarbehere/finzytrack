@@ -919,12 +919,13 @@ PartJournalNeverBlocks ==
 \* the editor's latest bytes of a file are in the file, at a name of ours beside it, or in a kept copy that a journal
 \* still stops on (.open: recovery stops while the copy exists, the save's gate refuses) or that the user chose to keep
 \* (.kept); a kept copy no journal names any more is lost to the user (verifier S0072 r1 F4). Or the user previewed
-\* them and the save replaced them (the backup holds them). Or they are a save's pre bytes, which its backup holds
-\* (an editor's revert, S0101): a swap that displaced them took them for ours (§6.4, "deleting it loses nothing";
-\* Limit (same bytes))
+\* them and the save replaced them (the backup holds them). Or they are a save's pre bytes, which its backup holds,
+\* and R holds that same save's post bytes (an editor's revert that save's swap displaced and took for ours: §6.4,
+\* "deleting it loses nothing"; Limit (same bytes); S0101, tightened in round 1, verifier F2: any older save's
+\* backup with those bytes hid a lost revert under no_displaced_check)
 EditKept(f) ==
   \/ gh.ed[f] = fs.cur[f]
-  \/ f = "R" /\ \E s \in SaveIds : fs.bk[s] = gh.ed[f] /\ gh.ed[f] # ABS
+  \/ f = "R" /\ \E s \in SaveIds : fs.bk[s] = gh.ed[f] /\ gh.ed[f] # ABS /\ fs.cur[f] = PostV(s)
   \/ \E j \in JIds : f \in JFiles(j) /\ gh.ed[f] \in {fs.tc[<<j, f>>], fs.rt[<<j, f>>]}
   \/ \E j \in JIds : f \in JFiles(j) /\ jr[j].st \in OpenSt \cup {"kept"} /\ gh.ed[f] \in fs.kp[<<j, f>>]
 ExternalEditNeverSilentlyLost ==

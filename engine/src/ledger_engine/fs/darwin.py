@@ -265,23 +265,27 @@ class DarwinDir:
         except FileNotFoundError:
             return None
         try:
-            chunks: list[bytes] = []
-            left = limit
-            while left is None or left > 0:
-                chunk = os.read(fd, 1 << 20 if left is None else min(1 << 20, left))
-                if not chunk:
-                    break
-                chunks.append(chunk)
-                if left is not None:
-                    left -= len(chunk)
-            return b"".join(chunks)
+            return _read_fd(fd, limit)
         finally:
             os.close(fd)
 
-    def sync_file(self, name: str) -> None:
+    def read_identified(self, name: str) -> tuple[bytes, tuple[int, int]] | None:
+        try:
+            fd = self._open_regular(check_name(name))
+        except FileNotFoundError:
+            return None
+        try:
+            st = os.fstat(fd)
+            return _read_fd(fd, None), (st.st_dev, st.st_ino)
+        finally:
+            os.close(fd)
+
+    def sync_file(self, name: str) -> tuple[int, int]:
         fd = self._open_regular(check_name(name))  # read-only: F_FULLFSYNC works on it (S0061 r4 probe, APFS)
         try:
+            st = os.fstat(fd)
             self._fs.durable_sync(fd)
+            return st.st_dev, st.st_ino
         finally:
             os.close(fd)
 
@@ -461,6 +465,20 @@ class DarwinDir:
 
     def sync(self) -> None:
         self._fs.durable_sync(self.fd)
+
+
+def _read_fd(fd: int, limit: int | None) -> bytes:
+    """The bytes from `fd`'s position on, at most `limit` of them (all with None), in chunks of 1 MiB."""
+    chunks: list[bytes] = []
+    left = limit
+    while left is None or left > 0:
+        chunk = os.read(fd, 1 << 20 if left is None else min(1 << 20, left))
+        if not chunk:
+            break
+        chunks.append(chunk)
+        if left is not None:
+            left -= len(chunk)
+    return b"".join(chunks)
 
 
 class DarwinFS:

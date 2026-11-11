@@ -2298,6 +2298,85 @@ def test_S0101_a_link_put_at_the_file_before_its_flush_is_refused_and_never_foll
     assert set(journals(w.fs)) == {State.OPEN}
 
 
+def _flush_at(w: World) -> int:
+    """The effect index of the flush of a.bean in a recovery of `w`'s kind (probed on a copy of the world)."""
+    n = len(w.fs.effects)
+    recover(w.fs)
+    return n + w.fs.effects[n:].index("sync_file /w/L/inc:a.bean")
+
+
+@pytest.mark.parametrize("by_rename", [False, True])
+@pytest.mark.parametrize("theirs", ["pre", "foreign"])
+def test_S0101_r1_an_outside_save_by_rename_after_the_checks_is_never_flushed_for_the_judged_file(
+    by_rename: bool, theirs: str
+) -> None:
+    """Round 1, red team F1 (High) = verifier F1: after the try judged a.bean at pre (an unsynced revert) and made
+    its last folder sync, another program saves a.bean by rename and syncs no folder. Flushing that new object and
+    resolving would let a power loss drop the rename and bring back the judged object, never flushed: the post
+    bytes, or torn, under `.resolved`. The flush checks it meets the object step 2 judged: the try fails with the
+    journal `.open` in every power-loss state; the next try judges again (resolves over their pre bytes, now made
+    durable by its folder syncs and flush, or stops on their own bytes)."""
+    at = _flush_at(_reverted(by_rename=by_rename))
+    w = _reverted(by_rename=by_rename)
+    t = w.targets[0]
+    assert t.pre is not None
+    data = t.pre if theirs == "pre" else FOREIGN
+
+    def save_by_rename(i: int, _: str) -> None:
+        if i == at - 1:  # right before the try's last effect ahead of the flush (the last folder sync)
+            w.fs.outside_rename_unsynced(t.path, data)
+
+    w.fs.on_effect = save_by_rename
+    out = recover(w.fs)
+    w.fs.on_effect = None
+    assert out == Failed(Cause.IO_ERROR, t.path), out
+    for state in (w.fs, *w.fs.power_loss_states()):
+        assert set(journals(state)) == {State.OPEN}, "never .resolved over an object it did not judge"
+    out = recover(w.fs)
+    if theirs == "pre":
+        assert isinstance(out, Resolved), out
+        check_recovered(w.fs, w, out)
+    else:
+        assert out == Stopped(Cause.FOREIGN, t.path), out
+
+
+def test_S0101_r1_bytes_read_through_a_rename_and_back_are_never_paired_with_the_object_that_came_back(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Round 1: the identity the flush checks is the one of the object whose bytes were judged, taken from the
+    reading descriptor, never from the `stat` before it. Here a.bean (durably at post) is looked up, then another
+    program's save by rename puts an object holding the pre bytes at the name, the try reads that one, and the old
+    object comes back. Judged at pre by the other object's bytes, a.bean must not be flushed and resolved: it holds the
+    post bytes. Mutant `identity-from-the-stat` resolves here."""
+    from tests.fakes.memfs import _key  # pyright: ignore[reportPrivateUsage]
+
+    w = crashed(A_DURABLE)
+    t = w.targets[0]
+    assert t.pre is not None
+    pre = t.pre
+    real = MemDir.read_identified
+    done: list[bool] = []
+
+    def through_a_rename_and_back(self: MemDir, name: str) -> tuple[bytes, tuple[int, int]] | None:
+        if name != t.base or self.path() != t.folder or done:
+            return real(self, name)
+        done.append(True)
+        d, base = w.fs._parent_and_name(t.path)  # pyright: ignore[reportPrivateUsage]
+        k = _key(base, d.ci)
+        old, pending = d.entries[k], list(d.pending)
+        w.fs.outside_rename_unsynced(t.path, pre)
+        got = real(self, name)
+        d.entries[k], d.pending = old, pending  # renamed back: the old object at the name again
+        return got
+
+    monkeypatch.setattr(MemDir, "read_identified", through_a_rename_and_back)
+    out = recover(w.fs)
+    assert done
+    assert out == Failed(Cause.IO_ERROR, t.path), out
+    assert w.fs.file(t.path) == t.post
+    assert set(journals(w.fs)) == {State.OPEN}
+
+
 def test_S0101_the_rollback_flushes_a_file_an_editor_put_back_to_its_pre_bytes_before_resolved() -> None:
     """The save's own rollback is the same restore: the save fails right after a.bean's swap is durable, an editor
     has put a.bean back to its old text in place without a sync; the rollback resolves only over durable pre bytes."""

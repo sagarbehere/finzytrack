@@ -446,6 +446,22 @@ class MemFS:
         node.data = data
         self.tick(ino)
 
+    def outside_rename_unsynced(self, path: str, data: bytes, *, synced: bool = True) -> None:
+        """Another program's save by rename that syncs no folder (S0101 round 1, red team F2): a new file holding
+        `data` (its data synced, or with `synced` False left unsynced: empty after a power loss) is linked under a
+        temp name and moved over `path`; both entry operations stay pending until a sync of the folder, so a power loss
+        may keep the old file at `path`. Not an effect."""
+        d, name = self._parent_and_name(path)
+        k = _key(name, d.ci)
+        if k not in d.entries:
+            raise FileNotFoundError(errno.ENOENT, "no entry")
+        ino = self._new(_File(data=data, synced=data if synced else b"", mode=0o644))
+        tmp = f".{name}.outside-save"
+        tk = _key(tmp, d.ci)
+        d.entries[k] = (self.stored(name), ino)
+        d.pending.append(("link", tk, self.stored(tmp), str(ino)))
+        d.pending.append(("move", tk, k, self.stored(name)))
+
     def outside_unsynced(self, path: str, synced: bytes = b"") -> None:
         """The file at `path` was last written in place by a program that did not sync it (many editors do not): its
         bytes are in the page cache, and a power loss may leave it at `synced` (empty: an entry kept before its data),
@@ -820,8 +836,17 @@ class MemDir:
             raise PermissionError(errno.EACCES, "read denied")
         return node.data if limit is None else node.data[:limit]
 
-    def sync_file(self, name: str) -> None:
-        """`durable_sync` of the regular file `name`'s data, refused as `read` refuses (one effect)."""
+    def read_identified(self, name: str) -> tuple[bytes, tuple[int, int]] | None:
+        """`read` of the whole file with its identity (the port's docstring)."""
+        hit = self._entry(name)
+        data = self.read(name)
+        if data is None or hit is None:
+            return None
+        return data, (self._d.dev, hit[1])
+
+    def sync_file(self, name: str) -> tuple[int, int]:
+        """`durable_sync` of the regular file `name`'s data, refused as `read` refuses (one effect); the identity of
+        the object it synced."""
         hit = self._entry(name)
         if hit is None:
             raise FileNotFoundError(errno.ENOENT, "no entry")
@@ -837,6 +862,7 @@ class MemDir:
             node.synced = node.data
 
         self._fs._effect(self._label("sync_file", name), do)
+        return self._d.dev, hit[1]
 
     def stat(self, name: str) -> EntryStat | None:
         hit = self._entry(name)

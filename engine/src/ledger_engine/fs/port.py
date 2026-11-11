@@ -160,13 +160,20 @@ class DirHandle(Protocol):
         learn that it is not ours)."""
         ...
 
+    def read_identified(self, name: str) -> tuple[bytes, tuple[int, int]] | None:
+        """`read` of the whole file, with the identity `(st_dev, st_ino)` of the object the bytes were read from, taken
+        from the descriptor that read them (`fstat`), so a later act on the file can check that it meets that same
+        object (S0101 round 1: the restore's flush). None when there is no entry; refused as `read` refuses."""
+        ...
+
     def stat(self, name: str) -> EntryStat | None:
         """The entry `name`, not followed through a link, or None when there is none."""
         ...
 
-    def sync_file(self, name: str) -> None:
+    def sync_file(self, name: str) -> tuple[int, int]:
         """`durable_sync` of the data of the regular file `name`, through a read-only descriptor (it writes nothing):
-        what another program wrote into it without a sync is durable after it returns. Refused as `read` refuses (a
+        what another program wrote into it without a sync is durable after it returns. Returns the identity
+        `(st_dev, st_ino)` of the object it synced, from that descriptor (S0101 round 1). Refused as `read` refuses (a
         link, a folder, a FIFO: `OSError`; no entry: `FileNotFoundError`)."""
         ...
 

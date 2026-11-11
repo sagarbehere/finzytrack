@@ -972,6 +972,25 @@ def test_a_save_on_apfs_writes_its_new_bytes_under_the_staging_name_first(fs: Da
     assert main.read_bytes() == b"pre\n"
 
 
+def test_read_identified_and_sync_file_name_the_object_they_met(fs: DarwinFS, tmp_path: Path) -> None:
+    """S0101 round 1 (red team F1, verifier F1): the restore's flush checks it syncs the object whose bytes step 2
+    judged. `read_identified` gives the identity of the object its descriptor read, `sync_file` that of the object
+    it synced; after a save by rename at the name both name the new object, never the old one."""
+    f = tmp_path / "f"
+    f.write_bytes(b"old")
+    old = f.stat()
+    with fs.open_dir(str(tmp_path)) as d:
+        assert d.read_identified("f") == (b"old", (old.st_dev, old.st_ino))
+        assert d.sync_file("f") == (old.st_dev, old.st_ino)
+        (tmp_path / "g").write_bytes(b"new")
+        os.rename(tmp_path / "g", f)  # another program's save by rename
+        new = f.stat()
+        assert (new.st_dev, new.st_ino) != (old.st_dev, old.st_ino)
+        assert d.read_identified("f") == (b"new", (new.st_dev, new.st_ino))
+        assert d.sync_file("f") == (new.st_dev, new.st_ino)
+        assert d.read_identified("missing") is None
+
+
 def test_sync_file_syncs_a_regular_file_through_a_read_only_descriptor_and_refuses_anything_else(
     fs: DarwinFS, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

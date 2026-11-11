@@ -379,6 +379,28 @@ def test_an_unsynced_in_place_outside_write_may_be_old_new_or_torn_until_the_fil
         fs.outside_write_unsynced("/d/missing", b"x")
 
 
+def test_an_unsynced_outside_save_by_rename_may_be_dropped_whole_until_its_folders_sync() -> None:
+    """S0101 round 1 (red team F2): `outside_rename_unsynced` puts a new object at the name now; a power loss may keep
+    the old one there until the folder is synced; `read_identified` and `sync_file` name the object they met."""
+    fs = fs_with("/d")
+    fs.outside_write("/d/f", b"old bytes")
+    with fs.open_dir("/d") as d:
+        got = d.read_identified("f")
+        assert got is not None
+        old_id = got[1]
+        fs.outside_rename_unsynced("/d/f", b"new bytes")
+        got = d.read_identified("f")
+        assert got is not None
+        assert got[0] == b"new bytes"
+        assert got[1] != old_id
+        assert {b"old bytes", b"new bytes"} <= {o[0] for o in outcomes(fs, "/d/f")}
+        assert d.sync_file("f") == got[1]
+        d.sync()
+    assert outcomes(fs, "/d/f") == {(b"new bytes",)}
+    with fs.open_dir("/d") as d:
+        assert d.read_identified("missing") is None
+
+
 def _deny(perms: str, flags: str = "") -> AclEntry:
     return AclEntry(True, frozenset(perms.split(",")), frozenset(f for f in flags.split(",") if f))
 

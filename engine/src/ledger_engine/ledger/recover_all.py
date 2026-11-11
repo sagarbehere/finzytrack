@@ -358,7 +358,7 @@ def _open_record(handles: Handles, journal_dir: str, name: str) -> tuple[DirHand
     return jd, record if isinstance(record, Record) and record.name == name else None
 
 
-def _tolerant_sync(sync: Callable[[], None]) -> None:
+def _tolerant_sync(sync: Callable[[], object]) -> None:
     """A sync for Keep: `EROFS` means a read-only volume, where nothing can be pending (S0062 probe)."""
     try:
         sync()
