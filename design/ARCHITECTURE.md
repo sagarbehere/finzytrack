@@ -425,7 +425,7 @@ The core is stateless. **These are all the stateful parts of the backend, and no
 
 **App-level files** (`workspaces.json`, `settings.yaml`, `.app.json`) are written under one app-level lock with atomic replace (review:F B-2.18). A second process on the same app root is refused at start: the process serving the API holds an app-instance lock for its life, and a second one exits with "Finzytrack is already running." (ADR-0062, BL-0100).
 
-Execution rule: every `async def` handler only `await`s. Sync work runs on a worker thread via `anyio.to_thread.run_sync`; engine work goes through the engine job queue (ADR-0064). An AST test enforces it (review:L1 §1.5).
+Execution rule: every `async def` handler only `await`s. Sync work runs on a worker thread via `anyio.to_thread.run_sync`; engine work goes through the engine job queue (ADR-0064). An AST test enforces it (review:L1 §1.5; built in S0103: `backend/tests/architecture/test_async_edge.py`, EP-25). The one file write the loop makes is the edge's log line on an `INTERNAL` answer (S0103 decision).
 
 ### 2.6 Domain types (summary; the rules are EP-21 and EP-22)
 
@@ -628,7 +628,7 @@ The taxonomy lives in `app.domain.errors`, and the code registry in `app.platfor
 
 ### 6.3 No swallowing; fail closed
 
-- `except Exception` (and bare `except`) is allowed in exactly three places: the API exception handler, the job runner and the sidecar's top-level loop. Each logs with the correlation id and converts to `INTERNAL`. Ruff `BLE001` / `S110` / `TRY` rules plus an AST allowlist test enforce this.
+- `except Exception` (and bare `except`) is allowed in three places: the API edge (`app.api.errors.Edge`), the job runner and the scheduler thread's loop (`app.platform.engine_jobs.scheduler`: its loop, a request's step, one effect of a step, a join, the job runner, Try again's reset). Each logs (with the correlation id at the edge) and converts to `INTERNAL` or the caller's fallback. Beside them, a log sink or a report receiver that raises loses its line or report, never a decision (S0041: `contextlib.suppress(Exception)` around a log call, the engine client's stderr pump), and a handler that cleans up and re-raises is not a catch-all. Ruff `BLE001` / `S110` / `TRY` rules plus an AST allowlist test enforce this (`backend/tests/architecture/test_error_model.py`, S0103: every site reviewed, counted per function).
 - The write contract never fails open (INV-22). Any exception inside a contract step becomes `WRITE_REFUSED_CHECK_FAILED`, and no byte reaches disk. There is a fault-injection test per step (ADR-0008).
 
 ### 6.4 One frontend path

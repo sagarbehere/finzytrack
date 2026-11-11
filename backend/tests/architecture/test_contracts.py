@@ -85,6 +85,16 @@ def test_contracts_hold_on_the_tree() -> None:
         ("app.platform.planted", "import structlog\n", "One logger"),
         ("app.domain.planted", "from structlog.contextvars import bind_contextvars\n", "One logger"),
         ("app.platform.observability_twin", "import logging.handlers\n", "One logger"),
+        # §6.2, EP-13 (L1-05, S0103): only the edge and the entry know HTTP.
+        ("app.platform.planted", "from fastapi import HTTPException\n", "Only the API edge and the entry know HTTP"),
+        ("app.mirror.planted", "import starlette.exceptions\n", "Only the API edge and the entry know HTTP"),
+        ("app.workspaces.planted", "import uvicorn\n", "Only the API edge and the entry know HTTP"),
+        ("app.platform.engine_jobs.planted", "import fastapi\n", "Only the API edge and the entry know HTTP"),
+        # ADR-0016 (L1-10, S0103): no SQLite connection outside the mirror package.
+        ("app.api.planted", "import sqlite3\n", "SQLite only in the mirror package"),
+        ("app.platform.adapters.planted", "from sqlite3 import connect\n", "SQLite only in the mirror package"),
+        ("app.workspaces.planted", "import sqlite3\n", "SQLite only in the mirror package"),
+        ("app.main", "import sqlite3\n", "SQLite only in the mirror package"),
     ],
 )
 def test_planted_violation_breaks_its_contract(tree: Path, module: str, text: str, contract: str) -> None:
@@ -173,6 +183,8 @@ def test_allowed_direction_passes(tree: Path) -> None:
     plant(tree, "app.workspaces.registry", "import app.mirror\nimport app.platform\n")  # §2.3: may import mirror
     plant(tree, "app.content.demo.planted", "import app.domain\nimport hashlib\n")  # §2.3: content may use domain
     plant(tree, "app.platform.observability.planted", "import logging\nimport structlog\n")  # its one home
+    plant(tree, "app.mirror.planted", "import sqlite3\n")  # S0103: the mirror is SQLite's one home
+    plant(tree, "app.api.planted", "import fastapi\nimport starlette\n")  # S0103: the edge knows HTTP
     # S0040: the table may use the port's types, the codec's constants and the event registry (data).
     plant(
         tree,

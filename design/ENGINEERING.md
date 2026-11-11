@@ -249,8 +249,9 @@ const m = useMutation({ mutationFn: closeAccount })          // errors reach pre
 ```
 
 **Enforcement.**
-- ruff `BLE001`, `S110`, `TRY`, plus an AST allowlist for `except Exception`.
-- AST ban on `in str(e)` / `e.args[0] ==` comparisons.
+- ruff `BLE001`, `S110`, `TRY`, plus an AST allowlist for every catch-all (`except:`, `except Exception`, `except BaseException`, `contextlib.suppress(Exception)`), counted per function (`backend/tests/architecture/test_error_model.py`, S0103).
+- AST ban on matching an exception's text (`in str(e)`, `e.args[0] ==`, `str(e).startswith`, `re.search(..., repr(e))`, through a local too), with its one reviewed site, SQLite's "no such table" (same file, S0103).
+- No module below `app.api` imports an HTTP framework (`.importlinter` contract `http-at-the-edge`, S0103).
 - pyright `reportMatchNotExhaustive`; TS `switch-exhaustiveness-check`.
 - Error-code coverage test (every registry code triggered by a test tagged with it; unused codes fail).
 - ESLint: `no-console` outside the logger, no access to `.body`/`.json()` on errors outside `src/api`, `no-empty`, `@typescript-eslint/only-throw-error`, `no-floating-promises`.
@@ -403,7 +404,7 @@ def run_user_sql(sql: UserSql, params: Params, limits: QueryLimits) -> Frame: ..
 **Rule.** An `async def` handler only awaits. Blocking work in the main sidecar (file reads and writes, SQLite, scikit-learn) runs in worker threads; ledger work (Beancount loads, BQL, saves) goes through the engine job queue, which runs one engine job at a time (ADR-0054, ADR-0064).
 **Why.** L1-02: one write froze the whole server. This is the engineering means of INV-20.
 
-**Enforcement.** The AST test from review:L1 §1.5 (no sync call into `usecases` from an `async def` without `to_thread`), plus the `/health` latency test during a 54k write (backend-core acceptance).
+**Enforcement.** `backend/tests/architecture/test_async_edge.py` (S0103, the AST test review:L1 §1.5 asked for, default-deny): every call the event loop runs, from each `async def` and the stop handler through every function of ours they call, is awaited, is ours and passes in turn, or is a reviewed site with its reason; any other call (a reader, the QueryRunner, the scheduler, a file, a lock) fails until it runs on a worker thread. Plus the `/health` latency test during a 54k write (backend-core acceptance; BL-0114).
 
 ### EP-26 Privacy-safe logging by construction
 **Rule.** Logs contain no financial content outside opt-in, time-limited debug mode. The logger's redaction is **default-deny**: only declared safe field kinds (ids, counts, durations, enums, codes, constant text) are written. Money, amounts, plain strings (including erased `NewType`s such as `AccountName`), `UntrustedText`, secrets and paths outside the app dirs are redacted automatically. AI diagnostics are opt-in under the same policy. "Report a problem" shows its contents before saving and scrubs free text (ARCHITECTURE §6A). *(Supports INV-23.)*

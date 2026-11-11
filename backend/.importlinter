@@ -162,3 +162,35 @@ forbidden_modules =
     secrets
     uuid
     datetime
+
+[importlinter:contract:http-at-the-edge]
+# Errors are translated once, at the edge: no module below `app.api` knows an HTTP status or raises a framework's
+# HTTP exception (ARCHITECTURE.md §6.2, EP-13; L1-05, S0103). HTTP clients (httpx, for a provider an adapter calls)
+# are not servers and are not listed.
+name = Only the API edge and the entry know HTTP (ARCHITECTURE.md §6.2, EP-13)
+type = forbidden
+source_modules =
+    app.domain
+    app.platform
+    app.mirror
+    app.workspaces
+    app.content
+forbidden_modules =
+    fastapi
+    starlette
+    uvicorn
+
+[importlinter:contract:one-sqlite-home]
+# One hardened runner for user SQL and one reader for the app's own reads, both in `app.mirror` (ADR-0016; L1-10,
+# S0103): no other package opens a SQLite connection of its own.
+name = SQLite only in the mirror package (ADR-0016)
+type = forbidden
+source_modules =
+    app.main
+    app.api
+    app.workspaces
+    app.platform
+    app.domain
+    app.content
+forbidden_modules =
+    sqlite3
