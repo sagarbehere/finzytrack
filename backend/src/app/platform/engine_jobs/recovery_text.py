@@ -254,13 +254,22 @@ def system_answer(code: int) -> str:
     return os.strerror(code)
 
 
+APP_FOLDER_MISSING: Final = "engine.app_folder_missing"
+"""The engine's refusal of a recovery op in an app folder that is not the one of the start (S0102, BL-0244)."""
+APP_FOLDER_GONE: Final = (
+    "Its data folder was removed or replaced while Finzytrack was open. Quit Finzytrack and open it again."
+)
+
+
 def _not_undone(b: Blocking, workspace: str) -> Screen:
     """§11's row for `cancelled`, `failed` and `not_tried`; for `failed` with an error, the file, the entry that
     failed when it is not the file, and the system's answer (S0061 rounds 5-7), with the read-only-drive wording for
     `EROFS` (red team r8 F1) and the ACL way out for a permission error (§15)."""
     file = _name(_file_of(b))
     message = f"{file} has an unfinished save from {workspace} that Finzytrack has not undone yet."
-    if b.reason == "failed" and b.cause == ENGINE_STOPPED:
+    if b.reason == "failed" and b.cause == APP_FOLDER_MISSING:
+        message += f" {APP_FOLDER_GONE}"
+    elif b.reason == "failed" and b.cause == ENGINE_STOPPED:
         message += " The ledger engine stopped while it was undoing it. Press Retry to try again."
     elif b.reason == "failed" and b.errno is not None:
         where = b.entry or b.path or file
@@ -304,6 +313,8 @@ def blocked_screen(b: Blocking, workspace: str) -> Screen:
 
 def not_recovered_screen(n: NotRecovered) -> Screen:
     """Every open is blocked: a journal folder could not be listed, or recover-all never listed (fail closed)."""
+    if n.why == APP_FOLDER_MISSING:  # S0102 (BL-0244): Retry would meet the same folder
+        return Screen(f"Finzytrack could not check for unfinished saves. {APP_FOLDER_GONE}", ())
     if n.folder is not None and n.linked:  # S0077 (BL-0193): the way out is the user's, so the screen names it
         answer = f" ({system_answer(n.errno)})" if n.errno is not None else ""
         return Screen(

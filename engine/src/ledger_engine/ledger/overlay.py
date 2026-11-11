@@ -56,6 +56,7 @@ the save runs no load since S0070 (ADR-0068 D1).
 
 from __future__ import annotations
 
+import errno
 import glob
 import os
 from collections.abc import Mapping
@@ -259,11 +260,7 @@ def _parse_recursive(
             parse_errors.append(port.load_error(f'File "{filename}" does not exist'))
             continue
         seen.add(filename)
-        if on_disk:
-            with open(filename, "rb") as f:
-                data = f.read()
-        else:
-            data = candidates[filename]
+        data = fp.read_regular(filename) if on_disk else candidates[filename]  # never blocks on a FIFO (S0102)
         record.files.setdefault(filename, fp.content(data))
         record.data.setdefault(filename, data)
         try:
@@ -309,11 +306,18 @@ def _parse_recursive(
 def _beancount_decrypts(filename: str) -> bool:
     """Whether Beancount's loader would decrypt `filename` (or fail trying) instead of reading it: its own test,
     `is_encrypted_file`, which names a `.gpg` file by its name alone and opens a `.asc` one to look for a PGP header
-    (a missing `.asc` makes it raise)."""
+    (a missing `.asc` makes it raise). Its open blocks on a FIFO: a `.asc` that is there and is no regular file is never
+    handed to it and raises as the read of it would (`EINVAL`; S0102, BL-0245)."""
     ext = path.splitext(filename)[1]
     if ext == ".gpg":
         return True
-    return ext == ".asc" and (not path.exists(filename) or port.is_encrypted_file(filename))
+    if ext != ".asc":
+        return False
+    if not path.exists(filename):
+        return True
+    if not fp.regular(filename):
+        raise OSError(errno.EINVAL, "not a regular file", filename)
+    return port.is_encrypted_file(filename)
 
 
 def _plugin_documents(

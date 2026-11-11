@@ -56,6 +56,7 @@ then its record's state, and with no record (or a `.part`) every target hashed a
 
 from __future__ import annotations
 
+import errno
 import gc
 import posixpath
 import re
@@ -107,7 +108,10 @@ class SavePlan:
     """A confirmed plan (§2's `save`). `fingerprint`: the plan's, of the ledger set before the save; `changes`: each
     file as the ledger names it (absolute, normalized), its pre SHA-256 (None: the save creates it) and its post bytes;
     `app_cache`: the app's cache folder, where the gate reads the published mirror (publish.md §7); `app_local_data`:
-    the app's machine-local folder (journals, backups).
+    the app's machine-local folder (journals, backups); `app_folder`: its identity `(st_dev, st_ino)` at the sidecar's
+    start (S0102, BL-0244): step 8 makes `local/` only in a folder of that identity, else `app_folder_missing`. The
+    protocol always passes it (`--app-folder-id`); None, in the tests over the in-memory fake only, takes the folder at
+    `app_local_data` as it is.
     `session`-`job` names this save alone (§6.5 "One save, one name"; the sidecar makes a new job part for every save):
     a name that already has a record or a backups folder in this key raises `BadPlanError("name_taken")`."""
 
@@ -121,6 +125,7 @@ class SavePlan:
     fingerprint: Fingerprint
     app_cache: str
     app_local_data: str
+    app_folder: tuple[int, int] | None = None
 
 
 class Job(Protocol):
@@ -319,16 +324,22 @@ class _AppFolderMissing(Exception):
     pass
 
 
-def _ensure_dir(fs: FileSystem, parent: str, name: str, *, no_link: bool = False) -> str:
+def _ensure_dir(
+    fs: FileSystem, parent: str, name: str, *, no_link: bool = False, parent_is: tuple[int, int] | None = None
+) -> str:
     """The folder `name` in `parent`, its entry durable: `parent` is synced whether or not the folder was made now. A
     folder that was there already may be the mkdir of an earlier engine that died before its sync; a power loss could
     then drop it, with the `.open` journal or the backups in it, while the ledger files stay swapped (round 1, verifier
     F1). A sync with nothing to flush costs nothing (§6.2). `no_link`: a link in place of the folder raises
     `_LinkedFolder` (the workspace's own folders, S0077); `local/` may be a link, which recover-all follows too.
     `parent` is never above the app's own folder: the sidecar made that one and synced its parent at start (S0100,
-    BL-0163 (a); owner, 2026-11-10: "Sidecar makes it once (Recommended)")."""
+    BL-0163 (a); owner, 2026-11-10: "Sidecar makes it once (Recommended)"). `parent_is`: the identity `parent` must
+    have, asked of the handle the folder is then made through (the app folder of the start, S0102, BL-0244): another
+    object raises `FileNotFoundError` before anything is made or synced in it."""
     path = join(parent, name)
     with fs.open_dir(parent) as h:
+        if parent_is is not None and h.identity() != parent_is:
+            raise FileNotFoundError(errno.ESTALE, "not the app folder of the start", parent)
         st = h.stat(name)
         if st is None:
             h.mkdir(name)
@@ -453,7 +464,7 @@ def _gated(
         # every folder below the app's own, its entry durable before the first write (round 1, verifier F1); the app's
         # folder is the sidecar's, made and its parent synced at start (S0100, BL-0163 (a)): never made or synced above
         try:
-            local = _ensure_dir(ports.fs, ald, LOCAL)
+            local = _ensure_dir(ports.fs, ald, LOCAL, parent_is=plan.app_folder)
         except FileNotFoundError:
             raise _AppFolderMissing from None
         key_dir = _ensure_dir(ports.fs, local, plan.workspace_key, no_link=True)

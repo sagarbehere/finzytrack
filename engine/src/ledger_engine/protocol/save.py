@@ -11,16 +11,15 @@ and the ledger files the plan names.
 
 from __future__ import annotations
 
-import os
 from collections.abc import Callable
 from importlib.metadata import version
 from typing import Final, Protocol
 
 from ledger_engine.fs.darwin import for_this_os
-from ledger_engine.fs.port import FileSystem
 from ledger_engine.ledger import save as sv
 from ledger_engine.ledger.core.ledger_set import UndecodableError, decode
 from ledger_engine.ledger.writer import BadPlanError, Change, NotSaved, Reason, Unfinished
+from ledger_engine.protocol.app_folder import folder_of_lock
 from ledger_engine.protocol.messages import (
     DecisionScalar,
     Message,
@@ -38,10 +37,14 @@ TABLE_VERSION: Final = 4  # 2 (S0068): no `check_pending` or `check_failed` refu
 
 class SaveJob(Decider, Protocol):
     """The request's job context as the save sees it (`server.JobContext`): also the app cache folder this engine was
-    started with (`--app-cache`), where the gate reads the published mirror (S0087)."""
+    started with (`--app-cache`), where the gate reads the published mirror (S0087), and the app folder's identity
+    at the start (`--app-folder-id`), which the save's step 8 checks on the folder it makes `local/` in (S0102)."""
 
     @property
     def app_cache(self) -> str | None: ...
+
+    @property
+    def app_folder_id(self) -> tuple[int, int] | None: ...
 
     def progress(self, phase: sv.Phase) -> None: ...
 
@@ -121,29 +124,20 @@ def _result(out: sv.SaveOutcome) -> SaveResult:
     )
 
 
-def _app_folder_gone(fs: FileSystem, app_local_data: str, ctx: Decider) -> bool:
-    """The request names, spelled as this engine's lock names it, the app folder that lock was taken in, and that
-    folder is gone (removed while the app runs): the save's own outcome, not a refused request (S0100 round 1, red
-    team F2)."""
-    lock = ctx.engine_lock
-    if lock is None:
-        return False
-    folder = os.path.dirname(os.path.dirname(os.path.abspath(lock)))
-    if os.path.normpath(app_local_data) != os.path.normpath(folder):
-        return False
-    try:
-        return bool(fs.resolve(app_local_data).rest)
-    except (OSError, ValueError):
-        return False
-
-
-def _app_folder_missing(fs: FileSystem, params: SaveParams, ctx: SaveJob) -> SaveResult:
+def app_folder_missing(params: Message, ctx: SaveJob) -> Message:
+    """The save's answer when the app folder is not the one of the engine's start (the server's check, S0102, BL-0244;
+    since S0100 round 1, red team F2, for a removed one): `not_saved {app_folder_missing}` naming the folder of the
+    engine lock, with the re-hash; nothing is made or written (the sidecar's `msg:save.app_folder_missing`: quit and
+    reopen). It is the save's own outcome, whatever spelling the request gave the folder (S0100 round 2, red team
+    Low 2)."""
+    assert isinstance(params, SaveParams)  # noqa: S101 (the handler's own params model)
+    fs = for_this_os()
     unchanged, changed = sv.rehash(fs, tuple(Change(c.path, c.pre, b"") for c in params.changes))
     result = SaveResult(
         outcome="not_saved",
         reason=Reason.APP_FOLDER_MISSING.value,
         path=None,
-        entry=params.app_local_data,
+        entry=None if ctx.engine_lock is None else folder_of_lock(ctx.engine_lock),
         detail=None,
         unchanged=unchanged,
         changed=changed,
@@ -166,8 +160,6 @@ def _app_folder_missing(fs: FileSystem, params: SaveParams, ctx: SaveJob) -> Sav
 def save(params: Message, ctx: SaveJob) -> Message:
     assert isinstance(params, SaveParams)  # noqa: S101 (the handler's own params model)
     fs = for_this_os()
-    if _app_folder_gone(fs, params.app_local_data, ctx):
-        return _app_folder_missing(fs, params, ctx)
     ald = app_local_data_of(fs, params.app_local_data, ctx)
     try:
         fingerprint = decode(params.fingerprint.encode("ascii"))
@@ -185,6 +177,7 @@ def save(params: Message, ctx: SaveJob) -> Message:
         fingerprint=fingerprint,
         app_cache=app_cache_of(ctx),
         app_local_data=ald,
+        app_folder=ctx.app_folder_id,
     )
     ports = sv.Ports(fs)
     try:
@@ -219,4 +212,5 @@ def save_outcome(params: Message, ctx: Decider) -> Message:
 
 
 SAVE_HANDLERS: Final[dict[str, Callable[[Message, SaveJob], Message]]] = {"save": save}
+APP_FOLDER_MISSING_HANDLERS: Final[dict[str, Callable[[Message, SaveJob], Message]]] = {"save": app_folder_missing}
 OUTCOME_HANDLERS: Final[dict[str, Callable[[Message, Decider], Message]]] = {"save_outcome": save_outcome}

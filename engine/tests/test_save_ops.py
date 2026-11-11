@@ -9,6 +9,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import shutil
 import sys
 from pathlib import Path
 from typing import Any
@@ -16,10 +17,12 @@ from typing import Any
 import pytest
 
 from ledger_engine.fs.darwin import for_this_os
+from ledger_engine.fs.port import FileSystem
 from ledger_engine.ledger import overlay
 from ledger_engine.ledger.core.ledger_set import encode
 from ledger_engine.ledger.policy import DesktopPolicy
 from ledger_engine.mirror import publish as pb
+from ledger_engine.protocol.messages import OPS
 from ledger_engine.protocol.server import Engine, InputEnded
 from tests.mirror.publish_support import publish_job
 
@@ -87,6 +90,7 @@ def engine(ald: Path | None, cache: Path | None = None) -> Engine:
         cache = ald.parent / "cache"
     e = Engine(
         engine_lock_held=None if ald is None else str(ald / "locks" / "engine.lock"),
+        app_folder_id=None if ald is None else (os.stat(ald).st_dev, os.stat(ald).st_ino),
         app_cache=None if cache is None else str(cache),
     )
     assert json.loads(e.handle(b'{"v":2,"id":0,"op":"handshake","params":{}}'))["ok"]
@@ -245,4 +249,136 @@ def test_S0100_r1_another_missing_folder_is_still_refused(setup: tuple[Path, Pat
     )
     assert not reply["ok"], reply
     assert not other.exists()
+    assert main.read_bytes() == PRE
+
+
+# -- S0102 (BL-0244; owner, 2026-11-11: "BL-0244 slice in M1a (Recommended)"): the app folder's identity from start --
+
+
+def identity(p: Path) -> tuple[int, int]:
+    st = os.stat(p)
+    return (st.st_dev, st.st_ino)
+
+
+def replace_folder(ald: Path) -> None:
+    """Another program removes the app folder and puts an empty one in its place (S0100 round 2 red team `test_g`)."""
+    shutil.rmtree(ald)
+    ald.mkdir()
+
+
+def held(ald: Path, app_folder: tuple[int, int]) -> Engine:
+    """An engine holding the lock under `ald`, started with the app folder identity `app_folder`."""
+    e = Engine(
+        engine_lock_held=str(ald / "locks" / "engine.lock"),
+        app_folder_id=app_folder,
+        app_cache=str(ald.parent / "cache"),
+    )
+    assert json.loads(e.handle(b'{"v":2,"id":0,"op":"handshake","params":{}}'))["ok"]
+    return e
+
+
+def _save(e: Engine, params: dict[str, Any]) -> dict[str, Any]:
+    reply = json.loads(e.handle(request("save", params), Channel(1, proceed=True)))
+    assert reply["ok"], reply
+    return reply["result"]
+
+
+def test_S0102_a_save_in_a_replaced_app_folder_is_app_folder_missing_and_writes_nothing_there(
+    setup: tuple[Path, Path, dict[str, Any]],
+) -> None:
+    """S0100 round 2 red team `test_g`: the app folder replaced by an empty one while this engine holds its lock."""
+    main, ald, params = setup
+    e = held(ald, identity(ald))
+    replace_folder(ald)
+    r = _save(e, params)
+    assert (r["outcome"], r["reason"], r["entry"], r["unchanged"]) == (
+        "not_saved",
+        "app_folder_missing",
+        str(ald),
+        True,
+    )
+    assert os.listdir(ald) == []
+    assert main.read_bytes() == PRE
+
+
+def test_S0102_a_save_spelled_with_a_dot_in_a_removed_app_folder_is_app_folder_missing(
+    setup: tuple[Path, Path, dict[str, Any]],
+) -> None:
+    """S0100 round 2 red team Low 2: `<app folder>/./` with the folder gone was `invalid_params`."""
+    main, ald, params = setup
+    e = held(ald, identity(ald))
+    shutil.rmtree(ald)
+    r = _save(e, {**params, "app_local_data": str(ald) + "/./"})
+    assert (r["outcome"], r["reason"]) == ("not_saved", "app_folder_missing")
+    assert not ald.exists()
+    assert main.read_bytes() == PRE
+
+
+def test_S0102_a_save_in_the_app_folder_of_its_start_lands(setup: tuple[Path, Path, dict[str, Any]]) -> None:
+    """Must pass: the identity check lets the folder of the start through."""
+    _, ald, params = setup
+    assert _save(held(ald, identity(ald)), params)["outcome"] == "saved"
+
+
+def test_S0102_an_engine_started_with_another_identity_saves_nothing(setup: tuple[Path, Path, dict[str, Any]]) -> None:
+    """The check compares with the identity the engine was started with, not with the folder found now."""
+    main, ald, params = setup
+    dev, ino = identity(ald)
+    r = _save(held(ald, (dev, ino + 1)), params)
+    assert (r["outcome"], r["reason"]) == ("not_saved", "app_folder_missing")
+    assert not (ald / "local").exists()
+    assert main.read_bytes() == PRE
+
+
+def test_S0102_the_ops_that_write_in_the_app_folder_are_the_ones_checked() -> None:
+    """The inventory, by behaviour (S0102 Hand-off): the save writes `local/<key>/journal` and `backups`; the listing
+    syncs journal folders and removes `.part`s; a try restores and renames records; an act keeps or deletes. Every
+    other op writes nothing there (the open, rebuild, create, copy and outcomes read it at most)."""
+    assert {op for op, spec in OPS.items() if spec.writes_app_folder} == {
+        "save",
+        "recover_list",
+        "recover_try",
+        "recover_act",
+    }
+
+
+def test_S0102_the_save_op_passes_the_identity_of_its_start_to_step_8(
+    setup: tuple[Path, Path, dict[str, Any]],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Must not pass with the protocol's plan carrying no identity: the folder is replaced after the op's own check,
+    during the gate's observation."""
+    from ledger_engine.ledger import save as sv
+    from ledger_engine.ledger.fingerprint import observe as observe_set
+
+    main, ald, params = setup
+    e = held(ald, identity(ald))
+    real = sv.Ports
+
+    def observe(fp: Any) -> Any:
+        if not (ald / "local").exists() and os.listdir(ald) != []:
+            replace_folder(ald)
+        return observe_set(fp.ledger_set)
+
+    def ports(fs: FileSystem) -> sv.Ports:
+        return real(fs, observe=observe)
+
+    monkeypatch.setattr(sv, "Ports", ports)
+    r = _save(e, params)
+    assert (r["outcome"], r["reason"]) == ("not_saved", "app_folder_missing")
+    assert os.listdir(ald) == []
+    assert main.read_bytes() == PRE
+
+
+def test_S0102_an_engine_that_holds_the_lock_with_no_identity_saves_nothing(
+    setup: tuple[Path, Path, dict[str, Any]],
+) -> None:
+    """Fail closed: an engine whose start named no app folder identity (never the product's: `--engine-lock` needs
+    `--app-folder-id`) writes nothing in the app folder."""
+    main, ald, params = setup
+    e = Engine(engine_lock_held=str(ald / "locks" / "engine.lock"), app_cache=str(ald.parent / "cache"))
+    assert json.loads(e.handle(b'{"v":2,"id":0,"op":"handshake","params":{}}'))["ok"]
+    r = _save(e, params)
+    assert (r["outcome"], r["reason"]) == ("not_saved", "app_folder_missing")
+    assert not (ald / "local").exists()
     assert main.read_bytes() == PRE

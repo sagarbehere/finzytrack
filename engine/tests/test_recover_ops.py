@@ -79,9 +79,15 @@ class Rig:
         return json.loads(self.engine.handle(line))
 
 
+def folder_id(ald: Path) -> str:
+    st = os.stat(ald)
+    return f"{st.st_dev}:{st.st_ino}"
+
+
 def held(ald: Path) -> Engine:
     """An engine that took the engine lock `<ald>/locks/engine.lock` (as `--engine-lock` names it)."""
-    return Engine(engine_lock_held=str(ald / "locks" / "engine.lock"))
+    st = os.stat(ald)  # the app folder's identity at the start (S0102, BL-0244)
+    return Engine(engine_lock_held=str(ald / "locks" / "engine.lock"), app_folder_id=(st.st_dev, st.st_ino))
 
 
 @pytest.fixture
@@ -370,7 +376,7 @@ def test_the_listing_waits_for_an_earlier_sessions_engine_to_let_the_engine_lock
     fd = os.open(lock, os.O_RDWR | os.O_CREAT, 0o600)
     fcntl.flock(fd, fcntl.LOCK_EX)  # an engine of an earlier session holds it
     proc = subprocess.Popen(  # noqa: S603 (this interpreter running the engine under test)
-        [sys.executable, "-I", "-m", "ledger_engine", "--engine-lock", str(lock)],
+        [sys.executable, "-I", "-m", "ledger_engine", "--engine-lock", str(lock), "--app-folder-id", folder_id(ald)],
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
         stderr=subprocess.DEVNULL,
@@ -396,3 +402,35 @@ def test_the_listing_waits_for_an_earlier_sessions_engine_to_let_the_engine_lock
             os.close(fd)
         proc.kill()
         proc.wait()
+
+
+# -- S0102 (BL-0244; owner, 2026-11-11: "BL-0244 slice in M1a (Recommended)"): the app folder's identity from start --
+
+
+def test_S0102_each_recovery_op_in_a_replaced_app_folder_is_refused_and_writes_nothing(tmp_path: Path) -> None:
+    ald = tmp_path / "app"
+    ald.mkdir()
+    _, jd, name = journalled(ald)
+    rig = Rig(held(ald))
+    os.rename(ald, tmp_path / "moved")  # the folder (journals and all) moved away; an empty one put in its place
+    ald.mkdir()
+    for op, params in (
+        ("recover_list", {"app_local_data": str(ald)}),
+        ("recover_try", {"app_local_data": str(ald), "journal_dir": str(jd), "name": name}),
+        ("recover_act", {"app_local_data": str(ald), "journal_dir": str(jd), "name": name, "action": "keep"}),
+    ):
+        reply = rig.send(op, params)
+        assert not reply["ok"], (op, reply)
+        assert reply["error"]["key"] == "engine.app_folder_missing", (op, reply)
+    assert os.listdir(ald) == []
+    moved = tmp_path / "moved" / "local" / "k1" / "journal"
+    assert sorted(p.name for p in moved.iterdir()) == ["s1-j7.open"], "a recovery op wrote in the moved folder"
+
+
+def test_S0102_the_recovery_ops_in_the_app_folder_of_their_start_run(tmp_path: Path) -> None:
+    """Must pass: the listing runs in the folder of the start."""
+    ald = tmp_path / "app"
+    ald.mkdir()
+    journalled(ald)
+    reply = Rig(held(ald)).send("recover_list", {"app_local_data": str(ald)})
+    assert reply["ok"], reply

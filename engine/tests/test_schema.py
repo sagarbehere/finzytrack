@@ -119,6 +119,7 @@ def test_every_refusal_key_the_engine_gives_is_in_the_schema() -> None:
         "protocol.handshake_required",
         "engine.internal",
         "engine.no_engine_lock",
+        "engine.app_folder_missing",  # S0102 (BL-0244): a recovery op in a folder not of the engine's start
     }
 
 

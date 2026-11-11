@@ -90,7 +90,7 @@ type Slot = Literal["none", "idle", "busy", "ending"]
 type EngineLock = Literal["unchecked", "waiting", "free"]
 type EndReason = Literal["cancel", "retire", "crashed"]
 type RefusalCode = Literal["WORKSPACE_NOT_OPEN", "ENGINE_QUEUE_FULL"]
-type NoEngineWhy = Literal["unavailable", "lock_failed"]
+type NoEngineWhy = Literal["unavailable", "lock_failed", "app_folder"]
 
 WRITING: frozenset[JobKind] = frozenset({"save", "create", "copy"})
 """Jobs that write and have a commit point (§1, §4)."""
@@ -189,7 +189,11 @@ class EngineLockFree:
 @dataclass(frozen=True, slots=True)
 class EngineLockFailed:
     """The sidecar's wait for the engine lock failed (an `OSError`): an earlier session's engine may still run, so no
-    engine starts on it (S0053 verifier F2 and round 2)."""
+    engine starts on it (S0053 verifier F2 and round 2). `app_folder`: the app folder is missing or another folder
+    since the start (S0102, BL-0244): the jobs end with that reason (`why="app_folder"`), whose next step is to quit
+    and reopen."""
+
+    app_folder: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -685,17 +689,18 @@ def _engine_lock_failed(p: QueuePolicy, s: QueueState, e: EngineLockFailed) -> S
         return Step(s)
     state = replace(s, engine_lock="unchecked")
     effects: list[Effect] = []
+    why: NoEngineWhy = "app_folder" if e.app_folder else "lock_failed"
     r = state.running
     if r is not None and r.wants_engine and state.slot != "busy" and _reports_itself(r):
         state = replace(state, running=replace(r, wants_engine=False))  # its report (§8.1) or its answer (§6.6) comes
-        effects.append(EngineRefused(r.job.id, "lock_failed"))
+        effects.append(EngineRefused(r.job.id, why))
     elif r is not None and r.wants_engine and state.slot != "busy":  # a job still on its engine keeps it and its ask
         state = replace(state, running=None)
-        effects.append(NoEngine(r.job.id, "lock_failed"))
+        effects.append(NoEngine(r.job.id, why))
     if state.running is None:
         while (job := _pick(state)) is not None:
             state = replace(state, queued=tuple(j for j in state.queued if j.id != job.id))
-            effects.append(NoEngine(job.id, "lock_failed"))
+            effects.append(NoEngine(job.id, why))
     state, cleared = _clear_advice(state)
     return Step(state, (*effects, *cleared))
 

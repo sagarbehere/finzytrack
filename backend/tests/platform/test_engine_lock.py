@@ -19,7 +19,9 @@ from pathlib import Path
 
 import pytest
 
+from app.platform.adapters.app_folder import AppFolder
 from app.platform.adapters.engine_lock import engine_lock_path, wait_engine_lock
+from app.platform.engine import AppFolderChangedError
 
 pytestmark = pytest.mark.skipif(os.name != "posix", reason="flock is POSIX; Windows is BL-0087 (M1b)")
 
@@ -62,7 +64,7 @@ def test_the_lock_is_one_file_in_the_app_local_data_locks_folder(tmp_path: Path)
 
 def test_with_nobody_holding_it_the_wait_returns_at_once_and_creates_the_file(tmp_path: Path) -> None:
     path = engine_lock_path(tmp_path)
-    wait_engine_lock(path)
+    wait_engine_lock(AppFolder.of(path.parent.parent))
     assert path.is_file()
     assert free(path), "the sidecar must release the lock at once: each engine holds it on its own"
 
@@ -72,7 +74,9 @@ def test_the_wait_lasts_while_an_earlier_sessions_process_holds_it(
 ) -> None:
     proc, path = holder
     done = threading.Event()
-    waiter = threading.Thread(target=lambda: (wait_engine_lock(path), done.set()), daemon=True)
+    waiter = threading.Thread(
+        target=lambda: (wait_engine_lock(AppFolder.of(path.parent.parent)), done.set()), daemon=True
+    )
     waiter.start()
     assert not done.wait(0.5), "the sidecar went on while an engine of an earlier session held the engine lock"
     assert proc.stdin is not None
@@ -84,7 +88,7 @@ def test_the_wait_lasts_while_an_earlier_sessions_process_holds_it(
 def test_the_lock_file_is_never_deleted(tmp_path: Path) -> None:
     path = engine_lock_path(tmp_path)
     for _ in range(2):
-        wait_engine_lock(path)
+        wait_engine_lock(AppFolder.of(path.parent.parent))
         assert path.is_file()
 
 
@@ -92,6 +96,9 @@ def test_S0100_the_wait_never_makes_the_app_folder_above_its_locks_folder(tmp_pa
     """S0100 (BL-0163 (a); owner, 2026-11-10: "Sidecar makes it once (Recommended)"): the app's folder is made at
     start (`app.main`, its parent synced); the wait makes only `locks/` in it, never a missing app folder."""
     app = tmp_path / "app"
-    with pytest.raises(FileNotFoundError):
-        wait_engine_lock(engine_lock_path(app))
+    app.mkdir()
+    folder = AppFolder.of(app)
+    app.rmdir()
+    with pytest.raises(AppFolderChangedError):  # S0102: the folder of the start is gone
+        wait_engine_lock(folder)
     assert not app.exists()

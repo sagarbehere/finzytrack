@@ -86,6 +86,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import IO, Literal
 
+from app.platform.adapters.app_folder import AppFolder, directory_flags
 from app.platform.adapters.engine_group import EngineGroup, GroupOps, PosixGroupOps, Reaped
 from app.platform.engine import (
     Committed,
@@ -225,20 +226,68 @@ def engine_env(environ: Mapping[str, str]) -> dict[str, str]:
 
 @dataclass(frozen=True, slots=True)
 class EngineBytecode:
-    """The bytecode directory of one engine build and the command that fills it (§5.1)."""
+    """The bytecode directory of one engine build (`<app folder>/engine/bytecode/<build>`), the command that fills it
+    (§5.1), and the app folder it lives in, with its identity at the start (S0102, BL-0244: the fill and the discard
+    write there only while it is that object; None: nothing is filled or removed)."""
 
     directory: Path
     fill_argv: tuple[str, ...]
+    app_folder: AppFolder | None = None
 
     def ready(self) -> bool:
         """Filled completely: the fill marks it last."""
         return (self.directory / BYTECODE_COMPLETE).is_file()
 
+    def parts(self) -> tuple[str, ...]:
+        """The directory's names below the app folder (`engine`, `bytecode`, `<build>`)."""
+        if self.app_folder is None or self.directory.parents[2] != self.app_folder.path:
+            msg = "the bytecode directory is not <app folder>/engine/bytecode/<build>"
+            raise ValueError(msg)
+        return (self.directory.parents[1].name, self.directory.parent.name, self.directory.name)
+
     def discard(self) -> None:
-        """Delete it, the mark first, so a half-deleted folder is never taken as filled."""
-        with contextlib.suppress(OSError):
-            (self.directory / BYTECODE_COMPLETE).unlink(missing_ok=True)
-        shutil.rmtree(self.directory, ignore_errors=True)
+        """Delete it, the mark first, so a half-deleted folder is never taken as filled; only in the app folder of the
+        start, through descriptors on it (S0102): in a folder removed or replaced since, nothing is ours."""
+        with contextlib.suppress(OSError, ValueError), _opened_chain(self, make=False) as build:
+            if build is None:
+                return
+            with contextlib.suppress(FileNotFoundError):
+                os.unlink(BYTECODE_COMPLETE, dir_fd=build.parent)
+            shutil.rmtree(build.name, dir_fd=build.parent, ignore_errors=True)
+
+
+@dataclass(frozen=True, slots=True)
+class _Build:
+    """The build folder's parent (`bytecode/`) as a descriptor, and the build folder's name in it."""
+
+    parent: int
+    name: str
+
+
+@contextlib.contextmanager
+def _opened_chain(bytecode: EngineBytecode, *, make: bool) -> Generator[_Build | None]:
+    """`engine/` and `bytecode/` opened (made when `make`) one by one through descriptors, from the app folder checked
+    to be the object of the start (`AppFolder.open`, which raises `AppFolderChangedError` otherwise); never following a
+    link. None when `make` is False and a folder of the chain is not there."""
+    assert bytecode.app_folder is not None  # noqa: S101 (`parts` checked it)
+    engine, codes, build = bytecode.parts()
+    fds: list[int] = [bytecode.app_folder.open()]
+    try:
+        for name in (engine, codes):
+            if make:
+                with contextlib.suppress(FileExistsError):
+                    os.mkdir(name, dir_fd=fds[-1])
+            try:
+                fds.append(os.open(name, directory_flags() | os.O_NOFOLLOW, dir_fd=fds[-1]))
+            except FileNotFoundError:
+                if make:
+                    raise
+                yield None
+                return
+        yield _Build(fds[-1], build)
+    finally:
+        for fd in fds:
+            os.close(fd)
 
 
 @dataclass(frozen=True, slots=True)
@@ -255,6 +304,16 @@ class EngineCommand:
     engine_lock: Path | None = None
     bytecode: EngineBytecode | None = None
     app_cache: Path | None = None
+    app_folder: AppFolder | None = None
+
+    def __post_init__(self) -> None:
+        """An engine that holds the lock is told the app folder's identity at the start (S0102, BL-0244): the lock
+        lives in that folder and the engine refuses to write in another (`--app-folder-id`)."""
+        if self.engine_lock is not None and (
+            self.app_folder is None or self.engine_lock.parent.parent != self.app_folder.path
+        ):
+            msg = "an engine lock needs the app folder it lives in, with its identity"
+            raise ValueError(msg)
 
     @classmethod
     def for_venv(
@@ -265,11 +324,12 @@ class EngineCommand:
         environ: Mapping[str, str] | None = None,
         engine_lock: Path | None = None,
         bytecode_dir: Path | None = None,
+        app_folder: AppFolder | None = None,
     ) -> EngineCommand:
         """The engine installed in a virtual environment (development and tests), under the same bootstrap as the
         bundle's, with the venv's site-packages."""
         python = venv / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
-        return cls._bootstrapped(python, venv_site(venv), test_ops, environ, engine_lock, bytecode_dir)
+        return cls._bootstrapped(python, venv_site(venv), test_ops, environ, engine_lock, bytecode_dir, app_folder)
 
     @classmethod
     def for_packaged(
@@ -281,9 +341,10 @@ class EngineCommand:
         environ: Mapping[str, str] | None = None,
         engine_lock: Path | None = None,
         bytecode_dir: Path | None = None,
+        app_folder: AppFolder | None = None,
     ) -> EngineCommand:
         """The engine in the bundle: the shared interpreter `python` with only the engine's `site` (S0038)."""
-        return cls._bootstrapped(python, site, test_ops, environ, engine_lock, bytecode_dir)
+        return cls._bootstrapped(python, site, test_ops, environ, engine_lock, bytecode_dir, app_folder)
 
     @classmethod
     def _bootstrapped(
@@ -294,21 +355,29 @@ class EngineCommand:
         environ: Mapping[str, str] | None,
         engine_lock: Path | None,
         bytecode_dir: Path | None,
+        app_folder: AppFolder | None,
     ) -> EngineCommand:
         argv = (*bootstrap_argv(python, site, ENGINE_RUN), *(("--test-ops",) if test_ops else ()))
         bytecode = (
             None
             if bytecode_dir is None
-            else EngineBytecode(bytecode_dir, bootstrap_argv(python, site, BYTECODE_FILL, FILL_FLAGS))
+            else EngineBytecode(bytecode_dir, bootstrap_argv(python, site, BYTECODE_FILL, FILL_FLAGS), app_folder)
         )
         env = engine_env(os.environ if environ is None else environ)
-        return cls(argv=argv, env=env, engine_lock=engine_lock, bytecode=bytecode)
+        return cls(argv=argv, env=env, engine_lock=engine_lock, bytecode=bytecode, app_folder=app_folder)
 
     def spawn_argv(self, parent_pid: int, pycache: Path | None = None) -> list[str]:
         """The argv the client spawns: the interpreter (reading bytecode from `pycache` when given), the command,
         the parent's pid for the engine's watchdog, and the engine lock."""
         prefix = ["-X", f"pycache_prefix={pycache}"] if pycache is not None else []
-        lock = ["--engine-lock", str(self.engine_lock)] if self.engine_lock is not None else []
+        lock = []
+        if self.engine_lock is not None and self.app_folder is not None:
+            lock = [
+                "--engine-lock",
+                str(self.engine_lock),
+                "--app-folder-id",
+                f"{self.app_folder.dev}:{self.app_folder.ino}",
+            ]
         cache = ["--app-cache", str(self.app_cache)] if self.app_cache is not None else []
         return [self.argv[0], *prefix, *self.argv[1:], "--parent-pid", str(parent_pid), *lock, *cache]
 
@@ -541,43 +610,75 @@ class _Filler:
                 self._group.signal()
 
     def _run(self) -> None:
-        directory = self._bytecode.directory
+        """The fill (S0102, BL-0244): `engine/`, `bytecode/` and the build folder are made through descriptors, from
+        the app folder checked to be the object of the start; the compiler child runs in the build folder with
+        `-X pycache_prefix=.`, so every folder and file it makes is relative to that object (in a removed folder its
+        `mkdir`s fail; it can never make the app folder again, as `os.makedirs` under an absolute prefix did: S0100
+        round 2). `.complete` is written only when, after the child, the app folder and the build folder at their
+        paths are still the objects made; otherwise nothing is marked or removed (what the fill made is gone with the
+        old folder, or not ours to reach)."""
+        bytecode = self._bytecode
         failure: str | None = None
         try:
-            if directory.exists():  # a folder left by a fill that did not finish
-                shutil.rmtree(directory)
-            # `<app_local_data>/engine/bytecode/<build>`: one `mkdir` each below the app folder, never the app folder or
-            # above it (the sidecar made it and synced its parent at start: S0100 round 1, red team F3)
-            for folder in (directory.parents[1], directory.parent):
-                folder.mkdir(exist_ok=True)
-            directory.mkdir()
-            argv = self._bytecode.fill_argv
-            with self._lock:
-                if self._stopped:
-                    return
-                proc = subprocess.Popen(  # noqa: S603 (argv from EngineCommand, built by the composition root)
-                    [argv[0], "-X", f"pycache_prefix={directory}", *argv[1:]],
-                    stdin=subprocess.DEVNULL,
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                    env=self._env,
-                    close_fds=True,
-                    start_new_session=os.name == "posix",
-                    creationflags=creation_flags(os.name),
-                )
-                group = EngineGroup(self._ops, proc.pid) if os.name == "posix" else _AloneProcess(proc)
-                self._group = group
-            reaped = group.drain()
-            proc.returncode = reaped.returncode
-            if reaped.returncode == 0 and not self._stopped:
-                (directory / BYTECODE_COMPLETE).write_bytes(b"")
-            elif not self._stopped:
-                failure = f"the fill exited with code {reaped.returncode}"
-        except OSError as e:
+            with _opened_chain(bytecode, make=True) as parent:
+                assert parent is not None  # noqa: S101 (made)
+                shutil.rmtree(parent.name, dir_fd=parent.parent, ignore_errors=True)  # a fill that did not finish
+                os.mkdir(parent.name, dir_fd=parent.parent)
+                build = os.open(parent.name, directory_flags() | os.O_NOFOLLOW, dir_fd=parent.parent)
+            try:
+                failure = self._fill(build)
+            finally:
+                os.close(build)
+        except (OSError, ValueError) as e:
             failure = f"the fill failed: {type(e).__name__}: {e}"
         if failure is not None:
             with contextlib.suppress(Exception):
                 self._log(ENGINE_BYTECODE, outcome="fill_failed", detail=failure)
+
+    def _fill(self, build: int) -> str | None:
+        """Run the compiler child in the build folder `build` and mark it complete; the failure's words, or None."""
+        bytecode = self._bytecode
+        argv = bytecode.fill_argv
+        with self._lock:
+            if self._stopped:
+                return None
+            proc = subprocess.Popen(  # noqa: S603 (argv from EngineCommand, built by the composition root)
+                [argv[0], "-X", "pycache_prefix=.", *argv[1:]],
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                env=self._env,
+                cwd=bytecode.directory,
+                close_fds=True,
+                start_new_session=os.name == "posix",
+                creationflags=creation_flags(os.name),
+            )
+            group = EngineGroup(self._ops, proc.pid) if os.name == "posix" else _AloneProcess(proc)
+            self._group = group
+        reaped = group.drain()
+        proc.returncode = reaped.returncode
+        if self._stopped:
+            return None
+        if reaped.returncode != 0:
+            return f"the fill exited with code {reaped.returncode}"
+        assert bytecode.app_folder is not None  # noqa: S101 (`_opened_chain` checked it)
+        st = os.fstat(build)
+        try:
+            at_path = os.stat(bytecode.directory, follow_symlinks=False)
+        except OSError:
+            at_path = None
+        if (
+            not bytecode.app_folder.same_now()
+            or at_path is None
+            or (at_path.st_dev, at_path.st_ino)
+            != (
+                st.st_dev,
+                st.st_ino,
+            )
+        ):
+            return "the app folder was removed or replaced while the fill ran: nothing marked"
+        os.close(os.open(BYTECODE_COMPLETE, os.O_WRONLY | os.O_CREAT | os.O_CLOEXEC, 0o644, dir_fd=build))
+        return None
 
 
 class EngineClient:

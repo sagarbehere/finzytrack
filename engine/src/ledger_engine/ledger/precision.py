@@ -38,13 +38,14 @@ passes the bytes it parsed itself. The load's refusal, when Beancount's arithmet
 from __future__ import annotations
 
 import decimal
+import errno
 import re
 from collections.abc import Mapping, Sequence
 from decimal import Decimal
-from os import path
 from typing import Any, Final, NamedTuple
 
 from ledger_engine.ledger import beancount_port as port
+from ledger_engine.ledger.fingerprint import read_regular, regular
 
 DIGITS: Final = 28
 """Beancount's precision: Python's default context (`beancount_port.BEANCOUNT_CONTEXT`), the one every load runs in."""
@@ -303,8 +304,11 @@ def of_disk(
     is a moved disk; a file it cannot read raises `OSError`, which the rebuild answers as a moved disk too."""
     files: dict[str, bytes] = {}
     for name in parsed:
-        if not path.isfile(name):
+        if not regular(name):
             continue
-        with open(name, "rb") as f:
-            files[name] = f.read()
+        try:
+            files[name] = read_regular(name)  # never blocks on a FIFO swapped in since (S0102, BL-0245)
+        except OSError as e:
+            if e.errno != errno.EINVAL:
+                raise
     return warnings(files, entries, options)

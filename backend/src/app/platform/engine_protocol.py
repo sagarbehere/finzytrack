@@ -90,6 +90,7 @@ REFUSAL_KEYS = frozenset(
         "protocol.handshake_required",
         "engine.internal",
         "engine.no_engine_lock",
+        "engine.app_folder_missing",
     }
 )
 OK_KEYS = frozenset({"v", "id", "op", "ok", "result"})

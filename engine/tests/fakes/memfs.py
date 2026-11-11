@@ -795,6 +795,9 @@ class MemDir:
     def device(self) -> int:
         return self._d.dev
 
+    def identity(self) -> tuple[int, int]:
+        return (self._d.dev, self._ino)
+
     def volume_id(self) -> str | None:
         """The UUID of this folder's drive (`DirHandle.volume_id`; S0089): `MemFS.volume_of`; `EIO` when it cannot
         be read (`outside_volume_error`). Asking writes nothing and is not an effect."""

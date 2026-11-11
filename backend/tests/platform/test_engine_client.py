@@ -32,6 +32,7 @@ from typing import Any, override
 
 import pytest
 
+from app.platform.adapters.app_folder import AppFolder
 from app.platform.adapters.engine_client import (
     EngineClient,
     EngineCommand,
@@ -559,8 +560,11 @@ def test_the_engine_is_told_its_parent(client: EngineClient) -> None:
 def test_the_spawned_engine_is_told_its_engine_lock() -> None:
     """S0053, engine-jobs §5.1: every engine the product starts holds the engine lock, so the spawn names it."""
     lock = Path("/data/locks/engine.lock")
-    with_lock = EngineCommand(argv=("python",), env=None, engine_lock=lock)
-    assert with_lock.spawn_argv(7) == ["python", "--parent-pid", "7", "--engine-lock", str(lock)]
+    with_lock = EngineCommand(
+        argv=("python",), env=None, engine_lock=lock, app_folder=AppFolder(lock.parent.parent, 1, 2)
+    )
+    lock_args = ["--engine-lock", str(lock), "--app-folder-id", "1:2"]  # S0102: with the folder's identity
+    assert with_lock.spawn_argv(7) == ["python", "--parent-pid", "7", *lock_args]
     assert EngineCommand(argv=("python",), env=None).spawn_argv(7) == ["python", "--parent-pid", "7"]
 
 
@@ -2079,7 +2083,10 @@ def test_a_violation_after_the_commit_point_closes_the_input_and_never_signals_t
 
 
 def bytecode_command(directory: Path) -> EngineCommand:
-    return EngineCommand.for_venv(ENGINE_VENV, test_ops=True, bytecode_dir=directory)
+    """The fill writes only in the app folder of the start (S0102): `directory` is `<app>/engine/bytecode/<build>`."""
+    app = directory.parents[2]
+    app.mkdir(parents=True, exist_ok=True)
+    return EngineCommand.for_venv(ENGINE_VENV, test_ops=True, bytecode_dir=directory, app_folder=AppFolder.of(app))
 
 
 def test_the_bytecode_directory_is_filled_once_then_used(tmp_path: Path) -> None:
@@ -2443,8 +2450,8 @@ def test_a_plugin_imported_from_a_user_folder_writes_no_pycache(tmp_path: Path) 
     folder = tmp_path / "ledger"
     folder.mkdir()
     (folder / "ft_test_plugin.py").write_text(PLUGIN, encoding="utf-8")
-    bytecode = tmp_path / "bytecode"
-    c = EngineClient(EngineCommand.for_venv(ENGINE_VENV, test_ops=True, bytecode_dir=bytecode))
+    bytecode = tmp_path / "app" / "engine" / "bytecode" / "build"
+    c = EngineClient(bytecode_command(bytecode))
     try:
         assert c.call("test.import_plugin", {"folder": str(folder)}) == {"value": 42}
         assert not list(folder.rglob("__pycache__")), "the engine wrote bytecode into the user's folder"
@@ -2457,8 +2464,8 @@ def test_a_plugin_imported_from_a_user_folder_writes_no_pycache(tmp_path: Path) 
 def test_a_failed_bytecode_fill_is_logged_and_never_marked_complete(tmp_path: Path) -> None:
     """@regression-guard (S0057 verifier R1-F6; §5.1: "marked complete last"): a fill that fails leaves no
     `.complete`, so no engine uses a half-filled directory."""
-    directory = tmp_path / "bytecode"
-    command = EngineCommand.for_venv(ENGINE_VENV, test_ops=True, bytecode_dir=directory)
+    directory = tmp_path / "app" / "engine" / "bytecode" / "build"
+    command = bytecode_command(directory)
     assert command.bytecode is not None
     failing = dataclasses.replace(
         command, bytecode=dataclasses.replace(command.bytecode, fill_argv=(sys.executable, "-c", "raise SystemExit(3)"))
@@ -2825,7 +2832,8 @@ def test_the_product_starts_its_engines_with_its_app_cache(tmp_path: Path) -> No
     from app.main import Args, engine_command
 
     args = Args(tmp_path / "local", tmp_path / "cache", 0, None, None, tmp_path / "venv", None)
-    assert engine_command(args, "0.4.0").app_cache == tmp_path / "cache"
+    (tmp_path / "local").mkdir()
+    assert engine_command(args, AppFolder.of(tmp_path / "local"), "0.4.0").app_cache == tmp_path / "cache"
 
 
 def test_S0100_r1_the_bytecode_fill_never_makes_the_app_folder(tmp_path: Path) -> None:
@@ -2834,10 +2842,10 @@ def test_S0100_r1_the_bytecode_fill_never_makes_the_app_folder(tmp_path: Path) -
     used `mkdir(parents=True)`, which made a removed app folder again, unsynced)."""
     app = tmp_path / "gone" / "app"
     directory = bytecode_build_dir(app, Path(sys.executable), Path(sys.prefix), "9.9.9")
-    command = EngineCommand.for_venv(ENGINE_VENV, test_ops=True, bytecode_dir=directory)
+    command = bytecode_command(directory)  # S0102: the app folder of the start, with its identity
     assert command.bytecode is not None
     seen: list[dict[str, object]] = []
-    (tmp_path / "gone").mkdir()  # the app folder's parent is there; the app folder is not
+    app.rmdir()  # the app folder's parent is there; the app folder is not
 
     def log(event: object, /, **fields: object) -> None:
         del event

@@ -40,6 +40,7 @@ type RefusalKey = Literal[
     "protocol.handshake_required",
     "engine.internal",
     "engine.no_engine_lock",
+    "engine.app_folder_missing",
 ]
 REFUSAL_KEYS: frozenset[str] = frozenset(get_args(RefusalKey.__value__))
 
@@ -553,13 +554,15 @@ class CopyParams(Message):
 class OpSpec:
     """One op: its params and result models, the example result its reply carries in the schema, the example params
     of its request, and whether it needs the engine lock (engine-jobs §5.1: every op that reads or writes ledger or
-    journal files runs only in an engine that holds it; S0062)."""
+    journal files runs only in an engine that holds it; S0062), and whether it writes or syncs in the app folder (S0102,
+    BL-0244: it runs only while the folder is the one of the engine's start, `--app-folder-id`)."""
 
     params: type[Message]
     result: type[Message]
     example_result: dict[str, Any]
     example_params: dict[str, Any] | None = None
     needs_engine_lock: bool = False
+    writes_app_folder: bool = False
 
 
 _ALD = "/app-data/com.finzytrack.desktop"
@@ -609,6 +612,7 @@ OPS: dict[str, OpSpec] = {
         },
         {"app_local_data": _ALD},
         needs_engine_lock=True,
+        writes_app_folder=True,
     ),
     "recover_try": OpSpec(
         RecoverTryParams,
@@ -640,6 +644,7 @@ OPS: dict[str, OpSpec] = {
         },
         {"app_local_data": _ALD, "journal_dir": _JD, "name": "s1-j7"},
         needs_engine_lock=True,
+        writes_app_folder=True,
     ),
     "recover_act": OpSpec(
         RecoverActParams,
@@ -647,6 +652,7 @@ OPS: dict[str, OpSpec] = {
         {"outcome": "done", "reason": None, "path": None, "detail": None, "errno": None},
         {"app_local_data": _ALD, "journal_dir": _JD, "name": "s1-j7", "action": "keep"},
         needs_engine_lock=True,
+        writes_app_folder=True,
     ),
     "save": OpSpec(
         SaveParams,
@@ -675,6 +681,7 @@ OPS: dict[str, OpSpec] = {
             "app_local_data": _ALD,
         },
         needs_engine_lock=True,
+        writes_app_folder=True,
     ),
     "save_outcome": OpSpec(
         SaveOutcomeParams,

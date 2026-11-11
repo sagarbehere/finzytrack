@@ -3029,7 +3029,8 @@
         "protocol.invalid_params",
         "protocol.handshake_required",
         "engine.internal",
-        "engine.no_engine_lock"
+        "engine.no_engine_lock",
+        "engine.app_folder_missing"
       ],
       "type": "string"
     },

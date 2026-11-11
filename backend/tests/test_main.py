@@ -34,6 +34,7 @@ from app.api import ApiContainer, create_app
 from app.api.envelope import Envelope
 from app.api.health import health_router
 from app.api.routes import declare
+from app.platform.adapters.app_folder import AppFolder
 from app.platform.adapters.clock import SystemClock
 from app.platform.adapters.engine_client import (
     EngineClient,
@@ -45,7 +46,7 @@ from app.platform.adapters.engine_client import (
 from app.platform.clock import FrozenClock
 from app.platform.engine_jobs.recovery import Report, blocking_for
 from app.platform.engine_jobs.scheduler import Done, EngineJobs, JobTicket
-from app.platform.observability import Event, EventLog
+from app.platform.observability import Event, EventLog, EventSink
 from app.workspaces.access import Unknown
 from tests.api.support import Counted, FakeContainer, FixedAccess
 
@@ -81,6 +82,15 @@ def dirs(tmp_path: Path) -> tuple[Path, Path]:
 VERSION = "9.9.9-test"
 
 
+def _wire(args: main.Args, log: EventSink, version: str) -> main.Wiring:
+    """`main.wire` with the app folder as the start makes it (S0102: with its identity)."""
+    return main.wire(args, AppFolder.of(args.app_local_data), log, version)
+
+
+def _engine_command(args: main.Args, version: str) -> EngineCommand:
+    return main.engine_command(args, AppFolder.of(args.app_local_data), version)
+
+
 def argv(data: Path, cache: Path, *extra: str) -> list[str]:
     return ["--app-local-data", str(data), "--app-cache", str(cache), *extra]
 
@@ -89,12 +99,12 @@ def test_args_default_to_port_0_and_the_system_clock(dirs: tuple[Path, Path]) ->
     args = main.parse_args(argv(*dirs))
     assert args.port == 0
     assert args.workspace is None
-    assert isinstance(main.wire(args, no_log, VERSION).clock, SystemClock)
+    assert isinstance(_wire(args, no_log, VERSION).clock, SystemClock)
 
 
 def test_frozen_clock_arg_wires_a_frozen_clock(dirs: tuple[Path, Path]) -> None:
     args = main.parse_args(argv(*dirs, "--frozen-clock", "2026-03-31T21:30:00-07:00"))
-    clock = main.wire(args, no_log, VERSION).clock
+    clock = _wire(args, no_log, VERSION).clock
     assert isinstance(clock, FrozenClock)
     assert clock.now() == datetime(2026, 4, 1, 4, 30, tzinfo=UTC)
     assert clock.now().utcoffset() == timedelta(hours=-7)
@@ -223,8 +233,10 @@ def test_engine_venv_selects_the_venv_engine(dirs: tuple[Path, Path]) -> None:
     lock = dirs[0] / "locks" / "engine.lock"
     python = ENGINE_VENV / "bin" / "python"
     bytecode = bytecode_build_dir(dirs[0], python, venv_site(ENGINE_VENV), VERSION)
-    expected = EngineCommand.for_venv(ENGINE_VENV, engine_lock=lock, bytecode_dir=bytecode)
-    assert main.engine_command(args, VERSION) == replace(expected, app_cache=dirs[1])  # S0087: the mirror's place
+    expected = EngineCommand.for_venv(
+        ENGINE_VENV, engine_lock=lock, bytecode_dir=bytecode, app_folder=AppFolder.of(dirs[0])
+    )
+    assert _engine_command(args, VERSION) == replace(expected, app_cache=dirs[1])  # S0087: the mirror's place
 
 
 def test_without_engine_venv_the_engine_is_the_packaged_one_beside_this_interpreter(dirs: tuple[Path, Path]) -> None:
@@ -233,8 +245,10 @@ def test_without_engine_venv_the_engine_is_the_packaged_one_beside_this_interpre
     lock = dirs[0] / "locks" / "engine.lock"
     site = packaged_engine_site(Path(sys.prefix))
     bytecode = bytecode_build_dir(dirs[0], Path(sys.executable), site, VERSION)
-    expected = EngineCommand.for_packaged(Path(sys.executable), site, engine_lock=lock, bytecode_dir=bytecode)
-    assert main.engine_command(args, VERSION) == replace(expected, app_cache=dirs[1])  # S0087: the mirror's place
+    expected = EngineCommand.for_packaged(
+        Path(sys.executable), site, engine_lock=lock, bytecode_dir=bytecode, app_folder=AppFolder.of(dirs[0])
+    )
+    assert _engine_command(args, VERSION) == replace(expected, app_cache=dirs[1])  # S0087: the mirror's place
 
 
 def test_a_relative_app_cache_reaches_the_engine_as_an_absolute_path(
@@ -244,7 +258,7 @@ def test_a_relative_app_cache_reaches_the_engine_as_an_absolute_path(
     exit; the composition root resolves it, as `open_log` does."""
     monkeypatch.chdir(dirs[1].parent)
     args = main.parse_args(argv(dirs[0], Path(dirs[1].name)))
-    command = main.engine_command(args, VERSION)
+    command = _engine_command(args, VERSION)
     assert command.app_cache == dirs[1].resolve()
     assert command.app_cache is not None
     assert command.app_cache.is_absolute()
@@ -254,10 +268,10 @@ def test_the_bytecode_directory_is_per_build_in_app_local_data(dirs: tuple[Path,
     """engine-jobs §5.1: "in app-local data (`app_local_data/engine/bytecode/<build>/`, never inside the packaged
     install)", which may be read-only; another app version is another build."""
     args = main.parse_args(argv(*dirs))
-    command = main.engine_command(args, VERSION)
+    command = _engine_command(args, VERSION)
     assert command.bytecode is not None
     assert command.bytecode.directory.parent == dirs[0] / "engine" / "bytecode"
-    other = main.engine_command(args, VERSION + ".1")
+    other = _engine_command(args, VERSION + ".1")
     assert other.bytecode is not None
     assert other.bytecode.directory != command.bytecode.directory
 
@@ -268,7 +282,7 @@ def test_engine_venv_must_be_a_folder(tmp_path: Path, dirs: tuple[Path, Path]) -
 
 
 def test_wire_builds_the_engine_client_without_starting_it(dirs: tuple[Path, Path]) -> None:
-    wiring = main.wire(main.parse_args(argv(*dirs, "--engine-venv", str(ENGINE_VENV))), no_log, VERSION)
+    wiring = _wire(main.parse_args(argv(*dirs, "--engine-venv", str(ENGINE_VENV))), no_log, VERSION)
     try:
         assert isinstance(wiring.engine, EngineClient)
         assert wiring.engine.pid is None
@@ -284,7 +298,7 @@ def test_the_boots_recover_all_starts_the_first_engine_through_the_scheduler(dir
     """engine-jobs §5.1, §5.5: "The engine is spawned when a job needs one, not at boot; at start the first job is
     the boot's `recover_all`, so an engine still starts early". The scheduler waits for the engine lock first
     (§5.1) and the boot's window ends with its job (§3, §9.2)."""
-    wiring = main.wire(main.parse_args(argv(*dirs, "--engine-venv", str(ENGINE_VENV))), no_log, VERSION)
+    wiring = _wire(main.parse_args(argv(*dirs, "--engine-venv", str(ENGINE_VENV))), no_log, VERSION)
     try:
         boot = wiring.jobs.start()
         assert isinstance(boot, JobTicket)
@@ -305,7 +319,7 @@ def test_the_boots_recover_all_lists_the_journals_in_its_engine(dirs: tuple[Path
     journal.mkdir(parents=True)
     (journal / "s0-j1.part").write_bytes(b"torn")
     (journal / "s0-j2.open").write_bytes(b"torn {")
-    wiring = main.wire(main.parse_args(argv(*dirs, "--engine-venv", str(ENGINE_VENV))), no_log, VERSION)
+    wiring = _wire(main.parse_args(argv(*dirs, "--engine-venv", str(ENGINE_VENV))), no_log, VERSION)
     try:
         boot = wiring.jobs.start()
         assert isinstance(boot, JobTicket)
@@ -629,7 +643,7 @@ def test_an_exception_that_leaves_main_is_logged_as_its_type_and_never_printed(d
 
 
 def test_the_api_container_has_the_version_uuid7_ids_no_workspaces_and_the_log(dirs: tuple[Path, Path]) -> None:
-    wiring = main.wire(main.parse_args(argv(*dirs)), no_log, VERSION)
+    wiring = _wire(main.parse_args(argv(*dirs)), no_log, VERSION)
     try:
         api = wiring.api
         assert api.app_version == VERSION
@@ -1110,12 +1124,12 @@ def test_S0100_a_missing_app_folder_is_made_at_start_and_its_parent_synced(
 
     monkeypatch.setattr(app_folder, "_full_sync", spy)
     data = tmp_path / "app"
-    assert app_folder.prepare(data) is None
+    assert isinstance(app_folder.prepare(data), AppFolder)
     assert data.is_dir()
     assert oct(data.stat().st_mode & 0o777) == oct(0o700)
     assert synced == [str(tmp_path.resolve())]
     synced.clear()
-    assert app_folder.prepare(data) is None, "a folder already there: its parent is synced again"
+    assert isinstance(app_folder.prepare(data), AppFolder), "a folder already there: its parent is synced again"
     assert synced == [str(tmp_path.resolve())]
 
 
@@ -1130,7 +1144,7 @@ def test_S0100_the_app_folders_parents_are_never_made(tmp_path: Path) -> None:
 
     data = tmp_path / "missing" / "app"
     refusal = app_folder.prepare(data)
-    assert refusal is not None
+    assert isinstance(refusal, app_folder.AppFolderRefusal)
     assert not (tmp_path / "missing").exists()
     assert refusal.text == (
         f"Finzytrack cannot start: it could not set up its data folder {data} ({os.strerror(2)}). Check that your "
@@ -1144,7 +1158,7 @@ def test_S0100_a_file_at_the_app_folders_path_is_refused(tmp_path: Path) -> None
     data = tmp_path / "app"
     data.write_text("x")
     refusal = app_folder.prepare(data)
-    assert refusal is not None
+    assert isinstance(refusal, app_folder.AppFolderRefusal)
     assert refusal.errno == errno.ENOTDIR
 
 
@@ -1198,7 +1212,7 @@ def test_S0100_r1_an_app_folder_that_is_a_link_has_both_parents_synced(
         full(fd)
 
     monkeypatch.setattr(app_folder, "_full_sync", spy)
-    assert app_folder.prepare(link) is None
+    assert isinstance(app_folder.prepare(link), AppFolder)
     assert sorted(synced) == sorted([str((tmp_path / "home").resolve()), str((tmp_path / "elsewhere").resolve())])
 
 
@@ -1225,7 +1239,7 @@ def test_S0100_r1_a_volume_that_refuses_the_full_sync_gets_fsync(
 
     monkeypatch.setattr(fcntl, "fcntl", refusing)
     monkeypatch.setattr(os, "fsync", fsync)
-    assert app_folder.prepare(tmp_path / "app") is None
+    assert isinstance(app_folder.prepare(tmp_path / "app"), AppFolder)
     assert len(fsynced) == 1
 
 
@@ -1246,5 +1260,5 @@ def test_S0100_r1_another_full_sync_error_still_refuses_the_start(
 
     monkeypatch.setattr(fcntl, "fcntl", failing)
     refusal = app_folder.prepare(tmp_path / "app")
-    assert refusal is not None
+    assert isinstance(refusal, app_folder.AppFolderRefusal)
     assert refusal.errno == errno.EIO

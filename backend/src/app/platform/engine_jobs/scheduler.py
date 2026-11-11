@@ -59,6 +59,7 @@ from typing import Final, Literal, Protocol, runtime_checkable
 
 from app.domain.errors import DomainError
 from app.platform.engine import (
+    AppFolderChangedError,
     EndReason,
     EngineEnd,
     EngineEvent,
@@ -132,6 +133,20 @@ from app.platform.observability.events import ENGINE_EXIT, ENGINE_START_FAILED, 
 DISPLAY_DELAY: Final = 2.0
 """§5.4: the display delay after which a job's text becomes "Still working…" and the advice may show (a UI constant;
 it only changes the text, it ends nothing)."""
+
+type EngineUnavailableReason = Literal["stopped_often", "incompatible", "cannot_start", "closing", "app_folder_missing"]
+
+
+def no_engine_reason(why: str, bound: EngineUnavailableReason) -> EngineUnavailableReason:
+    """`NoEngine`'s reason (§11 `ENGINE_UNAVAILABLE`): a failed lock wait's own, else the bound's (`bound`)."""
+    match why:
+        case "lock_failed":
+            return "cannot_start"
+        case "app_folder":  # S0102 (BL-0244): the app folder is not the one of the start: quit and reopen
+            return "app_folder_missing"
+        case _:
+            return bound
+
 
 LOST: Final[frozenset[FailureKind]] = frozenset(
     {"crashed", "protocol_violation", "start_failed", "unavailable", "incompatible", "closed"}
@@ -877,12 +892,12 @@ class EngineJobs:
             case EngineLost(job_id=job_id):
                 self._finish(job_id, self._lost_outcome(job_id))
             case NoEngine(job_id=job_id, why=why):
-                reason = "cannot_start" if why == "lock_failed" else self._unavailable_reason
-                self._finish(job_id, Failed(error(ErrorCode.ENGINE_UNAVAILABLE, EngineUnavailableDetails(reason))))
+                unavailable = no_engine_reason(why, self._unavailable_reason)
+                self._finish(job_id, Failed(error(ErrorCode.ENGINE_UNAVAILABLE, EngineUnavailableDetails(unavailable))))
             case EngineRefused(job_id=job_id, why=why):
                 job = self._jobs.get(job_id)
                 if job is not None and job.worker is not None:
-                    kind: FailureKind = "start_failed" if why == "lock_failed" else "unavailable"
+                    kind: FailureKind = "unavailable" if why == "unavailable" else "start_failed"
                     job.worker.refuse(EngineFailure(kind, f"no engine for the job's next part ({why})"))
             case Finished(job_id=job_id):
                 job = self._jobs.get(job_id)
@@ -980,7 +995,7 @@ class EngineJobs:
             with contextlib.suppress(Exception):
                 detail = f"the engine lock could not be waited for: {exc}"
                 self._log(ENGINE_START_FAILED, kind="start_failed", detail=detail)
-            self._post(_Feed(EngineLockFailed()))
+            self._post(_Feed(EngineLockFailed(app_folder=isinstance(exc, AppFolderChangedError))))
         else:
             self._post(_Feed(EngineLockFree()))
 

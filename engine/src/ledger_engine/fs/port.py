@@ -141,6 +141,11 @@ class DirHandle(Protocol):
         point)."""
         ...
 
+    def identity(self) -> tuple[int, int]:
+        """`(st_dev, st_ino)` of this directory, asked through its descriptor (`fstat`): the object it opened, whatever
+        its path names now (S0102, BL-0244: the save makes `local/` only in the app folder of the start)."""
+        ...
+
     def volume_id(self) -> str | None:
         """The UUID of the drive this directory is on, in lower case (`8-4-4-4-12` hex digits), or None when the drive
         reports none (S0089, BL-0188: the journal names each folder's drive by it, and the undo writes only on that

@@ -105,9 +105,15 @@ UNAVAILABLE: Final[tuple[tuple[str, str], ...]] = (
     ("cannot_start", "The ledger engine could not start. You can still look at your ledgers; saving changes is off."),
     ("incompatible", "This installation is damaged. Please reinstall Finzytrack."),
     ("closing", "Finzytrack is closing."),
+    (
+        "app_folder_missing",
+        "Finzytrack's data folder was removed or replaced while Finzytrack was open. Your ledger files are safe. "
+        "Quit Finzytrack and open it again.",
+    ),
 )
 """§11's "no engine" row (`msg:unavailable.*`): the bound reached, failure-modes E1; E6's two texts (an engine that
-cannot start; an incompatible one, a damaged install); the app closing."""
+cannot start; an incompatible one, a damaged install); the app closing; the app folder not the one of the start
+(S0102, BL-0244)."""
 
 
 def unavailable_text(details: EngineUnavailableDetails) -> str:

@@ -1,6 +1,7 @@
 """The engine's protocol server: one request line in, one reply line out (ADR-0054 decisions 2 and 4).
 
-    python -s -S -B -P -c <bootstrap> <site> [--parent-pid PID] [--engine-lock PATH] [--test-ops]
+    python -s -S -B -P -c <bootstrap> <site> [--parent-pid PID] [--engine-lock PATH --app-folder-id DEV:INO]
+        [--test-ops]
 
 (the main sidecar's bootstrap adds only the engine's site-packages, then runs this module; engine-jobs §5.1. Never
 `-I`: it implies `-E`, which ignores `PYTHONHASHSEED`. Tests may run `python -I -m ledger_engine`.)
@@ -40,6 +41,11 @@
   session's engines from doing any ledger work until it has ended, and the new session's recovery never runs beside
   it. Opened with `os.open`, so a forked child holds it too. POSIX only;
   Windows is BL-0087.
+- **The app folder of the start** (S0102, BL-0244; `ledger_engine.protocol.app_folder`): `--app-folder-id DEV:INO`
+  (required with `--engine-lock`) is the app folder's identity when the sidecar made it durable. The lock's `locks/`
+  is made through a descriptor on that folder only while it is that object; otherwise the engine takes no lock and
+  ends (`EXIT_APP_FOLDER`). The ops that write or sync in the folder (`OpSpec.writes_app_folder`) run only while it
+  still is: the save answers `not_saved {app_folder_missing}`, the others are refused `engine.app_folder_missing`.
 - **The create's ops** (S0080; `ledger_engine.protocol.create`): `create` and `create_outcome`, and **the copy's**
   (S0081; `ledger_engine.protocol.copy`): `copy` and `copy_outcome`, answered only by an engine that holds the engine
   lock.
@@ -57,6 +63,7 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import errno
 import json
 import os
 import signal
@@ -72,6 +79,8 @@ from typing import IO, Any, Protocol
 
 from pydantic import BaseModel, ConfigDict, ValidationError
 
+from ledger_engine.protocol import app_folder
+from ledger_engine.protocol.app_folder import AppFolderChangedError, Identity, parse_identity
 from ledger_engine.protocol.copy import COPY_HANDLERS, COPY_OUTCOME_HANDLERS
 from ledger_engine.protocol.create import CREATE_HANDLERS, CREATE_OUTCOME_HANDLERS
 from ledger_engine.protocol.messages import (
@@ -99,12 +108,14 @@ from ledger_engine.protocol.messages import (
 from ledger_engine.protocol.opening import OPEN_HANDLERS
 from ledger_engine.protocol.rebuild import REBUILD_HANDLERS
 from ledger_engine.protocol.recovery import RECOVERY_HANDLERS, BadParamsError
-from ledger_engine.protocol.save import OUTCOME_HANDLERS, SAVE_HANDLERS
+from ledger_engine.protocol.save import APP_FOLDER_MISSING_HANDLERS, OUTCOME_HANDLERS, SAVE_HANDLERS
 
 ENVELOPE = frozenset({"v", "id", "op", "params"})
 PARENT_POLL_SECONDS = 0.25
 EXIT_PARENT_GONE = 3
+EXIT_APP_FOLDER = 4  # the app folder is not the one of the start: no lock taken, nothing written (S0102, BL-0244)
 INIT_PID = 1
+APP_FOLDER_MESSAGE = "The app's data folder is missing or was replaced since the engine started."
 MAX_MESSAGE_CHARS = 1000
 
 
@@ -141,12 +152,20 @@ class JobContext:
     """One request's job messages (engine-jobs §4, §5.4, §6.1 steps 7 and 9, §12)."""
 
     def __init__(
-        self, rid: int, op: str, channel: JobChannel, *, engine_lock: str | None = None, app_cache: str | None = None
+        self,
+        rid: int,
+        op: str,
+        channel: JobChannel,
+        *,
+        engine_lock: str | None = None,
+        app_folder_id: Identity | None = None,
+        app_cache: str | None = None,
     ) -> None:
         self._rid = rid
         self._op = op
         self._channel = channel
         self.engine_lock = engine_lock  # the engine lock this engine holds (recover-all's ops check their folder)
+        self.app_folder_id = app_folder_id  # the app folder's identity at the start (S0102: the save's step 8)
         self.app_cache = app_cache  # the app's cache folder this engine was started with (S0087: the mirror's)
         self._gated = False
         self._proceeded = False
@@ -200,9 +219,15 @@ def _is_proceed(line: bytes, rid: int, op: str) -> bool:
 
 @dataclass(frozen=True, slots=True)
 class Handler:
+    """An op's handler. `writes_app_folder` (S0102, BL-0244): it runs only while the app folder is the one of the
+    engine's start; otherwise `app_folder_missing` answers when given (the save's own outcome), else the request is
+    refused `engine.app_folder_missing`."""
+
     params: type[Message]
     run: Callable[[Message, JobContext], Message]
     needs_engine_lock: bool = False
+    writes_app_folder: bool = False
+    app_folder_missing: Callable[[Message, JobContext], Message] | None = None
 
 
 def _handshake(_: Message, __: JobContext) -> Message:
@@ -336,18 +361,24 @@ def _interpreter(_: Message, __: JobContext) -> Message:
     )
 
 
+def _handler(op: str, run: Callable[[Message, JobContext], Message]) -> Handler:
+    spec = OPS[op]
+    missing = APP_FOLDER_MISSING_HANDLERS.get(op)
+    return Handler(spec.params, run, spec.needs_engine_lock, spec.writes_app_folder, missing)
+
+
 PRODUCTION: dict[str, Handler] = {
     "handshake": Handler(NoParams, _handshake),
     "ping": Handler(NoParams, _ping),
-    **{op: Handler(OPS[op].params, run, needs_engine_lock=True) for op, run in RECOVERY_HANDLERS.items()},
-    **{op: Handler(OPS[op].params, run, needs_engine_lock=True) for op, run in OUTCOME_HANDLERS.items()},
-    **{op: Handler(OPS[op].params, run, needs_engine_lock=True) for op, run in SAVE_HANDLERS.items()},
-    **{op: Handler(OPS[op].params, run, needs_engine_lock=True) for op, run in REBUILD_HANDLERS.items()},
-    **{op: Handler(OPS[op].params, run, needs_engine_lock=True) for op, run in OPEN_HANDLERS.items()},
-    **{op: Handler(OPS[op].params, run, needs_engine_lock=True) for op, run in CREATE_HANDLERS.items()},
-    **{op: Handler(OPS[op].params, run, needs_engine_lock=True) for op, run in CREATE_OUTCOME_HANDLERS.items()},
-    **{op: Handler(OPS[op].params, run, needs_engine_lock=True) for op, run in COPY_HANDLERS.items()},
-    **{op: Handler(OPS[op].params, run, needs_engine_lock=True) for op, run in COPY_OUTCOME_HANDLERS.items()},
+    **{op: _handler(op, run) for op, run in RECOVERY_HANDLERS.items()},
+    **{op: _handler(op, run) for op, run in OUTCOME_HANDLERS.items()},
+    **{op: _handler(op, run) for op, run in SAVE_HANDLERS.items()},
+    **{op: _handler(op, run) for op, run in REBUILD_HANDLERS.items()},
+    **{op: _handler(op, run) for op, run in OPEN_HANDLERS.items()},
+    **{op: _handler(op, run) for op, run in CREATE_HANDLERS.items()},
+    **{op: _handler(op, run) for op, run in CREATE_OUTCOME_HANDLERS.items()},
+    **{op: _handler(op, run) for op, run in COPY_HANDLERS.items()},
+    **{op: _handler(op, run) for op, run in COPY_OUTCOME_HANDLERS.items()},
 }
 TEST_OPS: dict[str, Handler] = {
     "test.stall": Handler(NoParams, _stall),
@@ -361,6 +392,9 @@ TEST_OPS: dict[str, Handler] = {
 }
 assert set(PRODUCTION) == set(OPS), "every op of the protocol has a handler"  # noqa: S101 (import-time invariant)
 assert all(PRODUCTION[op].needs_engine_lock == OPS[op].needs_engine_lock for op in OPS)  # noqa: S101
+assert all(PRODUCTION[op].writes_app_folder == OPS[op].writes_app_folder for op in OPS)  # noqa: S101
+assert all(OPS[op].needs_engine_lock for op in OPS if OPS[op].writes_app_folder)  # noqa: S101
+assert set(APP_FOLDER_MISSING_HANDLERS) <= {op for op in OPS if OPS[op].writes_app_folder}  # noqa: S101
 
 
 def _log(text: str) -> None:
@@ -394,15 +428,22 @@ class Engine:
     have answered its handshake and not yet taken its `flock` when the sidecar waited (BL-0151's gap)."""
 
     def __init__(
-        self, *, test_ops: bool = False, engine_lock_held: str | None = None, app_cache: str | None = None
+        self,
+        *,
+        test_ops: bool = False,
+        engine_lock_held: str | None = None,
+        app_folder_id: Identity | None = None,
+        app_cache: str | None = None,
     ) -> None:
         self._handlers = {**PRODUCTION, **(TEST_OPS if test_ops else {})}
         self._ready = False
         self._locked = engine_lock_held  # the path of the engine lock this engine holds
+        self._app_folder = app_folder_id  # the app folder's identity at the start (S0102, BL-0244)
         self._app_cache = app_cache  # S0087: the mirror's folders live under it; no request names another
 
-    def took_engine_lock(self, path: str) -> None:
+    def took_engine_lock(self, path: str, app_folder_id: Identity) -> None:
         self._locked = path
+        self._app_folder = app_folder_id
 
     @property
     def ready(self) -> bool:
@@ -461,9 +502,16 @@ class Engine:
             return _refusal(rid, op, "protocol.invalid_params", where or "Invalid params.")
         if handler.needs_engine_lock and self._locked is None:
             return _refusal(rid, op, "engine.no_engine_lock", "This engine does not hold the engine lock.")
-        ctx = JobContext(rid, op, channel, engine_lock=self._locked, app_cache=self._app_cache)
+        run = handler.run
+        if handler.writes_app_folder and app_folder.changed(self._locked, self._app_folder):
+            if handler.app_folder_missing is None:
+                return _refusal(rid, op, "engine.app_folder_missing", APP_FOLDER_MESSAGE)
+            run = handler.app_folder_missing
+        ctx = JobContext(
+            rid, op, channel, engine_lock=self._locked, app_folder_id=self._app_folder, app_cache=self._app_cache
+        )
         try:
-            reply = _accepted(rid, op, handler.run(params, ctx), ctx.decision)
+            reply = _accepted(rid, op, run(params, ctx), ctx.decision)
         except InputEnded:
             raise  # not a failure of the request: the read loop ends, and the job never proceeds
         except GateRefused as e:
@@ -547,18 +595,32 @@ def _discard_rest_of_line(channel: IO[bytes]) -> None:
             return
 
 
-def hold_engine_lock(path: str) -> None:
-    """Take the engine lock, waiting, and keep it for the life of the process (§5.1): the descriptor is never
-    closed. Creates the `locks/` folder if it is missing, as the sidecar's wait does, so the engine never depends on
-    the sidecar having waited first; never the app's folder above it, which the sidecar made at start (S0100, BL-0163
-    (a): nothing of ours writes in or above the app folder's parent)."""
+def hold_engine_lock(path: str, identity: Identity) -> None:
+    """Take the engine lock `<app folder>/locks/engine.lock`, waiting, and keep it for the life of the process (§5.1):
+    the descriptor is never closed. Creates the `locks/` folder if it is missing, as the sidecar's wait does, so the
+    engine never depends on the sidecar having waited first; never the app's folder above it, which the sidecar made at
+    start (S0100, BL-0163 (a): nothing of ours writes in or above the app folder's parent). The app folder is opened
+    first and must still be the object of the start (`identity`, S0102, BL-0244); `locks/` and the lock file are made
+    through that descriptor, so a folder removed or put in its place since gets nothing (`AppFolderChangedError`)."""
     if os.name != "posix":  # pragma: no cover (Windows)
         return  # TODO(BL-0087): the Windows lock (LockFileEx), with the engine's nested Job Object.
     import fcntl  # POSIX only
 
-    with contextlib.suppress(FileExistsError):
-        os.mkdir(os.path.dirname(path))
-    fd = os.open(path, os.O_RDWR | os.O_CREAT, 0o600)
+    folder = app_folder.folder_of_lock(path)
+    try:
+        dfd = os.open(folder, os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC)
+    except (FileNotFoundError, NotADirectoryError) as e:
+        raise AppFolderChangedError(e.errno, "the app folder is missing", folder) from None
+    try:
+        st = os.fstat(dfd)
+        if (st.st_dev, st.st_ino) != identity:
+            raise AppFolderChangedError(errno.ESTALE, "the app folder was replaced", folder)
+        locks = os.path.basename(os.path.dirname(os.path.abspath(path)))
+        with contextlib.suppress(FileExistsError):
+            os.mkdir(locks, dir_fd=dfd)
+        fd = os.open(f"{locks}/{os.path.basename(path)}", os.O_RDWR | os.O_CREAT, 0o600, dir_fd=dfd)
+    finally:
+        os.close(dfd)
     fcntl.flock(fd, fcntl.LOCK_EX)
 
 
@@ -663,6 +725,13 @@ def _pid(text: str) -> int:
     return value
 
 
+def _identity(text: str) -> Identity:
+    try:
+        return parse_identity(text)
+    except ValueError as e:
+        raise argparse.ArgumentTypeError(str(e)) from None
+
+
 def _absolute(text: str) -> str:
     if not text.startswith("/"):
         msg = f"{text} is not an absolute path"
@@ -685,8 +754,15 @@ def main(argv: list[str] | None = None) -> int:
         type=_absolute,
         help="the app's cache folder: the only place the mirror's publish writes (S0087; publish.md §2)",
     )
+    parser.add_argument(
+        "--app-folder-id",
+        type=_identity,
+        help="DEV:INO of the app folder at the sidecar's start; required with --engine-lock (S0102, BL-0244)",
+    )
     parser.add_argument("--test-ops", action="store_true", help="test only: add the test.* ops")
     args = parser.parse_args(argv)
+    if args.engine_lock is not None and args.app_folder_id is None:
+        parser.error("--engine-lock needs --app-folder-id")
     parent = args.parent_pid if args.parent_pid is not None else os.getppid()
     channel_in, channel_out = claim_stdio()
     if watches_parent(parent):
@@ -694,12 +770,18 @@ def main(argv: list[str] | None = None) -> int:
     else:
         _log(f"the parent is pid {parent}; the engine ends on stdin EOF only")
     lock: str | None = args.engine_lock
+    identity: Identity | None = args.app_folder_id
     engine = Engine(test_ops=args.test_ops, app_cache=args.app_cache)
 
     def hold() -> None:
         assert lock is not None  # noqa: S101 (only passed with a lock)
-        hold_engine_lock(lock)
-        engine.took_engine_lock(lock)
+        assert identity is not None  # noqa: S101 (required with a lock: checked above)
+        try:
+            hold_engine_lock(lock, identity)
+        except AppFolderChangedError as e:
+            _log(f"the app folder is not the one of the start ({e.strerror}); no lock taken, ending")
+            end_own_group(EXIT_APP_FOLDER)
+        engine.took_engine_lock(lock, identity)
 
     serve(channel_in, channel_out, engine, after_handshake=None if lock is None else hold)
     if leads_own_group():  # the end-of-input exit ends the whole group (engine-jobs §5.2)

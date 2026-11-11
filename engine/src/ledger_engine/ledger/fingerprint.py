@@ -60,14 +60,24 @@ def matches(pattern: str) -> list[str]:
 
 def file_state(p: str) -> FileState:
     """What the next load would find at `p`: no file (nothing, or a link to nothing), these bytes, or a read that
-    fails."""
+    fails. Read with `chunks`, so a FIFO or another special file swapped in never blocks the observation (the save's
+    gate before its commit point, S0102, BL-0245): it is `Unreadable("EINVAL")`, as for the copy since S0081."""
     if not path.exists(p):
         return Absent()
+    h = hashlib.sha256()
     try:
-        with open(p, "rb") as f:
-            return Content(hashlib.file_digest(f, "sha256").hexdigest())
+        for chunk in chunks(p):
+            h.update(chunk)
     except OSError as e:
         return Unreadable(errno.errorcode.get(e.errno, type(e).__name__) if e.errno else type(e).__name__)
+    return Content(h.hexdigest())
+
+
+def read_regular(p: str) -> bytes:
+    """The whole bytes of the regular file at `p` (links followed), never blocking on a FIFO or another special file
+    swapped in: anything but a regular file raises `OSError` (`EINVAL`), as a failed read does (S0102, BL-0245). The
+    overlay load and the rebuild's warnings read ledger files with it."""
+    return b"".join(chunks(p))
 
 
 def chunks(p: str, size: int = 1 << 20) -> Iterator[bytes]:
@@ -90,19 +100,6 @@ def regular(p: str) -> bool:
         return stat.S_ISREG(os.stat(p).st_mode)
     except OSError:
         return False
-
-
-def streamed_state(p: str) -> FileState:
-    """`file_state`, read with `chunks` (never blocking on a FIFO): a copy's re-check of a document (S0081)."""
-    if not path.exists(p):
-        return Absent()
-    h = hashlib.sha256()
-    try:
-        for chunk in chunks(p):
-            h.update(chunk)
-    except OSError as e:
-        return Unreadable(errno.errorcode.get(e.errno, type(e).__name__) if e.errno else type(e).__name__)
-    return Content(h.hexdigest())
 
 
 def listing(root: str) -> dict[str, bool] | None:

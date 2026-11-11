@@ -30,6 +30,7 @@ type RefusalKey = Literal[
     "protocol.handshake_required",
     "engine.internal",
     "engine.no_engine_lock",
+    "engine.app_folder_missing",
 ]
 
 type FailureKind = Literal[
@@ -122,6 +123,11 @@ class EngineInfo:
 @dataclass(frozen=True, slots=True)
 class Pong:
     """The engine is up and reading requests."""
+
+
+class AppFolderChangedError(OSError):
+    """The app folder is missing, or another object stands at its path, since the sidecar's start (S0102, BL-0244):
+    nothing of ours is written there; the jobs that need an engine end `ENGINE_UNAVAILABLE {app_folder_missing}`."""
 
 
 @dataclass(frozen=True, slots=True)

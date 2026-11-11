@@ -34,10 +34,19 @@ import pytest
 
 from app.mirror.files import MirrorInfo, pin
 from app.mirror.reader import Reader
+from app.platform.adapters.app_folder import AppFolder
 from app.platform.adapters.engine_client import EngineClient, EngineCommand
 from app.platform.adapters.engine_lock import engine_lock_path, wait_engine_lock
 from app.platform.clock import FrozenClock
-from app.platform.engine import EndReason, EngineEnd, EngineEvent, EngineFailure, EngineRefusal, GateReached
+from app.platform.engine import (
+    AppFolderChangedError,
+    EndReason,
+    EngineEnd,
+    EngineEvent,
+    EngineFailure,
+    EngineRefusal,
+    GateReached,
+)
 from app.platform.engine_jobs.queue import JobKind, JobSpec, QueuePolicy
 from app.platform.engine_jobs.rebuild import Loaded, RebuildTarget, rebuild_spec, rebuild_work
 from app.platform.engine_jobs.save import (
@@ -112,6 +121,7 @@ class LockWait:
     def __init__(self) -> None:
         self.calls = 0
         self.failing = False
+        self.app_folder_changed = False  # S0102: the app folder is not the one of the start
         self._open = threading.Event()
         self._open.set()
 
@@ -123,6 +133,8 @@ class LockWait:
 
     def __call__(self) -> None:
         self.calls += 1
+        if self.app_folder_changed:
+            raise AppFolderChangedError(2, "the app folder is missing", "/app")
         if self.failing:
             msg = "a file where locks/ belongs"
             raise NotADirectoryError(msg)
@@ -1250,6 +1262,7 @@ def real_rig(tmp_path: Path, ends: list[EngineEnd] | None = None) -> tuple[Engin
     if not (ENGINE_VENV / "bin" / "python").exists():
         pytest.fail("engine/.venv is missing: run `uv sync --locked` in engine/ (the engine tests need it)")
     lock = engine_lock_path(tmp_path)
+    folder = AppFolder.of(tmp_path)  # S0102: the app folder of the start, with its identity
     holder: list[EngineJobs] = []
 
     def ended(end: EngineEnd) -> None:
@@ -1258,11 +1271,14 @@ def real_rig(tmp_path: Path, ends: list[EngineEnd] | None = None) -> tuple[Engin
         holder[0].engine_ended(end)
 
     client = EngineClient(
-        replace(EngineCommand.for_venv(ENGINE_VENV, test_ops=True, engine_lock=lock), app_cache=tmp_path / "cache"),
+        replace(
+            EngineCommand.for_venv(ENGINE_VENV, test_ops=True, engine_lock=lock, app_folder=folder),
+            app_cache=tmp_path / "cache",
+        ),
         on_engine_spawned=lambda s: holder[0].engine_spawned(s),
         on_engine_ended=ended,
     )
-    jobs = EngineJobs(client, wait_engine_lock=lambda: wait_engine_lock(lock), display_delay=DELAY)
+    jobs = EngineJobs(client, wait_engine_lock=lambda: wait_engine_lock(folder), display_delay=DELAY)
     holder.append(jobs)
     return jobs, client
 
@@ -1355,6 +1371,7 @@ def test_with_the_real_engine_a_retire_during_another_client_call_does_not_wedge
     if not (ENGINE_VENV / "bin" / "python").exists():
         pytest.fail("engine/.venv is missing: run `uv sync --locked` in engine/ (the engine tests need it)")
     lock = engine_lock_path(tmp_path)
+    folder = AppFolder.of(tmp_path)  # S0102: the app folder of the start, with its identity
     holder: list[EngineJobs] = []
 
     def spawned(serial: int) -> None:
@@ -1364,11 +1381,14 @@ def test_with_the_real_engine_a_retire_during_another_client_call_does_not_wedge
         holder[0].engine_ended(end)
 
     client = ResetHeld(
-        replace(EngineCommand.for_venv(ENGINE_VENV, test_ops=True, engine_lock=lock), app_cache=tmp_path / "cache"),
+        replace(
+            EngineCommand.for_venv(ENGINE_VENV, test_ops=True, engine_lock=lock, app_folder=folder),
+            app_cache=tmp_path / "cache",
+        ),
         on_engine_spawned=spawned,
         on_engine_ended=ended,
     )
-    jobs = EngineJobs(client, wait_engine_lock=lambda: wait_engine_lock(lock), display_delay=DELAY)
+    jobs = EngineJobs(client, wait_engine_lock=lambda: wait_engine_lock(folder), display_delay=DELAY)
     holder.append(jobs)
     try:
         boot = jobs.start()
@@ -1573,3 +1593,24 @@ def test_with_the_real_engine_a_landed_save_is_published_and_a_pinned_read_sees_
     finally:
         jobs.close()
         client.close()
+
+
+def test_S0102_a_wait_that_finds_the_app_folder_changed_ends_every_job_with_quit_and_reopen() -> None:
+    """S0102 (BL-0244): the app folder removed or replaced while the app runs: the wait starts no engine, and each job
+    that needed one ends `ENGINE_UNAVAILABLE {app_folder_missing}` (quit and reopen), not `cannot_start`; the next job
+    waits again and gets the same answer."""
+    rig = Rig()
+    try:
+        rig.lock.app_folder_changed = True
+        boot = rig.jobs.start()
+        assert isinstance(boot, JobTicket)
+        out = outcome(boot)
+        assert details(out) == EngineUnavailableDetails(reason="app_folder_missing")
+        assert rig.engine.starts == 0
+        wait_until(lambda: not rig.jobs.status().queue.exclusive)
+        rig.jobs.workspace_opened(W1)
+        later = outcome(submit(rig, user("save"), calls("ok")))
+        assert details(later) == EngineUnavailableDetails(reason="app_folder_missing")
+        assert rig.engine.starts == 0
+    finally:
+        rig.close()

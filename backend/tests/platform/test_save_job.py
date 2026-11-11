@@ -639,8 +639,8 @@ def test_S0100_the_outcome_after_a_death_carries_the_changed_file_in_its_own_fie
         ),
         (
             ChangeNotSavedDetails("app_folder_missing", None, "/app", None, True, None),
-            "Finzytrack did not save your change. Its data folder /app is missing. Quit Finzytrack and open it "
-            "again, then try again. Your ledger is unchanged.",
+            "Finzytrack did not save your change. Its data folder /app is missing or was replaced. Quit Finzytrack and "
+            "open it again, then try again. Your ledger is unchanged.",
         ),
     ],
 )

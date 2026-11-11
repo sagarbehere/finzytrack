@@ -375,6 +375,16 @@ RECOVERY: tuple[Row, ...] = (
         lambda: _screen(_blocking("failed", "<refusal key>")),
     ),
     (
+        "msg:recovery.failed_app_folder",
+        "`failed`: the app's data folder was removed or replaced while the app ran (S0102, BL-0244)",
+        lambda: _screen(_blocking("failed", rt.APP_FOLDER_MISSING)),
+    ),
+    (
+        "msg:recovery.app_folder_missing",
+        "every open blocked: the listing was refused, the app's data folder removed or replaced (S0102, BL-0244)",
+        lambda: rt.not_recovered_screen(NotRecovered(None, None, rt.APP_FOLDER_MISSING)).message,
+    ),
+    (
         "msg:recovery.not_listed",
         "every open blocked: a journal folder could not be listed",
         lambda: rt.not_recovered_screen(NotRecovered(FOLDER, errno.EIO)).message,

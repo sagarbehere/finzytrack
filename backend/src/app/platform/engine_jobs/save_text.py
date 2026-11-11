@@ -119,9 +119,12 @@ def not_saved_text(d: ChangeNotSavedDetails) -> str:
                 f"{did_not} A folder {d.folder or 'of this change'} appeared where Finzytrack was about to make one. "
                 f"Try again. {_rehash(d)}"
             )
-        case "app_folder_missing":  # S0100 (BL-0163 (a)): the sidecar makes it again at start
+        case "app_folder_missing":  # S0100 (BL-0163 (a)), S0102 (BL-0244): the start makes it, or takes the new one
             folder = "Its data folder" if d.folder is None else f"Its data folder {d.folder}"
-            return f"{did_not} {folder} is missing. Quit Finzytrack and open it again, then try again. {_rehash(d)}"
+            return (
+                f"{did_not} {folder} is missing or was replaced. Quit Finzytrack and open it again, then try again. "
+                f"{_rehash(d)}"
+            )
         case "io_error" if d.path is not None:  # S0100 (BL-0163 (b)): the file named, the re-hash told apart
             return f"{NOT_SAVED} Finzytrack could not read or write {_name(d.path)}. {_rehash(d)}"
         case "read_back" if d.path is not None:

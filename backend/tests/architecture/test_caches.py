@@ -65,6 +65,7 @@ from pathlib import Path, PurePath
 import pytest
 
 from app import main
+from app.platform.adapters.app_folder import AppFolder
 from app.platform.observability.events import Event
 from app.platform.state_registry import REGISTRY, StateEntry
 from tests.architecture.test_globals import MEMOIZER_MODULES, MEMOIZER_NAMES, dotted, import_aliases, scan
@@ -249,7 +250,7 @@ def product_roots(tmp_path: Path, request: pytest.FixtureRequest) -> Iterator[di
     args = main.parse_args(["--app-local-data", str(data), "--app-cache", str(cache), *extra])
     log = main.open_log(args, "9.9.9-test")
     assert isinstance(log, main.EventLog), log
-    wiring = main.wire(args, log, "9.9.9-test")
+    wiring = main.wire(args, AppFolder.of(data), log, "9.9.9-test")
     try:
         yield {"log": log, "wiring": wiring}
     finally:

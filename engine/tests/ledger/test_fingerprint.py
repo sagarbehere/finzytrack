@@ -13,6 +13,7 @@ fingerprints never share a digest except by a SHA-256 collision.
 from __future__ import annotations
 
 import errno
+import hashlib
 import json
 import os
 import random
@@ -38,7 +39,7 @@ from ledger_engine.ledger.core.ledger_set import (
     digest,
     encode,
 )
-from ledger_engine.ledger.fingerprint import chunks, file_state, observe, regular, streamed_state
+from ledger_engine.ledger.fingerprint import chunks, file_state, observe, regular
 from ledger_engine.ledger.overlay import Loaded, load
 from ledger_engine.ledger.policy import DESKTOP
 
@@ -650,7 +651,7 @@ def test_a_copys_re_check_of_a_document_never_blocks_on_a_fifo(tmp_path: Path) -
     """@regression-guard (it held on 8b50323a; it kills mutants M11 and S14). S0081 r2: a document replaced by a FIFO
     before the re-check is told unreadable, at once."""
     os.mkfifo(tmp_path / "pipe")
-    assert streamed_state(str(tmp_path / "pipe")) == Unreadable("EINVAL")
+    assert file_state(str(tmp_path / "pipe")) == Unreadable("EINVAL")
     (tmp_path / "f").write_bytes(b"abc")
-    assert streamed_state(str(tmp_path / "f")) == file_state(str(tmp_path / "f"))
-    assert CopyPorts(fs=for_this_os(), legacy=DarwinLegacyLocks()).file_state is streamed_state, "the copy's port"
+    assert file_state(str(tmp_path / "f")) == Content(hashlib.sha256(b"abc").hexdigest())
+    assert CopyPorts(fs=for_this_os(), legacy=DarwinLegacyLocks()).file_state is file_state, "the copy's port"

@@ -14,8 +14,11 @@ returns at once.
 
 from __future__ import annotations
 
+import contextlib
 import os
 from pathlib import Path
+
+from app.platform.adapters.app_folder import AppFolder
 
 LOCKS_FOLDER = "locks"
 ENGINE_LOCK_FILE = "engine.lock"
@@ -26,16 +29,23 @@ def engine_lock_path(app_local_data: Path) -> Path:
     return app_local_data / LOCKS_FOLDER / ENGINE_LOCK_FILE
 
 
-def wait_engine_lock(path: Path) -> None:
-    """Take the engine lock, waiting for as long as another process holds it, and release it at once. Creates the
-    `locks/` folder and the file if they are missing (never the app's folder above it, made at start by `app.main`:
-    S0100, BL-0163 (a)); never deletes them."""
+def wait_engine_lock(folder: AppFolder) -> None:
+    """Take the engine lock in `folder`, waiting for as long as another process holds it, and release it at once.
+    Creates the `locks/` folder and the file if they are missing (never the app's folder above it, made at start by
+    `app.main`: S0100, BL-0163 (a)); never deletes them. Both are made through a descriptor on the app folder that
+    is still the object of the start (`AppFolder.open`; S0102, BL-0244): a folder removed or replaced since raises
+    `AppFolderChangedError`, with nothing made."""
     if os.name != "posix":  # pragma: no cover (Windows)
         return  # TODO(BL-0087): the Windows lock (LockFileEx), with the engine's nested Job Object.
     import fcntl  # POSIX only
 
-    path.parent.mkdir(exist_ok=True)
-    fd = os.open(path, os.O_RDWR | os.O_CREAT, 0o600)
+    dfd = folder.open()
+    try:
+        with contextlib.suppress(FileExistsError):
+            os.mkdir(LOCKS_FOLDER, dir_fd=dfd)
+        fd = os.open(f"{LOCKS_FOLDER}/{ENGINE_LOCK_FILE}", os.O_RDWR | os.O_CREAT | os.O_CLOEXEC, 0o600, dir_fd=dfd)
+    finally:
+        os.close(dfd)
     try:
         fcntl.flock(fd, fcntl.LOCK_EX)
         fcntl.flock(fd, fcntl.LOCK_UN)

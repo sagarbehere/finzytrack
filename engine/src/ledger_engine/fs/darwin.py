@@ -238,6 +238,10 @@ class DarwinDir:
     def device(self) -> int:
         return os.fstat(self.fd).st_dev
 
+    def identity(self) -> tuple[int, int]:
+        st = os.fstat(self.fd)
+        return (st.st_dev, st.st_ino)
+
     def stat(self, name: str) -> EntryStat | None:
         try:
             return _entry(os.stat(check_name(name), dir_fd=self.fd, follow_symlinks=False))

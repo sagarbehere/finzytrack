@@ -110,7 +110,7 @@ class CopyPorts:
     check: Callable[[copy_check.CheckRequest], copy_check.CheckResult] = fresh_load.check
     source: Callable[[str], Iterator[bytes]] = fingerprint.chunks
     observe: Callable[[LedgerSet], Fingerprint] = fingerprint.observe
-    file_state: Callable[[str], FileState] = fingerprint.streamed_state
+    file_state: Callable[[str], FileState] = fingerprint.file_state
     parse: Callable[[bytes, str], cl.Parsed] = parsed_from
     regular: Callable[[str], bool] = fingerprint.regular
 

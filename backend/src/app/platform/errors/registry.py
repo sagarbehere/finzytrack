@@ -95,9 +95,10 @@ class EngineStoppedDetails:
 class EngineUnavailableDetails:
     """No engine could be started for this job (engine-jobs §5.3, §11). `stopped_often`: the restart bound is
     reached (failure-modes E1); `incompatible`: the engine speaks another protocol, a damaged install (E6: reinstall);
-    `cannot_start`: the wait for the engine lock failed (E6); `closing`: Finzytrack is closing."""
+    `cannot_start`: the wait for the engine lock failed (E6); `closing`: Finzytrack is closing; `app_folder_missing`:
+    the app's data folder is missing or another folder since the start (S0102, BL-0244: quit and reopen)."""
 
-    reason: Literal["stopped_often", "incompatible", "cannot_start", "closing"]
+    reason: Literal["stopped_often", "incompatible", "cannot_start", "closing", "app_folder_missing"]
 
 
 type PausedReason = Literal[

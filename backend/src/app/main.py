@@ -29,7 +29,8 @@ or into the workspace is refused: the process exits with code 2 before the hands
 **The app-local-data folder** (S0100, BL-0163 (a)) is made here if it is missing (never its parents) and its parent
 synced at every start, before the log is opened in it (`app.platform.adapters.app_folder`): the save and recovery
 write and sync only inside it. A failure exits with code 2 before the handshake, with `msg:start.app_folder` on
-stderr.
+stderr. Its identity then (`AppFolder`, S0102, BL-0244) goes to the lock wait, every engine (`--app-folder-id`) and
+the bytecode fill: none writes in a folder removed or replaced since.
 
 **The stop** (failure-modes M7). SIGTERM and SIGINT (and SIGBREAK on Windows) have one handler for the process's
 life, `StopRequest`, installed before the engine can start. It only records: the first signal ends the serve, which
@@ -64,6 +65,7 @@ from fastapi import FastAPI
 
 from app.api import ApiContainer, create_app
 from app.domain.text import UntrustedText
+from app.platform.adapters.app_folder import AppFolder, AppFolderRefusal
 from app.platform.adapters.app_folder import prepare as prepare_app_folder
 from app.platform.adapters.clock import SystemClock
 from app.platform.adapters.engine_client import (
@@ -191,24 +193,25 @@ def parse_args(argv: list[str] | None) -> Args:
     return Args(ns.app_local_data, ns.app_cache, ns.port, ns.workspace, ns.frozen_clock, ns.engine_venv, ns.session_id)
 
 
-def engine_command(args: Args, app_version: str) -> EngineCommand:
+def engine_command(args: Args, folder: AppFolder, app_version: str) -> EngineCommand:
     """The venv engine when one is named, else the packaged engine beside this interpreter (ADR-0056 layout); every
     engine holds the engine lock in this app-local-data folder (engine-jobs §5.1, S0053) and reads the bytecode of
     its build from `app_local_data/engine/bytecode/<build>/` (§5.1, S0057), and publishes the mirror only under the
-    app cache folder it is started with (S0087)."""
-    lock = engine_lock_path(args.app_local_data)
+    app cache folder it is started with (S0087). `folder` is the app folder as the start made it, with its identity
+    (S0102, BL-0244): the engine and the fill write in it only while it is that object."""
+    lock = engine_lock_path(folder.path)
     if args.engine_venv is not None:
         python = args.engine_venv / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
-        bytecode = bytecode_build_dir(args.app_local_data, python, venv_site(args.engine_venv), app_version)
-        command = EngineCommand.for_venv(args.engine_venv, engine_lock=lock, bytecode_dir=bytecode)
+        bytecode = bytecode_build_dir(folder.path, python, venv_site(args.engine_venv), app_version)
+        command = EngineCommand.for_venv(args.engine_venv, engine_lock=lock, bytecode_dir=bytecode, app_folder=folder)
     else:
         python, site = Path(sys.executable), packaged_engine_site(Path(sys.prefix))
-        bytecode = bytecode_build_dir(args.app_local_data, python, site, app_version)
-        command = EngineCommand.for_packaged(python, site, engine_lock=lock, bytecode_dir=bytecode)
+        bytecode = bytecode_build_dir(folder.path, python, site, app_version)
+        command = EngineCommand.for_packaged(python, site, engine_lock=lock, bytecode_dir=bytecode, app_folder=folder)
     return replace(command, app_cache=args.app_cache.resolve())  # the mirror's only place (S0087; BL-0212 V4)
 
 
-def wire(args: Args, log: EventSink, app_version: str) -> Wiring:
+def wire(args: Args, folder: AppFolder, log: EventSink, app_version: str) -> Wiring:
     """Build, never start: the scheduler starts in `main` (S0038, S0058)."""
 
     def engine_stderr(line: str) -> None:
@@ -225,7 +228,7 @@ def wire(args: Args, log: EventSink, app_version: str) -> Wiring:
         jobs.engine_ended(end)
 
     engine = EngineClient(
-        engine_command(args, app_version),
+        engine_command(args, folder, app_version),
         restart,
         on_stderr=engine_stderr,
         log=log,  # the client logs the engine's lifecycle
@@ -234,7 +237,7 @@ def wire(args: Args, log: EventSink, app_version: str) -> Wiring:
     )
     jobs = EngineJobs(
         engine,
-        wait_engine_lock=lambda: wait_engine_lock(engine_lock_path(args.app_local_data)),
+        wait_engine_lock=lambda: wait_engine_lock(folder),
         restart=restart,
         log=log,
         recover_all=recover_all_work(args.app_local_data.resolve()),  # §8.1: the boot's recover-all, in an engine
@@ -392,8 +395,8 @@ def main(argv: list[str] | None = None) -> int:
     app_version = version(DISTRIBUTION)
     # S0100 (BL-0163 (a); owner, 2026-11-10: "Sidecar makes it once (Recommended)"): the app folder made if missing and
     # its parent synced, before anything is written in it; the save and recovery never write above it
-    folder = prepare_app_folder(args.app_local_data)
-    if folder is not None:
+    folder = prepare_app_folder(args.app_local_data)  # S0102: with its identity, which every writer of ours checks
+    if isinstance(folder, AppFolderRefusal):
         # TODO(BL-0095): the shell shows this text in its start failure screen
         sys.stderr.write(f"app.main: refused: {folder.text}\n")
         return 2
@@ -406,7 +409,9 @@ def main(argv: list[str] | None = None) -> int:
     log.capture_process()
     stop = StopRequest()
     install_stop_handler(stop)  # before the engine can start, so every later stop reaches the close below
-    wiring = wire(args, log, app_version)  # nothing reads the clock yet; the first use case receives it from here
+    wiring = wire(
+        args, folder, log, app_version
+    )  # nothing reads the clock yet; the first use case receives it from here
     try:
         wiring.jobs.start()  # never waits: the lock wait and the boot's recover-all run on their own threads
         with bind(args.port) as sock:
