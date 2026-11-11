@@ -176,8 +176,6 @@ forbidden_modules =
     fastapi
     starlette
     uvicorn
-# A planted copy of app.main (test_contracts) no longer imports fastapi; an unmatched ignore warns, never errors.
-unmatched_ignore_imports_alerting = warn
 ignore_imports =
     app.api.* -> fastapi
     app.api.* -> starlette

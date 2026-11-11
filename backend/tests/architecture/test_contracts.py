@@ -94,7 +94,8 @@ def test_contracts_hold_on_the_tree() -> None:
         ("app.api.planted", "import sqlite3\n", "SQLite only in the mirror package"),
         ("app.platform.adapters.planted", "from sqlite3 import connect\n", "SQLite only in the mirror package"),
         ("app.workspaces.planted", "import sqlite3\n", "SQLite only in the mirror package"),
-        ("app.main", "import sqlite3\n", "SQLite only in the mirror package"),
+        # The stand-in entry keeps the entry's own HTTP imports, so `http-at-the-edge`'s ignores still match.
+        ("app.main", "import fastapi\nimport uvicorn\nimport sqlite3\n", "SQLite only in the mirror package"),
         # S0103 round 1 (verifier F2): default-deny, so a package the contract does not name is held too.
         ("app.services.planted", "import sqlite3\n", "SQLite only in the mirror package"),
         ("app.selfcheck_twin", "import sqlite3\n", "SQLite only in the mirror package"),
@@ -180,6 +181,15 @@ def test_each_forbidden_entry_is_enforced(tree: Path, source: str, forbidden: st
     r = lint_imports(tree)
     broken = [line for line in r.stdout.splitlines() if line.rstrip().endswith("BROKEN")]
     assert any(contract in line for line in broken), f"{source} importing {forbidden} passed: {r.stdout}"
+
+
+def test_a_stale_ignore_fails_the_contract_run(tree: Path) -> None:
+    """S0103 round 1: an ignore that matches no import is an error, never a warning, so a default-deny contract
+    cannot keep an exemption the code no longer needs (the entry without its HTTP imports)."""
+    plant(tree, "app.main", "")
+    r = lint_imports(tree)
+    assert r.returncode != 0
+    assert "No matches for ignored import app.main -> fastapi" in r.stdout + r.stderr
 
 
 def test_allowed_direction_passes(tree: Path) -> None:
