@@ -223,6 +223,57 @@ class GuardTest(unittest.TestCase):
         # nor are commands built on purpose to slip past the parser (BL-0062 removed, BL-0055's anti-bypass
         # refusals removed; owner, 2026-10-29), nor a heredoc-written script run later or a `(cd …` subshell (BL-0155).
 
+    def test_single_quoted_messages_are_data(self) -> None:
+        """BL-0054 (owner, 2026-11-11, in session: "Exact shapes only (Recommended)"): for `git commit -m/--message/-F`,
+        `git tag -m` and `gh ... --body/--title`, a single-quoted value is data, since bash runs nothing inside single
+        quotes. Every other shape, and every shape bash would execute, is refused as before."""
+        gc = "git clean " + "-x"  # spelled in parts so this file's text is not itself a command the guard reads
+        nv = "--no-" + "verify"
+        hp = "core.hooks" + "Path"
+        allowed = [
+            f"git commit -m 'docs: {hp} must stay .githooks'",
+            f"git commit -m 'fix: a; {gc} is refused'",
+            f"git commit -m 'subject' -m 'never run {gc} | rm, nor {nv}'",
+            f"git commit --message 'b; git push --force'",
+            f"git commit --message='b; {gc}'",
+            f"git commit -q -F 'notes; {gc}.txt'",
+            f"git tag -m 'v; git tag -d v0.3.0' v9.9.9-test",
+            f"gh pr create --title 'x; {gc}' --body 'mentions {hp}'",
+            f"gh issue comment 12 --body='a `{gc}` in backticks'",
+            f"git commit -m 'multi\nline; {gc}\n'",
+            f"git commit -m 'a' && git log --oneline -1",
+        ]
+        for cmd in allowed:
+            with self.subTest(allowed=cmd):
+                self.assertFalse(self.blocked(cmd), cmd)
+        refused = [
+            f'git commit -m "$({gc})"',  # owner's planted case: bash runs $(...) inside double quotes
+            f"git commit -m 'x'; {gc}",  # owner's planted case: a command after the message
+            f"git commit -m 'x' && {gc}", f"git commit -m 'x' || {gc}", f"git commit -m 'x' | {gc}",
+            f"git commit -m 'x'\n{gc}",
+            f"git commit -m 'x' $({gc})", f"git commit -m 'x' `{gc}`", f"git commit -m 'x'\"$({gc})\"",
+            f"git commit -m \"{hp} x\"",  # double quotes stay as today
+            f"git commit -m 'x' {nv}", f"git commit {nv} -m 'x'", f"git commit -m 'x' -c {hp}=/dev/null",
+            f"git commit -m $'x\\' -m \\'; {gc}; #'",  # ANSI-C quoting: \' does not end it
+            f"git commit -m \\' ; {gc} ; echo \\'",  # an escaped quote is not a quote
+            f"git commit -m 'x' # -m '\n{gc}\n'",  # a quote inside a comment opens nothing
+            f"git commit -am '{hp} x'", f"git -C . commit -m '{hp} x'",  # not one of the exact shapes
+            f"git tag --message '{hp} x' v1", f"git commit --body '{hp} x'",
+            f"git commit -m '{hp} x",  # an unclosed quote
+            f"echo 'git commit -m ' ; {gc}",
+            # the quoting the blanking does not follow stops it (kills the loosening mutants of S0105 part B)
+            f"git commit -m \"x -m '\" ; {gc} ; echo \"'\"",  # a quote inside double quotes
+            f"git commit -m \\' -m ' -m '; {gc}; echo '#'",  # an escaped quote shifts every later quote
+            f"git commit -m $'x\\' -m '; {gc}; #'",  # in $'...', \' does not end it
+            f"git commit -m 'a'; git -C . commit -m '{hp} x'",  # a separator starts a new command
+        ]
+        # Not refused today and unchanged (outside the owner's shapes, stated in the hook's docstring): a command
+        # after a lone `&`, and a separator inside double quotes or inside a quote of another option (the split
+        # leaves a quote on the next word, so its flags are not read).
+        for cmd in refused:
+            with self.subTest(refused=cmd):
+                self.assertTrue(self.blocked(cmd), cmd)
+
     def test_hooks_fail_closed(self) -> None:
         """INV-22's spirit for the guards (S0014 round-2 verifier F2): Claude Code runs a command when the hook
         exits with anything but 2, so an internal error must refuse, never allow."""

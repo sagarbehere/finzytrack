@@ -572,3 +572,27 @@ Format:
 - Why: each check accepted something it was meant to refuse: deleted paths, a comment as a test, an enforcement test that a hook or a configuration kept from running.
 - Expected effect: a built capability always has a test that runs; an enforced invariant's tests are seen running at every push. Metric: findings on capability rows and on enforcement files per slice; the pre-push time of the extra check (one XML read, under a second).
 - Status: kept (agent-approved tightening; S0105 part A).
+
+## IMP-0060: the guard reads a message option's single-quoted value as data (2026-11-11)
+- Trigger: BL-0054 (S0014 verifier round 1): the guard refused `git commit -m '...'` whose text named a guarded word (`core.hooksPath`, `git clean -x`, a `;` inside the quotes). Owner, 2026-11-11, in session, choosing "Exact shapes only (Recommended)"; the option as put to the owner: "For git commit -m/--message/-F, git tag -m and gh --body/--title, a single-quoted value is data. Double quotes stay as today (bash runs $(...) inside them). Planted tests pin that `git commit -m \"$(git clean -x)\"` and `-m 'x'; git clean -x` are still refused."
+- What changed: gates (loosening, owner-approved). `.claude/hooks/guards.py` `_quoted_messages_as_data` blanks exactly those values before the split; from the first double quote, backslash, `$'`, `$"` or comment on nothing more is blanked. `scripts/tests/test_guards.py` `test_single_quoted_messages_are_data`: 11 shapes now allowed, 22 still refused (the owner's two, every separator after the value, `$(...)` and backticks outside it, double quotes, ANSI-C and escaped quotes, a quote inside a comment, flags outside the value, the non-exact shapes).
+- PROCESS.md section: §8 (Agents and real data).
+- Why: a false positive on every slice that changes the gates, worked around by rewording.
+- Expected effect: no reworded commit messages; nothing bash would execute passes. Metric: guard refusals of commit messages per slice.
+- Status: kept (owner-approved; S0105 part B).
+
+## IMP-0061: tagged engine tests count for a built capability (2026-11-11)
+- Trigger: BL-0252 (S0105 part A: the capability check never searched `engine/`, and the engine's pytest config did not register `cap`). Owner, 2026-11-11, in session, choosing "Count engine tests (Recommended)"; the option as put to the owner: "Add engine/ to the folders and register the cap mark, under the same real-test rule (no comment, skip or fixme counts)."
+- What changed: gates (loosening, owner-approved). `scripts/check_capabilities.py` `TEST_DIRS` gains `engine`; `engine/pyproject.toml` registers the `cap` mark (`--strict-markers` refused it).
+- PROCESS.md section: none (§7 names the tags).
+- Why: most tested code is in the engine; its capabilities could never be `built`.
+- Expected effect: an engine capability is `built` on a real tagged engine test. Metric: built rows by the folder of their tagged test.
+- Status: kept (owner-approved; S0105 part B).
+
+## IMP-0062: the licence check reads other platforms' packages and option lines; the floor history scan is spread (2026-11-11)
+- Trigger: BL-0050 (S0006 verifier F1, F7); BL-0080 (S0034: the floor range scan was the meta-tests' long pole).
+- What changed: gates (tightening, agent-approved) and gate running (no change in coverage). `scripts/check_licences.py`: a package behind a platform marker that does not hold here (the venv's interpreter evaluates it) is judged from an `[other_platform]` entry for its exact version, and an unused entry is stale; an option line of `uv export` other than the index URLs fails closed. `scripts/privacy_scan.py` runs detect-secrets in a thread while its own rules run (the same texts and rules); `scripts/tests/test_push_gate.py` scans the known history in three contiguous ranges, one test class each, and `Floor.test_the_split_ranges_cover_exactly_the_whole_range` proves the parts hold exactly the whole range's blobs and messages.
+- PROCESS.md section: none.
+- Why: a Windows-only package failed with a misleading message and its licence was never read; an editable dependency would have been bundled unchecked; one test bounded the meta-tests' wall time.
+- Expected effect: every bundled package is judged, on whatever OS; the floor scan's wall time falls (one range scan about 25 s to 18 s at load 25; the longest part 8 s). Metric: the meta-tests' longest unit.
+- Status: kept (agent-approved; S0105 part B).

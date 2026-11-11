@@ -11,7 +11,7 @@ Checks design/capabilities.toml:
     decorator of a test function, a test method or a test class (named `Test...` or a `TestCase`), or in a module's
     `pytestmark` beside at least one test; or a `describe`, `it`, `test` or `test.describe` call whose literal title
     holds `[<ID>]`, outside comments. The file is a tracked test file (`test_*.py`, `*_test.py`, `*.test.*`,
-    `*.spec.*`) in a `tests/` or `e2e/` folder under backend/, frontend/, shell/ or scripts/tests/, and holds no fixme
+    `*.spec.*`) in a `tests/` or `e2e/` folder under backend/, engine/ (BL-0252), frontend/, shell/ or scripts/tests/, and holds no fixme
     marker and no switched-off test (the enforcement-file rules of check_invariants.py, e2e files included). Round 1
     (L1): a function or class shadowed by a later definition of the same name does not count; under scripts/ (run by
     unittest) only TestCase classes count; a TypeScript tag counts only on a top-level call, and a tagged `describe`
@@ -46,7 +46,8 @@ STATUS = {"planned", "partial", "built", "cut", "deferred"}
 BLOCKING = {"yes", "no", "n/a"}
 MILESTONE = re.compile(r"^M(1[0-2]|[0-9])$")
 CAP_ID = re.compile(r"^CAP-[A-Z0-9]+(-[A-Z0-9]+)+$")
-TEST_DIRS = ("backend", "frontend", "shell", "scripts/tests")
+# engine/ since S0105 part B (BL-0252; owner, 2026-11-11, in session: "Count engine tests (Recommended)")
+TEST_DIRS = ("backend", "engine", "frontend", "shell", "scripts/tests")
 
 
 def candidate_files(root: Path) -> list[str]:

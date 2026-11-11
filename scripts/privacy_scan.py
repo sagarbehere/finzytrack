@@ -52,6 +52,7 @@ import tempfile
 import re
 import subprocess
 import sys
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -463,13 +464,13 @@ def excused(line: str, hashed: str) -> bool:
     return "secret-entropy" in allowed or bool(token and any(m.group(1) == token for m in HASH_PIN.finditer(line)))
 
 
-def entropy_findings(texts: dict) -> list[Finding]:
+def entropy_findings(texts: dict, hits: dict | None = None) -> list[Finding]:
     """One finding per (line, value). A hit is excused only when its line shows the mark or the pin under every
     numbering detect-secrets may have used for it: universal newlines always, and for a YAML scan also PyYAML's
     breaks (it falls back to universal numbering when the file does not parse). Duplicates are dropped only
     after that decision, so an excused hit never hides another (S0016 rounds 3 and 4)."""
     out: list[Finding] = []
-    for path, hits in detect_secrets(texts).items():
+    for path, hits in (detect_secrets(texts) if hits is None else hits).items():  # noqa: B020 (each path's hits)
         universal = text_lines(texts[path], ".txt")
         yaml_lines = text_lines(texts[path], ".yaml")
         reported: set[tuple[int, str]] = set()
@@ -517,8 +518,16 @@ def tracked_files() -> list[str]:
     return [p for p in out.decode("utf-8").split("\0") if p]
 
 
+def alongside_detect_secrets(texts: dict, work):
+    """(`work()`, detect-secrets' hits over `texts`), detect-secrets running in a thread while `work()` runs (S0105,
+    BL-0080): the same texts and the same rules as one after the other, in about the time of the longer one. An error
+    of either is raised, as before."""
+    with ThreadPoolExecutor(1) as pool:
+        hits = pool.submit(detect_secrets, texts)
+        return work(), hits.result()
+
+
 def run(paths: list[str], reader, denylist: list[str]) -> tuple[list[Finding], list[str]]:
-    findings: list[Finding] = []
     binaries: list[str] = []
     texts: dict[str, str] = {}
     for p in paths:
@@ -529,9 +538,9 @@ def run(paths: list[str], reader, denylist: list[str]) -> tuple[list[Finding], l
         if text is None:
             binaries.append(p)  # refused by scripts/check_staged.py unless an allowed media type
             continue
-        findings.extend(scan_text(p, text, denylist))
         texts[p] = text
-    findings.extend(entropy_findings(texts))
+    findings, hits = alongside_detect_secrets(texts, lambda: [f for p, x in texts.items() for f in scan_text(p, x, denylist)])
+    findings.extend(entropy_findings(texts, hits))
     return findings, binaries
 
 
@@ -560,7 +569,6 @@ def run_range(spec: str, denylist: list[str]) -> tuple[list[Finding], list[str],
     and the blob, or the commit. HISTORY_BASELINE rows are excused."""
     blobs = [b for b in git_range.changed_blobs(spec) if b.mode != "160000"]  # submodules: refused by check_staged
     contents = git_range.read_blobs([b.sha for b in blobs])
-    findings: list[Finding] = []
     binaries: list[str] = []
     texts: dict = {}
     origin: dict[str, tuple[str, str]] = {}  # label -> (path or "commit", sha)
@@ -571,15 +579,25 @@ def run_range(spec: str, denylist: list[str]) -> tuple[list[Finding], list[str],
         if text is None:
             binaries.append(label)
             continue
-        findings += [Finding(label, f.line, f.rule, f.sample) for f in scan_text(b.path, text, denylist)]
         texts[(b.path, b.sha)] = text
     messages = git_range.commit_messages(spec)  # S0031 verifier F4: a message is published like a file
     for sha, message in messages:
         label = f"commit {sha[:12]} message"
         origin[label] = ("commit", sha)
-        findings += scan_text(label, message, denylist)
         texts[label] = for_entropy(message)
-    findings.extend(entropy_findings(texts))
+
+    def own_rules() -> list[Finding]:
+        out: list[Finding] = []
+        for b in blobs:
+            if (b.path, b.sha) in texts:
+                label = _label((b.path, b.sha))
+                out += [Finding(label, f.line, f.rule, f.sample) for f in scan_text(b.path, texts[(b.path, b.sha)], denylist)]
+        for sha, message in messages:
+            out += scan_text(f"commit {sha[:12]} message", message, denylist)  # the whole message, not the entropy view
+        return out
+
+    findings, hits = alongside_detect_secrets(texts, own_rules)
+    findings.extend(entropy_findings(texts, hits))
     kept = [f for f in findings if (*origin.get(f.path, ("", "")), f.rule) not in HISTORY_BASELINE]
     return kept, binaries, len(blobs) + len(messages)
 

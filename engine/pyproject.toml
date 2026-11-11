@@ -40,6 +40,7 @@ testpaths = ["tests"]
 addopts = ["--strict-markers", "-p", "no:cacheprovider"]
 markers = [
   "inv(id): the invariant a test enforces (design/INVARIANTS.md; scripts/check_invariants.py)",
+  "cap(id): the capability a test covers (design/capabilities.toml; scripts/check_capabilities.py, BL-0252)",
 ]
 xfail_strict = true
 empty_parameter_set_mark = "fail_at_collect"

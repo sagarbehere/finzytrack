@@ -3,7 +3,8 @@
 These guards are a safety net, not a sandbox: they catch the common ways an agent could touch the live data
 folder, delete ignored files, write into the read-only legacy worktree, or switch off the git gates (meta-tested
 in scripts/tests/test_guards.py). Commands built on purpose to slip past the parser are a stated limit, not a
-target (S0054). The owner's running app is not guarded: agents never stop, start or call it, and ask the owner
+target (S0054). A message option's single-quoted value is data (BL-0054, `_quoted_messages_as_data`); a command
+after a lone `&` is not split off (a stated limit, BL-0253). The owner's running app is not guarded: agents never stop, start or call it, and ask the owner
 when it is in their way (INV-24, a working rule; owner, 2026-10-29). The rules are in design/process/PROCESS.md §8.
 """
 
@@ -120,10 +121,65 @@ WRITE_ANY_ARG = {"rm", "rmdir", "unlink", "truncate", "shred", "chmod", "chown",
                  "xattr", "setfacl"}
 
 
+# BL-0054 (owner, 2026-11-11, in session: "Exact shapes only (Recommended)"): the options whose single-quoted value
+# is a message, for the commands that take one. Bash runs nothing inside single quotes.
+MESSAGE_OPTIONS = {("git", "commit"): ("-m", "--message", "-F"), ("git", "tag"): ("-m",), ("gh", None): ("--body", "--title")}
+
+
+def _message_options(words: list[str]) -> tuple[str, ...]:
+    if words[:1] == ["gh"]:
+        return MESSAGE_OPTIONS[("gh", None)]
+    return MESSAGE_OPTIONS.get((words[0], words[1]), ()) if len(words) >= 2 else ()
+
+
+def _quoted_messages_as_data(command: str) -> str:
+    """`command` with the single-quoted value of a message option blanked to `'MSG'` (BL-0054): `git commit -m`,
+    `--message`, `-F`; `git tag -m`; `gh ... --body`, `--title`; as `-m '...'` or `--message='...'`, the command
+    starting at the line's start or after `;`, `&`, `|`, `(` or a newline, with nothing before `git` or `gh`. From the
+    first double quote, backslash, `$'`, `$"` or comment on, nothing more is blanked (bash's quoting there is not
+    followed), so every shape bash would execute still reaches the split."""
+    out: list[str] = []
+    words: list[str] = []
+    word = ""
+    i, n = 0, len(command)
+    while i < n:
+        c = command[i]
+        if c in ' \t':
+            if word:
+                words.append(word)
+            word = ""
+        elif c in ";&|()\n`":
+            if word:
+                words.append(word)
+            word, words = "", []
+        elif c == "'":
+            end = command.find("'", i + 1)
+            if end < 0:
+                break
+            opts = _message_options(words) if not word or word.endswith("=") else ()
+            if (not word and words and words[-1] in opts) or (word.endswith("=") and word[:-1] in opts):
+                out.append("'MSG'")
+                word += "MSG"
+            else:
+                out.append(command[i:end + 1])
+                word += command[i + 1:end]
+            i = end + 1
+            continue
+        elif c in '"\\' or (c == "$" and command[i + 1:i + 2] in ("'", '"')) or (c == "#" and not word):
+            break
+        else:
+            word += c
+        out.append(c)
+        i += 1
+    return "".join(out) + command[i:]
+
+
 def _split(command: str) -> list[list[str]]:
-    """The simple commands the shell runs. Heredoc bodies are data (S0054); line continuations join a command."""
+    """The simple commands the shell runs. Heredoc bodies are data (S0054); a message option's single-quoted value
+    is data (BL-0054); line continuations join a command."""
     segs: list[list[str]] = []
-    for part in re.split(r"\|\||&&|;|\||\n|\$\(|`|\)", _without_heredoc_bodies(command).replace("\\\n", " ")):
+    text = _quoted_messages_as_data(_without_heredoc_bodies(command))
+    for part in re.split(r"\|\||&&|;|\||\n|\$\(|`|\)", text.replace("\\\n", " ")):
         try:
             toks = shlex.split(part, comments=True)
         except ValueError:

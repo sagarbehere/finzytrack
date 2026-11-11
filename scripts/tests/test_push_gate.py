@@ -239,6 +239,16 @@ class Messages(Scratch):
         self.assertIn("message", p.stderr)
         self.assertNotIn(self.token(), p.stderr)
 
+    def test_a_commit_message_finding_of_the_scans_own_rules(self) -> None:  # @regression-guard (S0105 part B mutant)
+        base = self.remote_next()
+        self.write("a.txt", "a\n")
+        self.git("add", "a.txt")
+        self.git("commit", "-q", "-m", "notes moved to " + j("/Us", "ers/alice/notes.txt"))
+        p = self.script("privacy_scan.py", "--range", f"{base}..{self.head()}", "--quiet")
+        self.assertEqual(p.returncode, 1, p.stderr)
+        self.assertIn("message", p.stderr)
+        self.assertIn("home-path", p.stderr)
+
     def test_a_pushed_annotated_tag_and_its_message(self) -> None:
         self.git("tag", "-a", "-m", f"release note: {self.token()}", "v9")
         tag = self.git("rev-parse", "v9").strip()
@@ -766,15 +776,71 @@ class Floor(unittest.TestCase):
         self.assertEqual(git("ls-tree", "--name-only", check_push.FLOOR).stdout.split(), [".gitignore"])
         self.assertEqual(git("merge-base", "--is-ancestor", check_push.FLOOR, "HEAD").returncode, 0)
 
-    def test_known_history_from_the_floor_passes_the_range_scan(self) -> None:  # S0031 verifier R2-4
+    def test_the_split_ranges_cover_exactly_the_whole_range(self) -> None:  # S0105, BL-0080: how it runs, not what
         sys.path.insert(0, str(SCRIPTS))
-        import check_push
+        import git_range
 
-        # 796353ab: the commit the round-2 verifier read; every older finding is in privacy_scan.HISTORY_BASELINE
-        r = subprocess.run([sys.executable, str(SCRIPTS / "privacy_scan.py"), "--range",
-                            f"{check_push.FLOOR}..796353abefab9870857b4f9bc8c43a951400c953", "--quiet"],
-                           cwd=REPO, capture_output=True, text=True)
+        whole = f"{FLOOR()}..{known_tip()}"
+        parts = history_parts()
+        self.assertEqual(len(parts), HISTORY_PARTS)
+        self.assertEqual(parts[0].split("..")[0], FLOOR())
+        self.assertEqual(parts[-1].split("..")[1], known_tip())
+        for a, b in zip(parts, parts[1:]):
+            self.assertEqual(a.split("..")[1], b.split("..")[0])  # contiguous
+        self.assertEqual({(x.path, x.mode, x.sha) for p in parts for x in git_range.changed_blobs(p)},
+                         {(x.path, x.mode, x.sha) for x in git_range.changed_blobs(whole)})
+        self.assertEqual(sorted(m for p in parts for m in git_range.commit_messages(p)),
+                         sorted(git_range.commit_messages(whole)))
+
+
+# S0031 verifier R2-4: the known history from the floor passes the range scan. 796353ab is the commit the round-2
+# verifier read; every older finding is in privacy_scan.HISTORY_BASELINE. S0105 (BL-0080): the range is scanned in
+# HISTORY_PARTS contiguous parts, one test class each, so the parallel runner spreads them (the whole range was the
+# meta-tests' long pole); Floor.test_the_split_ranges_cover_exactly_the_whole_range proves the parts cover exactly
+# the same blobs and messages.
+HISTORY_PARTS = 3
+
+
+def known_tip() -> str:
+    """796353ab, read in full from git at run time (a full commit name in this file is a 40-hex value the privacy
+    scan's entropy rule refuses); an ambiguous or missing name fails the test."""
+    return subprocess.run(["git", "-C", str(REPO), "rev-parse", "--verify", "796353ab^{commit}"],
+                          capture_output=True, text=True, check=True).stdout.strip()
+
+def FLOOR() -> str:  # noqa: N802 (a constant read from check_push)
+    sys.path.insert(0, str(SCRIPTS))
+    import check_push
+
+    return check_push.FLOOR
+
+
+def history_parts() -> list[str]:
+    """FLOOR..known_tip() cut at commits of its first-parent line into HISTORY_PARTS contiguous ranges."""
+    line = subprocess.run(["git", "-C", str(REPO), "rev-list", "--first-parent", "--reverse", f"{FLOOR()}..{known_tip()}"],
+                          capture_output=True, text=True, check=True).stdout.split()
+    cuts = [FLOOR()] + [line[len(line) * i // HISTORY_PARTS - 1] for i in range(1, HISTORY_PARTS)] + [known_tip()]
+    return [f"{a}..{b}" for a, b in zip(cuts, cuts[1:])]
+
+
+class _HistoryPart:
+    PART = 0
+
+    def test_this_part_of_the_known_history_passes_the_range_scan(self) -> None:
+        r = subprocess.run([sys.executable, str(SCRIPTS / "privacy_scan.py"), "--range", history_parts()[self.PART],
+                            "--quiet"], cwd=REPO, capture_output=True, text=True)
         self.assertEqual(r.returncode, 0, r.stderr[-1500:])
+
+
+class FloorHistoryPart1(_HistoryPart, unittest.TestCase):
+    PART = 0
+
+
+class FloorHistoryPart2(_HistoryPart, unittest.TestCase):
+    PART = 1
+
+
+class FloorHistoryPart3(_HistoryPart, unittest.TestCase):
+    PART = 2
 
 
 if __name__ == "__main__":

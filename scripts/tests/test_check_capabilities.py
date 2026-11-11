@@ -156,6 +156,8 @@ class TaggedTestsAreRealTests(unittest.TestCase):
             "a vitest describe": ("frontend/tests/unit/a.test.ts", "describe('[CAP-X-Y] the thing', () => {\n"
                                   "  it('works', () => {})\n})\n"),
             "a vitest test, double quotes": ("frontend/tests/unit/a.test.ts", 'test("[CAP-X-Y][INV-01] works", () => {})\n'),
+            "an engine test (BL-0252, owner 2026-11-11)": ("engine/tests/ledger/test_a.py", PY_HEAD + AT + mark()
+                                                           + "\ndef test_x():\n    pass\n"),
             "a unittest class through a base of the file": ("scripts/tests/test_a.py", PY_HEAD + "class Base(unittest.TestCase):\n"
                                                              "    pass\n\n\nclass A(Base):\n    " + AT + mark()
                                                              + "\n    def test_y(self):\n        pass\n"),
@@ -176,6 +178,10 @@ class TaggedTestsAreRealTests(unittest.TestCase):
         fixme = 'pytest.mark.fixme(id="BL-0001", due="M2", reason="r")'
         cases = {
             "a comment": ("backend/tests/test_a.py", PY_HEAD + "# CAP-X-Y\ndef test_x():\n    pass\n"),
+            "an engine comment": ("engine/tests/test_a.py", PY_HEAD + "# CAP-X-Y\ndef test_x():\n    pass\n"),
+            "a skipped engine test": ("engine/tests/test_a.py", PY_HEAD + AT + mark() + "\n" + AT
+                                      + 'pytest.mark.skip(reason="later")\ndef test_x():\n    pass\n'),
+            "an engine file outside its tests": ("engine/src/test_a.py", PY_HEAD + AT + mark() + "\ndef test_x():\n    pass\n"),
             "a docstring": ("backend/tests/test_a.py", PY_HEAD + 'def test_x():\n    """CAP-X-Y"""\n'),
             "a string": ("backend/tests/test_a.py", PY_HEAD + 'def test_x():\n    assert "CAP-X-Y"\n'),
             "a mark kept in a variable": ("backend/tests/test_a.py", PY_HEAD + f"m = {mark()}\n\ndef test_x():\n    pass\n"),
@@ -251,11 +257,17 @@ class TaggedTestsAreRealTests(unittest.TestCase):
                 self.assertNotEqual(self.built(rel, text), [], name)
                 (self.root / rel).unlink()
 
-    def test_the_old_rule_still_holds_a_tag_found_only_in_a_non_test_path_fails(self) -> None:
-        # the new rule refuses more than the git grep did, never less: a tag in a test file is also in a test path
+    def test_the_folders_searched(self) -> None:
+        # the new rule refuses more than the git grep did, never less; engine/ added with the owner's approval
+        # (BL-0252, 2026-11-11: "Count engine tests (Recommended)")
         self.assertEqual(self.tagged("backend/tests/test_a.py", PY_HEAD + AT + mark() + "\ndef test_x():\n    pass\n"),
                          ["backend/tests/test_a.py"])
-        self.assertEqual(cc.TEST_DIRS, ("backend", "frontend", "shell", "scripts/tests"))
+        self.assertEqual(cc.TEST_DIRS, ("backend", "engine", "frontend", "shell", "scripts/tests"))
+
+    def test_the_engine_registers_the_cap_mark(self) -> None:  # BL-0252: --strict-markers refuses an unknown mark
+        cfg = tomllib.loads((cc.ROOT / "engine/pyproject.toml").read_text())["tool"]["pytest"]["ini_options"]
+        self.assertTrue(any(m.startswith("cap(id):") for m in cfg["markers"]), cfg["markers"])
+        self.assertIn("--strict-markers", cfg["addopts"])
 
     def test_the_real_tags_are_found_in_the_repository(self) -> None:
         tags = cc.real_tags(cc.ROOT, cc.candidate_files(cc.ROOT))

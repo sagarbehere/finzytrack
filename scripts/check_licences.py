@@ -27,8 +27,16 @@ check finds the clauses by their wording ("following acknowledg(e)ment"), so a l
 is not caught; an unquoted sentence is read up to the first full stop that ends a line, unless the next line starts
 in lower case, so a sentence wrapped right after an inner full stop ("Inc.") before a capital is cut short (the
 entry's source says who read the licence); JavaScript and Rust licence texts are not read here (BL-0086).
+Other platforms and options (BL-0050, S0105): a runtime package behind a platform marker that does not hold here
+(`colorama ; sys_platform == 'win32'`; the marker evaluated by the venv's own interpreter) is bundled on another OS but
+absent from this venv: it is judged from an `[other_platform.<package>]` entry for its exact pinned version (SPDX id,
+where its licence was read, and the acknowledgment its licence requires, "" for none), and an entry no such package
+uses is stale. Without an entry, with another version, or with a marker that holds here, it fails closed. An option
+line of `uv export` other than `--index-url`/`--extra-index-url` (an editable or path dependency `-e <path>`, an
+include) fails closed, since the package it brings would be bundled unchecked.
 Usage: python3 scripts/check_licences.py [--write-notices]
-(Internal: `--read-texts [path...]` prints `read_texts` as JSON; the check runs it inside each Python venv.)
+(Internal: `--read-texts [path...]` prints `read_texts` as JSON, and `--eval-markers` reads a JSON list of markers on
+stdin and prints whether each holds; the check runs both inside each Python venv.)
 """
 
 from __future__ import annotations
@@ -53,31 +61,108 @@ def norm(name: str) -> str:
     return re.sub(r"[-_.]+", "-", name).lower()
 
 
+@dataclass(frozen=True)
+class Requirement:
+    """One line of `uv export`: the normalized name, its pinned version (None when not `==`), its marker or None."""
+
+    name: str
+    version: str | None
+    marker: str | None
+
+
+@dataclass(frozen=True)
+class Elsewhere:
+    """A package bundled on another OS only, reviewed for one exact version (BL-0050): its SPDX id, where its licence
+    was read, and the acknowledgment its licence requires ("" for none)."""
+
+    version: str
+    spdx: str
+    source: str
+    acknowledgment: str
+
+
+# Options of `uv export` that bring no package (S0105, BL-0050 F7): any other option line fails closed.
+HARMLESS_OPTIONS = ("--index-url", "--extra-index-url")
+
+
+def runtime_requirements(requirements: str) -> tuple[dict[str, Requirement], list[str]]:
+    """The requirements of `uv export` output by normalized name, and the option lines that fail closed."""
+    reqs: dict[str, Requirement] = {}
+    problems: list[str] = []
+    for raw in requirements.splitlines():
+        line = raw.split(" #", 1)[0].strip() if not raw.lstrip().startswith("#") else ""
+        if not line:
+            continue
+        if line.startswith("-"):
+            if line.split()[0].split("=", 1)[0] not in HARMLESS_OPTIONS:
+                problems.append(f"uv export line {line!r}: an editable or path dependency or an include; the package "
+                                "it brings would be bundled unchecked")
+            continue
+        spec, _, marker = line.partition(";")
+        name = norm(re.split(r"[=<>!~\[ @]", spec.strip(), maxsplit=1)[0])
+        pinned = re.search(r"==\s*([^\s,;]+)", spec)
+        reqs[name] = Requirement(name, pinned.group(1) if pinned else None, marker.strip() or None)
+    return reqs, problems
+
+
 def runtime_names(requirements: str) -> set[str]:
     """Package names in `uv export` requirements output (comments, markers and options ignored)."""
-    names = set()
-    for line in requirements.splitlines():
-        line = line.split("#", 1)[0].strip()
-        if not line or line.startswith("-"):
-            continue
-        names.add(norm(re.split(r"[=<>!~;\[ ]", line, maxsplit=1)[0]))
-    return names
+    return set(runtime_requirements(requirements)[0])
 
 
 def bundled(
-    installed: list[tuple[str, str, str]], runtime: set[str], project: str = "backend"
+    installed: list[tuple[str, str, str]], runtime: set[str] | dict[str, Requirement], project: str = "backend",
+    elsewhere: dict[str, Elsewhere] | None = None, holds: dict[str, bool] | None = None, used: set[str] | None = None,
 ) -> list[tuple[str, str, str]]:
-    """The installed packages that are bundled. A runtime package missing from the venv fails closed."""
+    """The bundled packages: the installed runtime packages, and each runtime package bundled on another OS only (its
+    marker does not hold here) as its reviewed `elsewhere` entry for its exact pinned version (named in `used`). Any
+    other runtime package missing from the venv fails closed."""
     by_name = {norm(n): (n, v, lic) for n, v, lic in installed}
-    missing = sorted(runtime - by_name.keys())
+    reqs = runtime if isinstance(runtime, dict) else {n: Requirement(n, None, None) for n in runtime}
+    out: list[tuple[str, str, str]] = []
+    missing: list[str] = []
+    for name in sorted(reqs):
+        req, entry = reqs[name], (elsewhere or {}).get(name)
+        if name in by_name:
+            out.append(by_name[name])
+        elif req.marker and (holds or {}).get(req.marker) is False and entry is not None \
+                and req.version is not None and entry.version == req.version:
+            out.append((name, req.version, entry.spdx))
+            if used is not None:
+                used.add(name)
+        else:
+            why = "" if not req.marker else f" (marker {req.marker!r}" + (
+                ": it holds here)" if (holds or {}).get(req.marker) else
+                ": bundled on another OS; add [other_platform] for its exact version)" if entry is None or
+                entry.version != req.version else ": not evaluated)")
+            missing.append(name + why)
     if missing:
         raise SystemExit(f"check-licences: runtime packages not installed in {project}/.venv: {', '.join(missing)}")
-    return [by_name[n] for n in sorted(runtime)]
+    return out
 
 
-def python_deps(project: str = "backend", into: dict[str, str] | None = None) -> list[tuple[str, str, str]] | None:
+def evaluate_markers(project: str, markers: list[str]) -> dict[str, bool]:
+    """Whether each marker holds for the venv's own interpreter (packaging's evaluation, run inside it)."""
+    if not markers:
+        return {}
+    r = subprocess.run([str(ROOT / project / ".venv/bin/python"), "-I", str(Path(__file__).resolve()), "--eval-markers"],
+                       input=json.dumps(markers), capture_output=True, text=True, check=False)
+    if r.returncode != 0:
+        raise SystemExit(f"check-licences: {project}: platform markers could not be evaluated: {r.stderr.strip()[-300:]}")
+    return {k: v for k, v in json.loads(r.stdout).items() if isinstance(v, bool)}
+
+
+def stale_elsewhere(entries: dict[str, Elsewhere], used: set[str]) -> list[str]:
+    return [f"{name}: [other_platform] names a package no Python process bundles on another OS only; remove the entry"
+            for name in sorted(entries.keys() - used)]
+
+
+def python_deps(project: str = "backend", into: dict[str, str] | None = None,
+                elsewhere: dict[str, Elsewhere] | None = None, used: set[str] | None = None,
+                ) -> list[tuple[str, str, str]] | None:
     """The bundled packages of one Python process: `backend` (the main sidecar) or `engine` (ADR-0054). With `into`,
-    each bundled package's licence and notice texts are added to it (normalized name -> text)."""
+    each bundled package's licence and notice texts are added to it (normalized name -> text); `elsewhere` and `used`
+    as in `bundled`."""
     if not (ROOT / project / "pyproject.toml").exists():
         return None
     tool = ROOT / project / ".venv/bin/pip-licenses"
@@ -93,7 +178,13 @@ def python_deps(project: str = "backend", into: dict[str, str] | None = None) ->
     out = subprocess.run([str(tool), "--format=json", "--with-system", "--from=mixed"],
                          capture_output=True, text=True, check=True)
     report = json.loads(out.stdout)
-    deps = bundled([(d["Name"], d["Version"], d["License"]) for d in report], runtime_names(export.stdout), project)
+    reqs, problems = runtime_requirements(export.stdout)
+    if problems:
+        raise SystemExit(f"check-licences: {project}: " + "; ".join(problems))
+    installed = [(d["Name"], d["Version"], d["License"]) for d in report]
+    present = {norm(n) for n, _, _ in installed}
+    markers = sorted({r.marker for r in reqs.values() if r.marker and r.name not in present})
+    deps = bundled(installed, reqs, project, elsewhere, evaluate_markers(project, markers), used)
     if into is not None:
         # The venv's own interpreter reads its distributions; -I keeps the caller's environment and cwd out.
         read = subprocess.run([str(ROOT / project / ".venv/bin/python"), "-I", str(Path(__file__).resolve()),
@@ -332,6 +423,7 @@ class Config:
     mapping: dict[str, Reviewed]
     acknowledgments: dict[str, Acknowledgment] = field(default_factory=dict)
     textless: dict[str, Textless] = field(default_factory=dict)
+    elsewhere: dict[str, Elsewhere] = field(default_factory=dict)
 
 
 ENGINE_GROUP = "Python (ledger engine)"
@@ -358,6 +450,13 @@ def load_config(path: Path) -> Config:
         if not all(isinstance(entry.get(k), str) and entry[k].strip() for k in ("version", "reason")):
             raise SystemExit(f"check-licences: [no_licence_text.{name}] needs version and reason")
         textless[norm(name)] = Textless(entry["version"], entry["reason"])
+    elsewhere: dict[str, Elsewhere] = {}
+    for name, entry in cfg.get("other_platform", {}).items():
+        if not all(isinstance(entry.get(k), str) and entry[k].strip() for k in ("version", "spdx", "source")) \
+                or not isinstance(entry.get("acknowledgment"), str):
+            raise SystemExit(f"check-licences: [other_platform.{name}] needs version, spdx, source (where its licence "
+                             "was read) and acknowledgment (\"\" for none)")
+        elsewhere[norm(name)] = Elsewhere(entry["version"], entry["spdx"], entry["source"], entry["acknowledgment"])
     return Config(
         allowed=frozenset(cfg["allowed"]),
         pending=frozenset(cfg.get("pending_legal_advice", {})),
@@ -366,6 +465,7 @@ def load_config(path: Path) -> Config:
         mapping=mapping,
         acknowledgments=acks,
         textless=textless,
+        elsewhere=elsewhere,
     )
 
 
@@ -416,6 +516,7 @@ def required_acknowledgments(text: str) -> list[str | None]:
 def acknowledgments(
     groups: dict[str, list[tuple[str, str, str]] | None], texts: dict[str, dict[str, str]],
     configured: dict[str, Acknowledgment], textless: dict[str, Textless] | None = None,
+    elsewhere: dict[str, Elsewhere] | None = None,
 ) -> tuple[list[str], dict[tuple[str, str], str]]:
     """(problems, notes) for the groups whose licence texts were read (`texts`: group -> normalized name -> text),
     each package judged in its own group with that group's text and version: its text was read; it is not empty, or
@@ -432,6 +533,11 @@ def acknowledgments(
             seen.add(key)
             entry, empty = configured.get(key), textless.get(key)
             text = group_texts.get(key)
+            other = (elsewhere or {}).get(key)
+            if text is None and other is not None and other.version == version:  # bundled on another OS (BL-0050)
+                if other.acknowledgment.strip():
+                    notes[(group, key)] = squash(other.acknowledgment)
+                continue
             if text is None:
                 problems.append(f"{name} {version}: its licence text was not read, so its acknowledgments cannot be "
                                 "confirmed")
@@ -506,6 +612,11 @@ def main(argv: list[str]) -> int:
     if argv[:1] == ["--read-texts"]:
         print(json.dumps(read_texts(argv[1:] or None)))
         return 0
+    if argv[:1] == ["--eval-markers"]:  # inside a venv: packaging's marker evaluation for its interpreter
+        from packaging.markers import Marker
+
+        print(json.dumps({m: Marker(m).evaluate() for m in json.loads(sys.stdin.read())}))
+        return 0
     cfg = load_config(ROOT / "licences.allow.toml")
     mapping_problems: list[str] = []
 
@@ -518,13 +629,14 @@ def main(argv: list[str]) -> int:
 
     # Licence texts per Python process: a package may be bundled in both at different versions (verifier S0037 F2).
     texts: dict[str, dict[str, str]] = {BACKEND_GROUP: {}, ENGINE_GROUP: {}}
+    used: set[str] = set()
     groups = {"Python runtime (python-build-standalone)": runtime_deps(),
-              BACKEND_GROUP: mapped(python_deps("backend", texts[BACKEND_GROUP])),
-              ENGINE_GROUP: mapped(python_deps("engine", texts[ENGINE_GROUP])),
+              BACKEND_GROUP: mapped(python_deps("backend", texts[BACKEND_GROUP], cfg.elsewhere, used)),
+              ENGINE_GROUP: mapped(python_deps("engine", texts[ENGINE_GROUP], cfg.elsewhere, used)),
               "JavaScript (frontend)": js_deps(), "Rust (desktop shell)": rust_deps()}
-    ack_problems, notes = acknowledgments(groups, texts, cfg.acknowledgments, cfg.textless)
+    ack_problems, notes = acknowledgments(groups, texts, cfg.acknowledgments, cfg.textless, cfg.elsewhere)
     problems, warnings, text = evaluate(groups, set(cfg.allowed), set(cfg.pending), {ENGINE_GROUP: cfg.engine}, notes)
-    problems = mapping_problems + ack_problems + problems
+    problems = mapping_problems + ack_problems + stale_elsewhere(cfg.elsewhere, used) + problems
     if "--write-notices" in argv:
         NOTICES.write_text(text, encoding="utf-8")
     elif not NOTICES.exists() or NOTICES.read_text(encoding="utf-8") != text:

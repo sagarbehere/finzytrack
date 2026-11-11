@@ -58,6 +58,91 @@ class RuntimeOnly(unittest.TestCase):
             cl.bundled([("fastapi", "0.143.0", "MIT")], {"fastapi", "httpx"})
 
 
+COLORAMA = "sys_platform == 'win32'"
+ELSEWHERE = {"colorama": cl.Elsewhere(version="0.4.6", spdx="BSD-3-Clause", source="LICENSE.txt in the 0.4.6 wheel",
+                                      acknowledgment="")}
+MARKED = f"fastapi==0.143.0\ncolorama==0.4.6 ; {COLORAMA}\n"
+
+
+class OtherPlatformsAndOptions(unittest.TestCase):
+    """BL-0050 (S0006 verifier F1, F7): a package bundled on another OS only (a platform marker that does not hold
+    here) is judged from a reviewed entry for its exact version, never refused as missing nor passed unread; an
+    option line of `uv export` (`-e <path>`, a requirements include) fails closed instead of being dropped."""
+
+    def test_option_lines_fail_closed_except_the_index_urls(self) -> None:
+        for line in ("-e ./engine", "-e file:///x/engine", "--editable ./engine", "-r other.txt",
+                     "--requirement other.txt", "--find-links ./wheels", "-c constraints.txt", "--no-index"):
+            with self.subTest(line=line):
+                _, problems = cl.runtime_requirements(f"fastapi==0.143.0\n{line}\n")
+                self.assertTrue(problems, line)
+        reqs, problems = cl.runtime_requirements(EXPORT + "--extra-index-url https://example.org/simple\n")
+        self.assertEqual(problems, [])
+        self.assertEqual(set(reqs), {"fastapi", "typing-extensions", "pydantic"})
+
+    def test_markers_and_versions_are_read(self) -> None:
+        reqs, _ = cl.runtime_requirements(MARKED + "pydantic[email]==2.14.0\n")
+        self.assertEqual(reqs["colorama"], cl.Requirement("colorama", "0.4.6", COLORAMA))
+        self.assertEqual(reqs["fastapi"], cl.Requirement("fastapi", "0.143.0", None))
+        self.assertEqual(reqs["pydantic"].version, "2.14.0")
+
+    def bundle(self, holds: dict[str, bool], elsewhere: dict | None = None, export: str = MARKED):
+        reqs, _ = cl.runtime_requirements(export)
+        used: set[str] = set()
+        deps = cl.bundled([("fastapi", "0.143.0", "MIT")], reqs, "backend", ELSEWHERE if elsewhere is None else elsewhere,
+                          holds, used)
+        return deps, used
+
+    def test_a_package_bundled_on_another_os_is_judged_from_its_reviewed_entry(self) -> None:
+        deps, used = self.bundle({COLORAMA: False})
+        self.assertEqual(deps, [("colorama", "0.4.6", "BSD-3-Clause"), ("fastapi", "0.143.0", "MIT")])
+        self.assertEqual(used, {"colorama"})
+
+    def test_what_must_not_pass(self) -> None:
+        cases = {
+            "no reviewed entry": ({COLORAMA: False}, {}, MARKED),
+            "an entry for another version": ({COLORAMA: False},
+                                              {"colorama": cl.Elsewhere("0.4.5", "BSD-3-Clause", "x", "")}, MARKED),
+            "a marker that holds here, package missing": ({COLORAMA: True}, None, MARKED),
+            "a marker not evaluated": ({}, None, MARKED),
+            "no marker, package missing": ({}, None, "fastapi==0.143.0\ncolorama==0.4.6\n"),
+            "no pinned version": ({COLORAMA: False}, None, f"fastapi==0.143.0\ncolorama>=0.4 ; {COLORAMA}\n"),
+        }
+        for name, (holds, elsewhere, export) in cases.items():
+            with self.subTest(case=name), self.assertRaises(SystemExit):
+                self.bundle(holds, elsewhere, export)
+
+    def test_an_unused_entry_is_stale(self) -> None:
+        self.assertEqual(cl.stale_elsewhere(ELSEWHERE, {"colorama"}), [])
+        self.assertTrue(cl.stale_elsewhere(ELSEWHERE, set()))
+
+    def test_its_acknowledgment_comes_from_the_entry(self) -> None:
+        groups = {"G": [("colorama", "0.4.6", "BSD-3-Clause")]}
+        problems, notes = cl.acknowledgments(groups, {"G": {}}, {}, {}, ELSEWHERE)
+        self.assertEqual((problems, notes), ([], {}))
+        noted = {"colorama": cl.Elsewhere("0.4.6", "BSD-4-Clause", "x", "This product includes software by X.")}
+        problems, notes = cl.acknowledgments(groups, {"G": {}}, {}, {}, noted)
+        self.assertEqual((problems, notes), ([], {("G", "colorama"): "This product includes software by X."}))
+        problems, _ = cl.acknowledgments({"G": [("colorama", "0.4.7", "BSD-3-Clause")]}, {"G": {}}, {}, {}, ELSEWHERE)
+        self.assertTrue(problems)  # its text was not read and no entry for this version says what it requires
+
+    def test_a_malformed_entry_is_refused(self) -> None:
+        for body in ('version = "1"\nspdx = "MIT"\nsource = "x"\n', 'version = "1"\nspdx = "MIT"\nacknowledgment = ""\n',
+                     'spdx = "MIT"\nsource = "x"\nacknowledgment = ""\n', 'version = "1"\nspdx = " "\nsource = "x"\nacknowledgment = ""\n'):
+            with self.subTest(body=body), tempfile.TemporaryDirectory() as tmp:
+                path = Path(tmp) / "allow.toml"
+                path.write_text('allowed = ["MIT"]\n[engine]\nallowed = ["MIT"]\n[other_platform.pkg]\n' + body,
+                                encoding="utf-8")
+                with self.assertRaises(SystemExit):
+                    cl.load_config(path)
+
+    @unittest.skipUnless((cl.ROOT / "backend/.venv/bin/python").is_file(), "needs the backend venv")
+    def test_markers_are_evaluated_by_the_venvs_interpreter(self) -> None:
+        holds = cl.evaluate_markers("backend", [COLORAMA, "sys_platform == 'darwin'", "python_version >= '3'"])
+        self.assertEqual(holds[COLORAMA], sys.platform == "win32")
+        self.assertEqual(holds["sys_platform == 'darwin'"], sys.platform == "darwin")
+        self.assertTrue(holds["python_version >= '3'"])
+
+
 class Wiring(unittest.TestCase):
     """Verifier S0006 F8: python_deps reads the runtime closure (`--no-dev`) and filters the venv by it."""
 
@@ -688,7 +773,8 @@ class EngineWiring(unittest.TestCase):
             if not any(cl.norm(n) == cl.norm(default[0]) for n, _, _ in engine):
                 engine = [*engine, default]
 
-        def deps(project: str = "backend", into: dict[str, str] | None = None) -> list[tuple[str, str, str]]:
+        def deps(project: str = "backend", into: dict[str, str] | None = None, elsewhere: object = None,
+                 used: object = None) -> list[tuple[str, str, str]]:
             chosen = engine if project == "engine" else backend
             if into is not None:
                 into.update({cl.norm(n): by_project[project].get(cl.norm(n), "MIT") for n, _, _ in chosen})
