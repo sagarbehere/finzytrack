@@ -349,18 +349,27 @@ def _lookup(name: str, path: tuple[str, ...], spec: Any) -> ModuleLookup:
 class _SourceOnly(importlib.machinery.SourceFileLoader):
     """A module's source loader that never reads cached bytecode (S0099 r1, verifier F1): a `.pyc` in a `__pycache__`
     folder beside a plugin (left by `bean-check`, or compiled from other code) or under a `pycache_prefix` would run
-    code the fingerprint does not hash. Every read but the source's own fails, so Python compiles from the source, the
-    file hashed; no bytecode is written either, whatever the interpreter's flags (INV-30)."""
+    code the fingerprint does not hash. A read of bytecode fails, so Python compiles from the source, the file hashed;
+    every other read goes through, so a package's data (`pkgutil.get_data`, `__loader__.get_data`) reads as under
+    Beancount (S0099 r2, verifier F1; owner, 2026-11-10, "Narrow the refusal"). No bytecode is written either,
+    whatever the interpreter's flags (INV-30)."""
 
     @override
     def get_data(self, path: str) -> bytes:
-        if path != self.path:
+        if _is_bytecode(path):
             raise OSError(errno.ENOENT, "cached bytecode is not read during a load", path)
         return super().get_data(path)
 
     @override
     def set_data(self, path: str, data: Buffer, *, _mode: int = 0o666) -> None:
         """Never writes."""
+
+
+def _is_bytecode(path: str) -> bool:
+    """Whether a read is of cached bytecode: Python names every bytecode file it reads for a source module, beside it
+    (`__pycache__`) or under `pycache_prefix`, with a bytecode suffix (`.pyc`, `importlib.util.cache_from_source`). A
+    package data file a plugin names with that suffix is refused too (a limit, spec §5.1)."""
+    return path.endswith(tuple(importlib.machinery.BYTECODE_SUFFIXES))
 
 
 class _Recorder:

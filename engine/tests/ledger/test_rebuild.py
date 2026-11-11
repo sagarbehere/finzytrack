@@ -865,6 +865,29 @@ def test_plugin_code_changed_and_changed_back_around_the_load_is_moved(root: Pat
         sys.modules.pop(name, None)
 
 
+def test_a_refusal_by_plugin_code_changed_and_changed_back_around_the_load_is_moved(root: Path) -> None:
+    """S0099 r2 (verifier T1): the load ran a broken plugin that is no longer on disk (changed back before the
+    observation after it); refusing would show a failure of code nobody has (S0098: only an unchanged set is
+    refused)."""
+    name = "ft_s0099_rebuild_refused_flip"
+    try:
+        src = with_plugin(root, name)
+        hint = hint_of(root)
+        sys.modules.pop(name, None)
+
+        def load(r: str, parsed: list[str]) -> port.ParseResult:
+            src.write_text("raise RuntimeError('broken')\n")
+            try:
+                return port.real_load(r, parsed)
+            finally:
+                src.write_text(PLUGIN)
+
+        a = go(rebuild.Ports(load=load), hint, FakeJob())
+        assert a.outcome == "moved", a
+    finally:
+        sys.modules.pop(name, None)
+
+
 def hint_of_refused(root: Path) -> Fingerprint:
     out = overlay.load(str(root), {}, DesktopPolicy())
     assert isinstance(out, overlay.LoadRefused), out

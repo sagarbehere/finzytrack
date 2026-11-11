@@ -477,6 +477,56 @@ def test_a_file_no_import_can_reach_keeps_it(tmp_path: Path, names: Names, new: 
     assert unchanged(fp)
 
 
+def test_a_subpackage_added_to_a_package_that_finds_its_own_modules_changes_it(tmp_path: Path, names: Names) -> None:
+    """S0099 r2 (verifier T2): `pkgutil.iter_modules(__path__)` yields subpackages too."""
+    pkg = names("rules")
+    root = ledger(tmp_path / "L", pkg)
+    write(tmp_path / "L" / pkg / "__init__.py", DISCOVERS)
+    fp = fp_of(root)
+    write(tmp_path / "L" / pkg / "r3" / "__init__.py", "def check(entries):\n    return []\n")
+    assert not unchanged(fp)
+
+
+@pytest.mark.parametrize("new", [".#__init__.py", "._x.py", ".pytest_cache/", ".git/", "data/", "data/x.csv"])
+def test_names_no_import_can_reach_inside_a_package_keep_it(tmp_path: Path, names: Names, new: str) -> None:
+    """Must not change (S0099 r2, verifier F3): a name that is no identifier (an editor's lock file, a macOS `._`
+    file, a tool's folder) and a data folder that is no package are not what `pkgutil.iter_modules` yields."""
+    pkg = names("rules")
+    root = ledger(tmp_path / "L", pkg)
+    write(tmp_path / "L" / pkg / "__init__.py", DISCOVERS)
+    if new.startswith("data/x"):
+        (tmp_path / "L" / pkg / "data").mkdir()
+    fp = fp_of(root)
+    target = tmp_path / "L" / pkg / new.rstrip("/")
+    if new.endswith("/"):
+        target.mkdir()
+    else:
+        target.write_bytes(b"")
+    assert unchanged(fp)
+
+
+@pytest.mark.parametrize("when", ["import", "run"])
+def test_a_plugin_reads_its_package_data_as_under_beancount(tmp_path: Path, names: Names, when: str) -> None:
+    """S0099 r2 (verifier F1; owner, 2026-11-10, "Narrow the refusal"): only bytecode reads are refused, so a package
+    reads its own data files (`pkgutil.get_data`, `__loader__.get_data`) when imported and while it runs, as under
+    bean-check."""
+    pkg = names("rates")
+    root = ledger(tmp_path / "L", pkg)
+    read = 'pkgutil.get_data(__name__, "rates.csv") + __loader__.get_data(__file__.replace("__init__.py", "rates.csv"))'
+    body = (
+        f"import pkgutil\nRATES = {read}\n" + REPORTS.replace("TAG", "IMPORT")
+        if when == "import"
+        else "import pkgutil\n"
+        + REPORTS.replace("TAG", "RUN").replace(
+            "    return entries,", f"    assert {read} == b'USD,1\\nUSD,1\\n'\n    return entries,"
+        )
+    )
+    write(tmp_path / "L" / pkg / "__init__.py", body)
+    write(tmp_path / "L" / pkg / "rates.csv", "USD,1\n")
+    out = load(root)
+    assert ran(out) == [f"CODE={when.upper()}"], out.errors
+
+
 def test_a_plugin_that_replaces_the_finder_list_leaves_no_recorder_behind(tmp_path: Path, names: Names) -> None:
     """S0099 r1 (red team F7): the path search is put back in whatever list `sys.meta_path` names after the load."""
     import importlib.machinery

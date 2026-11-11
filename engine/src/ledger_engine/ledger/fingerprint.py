@@ -126,19 +126,39 @@ def document_file(p: str) -> bool:
 _IMPORTABLE: Final = tuple(importlib.machinery.all_suffixes())  # `.py`, `.pyc` and the extension module suffixes
 
 
+def _module_name(name: str) -> str | None:
+    """The module a file name would import as (`inspect.getmodulename`: a source, bytecode or extension module suffix
+    removed), when it is a Python identifier; else None."""
+    for suffix in sorted(_IMPORTABLE, key=len, reverse=True):
+        if name.endswith(suffix):
+            stem = name[: -len(suffix)]
+            return stem if stem.isidentifier() else None
+    return None
+
+
+def _is_package(folder: str) -> bool:
+    """Whether a subfolder is a package `pkgutil.iter_modules` yields: it holds an `__init__` module."""
+    try:
+        with os.scandir(folder) as entries:
+            return any(_module_name(e.name) == "__init__" for e in entries)
+    except OSError:
+        return False
+
+
 def package_listing(folder: str) -> PackageListing:
-    """A package folder's importable names: each module file (a name ending in a source, bytecode or extension module
-    suffix) and each subfolder (`name/`; `__pycache__` holds no module of the package), sorted; None when it cannot be
-    listed. What `pkgutil.iter_modules(__path__)` and a listing a plugin makes itself can find (S0099 r1, red team
-    F1); other files, and the folders above the package (a `pythonpath` folder), are not listed."""
+    """A package folder's importable names, sorted: each module file whose name is a Python identifier, and each
+    subfolder `name/` whose name is one and that is a package (`__init__` inside), as `pkgutil.iter_modules(__path__)`
+    yields them (S0099 r1, red team F1; r2, verifier F3: no `.#x.py`, `._x.py`, `.git/`, `__pycache__/` or data folder);
+    None when it cannot be listed. Other files, and the folders above the package (a `pythonpath` folder), are not
+    listed."""
     try:
         with os.scandir(folder) as entries:
             names: list[str] = []
             for e in entries:
                 if e.is_dir():
-                    if e.name != "__pycache__":
+                    if e.name.isidentifier() and _is_package(e.path):
                         names.append(e.name + "/")
-                elif e.name.endswith(_IMPORTABLE):
+                elif _module_name(e.name) is not None:
                     names.append(e.name)
     except OSError:
         return None
