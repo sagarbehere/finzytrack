@@ -579,7 +579,7 @@ Format:
 - PROCESS.md section: §8 (Agents and real data).
 - Why: a false positive on every slice that changes the gates, worked around by rewording.
 - Expected effect: no reworded commit messages; nothing bash would execute passes. Metric: guard refusals of commit messages per slice.
-- Status: kept (owner-approved; S0105 part B).
+- Status: reverted by IMP-0063 (S0105 part B round 2): two review rounds each found a shape bash executes that the blanking passed.
 
 ## IMP-0061: tagged engine tests count for a built capability (2026-11-11)
 - Trigger: BL-0252 (S0105 part A: the capability check never searched `engine/`, and the engine's pytest config did not register `cap`). Owner, 2026-11-11, in session, choosing "Count engine tests (Recommended)"; the option as put to the owner: "Add engine/ to the folders and register the cap mark, under the same real-test rule (no comment, skip or fixme counts)."
@@ -596,3 +596,11 @@ Format:
 - Why: a Windows-only package failed with a misleading message and its licence was never read; an editable dependency would have been bundled unchecked; one test bounded the meta-tests' wall time.
 - Expected effect: every bundled package is judged, on whatever OS; the floor scan's wall time falls (one range scan about 25 s to 18 s at load 25; the longest part 8 s). Metric: the meta-tests' longest unit.
 - Status: kept (agent-approved; S0105 part B).
+
+## IMP-0063: the guard's message blanking (IMP-0060) is reverted (2026-11-12)
+- Trigger: S0105 part B. Round 1 (High): the blanking ran inside heredoc bodies kept as code; fixed by stopping at `<<`. Round 2 (High, R2-F1): inside backticks, bash ends the substitution at the next backtick even within single quotes, so `` echo `git commit -m 'x`; git clean -x; echo `' `` was blanked as one message and the `git clean -x` never seen (refused before S0105). A second fix round on the same mechanism, so the owner got the options note. Owner, 2026-11-12, in session: "Revert BL-0054 (Recommended)"; the option as put to the owner: "Restore the guard to its pre-S0105 behaviour and close BL-0054 as won't-fix with the evidence. Agents keep rewording messages; the safety net stays simple."
+- What changed: gates (a revert of an owner-approved loosening, owner-approved). `.claude/hooks/guards.py` is byte for byte its version before S0105; PROCESS.md §8 loses the BL-0054 sentence; BL-0054 closed as won't fix. `scripts/tests/test_guards.py` keeps every must-refuse shape of both rounds (`test_quoted_message_shapes_bash_would_execute_are_refused`) and drops the allows.
+- PROCESS.md section: §8.
+- Why: each fix of the blanking left another bash quoting rule it did not follow; a safety net that models bash's quoting partly is worse than one that over-refuses.
+- Expected effect: agents keep rewording messages that name guarded words. Metric: none new (the false positive is known and accepted).
+- Status: kept (owner-approved; S0105 part B round 2).

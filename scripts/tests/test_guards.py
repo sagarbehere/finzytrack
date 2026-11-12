@@ -223,30 +223,14 @@ class GuardTest(unittest.TestCase):
         # nor are commands built on purpose to slip past the parser (BL-0062 removed, BL-0055's anti-bypass
         # refusals removed; owner, 2026-10-29), nor a heredoc-written script run later or a `(cd …` subshell (BL-0155).
 
-    def test_single_quoted_messages_are_data(self) -> None:
-        """BL-0054 (owner, 2026-11-11, in session: "Exact shapes only (Recommended)"): for `git commit -m/--message/-F`,
-        `git tag -m` and `gh ... --body/--title`, a single-quoted value is data, since bash runs nothing inside single
-        quotes. Every other shape, and every shape bash would execute, is refused as before."""
+    def test_quoted_message_shapes_bash_would_execute_are_refused(self) -> None:
+        """S0105 (BL-0054, reverted): the shapes two review rounds used against the blanking of quoted message values
+        (heredoc bodies kept as code, backtick substitutions spanning a quote, quoting the blanking did not follow).
+        The guard reads them as it did before S0105 and refuses each (owner, 2026-11-12, in session: "Revert BL-0054
+        (Recommended)")."""
         gc = "git clean " + "-x"  # spelled in parts so this file's text is not itself a command the guard reads
         nv = "--no-" + "verify"
         hp = "core.hooks" + "Path"
-        allowed = [
-            f"git commit -m 'docs: {hp} must stay .githooks'",
-            f"git commit -m 'fix: a; {gc} is refused'",
-            f"git commit -m 'subject' -m 'never run {gc} | rm, nor {nv}'",
-            f"git commit --message 'b; git push --force'",
-            f"git commit --message='b; {gc}'",
-            f"git commit -q -F 'notes; {gc}.txt'",
-            f"git tag -m 'v; git tag -d v0.3.0' v9.9.9-test",
-            f"gh pr create --title 'x; {gc}' --body 'mentions {hp}'",
-            f"gh issue comment 12 --body='a `{gc}` in backticks'",
-            f"git commit -m 'multi\nline; {gc}\n'",
-            f"git commit -m 'a' && git log --oneline -1",
-            f"git commit -q -F - <<'EOF'\nmentions {hp} and {gc}\nEOF",  # a quoted heredoc body is data (S0054)
-        ]
-        for cmd in allowed:
-            with self.subTest(allowed=cmd):
-                self.assertFalse(self.blocked(cmd), cmd)
         refused = [
             f'git commit -m "$({gc})"',  # owner's planted case: bash runs $(...) inside double quotes
             f"git commit -m 'x'; {gc}",  # owner's planted case: a command after the message
@@ -275,7 +259,16 @@ class GuardTest(unittest.TestCase):
             f"bash <<EOF\ngit tag -m 'v $({gc})' v1\nEOF",
             f"bash <<EOF\ngh pr create --title 'v `{gc}`'\nEOF",
             f"cat <<EOF\ngit commit -m 'x $({gc})'",  # no end line: bash still expands the body
-            f"git commit -F - <<EOF\nx\nEOF\ngit commit -m '{hp} x'",  # after a heredoc, nothing is blanked
+            f"git commit -F - <<EOF\nx\nEOF\ngit commit -m '{hp} x'",
+            # round 2 R2-F1 (High): inside backticks, a backtick ends the substitution even within single quotes
+            f"echo `git commit -m 'x`; {gc}; echo `'`",
+            f"echo `git commit -m 'x`; git config {hp} /dev/null; echo `'`",
+            f"echo `git tag -m 'x` && {gc} && echo `'`",
+            f"echo `gh pr create --title 'x`\n{gc}\necho `'`",
+            f"x=`git commit -m 'x`; {gc} #'",
+            # the single-quoted messages BL-0054 would have allowed stay refused (rewording is the workaround)
+            f"git commit -m 'docs: {hp} must stay .githooks'",
+            f"git commit -m 'fix: a; {gc} is refused'",
         ]
         # Not refused today and unchanged (outside the owner's shapes, stated in the hook's docstring): a command
         # after a lone `&`, and a separator inside double quotes or inside a quote of another option (the split
