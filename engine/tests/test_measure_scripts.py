@@ -31,10 +31,10 @@ LEDGER = b"""option "operating_currency" "USD"
 """
 
 
-def run(script: str, *args: str) -> str:
+def run(script: str, *args: str, scripts: Path = SCRIPTS) -> str:
     """The script under this interpreter (the engine's environment), from `engine/` as its usage line says."""
     done = subprocess.run(  # noqa: S603 (fixed argv: a script of this repository)
-        [sys.executable, "-I", str(SCRIPTS / script), *args],
+        [sys.executable, "-I", str(scripts / script), *args],
         cwd=ENGINE,
         capture_output=True,
         text=True,
@@ -81,16 +81,28 @@ CASES: dict[str, Callable[[Path], None]] = {
 }
 
 
+MAC_ONLY = {"measure_save.py": "the save's port is macOS-only until BL-0087"}
+
+
 def test_every_measurement_script_has_a_case() -> None:
     """Must not pass: a `measure_*.py` in the folder that no case runs."""
     assert {p.name for p in SCRIPTS.glob("measure_*.py")} == set(CASES)
 
 
-@pytest.mark.skipif(sys.platform != "darwin", reason="the save's port is macOS-only until BL-0087")
-def test_measure_save_runs(tmp_path: Path) -> None:
-    save(tmp_path)
-
-
-@pytest.mark.parametrize("name", ["measure_mirror_build.py", "measure_large_result.py"])
+@pytest.mark.parametrize(
+    "name",
+    [
+        pytest.param(n, marks=pytest.mark.skipif(sys.platform != "darwin", reason=MAC_ONLY[n])) if n in MAC_ONLY else n
+        for n in sorted(CASES)
+    ],
+)
 def test_measurement_script_runs(name: str, tmp_path: Path) -> None:
+    """Every case runs (S0106 verifier F2: a case without its own test function never ran)."""
     CASES[name](tmp_path)
+
+
+def test_a_script_that_fails_fails_its_case(tmp_path: Path) -> None:
+    """Must not pass: a measurement script that exits non-zero, run as the cases run it, goes unnoticed."""
+    (tmp_path / "measure_broken.py").write_text("import sys\nprint('report')\nsys.exit(1)\n")
+    with pytest.raises(AssertionError, match="report"):
+        run("measure_broken.py", scripts=tmp_path)

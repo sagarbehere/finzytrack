@@ -7,7 +7,7 @@
 ## Context (plain language, a concrete example first)
 The sidecar and the engine talk in lines of text, each at most 16 MiB. If the engine ever sends a longer line, the sidecar treats the engine as broken and stops it. BL-0082 asked to measure how big an answer can get, and to make the engine refuse an answer that is too big (with a clear "result too large" message) instead of being stopped.
 
-Measured in S0106 on the 54k demo ledger: a query that returns every posting with all 29 mirror columns would be a 79.5 MB line, almost five times the limit; with 7 columns (date, flag, payee, narration, account, number, currency), 9.4 MB, which fits. Decoding that 9.4 MB answer takes about 52 ms and 57 MB of memory. So a "show me every posting" BQL query will need paging when it exists.
+Measured in S0106 on the 54k demo ledger: a query that returns every posting with all 29 mirror columns would be a 79.5-81.9 MB line (it depends on the dates the generator was given), almost five times the limit; with 7 columns (date, flag, payee, narration, account, number, currency), 9.4 MB, which fits. Decoding that 9.4 MB answer takes about 52 ms and 57 MB of memory. So a "show me every posting" BQL query will need paging when it exists.
 
 But no engine operation returns query rows today. The BQL operation arrives with CAP-ENGINE-BQL in M7. Every answer the engine sends now is small and bounded by its fields (a save's answer is a few hundred bytes). A size check added now to every answer would also cover the save, and turning a save's "saved" answer into "result too large" would tell the user a landed save failed. So the check belongs to the ops that return rows, designed together with the paging, when the first one is built.
 
@@ -20,3 +20,4 @@ But no engine operation returns query rows today. The BQL operation arrives with
 Option 1. The numbers are in hand; the guard and the paging are one design that needs the op they protect.
 
 ## Answer (owner, verbatim, with date)
+Owner, 2026-11-12, in session (relayed by the orchestrator): "Move to M7 with BQL (Recommended)". The option as put to the owner: "The numbers are measured and meet M1a's exit item; the refusal and paging are one design built with the op they protect. The row moves to M7." Recorded on BL-0082 (milestone M7) and in the S0106 journal.

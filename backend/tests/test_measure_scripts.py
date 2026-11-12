@@ -37,9 +37,9 @@ LEDGER = b"""option "operating_currency" "USD"
 """
 
 
-def run(script: str, *args: str, tmp_path: Path) -> dict[str, object]:
+def run(script: str, *args: str, tmp_path: Path, scripts: Path = SCRIPTS) -> dict[str, object]:
     done = subprocess.run(  # noqa: S603 (fixed argv: a script of this repository)
-        [sys.executable, "-I", str(SCRIPTS / script), *args],
+        [sys.executable, "-I", str(scripts / script), *args],
         cwd=BACKEND,
         capture_output=True,
         text=True,
@@ -71,16 +71,16 @@ def protocol(tmp_path: Path) -> None:
     folder = tmp_path / "L"
     folder.mkdir()
     (folder / "main.beancount").write_bytes(LEDGER)
-    report = run(
-        "measure_protocol.py", str(folder / "main.beancount"), "--runs", "1", "--pings", "3", tmp_path=tmp_path
-    )
-    for key in ("ping_ms", "save", "save_until_published_ms", "refused_after_decode"):
-        assert key in report, report
-    saves = report["save"]
-    assert isinstance(saves, list), report
-    assert saves, report
-    outcomes = [s["outcome"] for s in cast("list[dict[str, object]]", saves)]
-    assert outcomes == ["saved"] * len(outcomes), report
+    for extra in ((), ("--warm",)):  # the product's path, and warm engines
+        args = (str(folder / "main.beancount"), "--runs", "1", "--pings", "3", *extra)
+        report = run("measure_protocol.py", *args, tmp_path=tmp_path)
+        for key in ("path", "ping_ms", "save", "save_until_published_ms", "refused_after_decode"):
+            assert key in report, report
+        saves = report["save"]
+        assert isinstance(saves, list), report
+        assert saves, report
+        outcomes = [s["outcome"] for s in cast("list[dict[str, object]]", saves)]
+        assert outcomes == ["saved"] * len(outcomes), report
 
 
 CASES: dict[str, Callable[[Path], None]] = {
@@ -90,21 +90,27 @@ CASES: dict[str, Callable[[Path], None]] = {
 }
 
 
+NEEDS_ENGINE = pytest.mark.skipif(not ENGINE_VENV.is_dir(), reason="needs the engine's environment (engine/.venv)")
+MAC_ONLY = pytest.mark.skipif(sys.platform != "darwin", reason="the save's port is macOS-only until BL-0087")
+MARKS: dict[str, tuple[pytest.MarkDecorator, ...]] = {
+    "measure_health.py": (NEEDS_ENGINE,),
+    "measure_protocol.py": (NEEDS_ENGINE, MAC_ONLY),
+}
+
+
 def test_every_measurement_script_has_a_case() -> None:
     """Must not pass: a `measure_*.py` in the folder that no case runs."""
     assert {p.name for p in SCRIPTS.glob("measure_*.py")} == set(CASES)
 
 
-def test_measure_mirror_reads_runs(tmp_path: Path) -> None:
-    mirror_reads(tmp_path)
+@pytest.mark.parametrize("name", [pytest.param(n, marks=MARKS.get(n, ())) for n in sorted(CASES)])
+def test_measurement_script_runs(name: str, tmp_path: Path) -> None:
+    """Every case runs (S0106 verifier F2: a case without its own test function never ran)."""
+    CASES[name](tmp_path)
 
 
-@pytest.mark.skipif(not ENGINE_VENV.is_dir(), reason="needs the engine's environment (engine/.venv)")
-def test_measure_health_runs(tmp_path: Path) -> None:
-    health(tmp_path)
-
-
-@pytest.mark.skipif(sys.platform != "darwin", reason="the save's port is macOS-only until BL-0087")
-@pytest.mark.skipif(not ENGINE_VENV.is_dir(), reason="needs the engine's environment (engine/.venv)")
-def test_measure_protocol_runs(tmp_path: Path) -> None:
-    protocol(tmp_path)
+def test_a_script_that_fails_fails_its_case(tmp_path: Path) -> None:
+    """Must not pass: a measurement script that exits non-zero, run as the cases run it, goes unnoticed."""
+    (tmp_path / "measure_broken.py").write_text('import sys\nprint("{}")\nsys.exit(1)\n')
+    with pytest.raises(AssertionError, match="assert 1 == 0"):
+        run("measure_broken.py", tmp_path=tmp_path, scripts=tmp_path)

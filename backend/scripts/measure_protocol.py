@@ -9,22 +9,26 @@ every run works on a fresh copy of its folder. Everything happens in a fresh tem
 folder and cache are made there, and the engine is started with the sidecar's own command (`app.main.engine_command`,
 the engine from `../engine/.venv`) through the sidecar's client (`EngineClient`), after the sidecar's lock wait.
 
-Each run: the `open` op loads the copy and publishes its mirror (the save's gate needs it); the engine is retired, as
-after any job that ran the ledger's plugins, and a fresh one started by a `ping`; the plan's fingerprint is read from
-the published mirror's `meta` (`app.mirror`; for a change to one file whose includes stay the same, the plan's
-fingerprint is the disk's); then one real `save` of the root file with a transaction appended, sent as the sidecar
-sends it, its gate answered with `proceed`, then the `rebuild` the landed save queues (Beancount's own load, the
-build, the publish). The report gives, from the client's side, the time to the gate, from the gate to the committed
-event, from that event to the reply, the rebuild, and the whole from sending the save to the new generation's
-publish: ADR-0008's 5 s at 54k entries counts "until everything on screen reflects the change" (the sidecar's read
-of the new generation, a few milliseconds, is not in it). Then the round trip of a `save` the engine refuses
-right after reading it (an unreadable fingerprint: `protocol.invalid_params`), once with the whole file in it and once
-with a one-line file: the protocol's own cost of a request that size, with no ledger work in it. Also: `ping` round
-trips (the smallest request), and the client's encode of the full request (`engine_protocol.encode_request`).
+Each run follows the product's path: the `open` op loads the copy and publishes its mirror (the save's gate needs it);
+its engine is retired, as the scheduler retires an engine after any job that ran the ledger's plugins, and the save
+starts a fresh one, inside its measured time (S0106 verifier F1); a landed save's job counts as user code too, so the
+rebuild starts another. With `--warm`, each of those engines is started by a `ping` before its time is taken: the
+process start leaves the time, the modules the job imports stay in it (not the product's path). The plan's fingerprint
+is read from the published mirror's `meta` (`app.mirror`; for a change to one file whose includes stay the same, the
+plan's fingerprint is the disk's); then one real `save` of the root file with a transaction appended, sent as the
+sidecar sends it, its gate answered with `proceed`, then the `rebuild` the landed save queues (Beancount's own load,
+the build, the publish). The report gives, from the client's side, the time to the gate, from the gate to the
+committed event, from that event to the reply, the rebuild, and the whole from sending the save to the new
+generation's publish: ADR-0008's 5 s at 54k entries counts "until everything on screen reflects the change" (the
+sidecar's read of the new generation, a few milliseconds, is not in it). Then the round trip of a `save` the engine
+refuses right after reading it (an unreadable fingerprint: `protocol.invalid_params`), once with the whole file in it
+and once with a one-line file: the protocol's own cost of a request that size, with no ledger work in it. Also: `ping`
+round trips (the smallest request), and the client's encode of the full request (`engine_protocol.encode_request`).
 
 It prints a JSON report in milliseconds and removes the folder. It reports and never fails, except when a save does
 not land (nothing would have been measured). The engine's own time for the same save is
-`engine/scripts/measure_save.py`'s "save" line; the protocol's cost per write is this script's save total less that.
+`engine/scripts/measure_save.py`'s "save" line; the protocol's cost per write is this script's save total with
+`--warm` less that (without it, the total also holds the engine's start).
 """
 
 from __future__ import annotations
@@ -97,8 +101,18 @@ def pings(client: EngineClient, count: int) -> list[float]:
     return samples
 
 
+def fresh_engine(client: EngineClient, folder: AppFolder, warm: bool) -> None:
+    """Retire the engine, as the scheduler does after a job that ran user code, and wait for the engine lock, as it
+    does before every fresh engine (engine-jobs §5.1). The next call starts the engine: inside the measured time, as
+    in the product, unless `warm`, which starts it here with a `ping`."""
+    client.end("retire")
+    wait_engine_lock(folder)
+    if warm:
+        pings(client, 1)
+
+
 def one_run(
-    client: EngineClient, folder: AppFolder, cache: Path, src: Path, work: Path, n: int
+    client: EngineClient, folder: AppFolder, cache: Path, src: Path, work: Path, n: int, warm: bool
 ) -> dict[str, float | str]:
     ledger = work / f"run{n}" / "L"
     shutil.copytree(src.parent, ledger)
@@ -119,8 +133,6 @@ def one_run(
     )
     if opened.get("publish") != "published":
         fail(f"open: {opened}")
-    client.end("retire")  # the open ran the ledger's plugins (OpenResult): the scheduler retires its engine
-    pings(client, 1)  # a fresh engine, so its start is not in the save's time
     path = pin(str(cache / "workspaces" / key / "mirror"))
     if not isinstance(path, str):
         fail(f"pin: {path}")
@@ -150,7 +162,11 @@ def one_run(
         elif isinstance(event, Committed):
             seen["committed"] = time.perf_counter()
 
+    if warm:
+        fresh_engine(client, folder, warm)
     t0 = time.perf_counter()
+    if not warm:  # the save job's own lock wait and engine start, inside its time
+        fresh_engine(client, folder, warm)  # the open ran the ledger's plugins (OpenResult): its engine is retired
     out = client.call("save", params, on_event=on_event)
     end = time.perf_counter()
     if isinstance(out, EngineRefusal | EngineFailure) or out.get("outcome") != "saved":
@@ -166,12 +182,12 @@ def one_run(
         "today": TODAY,
         "built_at": BUILT_AT,
     }
+    fresh_engine(client, folder, warm)  # a landed save's job ran user code too (`save._answered`): retired
     rebuilt = call(client, "rebuild", rebuild)
     published = time.perf_counter()
     if rebuilt.get("outcome") != "loaded" or rebuilt.get("publish") != "published":
         fail(f"rebuild: {rebuilt}")
-    client.end("retire")  # the rebuild ran the ledger's plugins
-    pings(client, 1)
+    fresh_engine(client, folder, warm=True)  # the hop alone is measured on a started engine
     refused: dict[str, float] = {}
     for size, post in (("full", pre.decode() + TXN), ("tiny", TXN)):
         bad = {
@@ -206,6 +222,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("root", type=Path)
     ap.add_argument("--runs", type=int, default=5)
     ap.add_argument("--pings", type=int, default=50)
+    ap.add_argument("--warm", action="store_true", help="start each job's engine process before its time is taken")
     args = ap.parse_args(argv)
     src = args.root.resolve()
     top = Path(tempfile.mkdtemp(prefix="ft-measure-protocol-"))
@@ -226,9 +243,10 @@ def main(argv: list[str] | None = None) -> int:
         if isinstance(started, EngineFailure):
             fail(f"the engine did not start: {started}")
         ping_ms = pings(client, args.pings)
-        saves = [one_run(client, folder, cache, src, work, n) for n in range(args.runs)]
+        saves = [one_run(client, folder, cache, src, work, n, args.warm) for n in range(args.runs)]
         report = {
             "ledger_mb": round(src.stat().st_size / 1e6, 2),
+            "path": "warm engines" if args.warm else "the product's (a fresh engine for the save and the rebuild)",
             "ping_ms": summary(ping_ms),
             "save": saves,
             "save_total_ms": summary([float(s["total_ms"]) for s in saves]),
