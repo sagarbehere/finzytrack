@@ -22,7 +22,11 @@ from ledger_engine.mirror.build import Built, Stamp, build
 from ledger_engine.mirror.core import rows
 
 STAMP = Stamp(
-    ledger_version="0:measure", fingerprint="{}", built_at="1970-01-01T00:00:00+00:00", engine_build="measure"
+    ledger_version="0:measure",
+    fingerprint="{}",
+    built_at="1970-01-01T00:00:00+00:00",
+    engine_build="measure",
+    published_by="open",  # an overlay load, as the open's (S0088)
 )
 
 

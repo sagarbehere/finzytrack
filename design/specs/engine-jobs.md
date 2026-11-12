@@ -155,7 +155,7 @@ Steps 0-11 run in one fresh engine (§5.1), with Python's garbage collector paus
 
 Every refusal of steps 0-4 writes nothing, and says "unchanged" only after the files the save would write were hashed again (§11).
 
-**Limit (speed):** on the demo generator's 54k ledger (one 8.7 MB file, APFS, the owner's Mac, `engine/scripts/measure_save.py`) the save takes 0.096-0.122 s from the records check to the closed record; the rebuild after it about 1.3 s, after the reply, and nobody waits for it; the preview's load (1.37-1.49 s) is before the confirm; a recovery's restore 0.04-0.05 s. The save on the real write path is measured again in M1b (BL-0112); a bounded cache of the edited file's parse is built only if the preview misses ADR-0008's 5 s.
+**Limit (speed):** on the demo generator's 54k ledger (one 8.7 MB file, APFS, the owner's Mac; S0106, `engine/scripts/measure_save.py` and `backend/scripts/measure_protocol.py`, 5 runs each) the save takes 0.098-0.101 s from the records check to the closed record inside the engine, 0.125-0.132 s through the protocol from the sidecar's client; the rebuild after it, with its publish, 2.75-2.82 s after the reply; from sending the save to the new generation published 2.88-2.94 s, within ADR-0008's 5 s (mirror update included); the preview's load (1.47-1.49 s) is before the confirm; a recovery's restore 0.04-0.05 s. At demo size, from the save to the publish 0.36-0.37 s. The 12-file ledger is measured in M1b (BL-0112); a bounded cache of the edited file's parse is built only if the preview misses ADR-0008's 5 s.
 
 The order of the steps (a picture of this list; the list decides):
 

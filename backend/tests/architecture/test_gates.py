@@ -20,7 +20,7 @@ RUFF = Path(sys.executable).parent / "ruff"
 # EP-22: the whole config is pinned, so no rule, include or ignore can be loosened without changing this test
 # (and a loosening needs the owner, PROCESS.md section 9).
 EXPECTED_PYRIGHT = {
-    "include": ["src", "tests"],
+    "include": ["src", "tests", "scripts"],  # scripts since S0106 (BL-0235, IMP-0064): a tightening
     "typeCheckingMode": "strict",
     "pythonVersion": "3.13",
     "venvPath": ".",
@@ -49,7 +49,7 @@ def strictness_comments(root: Path) -> list[str]:
 
 
 def test_no_file_lowers_pyright_strictness() -> None:
-    assert strictness_comments(BACKEND / "src") + strictness_comments(BACKEND / "tests") == []
+    assert [hit for d in EXPECTED_PYRIGHT["include"] for hit in strictness_comments(BACKEND / str(d))] == []
 
 
 def test_strictness_comment_check_sees_a_planted_one(tmp_path: Path) -> None:

@@ -81,7 +81,7 @@ def measure_queries(path: str, runs: int, params: dict[str, dict[str, str | int 
 
 
 def main(argv: list[str] | None = None) -> int:
-    ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+    ap = argparse.ArgumentParser(description=(__doc__ or "").split("\n\n")[0])
     ap.add_argument("mirror")
     ap.add_argument("--runs", type=int, default=20)
     ap.add_argument("--indexes", action="store_true")
@@ -90,7 +90,11 @@ def main(argv: list[str] | None = None) -> int:
     con = sqlite3.connect(f"{Path(path).as_uri()}?mode=ro", uri=True)
     try:  # the measurement's own inputs: an account with many postings and one transaction id
         (account,) = con.execute("SELECT account FROM m_postings GROUP BY account ORDER BY COUNT(*) DESC").fetchone()
-        (txn,) = con.execute("SELECT transaction_id FROM m_postings WHERE posting_id = 1000").fetchone()
+        # the 1000th posting's transaction, or the last one's on a smaller mirror (the smoke test's, S0106)
+        (txn,) = con.execute(
+            "SELECT transaction_id FROM m_postings ORDER BY posting_id"
+            " LIMIT 1 OFFSET (SELECT MIN(999, COUNT(*) - 1) FROM m_postings)"
+        ).fetchone()
     finally:
         con.close()
     params = {name: dict(p) for name, (_, p) in QUERIES.items()}

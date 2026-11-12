@@ -1,5 +1,5 @@
 {
-  "include": ["src", "tests"],
+  "include": ["src", "tests", "scripts"],
   "typeCheckingMode": "strict",
   "pythonVersion": "3.13",
   "venvPath": ".",

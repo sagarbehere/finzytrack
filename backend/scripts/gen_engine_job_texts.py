@@ -337,16 +337,16 @@ RECOVERY: tuple[Row, ...] = (
         "msg:recovery.drive_backup",
         "added to a `wrong_drive` or `unknown_drive` stop, per replaced file behind that drive with its backup checked "
         "good (S0090)",
-        lambda: rt._drive_backups(_behind_drive()).strip(),
+        lambda: rt._drive_backups(_behind_drive()).strip(),  # pyright: ignore[reportPrivateUsage]
     ),
     (
         "msg:recovery.drive_backup_others",
         "`msg:recovery.drive_backup` when the save has other files too (S0100, BL-0223)",
-        lambda: rt._drive_backups(_behind_drive(others=True)).strip(),
+        lambda: rt._drive_backups(_behind_drive(others=True)).strip(),  # pyright: ignore[reportPrivateUsage]
     ),
     ("msg:recovery.unreadable", "`stopped`, `unreadable` record", lambda: _screen(_blocking("stopped", UNREADABLE))),
     ("msg:recovery.stopped", "`stopped`, any other cause", lambda: _screen(_blocking("stopped", "backup_bad"))),
-    *_missing_rows("msg:recovery.missing", "added to a stop screen, replaced files absent (§6.8)", rt._missing_now),
+    *_missing_rows("msg:recovery.missing", "added to a stop screen, replaced files absent (§6.8)", rt._missing_now),  # pyright: ignore[reportPrivateUsage]
     ("msg:recovery.cancelled", "`cancelled`", lambda: _screen(_blocking("cancelled"))),
     ("msg:recovery.not_tried", "`not_tried`", lambda: _screen(_blocking("not_tried"))),
     (
@@ -426,7 +426,9 @@ RECOVERY: tuple[Row, ...] = (
         lambda: rt.keep_confirmation(_blocking("cancelled"), WS),
     ),
     *_missing_rows(
-        "msg:recovery.keep_missing", "added to Keep's confirmation, replaced files absent", rt._missing_kept
+        "msg:recovery.keep_missing",
+        "added to Keep's confirmation, replaced files absent",
+        rt._missing_kept,  # pyright: ignore[reportPrivateUsage]
     ),
     (
         "msg:recovery.keep_other_drive",
@@ -442,12 +444,12 @@ RECOVERY: tuple[Row, ...] = (
         "msg:recovery.keep_drive_backup",
         "added to Keep's confirmation after a `wrong_drive` or `unknown_drive` stop, per replaced file behind that "
         "drive with its backup checked good (S0090)",
-        lambda: rt._drive_backups_kept(_behind_drive()).strip(),
+        lambda: rt._drive_backups_kept(_behind_drive()).strip(),  # pyright: ignore[reportPrivateUsage]
     ),
     (
         "msg:recovery.keep_drive_backup_others",
         "`msg:recovery.keep_drive_backup` when the save has other files too (S0100, BL-0223)",
-        lambda: rt._drive_backups_kept(_behind_drive(others=True)).strip(),
+        lambda: rt._drive_backups_kept(_behind_drive(others=True)).strip(),  # pyright: ignore[reportPrivateUsage]
     ),
     (
         "msg:recovery.keep_kept_copy",

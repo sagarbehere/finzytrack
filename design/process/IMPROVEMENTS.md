@@ -604,3 +604,11 @@ Format:
 - Why: each fix of the blanking left another bash quoting rule it did not follow; a safety net that models bash's quoting partly is worse than one that over-refuses.
 - Expected effect: agents keep rewording messages that name guarded words. Metric: none new (the false positive is known and accepted).
 - Status: kept (owner-approved; S0105 part B round 2).
+
+## IMP-0064: the type checker reads the packages' scripts; every measurement script runs in a test (2026-11-12)
+- Trigger: BL-0235 (S0097, S0101): `engine/scripts/measure_mirror_build.py` crashed from S0088 on and `measure_save.py` from S0087 on, unseen until the numbers were needed. Root cause: `scripts/` was outside pyright's `include` in `engine/` and `backend/`, and no test ran a measurement script; `pyright scripts` found 11 errors in the engine's and 8 in the backend's.
+- What changed: gates (tightening, agent-approved). `engine/pyrightconfig.json` and `backend/pyrightconfig.json` include `scripts`; `engine/tests/test_measure_scripts.py` and `backend/tests/test_measure_scripts.py` run every `measure_*.py` of their package on a tiny input and fail when a script in the folder has no case.
+- PROCESS.md section: none.
+- Why: a measurement script is the evidence for a user-facing absolute (PROCESS.md §6); one that silently stopped working leaves the absolute unmeasured.
+- Expected effect: a signature change in the engine or the sidecar breaks the gate of the slice that makes it, not the next measurement. Metric: measurement scripts found broken when next run (0 expected).
+- Status: kept (agent-approved; S0106).
