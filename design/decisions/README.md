@@ -73,7 +73,7 @@ This folder holds the architecture decision records of Finzytrack v0.4: why the 
 | [ADR-0055](ADR-0055-mirror-legacy-postings-columns.md) | The mirror keeps the documented v0.2.2 `postings` columns, computed by the mirror | Accepted | 2026-10-25 | mirror, compatibility |
 | [ADR-0056](ADR-0056-python-build-standalone-and-linux-packages.md) | Sidecar packaging uses python-build-standalone; Linux ships AppImage and .deb | Accepted | 2026-10-25 | packaging, desktop |
 | [ADR-0057](ADR-0057-pilot-result.md) | The pilot's result: hand-off checks, re-verification, and a first slice count | Accepted | 2026-10-25 | process |
-| [ADR-0058](ADR-0058-process-overhead-trim.md) | Verification scaled to risk, process checks built on evidence, shorter journals | Accepted | 2026-10-25 | process |
+| [ADR-0058](ADR-0058-process-overhead-trim.md) | Verification scaled to risk, process checks built on evidence, shorter journals | Accepted; decision 1 superseded by the review budget (IMP-0068) | 2026-10-25 | process |
 | [ADR-0059](ADR-0059-encrypted-ledgers-not-read-in-v0-4-0.md) | Encrypted ledger files are not read in v0.4.0 | Accepted | 2026-10-25 | ledger loading, scope |
 | [ADR-0060](ADR-0060-github-ci-runs-manually-before-releases.md) | GitHub CI runs manually, before each release; the local hooks are the per-push gates | Accepted | 2026-10-25 | process, CI |
 | [ADR-0061](ADR-0061-macos-first-cross-platform-later.md) | macOS first; Linux and Windows ported in M11, except the write path's Windows semantics from M1b on | Accepted; amended by ADR-0062 | 2026-10-26 | process, platforms, release |
@@ -83,7 +83,7 @@ This folder holds the architecture decision records of Finzytrack v0.4: why the 
 | [ADR-0065](ADR-0065-agents-ask-the-owner-to-stop-the-running-app.md) | Agents ask the owner to stop the running app; the guard protects data, not the app | Accepted | 2026-10-29 | process, agents, invariants |
 | [ADR-0066](ADR-0066-frontend-composables-folder-and-inv-12-wording.md) | The features' headless logic lives in `composables/`; INV-12 says "composables" | Accepted; note by S0056 (the check made exact) | 2026-10-29 | frontend, invariants |
 | [ADR-0067](ADR-0067-integrity-blocks-accounting-advises.md) | Integrity blocks, accounting advises | Accepted; parts superseded by ADR-0068 | 2026-10-31 | write path, data safety, engine |
-| [ADR-0068](ADR-0068-step-back-simplifications.md) | Step-back simplifications | Accepted | 2026-11-01 | write path, data safety, engine, formal model, process |
+| [ADR-0068](ADR-0068-step-back-simplifications.md) | Step-back simplifications | Accepted; D6 narrowed and moved into the review budget (IMP-0067, IMP-0068) | 2026-11-01 | write path, data safety, engine, formal model, process |
 
 ## Template
 

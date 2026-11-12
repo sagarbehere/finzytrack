@@ -507,7 +507,7 @@ Format:
 - PROCESS.md section: §3 step 2 (brief) and step 7 (land), §4 (red-team cadence).
 - Why: S0066 and S0067 took four plus four rounds and four High findings, all in machinery that ADR-0067 then made advisory and ADR-0068 removes; S0065 took three plus three rounds on one rule family after IMP-0049; S0061 spent rounds 5 to 7 on permission corners that lose no byte.
 - Expected effect: fewer rounds on advisory machinery; the owner sees the trade-off before a mechanism draws a second round. Metric: verifier and red-team rounds per slice on write-path slices, and rounds whose findings touch no byte.
-- Status: kept (owner-approved; S0069). (c), the engine-jobs spec rewritten to rules only, is S0073 (BL-0181).
+- Status: kept (owner-approved; S0069). (c), the engine-jobs spec rewritten to rules only, is S0073 (BL-0181). (a)'s red-team scope narrowed by IMP-0067; (b) carried into the review budget by IMP-0068 (S0107).
 
 ## IMP-0052: a final review round's no-byte findings become backlog rows (2026-11-07)
 - Trigger: owner decision, 2026-11-07, in session, in S0080 round 3 ("Fix, then land": "anything it finds that loses no bytes becomes a backlog row instead of another round") and again in S0081 round 2 ("anything that loses no bytes becomes a backlog row"). Applied in S0080's and S0081's final rounds; recorded here by S0083 (verifier F3: the rule lived only in journals).
@@ -515,7 +515,7 @@ Format:
 - PROCESS.md section: §3 step 7 (land).
 - Why: S0080 and S0081 took three and four review rounds, the later ones on findings that lost no byte.
 - Expected effect: write-path slices end after their last fix round plus one verifier round. Metric: review rounds per write-path slice.
-- Status: kept (owner-approved; S0083 records it).
+- Status: superseded by IMP-0068 (the review budget's fresh-round rule keeps it and also fixes (b) findings; S0107).
 
 ## IMP-0053: a slice that changes `contracts/` runs the frontend gates (2026-11-08)
 - Trigger: escape in S0088. `LEDGER_CHANGING` joined the error registry and the generated frontend types, but the frontend test that pins the registry's codes was not updated; the implementer's and two verifiers' gate runs covered engine and backend only, and the pre-push hook's `vue-tsc` caught it at push.
@@ -612,3 +612,75 @@ Format:
 - Why: a measurement script is the evidence for a user-facing absolute (PROCESS.md §6); one that silently stopped working leaves the absolute unmeasured.
 - Expected effect: a signature change in the engine or the sidecar breaks the gate of the slice that makes it, not the next measurement. Metric: measurement scripts found broken when next run (0 expected).
 - Status: kept (agent-approved; S0106).
+
+## IMP-0065: two questions at the brief, and the policy offered at the first rare-setup finding (P1, 2026-11-12)
+- Trigger: the M1a process reflection (`design/inbox/answered/20261112-process-reflection.md`, P1): the app-folder family took 4 rounds over S0100 and S0102 (S0102 alone about 1.07M tokens) and ended by policy; the other long loops of M1a ended the same way. Owner, 2026-11-12, in session, on the orchestrator's recommendation "P1, P7, P4 with P2 and P3 inside it, and P5; agents apply P8 and the counting part of P9; P6 is your call: I'd take it": "I agree with your view. Let's adopt it."
+- What changed: process (tightening; a PROCESS.md change, owner-approved). PROCESS.md §3 step 2 adds, in the note's words: every brief that adds or hardens a mechanism answers "Which real setup needs this, and can a policy forbid the rest?" and "Has this mechanism or its family needed two or more fix rounds before (journal IDs)?"; when the setup is rare or the family has that history, the policy option goes to the owner before coding; at the first class (a) finding in a rare setup, the orchestrator offers the policy before the first fix round. The slice skill points to it.
+- PROCESS.md section: §3 step 2.
+- Why: one question at S0100's brief would most likely have ended the app-folder family before S0102.
+- Expected effect: rare-setup loops end at the brief. Metric: review runs per slice on data slices; slices created by a review finding.
+- Status: kept (owner-approved; S0107).
+
+## IMP-0066: the stop rule for tooling, gates, measurement and docs (P2, 2026-11-12)
+- Trigger: the M1a reflection, P2: 6 tooling slices took 2.80M tokens; their reviews found 0 (a)/(b) findings and 33 (c) findings, mostly shapes the verifier planted beyond the check's own promise (S0103: 12 of 12; S0104: 34 of 57). Owner, 2026-11-12, in session: "I agree with your view. Let's adopt it." (the quote and the recommendation as in IMP-0065).
+- What changed: process (a loosening, owner-approved). PROCESS.md §3 review budget, in the note's words: one verifier round; the fix round fixes only (1) a shape the check's own must-not-pass list or docstring promises to refuse, (2) a false statement of fact, (3) a finding in a guard of real data or privacy (INV-23, INV-24); every other missed shape becomes one line in the check's stated limits, or a backlog row when a real file in the repository has that shape.
+- PROCESS.md section: §3 (review budget).
+- Why: shape hunts on new checks cost more than they catch before any real escape; the same reasoning froze the gates' self-defence (IMP-0045).
+- Expected effect: about 0.3M tokens and 2 hours of fix time fewer per period like S0096-S0106. Metric: fix minutes per tooling slice; real escapes past a check with a stated limit.
+- Status: kept (owner-approved loosening; S0107).
+
+## IMP-0067: the data-safety red team only on a new write path or a new write outcome (P3, 2026-11-12)
+- Trigger: the M1a reflection, P3: red teams on S0098 (no write), S0099 (a gate input), S0101 and S0102 (hardening) cost 0.70M tokens for one unique (a) finding (Medium, app-folder family). Owner, 2026-11-12, in session: "I agree with your view. Let's adopt it." (as in IMP-0065).
+- What changed: process (a loosening, owner-approved). The data-safety red team runs only on a slice that adds a new way to write, delete or move ledger or user data, or a new outcome text for a write. A slice that hardens an existing write path (a new check, a sync, an identity test, a gate's input) gets the verifier only; the red team joins when the verifier reports a class (a) finding. A finance red team runs when a number's meaning or an input changes. Scope to the new part, one run by default and the High bar of IMP-0049 are unchanged. Narrows IMP-0051 (a) and ADR-0068 D6(a), which also sent the red team to a mechanism that gates a write.
+- PROCESS.md section: §3 (review budget), §4 (red-team cadence).
+- Why: on hardening slices the verifier found what the red team found, except one Medium in a rare setup; on new write paths the red team keeps the M1a Highs (S0060, S0061, S0071, S0080, S0081, S0086, S0089, S0095).
+- Expected effect: about 0.53M tokens fewer per period like S0096-S0106. Accepted risk, as the note states: S0102 red team F1 (Medium) and, earlier, S0089 r1 H1 would have come a round later or as a stated limit. Metric: unique (a) findings per red-team run; (a) findings found after landing.
+- Status: kept (owner-approved loosening; S0107).
+
+## IMP-0068: one review-budget table (P4, 2026-11-12)
+- Trigger: the M1a reflection, P4: about a dozen conditions added by five past fixes, and misapplied (S0098's data-safety run). Owner, 2026-11-12, in session: "I agree with your view. Let's adopt it." (as in IMP-0065).
+- What changed: process (mixed; owner-approved). PROCESS.md §3 gains "Review budget": the finding classes (IMP-0069) and one table by slice kind (reviews, fresh round on the fix range, what the fresh round fixes). It replaces §3 step 5's round sentence (ADR-0058 decision 1), step 7's two bold rules (IMP-0051 (b), kept as the table's options-note rule; IMP-0052, kept and widened to fix (b) findings too) and §4's data-safety cadence (IMP-0051 (a)). Loosening inside it: the "three or more Medium fixes" trigger for a fresh round is gone, and a tooling slice gets a fresh round only after a fix to a guard of real data or privacy (it was any High fix). Agent tightenings of the note's table, recorded in the S0107 journal: the fresh round follows a High fix of any class on every product row, and fixes High findings too; a row "Other product code" (engine, API, reads, security) keeps the verifier, the security red team and a fresh round after a High fix. The safety core is unchanged: INV-01, INV-22, INV-32, privacy, the verifier on every slice, red teams on new write paths, new write outcomes and new finance meanings.
+- PROCESS.md section: §3 steps 5 and 7, §3 review budget, §3 risk-class table, §4. Notes on ADR-0058 and ADR-0068.
+- Why: one table is easier to follow and to check than scattered conditionals.
+- Expected effect: no review run outside the table. Metric: PROCESS.md §3-§4 words; review runs outside the table found by the verifier or the next reflection.
+- Status: kept (owner-approved; S0107).
+
+## IMP-0069: a class letter on every finding; one row per finding in the journal (P5, 2026-11-12)
+- Trigger: the M1a reflection, P5: classifying 122 findings took a full reading of 11 journals. Owner, 2026-11-12, in session: "I agree with your view. Let's adopt it." (as in IMP-0065).
+- What changed: prompt and template (tightening). Every finding carries a class: (a) bytes or a false outcome, (b) a wrong number, (c) a gap in our own checks or tests, (d) docs or wording, (e) other. `.claude/agents/verifier.md` asks for it in each finding; `design/journal/README.md`'s Verifier section is one table row per finding: ID, severity, class, disposition.
+- PROCESS.md section: §3 (review budget).
+- Why: the share of (a)/(b) per run becomes visible at each slice, and the review budget's fix rules read the class.
+- Expected effect: the next reflection counts instead of reading. Metric: (a)/(b) per review run, per slice kind.
+- Status: kept (S0107).
+
+## IMP-0070: a backlog row moves with its first consumer by rule (P6, 2026-11-12)
+- Trigger: the M1a reflection, P6: 3 of 13 owner touches in S0096-S0106 were milestone moves (S0097 parked an evening; S0106 twice; commit 8fb3002e fixed a quote's form), all answered with the recommended option. Owner, 2026-11-12, in session: "I agree with your view. Let's adopt it." (as in IMP-0065, where the orchestrator said "P6 is your call: I'd take it").
+- What changed: process and gate (a loosening of the deferral check, owner-approved). PROCESS.md §5: a row may move to the milestone of its first consumer without the owner's words, citing exactly `moves with <ID> (IMP-0070)` on the moved row; the move is listed in the daily batch. `scripts/check_deferrals.py` accepts that citation only when the row stays `open` or `in-progress`, `<ID>` is another row open or in progress before and after the push, on the row's new milestone, and did not itself move later in the push except on an ADR or the owner's words; every other refusal is kept (parking, deferring, removing, deleting, a duplicate ID, any other wording). Meta-tests: `scripts/tests/test_check_deferrals.py` `MovesWithItsConsumer`, `MovesWithRefused`, `TheRuleIsWritten`. The pre-push hook is unchanged.
+- PROCESS.md section: §5, §6 (the deferral check).
+- Why: these questions always got the recommended answer and only cost waiting time.
+- Expected effect: no owner question for a move with a consumer. Metric: owner questions per slice; parked hours.
+- Status: kept (owner-approved loosening; S0107).
+
+## IMP-0071: options notes put the cheapest option first and give the mechanism's review history (P7, 2026-11-12)
+- Trigger: the M1a reflection, P7: the owner chose the recommended option in all of about 40 choices in S0080-S0106; two recommendations extended a loop ("BL-0244 slice in M1a", which became S0102; "Exact shapes only" for BL-0054, reverted). Owner, 2026-11-12, in session: "I agree with your view. Let's adopt it." (as in IMP-0065).
+- What changed: process and skills (tightening). PROCESS.md §5, in the note's words: each options note lists the cheapest option first and, for the recommended option, the mechanism's review history (slices, rounds, Highs); a note never recommends a new slice for a setup that a policy could forbid without offering that policy first. The `escalate` skill, the inbox template (`design/inbox/README.md`) and the `slice` skill carry it.
+- PROCESS.md section: §5.
+- Why: the recommendation's quality decides the outcome.
+- Expected effect: fewer recommended options later reverted or extended (two in S0096-S0106). Metric: that count.
+- Status: kept (S0107).
+
+## IMP-0072: batch rows of one kind; never batch a risky row (P8, 2026-11-12)
+- Trigger: the M1a reflection, P8: batches cost about 110-140k tokens per row (S0100, S0103) against about 1M for single-row hardening slices (S0101, S0102); S0105 part B put a loosening (BL-0054) with tooling rows, and both its Highs came from that row. Owner, 2026-11-12, in session: "I agree with your view. Let's adopt it." (as in IMP-0065; agent-approved in the note).
+- What changed: process and skill (tightening). PROCESS.md §3 and the `slice` skill: batch backlog rows of one lane and one kind into one slice; never put a loosening, or a mechanism that needed two fix rounds before, into a batch.
+- PROCESS.md section: §3 (the slice).
+- Why: batches cut the fixed cost per row; one risky row holds the whole batch's review loop.
+- Expected effect: about 0.1-0.15M tokens fewer per low-risk row. Metric: tokens per backlog row closed.
+- Status: kept (S0107).
+
+## IMP-0073: count each process check's catches and false positives (P9, counting part, 2026-11-12)
+- Trigger: the M1a reflection, P9: about 3,300 lines of process-checking code with few recorded true catches and repeated small false positives. Owner, 2026-11-12, in session: "I agree with your view. Let's adopt it." (as in IMP-0065: "agents apply ... the counting part of P9"). Retiring a check is the owner's, at G1.
+- What changed: process and template (tightening; no new script). The retro line (PROCESS.md §9, `design/journal/README.md`, the `slice` skill) counts each process check that fired in the slice: invariants, capabilities, retired terms, deferrals, push gate, gate timer, generated, as `<check> <n> catch / <n> false positive`. The counts live in the journals' retro lines. At G1 the reflection sums them from S0107 on and reads the earlier M1a journals; a check with no true catch and repeated false positives is offered to the owner for retirement; the data guards (privacy scan, staged-file guard, INV-24 guards) are never offered.
+- PROCESS.md section: §9.
+- Why: the cheapest honest count is the one the implementer already sees; a script would be one more process check to count.
+- Expected effect: G1 has per-check numbers. Metric: catches and false positives per check.
+- Status: kept (S0107).

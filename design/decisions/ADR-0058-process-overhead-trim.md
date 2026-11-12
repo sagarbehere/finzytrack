@@ -2,7 +2,7 @@
 
 This record trims the process after the owner asked whether it was eating the development (2026-10-25), and sets when that question is measured again.
 
-- **Status:** Accepted
+- **Status:** Accepted. Decision 1 superseded by PROCESS.md §3's review budget (IMP-0068, 2026-11-12; note below).
 - **Date:** 2026-10-25
 - **Deciders:** owner: "I agree with your recommendations 1-4 on improving the process and re-evaulating as in 5" (2026-10-25, in session)
 - **Area:** process
@@ -45,3 +45,7 @@ Measured after S0007 (journals S0000–S0007):
 ## References
 
 ADR-0001, ADR-0044, ADR-0046, ADR-0057; PROCESS.md §3, §9; journals S0002–S0007; the owner's question in session, 2026-10-25.
+
+## Note (2026-11-12): decision 1 superseded by the review budget (IMP-0068)
+
+After the M1a reflection (`design/inbox/answered/20261112-process-reflection.md`) the owner answered, 2026-11-12, in session: **"I agree with your view. Let's adopt it."** Decision 1's three round rules are replaced by one table in PROCESS.md §3 ("Review budget"), by slice kind: a fresh round follows a High fix on every product slice, and an (a) or (b) fix where the row says so; the "three or more Medium fixes" trigger is dropped; tooling gets a fresh round only when a fix changed a guard of real data or privacy, and a stop rule on what its fix round fixes (IMP-0066). Docs-only slices keep one round. Decisions 2 to 5 are unchanged (S0107).

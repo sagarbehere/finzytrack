@@ -200,6 +200,9 @@ The short answer to your question: **the core reviews are the price of safe soft
 
 ## Answer (owner, verbatim, with date)
 
+2026-11-12, in session. The orchestrator recommended: "P1, P7, P4 with P2 and P3 inside it, and P5; agents apply P8 and the counting part of P9; P6 is your call: I'd take it". The owner answered: "I agree with your view. Let's adopt it."
+
+Adopted: P1, P2, P3, P4 (carrying P2 and P3), P5, P6, P7, P8, and the counting part of P9 (retiring checks waits for G1). Applied in S0107: PROCESS.md §3, §4, §5, §6, §9; IMP-0065 to IMP-0073.
 
 ---
 

@@ -2,7 +2,7 @@
 
 This record keeps the save's durable core and removes, or turns into policy, the mechanisms around it that guard against things that are rare, advisory, or already guarded elsewhere. It also fixes the rule for saves the app starts itself, and adds two process rules.
 
-- **Status:** Accepted
+- **Status:** Accepted. D6(a)'s red-team scope narrowed, and D6(b) moved into PROCESS.md §3's review budget, by IMP-0067 and IMP-0068 (2026-11-12; note below).
 - **Date:** 2026-11-01
 - **Deciders:** owner. The owner asked for a step back ("At what point are we going to take a 'step back' and do a broad review of what we have built so far?", then "Yes", 2026-11-01). Two fresh reviews ran at `4f84645e`: an area review of the save path and a proportionality review of every mechanism on it (harm, likelihood, cost, verdict) (review:m1a/step-back-2026-11-01). The orchestrator put their proposals to the owner, who answered, 2026-11-01, in session: **"I agree with 3,4,5,6, and 7."** and, after the orchestrator clarified proposals 1 and 2 and the review's High finding, **"Yes, go ahead with all of those"**. Decisions D1 to D8 are those proposals; what this record adds within them is marked "(agent)".
 - **Area:** write path, data safety, engine, recovery, formal model, process
@@ -139,3 +139,7 @@ Built (`design/journal/S0075-drain-listing.md`, BL-0190, BL-0158): the drain of 
 ## Note (2026-11-07): a quit waits for the drain (S0076)
 
 The previous note's "so does a quit's end" no longer holds: owner, 2026-11-07, in session: "Yes, make quit wait for the drain." `close()` now waits for the drain of the engines that are ending, at most the display delay (ADR-0063 amendment of 2026-11-07; `design/journal/S0076-quit-drain.md`). The engine's own end when the sidecar is gone stays one signal (BL-0194).
+
+## Note (2026-11-12): D6 in the review budget (IMP-0067, IMP-0068)
+
+The owner answered, 2026-11-12, in session, on the M1a reflection: **"I agree with your view. Let's adopt it."** D6(a)'s red team now runs only on a slice that adds a new way to write, delete or move ledger or user data, or a new outcome text for a write; a slice that hardens an existing write path or changes a write's gate gets the verifier, and the data-safety red team joins when the verifier reports a class (a) finding (IMP-0067). "The bytes it protects" stays in every write-path brief. D6(b), the owner's options note before a second fix round on one mechanism, is unchanged and now sits in the review-budget table (IMP-0068) (S0107).

@@ -12,9 +12,10 @@ Template:
 - ADRs checked: <IDs searched, and why none settles the question>
 
 ## Context (plain language, a concrete example first)
-## Options
+## Options (cheapest first; PROCESS.md §5)
 1. ...
 2. ...
 ## Recommendation
+<the option, and for its mechanism the review history: slices, rounds, Highs. A policy that could forbid the setup is offered before any new slice.>
 ## Answer (owner, verbatim, with date)
 ```

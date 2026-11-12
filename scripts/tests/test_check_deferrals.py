@@ -108,6 +108,120 @@ class Allowed(unittest.TestCase):
         self.assertEqual(cd.problems(None, backlog(row("BL-0001", "M6")), lambda adr: False), [])
 
 
+RULE = "IMP-0070"  # PROCESS.md §5: a row moves with its first consumer by rule (P6, owner 2026-11-12)
+
+
+def moves_with(consumer: str, imp: str = RULE) -> str:
+    return f"`review:1`; moves with {consumer} ({imp})"
+
+
+class MovesWithItsConsumer(unittest.TestCase):
+    """P6 (IMP-0070): a row may move to the milestone of its first consumer, a named open backlog row."""
+
+    def test_a_row_follows_its_consumer_to_the_consumers_milestone(self) -> None:
+        consumer = row("BL-0126", "M2")
+        self.assertEqual(problems([row("BL-0114", "M1a"), consumer],
+                                  [row("BL-0114", "M2", ref=moves_with("BL-0126")), consumer]), [])
+        self.assertEqual(problems([row("BL-0114", "M1a", "in-progress"), consumer],
+                                  [row("BL-0114", "M2", "in-progress", ref=moves_with("BL-0126")), consumer]), [])
+
+    def test_a_review_id_consumer_and_a_bare_m1(self) -> None:
+        consumer = row("L4-03", "M7")
+        self.assertEqual(problems([row("BL-0082", "M1"), consumer],
+                                  [row("BL-0082", "M7", ref=moves_with("L4-03")), consumer]), [])
+
+    def test_a_consumer_that_moved_later_on_a_decision_of_its_own(self) -> None:
+        self.assertEqual(problems([row("BL-0114", "M1a"), row("BL-0126", "M2")],
+                                  [row("BL-0114", "M3", ref=moves_with("BL-0126")),
+                                   row("BL-0126", "M3", ref='owner: "M3 with the shell"')]), [])
+
+    def test_the_citation_already_on_the_row_still_follows_the_consumer(self) -> None:
+        # it can only ever follow its consumer, whose own move is checked
+        self.assertEqual(problems([row("BL-0114", "M2", ref=moves_with("BL-0126")), row("BL-0126", "M2")],
+                                  [row("BL-0114", "M3", ref=moves_with("BL-0126")),
+                                   row("BL-0126", "M3", ref="`ADR-0058`")]), [])
+
+
+class MovesWithRefused(unittest.TestCase):
+    """Must not pass: every shape of the rule's citation that does not tie the row to an anchored consumer."""
+
+    def refused(self, base_rows: list[str], tip_rows: list[str]) -> None:
+        self.assertTrue(problems(base_rows, tip_rows), (base_rows, tip_rows))
+
+    def test_a_consumer_on_another_milestone(self) -> None:
+        self.refused([row("BL-0114", "M1a"), row("BL-0126", "M2")],
+                     [row("BL-0114", "M3", ref=moves_with("BL-0126")), row("BL-0126", "M2")])
+
+    def test_a_consumer_that_is_missing(self) -> None:
+        self.refused([row("BL-0114", "M1a")], [row("BL-0114", "M2", ref=moves_with("BL-0126"))])
+
+    def test_a_consumer_that_is_new_in_the_range(self) -> None:
+        self.refused([row("BL-0114", "M1a")],
+                     [row("BL-0114", "M12", ref=moves_with("BL-0999")), row("BL-0999", "M12")])
+
+    def test_a_consumer_that_is_not_open(self) -> None:
+        for base_status, tip_status, cell in (("open", "done", "M2"), ("open", "parked", "M2"),
+                                              ("open", "removed", "M2"), ("parked", "open", "M2"),
+                                              ("done", "open", "M2"), ("open", "post-v0.4", "M2")):
+            with self.subTest(base=base_status, tip=tip_status):
+                self.refused([row("BL-0114", "M1a"), row("BL-0126", "M2", base_status)],
+                             [row("BL-0114", "M2", ref=moves_with("BL-0126")),
+                              row("BL-0126", cell, tip_status, ref='owner: "closed"')])
+
+    def test_a_consumer_that_itself_moved_by_the_rule(self) -> None:
+        # two rows naming each other could otherwise move anywhere
+        self.refused([row("BL-0001", "M2"), row("BL-0002", "M2")],
+                     [row("BL-0001", "M12", ref=moves_with("BL-0002")), row("BL-0002", "M12", ref=moves_with("BL-0001"))])
+        self.refused([row("BL-0001", "M2"), row("BL-0002", "M2"), row("BL-0003", "M2")],
+                     [row("BL-0001", "M9", ref=moves_with("BL-0002")), row("BL-0002", "M9", ref=moves_with("BL-0003")),
+                      row("BL-0003", "M2")])
+
+    def test_a_consumer_that_moved_later_without_any_citation(self) -> None:
+        found = problems([row("BL-0114", "M1a"), row("BL-0126", "M2")],
+                         [row("BL-0114", "M3", ref=moves_with("BL-0126")), row("BL-0126", "M3")])
+        self.assertTrue(any("BL-0126" in p for p in found))
+        self.assertTrue(any("BL-0114" in p for p in found))
+
+    def test_the_row_naming_itself(self) -> None:
+        self.refused([row("BL-0114", "M1a")], [row("BL-0114", "M2", ref=moves_with("BL-0114"))])
+
+    def test_a_wrong_or_missing_rule_id_or_a_loose_wording(self) -> None:
+        consumer = row("BL-0126", "M2")
+        for ref in (moves_with("BL-0126", "IMP-0069"), "moves with BL-0126", "moves with BL-0126 IMP-0070",
+                    "moves with `BL-0126` (IMP-0070)", "Moves With BL-0126 (IMP-0070)", "moves along BL-0126 (IMP-0070)",
+                    "moves with (IMP-0070)"):
+            with self.subTest(ref=ref):
+                self.refused([row("BL-0114", "M1a"), consumer], [row("BL-0114", "M2", ref=ref), consumer])
+
+    def test_a_status_change_is_not_a_move(self) -> None:
+        consumer = row("BL-0126", "M2")
+        for status, cell in (("parked", "M2"), ("post-v0.4", "M2"), ("removed", "M2"), ("parked", "—")):
+            with self.subTest(status=status):
+                self.refused([row("BL-0114", "M1a"), consumer],
+                             [row("BL-0114", cell, status, ref=moves_with("BL-0126")), consumer])
+
+    def test_a_row_losing_its_milestone(self) -> None:
+        consumer = row("BL-0126", "—")
+        self.refused([row("BL-0114", "M1a"), consumer], [row("BL-0114", "—", ref=moves_with("BL-0126")), consumer])
+
+    def test_a_deleted_row(self) -> None:
+        self.refused([row("BL-0114", "M1a"), row("BL-0126", "M2")], [row("BL-0126", "M2", ref=moves_with("BL-0114"))])
+
+    def test_the_citation_on_the_consumer_not_the_moved_row(self) -> None:
+        self.refused([row("BL-0114", "M1a"), row("BL-0126", "M2")],
+                     [row("BL-0114", "M2"), row("BL-0126", "M2", ref=moves_with("BL-0126") + " BL-0114")])
+
+
+class TheRuleIsWritten(unittest.TestCase):
+    """The citation's IMP id is the entry that records the owner's approval, and PROCESS.md states the form."""
+
+    def test_the_rule_id_names_the_improvements_entry_and_the_process_states_the_form(self) -> None:
+        root = SCRIPTS.parent
+        self.assertEqual(cd.MOVES_WITH_RULE, RULE)
+        self.assertIn(f"## {RULE}:", (root / "design/process/IMPROVEMENTS.md").read_text())
+        self.assertIn(f"moves with <ID> ({RULE})", (root / "design/process/PROCESS.md").read_text())
+
+
 class OnARange(unittest.TestCase):
     """The script reads the backlog at the range's base and tip, as the pre-push hook runs it."""
 

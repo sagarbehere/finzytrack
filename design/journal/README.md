@@ -27,13 +27,16 @@ Template:
 - Population (if the slice claims to cover a whole set): <inventory used, built by behaviour; counts in / out>
 
 ## Verifier
-(Summarise the report; do not transcribe it. One line per finding. A process change is described once, in `IMPROVEMENTS.md`, and the journal points to its IMP entry. ADR-0058.)
+(Summarise the report; do not transcribe it. One table row per finding; class (a) bytes or a false outcome, (b) a wrong number, (c) a gap in our own checks or tests, (d) docs or wording, (e) other (PROCESS.md §3 review budget; IMP-0069). A process change is described once, in `IMPROVEMENTS.md`, and the journal points to its IMP entry. ADR-0058.)
 - Round <n>, head <sha>: <verdict>. Attacks: <count and a few words>.
-- <ID> <severity>: <one line: what, and the fix or backlog ID>
+
+| ID | Severity | Class | Disposition |
+|---|---|---|---|
+| <F1> | <High/Medium/Low> | <a-e> | <one line: what, and the fix, backlog ID or reason> |
 
 ## Golden changes
 - <file>: <why the old expectation was wrong>; verifier verdict: …; finding ID: …
 
 ## Retro
-- Build <n> min, fix <n> min, <n> verifier rounds, findings <n>H/<n>M/<n>L. Cheaper gate: <one sentence>
+- Build <n> min, fix <n> min, <n> verifier rounds, findings <n>H/<n>M/<n>L. Cheaper gate: <one sentence>. Process checks: <check> <n> catch / <n> false positive, for each one that fired (PROCESS.md §9; IMP-0073)
 ```
