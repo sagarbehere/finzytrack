@@ -122,7 +122,7 @@ class ConfigManager:
             (e.g. "new ledger file was created").
         """
         # Validate and create new config
-        new_config = Config.model_validate(new_config_data)
+        new_config = Config.from_data(new_config_data, self.config.root_dir)
 
         # Check if restart-required fields changed
         restart_required = False

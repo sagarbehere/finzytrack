@@ -112,7 +112,7 @@ async def patch_config_endpoint(
 
     # Validate the merged result against the Config schema
     try:
-        Config.model_validate(_to_plain_dict(data))
+        Config.from_data(_to_plain_dict(data), config.root_dir)
     except ValidationError as e:
         errors = [
             f"{' -> '.join(str(loc) for loc in err['loc'])}: {err['msg']}"

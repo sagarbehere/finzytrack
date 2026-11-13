@@ -312,7 +312,17 @@ class Config(BaseModel):
             raise ValueError(f"Backup directory does not exist: {backup_path}")
         
         return self
-    
+
+    @classmethod
+    def from_data(cls, data: Dict[str, Any], root_dir: Path) -> 'Config':
+        """Validate config data (e.g. a merged YAML dict) under ``root_dir``.
+
+        ``root_dir`` is not stored in YAML, so validating YAML data without it
+        silently resolves every path against the process's working directory.
+        Re-validate a running config through here with its own ``root_dir``.
+        """
+        return cls.model_validate({**data, 'root_dir': root_dir})
+
     @classmethod
     def from_yaml_file(
         cls,

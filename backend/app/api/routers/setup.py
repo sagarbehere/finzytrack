@@ -166,7 +166,7 @@ async def complete_setup(
 
     # Validate
     try:
-        Config.model_validate(_to_plain_dict(data))
+        Config.from_data(_to_plain_dict(data), config.root_dir)
     except Exception as e:
         raise APIError(
             f"Configuration validation failed: {e}",
