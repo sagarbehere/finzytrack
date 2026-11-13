@@ -10,6 +10,9 @@ site-packages stand for the bundle's two sides (as in `tests/platform/test_engin
 from __future__ import annotations
 
 import json
+import ntpath
+import os
+import posixpath
 import site
 import subprocess
 import sys
@@ -100,3 +103,57 @@ def test_engine_finds_app_reports_an_engine_site_that_holds_the_main_sidecar() -
     report = selfcheck.report(Path(sys.executable), own)
     assert report["engine_finds_app"] is True
     assert str(own.resolve()) in resolved(report["engine_path"])
+
+
+# S0114 (owner, 2026-11-13: "Fix the check now (Recommended)"): `main_sites` are the main side's real site-packages
+# folders. Windows' `site.getsitepackages()` lists the interpreter's prefix too, and every standard-library folder
+# lies inside it, so the judges refused every Windows build (S0112 verifier F1).
+WIN_PREFIX = "C:\\Apps\\Finzytrack\\sidecar\\python"
+UNIX_PREFIX = "/opt/finzytrack/lib/finzytrack/sidecar/python"
+
+
+def windows(path: str) -> str:
+    return ntpath.normcase(ntpath.normpath(path))
+
+
+def unix(path: str) -> str:
+    return posixpath.normcase(posixpath.normpath(path))
+
+
+def test_windows_main_sites_drop_the_prefix_and_keep_the_real_site_packages() -> None:
+    sites = [WIN_PREFIX, ntpath.join(WIN_PREFIX, "Lib", "site-packages")]
+    assert selfcheck.main_site_packages(sites, [WIN_PREFIX, WIN_PREFIX], windows) == [sites[1]]
+
+
+def test_unix_main_sites_keep_every_real_site_packages() -> None:
+    sites = [posixpath.join(UNIX_PREFIX, d, "python3.13", "site-packages") for d in ("lib64", "lib")]
+    assert selfcheck.main_site_packages(sites, [UNIX_PREFIX], unix) == sites
+
+
+def test_main_sites_must_not_drop_a_real_site_packages() -> None:
+    """Must not pass: only the prefix itself goes, compared as the OS compares paths; a folder inside it (the real
+    site-packages, in any case or spelling), and another folder, stay, so the judges still refuse an engine path that
+    holds one of them."""
+    kept = [
+        ntpath.join(WIN_PREFIX, "Lib", "site-packages"),
+        ntpath.join(WIN_PREFIX.upper(), "LIB", "SITE-PACKAGES"),
+        WIN_PREFIX + "\\Lib\\..\\Lib\\site-packages",
+        "D:\\elsewhere\\site-packages",
+    ]
+    assert selfcheck.main_site_packages([WIN_PREFIX, *kept], [WIN_PREFIX], windows) == kept
+    # the prefix in another spelling (case, separator, trailing separator) is still the prefix
+    for spelling in (WIN_PREFIX.lower(), WIN_PREFIX.replace("\\", "/"), WIN_PREFIX + "\\"):
+        assert selfcheck.main_site_packages([spelling, kept[0]], [WIN_PREFIX], windows) == [kept[0]], spelling
+    # a prefix is never a site-packages folder; with nothing else listed nothing is left, which the judges refuse
+    assert selfcheck.main_site_packages([WIN_PREFIX], [WIN_PREFIX], windows) == []
+
+
+def test_the_report_names_the_real_site_packages_on_a_windows_shaped_interpreter(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The report itself (what both judges read): `getsitepackages()` shaped as on Windows, here with this OS's
+    separators."""
+    real = os.path.join(sys.prefix, "Lib", "site-packages")
+    monkeypatch.setattr(site, "getsitepackages", lambda: [sys.prefix, real])
+    report = selfcheck.report(Path(sys.executable), tmp_path / "missing")
+    assert report["main_sites"] == [real]

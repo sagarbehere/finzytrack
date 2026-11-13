@@ -7,7 +7,8 @@ of the sidecar build (`shell/sidecar/build_sidecar.py`). It prints one JSON repo
 - the packaged engine (`EngineCommand.for_packaged`, the same command the sidecar uses) started and handshaked
   (`handshake`), answered a ping (`pong`), or the failure (`error`);
 - the main side's view: whether this process finds `beancount`, `beanquery` or `ledger_engine` (`main_finds`; each
-  must be false), its `sys.path` and its own site-packages (`main_sites`);
+  must be false), its `sys.path` and its own site-packages folders (`main_sites`: `site.getsitepackages()` without
+  the interpreter's prefix, which Windows lists there too although only the standard library lies in it; S0114);
 - the engine side's view under the same bootstrap: its `sys.path` (`engine_path`) and whether it finds `app`
   (`engine_finds_app`; must be false).
 It never raises on a broken engine: a failure is a fact in the report, so the judges can name it.
@@ -16,9 +17,11 @@ It never raises on a broken engine: a failure is a fact in the report, so the ju
 from __future__ import annotations
 
 import json
+import os
 import site
 import subprocess
 import sys
+from collections.abc import Callable
 from decimal import Decimal
 from importlib.util import find_spec
 from pathlib import Path
@@ -38,6 +41,20 @@ VIEW_HANG_SECONDS = 30.0
 ENGINE_VIEW = (
     "import importlib.util as u, json; print(json.dumps({'path': sys.path, 'app': u.find_spec('app') is not None}))"
 )
+
+
+def _same_path(path: str) -> str:
+    return os.path.normcase(os.path.normpath(path))
+
+
+def main_site_packages(sites: list[str], prefixes: list[str], same: Callable[[str], str] = _same_path) -> list[str]:
+    """The main side's real site-packages folders: `sites` without the interpreter's prefixes, compared as `same`
+    spells a path. Windows' `site.getsitepackages()` is `[prefix, prefix\\Lib\\site-packages]`, and the engine's
+    standard library (`python313.zip`, `DLLs`, `Lib`, the prefix) lies inside the prefix, so the judges' "the engine's
+    path holds the main side's site-packages" refused every Windows build (S0112 verifier F1; owner, 2026-11-13: "Fix
+    the check now (Recommended)", S0114). Only a prefix itself is dropped; a folder inside it stays."""
+    own = {same(p) for p in prefixes}
+    return [s for s in sites if same(s) not in own]
 
 
 def _engine_view(python: Path, engine_site: Path) -> tuple[list[str] | None, bool | None, str | None]:
@@ -89,7 +106,7 @@ def report(python: Path, engine_site: Path) -> dict[str, object]:
         "error": error or view_error,
         "main_finds": {name: find_spec(name) is not None for name in ENGINE_ONLY},
         "main_path": list(sys.path),
-        "main_sites": site.getsitepackages(),
+        "main_sites": main_site_packages(site.getsitepackages(), [sys.prefix, sys.exec_prefix]),
         "engine_finds_app": engine_finds_app,
         "engine_path": engine_path,
     }

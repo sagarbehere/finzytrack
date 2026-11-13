@@ -119,12 +119,96 @@ class PackagedSmokeTest(unittest.TestCase):
                 self.assertEqual(step.count('--expect-fail "the bundled engine'), 1)
                 self.assertEqual(step.count('--expect-fail "cannot start the bundled interpreter"'), 1)
                 # the engine-less run comes after the full run and before the interpreter is moved away
-                full = re.search(r"smoke_packaged\.py \"\$\w+\"\n", step)
+                full = re.search(r"smoke_packaged\.py \"\$\w+\"(?: \"\$\{known\[@\]\}\")?\n", step)
                 assert full is not None
                 engine_away = step.index('--expect-fail "the bundled engine')
                 python_away = step.index("sidecar/python")
                 self.assertLess(full.start(), engine_away)
                 self.assertLess(engine_away, python_away)
+
+
+def matrix_entries(block: str) -> list[tuple[str, str | None, str]]:
+    """(os, known_failure or None when the key is absent, the comment lines above the entry) per `- os:` entry of a
+    job's `matrix.include`."""
+    lines = block.splitlines()
+    start = next(i for i, line in enumerate(lines) if line.strip() == "include:")
+    out: list[tuple[str, str | None, str]] = []
+    comment: list[str] = []
+    for line in lines[start + 1:]:
+        stripped = line.strip()
+        if stripped.startswith("#"):
+            comment.append(stripped)
+        elif m := re.fullmatch(r"- os: ([\w.-]+)(?:\s+#.*)?", stripped):
+            out.append((m.group(1), None, "\n".join(comment)))
+            comment = []
+        elif out and (m := re.fullmatch(r'known_failure: "([^"]*)"', stripped)):
+            out[-1] = (out[-1][0], m.group(1), out[-1][2])
+        elif stripped and not re.fullmatch(r"[\w-]+: .*", stripped):
+            break
+        elif stripped and not line.startswith("          "):
+            break
+    return out
+
+
+def backlog_row(row_id: str) -> str | None:
+    found = re.search(rf"(?m)^\| {row_id} \|.*$", (REPO / "design/backlog.md").read_text())
+    return found.group(0) if found else None
+
+
+class PackagedFixmeTest(unittest.TestCase):
+    """S0114 (owner, 2026-11-13: "Narrow it (Recommended)"; S0112 verifier F2): a fixme OS of the packaged run is
+    green only when its first smoke run fails with exactly its known failure; any other failure, in that run or in a
+    later step, and an unexpected pass, fail the run. No job hides its result (`continue-on-error`), macOS is strict,
+    and each known failure is the reason its open M11 row names (ADR-0061 decision 4b)."""
+
+    def setUp(self) -> None:
+        self.block = jobs((REPO / ".github/workflows/packaged.yml").read_text())["package"]
+        self.steps = {m.group(1): s for s in re.split(r"(?m)^(?=      - )", self.block)
+                      if (m := re.search(r"name: (macOS|Windows|Linux) ", s))}
+
+    def test_no_job_hides_its_result(self) -> None:
+        self.assertNotIn("continue-on-error", (REPO / ".github/workflows/packaged.yml").read_text())
+
+    def test_macos_is_strict_and_every_known_failure_is_its_open_m11_rows_reason(self) -> None:
+        entries = matrix_entries(self.block)
+        self.assertEqual(sorted(e[0].split("-")[0] for e in entries), ["macos", "ubuntu", "windows"])
+        for os_name, known, comment in entries:
+            with self.subTest(os=os_name):
+                self.assertIsNotNone(known, "every OS states its known failure (empty: strict)")
+                if os_name.startswith("macos"):
+                    self.assertEqual(known, "")
+                if not known:
+                    continue
+                rows = re.findall(r"BL-\d{4}", comment)
+                self.assertEqual(len(rows), 1, "a known failure cites exactly one backlog row")
+                row = backlog_row(rows[0])
+                assert row is not None, rows[0]
+                cells = [c.strip() for c in row.split("|")]
+                self.assertEqual(cells[4:6], ["M11", "open"], rows[0])
+                # quoted whole in the row, so a shorter reason (one that also accepts other failures) is refused
+                self.assertIn(f'"{known}"', row, "the known failure is the whole reason its row quotes")
+
+    def test_each_oses_first_smoke_run_takes_the_known_failure_and_no_other_run_does(self) -> None:
+        self.assertIn("      KNOWN_FAILURE: ${{ matrix.known_failure }}\n", self.block)
+        self.assertNotIn("${{ matrix.known_failure }}", "".join(self.steps.values()))  # through env only
+        self.assertEqual(sorted(self.steps), ["Linux", "Windows", "macOS"])
+        for os_name, step in self.steps.items():
+            with self.subTest(os=os_name):
+                self.assertIn('known=()\n', step)
+                self.assertIn('if [ -n "$KNOWN_FAILURE" ]; then known=(--expect-fail "$KNOWN_FAILURE"); fi\n', step)
+                runs = re.findall(r"(?m)^.*smoke_packaged\.py .*$", step)
+                self.assertGreaterEqual(len(runs), 3)
+                self.assertRegex(runs[0], r'smoke_packaged\.py "\$\w+" "\$\{known\[@\]\}"$')
+                for later in runs[1:]:
+                    self.assertNotIn("known", later)
+                self.assertLess(step.index("known=()"), step.index(runs[0]))
+
+    def test_the_matrix_parser_sees_a_missing_or_strict_entry(self) -> None:  # @regression-guard
+        block = ("    strategy:\n      matrix:\n        include:\n          - os: macos-15  # x\n"
+                 '            known_failure: ""\n          # fixme (BL-0001)\n          - os: ubuntu-22.04\n'
+                 '            known_failure: "boom"\n          - os: windows-2022\n    runs-on: x\n')
+        self.assertEqual(matrix_entries(block), [("macos-15", "", ""), ("ubuntu-22.04", "boom", "# fixme (BL-0001)"),
+                                                 ("windows-2022", None, "")])
 
 
 class ActionPinTest(unittest.TestCase):

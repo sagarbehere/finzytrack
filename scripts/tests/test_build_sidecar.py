@@ -343,6 +343,49 @@ class SelfcheckJudge(unittest.TestCase):
     def test_a_report_that_is_not_an_object_is_refused(self) -> None:
         self.assertNotEqual(bs.judge_selfcheck([], self.tree), [])
 
+    def test_no_main_site_packages_is_refused(self) -> None:  # @regression-guard
+        # S0114: `app.selfcheck` drops the interpreter's prefix from `main_sites`; a report left with none is refused
+        report = good_report(self.tree)
+        report["main_sites"] = []
+        self.assertNotEqual(bs.judge_selfcheck(report, self.tree), [])
+
+
+class SelfcheckJudgeWindowsLayout(unittest.TestCase):
+    """S0114 (owner, 2026-11-13: "Fix the check now (Recommended)"): the Windows layout, as `app.selfcheck` reports it
+    there (its `main_sites` without the interpreter's prefix). The engine's path holds the standard library, which
+    lies inside the prefix (`python313.zip`, `DLLs`, `Lib`, the prefix itself), and its own site; that is accepted.
+    The main sidecar's `Lib/site-packages`, or a folder inside it, is still refused. @regression-guard: the judge is
+    unchanged; the report's fix is pinned in `backend/tests/test_selfcheck.py`."""
+
+    def setUp(self) -> None:
+        self.tree = Path(tempfile.mkdtemp()) / "sidecar"
+        self.prefix = self.tree / "python"
+        self.main_site = self.prefix / "Lib/site-packages"
+        self.engine_site = self.tree / "engine/site-packages"
+        for d in (self.main_site, self.prefix / "DLLs", self.engine_site):
+            d.mkdir(parents=True)
+        (self.prefix / "python313.zip").write_bytes(b"")
+
+    def report(self, engine_path: list[Path]) -> dict[str, object]:
+        report = good_report(self.tree)
+        report["main_sites"] = [str(self.main_site)]
+        report["main_path"] = [str(p) for p in (self.prefix / "python313.zip", self.prefix / "DLLs",
+                                                self.prefix / "Lib", self.prefix, self.main_site)]
+        report["engine_path"] = [str(p) for p in engine_path]
+        return report
+
+    def stdlib(self) -> list[Path]:
+        return [self.prefix / "python313.zip", self.prefix / "DLLs", self.prefix / "Lib", self.prefix]
+
+    def test_the_standard_library_and_the_engines_site_pass(self) -> None:
+        self.assertEqual(bs.judge_selfcheck(self.report([*self.stdlib(), self.engine_site]), self.tree), [])
+
+    def test_must_not_pass(self) -> None:
+        for name, entry in {"the main site": self.main_site, "a folder inside it": self.main_site / "app"}.items():
+            with self.subTest(case=name):
+                problems = bs.judge_selfcheck(self.report([*self.stdlib(), self.engine_site, entry]), self.tree)
+                self.assertEqual(problems, [f"the engine's path holds the main sidecar's site-packages: {entry}"])
+
 
 class BuildOrder(unittest.TestCase):
     """`build` installs both sides, then checks the finished (signed) tree, and a failed check fails the build."""

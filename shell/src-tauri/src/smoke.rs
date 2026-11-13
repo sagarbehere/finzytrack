@@ -369,6 +369,43 @@ mod tests {
         );
     }
 
+    /// S0114 (owner, 2026-11-13: "Fix the check now (Recommended)"): the Windows layout, with this OS's separators,
+    /// as `app.selfcheck` reports it there (`main_sites` without the interpreter's prefix, which Windows'
+    /// `getsitepackages()` also lists). The standard library inside the prefix passes; the main site, or a folder
+    /// inside it, on the engine's path is still refused. @regression-guard: the judge is unchanged, the report's
+    /// fix is pinned in `backend/tests/test_selfcheck.py`.
+    #[test]
+    fn the_windows_layout_passes_and_its_main_site_on_the_engine_path_does_not() {
+        const W_PREFIX: &str = "/pkg/Resources/sidecar/python";
+        const W_MAIN_SITE: &str = "/pkg/Resources/sidecar/python/Lib/site-packages";
+        const W_APP: &str = "/pkg/Resources/sidecar/python/Lib/site-packages/app/__init__.py";
+        let stdlib = [
+            "/pkg/Resources/sidecar/python/python313.zip",
+            "/pkg/Resources/sidecar/python/DLLs",
+            "/pkg/Resources/sidecar/python/Lib",
+            W_PREFIX,
+        ];
+        let windows = |extra: Option<String>| {
+            let mut e = engine();
+            e["main_sites"] = serde_json::json!([W_MAIN_SITE]);
+            e["main_path"] =
+                serde_json::json!([stdlib[0], stdlib[1], stdlib[2], stdlib[3], W_MAIN_SITE]);
+            let mut path: Vec<String> = stdlib.iter().map(ToString::to_string).collect();
+            path.push(ENGINE_SITE.into());
+            path.extend(extra);
+            e["engine_path"] = serde_json::json!(path);
+            line_with("[3, 13]", W_PREFIX, W_APP, &e)
+        };
+        assert!(judge(true, &windows(None), Path::new(ROOT), canon).is_ok());
+        for entry in [W_MAIN_SITE.to_string(), format!("{W_MAIN_SITE}/app")] {
+            assert_eq!(
+                judge(true, &windows(Some(entry.clone())), Path::new(ROOT), canon),
+                Err("the bundled engine's path holds the main side's site-packages".into()),
+                "{entry} passed"
+            );
+        }
+    }
+
     #[test]
     fn engine_must_not_pass() {
         let edits: [(&str, &str, Value); 22] = [

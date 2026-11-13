@@ -4,7 +4,8 @@
 # Each OS builds its own artifacts (shell/package_app.py), installs them as a user would where it can, runs the
 # smoke test (spec: shell/src-tauri/src/smoke.rs: the page, the bundled interpreter and a real handshake and ping with
 # the bundled ledger engine, S0038), and runs it again with the engine's site-packages moved away and with the bundled
-# runtime moved away, each of which must fail with its own reason (the must-not-pass cases, EP-29).
+# runtime moved away, each of which must fail with its own reason (the must-not-pass cases, EP-29). A fixme OS's
+# first smoke run must fail with exactly its known reason instead (matrix known_failure); no job hides its result.
 # The job's timeout-minutes is a hang backstop only, far above a normal build, not a budget (owner rule, S0034;
 # S0036). The 12-minute step limits bound one fixed smoke run each, which does not grow with the code.
 name: packaged
@@ -27,17 +28,21 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # known_failure: empty, the OS is strict. Otherwise the OS is fixme due M11 (ADR-0061 decision 4b) and its
+          # first smoke run passes only when it fails with exactly this reason (smoke_packaged.py --expect-fail): a
+          # different failure, a failure in any other run or step, and an unexpected pass fail the run (S0114; owner,
+          # 2026-11-13: "Narrow it (Recommended)"). Remove the reason with its row.
           - os: macos-15  # Apple silicon; macOS 14 is the minimum (ADR-0007 amendment)
-            fixme: false
-          # fixme due M11 (ADR-0061 decision 4b; owner, 2026-11-13: "Defer to M11 (Recommended)"): the bundled
-          # engine fails here (Windows: BL-0264; Linux: BL-0263). The job runs and shows its result; it does not fail
-          # the run. Remove the flag with the row.
+            known_failure: ""
+          # Strict since S0114 fixed the build check's path false positive (BL-0264 closes when a run shows it green).
           - os: windows-2022
-            fixme: true
+            known_failure: ""
+          # fixme due M11, BL-0263: the AppImage's bundled engine (owner, 2026-11-13: "Defer to M11 (Recommended)").
           - os: ubuntu-22.04  # the oldest supported Ubuntu, so the glibc baseline is 22.04 (ARCHITECTURE.md §5)
-            fixme: true
+            known_failure: "the bundled engine failed: engine view: CalledProcessError"
     runs-on: ${{ matrix.os }}
-    continue-on-error: ${{ matrix.fixme }}
+    env:
+      KNOWN_FAILURE: ${{ matrix.known_failure }}
     timeout-minutes: 120
     defaults:
       run:
@@ -70,7 +75,9 @@ jobs:
           app="$(grep '\.app$' artifacts.txt)"
           codesign --verify --deep --strict --verbose=2 "$app"
           codesign -dv "$app" 2>&1 | grep -q '^Signature=adhoc$'
-          python shell/smoke_packaged.py "$app"
+          known=()
+          if [ -n "$KNOWN_FAILURE" ]; then known=(--expect-fail "$KNOWN_FAILURE"); fi
+          python shell/smoke_packaged.py "$app" "${known[@]}"
           ditto "$app" "$RUNNER_TEMP/neg-engine.app"
           mv "$RUNNER_TEMP/neg-engine.app/Contents/Resources/sidecar/engine" "$RUNNER_TEMP/engine-away"
           python shell/smoke_packaged.py "$RUNNER_TEMP/neg-engine.app" --expect-fail "the bundled engine failed"
@@ -87,7 +94,9 @@ jobs:
           dir="$LOCALAPPDATA/Finzytrack"
           exe="$(find "$dir" -maxdepth 1 -iname '*.exe' ! -iname 'uninstall*.exe')"
           test "$(printf '%s\n' "$exe" | wc -l)" -eq 1
-          python shell/smoke_packaged.py "$exe"
+          known=()
+          if [ -n "$KNOWN_FAILURE" ]; then known=(--expect-fail "$KNOWN_FAILURE"); fi
+          python shell/smoke_packaged.py "$exe" "${known[@]}"
           mv "$dir/sidecar/engine" "$RUNNER_TEMP/engine-away"
           python shell/smoke_packaged.py "$exe" --expect-fail "the bundled engine failed"
           mv "$RUNNER_TEMP/engine-away" "$dir/sidecar/engine"
@@ -99,7 +108,9 @@ jobs:
         run: |
           appimage="$(grep '\.AppImage$' artifacts.txt)"
           chmod +x "$appimage"
-          xvfb-run -a python shell/smoke_packaged.py "$appimage"
+          known=()
+          if [ -n "$KNOWN_FAILURE" ]; then known=(--expect-fail "$KNOWN_FAILURE"); fi
+          xvfb-run -a python shell/smoke_packaged.py "$appimage" "${known[@]}"
           deb="$(grep '\.deb$' artifacts.txt)"
           sudo apt-get install -y "$deb"
           exe="$(dpkg -L finzytrack | grep '^/usr/bin/' | head -n 1)"
