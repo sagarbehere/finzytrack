@@ -28,7 +28,8 @@
 | ID | Severity | Class | Disposition |
 |---|---|---|---|
 | F1 | Low | d | Fixed: the widened "Limit (keep read-only)" now names the screens the verifier saw on a read-only exFAT image (Keep: the generic action-failed text; a try at post: stops `permission` with §11's permission row, as on any read-only mount; a try at pre: fails at the sync), and that Retry or Keep works once the drive is writable |
-| F2 | Low | d | Fixed with the BL-0110 and BL-0109 outcome: roadmap §1's "Next" line |
+| F2 | Low | d | Fixed: roadmap §1's "Next" line, with the BL-0110 and BL-0109 outcome |
 | F3 | Low | d | Fixed: §15's index in text order; two missing full stops on BL-0246 and BL-0247 |
 
 ## Retro
+- Build 20 min, fix 15 min, 1 verifier round, findings 0H/0M/3L (all class d). Cheaper gate: probing the read-only exFAT case end to end before writing its limit, as the verifier did with `hdiutil`, would have caught F1. Process checks: invariants 0 catch / 0 false positive; deferrals 0 / 0.
