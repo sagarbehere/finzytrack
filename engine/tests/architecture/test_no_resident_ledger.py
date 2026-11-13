@@ -33,10 +33,12 @@ from beancount.core import data
 
 from ledger_engine.ledger import beancount_port
 from ledger_engine.protocol.server import Engine
-from tests.test_save_ops import Channel, engine, request
-from tests.test_save_ops import setup as setup  # the fixture, shared
+from tests.test_save_ops import Channel, engine, request, save_setup
 
 pytestmark = pytest.mark.inv("INV-10")
+# The jobs need the real file-system port. The tests make their ledger in the body (`save_setup`), not in a fixture:
+# the skip below fires only when the test is called, after its fixtures (S0113 round 2: the Linux CI run of
+# 2026-11-13 errored in the `setup` fixture).
 MAC_ONLY = "the write path's port is macOS-only until BL-0087"
 
 DIRECTIVES = tuple(data.ALL_DIRECTIVES)
@@ -87,8 +89,9 @@ def run_jobs(
 
 
 @unittest.skipUnless(sys.platform == "darwin", MAC_ONLY)
-def test_no_directive_outlives_its_job(setup: tuple[Path, Path, dict[str, Any]]) -> None:
+def test_no_directive_outlives_its_job(tmp_path: Path) -> None:
     """@regression-guard (it holds on 321be18d: the engine keeps no load result; its must-not-pass twin is below)."""
+    setup = save_setup(tmp_path)  # before any plant, as the fixture was
     left, replies, same = run_jobs(setup)
     outcomes = [r["result"]["outcome"] for r in replies]
     assert outcomes == ["loaded", "saved", "loaded"], replies  # each loading job really loaded
@@ -98,8 +101,9 @@ def test_no_directive_outlives_its_job(setup: tuple[Path, Path, dict[str, Any]])
 
 
 @unittest.skipUnless(sys.platform == "darwin", MAC_ONLY)
-def test_a_kept_load_result_is_seen(setup: tuple[Path, Path, dict[str, Any]], monkeypatch: pytest.MonkeyPatch) -> None:
+def test_a_kept_load_result_is_seen(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Must not pass: a load result kept after its job (as a memo or a cache would keep it) is a resident ledger."""
+    setup = save_setup(tmp_path)  # before any plant, as the fixture was
     kept: list[object] = []
     real: Callable[[str, list[str] | None], beancount_port.ParseResult] = beancount_port.real_load
 
@@ -115,11 +119,10 @@ def test_a_kept_load_result_is_seen(setup: tuple[Path, Path, dict[str, Any]], mo
 
 
 @unittest.skipUnless(sys.platform == "darwin", MAC_ONLY)
-def test_one_directive_kept_in_an_engine_module_is_seen(
-    setup: tuple[Path, Path, dict[str, Any]], monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_one_directive_kept_in_an_engine_module_is_seen(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Must not pass (S0093 round 1, the verifier's probe): the engine itself keeps one directive of the open's parse
     in a module attribute of the port; the test holds no reference of its own."""
+    setup = save_setup(tmp_path)  # before any plant, as the fixture was
     real = beancount_port.parse_string
 
     def keeping(data: bytes, report_filename: str | None = None) -> beancount_port.ParseResult:
@@ -136,10 +139,9 @@ def test_one_directive_kept_in_an_engine_module_is_seen(
 
 @unittest.skipUnless(sys.platform == "darwin", MAC_ONLY)
 @pytest.mark.parametrize("plant", ["filled", "added"])
-def test_a_cache_on_the_engine_object_is_seen(
-    setup: tuple[Path, Path, dict[str, Any]], monkeypatch: pytest.MonkeyPatch, plant: str
-) -> None:
+def test_a_cache_on_the_engine_object_is_seen(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, plant: str) -> None:
     """Must not pass: a store on the engine object, made at construction and filled by the jobs, or added by them."""
+    setup = save_setup(tmp_path)  # before any plant, as the fixture was
     real = Engine.handle
 
     def remembering(self: Engine, line: bytes, channel: Any = None) -> bytes:

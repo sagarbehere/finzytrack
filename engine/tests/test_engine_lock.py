@@ -205,10 +205,29 @@ def identity(p: Path) -> tuple[int, int]:
     return (st.st_dev, st.st_ino)
 
 
-def replace_folder(ald: Path) -> None:
-    """Another program removes the app folder and puts an empty one in its place (S0100 round 2 red team `test_g`)."""
-    shutil.rmtree(ald)
-    ald.mkdir()
+def replace_folder(ald: Path, how: str = "replaced") -> None:
+    """Another program puts an empty folder in the app folder's place: `replaced` removes it first (S0100 round 2 red
+    team `test_g`); `moved aside` moves it away and removes it only after, so the new folder is another object on any
+    file system."""
+    if how == "replaced":
+        shutil.rmtree(ald)
+        ald.mkdir()
+    else:
+        aside = ald.with_name(ald.name + ".aside")
+        ald.rename(aside)
+        ald.mkdir()
+        shutil.rmtree(aside)
+
+
+# A folder removed and made again at once can take the freed inode number on a file system that reuses it (the Linux
+# CI run of 2026-11-13 met it in the runner's temp folder: S0113 round 2), so `(st_dev, st_ino)` cannot tell the two
+# apart there (engine-jobs.md §6.1 step 8, limit (4)). APFS does not reuse an object's number. The Linux identity is
+# BL-0262 (with BL-0087's port); until then that case runs on macOS only, and `moved aside` checks the refusal
+# everywhere.
+REPLACED = pytest.param(
+    "replaced",
+    marks=pytest.mark.skipif(sys.platform != "darwin", reason="an inode number may be reused off APFS: BL-0262"),
+)
 
 
 def test_S0102_the_lock_is_taken_in_the_folder_with_its_identity(tmp_path: Path) -> None:
@@ -221,7 +240,7 @@ def test_S0102_the_lock_is_taken_in_the_folder_with_its_identity(tmp_path: Path)
     assert (app / "locks" / "engine.lock").is_file()
 
 
-@pytest.mark.parametrize("change", ["removed", "replaced"])
+@pytest.mark.parametrize("change", ["removed", REPLACED, "moved aside"])
 def test_S0102_the_lock_refuses_a_removed_or_replaced_app_folder_and_makes_nothing(tmp_path: Path, change: str) -> None:
     from ledger_engine.protocol.server import AppFolderChangedError, hold_engine_lock
 
@@ -231,17 +250,20 @@ def test_S0102_the_lock_refuses_a_removed_or_replaced_app_folder_and_makes_nothi
     if change == "removed":
         app.rmdir()
     else:
-        replace_folder(app)
+        replace_folder(app, change)
     with pytest.raises(AppFolderChangedError):
         hold_engine_lock(str(app / "locks" / "engine.lock"), start)
-    assert (sorted(os.listdir(app)) if app.exists() else None) == ([] if change == "replaced" else None)
+    assert (sorted(os.listdir(app)) if app.exists() else None) == (None if change == "removed" else [])
 
 
-def test_S0102_an_engine_whose_app_folder_was_replaced_ends_after_its_handshake_taking_no_lock(tmp_path: Path) -> None:
+@pytest.mark.parametrize("how", [REPLACED, "moved aside"])
+def test_S0102_an_engine_whose_app_folder_was_replaced_ends_after_its_handshake_taking_no_lock(
+    tmp_path: Path, how: str
+) -> None:
     app = tmp_path / "app"
     app.mkdir()
     dev, ino = identity(app)
-    replace_folder(app)
+    replace_folder(app, how)
     lock = app / "locks" / "engine.lock"
     proc = subprocess.run(  # noqa: S603 (this interpreter running the engine under test)
         [sys.executable, "-I", "-m", "ledger_engine", "--engine-lock", str(lock), "--app-folder-id", f"{dev}:{ino}"],

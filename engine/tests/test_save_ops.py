@@ -58,6 +58,13 @@ class Channel:
 
 @pytest.fixture
 def setup(tmp_path: Path) -> tuple[Path, Path, dict[str, Any]]:
+    return save_setup(tmp_path)
+
+
+def save_setup(tmp_path: Path) -> tuple[Path, Path, dict[str, Any]]:
+    """The ledger, the app folder and a save's params, with the open's publish done through the real port (macOS
+    only until BL-0087). A plain function too, for a test whose skip must come first: `unittest.skipUnless` on a
+    plain function fires only when the function is called, after its fixtures (S0113 round 2)."""
     ledger = tmp_path / "L"
     ledger.mkdir()
     main = ledger / "main.bean"

@@ -613,8 +613,11 @@ def test_a_plugin_that_raises_at_import_is_in_the_refusals_read(tmp_path: Path, 
     assert observe(out.read.ledger_set) != out.read
 
 
+# The real load is the one the rebuild's ports hold by default, read from the dataclass: `rebuild.Ports()` would also
+# make the file-system port, which refuses off macOS (S0113 round 2: the Linux CI run of 2026-11-13); the load needs
+# none.
 SCRIPT = """
-import sys
+import dataclasses, sys
 from ledger_engine.ledger import imports, overlay, rebuild
 from ledger_engine.ledger.core.ledger_set import encode, Fingerprint
 from ledger_engine.ledger.policy import DESKTOP
@@ -624,7 +627,8 @@ if sys.argv[1] == "overlay":
 else:
     modules = {}
     with imports.recording(modules):
-        rebuild.Ports().load(root, [])
+        real_load = next(f.default for f in dataclasses.fields(rebuild.Ports) if f.name == "load")
+        real_load(root, [])
 print(encode(Fingerprint.of(root, {}, {}, {}, {}, modules)).decode())
 """
 

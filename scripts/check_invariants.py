@@ -12,7 +12,8 @@ Rules:
     no enforcement file switches a test off (S0031, the M0 gate red team M2): no skip, skipif, xfail,
     importorskip, unittest skip, skipIf, skipUnless, expectedFailure, SkipTest, skipTest or load_tests in
     Python (the one exception: a skip that cannot fire on macOS, where the hooks run, written exactly as
-    `unittest.skipUnless(sys.platform == "darwin", ...)`), no skip, todo, skipIf or runIf in TypeScript, and no
+    `unittest.skipUnless(sys.platform == "darwin", ...)`; it fires when the test is called, after its fixtures, so
+    such a test makes what needs macOS in its body, S0113 round 2), no skip, todo, skipIf or runIf in TypeScript, and no
     collect_ignore, pytest_ignore_collect or skip form in a conftest.py above a Python enforcement test;
     the same ban holds for every test file under backend/tests/architecture, named or not (S0033);
     stated limits: string indirection (getattr), a conftest hook that filters or marks items, and the pytest

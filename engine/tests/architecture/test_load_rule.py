@@ -13,6 +13,11 @@ reads and writes a pickle cache beside the ledger (S0049 journal, Decisions).
 The scan is static and fails closed: inside `engine/src/`, any reference to a load stage outside `ALLOWED` is a
 violation, whether called or not, imported by name, through a module alias or a relative import; a star import of the
 port, a `getattr` on it, or a use of the port module as a value (which could carry it elsewhere) is refused too.
+
+A file-system adapter (`ledger_engine.fs.darwin`) refuses to be imported off its own OS (S0113), so off it the scan
+cannot resolve it: there it is a leaf, an object the scan does not follow (`off_its_os`). Its own source is still
+scanned like any engine file, only `fs/this_os.py` may import it (`test_platform_selection.py`), and on its own OS it
+is resolved and followed as before; a star import from it off its OS is refused, as the scan cannot judge it.
 """
 
 from __future__ import annotations
@@ -32,6 +37,7 @@ import pytest
 from beancount.parser import booking as beancount_booking
 
 from ledger_engine.ledger import beancount_port as port
+from tests.architecture.test_platform_selection import ADAPTERS
 
 pytestmark = pytest.mark.inv("INV-02")
 
@@ -41,6 +47,9 @@ ALLOWED = frozenset({"ledger_engine/ledger/overlay.py"})
 REAL_HOME = frozenset({"ledger_engine/ledger/rebuild.py", "ledger_engine/ledger/create.py"})
 ENGINE_PACKAGE = "ledger_engine"
 _MISSING = object()
+_ADAPTER = object()  # what a name bound to an adapter module, or to one of its names, holds off the adapter's OS
+# The OS each file-system adapter is for (`sys.platform`); every adapter of `fs/` must be named here.
+ADAPTER_OS = {"ledger_engine.fs.darwin": "darwin"}
 
 
 def module_of(rel: str) -> str:
@@ -63,6 +72,11 @@ def _import(name: str) -> ModuleType | None:
         return importlib.import_module(name)
     except ImportError:
         return None
+
+
+def off_its_os(module: str) -> bool:
+    """An adapter module the scan is not on the OS of (S0113): it refuses to be imported here, so it is a leaf."""
+    return module in ADAPTER_OS and sys.platform != ADAPTER_OS[module]
 
 
 def _in_engine(module: str) -> bool:
@@ -96,11 +110,21 @@ def violations(rel: str, source: str, stages: frozenset[str], allowed: frozenset
             mod = absolute(rel, node)
             if not _in_engine(mod):
                 continue
+            if off_its_os(mod):
+                for a in node.names:
+                    if a.name == "*":
+                        out.append(f"{rel}:{node.lineno}: a star import from {mod}, which this OS cannot load")
+                    else:
+                        bound[a.asname or a.name] = _ADAPTER
+                continue
             module = _import(mod)
             if module is None:
                 out.append(f"{rel}:{node.lineno}: cannot resolve the import of {mod}")
                 continue
             for a in node.names:
+                if off_its_os(f"{mod}.{a.name}"):
+                    bound[a.asname or a.name] = _ADAPTER
+                    continue
                 if a.name == "*":
                     public = getattr(module, "__all__", [n for n in vars(module) if not n.startswith("_")])
                     values = [getattr(module, n, None) for n in public]
@@ -122,6 +146,9 @@ def violations(rel: str, source: str, stages: frozenset[str], allowed: frozenset
                 if not _in_engine(a.name):
                     continue
                 target = a.name if a.asname else a.name.split(".")[0]
+                if off_its_os(a.name):  # `import ledger_engine.fs.darwin` binds the engine package, which loads
+                    bound[a.asname or target] = _ADAPTER if a.asname else importlib.import_module(target)
+                    continue
                 if _import(a.name) is None or (module := _import(target)) is None:
                     out.append(f"{rel}:{node.lineno}: cannot resolve the import of {a.name}")
                     continue
@@ -398,3 +425,66 @@ def test_the_allowed_home_and_the_port_itself_are_exempt() -> None:
     src = "from ledger_engine.ledger import beancount_port as p\np.book([], {})\n"
     assert violations("ledger_engine/ledger/overlay.py", src, STAGES) == []
     assert violations("ledger_engine/ledger/beancount_port.py", "def book(): ...\nbook()\n", STAGES) == []
+
+
+# ---- a file-system adapter off its own OS (S0113 round 2: the Linux CI run of 2026-11-13) ------------------------
+
+DARWIN = "ledger_engine.fs.darwin"
+
+
+def as_on(monkeypatch: pytest.MonkeyPatch, platform: str) -> None:
+    """The scan as it runs on `platform`, with the macOS adapter unloadable, as off macOS (its import guard)."""
+    monkeypatch.setattr(sys, "platform", platform)
+    monkeypatch.setitem(sys.modules, DARWIN, None)  # `import_module` then raises ImportError, as the guard does
+    monkeypatch.delattr(sys.modules["ledger_engine.fs"], "darwin", raising=False)  # off macOS it was never loaded
+
+
+def test_every_adapter_names_its_os() -> None:
+    assert set(ADAPTER_OS) == set(ADAPTERS)
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "import sys\nif sys.platform == 'darwin':\n"
+        "    from ledger_engine.fs.darwin import DarwinFS, DarwinLegacyLocks\n",
+        "from ledger_engine.fs import darwin\n",
+        "import ledger_engine.fs.darwin as d\nd.DarwinFS()\n",
+        "import ledger_engine.fs.darwin\n",
+        "from ..fs.darwin import DarwinFS\n",
+    ],
+)
+def test_off_its_os_an_adapter_is_a_leaf_of_the_scan(monkeypatch: pytest.MonkeyPatch, source: str) -> None:
+    as_on(monkeypatch, "linux")
+    for stages, allowed in ((port.LOAD_STAGES, ALLOWED), (port.REAL_LOADS, REAL_HOME)):
+        assert violations("ledger_engine/protocol/x.py", source, stages, allowed) == []
+
+
+def test_off_macos_the_selection_point_passes_the_scan(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The CI failure itself: `fs/this_os.py`, scanned as on Linux."""
+    source = (ENGINE_SRC / "ledger_engine" / "fs" / "this_os.py").read_text(encoding="utf-8")
+    as_on(monkeypatch, "linux")
+    assert violations("ledger_engine/fs/this_os.py", source, port.LOAD_STAGES) == []
+    assert violations("ledger_engine/fs/this_os.py", source, port.REAL_LOADS, REAL_HOME) == []
+
+
+def test_on_its_own_os_an_adapter_that_cannot_load_is_still_found(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Must not pass (@regression-guard: it held before S0113 round 2): the leaf is for another OS only."""
+    as_on(monkeypatch, "darwin")
+    for source in (
+        "from ledger_engine.fs.darwin import DarwinFS\n",
+        "import ledger_engine.fs.darwin as d\n",
+        "from ledger_engine.fs import darwin\n",
+    ):
+        assert violations(REL, source, STAGES) != [], source
+
+
+def test_off_its_os_a_star_import_from_an_adapter_or_another_missing_module_is_found(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Must not pass (@regression-guard: it held before S0113 round 2): the scan cannot judge a star import it cannot
+    load, and the leaf is for adapters only."""
+    as_on(monkeypatch, "linux")
+    assert violations(REL, "from ledger_engine.fs.darwin import *\n", STAGES) != []
+    assert violations(REL, "from ledger_engine.fs.linux import LinuxFS\n", STAGES) != []
+    assert violations(REL, "import ledger_engine.fs.no_such_adapter as a\n", STAGES) != []
