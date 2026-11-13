@@ -975,7 +975,7 @@ The versions below are the newest stable releases published on or before **2026-
 
 | Tool | Pin | Use |
 |---|---|---|
-| pyright | 1.1.414 | **the single type gate, in strict mode** (ADR-0050: `LiteralString` support and speed), run once per target platform with `--pythonplatform` (`scripts/pyright_platforms.py`: macOS and Linux, S0113; Windows BL-0259), the pinned config unchanged. mypy is not run |
+| pyright | 1.1.414 | **the single type gate, in strict mode** (ADR-0050: `LiteralString` support and speed), run once per target platform with `--pythonplatform` (`scripts/pyright_platforms.py`: macOS and Linux, S0113; Windows BL-0260), the pinned config unchanged. mypy is not run |
 | ruff | 0.17.0 | format + lint, incl. `TID251` banned APIs, `DTZ`, `BLE`, `S`, `TRY` |
 | import-linter | 2.15 | §2.4 contracts |
 | pytest | 9.1.1 | with pytest-xdist 3.8.0 and coverage 7.16.2 |

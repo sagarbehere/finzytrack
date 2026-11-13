@@ -6,7 +6,7 @@ and failed it on the Linux CI runner; a module that states its platform once at 
 (`if sys.platform != "darwin": raise ImportError(...)`) is checked in full for that platform and skipped for the others.
 
 PLATFORMS has no Windows yet: the product's POSIX-only process and lock code (process groups, `flock`, signals) has no
-Windows port to check until BL-0087; its pass is BL-0259.
+Windows port to check until BL-0087; its pass is BL-0260.
 
 Passes only when every pass ran and reported no error; each pass's output is printed under its platform, and a failure
 names it. Used by the T0 pre-push hook and the manual CI run (`ci.yml`), for `backend/` and `engine/`.
