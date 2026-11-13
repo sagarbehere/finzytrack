@@ -296,7 +296,10 @@ def test_wire_builds_the_engine_client_without_starting_it(dirs: tuple[Path, Pat
         wiring.engine.close()
 
 
-@pytest.mark.skipif(os.name != "posix", reason="flock is POSIX; Windows is BL-0087 (M1b)")
+@pytest.mark.skipif(
+    sys.platform != "darwin",
+    reason="the boot's recover-all lists through the engine's file-system port, macOS-only until BL-0087 (S0113)",
+)
 def test_the_boots_recover_all_starts_the_first_engine_through_the_scheduler(dirs: tuple[Path, Path]) -> None:
     """engine-jobs §5.1, §5.5: "The engine is spawned when a job needs one, not at boot; at start the first job is
     the boot's `recover_all`, so an engine still starts early". The scheduler waits for the engine lock first

@@ -542,7 +542,7 @@
       "account_balances": {"rows": 2, "sha256": "07f3324be7814b43f5afd502c4c94c07a299f3d7cb76a1bc121cba42ba842edb"},
       "lots": {"rows": 0, "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"},
       "commodity_usage": {"rows": 1, "sha256": "26c06fc5a7147d5a44a41310a4f943724d4922439fb35b1bd5093374df081654"},
-      "ledger_errors": {"rows": 3, "sha256": "26dab832ffdf15107e92e2b4f1db648ba414e5471906e9640a360e56571ac7bb"},
+      "ledger_errors": {"rows": 3, "sha256": "d4593d680b706070b9b3411f53f8a55f03af095115a7db4f7b78c6f53504cc43"},
       "training_data": {"rows": 2, "sha256": "a9ec8fa96afb120748b251cc386944314a5eac567b0c3d8ccc4da64ba69b5821"},
       "meta": {"rows": 9, "sha256": "cbc328cceccda89e3bf8d6d4d1d8a47f5abd6ad6c628f451c2bfc9b9656361f4"}
     },

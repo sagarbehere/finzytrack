@@ -15,7 +15,8 @@ review a change, print a table's rows on the base and on the head (`gen_mirror_c
   in `NOT_READ` with its reason.
 - **Normalized** (`normalized`): the case folder's path becomes `<case>` in every text value, and Beancount's
   `input_hash` option (an MD5 over file names and modification times) becomes `<input_hash>`; the build date and the
-  stamp are fixed. POSIX paths only (the engine runs on Linux and macOS in CI).
+  stamp are fixed; a Python traceback in a value keeps only its last line (S0112). POSIX paths only (the engine runs on
+  Linux and macOS in CI).
 - **Order**: a table's rows are hashed sorted. SQL row order is not part of the surface; an order the spec defines is
   a column (`posting_id`, ...) and is hashed with its row.
 - **Listing order** (`sorted_listing`, a choice of this harness, not of the product): Beancount does not sort an
@@ -207,8 +208,19 @@ def plugin_files(folder: Path) -> list[str]:
 # ---- normalization and hashing ------------------------------------------------------------------------------------
 
 
+TRACEBACK = "Traceback (most recent call last):"
+
+
 def _text(value: str, folder: re.Pattern[str]) -> str:
-    return folder.sub(CASE, value)
+    """The value with the case folder as `<case>`, and a Python traceback inside it (a plugin's import or run error,
+    as Beancount words it) cut to its last line: its frames name the interpreter's install and line numbers of the
+    standard library, which differ between machines and Python patch releases (S0112: the Linux CI run)."""
+    text = folder.sub(CASE, value)
+    head, marker, frames = text.partition(TRACEBACK)
+    if not marker:
+        return text
+    last = [line for line in frames.splitlines() if line.strip()][-1:]
+    return head + "<traceback> " + (last[0].strip() if last else "")
 
 
 def normalized(made: Tables, folder: Path) -> dict[str, list[list[Any]]]:
