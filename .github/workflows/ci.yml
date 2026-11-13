@@ -42,6 +42,9 @@ jobs:
         run: python3 -m pip install uv==0.13.0
       - name: Backend environment (the licence check reads its runtime closure; the harness meta-tests start the sidecar)
         run: uv sync --locked --directory backend
+      - name: Engine environment (the harness meta-tests start the sidecar's engine from it, S0038; the generated protocol
+          schema and the licence check read it, S0035)
+        run: uv sync --locked --directory engine
       - name: Check-script meta-tests (in parallel, one process per test class; S0034)
         run: python3 scripts/run_meta_tests.py -v
       - name: Privacy scan of every tracked file (INV-23)
@@ -54,8 +57,6 @@ jobs:
         run: python3 scripts/check_invariants.py
       - name: Capability map
         run: python3 scripts/check_capabilities.py
-      - name: Engine environment (the generated protocol schema and the licence check read it; S0035)
-        run: uv sync --locked --directory engine
       - uses: actions/setup-node@v4
         with:
           node-version: "24.21.0"
@@ -166,6 +167,8 @@ jobs:
           python-version: "3.13"
       - name: Backend environment (the acceptance harness starts the sidecar and the demo generator from it; S0030)
         run: python3 -m pip install uv==0.13.0 && uv sync --locked --directory ../backend
+      - name: Engine environment (the acceptance harness's sidecar starts its ledger engine from it; S0038)
+        run: uv sync --locked --directory ../engine
       # The browsers are cached by the exact Playwright version the lockfile installs (S0036); the Linux system
       # packages they need are installed on every run, since apt packages are not in the cache.
       - name: Playwright version (the browser cache key)

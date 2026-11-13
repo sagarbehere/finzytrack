@@ -104,6 +104,15 @@ jobs:
           python_dir="$(dpkg -L finzytrack | grep '/sidecar/python$')"
           sudo mv "$python_dir" "$RUNNER_TEMP/python-away"
           xvfb-run -a python shell/smoke_packaged.py "$exe" --expect-fail "cannot start the bundled interpreter"
+      - name: Diagnosis — the bundled engine's own error output off macOS, when a step failed (S0112; prints only)
+        if: failure() && runner.os != 'macOS'
+        run: |
+          py="$(ls build/sidecar/python/bin/python3 build/sidecar/python/python.exe 2>/dev/null | head -n 1)"
+          site=build/sidecar/engine/site-packages
+          echo "interpreter: $py"
+          "$py" -s -S -B -P -c "import site, sys; site.addsitedir(sys.argv.pop(1)); print(sys.path)" "$site" || true
+          "$py" -s -S -B -P -c "import site, sys; site.addsitedir(sys.argv.pop(1)); import ledger_engine.protocol.server; print('engine imports')" "$site" || true
+          "$py" -c "import site, sys; print(sys.prefix, site.getsitepackages())" || true
       - name: Keep the artifacts for a week
         uses: actions/upload-artifact@v4
         with:
