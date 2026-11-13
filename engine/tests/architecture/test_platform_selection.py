@@ -14,8 +14,16 @@ import ast
 from pathlib import Path
 
 SRC = Path(__file__).resolve().parents[2] / "src" / "ledger_engine"
-ADAPTERS = frozenset({"ledger_engine.fs.darwin"})
+# Every module of `fs/` except the port, the selection point and the package itself is an adapter (S0113 verifier V1:
+# a later `fs/linux.py` or `fs/windows.py` is covered without editing this test).
+NOT_ADAPTERS = frozenset({"__init__", "port", "this_os"})
 SELECTION = "fs/this_os.py"
+ADAPTERS = frozenset(f"ledger_engine.fs.{p.stem}" for p in (SRC / "fs").glob("*.py") if p.stem not in NOT_ADAPTERS)
+
+
+def test_the_adapter_set_is_read_from_the_fs_package() -> None:
+    assert "ledger_engine.fs.darwin" in ADAPTERS
+    assert not ADAPTERS & {"ledger_engine.fs.port", "ledger_engine.fs.this_os", "ledger_engine.fs.__init__"}
 
 
 def adapter_imports(rel: str, source: str) -> list[str]:

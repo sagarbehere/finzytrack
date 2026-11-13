@@ -17,3 +17,4 @@ macOS and Linux now pass with 0 errors. Windows gives 142 errors in the engine a
 Option 1. The Windows pass would check code that does not exist yet; the Linux pass fixes the real escape (the M1a exit CI run). No mechanism history: this gate is new in S0113.
 
 ## Answer (owner, verbatim, with date)
+Owner, 2026-11-13, in session: "Wait for the port (Recommended)".
