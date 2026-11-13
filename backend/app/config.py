@@ -367,7 +367,12 @@ class Config(BaseModel):
             error_messages = []
             for error in e.errors():
                 loc = " -> ".join(str(x) for x in error['loc'])
-                error_messages.append(f"{loc}: {error['msg']}")
+                # A model-level check (e.g. a missing ledger folder) has no
+                # field location, and Pydantic prefixes a raised ValueError's
+                # text with "Value error, ". Users read this message (the
+                # desktop launcher shows it), so drop both.
+                msg = error['msg'].removeprefix('Value error, ')
+                error_messages.append(f"{loc}: {msg}" if loc else msg)
             
             raise ConfigurationError(
                 "Configuration validation failed:\n" + 

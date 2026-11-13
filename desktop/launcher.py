@@ -362,8 +362,11 @@ def clear_webview_cache_on_version_change():
               file=sys.stderr, flush=True)
 
 
-def start_backend(args, shutdown_event):
-    """Start uvicorn in a background thread via the shared start_server() path."""
+def start_backend(args, shutdown_event, failure: dict):
+    """Start uvicorn in a background thread via the shared start_server() path.
+
+    If the backend cannot start, its error message goes into ``failure`` so the
+    launcher can show it instead of waiting for a server that never comes up."""
     from app.main import start_server
 
     config_path = args.config or './config/config.yaml'
@@ -391,15 +394,21 @@ def start_backend(args, shutdown_event):
             shutdown_event=shutdown_event,
         )
     except Exception as e:
+        failure['message'] = str(e)
         print(f'[backend] crashed: {e}', file=sys.stderr, flush=True)
         raise
 
 
-def wait_for_backend(url: str, timeout: int = 180) -> bool:
-    """Poll /health until the backend responds (any HTTP response = ready)."""
+def wait_for_backend(url: str, backend: threading.Thread, timeout: int = 180) -> bool:
+    """Poll /health until the backend responds (any HTTP response = ready).
+
+    Gives up at once if the backend thread has died: the server it would have
+    run is never coming up, so polling on would only delay the error."""
     deadline = time.time() + timeout
     dots = 0
     while time.time() < deadline:
+        if not backend.is_alive():
+            return False
         try:
             urllib.request.urlopen(f'{url}/health', timeout=2)
             return True
@@ -413,6 +422,51 @@ def wait_for_backend(url: str, timeout: int = 180) -> bool:
                 elapsed = int(time.time() - (deadline - timeout))
                 print(f'[launcher] Still waiting... ({elapsed}s)', flush=True)
     return False
+
+
+def webview_start_kwargs(args) -> dict:
+    """Arguments for webview.start(), shared by the app window and the error window."""
+    kwargs = {
+        'debug': args.debug,
+        'private_mode': False,
+        'storage_path': os.path.join(APP_DIR, 'browser_storage'),
+    }
+    # On Linux, pywebview tries Qt first and falls back to GTK with a noisy
+    # traceback. Force GTK so the log stays clean. macOS/Windows have their
+    # own native backends and don't need an override.
+    if sys.platform.startswith('linux'):
+        kwargs['gui'] = 'gtk'
+    return kwargs
+
+
+def show_startup_error(args, message: str) -> None:
+    """Show why the app could not start, in a small window, until the user closes it.
+
+    Launched from Finder or the Start menu there is no terminal, so without this
+    a failed start (e.g. the configured ledger's folder was moved) looks like
+    the app doing nothing at all."""
+    import html
+    config_file = os.path.abspath(args.config or './config/config.yaml')
+    log_file = os.path.abspath(os.path.join('logs', 'finzytrack.log'))
+    page = f"""<!doctype html>
+<html><head><meta charset="utf-8"><style>
+  :root {{ color-scheme: light dark; }}
+  body {{ font: 14px/1.5 -apple-system, "Segoe UI", system-ui, sans-serif; margin: 28px; }}
+  h1 {{ font-size: 18px; margin: 0 0 12px; }}
+  pre {{ white-space: pre-wrap; word-break: break-word; padding: 12px; border-radius: 6px;
+        background: rgba(127, 127, 127, 0.15); font-size: 13px; }}
+  code {{ word-break: break-all; }}
+</style></head><body>
+  <h1>Finzytrack could not start</h1>
+  <pre>{html.escape(message)}</pre>
+  <p>If a file or folder named above was moved or deleted, put it back, or edit
+     this settings file to point to where it is now, then open Finzytrack again:</p>
+  <p><code>{html.escape(config_file)}</code></p>
+  <p>More details are in the log: <code>{html.escape(log_file)}</code></p>
+</body></html>"""
+    webview.create_window('Finzytrack could not start', html=page,
+                          width=760, height=480, text_select=True)
+    webview.start(**webview_start_kwargs(args))
 
 
 def main():
@@ -429,13 +483,20 @@ def main():
     # Event to signal a graceful backend shutdown when the window closes.
     shutdown_event = threading.Event()
 
-    thread = threading.Thread(target=start_backend, args=(args, shutdown_event))
+    failure: dict = {}
+    thread = threading.Thread(target=start_backend, args=(args, shutdown_event, failure))
     thread.start()
 
     print(f'[launcher] Waiting for backend on {url}...', flush=True)
-    if not wait_for_backend(url):
-        print(f'[launcher] Backend failed to start within 180 seconds.', file=sys.stderr)
-        sys.exit(1)
+    if not wait_for_backend(url, thread):
+        message = failure.get('message') or 'The backend did not respond within 180 seconds.'
+        print(f'[launcher] Backend failed to start: {message}', file=sys.stderr, flush=True)
+        if not args.headless:
+            show_startup_error(args, message)
+        # os._exit, not sys.exit: a backend thread that hung (rather than
+        # crashed) is non-daemon and would keep the process alive.
+        shutdown_event.set()
+        os._exit(1)
 
     print(f'[launcher] Backend ready at {url}')
 
@@ -504,19 +565,8 @@ def main():
             window.evaluate_js("document.addEventListener('contextmenu', e => e.preventDefault())")
     window.events.loaded += on_loaded
 
-    # On Linux, pywebview tries Qt first and falls back to GTK with a noisy
-    # traceback. Force GTK so the log stays clean. macOS/Windows have their
-    # own native backends and don't need an override.
-    start_kwargs = {
-        'debug': args.debug,
-        'private_mode': False,
-        'storage_path': os.path.join(APP_DIR, 'browser_storage'),
-    }
-    if sys.platform.startswith('linux'):
-        start_kwargs['gui'] = 'gtk'
-
     # Blocks until the window is closed.
-    webview.start(**start_kwargs)
+    webview.start(**webview_start_kwargs(args))
 
     # Window closed — tell the backend to shut down gracefully so FastAPI
     # lifespan cleanup runs (cancels pending SQLite syncs, flushes logs).
