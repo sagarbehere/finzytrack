@@ -28,9 +28,16 @@ jobs:
       matrix:
         include:
           - os: macos-15  # Apple silicon; macOS 14 is the minimum (ADR-0007 amendment)
+            fixme: false
+          # fixme due M11 (ADR-0061 decision 4b; owner, 2026-11-13: "Defer to M11 (Recommended)"): the bundled
+          # engine fails here (Windows: BL-0264; Linux: BL-0263). The job runs and shows its result; it does not fail
+          # the run. Remove the flag with the row.
           - os: windows-2022
+            fixme: true
           - os: ubuntu-22.04  # the oldest supported Ubuntu, so the glibc baseline is 22.04 (ARCHITECTURE.md §5)
+            fixme: true
     runs-on: ${{ matrix.os }}
+    continue-on-error: ${{ matrix.fixme }}
     timeout-minutes: 120
     defaults:
       run:
