@@ -237,8 +237,9 @@ def normalized(made: Tables, folder: Path) -> dict[str, list[list[Any]]]:
         rows: list[list[Any]] = []
         for row in table:
             values = [_text(v, where) if isinstance(v, str) else v for v in row]
-            if name == "ledger_errors" and isinstance(values[MESSAGE], str):
-                values[MESSAGE] = _without_frames(values[MESSAGE])
+            message = values[MESSAGE] if name == "ledger_errors" else None
+            if isinstance(message, str):
+                values[MESSAGE] = _without_frames(message)
             if name == "ledger_options" and values[0] == "input_hash":
                 values[1] = json.dumps(INPUT_HASH)
             rows.append(values)
