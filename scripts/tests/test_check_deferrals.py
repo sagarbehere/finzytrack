@@ -204,6 +204,17 @@ class MovesWithRefused(unittest.TestCase):
         consumer = row("BL-0126", "—")
         self.refused([row("BL-0114", "M1a"), consumer], [row("BL-0114", "—", ref=moves_with("BL-0126")), consumer])
 
+    def test_to_no_milestone_behind_a_consumer_that_went_there_on_a_decision(self) -> None:  # S0107 verifier F4
+        # the consumer may lose its milestone on the owner's words; a row may not follow it there by the rule
+        self.refused([row("BL-0114", "M1a"), row("BL-0126", "M2")],
+                     [row("BL-0114", "—", ref=moves_with("BL-0126")), row("BL-0126", "—", ref='owner: "later"')])
+
+    def test_a_look_alike_word_before_with(self) -> None:  # S0107 verifier F4
+        consumer = row("BL-0126", "M2")
+        for ref in ("removes with BL-0126 (IMP-0070)", "re-moves with BL-0126 (IMP-0070)"):
+            with self.subTest(ref=ref):
+                self.refused([row("BL-0114", "M1a"), consumer], [row("BL-0114", "M2", ref=ref), consumer])
+
     def test_a_deleted_row(self) -> None:
         self.refused([row("BL-0114", "M1a"), row("BL-0126", "M2")], [row("BL-0126", "M2", ref=moves_with("BL-0114"))])
 
