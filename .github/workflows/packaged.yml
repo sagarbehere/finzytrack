@@ -108,8 +108,8 @@ jobs:
         if: failure() && runner.os != 'macOS'
         run: |
           py=""
-          for c in build/sidecar/python/bin/python3 build/sidecar/python/python.exe shell/src-tauri/target/release/sidecar/python/bin/python3; do if [ -f "$c" ]; then py="$c"; fi; done
-          case "$py" in *python.exe) site="$(dirname "$(dirname "$py")")/engine/site-packages";; *bin/python3) site="$(dirname "$(dirname "$(dirname "$py")")")/engine/site-packages";; esac
+          for c in build/sidecar/python/bin/python3.13 build/sidecar/python/python.exe; do if [ -f "$c" ]; then py="$c"; fi; done
+          case "$py" in *python.exe) site="$(dirname "$(dirname "$py")")/engine/site-packages";; *bin/python3.13) site="$(dirname "$(dirname "$(dirname "$py")")")/engine/site-packages";; esac
           echo "engine site: $site"
           echo "interpreter: $py"
           "$py" -s -S -B -P -c "import site, sys; site.addsitedir(sys.argv.pop(1)); print(sys.path)" "$site" || true
