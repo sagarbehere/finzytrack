@@ -25,5 +25,12 @@
 - Small tier on the new model: all 67 as expected (14 base, 29 mutants, 24 witnesses).
 
 ## Verifier
+- Round 1, head aa512c70: pass with findings. Attacks: 9 (the backup stand-in against `writer._backups`, which backs up every replaced file, data synced, folder synced, before the `.part`; a power loss between `S_Backup` and `S_BackupSync`; a created N; R absent at pre; R's old and new disjuncts proved equal by TLC, 418,289 states; vacuity for N, reached in 1,054 states; a second save with a rollback; the four mutants from scratch; the corpus diff). Tooling row: one round, stop rule.
+
+| ID | Severity | Class | Disposition |
+|---|---|---|---|
+| F1 | Medium | c | The comment's claim that S0101's tightening separates the cases is false (a later save's rollback back to an older save's post bytes lets that older backup hide a revert, under `no_displaced_check`; for R since S0101, for N since this slice; the base model holds). False statement fixed (MAPPING.md now; the `.tla` comment after the reruns, since the runner hashes the whole model file); the weaker check becomes MAPPING.md's "Limit (older backup)" (stop rule, IMP-0066) |
+| F2 | Low | c | No small-tier witness reaches the exception: MAPPING.md's "Limit (no witness)" (stop rule) |
+| F3 | Low | d | Fixed: the citation is §6.4, not §6.3 (MAPPING.md now; the `.tla` comment after the reruns; the brief's "§6.3" was the same slip) |
 
 ## Retro
