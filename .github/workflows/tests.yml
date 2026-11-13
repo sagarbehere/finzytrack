@@ -51,9 +51,8 @@ jobs:
         run: npm ci
         working-directory: frontend
 
-      # vue-tsc is not a devDependency on this branch; pin the version used locally.
       - name: Type-check
-        run: npx --yes -p vue-tsc@3.3.14 vue-tsc --noEmit
+        run: npx vue-tsc --noEmit
         working-directory: frontend
 
       - name: Run tests

@@ -55,10 +55,12 @@
     "stream-browserify": "^3.0.0",
     "tailwindcss": "^4.2.2",
     "timers-browserify": "^2.0.12",
+    "typescript": "5.9.2",
     "util": "^0.12.5",
     "vite": "^5.4.0",
     "vite-plugin-monaco-editor": "^1.1.0",
-    "vitest": "^3.2.4"
+    "vitest": "^3.2.4",
+    "vue-tsc": "3.3.14"
   },
   "engines": {
     "node": ">=20.0.0"
