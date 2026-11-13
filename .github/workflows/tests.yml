@@ -1,0 +1,61 @@
+name: Tests
+
+# Runs the backend and frontend test suites on every push and pull request, so
+# a release tag only goes out on a commit with green tests (RELEASING.md).
+# Toolchain matches build-desktop.yml: Python 3.13, Node 22.
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  backend:
+    name: Backend (pytest)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+          cache: 'pip'
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install backend dependencies
+        run: pip install -r backend/requirements.txt pytest==9.2.0 pytest-asyncio==1.5.0
+
+      # The backend reads gitignored copies of the recipe schema and AI
+      # reference files; dev startup and desktop/build.py create them the same way.
+      - name: Sync generated backend resources
+        run: python scripts/sync_ai_reference.py
+
+      - name: Run tests
+        run: python -m pytest -q
+        working-directory: backend
+
+  frontend:
+    name: Frontend (vue-tsc + vitest)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install frontend dependencies
+        run: npm ci
+        working-directory: frontend
+
+      # vue-tsc is not a devDependency on this branch; pin the version used locally.
+      - name: Type-check
+        run: npx --yes -p vue-tsc@3.3.14 vue-tsc --noEmit
+        working-directory: frontend
+
+      - name: Run tests
+        run: npx vitest run
+        working-directory: frontend
