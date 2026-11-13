@@ -23,5 +23,12 @@
 - Population: not applicable.
 
 ## Verifier
+- Round 1, head 3791e72a: pass with findings. Attacks: 8 (the model's boot states and the replay; `restore._flush`'s identity check; a read-only exFAT image probed end to end with `hdiutil`: Keep, a try at post, Retry after remounting writable; the backend text per outcome; §15's index; the rows' quotes; roadmap and capability drift). Docs-only row: one round, no fresh round.
+
+| ID | Severity | Class | Disposition |
+|---|---|---|---|
+| F1 | Low | d | Fixed: the widened "Limit (keep read-only)" now names the screens the verifier saw on a read-only exFAT image (Keep: the generic action-failed text; a try at post: stops `permission` with §11's permission row, as on any read-only mount; a try at pre: fails at the sync), and that Retry or Keep works once the drive is writable |
+| F2 | Low | d | Fixed with the BL-0110 and BL-0109 outcome: roadmap §1's "Next" line |
+| F3 | Low | d | Fixed: §15's index in text order; two missing full stops on BL-0246 and BL-0247 |
 
 ## Retro
