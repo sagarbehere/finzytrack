@@ -200,7 +200,7 @@ class PackagedFixmeTest(unittest.TestCase):
                 self.assertGreaterEqual(len(runs), 3)
                 self.assertRegex(runs[0], r'smoke_packaged\.py "\$\w+" "\$\{known\[@\]\}"$')
                 for later in runs[1:]:
-                    self.assertNotIn("known", later)
+                    self.assertNotIn("known", later.lower())
                 self.assertLess(step.index("known=()"), step.index(runs[0]))
 
     def test_the_matrix_parser_sees_a_missing_or_strict_entry(self) -> None:  # @regression-guard
