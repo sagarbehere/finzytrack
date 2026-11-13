@@ -141,6 +141,30 @@ jobs:
 
       # Windows zip is already created by build.py
 
+      # -- Startup check: the packaged app must start and answer /health.
+      #    A build that compiles can still fail to start (a module dropped by
+      #    PyInstaller, a launcher change, a platform quirk). The launcher
+      #    exits by itself on a backend failure or after its own startup
+      #    limit; timeout-minutes only backstops a hang outside it.
+
+      - name: Startup check (macOS)
+        if: runner.os == 'macOS'
+        timeout-minutes: 15
+        run: python desktop/startup_check.py desktop/dist/Finzytrack.app/Contents/MacOS/Finzytrack
+        shell: bash
+
+      - name: Startup check (Linux)
+        if: runner.os == 'Linux'
+        timeout-minutes: 15
+        run: python desktop/startup_check.py desktop/dist/Finzytrack-x86_64.AppImage
+        shell: bash
+
+      - name: Startup check (Windows)
+        if: runner.os == 'Windows'
+        timeout-minutes: 15
+        run: python desktop/startup_check.py desktop/dist/Finzytrack/Finzytrack.exe
+        shell: bash
+
       # -- Upload artifacts --
 
       - name: Upload macOS artifact
