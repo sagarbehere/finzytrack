@@ -175,11 +175,12 @@
                   transaction.id, idx, 'amount',
                   posting.amount,
                   (raw: string) => emit('updateField', transaction.id, `postings.${idx}.amount`, raw === '' ? null : toMoney(raw)),
-                  `${inputClasses()} text-right max-w-[8rem] ${getAmountColorClass(posting.amount)}`
+                  `${inputClasses()} text-right max-w-[8rem] ${getAmountColorClass(posting.amount)}`,
+                  posting.currency
                 )"
               />
               <span v-else class="text-sm tabular-nums font-medium" :class="getAmountColorClass(posting.amount)">
-                {{ posting.amount !== null ? toFixed(posting.amount, 2) : '—' }}
+                {{ posting.amount !== null ? groupDigits(toFixed(posting.amount, 2), posting.currency) : '—' }}
               </span>
             </div>
 
@@ -209,11 +210,12 @@
                   transaction.id, idx, 'cost.amount',
                   posting.cost?.amount,
                   (raw: string) => emit('updateField', transaction.id, `postings.${idx}.cost.amount`, raw === '' ? null : toMoney(raw)),
-                  `${inputClasses()} text-right max-w-[8rem]`
+                  `${inputClasses()} text-right max-w-[8rem]`,
+                  posting.cost?.currency
                 )"
               />
               <span v-else class="text-sm tabular-nums text-gray-900 dark:text-white">
-                {{ posting.cost?.amount !== undefined ? toFixed(posting.cost.amount, 2) : '—' }}
+                {{ posting.cost?.amount !== undefined ? groupDigits(toFixed(posting.cost.amount, 2), posting.cost.currency) : '—' }}
               </span>
             </div>
 
@@ -258,11 +260,12 @@
                   transaction.id, idx, 'price.amount',
                   posting.price?.amount,
                   (raw: string) => emit('updateField', transaction.id, `postings.${idx}.price.amount`, raw === '' ? null : toMoney(raw)),
-                  `${inputClasses()} text-right max-w-[8rem]`
+                  `${inputClasses()} text-right max-w-[8rem]`,
+                  posting.price?.currency
                 )"
               />
               <span v-else class="text-sm tabular-nums text-gray-900 dark:text-white">
-                {{ posting.price?.amount !== undefined ? toFixed(posting.price.amount, 2) : '—' }}
+                {{ posting.price?.amount !== undefined ? groupDigits(toFixed(posting.price.amount, 2), posting.price.currency) : '—' }}
               </span>
             </div>
 
@@ -303,7 +306,7 @@
             <div v-if="isColumnVisible('balance')" class="flex items-center justify-between px-4 py-2">
               <label class="text-xs font-medium text-gray-500 dark:text-gray-400">Balance</label>
               <span v-if="ledgerContext?.get(transaction.id)?.balance !== undefined" class="text-sm tabular-nums font-mono text-gray-900 dark:text-white">
-                {{ toFixed(ledgerContext!.get(transaction.id)!.balance!, 2) }}
+                {{ groupDigits(toFixed(ledgerContext!.get(transaction.id)!.balance!, 2), sharedCurrency(transaction)) }}
               </span>
               <span v-else class="text-sm text-gray-400">—</span>
             </div>
@@ -335,6 +338,7 @@ import TransactionStatusIndicator from '@/components/common/TransactionStatusInd
 import DetailsBadge from '@/components/documents/DetailsBadge.vue'
 import type { TransactionViewModel, ImportContext, LedgerContext } from '@/types/transactions'
 import { sign, toFixed, toMoney, type Money } from '@/utils/money'
+import { groupDigits, sharedCurrency } from '@/utils/currencyFormat'
 
 interface Props {
   transactions: TransactionViewModel[]
@@ -383,11 +387,12 @@ const numericInputProps = (
   txId: string, postingIdx: number, field: string,
   currentValue: Money | null | undefined,
   updateFn: (raw: string) => void,
-  extraClasses: string = ''
+  extraClasses: string = '',
+  currency?: string | null
 ): Record<string, unknown> => {
   const key = `${txId}-${postingIdx}-${field}`
   const rawStr = rawAmountStrings.value[key]
-  const fallback = (() => {
+  const plain = (() => {
     if (currentValue === null || currentValue === undefined) return ''
     const s = String(currentValue)
     const decimals = s.includes('.') ? s.split('.')[1].length : 0
@@ -396,11 +401,20 @@ const numericInputProps = (
   return {
     type: 'text',
     inputmode: 'decimal',
-    value: rawStr !== undefined ? rawStr : fallback,
+    // Grouped (1,129.41) at rest; the plain number while the field has focus.
+    value: rawStr !== undefined ? rawStr : groupDigits(plain, currency),
+    // Swap in the plain number synchronously, so a select() right after focus()
+    // (keyboard navigation) selects it and the re-render changes nothing.
+    onFocus: (e: any) => {
+      if (rawAmountStrings.value[key] !== undefined) return
+      e.target.value = plain
+      rawAmountStrings.value[key] = plain
+    },
     onInput: (e: any) => {
-      const raw: string = e.target.value
+      // Grouping commas, typed or pasted ("1,129.41"), are dropped.
+      const raw: string = e.target.value.replace(/,/g, '')
       if (raw !== '' && !/^-?\d*\.?\d*$/.test(raw)) {
-        e.target.value = rawAmountStrings.value[key] ?? fallback
+        e.target.value = rawAmountStrings.value[key] ?? plain
         return
       }
       rawAmountStrings.value[key] = raw

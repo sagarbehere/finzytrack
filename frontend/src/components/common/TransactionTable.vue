@@ -245,6 +245,7 @@ import { addDocument } from '@/utils/documentMeta'
 import { buildTanStackColumns, type TransactionColumnDef, type TableRowData } from '@/composables/useTransactionColumns'
 import { flattenTransactionRows } from '@/utils/flattenTransactionRows'
 import { sign, toFixed, type Money } from '@/utils/money'
+import { groupDigits, sharedCurrency } from '@/utils/currencyFormat'
 import type { TransactionViewModel, ImportContext, LedgerContext } from '@/types/transactions'
 import type { Cell, Row } from '@tanstack/vue-table'
 
@@ -448,11 +449,12 @@ const numericInputProps = (
   txId: string, postingIdx: number, field: string,
   currentValue: Money | null | undefined,
   updateFn: (raw: string) => void,
-  extraClasses: string = ''
+  extraClasses: string = '',
+  currency?: string | null
 ): Record<string, unknown> => {
   const key = `${txId}-${postingIdx}-${field}`
   const rawStr = rawAmountStrings.value[key]
-  const fallback = (() => {
+  const plain = (() => {
     if (currentValue === null || currentValue === undefined) return ''
     const s = String(currentValue)
     const decimals = s.includes('.') ? s.split('.')[1].length : 0
@@ -461,11 +463,20 @@ const numericInputProps = (
   return {
     type: 'text',
     inputmode: 'decimal',
-    value: rawStr !== undefined ? rawStr : fallback,
+    // Grouped (1,129.41) at rest; the plain number while the field has focus.
+    value: rawStr !== undefined ? rawStr : groupDigits(plain, currency),
+    // Swap in the plain number synchronously, so a select() right after focus()
+    // (keyboard navigation) selects it and the re-render changes nothing.
+    onFocus: (e: any) => {
+      if (rawAmountStrings.value[key] !== undefined) return
+      e.target.value = plain
+      rawAmountStrings.value[key] = plain
+    },
     onInput: (e: any) => {
-      const raw: string = e.target.value
+      // Grouping commas, typed or pasted ("1,129.41"), are dropped.
+      const raw: string = e.target.value.replace(/,/g, '')
       if (raw !== '' && !/^-?\d*\.?\d*$/.test(raw)) {
-        e.target.value = rawAmountStrings.value[key] ?? fallback
+        e.target.value = rawAmountStrings.value[key] ?? plain
         return
       }
       rawAmountStrings.value[key] = raw
@@ -749,12 +760,12 @@ const COLUMN_DEFS: TransactionColumnDef[] = [
     accessor: (row: TableRowData) => [...row.transaction.tags.map((t: string) => `#${t}`), ...row.transaction.links.map((l: string) => `^${l}`)].join(' '),
   },
   { id: 'account', header: 'Account', type: 'dropdown', field: 'account', span: 'posting', component: AccountDropdown, componentProps: { 'allow-custom': false }, placeholder: 'Account...' },
-  { id: 'amount', header: 'Amount', type: 'numeric', field: 'amount', span: 'posting', align: 'right', colorize: true },
+  { id: 'amount', header: 'Amount', type: 'numeric', field: 'amount', span: 'posting', align: 'right', colorize: true, currencyField: 'currency' },
   { id: 'currency', header: 'Currency', type: 'dropdown', field: 'currency', span: 'posting', component: CommodityDropdown, componentProps: { 'allow-custom': false, 'show-details': false }, placeholder: 'CURR' },
-  { id: 'cost_amount', header: 'Cost Amount', type: 'numeric', field: 'cost.amount', span: 'posting', align: 'right', accessor: (row: TableRowData) => row.cost?.amount },
+  { id: 'cost_amount', header: 'Cost Amount', type: 'numeric', field: 'cost.amount', span: 'posting', align: 'right', currencyField: 'cost.currency', accessor: (row: TableRowData) => row.cost?.amount },
   { id: 'cost_currency', header: 'Cost Currency', type: 'dropdown', field: 'cost.currency', span: 'posting', component: CommodityDropdown, componentProps: { 'allow-custom': false, 'show-details': false, clearable: true }, placeholder: 'CURR', accessor: (row: TableRowData) => row.cost?.currency },
   { id: 'cost_date', header: 'Cost Date', type: 'date', field: 'cost.date', span: 'posting', accessor: (row: TableRowData) => row.cost?.date },
-  { id: 'price_amount', header: 'Price Amount', type: 'numeric', field: 'price.amount', span: 'posting', align: 'right', accessor: (row: TableRowData) => row.price?.amount },
+  { id: 'price_amount', header: 'Price Amount', type: 'numeric', field: 'price.amount', span: 'posting', align: 'right', currencyField: 'price.currency', accessor: (row: TableRowData) => row.price?.amount },
   { id: 'price_currency', header: 'Price Currency', type: 'dropdown', field: 'price.currency', span: 'posting', component: CommodityDropdown, componentProps: { 'allow-custom': false, 'show-details': false, clearable: true }, placeholder: 'CURR', accessor: (row: TableRowData) => row.price?.currency },
   { id: 'price_type', header: 'Price Type', type: 'dropdown', field: 'price.type', span: 'posting', component: PriceTypeDropdown, placeholder: 'Type', accessor: (row: TableRowData) => row.price?.type },
   {
@@ -808,7 +819,7 @@ const columns = computed(() => {
         if (balance !== undefined) {
           return h('span', {
             class: `${getDisplayClasses()} font-mono text-right block`
-          }, toFixed(balance, 2))
+          }, groupDigits(toFixed(balance, 2), sharedCurrency(row.original.transaction)))
         }
         return h('span', { class: 'text-gray-400 text-sm' }, '—')
       },

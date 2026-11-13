@@ -3,6 +3,7 @@ import { createColumnHelper } from '@tanstack/vue-table'
 import type { PostingViewModel, TransactionViewModel, ImportContext, LedgerContext } from '@/types/transactions'
 import type { useTableColumns } from '@/composables/useTableColumns'
 import { toFixed, toMoney, type Money } from '@/utils/money'
+import { groupDigits } from '@/utils/currencyFormat'
 
 export interface TableRowData extends PostingViewModel {
   transaction: TransactionViewModel
@@ -21,6 +22,7 @@ export interface TransactionColumnDef {
   placeholder?: string
   align?: 'left' | 'right' | 'center'
   colorize?: boolean                // for numeric: apply green/red/gray color based on sign
+  currencyField?: string            // for numeric: dot-path to the amount's currency (sets digit grouping)
   component?: Component             // for 'component' and 'dropdown' types
   componentProps?: Record<string, unknown>  // extra static props for dropdowns
   accessor?: string | ((row: TableRowData) => any)  // custom accessor for TanStack
@@ -53,7 +55,8 @@ export interface BuildColumnsOptions {
     txId: string, postingIdx: number, field: string,
     currentValue: Money | null | undefined,
     updateFn: (raw: string) => void,
-    extraClasses?: string
+    extraClasses?: string,
+    currency?: string | null
   ) => Record<string, any>
   getImportContext: (id: string) => ImportContext | undefined
   getLedgerContext: (id: string) => LedgerContext | undefined
@@ -155,6 +158,7 @@ export function buildTanStackColumns(
         case 'numeric': {
           const value = getValue()
           const amountColorClass = def.colorize ? getAmountColorClass(value) : ''
+          const currency = def.currencyField ? getNestedValue(rowData, def.currencyField) : undefined
 
           if (editable()) {
             const storePath = resolveStorePath(def.field!, postingIndex)
@@ -166,11 +170,12 @@ export function buildTanStackColumns(
                 updateField(tx.id, storePath, parsed)
               },
               `${getEditableInputClasses('text-right')} ${amountColorClass}`,
+              currency,
             ))
           }
           return h('span', {
             class: `${getDisplayClasses()} font-mono text-right block ${amountColorClass}`,
-          }, value !== undefined && value !== null ? toFixed(value, 2) : '')
+          }, value !== undefined && value !== null ? groupDigits(toFixed(value, 2), currency) : '')
         }
 
         case 'dropdown': {
