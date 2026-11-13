@@ -107,7 +107,8 @@ jobs:
       - name: Diagnosis — the bundled engine's own error output off macOS, when a step failed (S0112; prints only)
         if: failure() && runner.os != 'macOS'
         run: |
-          py="$(ls build/sidecar/python/bin/python3 build/sidecar/python/python.exe 2>/dev/null | head -n 1)"
+          py=""
+          for c in build/sidecar/python/bin/python3 build/sidecar/python/python.exe; do if [ -f "$c" ]; then py="$c"; fi; done
           site=build/sidecar/engine/site-packages
           echo "interpreter: $py"
           "$py" -s -S -B -P -c "import site, sys; site.addsitedir(sys.argv.pop(1)); print(sys.path)" "$site" || true

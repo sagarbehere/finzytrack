@@ -64,6 +64,11 @@ jobs:
         run: npm install -g pnpm@12.12.0 && pnpm --dir frontend install --frozen-lockfile
       - name: Generated artifacts (INV-19)
         run: python3 scripts/check_generated.py --all
+      - name: Diagnosis — the mirror checksums as this runner builds them, when a step failed (S0112; prints only)
+        if: failure()
+        run: |
+          engine/.venv/bin/python -I engine/scripts/gen_mirror_checksums.py --stdout > "$RUNNER_TEMP/mirror-checksums.json" || true
+          diff corpora/ledgers/mirror-checksums.json "$RUNNER_TEMP/mirror-checksums.json" || true
       - name: Rust toolchain from shell/src-tauri/rust-toolchain.toml (the licence check runs cargo metadata)
         run: cd shell/src-tauri && rustup show active-toolchain || rustup toolchain install
       - name: Licences and THIRD_PARTY_NOTICES
