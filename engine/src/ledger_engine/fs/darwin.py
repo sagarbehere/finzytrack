@@ -30,7 +30,9 @@
   `ENOTDIR` for a link, probed S0061). `DarwinLegacyLocks`: the legacy app's write lock, tried only for Copy
   (INV-26, ADR-0068 D4; Copy is BL-0026's: the save no longer tries it).
 
-Other operating systems refuse (`for_this_os`): their primitives are BL-0087 (spec §14).
+This module is macOS-only: importing it elsewhere raises `ImportError`. The engine selects the adapter in
+`ledger_engine.fs.this_os` (`for_this_os`, `legacy_locks_for_this_os`), which refuses other operating systems; their
+primitives are BL-0087 (spec §14).
 """
 
 from __future__ import annotations
@@ -52,7 +54,6 @@ from ledger_engine.fs.port import (
     AclEntry,
     Caps,
     EntryStat,
-    FileSystem,
     FolderMark,
     FoldRule,
     Kind,
@@ -65,6 +66,11 @@ from ledger_engine.fs.port import (
     fold,
     split_absolute,
 )
+
+# The one statement of this module's platform (not an `assert`, which `-O` strips): elsewhere the import fails, and
+# pyright checks the rest of the module for macOS only (`--pythonplatform`; S0113).
+if sys.platform != "darwin":
+    raise ImportError("the macOS adapter; select one with ledger_engine.fs.this_os")  # noqa: TRY003 (one raise site)
 
 COPYFILE_XATTR: Final = 1 << 2
 ACCESS_DELETE: Final = 1 << 12  # <sys/unistd.h> _DELETE_OK: access(2) answers it from the file's and folder's ACLs
@@ -114,13 +120,6 @@ ACL_FLAGS: Final = (  # <sys/acl.h> acl_flag_t, the entry flags
     ("limit_inherit", 1 << 7),
     ("only_inherit", 1 << 8),
 )
-
-
-class UnsupportedPlatform(OSError):
-    """An `OSError`: a write refuses on this OS like on any other I/O failure."""
-
-    def __init__(self) -> None:
-        super().__init__(errno.ENOTSUP, "the write path's file-system port is macOS-only until BL-0087")
 
 
 def _libc() -> ctypes.CDLL:
@@ -489,8 +488,6 @@ class DarwinFS:
     """The real file system on macOS (`ledger_engine.fs.port.FileSystem`)."""
 
     def __init__(self, on_fallback: Callable[[], None] | None = None) -> None:
-        if sys.platform != "darwin":
-            raise UnsupportedPlatform
         self.libc = _libc()
         self._fallback_volumes: set[int] = set()  # bounded by the number of mounted volumes (INV-10)
         self._on_fallback = on_fallback
@@ -669,8 +666,3 @@ def _identity(st: os.stat_result) -> tuple[int, int]:
 
 def _join(folder: str, name: str) -> str:
     return "/" + name if folder == "/" else f"{folder}/{name}"
-
-
-def for_this_os(on_fallback: Callable[[], None] | None = None) -> FileSystem:
-    """The real port for this operating system; elsewhere than macOS it raises `UnsupportedPlatform` (BL-0087)."""
-    return DarwinFS(on_fallback)

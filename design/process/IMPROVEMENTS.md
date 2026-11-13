@@ -684,3 +684,11 @@ Format:
 - Why: the cheapest honest count is the one the implementer already sees; a script would be one more process check to count.
 - Expected effect: G1 has per-check numbers. Metric: catches and false positives per check.
 - Status: kept (S0107).
+
+## IMP-0074: the type check runs once per target platform (S0113, 2026-11-13)
+- Trigger: an escape. The M1a exit CI run on Linux (S0112) failed strict pyright with 77 errors (macOS-only names: `fcntl.F_FULLFSYNC`, `F_GETPATH`, `os.chflags`, `st_birthtime`) that the T0 pre-push hook never saw: pyright checks for the platform it runs on, and the hook runs on a Mac. Owner, 2026-11-13, on the S0113 plan: "I agree with the ownership rule, go ahead" (the plan named this gate; agent-approved as a tightening).
+- What changed: gate (tightening). `scripts/pyright_platforms.py` runs each package's pyright with `--pythonplatform Darwin` and `--pythonplatform Linux`, in parallel, with the pinned configs unchanged; the T0 pre-push hook and the backend and engine jobs of `ci.yml` call it (`scripts/tests/test_pyright_platforms.py`, the hook pin). Windows is not in it yet: 142 engine and 262 backend errors, all POSIX-only product and test code without a Windows port (BL-0259, with BL-0087).
+- PROCESS.md section: §6 (T0 pre-push).
+- Why: the cheapest gate that sees the Linux run's type errors before the push.
+- Expected effect: no type error reaches a Linux CI run. Metric: pyright failures in T1 that T0 passed (target 0); the pre-push check's time (measured once locally with both passes in parallel: about 8 s for the engine, 7 s for the backend; the gate timer's history shows the change against one pass).
+- Status: new.

@@ -60,7 +60,7 @@ class Real:
 
 @pytest.fixture
 def real(tmp_path: Path) -> Real:
-    from ledger_engine.fs.darwin import DarwinFS
+    from ledger_engine.fs.this_os import for_this_os
 
     if os.pathconf(tmp_path, 11) == 1:  # _PC_CASE_SENSITIVE
         pytest.skip("the temp volume is case-sensitive; this corpus is for the default case-insensitive APFS")
@@ -69,7 +69,7 @@ def real(tmp_path: Path) -> Real:
     (tmp_path / "Ledger" / "Main.beancount").write_bytes(b"x")
     (tmp_path / "linked").symlink_to(tmp_path / "Ledger")
     (tmp_path / "Ledger" / "alias.beancount").symlink_to(tmp_path / "Ledger" / "Main.beancount")
-    return Real(tmp_path, DarwinFS())
+    return Real(tmp_path, for_this_os())
 
 
 @macos

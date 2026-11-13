@@ -51,7 +51,7 @@ def journalled(ald: Path) -> tuple[Path, Path, str]:
     bd = ald / "local" / "k1" / "backups"
     jd.mkdir(parents=True)
     bd.mkdir(parents=True)
-    from ledger_engine.fs.darwin import DarwinFS
+    from ledger_engine.fs.this_os import for_this_os
 
     commit = Commit(
         session="s1",
@@ -63,7 +63,7 @@ def journalled(ald: Path) -> tuple[Path, Path, str]:
         journal_dir=str(jd),
         backups_dir=str(bd),
     )
-    assert isinstance(durable_commit(DarwinFS(), commit), Landed)
+    assert isinstance(durable_commit(for_this_os(), commit), Landed)
     os.rename(jd / "s1-j7.closed", jd / "s1-j7.open")
     return ledger, Path(os.path.realpath(jd)), "s1-j7"
 

@@ -23,8 +23,8 @@ import os
 from collections.abc import Callable
 from typing import Final, Protocol
 
-from ledger_engine.fs.darwin import for_this_os
 from ledger_engine.fs.port import FileSystem, Kind, same_path
+from ledger_engine.fs.this_os import for_this_os
 from ledger_engine.ledger import recover_all as ra
 from ledger_engine.ledger.core import journal
 from ledger_engine.ledger.core import paths as core_paths

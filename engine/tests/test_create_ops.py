@@ -13,10 +13,10 @@ from typing import Any, override
 
 import pytest
 
-from ledger_engine.fs import darwin
-from ledger_engine.fs.darwin import for_this_os
+from ledger_engine.fs.this_os import for_this_os
 from ledger_engine.ledger import create as cr
 from ledger_engine.protocol.server import InputEnded
+from tests.macos_only import MACOS_ONLY
 from tests.test_save_ops import Channel as SaveChannel
 from tests.test_save_ops import engine, request
 
@@ -190,6 +190,10 @@ def test_on_apfs_the_cleanup_never_removes_another_programs_file_or_folder_in_th
         "main.beancount",
         (cr.NewFile("rules/r.yaml", b"a: 1\n"), cr.NewFile("workspace.json", WS_JSON.encode())),
     )
+    if sys.platform != "darwin":  # skipped by the module's mark already; the raise is for pyright (tests/macos_only.py)
+        raise pytest.skip.Exception(MACOS_ONLY)
+    from ledger_engine.fs import darwin
+
     real_mkdir = darwin.DarwinDir.mkdir
     real_create = darwin.DarwinDir.create
 

@@ -41,8 +41,8 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from typing import Final, Literal, Protocol
 
-from ledger_engine.fs.darwin import for_this_os
 from ledger_engine.fs.port import FileSystem
+from ledger_engine.fs.this_os import for_this_os
 from ledger_engine.ledger import beancount_port as port
 from ledger_engine.ledger import fingerprint as _fingerprint
 from ledger_engine.ledger import imports, load_failure, precision, publishing

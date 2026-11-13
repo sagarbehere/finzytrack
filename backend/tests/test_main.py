@@ -225,6 +225,9 @@ def test_an_unknown_route_is_route_not_found_in_the_envelope_from_the_real_serve
 REPO = Path(__file__).resolve().parents[2]
 ENGINE_VENV = REPO / "engine" / ".venv"
 DEADLINE = 30.0
+# S0113: a test of macOS-only names skips elsewhere with `raise pytest.skip.Exception(MACOS_ONLY)` before them; a
+# `raise`, not a call to `pytest.skip`, so pyright checks the code after it for macOS only (`--pythonplatform`).
+MACOS_ONLY = "macOS only: F_FULLFSYNC and F_GETPATH (the Linux and Windows ports are BL-0087)"
 
 
 def test_engine_venv_selects_the_venv_engine(dirs: tuple[Path, Path]) -> None:
@@ -1113,6 +1116,8 @@ def _start(data: Path, cache: Path) -> subprocess.CompletedProcess[str]:
 def test_S0100_a_missing_app_folder_is_made_at_start_and_its_parent_synced(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    if sys.platform != "darwin":
+        raise pytest.skip.Exception(MACOS_ONLY)
     from app.platform.adapters import app_folder
 
     synced: list[str] = []
@@ -1134,6 +1139,8 @@ def test_S0100_a_missing_app_folder_is_made_at_start_and_its_parent_synced(
 
 
 def _fd_path(fd: int) -> str:
+    if sys.platform != "darwin":
+        raise pytest.skip.Exception(MACOS_ONLY)
     import fcntl
 
     return os.fsdecode(fcntl.fcntl(fd, fcntl.F_GETPATH, bytes(1024)).rstrip(b"\0"))
@@ -1197,6 +1204,8 @@ def test_S0100_r1_an_app_folder_that_is_a_link_has_both_parents_synced(
 ) -> None:
     """Verifier r1 F2: the save and recover-all follow a link at the app folder's path, so the real folder's parent is
     synced too, beside the link's."""
+    if sys.platform != "darwin":
+        raise pytest.skip.Exception(MACOS_ONLY)
     from app.platform.adapters import app_folder
 
     real = tmp_path / "elsewhere" / "app"
@@ -1221,6 +1230,8 @@ def test_S0100_r1_a_volume_that_refuses_the_full_sync_gets_fsync(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, err: int
 ) -> None:
     """Red team r1 F4: the engine's `durable_sync` rule: `F_FULLFSYNC` refused by the volume, then `fsync`."""
+    if sys.platform != "darwin":
+        raise pytest.skip.Exception(MACOS_ONLY)
     import fcntl
 
     from app.platform.adapters import app_folder
@@ -1247,6 +1258,8 @@ def test_S0100_r1_another_full_sync_error_still_refuses_the_start(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Must not pass: an I/O error from the full sync is a refusal, not an `fsync`."""
+    if sys.platform != "darwin":
+        raise pytest.skip.Exception(MACOS_ONLY)
     import fcntl
 
     from app.platform.adapters import app_folder

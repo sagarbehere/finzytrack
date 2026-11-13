@@ -15,8 +15,9 @@ loss keeps or drops each whole; so is a plain rename, except over an existing fi
 FAT: `rename`). Nothing is assumed about the order in which unsynced operations reach the disk. Every sync is
 `durable_sync`: `F_FULLFSYNC` on macOS.
 
-Every operation may raise `OSError`. The real adapter is `ledger_engine.fs.darwin` (macOS); the test adapter is the
-in-memory fake `tests/fakes/memfs.py`, with a separate durable layer, crash, I/O-error and power-loss injection.
+Every operation may raise `OSError`. The real adapter is `ledger_engine.fs.darwin` (macOS), taken only through
+`ledger_engine.fs.this_os.for_this_os` (S0113); the test adapter is the in-memory fake `tests/fakes/memfs.py`, with a
+separate durable layer, crash, I/O-error and power-loss injection.
 """
 
 from __future__ import annotations

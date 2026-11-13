@@ -28,8 +28,8 @@ from typing import Any, cast, override
 
 import pytest
 
-from ledger_engine.fs.darwin import for_this_os
 from ledger_engine.fs.port import DirHandle, FileSystem
+from ledger_engine.fs.this_os import for_this_os
 from ledger_engine.ledger.core.ledger_set import decode, digest, encode
 from ledger_engine.ledger.fingerprint import observe
 from ledger_engine.mirror import build as build_mod

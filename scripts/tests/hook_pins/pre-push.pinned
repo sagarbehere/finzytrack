@@ -82,7 +82,8 @@ run "cargo 14-day rule (new entries verified)" --size-dependent python3 scripts/
 if [[ -f backend/pyproject.toml ]]; then
   run "ruff format (backend)" bash -c "cd backend && .venv/bin/ruff format --check --config ruff.toml ."
   run "ruff lint (backend)" bash -c "cd backend && .venv/bin/ruff check --config ruff.toml ."
-  run "pyright" bash -c "cd backend && .venv/bin/pyright"
+  # S0113: strict types once per target platform (macOS and Linux, in parallel; Windows is BL-0259).
+  run "pyright" python3 scripts/pyright_platforms.py backend
   run "import contracts" bash -c "cd backend && .venv/bin/lint-imports"
   run "declared dependencies" bash -c "cd backend && .venv/bin/deptry src"
   run "backend tests" bash -c "cd backend && .venv/bin/pytest -q -x --junitxml='$reports/backend.xml'"
@@ -92,7 +93,7 @@ fi
 if [[ -f engine/pyproject.toml ]]; then
   run "ruff format (engine)" bash -c "cd engine && .venv/bin/ruff format --check --config ruff.toml ."
   run "ruff lint (engine)" bash -c "cd engine && .venv/bin/ruff check --config ruff.toml ."
-  run "pyright (engine)" bash -c "cd engine && .venv/bin/pyright"
+  run "pyright (engine)" python3 scripts/pyright_platforms.py engine
   run "engine tests" bash -c "cd engine && .venv/bin/python -m pytest -q -x --junitxml='$reports/engine.xml'"
 fi
 if [[ -f shell/src-tauri/Cargo.toml ]]; then

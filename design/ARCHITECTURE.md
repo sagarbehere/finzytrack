@@ -326,8 +326,10 @@ engine/src/ledger_engine/
                  write lock for Copy (BL-0026); same_path, the path guard's comparison), darwin.py (F_FULLFSYNC, renameatx_np on the folder's
                  descriptor, a file resolved through its folder and stored name, never F_GETPATH on a hard-linked
                  file; fcopyfile for xattrs only, no ACL; acl_get_fd_np for acl, _RMFILE_OK for
-                 REMOVE_ENTRIES, X_OK for SEARCH; DarwinLegacyLocks, flock as portalocker 3.2.0; other OSes
-                 refuse, BL-0087); the
+                 REMOVE_ENTRIES, X_OK for SEARCH; DarwinLegacyLocks, flock as portalocker 3.2.0; macOS-only: its
+                 import raises ImportError elsewhere), this_os.py (the one selection point, S0113: for_this_os and
+                 legacy_locks_for_this_os give the macOS adapters on macOS and raise UnsupportedPlatform elsewhere,
+                 BL-0087; nothing else imports an adapter, tests/architecture/test_platform_selection.py); the
                  in-memory fake with a durable layer and crash/power-loss injection is engine/tests/fakes/memfs.py
   mirror/        the build half: projection of a LoadResult into SQLite.
     core/        schema.py: the tables, the DDL, the r_* and compatibility views (S0050); rows.py: the row
@@ -378,7 +380,7 @@ Each slice has the same internal layout, so an agent finds things by convention:
 | `FileSystem` | `platform.adapters.fs` (read, `atomic_replace` = temp + fsync + `os.replace` + `fsync_dir`, stat, list, `newline=""`) | in-memory FS with crash injection at every call | Confined: takes `WorkspacePath` / `AppPath` only (§2.6) |
 | `Locks` | portalocker 3.2.0 semantics (`flock` on POSIX; `msvcrt.locking` for exclusive locks on Windows), a one-shot non-blocking try of a legacy `.write.lock` before a Copy, never waited for; the app-instance lock (ADR-0062) | in-process fake with an interleaving scheduler | The primitive is pinned in ADR-0005. The legacy-lock try is the engine's adapter (`ledger_engine.fs.darwin.DarwinLegacyLocks`, `flock` as portalocker 3.2.0 calls it on POSIX, tested against a portalocker 3.2.0 holder; S0063; portalocker a test-only dependency: ADR-0062's 2026-10-31 amendment), for Copy only since S0071 (ADR-0068 D4; BL-0026) |
 | Ledger store | `ledger.overlay` + `ledger.writer` over `FileSystem`, in the engine | the same code over the fake FS | Not a separate port inside the engine: it *is* the kernel; its I/O goes through `FileSystem` |
-| Engine `FileSystem` (writes) | `ledger_engine.fs.darwin` (S0060): a handle per directory, so the path check and the write use one descriptor; `F_FULLFSYNC`; `RENAME_SWAP` and `RENAME_EXCL`, each only where the volume's capabilities offer it, and a plain `renameat` only for the best-effort mode on a volume without the swap (ADR-0012 amendment of 2026-10-25, ADR-0013, ADR-0068 D2; S0065, S0071); `rmdir` (S0061); the legacy lock for Copy (`DarwinLegacyLocks`, ADR-0062, BL-0026); `sync_file`, `F_FULLFSYNC` on a read-only descriptor of a file the save replaces (S0061 round 4); macOS only until BL-0087 | `engine/tests/fakes/memfs.py`: in-memory, a separate durable layer, crash, I/O-error and power-loss injection at every effect (§13's file-system assumptions) | `engine/tests/architecture/test_write_port.py`: the write path imports nothing that touches files |
+| Engine `FileSystem` (writes) | `ledger_engine.fs.darwin` (S0060), selected only by `ledger_engine.fs.this_os.for_this_os` (S0113; other OSes: `UnsupportedPlatform`, an `OSError`, while the handshake and ping still work): a handle per directory, so the path check and the write use one descriptor; `F_FULLFSYNC`; `RENAME_SWAP` and `RENAME_EXCL`, each only where the volume's capabilities offer it, and a plain `renameat` only for the best-effort mode on a volume without the swap (ADR-0012 amendment of 2026-10-25, ADR-0013, ADR-0068 D2; S0065, S0071); `rmdir` (S0061); the legacy lock for Copy (`DarwinLegacyLocks`, ADR-0062, BL-0026); `sync_file`, `F_FULLFSYNC` on a read-only descriptor of a file the save replaces (S0061 round 4); macOS only until BL-0087 | `engine/tests/fakes/memfs.py`: in-memory, a separate durable layer, crash, I/O-error and power-loss injection at every effect (§13's file-system assumptions) | `engine/tests/architecture/test_write_port.py`: the write path imports nothing that touches files |
 | `EnginePort` (main sidecar) | `platform.adapters.engine_client.EngineClient` (spawn, handshake, our ends and the process group, bounded restarts; S0035, S0057; driven by the statechart `platform.engine_supervision`, S0040) | a fake `EnginePort` | The only way the main sidecar reaches the ledger engine (§2.0); results are tagged unions (EP-13) |
 | Mirror | `mirror.publish` / `mirror.reader` over SQLite files in the cache dir | the same over a temp dir | Generation files behind a symlink or pointer file |
 | `Clock` | `zoneinfo`-aware system clock | `FrozenClock` | "today" derives from it: `domain.dates.civil_date(clock.now())` (INV-07) |
@@ -973,7 +975,7 @@ The versions below are the newest stable releases published on or before **2026-
 
 | Tool | Pin | Use |
 |---|---|---|
-| pyright | 1.1.414 | **the single type gate, in strict mode** (ADR-0050: `LiteralString` support and speed). mypy is not run |
+| pyright | 1.1.414 | **the single type gate, in strict mode** (ADR-0050: `LiteralString` support and speed), run once per target platform with `--pythonplatform` (`scripts/pyright_platforms.py`: macOS and Linux, S0113; Windows BL-0259), the pinned config unchanged. mypy is not run |
 | ruff | 0.17.0 | format + lint, incl. `TID251` banned APIs, `DTZ`, `BLE`, `S`, `TRY` |
 | import-linter | 2.15 | §2.4 contracts |
 | pytest | 9.1.1 | with pytest-xdist 3.8.0 and coverage 7.16.2 |

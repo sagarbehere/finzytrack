@@ -21,16 +21,20 @@ from typing import override
 
 import pytest
 
-from ledger_engine.fs.darwin import DarwinFS
 from ledger_engine.fs.port import Caps, FolderMark
 from ledger_engine.ledger.handles import acl_denial
 from ledger_engine.ledger.paths import identify
 from ledger_engine.ledger.writer import Change, Commit, Landed, NotSaved, Reason, Step, durable_commit, sha256
+from tests.macos_only import MACOS_ONLY
 
-pytestmark = [
-    pytest.mark.inv("INV-01"),
-    pytest.mark.skipif(sys.platform != "darwin", reason="the real adapter is macOS-only until BL-0087"),
-]
+# Before any macOS-only name (S0113): the adapter refuses to be imported elsewhere, and after this `raise` pyright
+# checks the rest of the module for macOS only (`tests/macos_only.py`).
+if sys.platform != "darwin":
+    raise pytest.skip.Exception(MACOS_ONLY, allow_module_level=True)
+
+from ledger_engine.fs.darwin import DarwinFS  # after the platform guard
+
+pytestmark = pytest.mark.inv("INV-01")
 
 
 def _volumes_env() -> list[str]:
@@ -223,14 +227,6 @@ def test_another_error_from_full_fsync_is_not_hidden(
             fs.durable_sync(fd)
     finally:
         os.close(fd)
-
-
-def test_other_operating_systems_are_refused(monkeypatch: pytest.MonkeyPatch) -> None:
-    from ledger_engine.fs import darwin
-
-    monkeypatch.setattr(darwin.sys, "platform", "linux")
-    with pytest.raises(darwin.UnsupportedPlatform):
-        darwin.for_this_os()
 
 
 # ---- S0060 verifier round 1 and data-safety red team round 1 ------------------------------------------------------

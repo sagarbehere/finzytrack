@@ -16,7 +16,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Final, Protocol
 
-from ledger_engine.fs.darwin import for_this_os
+from ledger_engine.fs.this_os import for_this_os
 from ledger_engine.ledger import opening
 from ledger_engine.protocol.messages import Message, OpenParams, OpenRefusal, OpenResult
 from ledger_engine.protocol.rebuild import Publisher, fields_of, target_of

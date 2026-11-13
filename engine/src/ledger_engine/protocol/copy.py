@@ -15,7 +15,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Final
 
-from ledger_engine.fs.darwin import DarwinLegacyLocks, for_this_os
+from ledger_engine.fs.this_os import for_this_os, legacy_locks_for_this_os
 from ledger_engine.ledger import copy as cp
 from ledger_engine.ledger import create as cr
 from ledger_engine.ledger.writer import BadPlanError
@@ -50,7 +50,7 @@ def _plan(params: Message) -> cp.CopyPlan:
 def copy(params: Message, ctx: CreateJob) -> Message:
     plan = _plan(params)
     try:
-        out = cp.run(plan, cp.CopyPorts(for_this_os(), DarwinLegacyLocks()), ctx)
+        out = cp.run(plan, cp.CopyPorts(for_this_os(), legacy_locks_for_this_os()), ctx)
     except BadPlanError as e:
         raise BadParamsError(str(e)) from None
     return answer(out, ctx, TABLE, TABLE_VERSION)

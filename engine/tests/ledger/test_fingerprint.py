@@ -12,6 +12,7 @@ fingerprints never share a digest except by a SHA-256 collision.
 
 from __future__ import annotations
 
+import dataclasses
 import errno
 import hashlib
 import json
@@ -26,7 +27,6 @@ import pytest
 from hypothesis import example, given
 from hypothesis import strategies as st
 
-from ledger_engine.fs.darwin import DarwinLegacyLocks, for_this_os
 from ledger_engine.ledger.copy import CopyPorts
 from ledger_engine.ledger.core.ledger_set import (
     Absent,
@@ -654,4 +654,5 @@ def test_a_copys_re_check_of_a_document_never_blocks_on_a_fifo(tmp_path: Path) -
     assert file_state(str(tmp_path / "pipe")) == Unreadable("EINVAL")
     (tmp_path / "f").write_bytes(b"abc")
     assert file_state(str(tmp_path / "f")) == Content(hashlib.sha256(b"abc").hexdigest())
-    assert CopyPorts(fs=for_this_os(), legacy=DarwinLegacyLocks()).file_state is file_state, "the copy's port"
+    port = {f.name: f.default for f in dataclasses.fields(CopyPorts)}["file_state"]
+    assert port is file_state, "the copy's port (read from the class: no real file system needed, S0113)"

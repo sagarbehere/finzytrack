@@ -1015,12 +1015,12 @@ def test_a_long_backlog_is_trimmed_in_one_pass_under_a_low_descriptor_limit(tmp_
         (bd / tag(i)).mkdir()
         (bd / tag(i) / "0-a.bean").write_bytes(b"x")
         os.utime(jd / f"{tag(i)}.closed", ns=(10**9 * (i + 1), 10**9 * (i + 1)))
-    from ledger_engine.fs.darwin import DarwinFS  # macOS only
+    from ledger_engine.fs.this_os import for_this_os  # macOS only until BL-0087
 
     soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
     resource.setrlimit(resource.RLIMIT_NOFILE, (_free_descriptors_limit(40), hard))
     try:
-        out = history.trim(DarwinFS(), str(tmp_path), "k1", "s9-none")
+        out = history.trim(for_this_os(), str(tmp_path), "k1", "s9-none")
     finally:
         resource.setrlimit(resource.RLIMIT_NOFILE, (soft, hard))
     assert out == history.Trimmed(removed=n - KEEP, left=0, skipped=False)

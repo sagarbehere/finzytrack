@@ -121,7 +121,7 @@ class EngineChecksAreWired(unittest.TestCase):
         for line in ('run "ruff format (engine)" bash -c "cd engine && .venv/bin/ruff format --check --config '
                      'ruff.toml ."',
                      'run "ruff lint (engine)" bash -c "cd engine && .venv/bin/ruff check --config ruff.toml ."',
-                     'run "pyright (engine)" bash -c "cd engine && .venv/bin/pyright"',
+                     'run "pyright (engine)" python3 scripts/pyright_platforms.py engine',
                      'run "engine tests" bash -c "cd engine && .venv/bin/python -m pytest -q -x '
                      "--junitxml='$reports/engine.xml'\""):
             self.assertIn("\n  " + line + "\n", block + "\n")
@@ -151,7 +151,8 @@ class EngineChecksAreWired(unittest.TestCase):
         self.assertIn("working-directory: engine\n", engine)
         self.assertIn("timeout-minutes:", engine)
         steps = ["run: uv sync --locked\n", "run: .venv/bin/ruff format --check --config ruff.toml .\n",
-                 "run: .venv/bin/ruff check --config ruff.toml .\n", "run: .venv/bin/pyright\n",
+                 "run: .venv/bin/ruff check --config ruff.toml .\n",
+                 "run: python3 ../scripts/pyright_platforms.py .\n",
                  "run: .venv/bin/python -m pytest -q\n"]
         at = [engine.index(s) for s in steps]
         self.assertEqual(at, sorted(at))

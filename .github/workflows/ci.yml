@@ -95,8 +95,8 @@ jobs:
         run: .venv/bin/ruff format --check --config ruff.toml .
       - name: ruff lint
         run: .venv/bin/ruff check --config ruff.toml .
-      - name: pyright (strict)
-        run: .venv/bin/pyright
+      - name: pyright (strict, once per target platform; S0113)
+        run: python3 ../scripts/pyright_platforms.py .
       - name: import contracts
         run: .venv/bin/lint-imports
       - name: declared dependencies
@@ -129,8 +129,8 @@ jobs:
         run: .venv/bin/ruff format --check --config ruff.toml .
       - name: ruff lint
         run: .venv/bin/ruff check --config ruff.toml .
-      - name: pyright (strict)
-        run: .venv/bin/pyright
+      - name: pyright (strict, once per target platform; S0113)
+        run: python3 ../scripts/pyright_platforms.py .
       - name: tests
         run: .venv/bin/python -m pytest -q
   frontend:
