@@ -167,22 +167,28 @@ def test_a_domain_error_takes_its_status_and_class_from_the_registry(code: str, 
 
 
 @pytest.mark.parametrize(
-    ("error_class", "status"),
+    ("error_class", "code", "status"),
     [
-        (ErrorClass.INVALID, 422),
-        (ErrorClass.NOT_FOUND, 404),
-        (ErrorClass.CONFLICT, 409),
-        (ErrorClass.FORBIDDEN, 403),
-        (ErrorClass.UNAVAILABLE, 503),
-        (ErrorClass.INTERNAL, 500),
+        (ErrorClass.INVALID, "VALIDATION_FAILED", 422),
+        (ErrorClass.NOT_FOUND, "WORKSPACE_UNKNOWN", 404),
+        (ErrorClass.CONFLICT, "WORKSPACE_NOT_OPEN", 409),
+        (ErrorClass.FORBIDDEN, "UNPROMOTED_MUTATOR_ON_REAL_LEDGER", 403),
+        (ErrorClass.UNAVAILABLE, "ENGINE_QUEUE_FULL", 503),
+        (ErrorClass.INTERNAL, "INTERNAL", 500),
+        # S0117 (BL-0106): the one class with two statuses, by code: the user's Save anyway, and every refusal
+        (ErrorClass.CONTRACT_REFUSED, "ACK_REQUIRED", 409),
+        (ErrorClass.CONTRACT_REFUSED, "WRITE_REFUSED_CHECK_FAILED", 422),
+        (ErrorClass.CONTRACT_REFUSED, "SOME_FUTURE_REFUSAL", 422),
     ],
 )
-def test_the_status_of_each_class_is_the_table_of_architecture_6_1(error_class: ErrorClass, status: int) -> None:
-    assert status_for(error_class) == status
+def test_the_status_of_each_class_is_the_table_of_architecture_6_1(
+    error_class: ErrorClass, code: str, status: int
+) -> None:
+    assert status_for(error_class, code) == status
 
 
 def test_every_error_class_has_a_status() -> None:
-    assert {c: status_for(c) for c in ErrorClass}.keys() == set(ErrorClass)
+    assert {c: status_for(c, "X") for c in ErrorClass}.keys() == set(ErrorClass)
 
 
 @pytest.mark.parametrize(

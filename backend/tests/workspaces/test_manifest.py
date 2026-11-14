@@ -261,3 +261,15 @@ def test_an_encoded_manifest_reads_back_equal(ledger: Inside | External) -> None
 def test_only_a_manifest_of_this_apps_format_with_a_canonical_id_is_written(bad: Manifest) -> None:
     with pytest.raises(ValueError):  # noqa: PT011 (pydantic's ValidationError is a ValueError)
         encode_manifest(bad)
+
+
+def test_format_1_carries_no_test_copy_mark() -> None:
+    """@regression-guard (S0117: it pins what format 1 already does, so it passes on the base). ADR-0014;
+    CAP-WS-TEST-COPY, M3: the promotion guard reads a workspace's test-copy mark, and format 1 has
+    none. A `test_copy` field written into a format 1 manifest by hand is an unknown field, ignored like any other
+    (EP-14), so it can never make a real ledger pass the guard: the mark comes with the test copy's own format (M3)."""
+    plain = read_manifest(manifest())
+    marked = read_manifest(manifest(test_copy="true"))
+    assert marked == plain
+    assert isinstance(marked, Manifest)
+    assert [f for f in Manifest.__dataclass_fields__ if "copy" in f] == []

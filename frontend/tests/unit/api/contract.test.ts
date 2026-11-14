@@ -55,6 +55,13 @@ describe('[S0046] the generated API types', () => {
       | 'LEDGER_CHANGING'
       | 'WRITES_PAUSED'
       | 'CHANGE_NOT_SAVED'
+      | 'ACK_REQUIRED'
+      | 'WRITE_REFUSED_UNINTENDED_CHANGE'
+      | 'WRITE_REFUSED_CHECK_FAILED'
+      | 'ENCRYPTED_FILE_NOT_EDITABLE'
+      | 'PLAN_EXPIRED'
+      | 'PREVIEW_STALE'
+      | 'UNPROMOTED_MUTATOR_ON_REAL_LEDGER'
       | 'INTERNAL'
     >()
   })
@@ -67,6 +74,20 @@ describe('[S0046] the generated API types', () => {
     expectTypeOf<Extract<ApiError, { code: 'WORKSPACE_NOT_READY' }>['details']>().toEqualTypeOf<{
       phase: 'WARMING'
     }>()
+    // S0117: the write contract's codes (BL-0106)
+    expectTypeOf<Extract<ApiError, { code: 'ACK_REQUIRED' }>['details']>().toEqualTypeOf<{
+      error_keys: string[]
+    }>()
+    expectTypeOf<Extract<ApiError, { code: 'WRITE_REFUSED_CHECK_FAILED' }>['details']>().toEqualTypeOf<{
+      step: 'plan' | 'apply' | 'parse' | 'diff' | 'spans' | 'load' | 'errors' | 'files'
+    }>()
+    expectTypeOf<Extract<ApiError, { code: 'ENCRYPTED_FILE_NOT_EDITABLE' }>['details']>().toEqualTypeOf<{
+      path: string | null
+    }>()
+    expectTypeOf<Extract<ApiError, { code: 'UNPROMOTED_MUTATOR_ON_REAL_LEDGER' }>['details']>().toEqualTypeOf<{
+      mutator: string
+    }>()
+    expectTypeOf<Extract<ApiError, { code: 'PLAN_EXPIRED' }>['details']>().toEqualTypeOf<null>()
     // S0058: the engine-job codes (engine-jobs §11)
     expectTypeOf<Extract<ApiError, { code: 'JOB_CANCELLED' }>['details']>().toEqualTypeOf<{
       cannot_stop_ahead: boolean

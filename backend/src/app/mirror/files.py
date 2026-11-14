@@ -39,6 +39,7 @@ __all__ = [
     "NotAMirrorError",
     "OpenMirror",
     "absolute",
+    "generation_number",
     "open_mirror",
     "pin",
     "unavailable",
@@ -179,6 +180,15 @@ def pin(mirror_dir: str) -> str | MirrorUnavailable:
     if not GENERATION.fullmatch(target):
         return MirrorUnavailable("not_published", "current.db names no generation of the folder")
     return str(folder / target)
+
+
+def generation_number(pinned: str) -> int | None:
+    """The number N of a generation path `pin` gave (`gen-N-<hex>.db`, publish.md §3); None for any other name. S0117:
+    the confirm reads the published generation's number to hold a plan to the generation it was made on."""
+    name = Path(pinned).name
+    if not GENERATION.fullmatch(name):
+        return None
+    return int(name.split("-")[1])
 
 
 @tla_action("R_Read1", "R_Read2", model="mirror-publish")

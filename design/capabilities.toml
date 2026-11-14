@@ -5258,17 +5258,17 @@ id = "CAP-DATA-WRITE-GATE"
 area = "Data and lifecycle"
 capability = "A write that adds booking errors is refused"
 v04 = "change"
-v04_note = "the full write-safety contract, every step failing closed: semantic diff equals the intended change, no new errors unless the user saves anyway after the preview lists them (ADR-0067: integrity blocks, accounting advises; no error class is refused), hash and fingerprint checks, atomic with backup, read-back (review:D1 §3, §12.2). The contract's prepare is built (S0116: steps 1, 2, 2b and 3 in `ledger/contract.py`, served as the engine's `preview` op); no save goes through it yet (the confirm)"
-status = "planned"
+v04_note = "the full write-safety contract, every step failing closed: semantic diff equals the intended change, no new errors unless the user saves anyway after the preview lists them (ADR-0067: integrity blocks, accounting advises; no error class is refused), hash and fingerprint checks, atomic with backup, read-back (review:D1 §3, §12.2). The contract's prepare is built (S0116: steps 1, 2, 2b and 3 in `ledger/contract.py`, served as the engine's `preview` op); since S0117 the contract runs end to end on a test copy with a test producer: the sidecar's preview keeps the plan, and the confirm (acknowledgements, the plan's binding, the promotion guard) hands it to the save. Not yet: a real mutator, the routes, a test copy outside tests (CAP-WS-TEST-COPY)"
+status = "partial"
 milestone = "M1"
 release_blocking = "yes"
 doc = "reference/ledger-rewrites.md"
 legacy_entry = "write gate in `core/ledger_manager.py`"
 demo = "no"
-backlog = ["I11", "L1-08", "L7-04"]
-adrs = []
-code = []
-tests = []
+backlog = ["I11", "L1-08", "L7-04", "BL-0106", "BL-0267"]
+adrs = ["ADR-0008", "ADR-0014", "ADR-0067"]
+code = ["engine/src/ledger_engine/ledger/contract.py", "engine/src/ledger_engine/ledger/preview.py", "backend/src/app/platform/engine_jobs/preview.py", "backend/src/app/platform/plans.py", "backend/src/app/workspaces/writes.py"]
+tests = ["engine/tests/ledger/test_contract.py", "engine/tests/test_preview_ops.py", "backend/tests/workspaces/test_writes.py", "backend/tests/workspaces/test_writes_end_to_end.py"]
 
 [[capability]]
 id = "CAP-DATA-EXTERNAL-EDIT"

@@ -107,6 +107,14 @@ def test_the_codes_of_architecture_6_1_this_slice_raises_have_their_classes() ->
         "CHANGE_NOT_SAVED": ErrorClass.CONFLICT,
         # S0088 (engine-jobs §7, §11; ARCHITECTURE §6.1's `Unavailable` row: busy, Try again): the open's tries
         "LEDGER_CHANGING": ErrorClass.UNAVAILABLE,
+        # S0117 (BL-0106; ARCHITECTURE §6.1): the write contract's refusals and its Save anyway, and the confirm's
+        "ACK_REQUIRED": ErrorClass.CONTRACT_REFUSED,
+        "WRITE_REFUSED_UNINTENDED_CHANGE": ErrorClass.CONTRACT_REFUSED,
+        "WRITE_REFUSED_CHECK_FAILED": ErrorClass.CONTRACT_REFUSED,
+        "ENCRYPTED_FILE_NOT_EDITABLE": ErrorClass.CONTRACT_REFUSED,
+        "PLAN_EXPIRED": ErrorClass.NOT_FOUND,
+        "PREVIEW_STALE": ErrorClass.CONFLICT,
+        "UNPROMOTED_MUTATOR_ON_REAL_LEDGER": ErrorClass.FORBIDDEN,
         "INTERNAL": ErrorClass.INTERNAL,
     }
     assert {s.code: s.error_class for s in specs()} == expected

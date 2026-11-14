@@ -94,6 +94,7 @@ from app.platform.observability import (
     valid_session_id,
 )
 from app.platform.observability.events import ENGINE_STDERR
+from app.platform.plans import PlanStore
 from app.workspaces.access import NoWorkspaces, WorkspaceAccess
 
 LOOPBACK = "127.0.0.1"
@@ -129,6 +130,7 @@ class Wiring:
     clock: Clock
     engine: EngineClient
     jobs: EngineJobs
+    plans: PlanStore
     api: ApiContainer
 
 
@@ -242,10 +244,14 @@ def wire(args: Args, folder: AppFolder, log: EventSink, app_version: str) -> Wir
         log=log,
         recover_all=recover_all_work(args.app_local_data.resolve()),  # §8.1: the boot's recover-all, in an engine
     )
+    clock = FrozenClock(args.frozen_clock) if args.frozen_clock else SystemClock()
     return Wiring(
-        clock=FrozenClock(args.frozen_clock) if args.frozen_clock else SystemClock(),
+        clock=clock,
         engine=engine,
         jobs=jobs,
+        # The write contract's plans (S0117); the routes that use them come with the first mutator.
+        # TODO(BL-0154): the switch drops them (`workspace_opened`, `workspace_closed`).
+        plans=PlanStore(clock),
         # TODO(BL-0102): the registry's gate replaces NoWorkspaces (every key is WORKSPACE_UNKNOWN until then).
         api=SidecarContainer(app_version=app_version, ids=Uuid7Ids(), workspaces=NoWorkspaces(), log=log),
     )

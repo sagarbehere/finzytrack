@@ -41,6 +41,7 @@ from app.platform.engine_jobs.save import (
 from app.platform.engine_jobs.scheduler import Done, EngineJobs, JobTicket
 from app.platform.errors import (
     ChangeNotSavedDetails,
+    EncryptedFileDetails,
     EngineStoppedDetails,
     EngineUnavailableDetails,
     ErrorCode,
@@ -160,8 +161,13 @@ def test_a_save_that_lands_is_saved_and_its_engine_is_retired(make: Any) -> None
             WorkspaceNotReadyDetails("WARMING"),
         ),
         (answer(outcome="refused", reason="load_refused", unchanged=True), "INTERNAL", None),  # an older engine's
-        # S0070: the preview refuses an encrypted file first (BL-0106); the save's own refusal is a bug, never "saved"
-        (answer(outcome="refused", reason="encrypted_file", unchanged=True), "INTERNAL", None),
+        # S0117 (BL-0106): the confirm refuses an encrypted file first; the save's own step 0 refusal (a link to one
+        # made after the preview) has the contract's code, never "saved" and never INTERNAL
+        (
+            answer(outcome="refused", reason="encrypted_file", path=NEW, unchanged=True),
+            "ENCRYPTED_FILE_NOT_EDITABLE",
+            EncryptedFileDetails(NEW),
+        ),
         (answer(outcome="not_saved", reason="changed"), "LEDGER_EXTERNALLY_CHANGED", None),
         (answer(outcome="not_saved", reason="path_moved"), "LEDGER_EXTERNALLY_CHANGED", None),
         (
@@ -222,8 +228,8 @@ def test_a_save_that_lands_is_saved_and_its_engine_is_retired(make: Any) -> None
 def test_each_engine_answer_is_its_code(
     make: Any, result: dict[str, object], want_code: str, want_details: object
 ) -> None:
-    """S0070's `encrypted_file` case is a @regression-guard: the base already mapped an unknown refusal to `INTERNAL`;
-    the case pins that the save's own encrypted refusal never reads as saved or as a pause."""
+    """S0117: the save's own `encrypted_file` refusal is the contract's `ENCRYPTED_FILE_NOT_EDITABLE` naming the
+    file (BL-0106's TODO), never "saved", a pause or `INTERNAL`."""
     rig = make({"save": [Gated(result) if result["outcome"] in ("not_saved", "unfinished") else result]})
     value = rig.save()
     assert code(value) == want_code

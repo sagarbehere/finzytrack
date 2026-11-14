@@ -1,7 +1,11 @@
 """Error codes: the registry, the single source for codes (ARCHITECTURE.md §6.1; EP-13)."""
 
 from app.platform.errors.registry import (
+    AckRequiredDetails,
     ChangeNotSavedDetails,
+    ContractStep,
+    ContractStepDetails,
+    EncryptedFileDetails,
     EngineStoppedDetails,
     EngineUnavailableDetails,
     ErrorCode,
@@ -10,6 +14,7 @@ from app.platform.errors.registry import (
     NotReadyPhase,
     NotSavedReason,
     PausedReason,
+    UnpromotedDetails,
     WorkspaceNotOpenDetails,
     WorkspaceNotReadyDetails,
     WritesPausedDetails,
@@ -21,7 +26,11 @@ from app.platform.errors.registry import (
 )
 
 __all__ = [
+    "AckRequiredDetails",
     "ChangeNotSavedDetails",
+    "ContractStep",
+    "ContractStepDetails",
+    "EncryptedFileDetails",
     "EngineStoppedDetails",
     "EngineUnavailableDetails",
     "ErrorCode",
@@ -30,6 +39,7 @@ __all__ = [
     "NotReadyPhase",
     "NotSavedReason",
     "PausedReason",
+    "UnpromotedDetails",
     "WorkspaceNotOpenDetails",
     "WorkspaceNotReadyDetails",
     "WritesPausedDetails",

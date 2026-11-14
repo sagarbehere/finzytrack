@@ -1,0 +1,176 @@
+"""Write plans and the `PlanStore` (S0117; ARCHITECTURE.md §2.5's state table, §4.2, §9.2 steps 3-4; ADR-0008,
+ADR-0033, ADR-0063; INV-10, INV-11; BL-0106).
+
+A **write plan** is what the engine's `preview` prepared and the user may confirm: the files it writes (each path, the
+SHA-256 of its bytes when the preview read them, the SHA-256 of its new text, and that text), the plan's fingerprint
+(the ledger set the preview's load read, with each written file at its pre bytes: the save's gate checks the disk
+still holds it, engine-jobs §6.1 step 4), the mirror generation it was made on, the mutator that made it, and the keys
+of the new errors the preview listed (ADR-0067). It holds texts and hashes, never entries (INV-10).
+
+The **preview hash** is the SHA-256 of everything the user was shown about the plan, in one canonical encoding: the
+workspace, the root, the mutator, the generation, the fingerprint, each file's path and both hashes in order, and the
+new error keys in order. The text is covered by its `post` hash (the confirm checks the text against it). The plan id
+is not in it. The client sends it back with the confirm, which must name this hash (owner's rule 3, S0117).
+
+The **store** holds the plans of this user container (the owner's rule 1: a confirm writes only a plan this app's
+preview prepared, held here, never sent back by the client). Bounded (INV-10, `PlanPolicy`): a plan lives at most
+`ttl_seconds` after it was made (by the injected `Clock`), and at most `max_plans` are kept, the oldest let go first.
+A plan is found only in its own workspace; `take` removes it, so it is used once; a switch drops plans (ADR-0063
+decision 1 step 3): `workspace_opened(ws)` drops every other workspace's, `workspace_closed()` drops them all (the
+switch calls them, BL-0154). Every method takes one lock, so two confirms of one plan take it once.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import threading
+from collections.abc import Iterable
+from dataclasses import dataclass
+from datetime import datetime, timedelta
+from typing import NewType
+
+from app.platform.clock import Clock
+
+PlanId = NewType("PlanId", str)
+"""A plan's id in the store (ARCHITECTURE §2.6)."""
+
+PreviewHash = NewType("PreviewHash", str)
+"""The SHA-256 (hex) of what the preview showed (the module's docstring; ARCHITECTURE §2.6)."""
+
+
+@dataclass(frozen=True, slots=True)
+class PlannedFile:
+    """A file the plan writes: its absolute path as the ledger names it, the SHA-256 of its bytes when the preview
+    read them (`pre`), the SHA-256 of its new text (`post`), and the text."""
+
+    path: str
+    pre: str
+    post: str
+    text: str
+
+
+@dataclass(frozen=True, slots=True)
+class WritePlan:
+    plan_id: PlanId
+    workspace: str
+    root: str
+    mutator: str
+    generation: int
+    fingerprint: str
+    files: tuple[PlannedFile, ...]
+    new_error_keys: tuple[str, ...]
+    preview_hash: PreviewHash
+    made_at: datetime
+
+
+def preview_hash(
+    workspace: str,
+    root: str,
+    mutator: str,
+    generation: int,
+    fingerprint: str,
+    files: Iterable[PlannedFile],
+    new_error_keys: Iterable[str],
+) -> PreviewHash:
+    value = {
+        "workspace": workspace,
+        "root": root,
+        "mutator": mutator,
+        "generation": generation,
+        "fingerprint": fingerprint,
+        "files": [[f.path, f.pre, f.post] for f in files],
+        "new_error_keys": list(new_error_keys),
+    }
+    encoded = json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode("ascii")
+    return PreviewHash(hashlib.sha256(encoded).hexdigest())
+
+
+def new_plan(
+    plan_id: PlanId,
+    workspace: str,
+    root: str,
+    mutator: str,
+    generation: int,
+    fingerprint: str,
+    files: tuple[PlannedFile, ...],
+    new_error_keys: tuple[str, ...],
+    made_at: datetime,
+) -> WritePlan:
+    """A plan with its own preview hash."""
+    digest = preview_hash(workspace, root, mutator, generation, fingerprint, files, new_error_keys)
+    return WritePlan(plan_id, workspace, root, mutator, generation, fingerprint, files, new_error_keys, digest, made_at)
+
+
+@dataclass(frozen=True, slots=True)
+class PlanPolicy:
+    """The store's bounds (INV-10: a setting, with desktop defaults). A preview's texts fit one engine reply (16 MiB,
+    `engine_protocol.MAX_LINE_BYTES`), so the store holds at most `max_plans` of that."""
+
+    ttl_seconds: int = 15 * 60
+    max_plans: int = 4
+
+    @property
+    def ttl(self) -> timedelta:
+        return timedelta(seconds=self.ttl_seconds)
+
+    def __post_init__(self) -> None:
+        if self.ttl_seconds < 1 or self.max_plans < 1:
+            msg = "a plan store needs a positive ttl and room for one plan"
+            raise ValueError(msg)
+
+
+class PlanStore:
+    """The module's docstring."""
+
+    def __init__(self, clock: Clock, policy: PlanPolicy | None = None) -> None:
+        self._clock = clock
+        self._policy = policy or PlanPolicy()
+        self._lock = threading.Lock()
+        self._plans: dict[PlanId, WritePlan] = {}  # in the order they were added: the oldest first
+
+    def __len__(self) -> int:
+        with self._lock:
+            return len(self._plans)
+
+    def add(self, plan: WritePlan) -> None:
+        """Keep `plan`; the expired ones are let go, then the oldest until there is room. An id is never used twice."""
+        with self._lock:
+            if plan.plan_id in self._plans:
+                msg = f"a plan id is used once: {plan.plan_id}"
+                raise ValueError(msg)
+            self._drop_expired()
+            while len(self._plans) >= self._policy.max_plans:
+                del self._plans[next(iter(self._plans))]
+            self._plans[plan.plan_id] = plan
+
+    def find(self, workspace: str, plan_id: str) -> WritePlan | None:
+        """The plan, if it is held, has not expired and is this workspace's; it stays held."""
+        with self._lock:
+            self._drop_expired()
+            plan = self._plans.get(PlanId(plan_id))
+            return plan if plan is not None and plan.workspace == workspace else None
+
+    def take(self, workspace: str, plan_id: str) -> WritePlan | None:
+        """As `find`, and the plan is no longer held: it is used once."""
+        with self._lock:
+            self._drop_expired()
+            plan = self._plans.get(PlanId(plan_id))
+            if plan is None or plan.workspace != workspace:
+                return None
+            del self._plans[plan.plan_id]
+            return plan
+
+    def workspace_opened(self, workspace: str) -> None:
+        """A switch opened `workspace`: every other workspace's plans are dropped (ADR-0063)."""
+        with self._lock:
+            self._plans = {k: p for k, p in self._plans.items() if p.workspace == workspace}
+
+    def workspace_closed(self) -> None:
+        """The open workspace closed: every plan is dropped (ADR-0063)."""
+        with self._lock:
+            self._plans = {}
+
+    def _drop_expired(self) -> None:
+        now = self._clock.now()
+        self._plans = {k: p for k, p in self._plans.items() if now - p.made_at < self._policy.ttl}

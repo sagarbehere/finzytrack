@@ -73,6 +73,13 @@ CODES = (
     ErrorCode.LEDGER_CHANGING,
     ErrorCode.WRITES_PAUSED,
     ErrorCode.CHANGE_NOT_SAVED,
+    ErrorCode.ACK_REQUIRED,  # S0117: the write contract's preview and confirm
+    ErrorCode.WRITE_REFUSED_UNINTENDED_CHANGE,
+    ErrorCode.WRITE_REFUSED_CHECK_FAILED,
+    ErrorCode.ENCRYPTED_FILE_NOT_EDITABLE,
+    ErrorCode.PLAN_EXPIRED,
+    ErrorCode.PREVIEW_STALE,
+    ErrorCode.UNPROMOTED_MUTATOR_ON_REAL_LEDGER,
     ErrorCode.INTERNAL,
 )
 

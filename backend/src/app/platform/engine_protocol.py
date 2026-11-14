@@ -697,7 +697,8 @@ def _preview_error(value: object) -> PreviewError:
 
 
 def _preview(result: Mapping[str, object]) -> PreviewAnswer:
-    """S0116: each field checked as the schema checks it; how they go together is the preview use case's (BL-0106)."""
+    """S0116: each field checked as the schema checks it; how they go together is the preview job's (S0117,
+    `app.platform.engine_jobs.preview._holds_together`)."""
     o = _keys(dict(result), _PREVIEW, "the preview result")
     fingerprint = _text(o["fingerprint"], "fingerprint", nullable=True)
     if fingerprint == "":

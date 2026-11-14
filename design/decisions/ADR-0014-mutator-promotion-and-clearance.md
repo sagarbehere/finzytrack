@@ -46,3 +46,13 @@ Each mutator (an edit producer, ADR-0009) is new code that writes the owner's bo
 ## References
 
 review:D1 §12.4–12.6; review:21 §3 steps 5–6; review:27 §0.4; review:F §2 item 4; ADR-0009, ADR-0026, ADR-0043, ADR-0045; INV-01, INV-24.
+
+## Implementation note (2026-11-14): the guard as built before the test copy exists (agent, S0117)
+
+Not a change of the decision; how its guard reads "an explicit test copy" until CAP-WS-TEST-COPY (M3) gives a workspace its mark. The owner's ownership rule for the confirm (2026-11-14, the S0117 brief, owner: "Yes") put the guard in that slice, refusing by default.
+- **Where:** `app.workspaces.writes.promotion_refusal`, at every confirm, before the acknowledgements (the user is never asked to Save anyway a change that would be refused). `UNPROMOTED_MUTATOR_ON_REAL_LEDGER` is `Forbidden` (403, ARCHITECTURE §6.1).
+- **Promotion** is the frozen set `writes.PROMOTED`, code changed with the owner's clearance page (ADR-0045), never a setting or a request field. It is empty.
+- **The mark** is the sidecar's own value (`WriteTarget.copy`), never read from a request. No workspace has one yet: the manifest's format 1 has no such field, and one written by hand is an unknown field, ignored (EP-14), so a hand edit cannot turn a real ledger into a test copy. So every confirm is refused today, as the rule asks.
+- **"Inside the test-copy folder"** is judged on resolved paths: each file the plan writes, resolved through links as the save writes it (ADR-0008 step 5: a linked file is written at its real path), must lie in the copy's folder, resolved. A path that cannot be resolved refuses (INV-22).
+- **Left for M3** (BL-0267): the mark itself, set by the test copy's job; and "not in the file set of any non-copy workspace", which needs the registry. **Limit:** the paths are resolved when the confirm is asked; a link made in the copy after that, pointing out of it, is met only when it changes the plan's fingerprint at the save's gate.
+- Journal: `design/journal/S0117-contract-confirm.md`.

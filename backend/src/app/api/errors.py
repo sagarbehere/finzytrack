@@ -43,9 +43,17 @@ UNASSIGNED = "unassigned"
 """The request id of an answer given before the request had a container (the factory failed)."""
 
 
-def status_for(error_class: ErrorClass) -> int:
-    """ARCHITECTURE.md §6.1's table; the only place that knows an HTTP status for an error."""
+NEEDS_THE_USERS_OK = frozenset({"ACK_REQUIRED"})
+"""The `ContractRefused` codes that ask for the user's Save anyway (409); every other code of the class is a refusal
+(422). S0117, BL-0106: the one class with two statuses, by code."""
+
+
+def status_for(error_class: ErrorClass, code: str) -> int:
+    """ARCHITECTURE.md §6.1's table; the only place that knows an HTTP status for an error. Only `ContractRefused`
+    looks at the code."""
     match error_class:
+        case ErrorClass.CONTRACT_REFUSED:
+            return 409 if code in NEEDS_THE_USERS_OK else 422
         case ErrorClass.INVALID:
             return 422
         case ErrorClass.NOT_FOUND:
@@ -127,7 +135,9 @@ def _registry(code: ErrorCode) -> ErrorSpec:
 
 
 def _response(spec: ErrorSpec, request_id: str, ctx: RequestContext | None, err: DomainError | None) -> JSONResponse:
-    return JSONResponse(error_body(spec, request_id, ctx, err), status_code=status_for(spec.error_class))
+    return JSONResponse(
+        error_body(spec, request_id, ctx, err), status_code=status_for(spec.error_class, str(spec.code))
+    )
 
 
 def _internal(ctx: RequestContext, exc: BaseException) -> JSONResponse:

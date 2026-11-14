@@ -6,7 +6,8 @@ else about the code (its message, whether the data is safe, the next step, its t
 `app.api` knows an HTTP status: `app.api.errors` translates once, at the edge.
 
 Expected outcomes the caller must handle are not errors: they are tagged-union results (EP-13). `ContractRefused`
-joins with the write contract (M1b, BL-0106).
+(S0117, BL-0106) is the write contract's: a change it refused (nothing was written), or one that needs the user's
+Save anyway (its new errors, ADR-0067); the edge gives that class two statuses, by code.
 """
 
 from __future__ import annotations
@@ -21,6 +22,7 @@ class ErrorClass(StrEnum):
     NOT_FOUND = "not_found"
     CONFLICT = "conflict"
     FORBIDDEN = "forbidden"
+    CONTRACT_REFUSED = "contract_refused"
     UNAVAILABLE = "unavailable"
     INTERNAL = "internal"
 
@@ -59,6 +61,10 @@ class Conflict(DomainError):
 
 class Forbidden(DomainError):
     error_class = ErrorClass.FORBIDDEN
+
+
+class ContractRefused(DomainError):
+    error_class = ErrorClass.CONTRACT_REFUSED
 
 
 class Unavailable(DomainError):

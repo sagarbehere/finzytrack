@@ -21,6 +21,7 @@ from typing import Literal
 
 from app.domain.errors import (
     Conflict,
+    ContractRefused,
     DomainError,
     ErrorClass,
     Forbidden,
@@ -54,6 +55,13 @@ class ErrorCode(StrEnum):
     LEDGER_CHANGING = "LEDGER_CHANGING"
     WRITES_PAUSED = "WRITES_PAUSED"
     CHANGE_NOT_SAVED = "CHANGE_NOT_SAVED"
+    ACK_REQUIRED = "ACK_REQUIRED"
+    WRITE_REFUSED_UNINTENDED_CHANGE = "WRITE_REFUSED_UNINTENDED_CHANGE"
+    WRITE_REFUSED_CHECK_FAILED = "WRITE_REFUSED_CHECK_FAILED"
+    ENCRYPTED_FILE_NOT_EDITABLE = "ENCRYPTED_FILE_NOT_EDITABLE"
+    PLAN_EXPIRED = "PLAN_EXPIRED"
+    PREVIEW_STALE = "PREVIEW_STALE"
+    UNPROMOTED_MUTATOR_ON_REAL_LEDGER = "UNPROMOTED_MUTATOR_ON_REAL_LEDGER"
     INTERNAL = "INTERNAL"
 
 
@@ -154,6 +162,41 @@ class ChangeNotSavedDetails:
     acl_entry: str | None
     unchanged: bool
     changed: str | None
+
+
+type ContractStep = Literal["plan", "apply", "parse", "diff", "spans", "load", "errors", "files"]
+"""Where the write contract refused a change (S0117): the engine's preview steps (ADR-0008 steps 1-3:
+`ledger_engine.ledger.contract`), and `files`, the confirm's own check that the plan writes only files of its ledger
+set at the bytes the preview read (`app.workspaces.writes.plan_problems`)."""
+
+
+@dataclass(frozen=True, slots=True)
+class ContractStepDetails:
+    """The step of the write contract that refused the change (S0117, BL-0106)."""
+
+    step: ContractStep
+
+
+@dataclass(frozen=True, slots=True)
+class EncryptedFileDetails:
+    """The encrypted file the change would edit (ADR-0059; S0117), when the refusal names one."""
+
+    path: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class AckRequiredDetails:
+    """The new errors the preview listed, by key (ADR-0008's error identity, as the engine's SHA-256 of it), each once:
+    the user's Save anyway acknowledges exactly these (ADR-0067; S0117)."""
+
+    error_keys: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class UnpromotedDetails:
+    """The mutator that is not promoted yet (ADR-0014): its changes are saved only in a test copy."""
+
+    mutator: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -305,6 +348,75 @@ def specs() -> tuple[ErrorSpec, ...]:
             next_step="Follow the steps shown, then try again.",
             details=ChangeNotSavedDetails,
         ),
+        # S0117 (BL-0106; ARCHITECTURE §6.1): the write contract. Every refusal below happens before the save writes
+        # anything, so each says the change was not saved, and none says "unchanged": that is said only after a
+        # re-hash (engine-jobs §11), and another program may have changed the ledger meanwhile.
+        ErrorSpec(
+            ErrorCode.ACK_REQUIRED,
+            ErrorClass.CONTRACT_REFUSED,
+            retryable=False,  # the user decides: Save anyway or Cancel (ADR-0067)
+            message="This change adds new errors to your ledger, so Finzytrack did not save it yet.",
+            data_safe=True,  # nothing of this change was written
+            next_step="Check the errors listed, then choose Save anyway or Cancel.",
+            details=AckRequiredDetails,
+        ),
+        ErrorSpec(
+            ErrorCode.WRITE_REFUSED_UNINTENDED_CHANGE,
+            ErrorClass.CONTRACT_REFUSED,
+            retryable=False,  # the same request makes the same text
+            message="Finzytrack did not save this change, because the text it would write is not exactly the change "
+            "you asked for.",
+            data_safe=True,  # refused at the preview: nothing was written
+            next_step="Copy the diagnostics and report a problem.",
+            details=ContractStepDetails,
+        ),
+        ErrorSpec(
+            ErrorCode.WRITE_REFUSED_CHECK_FAILED,
+            ErrorClass.CONTRACT_REFUSED,
+            retryable=False,  # a check that could not run on this ledger fails the same way again (INV-22)
+            message="Finzytrack could not check this change, so it did not save it.",
+            data_safe=True,  # refused before the save: nothing was written
+            next_step="Copy the diagnostics and report a problem.",
+            details=ContractStepDetails,
+        ),
+        ErrorSpec(
+            ErrorCode.ENCRYPTED_FILE_NOT_EDITABLE,
+            ErrorClass.CONTRACT_REFUSED,
+            retryable=False,
+            message="This change would edit an encrypted file. Finzytrack never changes encrypted files, so it did "
+            "not save the change.",
+            data_safe=True,  # refused at the preview, the confirm or the save's step 0, each before any write
+            next_step="Make this change with the tools you use for that encrypted file.",
+            details=EncryptedFileDetails,
+        ),
+        ErrorSpec(
+            ErrorCode.PLAN_EXPIRED,
+            ErrorClass.NOT_FOUND,
+            retryable=False,  # the preview is gone: a new one is needed
+            message="This preview is no longer available, so Finzytrack did not save the change.",
+            data_safe=True,  # nothing of this change was written
+            next_step="Preview the change again.",
+            details=None,  # expired, used, dropped by a switch, or another workspace's: one answer for all
+        ),
+        ErrorSpec(
+            ErrorCode.PREVIEW_STALE,
+            ErrorClass.CONFLICT,
+            retryable=False,
+            message="This preview is out of date, so Finzytrack did not save the change.",
+            data_safe=True,  # nothing of this change was written
+            next_step="Preview the change again.",
+            details=None,
+        ),
+        ErrorSpec(
+            ErrorCode.UNPROMOTED_MUTATOR_ON_REAL_LEDGER,
+            ErrorClass.FORBIDDEN,
+            retryable=False,
+            message="Finzytrack is still testing this kind of change, so it saves it only in a test copy of a "
+            "workspace.",
+            data_safe=True,  # refused before the save: nothing was written
+            next_step="Make the change in a test copy of your workspace.",
+            details=UnpromotedDetails,
+        ),
         ErrorSpec(
             ErrorCode.INTERNAL,
             ErrorClass.INTERNAL,
@@ -331,6 +443,8 @@ def _class_of(error_class: ErrorClass) -> type[DomainError]:
             return Conflict
         case ErrorClass.FORBIDDEN:
             return Forbidden
+        case ErrorClass.CONTRACT_REFUSED:
+            return ContractRefused
         case ErrorClass.UNAVAILABLE:
             return Unavailable
         case ErrorClass.INTERNAL:

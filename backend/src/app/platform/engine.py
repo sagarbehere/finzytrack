@@ -372,7 +372,7 @@ class PreviewAnswer:
     `fingerprint` for the save's gate, `new_errors`, `errors` in the candidate), `refused` (`step`, `reason`, `path`,
     `detail`, `line`), `moved` (run it again in a fresh engine), `paused` (an unfinished save) or `stale` (`stale`: the
     published generation cannot be the plan's baseline). It wrote nothing; the ledger's plugins ran in that engine.
-    The sidecar's preview use case, the `PlanStore` and the routes come with the confirm (BL-0106)."""
+    The sidecar's preview job is `app.platform.engine_jobs.preview`; its use case and the `PlanStore` are S0117's."""
 
     outcome: PreviewOutcome
     files: tuple[PreviewFile, ...]

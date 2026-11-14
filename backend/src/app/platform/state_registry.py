@@ -52,6 +52,16 @@ REGISTRY: tuple[StateEntry, ...] = (
         "job's record goes once it has ended and been answered",
     ),
     StateEntry(
+        "app.platform.plans",
+        "PlanStore",
+        "UserContainer",  # ARCHITECTURE §2.5: keyed by workspace; S0117
+        "at most PlanPolicy.max_plans write plans (each its files' texts and hashes, never entries: one engine reply, "
+        "at most 16 MiB of text), each for at most PlanPolicy.ttl after the preview made it, and one lock",
+        "a plan expires after its ttl (checked at every use, by the injected clock) and is let go at the next use; "
+        "the oldest is let go when a new one needs room; a confirm takes its plan; a switch drops the other "
+        "workspaces' plans (workspace_opened) or all of them (workspace_closed)",
+    ),
+    StateEntry(
         "app.platform.observability.log",
         "EventLog",
         "UserContainer",  # S0039: built by the composition root before anything logs, one per launch, closed last

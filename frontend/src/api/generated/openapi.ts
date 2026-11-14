@@ -22,6 +22,43 @@ export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
         /**
+         * AckRequiredDetails
+         * @description The new errors the preview listed, by key (ADR-0008's error identity, as the engine's SHA-256 of it), each once:
+         *     the user's Save anyway acknowledges exactly these (ADR-0067; S0117).
+         */
+        AckRequiredDetails: {
+            /** Error Keys */
+            error_keys: string[];
+        };
+        /** AckRequiredError */
+        AckRequiredError: {
+            /**
+             * Class
+             * @constant
+             */
+            class: "contract_refused";
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            code: "ACK_REQUIRED";
+            /** Correlation Id */
+            correlation_id: string;
+            /** Data Safe */
+            data_safe: boolean;
+            details: components["schemas"]["AckRequiredDetails"];
+            /** Issues */
+            issues: components["schemas"]["Issue"][];
+            /** Message */
+            message: string;
+            /** Next Step */
+            next_step: string;
+            /** Retry After Ms */
+            retry_after_ms: number | null;
+            /** Retryable */
+            retryable: boolean;
+        };
+        /**
          * ChangeNotSavedDetails
          * @description A save that did not happen, and why (engine-jobs §6.1 step 8's refusals, §6.4, §6.6, §11; S0063). `path`: the
          *     file it is about (an I/O error's file); `folder` and `acl_entry`: for `permission`, the folder and the ACL entry
@@ -91,6 +128,51 @@ export interface components {
             data_safe: boolean;
             /** Details */
             details: null;
+            /** Issues */
+            issues: components["schemas"]["Issue"][];
+            /** Message */
+            message: string;
+            /** Next Step */
+            next_step: string;
+            /** Retry After Ms */
+            retry_after_ms: number | null;
+            /** Retryable */
+            retryable: boolean;
+        };
+        /** @enum {string} */
+        ContractStep: "plan" | "apply" | "parse" | "diff" | "spans" | "load" | "errors" | "files";
+        /**
+         * ContractStepDetails
+         * @description The step of the write contract that refused the change (S0117, BL-0106).
+         */
+        ContractStepDetails: {
+            step: components["schemas"]["ContractStep"];
+        };
+        /**
+         * EncryptedFileDetails
+         * @description The encrypted file the change would edit (ADR-0059; S0117), when the refusal names one.
+         */
+        EncryptedFileDetails: {
+            /** Path */
+            path: string | null;
+        };
+        /** EncryptedFileNotEditableError */
+        EncryptedFileNotEditableError: {
+            /**
+             * Class
+             * @constant
+             */
+            class: "contract_refused";
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            code: "ENCRYPTED_FILE_NOT_EDITABLE";
+            /** Correlation Id */
+            correlation_id: string;
+            /** Data Safe */
+            data_safe: boolean;
+            details: components["schemas"]["EncryptedFileDetails"];
             /** Issues */
             issues: components["schemas"]["Issue"][];
             /** Message */
@@ -221,7 +303,7 @@ export interface components {
         /** ErrorEnvelope */
         ErrorEnvelope: {
             /** Error */
-            error: components["schemas"]["ValidationFailedError"] | components["schemas"]["RouteNotFoundError"] | components["schemas"]["WorkspaceUnknownError"] | components["schemas"]["WorkspaceNotOpenError"] | components["schemas"]["WorkspaceNotReadyError"] | components["schemas"]["EngineQueueFullError"] | components["schemas"]["JobCancelledError"] | components["schemas"]["EngineStoppedError"] | components["schemas"]["EngineUnavailableError"] | components["schemas"]["ChangeOutcomeUnknownError"] | components["schemas"]["LedgerExternallyChangedError"] | components["schemas"]["LedgerChangingError"] | components["schemas"]["WritesPausedError"] | components["schemas"]["ChangeNotSavedError"] | components["schemas"]["InternalError"];
+            error: components["schemas"]["ValidationFailedError"] | components["schemas"]["RouteNotFoundError"] | components["schemas"]["WorkspaceUnknownError"] | components["schemas"]["WorkspaceNotOpenError"] | components["schemas"]["WorkspaceNotReadyError"] | components["schemas"]["EngineQueueFullError"] | components["schemas"]["JobCancelledError"] | components["schemas"]["EngineStoppedError"] | components["schemas"]["EngineUnavailableError"] | components["schemas"]["ChangeOutcomeUnknownError"] | components["schemas"]["LedgerExternallyChangedError"] | components["schemas"]["LedgerChangingError"] | components["schemas"]["WritesPausedError"] | components["schemas"]["ChangeNotSavedError"] | components["schemas"]["AckRequiredError"] | components["schemas"]["WriteRefusedUnintendedChangeError"] | components["schemas"]["WriteRefusedCheckFailedError"] | components["schemas"]["EncryptedFileNotEditableError"] | components["schemas"]["PlanExpiredError"] | components["schemas"]["PreviewStaleError"] | components["schemas"]["UnpromotedMutatorOnRealLedgerError"] | components["schemas"]["InternalError"];
             meta: components["schemas"]["Meta"];
         };
         /** HealthData */
@@ -386,6 +468,64 @@ export interface components {
         NotSavedReason: "hard_linked" | "locked" | "not_a_file" | "permission" | "io_error" | "read_back" | "name_not_utf8" | "linked_folder" | "no_drive_id" | "no_folder_id" | "engine_stopped" | "case_twins" | "folder_appeared" | "app_folder_missing";
         /** @enum {string} */
         PausedReason: "unfinished_save" | "earlier_unfinished";
+        /** PlanExpiredError */
+        PlanExpiredError: {
+            /**
+             * Class
+             * @constant
+             */
+            class: "not_found";
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            code: "PLAN_EXPIRED";
+            /** Correlation Id */
+            correlation_id: string;
+            /** Data Safe */
+            data_safe: boolean;
+            /** Details */
+            details: null;
+            /** Issues */
+            issues: components["schemas"]["Issue"][];
+            /** Message */
+            message: string;
+            /** Next Step */
+            next_step: string;
+            /** Retry After Ms */
+            retry_after_ms: number | null;
+            /** Retryable */
+            retryable: boolean;
+        };
+        /** PreviewStaleError */
+        PreviewStaleError: {
+            /**
+             * Class
+             * @constant
+             */
+            class: "conflict";
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            code: "PREVIEW_STALE";
+            /** Correlation Id */
+            correlation_id: string;
+            /** Data Safe */
+            data_safe: boolean;
+            /** Details */
+            details: null;
+            /** Issues */
+            issues: components["schemas"]["Issue"][];
+            /** Message */
+            message: string;
+            /** Next Step */
+            next_step: string;
+            /** Retry After Ms */
+            retry_after_ms: number | null;
+            /** Retryable */
+            retryable: boolean;
+        };
         /** RouteNotFoundError */
         RouteNotFoundError: {
             /**
@@ -404,6 +544,42 @@ export interface components {
             data_safe: boolean;
             /** Details */
             details: null;
+            /** Issues */
+            issues: components["schemas"]["Issue"][];
+            /** Message */
+            message: string;
+            /** Next Step */
+            next_step: string;
+            /** Retry After Ms */
+            retry_after_ms: number | null;
+            /** Retryable */
+            retryable: boolean;
+        };
+        /**
+         * UnpromotedDetails
+         * @description The mutator that is not promoted yet (ADR-0014): its changes are saved only in a test copy.
+         */
+        UnpromotedDetails: {
+            /** Mutator */
+            mutator: string;
+        };
+        /** UnpromotedMutatorOnRealLedgerError */
+        UnpromotedMutatorOnRealLedgerError: {
+            /**
+             * Class
+             * @constant
+             */
+            class: "forbidden";
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            code: "UNPROMOTED_MUTATOR_ON_REAL_LEDGER";
+            /** Correlation Id */
+            correlation_id: string;
+            /** Data Safe */
+            data_safe: boolean;
+            details: components["schemas"]["UnpromotedDetails"];
             /** Issues */
             issues: components["schemas"]["Issue"][];
             /** Message */
@@ -537,6 +713,62 @@ export interface components {
             data_safe: boolean;
             /** Details */
             details: null;
+            /** Issues */
+            issues: components["schemas"]["Issue"][];
+            /** Message */
+            message: string;
+            /** Next Step */
+            next_step: string;
+            /** Retry After Ms */
+            retry_after_ms: number | null;
+            /** Retryable */
+            retryable: boolean;
+        };
+        /** WriteRefusedCheckFailedError */
+        WriteRefusedCheckFailedError: {
+            /**
+             * Class
+             * @constant
+             */
+            class: "contract_refused";
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            code: "WRITE_REFUSED_CHECK_FAILED";
+            /** Correlation Id */
+            correlation_id: string;
+            /** Data Safe */
+            data_safe: boolean;
+            details: components["schemas"]["ContractStepDetails"];
+            /** Issues */
+            issues: components["schemas"]["Issue"][];
+            /** Message */
+            message: string;
+            /** Next Step */
+            next_step: string;
+            /** Retry After Ms */
+            retry_after_ms: number | null;
+            /** Retryable */
+            retryable: boolean;
+        };
+        /** WriteRefusedUnintendedChangeError */
+        WriteRefusedUnintendedChangeError: {
+            /**
+             * Class
+             * @constant
+             */
+            class: "contract_refused";
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            code: "WRITE_REFUSED_UNINTENDED_CHANGE";
+            /** Correlation Id */
+            correlation_id: string;
+            /** Data Safe */
+            data_safe: boolean;
+            details: components["schemas"]["ContractStepDetails"];
             /** Issues */
             issues: components["schemas"]["Issue"][];
             /** Message */

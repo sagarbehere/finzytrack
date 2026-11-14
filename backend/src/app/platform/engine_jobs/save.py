@@ -10,9 +10,10 @@ save`); the sidecar never reads a journal or a ledger file itself. Its answer be
 - **`NotDone(error)`**, a registry error with §11's text (`save_text`): `WRITES_PAUSED {unfinished_save}` (this
   save's journal left open) or `{earlier_unfinished}` (refused at step 1 or 4 by an earlier save's: S0100, BL-0183),
   `LEDGER_EXTERNALLY_CHANGED`, `WORKSPACE_NOT_READY {WARMING}`,
-  `CHANGE_NOT_SAVED {reason, path, folder, acl_entry, unchanged, changed}`; an engine refusal before the engine's
-  `gate` is `INTERNAL` (it wrote nothing; never "saved"), and so is the save's `encrypted_file` refusal until the
-  preview's own refusal exists (BL-0106).
+  `CHANGE_NOT_SAVED {reason, path, folder, acl_entry, unchanged, changed}`, and the save's step 0 refusal of an
+  encrypted file `ENCRYPTED_FILE_NOT_EDITABLE {path}` (the confirm refuses one first, S0117; the save meets one only
+  through a link made after the preview); an engine refusal before the engine's `gate` is `INTERNAL` (it wrote
+  nothing; never "saved").
 
 **After the engine died without its final reply** (§5.3, §6.6), the queue keeps the job (the table's `outcome_owed`);
 then, as after a refusal past its `gate` (an exception once it may have written) or a final reply of the wrong
@@ -43,6 +44,7 @@ from app.platform.engine_jobs.scheduler import EngineJobs, Failed, JobContext, J
 from app.platform.engine_protocol import Violation, decode_save, decode_save_outcome
 from app.platform.errors import (
     ChangeNotSavedDetails,
+    EncryptedFileDetails,
     EngineStoppedDetails,
     EngineUnavailableDetails,
     ErrorCode,
@@ -92,7 +94,7 @@ class ChangeText:
 
 @dataclass(frozen=True, slots=True)
 class SaveRequest:
-    """A confirmed plan (the preview's, BL-0106): who saves, the root, the changes, the plan's
+    """A confirmed plan (the preview's, S0117: `app.workspaces.writes`): who saves, the root, the changes, the plan's
     fingerprint (its canonical encoding, opaque here) and the app's machine-local folder (no legacy lock: a save tries
     none, ADR-0068 D4). The engine's gate reads the published mirror in the app cache folder the engine was started
     with (publish.md §7; S0087): no request names it.
@@ -180,8 +182,10 @@ def answer_of(a: SaveAnswer) -> SaveValue:
                     return _not_done(ErrorCode.LEDGER_EXTERNALLY_CHANGED)
                 case "mirror_stale":
                     return _not_done(ErrorCode.WORKSPACE_NOT_READY, WorkspaceNotReadyDetails(phase="WARMING"))
-                case _:  # `encrypted_file`: the preview refuses it first (BL-0106); here a bug, never "saved"
-                    return _not_done(ErrorCode.INTERNAL)  # TODO(BL-0106): the contract's own code
+                case "encrypted_file":  # §6.1 step 0: the confirm refuses one first; a link to one made since
+                    return _not_done(ErrorCode.ENCRYPTED_FILE_NOT_EDITABLE, EncryptedFileDetails(a.path))
+                case _:  # a reason this sidecar does not know: a bug, never "saved"
+                    return _not_done(ErrorCode.INTERNAL)
         case "not_saved":
             if a.open_journal:
                 return _paused()  # nothing replaced, the journal left open: Reopen resolves it
