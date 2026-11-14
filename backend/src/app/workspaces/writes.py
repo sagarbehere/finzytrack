@@ -49,7 +49,8 @@ path (a link in it or above it refuses), checks the recorded identity (drive, fi
 folder at the path refuses), and refuses a file that resolves outside it (`not_saved {outside_folder}`, nothing
 written); its path guard then holds every folder written in until each write. Since round 3 (owner, 2026-11-14: "2",
 `design/inbox/answered/20261114-test-copy-no-links.md`) a test copy's save follows no link at all: below the folder
-the engine reaches every file from the folder's handle one name at a time, and a link anywhere refuses. A link or a
+the engine reaches every file from the folder's handle one name at a time, and a link on the way to a file it
+writes refuses (links elsewhere in the copy are not looked at). A link or a
 folder swapped in after the copy was made gains nothing. Limits: a folder reached through a macOS firmlink spelling is
 not taken for its recorded real path (refused, fails closed); a folder's creation time can be set by a program, so the
 identity tells folders apart by accident, not against a program that sets times on purpose (with no link followed,
@@ -186,6 +187,20 @@ def _sha256(text: str) -> str:
 # -- rule 6: the promotion guard --------------------------------------------------------------------------------------
 
 
+def _where_written(path: str) -> str:
+    """Where the save would write `path`, resolved through links as the save resolves an unconfined path: the file's own
+    real path, or for a file (or folders) it creates, its deepest existing folder's real path followed by the names it
+    makes (S0117 round 4, red team overflow: a created file was judged as if missing, and refused). A resolution that
+    fails raises `OSError` (the caller refuses)."""
+    head, tail = path, list[str]()
+    while not os.path.lexists(head):
+        head, name = os.path.split(head)
+        if not name:
+            raise FileNotFoundError(path)
+        tail.insert(0, name)
+    return os.path.join(os.path.realpath(head, strict=True), *tail)
+
+
 def _inside(folder: str, path: str) -> bool:
     return posixpath.commonpath([folder, path]) == folder
 
@@ -203,7 +218,7 @@ def promotion_refusal(plan: WritePlan, target: WriteTarget) -> DomainError | Non
     folder = target.copy.path
     try:
         for f in plan.files:
-            if not _inside(folder, os.path.realpath(f.path, strict=True)):
+            if not _inside(folder, _where_written(f.path)):
                 return refused
     except (OSError, ValueError):
         return refused

@@ -27,22 +27,25 @@ def join(parent: str, name: str) -> str:
     return "/" + name if parent == "/" else f"{parent}/{name}"
 
 
-class LinkedPathError(Exception):
-    """A test copy's save met a link (or an entry that is not a plain folder) on its way down from the copy's folder
-    (S0117 round 3; owner, 2026-11-14: "2", `design/inbox/answered/20261114-test-copy-no-links.md`): it follows no
-    link at all, so nothing was opened through it."""
-
-    def __init__(self, canonical: str) -> None:
-        super().__init__("linked_path")
-        self.canonical = canonical
-
-
 class PathMovedError(Exception):
     """A folder is no longer at its recorded canonical path (§6.3 path guard)."""
 
     def __init__(self, canonical: str) -> None:
         super().__init__("path_moved")
         self.canonical = canonical
+
+
+class LinkedPathError(PathMovedError):
+    """A test copy's save met a link, or a file where a folder should be, on its way down from the copy's folder (S0117
+    round 3; owner, 2026-11-14: "2", `design/inbox/answered/20261114-test-copy-no-links.md`): it follows no link, so
+    nothing was opened through it. `link`: a link (`ELOOP`), else a file or other entry (`ENOTDIR`). A kind of
+    `PathMovedError` (S0117 round 4; owner, 2026-11-14: "2", `20261114-confined-save-missing-catch.md`): the folder is
+    not where the walk expects it, so every handler that stops on a moved folder (the save's two, the re-hash, and any
+    later one) stops on this too, and the writer words it by `link`."""
+
+    def __init__(self, canonical: str, *, link: bool) -> None:
+        super().__init__(canonical)
+        self.link = link
 
 
 SERIAL_IDENTIFIED: Final = frozenset({"msdos", "exfat"})
@@ -165,8 +168,8 @@ class Handles:
         try:
             return self.at(parent or "/").open_child(name)
         except OSError as e:
-            if e.errno in (errno.ELOOP, errno.ENOTDIR):
-                raise LinkedPathError(canonical) from None  # O_NOFOLLOW: a link (or a file) stands at that name
+            if e.errno in (errno.ELOOP, errno.ENOTDIR):  # O_NOFOLLOW: a link, or a file, stands at that name
+                raise LinkedPathError(canonical, link=e.errno == errno.ELOOP) from None
             raise
 
     def at(self, canonical: str) -> DirHandle:

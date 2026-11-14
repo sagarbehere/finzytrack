@@ -2095,3 +2095,25 @@ def test_h1_a_twin_fat_stick_at_the_ledgers_mount_point_is_never_written(fs: Dar
     finally:
         with contextlib.suppress(subprocess.CalledProcessError):
             detach()
+
+
+def test_S0117_r4_a_folders_rule_is_asked_through_its_descriptor_as_resolve_asks_by_path(tmp_path: Path) -> None:
+    """Verifier V4-2: `DirHandle.rule()` answers what `resolve` answers for the names in that folder (here APFS,
+    case-insensitive by default), through the descriptor, and from a handle opened with `open_child` too."""
+    from ledger_engine.fs.this_os import for_this_os
+
+    fs = for_this_os()
+    sub = tmp_path / "Sub"
+    sub.mkdir()
+    (sub / "f").write_text("x")
+    by_path = fs.resolve(str(sub / "f")).rules[-1]
+    h = fs.open_dir(str(tmp_path))
+    try:
+        child = h.open_child("Sub")
+        try:
+            assert child.rule() == by_path
+            assert child.rule().nfd
+        finally:
+            child.close()
+    finally:
+        h.close()

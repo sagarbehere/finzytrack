@@ -751,3 +751,21 @@ def threading_wait(cond: Any) -> None:
             return
         threading_pause()
     assert cond()
+
+
+def test_a_file_the_save_creates_in_the_copy_is_judged_by_its_folder(tmp_path: Path) -> None:
+    """S0117 round 4 (red team overflow): a created file (and a folder made for it) does not exist yet; the guard
+    judges it by the real path of its deepest existing folder, so a new file in the copy passes and one whose folder
+    leads out of it does not."""
+    copy, real = tmp_path / "copy", tmp_path / "real"
+    copy.mkdir()
+    real.mkdir()
+    (copy / "out").symlink_to(real)
+    target = WriteTarget("k1", str(copy / "main.bean"), "lin1", tmp_path, tmp_path, mark(copy))
+
+    def created(*parts: str) -> WritePlan:
+        return make_plan(files=(PlannedFile(str(copy.joinpath(*parts)), "a" * 64, "b" * 64, "x"),))
+
+    assert promotion_refusal(created("prices.bean"), target) is None
+    assert promotion_refusal(created("y2026", "prices.bean"), target) is None
+    assert promotion_refusal(created("out", "prices.bean"), target) is not None

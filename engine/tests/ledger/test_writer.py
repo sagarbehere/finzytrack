@@ -2278,3 +2278,211 @@ def test_a_confined_save_looks_nothing_up_by_path_below_the_copys_folder(new_dir
     assert isinstance(_confined(w, rec), Landed)
     assert [p for p in opened if p == "/w/L" or p.startswith("/w/L/")] == ["/w/L"]
     assert [p for p in resolved if p == "/w/L" or p.startswith("/w/L/")] == ["/w/L"]
+
+
+# -- S0117 round 4 (verifier V4-1 to V4-6, red team RT4-F1 to RT4-F3; owner, 2026-11-14: "2",
+# `design/inbox/answered/20261114-confined-save-missing-catch.md`) ---------------------------------------------------
+
+
+@pytest.mark.parametrize("what", ["file", "link"])
+def test_an_entry_at_a_folder_the_save_will_make_before_the_journal_is_a_refusal(what: str) -> None:
+    """V4-1 (a): after the walk and before the record is `.open`, an entry appears where the save will make `y2026`:
+    step 0 refuses (`changed`, nothing written) and the re-hash, which walks there too, answers instead of raising."""
+    w = world(new_dir=True)
+    rec = _recorded(w)
+    from ledger_engine.ledger import writer as wr
+
+    prepare = wr._prepare  # pyright: ignore[reportPrivateUsage]
+
+    def racing(*args: object) -> object:
+        if what == "file":
+            w.fs.outside_write("/w/L/y2026", b"x")
+        else:
+            w.fs.outside_mkdirs("/w/real")
+            w.fs.outside_symlink("/w/L/y2026", "/w/real")
+        return prepare(*args)  # pyright: ignore[reportArgumentType]
+
+    with pytest.MonkeyPatch.context() as m:
+        m.setattr(wr, "_prepare", racing)
+        out = durable_commit(w.fs, replace(w.commit, confine=rec))
+    assert isinstance(out, NotSaved), out
+    assert (out.reason, out.step, out.open_journal) == (Reason.CHANGED, Step.BACKUP, False)
+    assert journals(w.fs) == {}
+    for t in w.targets:
+        if t.pre is not None:
+            assert w.fs.file(t.path) == t.pre
+    assert w.fs.file("/w/real/prices.bean") is None
+
+
+@pytest.mark.parametrize("what", ["link", "file"])
+def test_a_folder_the_save_made_replaced_past_the_commit_point_is_rolled_back_at_once(what: str) -> None:
+    """V4-1 (b), RT4-F1: past the commit point the save makes `y2026`, and another program replaces it before the
+    writer opens it from its parent (a link, or a file). The save rolls back at once (§6.4) and answers its true
+    reason; the record is not left `.open`, every replaced file is back at its pre bytes, and nothing reaches the link's
+    target."""
+    w = world(new_dir=True)
+    rec = _recorded(w)
+    w.fs.outside_mkdirs("/w/real")
+    mkdir = MemDir.mkdir
+
+    def racing(self: MemDir, name: str, mode: int = 0o755) -> None:
+        mkdir(self, name, mode)
+        if name == "y2026":
+            w.fs.outside_move("/w/L/y2026", "/w/y-moved")
+            if what == "link":
+                w.fs.outside_symlink("/w/L/y2026", "/w/real")
+            else:
+                w.fs.outside_write("/w/L/y2026", b"x")
+
+    with pytest.MonkeyPatch.context() as m:
+        m.setattr(MemDir, "mkdir", racing)
+        out = durable_commit(w.fs, replace(w.commit, confine=rec))
+    assert isinstance(out, NotSaved | Unfinished), out
+    assert out.reason is (Reason.LINK_IN_COPY if what == "link" else Reason.CHANGED)
+    assert w.fs.file("/w/real/prices.bean") is None
+    assert w.fs.snapshot()["/w/real"] == ("dir",)  # nothing reached the link's target
+    if what == "file":  # the undo resolved the record: every replaced file back at its pre bytes
+        assert isinstance(out, NotSaved), out
+        assert State.OPEN not in journals(w.fs)
+        assert w.fs.file("/w/L/inc/a.bean") == w.targets[0].pre
+        assert w.fs.file("/w/L/main.bean") == w.targets[2].pre
+    else:  # the undo stops at the created folder, now a link (its path guard): writes paused, Reopen; never "saved"
+        assert isinstance(out, Unfinished), out
+        assert (out.cause, out.cause_path) == ("path_moved", "/w/L/y2026/prices.bean")
+        assert State.OPEN in journals(w.fs)
+
+
+@pytest.mark.parametrize("what", ["link", "file"])
+def test_an_entry_at_a_folder_to_be_made_after_the_journal_is_answered_after_the_rollback(what: str) -> None:
+    """RT4 (red team): after the record is `.open`, an entry at `y2026` just before the save's `mkdir`:
+    `folder_appeared`, the rollback, and the re-hash after it, which walks to `y2026`, answers instead of raising."""
+    w = world(new_dir=True)
+    rec = _recorded(w)
+    w.fs.outside_mkdirs("/w/real")
+    mkdir = MemDir.mkdir
+
+    def racing(self: MemDir, name: str, mode: int = 0o755) -> None:
+        if name == "y2026":
+            if what == "link":
+                w.fs.outside_symlink("/w/L/y2026", "/w/real")
+            else:
+                w.fs.outside_write("/w/L/y2026", b"x")
+        mkdir(self, name, mode)
+
+    with pytest.MonkeyPatch.context() as m:
+        m.setattr(MemDir, "mkdir", racing)
+        out = durable_commit(w.fs, replace(w.commit, confine=rec))
+    assert isinstance(out, NotSaved | Unfinished), out  # a call that raised would fail here (RT4)
+    assert out.reason is Reason.FOLDER_APPEARED
+    assert w.fs.file("/w/real/prices.bean") is None
+    if what == "file":
+        assert isinstance(out, NotSaved), out
+        assert State.OPEN not in journals(w.fs)
+        assert w.fs.file("/w/L/inc/a.bean") == w.targets[0].pre
+    else:  # the undo stops at the link, never following it: writes paused, Reopen
+        assert isinstance(out, Unfinished), out
+        assert out.cause == "path_moved"
+
+
+def test_the_folder_rule_is_asked_through_the_fake_handle() -> None:
+    """V4-2: `DirHandle.rule()` answers the folder's own way of comparing names."""
+    w = world()
+    rule = w.fs.open_dir("/w/L").rule()
+    assert (rule.nfd, rule.casefold) == (True, True)  # the world's volume is case-insensitive
+
+
+def test_a_plan_spelled_in_another_case_than_the_copys_folder_lands_under_the_stored_name() -> None:
+    """V4-2: the copy holds `Inc/`, the plan says `inc/…`: the walk finds the stored name by the folder's rule, and the
+    record names it as an unconfined save would."""
+    w = world()
+    w.fs.outside_rename_case("/w/L/inc", "Inc")
+    w = _again(w)
+    out = _confined(w, _recorded(w))
+    assert isinstance(out, Landed), out
+    assert out.record.files[0].canonical_path == "/w/L/Inc/a.bean"
+    assert out.record.files[0].path_key == "/w/l/inc/a.bean"
+
+
+def test_a_link_above_the_folder_during_its_key_resolution_refuses_the_save() -> None:
+    """RT4 (red team): a link above the copy's folder, to its parent moved aside, makes the resolution name the same
+    object by another path; its keys would not be this path's: refused."""
+    w = world()
+    rec = _recorded(w, "/w/L/inc")
+    w = _again(w)
+    resolve = w.fs.resolve
+
+    def flipped(path: str) -> Resolved:
+        if path != "/w/L/inc":
+            return resolve(path)
+        w.fs.outside_move("/w/L", "/w/L-aside")
+        w.fs.outside_symlink("/w/L", "/w/L-aside")
+        try:
+            return resolve(path)
+        finally:
+            w.fs.outside_remove("/w/L")
+            w.fs.outside_move("/w/L-aside", "/w/L")
+
+    w.fs.resolve = flipped
+    a = w.commit.changes[0]
+    out = durable_commit(w.fs, replace(w.commit, changes=(a,), confine=rec))
+    assert isinstance(out, NotSaved), out
+    assert out.reason is Reason.COPY_FOLDER_MOVED
+    assert journals(w.fs) == {}
+
+
+def test_a_confined_record_that_does_not_hold_together_is_copy_folder_moved(monkeypatch: pytest.MonkeyPatch) -> None:
+    """RT4 overflow: the record's own check failing for a test copy's save (a folder of the copy changed under the walk)
+    is a refusal naming the copy's folder; for an unconfined save it still raises (a bug)."""
+    from ledger_engine.ledger import writer as wr
+
+    def broken(_record: Record) -> bytes:
+        raise journal.BadRecordError("folders")
+
+    monkeypatch.setattr(wr.journal, "encode", broken)
+    w = world()
+    out = _confined(w, _recorded(w))
+    assert isinstance(out, NotSaved), out
+    assert (out.reason, out.entry) == (Reason.COPY_FOLDER_MOVED, "/w/L")
+    w2 = world()
+    with pytest.raises(journal.BadRecordError):
+        durable_commit(w2.fs, w2.commit)
+
+
+def _confined_world(new_dir: bool) -> tuple[World, Commit]:
+    w = world(new_dir=new_dir)
+    return w, replace(w.commit, confine=_recorded(w))
+
+
+def _effects(new_dir: bool) -> int:
+    w, c = _confined_world(new_dir)
+    assert isinstance(durable_commit(w.fs, c), Landed)
+    return len(w.fs.effects)
+
+
+@pytest.mark.parametrize("new_dir", [False, True])
+def test_a_confined_save_crashed_at_every_effect_leaves_a_recoverable_disk_after_every_power_loss(
+    new_dir: bool,
+) -> None:
+    """RT4-F3 (the red team's sweep, adopted): a test copy's save, a crash at each effect, then every power loss."""
+    for at in range(_effects(new_dir)):
+        w, c = _confined_world(new_dir)
+        w.fs.inject(at, crash=True)
+        with pytest.raises(Crash):
+            durable_commit(w.fs, c)
+        check_disk(w.fs, w)
+        check_every_power_loss(w.fs, w)
+
+
+@pytest.mark.parametrize("new_dir", [False, True])
+@pytest.mark.parametrize("err", [errno.ENOSPC, errno.ELOOP, errno.ENOTDIR])
+def test_a_confined_save_failing_at_every_effect_is_told_truthfully(new_dir: bool, err: int) -> None:
+    """RT4-F3: an error at each effect, the link errors of the walk among them: always an outcome, never a raise, and
+    what it tells holds against the disk."""
+    for at in range(_effects(new_dir)):
+        w, c = _confined_world(new_dir)
+        w.fs.inject(at, crash=False, err=err)
+        out = durable_commit(w.fs, c)
+        assert not isinstance(out, Landed), (at, out)
+        check_disk(w.fs, w)
+        check_every_power_loss(w.fs, w)
+        check_told(w.fs, w, out)

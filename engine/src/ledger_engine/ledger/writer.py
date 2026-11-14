@@ -1,9 +1,10 @@
 """The save's durable order (`design/specs/engine-jobs.md` §6.1 step 8; ADR-0008 steps 5-6, ADR-0012, ADR-0013;
 S0060): what a save does after its commit point (§6.1 step 7), through the file-system port only.
 
-0. **Before the first effect** (`_prepare`; every refusal here writes nothing): every path resolved (§6.3), inside the
-   test copy's folder, at its recorded path with its recorded identity, when the plan names one (`Commit.confine`,
-   `_check_confined`: `outside_folder`; S0117), and
+0. **Before the first effect** (`_prepare`; every refusal here writes nothing): every path resolved (§6.3) or, for a
+   test copy's save (`Commit.confine`; S0117), reached from the copy's folder, opened once at its recorded path with
+   its recorded identity (`_open_confined`), one name at a time without following a link (`_confined_target`,
+   `Handles.confined`), and
    checked to be the file the plan meant: a replaced file a regular file (never a link, a FIFO or a folder), not
    locked (`uchg`), not hard-linked (`handles.hard_links`, the owner's decision point), the same object its
    canonical path names (`st_dev`, `st_ino`); a created path free of any entry (a dangling link included) under an
@@ -80,6 +81,7 @@ from ledger_engine.fs.port import (
     Right,
     check_name,
     fold,
+    same_path,
     split_absolute,
 )
 from ledger_engine.ledger import restore as _restore
@@ -145,8 +147,8 @@ class Commit:
     backups_dir: str
     anchor: Anchor | None = None
     confine: FolderEntry | None = None
-    """The test copy's folder as its mark recorded it, path and identity, that every file the save writes or creates
-    must lie in once resolved (`_check_confined`), or None."""
+    """The test copy's folder as its mark recorded it, path and identity: the save opens it once and reaches every file
+    it writes or creates from it without following a link (`_open_confined`, `_confined_target`), or None."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -430,7 +432,12 @@ def _open_confined(fs: FileSystem, handles: Handles, confine: FolderEntry) -> st
     recorded = FolderMark(confine.volume, confine.fs_type, confine.born)
     if known_birth(mark) is None or known_birth(recorded) is None:
         raise _Stop(Reason.NO_FOLDER_ID, path, path)
-    if folder_verdict(confine, mark) != "same" or r.rest or r.identity != h.identity():
+    if (
+        folder_verdict(confine, mark) != "same"
+        or r.rest
+        or r.identity != h.identity()
+        or not same_path(core_paths.canonical_path(r), path)  # S0117 round 4 (red team): a link above, to the same
+    ):  # parent moved aside, names the same object by another path, whose keys are not this path's
         raise _Stop(Reason.COPY_FOLDER_MOVED, None, path)
     handles.confined = path
     return core_paths.path_key(r)
@@ -849,10 +856,10 @@ def _remove_temps(handles: Handles, targets: tuple[_Target, ...]) -> None:
 def _why(e: Exception, handles: Handles) -> tuple[Reason, str | None]:
     if isinstance(e, _Stop):
         return e.reason, e.path
+    if isinstance(e, LinkedPathError):  # before its base class (S0117 round 4): a link, or a file for a folder
+        return (Reason.LINK_IN_COPY if e.link else Reason.CHANGED), e.canonical
     if isinstance(e, PathMovedError):
         return Reason.PATH_MOVED, e.canonical
-    if isinstance(e, LinkedPathError):
-        return Reason.LINK_IN_COPY, e.canonical
     return Reason.IO_ERROR, handles.on
 
 
@@ -884,14 +891,21 @@ def _rollback(
     )
 
 
-def _encoded(record: Record) -> bytes:
+def _encoded(record: Record, confine: FolderEntry | None = None) -> bytes:
     """The record's bytes, before the first effect (S0100, BL-0162): a plan whose files' names of ours fold to one under
     the journal's widest rule (two paths that differ only in case, on a case-sensitive volume) stops as `case_twins`,
-    naming the second file; any other rule of the record's own check raises before anything is written."""
+    naming the second file; any other rule of the record's own check raises before anything is written, except for a
+    test copy's save, where a record that does not hold together means a folder of the copy changed under the walk
+    (S0117 round 4, red team overflow): `copy_folder_moved`, naming the copy's folder."""
     twin = journal.case_twin(record)
     if twin is not None:
         raise _Stop(Reason.CASE_TWINS, twin.canonical_path)
-    return journal.encode(record)
+    try:
+        return journal.encode(record)
+    except BadRecordError:
+        if confine is None:
+            raise
+        raise _Stop(Reason.COPY_FOLDER_MOVED, None, confine.canonical_path) from None
 
 
 @tla_action("S_JPart", "S_JPartSync", "S_JOpen", "S_JDirSync", "S_Close", "S_CloseSync")
@@ -912,7 +926,7 @@ def durable_commit(fs: FileSystem, c: Commit) -> Outcome:
             plan = _prepare(fs, handles, c, targets)
             backups = _backup_names(plan)
             record = _record(c, plan, name, backups)
-            data = _encoded(record)
+            data = _encoded(record, c.confine)
             _check_anchor(fs, c.anchor)  # S0102 round 1 (red team F1): the folders of step 8, before each write
             _backups(handles, plan, name, backups)
             step = Step.JOURNAL
@@ -921,7 +935,7 @@ def durable_commit(fs: FileSystem, c: Commit) -> Outcome:
             jd = handles.at(plan.journal_dir)
             jd.create(journal.file_name(name, State.PART), data, JOURNAL_MODE)
             _check_anchor(fs, c.anchor)  # last, before the record is `.open` and the first swap
-        except (OSError, _Stop, PathMovedError, LinkedPathError) as e:
+        except (OSError, _Stop, PathMovedError) as e:  # `LinkedPathError` is a `PathMovedError` (S0117 round 4)
             reason, path = _why(e, handles)
             entry, detail = _where(e)
             unchanged, changed = _rehash(handles, targets)

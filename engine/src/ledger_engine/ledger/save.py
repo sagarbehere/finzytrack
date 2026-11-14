@@ -128,10 +128,11 @@ class SavePlan:
     app_local_data: str
     app_folder: tuple[int, int]
     confine: FolderEntry | None = None
-    """S0117 rounds 1 and 2 (owner, 2026-11-14: "Go with (2), fix it now", then "3"): the test copy's folder as its
-    mark recorded it (its real path and identity) that every file the save writes must lie in, checked by the writer
-    after the gate (`writer._check_confined`: `outside_folder`, nothing written); the sidecar names it for an
-    unpromoted mutator's plan. None: no confinement."""
+    """S0117 rounds 1 to 3 (owner, 2026-11-14: "Go with (2), fix it now", then "3", then "2"): the test copy's folder
+    as its mark recorded it (its real path and identity); after the gate the writer opens it once and reaches every
+    file the save writes from it without following a link (`writer._open_confined`, `writer._confined_target`;
+    `outside_folder`, `link_in_copy`, `copy_folder_moved`, `copy_folder_missing`, nothing written); the sidecar names
+    it for an unpromoted mutator's plan. None: no confinement."""
 
 
 class Job(Protocol):

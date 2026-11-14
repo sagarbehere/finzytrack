@@ -45,9 +45,10 @@ PlanId = NewType("PlanId", str)
 """A plan's id in the store (ARCHITECTURE §2.6)."""
 
 PreviewHash = NewType("PreviewHash", str)
+"""The SHA-256 (hex) of what the preview showed (the module's docstring; ARCHITECTURE §2.6)."""
 
 type Fate = Literal["used", "gone", "unknown"]
-"""The SHA-256 (hex) of what the preview showed (the module's docstring; ARCHITECTURE §2.6)."""
+"""What became of a plan the store no longer gives (`PlanStore.fate`; S0117 round 3)."""
 
 
 @dataclass(frozen=True, slots=True)
