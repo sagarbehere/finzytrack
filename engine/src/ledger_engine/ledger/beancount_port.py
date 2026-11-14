@@ -50,6 +50,7 @@ from types import ModuleType
 from typing import Any, Final, cast, override
 
 import beancount.parser.parser as _parser_module
+from beancount.core.account import TYPE as _ACCOUNT_TYPE
 from beancount.core.amount import Amount as _Amount
 from beancount.core.data import SORT_ORDER as _SORT_ORDER
 from beancount.core.data import (
@@ -126,6 +127,7 @@ __all__ = [
     "Posting",
     "Price",
     "Query",
+    "Token",
     "Transaction",
     "TransactionCheck",
     "WrittenNumber",
@@ -136,6 +138,7 @@ __all__ = [
     "book",
     "booked_positions",
     "check_transaction",
+    "custom_accounts",
     "default_options",
     "display_precision",
     "fill_weight",
@@ -144,6 +147,7 @@ __all__ = [
     "input_hash",
     "is_encrypted_file",
     "is_interpolated",
+    "lex",
     "load_error",
     "parse_file",
     "parse_string",
@@ -208,6 +212,8 @@ WRAPPERS: Final = frozenset(
         "display_precision",
         "is_interpolated",
         "written_numbers",
+        "lex",
+        "custom_accounts",
         "beancount_context",
         "fill_weight",
         "quantize_fill",
@@ -265,6 +271,27 @@ def written_numbers(data: bytes) -> Iterator[WrittenNumber]:
         alone = (signed or before not in _OPERATORS) and first not in _OPERATORS and after not in _OPERATORS
         shown = ("-" if signed else "") + text.decode("ascii", "replace")
         yield WrittenNumber(lineno, shown, value.copy_negate() if signed else value, alone)
+
+
+@dataclass(frozen=True, slots=True)
+class Token:
+    """One token of Beancount's own lexer: its kind (`ACCOUNT`, `DATE`, `INCLUDE`, ...), its line, the bytes it was
+    read from and the value the lexer gave it (a date for `DATE`, the name for `ACCOUNT`, else what the lexer gives)."""
+
+    kind: str
+    lineno: int
+    text: bytes
+    value: object
+
+
+def lex(data: bytes) -> list[Token]:
+    """Every token of `data`, as Beancount's own lexer reads it (`lexer.lex_iter`, the parser's lexer; S0115)."""
+    return [Token(kind, lineno, text, value) for kind, lineno, text, value in _lex_iter(io.BytesIO(data))]
+
+
+def custom_accounts(entry: Custom) -> list[str]:
+    """The values of a `custom` entry that the parser read as account names (its `account.TYPE` values), in order."""
+    return [str(v.value) for v in entry.values if v.dtype == _ACCOUNT_TYPE]
 
 
 def sort_order(entry: object) -> int:

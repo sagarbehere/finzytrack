@@ -5,7 +5,8 @@ The grammar is Beancount's parser, not `beancount.core.account.is_valid` (which 
 parses with no error and opens exactly that name, under the ledger's own root names; a code is a currency when it
 parses, exactly, both as a `commodity` directive and as the base of a `price` directive. The tolerances are
 Beancount's own calls on booked entries, through `beancount_port`. The domain vectors pin all of it
-(`engine/tests/ledger/test_vectors.py`).
+(`engine/tests/ledger/test_vectors.py`). An account token on a line of a file is found by Beancount's lexer
+(`account_token`, S0115).
 """
 
 from __future__ import annotations
@@ -65,6 +66,43 @@ def parse_account(text: str, roots: AccountRoots) -> AccountName | Invalid:
     if not errors and opened == [text]:
         return AccountName(text)
     return Invalid(_messages(errors))
+
+
+@dataclass(frozen=True, slots=True)
+class TokenAt:
+    """Where one token stands on a line: `line[start:end]`."""
+
+    start: int
+    end: int
+
+
+def _tokens(line: str) -> list[tuple[str, bytes]]:
+    return [(t.kind, t.text) for t in port.lex((line + "\n").encode()) if t.kind != "EOL"]
+
+
+def account_token(line: str, old: str, new: str) -> TokenAt | Invalid:
+    """Where `old` stands on `line` (one line, without its line ending) as an account token, as Beancount's lexer reads
+    the line, so that writing `new` there changes that one token into the account `new` and nothing else the lexer
+    reads (S0115, `replace_token`; ADR-0009: never a regex over the file). Each place `old` is written is tried and the
+    line lexed again: a place inside a comment, a string or a longer name changes another token or none, so it is not
+    the token. Invalid when `old` is not exactly one account token of the line, `new` equals it, or `new` would not be
+    read as one account token there."""
+    before = _tokens(line)
+    if old == new or [text for kind, text in before if kind == "ACCOUNT"].count(old.encode()) != 1:
+        return Invalid(())
+    want = [
+        ("ACCOUNT", new.encode()) if (kind, text) == ("ACCOUNT", old.encode()) else (kind, text)
+        for kind, text in before
+    ]
+    hits: list[int] = []
+    at = line.find(old)
+    while at >= 0:
+        if _tokens(line[:at] + new + line[at + len(old) :]) == want:
+            hits.append(at)
+        at = line.find(old, at + 1)
+    if len(hits) != 1:
+        return Invalid(())
+    return TokenAt(hits[0], hits[0] + len(old))
 
 
 def account_root(account: str) -> str:

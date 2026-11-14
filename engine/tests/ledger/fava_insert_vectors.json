@@ -1,0 +1,306 @@
+{
+ "$comment": "Recorded from Fava 1.30.16 (find_insert_position, parse_options) on Beancount 3.2.0 by scripts/oracle/record_fava_insert.py; never edit by hand (S0115).",
+ "vectors": [
+  {
+   "name": "no-options",
+   "files": [
+    [
+     "main.bean",
+     "2020-01-01 open Assets:Cash USD\n2020-01-01 open Assets:Bank USD\n2020-01-01 open Expenses:Food USD\n2020-01-01 open Expenses:Food:Lunch USD\n2020-01-01 open Expenses:Coffee USD\n2020-01-01 open Income:Salary USD\n2020-01-01 open Equity:Opening USD\n"
+    ]
+   ],
+   "inserts": [
+    {
+     "text": "2024-02-01 * \"Shop\" \"x\"\n  Expenses:Food  1.00 USD\n  Assets:Cash\n",
+     "path": "main.bean",
+     "line": null
+    },
+    {
+     "text": "2024-02-01 open Assets:New USD\n",
+     "path": "main.bean",
+     "line": null
+    }
+   ]
+  },
+  {
+   "name": "one-option",
+   "files": [
+    [
+     "main.bean",
+     "2020-01-01 open Assets:Cash USD\n2020-01-01 open Assets:Bank USD\n2020-01-01 open Expenses:Food USD\n2020-01-01 open Expenses:Food:Lunch USD\n2020-01-01 open Expenses:Coffee USD\n2020-01-01 open Income:Salary USD\n2020-01-01 open Equity:Opening USD\ninclude \"food.bean\"\n"
+    ],
+    [
+     "food.bean",
+     "2024-02-01 * \"Shop\" \"x\"\n  Expenses:Food  1.00 USD\n  Assets:Cash\n2020-01-01 custom \"fava-option\" \"insert-entry\" \"Expenses:Food\"\n"
+    ]
+   ],
+   "inserts": [
+    {
+     "text": "2024-02-01 * \"Shop\" \"x\"\n  Expenses:Food  1.00 USD\n  Assets:Cash\n",
+     "path": "food.bean",
+     "line": 3
+    },
+    {
+     "text": "2024-02-01 * \"Shop\" \"x\"\n  Assets:Cash  1.00 USD\n  Expenses:Food\n",
+     "path": "food.bean",
+     "line": 3
+    },
+    {
+     "text": "2024-02-01 * \"Shop\" \"x\"\n  Expenses:Coffee  1.00 USD\n  Assets:Cash\n",
+     "path": "main.bean",
+     "line": null
+    },
+    {
+     "text": "2024-02-01 * \"Shop\" \"x\"\n  Expenses:Food:Lunch  1.00 USD\n  Assets:Cash\n",
+     "path": "food.bean",
+     "line": 3
+    },
+    {
+     "text": "2020-01-01 * \"Shop\" \"x\"\n  Expenses:Food  1.00 USD\n  Assets:Cash\n",
+     "path": "main.bean",
+     "line": null
+    }
+   ]
+  },
+  {
+   "name": "dates",
+   "files": [
+    [
+     "main.bean",
+     "2020-01-01 open Assets:Cash USD\n2020-01-01 open Assets:Bank USD\n2020-01-01 open Expenses:Food USD\n2020-01-01 open Expenses:Food:Lunch USD\n2020-01-01 open Expenses:Coffee USD\n2020-01-01 open Income:Salary USD\n2020-01-01 open Equity:Opening USD\n2021-01-01 custom \"fava-option\" \"insert-entry\" \"Expenses:Food\"\n\n2023-01-01 custom \"fava-option\" \"insert-entry\" \"Expenses:Food\"\n\n2025-01-01 custom \"fava-option\" \"insert-entry\" \"Expenses:Food\"\n"
+    ]
+   ],
+   "inserts": [
+    {
+     "text": "2024-02-01 * \"Shop\" \"x\"\n  Expenses:Food  1.00 USD\n  Assets:Cash\n",
+     "path": "main.bean",
+     "line": 9
+    },
+    {
+     "text": "2022-06-01 * \"Shop\" \"x\"\n  Expenses:Food  1.00 USD\n  Assets:Cash\n",
+     "path": "main.bean",
+     "line": 7
+    },
+    {
+     "text": "2026-01-01 * \"Shop\" \"x\"\n  Expenses:Food  1.00 USD\n  Assets:Cash\n",
+     "path": "main.bean",
+     "line": 11
+    }
+   ]
+  },
+  {
+   "name": "account-order",
+   "files": [
+    [
+     "main.bean",
+     "2020-01-01 open Assets:Cash USD\n2020-01-01 open Assets:Bank USD\n2020-01-01 open Expenses:Food USD\n2020-01-01 open Expenses:Food:Lunch USD\n2020-01-01 open Expenses:Coffee USD\n2020-01-01 open Income:Salary USD\n2020-01-01 open Equity:Opening USD\n2021-01-01 custom \"fava-option\" \"insert-entry\" \"Expenses:Food\"\n\n2021-01-01 custom \"fava-option\" \"insert-entry\" \"Expenses:Coffee\"\n"
+    ]
+   ],
+   "inserts": [
+    {
+     "text": "2024-02-01 * \"Shop\" \"x\"\n  Expenses:Coffee  1.00 USD\n  Expenses:Food\n",
+     "path": "main.bean",
+     "line": 7
+    },
+    {
+     "text": "2024-02-01 * \"Shop\" \"x\"\n  Expenses:Food  1.00 USD\n  Expenses:Coffee\n",
+     "path": "main.bean",
+     "line": 9
+    },
+    {
+     "text": "2024-02-01 * \"Shop\" \"x\"\n  Assets:Cash  1.00 USD\n  Income:Salary\n",
+     "path": "main.bean",
+     "line": null
+    }
+   ]
+  },
+  {
+   "name": "patterns",
+   "files": [
+    [
+     "main.bean",
+     "2020-01-01 open Assets:Cash USD\n2020-01-01 open Assets:Bank USD\n2020-01-01 open Expenses:Food USD\n2020-01-01 open Expenses:Food:Lunch USD\n2020-01-01 open Expenses:Coffee USD\n2020-01-01 open Income:Salary USD\n2020-01-01 open Equity:Opening USD\n2021-01-01 custom \"fava-option\" \"insert-entry\" \"Food\"\n2021-01-02 custom \"fava-option\" \"insert-entry\" \"Expenses\"\n2021-01-03 custom \"fava-option\" \"insert-entry\" \".*:Lunch$\"\n2021-01-04 custom \"fava-option\" \"insert-entry\" \"Assets:Ca\"\n"
+    ]
+   ],
+   "inserts": [
+    {
+     "text": "2024-02-01 * \"Shop\" \"x\"\n  Expenses:Food  1.00 USD\n  Assets:Cash\n",
+     "path": "main.bean",
+     "line": 10
+    },
+    {
+     "text": "2024-02-01 * \"Shop\" \"x\"\n  Expenses:Food:Lunch  1.00 USD\n  Assets:Cash\n",
+     "path": "main.bean",
+     "line": 10
+    },
+    {
+     "text": "2024-02-01 * \"Shop\" \"x\"\n  Expenses:Coffee  1.00 USD\n  Assets:Cash\n",
+     "path": "main.bean",
+     "line": 10
+    },
+    {
+     "text": "2024-02-01 * \"Shop\" \"x\"\n  Income:Salary  1.00 USD\n  Assets:Cash\n",
+     "path": "main.bean",
+     "line": 10
+    },
+    {
+     "text": "2021-01-03 * \"Shop\" \"x\"\n  Equity:Opening  1.00 USD\n  Expenses:Food:Lunch\n",
+     "path": "main.bean",
+     "line": 8
+    }
+   ]
+  },
+  {
+   "name": "directive-accounts",
+   "files": [
+    [
+     "main.bean",
+     "2020-01-01 open Assets:Cash USD\n2020-01-01 open Assets:Bank USD\n2020-01-01 open Expenses:Food USD\n2020-01-01 open Expenses:Food:Lunch USD\n2020-01-01 open Expenses:Coffee USD\n2020-01-01 open Income:Salary USD\n2020-01-01 open Equity:Opening USD\n2021-01-01 custom \"fava-option\" \"insert-entry\" \"Assets:Bank\"\n\n2021-01-02 custom \"fava-option\" \"insert-entry\" \"Expenses:Food\"\n"
+    ]
+   ],
+   "inserts": [
+    {
+     "text": "2024-02-01 open Assets:Bank:Sub USD\n",
+     "path": "main.bean",
+     "line": 7
+    },
+    {
+     "text": "2024-02-01 close Expenses:Food\n",
+     "path": "main.bean",
+     "line": 9
+    },
+    {
+     "text": "2024-02-01 balance Assets:Bank  1.00 USD\n",
+     "path": "main.bean",
+     "line": 7
+    },
+    {
+     "text": "2024-02-01 pad Expenses:Food Assets:Bank\n",
+     "path": "main.bean",
+     "line": 9
+    },
+    {
+     "text": "2024-02-01 pad Assets:Bank Expenses:Food\n",
+     "path": "main.bean",
+     "line": 7
+    },
+    {
+     "text": "2024-02-01 note Assets:Bank \"a note\"\n",
+     "path": "main.bean",
+     "line": 7
+    },
+    {
+     "text": "2024-02-01 document Assets:Bank \"statement.pdf\"\n",
+     "path": "main.bean",
+     "line": 7
+    },
+    {
+     "text": "2024-02-01 custom \"budget\" Expenses:Food \"x\" Assets:Bank\n",
+     "path": "main.bean",
+     "line": 9
+    },
+    {
+     "text": "2024-02-01 custom \"budget\" \"Expenses:Food\"\n",
+     "path": "main.bean",
+     "line": null
+    },
+    {
+     "text": "2024-02-01 price EUR 1.10 USD\n",
+     "path": "main.bean",
+     "line": null
+    },
+    {
+     "text": "2024-02-01 event \"location\" \"home\"\n",
+     "path": "main.bean",
+     "line": null
+    },
+    {
+     "text": "2024-02-01 commodity EUR\n",
+     "path": "main.bean",
+     "line": null
+    }
+   ]
+  },
+  {
+   "name": "same-date-ties",
+   "files": [
+    [
+     "main.bean",
+     "2020-01-01 open Assets:Cash USD\n2020-01-01 open Assets:Bank USD\n2020-01-01 open Expenses:Food USD\n2020-01-01 open Expenses:Food:Lunch USD\n2020-01-01 open Expenses:Coffee USD\n2020-01-01 open Income:Salary USD\n2020-01-01 open Equity:Opening USD\ninclude \"a.bean\"\ninclude \"b.bean\"\n2021-01-01 custom \"fava-option\" \"insert-entry\" \"Expenses\"\n"
+    ],
+    [
+     "a.bean",
+     "\n\n2021-01-01 custom \"fava-option\" \"insert-entry\" \"Expenses:Food\"\n"
+    ],
+    [
+     "b.bean",
+     "2021-01-01 custom \"fava-option\" \"insert-entry\" \"Expenses:F\"\n\n\n\n\n\n\n\n\n\n\n\n\n\n2021-01-01 custom \"fava-option\" \"insert-entry\" \"Exp\"\n"
+    ]
+   ],
+   "inserts": [
+    {
+     "text": "2024-02-01 * \"Shop\" \"x\"\n  Expenses:Food  1.00 USD\n  Assets:Cash\n",
+     "path": "b.bean",
+     "line": 0
+    },
+    {
+     "text": "2024-02-01 * \"Shop\" \"x\"\n  Expenses:Coffee  1.00 USD\n  Assets:Cash\n",
+     "path": "main.bean",
+     "line": 9
+    }
+   ]
+  },
+  {
+   "name": "odd-options",
+   "files": [
+    [
+     "main.bean",
+     "2020-01-01 open Assets:Cash USD\n2020-01-01 open Assets:Bank USD\n2020-01-01 open Expenses:Food USD\n2020-01-01 open Expenses:Food:Lunch USD\n2020-01-01 open Expenses:Coffee USD\n2020-01-01 open Income:Salary USD\n2020-01-01 open Equity:Opening USD\n2021-01-01 custom \"fava-option\" \"insert-entry\" \"(\"\n2021-01-02 custom \"fava-option\" \"insert-entry\"\n2021-01-03 custom \"fava-option\" \"insert_entry\" \"Expenses:Coffee\"\n2021-01-04 custom \"fava-option\" \"insert-entry\" Expenses:Food\n2021-01-05 custom \"fava-option\" \"insert-entry\" 12\n2021-01-06 custom \"fava-option\" \"not-an-option\" \"Income\"\n"
+    ]
+   ],
+   "inserts": [
+    {
+     "text": "2024-02-01 * \"Shop\" \"x\"\n  Expenses:Food  1.00 USD\n  Assets:Cash\n",
+     "path": "main.bean",
+     "line": 8
+    },
+    {
+     "text": "2024-02-01 * \"Shop\" \"x\"\n  Expenses:Coffee  1.00 USD\n  Assets:Cash\n",
+     "path": "main.bean",
+     "line": 8
+    },
+    {
+     "text": "2024-02-01 * \"Shop\" \"x\"\n  Income:Salary  1.00 USD\n  Assets:Cash\n",
+     "path": "main.bean",
+     "line": 8
+    },
+    {
+     "text": "2021-01-02 * \"Shop\" \"x\"\n  Income:Salary  1.00 USD\n  Assets:Cash\n",
+     "path": "main.bean",
+     "line": null
+    }
+   ]
+  },
+  {
+   "name": "crlf-and-tabs",
+   "files": [
+    [
+     "main.bean",
+     "2020-01-01 open Assets:Cash USD\r\n2020-01-01 open Assets:Bank USD\r\n2020-01-01 open Expenses:Food USD\r\n2020-01-01 open Expenses:Food:Lunch USD\r\n2020-01-01 open Expenses:Coffee USD\r\n2020-01-01 open Income:Salary USD\r\n2020-01-01 open Equity:Opening USD\r\n2021-01-01 custom \"fava-option\" \"insert-entry\" \"Expenses:Food\"\r\n"
+    ]
+   ],
+   "inserts": [
+    {
+     "text": "2024-02-01 * \"Shop\" \"x\"\n  Expenses:Food  1.00 USD\n  Assets:Cash\n",
+     "path": "main.bean",
+     "line": 7
+    },
+    {
+     "text": "2024-02-01 *\t\"Shop\"\n\tExpenses:Food\t1.00 USD\n\tAssets:Cash\n",
+     "path": "main.bean",
+     "line": 7
+    }
+   ]
+  }
+ ]
+}
