@@ -129,7 +129,7 @@ Origin: accepted by the owner as a starting point on 2026-10-24 (review:20 §2),
 - **Status:** enforced
 
 ### INV-20: Performance does not regress
-- **Rule:** The event loop is never blocked; per-write and per-read times do not regress significantly against the previous baseline; the user-facing absolutes hold (a write takes at most 1 s at demo size and at most 5 s at 54k entries).
+- **Rule:** The event loop is never blocked; per-write and per-read times do not regress significantly against the previous baseline; the user-facing absolutes hold (a write takes at most 1 s at demo size and at most 5 s at 54k entries, when no file the write touches is larger than 15 MB; a larger file is written too, more slowly, and the user is told it can be split; owner, 2026-11-15, ADR-0008 amendment of 2026-11-15).
 - **Why:** The app must stay usable at 54k transactions (owner, 2026-10-24).
 - **Enforced by:** the event loop clause: `backend/tests/architecture/test_async_edge.py` (S0103, EP-25: every call the loop runs is awaited, ours and checked in turn, or reviewed with its reason). Planned: the nightly perf suite comparing with the stored baseline (BL-0020), and `/health` measured under a busy sidecar (BL-0114).
 - **Status:** pending (BL-0020, by M11)
