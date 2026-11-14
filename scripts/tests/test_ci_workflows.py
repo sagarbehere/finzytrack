@@ -159,7 +159,8 @@ class PackagedFixmeTest(unittest.TestCase):
     """S0114 (owner, 2026-11-13: "Narrow it (Recommended)"; S0112 verifier F2): a fixme OS of the packaged run is
     green only when its first smoke run fails with exactly its known failure; any other failure, in that run or in a
     later step, and an unexpected pass, fail the run. No job hides its result (`continue-on-error`), macOS is strict,
-    and each known failure is the reason its open M11 row names (ADR-0061 decision 4b)."""
+    and each known failure is the reason its open row names (ADR-0061 decision 4b; since its amendment of 2026-11-14
+    the row is due the next milestone, not M11)."""
 
     def setUp(self) -> None:
         self.block = jobs((REPO / ".github/workflows/packaged.yml").read_text())["package"]
@@ -169,7 +170,7 @@ class PackagedFixmeTest(unittest.TestCase):
     def test_no_job_hides_its_result(self) -> None:
         self.assertNotIn("continue-on-error", (REPO / ".github/workflows/packaged.yml").read_text())
 
-    def test_macos_is_strict_and_every_known_failure_is_its_open_m11_rows_reason(self) -> None:
+    def test_macos_is_strict_and_every_known_failure_is_its_open_rows_reason(self) -> None:
         entries = matrix_entries(self.block)
         self.assertEqual(sorted(e[0].split("-")[0] for e in entries), ["macos", "ubuntu", "windows"])
         for os_name, known, comment in entries:
@@ -184,7 +185,8 @@ class PackagedFixmeTest(unittest.TestCase):
                 row = backlog_row(rows[0])
                 assert row is not None, rows[0]
                 cells = [c.strip() for c in row.split("|")]
-                self.assertEqual(cells[4:6], ["M11", "open"], rows[0])
+                self.assertRegex(cells[4], r"^M(0|1a|1b|[2-9]|1[0-2])$", rows[0])
+                self.assertEqual(cells[5], "open", rows[0])
                 # quoted whole in the row, so a shorter reason (one that also accepts other failures) is refused
                 self.assertIn(f'"{known}"', row, "the known failure is the whole reason its row quotes")
 

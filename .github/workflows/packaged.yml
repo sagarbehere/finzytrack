@@ -28,7 +28,8 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # known_failure: empty, the OS is strict. Otherwise the OS is fixme due M11 (ADR-0061 decision 4b) and its
+          # known_failure: empty, the OS is strict. Otherwise the OS is fixme due its row's milestone (ADR-0061 decision 4b and its amendment of 2026-11-14: the
+          # next milestone) and its
           # first smoke run passes only when it fails with exactly this reason (smoke_packaged.py --expect-fail): a
           # different failure, a failure in any other run or step, and an unexpected pass fail the run (S0114; owner,
           # 2026-11-13: "Narrow it (Recommended)"). Remove the reason with its row.
@@ -37,7 +38,7 @@ jobs:
           # Strict since S0114 fixed the build check's path false positive (BL-0264 closes when a run shows it green).
           - os: windows-2022
             known_failure: ""
-          # fixme due M11, BL-0263: the AppImage's bundled engine (owner, 2026-11-13: "Defer to M11 (Recommended)").
+          # fixme due M1b, BL-0263: the AppImage's bundled engine (ADR-0061 amendment of 2026-11-14).
           - os: ubuntu-22.04  # the oldest supported Ubuntu, so the glibc baseline is 22.04 (ARCHITECTURE.md §5)
             known_failure: "the bundled engine failed: engine view: CalledProcessError"
     runs-on: ${{ matrix.os }}

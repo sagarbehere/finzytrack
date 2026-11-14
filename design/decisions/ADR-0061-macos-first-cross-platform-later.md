@@ -2,7 +2,7 @@
 
 This record sets the platform order for v0.4 development: build, test and dogfood on macOS, keep the cheap cross-platform signals, and port to Linux and Windows in dedicated sessions in M11, except for the write path, whose Windows behaviour is designed in and checked at every exit from M1b on.
 
-- **Status:** Accepted. Amended by ADR-0062 (2026-10-27): INV-26's three-OS lock-interleaving test narrows to the legacy-lock detection test.
+- **Status:** Accepted. Amended by ADR-0062 (2026-10-27): INV-26's three-OS lock-interleaving test narrows to the legacy-lock detection test. **Amended 2026-11-14 (below): Linux joins Windows for the write path from M1b on, and a platform-only failure is fixed by the next milestone's exit instead of waiting for M11; M11 keeps the work that needs real machines.**
 - **Date:** 2026-10-26
 - **Deciders:** owner: "I agree, also with the exception as you have described it." (2026-10-26, in session), answering the agent's recommendation on the owner's proposal: "Would it make sense to 1) Defer Linux and Windows builds for now (since we don't have ready access to those operating systems) 2) Still do the deveolpment in a way that would theoretically work on those operating systems 3) Focus on MacOS development for now 4) Later, once v0.4.0 works on MacOS, we spend some dedicated sessions on making sure they work in Linux and Windows (by then, I'll have computers running those operating systems and maybe we could run claude code on those and make sure it works on both those operating systems). What do you think?"
 - **Area:** process, platforms, release
@@ -38,6 +38,15 @@ The owner develops and dogfoods on macOS and has no Linux or Windows machine at 
 
 Owner: "Drop the coexistence policy; I approve the needed changes to INV-26 and ADR-0020. The rest of the pending work you have identified should be done." (2026-10-27, in session).
 - Where this ADR names **INV-26's lock-interleaving test on all three OSes** (Amends, decision 4, Consequences), read **INV-26's legacy-lock detection test**: v0.4 no longer interleaves writes with a legacy app; it tries the legacy lock once without waiting and refuses while it is held (ADR-0062). The detection test runs in the unit tests on macOS and on Linux and Windows in the manual CI run, and stays **never deferred**, like every INV-tagged test.
+
+## Amendment (2026-11-14): Linux and Windows no more than one milestone behind
+
+Owner, on where the deferred Linux work would land: "I want Finzytrack to work well on Linux, Windows, and MacOS.. it's fine to develop for MacOS first, but Linux and windows should not lag too far behind." Agreeing to the three changes below: "Yes, go with all three" (2026-11-14, in session). On the Windows scope of decision 6, the same day: "(b) for windows" (a Windows port of the engine's write path, so its real-disk write-contract tests run on the Windows runner, rather than only the pure and fake-file-system tests).
+1. **Linux joins decision 6.** The engine's write path (the file-system port: the one-step swap, the data and folder syncs, the locks, drive and folder identity, the engine's process group) is ported to Linux in M1b beside Windows, and the engine's write-contract tests run on a Linux runner as well as a Windows runner in the manual CI run at **every milestone exit from M1b on**; a failure there holds the exit like any write-path defect (BL-0087, BL-0266). The backend's Windows supervision pieces (the engine group, the app-instance lock) stay with the Windows sessions unless a write-contract test needs them.
+2. **A platform-only failure waits at most one milestone.** Decision 4(b) still lets an exit be green with a platform-only failure that is not cheap to fix and not a safety test marked `fixme`, but it is now due **the next milestone**, not M11: its backlog row takes that milestone. So Linux and Windows are never more than one milestone behind macOS on what the CI runs can check. The rows deferred under 4(b) before this amendment move the same way: BL-0263 (the AppImage's engine) to M1b.
+3. **M11 keeps what needs real machines** (decision 5): installers, each platform's look and feel, hands-on testing, before the dogfood window. A session on a real Linux or Windows machine may come earlier whenever the owner has one.
+
+Unchanged: decisions 1 to 3, decision 4(a) and 4(b)'s "safety, write-path, INV-26 and integrity-core tests are never deferred", ADR-0043's release gate.
 
 ## References
 
