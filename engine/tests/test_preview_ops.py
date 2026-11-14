@@ -6,17 +6,21 @@ the save's gate. Answered only by an engine that holds the engine lock. The edit
 
 from __future__ import annotations
 
+import dataclasses
+import hashlib
 import json
 import os
 import sqlite3
 import sys
 from pathlib import Path
-from typing import Any
+from typing import Any, override
 
 import pytest
 
 from ledger_engine.ledger import overlay, preview
-from ledger_engine.ledger.core.ledger_set import decode
+from ledger_engine.ledger.core.ledger_set import Content, LedgerSet, decode
+from ledger_engine.mirror import publish as pb
+from ledger_engine.mirror.store import SqliteStore
 from ledger_engine.protocol.save import engine_build
 from tests.ledger import producer
 from tests.test_save_ops import Channel, engine, request
@@ -102,7 +106,7 @@ def test_a_preview_prepares_a_plan_that_the_save_then_lands(ws: tuple[Path, Path
     assert reply["events"] == ["checking_change"]
     assert (reply["decision"]["table"], reply["decision"]["version"], reply["decision"]["output"]) == (
         "engine.preview",
-        1,
+        2,
         "prepared",
     )
     assert reply["decision"]["inputs"] == {
@@ -164,34 +168,89 @@ def test_a_target_the_producer_cannot_locate_is_refused_at_the_plan(ws: tuple[Pa
     assert (result["outcome"], result["step"], result["reason"]) == ("refused", "plan", "no_entry_at_position")
 
 
-def test_no_published_generation_is_stale(ws: tuple[Path, Path, dict[str, Any]]) -> None:
+def own_set(root: Path) -> LedgerSet:
+    """BL-0255 (S0118): the hint a `stale` answer carries when it has no stamp of this root: the root alone, observed
+    now (the rebuild widens it by its `moved` try, engine-jobs §7)."""
+    return LedgerSet(str(root), (str(root),), (), (), ())
+
+
+def published_stamp(ald: Path) -> str:
+    mirror = ald.parent / "cache" / "workspaces" / "k1" / "mirror"
+    con = sqlite3.connect(f"{(mirror / os.readlink(mirror / 'current.db')).as_uri()}?mode=ro", uri=True)
+    try:
+        return str(dict(con.execute("SELECT key, value FROM m_meta").fetchall())["fingerprint"])
+    finally:
+        con.close()
+
+
+def test_no_published_generation_is_stale_with_the_roots_own_set_as_its_hint(
+    ws: tuple[Path, Path, dict[str, Any]],
+) -> None:
     main, ald, params = ws
     result = call(ald, params, 1, replace_buy(main))["result"]
     assert (result["outcome"], result["stale"]) == ("stale", "unpublished")
+    hint = decode(result["fingerprint"].encode())
+    assert hint.ledger_set == own_set(main)
+    assert hint.files == ((str(main), Content(hashlib.sha256(MAIN).hexdigest())),)  # observed now
 
 
-def test_another_generation_than_the_plan_s_is_stale(ws: tuple[Path, Path, dict[str, Any]]) -> None:
+def test_another_generation_than_the_plan_s_is_stale_with_no_hint(ws: tuple[Path, Path, dict[str, Any]]) -> None:
+    """@regression-guard (no stale answer carried a fingerprint on the base): the mirror may be fresh, so the caller
+    plans again on the current generation; nothing to rebuild."""
     main, ald, params = ws
     number = opened(ald, params)
     result = call(ald, params, number + 1, replace_buy(main))["result"]
-    assert (result["outcome"], result["stale"]) == ("stale", "other_generation")
+    assert (result["outcome"], result["stale"], result["fingerprint"]) == ("stale", "other_generation", None)
 
 
-def test_a_disk_changed_since_the_publish_is_stale(ws: tuple[Path, Path, dict[str, Any]]) -> None:
+def test_a_disk_changed_since_the_publish_is_stale_with_the_published_stamp_as_its_hint(
+    ws: tuple[Path, Path, dict[str, Any]],
+) -> None:
     main, ald, params = ws
     number = opened(ald, params)
     main.write_bytes(MAIN + b"2024-02-01 open Assets:Other\n")
     result = call(ald, params, number, replace_buy(main))["result"]
     assert (result["outcome"], result["stale"], result["files"]) == ("stale", "not_fresh", [])
+    assert result["fingerprint"] == published_stamp(ald)  # the generation's own stamp, as published
 
 
-def test_another_ledger_s_generation_is_stale(ws: tuple[Path, Path, dict[str, Any]]) -> None:
+def test_another_ledger_s_generation_is_stale_with_this_roots_own_set(ws: tuple[Path, Path, dict[str, Any]]) -> None:
+    """Never a hint of another root: the engine's `rebuild` refuses one (`params.root: not the fingerprint's root`)."""
     main, ald, params = ws
     number = opened(ald, params)
     other = main.parent / "other.bean"
     other.write_bytes(MAIN)
     result = call(ald, {**params, "root": str(other)}, number, replace_buy(other))["result"]
     assert (result["outcome"], result["stale"]) == ("stale", "not_fresh")
+    assert decode(result["fingerprint"].encode()).ledger_set == own_set(other)
+
+
+class BadStamp(SqliteStore):
+    """The published generation's stamp cannot be decoded."""
+
+    @override
+    def meta(self, d: Any, name: str) -> pb.Meta | None:
+        m = super().meta(d, name)
+        return None if m is None else dataclasses.replace(m, fingerprint="not a fingerprint")
+
+
+def test_a_stamp_that_cannot_be_decoded_is_not_fresh_with_the_roots_own_set(
+    ws: tuple[Path, Path, dict[str, Any]],
+) -> None:
+    main, ald, params = ws
+    number = opened(ald, params)
+    a = preview.run(
+        preview.Ports(store=BadStamp()),
+        str(main),
+        number,
+        producer.TEST_MUTATOR,
+        replace_buy(main),
+        where(ald, engine_build()),
+        NoJob(),
+    )
+    assert (a.outcome, a.stale) == ("stale", "not_fresh")
+    assert a.hint is not None
+    assert a.hint.ledger_set == own_set(main)
 
 
 def test_an_open_journal_is_paused_and_nothing_is_loaded_over_it(
@@ -392,6 +451,7 @@ def test_another_engine_build_s_generation_is_stale(ws: tuple[Path, Path, dict[s
         preview.Ports(), str(main), number, producer.TEST_MUTATOR, replace_buy(main), where(ald, "other"), NoJob()
     )
     assert (a.outcome, a.stale) == ("stale", "not_fresh")
+    assert a.hint == decode(published_stamp(ald).encode())  # readable and this root's: the stamp itself
     b = preview.run(
         preview.Ports(),
         str(main),

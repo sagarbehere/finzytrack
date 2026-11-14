@@ -11,6 +11,9 @@ scheduler. Written from the spec's lines:
 - §3: at most one background rebuild waits per workspace; §4: another job's Cancel never ends a running one
   (ADR-0068 D7).
 R4 is gone: no `r4_check`, no notice, no `r4.*` log line.
+- BL-0255 (S0118): a save the gate refuses `mirror_stale` submits the workspace's rebuild too, with the plan's
+  fingerprint as its hint, so "wait a moment and try again" comes true; a refused submit, here or after a landed save,
+  is logged (`rebuild.not_queued`), never raised, and never changes the save's answer.
 """
 
 from __future__ import annotations
@@ -27,6 +30,8 @@ from jsonschema import Draft202012Validator
 
 from app.platform.clock import FrozenClock
 from app.platform.engine import EngineRefusal
+from app.platform.engine_jobs.preview import preview_spec
+from app.platform.engine_jobs.queue import QueuePolicy
 from app.platform.engine_jobs.rebuild import (
     MAX_TRIES,
     Loaded,
@@ -45,8 +50,8 @@ from app.platform.engine_jobs.save import (
     save_work,
     submit_save,
 )
-from app.platform.engine_jobs.scheduler import Done, EngineJobs, Failed, JobTicket
-from app.platform.errors import ErrorCode
+from app.platform.engine_jobs.scheduler import Done, EngineJobs, Failed, JobContext, JobTicket, WorkResult
+from app.platform.errors import ErrorCode, WorkspaceNotReadyDetails
 from app.platform.observability import Event as LogEvent
 from tests.platform.fake_job_engine import BLOCK, CRASH, CRASH_TO_BOUND, GATE_DIE, FakeEngine, Gated
 
@@ -127,10 +132,10 @@ def moved(fingerprint: str = FP2) -> dict[str, object]:
 
 
 class Rig:
-    def __init__(self, scripted: dict[str, list[object]]) -> None:
+    def __init__(self, scripted: dict[str, list[object]], policy: QueuePolicy | None = None) -> None:
         self.engine = FakeEngine(scripted=scripted)
         self.logged: list[tuple[str, dict[str, object]]] = []
-        self.jobs = EngineJobs(self.engine, wait_engine_lock=lambda: None, log=self._sink)
+        self.jobs = EngineJobs(self.engine, wait_engine_lock=lambda: None, policy=policy, log=self._sink)
         self.engine.spawned = self.jobs.engine_spawned
         self.engine.ended = self.jobs.engine_ended
         boot = self.jobs.start()
@@ -177,8 +182,8 @@ class Rig:
 def make() -> Iterator[Any]:
     rigs: list[Rig] = []
 
-    def build(scripted: dict[str, list[object]]) -> Rig:
-        rigs.append(Rig(scripted))
+    def build(scripted: dict[str, list[object]], policy: QueuePolicy | None = None) -> Rig:
+        rigs.append(Rig(scripted, policy))
         return rigs[-1]
 
     yield build
@@ -233,6 +238,86 @@ def test_a_save_read_from_disk_as_not_saved_queues_none(make: Any) -> None:
     assert isinstance(out, Done), out
     assert isinstance(out.value, NotDone)
     assert not rig.rebuild_queued()
+
+
+# -- BL-0255 (S0118): a save refused `mirror_stale` queues the rebuild ------------------------------------------------
+
+STALE = answer(outcome="refused", reason="mirror_stale", unchanged=True)
+
+
+def warming(value: object) -> bool:
+    return (
+        isinstance(value, Done)
+        and isinstance(value.value, NotDone)
+        and value.value.error.code == ErrorCode.WORKSPACE_NOT_READY
+        and value.value.error.details == WorkspaceNotReadyDetails(phase="WARMING")
+    )
+
+
+def test_a_save_refused_mirror_stale_queues_the_rebuild_with_the_plans_fingerprint(make: Any) -> None:
+    rig = make({"save": [STALE], "rebuild": [loaded()]})
+    assert warming(rig.run(submit_save(rig.jobs, W1, REQUEST, clock=CLOCK)))  # the answer is unchanged
+    rig.called("rebuild")
+    assert rig.engine.params[-1][1:] == ("rebuild", PARAMS)  # the plan's fingerprint as the hint
+    assert rig.ops() == ["save", "rebuild"]
+
+
+def test_a_second_stale_save_finds_the_queued_rebuild_and_queues_nothing_more(make: Any) -> None:
+    """@regression-guard (on the base no stale save queues one at all): §3, INV-10, `AlreadyQueued`; the queued
+    rebuild keeps its own hint."""
+    rig = make({"save": [BLOCK, STALE], "rebuild": [loaded()]})
+    ticket = submit_save(rig.jobs, W1, REQUEST, clock=CLOCK)
+    rig.called("save")
+    queued = rig.jobs.submit(rebuild_spec(W1), rebuild_work(replace(TARGET, fingerprint=FP2), CLOCK))
+    assert isinstance(queued, JobTicket)
+    rig.engine.release("save")
+    assert warming(rig.run(ticket))
+    assert isinstance(rig.run(queued), Done)
+    assert rig.ops() == ["save", "rebuild"]
+    assert rig.engine.params[-1][2]["fingerprint"] == FP2
+
+
+@pytest.mark.parametrize("reason", ["ledger_changed", "unfinished_save", "encrypted_file", "a_new_reason"])
+def test_no_other_refusal_queues_a_rebuild(make: Any, reason: str) -> None:
+    rig = make({"save": [answer(outcome="refused", reason=reason, path=MAIN)], "rebuild": [loaded()]})
+    rig.run(submit_save(rig.jobs, W1, REQUEST, clock=CLOCK))
+    assert not rig.rebuild_queued()
+    assert rig.ops() == ["save"]
+
+
+def _filler(_ctx: JobContext) -> WorkResult:
+    return WorkResult(None, ran_user_code=False)
+
+
+@pytest.mark.parametrize(
+    ("scripted", "expected"),
+    [
+        pytest.param(STALE, "warming", id="refused mirror_stale"),
+        pytest.param(answer(), "saved", id="landed"),  # dropped silently before S0118 (BLOCK precedes no gate)
+    ],
+)
+def test_a_refused_rebuild_submit_is_logged_and_never_changes_the_answer(
+    make: Any, scripted: object, expected: str
+) -> None:
+    """A full queue (INV-10): the rebuild is not queued, a content-free line is logged (INV-23), nothing raised."""
+    rig = make({"save": [BLOCK, scripted], "rebuild": [loaded()]}, QueuePolicy(max_queued=1))
+    ticket = submit_save(rig.jobs, W1, REQUEST, clock=CLOCK)
+    rig.called("save")
+    filler = rig.jobs.submit(preview_spec(W1), _filler)  # the queue is full now
+    assert isinstance(filler, JobTicket)
+    rig.engine.release("save")
+    out = rig.run(ticket)
+    if expected == "warming":
+        assert warming(out), out
+    else:
+        assert isinstance(out, Done), out
+        assert out.value == Saved(published=False)
+    assert isinstance(ticket, JobTicket)
+    assert rig.lines() == [
+        ("rebuild.not_queued", {"job": ticket.id, "workspace_key": "k1", "code": "ENGINE_QUEUE_FULL"})
+    ]
+    rig.run(filler)
+    assert "rebuild" not in rig.ops()
 
 
 def test_one_background_rebuild_waits_per_workspace(make: Any) -> None:

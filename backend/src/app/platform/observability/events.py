@@ -214,6 +214,21 @@ REBUILD_NOT_LOADED = Event(
     ),
 )
 
+REBUILD_NOT_QUEUED = Event(
+    "rebuild.not_queued",
+    "warning",
+    "platform",
+    (
+        Field("job", Kind.ID),  # the job that asked for the rebuild (a save or a preview), not a rebuild's own id
+        Field("workspace_key", Kind.ID),
+        Field(
+            "code",
+            Kind.ENUM,  # the queue's refusal (S0118, BL-0255): a full queue, a switch since, the app closing
+            frozenset({"ENGINE_QUEUE_FULL", "WORKSPACE_NOT_OPEN", "ENGINE_UNAVAILABLE"}),
+        ),
+    ),
+)
+
 
 OPEN_LOADED = Event(
     "open.loaded",
@@ -314,6 +329,7 @@ EVENTS = (
     JOB_INTERNAL_ERROR,
     REBUILD_LOADED,
     REBUILD_NOT_LOADED,
+    REBUILD_NOT_QUEUED,
     OPEN_LOADED,
     OPEN_NOT_LOADED,
     LIB_RECORD,

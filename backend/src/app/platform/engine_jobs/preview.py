@@ -15,7 +15,12 @@ write-safety contract's steps 1-3 and writes nothing. Its answer becomes the job
     `WRITE_REFUSED_UNINTENDED_CHANGE {step}`; a check that could not run (the producer's plan, the load, a fault or an
     undecidable result in any step: INV-22) is `WRITE_REFUSED_CHECK_FAILED {step}`;
   - `stale` (the published generation is not the plan's baseline: none, another one, or not fresh) is
-    `WORKSPACE_NOT_READY {WARMING}`: the caller plans again once a fresh generation is published (BL-0106);
+    `WORKSPACE_NOT_READY {WARMING}`: the caller plans again once a fresh generation is published (BL-0106). When
+    there is none or it is not fresh (`unpublished`, `not_fresh`), the answer carries a hint fingerprint (the
+    generation's stamp, or the root's own set) and the job queues the workspace's background rebuild with it
+    (`rebuild.rebuild_submitter`; S0118, BL-0255), so "wait a moment and try again" comes true even after a rebuild
+    that ended without publishing; a refused submit is logged and changes nothing. `other_generation` queues none:
+    the mirror may be fresh, and the caller plans again on the current generation;
   - `paused` (an unfinished save's `.open` journal) is `WRITES_PAUSED {earlier_unfinished}`;
   - `moved` runs the job again in a fresh engine (the try ran the ledger's plugins, §5.1), at most `MAX_TRIES` tries
     in a row (§7), then `LEDGER_CHANGING`;
@@ -32,8 +37,10 @@ from pathlib import Path
 from typing import Final
 
 from app.domain.errors import DomainError
+from app.platform.clock import Clock
 from app.platform.engine import EngineFailure, EngineRefusal, PreviewAnswer, PreviewError, PreviewFile
 from app.platform.engine_jobs.queue import JobSpec
+from app.platform.engine_jobs.rebuild import QueueRebuild, RebuildTarget, rebuild_submitter
 from app.platform.engine_jobs.scheduler import EngineJobs, Failed, JobContext, JobTicket, Work, WorkResult
 from app.platform.engine_protocol import Violation, decode_preview
 from app.platform.errors import (
@@ -52,6 +59,8 @@ TEXT_STEPS: Final[frozenset[str]] = frozenset({"apply", "parse", "diff", "spans"
 NOT_RUN: Final[frozenset[str]] = frozenset({"fault", "undecidable"})
 """Reasons that say a step did not run to a decision (INV-22): a check failed, whatever the step."""
 ENCRYPTED: Final[frozenset[tuple[str, str]]] = frozenset({("apply", "encrypted_file"), ("load", "encrypted")})
+HINTED: Final[frozenset[str]] = frozenset({"unpublished", "not_fresh"})
+"""The `stale` reasons that carry a hint and queue the rebuild (BL-0255): no fresh generation describes the disk."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -110,10 +119,12 @@ def params_of(target: PreviewTarget, order: PreviewOrder) -> dict[str, object]:
 
 
 def _holds_together(a: PreviewAnswer) -> bool:
-    """Only a prepared plan has files and a fingerprint, and it has both; only a refusal names its step and reason, and
+    """Only a prepared plan has files, and it has a fingerprint; a fingerprint comes exactly with a prepared plan or a
+    `stale` answer with no fresh generation (`HINTED`: its hint, S0118); only a refusal names its step and reason, and
     every refusal names both; only a stale answer says why it is stale; a refusal lists no new error."""
     prepared, refused, stale = a.outcome == "prepared", a.outcome == "refused", a.outcome == "stale"
-    if prepared != bool(a.files) or prepared != (a.fingerprint is not None):
+    hinted = stale and a.stale in HINTED
+    if prepared != bool(a.files) or (prepared or hinted) != (a.fingerprint is not None):
         return False
     if refused != (a.step is not None) or refused != (a.reason is not None):
         return False
@@ -138,7 +149,9 @@ def refusal_of(a: PreviewAnswer) -> NotPrepared:
     return _not_prepared(ErrorCode.WRITE_REFUSED_CHECK_FAILED, ContractStepDetails(step))
 
 
-def run_preview(ctx: JobContext, target: PreviewTarget, order: PreviewOrder) -> PreviewValue | None:
+def run_preview(
+    ctx: JobContext, target: PreviewTarget, order: PreviewOrder, queue_rebuild: QueueRebuild | None = None
+) -> PreviewValue | None:
     """The module's docstring. None when an engine failed or the job was cancelled (the scheduler answers then)."""
     for tries in range(1, MAX_TRIES + 1):
         if tries > 1 and ctx.fresh_engine() is not None:
@@ -158,6 +171,11 @@ def run_preview(ctx: JobContext, target: PreviewTarget, order: PreviewOrder) -> 
             case "refused":
                 return refusal_of(a)
             case "stale":
+                if a.fingerprint is not None and queue_rebuild is not None:  # `HINTED` (`_holds_together`)
+                    t = target
+                    queue_rebuild(
+                        ctx, RebuildTarget(t.workspace_key, t.root, a.fingerprint, t.lineage, t.app_local_data)
+                    )
                 return _not_prepared(ErrorCode.WORKSPACE_NOT_READY, WorkspaceNotReadyDetails(phase="WARMING"))
             case "paused":
                 return _not_prepared(ErrorCode.WRITES_PAUSED, WritesPausedDetails("earlier_unfinished", None))
@@ -169,12 +187,19 @@ def run_preview(ctx: JobContext, target: PreviewTarget, order: PreviewOrder) -> 
 type AfterPrepared = Callable[[Prepared], object]
 
 
-def preview_work(target: PreviewTarget, order: PreviewOrder, then: AfterPrepared | None = None) -> Work:
+def preview_work(
+    target: PreviewTarget,
+    order: PreviewOrder,
+    then: AfterPrepared | None = None,
+    *,
+    queue_rebuild: QueueRebuild | None = None,
+) -> Work:
     """The work of a preview job. `then` turns a `Prepared` value into the job's value (the use case keeps the plan);
-    if it raises, the job ends `INTERNAL` (the scheduler's rule) and nothing is kept."""
+    if it raises, the job ends `INTERNAL` (the scheduler's rule) and nothing is kept. `queue_rebuild` is told what to
+    rebuild after a `stale` answer with a hint (BL-0255)."""
 
     def work(ctx: JobContext) -> WorkResult:
-        value = run_preview(ctx, target, order)
+        value = run_preview(ctx, target, order, queue_rebuild)
         if value is None:
             return WorkResult(None)
         if isinstance(value, Prepared) and then is not None:
@@ -185,6 +210,8 @@ def preview_work(target: PreviewTarget, order: PreviewOrder, then: AfterPrepared
 
 
 def submit_preview(
-    jobs: EngineJobs, target: PreviewTarget, order: PreviewOrder, then: AfterPrepared | None = None
+    jobs: EngineJobs, target: PreviewTarget, order: PreviewOrder, then: AfterPrepared | None = None, *, clock: Clock
 ) -> JobTicket | Failed:
-    return jobs.submit(preview_spec(target.workspace_key), preview_work(target, order, then))
+    """Queue a preview whose `stale` answer with a hint queues the workspace's rebuild (BL-0255)."""
+    queue = rebuild_submitter(jobs, target.workspace_key, clock)
+    return jobs.submit(preview_spec(target.workspace_key), preview_work(target, order, then, queue_rebuild=queue))

@@ -74,7 +74,7 @@ from app.platform.clock import Clock
 from app.platform.engine import PreviewError
 from app.platform.engine_jobs.preview import NotPrepared, Prepared, PreviewOrder, PreviewTarget
 from app.platform.engine_jobs.preview import submit_preview as submit_preview_job
-from app.platform.engine_jobs.rebuild import RebuildTarget, rebuild_spec, rebuild_work
+from app.platform.engine_jobs.rebuild import rebuild_submitter
 from app.platform.engine_jobs.save import ChangeText, NotDone, SaveConfine, SaveRequest, save_spec, save_work
 from app.platform.engine_jobs.scheduler import EngineJobs, Failed, JobContext, JobTicket, Work, WorkResult
 from app.platform.errors import (
@@ -255,7 +255,9 @@ def submit_preview(
         return Previewed(plan.plan_id, plan.preview_hash, files, prepared.new_errors, prepared.errors)
 
     where = PreviewTarget(target.workspace, target.root, target.lineage, target.app_local_data)
-    return submit_preview_job(services.jobs, where, PreviewOrder(generation, mutator, request), keep)
+    return submit_preview_job(
+        services.jobs, where, PreviewOrder(generation, mutator, request), keep, clock=services.clock
+    )
 
 
 # -- the confirm ------------------------------------------------------------------------------------------------------
@@ -337,11 +339,8 @@ def _confirm_work(services: WriteServices, target: WriteTarget, plan: WritePlan,
         confine=confine,
     )
 
-    def queue_rebuild(rebuild: RebuildTarget) -> None:
-        """§6.1 step 10 (ADR-0068 D1), as `save.submit_save` queues it; its refusal is BL-0255's."""
-        services.jobs.submit(rebuild_spec(target.workspace), rebuild_work(rebuild, services.clock))
-
-    save = save_work(request, after_saved=queue_rebuild)
+    # §6.1 step 10 (ADR-0068 D1) and the gate's `mirror_stale` (BL-0255), as `save.submit_save` queues it
+    save = save_work(request, queue_rebuild=rebuild_submitter(services.jobs, target.workspace, services.clock))
 
     def work(ctx: JobContext) -> WorkResult:
         if services.plans.take(target.workspace, plan.plan_id) is not plan:  # used, expired, let go or dropped

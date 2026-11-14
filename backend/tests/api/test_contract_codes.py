@@ -77,7 +77,9 @@ class Scenarios:
         return self._preview_error(self._refused("apply", "encrypted_file"))
 
     def stale(self) -> object:
-        return self._preview_error(self.rig.answer(outcome="stale", files=[], fingerprint=None, stale="not_fresh"))
+        return self._preview_error(  # no hint: no rebuild queued (S0118)
+            self.rig.answer(outcome="stale", files=[], fingerprint=None, stale="other_generation")
+        )
 
     def already_confirmed(self) -> object:
         p = self.rig.preview()

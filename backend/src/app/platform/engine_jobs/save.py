@@ -5,11 +5,13 @@ The work of a `save` job: one `save` request to the job's engine, which runs §6
 save`); the sidecar never reads a journal or a ledger file itself. Its answer becomes the job's value:
 
 - **`Saved`** once the engine said so (the closed record is durable), or once the disk said so after the engine
-  died (§6.6). `published` is False: the save publishes nothing itself. `after_saved` queues the background rebuild
-  with Beancount's own loader (`submit_save` wires it: §6.1 step 10; ADR-0068 D1, S0070); it gates nothing.
+  died (§6.6). `published` is False: the save publishes nothing itself. `queue_rebuild` queues the background
+  rebuild with Beancount's own loader (`submit_save` wires it: §6.1 step 10; ADR-0068 D1, S0070); it gates nothing.
 - **`NotDone(error)`**, a registry error with §11's text (`save_text`): `WRITES_PAUSED {unfinished_save}` (this
   save's journal left open) or `{earlier_unfinished}` (refused at step 1 or 4 by an earlier save's: S0100, BL-0183),
-  `LEDGER_EXTERNALLY_CHANGED`, `WORKSPACE_NOT_READY {WARMING}`,
+  `LEDGER_EXTERNALLY_CHANGED`, `WORKSPACE_NOT_READY {WARMING}` (the gate's `mirror_stale`: the job queues the
+  workspace's rebuild too, with the plan's fingerprint as its hint, so "wait a moment and try again" comes true;
+  S0118, BL-0255),
   `CHANGE_NOT_SAVED {reason, path, folder, acl_entry, unchanged, changed}`, and the save's step 0 refusal of an
   encrypted file `ENCRYPTED_FILE_NOT_EDITABLE {path}` (the confirm refuses one first, S0117; the save meets one only
   through a link made after the preview); an engine refusal before the engine's `gate` is `INTERNAL` (it wrote
@@ -31,7 +33,7 @@ from __future__ import annotations
 
 import dataclasses
 import uuid
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Final, cast
@@ -40,7 +42,7 @@ from app.domain.errors import DomainError
 from app.platform.clock import Clock
 from app.platform.engine import EngineEvent, EngineFailure, EngineRefusal, GateReached, OutcomeFacts, SaveAnswer
 from app.platform.engine_jobs.queue import JobSpec
-from app.platform.engine_jobs.rebuild import RebuildTarget, rebuild_spec, rebuild_work
+from app.platform.engine_jobs.rebuild import QueueRebuild, RebuildTarget, rebuild_submitter
 from app.platform.engine_jobs.scheduler import EngineJobs, Failed, JobContext, JobTicket, Work, WorkResult
 from app.platform.engine_protocol import Violation, decode_save, decode_save_outcome
 from app.platform.errors import (
@@ -244,14 +246,12 @@ def save_outcome(facts: OutcomeFacts, *, gated: bool) -> SaveValue:
             return _not_done(ErrorCode.ENGINE_STOPPED, EngineStoppedDetails(reason="crashed"))
 
 
-type AfterSaved = Callable[[RebuildTarget], object]
-
-
-def save_work(request: SaveRequest, *, after_saved: AfterSaved | None = None) -> Work:
-    """The work of a save job; `after_saved` is told what to rebuild after a save that landed."""
+def save_work(request: SaveRequest, *, queue_rebuild: QueueRebuild | None = None) -> Work:
+    """The work of a save job; `queue_rebuild` is told what to rebuild after a save that landed, and after the gate
+    refused it `mirror_stale` (BL-0255)."""
 
     def work(ctx: JobContext) -> WorkResult:
-        return _Run(ctx, request, after_saved).run()
+        return _Run(ctx, request, queue_rebuild).run()
 
     return work
 
@@ -264,20 +264,17 @@ def submit_save(
     work that plans when it runs can), so a second one while one is queued is refused with its own
     `ENGINE_QUEUE_FULL`. At most one rebuild waits per workspace (§3): a newer save's finds the queued one, which loads
     the disk when it runs and so shows both saves (its fingerprint is a hint: a set that misses a file the newer save
-    added makes it try once more with the wider set, `ledger_engine.ledger.rebuild`)."""
-
-    def queue_rebuild(target: RebuildTarget) -> None:
-        jobs.submit(rebuild_spec(workspace), rebuild_work(target, clock))
-
-    work = save_work(request, after_saved=queue_rebuild)
+    added makes it try once more with the wider set, `ledger_engine.ledger.rebuild`). A refused rebuild is logged
+    (`rebuild_submitter`)."""
+    work = save_work(request, queue_rebuild=rebuild_submitter(jobs, workspace, clock))
     return jobs.submit_background_save(workspace, work) if background else jobs.submit(save_spec(workspace), work)
 
 
 class _Run:
-    def __init__(self, ctx: JobContext, request: SaveRequest, after_saved: AfterSaved | None = None) -> None:
+    def __init__(self, ctx: JobContext, request: SaveRequest, queue_rebuild: QueueRebuild | None = None) -> None:
         self._ctx = ctx
         self._r = request
-        self._after_saved = after_saved
+        self._queue_rebuild = queue_rebuild
         self._job = new_job_name()  # this save's name: the save and its outcome read use it (§6.5, §6.6)
         self.gated = False
 
@@ -300,12 +297,19 @@ class _Run:
         answer = decode_save(out)
         if isinstance(answer, Violation):
             return self._from_disk()  # a final reply we cannot read: what happened is on disk
+        if answer.outcome == "refused" and answer.reason == "mirror_stale":
+            self._rebuild()  # BL-0255: the mirror describes no disk; nothing else would rebuild it until a reopen
         return self._answered(answer_of(answer))
 
-    def _answered(self, value: SaveValue, *, ran_user_code: bool = True) -> WorkResult:
-        if isinstance(value, Saved) and self._after_saved is not None:
+    def _rebuild(self) -> None:
+        if self._queue_rebuild is not None:
             r = self._r
-            self._after_saved(RebuildTarget(r.workspace_key, r.root, r.fingerprint, r.lineage, r.app_local_data))
+            target = RebuildTarget(r.workspace_key, r.root, r.fingerprint, r.lineage, r.app_local_data)
+            self._queue_rebuild(self._ctx, target)
+
+    def _answered(self, value: SaveValue, *, ran_user_code: bool = True) -> WorkResult:
+        if isinstance(value, Saved):
+            self._rebuild()
         return WorkResult(value, ran_user_code=ran_user_code)
 
     def _no_engine(self, *, app_folder: bool = False) -> WorkResult:

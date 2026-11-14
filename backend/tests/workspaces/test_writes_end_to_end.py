@@ -11,6 +11,10 @@ path under the product's bootstrap; `test_the_shipped_engine_has_no_producer` ho
 
 Each must-not-pass case compares the ledger folder's bytes before and after (the brief: "each with the disk
 byte-identical afterwards").
+
+BL-0255 (S0118): a rebuild that ends without publishing, or a mirror the OS removed, no longer leaves every preview
+`WORKSPACE_NOT_READY {WARMING}` until a reopen: the stale preview queues the rebuild, and once it has run, the
+preview prepares a plan again.
 """
 
 from __future__ import annotations
@@ -41,11 +45,12 @@ from app.platform.adapters.engine_lock import engine_lock_path, wait_engine_lock
 from app.platform.clock import FrozenClock
 from app.platform.engine_jobs.opening import Opened, submit_open
 from app.platform.engine_jobs.opening import OpenTarget as OpenJobTarget
-from app.platform.engine_jobs.preview import preview_spec
+from app.platform.engine_jobs.preview import NotPrepared, preview_spec
+from app.platform.engine_jobs.queue import JobSpec
 from app.platform.engine_jobs.save import NotDone, Saved
-from app.platform.engine_jobs.scheduler import Done, EngineJobs, Failed, JobContext, JobTicket, WorkResult
+from app.platform.engine_jobs.scheduler import Done, EngineJobs, Failed, JobContext, JobTicket, Work, WorkResult
 from app.platform.engine_supervision import RestartPolicy
-from app.platform.errors import ChangeNotSavedDetails, ErrorCode
+from app.platform.errors import ChangeNotSavedDetails, ErrorCode, WorkspaceNotReadyDetails, error
 from app.platform.plans import PlannedFile, PlanStore, WritePlan, new_plan
 from app.workspaces import writes
 from app.workspaces.writes import CopyMark, Previewed, WriteServices, WriteTarget, mirror_generation
@@ -209,10 +214,8 @@ def code_of(value: object) -> str:
     return value.error.code
 
 
-def wait_for(cond: object) -> bool:
-    import threading
-
-    for _ in range(int(DEADLINE / 0.05)):
+def wait_for(cond: object, seconds: float = DEADLINE) -> bool:
+    for _ in range(int(seconds / 0.05)):
         if cond():  # pyright: ignore[reportCallIssue]
             return True
         threading.Event().wait(0.05)
@@ -443,6 +446,59 @@ def test_a_second_confirm_of_a_saved_plan_is_already_confirmed(rig: Rig) -> None
     assert one.value == Saved(published=False)
     assert isinstance(two, Done)
     assert code_of(two.value) == ErrorCode.PLAN_ALREADY_CONFIRMED
+
+
+# -- BL-0255 (S0118): "wait a moment and try again" comes true -------------------------------------------------------
+
+REBUILT = 30.0  # a rebuild of this one-file ledger takes well under a second; on the base none is ever queued
+
+
+def _warming(rig: Rig, generation: int) -> None:
+    request = {"edits": [{"kind": "insert", "text": NOTE, "default_file": str(rig.main)}]}
+    ticket = writes.submit_preview(rig.services, rig.target, generation, MUTATOR, request)
+    assert isinstance(ticket, JobTicket), ticket
+    out = ticket.wait(DEADLINE)
+    assert isinstance(out, Done), out
+    assert isinstance(out.value, NotPrepared), out.value
+    assert (out.value.error.code, out.value.error.details) == (
+        ErrorCode.WORKSPACE_NOT_READY,
+        WorkspaceNotReadyDetails(phase="WARMING"),
+    )
+
+
+def test_after_a_rebuild_that_did_not_publish_the_next_preview_queues_one(
+    rig: Rig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The landed save's rebuild never runs (its submit refused: a full queue, one of BL-0255's causes), so the
+    published generation no longer describes the disk. The preview answers WARMING (`not_fresh`) and queues the
+    rebuild with the generation's stamp as its hint; once it has published, the preview prepares a plan."""
+    submit, refused = rig.jobs.submit, list[JobSpec]()
+
+    def refuse_the_first_rebuild(spec: JobSpec, work: Work) -> JobTicket | Failed:
+        if spec.kind == "rebuild" and not refused:
+            refused.append(spec)
+            return Failed(error(ErrorCode.ENGINE_QUEUE_FULL))
+        return submit(spec, work)
+
+    monkeypatch.setattr(rig.jobs, "submit", refuse_the_first_rebuild)
+    assert rig.confirm(rig.preview()) == Saved(published=False)
+    assert len(refused) == 1
+    assert rig.generation() == 1  # nothing published since the save
+    _warming(rig, 1)
+    assert wait_for(lambda: rig.generation() == 2, REBUILT), "the stale preview queued no rebuild"
+    p = rig.preview()
+    assert p.files[0].text.count(NOTE) == 2  # planned on the saved ledger
+
+
+def test_after_the_os_removed_the_mirror_the_next_preview_queues_a_rebuild(rig: Rig) -> None:
+    """The cache folder purged under a running app (`unpublished`): the hint is the root's own set; the rebuild widens
+    it as it needs and publishes again."""
+    assert rig.confirm(rig.preview()) == Saved(published=False)
+    assert wait_for(lambda: rig.generation() == 2)
+    shutil.rmtree(rig.cache / "workspaces" / KEY / "mirror")
+    _warming(rig, 2)
+    assert wait_for(lambda: rig.generation() is not None, REBUILT), "the stale preview queued no rebuild"
+    assert rig.preview().files[0].text.count(NOTE) == 2
 
 
 PRODUCER_HOME = "src/ledger_engine/ledger/preview.py"

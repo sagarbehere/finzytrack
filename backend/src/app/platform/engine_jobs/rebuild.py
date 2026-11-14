@@ -22,10 +22,20 @@ the civil date and the instant from the sidecar's clock (the engine reads none, 
 generation number. TODO(BL-0126): the floor comes from the open workspace's holder of the highest number published or
 served this session; until reads are served it is 0, so after the OS purges the cache under a running app the number
 may start again at 1 (no screen reads it yet). TODO(BL-0211): the screens' "Checking…" text until the rebuild ends.
+
+**Who queues it** (`rebuild_submitter`, one helper for every caller): a landed save, a save read from disk as saved,
+and since S0118 (BL-0255) a save the gate refused `mirror_stale` and a preview answered `stale` (`unpublished`,
+`not_fresh`): a rebuild that ended without publishing (a crashed plugin, a ledger that kept changing, an I/O
+refusal, a full queue, the OS removing the cache folder) is then queued again by the next write, so
+`WORKSPACE_NOT_READY {WARMING}`'s "wait a moment and try again" comes true. A queued one answers `AlreadyQueued`
+(the queued one loads the disk when it runs). A refused submit (`ENGINE_QUEUE_FULL`; `WORKSPACE_NOT_OPEN` after a
+switch, INV-31; `ENGINE_UNAVAILABLE` while the app closes) is logged `rebuild.not_queued`, content-free (INV-23); it is
+never raised and never changes the asking job's answer.
 """
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Final, Literal
@@ -34,9 +44,9 @@ from app.domain.dates import civil_date
 from app.platform.clock import Clock
 from app.platform.engine import EngineFailure, EngineRefusal, Publish, RebuildAnswer
 from app.platform.engine_jobs.queue import JobSpec
-from app.platform.engine_jobs.scheduler import JobContext, Work, WorkResult
+from app.platform.engine_jobs.scheduler import EngineJobs, Failed, JobContext, Work, WorkResult
 from app.platform.engine_protocol import Violation, decode_rebuild
-from app.platform.observability.events import REBUILD_LOADED, REBUILD_NOT_LOADED
+from app.platform.observability.events import REBUILD_LOADED, REBUILD_NOT_LOADED, REBUILD_NOT_QUEUED
 
 MAX_TRIES: Final = 3
 """§7: a moved fingerprint runs the load again, at most 3 times in a row."""
@@ -207,3 +217,19 @@ def rebuild_work(target: RebuildTarget, clock: Clock) -> Work:
         return WorkResult(None if isinstance(result, Cancelled) else result, ran_user_code=True)
 
     return work
+
+
+type QueueRebuild = Callable[[JobContext, RebuildTarget], None]
+"""Queue the background rebuild of what a job leaves stale (the module's docstring), from inside that job's work."""
+
+
+def rebuild_submitter(jobs: EngineJobs, workspace: str, clock: Clock) -> QueueRebuild:
+    """The one way a job queues the rebuild of its own workspace (`workspace`, the queue's key; INV-31): queued, or
+    the queued one's ticket (`AlreadyQueued`), or a refusal logged and dropped (the module's docstring)."""
+
+    def queue(ctx: JobContext, target: RebuildTarget) -> None:
+        out = jobs.submit(rebuild_spec(workspace), rebuild_work(target, clock))
+        if isinstance(out, Failed):
+            ctx.log(REBUILD_NOT_QUEUED, job=ctx.job_id, workspace_key=target.workspace_key, code=str(out.error.code))
+
+    return queue
