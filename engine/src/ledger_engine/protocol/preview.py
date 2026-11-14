@@ -18,7 +18,7 @@ from collections.abc import Callable
 from typing import Final, Protocol
 
 from ledger_engine.fs.this_os import for_this_os
-from ledger_engine.ledger import preview
+from ledger_engine.ledger import contract, preview
 from ledger_engine.ledger.core.ledger_set import encode
 from ledger_engine.protocol.messages import Message, PreviewError, PreviewFile, PreviewParams, PreviewResult
 from ledger_engine.protocol.rebuild import Publisher
@@ -26,6 +26,7 @@ from ledger_engine.protocol.recovery import BadParamsError, app_local_data_of
 from ledger_engine.protocol.save import app_cache_of, engine_build
 
 TABLE: Final = "engine.preview"
+TYPE_CHARS: Final = 128  # `PreviewError.type`
 TABLE_VERSION: Final = 1  # 1 (S0116): the baseline, the producer, the contract's prepare, the re-check
 
 
@@ -38,6 +39,19 @@ def _abs(path: str | None) -> str | None:
     return path if path is not None and path.startswith("/") else None
 
 
+def _line(line: int | None) -> int | None:
+    """A line the answer may name: Beancount and its plugins put some errors at line 0 or -1 (no line; S0116 round 1,
+    F1), which are listed without one, never a reason to fail the answer."""
+    return line if line is not None and line >= 1 else None
+
+
+def _detail(r: contract.Refused) -> str:
+    """The detail, led by the refusal's subject when it is not a path the answer can name (a plugin's name)."""
+    if r.path is not None and _abs(r.path) is None:
+        return f"{r.path}: {r.detail}"
+    return r.detail
+
+
 def result_of(a: preview.Answer) -> PreviewResult:
     p, r = a.prepared, a.refused
     return PreviewResult(
@@ -47,14 +61,15 @@ def result_of(a: preview.Answer) -> PreviewResult:
         new_errors=[]
         if p is None
         else [
-            PreviewError(key=e.key, type=e.type, message=e.message, path=_abs(e.path), line=e.line)
+            PreviewError(key=e.key, type=e.type[:TYPE_CHARS], message=e.message, path=_abs(e.path), line=_line(e.line))
             for e in p.new_errors
         ],
         errors=0 if p is None else p.errors,
         step=None if r is None else r.step,
         reason=None if r is None else r.reason,
         path=None if r is None else _abs(r.path),
-        detail=None if r is None else r.detail,
+        detail=None if r is None else _detail(r),
+        line=None if r is None else _line(r.line),
         stale=a.stale,
     )
 

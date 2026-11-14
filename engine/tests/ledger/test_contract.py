@@ -442,6 +442,119 @@ def test_a_candidate_for_a_file_the_plan_does_not_edit_is_refused(
     refused(contract.prepare(current, p, root, base, DESKTOP), "spans", "outside_spans_changed")
 
 
+def spliced(monkeypatch: pytest.MonkeyPatch, change: Callable[[str], str]) -> None:
+    """`apply_edits` as a bug inside a span would answer: each splice's new text changed by `change`, the candidate,
+    its hash and its record all agreeing with it (so only the plan's own texts can tell)."""
+    real = se.apply_edits
+
+    def inside(snap: se.Snapshot, plan: se.EditPlan) -> se.Applied | se.Refusal:
+        a = real(snap, plan)
+        assert isinstance(a, se.Applied)
+        files: dict[str, bytes] = {}
+        splices: dict[str, tuple[se.Splice, ...]] = {}
+        for path, made in a.splices.items():
+            old = snap.files[path].decode()
+            parts: list[str] = []
+            pos = 0
+            out: list[se.Splice] = []
+            for sp in sorted(made, key=lambda x: x.start):
+                new = change(sp.new)
+                parts += [old[pos : sp.start], new]
+                pos = sp.end
+                out.append(dataclasses.replace(sp, new=new))
+            parts.append(old[pos:])
+            files[path] = "".join(parts).encode()
+            splices[path] = tuple(out)
+        return se.Applied(files, a.before, {p: sha(b) for p, b in files.items()}, splices)
+
+    monkeypatch.setattr(se, "apply_edits", inside)
+
+
+LUNCH_MEMO = '2024-01-05 * "Shop" "lunch"\n  memo: "x"\n  Expenses:Food  10.50 USD\n  Assets:Cash  -10.50 USD\n'
+FEE = '2024-02-01 * "Bank" "fee"\n  Expenses:Food  1.00 USD\n  Assets:Bank\n'
+INSIDE: list[tuple[str, Callable[[str], str]]] = [
+    ("replace", lambda t: t + "; not planned\n"),  # a comment added after the replaced entry
+    ("replace", lambda t: t.replace('  memo: "x"\n', '  memo: "x"\n  ; not planned\n')),  # inside it
+    ("replace", lambda t: t.replace("\n", "  \n", 1)),  # trailing whitespace on its first line
+    ("insert", lambda t: t + "\n"),  # an extra blank line after the inserted entry
+    ("insert", lambda t: t.replace("\n2024", "\n; not planned\n2024")),  # a comment before it
+    ("token", lambda t: t + " "),  # a space after the new account
+]
+
+
+@pytest.mark.parametrize(("kind", "change"), INSIDE)
+def test_a_span_whose_text_is_not_the_planned_text_is_refused(
+    kind: str, change: Callable[[str], str], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """S0116 round 1 F2: the text inside each span is held to the plan's own text (the replace's, the token, the
+    insert's with its separators), not to `apply_edits`' record; a comment or whitespace a bug adds there keeps every
+    entry the same, so only step 2b can see it."""
+    root, current = ledger(tmp_path)
+    base = baseline(root)
+    requests: dict[str, list[pr.Request]] = {
+        "replace": [pr.ReplaceReq(at(LUNCH, root), LUNCH_MEMO)],
+        "insert": [pr.InsertReq(FEE, root)],
+        "token": [pr.TokenReq(at(LUNCH, root), 8, "Assets:Cash", "Assets:Bank")],
+    }
+    p = produced(current, requests[kind])
+    ok(contract.prepare(current, p, root, base, DESKTOP))
+    spliced(monkeypatch, change)
+    refused(contract.prepare(current, p, root, base, DESKTOP), "spans", "outside_spans_changed")
+
+
+def test_a_replaced_text_in_another_line_ending_is_refused(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A CRLF file: the replaced entry written with LF line ends is not the plan's text."""
+    root, current = ledger(tmp_path, {"main.beancount": MAIN.replace("\n", "\r\n")})
+    base = baseline(root)
+    p = produced(current, [pr.ReplaceReq(at(LUNCH, root), LUNCH_MEMO)])
+    assert "\r\n" in ok(contract.prepare(current, p, root, base, DESKTOP)).files[0].text
+    spliced(monkeypatch, lambda t: t.replace("\r\n", "\n"))
+    refused(contract.prepare(current, p, root, base, DESKTOP), "spans", "outside_spans_changed")
+
+
+def test_a_recorded_hash_that_is_not_the_candidate_s_is_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """S0116 round 1 F3: the plan's `post` is the hash of the text it ships; a record that says otherwise refuses."""
+    root, current = ledger(tmp_path)
+    base = baseline(root)
+    p = produced(current, DELETE_DINNER(root))
+    out = ok(contract.prepare(current, p, root, base, DESKTOP))
+    assert out.files[0].post == sha(out.files[0].text.encode())
+    real = se.apply_edits
+
+    def wrong_after(snap: se.Snapshot, plan: se.EditPlan) -> se.Applied | se.Refusal:
+        a = real(snap, plan)
+        assert isinstance(a, se.Applied)
+        return se.Applied(a.files, a.before, dict.fromkeys(a.after, "0" * 64), a.splices)
+
+    monkeypatch.setattr(se, "apply_edits", wrong_after)
+    refused(contract.prepare(current, p, root, base, DESKTOP), "spans", "outside_spans_changed")
+
+
+META_PAIRS = [("  xx: Assets:Foo\n", '  xx: "Assets:Foo"\n'), ("  xx: USD\n", '  xx: "USD"\n')]
+
+
+@pytest.mark.parametrize(("written", "other"), META_PAIRS + [(b, a) for a, b in META_PAIRS])
+def test_a_metadata_value_s_spelling_is_held_by_the_bytes(
+    written: str, other: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """S0116 round 1 F4: Beancount parses `xx: Assets:Foo` and `xx: "Assets:Foo"` (and `USD`, `"USD"`) to one string,
+    so no key from the parse tells them apart (`test_entry_keys.py`); a change between them is refused by step 2b,
+    in an untargeted entry and inside a replaced one, both ways."""
+    text = MAIN + written  # on the balance assertion, the last entry
+    root, current = ledger(tmp_path, {"main.beancount": text})
+    base = baseline(root)
+    p = produced(current, DELETE_DINNER(root))
+    doctor(monkeypatch, lambda t: t.replace(written, other))
+    refused(contract.prepare(current, p, root, base, DESKTOP), "spans", "outside_spans_changed")
+    monkeypatch.undo()
+    lunch = LUNCH_MEMO.replace('  memo: "x"\n', written)
+    p = produced(current, [pr.ReplaceReq(at(LUNCH, root), lunch)])
+    spliced(monkeypatch, lambda t: t.replace(written, other))
+    refused(contract.prepare(current, p, root, base, DESKTOP), "spans", "outside_spans_changed")
+
+
 def test_a_splice_outside_the_planned_spans_is_refused(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """The splices `apply_edits` reports are held to the plan's own spans, not trusted."""
     root, current = ledger(tmp_path)
@@ -524,6 +637,17 @@ def test_a_second_copy_of_an_old_error_is_new(tmp_path: Path) -> None:
     root, current = ledger(tmp_path, {"main.beancount": text})
     out = ok(prep(root, current, [pr.InsertReq("2024-01-11 balance Assets:Cash  1.00 USD\n", root)]))
     assert [e.type for e in out.new_errors] == ["BalanceError"]
+
+
+def test_a_load_refusal_keeps_its_subject_and_its_line(tmp_path: Path) -> None:
+    """S0116 round 1 F5: what the load refused (a plugin's name, a file) and the line Beancount failed on."""
+    root, current = ledger(tmp_path)
+
+    def failed(r: str, c: Mapping[str, bytes], policy: object) -> overlay.LoadResult:
+        return overlay.LoadRefused("beancount-failed", "my_plugin", 7)
+
+    out = refused(prep(root, current, DELETE_DINNER(root), load=failed), "load", "beancount-failed")
+    assert (out.path, out.line) == ("my_plugin", 7)
 
 
 def test_a_load_that_cannot_run_refuses(tmp_path: Path) -> None:

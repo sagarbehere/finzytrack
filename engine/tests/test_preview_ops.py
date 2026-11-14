@@ -421,3 +421,87 @@ def test_a_file_read_otherwise_than_the_generation_read_it_is_moved(ws: tuple[Pa
         ports, str(main), number, producer.TEST_MUTATOR, replace_buy(main), where(ald, engine_build()), NoJob()
     )
     assert (a.outcome, a.prepared) == ("moved", None)
+
+
+def test_a_new_error_at_line_0_is_listed_without_a_line(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """S0116 round 1 F1: `check_commodity` puts its errors at line 0 of `<check_commodity>`: listed (ADR-0067), the
+    line and the file left out, never an `engine.internal`."""
+    monkeypatch.setitem(preview.PRODUCERS, producer.TEST_MUTATOR, producer.produce_json)
+    led = tmp_path / "L"
+    led.mkdir()
+    main = led / "main.bean"
+    main.write_bytes(
+        b'plugin "beancount.plugins.check_commodity"\n2024-01-01 commodity USD\n'
+        b"2024-01-01 open Assets:Cash\n2024-01-01 open Assets:Bank\n"
+    )
+    ald = tmp_path / "app"
+    (ald / "locks").mkdir(parents=True)
+    (tmp_path / "cache").mkdir()
+    params = {"root": str(main), "app_local_data": str(ald), "workspace_key": "k1", "lineage": "lin1"}
+    number = opened(ald, params)
+    text = '2024-02-01 * "x"\n  Assets:Cash  1 EUR\n  Assets:Bank  -1 EUR\n'
+    reply = call(ald, params, number, {"edits": [{"kind": "insert", "text": text, "default_file": str(main)}]})
+    assert reply["ok"], reply
+    result = reply["result"]
+    assert result["outcome"] == "prepared", result
+    assert [(e["type"], e["path"], e["line"]) for e in result["new_errors"]] == [("CheckCommodityError", None, None)]
+
+
+MINUS = """\
+import collections
+
+__plugins__ = ["minus"]
+MinusError = collections.namedtuple("MinusError", "source message entry")
+
+
+def minus(entries, options_map):
+    errors = [
+        MinusError({"filename": e.meta["filename"], "lineno": -1}, "an error with no line", None)
+        for e in entries
+        if getattr(e, "narration", None) == "minus"
+    ]
+    return entries, errors
+"""
+
+
+def test_a_new_error_at_line_minus_1_is_listed_without_a_line(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """S0116 round 1 F1: a plugin's error at line -1 (as Beancount's `summarize` gives) is listed without a line."""
+    monkeypatch.setitem(preview.PRODUCERS, producer.TEST_MUTATOR, producer.produce_json)
+    led = tmp_path / "L"
+    led.mkdir()
+    (led / "s0116_minus.py").write_text(MINUS)
+    main = led / "main.bean"
+    main.write_bytes(
+        b'option "insert_pythonpath" "TRUE"\nplugin "s0116_minus"\n'
+        b"2024-01-01 open Assets:Cash\n2024-01-01 open Assets:Bank\n"
+    )
+    ald = tmp_path / "app"
+    (ald / "locks").mkdir(parents=True)
+    (tmp_path / "cache").mkdir()
+    params = {"root": str(main), "app_local_data": str(ald), "workspace_key": "k1", "lineage": "lin1"}
+    number = opened(ald, params)
+    for name, module in list(sys.modules.items()):  # a fresh engine for the preview, as the sidecar runs it
+        file = getattr(module, "__file__", None)
+        if isinstance(file, str) and os.path.realpath(file).startswith(os.path.realpath(led)):
+            del sys.modules[name]
+    text = '2024-02-01 * "minus"\n  Assets:Cash  1 USD\n  Assets:Bank\n'
+    reply = call(ald, params, number, {"edits": [{"kind": "insert", "text": text, "default_file": str(main)}]})
+    assert reply["ok"], reply
+    result = reply["result"]
+    assert result["outcome"] == "prepared", result
+    assert [(e["type"], e["path"], e["line"]) for e in result["new_errors"]] == [("MinusError", str(main), None)]
+
+
+def test_a_load_refusal_names_its_plugin_and_line_in_the_answer() -> None:
+    """S0116 round 1 F5: a refusal's subject that is no path (a plugin's name) leads the detail; its line is kept."""
+    from ledger_engine.ledger import contract
+    from ledger_engine.protocol.preview import result_of
+
+    refused = contract.Refused("load", "beancount-failed", "my_plugin", "the load of the candidate cannot run", 7)
+    out = result_of(preview.Answer("refused", refused=refused))
+    assert (out.path, out.line) == (None, 7)
+    assert out.detail is not None
+    assert out.detail.startswith("my_plugin: ")
+    on_disk = contract.Refused("load", "number-failed", "/l/main.bean", "the load of the candidate cannot run", 0)
+    out = result_of(preview.Answer("refused", refused=on_disk))
+    assert (out.path, out.line, out.detail) == ("/l/main.bean", None, "the load of the candidate cannot run")

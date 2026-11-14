@@ -370,7 +370,7 @@ class PreviewError:
 class PreviewAnswer:
     """The result of the engine's `preview` (engine-jobs §2, §7; S0116): `prepared` (the write plan: `files`,
     `fingerprint` for the save's gate, `new_errors`, `errors` in the candidate), `refused` (`step`, `reason`, `path`,
-    `detail`), `moved` (run it again in a fresh engine), `paused` (an unfinished save) or `stale` (`stale`: the
+    `detail`, `line`), `moved` (run it again in a fresh engine), `paused` (an unfinished save) or `stale` (`stale`: the
     published generation cannot be the plan's baseline). It wrote nothing; the ledger's plugins ran in that engine.
     The sidecar's preview use case, the `PlanStore` and the routes come with the confirm (BL-0106)."""
 
@@ -383,6 +383,7 @@ class PreviewAnswer:
     reason: str | None
     path: str | None
     detail: str | None
+    line: int | None
     stale: PreviewStale | None
 
 

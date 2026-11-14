@@ -1,9 +1,14 @@
 """Canonical entry keys and error keys: what the write-safety contract compares (ADR-0008 steps 2 and 3; S0116).
 
-- **An entry's key** (step 2) is Beancount's printer's text of the parsed entry (`beancount_port.format_entry`), which
-  leaves out the entry's location (`filename`, `lineno`): an entry the splice moved down a line keeps its key, and one
-  whose text changed (an amount, its decimals, a flag, a tag, a metadata line) gets another. Example: `10.50 USD`
-  and `10.5 USD` are one number but two keys, since the text the user wrote differs.
+- **An entry's key** (step 2) is the text of the parsed entry as Python writes the value (its `repr`), with its
+  location (`filename`, `lineno`, of the entry and of each posting) left out and its tags and links in sorted order:
+  an entry the splice moved down a line keeps its key, and one whose parse changed in any field (an amount, its
+  decimals, a flag, a tag, a metadata line, a payee written as `""` or left out) gets another. Example: `10.50 USD`
+  and `10.5 USD` are one number but two keys, since the text the user wrote differs. ADR-0008 names the printer's
+  text; the printer writes a payee `""` and no payee alike, so the key is the parsed value itself (ADR-0008's
+  implementation note of 2026-11-14, S0116 round 1). What Beancount's parser does not tell apart, no key can: a
+  metadata value written `Assets:Foo` or `"Assets:Foo"` (or `USD` and `"USD"`) is the same string; the bytes are
+  held by step 2b instead (an untargeted entry's bytes, and a targeted span's text against the plan's).
 - **An error's key** (step 3) is its type, its entry and its message, each without locations, so a splice that shifts
   lines does not make an old error new. It is read from a `ledger_errors` row (`mirror.core.rows.error_rows`), the
   form in which the baseline is published (the published mirror generation's `ledger_errors`): the candidate's
@@ -22,9 +27,9 @@ import hashlib
 import json
 import re
 from collections import Counter
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from decimal import Decimal
-from typing import Any, Final
+from typing import Any, Final, cast
 
 from ledger_engine.ledger import beancount_port as port
 from ledger_engine.mirror.core.rows import Row
@@ -34,9 +39,20 @@ _PRINTED_LINENO: Final = re.compile(r"'lineno': \d+")  # an entry's or posting's
 _PRINTED_FILENAME: Final = re.compile(r"'filename': '(?:[^'\\]|\\.)*'")
 
 
+def _meta(meta: Mapping[str, Any] | None) -> dict[str, Any] | None:
+    return None if meta is None else {k: v for k, v in meta.items() if k not in LOCATION}
+
+
 def entry_key(entry: port.Directive) -> str:
-    """The entry's canonical key: the printer's text, without its location."""
-    return port.format_entry(entry)
+    """The entry's canonical key: its parsed value without its location, tags and links sorted."""
+    fields: dict[str, Any] = {"meta": _meta(entry.meta)}
+    if isinstance(entry, port.Transaction):
+        fields["postings"] = [p._replace(meta=_meta(p.meta)) for p in entry.postings]
+    for name in ("tags", "links"):
+        value: object = getattr(entry, name, None)
+        if isinstance(value, frozenset | set):
+            fields[name] = tuple(sorted(cast("Iterable[str]", value)))
+    return repr(cast("Any", entry)._replace(**fields))
 
 
 def key_of_text(text: str, path: str) -> str | None:

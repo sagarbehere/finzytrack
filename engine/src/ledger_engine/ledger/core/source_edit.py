@@ -552,7 +552,8 @@ def _in_newline(text: str, newline: str) -> str:
     return text.replace("\n", newline)
 
 
-def _insert_key(text: str) -> tuple[datetime.date, int, str]:
+def insert_key(text: str) -> tuple[datetime.date, int, str]:
+    """The order of new entries inserted at one point (rule 5): date, Fava's order of kinds, text."""
     entry = _entry_of(text, None)
     if isinstance(entry, Refusal):  # never: route_insert refused such a text before
         return datetime.date.min, 0, text
@@ -576,7 +577,7 @@ def _pieces(text: _Text, edits: Sequence[Edit]) -> list[_Piece]:
         else:
             pieces.append(_Piece(edit.start, edit.end, edit.new))
     for line, texts in points.items():
-        ordered = [_in_newline(t, nl) for t in sorted(texts, key=_insert_key)]
+        ordered = [_in_newline(t, nl) for t in sorted(texts, key=insert_key)]
         if line is not None:
             pieces.append(_Piece(text.offsets[line], text.offsets[line], "".join(t + nl for t in ordered)))
             continue

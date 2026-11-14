@@ -29,6 +29,7 @@ the new errors; and the count of Beancount's errors in the candidate. No entry o
 
 from __future__ import annotations
 
+import hashlib
 import os
 from collections import Counter
 from collections.abc import Callable, Mapping
@@ -54,12 +55,15 @@ type Load = Callable[[str, Mapping[str, bytes], LoadPolicy], overlay.LoadResult]
 @dataclass(frozen=True, slots=True)
 class Refused:
     """Not prepared: `step` and its `reason` (`fault`: the step raised, `detail` the exception's class; `undecidable`:
-    no result it could read), the file it is about when there is one, and a detail without ledger content."""
+    no result it could read), what it is about when there is one (a file; for a load, the plugin or folder the
+    load refused, `LoadRefused.subject`), a detail without ledger content, and the line when known (a load
+    Beancount failed on, `LoadRefused.line`)."""
 
     step: Step
     reason: str
     path: str | None
     detail: str
+    line: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -165,7 +169,7 @@ def _prepare(
 
     loaded = _step("load", lambda: load(root, dict(applied.files), policy))
     if isinstance(loaded, overlay.LoadRefused):
-        raise _Stop(Refused("load", loaded.reason, loaded.subject, "the load of the candidate cannot run"))
+        raise _Stop(Refused("load", loaded.reason, loaded.subject, "the load of the candidate cannot run", loaded.line))
     if not isinstance(loaded, overlay.Loaded):  # pyright: ignore[reportUnnecessaryIsInstance] (INV-22: a load
         # that answers anything else is undecidable, never taken for a pass)
         raise _Stop(Refused("load", "undecidable", None, type(loaded).__name__))
@@ -189,7 +193,9 @@ def _prepare(
 
     new_errors, fingerprint, count = _step("errors", errors)
     files = tuple(
-        PlannedFile(p, current.hashes[p], applied.after[p], applied.files[p].decode("utf-8"))
+        PlannedFile(
+            p, current.hashes[p], hashlib.sha256(applied.files[p]).hexdigest(), applied.files[p].decode("utf-8")
+        )
         for p in sorted(applied.files)
     )
     return Prepared(files, fingerprint, new_errors, count)

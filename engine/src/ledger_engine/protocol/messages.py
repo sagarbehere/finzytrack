@@ -527,11 +527,13 @@ class PreviewResult(Message):
     `ledger_set.encode`'s text, which the save's gate checks), `new_errors` (empty when the change brings none) and
     `errors` (Beancount's errors in the candidate, as bean-check counts them). `refused`: `step` and `reason` say
     where and why (`fault`: the step raised; `undecidable`: no result it could read), `path` the file when there is
-    one, `detail` more, without ledger content. `moved`: the disk changed during the job (run it again in a fresh
-    engine). `paused`: an unfinished save's `.open` journal. `stale`: the published generation cannot be the
-    plan's baseline (`unpublished`: none, or not complete; `other_generation`: not the plan's; `not_fresh`: not this
-    ledger's, another engine build's, or the disk changed since it was built). It runs the ledger's plugins, so the
-    engine is retired after it; it writes nothing."""
+    one, `detail` more, without ledger content (led by what the load refused when it is no path: a plugin's name),
+    `line` the line when known (a load Beancount failed on). `moved`: the disk changed during the job (run it again
+    in a fresh engine). `paused`: an unfinished save's `.open` journal. `stale`: the published generation cannot be
+    the plan's baseline (`unpublished`: none, or not complete; `other_generation`: not the plan's; `not_fresh`: not
+    this ledger's, another engine build's, or the disk changed since it was built). It runs the ledger's plugins, so
+    the engine is retired after it; it writes nothing. A new error's `line` is null when Beancount gives none (it
+    puts some at line 0 or -1)."""
 
     outcome: Literal["prepared", "refused", "moved", "paused", "stale"]
     files: list[PreviewFile]
@@ -542,6 +544,7 @@ class PreviewResult(Message):
     reason: str | None = Field(min_length=1, max_length=64)
     path: AbsPath | None
     detail: str | None
+    line: int | None = Field(ge=1)
     stale: PreviewStale | None
 
 
@@ -851,6 +854,7 @@ OPS: dict[str, OpSpec] = {
             "reason": None,
             "path": None,
             "detail": None,
+            "line": None,
             "stale": None,
         },
         {

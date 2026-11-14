@@ -1961,6 +1961,7 @@
               }
             ],
             "fingerprint": "{\"document_files\":[],\"documents\":[],\"files\":[],\"globs\":[],\"modules\":[],\"root\":\"/ledgers/L/main.bean\",\"v\":2}",
+            "line": null,
             "new_errors": [
               {
                 "key": "2222222222222222222222222222222222222222222222222222222222222222",
@@ -2080,7 +2081,7 @@
     },
     "PreviewResult": {
       "additionalProperties": false,
-      "description": "`preview`'s answer. `prepared`: `files` (the write plan's texts and hashes), `fingerprint` (the plan's,\n`ledger_set.encode`'s text, which the save's gate checks), `new_errors` (empty when the change brings none) and\n`errors` (Beancount's errors in the candidate, as bean-check counts them). `refused`: `step` and `reason` say\nwhere and why (`fault`: the step raised; `undecidable`: no result it could read), `path` the file when there is\none, `detail` more, without ledger content. `moved`: the disk changed during the job (run it again in a fresh\nengine). `paused`: an unfinished save's `.open` journal. `stale`: the published generation cannot be the\nplan's baseline (`unpublished`: none, or not complete; `other_generation`: not the plan's; `not_fresh`: not this\nledger's, another engine build's, or the disk changed since it was built). It runs the ledger's plugins, so the\nengine is retired after it; it writes nothing.",
+      "description": "`preview`'s answer. `prepared`: `files` (the write plan's texts and hashes), `fingerprint` (the plan's,\n`ledger_set.encode`'s text, which the save's gate checks), `new_errors` (empty when the change brings none) and\n`errors` (Beancount's errors in the candidate, as bean-check counts them). `refused`: `step` and `reason` say\nwhere and why (`fault`: the step raised; `undecidable`: no result it could read), `path` the file when there is\none, `detail` more, without ledger content (led by what the load refused when it is no path: a plugin's name),\n`line` the line when known (a load Beancount failed on). `moved`: the disk changed during the job (run it again\nin a fresh engine). `paused`: an unfinished save's `.open` journal. `stale`: the published generation cannot be\nthe plan's baseline (`unpublished`: none, or not complete; `other_generation`: not the plan's; `not_fresh`: not\nthis ledger's, another engine build's, or the disk changed since it was built). It runs the ledger's plugins, so\nthe engine is retired after it; it writes nothing. A new error's `line` is null when Beancount gives none (it\nputs some at line 0 or -1).",
       "properties": {
         "outcome": {
           "enum": [
@@ -2171,6 +2172,18 @@
           ],
           "title": "Detail"
         },
+        "line": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Line"
+        },
         "stale": {
           "anyOf": [
             {
@@ -2192,6 +2205,7 @@
         "reason",
         "path",
         "detail",
+        "line",
         "stale"
       ],
       "title": "PreviewResult",

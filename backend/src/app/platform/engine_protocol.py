@@ -656,7 +656,7 @@ def decode_open(result: Mapping[str, object]) -> OpenAnswer | Violation:
 
 
 _PREVIEW = frozenset(
-    {"outcome", "files", "fingerprint", "new_errors", "errors", "step", "reason", "path", "detail", "stale"}
+    {"outcome", "files", "fingerprint", "new_errors", "errors", "step", "reason", "path", "detail", "line", "stale"}
 )
 PREVIEW_OUTCOMES: frozenset[str] = frozenset({"prepared", "refused", "moved", "paused", "stale"})
 PREVIEW_STEPS: frozenset[str] = frozenset({"plan", "apply", "parse", "diff", "spans", "load", "errors"})
@@ -718,6 +718,7 @@ def _preview(result: Mapping[str, object]) -> PreviewAnswer:
         reason=reason,
         path=_path(o["path"], "path", nullable=True),
         detail=_text(o["detail"], "detail", nullable=True),
+        line=_int(o["line"], "line", nullable=True, low=1),
         stale=None if stale is None else cast("PreviewStale", _choice(stale, PREVIEW_STALE, "stale")),
     )
 

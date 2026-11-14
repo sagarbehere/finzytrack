@@ -29,6 +29,7 @@ def test_an_entry_s_key_leaves_out_its_line_and_keeps_its_text() -> None:
         TXN.replace('memo: "x"', 'memo: "y"'),
         TXN.replace("  Assets:Cash\n", "  Assets:Bank\n"),
         TXN.replace('"Shop" "lunch"', '"lunch"'),
+        TXN.replace("#t ^l", "#t #u ^l"),
     ):
         assert key(changed) != key(TXN), changed
 
@@ -79,3 +80,21 @@ def test_a_file_and_line_in_a_message_are_left_out_for_the_error_s_own_file() ->
     other = (1, "/l/main.bean", 9, "bad at /l/other.bean:9 here", None, "PluginError")
     assert entry_keys.error_key(row) == entry_keys.error_key(moved)
     assert entry_keys.error_key(row) != entry_keys.error_key(other)
+
+
+def test_tags_and_links_count_as_sets() -> None:
+    assert key(TXN.replace("#t ^l", "#t #u ^l")) == key(TXN.replace("#t ^l", "#u #t ^l"))
+
+
+def test_what_the_parser_does_not_tell_apart_has_one_key() -> None:
+    """A metadata value written as an account or a currency, or as a string, is one string to Beancount: one key.
+    Step 2b holds those bytes (`test_contract.py::test_a_metadata_value_s_spelling_is_held_by_the_bytes`)."""
+    for bare, quoted in (("Assets:Foo", '"Assets:Foo"'), ("USD", '"USD"')):
+        a = "2024-01-01 open Assets:Cash\n  xx: " + bare + "\n"
+        b = "2024-01-01 open Assets:Cash\n  xx: " + quoted + "\n"
+        assert key(a) == key(b)
+
+
+def test_a_payee_written_as_empty_is_not_no_payee() -> None:
+    """S0116 round 1 F4: Beancount's printer writes both as `* "lunch"`; the parse holds `""` and None."""
+    assert key(TXN.replace('"Shop" "lunch"', '"" "lunch"')) != key(TXN.replace('"Shop" "lunch"', '"lunch"'))
