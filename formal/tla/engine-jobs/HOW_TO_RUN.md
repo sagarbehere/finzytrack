@@ -59,8 +59,8 @@ of `L_world` (default 200,000 traces of at most 200 steps).
 
 ## How long it takes
 
-Measured on the owner's Mac (Apple M4 Pro, 14 cores, 48 GB) on 2026-11-01 with 14 TLC workers, on the model of S0072
-round 1 (model sha256 23acd902b1d1); the S tier again on 2026-11-11 on S0101's model (a folder sync covers entries only, `RS_Flush`). Earlier models' numbers (the queue, the screens and liveness) are in git history.
+Measured on the owner's Mac (Apple M4 Pro, 14 cores, 48 GB). The S tier on 2026-11-01 with 14 TLC workers, on the model of S0072
+round 1 (model sha256 23acd902b1d1), and again on 2026-11-11 on S0101's model (a folder sync covers entries only, `RS_Flush`). Earlier models' numbers (the queue, the screens and liveness) are in git history.
 
 | Tier | Configurations | Result | Size | Wall time |
 |---|---|---|---|---|

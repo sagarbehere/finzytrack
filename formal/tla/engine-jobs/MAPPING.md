@@ -2,7 +2,7 @@
 
 - **Spec:** `design/specs/engine-jobs.md` §13 (the model's scope since ADR-0068 D5) and the sections it cites: §6.1 step 8 (the durable order), §6.4 (the rollback and the kept-name design), §6.6 (the outcome after an engine death), §8.1 (recovery, recover-all, Keep), §8.2 (create and copy). The code decides where the spec's prose is older: the model follows `engine/src/ledger_engine/ledger/writer.py`, `restore.py` and `core/recovery.py` as built (S0072, BL-0161).
 - **Model:** `EngineJobs.tla` (one module, durability only since S0072: EP-19). Configurations come from `gen_cfgs.py` (`cfg/*.cfg`, `configs.txt`); `run_all.sh` runs them (HOW_TO_RUN.md).
-- **State:** on this model the small tier ran to completion, all as expected: 14 base worlds pass, 28 mutants each break their property, 23 vacuity witnesses are each reached (65 configurations; HOW_TO_RUN.md has the times). The medium and large tiers are the owner's (BL-0110).
+- **State:** every tier ran to completion on S0111's model, all as expected (72 configurations): 14 base worlds pass, 29 mutants each break their property, 24 vacuity witnesses are each reached, and the medium and large worlds (`M_recover_temps`, `L_save_all`, `L_recover_all`, `L_save_deep`, `L_world`) pass, run by the owner (BL-0110, 2026-11-13 to 2026-11-14). The model changed after them only in a comment (S0111's close). HOW_TO_RUN.md has the times.
 - `scripts/tests/test_tla_engine_jobs.py` keeps this file honest: every action in `Next` has a row in §2.1 and every row names an action; every property and mutant §13 names exists in the model and in `gen_cfgs.py`, and every one they hold is named in §13; every property has at least one mutant; every witness is a predicate of a small world.
 
 ## 1. Spec → model

@@ -35,5 +35,11 @@
 | F2 | Low | c | No small-tier witness reaches the exception: MAPPING.md's "Limit (no witness)" (stop rule) |
 | F3 | Low | d | Fixed: the citation is §6.4, not §6.3 (MAPPING.md now; the `.tla` comment after the reruns; the brief's "§6.3" was the same slip) |
 
+- Close round (docs row, one round), head 0dda9f50: pass with findings. Attacks: 9 (the models diffed with comments stripped: identical; the corpus with its hash masked: byte-identical; both model hashes; every time and count against SUMMARY.md and the logs; the `stale` claim against `run_model.sh`; the §6.4 citation; the comment against MAPPING's limit; the retro line's form; the severity counts).
+
+| ID | Severity | Class | Disposition |
+|---|---|---|---|
+| C1 | Low | d | Fixed (a false statement of fact): MAPPING.md's State line still said 28 mutants, 23 witnesses, 65 configurations and the medium and large tiers not run; now 29, 24, 72 and all run. HOW_TO_RUN.md's "14 TLC workers" now reads as the S tier's only |
+
 ## Retro
 - Build about 20 min (model change and small tier), fix 10 min (round 1's limits), 1 verifier round, findings 0H/1M/2L (F1 c, F2 c, F3 d); the long runs took 16 h beside M1a's exit, the close 10 min. Cheaper gate: a small-tier witness for the same-bytes exception on N (`EdFiles = {N}`, `MaxEdits = 3`, about 1,000 states; MAPPING.md "Limit (no witness)") would have flagged the R-only exception in seconds instead of in `L_save_deep`'s 13th minute. Process checks: the trace corpus check (`gen_traces.py --check`) 0 catch / 1 false positive (it hashes the whole model file, so a comment-only change refused a corpus whose traces were current; the regeneration cost 5.5 min for a header hash); the others 0 / 0.
