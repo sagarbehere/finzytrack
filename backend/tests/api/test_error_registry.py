@@ -109,10 +109,12 @@ def test_the_codes_of_architecture_6_1_this_slice_raises_have_their_classes() ->
         "LEDGER_CHANGING": ErrorClass.UNAVAILABLE,
         # S0117 (BL-0106; ARCHITECTURE §6.1): the write contract's refusals and its Save anyway, and the confirm's
         "ACK_REQUIRED": ErrorClass.CONTRACT_REFUSED,
+        "ACK_UNEXPECTED": ErrorClass.CONTRACT_REFUSED,  # S0117 round 1 (verifier V2)
         "WRITE_REFUSED_UNINTENDED_CHANGE": ErrorClass.CONTRACT_REFUSED,
         "WRITE_REFUSED_CHECK_FAILED": ErrorClass.CONTRACT_REFUSED,
         "ENCRYPTED_FILE_NOT_EDITABLE": ErrorClass.CONTRACT_REFUSED,
         "PLAN_EXPIRED": ErrorClass.NOT_FOUND,
+        "PLAN_ALREADY_CONFIRMED": ErrorClass.CONFLICT,  # S0117 round 1 (red team RT-F2)
         "PREVIEW_STALE": ErrorClass.CONFLICT,
         "UNPROMOTED_MUTATOR_ON_REAL_LEDGER": ErrorClass.FORBIDDEN,
         "INTERNAL": ErrorClass.INTERNAL,

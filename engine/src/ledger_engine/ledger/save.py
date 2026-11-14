@@ -127,6 +127,10 @@ class SavePlan:
     app_cache: str
     app_local_data: str
     app_folder: tuple[int, int]
+    confine: str | None = None
+    """S0117 round 1 (red team RT-F1; owner, 2026-11-14: "Go with (2), fix it now"): the folder every file the save
+    writes must lie in once the writer resolves it, after the gate (`writer._check_confined`: `outside_folder`, nothing
+    written); the sidecar names a test copy's folder for an unpromoted mutator's plan. None: no confinement."""
 
 
 class Job(Protocol):
@@ -494,6 +498,7 @@ def _gated(
         journal_dir=jd,
         backups_dir=bd,
         anchor=anchor,
+        confine=plan.confine,
     )
     out = durable_commit(ports.fs, commit)  # step 8
     if isinstance(out, Landed):

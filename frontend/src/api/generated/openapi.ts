@@ -58,12 +58,42 @@ export interface components {
             /** Retryable */
             retryable: boolean;
         };
+        /** AckUnexpectedError */
+        AckUnexpectedError: {
+            /**
+             * Class
+             * @constant
+             */
+            class: "contract_refused";
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            code: "ACK_UNEXPECTED";
+            /** Correlation Id */
+            correlation_id: string;
+            /** Data Safe */
+            data_safe: boolean;
+            /** Details */
+            details: null;
+            /** Issues */
+            issues: components["schemas"]["Issue"][];
+            /** Message */
+            message: string;
+            /** Next Step */
+            next_step: string;
+            /** Retry After Ms */
+            retry_after_ms: number | null;
+            /** Retryable */
+            retryable: boolean;
+        };
         /**
          * ChangeNotSavedDetails
          * @description A save that did not happen, and why (engine-jobs §6.1 step 8's refusals, §6.4, §6.6, §11; S0063). `path`: the
          *     file it is about (an I/O error's file); `folder` and `acl_entry`: for `permission`, the folder and the ACL entry
          *     (in `chmod`'s words, no subject) that stop it, for `linked_folder` the link in place of the save's own folder, for
-         *     `folder_appeared` the folder that appeared, for `app_folder_missing` the app's folder; `unchanged`: every file
+         *     `folder_appeared` the folder that appeared, for `app_folder_missing` the app's folder, for `outside_folder` the test
+         *     copy's folder the save is confined to (`path`: the file that led out of it, when known); `unchanged`: every file
          *     the save would write was hashed again and equals its bytes before the save (only then may the user read "Your
          *     ledger is unchanged"); `changed`: the first file that re-hash found not at those bytes (None when none was found,
          *     or when it could not read a file; S0100, BL-0163 (b)). The UI words each reason
@@ -303,7 +333,7 @@ export interface components {
         /** ErrorEnvelope */
         ErrorEnvelope: {
             /** Error */
-            error: components["schemas"]["ValidationFailedError"] | components["schemas"]["RouteNotFoundError"] | components["schemas"]["WorkspaceUnknownError"] | components["schemas"]["WorkspaceNotOpenError"] | components["schemas"]["WorkspaceNotReadyError"] | components["schemas"]["EngineQueueFullError"] | components["schemas"]["JobCancelledError"] | components["schemas"]["EngineStoppedError"] | components["schemas"]["EngineUnavailableError"] | components["schemas"]["ChangeOutcomeUnknownError"] | components["schemas"]["LedgerExternallyChangedError"] | components["schemas"]["LedgerChangingError"] | components["schemas"]["WritesPausedError"] | components["schemas"]["ChangeNotSavedError"] | components["schemas"]["AckRequiredError"] | components["schemas"]["WriteRefusedUnintendedChangeError"] | components["schemas"]["WriteRefusedCheckFailedError"] | components["schemas"]["EncryptedFileNotEditableError"] | components["schemas"]["PlanExpiredError"] | components["schemas"]["PreviewStaleError"] | components["schemas"]["UnpromotedMutatorOnRealLedgerError"] | components["schemas"]["InternalError"];
+            error: components["schemas"]["ValidationFailedError"] | components["schemas"]["RouteNotFoundError"] | components["schemas"]["WorkspaceUnknownError"] | components["schemas"]["WorkspaceNotOpenError"] | components["schemas"]["WorkspaceNotReadyError"] | components["schemas"]["EngineQueueFullError"] | components["schemas"]["JobCancelledError"] | components["schemas"]["EngineStoppedError"] | components["schemas"]["EngineUnavailableError"] | components["schemas"]["ChangeOutcomeUnknownError"] | components["schemas"]["LedgerExternallyChangedError"] | components["schemas"]["LedgerChangingError"] | components["schemas"]["WritesPausedError"] | components["schemas"]["ChangeNotSavedError"] | components["schemas"]["AckRequiredError"] | components["schemas"]["AckUnexpectedError"] | components["schemas"]["WriteRefusedUnintendedChangeError"] | components["schemas"]["WriteRefusedCheckFailedError"] | components["schemas"]["EncryptedFileNotEditableError"] | components["schemas"]["PlanExpiredError"] | components["schemas"]["PlanAlreadyConfirmedError"] | components["schemas"]["PreviewStaleError"] | components["schemas"]["UnpromotedMutatorOnRealLedgerError"] | components["schemas"]["InternalError"];
             meta: components["schemas"]["Meta"];
         };
         /** HealthData */
@@ -465,9 +495,38 @@ export interface components {
         /** @constant */
         NotReadyPhase: "WARMING";
         /** @enum {string} */
-        NotSavedReason: "hard_linked" | "locked" | "not_a_file" | "permission" | "io_error" | "read_back" | "name_not_utf8" | "linked_folder" | "no_drive_id" | "no_folder_id" | "engine_stopped" | "case_twins" | "folder_appeared" | "app_folder_missing";
+        NotSavedReason: "hard_linked" | "locked" | "not_a_file" | "permission" | "io_error" | "read_back" | "name_not_utf8" | "linked_folder" | "no_drive_id" | "no_folder_id" | "engine_stopped" | "case_twins" | "folder_appeared" | "app_folder_missing" | "outside_folder";
         /** @enum {string} */
         PausedReason: "unfinished_save" | "earlier_unfinished";
+        /** PlanAlreadyConfirmedError */
+        PlanAlreadyConfirmedError: {
+            /**
+             * Class
+             * @constant
+             */
+            class: "conflict";
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            code: "PLAN_ALREADY_CONFIRMED";
+            /** Correlation Id */
+            correlation_id: string;
+            /** Data Safe */
+            data_safe: boolean;
+            /** Details */
+            details: null;
+            /** Issues */
+            issues: components["schemas"]["Issue"][];
+            /** Message */
+            message: string;
+            /** Next Step */
+            next_step: string;
+            /** Retry After Ms */
+            retry_after_ms: number | null;
+            /** Retryable */
+            retryable: boolean;
+        };
         /** PlanExpiredError */
         PlanExpiredError: {
             /**

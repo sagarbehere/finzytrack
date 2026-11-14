@@ -56,10 +56,12 @@ class ErrorCode(StrEnum):
     WRITES_PAUSED = "WRITES_PAUSED"
     CHANGE_NOT_SAVED = "CHANGE_NOT_SAVED"
     ACK_REQUIRED = "ACK_REQUIRED"
+    ACK_UNEXPECTED = "ACK_UNEXPECTED"
     WRITE_REFUSED_UNINTENDED_CHANGE = "WRITE_REFUSED_UNINTENDED_CHANGE"
     WRITE_REFUSED_CHECK_FAILED = "WRITE_REFUSED_CHECK_FAILED"
     ENCRYPTED_FILE_NOT_EDITABLE = "ENCRYPTED_FILE_NOT_EDITABLE"
     PLAN_EXPIRED = "PLAN_EXPIRED"
+    PLAN_ALREADY_CONFIRMED = "PLAN_ALREADY_CONFIRMED"
     PREVIEW_STALE = "PREVIEW_STALE"
     UNPROMOTED_MUTATOR_ON_REAL_LEDGER = "UNPROMOTED_MUTATOR_ON_REAL_LEDGER"
     INTERNAL = "INTERNAL"
@@ -142,6 +144,7 @@ type NotSavedReason = Literal[
     "case_twins",  # two files of the change whose names differ only in capital letters (S0100, BL-0162)
     "folder_appeared",  # a folder stood where the save makes one (S0100, BL-0187)
     "app_folder_missing",  # the app's own data folder is gone (S0100, BL-0163 (a))
+    "outside_folder",  # a file the save writes leads out of the test copy's folder (S0117 round 1, red team RT-F1)
 ]
 
 
@@ -150,7 +153,8 @@ class ChangeNotSavedDetails:
     """A save that did not happen, and why (engine-jobs §6.1 step 8's refusals, §6.4, §6.6, §11; S0063). `path`: the
     file it is about (an I/O error's file); `folder` and `acl_entry`: for `permission`, the folder and the ACL entry
     (in `chmod`'s words, no subject) that stop it, for `linked_folder` the link in place of the save's own folder, for
-    `folder_appeared` the folder that appeared, for `app_folder_missing` the app's folder; `unchanged`: every file
+    `folder_appeared` the folder that appeared, for `app_folder_missing` the app's folder, for `outside_folder` the test
+    copy's folder the save is confined to (`path`: the file that led out of it, when known); `unchanged`: every file
     the save would write was hashed again and equals its bytes before the save (only then may the user read "Your
     ledger is unchanged"); `changed`: the first file that re-hash found not at those bytes (None when none was found,
     or when it could not read a file; S0100, BL-0163 (b)). The UI words each reason
@@ -361,6 +365,16 @@ def specs() -> tuple[ErrorSpec, ...]:
             details=AckRequiredDetails,
         ),
         ErrorSpec(
+            ErrorCode.ACK_UNEXPECTED,
+            ErrorClass.CONTRACT_REFUSED,
+            retryable=False,
+            # S0117 round 1 (verifier V2): ACK_REQUIRED's words ("adds new errors") are false when none is listed
+            message="This change adds no new errors, but the request accepted some, so Finzytrack did not save it.",
+            data_safe=True,  # nothing of this change was written
+            next_step="Preview the change again.",
+            details=None,
+        ),
+        ErrorSpec(
             ErrorCode.WRITE_REFUSED_UNINTENDED_CHANGE,
             ErrorClass.CONTRACT_REFUSED,
             retryable=False,  # the same request makes the same text
@@ -393,10 +407,21 @@ def specs() -> tuple[ErrorSpec, ...]:
             ErrorCode.PLAN_EXPIRED,
             ErrorClass.NOT_FOUND,
             retryable=False,  # the preview is gone: a new one is needed
-            message="This preview is no longer available, so Finzytrack did not save the change.",
-            data_safe=True,  # nothing of this change was written
+            # S0117 round 1 (red team RT-F2): "this time" is true however the plan went; a plan this session saw
+            # confirmed is PLAN_ALREADY_CONFIRMED instead (`PlanStore.used`)
+            message="This preview is no longer available, so Finzytrack did not save the change this time.",
+            data_safe=True,  # this request wrote nothing
             next_step="Preview the change again.",
-            details=None,  # expired, used, dropped by a switch, or another workspace's: one answer for all
+            details=None,  # expired, let go, dropped by a switch, or another workspace's: one answer for all
+        ),
+        ErrorSpec(
+            ErrorCode.PLAN_ALREADY_CONFIRMED,
+            ErrorClass.CONFLICT,
+            retryable=False,  # a retry, a double click or a second tab: the first confirm's answer is the one to read
+            message="This change was already confirmed.",
+            data_safe=True,  # this request wrote nothing; the first confirm's own answer says what it did
+            next_step="Check your ledger before you preview it again.",
+            details=None,
         ),
         ErrorSpec(
             ErrorCode.PREVIEW_STALE,

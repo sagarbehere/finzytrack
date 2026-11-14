@@ -125,6 +125,12 @@ def not_saved_text(d: ChangeNotSavedDetails) -> str:
                 f"{did_not} {folder} is missing or was replaced. Quit Finzytrack and open it again, then try again. "
                 f"{_rehash(d)}"
             )
+        case "outside_folder":  # S0117 round 1 (red team RT-F1): a link led a file of the test copy out of it
+            folder = d.folder or "the test copy's folder"
+            return (
+                f"{did_not} {_name(d.path)} now leads to a place outside {folder}, and Finzytrack saves this kind "
+                f"of change only inside a test copy. Check the test copy for links to other folders. {_rehash(d)}"
+            )
         case "io_error" if d.path is not None:  # S0100 (BL-0163 (b)): the file named, the re-hash told apart
             return f"{NOT_SAVED} Finzytrack could not read or write {_name(d.path)}. {_rehash(d)}"
         case "read_back" if d.path is not None:

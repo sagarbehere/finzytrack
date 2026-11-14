@@ -290,13 +290,26 @@ def test_an_expired_plan_is_plan_expired(rig: Rig) -> None:
     assert rig.saves() == 0
 
 
-def test_a_plan_used_twice_is_refused_the_second_time(rig: Rig) -> None:
+def test_a_plan_used_twice_is_refused_the_second_time_as_already_confirmed(rig: Rig) -> None:
+    """S0117 round 1 (red team RT-F2): a retry after a lost answer, or a double click, is told the change was already
+    confirmed, never "did not save" (which would invite making it twice)."""
     p = rig.preview()
     rig.script_saved()
     assert isinstance(rig.confirm(p), Saved)
     rig.script_saved()
-    assert code_of(rig.confirm(p)) == ErrorCode.PLAN_EXPIRED
+    again = rig.confirm(p)
+    assert code_of(again) == ErrorCode.PLAN_ALREADY_CONFIRMED
     assert rig.saves() == 1
+
+
+def test_a_confirmed_plan_is_still_known_after_a_switch(rig: Rig) -> None:
+    """A retry may come after the user switched away and back: the used ids survive the drop of the plans."""
+    p = rig.preview()
+    rig.script_saved()
+    assert isinstance(rig.confirm(p), Saved)
+    rig.plans.workspace_closed()
+    rig.plans.workspace_opened(W1)
+    assert code_of(rig.confirm(p)) == ErrorCode.PLAN_ALREADY_CONFIRMED
 
 
 def test_a_plan_whose_save_was_refused_is_used_up_too(rig: Rig) -> None:
@@ -305,7 +318,7 @@ def test_a_plan_whose_save_was_refused_is_used_up_too(rig: Rig) -> None:
     rig.engine.scripted["save"].append({**SAVED, "outcome": "refused", "reason": "ledger_changed", "unchanged": True})
     assert code_of(rig.confirm(p)) == ErrorCode.LEDGER_EXTERNALLY_CHANGED
     rig.script_saved()
-    assert code_of(rig.confirm(p)) == ErrorCode.PLAN_EXPIRED
+    assert code_of(rig.confirm(p)) == ErrorCode.PLAN_ALREADY_CONFIRMED
     assert rig.saves() == 1
 
 
@@ -327,7 +340,7 @@ def test_two_confirms_of_one_plan_queued_together_save_once(rig: Rig) -> None:
     assert isinstance(out1, Done)
     assert out1.value == Saved(published=False)
     assert isinstance(out2, Done)
-    assert code_of(out2.value) == ErrorCode.PLAN_EXPIRED
+    assert code_of(out2.value) == ErrorCode.PLAN_ALREADY_CONFIRMED  # S0117 round 1, red team RT-F2
     assert rig.saves() == 1
 
 
@@ -402,7 +415,6 @@ def test_no_published_generation_at_the_confirm_is_preview_stale(rig: Rig) -> No
         pytest.param((KEY_A, KEY_B), frozenset({KEY_A}), id="one missing"),
         pytest.param((KEY_A,), frozenset({KEY_A, KEY_B}), id="one added"),
         pytest.param((KEY_A,), frozenset({KEY_B}), id="different"),
-        pytest.param((), frozenset({KEY_A}), id="added where none is listed"),
     ],
 )
 def test_acknowledgements_that_miss_add_or_differ_are_ack_required(
@@ -415,6 +427,54 @@ def test_acknowledgements_that_miss_add_or_differ_are_ack_required(
     assert rig.saves() == 0
     rig.script_saved()
     assert isinstance(rig.confirm(p, acks=frozenset(listed)), Saved)  # ACK_REQUIRED keeps the plan for Save anyway
+
+
+def test_acknowledgements_where_none_is_listed_are_ack_unexpected(rig: Rig) -> None:
+    """S0117 round 1 (verifier V2): refused, in words that do not say the change adds errors."""
+    p = rig.preview()
+    out = rig.confirm(p, acks=frozenset({KEY_A}))
+    assert code_of(out) == ErrorCode.ACK_UNEXPECTED
+    assert rig.saves() == 0
+    rig.script_saved()
+    assert isinstance(rig.confirm(p), Saved)
+
+
+def test_an_unpromoted_mutators_save_is_confined_to_the_test_copys_resolved_folder(rig: Rig, tmp_path: Path) -> None:
+    """S0117 round 1 (red team RT-F1; owner, 2026-11-14: "Go with (2), fix it now"): the save request names the copy's
+    folder as resolved at the confirm (through a link to it here), for the engine's writer to hold after the gate."""
+    link = tmp_path / "copy-link"
+    link.symlink_to(rig.folder)
+    p = rig.preview()
+    rig.script_saved()
+    assert isinstance(rig.confirm(p, target=dataclasses.replace(rig.target, copy=CopyMark(link))), Saved)
+    sent = [params for _, op, params in rig.engine.params if op == "save"]
+    assert sent[0]["confine"] == os.path.realpath(rig.folder)
+
+
+def test_a_promoted_mutators_save_is_not_confined(rig: Rig, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(writes, "PROMOTED", frozenset({MUTATOR}))
+    for copy in (None, rig.target.copy):
+        target = dataclasses.replace(rig.target, copy=copy)
+        p = rig.preview(target=target)
+        rig.script_saved()
+        assert isinstance(rig.confirm(p, target=target), Saved)
+    sent = [params for _, op, params in rig.engine.params if op == "save"]
+    assert [s["confine"] for s in sent] == [None, None]
+
+
+def test_every_file_of_the_plan_must_lie_in_the_copy(tmp_path: Path) -> None:
+    """@regression-guard (the guard already checked every file; this kills the mutant that checks only the first).
+    S0117 round 1 (verifier V4): a plan writing one file inside the copy and one of the real ledger outside it."""
+    copy, real = tmp_path / "copy", tmp_path / "real"
+    copy.mkdir()
+    real.mkdir()
+    (copy / "main.bean").write_text("x\n")
+    (real / "accounts.bean").write_text("y\n")
+    files = tuple(PlannedFile(str(p), "a" * 64, "b" * 64, "z\n") for p in (copy / "main.bean", real / "accounts.bean"))
+    target = WriteTarget("k1", str(copy / "main.bean"), "lin1", tmp_path, tmp_path, CopyMark(copy))
+    out = promotion_refusal(make_plan(files=files), target)
+    assert out is not None
+    assert out.code == ErrorCode.UNPROMOTED_MUTATOR_ON_REAL_LEDGER
 
 
 def test_a_real_workspace_with_no_promoted_mutator_is_refused_by_default(rig: Rig) -> None:

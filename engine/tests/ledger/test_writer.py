@@ -1938,3 +1938,112 @@ def test_BL0163b_unchanged_means_no_changed_file_and_a_failed_rehash_names_none(
     out = durable_commit(w.fs, w.commit)
     assert isinstance(out, NotSaved)
     assert (out.unchanged, out.changed) == (False, None), "a folder that moved cannot be read again: not checked"
+
+
+# -- S0117 round 1 (red team RT-F1; owner, 2026-11-14: "Go with (2), fix it now"): the save stays in its folder --------
+
+
+def _confined(w: World, confine: str | None = "/w/L") -> Outcome:
+    return durable_commit(w.fs, replace(w.commit, confine=confine))
+
+
+def _nothing_written(w: World) -> None:
+    assert w.fs.snapshot() == w.before
+    assert journals(w.fs) == {}
+
+
+def test_a_save_confined_to_its_folder_lands_when_every_file_is_inside() -> None:
+    w = world()
+    assert isinstance(_confined(w), Landed)
+    for t in w.targets:
+        assert w.fs.file(t.path) == t.post
+
+
+def test_a_file_that_resolves_outside_the_folder_refuses_the_save_and_nothing_is_written() -> None:
+    """The writer resolves every file after the gate; one that leads out of the folder (a link to a real ledger with
+    the same bytes) refuses before the first effect."""
+    w = world()
+    w.fs.outside_mkdirs("/w/real/inc")
+    w.fs.outside_write("/w/real/inc/a.bean", b"2026-01-01 open Assets:A\n")
+    w.fs.outside_remove("/w/L/inc/a.bean")
+    w.fs.outside_symlink("/w/L/inc/a.bean", "/w/real/inc/a.bean")
+    w = replace(w, before=w.fs.snapshot())
+    out = _confined(w)
+    assert isinstance(out, NotSaved), out
+    assert (out.step, out.reason, out.path, out.entry, out.open_journal) == (
+        Step.BACKUP,
+        Reason.OUTSIDE_FOLDER,
+        "/w/real/inc/a.bean",
+        "/w/L",
+        False,
+    )
+    _nothing_written(w)
+    assert w.fs.file("/w/real/inc/a.bean") == b"2026-01-01 open Assets:A\n"
+
+
+def test_a_folder_that_links_out_of_the_confined_folder_refuses_the_save() -> None:
+    w = world()
+    w.fs.outside_move("/w/L/inc", "/w/real-inc")
+    w.fs.outside_symlink("/w/L/inc", "/w/real-inc")
+    w = replace(w, before=w.fs.snapshot())
+    out = _confined(w)
+    assert isinstance(out, NotSaved), out
+    assert out.reason is Reason.OUTSIDE_FOLDER
+    _nothing_written(w)
+
+
+def test_a_confined_folder_that_is_now_a_link_refuses_the_save() -> None:
+    """A link put in place of the folder itself (or of a folder above it) after the sidecar resolved it: its files
+    now resolve inside the link's target, so the folder must still be its own resolved path."""
+    w = world()
+    w.fs.outside_move("/w/L", "/w/real")
+    w.fs.outside_symlink("/w/L", "/w/real")
+    w = replace(w, before=w.fs.snapshot())
+    out = _confined(w)
+    assert isinstance(out, NotSaved), out
+    assert (out.reason, out.entry) == (Reason.OUTSIDE_FOLDER, "/w/L")
+    _nothing_written(w)
+
+
+@pytest.mark.parametrize("confine", ["/w/nowhere", "/w/L/main.bean", "/w/L/inc", "/", "w/L"])
+def test_a_confined_folder_that_is_missing_not_a_folder_or_too_narrow_refuses(confine: str) -> None:
+    w = world()
+    out = _confined(w, confine)
+    assert isinstance(out, NotSaved), out
+    assert out.reason is Reason.OUTSIDE_FOLDER
+    _nothing_written(w)
+
+
+def test_a_created_file_outside_the_folder_refuses_the_save() -> None:
+    w = world()
+    out = _confined(w, "/w/L/inc")  # `prices.bean` would be created in /w/L, outside /w/L/inc
+    assert isinstance(out, NotSaved), out
+    assert out.reason is Reason.OUTSIDE_FOLDER
+    _nothing_written(w)
+
+
+def test_a_folder_beside_the_confined_one_whose_name_starts_with_it_is_outside() -> None:
+    """`/w/L/inc/a.bean` is not inside `/w/L/in` (a prefix of the text is not a parent folder)."""
+    w = world()
+    w.fs.outside_mkdirs("/w/L/in")
+    w = replace(w, before=w.fs.snapshot())
+    a = w.commit.changes[0]
+    assert a.path == "/w/L/inc/a.bean"
+    out = durable_commit(w.fs, replace(w.commit, changes=(a,), confine="/w/L/in"))
+    assert isinstance(out, NotSaved), out
+    assert out.reason is Reason.OUTSIDE_FOLDER
+    _nothing_written(w)
+
+
+def test_the_confined_folder_is_compared_by_its_key_on_a_case_insensitive_volume() -> None:
+    w = world()
+    assert isinstance(_confined(w, "/w/l"), Landed)
+
+
+def test_no_folder_confines_nothing() -> None:
+    w = world()
+    w.fs.outside_mkdirs("/w/real")
+    w.fs.outside_write("/w/real/r.bean", b"pre\n")
+    w.fs.outside_symlink("/w/L/r.bean", "/w/real/r.bean")
+    c = replace(w.commit, changes=(Change("/w/L/r.bean", sha256(b"pre\n"), b"post\n"),), confine=None)
+    assert isinstance(durable_commit(w.fs, c), Landed)

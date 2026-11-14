@@ -302,7 +302,10 @@ class SaveParams(Message):
     """A confirmed plan (§2's `save`): who saves (`session`, `job`, the workspace's registry key and lineage id), the
     ledger's root, the changes, the plan's fingerprint (`ledger_set.encode`'s text) and the app's machine-local folder.
     The gate reads the published mirror in the app's cache folder the engine was started with (`--app-cache`;
-    `design/specs/mirror/publish.md` §7; S0087): no request names it."""
+    `design/specs/mirror/publish.md` §7; S0087): no request names it. `confine` (S0117 round 1; owner, 2026-11-14: "Go
+    with (2), fix it now"): the folder every file the save writes must lie in once the writer resolves it after the
+    gate, else `not_saved {outside_folder}` with nothing written; null for no confinement. Required, so a sender
+    always says which."""
 
     session: SessionId
     job: JobName
@@ -312,6 +315,7 @@ class SaveParams(Message):
     changes: list[SaveChange] = Field(min_length=1)
     fingerprint: str = Field(min_length=1)
     app_local_data: AbsPath
+    confine: AbsPath | None
 
 
 type SaveOutcomeKind = Literal["saved", "refused", "not_saved", "unfinished"]
@@ -323,13 +327,14 @@ class SaveResult(Message):
     `ledger_changed`, `mirror_stale`, `encrypted_file`). `not_saved`: the writer's `NotSaved` (`reason` its own:
     `hard_linked`, `locked`, `not_a_file`, `permission`, `changed`, `path_moved`, `read_back`, `io_error`,
     `name_not_utf8`, `linked_folder`, `no_drive_id`, `no_folder_id`, `case_twins`, `folder_appeared`,
-    `app_folder_missing`; `open_journal`: writes are paused until
+    `app_folder_missing`, `outside_folder`; `open_journal`: writes are paused until
     recovery). `unfinished`: a file may have been replaced and the rollback stopped (`cause`, and `cause_path` its
     file: after `created_path_taken` the undo will ask about that file). `unchanged`: every file the save would write
     was hashed again and equals its pre bytes; `changed`: the first file that re-hash found not at them (None also when
     it could not read a file; S0100, BL-0163 (b)). `path`: the file it is about (the one an I/O error happened at);
     `entry`: the folder a `permission` refusal is about, the link a `linked_folder` refusal names, the folder that
-    appeared (`folder_appeared`) or the app's folder that is missing (`app_folder_missing`); `detail`: the ACL entry
+    appeared (`folder_appeared`), the app's folder that is missing (`app_folder_missing`) or the folder the save is
+    confined to (`outside_folder`); `detail`: the ACL entry
     that blocks it."""
 
     outcome: SaveOutcomeKind
@@ -752,6 +757,7 @@ OPS: dict[str, OpSpec] = {
             "changes": [{"path": "/ledgers/L/main.bean", "pre": "0" * 64, "post": "2026-01-01 open Assets:Cash\n"}],
             "fingerprint": _FP,
             "app_local_data": _ALD,
+            "confine": "/ledgers/L",
         },
         needs_engine_lock=True,
         writes_app_folder=True,

@@ -223,3 +223,50 @@ def test_a_plan_holds_texts_and_hashes_never_entries() -> None:
         }
     for f in dataclasses.fields(PlannedFile):
         assert f.type == "str"
+
+
+# -- S0117 round 1 -----------------------------------------------------------------------------------------------------
+
+
+def test_a_taken_plan_is_remembered_as_used_in_its_workspace_only() -> None:
+    """Red team RT-F2: a second confirm of a confirmed plan is told so."""
+    s = store()
+    s.add(plan())
+    assert not s.used("ws-1", "p1")
+    assert s.take("ws-1", "p1") is not None
+    assert s.used("ws-1", "p1")
+    assert not s.used("ws-2", "p1")
+    assert not s.used("ws-1", "p2")
+
+
+def test_a_plan_found_or_dropped_is_not_used() -> None:
+    s = store()
+    s.add(plan())
+    assert s.find("ws-1", "p1") is not None
+    s.workspace_closed()
+    assert not s.used("ws-1", "p1")
+
+
+def test_used_ids_survive_a_switch_and_are_bounded() -> None:
+    s = store(max_used=2)
+    for n in (1, 2, 3):
+        s.add(plan(n))
+        assert s.take("ws-1", f"p{n}") is not None
+    s.workspace_closed()
+    s.workspace_opened("ws-2")
+    assert [s.used("ws-1", f"p{n}") for n in (1, 2, 3)] == [False, True, True]
+
+
+def test_a_clock_set_back_before_the_plan_was_made_expires_it() -> None:
+    """Red team RT-F5, verifier V1: a negative age never lengthens a plan's life."""
+    clock = MovingClock()
+    s = store(clock)
+    s.add(plan())
+    clock.at = T0 - timedelta(microseconds=1)
+    assert s.find("ws-1", "p1") is None
+    assert len(s) == 0
+
+
+def test_a_policy_that_remembers_no_used_id_is_refused() -> None:
+    with pytest.raises(ValueError, match="plan"):
+        PlanPolicy(max_used=0)

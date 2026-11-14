@@ -8,13 +8,15 @@ BL-0106). No route calls them yet: each mutator's slice adds its `…:preview` r
    never sent back by the client (`submit_preview` keeps the engine's plan; `submit_confirm` names it by id and saves
    its own texts).
 2. Bound to its workspace and ledger state: found only in its workspace and for its root (`PLAN_EXPIRED` otherwise);
-   expired, used or dropped by a switch: `PLAN_EXPIRED`; made on another mirror generation than the published one:
-   `PREVIEW_STALE`, read inside the save's job (one job at a time, so no publish comes between that read and the
-   save's gate); its fingerprint: the save's gate (engine-jobs §6.1 step 4). The plan is taken from the store when the
-   save's job starts, so it is used once, whatever the save answers.
+   expired, let go or dropped by a switch: `PLAN_EXPIRED`; already confirmed in this session:
+   `PLAN_ALREADY_CONFIRMED` (S0117 round 1, red team RT-F2: never "did not save" for a change that may be saved);
+   made on another mirror generation than the published one: `PREVIEW_STALE`, read inside the save's job (one job
+   at a time, so no publish comes between that read and the save's gate); its fingerprint: the save's gate
+   (engine-jobs §6.1 step 4). The plan is taken from the store when the save's job starts, so it is used once,
+   whatever the save answers.
 3. The confirm carries the preview's hash (`PREVIEW_STALE` otherwise); the acknowledgements must be exactly the new
    error keys the preview listed, as a set (`ACK_REQUIRED {error_keys}` otherwise; the plan stays for the user's Save
-   anyway). An accounting error never blocks (ADR-0067).
+   anyway; acknowledgements where none is listed: `ACK_UNEXPECTED`). An accounting error never blocks (ADR-0067).
 4. Every file as the preview found it: the save's gate (`LEDGER_EXTERNALLY_CHANGED`).
 5. Never a file outside the plan or outside the ledger set, never an encrypted file: the save writes only the plan's
    files, and refuses a change that is not in the plan's fingerprint at its `pre` bytes (`ledger_engine.ledger.save`,
@@ -37,8 +39,11 @@ format 1 has no such field (an unknown field written by hand is ignored, EP-14),
 (CAP-WS-TEST-COPY, M3), so no product code builds a `WriteTarget` with one, and every confirm on a real workspace is
 refused. The target is built by the sidecar from its own state (the open workspace's container, M2), never from a
 request. ADR-0014's second half, "and not in the file set of any non-copy workspace", needs the registry and the mark:
-TODO(BL-0267). Limit: the guard resolves the paths when the confirm is asked; a link made inside a test copy after
-that, pointing out of it, is met only by the save's gate when it changes the plan's fingerprint.
+TODO(BL-0267). **The engine holds it to the end** (S0117 round 1, red team RT-F1; owner, 2026-11-14: "Go with (2), fix
+it now"): the guard resolves the paths when the confirm is asked, and the save runs later; so the save request names
+the copy's folder, resolved now (`confinement`), and the engine's writer resolves every file again after the gate and
+refuses one outside that folder, or a folder that is no longer its own resolved path (`not_saved {outside_folder}`,
+nothing written). A link swapped in after the confirm gains nothing.
 """
 
 from __future__ import annotations
@@ -238,7 +243,9 @@ def submit_confirm(
     """Confirm a kept plan (the module's docstring): `NotDone(error)` for a refusal before the queue, `Failed` when
     the queue refuses the job, else the save job's ticket, whose value is the save's (`Saved` or `NotDone`)."""
     plan = services.plans.find(target.workspace, plan_id)
-    if plan is None or plan.root != target.root:
+    if plan is None:
+        return _refused(_gone(services, target, plan_id))
+    if plan.root != target.root:
         return _refused(ErrorCode.PLAN_EXPIRED)
     if plan.preview_hash != preview_hash:
         return _refused(ErrorCode.PREVIEW_STALE)
@@ -248,12 +255,39 @@ def submit_confirm(
     if problem is not None:
         return NotDone(problem)
     listed = tuple(dict.fromkeys(plan.new_error_keys))
+    if acknowledged and not listed:
+        return _refused(ErrorCode.ACK_UNEXPECTED)
     if acknowledged != frozenset(listed):
         return _refused(ErrorCode.ACK_REQUIRED, AckRequiredDetails(error_keys=listed))
-    return services.jobs.submit(save_spec(target.workspace), _confirm_work(services, target, plan))
+    confine = confinement(plan, target)
+    return services.jobs.submit(save_spec(target.workspace), _confirm_work(services, target, plan, confine))
 
 
-def _confirm_work(services: WriteServices, target: WriteTarget, plan: WritePlan) -> Work:
+def _gone(services: WriteServices, target: WriteTarget, plan_id: str) -> ErrorCode:
+    """Rule 2 and the truth of "not saved" (S0117 round 1, red team RT-F2): a plan this session saw confirmed is
+    `PLAN_ALREADY_CONFIRMED` (a retry after a lost answer, a double click, a second tab: never "did not save"), any
+    other missing plan `PLAN_EXPIRED`."""
+    if services.plans.used(target.workspace, plan_id):
+        return ErrorCode.PLAN_ALREADY_CONFIRMED
+    return ErrorCode.PLAN_EXPIRED
+
+
+def confinement(plan: WritePlan, target: WriteTarget) -> str | None:
+    """The folder the engine's save must stay in (S0117 round 1, red team RT-F1; owner, 2026-11-14: "Go with (2), fix
+    it now"), for a plan `promotion_refusal` let through: a promoted mutator's save is not confined (None: a real
+    ledger may include files outside its root's folder, and its plan's fingerprint is the gate's to check); an
+    unpromoted one's is confined to the test copy's folder, resolved now, which the engine's writer requires to be its
+    own resolved path and every file to resolve inside, after the gate, before its first write. A folder that cannot
+    be resolved raises (`OSError`): nothing is queued (INV-22)."""
+    if plan.mutator in PROMOTED:
+        return None
+    if target.copy is None:  # `promotion_refusal` refused it: never reached
+        msg = "an unpromoted mutator's plan without a test copy reached the save"
+        raise ValueError(msg)
+    return os.path.realpath(target.copy.folder, strict=True)
+
+
+def _confirm_work(services: WriteServices, target: WriteTarget, plan: WritePlan, confine: str | None) -> Work:
     request = SaveRequest(
         session=services.session,
         workspace_key=target.workspace,
@@ -262,6 +296,7 @@ def _confirm_work(services: WriteServices, target: WriteTarget, plan: WritePlan)
         changes=tuple(ChangeText(f.path, f.pre, f.text) for f in plan.files),
         fingerprint=plan.fingerprint,
         app_local_data=target.app_local_data,
+        confine=confine,
     )
 
     def queue_rebuild(rebuild: RebuildTarget) -> None:
@@ -271,8 +306,8 @@ def _confirm_work(services: WriteServices, target: WriteTarget, plan: WritePlan)
     save = save_work(request, after_saved=queue_rebuild)
 
     def work(ctx: JobContext) -> WorkResult:
-        if services.plans.take(target.workspace, plan.plan_id) is not plan:
-            return WorkResult(_refused(ErrorCode.PLAN_EXPIRED), ran_user_code=False)  # used, expired or dropped
+        if services.plans.take(target.workspace, plan.plan_id) is not plan:  # used, expired, let go or dropped
+            return WorkResult(_refused(_gone(services, target, plan.plan_id)), ran_user_code=False)
         if services.published_generation(target) != plan.generation:
             return WorkResult(_refused(ErrorCode.PREVIEW_STALE), ran_user_code=False)
         return save(ctx)

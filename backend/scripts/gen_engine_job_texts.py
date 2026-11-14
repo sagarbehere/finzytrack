@@ -74,10 +74,12 @@ CODES = (
     ErrorCode.WRITES_PAUSED,
     ErrorCode.CHANGE_NOT_SAVED,
     ErrorCode.ACK_REQUIRED,  # S0117: the write contract's preview and confirm
+    ErrorCode.ACK_UNEXPECTED,
     ErrorCode.WRITE_REFUSED_UNINTENDED_CHANGE,
     ErrorCode.WRITE_REFUSED_CHECK_FAILED,
     ErrorCode.ENCRYPTED_FILE_NOT_EDITABLE,
     ErrorCode.PLAN_EXPIRED,
+    ErrorCode.PLAN_ALREADY_CONFIRMED,
     ErrorCode.PREVIEW_STALE,
     ErrorCode.UNPROMOTED_MUTATOR_ON_REAL_LEDGER,
     ErrorCode.INTERNAL,
@@ -227,6 +229,11 @@ SAVE: tuple[Row, ...] = (
         "msg:save.folder_appeared",
         "`CHANGE_NOT_SAVED {folder_appeared}`: a folder stood where the save makes one (S0100, BL-0187)",
         lambda: _not_saved("folder_appeared", folder=FOLDER, unchanged=True),
+    ),
+    (
+        "msg:save.outside_folder",
+        "`CHANGE_NOT_SAVED {outside_folder}`: a file of the test copy led out of it (S0117 round 1)",
+        lambda: _not_saved("outside_folder", folder=FOLDER, unchanged=True),
     ),
     (
         "msg:save.app_folder_missing",

@@ -73,6 +73,7 @@ WRITER_REASONS: Final[frozenset[str]] = frozenset(
         "case_twins",
         "folder_appeared",
         "app_folder_missing",
+        "outside_folder",
     }
 )
 OUTSIDE: Final[frozenset[str]] = frozenset({"changed", "path_moved"})
@@ -110,6 +111,10 @@ class SaveRequest:
     changes: tuple[ChangeText, ...]
     fingerprint: str
     app_local_data: Path
+    confine: str | None = None
+    """S0117 round 1 (red team RT-F1; owner, 2026-11-14: "Go with (2), fix it now"): the folder every file the save
+    writes must lie in when the engine's writer resolves it after the gate (`not_saved {outside_folder}` otherwise);
+    the confirm names a test copy's resolved folder for an unpromoted mutator, None for a promoted one."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -153,6 +158,7 @@ def params_of(r: SaveRequest, job: str) -> dict[str, object]:
         "changes": [{"path": c.path, "pre": c.pre, "post": c.post} for c in r.changes],
         "fingerprint": r.fingerprint,
         "app_local_data": str(r.app_local_data),
+        "confine": r.confine,
     }
 
 

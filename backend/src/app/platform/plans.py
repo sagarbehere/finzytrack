@@ -17,7 +17,16 @@ preview prepared, held here, never sent back by the client). Bounded (INV-10, `P
 `ttl_seconds` after it was made (by the injected `Clock`), and at most `max_plans` are kept, the oldest let go first.
 A plan is found only in its own workspace; `take` removes it, so it is used once; a switch drops plans (ADR-0063
 decision 1 step 3): `workspace_opened(ws)` drops every other workspace's, `workspace_closed()` drops them all (the
-switch calls them, BL-0154). Every method takes one lock, so two confirms of one plan take it once.
+switch calls them, BL-0154). Every method takes one lock, so two confirms of one plan take it once. The ids of taken
+plans are remembered (`used`, at most `max_used`, kept across a switch), so a second confirm of a confirmed plan is
+told so (S0117 round 1, red team RT-F2).
+
+Limits (S0117 round 1): a plan whose confirm waits in the queue can be let go by newer previews (`max_plans`) or by
+its TTL before its job starts; that confirm then writes nothing and answers `PLAN_EXPIRED` (red team RT-F3). The TTL
+follows the injected wall clock: a clock set back before a plan was made expires it; under the test-only
+`--frozen-clock` no plan expires by age, only by count (red team RT-F5, verifier V1). A used id let go after
+`max_used` later confirms, or from an earlier run of the app, reads as `PLAN_EXPIRED`, whose words say only that
+this request saved nothing.
 """
 
 from __future__ import annotations
@@ -109,13 +118,16 @@ class PlanPolicy:
 
     ttl_seconds: int = 15 * 60
     max_plans: int = 4
+    max_used: int = 256
+    """How many used plan ids the store remembers (ids only, about 100 bytes each), so a second confirm of a plan this
+    session confirmed is told so, never "did not save" (S0117 round 1, red team RT-F2)."""
 
     @property
     def ttl(self) -> timedelta:
         return timedelta(seconds=self.ttl_seconds)
 
     def __post_init__(self) -> None:
-        if self.ttl_seconds < 1 or self.max_plans < 1:
+        if self.ttl_seconds < 1 or self.max_plans < 1 or self.max_used < 1:
             msg = "a plan store needs a positive ttl and room for one plan"
             raise ValueError(msg)
 
@@ -128,6 +140,7 @@ class PlanStore:
         self._policy = policy or PlanPolicy()
         self._lock = threading.Lock()
         self._plans: dict[PlanId, WritePlan] = {}  # in the order they were added: the oldest first
+        self._used: dict[PlanId, str] = {}  # taken plan ids and their workspaces, the oldest first
 
     def __len__(self) -> int:
         with self._lock:
@@ -159,7 +172,16 @@ class PlanStore:
             if plan is None or plan.workspace != workspace:
                 return None
             del self._plans[plan.plan_id]
+            while len(self._used) >= self._policy.max_used:
+                del self._used[next(iter(self._used))]
+            self._used[plan.plan_id] = workspace
             return plan
+
+    def used(self, workspace: str, plan_id: str) -> bool:
+        """This workspace's plan of that id was taken (confirmed) in this session, as far as the store remembers
+        (`PlanPolicy.max_used` ids; kept across a switch, since a retry may come after one)."""
+        with self._lock:
+            return self._used.get(PlanId(plan_id)) == workspace
 
     def workspace_opened(self, workspace: str) -> None:
         """A switch opened `workspace`: every other workspace's plans are dropped (ADR-0063)."""
@@ -172,5 +194,8 @@ class PlanStore:
             self._plans = {}
 
     def _drop_expired(self) -> None:
+        """A plan is held while its age is at least zero and under the TTL: a clock set back before the plan was made
+        expires it, rather than lengthening its life (S0117 round 1, red team RT-F5, verifier V1)."""
         now = self._clock.now()
-        self._plans = {k: p for k, p in self._plans.items() if now - p.made_at < self._policy.ttl}
+        ttl = self._policy.ttl
+        self._plans = {k: p for k, p in self._plans.items() if timedelta(0) <= now - p.made_at < ttl}

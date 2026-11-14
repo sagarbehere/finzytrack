@@ -834,3 +834,64 @@ def test_S0102_BL0245_a_target_replaced_by_a_fifo_never_hangs_the_gate(led: Ledg
     assert isinstance(out, sv.Refused | sv.NotSaved), out
     assert not out.unchanged, out
     assert not (led.ald / "local").exists()
+
+
+# -- S0117 round 1 (red team RT-F1; owner, 2026-11-14: "Go with (2), fix it now"): the save stays in its folder --------
+
+
+def test_a_link_to_identical_bytes_swapped_in_after_the_gate_is_refused_outside_the_folder(led: Ledger) -> None:
+    """A test copy holds the same bytes as its original: a link from the copy's file to the original leaves the
+    plan's fingerprint as it was, so the gate passes; the writer resolves the file after the gate and refuses it."""
+    real = led.tmp / "real"
+    real.mkdir()
+    (real / "main.bean").write_bytes(MAIN)
+
+    def swap() -> None:
+        led.main.unlink()
+        led.main.symlink_to(real / "main.bean")
+
+    plan = plan_for(led, confine=os.path.realpath(led.root))
+    out = sv.run(plan, ports_for(led), FakeJob(on_gate=swap))
+    assert isinstance(out, NotSaved), out
+    assert out.reason is Reason.OUTSIDE_FOLDER
+    assert out.unchanged
+    assert (real / "main.bean").read_bytes() == MAIN
+    assert led.main.is_symlink()
+    assert sorted(os.listdir(led.journal())) == []  # no record: nothing was written
+
+
+def test_a_link_to_identical_bytes_in_place_before_the_save_passes_the_gate_and_is_refused(led: Ledger) -> None:
+    real = led.tmp / "real"
+    real.mkdir()
+    (real / "main.bean").write_bytes(MAIN)
+    plan = plan_for(led, confine=os.path.realpath(led.root))
+    led.main.unlink()
+    led.main.symlink_to(real / "main.bean")
+    before = led.tree()
+    out = sv.run(plan, ports_for(led), FakeJob())
+    assert isinstance(out, NotSaved), out
+    assert out.reason is Reason.OUTSIDE_FOLDER
+    assert {k: v for k, v in led.tree().items() if "/app/" not in k} == {
+        k: v for k, v in before.items() if "/app/" not in k
+    }
+
+
+def test_the_ledger_folder_swapped_for_a_link_after_the_gate_is_refused(led: Ledger) -> None:
+    """A folder link higher up: the copy's folder itself replaced by a link to another folder with the same files."""
+    confine = os.path.realpath(led.root)
+    moved = led.tmp / "moved"
+
+    def swap() -> None:
+        led.root.rename(moved)
+        led.root.symlink_to(moved)
+
+    out = sv.run(plan_for(led, confine=confine), ports_for(led), FakeJob(on_gate=swap))
+    assert isinstance(out, NotSaved), out
+    assert out.reason is Reason.OUTSIDE_FOLDER
+    assert (moved / "main.bean").read_bytes() == MAIN
+
+
+def test_a_save_confined_to_its_own_folder_lands(led: Ledger) -> None:
+    out = sv.run(plan_for(led, confine=os.path.realpath(led.root)), ports_for(led), FakeJob())
+    assert isinstance(out, sv.Saved), out
+    assert led.main.read_bytes() == MAIN + TXN

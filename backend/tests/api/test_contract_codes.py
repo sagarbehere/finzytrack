@@ -27,7 +27,7 @@ from app.api.errors import status_for
 from app.api.routes import declare
 from app.domain.errors import DomainError, ErrorClass
 from app.platform.engine_jobs.preview import NotPrepared
-from app.platform.engine_jobs.save import NotDone
+from app.platform.engine_jobs.save import NotDone, Saved
 from app.platform.engine_jobs.scheduler import Done, Failed, JobTicket
 from app.platform.errors import ErrorCode, spec_for
 from app.workspaces.access import Unknown
@@ -78,6 +78,16 @@ class Scenarios:
 
     def stale(self) -> object:
         return self._preview_error(self.rig.answer(outcome="stale", files=[], fingerprint=None, stale="not_fresh"))
+
+    def already_confirmed(self) -> object:
+        p = self.rig.preview()
+        self.rig.script_saved()
+        assert self.rig.confirm(p) == Saved(published=False)
+        return self.rig.confirm(p)
+
+    def ack_unexpected(self) -> object:
+        p = self.rig.preview()
+        return self.rig.confirm(p, acks=frozenset({KEY_A}))
 
     def plan_expired(self) -> object:
         p = self.rig.preview()
@@ -167,6 +177,24 @@ def test_a_plan_that_is_gone_is_plan_expired_at_404(scenarios: Scenarios) -> Non
     assert error["details"] is None
 
 
+@pytest.mark.error_code("PLAN_ALREADY_CONFIRMED")
+def test_a_second_confirm_of_a_confirmed_plan_is_already_confirmed_at_409(scenarios: Scenarios) -> None:
+    """S0117 round 1 (red team RT-F2): never "did not save" for a change that may be saved."""
+    status, error = answer(scenarios, "already_confirmed")
+    assert status == 409
+    assert (error["code"], error["class"]) == ("PLAN_ALREADY_CONFIRMED", "conflict")
+    assert "not save" not in f"{error['message']} {error['next_step']}"
+
+
+@pytest.mark.error_code("ACK_UNEXPECTED")
+def test_acknowledgements_where_none_is_listed_are_ack_unexpected_at_422(scenarios: Scenarios) -> None:
+    """S0117 round 1 (verifier V2): refused, and the words do not say the change adds errors."""
+    status, error = answer(scenarios, "ack_unexpected")
+    assert status == 422
+    assert (error["code"], error["class"]) == ("ACK_UNEXPECTED", "contract_refused")
+    assert "adds no new errors" in error["message"]
+
+
 @pytest.mark.error_code("PREVIEW_STALE")
 def test_a_confirm_of_another_preview_is_preview_stale_at_409(scenarios: Scenarios) -> None:
     status, error = answer(scenarios, "preview_stale")
@@ -195,6 +223,7 @@ def test_contract_refused_has_two_statuses_by_code_and_every_other_class_one() -
     contract = [s for s in all_specs() if s.error_class is ErrorClass.CONTRACT_REFUSED]
     assert {s.code: status_for(s.error_class, s.code) for s in contract} == {
         "ACK_REQUIRED": 409,
+        "ACK_UNEXPECTED": 422,
         "WRITE_REFUSED_UNINTENDED_CHANGE": 422,
         "WRITE_REFUSED_CHECK_FAILED": 422,
         "ENCRYPTED_FILE_NOT_EDITABLE": 422,
@@ -209,6 +238,8 @@ def test_every_contract_refusal_says_nothing_was_written_without_saying_unchange
     Finzytrack did not save the change, never that the ledger is unchanged (another program may have changed it)."""
     for code in (
         ErrorCode.ACK_REQUIRED,
+        ErrorCode.ACK_UNEXPECTED,
+        ErrorCode.PLAN_ALREADY_CONFIRMED,
         ErrorCode.WRITE_REFUSED_UNINTENDED_CHANGE,
         ErrorCode.WRITE_REFUSED_CHECK_FAILED,
         ErrorCode.ENCRYPTED_FILE_NOT_EDITABLE,

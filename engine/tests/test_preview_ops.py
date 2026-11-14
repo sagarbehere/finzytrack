@@ -125,6 +125,7 @@ def test_a_preview_prepares_a_plan_that_the_save_then_lands(ws: tuple[Path, Path
         "changes": [{"path": f["path"], "pre": f["pre"], "post": f["text"]}],
         "fingerprint": result["fingerprint"],
         "app_local_data": str(ald),
+        "confine": None,
     }
     saved = json.loads(engine(ald).handle(request("save", save, 4), Channel(4, proceed=True)))
     assert saved["ok"], saved

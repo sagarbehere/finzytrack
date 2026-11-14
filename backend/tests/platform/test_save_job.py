@@ -190,6 +190,11 @@ def test_a_save_that_lands_is_saved_and_its_engine_is_retired(make: Any) -> None
             "CHANGE_NOT_SAVED",
             ChangeNotSavedDetails("linked_folder", None, "/app/local/k1/journal", None, True, None),
         ),
+        (  # S0117 round 1 (red team RT-F1): a file of the test copy led out of it after the confirm
+            answer(outcome="not_saved", reason="outside_folder", path="/real/main.bean", entry="/copy", unchanged=True),
+            "CHANGE_NOT_SAVED",
+            ChangeNotSavedDetails("outside_folder", "/real/main.bean", "/copy", None, True, None),
+        ),
         (  # S0089 (BL-0188): a drive with no volume UUID; its journal could never be undone
             answer(outcome="not_saved", reason="no_drive_id", path=MAIN, unchanged=True),
             "CHANGE_NOT_SAVED",

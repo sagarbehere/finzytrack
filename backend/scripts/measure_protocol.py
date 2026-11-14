@@ -149,6 +149,7 @@ def one_run(
         "changes": [{"path": str(root), "pre": hashlib.sha256(pre).hexdigest(), "post": pre.decode() + TXN}],
         "fingerprint": info.fingerprint,
         "app_local_data": str(folder.path),
+        "confine": None,  # S0117 round 1: required; a measured save is not confined
     }
     t0 = time.perf_counter()
     line = encode_request(1, "save", params)

@@ -88,8 +88,78 @@
         "title": "AckRequiredError",
         "type": "object"
       },
+      "AckUnexpectedError": {
+        "properties": {
+          "class": {
+            "const": "contract_refused",
+            "title": "Class",
+            "type": "string"
+          },
+          "code": {
+            "const": "ACK_UNEXPECTED",
+            "title": "Code",
+            "type": "string"
+          },
+          "correlation_id": {
+            "title": "Correlation Id",
+            "type": "string"
+          },
+          "data_safe": {
+            "title": "Data Safe",
+            "type": "boolean"
+          },
+          "details": {
+            "title": "Details",
+            "type": "null"
+          },
+          "issues": {
+            "items": {
+              "$ref": "#/components/schemas/Issue"
+            },
+            "title": "Issues",
+            "type": "array"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "next_step": {
+            "title": "Next Step",
+            "type": "string"
+          },
+          "retry_after_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Retry After Ms"
+          },
+          "retryable": {
+            "title": "Retryable",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "code",
+          "class",
+          "message",
+          "data_safe",
+          "next_step",
+          "issues",
+          "retryable",
+          "retry_after_ms",
+          "details",
+          "correlation_id"
+        ],
+        "title": "AckUnexpectedError",
+        "type": "object"
+      },
       "ChangeNotSavedDetails": {
-        "description": "A save that did not happen, and why (engine-jobs §6.1 step 8's refusals, §6.4, §6.6, §11; S0063). `path`: the\nfile it is about (an I/O error's file); `folder` and `acl_entry`: for `permission`, the folder and the ACL entry\n(in `chmod`'s words, no subject) that stop it, for `linked_folder` the link in place of the save's own folder, for\n`folder_appeared` the folder that appeared, for `app_folder_missing` the app's folder; `unchanged`: every file\nthe save would write was hashed again and equals its bytes before the save (only then may the user read \"Your\nledger is unchanged\"); `changed`: the first file that re-hash found not at those bytes (None when none was found,\nor when it could not read a file; S0100, BL-0163 (b)). The UI words each reason\n(`app.platform.engine_jobs.save_text.not_saved_text`).",
+        "description": "A save that did not happen, and why (engine-jobs §6.1 step 8's refusals, §6.4, §6.6, §11; S0063). `path`: the\nfile it is about (an I/O error's file); `folder` and `acl_entry`: for `permission`, the folder and the ACL entry\n(in `chmod`'s words, no subject) that stop it, for `linked_folder` the link in place of the save's own folder, for\n`folder_appeared` the folder that appeared, for `app_folder_missing` the app's folder, for `outside_folder` the test\ncopy's folder the save is confined to (`path`: the file that led out of it, when known); `unchanged`: every file\nthe save would write was hashed again and equals its bytes before the save (only then may the user read \"Your\nledger is unchanged\"); `changed`: the first file that re-hash found not at those bytes (None when none was found,\nor when it could not read a file; S0100, BL-0163 (b)). The UI words each reason\n(`app.platform.engine_jobs.save_text.not_saved_text`).",
         "properties": {
           "acl_entry": {
             "anyOf": [
@@ -678,6 +748,7 @@
             "discriminator": {
               "mapping": {
                 "ACK_REQUIRED": "#/components/schemas/AckRequiredError",
+                "ACK_UNEXPECTED": "#/components/schemas/AckUnexpectedError",
                 "CHANGE_NOT_SAVED": "#/components/schemas/ChangeNotSavedError",
                 "CHANGE_OUTCOME_UNKNOWN": "#/components/schemas/ChangeOutcomeUnknownError",
                 "ENCRYPTED_FILE_NOT_EDITABLE": "#/components/schemas/EncryptedFileNotEditableError",
@@ -688,6 +759,7 @@
                 "JOB_CANCELLED": "#/components/schemas/JobCancelledError",
                 "LEDGER_CHANGING": "#/components/schemas/LedgerChangingError",
                 "LEDGER_EXTERNALLY_CHANGED": "#/components/schemas/LedgerExternallyChangedError",
+                "PLAN_ALREADY_CONFIRMED": "#/components/schemas/PlanAlreadyConfirmedError",
                 "PLAN_EXPIRED": "#/components/schemas/PlanExpiredError",
                 "PREVIEW_STALE": "#/components/schemas/PreviewStaleError",
                 "ROUTE_NOT_FOUND": "#/components/schemas/RouteNotFoundError",
@@ -749,6 +821,9 @@
                 "$ref": "#/components/schemas/AckRequiredError"
               },
               {
+                "$ref": "#/components/schemas/AckUnexpectedError"
+              },
+              {
                 "$ref": "#/components/schemas/WriteRefusedUnintendedChangeError"
               },
               {
@@ -759,6 +834,9 @@
               },
               {
                 "$ref": "#/components/schemas/PlanExpiredError"
+              },
+              {
+                "$ref": "#/components/schemas/PlanAlreadyConfirmedError"
               },
               {
                 "$ref": "#/components/schemas/PreviewStaleError"
@@ -1182,7 +1260,8 @@
           "engine_stopped",
           "case_twins",
           "folder_appeared",
-          "app_folder_missing"
+          "app_folder_missing",
+          "outside_folder"
         ],
         "type": "string"
       },
@@ -1192,6 +1271,76 @@
           "earlier_unfinished"
         ],
         "type": "string"
+      },
+      "PlanAlreadyConfirmedError": {
+        "properties": {
+          "class": {
+            "const": "conflict",
+            "title": "Class",
+            "type": "string"
+          },
+          "code": {
+            "const": "PLAN_ALREADY_CONFIRMED",
+            "title": "Code",
+            "type": "string"
+          },
+          "correlation_id": {
+            "title": "Correlation Id",
+            "type": "string"
+          },
+          "data_safe": {
+            "title": "Data Safe",
+            "type": "boolean"
+          },
+          "details": {
+            "title": "Details",
+            "type": "null"
+          },
+          "issues": {
+            "items": {
+              "$ref": "#/components/schemas/Issue"
+            },
+            "title": "Issues",
+            "type": "array"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "next_step": {
+            "title": "Next Step",
+            "type": "string"
+          },
+          "retry_after_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Retry After Ms"
+          },
+          "retryable": {
+            "title": "Retryable",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "code",
+          "class",
+          "message",
+          "data_safe",
+          "next_step",
+          "issues",
+          "retryable",
+          "retry_after_ms",
+          "details",
+          "correlation_id"
+        ],
+        "title": "PlanAlreadyConfirmedError",
+        "type": "object"
       },
       "PlanExpiredError": {
         "properties": {

@@ -86,6 +86,7 @@ def save_setup(tmp_path: Path) -> tuple[Path, Path, dict[str, Any]]:
         "changes": [{"path": str(main), "pre": sha(PRE), "post": POST}],
         "fingerprint": encode(loaded.fingerprint).decode("ascii"),
         "app_local_data": str(ald),
+        "confine": None,
     }
     return main, ald, params
 
@@ -170,6 +171,7 @@ def test_no_save_op_runs_in_an_engine_without_the_engine_lock(
         {"fingerprint": "{}"},
         {"changes": [{"path": "/x", "pre": None, "post": "\ud800"}]},
         {"legacy_locks": []},  # ADR-0068 D4: a save tries no legacy lock, so its plan names none (S0071)
+        {"confine": "relative/folder"},  # S0117 round 1: an absolute folder or null
     ],
 )
 def test_malformed_params_are_refused_and_nothing_is_written(
@@ -478,3 +480,32 @@ def test_S0102_r1_a_folder_replaced_after_the_swaps_is_saved_and_never_trimmed(
     assert r["outcome"] == "saved", r
     assert main.read_bytes() == POST.encode()
     assert trimmed == []
+
+
+def test_a_save_without_its_confine_field_is_refused(setup: tuple[Path, Path, dict[str, Any]]) -> None:
+    """S0117 round 1 (red team RT-F1): `confine` is required (null for none), so a sender always says which."""
+    main, ald, params = setup
+    del params["confine"]
+    reply = json.loads(engine(ald).handle(request("save", params), Channel(1, proceed=True)))
+    assert reply["error"]["key"] == "protocol.invalid_params"
+    assert main.read_bytes() == PRE
+
+
+def test_a_save_confined_to_another_folder_is_not_saved_outside_folder(
+    setup: tuple[Path, Path, dict[str, Any]], tmp_path: Path
+) -> None:
+    """S0117 round 1 (red team RT-F1; owner, 2026-11-14: "Go with (2), fix it now"): the op hands `confine` to the
+    writer, which refuses a file outside it after the gate, nothing written."""
+    main, ald, params = setup
+    other = tmp_path / "other"
+    other.mkdir()
+    params["confine"] = os.path.realpath(other)
+    reply = json.loads(engine(ald).handle(request("save", params), Channel(1, proceed=True)))
+    assert reply["ok"], reply
+    result = reply["result"]
+    assert (result["outcome"], result["reason"], result["unchanged"]) == ("not_saved", "outside_folder", True)
+    assert result["entry"] == os.path.realpath(other)
+    assert main.read_bytes() == PRE
+    params["confine"] = os.path.realpath(main.parent)
+    reply = json.loads(engine(ald).handle(request("save", params), Channel(1, proceed=True)))
+    assert reply["result"]["outcome"] == "saved", reply

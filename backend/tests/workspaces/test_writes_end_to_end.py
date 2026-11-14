@@ -19,6 +19,7 @@ import dataclasses
 import hashlib
 import os
 import subprocess
+import threading
 from collections.abc import Iterator
 from datetime import UTC, datetime
 from pathlib import Path
@@ -38,10 +39,11 @@ from app.platform.adapters.engine_lock import engine_lock_path, wait_engine_lock
 from app.platform.clock import FrozenClock
 from app.platform.engine_jobs.opening import Opened, submit_open
 from app.platform.engine_jobs.opening import OpenTarget as OpenJobTarget
+from app.platform.engine_jobs.preview import preview_spec
 from app.platform.engine_jobs.save import NotDone, Saved
-from app.platform.engine_jobs.scheduler import Done, EngineJobs, Failed, JobTicket
+from app.platform.engine_jobs.scheduler import Done, EngineJobs, Failed, JobContext, JobTicket, WorkResult
 from app.platform.engine_supervision import RestartPolicy
-from app.platform.errors import ErrorCode
+from app.platform.errors import ChangeNotSavedDetails, ErrorCode
 from app.platform.plans import PlannedFile, PlanStore, new_plan
 from app.workspaces import writes
 from app.workspaces.writes import CopyMark, Previewed, WriteServices, WriteTarget, mirror_generation
@@ -260,6 +262,126 @@ def test_a_plan_with_an_encrypted_file_writes_nothing(rig: Rig) -> None:
     assert snapshot(rig.folder) == before
 
 
+def _hold_the_engine(rig: Rig) -> threading.Event:
+    """A job that holds the one engine slot (as a long rebuild or another preview would) until the event is set."""
+    release, started = threading.Event(), threading.Event()
+
+    def work(_ctx: JobContext) -> WorkResult:
+        started.set()
+        release.wait(DEADLINE)
+        return WorkResult(None, ran_user_code=False)
+
+    ticket = rig.jobs.submit(preview_spec(KEY), work)
+    assert isinstance(ticket, JobTicket), ticket
+    assert started.wait(DEADLINE)
+    return release
+
+
+def _queued_confirm(rig: Rig, p: Previewed) -> JobTicket:
+    ticket = writes.submit_confirm(rig.services, rig.target, p.plan_id, p.preview_hash, acknowledged=frozenset())
+    assert isinstance(ticket, JobTicket), ticket  # the guard passed: every file was inside the copy then
+    return ticket
+
+
+def test_a_link_to_the_real_ledger_swapped_in_after_the_confirm_writes_nothing(rig: Rig, tmp_path: Path) -> None:
+    """S0117 round 1, red team RT-F1 (owner, 2026-11-14: "Go with (2), fix it now"): a test copy holds the bytes of its
+    original, so a link from the copy's file to the original, made while the confirm waits in the queue, leaves the
+    plan's fingerprint as it was. The engine's writer resolves the file after the gate and refuses it: neither the
+    real ledger nor the copy changes."""
+    real = tmp_path.resolve() / "real"
+    real.mkdir()
+    (real / "main.bean").write_bytes(BEFORE)
+    p = rig.preview()
+    release = _hold_the_engine(rig)
+    ticket = _queued_confirm(rig, p)
+    rig.main.unlink()
+    rig.main.symlink_to(real / "main.bean")
+    before = (snapshot(rig.folder), snapshot(real))
+    release.set()
+    done = ticket.wait(DEADLINE)
+    assert isinstance(done, Done), done
+    assert isinstance(done.value, NotDone), done.value
+    assert done.value.error.code == ErrorCode.CHANGE_NOT_SAVED
+    details = done.value.error.details
+    assert isinstance(details, ChangeNotSavedDetails)
+    assert (details.reason, details.unchanged) == ("outside_folder", True)
+    assert (snapshot(rig.folder), snapshot(real)) == before
+    assert rig.main.is_symlink()
+
+
+def test_the_copys_folder_swapped_for_a_link_after_the_confirm_writes_nothing(rig: Rig, tmp_path: Path) -> None:
+    """A folder link higher up: the copy's folder moved away and a link to it put in its place."""
+    p = rig.preview()
+    release = _hold_the_engine(rig)
+    ticket = _queued_confirm(rig, p)
+    moved = tmp_path.resolve() / "moved"
+    rig.folder.rename(moved)
+    rig.folder.symlink_to(moved)
+    before = snapshot(moved)
+    release.set()
+    done = ticket.wait(DEADLINE)
+    assert isinstance(done, Done), done
+    assert isinstance(done.value, NotDone), done.value
+    details = done.value.error.details
+    assert isinstance(details, ChangeNotSavedDetails)
+    assert (details.reason, details.folder, details.unchanged) == ("outside_folder", str(rig.folder), True)
+    assert snapshot(moved) == before
+
+
+def test_a_second_confirm_of_a_saved_plan_is_already_confirmed(rig: Rig) -> None:
+    """S0117 round 1, red team RT-F2: sequential (a retry after a lost answer) and queued together (a double click)."""
+    p = rig.preview()
+    assert rig.confirm(p) == Saved(published=False)
+    assert code_of(rig.confirm(p)) == ErrorCode.PLAN_ALREADY_CONFIRMED
+    assert wait_for(lambda: rig.generation() == 2)
+    q = rig.preview()
+    release = _hold_the_engine(rig)
+    first, second = _queued_confirm(rig, q), _queued_confirm(rig, q)
+    release.set()
+    one, two = first.wait(DEADLINE), second.wait(DEADLINE)
+    assert isinstance(one, Done)
+    assert one.value == Saved(published=False)
+    assert isinstance(two, Done)
+    assert code_of(two.value) == ErrorCode.PLAN_ALREADY_CONFIRMED
+
+
+PRODUCER_HOME = "src/ledger_engine/ledger/preview.py"
+PRODUCER_HOME_LINES = (
+    "PRODUCERS: Final[dict[str, Producer]] = {}",
+    "    producers: Mapping[str, Producer] = PRODUCERS,",
+)
+
+
+def producer_writers(sources: dict[str, str]) -> list[str]:
+    """S0117 round 1 (verifier V3): every place of the engine's source that names `PRODUCERS`, except its definition
+    and the default of `preview.run` (so a write in any spelling, `setdefault`, `|=`, `update`, an item, or an alias,
+    is found by the name it must use); a name built at run time is the full import's to catch."""
+    out: list[str] = []
+    for name, text in sources.items():
+        for n, line in enumerate(text.splitlines(), 1):
+            prose = line.replace("`PRODUCERS`", "") if name == PRODUCER_HOME else line  # its own docstring
+            if "PRODUCERS" in prose and not (name == PRODUCER_HOME and line in PRODUCER_HOME_LINES):
+                out.append(f"{name}:{n}")
+    return out
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        'preview.PRODUCERS["x"] = f',
+        'preview.PRODUCERS.setdefault("x", f)',
+        "preview.PRODUCERS |= {'x': f}",
+        "preview.PRODUCERS.update(x=f)",
+        "P = preview.PRODUCERS",
+        "from ledger_engine.ledger.preview import PRODUCERS as P",
+    ],
+)
+def test_the_producer_scan_finds_every_spelling_of_a_write(line: str) -> None:
+    """@regression-guard (it tests this file's own scan, which passes on any base): verifier V3's shapes."""
+    assert producer_writers({"src/ledger_engine/x.py": f"{line}\n"}) == ["src/ledger_engine/x.py:1"]
+    assert producer_writers({PRODUCER_HOME: f"{line}\n"}) == [f"{PRODUCER_HOME}:1"]
+
+
 def test_the_shipped_engine_has_no_producer(tmp_path: Path) -> None:
     """Under the product's bootstrap (`EngineCommand.for_venv` / `for_packaged`: `ENGINE_RUN` after the path setup
     with the engine's site only), `preview.PRODUCERS` is empty and the engine's tests cannot be imported; no module
@@ -280,9 +402,24 @@ def test_the_shipped_engine_has_no_producer(tmp_path: Path) -> None:
     assert out.stdout.split() == ["0", "True"], out
     product = EngineCommand.for_venv(ENGINE_VENV).argv
     assert "producer" not in " ".join(product)
-    writers = [
-        str(p.relative_to(ENGINE))
-        for p in sorted((ENGINE / "src").rglob("*.py"))
-        if "PRODUCERS[" in p.read_text(encoding="utf-8") or "PRODUCERS.update" in p.read_text(encoding="utf-8")
-    ]
-    assert writers == []
+    sources = {
+        str(p.relative_to(ENGINE)): p.read_text(encoding="utf-8") for p in sorted((ENGINE / "src").rglob("*.py"))
+    }
+    assert PRODUCER_HOME in sources
+    assert producer_writers(sources) == []
+    every_module = (  # every module of the engine imported, then the registry read (verifier V3)
+        "import importlib, pkgutil, ledger_engine; "
+        "[importlib.import_module(m.name) for m in pkgutil.walk_packages(ledger_engine.__path__, 'ledger_engine.') "
+        "if m.name != 'ledger_engine.__main__']; "
+        "from ledger_engine.ledger import preview; print(len(preview.PRODUCERS))"
+    )
+    out = subprocess.run(  # noqa: S603 (fixed argv: the engine's interpreter under the sidecar's bootstrap)
+        bootstrap_argv(python(), venv_site(ENGINE_VENV), every_module),
+        capture_output=True,
+        text=True,
+        timeout=120,
+        check=True,
+        cwd=tmp_path,
+        env=engine_env(os.environ),
+    )
+    assert out.stdout.split() == ["0"], out

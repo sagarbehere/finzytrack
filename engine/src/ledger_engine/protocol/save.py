@@ -188,6 +188,7 @@ def save(params: Message, ctx: SaveJob) -> Message:
         app_cache=app_cache_of(ctx),
         app_local_data=ald,
         app_folder=_app_folder_of(ctx),
+        confine=params.confine,
     )
     ports = sv.Ports(fs)
     try:
