@@ -47,9 +47,14 @@ asked and the save runs later, so the save request carries the mark as recorded 
 resolved here), and the engine's writer, after the gate and before its first write, opens the folder at the recorded
 path (a link in it or above it refuses), checks the recorded identity (drive, file system, creation time: another
 folder at the path refuses), and refuses a file that resolves outside it (`not_saved {outside_folder}`, nothing
-written); its path guard then holds every folder written in until each write. A link or a folder swapped in after the
-copy was made gains nothing. Limit: a folder reached through a macOS firmlink spelling is not taken for its recorded
-real path (refused, fails closed).
+written); its path guard then holds every folder written in until each write. Since round 3 (owner, 2026-11-14: "2",
+`design/inbox/answered/20261114-test-copy-no-links.md`) a test copy's save follows no link at all: below the folder
+the engine reaches every file from the folder's handle one name at a time, and a link anywhere refuses. A link or a
+folder swapped in after the copy was made gains nothing. Limits: a folder reached through a macOS firmlink spelling is
+not taken for its recorded real path (refused, fails closed); a folder's creation time can be set by a program, so the
+identity tells folders apart by accident, not against a program that sets times on purpose (with no link followed,
+that leads to no other folder); the copy job must never record a folder that holds or sits above a real ledger
+(BL-0267).
 """
 
 from __future__ import annotations
@@ -277,12 +282,17 @@ def submit_confirm(
 
 
 def _gone(services: WriteServices, target: WriteTarget, plan_id: str) -> ErrorCode:
-    """Rule 2 and the truth of "not saved" (S0117 round 1, red team RT-F2): a plan this session saw confirmed is
-    `PLAN_ALREADY_CONFIRMED` (a retry after a lost answer, a double click, a second tab: never "did not save"), any
-    other missing plan `PLAN_EXPIRED`."""
-    if services.plans.used(target.workspace, plan_id):
-        return ErrorCode.PLAN_ALREADY_CONFIRMED
-    return ErrorCode.PLAN_EXPIRED
+    """Rule 2 and the truth of "not saved" (S0117 rounds 1 to 3, red team RT-F2, RT2-F2, verifier V-R3-5): a plan this
+    session saw confirmed is `PLAN_ALREADY_CONFIRMED`; one let go unconfirmed (expired, pushed out, dropped by a
+    switch) or another workspace's is `PLAN_EXPIRED` (preview again); an id the store does not know (an earlier run of
+    the app, or long ago) is `PLAN_UNKNOWN`, whose words ask the user to check the ledger first."""
+    match services.plans.fate(target.workspace, plan_id):
+        case "used":
+            return ErrorCode.PLAN_ALREADY_CONFIRMED
+        case "gone":
+            return ErrorCode.PLAN_EXPIRED
+        case "unknown":
+            return ErrorCode.PLAN_UNKNOWN
 
 
 def confinement(plan: WritePlan, target: WriteTarget) -> SaveConfine | None:

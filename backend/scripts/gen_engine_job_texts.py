@@ -80,6 +80,7 @@ CODES = (
     ErrorCode.ENCRYPTED_FILE_NOT_EDITABLE,
     ErrorCode.PLAN_EXPIRED,
     ErrorCode.PLAN_ALREADY_CONFIRMED,
+    ErrorCode.PLAN_UNKNOWN,
     ErrorCode.PREVIEW_STALE,
     ErrorCode.UNPROMOTED_MUTATOR_ON_REAL_LEDGER,
     ErrorCode.INTERNAL,
@@ -236,9 +237,24 @@ SAVE: tuple[Row, ...] = (
         lambda: _not_saved("outside_folder", folder=FOLDER, unchanged=True),
     ),
     (
-        "msg:save.outside_folder_moved",
-        "`CHANGE_NOT_SAVED {outside_folder}` with no file: the test copy's folder moved or replaced (S0117 round 2)",
-        lambda: _not_saved("outside_folder", path=None, folder=FOLDER, unchanged=True),
+        "msg:save.outside_folder_unrecorded",
+        "`CHANGE_NOT_SAVED {outside_folder}` with no file: a mark naming the root or a relative path (S0117)",
+        lambda: _not_saved("outside_folder", path=None, folder=FOLDER),
+    ),
+    (
+        "msg:save.link_in_copy",
+        "`CHANGE_NOT_SAVED {link_in_copy}`: a link met in a test copy (S0117 round 3)",
+        lambda: _not_saved("link_in_copy", folder=FOLDER),
+    ),
+    (
+        "msg:save.copy_folder_moved",
+        "`CHANGE_NOT_SAVED {copy_folder_moved}`: the test copy's folder is not the recorded one (S0117 rounds 2, 3)",
+        lambda: _not_saved("copy_folder_moved", path=None, folder=FOLDER),
+    ),
+    (
+        "msg:save.copy_folder_missing",
+        "`CHANGE_NOT_SAVED {copy_folder_missing}`: nothing at the test copy's recorded folder (S0117 round 3)",
+        lambda: _not_saved("copy_folder_missing", path=None, folder=FOLDER),
     ),
     (
         "msg:save.app_folder_missing",

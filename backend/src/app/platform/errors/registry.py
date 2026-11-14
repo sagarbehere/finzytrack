@@ -62,6 +62,7 @@ class ErrorCode(StrEnum):
     ENCRYPTED_FILE_NOT_EDITABLE = "ENCRYPTED_FILE_NOT_EDITABLE"
     PLAN_EXPIRED = "PLAN_EXPIRED"
     PLAN_ALREADY_CONFIRMED = "PLAN_ALREADY_CONFIRMED"
+    PLAN_UNKNOWN = "PLAN_UNKNOWN"
     PREVIEW_STALE = "PREVIEW_STALE"
     UNPROMOTED_MUTATOR_ON_REAL_LEDGER = "UNPROMOTED_MUTATOR_ON_REAL_LEDGER"
     INTERNAL = "INTERNAL"
@@ -144,7 +145,10 @@ type NotSavedReason = Literal[
     "case_twins",  # two files of the change whose names differ only in capital letters (S0100, BL-0162)
     "folder_appeared",  # a folder stood where the save makes one (S0100, BL-0187)
     "app_folder_missing",  # the app's own data folder is gone (S0100, BL-0163 (a))
-    "outside_folder",  # a file the save writes leads out of the test copy's folder (S0117 round 1, red team RT-F1)
+    "outside_folder",  # a file of a test copy's save whose path is not under the copy's folder (S0117)
+    "link_in_copy",  # a link met in a test copy: its save follows none (S0117 round 3; owner, 2026-11-14: "2")
+    "copy_folder_moved",  # the test copy's folder is not the recorded one: a link at it or above it, another folder
+    "copy_folder_missing",  # nothing at the test copy's recorded folder
 ]
 
 
@@ -411,10 +415,19 @@ def specs() -> tuple[ErrorSpec, ...]:
             # confirmed is PLAN_ALREADY_CONFIRMED instead (`PlanStore.used`)
             message="This preview is no longer available, so Finzytrack did not save the change this time.",
             data_safe=True,  # this request wrote nothing
-            # S0117 round 2 (red team RT2-F2, verifier V-R2-3): after a restart, or 256 later confirms, the store no
-            # longer knows a used id: never invite a second write of a change that may be saved (BL-0268)
-            next_step="Check your ledger first: an earlier confirm may have saved this change.",
+            next_step="Preview the change again.",  # S0117 round 3 (V-R3-5): never confirmed, so nothing saved it
             details=None,  # expired, let go, dropped by a switch, or another workspace's: one answer for all
+        ),
+        ErrorSpec(
+            ErrorCode.PLAN_UNKNOWN,
+            ErrorClass.NOT_FOUND,
+            retryable=False,
+            # S0117 rounds 2 and 3 (red team RT2-F2, verifier V-R2-3, V-R3-5): an id this run does not know (a restart,
+            # or long ago): an earlier confirm may have saved it; never invite a second write (BL-0268)
+            message="Finzytrack does not know this preview, so it did not save the change this time.",
+            data_safe=True,  # this request wrote nothing
+            next_step="Check your ledger first: an earlier confirm may have saved this change.",
+            details=None,
         ),
         ErrorSpec(
             ErrorCode.PLAN_ALREADY_CONFIRMED,

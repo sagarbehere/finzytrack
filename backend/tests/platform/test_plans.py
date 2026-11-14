@@ -270,3 +270,33 @@ def test_a_clock_set_back_before_the_plan_was_made_expires_it() -> None:
 def test_a_policy_that_remembers_no_used_id_is_refused() -> None:
     with pytest.raises(ValueError, match="plan"):
         PlanPolicy(max_used=0)
+
+
+# -- S0117 round 3 (verifier V-R3-5) --------------------------------------------------------------------------------
+
+
+def test_the_fate_of_a_plan_tells_used_let_go_and_never_known_apart() -> None:
+    clock = MovingClock()
+    s = store(clock, max_plans=2)
+    for n in (1, 2, 3):  # p1 pushed out by p3
+        s.add(plan(n))
+    assert s.take("ws-1", "p2") is not None
+    s.add(plan(4, "ws-2"))
+    assert s.fate("ws-1", "p1") == "gone"  # pushed out by newer previews
+    assert s.fate("ws-1", "p2") == "used"
+    assert s.fate("ws-1", "p4") == "gone"  # held for another workspace
+    assert s.fate("ws-2", "p2") == "gone"  # used in another workspace: not saved in this one
+    assert s.fate("ws-1", "p9") == "unknown"
+    clock.at = T0 + timedelta(hours=1)
+    assert s.find("ws-1", "p3") is None
+    assert s.fate("ws-1", "p3") == "gone"  # expired
+    s.add(plan(5))
+    s.workspace_closed()
+    assert s.fate("ws-1", "p5") == "gone"  # dropped by a switch
+
+
+def test_the_memory_of_plans_let_go_is_bounded() -> None:
+    s = store(max_plans=1, max_used=2)
+    for n in (1, 2, 3, 4):
+        s.add(plan(n))
+    assert [s.fate("ws-1", f"p{n}") for n in (1, 2, 3)] == ["unknown", "gone", "gone"]

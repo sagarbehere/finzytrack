@@ -19,7 +19,7 @@ from dataclasses import replace
 
 import pytest
 
-from ledger_engine.fs.port import AclEntry, Right
+from ledger_engine.fs.port import AclEntry, Resolved, Right
 from ledger_engine.ledger.core import journal
 from ledger_engine.ledger.core.journal import FolderEntry, Record, State
 from ledger_engine.ledger.core.recovery import Cause
@@ -36,7 +36,7 @@ from ledger_engine.ledger.writer import (
     durable_commit,
     sha256,
 )
-from tests.fakes.memfs import Crash, MemFS
+from tests.fakes.memfs import Crash, MemDir, MemFS
 from tests.ledger.worlds import (
     BD,
     JD,
@@ -1940,8 +1940,8 @@ def test_BL0163b_unchanged_means_no_changed_file_and_a_failed_rehash_names_none(
     assert (out.unchanged, out.changed) == (False, None), "a folder that moved cannot be read again: not checked"
 
 
-# -- S0117 rounds 1 and 2 (red team RT-F1, RT2-F1, verifier V-R2-1, V-R2-2; owner, 2026-11-14: "Go with (2), fix it
-# now", then "3"): the save stays in the test copy's folder, recorded by path and identity when the copy was made ----
+# -- S0117 rounds 1 to 3 (owner, 2026-11-14: "Go with (2), fix it now", then "3", then "2"): a test copy's save stays in
+# the copy's folder, recorded by path and identity, and follows no link at all ---------------------------------------
 
 
 def _recorded(w: World, path: str = "/w/L") -> FolderEntry:
@@ -1956,11 +1956,11 @@ def _confined(w: World, confine: FolderEntry | None) -> Outcome:
     return durable_commit(w.fs, replace(w.commit, confine=confine))
 
 
-def _refused_outside(w: World, out: Outcome) -> NotSaved:
+def _refused(w: World, out: Outcome, reason: Reason, *, unchanged: bool = False) -> NotSaved:
+    """Refused before the first effect with `reason`; nothing written; "unchanged" only where the files were read back
+    (never once the copy's folder or a path through it failed: nothing is read through it)."""
     assert isinstance(out, NotSaved), out
-    assert out.reason is Reason.OUTSIDE_FOLDER
-    assert out.step is Step.BACKUP
-    assert not out.open_journal
+    assert (out.reason, out.step, out.open_journal, out.unchanged) == (reason, Step.BACKUP, False, unchanged)
     assert w.fs.snapshot() == w.before
     assert journals(w.fs) == {}
     return out
@@ -1970,6 +1970,20 @@ def _again(w: World) -> World:
     return replace(w, before=w.fs.snapshot())
 
 
+def _real(w: World) -> None:
+    """The real ledger the copy was made from: the same files, the same bytes, beside it."""
+    w.fs.outside_mkdirs("/w/real/inc")
+    for t in w.targets:
+        if t.pre is not None:
+            w.fs.outside_write(t.path.replace("/w/L/", "/w/real/"), t.pre)
+
+
+def _real_unchanged(w: World) -> None:
+    for t in w.targets:
+        if t.pre is not None:
+            assert w.fs.file(t.path.replace("/w/L/", "/w/real/")) == t.pre
+
+
 def test_a_save_confined_to_its_folder_lands_when_every_file_is_inside() -> None:
     w = world()
     assert isinstance(_confined(w, _recorded(w)), Landed)
@@ -1977,68 +1991,99 @@ def test_a_save_confined_to_its_folder_lands_when_every_file_is_inside() -> None
         assert w.fs.file(t.path) == t.post
 
 
-def test_a_file_that_resolves_outside_the_folder_refuses_the_save_and_nothing_is_written() -> None:
-    """The writer resolves every file after the gate; one that leads out of the folder (a link to a real ledger with
-    the same bytes) refuses before the first effect."""
+def test_a_confined_save_in_a_new_folder_lands() -> None:
+    """The folder the save makes is opened from its parent's handle too."""
+    w = world(new_dir=True)
+    out = _confined(w, _recorded(w))
+    assert isinstance(out, Landed), out
+    assert w.fs.file("/w/L/y2026/prices.bean") == w.targets[1].post
+
+
+@pytest.mark.parametrize(
+    ("where", "path"),
+    [
+        pytest.param("file", "/w/L/inc/a.bean", id="a file"),
+        pytest.param("sub_folder", "/w/L/inc", id="a sub-folder"),
+    ],
+)
+def test_a_link_in_the_copy_refuses_the_save(where: str, path: str) -> None:
+    """Round 3 (owner, 2026-11-14: "2"): a test copy's save follows no link at all, to the real ledger or anywhere."""
     w = world()
     rec = _recorded(w)
-    w.fs.outside_mkdirs("/w/real/inc")
-    w.fs.outside_write("/w/real/inc/a.bean", b"2026-01-01 open Assets:A\n")
-    w.fs.outside_remove("/w/L/inc/a.bean")
-    w.fs.outside_symlink("/w/L/inc/a.bean", "/w/real/inc/a.bean")
+    _real(w)
+    if where == "file":
+        w.fs.outside_remove("/w/L/inc/a.bean")
+        w.fs.outside_symlink("/w/L/inc/a.bean", "/w/real/inc/a.bean")
+    else:
+        w.fs.outside_move("/w/L/inc", "/w/inc-moved")
+        w.fs.outside_symlink("/w/L/inc", "/w/real/inc")
     w = _again(w)
-    out = _refused_outside(w, _confined(w, rec))
-    assert (out.path, out.entry) == ("/w/real/inc/a.bean", "/w/L")
-    assert w.fs.file("/w/real/inc/a.bean") == b"2026-01-01 open Assets:A\n"
+    out = _refused(w, _confined(w, rec), Reason.LINK_IN_COPY)
+    assert (out.path, out.entry) == (path, "/w/L")
+    _real_unchanged(w)
 
 
-def test_a_folder_that_links_out_of_the_confined_folder_refuses_the_save() -> None:
-    w = world()
+def test_a_created_file_under_a_linked_sub_folder_refuses_the_save() -> None:
+    w = world(new_dir=True)
     rec = _recorded(w)
-    w.fs.outside_move("/w/L/inc", "/w/real-inc")
-    w.fs.outside_symlink("/w/L/inc", "/w/real-inc")
+    w.fs.outside_mkdirs("/w/real/y2026")
+    w.fs.outside_symlink("/w/L/y2026", "/w/real/y2026")
     w = _again(w)
-    _refused_outside(w, _confined(w, rec))
+    _refused(w, _confined(w, rec), Reason.LINK_IN_COPY)
+    assert w.fs.file("/w/real/y2026/prices.bean") is None
 
 
-def test_the_copys_folder_replaced_by_a_link_to_the_real_folder_refuses_the_save() -> None:
-    """V-R2-1 / RT2-F1: the copy's folder moved away and a link to the real ledger's folder (same files, same bytes)
-    put at its path; nothing in the sidecar or the engine follows the link to find the folder: the recorded path is
-    opened, and its descriptor's real path is the real folder's."""
+def test_a_link_made_during_the_walk_refuses_the_save() -> None:
+    """A sub-folder replaced by a link between the folder's check and the walk to it."""
     w = world()
     rec = _recorded(w)
+    _real(w)
+    w = _again(w)
+    from ledger_engine.ledger import writer as wr
+
+    opened = wr._open_confined  # pyright: ignore[reportPrivateUsage]
+
+    def then_link(*args: object) -> str:
+        key = opened(*args)  # pyright: ignore[reportArgumentType]
+        w.fs.outside_move("/w/L/inc", "/w/inc-moved")
+        w.fs.outside_symlink("/w/L/inc", "/w/real/inc")
+        return key
+
+    with pytest.MonkeyPatch.context() as m:
+        m.setattr(wr, "_open_confined", then_link)
+        out = _confined(w, rec)
+    assert isinstance(out, NotSaved), out
+    assert out.reason is Reason.LINK_IN_COPY
+    assert journals(w.fs) == {}
+    _real_unchanged(w)
+
+
+@pytest.mark.parametrize("above", [False, True])
+def test_the_copys_folder_or_a_folder_above_it_replaced_by_a_link_refuses_the_save(above: bool) -> None:
+    """Round 2 (V-R2-1, RT2-F1): the recorded path is opened once; its descriptor's real path is not the path."""
+    w = world()
+    rec = _recorded(w, "/w/L/inc" if above else "/w/L")
+    _real(w)
     w.fs.outside_move("/w/L", "/w/copy-moved")
-    w.fs.outside_mkdirs("/w/real/inc")
-    for t in w.targets:
-        if t.pre is not None:
-            w.fs.outside_write(t.path.replace("/w/L/", "/w/real/"), t.pre)
-    w.fs.outside_symlink("/w/L", "/w/real")
+    w.fs.outside_symlink("/w/L", "/w/real" if not above else "/w/copy-moved")
     w = _again(w)
-    out = _refused_outside(w, _confined(w, rec))
-    assert (out.path, out.entry) == (None, "/w/L")
-
-
-def test_a_folder_above_the_copys_replaced_by_a_link_refuses_the_save() -> None:
-    w = world()
-    rec = _recorded(w, "/w/L/inc")
-    w.fs.outside_move("/w/L", "/w/moved")
-    w.fs.outside_symlink("/w/L", "/w/moved")
-    w = _again(w)
-    a = w.commit.changes[0]
-    _refused_outside(w, durable_commit(w.fs, replace(w.commit, changes=(a,), confine=rec)))
+    changes = (w.commit.changes[0],) if above else w.commit.changes
+    out = _refused(w, durable_commit(w.fs, replace(w.commit, changes=changes, confine=rec)), Reason.COPY_FOLDER_MOVED)
+    assert out.entry == rec.canonical_path
+    _real_unchanged(w)
 
 
 @pytest.mark.parametrize("how", ["born", "volume", "fs_type"])
 def test_a_folder_at_the_recorded_path_with_another_identity_refuses_the_save(how: str) -> None:
-    """V-R2-1: a folder deleted and made again at the path (another creation time), or one on another drive."""
     w = world()
     rec = _recorded(w)
+    assert rec.born is not None
     other = {
-        "born": replace(rec, born=rec.born + 1 if rec.born is not None else 1),
+        "born": replace(rec, born=rec.born + 1),
         "volume": replace(rec, volume="11111111-2222-3333-8444-555555555555"),
         "fs_type": replace(rec, fs_type="hfs"),
     }[how]
-    _refused_outside(w, _confined(w, other))
+    _refused(w, _confined(w, other), Reason.COPY_FOLDER_MOVED)
 
 
 def test_the_copys_folder_made_again_at_its_path_refuses_the_save() -> None:
@@ -2050,38 +2095,68 @@ def test_the_copys_folder_made_again_at_its_path_refuses_the_save() -> None:
         if t.pre is not None:
             w.fs.outside_write(t.path, t.pre)
     w = _again(w)
-    _refused_outside(w, _confined(w, rec))
+    _refused(w, _confined(w, rec), Reason.COPY_FOLDER_MOVED)
 
 
-@pytest.mark.parametrize("path", ["/w/nowhere", "/w/L/main.bean", "/", "w/L"])
-def test_a_confined_folder_that_is_missing_not_a_folder_the_root_or_relative_refuses(path: str) -> None:
+@pytest.mark.parametrize(
+    ("path", "reason"),
+    [
+        ("/w/nowhere", Reason.COPY_FOLDER_MISSING),
+        ("/w/L/main.bean", Reason.COPY_FOLDER_MISSING),
+        ("/", Reason.OUTSIDE_FOLDER),
+        ("w/L", Reason.OUTSIDE_FOLDER),
+        ("/w/l", Reason.COPY_FOLDER_MOVED),  # another spelling than the folder's own: fails closed
+    ],
+)
+def test_a_recorded_folder_that_is_missing_a_file_the_root_relative_or_misspelled_refuses(
+    path: str, reason: Reason
+) -> None:
     w = world()
-    rec = replace(_recorded(w), canonical_path=path)
-    _refused_outside(w, _confined(w, rec))
+    _refused(w, _confined(w, replace(_recorded(w), canonical_path=path)), reason)
 
 
 def test_the_root_is_never_a_test_copys_folder() -> None:
     """Even with the root's own identity recorded: the root would confine nothing."""
     w = world()
-    _refused_outside(w, _confined(w, _recorded(w, "/")))
+    _refused(w, _confined(w, _recorded(w, "/")), Reason.OUTSIDE_FOLDER)
 
 
 def test_a_mark_with_no_creation_time_refuses() -> None:
     w = world()
-    _refused_outside(w, _confined(w, replace(_recorded(w), born=None)))
+    _refused(w, _confined(w, replace(_recorded(w), born=None)), Reason.NO_FOLDER_ID)
+
+
+@pytest.mark.parametrize("fs_type", ["msdos", "exfat"])
+def test_a_fat_or_exfat_folder_with_no_known_creation_time_refuses(fs_type: str) -> None:
+    """Verifier V-R3-6: a creation time of 0 on FAT or exFAT is none (`handles.known_birth`), recorded or found."""
+    w = world()
+    w.fs.outside_fs_type(w.fs.open_dir("/w/L").device(), fs_type)
+    w.fs.outside_born("/w/L", 0)
+    w = _again(w)
+    out = _refused(w, _confined(w, _recorded(w)), Reason.NO_FOLDER_ID)
+    assert out.entry == "/w/L"
+
+
+def test_a_folder_on_a_drive_with_no_uuid_refuses() -> None:
+    w = world()
+    rec = _recorded(w)
+    w.fs.outside_volume_id(w.fs.open_dir("/w/L").device(), None)
+    w = _again(w)
+    _refused(w, _confined(w, rec), Reason.NO_DRIVE_ID)
 
 
 def test_a_missing_folder_that_every_created_file_would_be_under_refuses() -> None:
-    """V-R2-4: a confine that does not exist while every target is a file the save would create under it."""
+    """V-R2-4: a recorded folder that does not exist while every target is a file the save would create under it."""
     w = world()
     rec = replace(_recorded(w), canonical_path="/w/L/y2027")
     c = replace(w.commit, changes=(Change("/w/L/y2027/new.bean", None, b"x\n"),), confine=rec)
-    _refused_outside(w, durable_commit(w.fs, c))
+    _refused(w, durable_commit(w.fs, c), Reason.COPY_FOLDER_MISSING)
 
 
 def test_a_narrower_folder_refuses_a_file_outside_it() -> None:
     w = world()
-    _refused_outside(w, _confined(w, _recorded(w, "/w/L/inc")))  # main.bean and prices.bean are in /w/L
+    out = _refused(w, _confined(w, _recorded(w, "/w/L/inc")), Reason.OUTSIDE_FOLDER)
+    assert out.path is not None
 
 
 def test_a_folder_beside_the_confined_one_whose_name_starts_with_it_is_outside() -> None:
@@ -2091,14 +2166,54 @@ def test_a_folder_beside_the_confined_one_whose_name_starts_with_it_is_outside()
     w = _again(w)
     a = w.commit.changes[0]
     assert a.path == "/w/L/inc/a.bean"
-    _refused_outside(w, durable_commit(w.fs, replace(w.commit, changes=(a,), confine=_recorded(w, "/w/L/in"))))
+    c = replace(w.commit, changes=(a,), confine=_recorded(w, "/w/L/in"))
+    _refused(w, durable_commit(w.fs, c), Reason.OUTSIDE_FOLDER)
 
 
-def test_a_recorded_path_in_another_spelling_than_the_folders_own_refuses() -> None:
-    """The mark records the folder's real path as the copy job finds it (its stored spelling); another spelling, even
-    one the volume folds to the same name, is not taken for it: fails closed."""
+def test_a_hard_link_to_the_real_ledger_refuses_the_save() -> None:
     w = world()
-    _refused_outside(w, _confined(w, replace(_recorded(w), canonical_path="/w/l")))
+    rec = _recorded(w)
+    _real(w)
+    w.fs.outside_remove("/w/L/inc/a.bean")
+    w.fs.outside_link("/w/real/inc/a.bean", "/w/L/inc/a.bean")
+    w = _again(w)
+    _refused(w, _confined(w, rec), Reason.HARD_LINKED, unchanged=True)
+    _real_unchanged(w)
+
+
+def test_the_journal_records_the_walked_paths_and_keys() -> None:
+    """A confined save's record names each file by the copy's folder and the stored names, keyed as the unconfined
+    save keys them (the same record, so recovery and the blocking rule read it alike)."""
+    w = world()
+    plain = durable_commit(w.fs, w.commit)
+    w2 = world()
+    walked = _confined(w2, _recorded(w2))
+    assert isinstance(plain, Landed)
+    assert isinstance(walked, Landed)
+    assert [(f.canonical_path, f.path_key) for f in walked.record.files] == [
+        (f.canonical_path, f.path_key) for f in plain.record.files
+    ]
+    assert walked.record.folders == plain.record.folders
+
+
+def test_a_confined_save_cut_after_its_swap_is_recovered_without_following_a_link() -> None:
+    """The undo of a test copy's save, after the copy's folder was replaced by a link to the real folder: recovery
+    opens each recorded folder by path and refuses a descriptor whose real path or identity is not the recorded one
+    (`journal.folders`, S0089): it stops, and the real ledger is untouched."""
+    label = "swap /w/L/inc:.a.bean.ft-s1-j7.tmp,a.bean"
+    dry = world()
+    assert isinstance(_confined(dry, _recorded(dry)), Landed)
+    w = world()
+    rec = _recorded(w)
+    _real(w)
+    w.fs.inject(dry.fs.effects.index(label), crash=True, after=True)
+    with pytest.raises(Crash):
+        _confined(w, rec)
+    assert w.fs.file("/w/L/inc/a.bean") == w.targets[0].post  # the swap happened: the undo has work to do
+    w.fs.outside_move("/w/L", "/w/copy-moved")
+    w.fs.outside_symlink("/w/L", "/w/real")
+    recover(w.fs)
+    _real_unchanged(w)
 
 
 def test_no_folder_confines_nothing() -> None:
@@ -2108,3 +2223,58 @@ def test_no_folder_confines_nothing() -> None:
     w.fs.outside_symlink("/w/L/r.bean", "/w/real/r.bean")
     c = replace(w.commit, changes=(Change("/w/L/r.bean", sha256(b"pre\n"), b"post\n"),), confine=None)
     assert isinstance(durable_commit(w.fs, c), Landed)
+
+
+def test_a_folder_flipped_only_while_its_key_is_resolved_refuses_the_save() -> None:
+    """Red team run 3's window, narrowed: the copy's folder is a link to the real folder only while the writer resolves
+    its path for the key, and the copy again before the walk. The key is accepted only from a resolution naming the
+    object the folder's handle holds, so the record never carries another folder's keys."""
+    w = world()
+    rec = _recorded(w)
+    _real(w)
+    w = _again(w)
+    resolve = w.fs.resolve
+
+    def flipped(path: str) -> Resolved:
+        if path != "/w/L":
+            return resolve(path)
+        w.fs.outside_move("/w/L", "/w/copy-moved")
+        w.fs.outside_symlink("/w/L", "/w/real")
+        try:
+            return resolve(path)
+        finally:
+            w.fs.outside_remove("/w/L")
+            w.fs.outside_move("/w/copy-moved", "/w/L")
+
+    w.fs.resolve = flipped
+    out = _confined(w, rec)
+    assert isinstance(out, NotSaved), out
+    assert out.reason is Reason.COPY_FOLDER_MOVED
+    assert journals(w.fs) == {}
+    _real_unchanged(w)
+
+
+@pytest.mark.parametrize("new_dir", [False, True])
+def test_a_confined_save_looks_nothing_up_by_path_below_the_copys_folder(new_dir: bool) -> None:
+    """Round 3 (owner, 2026-11-14: "2": "nothing is ever looked up again by path"): every folder below the copy's
+    folder, a folder the save makes included, is opened from its parent's handle, never with `open_dir` or `resolve`;
+    the copy's folder itself is opened once."""
+    w = world(new_dir=new_dir)
+    rec = _recorded(w)
+    opened: list[str] = []
+    resolved: list[str] = []
+    open_dir, resolve = w.fs.open_dir, w.fs.resolve
+
+    def spy_open(path: str) -> MemDir:
+        opened.append(path)
+        return open_dir(path)
+
+    def spy_resolve(path: str) -> Resolved:
+        resolved.append(path)
+        return resolve(path)
+
+    w.fs.open_dir = spy_open
+    w.fs.resolve = spy_resolve
+    assert isinstance(_confined(w, rec), Landed)
+    assert [p for p in opened if p == "/w/L" or p.startswith("/w/L/")] == ["/w/L"]
+    assert [p for p in resolved if p == "/w/L" or p.startswith("/w/L/")] == ["/w/L"]

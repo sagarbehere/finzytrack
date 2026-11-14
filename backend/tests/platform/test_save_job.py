@@ -196,6 +196,21 @@ def test_a_save_that_lands_is_saved_and_its_engine_is_retired(make: Any) -> None
             "CHANGE_NOT_SAVED",
             ChangeNotSavedDetails("outside_folder", "/real/main.bean", "/copy", None, True, None),
         ),
+        (  # S0117 round 3 (owner, 2026-11-14: "2"): a test copy's save follows no link; its folder's own refusals
+            answer(outcome="not_saved", reason="link_in_copy", path="/copy/main.bean", entry="/copy"),
+            "CHANGE_NOT_SAVED",
+            ChangeNotSavedDetails("link_in_copy", "/copy/main.bean", "/copy", None, False, None),
+        ),
+        (
+            answer(outcome="not_saved", reason="copy_folder_moved", entry="/copy"),
+            "CHANGE_NOT_SAVED",
+            ChangeNotSavedDetails("copy_folder_moved", None, "/copy", None, False, None),
+        ),
+        (
+            answer(outcome="not_saved", reason="copy_folder_missing", entry="/copy"),
+            "CHANGE_NOT_SAVED",
+            ChangeNotSavedDetails("copy_folder_missing", None, "/copy", None, False, None),
+        ),
         (  # S0089 (BL-0188): a drive with no volume UUID; its journal could never be undone
             answer(outcome="not_saved", reason="no_drive_id", path=MAIN, unchanged=True),
             "CHANGE_NOT_SAVED",

@@ -328,7 +328,7 @@ def test_a_link_to_the_real_ledger_swapped_in_after_the_confirm_writes_nothing(r
     assert done.value.error.code == ErrorCode.CHANGE_NOT_SAVED
     details = done.value.error.details
     assert isinstance(details, ChangeNotSavedDetails)
-    assert (details.reason, details.unchanged) == ("outside_folder", True)
+    assert (details.reason, details.unchanged) == ("link_in_copy", False)  # round 3: no link followed
     assert (snapshot(rig.folder), snapshot(real)) == before
     assert rig.main.is_symlink()
 
@@ -341,12 +341,14 @@ def _real_ledger(tmp_path: Path) -> Path:
     return real
 
 
-def _outside_folder(done: object, folder: Path) -> None:
+def _copy_folder_moved(done: object, folder: Path) -> None:
+    """Refused: the copy's folder is not the recorded one (a link at it, or another folder at its path); nothing read
+    back through it, so never "unchanged"."""
     assert isinstance(done, Done), done
     assert isinstance(done.value, NotDone), done.value
     details = done.value.error.details
     assert isinstance(details, ChangeNotSavedDetails)
-    assert (details.reason, details.folder, details.unchanged) == ("outside_folder", str(folder), True)
+    assert (details.reason, details.folder, details.unchanged) == ("copy_folder_moved", str(folder), False)
 
 
 @pytest.mark.parametrize("to", ["the_moved_copy", "the_real_ledger"])
@@ -364,7 +366,7 @@ def test_the_copys_folder_swapped_for_a_link_after_the_confirm_writes_nothing(
     rig.folder.symlink_to(moved if to == "the_moved_copy" else real)
     before = (snapshot(moved), snapshot(real))
     release.set()
-    _outside_folder(ticket.wait(DEADLINE), rig.folder)
+    _copy_folder_moved(ticket.wait(DEADLINE), rig.folder)
     assert (snapshot(moved), snapshot(real)) == before
 
 
@@ -393,7 +395,7 @@ def test_the_copys_folder_replaced_by_a_link_to_the_real_ledger_writes_nothing(
     before = snapshot(real)
     assert code_of(rig.confirm(p)) == ErrorCode.UNPROMOTED_MUTATOR_ON_REAL_LEDGER  # the early look sees it
     monkeypatch.setattr(writes, "promotion_refusal", no_early_look)  # without it, the engine refuses
-    _outside_folder(Done(rig.confirm(p)), rig.folder)
+    _copy_folder_moved(Done(rig.confirm(p)), rig.folder)
     assert snapshot(real) == before
 
 
@@ -408,7 +410,7 @@ def test_the_copys_folder_replaced_after_the_guard_writes_nothing(rig: Rig, tmp_
     real.rename(rig.folder)  # no link at all: the real ledger's own folder moved to the copy's path
     before = snapshot(rig.folder)
     release.set()
-    _outside_folder(ticket.wait(DEADLINE), rig.folder)
+    _copy_folder_moved(ticket.wait(DEADLINE), rig.folder)
     assert snapshot(rig.folder) == before
 
 
@@ -422,7 +424,7 @@ def test_a_folder_made_again_at_the_copys_path_writes_nothing(rig: Rig, tmp_path
     rig.main.write_bytes(BEFORE)
     before = snapshot(rig.folder)
     release.set()
-    _outside_folder(ticket.wait(DEADLINE), rig.folder)
+    _copy_folder_moved(ticket.wait(DEADLINE), rig.folder)
     assert snapshot(rig.folder) == before
 
 

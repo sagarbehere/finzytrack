@@ -125,18 +125,27 @@ def not_saved_text(d: ChangeNotSavedDetails) -> str:
                 f"{did_not} {folder} is missing or was replaced. Quit Finzytrack and open it again, then try again. "
                 f"{_rehash(d)}"
             )
-        case "outside_folder" if d.path is None:  # S0117 round 2: the folder itself is not the copy's any more
+        case "outside_folder" if d.path is None:  # S0117: a mark with the root or a relative path (a bug)
+            return f"{did_not} The test copy's folder is not recorded correctly. Make the test copy again."
+        case "outside_folder":  # S0117 round 1 (red team RT-F1): a file of the change outside the test copy
+            return (
+                f"{did_not} {_name(d.path)} is outside the test copy's folder, and Finzytrack saves this kind of "
+                f"change only inside a test copy. {_rehash(d)}"
+            )
+        case "link_in_copy":  # S0117 round 3 (owner, 2026-11-14: "2"): a test copy's save follows no link
+            return (
+                f"{did_not} {_name(d.path)} in the test copy is a link to another place. Finzytrack saves this kind "
+                f"of change only in a test copy without links. Make the test copy again. {_rehash(d)}"
+            )
+        case "copy_folder_moved":  # S0117 rounds 2 and 3: a link at the folder or above it, or another folder there
             folder = d.folder or "The test copy's folder"
             return (
                 f"{did_not} {folder} was moved or replaced since the test copy was made, and Finzytrack saves this "
-                f"kind of change only inside that test copy. {_rehash(d)}"
+                f"kind of change only in that test copy. {_rehash(d)}"
             )
-        case "outside_folder":  # S0117 round 1 (red team RT-F1): a link led a file of the test copy out of it
-            folder = d.folder or "the test copy's folder"
-            return (
-                f"{did_not} {_name(d.path)} now leads to a place outside {folder}, and Finzytrack saves this kind "
-                f"of change only inside a test copy. Check the test copy for links to other folders. {_rehash(d)}"
-            )
+        case "copy_folder_missing":
+            folder = d.folder or "The test copy's folder"
+            return f"{did_not} {folder}, the test copy's folder, is missing. {_rehash(d)}"
         case "io_error" if d.path is not None:  # S0100 (BL-0163 (b)): the file named, the re-hash told apart
             return f"{NOT_SAVED} Finzytrack could not read or write {_name(d.path)}. {_rehash(d)}"
         case "read_back" if d.path is not None:

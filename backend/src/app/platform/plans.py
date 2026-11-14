@@ -37,7 +37,7 @@ import threading
 from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import NewType
+from typing import Literal, NewType
 
 from app.platform.clock import Clock
 
@@ -45,6 +45,8 @@ PlanId = NewType("PlanId", str)
 """A plan's id in the store (ARCHITECTURE §2.6)."""
 
 PreviewHash = NewType("PreviewHash", str)
+
+type Fate = Literal["used", "gone", "unknown"]
 """The SHA-256 (hex) of what the preview showed (the module's docstring; ARCHITECTURE §2.6)."""
 
 
@@ -119,8 +121,8 @@ class PlanPolicy:
     ttl_seconds: int = 15 * 60
     max_plans: int = 4
     max_used: int = 256
-    """How many used plan ids the store remembers (ids only, about 100 bytes each), so a second confirm of a plan this
-    session confirmed is told so, never "did not save" (S0117 round 1, red team RT-F2)."""
+    """How many used plan ids, and how many plan ids let go unconfirmed, the store remembers (ids only, about 100 bytes
+    each), so a confirm of either is told what became of it (S0117 rounds 1 and 3, red team RT-F2, verifier V-R3-5)."""
 
     @property
     def ttl(self) -> timedelta:
@@ -141,6 +143,9 @@ class PlanStore:
         self._lock = threading.Lock()
         self._plans: dict[PlanId, WritePlan] = {}  # in the order they were added: the oldest first
         self._used: dict[PlanId, str] = {}  # taken plan ids and their workspaces, the oldest first
+        self._gone: dict[
+            PlanId, str
+        ] = {}  # plan ids let go unconfirmed (expired, pushed out, dropped), the oldest first
 
     def __len__(self) -> int:
         with self._lock:
@@ -154,7 +159,7 @@ class PlanStore:
                 raise ValueError(msg)
             self._drop_expired()
             while len(self._plans) >= self._policy.max_plans:
-                del self._plans[next(iter(self._plans))]
+                self._let_go(next(iter(self._plans)))
             self._plans[plan.plan_id] = plan
 
     def find(self, workspace: str, plan_id: str) -> WritePlan | None:
@@ -172,9 +177,7 @@ class PlanStore:
             if plan is None or plan.workspace != workspace:
                 return None
             del self._plans[plan.plan_id]
-            while len(self._used) >= self._policy.max_used:
-                del self._used[next(iter(self._used))]
-            self._used[plan.plan_id] = workspace
+            self._remember(self._used, plan.plan_id, workspace)
             return plan
 
     def used(self, workspace: str, plan_id: str) -> bool:
@@ -183,19 +186,45 @@ class PlanStore:
         with self._lock:
             return self._used.get(PlanId(plan_id)) == workspace
 
+    def fate(self, workspace: str, plan_id: str) -> Fate:
+        """What became of a plan `find` did not give (S0117 rounds 1 and 3, red team RT-F2, verifier V-R3-5): `used`,
+        taken by a confirm of this workspace in this session; `gone`, held for another workspace or let go unconfirmed
+        (expired, pushed out by newer previews, dropped by a switch); `unknown`, an id the store does not remember (an
+        earlier run of the app, or one let go after `max_used` later ones): only then may an earlier confirm have saved
+        it without this store knowing."""
+        with self._lock:
+            pid = PlanId(plan_id)
+            if self._used.get(pid) == workspace:
+                return "used"
+            if pid in self._plans or pid in self._gone or pid in self._used:
+                return "gone"
+            return "unknown"
+
     def workspace_opened(self, workspace: str) -> None:
         """A switch opened `workspace`: every other workspace's plans are dropped (ADR-0063)."""
         with self._lock:
-            self._plans = {k: p for k, p in self._plans.items() if p.workspace == workspace}
+            for k in [k for k, p in self._plans.items() if p.workspace != workspace]:
+                self._let_go(k)
 
     def workspace_closed(self) -> None:
         """The open workspace closed: every plan is dropped (ADR-0063)."""
         with self._lock:
-            self._plans = {}
+            for k in list(self._plans):
+                self._let_go(k)
+
+    def _let_go(self, plan_id: PlanId) -> None:
+        plan = self._plans.pop(plan_id)
+        self._remember(self._gone, plan_id, plan.workspace)
+
+    def _remember(self, memory: dict[PlanId, str], plan_id: PlanId, workspace: str) -> None:
+        while len(memory) >= self._policy.max_used:
+            del memory[next(iter(memory))]
+        memory[plan_id] = workspace
 
     def _drop_expired(self) -> None:
         """A plan is held while its age is at least zero and under the TTL: a clock set back before the plan was made
         expires it, rather than lengthening its life (S0117 round 1, red team RT-F5, verifier V1)."""
         now = self._clock.now()
         ttl = self._policy.ttl
-        self._plans = {k: p for k, p in self._plans.items() if timedelta(0) <= now - p.made_at < ttl}
+        for k in [k for k, p in self._plans.items() if not timedelta(0) <= now - p.made_at < ttl]:
+            self._let_go(k)

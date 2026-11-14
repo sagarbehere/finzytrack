@@ -70,7 +70,18 @@ from dataclasses import dataclass, field, replace
 from enum import StrEnum
 from typing import Final
 
-from ledger_engine.fs.port import DirHandle, EntryStat, FileSystem, Kind, Right, check_name, fold, split_absolute
+from ledger_engine.fs.port import (
+    DirHandle,
+    EntryStat,
+    FileSystem,
+    FolderMark,
+    FoldRule,
+    Kind,
+    Right,
+    check_name,
+    fold,
+    split_absolute,
+)
 from ledger_engine.ledger import restore as _restore
 from ledger_engine.ledger.core import journal
 from ledger_engine.ledger.core import paths as core_paths
@@ -78,6 +89,7 @@ from ledger_engine.ledger.core.journal import BadRecordError, DirEntry, FileEntr
 from ledger_engine.ledger.handles import (
     Displaced,
     Handles,
+    LinkedPathError,
     Mode,
     PathMovedError,
     displaced,
@@ -197,10 +209,12 @@ class Reason(StrEnum):
     # network share possibly our own retried `mkdir`, so not "the ledger changed" (S0100, BL-0187)
     APP_FOLDER_MISSING = "app_folder_missing"  # the app's own folder is gone: the sidecar makes it at start, the save
     # never makes it or writes above it (S0100, BL-0163 (a); owner, 2026-11-10: "Sidecar makes it once (Recommended)")
-    OUTSIDE_FOLDER = "outside_folder"  # a file the save writes resolves outside the test copy's folder, or that folder
-    # is not at its recorded path with its recorded identity now (S0117 rounds 1 and 2; owner, 2026-11-14: "Go with
-    # (2), fix it now", then "3"): an unpromoted mutator's save stays in its test copy whatever link or folder is
-    # swapped in after the copy was made
+    OUTSIDE_FOLDER = "outside_folder"  # a file of a test copy's save whose path is not under the copy's folder (S0117)
+    LINK_IN_COPY = "link_in_copy"  # a link met in a test copy (S0117 round 3; owner, 2026-11-14: "2"): its save
+    # follows no link at all
+    COPY_FOLDER_MOVED = "copy_folder_moved"  # the test copy's folder is not at its recorded path with its recorded
+    # identity: a link at it or above it, or another folder there (S0117 rounds 2 and 3; owner: "3")
+    COPY_FOLDER_MISSING = "copy_folder_missing"  # nothing at the test copy's recorded folder path
 
 
 class Step(StrEnum):
@@ -380,39 +394,114 @@ def _target(fs: FileSystem, handles: Handles, index: int, c: Commit, ch: Change)
     return _Target(index, ch, canonical, key, parent, parent_key, base, *names, None, new_dirs, r.rest, tag)
 
 
-def _check_confined(
-    fs: FileSystem, handles: Handles, confine: FolderEntry | None, targets: tuple[_Target, ...]
-) -> None:
-    """The test copy's folder held at the write (S0117 rounds 1 and 2; owner, 2026-11-14: "Go with (2), fix it now",
-    then "3", `design/inbox/answered/20261114-test-copy-folder-identity.md`). `confine` is the folder as the test-copy
-    mark recorded it when the copy was made: its real path and its identity (drive, file system, creation time: the
-    journal's own `FolderEntry`, S0089). Past the commit point and before the first effect:
-    - the folder's handle is opened at the recorded path through the writer's `Handles`, whose path guard refuses a
-      descriptor whose real path is not that path (a link in place of the folder or of any folder above it);
-    - its `FolderMark`, asked through that descriptor, must be the recorded one (`handles.folder_verdict`: another
-      drive, file system or creation time, so a folder deleted and made again, or one moved into its place, refuses);
-    - every file the save writes or creates, resolved here (every link followed: where the save writes it), must lie
-      inside it, compared by `path_key`, component by component.
-    After this check the path guard holds the folder and every folder the save writes in at their recorded paths until
-    each write through the same descriptors (§6.3), and each replaced file's identity is checked again through its
-    folder's handle (`_check_replaced`). Else `outside_folder`, naming the file (None when the folder itself fails) and
-    the folder. None: no confinement (a promoted mutator's save). The root, or a mark with no creation time, is never a
-    test copy's folder: refused."""
-    if confine is None:
-        return
+def _open_confined(fs: FileSystem, handles: Handles, confine: FolderEntry) -> str:
+    """A test copy's folder, opened once and checked (S0117 rounds 2 and 3; owner, 2026-11-14: "3", then "2":
+    `design/inbox/answered/20261114-test-copy-folder-identity.md`, `20261114-test-copy-no-links.md`): its handle is
+    opened at the recorded path (the path guard refuses a descriptor whose real path is not that path: a link at the
+    folder or above it), its `FolderMark` asked through that descriptor must be the recorded identity
+    (`handles.folder_verdict`: another drive, file system or creation time), and neither the record nor the folder may
+    lack a creation time Finzytrack can rely on (`handles.known_birth`: a FAT or exFAT drive's top level keeps none).
+    Its key comes from resolving the path once, accepted only when that names the same object the handle holds. The
+    folder's path is returned and set as `handles.confined`: below it nothing is opened by path again.
+    Refusals, each naming the folder (none writes anything): missing `copy_folder_missing`; a link at it or above it,
+    or another folder at the path, `copy_folder_moved`; not allowed `permission`; a drive with no UUID Finzytrack can
+    rely on `no_drive_id`, no creation time `no_folder_id`; a read error `io_error`; the root or a relative path
+    `outside_folder`."""
     path = confine.canonical_path
     try:
-        if not split_absolute(path) or confine.born is None:
+        if not split_absolute(path):
             raise _Stop(Reason.OUTSIDE_FOLDER, None, path)
-        verdict = folder_verdict(confine, handles.at(path).mark())
-        key = core_paths.path_key(fs.resolve(path))
-    except (OSError, ValueError, PathMovedError):
+    except ValueError:
         raise _Stop(Reason.OUTSIDE_FOLDER, None, path) from None
-    if verdict != "same":
-        raise _Stop(Reason.OUTSIDE_FOLDER, None, path)
-    for t in targets:
-        if not t.key.startswith(key.rstrip("/") + "/"):
-            raise _Stop(Reason.OUTSIDE_FOLDER, t.canonical, path)
+    try:
+        h = handles.at(path)
+        mark = h.mark()
+        r = fs.resolve(path)
+    except (FileNotFoundError, NotADirectoryError):
+        raise _Stop(Reason.COPY_FOLDER_MISSING, None, path) from None
+    except PathMovedError:
+        raise _Stop(Reason.COPY_FOLDER_MOVED, None, path) from None
+    except PermissionError:
+        raise _Stop(Reason.PERMISSION, None, path) from None
+    except OSError:
+        raise _Stop(Reason.IO_ERROR, path, path) from None
+    if drive_of(mark) is None:
+        raise _Stop(Reason.NO_DRIVE_ID, path, path)
+    recorded = FolderMark(confine.volume, confine.fs_type, confine.born)
+    if known_birth(mark) is None or known_birth(recorded) is None:
+        raise _Stop(Reason.NO_FOLDER_ID, path, path)
+    if folder_verdict(confine, mark) != "same" or r.rest or r.identity != h.identity():
+        raise _Stop(Reason.COPY_FOLDER_MOVED, None, path)
+    handles.confined = path
+    return core_paths.path_key(r)
+
+
+def _stored(h: DirHandle, name: str, rule: FoldRule) -> str | None:
+    """The stored spelling of the entry `name` in the folder `h` as its volume compares names, or None: none, or more
+    than one (fails closed: the walk cannot tell which the plan meant)."""
+    names = h.names()
+    if name in names:
+        return name
+    hits = [n for n in names if fold(n, rule) == fold(name, rule)]
+    return hits[0] if len(hits) == 1 else None
+
+
+def _confined_target(handles: Handles, root: str, root_key: str, index: int, c: Commit, ch: Change) -> _Target:
+    """A test copy's file, reached without following any link and without looking anything up by path (S0117 round 3;
+    owner, 2026-11-14: "2"): its path must be the copy's folder's recorded path followed by names (else
+    `outside_folder`); each name is looked up in the handle of the folder above it (`DirHandle.names`, `stat`, which
+    follows no link) and each folder is opened from its parent's handle (`Handles.confined`); a link anywhere is
+    `link_in_copy`, a file where a folder should be `changed`. Names not there yet are the folders and file the save
+    creates. The canonical path is the folder's path and the stored names; the key folds each name by the rule of the
+    folder that holds it, asked through that folder's handle."""
+    parts, top = split_absolute(ch.path), split_absolute(root)
+    if len(parts) <= len(top) or parts[: len(top)] != top:
+        raise _Stop(Reason.OUTSIDE_FOLDER, ch.path, root)
+    names = parts[len(top) :]
+    h = handles.at(root)
+    canonical, key, depth = [root], [root_key], 0
+    rule = h.rule()
+    identity: tuple[int, int] | None = None
+    for i, name in enumerate(names):
+        rule = h.rule()
+        stored = _stored(h, check_name(name), rule)
+        st = None if stored is None else h.stat(stored)
+        if stored is None or st is None:
+            break
+        canonical.append(stored)
+        key.append(fold(stored, rule))
+        depth = i + 1
+        if st.kind is Kind.LINK:
+            raise _Stop(Reason.LINK_IN_COPY, "/".join(canonical), root)
+        if i == len(names) - 1:
+            identity = st.identity
+        elif st.kind is not Kind.DIR:
+            raise _Stop(Reason.CHANGED, "/".join(canonical))
+        else:
+            h = handles.at("/".join(canonical))
+    rest = names[depth:]
+    for name in rest:
+        canonical.append(name)
+        key.append(fold(name, rule))
+    full, full_key = "/".join(canonical), "/".join(key)
+    if full.lower().endswith(ENCRYPTED_SUFFIXES):
+        raise _Stop(Reason.CHANGED, ch.path)
+    try:
+        full.encode()
+    except UnicodeEncodeError:
+        raise _Stop(Reason.NAME_NOT_UTF8, full.encode(errors="backslashreplace").decode()) from None
+    cparts, kparts = split_absolute(full), split_absolute(full_key)
+    base = check_name(cparts[-1])
+    parent, parent_key = "/" + "/".join(cparts[:-1]), "/" + "/".join(kparts[:-1])
+    tag = journal.record_name(c.session, c.job)
+    scratch = journal.scratch_names(base, tag)
+    keys = tuple(_join(parent_key, fold(n, rule)) for n in scratch)
+    names4 = (scratch[0], scratch[1], scratch, keys)
+    if not rest:
+        return _Target(index, ch, full, full_key, parent, parent_key, base, *names4, identity, (), (), tag)
+    n = len(top) + depth
+    new_dirs = tuple(("/" + "/".join(cparts[:i]), "/" + "/".join(kparts[:i])) for i in range(n + 1, len(cparts)))
+    return _Target(index, ch, full, full_key, parent, parent_key, base, *names4, None, new_dirs, tuple(rest), tag)
 
 
 def _check_folder(h: DirHandle, canonical: str, folder: str) -> Mode:
@@ -762,6 +851,8 @@ def _why(e: Exception, handles: Handles) -> tuple[Reason, str | None]:
         return e.reason, e.path
     if isinstance(e, PathMovedError):
         return Reason.PATH_MOVED, e.canonical
+    if isinstance(e, LinkedPathError):
+        return Reason.LINK_IN_COPY, e.canonical
     return Reason.IO_ERROR, handles.on
 
 
@@ -813,8 +904,11 @@ def durable_commit(fs: FileSystem, c: Commit) -> Outcome:
     step = Step.BACKUP
     try:
         try:
-            targets = tuple(_target(fs, handles, i, c, ch) for i, ch in enumerate(c.changes))
-            _check_confined(fs, handles, c.confine, targets)
+            if c.confine is None:
+                targets = tuple(_target(fs, handles, i, c, ch) for i, ch in enumerate(c.changes))
+            else:  # a test copy's save follows no link and looks nothing up by path below its folder (S0117 round 3)
+                root, root_key = c.confine.canonical_path, _open_confined(fs, handles, c.confine)
+                targets = tuple(_confined_target(handles, root, root_key, i, c, ch) for i, ch in enumerate(c.changes))
             plan = _prepare(fs, handles, c, targets)
             backups = _backup_names(plan)
             record = _record(c, plan, name, backups)
@@ -827,7 +921,7 @@ def durable_commit(fs: FileSystem, c: Commit) -> Outcome:
             jd = handles.at(plan.journal_dir)
             jd.create(journal.file_name(name, State.PART), data, JOURNAL_MODE)
             _check_anchor(fs, c.anchor)  # last, before the record is `.open` and the first swap
-        except (OSError, _Stop, PathMovedError) as e:
+        except (OSError, _Stop, PathMovedError, LinkedPathError) as e:
             reason, path = _why(e, handles)
             entry, detail = _where(e)
             unchanged, changed = _rehash(handles, targets)

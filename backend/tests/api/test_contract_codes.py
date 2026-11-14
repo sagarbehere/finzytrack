@@ -89,6 +89,10 @@ class Scenarios:
         p = self.rig.preview()
         return self.rig.confirm(p, acks=frozenset({KEY_A}))
 
+    def plan_unknown(self) -> object:
+        p = self.rig.preview()
+        return self.rig.confirm(dataclasses.replace(p, plan_id="plan-from-an-earlier-run"))
+
     def plan_expired(self) -> object:
         p = self.rig.preview()
         self.rig.plans.workspace_closed()
@@ -195,6 +199,20 @@ def test_acknowledgements_where_none_is_listed_are_ack_unexpected_at_422(scenari
     assert "adds no new errors" in error["message"]
 
 
+@pytest.mark.error_code("PLAN_UNKNOWN")
+def test_a_plan_id_this_run_never_knew_is_plan_unknown_and_asks_to_check_the_ledger(scenarios: Scenarios) -> None:
+    """S0117 round 3 (verifier V-R3-5; red team RT2-F2): only here may an earlier confirm have saved the change."""
+    status, error = answer(scenarios, "plan_unknown")
+    assert status == 404
+    assert error["code"] == "PLAN_UNKNOWN"
+    assert "Check your ledger first" in error["next_step"]
+
+
+def test_a_plan_let_go_unconfirmed_is_plan_expired_and_asks_for_a_new_preview(scenarios: Scenarios) -> None:
+    status, error = answer(scenarios, "plan_expired")
+    assert (status, error["code"], error["next_step"]) == (404, "PLAN_EXPIRED", "Preview the change again.")
+
+
 @pytest.mark.error_code("PREVIEW_STALE")
 def test_a_confirm_of_another_preview_is_preview_stale_at_409(scenarios: Scenarios) -> None:
     status, error = answer(scenarios, "preview_stale")
@@ -240,6 +258,7 @@ def test_every_contract_refusal_says_nothing_was_written_without_saying_unchange
         ErrorCode.ACK_REQUIRED,
         ErrorCode.ACK_UNEXPECTED,
         ErrorCode.PLAN_ALREADY_CONFIRMED,
+        ErrorCode.PLAN_UNKNOWN,
         ErrorCode.WRITE_REFUSED_UNINTENDED_CHANGE,
         ErrorCode.WRITE_REFUSED_CHECK_FAILED,
         ErrorCode.ENCRYPTED_FILE_NOT_EDITABLE,

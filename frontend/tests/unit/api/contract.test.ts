@@ -62,6 +62,7 @@ describe('[S0046] the generated API types', () => {
       | 'ENCRYPTED_FILE_NOT_EDITABLE'
       | 'PLAN_EXPIRED'
       | 'PLAN_ALREADY_CONFIRMED'
+      | 'PLAN_UNKNOWN'
       | 'PREVIEW_STALE'
       | 'UNPROMOTED_MUTATOR_ON_REAL_LEDGER'
       | 'INTERNAL'

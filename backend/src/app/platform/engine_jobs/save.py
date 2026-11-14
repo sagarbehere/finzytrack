@@ -75,6 +75,9 @@ WRITER_REASONS: Final[frozenset[str]] = frozenset(
         "folder_appeared",
         "app_folder_missing",
         "outside_folder",
+        "link_in_copy",
+        "copy_folder_moved",
+        "copy_folder_missing",
     }
 )
 OUTSIDE: Final[frozenset[str]] = frozenset({"changed", "path_moved"})

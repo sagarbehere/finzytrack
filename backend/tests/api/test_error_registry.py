@@ -115,6 +115,7 @@ def test_the_codes_of_architecture_6_1_this_slice_raises_have_their_classes() ->
         "ENCRYPTED_FILE_NOT_EDITABLE": ErrorClass.CONTRACT_REFUSED,
         "PLAN_EXPIRED": ErrorClass.NOT_FOUND,
         "PLAN_ALREADY_CONFIRMED": ErrorClass.CONFLICT,  # S0117 round 1 (red team RT-F2)
+        "PLAN_UNKNOWN": ErrorClass.NOT_FOUND,  # S0117 round 3 (verifier V-R3-5)
         "PREVIEW_STALE": ErrorClass.CONFLICT,
         "UNPROMOTED_MUTATOR_ON_REAL_LEDGER": ErrorClass.FORBIDDEN,
         "INTERNAL": ErrorClass.INTERNAL,

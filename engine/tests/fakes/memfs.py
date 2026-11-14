@@ -1241,6 +1241,10 @@ class MemDir:
 
         self._fs._effect(self._label("write", name), do, cut)
 
+    def rule(self) -> FoldRule:
+        """`DirHandle.rule` (S0117 round 3): the folder's own `ci`, as `resolve` takes it for the names in it."""
+        return FoldRule(nfd=True, casefold=self._d.ci)
+
     def names(self) -> list[str]:
         d = self._d
         if _denies(d, "list"):

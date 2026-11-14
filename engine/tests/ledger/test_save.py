@@ -22,6 +22,7 @@ import gc
 import os
 import shutil
 import sqlite3
+import subprocess
 import sys
 from collections.abc import Callable
 from dataclasses import dataclass, field, fields, replace
@@ -836,8 +837,8 @@ def test_S0102_BL0245_a_target_replaced_by_a_fifo_never_hangs_the_gate(led: Ledg
     assert not (led.ald / "local").exists()
 
 
-# -- S0117 rounds 1 and 2 (owner, 2026-11-14: "Go with (2), fix it now", then "3"): the save stays in the test copy's
-# folder, recorded by its real path and identity when the copy was made ---------------------------------------------
+# -- S0117 rounds 1 to 3 (owner, 2026-11-14: "Go with (2), fix it now", then "3", then "2"): a test copy's save stays in
+# the copy's folder, recorded by path and identity, and follows no link at all ---------------------------------------
 
 
 def recorded(folder: Path) -> FolderEntry:
@@ -862,42 +863,44 @@ def files_of(folder: Path) -> dict[str, bytes]:
     return {p.name: p.read_bytes() for p in sorted(folder.iterdir()) if p.is_file()}
 
 
-def outside_refused(out: object) -> None:
+REAL_BEFORE = {"inc.bean": INC, "main.bean": MAIN}
+
+
+def refused(out: object, reason: Reason) -> None:
     assert isinstance(out, NotSaved), out
-    assert out.reason is Reason.OUTSIDE_FOLDER
-    assert out.unchanged
+    assert out.reason is reason
+    assert not out.open_journal
 
 
-def test_a_link_to_identical_bytes_swapped_in_after_the_gate_is_refused_outside_the_folder(led: Ledger) -> None:
-    """Round 1 (RT-F1): a link from the copy's file to the original's identical bytes leaves the plan's fingerprint
-    as it was, so the gate passes; the writer resolves the file after the gate and refuses it."""
+def test_a_link_to_identical_bytes_swapped_in_at_the_gate_is_refused(led: Ledger) -> None:
+    """Round 1 (RT-F1): a link from the copy's file to the original's identical bytes leaves the plan's fingerprint as
+    it was; the writer's walk from the copy's folder meets the link and refuses it."""
     real = with_real(led)
 
     def swap() -> None:
         led.main.unlink()
         led.main.symlink_to(real / "main.bean")
 
-    out = sv.run(plan_for(led, confine=recorded(led.root)), ports_for(led), FakeJob(on_gate=swap))
-    outside_refused(out)
-    assert files_of(real) == {"inc.bean": INC, "main.bean": MAIN}
+    refused(
+        sv.run(plan_for(led, confine=recorded(led.root)), ports_for(led), FakeJob(on_gate=swap)), Reason.LINK_IN_COPY
+    )
+    assert files_of(real) == REAL_BEFORE
     assert led.main.is_symlink()
     assert sorted(os.listdir(led.journal())) == []  # no record: nothing was written
 
 
-def test_a_link_to_identical_bytes_in_place_before_the_save_passes_the_gate_and_is_refused(led: Ledger) -> None:
+def test_a_link_to_identical_bytes_in_place_before_the_save_is_refused(led: Ledger) -> None:
     real = with_real(led)
     plan = plan_for(led, confine=recorded(led.root))
     led.main.unlink()
     led.main.symlink_to(real / "main.bean")
-    outside_refused(sv.run(plan, ports_for(led), FakeJob()))
-    assert files_of(real) == {"inc.bean": INC, "main.bean": MAIN}
+    refused(sv.run(plan, ports_for(led), FakeJob()), Reason.LINK_IN_COPY)
+    assert files_of(real) == REAL_BEFORE
 
 
 @pytest.mark.parametrize("when", ["before_the_plan", "at_the_gate"])
 def test_the_copys_folder_replaced_by_a_link_to_the_real_folder_is_refused(led: Ledger, when: str) -> None:
-    """Round 2 (V-R2-1, RT2-F1): the copy's folder moved away and a link to the real ledger's folder put at its path,
-    before the plan is made or at the gate. The recorded path's descriptor is the real folder: refused, the real
-    ledger byte-identical."""
+    """Round 2 (V-R2-1, RT2-F1): the recorded path's descriptor is the real folder's: refused, real byte-identical."""
     real = with_real(led)
     mark = recorded(led.root)
 
@@ -910,13 +913,11 @@ def test_the_copys_folder_replaced_by_a_link_to_the_real_folder_is_refused(led: 
         out = sv.run(plan_for(led, confine=mark), ports_for(led), FakeJob())
     else:
         out = sv.run(plan_for(led, confine=mark), ports_for(led), FakeJob(on_gate=swap))
-    outside_refused(out)
-    assert files_of(real) == {"inc.bean": INC, "main.bean": MAIN}
+    refused(out, Reason.COPY_FOLDER_MOVED)
+    assert files_of(real) == REAL_BEFORE
 
 
 def test_the_real_folder_moved_into_the_copys_place_is_refused(led: Ledger) -> None:
-    """Red team run 2's shape: no link at all, the real folder itself renamed to the copy's path at the gate. Another
-    creation time: refused."""
     real = with_real(led)
     mark = recorded(led.root)
 
@@ -924,47 +925,143 @@ def test_the_real_folder_moved_into_the_copys_place_is_refused(led: Ledger) -> N
         led.root.rename(led.tmp / "copy-moved")
         real.rename(led.root)
 
-    outside_refused(sv.run(plan_for(led, confine=mark), ports_for(led), FakeJob(on_gate=swap)))
-    assert files_of(led.root) == {"inc.bean": INC, "main.bean": MAIN}
+    refused(sv.run(plan_for(led, confine=mark), ports_for(led), FakeJob(on_gate=swap)), Reason.COPY_FOLDER_MOVED)
+    assert files_of(led.root) == REAL_BEFORE
 
 
 def test_the_copys_folder_deleted_and_made_again_is_refused(led: Ledger) -> None:
-    mark = recorded(led.root)
-    plan = plan_for(led, confine=mark)
+    plan = plan_for(led, confine=recorded(led.root))
     shutil.rmtree(led.root)
     led.root.mkdir()
     (led.root / "main.bean").write_bytes(MAIN)
     (led.root / "inc.bean").write_bytes(INC)
-    outside_refused(sv.run(plan, ports_for(led), FakeJob()))
-    assert files_of(led.root) == {"inc.bean": INC, "main.bean": MAIN}
+    refused(sv.run(plan, ports_for(led), FakeJob()), Reason.COPY_FOLDER_MOVED)
+    assert files_of(led.root) == REAL_BEFORE
+
+
+def test_a_copys_folder_that_may_not_be_opened_is_refused(led: Ledger) -> None:
+    """A folder the save may not look into is refused before the writer (step 3 resolves every path: `io_error`
+    naming the file), so nothing reaches the folder check."""
+    plan = plan_for(led, confine=recorded(led.root))
+    os.chmod(led.root, 0o000)
+    try:
+        refused(sv.run(plan, ports_for(led), FakeJob()), Reason.IO_ERROR)
+    finally:
+        os.chmod(led.root, 0o700)
+    assert led.main.read_bytes() == MAIN
+
+
+def test_RT3_F1_the_folder_flipped_around_the_identity_read_is_refused(
+    led: Ledger, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Red team run 3 (RT3-F1; verifier V-R3-1), deterministic: the copy's folder a link to the real folder at the
+    gate, the copy again when the writer opens it and reads its identity, a link again right after. Round 2 took the
+    targets and the folder's key from path lookups around that read, so the real ledger was written and told Saved.
+    Now nothing below the folder is looked up by path, and the folder's key is accepted only from a resolution that
+    names the object its handle holds."""
+    real = with_real(led)
+    mark = recorded(led.root)
+    moved = led.tmp / "copy-moved"
+
+    def to_link() -> None:
+        led.root.rename(moved)
+        led.root.symlink_to(real)
+
+    def to_copy() -> None:
+        led.root.unlink()
+        moved.rename(led.root)
+
+    plan = plan_for(led, confine=mark)
+    to_link()
+    opened = writer._open_confined  # pyright: ignore[reportPrivateUsage]
+    verdict = writer.folder_verdict
+
+    def copy_then_open(*args: Any) -> str:
+        to_copy()
+        return opened(*args)
+
+    def verdict_then_link(*args: Any) -> Any:
+        out = verdict(*args)
+        to_link()
+        return out
+
+    monkeypatch.setattr(writer, "_open_confined", copy_then_open)
+    monkeypatch.setattr(writer, "folder_verdict", verdict_then_link)
+    out = sv.run(plan, ports_for(led), FakeJob())
+    assert not isinstance(out, sv.Saved), out
+    assert files_of(real) == REAL_BEFORE
+    assert files_of(moved) == REAL_BEFORE
+
+
+@pytest.mark.parametrize("how", ["link", "real_folder"])
+def test_the_copys_folder_replaced_after_the_folder_check_is_never_written_through(
+    led: Ledger, monkeypatch: pytest.MonkeyPatch, how: str
+) -> None:
+    """Right after the folder's check, before the walk: the walk starts from the held handle (the copy, wherever it
+    now is), and the path guard refuses it at its first use; never "saved", the real ledger byte-identical."""
+    real = with_real(led)
+    opened = writer._open_confined  # pyright: ignore[reportPrivateUsage]
+
+    def then_swap(*args: Any) -> str:
+        key = opened(*args)
+        led.root.rename(led.tmp / "copy-moved")
+        if how == "link":
+            led.root.symlink_to(real)
+        else:
+            real.rename(led.root)
+        return key
+
+    monkeypatch.setattr(writer, "_open_confined", then_swap)
+    out = sv.run(plan_for(led, confine=recorded(led.root)), ports_for(led), FakeJob())
+    assert isinstance(out, NotSaved), out
+    target = real if how == "link" else led.root
+    assert files_of(target) == REAL_BEFORE
+
+
+FLIPPER = (
+    "import os, sys\n"
+    "L, moved, real, stop = sys.argv[1:5]\n"
+    "while not os.path.exists(stop):\n"
+    "    try:\n"
+    "        os.rename(L, moved); os.symlink(real, L); os.unlink(L); os.rename(moved, L)\n"
+    "    except OSError:\n"
+    "        pass\n"
+    "if os.path.islink(L):\n"
+    "    os.unlink(L)\n"
+    "if os.path.exists(moved) and not os.path.exists(L):\n"
+    "    os.rename(moved, L)\n"
+)
+FLIPS = 120
+
+
+def test_a_program_flipping_the_copys_folder_never_gets_the_real_ledger_written(led: Ledger) -> None:
+    """Red team run 3's toggler, bounded by a count of saves, not a time: another process flips the copy's folder
+    between itself and a link to the real folder while saves run. Whatever each save answers, the real ledger is never
+    written (round 2's code wrote it after about 86 tries)."""
+    real = with_real(led)
+    mark = recorded(led.root)
+    moved, stop = led.tmp / "copy-moved", led.tmp / "stop"
+    plan = plan_for(led, confine=mark)
+    for n in range(FLIPS):
+        stop.unlink(missing_ok=True)
+        flipper = subprocess.Popen(  # noqa: S603 (fixed argv: this interpreter, the test's own script)
+            [sys.executable, "-I", "-c", FLIPPER, str(led.root), str(moved), str(real), str(stop)]
+        )
+        try:
+            out = sv.run(replace(plan, job=f"f{n}"), ports_for(led), FakeJob())
+        finally:
+            stop.touch()
+            flipper.wait()
+        assert files_of(real) == REAL_BEFORE, (n, out)
+        if isinstance(out, sv.Saved):  # it landed in the copy: put the copy back as the plan expects
+            led.main.write_bytes(MAIN)
+        shutil.rmtree(led.ald / "local", ignore_errors=True)
+        for f in os.listdir(led.root):
+            if f.startswith("."):
+                os.unlink(led.root / f)
 
 
 def test_a_save_confined_to_its_own_folder_lands(led: Ledger) -> None:
     out = sv.run(plan_for(led, confine=recorded(led.root)), ports_for(led), FakeJob())
     assert isinstance(out, sv.Saved), out
     assert led.main.read_bytes() == MAIN + TXN
-
-
-@pytest.mark.parametrize("how", ["link", "real_folder"])
-def test_the_copys_folder_replaced_after_the_writers_check_is_held_by_the_path_guard(
-    led: Ledger, monkeypatch: pytest.MonkeyPatch, how: str
-) -> None:
-    """Red team run 2's window: the folder replaced right after `_check_confined`; the path guard of every folder the
-    save writes in (§6.3) refuses before the first write: never "saved", the real ledger byte-identical."""
-    real = with_real(led)
-    check = writer._check_confined  # pyright: ignore[reportPrivateUsage]
-
-    def then_swap(*args: Any) -> None:
-        check(*args)
-        led.root.rename(led.tmp / "copy-moved")
-        if how == "link":
-            led.root.symlink_to(real)
-        else:
-            real.rename(led.root)
-
-    monkeypatch.setattr(writer, "_check_confined", then_swap)
-    out = sv.run(plan_for(led, confine=recorded(led.root)), ports_for(led), FakeJob())
-    assert not isinstance(out, sv.Saved), out
-    assert isinstance(out, NotSaved), out
-    target = real if how == "link" else led.root
-    assert files_of(target) == {"inc.bean": INC, "main.bean": MAIN}

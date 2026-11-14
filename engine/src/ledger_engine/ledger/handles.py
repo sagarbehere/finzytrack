@@ -7,6 +7,7 @@ that follows use one descriptor.
 
 from __future__ import annotations
 
+import errno
 import hashlib
 import uuid
 from collections.abc import Mapping
@@ -24,6 +25,16 @@ def sha256(data: bytes) -> str:
 
 def join(parent: str, name: str) -> str:
     return "/" + name if parent == "/" else f"{parent}/{name}"
+
+
+class LinkedPathError(Exception):
+    """A test copy's save met a link (or an entry that is not a plain folder) on its way down from the copy's folder
+    (S0117 round 3; owner, 2026-11-14: "2", `design/inbox/answered/20261114-test-copy-no-links.md`): it follows no
+    link at all, so nothing was opened through it."""
+
+    def __init__(self, canonical: str) -> None:
+        super().__init__("linked_path")
+        self.canonical = canonical
 
 
 class PathMovedError(Exception):
@@ -136,11 +147,32 @@ class Handles:
     entry: str | None = None  # the entry being checked or written when it is not that file (a name of ours, the
     # backup, a folder), for the outcome (S0061 verifier r6 F3)
     folders: Mapping[str, FolderEntry] = field(default_factory=lambda: {})
+    confined: str | None = None
+    """A test copy's folder, its handle already open and checked (S0117 round 3; owner, 2026-11-14: "2"): a folder
+    below it is never opened by path, but from its parent's handle, one name at a time, never through a link
+    (`DirHandle.open_child`; a link there raises `LinkedPathError`); the copy's folder itself is never opened again."""
+
+    def _below(self, canonical: str) -> bool:
+        root = self.confined
+        return root is not None and (canonical == root or canonical.startswith(root.rstrip("/") + "/"))
+
+    def _open(self, canonical: str) -> DirHandle:
+        if not self._below(canonical):
+            return self.fs.open_dir(canonical)
+        if canonical == self.confined:
+            raise PathMovedError(canonical)  # its handle is opened once, checked by the caller, and kept
+        parent, _, name = canonical.rpartition("/")
+        try:
+            return self.at(parent or "/").open_child(name)
+        except OSError as e:
+            if e.errno in (errno.ELOOP, errno.ENOTDIR):
+                raise LinkedPathError(canonical) from None  # O_NOFOLLOW: a link (or a file) stands at that name
+            raise
 
     def at(self, canonical: str) -> DirHandle:
         h = self.open.get(canonical)
         if h is None:
-            h = self.fs.open_dir(canonical)
+            h = self._open(canonical)
             try:
                 self._check_new(h, canonical)
             except BaseException:

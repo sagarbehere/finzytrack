@@ -339,7 +339,8 @@ class SaveResult(Message):
     `ledger_changed`, `mirror_stale`, `encrypted_file`). `not_saved`: the writer's `NotSaved` (`reason` its own:
     `hard_linked`, `locked`, `not_a_file`, `permission`, `changed`, `path_moved`, `read_back`, `io_error`,
     `name_not_utf8`, `linked_folder`, `no_drive_id`, `no_folder_id`, `case_twins`, `folder_appeared`,
-    `app_folder_missing`, `outside_folder`; `open_journal`: writes are paused until
+    `app_folder_missing`, `outside_folder`, `link_in_copy`, `copy_folder_moved`, `copy_folder_missing`;
+    `open_journal`: writes are paused until
     recovery). `unfinished`: a file may have been replaced and the rollback stopped (`cause`, and `cause_path` its
     file: after `created_path_taken` the undo will ask about that file). `unchanged`: every file the save would write
     was hashed again and equals its pre bytes; `changed`: the first file that re-hash found not at them (None also when

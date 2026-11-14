@@ -460,6 +460,12 @@ class DarwinDir:
         fd = os.open(check_name(name), os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC, dir_fd=self.fd)
         return DarwinDir(self._fs, "", fd=fd)
 
+    def rule(self) -> FoldRule:
+        try:
+            return FoldRule(nfd=True, casefold=os.fpathconf(self.fd, PC_CASE_SENSITIVE) != 1)
+        except OSError:
+            return FoldRule(nfd=True, casefold=True)
+
     def rmdir(self, name: str) -> None:
         os.rmdir(check_name(name), dir_fd=self.fd)
 

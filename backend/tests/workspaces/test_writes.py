@@ -284,10 +284,11 @@ def test_a_second_copy_of_one_error_key_is_acknowledged_by_that_key(rig: Rig) ->
 # -- must not pass: nothing reaches the save --------------------------------------------------------------------------
 
 
-def test_an_unknown_plan_is_plan_expired(rig: Rig) -> None:
+def test_an_unknown_plan_is_plan_unknown(rig: Rig) -> None:
+    """S0117 round 3 (verifier V-R3-5): an id this run never knew (a restart): an earlier confirm may have saved it."""
     p = rig.preview()
     gone = dataclasses.replace(p, plan_id="plan-99")
-    assert code_of(rig.confirm(gone)) == ErrorCode.PLAN_EXPIRED
+    assert code_of(rig.confirm(gone)) == ErrorCode.PLAN_UNKNOWN
     assert rig.saves() == 0
 
 

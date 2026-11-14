@@ -333,7 +333,7 @@ export interface components {
         /** ErrorEnvelope */
         ErrorEnvelope: {
             /** Error */
-            error: components["schemas"]["ValidationFailedError"] | components["schemas"]["RouteNotFoundError"] | components["schemas"]["WorkspaceUnknownError"] | components["schemas"]["WorkspaceNotOpenError"] | components["schemas"]["WorkspaceNotReadyError"] | components["schemas"]["EngineQueueFullError"] | components["schemas"]["JobCancelledError"] | components["schemas"]["EngineStoppedError"] | components["schemas"]["EngineUnavailableError"] | components["schemas"]["ChangeOutcomeUnknownError"] | components["schemas"]["LedgerExternallyChangedError"] | components["schemas"]["LedgerChangingError"] | components["schemas"]["WritesPausedError"] | components["schemas"]["ChangeNotSavedError"] | components["schemas"]["AckRequiredError"] | components["schemas"]["AckUnexpectedError"] | components["schemas"]["WriteRefusedUnintendedChangeError"] | components["schemas"]["WriteRefusedCheckFailedError"] | components["schemas"]["EncryptedFileNotEditableError"] | components["schemas"]["PlanExpiredError"] | components["schemas"]["PlanAlreadyConfirmedError"] | components["schemas"]["PreviewStaleError"] | components["schemas"]["UnpromotedMutatorOnRealLedgerError"] | components["schemas"]["InternalError"];
+            error: components["schemas"]["ValidationFailedError"] | components["schemas"]["RouteNotFoundError"] | components["schemas"]["WorkspaceUnknownError"] | components["schemas"]["WorkspaceNotOpenError"] | components["schemas"]["WorkspaceNotReadyError"] | components["schemas"]["EngineQueueFullError"] | components["schemas"]["JobCancelledError"] | components["schemas"]["EngineStoppedError"] | components["schemas"]["EngineUnavailableError"] | components["schemas"]["ChangeOutcomeUnknownError"] | components["schemas"]["LedgerExternallyChangedError"] | components["schemas"]["LedgerChangingError"] | components["schemas"]["WritesPausedError"] | components["schemas"]["ChangeNotSavedError"] | components["schemas"]["AckRequiredError"] | components["schemas"]["AckUnexpectedError"] | components["schemas"]["WriteRefusedUnintendedChangeError"] | components["schemas"]["WriteRefusedCheckFailedError"] | components["schemas"]["EncryptedFileNotEditableError"] | components["schemas"]["PlanExpiredError"] | components["schemas"]["PlanUnknownError"] | components["schemas"]["PlanAlreadyConfirmedError"] | components["schemas"]["PreviewStaleError"] | components["schemas"]["UnpromotedMutatorOnRealLedgerError"] | components["schemas"]["InternalError"];
             meta: components["schemas"]["Meta"];
         };
         /** HealthData */
@@ -495,7 +495,7 @@ export interface components {
         /** @constant */
         NotReadyPhase: "WARMING";
         /** @enum {string} */
-        NotSavedReason: "hard_linked" | "locked" | "not_a_file" | "permission" | "io_error" | "read_back" | "name_not_utf8" | "linked_folder" | "no_drive_id" | "no_folder_id" | "engine_stopped" | "case_twins" | "folder_appeared" | "app_folder_missing" | "outside_folder";
+        NotSavedReason: "hard_linked" | "locked" | "not_a_file" | "permission" | "io_error" | "read_back" | "name_not_utf8" | "linked_folder" | "no_drive_id" | "no_folder_id" | "engine_stopped" | "case_twins" | "folder_appeared" | "app_folder_missing" | "outside_folder" | "link_in_copy" | "copy_folder_moved" | "copy_folder_missing";
         /** @enum {string} */
         PausedReason: "unfinished_save" | "earlier_unfinished";
         /** PlanAlreadyConfirmedError */
@@ -539,6 +539,35 @@ export interface components {
              * @enum {string}
              */
             code: "PLAN_EXPIRED";
+            /** Correlation Id */
+            correlation_id: string;
+            /** Data Safe */
+            data_safe: boolean;
+            /** Details */
+            details: null;
+            /** Issues */
+            issues: components["schemas"]["Issue"][];
+            /** Message */
+            message: string;
+            /** Next Step */
+            next_step: string;
+            /** Retry After Ms */
+            retry_after_ms: number | null;
+            /** Retryable */
+            retryable: boolean;
+        };
+        /** PlanUnknownError */
+        PlanUnknownError: {
+            /**
+             * Class
+             * @constant
+             */
+            class: "not_found";
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            code: "PLAN_UNKNOWN";
             /** Correlation Id */
             correlation_id: string;
             /** Data Safe */

@@ -761,6 +761,7 @@
                 "LEDGER_EXTERNALLY_CHANGED": "#/components/schemas/LedgerExternallyChangedError",
                 "PLAN_ALREADY_CONFIRMED": "#/components/schemas/PlanAlreadyConfirmedError",
                 "PLAN_EXPIRED": "#/components/schemas/PlanExpiredError",
+                "PLAN_UNKNOWN": "#/components/schemas/PlanUnknownError",
                 "PREVIEW_STALE": "#/components/schemas/PreviewStaleError",
                 "ROUTE_NOT_FOUND": "#/components/schemas/RouteNotFoundError",
                 "UNPROMOTED_MUTATOR_ON_REAL_LEDGER": "#/components/schemas/UnpromotedMutatorOnRealLedgerError",
@@ -834,6 +835,9 @@
               },
               {
                 "$ref": "#/components/schemas/PlanExpiredError"
+              },
+              {
+                "$ref": "#/components/schemas/PlanUnknownError"
               },
               {
                 "$ref": "#/components/schemas/PlanAlreadyConfirmedError"
@@ -1261,7 +1265,10 @@
           "case_twins",
           "folder_appeared",
           "app_folder_missing",
-          "outside_folder"
+          "outside_folder",
+          "link_in_copy",
+          "copy_folder_moved",
+          "copy_folder_missing"
         ],
         "type": "string"
       },
@@ -1410,6 +1417,76 @@
           "correlation_id"
         ],
         "title": "PlanExpiredError",
+        "type": "object"
+      },
+      "PlanUnknownError": {
+        "properties": {
+          "class": {
+            "const": "not_found",
+            "title": "Class",
+            "type": "string"
+          },
+          "code": {
+            "const": "PLAN_UNKNOWN",
+            "title": "Code",
+            "type": "string"
+          },
+          "correlation_id": {
+            "title": "Correlation Id",
+            "type": "string"
+          },
+          "data_safe": {
+            "title": "Data Safe",
+            "type": "boolean"
+          },
+          "details": {
+            "title": "Details",
+            "type": "null"
+          },
+          "issues": {
+            "items": {
+              "$ref": "#/components/schemas/Issue"
+            },
+            "title": "Issues",
+            "type": "array"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "next_step": {
+            "title": "Next Step",
+            "type": "string"
+          },
+          "retry_after_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Retry After Ms"
+          },
+          "retryable": {
+            "title": "Retryable",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "code",
+          "class",
+          "message",
+          "data_safe",
+          "next_step",
+          "issues",
+          "retryable",
+          "retry_after_ms",
+          "details",
+          "correlation_id"
+        ],
+        "title": "PlanUnknownError",
         "type": "object"
       },
       "PreviewStaleError": {

@@ -260,6 +260,12 @@ class DirHandle(Protocol):
         file or no entry raises `OSError` (S0087: the mirror folder and the cleanup of folders in it, publish.md §2)."""
         ...
 
+    def rule(self) -> FoldRule:
+        """How this folder compares the names in it (§6.3), asked through this descriptor, never by path (S0117 round
+        3: a test copy's save walks its folders by handle). An answer that cannot be read counts as case-insensitive,
+        as `resolve` counts it."""
+        ...
+
     def rmdir(self, name: str) -> None:
         """Remove the directory `name` if it is empty: it fails with `ENOTEMPTY` when it holds any entry, `ENOTDIR`
         when it is not a directory (a link to one included: never followed) and `ENOENT` when there is none. Durable

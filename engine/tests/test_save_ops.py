@@ -509,12 +509,12 @@ def test_a_save_confined_to_another_folder_is_not_saved_outside_folder(
     reply = json.loads(engine(ald).handle(request("save", params), Channel(1, proceed=True)))
     assert reply["ok"], reply
     result = reply["result"]
-    assert (result["outcome"], result["reason"], result["unchanged"]) == ("not_saved", "outside_folder", True)
+    assert (result["outcome"], result["reason"], result["unchanged"]) == ("not_saved", "outside_folder", False)
     assert result["entry"] == os.path.realpath(other)
     assert main.read_bytes() == PRE
     params["confine"] = {**_recorded(main.parent), "born": _recorded(main.parent)["born"] + 1}  # another folder
     reply = json.loads(engine(ald).handle(request("save", params), Channel(1, proceed=True)))
-    assert reply["result"]["reason"] == "outside_folder", reply
+    assert reply["result"]["reason"] == "copy_folder_moved", reply
     assert main.read_bytes() == PRE
     params["confine"] = _recorded(main.parent)
     reply = json.loads(engine(ald).handle(request("save", params), Channel(1, proceed=True)))
