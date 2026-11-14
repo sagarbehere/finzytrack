@@ -63,6 +63,8 @@ Closed at the M0 exit (2026-10-26; `design/journal/M0-exit.md`), as they stood:
 
 Next: **M1b** (write contract), starting with the splicing primitives (ADR-0009) under the owner's ownership rule (2026-11-13: a mutator owns only the located spans of its target entries; every byte outside stays byte-identical); then **G1**, your go/no-go. M2 may start beside M1b.
 
+**M1b: the write's cost measured (2026-11-14, S0119).** One write on the product's path (a preview, its confirm, the rebuild until the mirror shows it), each job against ADR-0008's target: at 54k entries in one 8.7 MB file the preview takes about 4.0 s, the save 0.27 s and the mirror is published 3.2-3.4 s after the confirm; in 12 files 2.2-2.4 s, 0.21 s and 3.2-3.3 s; at demo size 0.47-0.49 s, 0.2 s and 0.60-0.63 s. Every job is within its target. From the preview's click to the publish it is 7.2-7.4 s, 5.3-5.6 s and 1.07-1.12 s. A 21 MB single file (54k transactions with five metadata lines each) cannot be written at all: its plan is over the protocol's 16 MiB line (BL-0106). What to do about that layout is the owner's choice (BL-0112).
+
 ## 2. The milestones at a glance
 
 | # | Milestone | Size | What the owner can do at the end | Real ledgers? |

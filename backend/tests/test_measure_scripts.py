@@ -83,10 +83,51 @@ def protocol(tmp_path: Path) -> None:
         assert outcomes == ["saved"] * len(outcomes), report
 
 
+LAYOUTS = ("one", "files12", "meta20")
+JOBS = ("preview", "save", "rebuild")
+
+
+def write(tmp_path: Path) -> None:
+    """S0119: one write on the product's path (the preview, its confirm, the rebuild until the publish) in each
+    layout derived from the ledger: one file, the same entries in 12 files under the root, and the 20 MB recipe."""
+    folder = tmp_path / "L"
+    folder.mkdir()
+    (folder / "main.beancount").write_bytes(LEDGER)
+    args = [str(folder / "main.beancount"), "--runs", "1"]
+    for layout in LAYOUTS:
+        args += ["--layout", layout]
+    report = run("measure_write.py", *args, tmp_path=tmp_path)
+    for key in ("path", "producer", "layouts", "runs", "summary"):
+        assert key in report, report
+    layouts = cast("dict[str, dict[str, object]]", report["layouts"])
+    assert set(layouts) == set(LAYOUTS), report
+    assert layouts["one"]["files"] == 1, layouts
+    assert layouts["files12"]["files"] == 13, layouts  # the root and 12 files under it, one glob include
+    for name in LAYOUTS:
+        assert layouts[name]["transactions"] == 2, layouts
+    # the recipe: five metadata lines on every transaction, nothing else changed
+    assert layouts["meta20"]["lines"] == cast("int", layouts["one"]["lines"]) + 5 * 2, layouts
+    runs = cast("list[dict[str, object]]", report["runs"])
+    assert sorted(str(r["layout"]) for r in runs) == sorted(LAYOUTS), report
+    for r in runs:
+        assert r["outcome"] == "published", r
+        for job in JOBS:
+            assert cast("float", r[f"{job}_ms"]) > 0, r
+            assert cast("float", r[f"{job}_peak_rss_mb"]) > 0, r
+        assert cast("float", r["total_ms"]) >= cast("float", r["confirm_to_published_ms"]) > 0, r
+        assert "load_average" in r, r
+    summary = cast("dict[str, dict[str, object]]", report["summary"])
+    assert set(summary) == set(LAYOUTS), report
+    for name in LAYOUTS:
+        for key in (*(f"{j}_ms" for j in JOBS), "confirm_to_published_ms", "total_ms"):
+            assert key in summary[name], summary
+
+
 CASES: dict[str, Callable[[Path], None]] = {
     "measure_mirror_reads.py": mirror_reads,
     "measure_health.py": health,
     "measure_protocol.py": protocol,
+    "measure_write.py": write,
 }
 
 
@@ -95,6 +136,7 @@ MAC_ONLY = pytest.mark.skipif(sys.platform != "darwin", reason="the save's port 
 MARKS: dict[str, tuple[pytest.MarkDecorator, ...]] = {
     "measure_health.py": (NEEDS_ENGINE,),
     "measure_protocol.py": (NEEDS_ENGINE, MAC_ONLY),
+    "measure_write.py": (NEEDS_ENGINE, MAC_ONLY),
 }
 
 
