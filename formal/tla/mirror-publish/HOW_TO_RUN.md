@@ -35,9 +35,43 @@ Measured on the owner's Mac (Apple M4 Pro) on 2026-11-08 with 8 TLC workers, on 
 | S | 11 witnesses | each reached | 136 to 17,831 distinct states | 0-1 s each |
 | S | all 22 | **all as expected** | | about 18 s together |
 | M | `M_all` | not run (the owner's, BL-0110) | | |
-| L | `L_all` | not run (the owner's, BL-0110) | | |
+| L | `L_all` | in pieces (the owner's, BL-0110): no violation in 364M distinct states, depth 34, after 27 h (2026-11-14); see "Running `L_all` in pieces" | | |
 
 Each run rewrites `results/SUMMARY.md` with the numbers per configuration.
+
+## Running `L_all` in pieces (the owner's run, from 2026-11-13)
+
+`L_all` is too large for one sitting: after 27 h it had found 364M distinct states, every behaviour up to depth 34, no
+violation, with 125M states still queued (2026-11-14 11:50). It runs in pieces, from TLC's own checkpoint (TLC writes
+one every 30 minutes: "Checkpointing completed at ..." in the log). Its state lives in
+`results/states/L_all/26-11-13-08-39-33/` (about 30 GB, ignored by git); keep it until the run ends. Do not change
+`MirrorPublish.tla` or `cfg/L_all.cfg` meanwhile: a checkpoint resumes only the same model.
+
+**Resume** (from `formal/tla/mirror-publish/`; `run_all.sh` is not used here, since it deletes the state folder when
+a configuration starts or stops):
+
+```sh
+cd formal/tla/mirror-publish
+echo "=== resumed $(date '+%Y-%m-%d %H:%M:%S') from the checkpoint" >> results/L_all.log
+nohup caffeinate -i nice -n 10 java -XX:+UseParallelGC -XX:MaxRAMPercentage=50 \
+  -cp ../tools/tla2tools.jar tlc2.TLC -config cfg/L_all.cfg -workers 14 \
+  -recover results/states/L_all/26-11-13-08-39-33 -nowarning MirrorPublish.tla >> results/L_all.log 2>&1 &
+```
+
+The log should show TLC starting its recovery from the checkpoint and then `Progress(...)` lines with counts above the
+last ones. If the recovery fails, the choices are a fresh run (`run_all.sh --only L_all --force`, from the start) or
+the bounded result above as a stated limit.
+
+**Pause** (any time it is running): wait for the next `Checkpointing completed at` line after the resume, then stop
+the process (`pkill -f 'tlc2.TLC -config cfg/L_all.cfg'`). Stopping between checkpoints loses at most the half hour
+since the last one, but stop right after a completed checkpoint: the queue files a checkpoint names may already be
+consumed after it. A Mac that sleeps is fine; `caffeinate -i` keeps it awake while the run lasts.
+
+**When it ends**: `Model checking completed. No error has been found.` (or a violation with its trace) is the last
+part of `results/L_all.log`. Record the result in the table above (distinct states, depth, the wall time summed over
+the pieces), run `formal/tla/mirror-publish/run_all.sh --tier L --list` to see the summary's view, delete
+`results/states/` (30 GB or more), and close BL-0110. A violation is read from its trace first: it becomes a test or a
+backlog row, unless it is a High data-safety issue (PROCESS.md §3).
 
 ## Changing the model
 
