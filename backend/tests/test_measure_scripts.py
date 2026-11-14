@@ -151,6 +151,29 @@ def test_measurement_script_runs(name: str, tmp_path: Path) -> None:
     CASES[name](tmp_path)
 
 
+@NEEDS_ENGINE
+@MAC_ONLY
+def test_measure_write_reports_a_run_that_does_not_publish(tmp_path: Path) -> None:
+    """S0119 verifier F1. Must not pass: a run that does not publish ends the script without its report, or is counted
+    in the summary. A preview whose reply passes the protocol's 16 MiB line (the file's new text: over 16 MiB of
+    comments before the tiny ledger) stops the engine; a job that does not answer within `--deadline` ends its run."""
+    folder = tmp_path / "L"
+    folder.mkdir()
+    (folder / "main.beancount").write_bytes((b";" + b"x" * 99 + b"\n") * 170_000 + LEDGER)
+    report = run("measure_write.py", str(folder / "main.beancount"), tmp_path=tmp_path)
+    (r,) = cast("list[dict[str, object]]", report["runs"])
+    assert str(r["outcome"]).startswith("preview: "), r
+    assert "preview_ms" in r, r  # the figures measured before the end stay in the run
+    stops = cast("list[str]", r["engine_stops"])
+    assert any(s.startswith("protocol_violation") for s in stops), r
+    assert report["summary"] == {"one": {"published": 0, "not_published": 1}}, report
+    (folder / "main.beancount").write_bytes(LEDGER)
+    report = run("measure_write.py", str(folder / "main.beancount"), "--deadline", "0.000001", tmp_path=tmp_path)
+    (r,) = cast("list[dict[str, object]]", report["runs"])
+    assert str(r["outcome"]).startswith("not measured: open: no answer"), r
+    assert report["summary"] == {"one": {"published": 0, "not_published": 1}}, report
+
+
 def test_a_script_that_fails_fails_its_case(tmp_path: Path) -> None:
     """Must not pass: a measurement script that exits non-zero, run as the cases run it, goes unnoticed."""
     (tmp_path / "measure_broken.py").write_text('import sys\nprint("{}")\nsys.exit(1)\n')

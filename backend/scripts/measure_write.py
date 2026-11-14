@@ -3,7 +3,8 @@
 (S0119; BL-0112; ADR-0008 and its amendments of 2026-10-25, 2026-10-27 and 2026-10-31; ADR-0064; INV-20, INV-10).
 
 usage (cwd = backend/):
-    .venv/bin/python scripts/measure_write.py ROOT [--layout one|files12|meta20 ...] [--runs 1]
+    .venv/bin/python scripts/measure_write.py ROOT [--layout one|files12|meta20 ...] [--runs 1] [--cut N]
+        [--deadline SECONDS] [--write-layout DIR]
 
 ROOT is a generated ledger's root file (`scripts/gen_demo.py --size 54k` or `--size demo`); it is only read. Each
 `--layout` (default: `one`) is derived from its text into a fresh test copy for every run, never written back:
@@ -17,6 +18,9 @@ ROOT is a generated ledger's root file (`scripts/gen_demo.py --size 54k` or `--s
   transaction's text), `source_account` (its last posting's account), `external_id` (its date's digits and <i> in
   8 digits), `external_id_type` ("OFX"); <i> is the transaction's index in the file, from 0. On the 54k ledger it
   gives about 21 MB with the same 54,000 transactions.
+`--cut N` first cuts the ledger after its N-th transaction (in file order), so a layout can be made at a smaller size.
+`--write-layout DIR` writes each layout's files into `DIR/<layout>/` (never over an existing file), prints their
+sizes and measures nothing: the files for `engine/scripts/measure_save.py`.
 
 Everything happens in a fresh temp folder (honours TMPDIR): the app's folder and cache are made there, and the jobs run
 through the sidecar's own scheduler (`EngineJobs`) and write use cases (`app.workspaces.writes`), as the product wires
@@ -39,8 +43,15 @@ landed save queues, each waited for in turn. Per run it reports each job's wall 
 (the rebuild's from the save's answer to its own), the time from the confirm's submit to the new generation
 published, the user-visible total from the preview's submit to that publish, each job's engine's peak resident size
 (sampled every 5 ms, macOS `proc_pid_rusage`) and its lifetime peak footprint, and the 1-minute load average before
-the run. A job that does not end as expected ends that run with its outcome (the report says which, e.g. a preview
-refused); the script exits 0 and prints its JSON report. With `--runs N` the layouts alternate within each run.
+the run. A job that does not end as expected, or does not answer within `--deadline` seconds (600 by default; a
+stuck job, not a budget), ends that run with its outcome and the figures measured so far (the report says which, e.g.
+a preview refused, with the client's `engine.stopped` events); the other runs go on, and the script exits 0 and prints
+its JSON report. Its summary is over the published runs only. With `--runs N` the layouts alternate within each run.
+
+**Stated limits.** The smoke test (`tests/test_measure_scripts.py`) checks the report's shape, the layouts' file,
+line and transaction counts and that every run publishes; it does not check how `files12` spreads the entries over
+its files, nor that `rebuild_ms` starts at the save's answer and `total_ms` at the preview's submit (S0119 verifier
+F3). A resident-size spike shorter than the 5 ms sample is missed (the lifetime footprint is not).
 """
 
 from __future__ import annotations
@@ -336,13 +347,25 @@ def command_for(folder: AppFolder, cache: Path) -> EngineCommand:
     return dataclasses.replace(product, argv=bootstrap_argv(python, site, WITH_LAZY_TEST_PRODUCER))
 
 
-def waited(ticket: JobTicket | Failed | NotDone, what: str) -> Outcome:
+def waited(ticket: JobTicket | Failed | NotDone, what: str, deadline: float = JOB_DEADLINE) -> Outcome:
     if not isinstance(ticket, JobTicket):
         fail(f"{what}: not queued: {ticket}")
-    out = ticket.wait(JOB_DEADLINE)
+    out = ticket.wait(deadline)
     if out is None:
-        fail(f"{what}: no answer in {JOB_DEADLINE:.0f} s")
+        fail(f"{what}: no answer in {deadline:g} s")
     return out
+
+
+def cut(text: str, transactions: int) -> str:
+    """The text up to and including its `transactions`-th transaction (in file order): the ledger cut there."""
+    out: list[str] = []
+    seen = 0
+    for b in blocks(text):
+        if seen == transactions:
+            break
+        out.append(b)
+        seen += 1 if TXN.match(b) else 0
+    return "".join(out)
 
 
 # -- one run ----------------------------------------------------------------------------------------------------------
@@ -358,20 +381,29 @@ def one_run(
     key: str,
     root_name: str,
     stops: list[str],
-) -> dict[str, object]:
+    result: dict[str, object],
+    deadline: float,
+) -> None:
+    """One write, its figures and outcome put in `result` as they come: a `Measured` raised part way leaves the
+    figures measured so far there (the caller records the outcome)."""
     copy = work / key / "copy"
     for rel, text in layout.files.items():
         (copy / rel).parent.mkdir(parents=True, exist_ok=True)
         (copy / rel).write_text(text, encoding="utf-8", newline="")
     copy = copy.resolve()
     root, latest = copy / root_name, copy / layout.latest
-    result: dict[str, object] = {"load_average": round(os.getloadavg()[0], 2)}
-
+    result["load_average"] = round(os.getloadavg()[0], 2)
+    jobs.tickets = []
+    stops.clear()
+    sampler.reset()
     jobs.exclusive_began()
-    t = time.perf_counter()
-    opened = waited(submit_open(jobs, key, OpenJobTarget(key, str(root), LINEAGE, folder.path), clock=CLOCK), "open")
-    result["open_ms"] = ms(time.perf_counter() - t)
-    jobs.exclusive_ended()
+    try:
+        t = time.perf_counter()
+        opening = submit_open(jobs, key, OpenJobTarget(key, str(root), LINEAGE, folder.path), clock=CLOCK)
+        opened = waited(opening, "open", deadline)
+        result["open_ms"] = ms(time.perf_counter() - t)
+    finally:
+        jobs.exclusive_ended()
     if not (isinstance(opened, Done) and isinstance(opened.value, Opened) and opened.value.mirror_ready):
         fail(f"open: {opened}")
     jobs.workspace_opened(key)
@@ -384,18 +416,13 @@ def one_run(
     request = {"edits": [{"kind": "insert", "text": txn, "default_file": str(latest)}]}
     jobs.tickets = []
     stops.clear()
-    sampler.reset()
 
-    def stop(outcome: str) -> dict[str, object]:
-        sampler.label = None
+    def stop(outcome: str) -> None:
         result["outcome"] = outcome
-        if stops:
-            result["engine_stops"] = list(stops)  # the client's `engine.stopped`: how the engine's output ended
-        return result
 
     sampler.label = "preview"
     t0 = time.perf_counter()
-    previewed = waited(writes.submit_preview(services, target, before, MUTATOR, request), "preview")
+    previewed = waited(writes.submit_preview(services, target, before, MUTATOR, request), "preview", deadline)
     t1 = time.perf_counter()
     result["preview_ms"] = ms(t1 - t0)
     if not (isinstance(previewed, Done) and isinstance(previewed.value, Previewed)):
@@ -410,7 +437,7 @@ def one_run(
     confirmed = writes.submit_confirm(services, target, plan.plan_id, plan.preview_hash, acknowledged=frozenset())
     if isinstance(confirmed, NotDone):
         return stop(f"confirm: {confirmed}")
-    saved = waited(confirmed, "save")
+    saved = waited(confirmed, "save", deadline)
     t3 = time.perf_counter()
     sampler.label = "rebuild"
     result["save_ms"] = ms(t3 - t2)
@@ -419,7 +446,7 @@ def one_run(
     rebuilds = [ticket for kind, ticket in jobs.tickets if kind == "rebuild"]
     if len(rebuilds) != 1:
         return stop(f"rebuild: {len(rebuilds)} queued")
-    rebuilt = waited(rebuilds[0], "rebuild")
+    rebuilt = waited(rebuilds[0], "rebuild", deadline)
     t4 = time.perf_counter()
     sampler.label = None
     result["rebuild_ms"] = ms(t4 - t3)
@@ -445,11 +472,31 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("root", type=Path)
     ap.add_argument("--layout", action="append", choices=LAYOUTS)
     ap.add_argument("--runs", type=int, default=1)
+    ap.add_argument("--cut", type=int, default=None, help="cut the ledger after its N-th transaction first")
+    ap.add_argument("--deadline", type=float, default=JOB_DEADLINE, help="seconds a run's job may take to answer")
+    ap.add_argument(
+        "--write-layout", type=Path, default=None, help="write the layouts into DIR/<layout>/, measure none"
+    )
     args = ap.parse_args(argv)
     names: list[str] = args.layout or ["one"]
     src: Path = args.root.resolve()
     text = src.read_text(encoding="utf-8")
+    if args.cut is not None:
+        text = cut(text, args.cut)
     layouts = {name: layout_of(name, src.name, text) for name in dict.fromkeys(names)}
+    if args.write_layout is not None:
+        for name, layout in layouts.items():
+            for rel, body in layout.files.items():
+                path = args.write_layout / name / rel
+                path.parent.mkdir(parents=True, exist_ok=True)
+                try:
+                    with path.open("x", encoding="utf-8", newline="") as f:  # never over an existing file
+                        f.write(body)
+                except FileExistsError:
+                    sys.stderr.write(f"measure_write: {path} exists; nothing is written over a file\n")
+                    return 2
+        sys.stdout.write(json.dumps({name: stats(layout) for name, layout in layouts.items()}, indent=2) + "\n")
+        return 0
     top = Path(tempfile.mkdtemp(prefix="ft-measure-write-"))
     jobs: Jobs | None = None
     client: EngineClient | None = None
@@ -500,8 +547,27 @@ def main(argv: list[str] | None = None) -> int:
         runs: list[dict[str, object]] = []
         for n in range(args.runs):
             for name, layout in layouts.items():
-                out = one_run(jobs, sampler, folder, cache, work, layout, f"k{n}{name}", src.name, stops)
-                runs.append({"run": n, "layout": name, **out})
+                result: dict[str, object] = {"run": n, "layout": name}
+                try:
+                    one_run(
+                        jobs,
+                        sampler,
+                        folder,
+                        cache,
+                        work,
+                        layout,
+                        f"k{n}{name}",
+                        src.name,
+                        stops,
+                        result,
+                        args.deadline,
+                    )
+                except (Measured, OSError, subprocess.CalledProcessError) as e:  # the run ends; the others go on
+                    result["outcome"] = f"not measured: {e}"
+                sampler.label = None
+                if stops:
+                    result["engine_stops"] = list(stops)  # the client's `engine.stopped`: how the engine's output ended
+                runs.append(result)
                 shutil.rmtree(work / f"k{n}{name}", ignore_errors=True)
         keys = (*(f"{j}_ms" for j in JOBS), "confirm_to_published_ms", "total_ms", "open_ms")
         keys += tuple(f"{j}_peak_rss_mb" for j in JOBS)
@@ -511,13 +577,14 @@ def main(argv: list[str] | None = None) -> int:
             "producer": "the engine's test producer, registered lazily by this script's engine command only",
             "layouts": {name: stats(layout) for name, layout in layouts.items()},
             "runs": runs,
-            "summary": {
+            "summary": {  # over the published runs only; the others are in `runs` with their outcome
                 name: {
-                    k: summary([float(str(r[k])) for r in runs if r["layout"] == name and k in r])
-                    for k in keys
-                    if any(r["layout"] == name and k in r for r in runs)
+                    "published": len(done),
+                    "not_published": sum(1 for r in runs if r["layout"] == name) - len(done),
+                    **{k: summary([float(str(r[k])) for r in done]) for k in keys if done},
                 }
                 for name in layouts
+                for done in ([r for r in runs if r["layout"] == name and r.get("outcome") == "published"],)
             },
             "python": sys.version.split()[0],
             "platform": sys.platform,
