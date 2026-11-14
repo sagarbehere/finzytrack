@@ -405,18 +405,36 @@ def test_a_request_that_is_not_json_data_raises_before_sending(
     assert client.pid == pid
 
 
-def test_a_request_longer_than_the_line_limit_is_not_sent_and_is_no_stop(client: EngineClient) -> None:
+def test_a_request_longer_than_the_line_limit_is_not_sent_and_is_no_stop(
+    client: EngineClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """S0035 independent verifier F7: a too-large request depends on the data, so it is an outcome the caller
-    handles, distinct from the engine's refusals; nothing is sent and it does not count towards the restart bound."""
+    handles, distinct from the engine's refusals; nothing is sent and it does not count towards the restart bound.
+    S0120: the guard is 256 MiB (`test_the_client_s_guard_is_the_protocol_s`); it is lowered to 1 MiB here, so the
+    test does not build a 256 MiB line, and a request under it is sent."""
+    from app.platform.adapters import engine_client
+
+    monkeypatch.setattr(engine_client, "MAX_LINE_BYTES", 1024 * 1024)
     client.start()
     pid = client.pid
-    big = {"x": "a" * (16 * 1024 * 1024)}
+    under = {"x": "a" * (1024 * 1024 - 100)}
+    sent = client.call("ping", under)
+    assert isinstance(sent, EngineRefusal), sent  # sent and read by the engine: ping takes no params
+    big = {"x": "a" * (1024 * 1024)}
     for _ in range(RestartPolicy().max_crashes + 1):
         out = client.call("ping", big)
         assert isinstance(out, EngineFailure)
         assert out.kind == "too_large"
     assert client.ping() == Pong()
     assert client.pid == pid
+
+
+def test_the_client_s_guard_is_the_protocol_s() -> None:
+    """S0120: the client refuses to send, and cuts what it reads, at the protocol's one guard (256 MiB)."""
+    from app.platform import engine_protocol
+    from app.platform.adapters import engine_client
+
+    assert engine_client.MAX_LINE_BYTES == engine_protocol.MAX_LINE_BYTES == 256 * 1024 * 1024
 
 
 @pytest.mark.parametrize(

@@ -78,6 +78,7 @@ CODES = (
     ErrorCode.WRITE_REFUSED_UNINTENDED_CHANGE,
     ErrorCode.WRITE_REFUSED_CHECK_FAILED,
     ErrorCode.ENCRYPTED_FILE_NOT_EDITABLE,
+    ErrorCode.LEDGER_FILE_TOO_LARGE,  # S0120
     ErrorCode.PLAN_EXPIRED,
     ErrorCode.PLAN_ALREADY_CONFIRMED,
     ErrorCode.PLAN_UNKNOWN,
@@ -317,6 +318,16 @@ SAVE: tuple[Row, ...] = (
         "msg:save.best_effort_drive",
         "the open of a workspace on a drive without the swap (§6.8)",
         lambda: st.BEST_EFFORT_DRIVE,
+    ),
+    (
+        "msg:preview.large_file",
+        "a preview whose plan changes one file larger than 15 MB, now or after the change (S0120)",
+        lambda: st.large_file_tip((FILE,)) or "",
+    ),
+    (
+        "msg:preview.large_files",
+        "the same, several such files (S0120)",
+        lambda: st.large_file_tip((FILE, "<path>/<other file>")) or "",
     ),
 )
 

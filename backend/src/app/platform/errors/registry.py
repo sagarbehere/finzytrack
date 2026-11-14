@@ -60,6 +60,7 @@ class ErrorCode(StrEnum):
     WRITE_REFUSED_UNINTENDED_CHANGE = "WRITE_REFUSED_UNINTENDED_CHANGE"
     WRITE_REFUSED_CHECK_FAILED = "WRITE_REFUSED_CHECK_FAILED"
     ENCRYPTED_FILE_NOT_EDITABLE = "ENCRYPTED_FILE_NOT_EDITABLE"
+    LEDGER_FILE_TOO_LARGE = "LEDGER_FILE_TOO_LARGE"
     PLAN_EXPIRED = "PLAN_EXPIRED"
     PLAN_ALREADY_CONFIRMED = "PLAN_ALREADY_CONFIRMED"
     PLAN_UNKNOWN = "PLAN_UNKNOWN"
@@ -406,6 +407,17 @@ def specs() -> tuple[ErrorSpec, ...]:
             data_safe=True,  # refused at the preview, the confirm or the save's step 0, each before any write
             next_step="Make this change with the tools you use for that encrypted file.",
             details=EncryptedFileDetails,
+        ),
+        ErrorSpec(
+            ErrorCode.LEDGER_FILE_TOO_LARGE,
+            ErrorClass.CONTRACT_REFUSED,
+            retryable=False,  # the same file is as large the next time
+            # S0120 (ADR-0008 amendment of 2026-11-15): the preview's answer, which carries the file's new text, would
+            # pass the protocol's 256 MiB guard; the engine refused to send it
+            message="A file this change edits is too large for Finzytrack to edit, so it did not save the change.",
+            data_safe=True,  # refused at the preview: nothing was written
+            next_step="Split the file into smaller files with Beancount's include directive, then try again.",
+            details=None,  # the engine's refusal names no file
         ),
         ErrorSpec(
             ErrorCode.PLAN_EXPIRED,

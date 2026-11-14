@@ -69,7 +69,10 @@ from app.platform.engine import (
 )
 
 PROTOCOL_VERSION = 2
-MAX_LINE_BYTES = 16 * 1024 * 1024
+MAX_LINE_BYTES = 256 * 1024 * 1024
+"""The protocol's line guard (S0120, ADR-0008 amendment of 2026-11-15): against a broken engine, far above any ledger
+file. A request over it is not sent (`too_large`); a reply over it is cut and is a violation; the engine refuses an
+answer over it (`engine.result_too_large`) before sending it."""
 MAX_ID = 2**31 - 1
 OPS = (
     "handshake",
@@ -98,6 +101,7 @@ REFUSAL_KEYS = frozenset(
         "engine.internal",
         "engine.no_engine_lock",
         "engine.app_folder_missing",
+        "engine.result_too_large",
     }
 )
 OK_KEYS = frozenset({"v", "id", "op", "ok", "result"})
@@ -672,12 +676,13 @@ def _sha(value: object, what: str) -> str:
 
 
 def _preview_file(value: object) -> PreviewFile:
-    o = _keys(value, frozenset({"path", "pre", "post", "text"}), "a preview file")
+    o = _keys(value, frozenset({"path", "pre", "post", "text", "pre_size"}), "a preview file")
     return PreviewFile(
         path=cast("str", _path(o["path"], "path")),
         pre=_sha(o["pre"], "pre"),
         post=_sha(o["post"], "post"),
         text=cast("str", _text(o["text"], "text")),
+        pre_size=cast("int", _int(o["pre_size"], "pre_size", low=0)),
     )
 
 

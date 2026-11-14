@@ -68,10 +68,14 @@ class Refused:
 
 @dataclass(frozen=True, slots=True)
 class PlannedFile:
+    """A file the plan writes: its path, the SHA-256 of its bytes now and of its new text, the text, and the size of
+    its bytes now (S0120: the large-file tip)."""
+
     path: str
     pre: str
     post: str
     text: str
+    pre_size: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -194,7 +198,11 @@ def _prepare(
     new_errors, fingerprint, count = _step("errors", errors)
     files = tuple(
         PlannedFile(
-            p, current.hashes[p], hashlib.sha256(applied.files[p]).hexdigest(), applied.files[p].decode("utf-8")
+            p,
+            current.hashes[p],
+            hashlib.sha256(applied.files[p]).hexdigest(),
+            applied.files[p].decode("utf-8"),
+            len(current.files[p]),
         )
         for p in sorted(applied.files)
     )

@@ -124,15 +124,38 @@ def test_deeply_nested_json_is_refused_and_the_engine_keeps_serving(depth: int) 
     assert answer(engine, request("ping", rid=5))["ok"] is True
 
 
-def test_an_over_long_line_is_refused() -> None:
-    padding = "x" * MAX_LINE_BYTES
-    raw = line({"v": 2, "id": 1, "op": "ping", "params": {"pad": padding}})
-    assert len(raw) > MAX_LINE_BYTES
+def test_an_over_long_line_is_refused(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The guard is lowered here (S0120: the real one is 256 MiB, too large to build in every run); a line at it is
+    read, one byte over it is refused."""
+    from ledger_engine.protocol import server
+
+    raw = line({"v": 2, "id": 1, "op": "ping", "params": {"pad": "x" * 1000}})
+    monkeypatch.setattr(server, "MAX_LINE_BYTES", len(raw) - 1)
+    assert answer(ready(), raw)["ok"] is False  # read, then refused by its params, not by its length
+    assert refusal(answer(ready(), raw)) == "protocol.invalid_params"
+    monkeypatch.setattr(server, "MAX_LINE_BYTES", len(raw) - 2)
     assert refusal(answer(ready(), raw)) == "protocol.malformed"
 
 
-def test_the_line_limit_is_16_mib() -> None:
-    assert MAX_LINE_BYTES == 16 * 1024 * 1024
+def test_only_the_preview_s_answer_is_refused_for_its_size(monkeypatch: pytest.MonkeyPatch) -> None:
+    """S0120; owner, 2026-11-12 (`design/inbox/answered/20261112-large-reply-guard.md`): a guard on every answer
+    stays with the first op that returns rows (BL-0082, M7), so a writing op's answer is never turned into a refusal.
+    Must not pass: an answer of another op (here `ping`, with the guard lowered under it) refused for its size."""
+    from ledger_engine.protocol import server
+
+    assert frozenset({"preview"}) == server.SIZE_GUARDED
+    engine = ready()
+    raw = request("ping", rid=2)
+    guard = len(raw)  # the request fits; its answer (about 60 bytes) does not
+    monkeypatch.setattr(server, "MAX_LINE_BYTES", guard)
+    out = engine.handle(raw)
+    assert len(out) - 1 > guard
+    assert json.loads(out)["ok"] is True
+
+
+def test_the_line_limit_is_a_256_mib_guard() -> None:
+    """S0120 (ADR-0008 amendment of 2026-11-15): a guard against a broken peer, far above any ledger file."""
+    assert MAX_LINE_BYTES == 256 * 1024 * 1024
 
 
 @pytest.mark.parametrize("v", [0, 1, 3, "2", 2.0, None, True])

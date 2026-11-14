@@ -333,7 +333,7 @@ export interface components {
         /** ErrorEnvelope */
         ErrorEnvelope: {
             /** Error */
-            error: components["schemas"]["ValidationFailedError"] | components["schemas"]["RouteNotFoundError"] | components["schemas"]["WorkspaceUnknownError"] | components["schemas"]["WorkspaceNotOpenError"] | components["schemas"]["WorkspaceNotReadyError"] | components["schemas"]["EngineQueueFullError"] | components["schemas"]["JobCancelledError"] | components["schemas"]["EngineStoppedError"] | components["schemas"]["EngineUnavailableError"] | components["schemas"]["ChangeOutcomeUnknownError"] | components["schemas"]["LedgerExternallyChangedError"] | components["schemas"]["LedgerChangingError"] | components["schemas"]["WritesPausedError"] | components["schemas"]["ChangeNotSavedError"] | components["schemas"]["AckRequiredError"] | components["schemas"]["AckUnexpectedError"] | components["schemas"]["WriteRefusedUnintendedChangeError"] | components["schemas"]["WriteRefusedCheckFailedError"] | components["schemas"]["EncryptedFileNotEditableError"] | components["schemas"]["PlanExpiredError"] | components["schemas"]["PlanUnknownError"] | components["schemas"]["PlanAlreadyConfirmedError"] | components["schemas"]["PreviewStaleError"] | components["schemas"]["UnpromotedMutatorOnRealLedgerError"] | components["schemas"]["InternalError"];
+            error: components["schemas"]["ValidationFailedError"] | components["schemas"]["RouteNotFoundError"] | components["schemas"]["WorkspaceUnknownError"] | components["schemas"]["WorkspaceNotOpenError"] | components["schemas"]["WorkspaceNotReadyError"] | components["schemas"]["EngineQueueFullError"] | components["schemas"]["JobCancelledError"] | components["schemas"]["EngineStoppedError"] | components["schemas"]["EngineUnavailableError"] | components["schemas"]["ChangeOutcomeUnknownError"] | components["schemas"]["LedgerExternallyChangedError"] | components["schemas"]["LedgerChangingError"] | components["schemas"]["WritesPausedError"] | components["schemas"]["ChangeNotSavedError"] | components["schemas"]["AckRequiredError"] | components["schemas"]["AckUnexpectedError"] | components["schemas"]["WriteRefusedUnintendedChangeError"] | components["schemas"]["WriteRefusedCheckFailedError"] | components["schemas"]["EncryptedFileNotEditableError"] | components["schemas"]["LedgerFileTooLargeError"] | components["schemas"]["PlanExpiredError"] | components["schemas"]["PlanUnknownError"] | components["schemas"]["PlanAlreadyConfirmedError"] | components["schemas"]["PreviewStaleError"] | components["schemas"]["UnpromotedMutatorOnRealLedgerError"] | components["schemas"]["InternalError"];
             meta: components["schemas"]["Meta"];
         };
         /** HealthData */
@@ -464,6 +464,35 @@ export interface components {
              * @enum {string}
              */
             code: "LEDGER_EXTERNALLY_CHANGED";
+            /** Correlation Id */
+            correlation_id: string;
+            /** Data Safe */
+            data_safe: boolean;
+            /** Details */
+            details: null;
+            /** Issues */
+            issues: components["schemas"]["Issue"][];
+            /** Message */
+            message: string;
+            /** Next Step */
+            next_step: string;
+            /** Retry After Ms */
+            retry_after_ms: number | null;
+            /** Retryable */
+            retryable: boolean;
+        };
+        /** LedgerFileTooLargeError */
+        LedgerFileTooLargeError: {
+            /**
+             * Class
+             * @constant
+             */
+            class: "contract_refused";
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            code: "LEDGER_FILE_TOO_LARGE";
             /** Correlation Id */
             correlation_id: string;
             /** Data Safe */

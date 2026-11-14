@@ -59,7 +59,9 @@ def result_of(a: preview.Answer) -> PreviewResult:
     p, r = a.prepared, a.refused
     return PreviewResult(
         outcome=a.outcome,
-        files=[] if p is None else [PreviewFile(path=f.path, pre=f.pre, post=f.post, text=f.text) for f in p.files],
+        files=[]
+        if p is None
+        else [PreviewFile(path=f.path, pre=f.pre, post=f.post, text=f.text, pre_size=f.pre_size) for f in p.files],
         fingerprint=encode(p.fingerprint).decode("ascii")
         if p is not None
         else (None if a.hint is None else encode(a.hint).decode("ascii")),

@@ -4,7 +4,7 @@
   "title": "Finzytrack engine protocol",
   "description": "The plain-data protocol between the main sidecar and the ledger engine. JSON Lines: one request per line on the engine's stdin, one reply per line on its protocol channel (its original stdout; stray output inside the engine goes to stderr). UTF-8, at most x-max-line-bytes per line without the newline. Every message carries `v` (x-protocol-version), `id` and `op`; a reply adds `ok` and `result` or `error`, and may carry the engine's `decision`. `handshake` comes first. One request is answered before the next is read. Before its reply a request may send job messages with its `id` and `op`: progress (any number), `gate` (at most once; the engine then reads nothing but the sidecar's `proceed` for this request) and `committed` (only after `proceed`).",
   "x-protocol-version": 2,
-  "x-max-line-bytes": 16777216,
+  "x-max-line-bytes": 268435456,
   "x-ops": [
     "handshake",
     "ping",
@@ -1849,7 +1849,7 @@
     },
     "PreviewFile": {
       "additionalProperties": false,
-      "description": "A file the plan writes: its path, the SHA-256 of its bytes now (`pre`) and of its new text (`post`), and the\nnew text (UTF-8, as `save`'s `post`).",
+      "description": "A file the plan writes: its path, the SHA-256 of its bytes now (`pre`) and of its new text (`post`), the new\ntext (UTF-8, as `save`'s `post`), and the size of its bytes now (`pre_size`; S0120: the sidecar's large-file tip\nreads it with the new text's size).",
       "properties": {
         "path": {
           "minLength": 1,
@@ -1870,13 +1870,19 @@
         "text": {
           "title": "Text",
           "type": "string"
+        },
+        "pre_size": {
+          "minimum": 0,
+          "title": "Pre Size",
+          "type": "integer"
         }
       },
       "required": [
         "path",
         "pre",
         "post",
-        "text"
+        "text",
+        "pre_size"
       ],
       "title": "PreviewFile",
       "type": "object"
@@ -1957,6 +1963,7 @@
                 "path": "/ledgers/L/main.bean",
                 "post": "1111111111111111111111111111111111111111111111111111111111111111",
                 "pre": "0000000000000000000000000000000000000000000000000000000000000000",
+                "pre_size": 28,
                 "text": "2026-01-01 open Assets:Cash\n2026-01-02 open Expenses:Food\n"
               }
             ],
@@ -3471,7 +3478,8 @@
         "protocol.handshake_required",
         "engine.internal",
         "engine.no_engine_lock",
-        "engine.app_folder_missing"
+        "engine.app_folder_missing",
+        "engine.result_too_large"
       ],
       "type": "string"
     },

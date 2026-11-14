@@ -55,11 +55,13 @@ REGISTRY: tuple[StateEntry, ...] = (
         "app.platform.plans",
         "PlanStore",
         "UserContainer",  # ARCHITECTURE §2.5: keyed by workspace; S0117
-        "at most PlanPolicy.max_plans write plans (each its files' texts and hashes, never entries: one engine reply, "
-        "at most 16 MiB of text), each for at most PlanPolicy.ttl after the preview made it, and one lock",
+        "at most PlanPolicy.max_plans write plans (each its files' texts and hashes, never entries), their texts at "
+        "most PlanPolicy.max_text_bytes together plus the newest plan's (one engine answer, under the protocol's "
+        "256 MiB guard; S0120), each for at most PlanPolicy.ttl after the preview made it, and one lock",
         "a plan expires after its ttl (checked at every use, by the injected clock) and is let go at the next use; "
-        "the oldest is let go when a new one needs room; a confirm takes its plan; a switch drops the other "
-        "workspaces' plans (workspace_opened) or all of them (workspace_closed)",
+        "the oldest is let go when a new one needs room by count or by bytes, the new one always kept; a confirm "
+        "takes its plan; a switch drops the other workspaces' plans (workspace_opened) or all of them "
+        "(workspace_closed)",
     ),
     StateEntry(
         "app.platform.observability.log",

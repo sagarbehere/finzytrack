@@ -18,7 +18,7 @@ The rebuild needs a kill/continue point after the write core. The first G1 crite
   - ~~14 green nightly runs in a row~~ replaced (owner, 2026-10-25, with ADR-0060): a manual full GitHub run (`ci.yml` + `nightly.yml`) green at each milestone exit (M1a, M1b) and at G1;
   - at least 200 old-vs-new comparisons, none unexplained;
   - under 5% unjustified refusals on copies of the owner's books;
-  - a write takes **≤ 1 s at demo size and ≤ 5 s at 54k entries**; these are also the app's user-facing performance targets (INV-20);
+  - a write takes **≤ 1 s at demo size and ≤ 5 s at 54k entries**; these are also the app's user-facing performance targets (INV-20); the 5 s holds when no file the write touches is larger than 15 MB (ADR-0008 amendment of 2026-11-15);
   - at least 80% of planted bugs caught (a sample of ≥ 20 plants across ≥ 4 classes);
   - **no fixed time-to-finish ceiling:** the G1 evidence pack shows the measured pace and the projected time to a releasable v0.4.0, and the owner judges it then.
 - D2 equivalence exact on every corpus ledger and real-ledger copy, and one load per write, stay M1b exit criteria.

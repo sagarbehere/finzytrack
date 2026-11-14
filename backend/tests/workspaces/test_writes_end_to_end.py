@@ -111,12 +111,12 @@ class Rig:
     producer, the open's published mirror, and the write services as the product wires them (the generation read
     from the published mirror: `mirror_generation`)."""
 
-    def __init__(self, tmp: Path) -> None:
+    def __init__(self, tmp: Path, before: bytes = BEFORE) -> None:
         tmp = tmp.resolve()
         self.folder = tmp / "copy"
         self.folder.mkdir()
         self.main = self.folder / "main.bean"
-        self.main.write_bytes(BEFORE)
+        self.main.write_bytes(before)
         app = prepare(tmp / "app")
         assert isinstance(app, AppFolder), app
         self.app: AppFolder = app
@@ -169,8 +169,8 @@ class Rig:
     def generation(self) -> int | None:
         return mirror_generation(self.target)
 
-    def preview(self, target: WriteTarget | None = None) -> Previewed:
-        request = {"edits": [{"kind": "insert", "text": NOTE, "default_file": str(self.main)}]}
+    def preview(self, target: WriteTarget | None = None, text: str = NOTE) -> Previewed:
+        request = {"edits": [{"kind": "insert", "text": text, "default_file": str(self.main)}]}
         generation = self.generation()
         assert generation is not None
         ticket = writes.submit_preview(self.services, target or self.target, generation, MUTATOR, request)
@@ -594,3 +594,51 @@ def test_the_shipped_engine_has_no_producer(tmp_path: Path) -> None:
         env=engine_env(os.environ),
     )
     assert out.stdout.split() == ["0"], out
+
+
+# -- S0120: no size limit on a ledger file (ADR-0008 amendment of 2026-11-15) ------------------------------------------
+
+
+def meta20_54k() -> bytes:
+    """S0119's 21 MB recipe (`scripts/measure_write.py --layout meta20` on `scripts/gen_demo.py --size 54k`): the 54k
+    demo ledger with five metadata lines on every transaction, one file of about 21.3 MB."""
+    import importlib.util
+    import sys
+
+    from app.content.demo import Size, anchor_from_iso, default_fragments, generate
+
+    spec = importlib.util.spec_from_file_location("measure_write", REPO / "backend" / "scripts" / "measure_write.py")
+    assert spec is not None
+    assert spec.loader is not None
+    measure = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = measure  # its dataclasses look their module up there
+    try:
+        spec.loader.exec_module(measure)
+    finally:
+        del sys.modules[spec.name]
+    demo = generate(anchor_from_iso("2026-11-01"), Size("54k"), default_fragments())
+    layout = measure.layout_of("meta20", "main.bean", demo.files["main.beancount"])
+    return layout.files["main.bean"].encode()
+
+
+def test_a_single_21_mb_file_is_previewed_confirmed_and_saved_byte_for_byte(tmp_path: Path) -> None:
+    """S0120 (ADR-0008 amendment of 2026-11-15; INV-01, INV-22). Must not pass: a single ledger file above the old
+    16 MiB line fails its preview (S0119: the engine was stopped), or its file after the save is not exactly the plan's
+    text, or the plan does not list it for the tip. The real engine, a test copy, the test producer."""
+    before = meta20_54k()
+    assert len(before) > 21_000_000
+    rig = Rig(tmp_path, before)
+    try:
+        txn = '2026-11-01 * "S0120 write"\n  Expenses:Food:Groceries  12.34 USD\n  Assets:Bank:Checking\n'
+        p = rig.preview(text=txn)
+        assert p.new_errors == ()
+        [planned] = p.files
+        assert planned.path == str(rig.main)
+        assert p.large_files == (str(rig.main),)
+        assert txn in planned.text
+        assert rig.main.read_bytes() == before  # the preview wrote nothing
+        assert rig.confirm(p) == Saved(published=False)
+        assert rig.main.read_bytes() == planned.text.encode()  # exactly the plan's text, whole
+        assert wait_for(lambda: rig.generation() == 2)
+    finally:
+        rig.close()

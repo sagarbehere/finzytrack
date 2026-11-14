@@ -135,7 +135,9 @@ def test_a_replace_is_prepared_with_its_texts_hashes_and_the_fingerprint_the_sav
     expected = MAIN.replace(
         '2024-01-05 * "Shop" "lunch"\n  Expenses:Food  10.50 USD\n  Assets:Cash  -10.50 USD\n', new
     ).encode()
-    assert out.files == (contract.PlannedFile(root, sha(current[root]), sha(expected), expected.decode()),)
+    assert out.files == (
+        contract.PlannedFile(root, sha(current[root]), sha(expected), expected.decode(), len(current[root])),
+    )
     assert out.new_errors == ()
     assert out.errors == 0
     # The plan's fingerprint is `as_before` of the load's: the disk as the load read it, each candidate at its pre

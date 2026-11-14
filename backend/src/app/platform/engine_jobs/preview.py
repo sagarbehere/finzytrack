@@ -26,7 +26,10 @@ write-safety contract's steps 1-3 and writes nothing. Its answer becomes the job
   - `paused` (an unfinished save's `.open` journal) is `WRITES_PAUSED {earlier_unfinished}`;
   - `moved` runs the job again in a fresh engine (the try ran the ledger's plugins, §5.1), at most `MAX_TRIES` tries
     in a row (§7), then `LEDGER_CHANGING`;
-  - an engine refusal, an answer that cannot be decoded or does not hold together: `INTERNAL`, never a plan.
+  - the engine's refusal of an answer longer than the protocol's line guard (`engine.result_too_large`, S0120: a
+    file of about 240 MiB or more, whose new text the answer carries) is `LEDGER_FILE_TOO_LARGE`: nothing was
+    written, and the engine did not stop (it is retired as after any preview);
+  - any other engine refusal, an answer that cannot be decoded or does not hold together: `INTERNAL`, never a plan.
 An engine death ends the job as any waited-for read's (§5.3: `ENGINE_STOPPED`, from the scheduler); a Cancel ends it
 with nothing to undo (§4).
 """
@@ -165,7 +168,8 @@ def run_preview(
         if isinstance(out, EngineFailure):
             return None
         if isinstance(out, EngineRefusal):
-            return _not_prepared(ErrorCode.INTERNAL)
+            too_large = out.key == "engine.result_too_large"
+            return _not_prepared(ErrorCode.LEDGER_FILE_TOO_LARGE if too_large else ErrorCode.INTERNAL)
         a = decode_preview(out)
         if isinstance(a, Violation) or not _holds_together(a):
             return _not_prepared(ErrorCode.INTERNAL)

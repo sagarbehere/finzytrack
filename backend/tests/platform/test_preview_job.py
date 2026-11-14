@@ -66,7 +66,7 @@ HINT = (
 CLOCK = FrozenClock(datetime(2026, 11, 14, 10, 0, tzinfo=UTC))
 BLANK: dict[str, object] = {
     "outcome": "prepared",
-    "files": [{"path": "/L/main.bean", "pre": SHA, "post": "b" * 64, "text": "x\n"}],
+    "files": [{"path": "/L/main.bean", "pre": SHA, "post": "b" * 64, "text": "x\n", "pre_size": 1}],
     "fingerprint": FINGERPRINT,
     "new_errors": [],
     "errors": 0,
@@ -393,6 +393,16 @@ def test_an_answer_that_does_not_hold_together_is_internal(make: Any, bad: dict[
 def test_an_engine_refusal_is_internal(make: Any) -> None:
     rig = make({"preview": [EngineRefusal(key="protocol.invalid_params", message="x")]})
     assert error_of(rig.preview()) == (ErrorCode.INTERNAL, None)
+
+
+def test_an_answer_too_large_to_send_is_ledger_file_too_large_and_no_stop(make: Any) -> None:
+    """S0120 (ADR-0008 amendment of 2026-11-15; engine-jobs §5.5). Must not pass: the engine's refusal of an answer
+    over the protocol's guard ends the preview `INTERNAL` or `ENGINE_STOPPED`, or counts as a stop. Its code says the
+    file is too large to edit; the engine is retired as after any preview (it ran the plugins), never crashed."""
+    rig = make({"preview": [EngineRefusal(key="engine.result_too_large", message="x")]})
+    assert error_of(rig.preview()) == (ErrorCode.LEDGER_FILE_TOO_LARGE, None)
+    assert [reason for _, reason in rig.engine.ends] == ["retire"]
+    assert "engine.stopped" not in [name for name, _ in rig.logged]
 
 
 def test_an_engine_that_dies_is_engine_stopped(make: Any) -> None:

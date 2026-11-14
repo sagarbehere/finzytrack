@@ -26,6 +26,7 @@ from app.api.envelope import Envelope
 from app.api.errors import status_for
 from app.api.routes import declare
 from app.domain.errors import DomainError, ErrorClass
+from app.platform.engine import EngineRefusal
 from app.platform.engine_jobs.preview import NotPrepared
 from app.platform.engine_jobs.save import NotDone, Saved
 from app.platform.engine_jobs.scheduler import Done, Failed, JobTicket
@@ -50,7 +51,7 @@ class Scenarios:
         assert isinstance(out, NotDone | Failed | NotPrepared), out
         return out.error
 
-    def _preview_error(self, answer: dict[str, object]) -> object:
+    def _preview_error(self, answer: object) -> object:
         self.rig.engine.scripted["preview"].append(answer)
         ticket = submit_preview(self.rig.services, self.rig.target, 3, MUTATOR, {"edits": []})
         assert isinstance(ticket, JobTicket)
@@ -103,6 +104,9 @@ class Scenarios:
     def preview_stale(self) -> object:
         p = self.rig.preview()
         return self.rig.confirm(p, preview_hash="0" * 64)
+
+    def too_large(self) -> object:  # S0120: the engine refused an answer over the protocol's guard
+        return self._preview_error(EngineRefusal(key="engine.result_too_large", message="x"))
 
     def unpromoted(self) -> object:
         real = dataclasses.replace(self.rig.target, copy=None)
@@ -173,6 +177,20 @@ def test_an_encrypted_file_is_refused_at_422_naming_it(scenarios: Scenarios) -> 
     assert status == 422
     assert (error["code"], error["class"]) == ("ENCRYPTED_FILE_NOT_EDITABLE", "contract_refused")
     assert error["details"] == {"path": "/L/a.gpg"}
+
+
+@pytest.mark.error_code("LEDGER_FILE_TOO_LARGE")
+def test_a_file_too_large_to_edit_is_refused_at_422_and_says_so(scenarios: Scenarios) -> None:
+    """S0120 (ADR-0008 amendment of 2026-11-15): the preview's answer would pass the protocol's guard; nothing was
+    written, and the words say the file is too large and how to split it."""
+    status, error = answer(scenarios, "too_large")
+    assert status == 422
+    assert (error["code"], error["class"]) == ("LEDGER_FILE_TOO_LARGE", "contract_refused")
+    assert error["details"] is None
+    assert error["data_safe"] is True
+    assert error["retryable"] is False
+    assert "too large" in error["message"]
+    assert "include" in error["next_step"]
 
 
 @pytest.mark.error_code("PLAN_EXPIRED")
@@ -247,6 +265,7 @@ def test_contract_refused_has_two_statuses_by_code_and_every_other_class_one() -
         "WRITE_REFUSED_UNINTENDED_CHANGE": 422,
         "WRITE_REFUSED_CHECK_FAILED": 422,
         "ENCRYPTED_FILE_NOT_EDITABLE": 422,
+        "LEDGER_FILE_TOO_LARGE": 422,  # S0120
     }
     for cls in ErrorClass:
         if cls is not ErrorClass.CONTRACT_REFUSED:

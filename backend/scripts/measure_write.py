@@ -429,6 +429,7 @@ def one_run(
         return stop(f"preview: {previewed}")
     plan = previewed.value
     result["plan_mb"] = round(sum(len(f.text.encode()) for f in plan.files) / 1e6, 2)
+    result["large_files"] = len(plan.large_files)  # S0120: the tip's list, counted (no path in the report)
     if plan.new_errors or [f.path for f in plan.files] != [str(latest)]:
         return stop(f"preview: an unexpected plan: {len(plan.new_errors)} new errors, {len(plan.files)} files")
 

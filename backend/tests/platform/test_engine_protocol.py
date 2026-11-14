@@ -268,9 +268,42 @@ def test_a_deeply_nested_reply_is_a_violation_not_a_crash() -> None:
     assert isinstance(decode_reply(raw, 1, "ping"), Violation)
 
 
+def test_the_line_limit_is_a_256_mib_guard() -> None:
+    """S0120 (ADR-0008 amendment of 2026-11-15): a guard against a broken engine, far above any ledger file; the
+    engine's value is the same (the schema's `x-max-line-bytes`: `test_version_ops_keys_and_limit_agree_with_...`)."""
+    assert MAX_LINE_BYTES == 256 * 1024 * 1024
+
+
 def test_an_over_long_reply_is_a_violation() -> None:
-    raw = b'{"v":2,"id":1,"op":"ping","ok":true,"result":{"status":"' + b"o" * MAX_LINE_BYTES + b'"}}\n'
-    assert isinstance(decode_reply(raw, 1, "ping"), Violation)
+    """At the real guard (S0120): one byte over it, with its newline, is a violation before any of it is parsed. The
+    line is a zero-filled buffer (its pages are never touched), so the test costs no 256 MiB of work."""
+    raw = bytearray(MAX_LINE_BYTES + 2)
+    raw[-1] = 0x0A
+    out = decode_reply(cast("bytes", raw), 1, "ping")
+    assert isinstance(out, Violation)
+    assert "longer than" in out.detail
+
+
+def test_a_cut_reply_is_never_decoded() -> None:
+    """INV-01, INV-22 (S0120: a large candidate text arrives whole or not at all): a line that ends without its
+    newline, as the reader passes a line cut at the guard, is a violation even when what came is a valid reply."""
+    ex = examples("PreviewReply")[0]
+    whole = json.dumps(ex, separators=(",", ":")).encode() + b"\n"
+    assert not isinstance(decode_reply(whole, ex["id"], "preview"), Violation)
+    for cut in (whole[:-1], whole[: len(whole) // 2]):
+        assert isinstance(decode_reply(cut, ex["id"], "preview"), Violation)
+
+
+def test_an_answer_too_large_to_send_is_an_engine_refusal() -> None:
+    """S0120: the engine's own refusal of an answer over the guard (`engine.result_too_large`) is a refusal the job
+    reads, never a violation that stops the engine."""
+    raw = (
+        b'{"v":2,"id":3,"op":"preview","ok":false,"error":{"key":"engine.result_too_large",'
+        b'"message":"The answer is too long."}}\n'
+    )
+    out = decode_reply(raw, 3, "preview")
+    assert isinstance(out, EngineRefusal), out
+    assert out.key == "engine.result_too_large"
 
 
 # -- Version 2 (S0057; engine-jobs §5.5 bullet 5): a job's messages, the sidecar's proceed, the decision ------------

@@ -759,6 +759,7 @@
                 "JOB_CANCELLED": "#/components/schemas/JobCancelledError",
                 "LEDGER_CHANGING": "#/components/schemas/LedgerChangingError",
                 "LEDGER_EXTERNALLY_CHANGED": "#/components/schemas/LedgerExternallyChangedError",
+                "LEDGER_FILE_TOO_LARGE": "#/components/schemas/LedgerFileTooLargeError",
                 "PLAN_ALREADY_CONFIRMED": "#/components/schemas/PlanAlreadyConfirmedError",
                 "PLAN_EXPIRED": "#/components/schemas/PlanExpiredError",
                 "PLAN_UNKNOWN": "#/components/schemas/PlanUnknownError",
@@ -832,6 +833,9 @@
               },
               {
                 "$ref": "#/components/schemas/EncryptedFileNotEditableError"
+              },
+              {
+                "$ref": "#/components/schemas/LedgerFileTooLargeError"
               },
               {
                 "$ref": "#/components/schemas/PlanExpiredError"
@@ -1194,6 +1198,76 @@
           "correlation_id"
         ],
         "title": "LedgerExternallyChangedError",
+        "type": "object"
+      },
+      "LedgerFileTooLargeError": {
+        "properties": {
+          "class": {
+            "const": "contract_refused",
+            "title": "Class",
+            "type": "string"
+          },
+          "code": {
+            "const": "LEDGER_FILE_TOO_LARGE",
+            "title": "Code",
+            "type": "string"
+          },
+          "correlation_id": {
+            "title": "Correlation Id",
+            "type": "string"
+          },
+          "data_safe": {
+            "title": "Data Safe",
+            "type": "boolean"
+          },
+          "details": {
+            "title": "Details",
+            "type": "null"
+          },
+          "issues": {
+            "items": {
+              "$ref": "#/components/schemas/Issue"
+            },
+            "title": "Issues",
+            "type": "array"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "next_step": {
+            "title": "Next Step",
+            "type": "string"
+          },
+          "retry_after_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Retry After Ms"
+          },
+          "retryable": {
+            "title": "Retryable",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "code",
+          "class",
+          "message",
+          "data_safe",
+          "next_step",
+          "issues",
+          "retryable",
+          "retry_after_ms",
+          "details",
+          "correlation_id"
+        ],
+        "title": "LedgerFileTooLargeError",
         "type": "object"
       },
       "Meta": {

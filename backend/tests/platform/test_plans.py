@@ -2,7 +2,7 @@
 §9.2 steps 3-4; ADR-0008, ADR-0063; INV-10, INV-11). Written from the owner's ownership rule of 2026-11-14 (the S0117
 brief): a plan is held in the app's store, never sent back by the client, and holds texts and hashes, never entries;
 it is bound to its workspace and to the ledger state it was made on; it expires (TTL), is used once, and a switch
-drops it. The store is bounded by a count as well as the TTL (INV-10).
+drops it. The store is bounded by a count and (S0120) the bytes of its texts as well as the TTL (INV-10).
 """
 
 from __future__ import annotations
@@ -14,13 +14,16 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from app.platform.plans import (
+    LARGE_FILE_BYTES,
     PlanId,
     PlannedFile,
     PlanPolicy,
     PlanStore,
     WritePlan,
+    is_large,
     new_plan,
     preview_hash,
+    text_bytes,
 )
 
 T0 = datetime(2026, 11, 14, 10, 0, tzinfo=UTC)
@@ -201,6 +204,7 @@ def test_two_threads_taking_one_plan_get_it_once() -> None:
         pytest.param({"ttl_seconds": 0}, id="no time"),
         pytest.param({"ttl_seconds": -1}, id="negative time"),
         pytest.param({"max_plans": 0}, id="no plan"),
+        pytest.param({"max_text_bytes": 0}, id="no bytes"),
     ],
 )
 def test_a_policy_with_no_room_is_refused(policy: dict[str, object]) -> None:
@@ -300,3 +304,107 @@ def test_the_memory_of_plans_let_go_is_bounded() -> None:
     for n in (1, 2, 3, 4):
         s.add(plan(n))
     assert [s.fate("ws-1", f"p{n}") for n in (1, 2, 3)] == ["unknown", "gone", "gone"]
+
+
+# -- S0120: the byte budget (INV-10; ADR-0008 amendment of 2026-11-15) -------------------------------------------------
+
+
+def sized(n: int, size: int, workspace: str = "ws-1") -> WritePlan:
+    """A plan whose one file's new text is `size` bytes of UTF-8."""
+    text = "x" * size
+    return plan(n, workspace, files=(dataclasses.replace(FILE, path=f"/L/{n}.bean", text=text),))
+
+
+def test_the_default_budget_is_128_mb_over_the_plans_texts() -> None:
+    """S0120: the store's bound was `max_plans` x the line limit (4 x 16 MiB); with a 256 MiB guard that would be
+    about 1 GB, so the texts have their own budget."""
+    assert PlanPolicy().max_text_bytes == 128_000_000
+
+
+def test_a_plan_s_bytes_are_its_texts_in_utf_8_over_all_its_files() -> None:
+    two = plan(1, files=(dataclasses.replace(FILE, text="é" * 10), dataclasses.replace(FILE, path="/L/b", text="ab")))
+    assert text_bytes(two) == 22  # 10 characters of two bytes each, and two of one
+
+
+def test_the_store_lets_the_oldest_go_until_the_texts_fit_the_budget() -> None:
+    """Must not pass: a store over its byte budget while it holds more than the newest plan."""
+    s = store(max_text_bytes=100)
+    s.add(sized(1, 40))
+    s.add(sized(2, 40))
+    assert len(s) == 2  # 80 bytes: both fit
+    s.add(sized(3, 40))  # 120: the oldest goes
+    assert [s.find("ws-1", f"p{n}") is not None for n in (1, 2, 3)] == [False, True, True]
+    assert s.fate("ws-1", "p1") == "gone"
+    s.add(sized(4, 100))  # 180, then 140: both older ones go, the newest alone fits exactly
+    assert [s.find("ws-1", f"p{n}") is not None for n in (2, 3, 4)] == [False, False, True]
+
+
+def test_one_byte_over_the_budget_lets_the_oldest_go() -> None:
+    """The boundary (mutant `s-budget-off-by-one`): exactly at the budget both stay; one byte over, the oldest goes."""
+    s = store(max_text_bytes=100)
+    s.add(sized(1, 40))
+    s.add(sized(2, 60))
+    assert len(s) == 2
+    s = store(max_text_bytes=100)
+    s.add(sized(1, 40))
+    s.add(sized(2, 61))
+    assert [s.find("ws-1", f"p{n}") is not None for n in (1, 2)] == [False, True]
+
+
+def test_the_newest_plan_is_always_kept_even_alone_over_the_budget() -> None:
+    """S0120: a file of any size can be previewed and confirmed; the plan let go for it answers `PLAN_EXPIRED`."""
+    s = store(max_text_bytes=100)
+    s.add(sized(1, 40))
+    s.add(sized(2, 101))
+    assert s.find("ws-1", "p1") is None
+    kept = s.find("ws-1", "p2")
+    assert kept is not None
+    assert s.take("ws-1", "p2") is kept
+    s.add(sized(3, 250))
+    s.add(sized(4, 10))  # a newer plan: the large one goes
+    assert s.find("ws-1", "p3") is None
+    assert s.fate("ws-1", "p3") == "gone"
+    assert s.find("ws-1", "p4") is not None
+
+
+def test_the_budget_counts_bytes_not_characters() -> None:
+    s = store(max_text_bytes=100)
+    s.add(plan(1, files=(dataclasses.replace(FILE, text="é" * 30),)))  # 60 bytes
+    s.add(plan(2, files=(dataclasses.replace(FILE, path="/L/b", text="é" * 30),)))  # 120 in all
+    assert s.find("ws-1", "p1") is None
+    assert s.find("ws-1", "p2") is not None
+
+
+def test_a_taken_or_let_go_plan_frees_its_bytes() -> None:
+    s = store(max_text_bytes=100)
+    s.add(sized(1, 60))
+    assert s.take("ws-1", "p1") is not None
+    s.add(sized(2, 60))
+    s.add(sized(3, 40))  # 100: fits, p1's bytes are not counted any more
+    assert len(s) == 2
+    s.workspace_closed()
+    s.add(sized(4, 100))
+    assert len(s) == 1
+
+
+# -- S0120: the large-file tip's threshold -----------------------------------------------------------------------------
+
+
+def test_the_large_file_threshold_is_15_mb() -> None:
+    assert LARGE_FILE_BYTES == 15_000_000
+
+
+@pytest.mark.parametrize(
+    ("pre_size", "text", "large"),
+    [
+        pytest.param(15_000_000, "x" * 15_000_000, False, id="both at the threshold"),
+        pytest.param(15_000_001, "x", True, id="the bytes now over it"),
+        pytest.param(10, "x" * 15_000_001, True, id="the candidate over it"),
+        pytest.param(10, "é" * 7_500_001, True, id="the candidate over it in bytes, not in characters"),
+        pytest.param(0, "", False, id="empty"),
+    ],
+)
+def test_a_file_is_large_when_its_bytes_now_or_its_new_text_pass_15_mb(pre_size: int, text: str, large: bool) -> None:
+    """S0120 (ADR-0008 amendment of 2026-11-15): larger than 15 MB (15,000,000 bytes), its bytes now or the
+    candidate's in UTF-8; at the threshold it is not large."""
+    assert is_large(pre_size, text) is large

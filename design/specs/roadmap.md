@@ -63,7 +63,7 @@ Closed at the M0 exit (2026-10-26; `design/journal/M0-exit.md`), as they stood:
 
 Next: **M1b** (write contract), starting with the splicing primitives (ADR-0009) under the owner's ownership rule (2026-11-13: a mutator owns only the located spans of its target entries; every byte outside stays byte-identical); then **G1**, your go/no-go. M2 may start beside M1b.
 
-**M1b: the write's cost measured (2026-11-14, S0119).** One write on the product's path (a preview, its confirm, the rebuild until the mirror shows it), each job against ADR-0008's target: at 54k entries in one 8.7 MB file the preview takes about 4.0 s, the save 0.27 s and the mirror is published 3.2-3.4 s after the confirm; in 12 files 2.2-2.4 s, 0.21 s and 3.2-3.3 s; at demo size 0.47-0.49 s, 0.2 s and 0.60-0.63 s. Every job is within its target. From the preview's click to the publish it is 7.2-7.4 s, 5.3-5.6 s and 1.07-1.12 s. A single file over about 16 MB cannot be written at all: the preview's answer carries the file's new text, and an answer over the protocol's 16 MiB line stops the engine (BL-0106). The 21 MB file of S0119's recipe fails that way; the same shape cut to 10-15.8 MB is written with every job within 5 s, and fails from 16.2 MB. What to do about such files is the owner's choice (BL-0112).
+**M1b: the write's cost measured (2026-11-14, S0119).** One write on the product's path (a preview, its confirm, the rebuild until the mirror shows it), each job against ADR-0008's target: at 54k entries in one 8.7 MB file the preview takes about 4.0 s, the save 0.27 s and the mirror is published 3.2-3.4 s after the confirm; in 12 files 2.2-2.4 s, 0.21 s and 3.2-3.3 s; at demo size 0.47-0.49 s, 0.2 s and 0.60-0.63 s. Every job is within its target. From the preview's click to the publish it is 7.2-7.4 s, 5.3-5.6 s and 1.07-1.12 s. The same shape cut to 10-15.8 MB is written with every job within 5 s. **Since S0120 (2026-11-15; ADR-0008 amendment of that date, the owner's choice):** a ledger file of any size is written (the protocol's line a 256 MiB guard), more slowly above 15 MB, with a tip to split it: the 21.3 MB file previews in 5.3-5.6 s and is published 3.9-4.0 s after the confirm; a 42.7 MB file 11.0-11.3 s and 7.3-7.9 s (BL-0112 done).
 
 ## 2. The milestones at a glance
 
@@ -139,7 +139,7 @@ Each entry: what is built, the exit beyond §3.2, and the dogfood rule. Detail p
 - **Dogfood:** copies only, in the local tier. The new code never opens your originals.
 
 ### G1: Go/no-go (ADR-0046)
-**Go criteria:** a green manual full CI run at each milestone exit and at G1 (ADR-0060); at least 200 old-vs-new comparisons, none unexplained; under 5% unjustified refusals on copies of your books; a write takes ≤ 1 s at demo size and ≤ 5 s at 54k entries, mirror update included (until the screen reflects the change; ADR-0008 amendment); at least 80% of planted bugs caught. No fixed time-to-finish ceiling: the evidence pack shows the measured pace and projected time, and you judge it.
+**Go criteria:** a green manual full CI run at each milestone exit and at G1 (ADR-0060); at least 200 old-vs-new comparisons, none unexplained; under 5% unjustified refusals on copies of your books; a write takes ≤ 1 s at demo size and ≤ 5 s at 54k entries, mirror update included (until the screen reflects the change; ADR-0008 amendment), when no file it touches is larger than 15 MB (ADR-0008 amendment of 2026-11-15); at least 80% of planted bugs caught. No fixed time-to-finish ceiling: the evidence pack shows the measured pace and projected time, and you judge it.
 **You get:** does the contract hold; does it agree with the old app where the old app is right; what it refuses and why; what a write costs; whether the process works; the re-estimated size of M2–M12.
 **Options:** go; go with named changes; no-go (fall back to incremental work on the v0.3.0 code, moving the contract and engine in first; the gates, specs, corpora and harness carry over).
 
@@ -225,7 +225,7 @@ The release gate (ADR-0043): every release-blocking row built; every mutator pro
 
 ## 6. Open technical points (settled in specs, not owner calls unless they hit the rubric)
 - `@@` printing (L3-03): an own posting renderer or `replace_token` on the price span. Before M5.
-- Write cost for very large single-file ledgers (the open part of spike S4): the save at 54k is measured in M1b first (BL-0112); a bounded cache of the edited file's parse, on disk in a safe format and never Beancount's pickle cache, is built only if that measurement misses the 5 s target; only if it then still misses does the owner revisit the number for that case (ADR-0008 amendments).
+- Write cost for very large single-file ledgers (the open part of spike S4): measured in M1b (S0119, S0120, BL-0112, done). The owner revisited the number for that case (ADR-0008 amendment of 2026-11-15): no size limit on a ledger file; the 5 s target holds up to 15 MB per file, a larger file is written more slowly with a tip to split it; the parse cache is not built.
 - The concrete recipe schema v3. By M3's exit.
 - The mutation-score floor for the ledger and domain code: proposed after M1's first measurement, fixed by M11.
 - Whether M6 and M7 split into sub-milestones, judged by the measured pace.

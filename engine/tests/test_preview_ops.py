@@ -637,3 +637,51 @@ def test_a_load_refusal_names_its_plugin_and_line_in_the_answer() -> None:
     on_disk = contract.Refused("load", "number-failed", "/l/main.bean", "the load of the candidate cannot run", 0)
     out = result_of(preview.Answer("refused", refused=on_disk))
     assert (out.path, out.line, out.detail) == ("/l/main.bean", None, "the load of the candidate cannot run")
+
+
+# -- S0120: no size limit on a ledger file; the answer's guard ---------------------------------------------------------
+
+
+def test_a_prepared_file_carries_its_size_now(ws: tuple[Path, Path, dict[str, Any]]) -> None:
+    """S0120 (the tip, ADR-0008 amendment of 2026-11-15): each planned file carries the size of its bytes now
+    (`pre_size`), so the sidecar can tell a large file by its bytes now as well as by its new text's."""
+    main, ald, params = ws
+    reply = call(ald, params, opened(ald, params), replace_buy(main))
+    [f] = reply["result"]["files"]
+    assert f["pre_size"] == len(MAIN)
+    assert len(f["text"].encode()) != len(MAIN)  # not the candidate's size
+
+
+def test_an_answer_over_the_guard_is_refused_with_its_own_key_and_nothing_is_written(
+    ws: tuple[Path, Path, dict[str, Any]], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """S0120 (ADR-0008 amendment of 2026-11-15; engine-jobs §5.5). Must not pass: a preview answer longer than the
+    protocol's line guard is sent (the sidecar would cut it and stop the engine as a protocol violation), or refused
+    with a key the sidecar reads as another failure. The engine refuses it `engine.result_too_large`, writes nothing,
+    and answers the next request. The guard is lowered here; the real one is 256 MiB. An answer exactly at the guard
+    is sent."""
+    from ledger_engine.protocol import server
+
+    main, ald, params = ws
+    number = opened(ald, params)
+    before = tree(main.parent.parent)
+    events = Channel(3, proceed=False)
+    p = {**params, "generation": number, "mutator": producer.TEST_MUTATOR, "request": replace_buy(main)}
+    whole = engine(ald).handle(request("preview", p, 3), events)
+    size = len(whole) - 1  # the line without its newline
+    assert json.loads(whole)["ok"] is True
+
+    monkeypatch.setattr(server, "MAX_LINE_BYTES", size)
+    at = engine(ald).handle(request("preview", p, 3), Channel(3, proceed=False))
+    assert json.loads(at)["ok"] is True, "an answer exactly at the guard is sent"
+
+    monkeypatch.setattr(server, "MAX_LINE_BYTES", size - 1)
+    e = engine(ald)
+    out = e.handle(request("preview", p, 3), Channel(3, proceed=False))
+    assert len(out) - 1 <= size - 1
+    reply = json.loads(out)
+    assert (reply["ok"], reply["id"], reply["op"]) == (False, 3, "preview")
+    assert reply["error"]["key"] == "engine.result_too_large"
+    assert str(size - 1) in reply["error"]["message"]
+    assert tree(main.parent.parent) == before  # nothing written
+    assert json.loads(e.handle(request("ping", {}, 4)))["ok"] is True  # the engine keeps serving

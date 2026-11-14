@@ -1,12 +1,14 @@
 """The engine protocol's message models: the single source of `contracts/engine-protocol.schema.json` (ADR-0054
 decision 2; EP-14, EP-16).
 
-Framing: JSON Lines. Each request is one JSON object on one line of the engine's stdin; each reply is one JSON
-object on one line of the engine's protocol channel (its original stdout). Lines are UTF-8 and at most
-`MAX_LINE_BYTES` long, the newline excluded. Every message carries `v` (the protocol version), the request `id`
-and the `op`; a reply adds `ok` and then either `result` or `error {key, message}`, and may carry the engine's
-`decision {table, version, inputs, output}` (engine-jobs §12). A refusal of a line the engine could not read that
-far has `id` and `op` null. `handshake` must be the first request.
+Framing: JSON Lines. Each request is one JSON object on one line of the engine's stdin; each reply is one JSON object on
+one line of the engine's protocol channel (its original stdout). Lines are UTF-8 and at most `MAX_LINE_BYTES` long, the
+newline excluded: a guard against a broken peer, far above any ledger file (256 MiB since S0120, ADR-0008 amendment of
+2026-11-15). A preview's answer that would pass it is refused `engine.result_too_large` by the engine before it is sent
+(`server.SIZE_GUARDED`). Every message carries `v` (the protocol version), the request `id` and the `op`; a reply adds
+`ok` and then either `result` or `error {key, message}`, and may carry the engine's `decision {table, version, inputs,
+output}` (engine-jobs §12). A refusal of a line the engine could not read that far has `id` and `op` null. `handshake`
+must be the first request.
 
 Version 2 (S0057; engine-jobs §5.4, §5.5 bullet 5, §6.1 steps 7 and 9): before its reply, a request may send job
 messages with the same `id` and `op`: `event: progress` with a `phase` (any number), `event: gate` (at most once:
@@ -28,7 +30,7 @@ from typing import Annotated, Any, Literal, get_args
 from pydantic import BaseModel, ConfigDict, Field, JsonValue
 
 PROTOCOL_VERSION = 2
-MAX_LINE_BYTES = 16 * 1024 * 1024
+MAX_LINE_BYTES = 256 * 1024 * 1024
 MAX_ID = 2**31 - 1  # exact in every JSON reader; the client wraps its counter below it
 MAX_ECHO_CHARS = 128  # the longest `op` a refusal echoes (S0035 independent verifier F1)
 
@@ -41,6 +43,7 @@ type RefusalKey = Literal[
     "engine.internal",
     "engine.no_engine_lock",
     "engine.app_folder_missing",
+    "engine.result_too_large",
 ]
 REFUSAL_KEYS: frozenset[str] = frozenset(get_args(RefusalKey.__value__))
 
@@ -520,13 +523,15 @@ class PreviewParams(Message):
 
 
 class PreviewFile(Message):
-    """A file the plan writes: its path, the SHA-256 of its bytes now (`pre`) and of its new text (`post`), and the
-    new text (UTF-8, as `save`'s `post`)."""
+    """A file the plan writes: its path, the SHA-256 of its bytes now (`pre`) and of its new text (`post`), the new
+    text (UTF-8, as `save`'s `post`), and the size of its bytes now (`pre_size`; S0120: the sidecar's large-file tip
+    reads it with the new text's size)."""
 
     path: AbsPath
     pre: Sha256
     post: Sha256
     text: str
+    pre_size: int = Field(ge=0)
 
 
 class PreviewError(Message):
@@ -862,6 +867,7 @@ OPS: dict[str, OpSpec] = {
                     "pre": "0" * 64,
                     "post": "1" * 64,
                     "text": "2026-01-01 open Assets:Cash\n2026-01-02 open Expenses:Food\n",
+                    "pre_size": 28,
                 }
             ],
             "fingerprint": _FP,

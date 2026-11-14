@@ -113,6 +113,7 @@ def test_the_codes_of_architecture_6_1_this_slice_raises_have_their_classes() ->
         "WRITE_REFUSED_UNINTENDED_CHANGE": ErrorClass.CONTRACT_REFUSED,
         "WRITE_REFUSED_CHECK_FAILED": ErrorClass.CONTRACT_REFUSED,
         "ENCRYPTED_FILE_NOT_EDITABLE": ErrorClass.CONTRACT_REFUSED,
+        "LEDGER_FILE_TOO_LARGE": ErrorClass.CONTRACT_REFUSED,  # S0120: a preview answer over the protocol's guard
         "PLAN_EXPIRED": ErrorClass.NOT_FOUND,
         "PLAN_ALREADY_CONFIRMED": ErrorClass.CONFLICT,  # S0117 round 1 (red team RT-F2)
         "PLAN_UNKNOWN": ErrorClass.NOT_FOUND,  # S0117 round 3 (verifier V-R3-5)

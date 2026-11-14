@@ -160,7 +160,15 @@ class Rig:
         path = str(self.main)
         out: dict[str, object] = {
             "outcome": "prepared",
-            "files": [{"path": path, "pre": sha(self.before), "post": sha(self.after), "text": self.after}],
+            "files": [
+                {
+                    "path": path,
+                    "pre": sha(self.before),
+                    "post": sha(self.after),
+                    "text": self.after,
+                    "pre_size": len(self.before.encode()),
+                }
+            ],
             "fingerprint": fingerprint(path, {path: sha(self.before)}),
             "new_errors": [
                 {"key": k, "type": "ValidationError", "message": "m", "path": path, "line": 2} for k in new_errors
@@ -664,7 +672,15 @@ def test_a_plan_with_a_changed_text_in_the_store_is_refused_before_the_save(rig:
 
 def test_a_preview_whose_answer_breaks_rule_5_is_not_stored(rig: Rig) -> None:
     path = str(rig.main)
-    files = [{"path": path, "pre": sha(rig.before), "post": sha(rig.after), "text": rig.after + "; not checked\n"}]
+    files = [
+        {
+            "path": path,
+            "pre": sha(rig.before),
+            "post": sha(rig.after),
+            "text": rig.after + "; not checked\n",
+            "pre_size": len(rig.before),
+        }
+    ]
     rig.engine.scripted["preview"].append(rig.answer(files=files))
     ticket = submit_preview(rig.services, rig.target, rig.generation, MUTATOR, {"edits": []})
     assert isinstance(ticket, JobTicket)
@@ -769,3 +785,66 @@ def test_a_file_the_save_creates_in_the_copy_is_judged_by_its_folder(tmp_path: P
     assert promotion_refusal(created("prices.bean"), target) is None
     assert promotion_refusal(created("y2026", "prices.bean"), target) is None
     assert promotion_refusal(created("out", "prices.bean"), target) is not None
+
+
+# -- S0120: a file of any size; the plan store's byte budget; the large-file tip ---------------------------------------
+
+
+def test_a_plan_let_go_for_the_byte_budget_answers_plan_expired_and_writes_nothing(tmp_path: Path) -> None:
+    """S0120 (INV-10; ADR-0008 amendment of 2026-11-15). Must not pass: a confirm of a plan the store let go for its
+    byte budget reaches the save. The newest plan, alone over the budget, is kept and confirmed."""
+    rig = Rig(tmp_path)
+    try:
+        rig.plans = PlanStore(rig.clock, PlanPolicy(max_text_bytes=len(rig.after.encode()) + 1))
+        rig.services = dataclasses.replace(rig.services, plans=rig.plans)
+        first = rig.preview()
+        second = rig.preview()
+        rig.script_saved()
+        assert code_of(rig.confirm(first)) == ErrorCode.PLAN_EXPIRED
+        assert rig.saves() == 0
+        assert rig.confirm(second) == Saved(published=False)
+        assert rig.saves() == 1
+    finally:
+        rig.jobs.close()
+
+
+def large_answer(rig: Rig, pre_size: int, text: str) -> dict[str, object]:
+    path = str(rig.main)
+    f = {"path": path, "pre": sha(rig.before), "post": sha(text), "text": text, "pre_size": pre_size}
+    return rig.answer(files=[f])
+
+
+@pytest.mark.parametrize(
+    ("pre_size", "grow", "listed"),
+    [
+        pytest.param(15_000_000, 0, False, id="at the threshold"),
+        pytest.param(15_000_001, 0, True, id="the file now over it"),
+        pytest.param(10, 15_000_001, True, id="the candidate over it"),
+    ],
+)
+def test_a_plan_that_changes_a_file_over_15_mb_lists_it_for_the_tip(
+    rig: Rig, pre_size: int, grow: int, listed: bool
+) -> None:
+    """S0120: the tip's list. Must not pass: a file over the threshold, by its bytes now or the candidate's, missing
+    from `large_files`, or a file at it listed. The plan is kept and confirmed like any other."""
+    text = rig.after + ";" * grow
+    p = rig.preview(large_answer(rig, pre_size, text))
+    assert p.large_files == ((str(rig.main),) if listed else ())
+    rig.script_saved()
+    assert rig.confirm(p) == Saved(published=False)
+
+
+def test_the_tip_names_each_large_file_and_says_to_split_it_with_include() -> None:
+    """S0120: the preview's tip (`msg:preview.large_file`, `msg:preview.large_files`); no large file, no tip."""
+    from app.platform.engine_jobs.save_text import large_file_tip
+
+    assert large_file_tip(()) is None
+    one = large_file_tip(("/L/main.bean",))
+    assert one is not None
+    assert "/L/main.bean" in one
+    assert "15 MB" in one
+    assert "include" in one
+    several = large_file_tip(("/L/a.bean", "/L/b.bean"))
+    assert several is not None
+    assert "/L/a.bean" in several
+    assert "/L/b.bean" in several

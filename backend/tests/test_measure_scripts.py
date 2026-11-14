@@ -116,6 +116,7 @@ def write(tmp_path: Path) -> None:
             assert cast("float", r[f"{job}_peak_rss_mb"]) > 0, r
         assert cast("float", r["total_ms"]) >= cast("float", r["confirm_to_published_ms"]) > 0, r
         assert "load_average" in r, r
+        assert r["large_files"] == 0, r  # S0120: the tip's list, by count (no path in the report)
     summary = cast("dict[str, dict[str, object]]", report["summary"])
     assert set(summary) == set(LAYOUTS), report
     for name in LAYOUTS:
@@ -155,23 +156,39 @@ def test_measurement_script_runs(name: str, tmp_path: Path) -> None:
 @MAC_ONLY
 def test_measure_write_reports_a_run_that_does_not_publish(tmp_path: Path) -> None:
     """S0119 verifier F1. Must not pass: a run that does not publish ends the script without its report, or is counted
-    in the summary. A preview whose reply passes the protocol's 16 MiB line (the file's new text: over 16 MiB of
-    comments before the tiny ledger) stops the engine; a job that does not answer within `--deadline` ends its run."""
+    in the summary. S0120: a file over 16 MiB no longer stops the engine, so the run that does not publish is a preview
+    whose plan is not the expected one (the inserted transaction's account is not open: a new error); a job that does
+    not answer within `--deadline` ends its run."""
     folder = tmp_path / "L"
     folder.mkdir()
-    (folder / "main.beancount").write_bytes((b";" + b"x" * 99 + b"\n") * 170_000 + LEDGER)
+    (folder / "main.beancount").write_bytes(LEDGER.replace(b"2020-01-01 open Expenses:Food:Groceries USD\n", b""))
     report = run("measure_write.py", str(folder / "main.beancount"), tmp_path=tmp_path)
     (r,) = cast("list[dict[str, object]]", report["runs"])
-    assert str(r["outcome"]).startswith("preview: "), r
+    assert str(r["outcome"]).startswith("preview: an unexpected plan: 1 new errors"), r
     assert "preview_ms" in r, r  # the figures measured before the end stay in the run
-    stops = cast("list[str]", r["engine_stops"])
-    assert any(s.startswith("protocol_violation") for s in stops), r
     assert report["summary"] == {"one": {"published": 0, "not_published": 1}}, report
     (folder / "main.beancount").write_bytes(LEDGER)
     report = run("measure_write.py", str(folder / "main.beancount"), "--deadline", "0.000001", tmp_path=tmp_path)
     (r,) = cast("list[dict[str, object]]", report["runs"])
     assert str(r["outcome"]).startswith("not measured: open: no answer"), r
     assert report["summary"] == {"one": {"published": 0, "not_published": 1}}, report
+
+
+@NEEDS_ENGINE
+@MAC_ONLY
+def test_measure_write_publishes_a_file_over_16_mib_and_reports_it_large(tmp_path: Path) -> None:
+    """S0120 (ADR-0008 amendment of 2026-11-15). Must not pass: a single file over the old 16 MiB line fails its
+    preview (S0119: the engine was stopped as a protocol violation), or its plan does not list it for the tip. The
+    file: 17 MB of comments before the tiny ledger."""
+    folder = tmp_path / "L"
+    folder.mkdir()
+    (folder / "main.beancount").write_bytes((b";" + b"x" * 99 + b"\n") * 170_000 + LEDGER)
+    report = run("measure_write.py", str(folder / "main.beancount"), tmp_path=tmp_path)
+    (r,) = cast("list[dict[str, object]]", report["runs"])
+    assert r["outcome"] == "published", r
+    assert r["large_files"] == 1, r
+    assert cast("float", r["plan_mb"]) > 16 * 1024 * 1024 / 1e6, r
+    assert cast("dict[str, dict[str, object]]", report["summary"])["one"]["published"] == 1, report
 
 
 def test_a_script_that_fails_fails_its_case(tmp_path: Path) -> None:

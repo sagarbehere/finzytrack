@@ -31,6 +31,7 @@ type RefusalKey = Literal[
     "engine.internal",
     "engine.no_engine_lock",
     "engine.app_folder_missing",
+    "engine.result_too_large",  # S0120: the answer would pass the protocol's line guard; the engine did not send it
 ]
 
 type FailureKind = Literal[
@@ -346,12 +347,14 @@ type PreviewStale = Literal["unpublished", "other_generation", "not_fresh"]
 
 @dataclass(frozen=True, slots=True)
 class PreviewFile:
-    """A file a prepared plan writes: its path, the SHA-256 of its bytes now and of its new text, and the text."""
+    """A file a prepared plan writes: its path, the SHA-256 of its bytes now and of its new text, the text, and the size
+    of its bytes now (S0120: the large-file tip)."""
 
     path: str
     pre: str
     post: str
     text: str
+    pre_size: int
 
 
 @dataclass(frozen=True, slots=True)

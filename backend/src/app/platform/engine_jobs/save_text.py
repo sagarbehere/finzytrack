@@ -1,5 +1,5 @@
-"""What the user reads when a save does not end "saved" (`design/specs/engine-jobs.md` §11's save rows; S0063). Plain
-text for non-native readers; the screens are BL-0092's.
+"""What the user reads when a save does not end "saved" (`design/specs/engine-jobs.md` §11's save rows; S0063), and
+the preview's tip for a large file (S0120). Plain text for non-native readers; the screens are BL-0092's.
 
 "Your ledger is unchanged" is said only when every file the save would write was hashed again and equals its bytes
 before the save (§11's rule; `ChangeNotSavedDetails.unchanged`); otherwise the text says which file changed, or that
@@ -9,11 +9,13 @@ an undo (`recovery_text.reopen_after_created`; S0061 red team r8 overflow 1).
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import Final
 
 from app.domain.errors import DomainError
 from app.platform.engine_jobs.recovery_text import REOPEN, reopen_after_created
 from app.platform.errors import ChangeNotSavedDetails, ErrorCode, WritesPausedDetails, spec_for
+from app.platform.plans import LARGE_FILE_BYTES
 
 NOT_SAVED: Final = "Your change was not saved."
 UNCHANGED: Final = "Your ledger is unchanged."
@@ -180,3 +182,21 @@ def text(err: DomainError) -> str:
         case _:
             spec = spec_for(err.code)
             return "Something went wrong inside Finzytrack." if spec is None else f"{spec.message} {spec.next_step}"
+
+
+def large_file_tip(paths: Sequence[str]) -> str | None:
+    """The preview's tip when the plan changes a file larger than 15 MB (`Previewed.large_files`; S0120, ADR-0008
+    amendment of 2026-11-15): such a file is saved more slowly; splitting it keeps Finzytrack fast. None without one."""
+    mb = f"{LARGE_FILE_BYTES // 1_000_000} MB"
+    split = "into smaller files with Beancount's include directive"
+    if not paths:
+        return None
+    if len(paths) == 1:
+        return (
+            f"The file {paths[0]} is larger than {mb}, so saving changes to it takes longer. "
+            f"To keep Finzytrack fast, split it {split}."
+        )
+    return (
+        f"These files are larger than {mb}, so saving changes to them takes longer: {', '.join(paths)}. "
+        f"To keep Finzytrack fast, split them {split}."
+    )

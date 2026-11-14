@@ -21,7 +21,9 @@
   goes to stderr, never into the reply. The engine never dies on input (S0035 independent verifier F1): a refusal
   echoes `op` only when it is valid Unicode and at most `MAX_ECHO_CHARS` long (else null), its message is made
   valid Unicode and cut to `MAX_MESSAGE_CHARS`, and the read loop answers anything that still escapes with a fixed
-  `engine.internal` reply.
+  `engine.internal` reply. A preview's answer longer than the line guard (`MAX_LINE_BYTES`) is never sent: it is
+  refused `engine.result_too_large` (`SIZE_GUARDED`; S0120, ADR-0008 amendment of 2026-11-15: a file of about
+  240 MiB or more, whose new text the answer carries).
 - **Parent-death watchdog** (spike S1): the engine exits when its stdin reaches EOF (after finishing the request in
   hand), and on POSIX also when its parent is no longer `--parent-pid` (polled from the start, so a parent that
   died while the engine was starting is caught), even mid-request and with stdin still open. A parent that is pid 1
@@ -75,7 +77,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from decimal import Decimal
 from importlib.metadata import version
-from typing import IO, Any, Protocol
+from typing import IO, Any, Final, Protocol
 
 from pydantic import BaseModel, ConfigDict, ValidationError
 
@@ -523,12 +525,19 @@ class Engine:
         except Exception:  # noqa: BLE001 (the engine's request boundary, EP-13: logged, then a typed refusal)
             _log(f"internal error in {op}:\n{traceback.format_exc()}")
             return _refusal(rid, op, "engine.internal", INTERNAL_MESSAGE)
+        if op in SIZE_GUARDED and len(reply) > MAX_LINE_BYTES:  # S0120: built once, then measured, never cut
+            return _refusal(rid, op, "engine.result_too_large", f"The answer is longer than {MAX_LINE_BYTES} bytes.")
         if op == "handshake":
             self._ready = True
         return reply
 
 
 INTERNAL_MESSAGE = "The engine failed on this request; details are in its log."
+SIZE_GUARDED: Final = frozenset({"preview"})
+"""The ops whose answer the engine refuses `engine.result_too_large` when it would pass the line guard (S0120; ADR-0008
+amendment of 2026-11-15): the preview, whose answer carries each planned file's new text. A guard on every other
+answer stays with the first op that returns rows (BL-0082, M7; owner, 2026-11-12: a writing op's answer is never
+turned into a refusal)."""
 
 
 def _accepted(rid: int, op: str, result: BaseModel, decision: Decision | None) -> bytes:

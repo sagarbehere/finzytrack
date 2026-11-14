@@ -86,7 +86,7 @@ from app.platform.errors import (
     error,
 )
 from app.platform.ids import Ids
-from app.platform.plans import PlanId, PlannedFile, PlanStore, PreviewHash, WritePlan, new_plan
+from app.platform.plans import PlanId, PlannedFile, PlanStore, PreviewHash, WritePlan, is_large, new_plan
 
 PROMOTED: Final[frozenset[str]] = frozenset()
 """The mutators promoted for real ledgers (ADR-0014), by intent-table id: none yet."""
@@ -144,13 +144,17 @@ class WriteServices:
 @dataclass(frozen=True, slots=True)
 class Previewed:
     """A kept plan, as the preview answers it (ARCHITECTURE §4.2's `WritePlan`): its id and hash, the files with their
-    new texts, the new errors (listed, never a refusal: ADR-0067) and Beancount's error count of the candidate."""
+    new texts, the new errors (listed, never a refusal: ADR-0067), Beancount's error count of the candidate, and the
+    large files for the tip."""
 
     plan_id: PlanId
     preview_hash: PreviewHash
     files: tuple[PlannedFile, ...]
     new_errors: tuple[PreviewError, ...]
     errors: int
+    large_files: tuple[str, ...] = ()
+    """The files the plan writes that are larger than `plans.LARGE_FILE_BYTES` now or after the change (S0120): the
+    preview shows the tip to split them (`save_text.large_file_tip`). Paths only: never logged (INV-23)."""
 
 
 # -- rule 5: the plan's own files -------------------------------------------------------------------------------------
@@ -252,7 +256,8 @@ def submit_preview(
         if problem is not None:
             return NotPrepared(problem)
         services.plans.add(plan)
-        return Previewed(plan.plan_id, plan.preview_hash, files, prepared.new_errors, prepared.errors)
+        large = tuple(f.path for f in prepared.files if is_large(f.pre_size, f.text))
+        return Previewed(plan.plan_id, plan.preview_hash, files, prepared.new_errors, prepared.errors, large)
 
     where = PreviewTarget(target.workspace, target.root, target.lineage, target.app_local_data)
     return submit_preview_job(
