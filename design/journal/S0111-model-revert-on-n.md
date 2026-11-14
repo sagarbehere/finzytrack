@@ -23,6 +23,8 @@
 
 ## Runs
 - Small tier on the new model: all 67 as expected (14 base, 29 mutants, 24 witnesses).
+- Medium and large tiers on the new model (model sha256 02e556707512, the owner's Mac, 7 TLC workers, beside the mirror-publish `L_all`), 2026-11-13 10:41 to 2026-11-14 02:19: all as expected. `M_recover_temps` 5 s (85,156 distinct states); `L_save_all` 61 s (670,086); `L_recover_all` 243 s (4,088,438); `L_save_deep` 55,417 s (2,167,593,483 distinct states, depth 98: the world that flagged the revert on N now passes in full); `L_world` 512 s (simulation). With the small tier: 72 configurations, ALL AS EXPECTED (BL-0110).
+- Close (2026-11-14, after the runs, as round 1 planned): `EngineJobs.tla`'s `EditKept` comment cites §6.4 (F3) and says the S0101 tightening is incomplete, pointing at MAPPING.md's "Limit (older backup)" (F1). Comment only: model sha256 9988da5bf4c9; the trace corpus regenerated, its header's model hash the only change (traces byte-identical). `HOW_TO_RUN.md` records the medium and large times and that they were measured at the hash before this comment change.
 
 ## Verifier
 - Round 1, head aa512c70: pass with findings. Attacks: 9 (the backup stand-in against `writer._backups`, which backs up every replaced file, data synced, folder synced, before the `.part`; a power loss between `S_Backup` and `S_BackupSync`; a created N; R absent at pre; R's old and new disjuncts proved equal by TLC, 418,289 states; vacuity for N, reached in 1,054 states; a second save with a rollback; the four mutants from scratch; the corpus diff). Tooling row: one round, stop rule.
@@ -34,3 +36,4 @@
 | F3 | Low | d | Fixed: the citation is §6.4, not §6.3 (MAPPING.md now; the `.tla` comment after the reruns; the brief's "§6.3" was the same slip) |
 
 ## Retro
+- Build about 20 min (model change and small tier), fix 10 min (round 1's limits), 1 verifier round, findings 0H/1M/2L (F1 c, F2 c, F3 d); the long runs took 16 h beside M1a's exit, the close 10 min. Cheaper gate: a small-tier witness for the same-bytes exception on N (`EdFiles = {N}`, `MaxEdits = 3`, about 1,000 states; MAPPING.md "Limit (no witness)") would have flagged the R-only exception in seconds instead of in `L_save_deep`'s 13th minute. Process checks: the trace corpus check (`gen_traces.py --check`) 0 catch / 1 false positive (it hashes the whole model file, so a comment-only change refused a corpus whose traces were current; the regeneration cost 5.5 min for a header hash); the others 0 / 0.

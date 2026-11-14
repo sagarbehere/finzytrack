@@ -921,8 +921,10 @@ PartJournalNeverBlocks ==
 \* (.kept); a kept copy no journal names any more is lost to the user (verifier S0072 r1 F4). Or the user previewed
 \* them and the save replaced them (the backup holds them). Or they are a save's pre bytes of a file it writes, which
 \* its backup holds, and the file holds that same save's post bytes (an editor's revert that save's swap displaced and
-\* took for ours: §6.3, "deleting it loses nothing"; Limit (same bytes); S0101, tightened in round 1, verifier F2: any
-\* older save's backup with those bytes hid a lost revert under no_displaced_check). The model writes one backup per
+\* took for ours: §6.4, "deleting it loses nothing"; Limit (same bytes); S0101, tightened in round 1, verifier F2: any
+\* older save's backup with those bytes hid a lost revert under no_displaced_check. The tightening is incomplete: a
+\* later save's rollback back to an older save's post bytes makes fs.cur[f] = PostV(s) true again, so that older
+\* backup can still hide a revert; MAPPING.md, "Limit (older backup)", S0111 verifier F1). The model writes one backup per
 \* save, R's (`bk`), for the step that backs up every file the save replaces (`writer._backups`, §6.1 step 8.1): so
 \* for any file of Tg the pre bytes are the ones the save recorded (`gh.pre`) and the backup step is the one `bk`
 \* shows written (S0111: L_save_deep's revert on N, owner's run of 2026-11-13)
