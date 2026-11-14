@@ -12,9 +12,10 @@ path under the product's bootstrap; `test_the_shipped_engine_has_no_producer` ho
 Each must-not-pass case compares the ledger folder's bytes before and after (the brief: "each with the disk
 byte-identical afterwards").
 
-BL-0255 (S0118): a rebuild that ends without publishing, or a mirror the OS removed, no longer leaves every preview
-`WORKSPACE_NOT_READY {WARMING}` until a reopen: the stale preview queues the rebuild, and once it has run, the
-preview prepares a plan again.
+BL-0255 (S0118): a rebuild that ends without publishing no longer leaves every preview `WORKSPACE_NOT_READY
+{WARMING}` until a reopen: the stale preview queues the rebuild from the generation's stamp, and once it has
+published, the preview prepares a plan again. With no usable mirror (removed by the OS) the preview queues nothing and
+a reopen builds it (round 1, red team RT-F1).
 """
 
 from __future__ import annotations
@@ -490,14 +491,28 @@ def test_after_a_rebuild_that_did_not_publish_the_next_preview_queues_one(
     assert p.files[0].text.count(NOTE) == 2  # planned on the saved ledger
 
 
-def test_after_the_os_removed_the_mirror_the_next_preview_queues_a_rebuild(rig: Rig) -> None:
-    """The cache folder purged under a running app (`unpublished`): the hint is the root's own set; the rebuild widens
-    it as it needs and publishes again."""
+def _rebuild_queued(rig: Rig) -> bool:
+    q = rig.jobs.status().queue
+    return any(j.kind == "rebuild" for j in q.queued) or (q.running is not None and q.running.job.kind == "rebuild")
+
+
+def test_after_the_os_removed_the_mirror_previews_stay_warming_until_a_reopen(rig: Rig) -> None:
+    """S0118 round 1 (red team RT-F1; owner, 2026-11-14: "Narrow the scope (Recommended)"): with no published mirror
+    there is no stamp to rebuild from (the root alone would drop the ledger's include patterns), so the preview queues
+    nothing and stays WARMING; a reopen builds the mirror again (engine-jobs §15)."""
     assert rig.confirm(rig.preview()) == Saved(published=False)
     assert wait_for(lambda: rig.generation() == 2)
     shutil.rmtree(rig.cache / "workspaces" / KEY / "mirror")
     _warming(rig, 2)
-    assert wait_for(lambda: rig.generation() is not None, REBUILT), "the stale preview queued no rebuild"
+    assert not _rebuild_queued(rig)  # the job would have queued it before its answer
+    assert rig.generation() is None
+    rig.jobs.exclusive_began()  # the reopen
+    opening = submit_open(rig.jobs, KEY, OpenJobTarget(KEY, str(rig.main), "lin1", rig.app.path), clock=CLOCK)
+    assert isinstance(opening, JobTicket)
+    opened = opening.wait(DEADLINE)
+    rig.jobs.exclusive_ended()
+    assert isinstance(opened, Done), opened
+    assert isinstance(opened.value, Opened), opened.value
     assert rig.preview().files[0].text.count(NOTE) == 2
 
 

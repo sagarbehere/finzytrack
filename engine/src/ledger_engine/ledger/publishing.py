@@ -5,8 +5,8 @@ BL-0152). The `preview` (`ledger_engine.ledger.preview`, S0116) uses `unfinished
 - `Target`: where and as of when a result is published;
 - `unfinished`: this workspace's `.open` journal, looked for before any result is returned (§7: "checks that this
   workspace has no `.open` journal"; a journal folder that cannot be listed counts as one, as the save's step 1);
-- `fresh_current`: the published generation, when it is fresh (publish.md §8) and, for the rebuild, its stamp names
-  everything the hint names (BL-0212 V1);
+- `fresh_current`: the published generation, when it is fresh (publish.md §8; its error rows readable, S0118) and,
+  for the rebuild, its stamp names everything the hint names (BL-0212 V1);
 - `recheck`: publish.md §4 step 7, just before the swap: the stamped set observed again, and `unfinished` again.
 
 It writes nothing; the publish itself is `ledger_engine.mirror.publish`.
@@ -92,11 +92,12 @@ def fresh_current(
     by: pb.PublishedBy | None = None,
 ) -> pb.Current | None:
     """The published generation when it is fresh (publish.md §8: this ledger's, its own set unchanged on disk, this
-    engine's build and DDL, today); given `by`, only a generation that job published (the open's: `open`, since only
-    its stamp names every pattern the ledger includes; S0088 round 1, owner 2026-11-08); and given a `hint` (the
-    rebuild's), its stamp names all the hint names: a hint that names a glob or a file the stamp lacks (an outside edit
-    added it before an earlier rebuild, whose hint did not know it) means the generation may not describe the disk
-    (BL-0212 V1). Otherwise None: the job loads."""
+    engine's build and DDL, today, and its `ledger_errors` readable: the preview's baseline needs them, so a generation
+    without them is built again, S0118 round 1, verifier V1); given `by`, only a generation that job published (the
+    open's: `open`, since only its stamp names every pattern the ledger includes; S0088 round 1, owner 2026-11-08);
+    and given a `hint` (the rebuild's), its stamp names all the hint names: a hint that names a glob or a file the
+    stamp lacks (an outside edit added it before an earlier rebuild, whose hint did not know it) means the generation
+    may not describe the disk (BL-0212 V1). Otherwise None: the job loads."""
     if cleaned.current is None:
         return None
     facts = store.meta(d, cleaned.current.name)
@@ -109,6 +110,8 @@ def fresh_current(
     if not pb.fresh(facts, observe, ours, engine_build=target.engine_build, today=target.today):
         return None
     if hint is not None and not within(hint, decode(facts.fingerprint.encode("ascii")).ledger_set):
+        return None
+    if store.errors(d, cleaned.current.name) is None:  # no baseline for the preview: not fresh (V1)
         return None
     return pb.Current(cleaned.current, facts)
 

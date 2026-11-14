@@ -9,12 +9,14 @@ fingerprint it returns. `run(ports, root, generation, mutator, request, where, j
    It must be the generation the plan was made on (`generation`, its number), complete, built by this engine build
    and DDL, this ledger's (its root's `path_key` is `root`'s), and fresh on disk (its own ledger set observed now
    has its digest). Otherwise `stale`, nothing loaded: the generation's errors are not those of the files the plan
-   edits, so the preview's list of new errors would not be true. The sidecar plans again after a rebuild. When no
-   fresh generation describes the disk (`unpublished`, `not_fresh`) the answer carries a **hint** for that rebuild
-   (S0118, BL-0255; the sidecar queues it): the generation's stamp when it decodes and names this `root` (the `rebuild`
-   op refuses a hint of another root), else the root's own set observed now (no generation, a stamp that cannot be
-   decoded, another ledger's), which the rebuild widens by its `moved` try (engine-jobs §7). `other_generation`
-   carries none: the published generation may be fresh, and the sidecar plans again on it;
+   edits, so the preview's list of new errors would not be true. The sidecar plans again after a rebuild. A
+   `not_fresh` answer whose generation has a stamp that decodes and names this `root` carries that stamp as the
+   **hint** for the rebuild the sidecar queues (S0118, BL-0255): a stamp names every include pattern the ledger's
+   load read, so the rebuild's own stamp names them too (the `rebuild` op refuses a hint of another root). Every other
+   `stale` answer carries none (S0118 round 1, red team RT-F1: the root alone would drop the include patterns from
+   the next stamp): `unpublished` (no generation, or one whose errors cannot be read), a stamp that cannot be decoded,
+   another ledger's, and `other_generation` (the published generation may be fresh, and the sidecar plans again on
+   it). With no usable mirror a reopen builds it (engine-jobs §15);
 2. **the snapshot**: the bytes of every ledger file the generation's fingerprint names, read now, each with the
    SHA-256 the fingerprint holds (else `moved`: the disk changed since step 1); in the fingerprint's order, the root
    first (the order `route_insert` breaks ties of Fava's `insert-entry` options in);
@@ -104,8 +106,8 @@ class Ports:
 class Answer:
     """`prepared` (`prepared` holds the write plan), `refused` (`refused` names the step and why), `moved` (the disk
     changed during the job: run it again), `paused` (an unfinished save's `.open` journal) or `stale` (`stale` says
-    why the published generation is not the plan's baseline; `hint`, for `unpublished` and `not_fresh` only, the
-    fingerprint the rebuild starts from: the module's docstring)."""
+    why the published generation is not the plan's baseline; `hint`, for `not_fresh` only and only when the
+    generation's stamp is this ledger's: the fingerprint the rebuild starts from, the module's docstring)."""
 
     outcome: Outcome
     prepared: contract.Prepared | None = None
@@ -133,16 +135,6 @@ def _baseline_fresh(ports: Ports, base: pb.Baseline, root: str, where: Where) ->
         and meta.engine_build == where.engine_build
         and pb.fresh_on_disk(meta, observe, ours)
     )
-
-
-def _own_set(ports: Ports, root: str) -> Fingerprint:
-    """The root alone, observed now: the hint when no stamp of this root can be read (the module's docstring)."""
-    return ports.observe(LedgerSet(root, (root,), (), (), ()))
-
-
-def _not_fresh(ports: Ports, root: str, stamp: Fingerprint | None) -> Answer:
-    hint = stamp if stamp is not None and stamp.root == root else _own_set(ports, root)
-    return Answer("stale", stale="not_fresh", hint=hint)
 
 
 def _snapshot(ports: Ports, stamp: Fingerprint) -> se.Snapshot | None:
@@ -184,15 +176,15 @@ def run(
         return Answer("paused")
     base = pb.read_baseline(ports.fs, where.app_cache, where.workspace_key, ports.store)  # step 1
     if base is None:
-        return Answer("stale", stale="unpublished", hint=_own_set(ports, root))
+        return Answer("stale", stale="unpublished")
     if base.current.gen.number != generation:
         return Answer("stale", stale="other_generation")
     try:
         stamp = decode(base.current.meta.fingerprint.encode("ascii"))
     except (UnicodeEncodeError, UndecodableError):
-        return _not_fresh(ports, root, None)
+        return Answer("stale", stale="not_fresh")
     if not _baseline_fresh(ports, base, root, where):
-        return _not_fresh(ports, root, stamp)
+        return Answer("stale", stale="not_fresh", hint=stamp if stamp.root == root else None)
     snapshot = _snapshot(ports, stamp)  # step 2
     if snapshot is None:
         return Answer("moved")

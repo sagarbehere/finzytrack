@@ -80,6 +80,10 @@ class FakeStore:
             return None
         return pb.meta_of({str(k): v for k, v in facts.items()})  # pyright: ignore[reportUnknownVariableType, reportUnknownArgumentType]
 
+    def errors(self, d: DirHandle, name: str) -> list[pb.Row] | None:
+        """No error rows in a fake mirror; None where `meta` refuses the file (S0118 round 1)."""
+        return [] if self.meta(d, name) is not None else None
+
 
 def outside_publish(fs: MemFS, fp: Fingerprint, key: str, cache: str = "/cache") -> None:
     """A published generation stamped with `fp`, put in place durably and with no effect counted (as an earlier job

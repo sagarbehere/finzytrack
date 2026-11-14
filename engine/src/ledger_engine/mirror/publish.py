@@ -166,6 +166,11 @@ class Store(Protocol):
         stands beside it (SQLite refuses it read-only), or it is not a whole mirror."""
         ...
 
+    def errors(self, d: DirHandle, name: str) -> list[Row] | None:
+        """The generation's `ledger_errors` rows, read only, in their order; None when they cannot be read (the
+        preview's baseline then has none, so the open and the rebuild do not take it as fresh: S0118 round 1)."""
+        ...
+
 
 # -- §2: the folder ---------------------------------------------------------------------------------------------------
 

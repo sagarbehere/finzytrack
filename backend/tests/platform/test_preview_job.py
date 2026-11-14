@@ -10,10 +10,11 @@ scheduler. Written from BL-0106's list and the S0117 brief:
   load) `WRITE_REFUSED_CHECK_FAILED`, an encrypted file `ENCRYPTED_FILE_NOT_EDITABLE`;
 - an unfinished save's journal (`paused`) is `WRITES_PAUSED {earlier_unfinished}`; an answer that does not hold
   together, or an engine refusal, is `INTERNAL` (INV-22: never a plan);
-- BL-0255 (S0118): a `stale` answer whose published generation is missing or not fresh (`unpublished`, `not_fresh`)
-  carries a hint fingerprint, and the job submits the workspace's background rebuild with it, so "wait a moment and
-  try again" comes true; `other_generation` carries none and queues nothing; a refused submit is logged
-  (`rebuild.not_queued`), never raised, and the answer stays `WORKSPACE_NOT_READY {WARMING}`.
+- BL-0255 (S0118): a `not_fresh` answer whose published generation has a readable stamp of this ledger carries it
+  as a hint, and the job submits the workspace's background rebuild with it, so "wait a moment and try again" comes
+  true; every other `stale` answer carries none and queues nothing (round 1, red team RT-F1: a set that is not a
+  stamp would drop the ledger's include patterns; with no usable mirror, a reopen builds it); a refused submit is
+  logged (`rebuild.not_queued`), never raised, and the answer stays `WORKSPACE_NOT_READY {WARMING}`.
 """
 
 from __future__ import annotations
@@ -234,7 +235,9 @@ def test_an_encrypted_file_is_refused_with_its_own_code(make: Any, step: str, re
 WARMING = (ErrorCode.WORKSPACE_NOT_READY, WorkspaceNotReadyDetails(phase="WARMING"))
 
 
-@pytest.mark.parametrize(("why", "hint"), [("unpublished", HINT), ("other_generation", None), ("not_fresh", HINT)])
+@pytest.mark.parametrize(
+    ("why", "hint"), [("unpublished", None), ("other_generation", None), ("not_fresh", HINT), ("not_fresh", None)]
+)
 def test_a_stale_baseline_is_workspace_not_ready_warming(make: Any, why: str, hint: str | None) -> None:
     rig = make({"preview": [stale(why, hint)]})
     assert error_of(rig.preview()) == WARMING
@@ -252,9 +255,8 @@ def wait_ops(rig: Rig, n: int) -> list[str]:
     return [op for _, op in rig.engine.calls]
 
 
-@pytest.mark.parametrize("why", ["unpublished", "not_fresh"])
-def test_a_baseline_missing_or_not_fresh_queues_the_rebuild_with_the_answers_hint(make: Any, why: str) -> None:
-    rig = make({"preview": [stale(why)], "rebuild": [REBUILT]})
+def test_a_not_fresh_baseline_queues_the_rebuild_with_the_answers_hint(make: Any) -> None:
+    rig = make({"preview": [stale("not_fresh")], "rebuild": [REBUILT]})
     assert error_of(rig.preview(submit_preview(rig.jobs, TARGET, ORDER, clock=CLOCK))) == WARMING  # unchanged
     assert rebuild_queued(rig) or "rebuild" in [op for _, op in rig.engine.calls]
     assert wait_ops(rig, 2) == ["preview", "rebuild"]
@@ -282,13 +284,17 @@ def test_another_generation_queues_no_rebuild(make: Any) -> None:
     assert [op for _, op in rig.engine.calls] == ["preview"]
 
 
-@pytest.mark.parametrize("why", ["refused", "moved", "paused", "prepared"])
+@pytest.mark.parametrize("why", ["refused", "moved", "paused", "prepared", "unpublished", "not_fresh_no_hint"])
 def test_no_other_answer_queues_a_rebuild(make: Any, why: str) -> None:
+    """Round 1 (RT-F1): no mirror (`unpublished`), or one whose stamp is not this ledger's or cannot be read
+    (`not_fresh` with no hint), queues nothing: a reopen builds it (engine-jobs §15)."""
     first = {
         "refused": refused("load", "fault"),
         "moved": MOVED,
         "paused": answer(outcome="paused", files=[], fingerprint=None),
         "prepared": answer(),
+        "unpublished": stale("unpublished", None),
+        "not_fresh_no_hint": stale("not_fresh", None),
     }[why]
     rig = make({"preview": [first, answer()], "rebuild": [REBUILT]})
     rig.preview(submit_preview(rig.jobs, TARGET, ORDER, clock=CLOCK))
@@ -319,7 +325,7 @@ def test_a_refused_submit_is_logged_and_the_answer_is_unchanged(make: Any) -> No
 
 def test_a_rebuild_is_never_queued_for_a_workspace_no_longer_open(make: Any) -> None:
     """INV-28, INV-31: after a switch the old workspace's rebuild is refused `WORKSPACE_NOT_OPEN`, and logged."""
-    rig = make({"preview": [BLOCK, stale("unpublished")]})
+    rig = make({"preview": [BLOCK, stale("not_fresh")]})
     ticket = submit_preview(rig.jobs, TARGET, ORDER, clock=CLOCK)
     wait_ops(rig, 1)
     rig.jobs.workspace_opened("k2")
@@ -370,15 +376,18 @@ def test_a_ledger_that_keeps_moving_is_ledger_changing_after_three_tries(make: A
         pytest.param(refused("load", "x") | {"fingerprint": HINT}, id="refused with a fingerprint"),
         pytest.param(answer(outcome="paused", files=[]), id="paused with a fingerprint"),
         pytest.param(stale("other_generation"), id="another generation with a hint"),
-        pytest.param(stale("unpublished", None), id="unpublished without a hint"),
-        pytest.param(stale("not_fresh", None), id="not fresh without a hint"),
+        pytest.param(stale("unpublished"), id="unpublished with a hint"),
         pytest.param(stale("not_fresh") | {"files": BLANK["files"]}, id="stale with files"),
         pytest.param({"outcome": "prepared"}, id="a reply of the wrong shape"),
     ],
 )
 def test_an_answer_that_does_not_hold_together_is_internal(make: Any, bad: dict[str, object]) -> None:
+    """The job's own answer (`NotPrepared`), never an exception in its code: a check that relies on an `assert` alone
+    would let the answer through under `python -O` (S0118 round 1, mutant `prepared-without-fingerprint`)."""
     rig = make({"preview": [bad]})
-    assert error_of(rig.preview()) == (ErrorCode.INTERNAL, None)
+    value = rig.preview()
+    assert isinstance(value, NotPrepared), value
+    assert error_of(value) == (ErrorCode.INTERNAL, None)
 
 
 def test_an_engine_refusal_is_internal(make: Any) -> None:

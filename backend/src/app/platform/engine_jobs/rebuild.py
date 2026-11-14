@@ -24,13 +24,14 @@ served this session; until reads are served it is 0, so after the OS purges the 
 may start again at 1 (no screen reads it yet). TODO(BL-0211): the screens' "Checking…" text until the rebuild ends.
 
 **Who queues it** (`rebuild_submitter`, one helper for every caller): a landed save, a save read from disk as saved,
-and since S0118 (BL-0255) a save the gate refused `mirror_stale` and a preview answered `stale` (`unpublished`,
-`not_fresh`): a rebuild that ended without publishing (a crashed plugin, a ledger that kept changing, an I/O
-refusal, a full queue, the OS removing the cache folder) is then queued again by the next write, so
-`WORKSPACE_NOT_READY {WARMING}`'s "wait a moment and try again" comes true. A queued one answers `AlreadyQueued`
-(the queued one loads the disk when it runs). A refused submit (`ENGINE_QUEUE_FULL`; `WORKSPACE_NOT_OPEN` after a
-switch, INV-31; `ENGINE_UNAVAILABLE` while the app closes) is logged `rebuild.not_queued`, content-free (INV-23); it is
-never raised and never changes the asking job's answer.
+and since S0118 (BL-0255) a save the gate refused `mirror_stale` and a preview answered `stale/not_fresh` with the
+generation's stamp as its hint: a rebuild that ended without publishing (a crashed plugin, a ledger that kept
+changing, an I/O refusal, a full queue) is then queued again by the next write, so `WORKSPACE_NOT_READY {WARMING}`'s
+"wait a moment and try again" comes true once it has published. With no usable mirror (removed, a stamp that cannot
+be read) the preview queues nothing and a reopen builds it (S0118 round 1, red team RT-F1; engine-jobs §2 "Limit
+(no usable mirror)"). A queued one answers `AlreadyQueued` (the queued one loads the disk when it runs). A refused
+submit (`ENGINE_QUEUE_FULL`; `WORKSPACE_NOT_OPEN` after a switch, INV-31; `ENGINE_UNAVAILABLE` while the app closes)
+is logged `rebuild.not_queued`, content-free (INV-23); it is never raised and never changes the asking job's answer.
 """
 
 from __future__ import annotations

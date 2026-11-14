@@ -7,7 +7,6 @@ the save's gate. Answered only by an engine that holds the engine lock. The edit
 from __future__ import annotations
 
 import dataclasses
-import hashlib
 import json
 import os
 import sqlite3
@@ -18,8 +17,9 @@ from typing import Any, override
 import pytest
 
 from ledger_engine.ledger import overlay, preview
-from ledger_engine.ledger.core.ledger_set import Content, LedgerSet, decode
+from ledger_engine.ledger.core.ledger_set import decode
 from ledger_engine.mirror import publish as pb
+from ledger_engine.mirror.core import schema
 from ledger_engine.mirror.store import SqliteStore
 from ledger_engine.protocol.save import engine_build
 from tests.ledger import producer
@@ -168,12 +168,6 @@ def test_a_target_the_producer_cannot_locate_is_refused_at_the_plan(ws: tuple[Pa
     assert (result["outcome"], result["step"], result["reason"]) == ("refused", "plan", "no_entry_at_position")
 
 
-def own_set(root: Path) -> LedgerSet:
-    """BL-0255 (S0118): the hint a `stale` answer carries when it has no stamp of this root: the root alone, observed
-    now (the rebuild widens it by its `moved` try, engine-jobs §7)."""
-    return LedgerSet(str(root), (str(root),), (), (), ())
-
-
 def published_stamp(ald: Path) -> str:
     mirror = ald.parent / "cache" / "workspaces" / "k1" / "mirror"
     con = sqlite3.connect(f"{(mirror / os.readlink(mirror / 'current.db')).as_uri()}?mode=ro", uri=True)
@@ -183,15 +177,23 @@ def published_stamp(ald: Path) -> str:
         con.close()
 
 
-def test_no_published_generation_is_stale_with_the_roots_own_set_as_its_hint(
-    ws: tuple[Path, Path, dict[str, Any]],
-) -> None:
+def with_glob(main: Path) -> Path:
+    """An `include` pattern, so a stamp must name it (S0118 round 1, red team RT-F1)."""
+    sub = main.parent / "sub"
+    sub.mkdir()
+    (sub / "a.bean").write_text("2024-01-01 open Assets:A\n")
+    main.write_bytes(MAIN + b'include "sub/*.bean"\n')
+    return sub
+
+
+def test_no_published_generation_is_stale_with_no_hint(ws: tuple[Path, Path, dict[str, Any]]) -> None:
+    """S0118 round 1 (red team RT-F1; owner, 2026-11-14: "Narrow the scope (Recommended)"): with no stamp of this
+    ledger there is no set to rebuild from that names its include patterns (the root alone would drop them), so the
+    answer carries no hint and nothing is queued; a reopen builds the mirror (engine-jobs §15)."""
     main, ald, params = ws
+    with_glob(main)
     result = call(ald, params, 1, replace_buy(main))["result"]
-    assert (result["outcome"], result["stale"]) == ("stale", "unpublished")
-    hint = decode(result["fingerprint"].encode())
-    assert hint.ledger_set == own_set(main)
-    assert hint.files == ((str(main), Content(hashlib.sha256(MAIN).hexdigest())),)  # observed now
+    assert (result["outcome"], result["stale"], result["fingerprint"]) == ("stale", "unpublished", None)
 
 
 def test_another_generation_than_the_plan_s_is_stale_with_no_hint(ws: tuple[Path, Path, dict[str, Any]]) -> None:
@@ -214,15 +216,54 @@ def test_a_disk_changed_since_the_publish_is_stale_with_the_published_stamp_as_i
     assert result["fingerprint"] == published_stamp(ald)  # the generation's own stamp, as published
 
 
-def test_another_ledger_s_generation_is_stale_with_this_roots_own_set(ws: tuple[Path, Path, dict[str, Any]]) -> None:
+def rebuilt(ald: Path, params: dict[str, Any], fingerprint: str) -> dict[str, Any]:
+    """The sidecar's rebuild job: tries again with the answer's fingerprint after `moved`, at most 3 tries (§7)."""
+    result: dict[str, Any] = {}
+    for _ in range(3):
+        p = {
+            **params,
+            "fingerprint": fingerprint,
+            "floor": 0,
+            "today": "2026-11-14",
+            "built_at": "2026-11-14T10:00:00Z",
+        }
+        reply = json.loads(engine(ald).handle(request("rebuild", p, 5), Channel(5, proceed=False)))
+        assert reply["ok"], reply
+        result = reply["result"]
+        if result["outcome"] != "moved":
+            return result
+        fingerprint = result["fingerprint"]
+    raise AssertionError(result)
+
+
+def test_a_rebuild_from_the_hint_keeps_the_stamps_include_patterns(ws: tuple[Path, Path, dict[str, Any]]) -> None:
+    """@regression-guard (the stamp's hint was right on the base; the root-only hint was not, RT-F1): a file a sync
+    tool adds under a glob include makes the generation not fresh; the rebuild from the answer's hint publishes a
+    stamp that still names the pattern, so the next file added under it is seen as a change too (ADR-0015)."""
+    main, ald, params = ws
+    sub = with_glob(main)
+    number = opened(ald, params)
+    (sub / "b.bean").write_text("2024-01-01 open Assets:B\n")
+    first = call(ald, params, number, replace_buy(main))["result"]
+    assert (first["outcome"], first["stale"]) == ("stale", "not_fresh")
+    assert decode(first["fingerprint"].encode()).globs  # the stamp names the pattern
+    done = rebuilt(ald, params, first["fingerprint"])
+    assert (done["outcome"], done["publish"]) == ("loaded", "published")
+    assert [g for g, _ in decode(published_stamp(ald).encode()).globs] == [str(sub / "*.bean")]
+    assert call(ald, params, done["number"], replace_buy(main))["result"]["outcome"] == "prepared"
+    (sub / "c.bean").write_text("2024-01-01 open Assets:C\n")
+    again = call(ald, params, done["number"], replace_buy(main))["result"]
+    assert (again["outcome"], again["stale"]) == ("stale", "not_fresh")
+
+
+def test_another_ledger_s_generation_is_stale_with_no_hint(ws: tuple[Path, Path, dict[str, Any]]) -> None:
     """Never a hint of another root: the engine's `rebuild` refuses one (`params.root: not the fingerprint's root`)."""
     main, ald, params = ws
     number = opened(ald, params)
     other = main.parent / "other.bean"
     other.write_bytes(MAIN)
     result = call(ald, {**params, "root": str(other)}, number, replace_buy(other))["result"]
-    assert (result["outcome"], result["stale"]) == ("stale", "not_fresh")
-    assert decode(result["fingerprint"].encode()).ledger_set == own_set(other)
+    assert (result["outcome"], result["stale"], result["fingerprint"]) == ("stale", "not_fresh", None)
 
 
 class BadStamp(SqliteStore):
@@ -234,9 +275,7 @@ class BadStamp(SqliteStore):
         return None if m is None else dataclasses.replace(m, fingerprint="not a fingerprint")
 
 
-def test_a_stamp_that_cannot_be_decoded_is_not_fresh_with_the_roots_own_set(
-    ws: tuple[Path, Path, dict[str, Any]],
-) -> None:
+def test_a_stamp_that_cannot_be_decoded_is_not_fresh_with_no_hint(ws: tuple[Path, Path, dict[str, Any]]) -> None:
     main, ald, params = ws
     number = opened(ald, params)
     a = preview.run(
@@ -248,9 +287,41 @@ def test_a_stamp_that_cannot_be_decoded_is_not_fresh_with_the_roots_own_set(
         where(ald, engine_build()),
         NoJob(),
     )
-    assert (a.outcome, a.stale) == ("stale", "not_fresh")
-    assert a.hint is not None
-    assert a.hint.ledger_set == own_set(main)
+    assert (a.outcome, a.stale, a.hint) == ("stale", "not_fresh", None)
+
+
+def drop_errors(ald: Path) -> None:
+    """The published generation's `ledger_errors` made unreadable (its table gone), the rest of it intact."""
+    mirror = ald.parent / "cache" / "workspaces" / "k1" / "mirror"
+    table = next(t for t in schema.TABLES if t.name == "ledger_errors")
+    con = sqlite3.connect(mirror / os.readlink(mirror / "current.db"))
+    try:
+        con.execute(f"DROP TABLE {table.base}")
+        con.commit()
+    finally:
+        con.close()
+
+
+@pytest.mark.parametrize("job", ["open", "rebuild"])
+def test_a_generation_whose_errors_cannot_be_read_is_not_fresh_and_is_built_again(
+    ws: tuple[Path, Path, dict[str, Any]], job: str
+) -> None:
+    """S0118 round 1 (verifier V1; owner, 2026-11-14: "Align freshness (Recommended)"): the preview cannot use a
+    generation whose error table it cannot read as its baseline, so the open and the rebuild do not take it as fresh
+    (`publishing.fresh_current`): they build a new one, and the preview prepares a plan on it."""
+    main, ald, params = ws
+    number = opened(ald, params)
+    stamp = published_stamp(ald)
+    drop_errors(ald)
+    assert call(ald, params, number, replace_buy(main))["result"]["stale"] == "unpublished"
+    if job == "open":
+        again = opened(ald, params)  # `loaded`, never `fresh` (asserted by `opened`)
+    else:
+        done = rebuilt(ald, params, stamp)
+        assert (done["outcome"], done["publish"]) == ("loaded", "published")
+        again = int(done["number"])
+    assert again != number
+    assert call(ald, params, again, replace_buy(main))["result"]["outcome"] == "prepared"
 
 
 def test_an_open_journal_is_paused_and_nothing_is_loaded_over_it(

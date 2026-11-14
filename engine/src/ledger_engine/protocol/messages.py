@@ -549,11 +549,10 @@ class PreviewResult(Message):
     `line` the line when known (a load Beancount failed on). `moved`: the disk changed during the job (run it again
     in a fresh engine). `paused`: an unfinished save's `.open` journal. `stale`: the published generation cannot be
     the plan's baseline (`unpublished`: none, or not complete; `other_generation`: not the plan's; `not_fresh`: not
-    this ledger's, another engine build's, or the disk changed since it was built); with `unpublished` and `not_fresh`
-    its `fingerprint` is the hint for the rebuild the sidecar queues (the generation's stamp when it decodes and names
-    this root, else the root's own set; S0118, BL-0255), with `other_generation` it has none. It runs the ledger's
-    plugins, so the engine is retired after it; it writes nothing. A new error's `line` is null when Beancount gives
-    none (it puts some at line 0 or -1)."""
+    this ledger's, another engine build's, or the disk changed since it was built); with `not_fresh` and a stamp of
+    this ledger, `fingerprint` is that stamp, the hint for the rebuild the sidecar queues (S0118, BL-0255), and it is
+    null otherwise. It runs the ledger's plugins, so the engine is retired after it; it writes nothing. A new error's
+    `line` is null when Beancount gives none (it puts some at line 0 or -1)."""
 
     outcome: Literal["prepared", "refused", "moved", "paused", "stale"]
     files: list[PreviewFile]

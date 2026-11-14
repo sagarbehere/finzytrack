@@ -5,9 +5,10 @@ ledger files, the mirror and the journals (engine/CLAUDE.md: a new op that reads
 folder's identity (`writes_app_folder` stays false, as for the `open`).
 
 - `preview` (`preview.run`): the published generation `generation` as the baseline, the ledger's files read, the
-  mutator's producer, the contract's prepare, the re-check. A `stale` answer with no fresh generation (`unpublished`,
-  `not_fresh`) carries its rebuild's hint in `fingerprint` (S0118, BL-0255). It runs the ledger's plugins: the
-  sidecar retires its engine after it. `app_local_data` must be the folder of this engine's lock (as for the save).
+  mutator's producer, the contract's prepare, the re-check. A `not_fresh` answer whose generation has a stamp of this
+  ledger carries it in `fingerprint`, the hint for the rebuild the sidecar queues (S0118, BL-0255). It runs the
+  ledger's plugins: the sidecar retires its engine after it. `app_local_data` must be the folder of this engine's
+  lock (as for the save).
 
 Any `OSError` (a ledger file that cannot be read) reaches the server as `engine.internal`: the preview did not run to
 a result.
@@ -29,7 +30,7 @@ from ledger_engine.protocol.save import app_cache_of, engine_build
 TABLE: Final = "engine.preview"
 TYPE_CHARS: Final = 128  # `PreviewError.type`
 TABLE_VERSION: Final = 2  # 1 (S0116): the baseline, the producer, the contract's prepare, the re-check; 2 (S0118):
-# a `stale` answer with no fresh generation carries the rebuild's hint (the stamp of this root, or the root's own set)
+# a `not_fresh` answer carries the generation's stamp of this ledger as the rebuild's hint
 
 
 class PreviewJob(Publisher, Protocol):

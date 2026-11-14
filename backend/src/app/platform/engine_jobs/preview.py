@@ -15,12 +15,14 @@ write-safety contract's steps 1-3 and writes nothing. Its answer becomes the job
     `WRITE_REFUSED_UNINTENDED_CHANGE {step}`; a check that could not run (the producer's plan, the load, a fault or an
     undecidable result in any step: INV-22) is `WRITE_REFUSED_CHECK_FAILED {step}`;
   - `stale` (the published generation is not the plan's baseline: none, another one, or not fresh) is
-    `WORKSPACE_NOT_READY {WARMING}`: the caller plans again once a fresh generation is published (BL-0106). When
-    there is none or it is not fresh (`unpublished`, `not_fresh`), the answer carries a hint fingerprint (the
-    generation's stamp, or the root's own set) and the job queues the workspace's background rebuild with it
-    (`rebuild.rebuild_submitter`; S0118, BL-0255), so "wait a moment and try again" comes true even after a rebuild
-    that ended without publishing; a refused submit is logged and changes nothing. `other_generation` queues none:
-    the mirror may be fresh, and the caller plans again on the current generation;
+    `WORKSPACE_NOT_READY {WARMING}`: the caller plans again once a fresh generation is published (BL-0106). A
+    `not_fresh` answer whose generation has a stamp of this ledger carries it as a hint, and the job queues the
+    workspace's background rebuild with it (`rebuild.rebuild_submitter`; S0118, BL-0255), so "wait a moment and try
+    again" comes true once that rebuild has published, even after one that ended without publishing; a refused
+    submit is logged and changes nothing. Every other `stale` answer queues none (S0118 round 1, red team RT-F1):
+    `unpublished` and a stamp that is not this ledger's or cannot be read leave no set that names the ledger's include
+    patterns, so a reopen builds the mirror (engine-jobs §15); `other_generation` may be fresh, and the caller plans
+    again on the current generation;
   - `paused` (an unfinished save's `.open` journal) is `WRITES_PAUSED {earlier_unfinished}`;
   - `moved` runs the job again in a fresh engine (the try ran the ledger's plugins, §5.1), at most `MAX_TRIES` tries
     in a row (§7), then `LEDGER_CHANGING`;
@@ -59,8 +61,9 @@ TEXT_STEPS: Final[frozenset[str]] = frozenset({"apply", "parse", "diff", "spans"
 NOT_RUN: Final[frozenset[str]] = frozenset({"fault", "undecidable"})
 """Reasons that say a step did not run to a decision (INV-22): a check failed, whatever the step."""
 ENCRYPTED: Final[frozenset[tuple[str, str]]] = frozenset({("apply", "encrypted_file"), ("load", "encrypted")})
-HINTED: Final[frozenset[str]] = frozenset({"unpublished", "not_fresh"})
-"""The `stale` reasons that carry a hint and queue the rebuild (BL-0255): no fresh generation describes the disk."""
+HINTED: Final[frozenset[str]] = frozenset({"not_fresh"})
+"""The `stale` reasons that may carry a hint and queue the rebuild (BL-0255, S0118 round 1): a generation of this
+ledger that no longer describes the disk; it carries one only when its stamp is this ledger's and can be read."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -119,12 +122,14 @@ def params_of(target: PreviewTarget, order: PreviewOrder) -> dict[str, object]:
 
 
 def _holds_together(a: PreviewAnswer) -> bool:
-    """Only a prepared plan has files, and it has a fingerprint; a fingerprint comes exactly with a prepared plan or a
-    `stale` answer with no fresh generation (`HINTED`: its hint, S0118); only a refusal names its step and reason, and
+    """Only a prepared plan has files, and it has a fingerprint; besides it, only a `stale` answer with a reason in
+    `HINTED` may carry one (its hint, S0118 round 1), with or without; only a refusal names its step and reason, and
     every refusal names both; only a stale answer says why it is stale; a refusal lists no new error."""
     prepared, refused, stale = a.outcome == "prepared", a.outcome == "refused", a.outcome == "stale"
-    hinted = stale and a.stale in HINTED
-    if prepared != bool(a.files) or (prepared or hinted) != (a.fingerprint is not None):
+    may_hint = stale and a.stale in HINTED
+    if prepared != bool(a.files) or (prepared and a.fingerprint is None):
+        return False
+    if not (prepared or may_hint) and a.fingerprint is not None:
         return False
     if refused != (a.step is not None) or refused != (a.reason is not None):
         return False
