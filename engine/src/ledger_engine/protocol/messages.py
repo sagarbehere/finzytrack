@@ -298,14 +298,26 @@ class SaveChange(Message):
     post: str
 
 
+class SaveConfine(Message):
+    """The test copy's folder as its mark recorded it when the copy was made (S0117 round 2; owner, 2026-11-14: "3"):
+    its real path, and its identity as the journal records a folder's (S0089): the drive's volume UUID, the file
+    system's type name and the folder's creation time in nanoseconds. The writer refuses unless the folder at that
+    path, with no link in it or above it, has that identity, and every file it writes lies inside it."""
+
+    path: AbsPath
+    volume: str = Field(min_length=36, max_length=36)
+    fs_type: str = Field(min_length=1, max_length=64)
+    born: int
+
+
 class SaveParams(Message):
     """A confirmed plan (§2's `save`): who saves (`session`, `job`, the workspace's registry key and lineage id), the
     ledger's root, the changes, the plan's fingerprint (`ledger_set.encode`'s text) and the app's machine-local folder.
     The gate reads the published mirror in the app's cache folder the engine was started with (`--app-cache`;
-    `design/specs/mirror/publish.md` §7; S0087): no request names it. `confine` (S0117 round 1; owner, 2026-11-14: "Go
-    with (2), fix it now"): the folder every file the save writes must lie in once the writer resolves it after the
-    gate, else `not_saved {outside_folder}` with nothing written; null for no confinement. Required, so a sender
-    always says which."""
+    `design/specs/mirror/publish.md` §7; S0087): no request names it. `confine` (S0117 rounds 1 and 2; owner,
+    2026-11-14: "Go with (2), fix it now", then "3"): the test copy's recorded folder (`SaveConfine`) that every file
+    the save writes must lie in, checked by the writer after the gate, else `not_saved {outside_folder}` with nothing
+    written; null for no confinement. Required, so a sender always says which."""
 
     session: SessionId
     job: JobName
@@ -315,7 +327,7 @@ class SaveParams(Message):
     changes: list[SaveChange] = Field(min_length=1)
     fingerprint: str = Field(min_length=1)
     app_local_data: AbsPath
-    confine: AbsPath | None
+    confine: SaveConfine | None
 
 
 type SaveOutcomeKind = Literal["saved", "refused", "not_saved", "unfinished"]
@@ -757,7 +769,12 @@ OPS: dict[str, OpSpec] = {
             "changes": [{"path": "/ledgers/L/main.bean", "pre": "0" * 64, "post": "2026-01-01 open Assets:Cash\n"}],
             "fingerprint": _FP,
             "app_local_data": _ALD,
-            "confine": "/ledgers/L",
+            "confine": {
+                "path": "/ledgers/L",
+                "volume": "0b3d5c1e-2f4a-4c6b-8d7e-9f0a1b2c3d4e",
+                "fs_type": "apfs",
+                "born": 1_731_580_000_000_000_000,
+            },
         },
         needs_engine_lock=True,
         writes_app_folder=True,

@@ -171,7 +171,7 @@ def test_no_save_op_runs_in_an_engine_without_the_engine_lock(
         {"fingerprint": "{}"},
         {"changes": [{"path": "/x", "pre": None, "post": "\ud800"}]},
         {"legacy_locks": []},  # ADR-0068 D4: a save tries no legacy lock, so its plan names none (S0071)
-        {"confine": "relative/folder"},  # S0117 round 1: an absolute folder or null
+        {"confine": "/an/absolute/folder"},  # S0117 round 2: the recorded folder (path and identity) or null
     ],
 )
 def test_malformed_params_are_refused_and_nothing_is_written(
@@ -491,21 +491,51 @@ def test_a_save_without_its_confine_field_is_refused(setup: tuple[Path, Path, di
     assert main.read_bytes() == PRE
 
 
+def _recorded(folder: Path) -> dict[str, Any]:
+    path = os.path.realpath(folder)
+    m = for_this_os().open_dir(path).mark()
+    return {"path": path, "volume": m.volume, "fs_type": m.fs_type, "born": m.born}
+
+
 def test_a_save_confined_to_another_folder_is_not_saved_outside_folder(
     setup: tuple[Path, Path, dict[str, Any]], tmp_path: Path
 ) -> None:
-    """S0117 round 1 (red team RT-F1; owner, 2026-11-14: "Go with (2), fix it now"): the op hands `confine` to the
-    writer, which refuses a file outside it after the gate, nothing written."""
+    """S0117 rounds 1 and 2 (owner, 2026-11-14: "Go with (2), fix it now", then "3"): the op hands the recorded folder
+    to the writer, which refuses a file outside it after the gate, nothing written."""
     main, ald, params = setup
     other = tmp_path / "other"
     other.mkdir()
-    params["confine"] = os.path.realpath(other)
+    params["confine"] = _recorded(other)
     reply = json.loads(engine(ald).handle(request("save", params), Channel(1, proceed=True)))
     assert reply["ok"], reply
     result = reply["result"]
     assert (result["outcome"], result["reason"], result["unchanged"]) == ("not_saved", "outside_folder", True)
     assert result["entry"] == os.path.realpath(other)
     assert main.read_bytes() == PRE
-    params["confine"] = os.path.realpath(main.parent)
+    params["confine"] = {**_recorded(main.parent), "born": _recorded(main.parent)["born"] + 1}  # another folder
+    reply = json.loads(engine(ald).handle(request("save", params), Channel(1, proceed=True)))
+    assert reply["result"]["reason"] == "outside_folder", reply
+    assert main.read_bytes() == PRE
+    params["confine"] = _recorded(main.parent)
     reply = json.loads(engine(ald).handle(request("save", params), Channel(1, proceed=True)))
     assert reply["result"]["outcome"] == "saved", reply
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        {"volume": "00000000-0000-0000-0000-000000000000"},  # the nil UUID names no drive
+        {"volume": "0B3D5C1E-2F4A-4C6B-8D7E-9F0A1B2C3D4E"},  # upper case: two spellings of one drive
+        {"fs_type": "not a type"},
+        {"path": "relative/folder"},
+        {"born": "1"},
+    ],
+)
+def test_a_malformed_confine_is_refused_and_nothing_is_written(
+    setup: tuple[Path, Path, dict[str, Any]], bad: dict[str, Any]
+) -> None:
+    main, ald, params = setup
+    params["confine"] = {**_recorded(main.parent), **bad}
+    reply = json.loads(engine(ald).handle(request("save", params), Channel(1, proceed=True)))
+    assert reply["error"]["key"] == "protocol.invalid_params", reply
+    assert main.read_bytes() == PRE

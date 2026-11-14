@@ -68,7 +68,7 @@ from ledger_engine.ledger import fingerprint as _fingerprint
 from ledger_engine.ledger import history, overlay
 from ledger_engine.ledger.core import journal
 from ledger_engine.ledger.core import paths as core_paths
-from ledger_engine.ledger.core.journal import Record, State
+from ledger_engine.ledger.core.journal import FolderEntry, Record, State
 from ledger_engine.ledger.core.ledger_set import Absent, Content, Fingerprint, Unreadable
 from ledger_engine.ledger.handles import join, sha256
 from ledger_engine.ledger.writer import (
@@ -127,10 +127,11 @@ class SavePlan:
     app_cache: str
     app_local_data: str
     app_folder: tuple[int, int]
-    confine: str | None = None
-    """S0117 round 1 (red team RT-F1; owner, 2026-11-14: "Go with (2), fix it now"): the folder every file the save
-    writes must lie in once the writer resolves it, after the gate (`writer._check_confined`: `outside_folder`, nothing
-    written); the sidecar names a test copy's folder for an unpromoted mutator's plan. None: no confinement."""
+    confine: FolderEntry | None = None
+    """S0117 rounds 1 and 2 (owner, 2026-11-14: "Go with (2), fix it now", then "3"): the test copy's folder as its
+    mark recorded it (its real path and identity) that every file the save writes must lie in, checked by the writer
+    after the gate (`writer._check_confined`: `outside_folder`, nothing written); the sidecar names it for an
+    unpromoted mutator's plan. None: no confinement."""
 
 
 class Job(Protocol):

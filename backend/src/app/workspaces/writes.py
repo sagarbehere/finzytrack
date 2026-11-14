@@ -34,16 +34,22 @@ the job before the save ends it `INTERNAL` (the scheduler's rule): each step fai
 changed only with the owner's signed clearance page (ADR-0045), never a setting or a request field: empty today. An
 unpromoted mutator's plan is confirmed only when the workspace carries a test-copy mark (`WriteTarget.copy`) and every
 file the plan writes, resolved through links as the save resolves them (ADR-0008 step 5: a linked file is written at
-its real path), lies inside the copy's folder, resolved too. **No workspace carries the mark yet:** the manifest's
+its real path), lies inside the copy's folder as the mark recorded it. The sidecar never resolves that folder: the
+mark holds its real path and identity, taken when the copy was made (S0117 round 2).
+**No workspace carries the mark yet:** the manifest's
 format 1 has no such field (an unknown field written by hand is ignored, EP-14), and the mark comes with the test copy
 (CAP-WS-TEST-COPY, M3), so no product code builds a `WriteTarget` with one, and every confirm on a real workspace is
 refused. The target is built by the sidecar from its own state (the open workspace's container, M2), never from a
 request. ADR-0014's second half, "and not in the file set of any non-copy workspace", needs the registry and the mark:
-TODO(BL-0267). **The engine holds it to the end** (S0117 round 1, red team RT-F1; owner, 2026-11-14: "Go with (2), fix
-it now"): the guard resolves the paths when the confirm is asked, and the save runs later; so the save request names
-the copy's folder, resolved now (`confinement`), and the engine's writer resolves every file again after the gate and
-refuses one outside that folder, or a folder that is no longer its own resolved path (`not_saved {outside_folder}`,
-nothing written). A link swapped in after the confirm gains nothing.
+TODO(BL-0267). **The engine checks it when it writes** (S0117 rounds 1 and 2; owner, 2026-11-14: "Go with (2), fix it
+now", then "3", `design/inbox/answered/20261114-test-copy-folder-identity.md`): the guard looks when the confirm is
+asked and the save runs later, so the save request carries the mark as recorded (`confinement`, one value, never
+resolved here), and the engine's writer, after the gate and before its first write, opens the folder at the recorded
+path (a link in it or above it refuses), checks the recorded identity (drive, file system, creation time: another
+folder at the path refuses), and refuses a file that resolves outside it (`not_saved {outside_folder}`, nothing
+written); its path guard then holds every folder written in until each write. A link or a folder swapped in after the
+copy was made gains nothing. Limit: a folder reached through a macOS firmlink spelling is not taken for its recorded
+real path (refused, fails closed).
 """
 
 from __future__ import annotations
@@ -63,7 +69,7 @@ from app.platform.engine import PreviewError
 from app.platform.engine_jobs.preview import NotPrepared, Prepared, PreviewOrder, PreviewTarget
 from app.platform.engine_jobs.preview import submit_preview as submit_preview_job
 from app.platform.engine_jobs.rebuild import RebuildTarget, rebuild_spec, rebuild_work
-from app.platform.engine_jobs.save import ChangeText, NotDone, SaveRequest, save_spec, save_work
+from app.platform.engine_jobs.save import ChangeText, NotDone, SaveConfine, SaveRequest, save_spec, save_work
 from app.platform.engine_jobs.scheduler import EngineJobs, Failed, JobContext, JobTicket, Work, WorkResult
 from app.platform.errors import (
     AckRequiredDetails,
@@ -85,9 +91,15 @@ ENCRYPTED_SUFFIXES: Final = (".gpg", ".asc")
 
 @dataclass(frozen=True, slots=True)
 class CopyMark:
-    """The workspace is a test copy (CAP-WS-TEST-COPY): the folder it was copied into."""
+    """The workspace is a test copy (CAP-WS-TEST-COPY): the folder it was copied into, as the copy recorded it when it
+    made the folder (S0117 round 2; owner, 2026-11-14: "3"): its real path and its identity, the engine's journal
+    folder identity (S0089): the drive's volume UUID, the file system's type name, the folder's creation time in ns.
+    Defined now; the test copy's job fills it (BL-0267, M3)."""
 
-    folder: Path
+    path: str
+    volume: str
+    fs_type: str
+    born: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -174,16 +186,17 @@ def _inside(folder: str, path: str) -> bool:
 
 
 def promotion_refusal(plan: WritePlan, target: WriteTarget) -> DomainError | None:
-    """Rule 6 (the module's docstring): None when the mutator is promoted, or the workspace is a test copy and every
-    file of the plan, resolved through links (where the save writes it), lies inside the copy's folder, resolved; else
-    `UNPROMOTED_MUTATOR_ON_REAL_LEDGER`. A resolution that fails (a missing file, a loop) refuses (INV-22)."""
+    """Rule 6, the early look (the module's docstring): None when the mutator is promoted, or the workspace is a test
+    copy and every file of the plan, resolved through links (where the save writes it), lies inside the copy's folder
+    at the mark's recorded path (never resolved here: S0117 round 2); else `UNPROMOTED_MUTATOR_ON_REAL_LEDGER`. A
+    resolution that fails (a missing file, a loop) refuses (INV-22). The engine checks it again when it writes."""
     if plan.mutator in PROMOTED:
         return None
     refused = error(ErrorCode.UNPROMOTED_MUTATOR_ON_REAL_LEDGER, UnpromotedDetails(plan.mutator))
     if target.copy is None:
         return refused
+    folder = target.copy.path
     try:
-        folder = os.path.realpath(target.copy.folder, strict=True)
         for f in plan.files:
             if not _inside(folder, os.path.realpath(f.path, strict=True)):
                 return refused
@@ -272,22 +285,22 @@ def _gone(services: WriteServices, target: WriteTarget, plan_id: str) -> ErrorCo
     return ErrorCode.PLAN_EXPIRED
 
 
-def confinement(plan: WritePlan, target: WriteTarget) -> str | None:
-    """The folder the engine's save must stay in (S0117 round 1, red team RT-F1; owner, 2026-11-14: "Go with (2), fix
-    it now"), for a plan `promotion_refusal` let through: a promoted mutator's save is not confined (None: a real
-    ledger may include files outside its root's folder, and its plan's fingerprint is the gate's to check); an
-    unpromoted one's is confined to the test copy's folder, resolved now, which the engine's writer requires to be its
-    own resolved path and every file to resolve inside, after the gate, before its first write. A folder that cannot
-    be resolved raises (`OSError`): nothing is queued (INV-22)."""
+def confinement(plan: WritePlan, target: WriteTarget) -> SaveConfine | None:
+    """What the engine's save must stay in (S0117 rounds 1 and 2; owner, 2026-11-14: "Go with (2), fix it now", then
+    "3"), for a plan `promotion_refusal` let through: a promoted mutator's save is not confined (None: a real ledger
+    may include files outside its root's folder, and its plan's fingerprint is the gate's to check); an unpromoted
+    one's is confined to the test copy's folder exactly as its mark recorded it (path and identity, the same value the
+    guard read; nothing resolved here), which the engine's writer checks after the gate."""
     if plan.mutator in PROMOTED:
         return None
     if target.copy is None:  # `promotion_refusal` refused it: never reached
         msg = "an unpromoted mutator's plan without a test copy reached the save"
         raise ValueError(msg)
-    return os.path.realpath(target.copy.folder, strict=True)
+    m = target.copy
+    return SaveConfine(m.path, m.volume, m.fs_type, m.born)
 
 
-def _confirm_work(services: WriteServices, target: WriteTarget, plan: WritePlan, confine: str | None) -> Work:
+def _confirm_work(services: WriteServices, target: WriteTarget, plan: WritePlan, confine: SaveConfine | None) -> Work:
     request = SaveRequest(
         session=services.session,
         workspace_key=target.workspace,

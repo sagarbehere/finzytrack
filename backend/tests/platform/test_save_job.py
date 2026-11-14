@@ -63,6 +63,7 @@ REQUEST = SaveRequest(
     changes=(ChangeText(MAIN, "0" * 64, "post\n"), ChangeText(NEW, None, "p\n")),
     fingerprint='{"document_files":[],"documents":[],"files":[],"globs":[],"modules":[],"root":"/L/main.bean","v":2}',
     app_local_data=Path("/app"),
+    confine=None,
 )
 BLANK: dict[str, object] = {
     "outcome": "saved",

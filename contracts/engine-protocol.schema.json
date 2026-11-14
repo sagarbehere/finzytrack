@@ -3607,6 +3607,42 @@
       "title": "SaveChange",
       "type": "object"
     },
+    "SaveConfine": {
+      "additionalProperties": false,
+      "description": "The test copy's folder as its mark recorded it when the copy was made (S0117 round 2; owner, 2026-11-14: \"3\"):\nits real path, and its identity as the journal records a folder's (S0089): the drive's volume UUID, the file\nsystem's type name and the folder's creation time in nanoseconds. The writer refuses unless the folder at that\npath, with no link in it or above it, has that identity, and every file it writes lies inside it.",
+      "properties": {
+        "path": {
+          "minLength": 1,
+          "pattern": "^/",
+          "title": "Path",
+          "type": "string"
+        },
+        "volume": {
+          "maxLength": 36,
+          "minLength": 36,
+          "title": "Volume",
+          "type": "string"
+        },
+        "fs_type": {
+          "maxLength": 64,
+          "minLength": 1,
+          "title": "Fs Type",
+          "type": "string"
+        },
+        "born": {
+          "title": "Born",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "path",
+        "volume",
+        "fs_type",
+        "born"
+      ],
+      "title": "SaveConfine",
+      "type": "object"
+    },
     "SaveOutcomeKind": {
       "enum": [
         "saved",
@@ -3832,7 +3868,7 @@
     },
     "SaveParams": {
       "additionalProperties": false,
-      "description": "A confirmed plan (§2's `save`): who saves (`session`, `job`, the workspace's registry key and lineage id), the\nledger's root, the changes, the plan's fingerprint (`ledger_set.encode`'s text) and the app's machine-local folder.\nThe gate reads the published mirror in the app's cache folder the engine was started with (`--app-cache`;\n`design/specs/mirror/publish.md` §7; S0087): no request names it. `confine` (S0117 round 1; owner, 2026-11-14: \"Go\nwith (2), fix it now\"): the folder every file the save writes must lie in once the writer resolves it after the\ngate, else `not_saved {outside_folder}` with nothing written; null for no confinement. Required, so a sender\nalways says which.",
+      "description": "A confirmed plan (§2's `save`): who saves (`session`, `job`, the workspace's registry key and lineage id), the\nledger's root, the changes, the plan's fingerprint (`ledger_set.encode`'s text) and the app's machine-local folder.\nThe gate reads the published mirror in the app's cache folder the engine was started with (`--app-cache`;\n`design/specs/mirror/publish.md` §7; S0087): no request names it. `confine` (S0117 rounds 1 and 2; owner,\n2026-11-14: \"Go with (2), fix it now\", then \"3\"): the test copy's recorded folder (`SaveConfine`) that every file\nthe save writes must lie in, checked by the writer after the gate, else `not_saved {outside_folder}` with nothing\nwritten; null for no confinement. Required, so a sender always says which.",
       "properties": {
         "session": {
           "pattern": "^[a-z0-9_]{1,64}$",
@@ -3885,15 +3921,12 @@
         "confine": {
           "anyOf": [
             {
-              "minLength": 1,
-              "pattern": "^/",
-              "type": "string"
+              "$ref": "#/$defs/SaveConfine"
             },
             {
               "type": "null"
             }
-          ],
-          "title": "Confine"
+          ]
         }
       },
       "required": [
@@ -3997,7 +4030,12 @@
                 "pre": "0000000000000000000000000000000000000000000000000000000000000000"
               }
             ],
-            "confine": "/ledgers/L",
+            "confine": {
+              "born": 1731580000000000000,
+              "fs_type": "apfs",
+              "path": "/ledgers/L",
+              "volume": "0b3d5c1e-2f4a-4c6b-8d7e-9f0a1b2c3d4e"
+            },
             "fingerprint": "{\"document_files\":[],\"documents\":[],\"files\":[],\"globs\":[],\"modules\":[],\"root\":\"/ledgers/L/main.bean\",\"v\":2}",
             "job": "j7",
             "lineage": "lin1",

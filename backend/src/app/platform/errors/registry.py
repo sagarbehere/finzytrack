@@ -411,14 +411,18 @@ def specs() -> tuple[ErrorSpec, ...]:
             # confirmed is PLAN_ALREADY_CONFIRMED instead (`PlanStore.used`)
             message="This preview is no longer available, so Finzytrack did not save the change this time.",
             data_safe=True,  # this request wrote nothing
-            next_step="Preview the change again.",
+            # S0117 round 2 (red team RT2-F2, verifier V-R2-3): after a restart, or 256 later confirms, the store no
+            # longer knows a used id: never invite a second write of a change that may be saved (BL-0268)
+            next_step="Check your ledger first: an earlier confirm may have saved this change.",
             details=None,  # expired, let go, dropped by a switch, or another workspace's: one answer for all
         ),
         ErrorSpec(
             ErrorCode.PLAN_ALREADY_CONFIRMED,
             ErrorClass.CONFLICT,
             retryable=False,  # a retry, a double click or a second tab: the first confirm's answer is the one to read
-            message="This change was already confirmed.",
+            # S0117 round 2 (red team RT2-F3): the plan is taken when its job starts, so the first confirm may have been
+            # refused after that: "sent to be saved" is true either way
+            message="This change was already sent to be saved.",
             data_safe=True,  # this request wrote nothing; the first confirm's own answer says what it did
             next_step="Check your ledger before you preview it again.",
             details=None,

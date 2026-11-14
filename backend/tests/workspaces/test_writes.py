@@ -91,6 +91,15 @@ class Ids:
         return f"plan-{self.n}"
 
 
+IDENTITY = ("0b3d5c1e-2f4a-4c6b-8d7e-9f0a1b2c3d4e", "apfs", 1_731_580_000_000_000_000)
+
+
+def mark(folder: Path) -> CopyMark:
+    """A test copy's mark as the copy job records it: the folder's real path and its identity (here a fixed one: the
+    engine is faked, so only the sidecar's handling of the value is tested)."""
+    return CopyMark(os.path.realpath(folder), *IDENTITY)
+
+
 def sha(text: str) -> str:
     return hashlib.sha256(text.encode()).hexdigest()
 
@@ -144,7 +153,7 @@ class Rig:
             lineage="lin1",
             app_local_data=tmp / "app",
             app_cache=tmp / "cache",
-            copy=CopyMark(self.folder),
+            copy=mark(self.folder),
         )
 
     def answer(self, new_errors: tuple[str, ...] = (), **kw: object) -> dict[str, object]:
@@ -439,16 +448,39 @@ def test_acknowledgements_where_none_is_listed_are_ack_unexpected(rig: Rig) -> N
     assert isinstance(rig.confirm(p), Saved)
 
 
-def test_an_unpromoted_mutators_save_is_confined_to_the_test_copys_resolved_folder(rig: Rig, tmp_path: Path) -> None:
-    """S0117 round 1 (red team RT-F1; owner, 2026-11-14: "Go with (2), fix it now"): the save request names the copy's
-    folder as resolved at the confirm (through a link to it here), for the engine's writer to hold after the gate."""
-    link = tmp_path / "copy-link"
-    link.symlink_to(rig.folder)
+def test_an_unpromoted_mutators_save_is_confined_to_the_test_copys_recorded_folder(rig: Rig) -> None:
+    """S0117 rounds 1 and 2 (owner, 2026-11-14: "Go with (2), fix it now", then "3"): the save request carries the
+    mark as recorded, path and identity, for the engine's writer to check after the gate; nothing resolved here."""
     p = rig.preview()
     rig.script_saved()
-    assert isinstance(rig.confirm(p, target=dataclasses.replace(rig.target, copy=CopyMark(link))), Saved)
+    assert isinstance(rig.confirm(p), Saved)
     sent = [params for _, op, params in rig.engine.params if op == "save"]
-    assert sent[0]["confine"] == os.path.realpath(rig.folder)
+    assert rig.target.copy is not None
+    assert sent[0]["confine"] == {
+        "path": rig.target.copy.path,
+        "volume": IDENTITY[0],
+        "fs_type": IDENTITY[1],
+        "born": IDENTITY[2],
+    }
+
+
+def test_the_sidecar_never_resolves_the_copys_folder(rig: Rig, monkeypatch: pytest.MonkeyPatch) -> None:
+    """V-R2-1 / V-R2-2: the folder is never looked up by the sidecar (it would follow a link put in its place); only
+    the plan's files are resolved, and never the mark's path."""
+    asked: list[str] = []
+    real = os.path.realpath
+
+    def spy(path: object, *, strict: bool = False) -> str:
+        asked.append(str(path))
+        return real(str(path), strict=strict)
+
+    p = rig.preview()
+    rig.script_saved()
+    monkeypatch.setattr(os.path, "realpath", spy)
+    assert isinstance(rig.confirm(p), Saved)
+    assert rig.target.copy is not None
+    assert rig.target.copy.path not in asked
+    assert asked == [str(rig.main)]
 
 
 def test_a_promoted_mutators_save_is_not_confined(rig: Rig, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -471,7 +503,7 @@ def test_every_file_of_the_plan_must_lie_in_the_copy(tmp_path: Path) -> None:
     (copy / "main.bean").write_text("x\n")
     (real / "accounts.bean").write_text("y\n")
     files = tuple(PlannedFile(str(p), "a" * 64, "b" * 64, "z\n") for p in (copy / "main.bean", real / "accounts.bean"))
-    target = WriteTarget("k1", str(copy / "main.bean"), "lin1", tmp_path, tmp_path, CopyMark(copy))
+    target = WriteTarget("k1", str(copy / "main.bean"), "lin1", tmp_path, tmp_path, mark(copy))
     out = promotion_refusal(make_plan(files=files), target)
     assert out is not None
     assert out.code == ErrorCode.UNPROMOTED_MUTATOR_ON_REAL_LEDGER
@@ -505,7 +537,7 @@ def test_a_promoted_mutator_is_confirmed_on_a_real_workspace(rig: Rig, monkeypat
 
 
 def test_a_test_copy_whose_file_lies_outside_its_folder_is_refused(rig: Rig, tmp_path: Path) -> None:
-    elsewhere = dataclasses.replace(rig.target, copy=CopyMark(tmp_path / "another"))
+    elsewhere = dataclasses.replace(rig.target, copy=mark(tmp_path / "another"))
     (tmp_path / "another").mkdir()
     p = rig.preview(target=elsewhere)
     assert code_of(rig.confirm(p, target=elsewhere)) == ErrorCode.UNPROMOTED_MUTATOR_ON_REAL_LEDGER
@@ -526,13 +558,16 @@ def test_a_test_copy_file_that_links_out_of_its_folder_is_refused(rig: Rig, tmp_
     assert (real / "main.bean").read_text() == rig.before
 
 
-def test_a_test_copy_folder_that_is_a_link_is_judged_by_where_it_leads(rig: Rig, tmp_path: Path) -> None:
-    """The mark's folder and the file are both resolved: a copy reached through a link of its own is still inside."""
+def test_a_mark_whose_path_is_a_link_to_the_copy_is_not_followed(rig: Rig, tmp_path: Path) -> None:
+    """S0117 round 2 (V-R2-1, RT2-F1; inverts round 1's test, which pinned the hole): the mark's path is taken as
+    recorded, never resolved; a mark naming a link is not the copy's folder, so the guard refuses (the copy job records
+    the real path)."""
     link = tmp_path / "copy-link"
     link.symlink_to(rig.folder)
     p = rig.preview()
-    rig.script_saved()
-    assert isinstance(rig.confirm(p, target=dataclasses.replace(rig.target, copy=CopyMark(link))), Saved)
+    target = dataclasses.replace(rig.target, copy=CopyMark(str(link), *IDENTITY))
+    assert code_of(rig.confirm(p, target=target)) == ErrorCode.UNPROMOTED_MUTATOR_ON_REAL_LEDGER
+    assert rig.saves() == 0
 
 
 def test_a_folder_beside_the_copy_whose_name_starts_with_it_is_outside(tmp_path: Path) -> None:
@@ -540,7 +575,7 @@ def test_a_folder_beside_the_copy_whose_name_starts_with_it_is_outside(tmp_path:
     (tmp_path / "copy").mkdir()
     (tmp_path / "copy-2").mkdir()
     (tmp_path / "copy-2" / "main.bean").write_text("x")  # it resolves: only the folder test can refuse it
-    target = WriteTarget("k1", "/r", "lin1", tmp_path, tmp_path, CopyMark(tmp_path / "copy"))
+    target = WriteTarget("k1", "/r", "lin1", tmp_path, tmp_path, mark(tmp_path / "copy"))
     f = PlannedFile(str(tmp_path / "copy-2" / "main.bean"), "a" * 64, "b" * 64, "x")
     p = make_plan(files=(f,))
     assert promotion_refusal(p, target) is not None
@@ -549,7 +584,7 @@ def test_a_folder_beside_the_copy_whose_name_starts_with_it_is_outside(tmp_path:
 def test_a_resolution_that_fails_refuses(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """INV-22: a guard that cannot decide refuses."""
     (tmp_path / "main.bean").write_text("x")
-    target = WriteTarget("k1", "/r", "lin1", tmp_path, tmp_path, CopyMark(tmp_path))
+    target = WriteTarget("k1", "/r", "lin1", tmp_path, tmp_path, mark(tmp_path))
     p = make_plan(files=(PlannedFile(str(tmp_path / "main.bean"), "a" * 64, "b" * 64, "x"),))
     assert promotion_refusal(p, target) is None
 

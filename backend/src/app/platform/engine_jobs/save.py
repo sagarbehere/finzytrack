@@ -29,6 +29,7 @@ Session ids are lower case only (`new_session_id`), so two sessions never differ
 
 from __future__ import annotations
 
+import dataclasses
 import uuid
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
@@ -94,6 +95,19 @@ class ChangeText:
 
 
 @dataclass(frozen=True, slots=True)
+class SaveConfine:
+    """A test copy's folder as its mark recorded it when the copy was made (S0117 round 2; owner, 2026-11-14: "3"): its
+    real path and its identity (the drive's volume UUID, the file system's type name, the folder's creation time in
+    ns: the engine's journal folder identity, S0089). Sent as it is, never resolved by the sidecar; the engine's writer
+    refuses unless the folder at that path, with no link in it or above it, has that identity."""
+
+    path: str
+    volume: str
+    fs_type: str
+    born: int
+
+
+@dataclass(frozen=True, slots=True)
 class SaveRequest:
     """A confirmed plan (the preview's, S0117: `app.workspaces.writes`): who saves, the root, the changes, the plan's
     fingerprint (its canonical encoding, opaque here) and the app's machine-local folder (no legacy lock: a save tries
@@ -111,10 +125,11 @@ class SaveRequest:
     changes: tuple[ChangeText, ...]
     fingerprint: str
     app_local_data: Path
-    confine: str | None = None
-    """S0117 round 1 (red team RT-F1; owner, 2026-11-14: "Go with (2), fix it now"): the folder every file the save
-    writes must lie in when the engine's writer resolves it after the gate (`not_saved {outside_folder}` otherwise);
-    the confirm names a test copy's resolved folder for an unpromoted mutator, None for a promoted one."""
+    confine: SaveConfine | None
+    """S0117 rounds 1 and 2 (owner, 2026-11-14: "Go with (2), fix it now", then "3"): the test copy's recorded folder
+    every file the save writes must lie in, checked by the engine's writer after the gate (`not_saved {outside_folder}`
+    otherwise); the confirm sends it for an unpromoted mutator's plan, None for a promoted one's. No default (round 2,
+    red team RT2-F4): every caller says which."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -158,7 +173,7 @@ def params_of(r: SaveRequest, job: str) -> dict[str, object]:
         "changes": [{"path": c.path, "pre": c.pre, "post": c.post} for c in r.changes],
         "fingerprint": r.fingerprint,
         "app_local_data": str(r.app_local_data),
-        "confine": r.confine,
+        "confine": None if r.confine is None else dataclasses.asdict(r.confine),
     }
 
 

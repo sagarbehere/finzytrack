@@ -17,12 +17,15 @@ from typing import Final, Protocol
 
 from ledger_engine.fs.this_os import for_this_os
 from ledger_engine.ledger import save as sv
+from ledger_engine.ledger.core import journal
+from ledger_engine.ledger.core.journal import BadRecordError, FolderEntry
 from ledger_engine.ledger.core.ledger_set import UndecodableError, decode
 from ledger_engine.ledger.writer import BadPlanError, Change, NotSaved, Reason, Unfinished
 from ledger_engine.protocol.app_folder import folder_of_lock
 from ledger_engine.protocol.messages import (
     DecisionScalar,
     Message,
+    SaveConfine,
     SaveOutcomeParams,
     SaveOutcomeResult,
     SaveParams,
@@ -167,6 +170,20 @@ def _app_folder_of(ctx: SaveJob) -> tuple[int, int]:
     return identity
 
 
+def _confine(c: SaveConfine | None) -> FolderEntry | None:
+    """The request's test-copy folder as the journal's folder entry (S0117 round 2), checked by that entry's own rules
+    (`journal.check_folder`: an absolute path, a lower-case non-nil UUID, a file-system type name)."""
+    if c is None:
+        return None
+    entry = FolderEntry(c.path, c.volume, c.fs_type, c.born)
+    try:
+        journal.check_folder(entry)
+    except BadRecordError as e:
+        msg = f"params.confine: {e}"
+        raise BadParamsError(msg) from None
+    return entry
+
+
 def save(params: Message, ctx: SaveJob) -> Message:
     assert isinstance(params, SaveParams)  # noqa: S101 (the handler's own params model)
     fs = for_this_os()
@@ -188,7 +205,7 @@ def save(params: Message, ctx: SaveJob) -> Message:
         app_cache=app_cache_of(ctx),
         app_local_data=ald,
         app_folder=_app_folder_of(ctx),
-        confine=params.confine,
+        confine=_confine(params.confine),
     )
     ports = sv.Ports(fs)
     try:

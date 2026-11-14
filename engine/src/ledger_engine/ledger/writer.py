@@ -2,7 +2,8 @@
 S0060): what a save does after its commit point (§6.1 step 7), through the file-system port only.
 
 0. **Before the first effect** (`_prepare`; every refusal here writes nothing): every path resolved (§6.3), inside the
-   folder the plan confines it to when it names one (`Commit.confine`, `_check_confined`: `outside_folder`; S0117), and
+   test copy's folder, at its recorded path with its recorded identity, when the plan names one (`Commit.confine`,
+   `_check_confined`: `outside_folder`; S0117), and
    checked to be the file the plan meant: a replaced file a regular file (never a link, a FIFO or a folder), not
    locked (`uchg`), not hard-linked (`handles.hard_links`, the owner's decision point), the same object its
    canonical path names (`st_dev`, `st_ino`); a created path free of any entry (a dangling link included) under an
@@ -82,6 +83,7 @@ from ledger_engine.ledger.handles import (
     displaced,
     drive_of,
     folder_blocked,
+    folder_verdict,
     hard_links,
     keep,
     known_birth,
@@ -130,8 +132,9 @@ class Commit:
     journal_dir: str
     backups_dir: str
     anchor: Anchor | None = None
-    confine: str | None = None
-    """The folder every file the save writes or creates must lie in once resolved (`_check_confined`), or None."""
+    confine: FolderEntry | None = None
+    """The test copy's folder as its mark recorded it, path and identity, that every file the save writes or creates
+    must lie in once resolved (`_check_confined`), or None."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -194,9 +197,10 @@ class Reason(StrEnum):
     # network share possibly our own retried `mkdir`, so not "the ledger changed" (S0100, BL-0187)
     APP_FOLDER_MISSING = "app_folder_missing"  # the app's own folder is gone: the sidecar makes it at start, the save
     # never makes it or writes above it (S0100, BL-0163 (a); owner, 2026-11-10: "Sidecar makes it once (Recommended)")
-    OUTSIDE_FOLDER = "outside_folder"  # a file the save writes resolves outside the folder the plan confines it to,
-    # or that folder is not its own resolved path now (S0117 round 1, red team RT-F1; owner, 2026-11-14: "Go with (2),
-    # fix it now"): an unpromoted mutator's save stays in its test copy whatever link is swapped in after the confirm
+    OUTSIDE_FOLDER = "outside_folder"  # a file the save writes resolves outside the test copy's folder, or that folder
+    # is not at its recorded path with its recorded identity now (S0117 rounds 1 and 2; owner, 2026-11-14: "Go with
+    # (2), fix it now", then "3"): an unpromoted mutator's save stays in its test copy whatever link or folder is
+    # swapped in after the copy was made
 
 
 class Step(StrEnum):
@@ -376,31 +380,39 @@ def _target(fs: FileSystem, handles: Handles, index: int, c: Commit, ch: Change)
     return _Target(index, ch, canonical, key, parent, parent_key, base, *names, None, new_dirs, r.rest, tag)
 
 
-def _check_confined(fs: FileSystem, confine: str | None, targets: tuple[_Target, ...]) -> None:
-    """S0117 round 1 (red team RT-F1; owner, 2026-11-14: "Go with (2), fix it now"): before the first effect and after
-    the gate (the writer runs past the commit point), every file the save writes or creates, as resolved here (every
-    link followed: where the save writes it), lies inside `confine`, compared by `path_key`, component by component.
-    `confine` must exist, not be the root, and resolve to itself (no link in or above it now: the sidecar sends the
-    folder it resolved when it checked the plan); a file there confines nothing in it, so every target refuses. The
-    writer's path guard then holds every folder the save writes in at its recorded canonical path until its write
-    (§6.3: a link put in place of the folder or above it later makes the descriptor's real path differ), and each
-    replaced file's identity is checked again through its folder's handle (`_check_replaced`). Else `outside_folder`,
-    naming the file (None when the folder itself fails) and the folder. None: no confinement (a promoted mutator's
-    save)."""
+def _check_confined(
+    fs: FileSystem, handles: Handles, confine: FolderEntry | None, targets: tuple[_Target, ...]
+) -> None:
+    """The test copy's folder held at the write (S0117 rounds 1 and 2; owner, 2026-11-14: "Go with (2), fix it now",
+    then "3", `design/inbox/answered/20261114-test-copy-folder-identity.md`). `confine` is the folder as the test-copy
+    mark recorded it when the copy was made: its real path and its identity (drive, file system, creation time: the
+    journal's own `FolderEntry`, S0089). Past the commit point and before the first effect:
+    - the folder's handle is opened at the recorded path through the writer's `Handles`, whose path guard refuses a
+      descriptor whose real path is not that path (a link in place of the folder or of any folder above it);
+    - its `FolderMark`, asked through that descriptor, must be the recorded one (`handles.folder_verdict`: another
+      drive, file system or creation time, so a folder deleted and made again, or one moved into its place, refuses);
+    - every file the save writes or creates, resolved here (every link followed: where the save writes it), must lie
+      inside it, compared by `path_key`, component by component.
+    After this check the path guard holds the folder and every folder the save writes in at their recorded paths until
+    each write through the same descriptors (§6.3), and each replaced file's identity is checked again through its
+    folder's handle (`_check_replaced`). Else `outside_folder`, naming the file (None when the folder itself fails) and
+    the folder. None: no confinement (a promoted mutator's save). The root, or a mark with no creation time, is never a
+    test copy's folder: refused."""
     if confine is None:
         return
+    path = confine.canonical_path
     try:
-        parts = split_absolute(confine)
-        r = fs.resolve(confine)
-        key = core_paths.path_key(r)
-        given = "/" + "/".join(fold(p, rule) for p, rule in zip(parts, r.rules, strict=True))
-        if r.rest or not r.existing or given != key:
-            raise _Stop(Reason.OUTSIDE_FOLDER, None, confine)
-    except (OSError, ValueError):
-        raise _Stop(Reason.OUTSIDE_FOLDER, None, confine) from None
+        if not split_absolute(path) or confine.born is None:
+            raise _Stop(Reason.OUTSIDE_FOLDER, None, path)
+        verdict = folder_verdict(confine, handles.at(path).mark())
+        key = core_paths.path_key(fs.resolve(path))
+    except (OSError, ValueError, PathMovedError):
+        raise _Stop(Reason.OUTSIDE_FOLDER, None, path) from None
+    if verdict != "same":
+        raise _Stop(Reason.OUTSIDE_FOLDER, None, path)
     for t in targets:
         if not t.key.startswith(key.rstrip("/") + "/"):
-            raise _Stop(Reason.OUTSIDE_FOLDER, t.canonical, confine)
+            raise _Stop(Reason.OUTSIDE_FOLDER, t.canonical, path)
 
 
 def _check_folder(h: DirHandle, canonical: str, folder: str) -> Mode:
@@ -802,7 +814,7 @@ def durable_commit(fs: FileSystem, c: Commit) -> Outcome:
     try:
         try:
             targets = tuple(_target(fs, handles, i, c, ch) for i, ch in enumerate(c.changes))
-            _check_confined(fs, c.confine, targets)
+            _check_confined(fs, handles, c.confine, targets)
             plan = _prepare(fs, handles, c, targets)
             backups = _backup_names(plan)
             record = _record(c, plan, name, backups)

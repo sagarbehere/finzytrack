@@ -424,6 +424,7 @@ def test_a_second_background_save_of_the_products_plain_work_is_refused(rig: Rig
         changes=(ChangeText(str(tmp_path / "main.bean"), None, "x"),),
         fingerprint="fp",
         app_local_data=tmp_path,
+        confine=None,
     )
     save = submit_save(rig.jobs, W1, request, clock=CLOCK, background=True)
     again = submit_save(rig.jobs, W1, request, clock=CLOCK, background=True)
@@ -1516,6 +1517,7 @@ def test_with_the_real_engine_a_save_job_lands_and_retires_its_engine(tmp_path: 
             changes=(ChangeText(str(main), hashlib.sha256(pre).hexdigest(), post.decode()),),
             fingerprint=fp,
             app_local_data=app,
+            confine=None,
         )
         # the save's work alone (no rebuild after it): the only engine retired below is the save's own (S0069 V6)
         ticket = jobs.submit(save_spec(W1), save_work(request))
@@ -1556,6 +1558,7 @@ def test_with_the_real_engine_a_landed_save_is_published_and_a_pinned_read_sees_
         changes=(ChangeText(str(main), hashlib.sha256(pre).hexdigest(), post.decode()),),
         fingerprint=fp,
         app_local_data=tmp_path,
+        confine=None,
     )
     jobs, client = real_rig(tmp_path)
     try:

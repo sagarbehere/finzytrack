@@ -74,6 +74,7 @@ REQUEST = SaveRequest(
     changes=(ChangeText(MAIN, "0" * 64, "post\n"),),
     fingerprint=FP,
     app_local_data=ALD,
+    confine=None,
 )
 PARAMS: dict[str, object] = {
     "root": MAIN,

@@ -54,6 +54,7 @@ REQUEST = SaveRequest(
     changes=(ChangeText("/L/main.bean", "0" * 64, "x"),),
     fingerprint="{}",
     app_local_data=Path("/app"),
+    confine=None,
 )
 
 

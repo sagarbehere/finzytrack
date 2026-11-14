@@ -17,7 +17,9 @@ from __future__ import annotations
 
 import dataclasses
 import hashlib
+import json
 import os
+import shutil
 import subprocess
 import threading
 from collections.abc import Iterator
@@ -44,7 +46,7 @@ from app.platform.engine_jobs.save import NotDone, Saved
 from app.platform.engine_jobs.scheduler import Done, EngineJobs, Failed, JobContext, JobTicket, WorkResult
 from app.platform.engine_supervision import RestartPolicy
 from app.platform.errors import ChangeNotSavedDetails, ErrorCode
-from app.platform.plans import PlannedFile, PlanStore, new_plan
+from app.platform.plans import PlannedFile, PlanStore, WritePlan, new_plan
 from app.workspaces import writes
 from app.workspaces.writes import CopyMark, Previewed, WriteServices, WriteTarget, mirror_generation
 
@@ -70,6 +72,28 @@ def python() -> Path:
     if not found.exists():
         pytest.fail("engine/.venv is missing: run `uv sync --locked` in engine/ (the engine tests need it)")
     return found
+
+
+def recorded_mark(folder: Path) -> CopyMark:
+    """The test-copy mark as the copy job will record it when it makes the folder (BL-0267, M3): its real path and its
+    identity, read by the engine's own file-system port (the journal's folder identity, S0089), in the engine's
+    interpreter (the sidecar never imports the engine)."""
+    path = os.path.realpath(folder)
+    code = (
+        "import json, sys; from ledger_engine.fs.this_os import for_this_os; "
+        "m = for_this_os().open_dir(sys.argv[-1]).mark(); "
+        "print(json.dumps([m.volume, m.fs_type, m.born]))"
+    )
+    out = subprocess.run(  # noqa: S603 (fixed argv: the engine's interpreter under the sidecar's bootstrap)
+        [*bootstrap_argv(python(), venv_site(ENGINE_VENV), code), path],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=True,
+        env=engine_env(os.environ),
+    )
+    volume, fs_type, born = json.loads(out.stdout)
+    return CopyMark(path, volume, fs_type, born)
 
 
 def snapshot(folder: Path) -> dict[str, bytes]:
@@ -121,7 +145,7 @@ class Rig:
             lineage="lin1",
             app_local_data=app.path,
             app_cache=self.cache,
-            copy=CopyMark(self.folder),
+            copy=recorded_mark(self.folder),
         )
         self.plans = PlanStore(CLOCK)
         self.services = WriteServices(jobs=self.jobs, plans=self.plans, clock=CLOCK, ids=_Ids(), session="s1")
@@ -309,23 +333,97 @@ def test_a_link_to_the_real_ledger_swapped_in_after_the_confirm_writes_nothing(r
     assert rig.main.is_symlink()
 
 
-def test_the_copys_folder_swapped_for_a_link_after_the_confirm_writes_nothing(rig: Rig, tmp_path: Path) -> None:
-    """A folder link higher up: the copy's folder moved away and a link to it put in its place."""
+def _real_ledger(tmp_path: Path) -> Path:
+    """The real ledger the test copy was made from: the same file, the same bytes."""
+    real = tmp_path.resolve() / "real"
+    real.mkdir()
+    (real / "main.bean").write_bytes(BEFORE)
+    return real
+
+
+def _outside_folder(done: object, folder: Path) -> None:
+    assert isinstance(done, Done), done
+    assert isinstance(done.value, NotDone), done.value
+    details = done.value.error.details
+    assert isinstance(details, ChangeNotSavedDetails)
+    assert (details.reason, details.folder, details.unchanged) == ("outside_folder", str(folder), True)
+
+
+@pytest.mark.parametrize("to", ["the_moved_copy", "the_real_ledger"])
+def test_the_copys_folder_swapped_for_a_link_after_the_confirm_writes_nothing(
+    rig: Rig, tmp_path: Path, to: str
+) -> None:
+    """The copy's folder moved away and a link put at its path, while the confirm waits in the queue: to the moved
+    copy itself, or to the real ledger's folder (round 2, V-R2-1 / RT2-F1)."""
+    real = _real_ledger(tmp_path)
     p = rig.preview()
     release = _hold_the_engine(rig)
     ticket = _queued_confirm(rig, p)
     moved = tmp_path.resolve() / "moved"
     rig.folder.rename(moved)
-    rig.folder.symlink_to(moved)
-    before = snapshot(moved)
+    rig.folder.symlink_to(moved if to == "the_moved_copy" else real)
+    before = (snapshot(moved), snapshot(real))
     release.set()
-    done = ticket.wait(DEADLINE)
-    assert isinstance(done, Done), done
-    assert isinstance(done.value, NotDone), done.value
-    details = done.value.error.details
-    assert isinstance(details, ChangeNotSavedDetails)
-    assert (details.reason, details.folder, details.unchanged) == ("outside_folder", str(rig.folder), True)
-    assert snapshot(moved) == before
+    _outside_folder(ticket.wait(DEADLINE), rig.folder)
+    assert (snapshot(moved), snapshot(real)) == before
+
+
+def no_early_look(_plan: WritePlan, _target: WriteTarget) -> None:
+    """The sidecar's early guard switched off, to show the engine's own check."""
+
+
+@pytest.mark.parametrize("when", ["before_the_preview", "between_the_preview_and_the_confirm"])
+def test_the_copys_folder_replaced_by_a_link_to_the_real_ledger_writes_nothing(
+    rig: Rig, tmp_path: Path, when: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """S0117 round 2 (verifier V-R2-1, red team RT2-F1; owner, 2026-11-14: "3"): the sidecar never resolves the folder
+    and the engine checks the recorded path and identity, so a link to the real ledger's folder at the copy's path,
+    made at any time, is refused when the save writes; the real ledger byte-identical."""
+    real = _real_ledger(tmp_path)
+
+    def swap() -> None:
+        rig.folder.rename(tmp_path.resolve() / "moved")
+        rig.folder.symlink_to(real)
+
+    if when == "before_the_preview":
+        swap()
+    p = rig.preview()
+    if when != "before_the_preview":
+        swap()
+    before = snapshot(real)
+    assert code_of(rig.confirm(p)) == ErrorCode.UNPROMOTED_MUTATOR_ON_REAL_LEDGER  # the early look sees it
+    monkeypatch.setattr(writes, "promotion_refusal", no_early_look)  # without it, the engine refuses
+    _outside_folder(Done(rig.confirm(p)), rig.folder)
+    assert snapshot(real) == before
+
+
+def test_the_copys_folder_replaced_after_the_guard_writes_nothing(rig: Rig, tmp_path: Path) -> None:
+    """Between the early guard and the save (V-R2-2's window): the value the guard read is the one sent; the engine
+    checks it when it writes."""
+    real = _real_ledger(tmp_path)
+    p = rig.preview()
+    release = _hold_the_engine(rig)
+    ticket = _queued_confirm(rig, p)  # the guard passed, `confine` built from the same mark
+    rig.folder.rename(tmp_path.resolve() / "moved")
+    real.rename(rig.folder)  # no link at all: the real ledger's own folder moved to the copy's path
+    before = snapshot(rig.folder)
+    release.set()
+    _outside_folder(ticket.wait(DEADLINE), rig.folder)
+    assert snapshot(rig.folder) == before
+
+
+def test_a_folder_made_again_at_the_copys_path_writes_nothing(rig: Rig, tmp_path: Path) -> None:
+    """The right path, another folder: deleted and made again (another creation time)."""
+    p = rig.preview()
+    release = _hold_the_engine(rig)
+    ticket = _queued_confirm(rig, p)
+    shutil.rmtree(rig.folder)
+    rig.folder.mkdir()
+    rig.main.write_bytes(BEFORE)
+    before = snapshot(rig.folder)
+    release.set()
+    _outside_folder(ticket.wait(DEADLINE), rig.folder)
+    assert snapshot(rig.folder) == before
 
 
 def test_a_second_confirm_of_a_saved_plan_is_already_confirmed(rig: Rig) -> None:

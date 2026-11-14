@@ -236,6 +236,11 @@ SAVE: tuple[Row, ...] = (
         lambda: _not_saved("outside_folder", folder=FOLDER, unchanged=True),
     ),
     (
+        "msg:save.outside_folder_moved",
+        "`CHANGE_NOT_SAVED {outside_folder}` with no file: the test copy's folder moved or replaced (S0117 round 2)",
+        lambda: _not_saved("outside_folder", path=None, folder=FOLDER, unchanged=True),
+    ),
+    (
         "msg:save.app_folder_missing",
         "`CHANGE_NOT_SAVED {app_folder_missing}`: the app's own folder is gone (S0100, BL-0163 (a))",
         lambda: _not_saved("app_folder_missing", path=None, folder=FOLDER, unchanged=True),

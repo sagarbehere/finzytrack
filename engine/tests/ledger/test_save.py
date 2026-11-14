@@ -34,7 +34,7 @@ from ledger_engine.fs.this_os import for_this_os
 from ledger_engine.ledger import overlay, writer
 from ledger_engine.ledger import save as sv
 from ledger_engine.ledger.core import journal
-from ledger_engine.ledger.core.journal import FileEntry, Record, State
+from ledger_engine.ledger.core.journal import FileEntry, FolderEntry, Record, State
 from ledger_engine.ledger.core.ledger_set import Fingerprint, LedgerSet, as_before
 from ledger_engine.ledger.fingerprint import observe as observe_set
 from ledger_engine.ledger.policy import DesktopPolicy
@@ -836,62 +836,135 @@ def test_S0102_BL0245_a_target_replaced_by_a_fifo_never_hangs_the_gate(led: Ledg
     assert not (led.ald / "local").exists()
 
 
-# -- S0117 round 1 (red team RT-F1; owner, 2026-11-14: "Go with (2), fix it now"): the save stays in its folder --------
+# -- S0117 rounds 1 and 2 (owner, 2026-11-14: "Go with (2), fix it now", then "3"): the save stays in the test copy's
+# folder, recorded by its real path and identity when the copy was made ---------------------------------------------
 
 
-def test_a_link_to_identical_bytes_swapped_in_after_the_gate_is_refused_outside_the_folder(led: Ledger) -> None:
-    """A test copy holds the same bytes as its original: a link from the copy's file to the original leaves the
-    plan's fingerprint as it was, so the gate passes; the writer resolves the file after the gate and refuses it."""
+def recorded(folder: Path) -> FolderEntry:
+    """The folder as the test-copy mark records it: its real path and its identity, read as the journal reads one."""
+    path = os.path.realpath(folder)
+    m = for_this_os().open_dir(path).mark()
+    assert m.volume is not None
+    assert m.born is not None
+    return FolderEntry(path, m.volume, m.fs_type, m.born)
+
+
+def with_real(led: Ledger) -> Path:
+    """The real ledger the test copy was made from: the same files, the same bytes."""
     real = led.tmp / "real"
     real.mkdir()
     (real / "main.bean").write_bytes(MAIN)
+    (real / "inc.bean").write_bytes(INC)
+    return real
+
+
+def files_of(folder: Path) -> dict[str, bytes]:
+    return {p.name: p.read_bytes() for p in sorted(folder.iterdir()) if p.is_file()}
+
+
+def outside_refused(out: object) -> None:
+    assert isinstance(out, NotSaved), out
+    assert out.reason is Reason.OUTSIDE_FOLDER
+    assert out.unchanged
+
+
+def test_a_link_to_identical_bytes_swapped_in_after_the_gate_is_refused_outside_the_folder(led: Ledger) -> None:
+    """Round 1 (RT-F1): a link from the copy's file to the original's identical bytes leaves the plan's fingerprint
+    as it was, so the gate passes; the writer resolves the file after the gate and refuses it."""
+    real = with_real(led)
 
     def swap() -> None:
         led.main.unlink()
         led.main.symlink_to(real / "main.bean")
 
-    plan = plan_for(led, confine=os.path.realpath(led.root))
-    out = sv.run(plan, ports_for(led), FakeJob(on_gate=swap))
-    assert isinstance(out, NotSaved), out
-    assert out.reason is Reason.OUTSIDE_FOLDER
-    assert out.unchanged
-    assert (real / "main.bean").read_bytes() == MAIN
+    out = sv.run(plan_for(led, confine=recorded(led.root)), ports_for(led), FakeJob(on_gate=swap))
+    outside_refused(out)
+    assert files_of(real) == {"inc.bean": INC, "main.bean": MAIN}
     assert led.main.is_symlink()
     assert sorted(os.listdir(led.journal())) == []  # no record: nothing was written
 
 
 def test_a_link_to_identical_bytes_in_place_before_the_save_passes_the_gate_and_is_refused(led: Ledger) -> None:
-    real = led.tmp / "real"
-    real.mkdir()
-    (real / "main.bean").write_bytes(MAIN)
-    plan = plan_for(led, confine=os.path.realpath(led.root))
+    real = with_real(led)
+    plan = plan_for(led, confine=recorded(led.root))
     led.main.unlink()
     led.main.symlink_to(real / "main.bean")
-    before = led.tree()
-    out = sv.run(plan, ports_for(led), FakeJob())
-    assert isinstance(out, NotSaved), out
-    assert out.reason is Reason.OUTSIDE_FOLDER
-    assert {k: v for k, v in led.tree().items() if "/app/" not in k} == {
-        k: v for k, v in before.items() if "/app/" not in k
-    }
+    outside_refused(sv.run(plan, ports_for(led), FakeJob()))
+    assert files_of(real) == {"inc.bean": INC, "main.bean": MAIN}
 
 
-def test_the_ledger_folder_swapped_for_a_link_after_the_gate_is_refused(led: Ledger) -> None:
-    """A folder link higher up: the copy's folder itself replaced by a link to another folder with the same files."""
-    confine = os.path.realpath(led.root)
-    moved = led.tmp / "moved"
+@pytest.mark.parametrize("when", ["before_the_plan", "at_the_gate"])
+def test_the_copys_folder_replaced_by_a_link_to_the_real_folder_is_refused(led: Ledger, when: str) -> None:
+    """Round 2 (V-R2-1, RT2-F1): the copy's folder moved away and a link to the real ledger's folder put at its path,
+    before the plan is made or at the gate. The recorded path's descriptor is the real folder: refused, the real
+    ledger byte-identical."""
+    real = with_real(led)
+    mark = recorded(led.root)
 
     def swap() -> None:
-        led.root.rename(moved)
-        led.root.symlink_to(moved)
+        led.root.rename(led.tmp / "copy-moved")
+        led.root.symlink_to(real)
 
-    out = sv.run(plan_for(led, confine=confine), ports_for(led), FakeJob(on_gate=swap))
-    assert isinstance(out, NotSaved), out
-    assert out.reason is Reason.OUTSIDE_FOLDER
-    assert (moved / "main.bean").read_bytes() == MAIN
+    if when == "before_the_plan":
+        swap()
+        out = sv.run(plan_for(led, confine=mark), ports_for(led), FakeJob())
+    else:
+        out = sv.run(plan_for(led, confine=mark), ports_for(led), FakeJob(on_gate=swap))
+    outside_refused(out)
+    assert files_of(real) == {"inc.bean": INC, "main.bean": MAIN}
+
+
+def test_the_real_folder_moved_into_the_copys_place_is_refused(led: Ledger) -> None:
+    """Red team run 2's shape: no link at all, the real folder itself renamed to the copy's path at the gate. Another
+    creation time: refused."""
+    real = with_real(led)
+    mark = recorded(led.root)
+
+    def swap() -> None:
+        led.root.rename(led.tmp / "copy-moved")
+        real.rename(led.root)
+
+    outside_refused(sv.run(plan_for(led, confine=mark), ports_for(led), FakeJob(on_gate=swap)))
+    assert files_of(led.root) == {"inc.bean": INC, "main.bean": MAIN}
+
+
+def test_the_copys_folder_deleted_and_made_again_is_refused(led: Ledger) -> None:
+    mark = recorded(led.root)
+    plan = plan_for(led, confine=mark)
+    shutil.rmtree(led.root)
+    led.root.mkdir()
+    (led.root / "main.bean").write_bytes(MAIN)
+    (led.root / "inc.bean").write_bytes(INC)
+    outside_refused(sv.run(plan, ports_for(led), FakeJob()))
+    assert files_of(led.root) == {"inc.bean": INC, "main.bean": MAIN}
 
 
 def test_a_save_confined_to_its_own_folder_lands(led: Ledger) -> None:
-    out = sv.run(plan_for(led, confine=os.path.realpath(led.root)), ports_for(led), FakeJob())
+    out = sv.run(plan_for(led, confine=recorded(led.root)), ports_for(led), FakeJob())
     assert isinstance(out, sv.Saved), out
     assert led.main.read_bytes() == MAIN + TXN
+
+
+@pytest.mark.parametrize("how", ["link", "real_folder"])
+def test_the_copys_folder_replaced_after_the_writers_check_is_held_by_the_path_guard(
+    led: Ledger, monkeypatch: pytest.MonkeyPatch, how: str
+) -> None:
+    """Red team run 2's window: the folder replaced right after `_check_confined`; the path guard of every folder the
+    save writes in (§6.3) refuses before the first write: never "saved", the real ledger byte-identical."""
+    real = with_real(led)
+    check = writer._check_confined  # pyright: ignore[reportPrivateUsage]
+
+    def then_swap(*args: Any) -> None:
+        check(*args)
+        led.root.rename(led.tmp / "copy-moved")
+        if how == "link":
+            led.root.symlink_to(real)
+        else:
+            real.rename(led.root)
+
+    monkeypatch.setattr(writer, "_check_confined", then_swap)
+    out = sv.run(plan_for(led, confine=recorded(led.root)), ports_for(led), FakeJob())
+    assert not isinstance(out, sv.Saved), out
+    assert isinstance(out, NotSaved), out
+    target = real if how == "link" else led.root
+    assert files_of(target) == {"inc.bean": INC, "main.bean": MAIN}
