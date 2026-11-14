@@ -2476,8 +2476,8 @@ def test_a_confined_save_crashed_at_every_effect_leaves_a_recoverable_disk_after
 @pytest.mark.parametrize("new_dir", [False, True])
 @pytest.mark.parametrize("err", [errno.ENOSPC, errno.ELOOP, errno.ENOTDIR])
 def test_a_confined_save_failing_at_every_effect_is_told_truthfully(new_dir: bool, err: int) -> None:
-    """RT4-F3: an error at each effect, the link errors of the walk among them: always an outcome, never a raise, and
-    what it tells holds against the disk."""
+    """RT4-F3: an error at each effect (`ELOOP` and `ENOTDIR` at a create or a rename; the walk's own `open_child` is
+    not an effect of the fake, BL-0269): always an outcome, never a raise, and what it tells holds against the disk."""
     for at in range(_effects(new_dir)):
         w, c = _confined_world(new_dir)
         w.fs.inject(at, crash=False, err=err)
