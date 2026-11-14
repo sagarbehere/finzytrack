@@ -130,3 +130,5 @@
   | F4 Low | (c) | No script writes a layout to disk, so the in-engine 21.3 MB numbers needed ad-hoc code. | Fixed by a small option instead of a limit line: `--write-layout DIR` (with `--cut N`); the command is in Measurements. |
 
 ## Retro
+- Build about 20 min, fix about 14 min (the size sweep included), 1 verifier round (measurement row: no fresh round), findings 0H/2M/2L (M: 1 c, 1 d; L: 2 c). Cheaper gate: a measurement that ends at a limit names the limit's real threshold before any option is put to the owner (here the verifier found the 16 MiB line binds at about 16 MB of file text, not at "20 MB", because the answer is the file's text escaped as JSON); and a measurement script's error path is tested with a run that does not publish from the start. Process checks: premise check before asking the owner (options note held until the verifier confirmed the numbers) 1 catch / 0 false positive; the size sweep turned a "speed" question into a "size" question before the owner was asked.
+- Options note: `design/inbox/20261115-large-single-file.md` (BL-0112's last part).
