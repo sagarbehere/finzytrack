@@ -552,6 +552,19 @@ def test_an_insert_is_never_routed_by_an_option_that_is_not_a_whole_column_0_ent
     refused(se.route_insert(s, new, "m.bean"), se.Reason.NOT_WHOLE)
 
 
+def test_an_option_that_is_not_a_whole_entry_is_refused_in_any_file_of_the_set() -> None:
+    """The option check holds wherever the option is, not only in the default file (S0115 round 2, G1)."""
+    option = '2019-01-01 custom "fava-option" "insert-entry" "Assets:Cash"\n'
+    s = snap(
+        {
+            "main.bean": "2018-01-01 open Assets:Cash USD\n",
+            "o.bean": '2018-06-01 * "p"\n  Assets:Cash 1 USD\n  Assets:Bank\n  ' + option,
+        }
+    )
+    new = '2021-01-01 * "new"\n  Assets:Cash  5 USD\n  Assets:Bank\n'
+    assert refused(se.route_insert(s, new, "main.bean"), se.Reason.NOT_WHOLE).path == "o.bean"
+
+
 def test_text_that_cannot_be_utf8_is_refused_not_raised() -> None:
     """A lone surrogate in new text or in a new account name (S0115 verifier F4)."""
     s = snap({"m.bean": LEDGER})

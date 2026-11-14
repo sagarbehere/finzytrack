@@ -53,15 +53,15 @@
 - Checks that refuse, each with its must-not-pass test (`engine/tests/ledger/`):
   - `file_missing`: `test_source_edit.py::test_locate_refuses_a_file_the_snapshot_does_not_hold`, `::test_route_insert_refuses_a_default_file_the_snapshot_does_not_hold`.
   - `encrypted_file`: `::test_locate_refuses_an_encrypted_file_by_its_name`, `::test_an_encrypted_corpus_file_is_never_edited` (3 corpus cases), `::test_route_insert_refuses_when_a_file_of_the_set_cannot_be_read`; suffixes pinned by `::test_the_encrypted_names_are_the_overlay_s`.
-  - `not_utf8`: `::test_locate_refuses_a_file_that_is_not_utf8`, `::test_route_insert_refuses_when_a_file_of_the_set_cannot_be_read`.
+  - `not_utf8`: `::test_locate_refuses_a_file_that_is_not_utf8`, `::test_route_insert_refuses_when_a_file_of_the_set_cannot_be_read`, `::test_text_that_cannot_be_utf8_is_refused_not_raised` (new text with a lone surrogate; round 1 F4).
   - `stale_snapshot`: `::test_apply_refuses_a_stale_snapshot`, `::test_apply_refuses_a_span_planned_from_another_text`, `::test_revert_returns_the_original_bytes_and_refuses_a_changed_file`.
   - `file_not_allowed`: `::test_apply_refuses_a_file_outside_the_row_s_files`, `::test_apply_refuses_an_insert_into_a_file_outside_the_row_s_files`.
   - `no_entry_at_position`: `::test_locate_refuses_a_line_where_the_parser_found_no_entry`.
   - `first_line_mismatch`: `::test_locate_refuses_a_first_line_without_the_entry_s_date`, `::..._keyword`, `::test_a_plugin_generated_entry_cannot_be_targeted` (`implicit_prices`).
-  - `span_not_whole_entry`: `::test_locate_refuses_an_entry_that_runs_past_fava_s_span`, `::test_locate_refuses_an_indented_directive_beancount_kept_after_an_error`.
+  - `span_not_whole_entry`: `::test_locate_refuses_an_entry_that_runs_past_fava_s_span`, `::test_locate_refuses_an_indented_directive_beancount_kept_after_an_error`; in `route_insert`, `::test_an_insert_is_never_routed_by_an_option_that_is_not_a_whole_column_0_entry` and `::test_an_option_that_is_not_a_whole_entry_is_refused_in_any_file_of_the_set` (round 1 F1, round 2 G1).
   - `edit_not_located`: `::test_apply_refuses_a_span_that_is_not_the_located_one`, `::test_apply_refuses_a_hand_made_token_edit`, `::test_replace_token_refuses_a_span_that_is_not_the_located_one`.
   - `not_an_entry_line`: `::test_replace_token_refuses_a_line_that_is_not_the_entry_s_or_a_posting_s`.
-  - `token_not_one_account`: `::test_replace_token_refuses_anything_but_exactly_one_account_token` (7 shapes), `::test_grammar_finds_the_one_account_token_with_beancount_s_lexer`.
+  - `token_not_one_account`: `::test_replace_token_refuses_anything_but_exactly_one_account_token` (7 shapes), `::test_grammar_finds_the_one_account_token_with_beancount_s_lexer`, `::test_text_that_cannot_be_utf8_is_refused_not_raised` (a new account with a lone surrogate; round 1 F4).
   - `bad_entry_text`, `forbidden_line`: `::test_new_text_is_one_entry_and_never_a_file_level_line` (15 texts, through both `Replace` and `route_insert`).
   - `insert_in_push_region`: `::test_an_insert_routed_into_a_push_region_by_an_option_is_refused`, `::test_an_insert_appended_inside_an_open_push_region_is_refused`, `::test_an_insert_the_parser_cannot_place_is_refused`, `::test_entries_inside_a_push_block_are_edited_but_never_inserted_into`; must-pass `::test_an_insert_after_a_closed_push_region_is_placed`.
   - `insert_not_routed`: `::test_apply_refuses_an_insert_that_is_not_where_routing_puts_it`.
@@ -83,6 +83,16 @@
 | F2 | Medium | c | No test pinned the span's end apart from `locate` (the verifier's mutant M21, which drops trailing indented comments, survived; M22, which drops a trailing metadata line, did too). Fixed: `test_trailing_indented_lines_belong_to_the_span_and_go_with_a_delete`, whose expected bytes come from Fava's rule, and the property generator now writes an indented comment after a transaction's last posting. |
 | F3 | Low | c | The column-0 check of new text was untested (M6). Fixed: a leading blank line and a tab-indented first line added to `test_new_text_is_one_entry_and_never_a_file_level_line`. |
 | F4 | Low | e | New text or a new account name holding a lone surrogate raised `UnicodeEncodeError`. Fixed: new text is refused `not_utf8`; `grammar.account_token` returns `Invalid` (so `replace_token` refuses `token_not_one_account`). Test `test_text_that_cannot_be_utf8_is_refused_not_raised` (fails on e89ab0fe). |
-| F5 | Low | d | `THIRD_PARTY_NOTICES` does not name the ported Fava source. Recorded, not changed: a line (3) in BL-0085 (the legal review) says so and leaves to the review whether ported source must be listed. |
+| F5 | Low | d | `THIRD_PARTY_NOTICES` does not name the ported Fava source. Recorded, not changed: a line (4) in BL-0085 (the legal review) says so and leaves to the review whether ported source must be listed. |
+
+- Round 2 (fresh round on the fix range e89ab0fe..468be330), head 468be330: PASS WITH FINDINGS (1 Medium, 3 Low; no High, nothing in class a or b). Attacks: 10 (F1's refusal in every indented shape, after a blank line, on the first line, in another file; options led by characters Python takes for whitespace and Beancount does not; valid options at the end of a file with and without a final newline, CRLF; line counting with a lone CR or form feed; end-of-file appends; a differential fuzz of 20,000 random files, LF and CRLF, Beancount's entries after equal to entries before plus the new one: 0 bad on the head, 855 bad on e89ab0fe; F4 in every path; the new tests against e89ab0fe's source; mutants). By the budget the rest would become backlog rows; all four are a test or a docs line, cheaper to fix than to track, and none changes product code, so no further round (orchestrator).
+
+| ID | Severity | Class | Disposition |
+|---|---|---|---|
+| G1 | Medium | c | F1's check was pinned only for an option in the default file (a mutant restricting it there passed every test). Fixed: `test_an_option_that_is_not_a_whole_entry_is_refused_in_any_file_of_the_set`; the mutant now fails it. |
+| G2 | Low | d | `engine/CLAUDE.md` still said `locate` lexes the first line (removed in round 0) and did not name `route_insert`'s departure from Fava. Fixed. |
+| G3 | Low | d | BL-0085 had two items "(3)". Fixed: the ported-source item is (4). |
+| G4 | Low | d | The Hand-off's refusal list did not name round 1's new tests. Fixed. |
 
 ## Retro
+- Build about 34 min (implementer), fix about 7 min (round 1) and 10 min (round 2, orchestrator, tests and docs only), 2 verifier rounds, findings 0H/3M/5L (classes: 1 a, 4 c, 1 e, 4 d over both rounds; F5 is only recorded). Cheaper gate: a differential check against Beancount's own parse after every planned insert (entries after = entries before + the new one), which round 2's fuzz used, would have found F1 in round 0; it belongs in the contract's step 2 (semantic diff), which is the next slice. Process checks: invariants 0 catch / 0 false positive; capabilities 0 / 0; generated 0 / 0; the privacy scan 0 catch / 1 false positive (the MIT notice's copyright email, allowed by its per-line marker).
