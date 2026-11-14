@@ -8,8 +8,13 @@ are the lines between two job keys (two-space indent under `jobs:`), which is ho
 from __future__ import annotations
 
 import re
+import sys
 import unittest
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from check_invariants import MILESTONES  # noqa: E402
 
 REPO = Path(__file__).resolve().parents[2]
 WORKFLOWS = [REPO / ".github" / "workflows" / n for n in ("ci.yml", "nightly.yml", "packaged.yml")]
@@ -185,8 +190,14 @@ class PackagedFixmeTest(unittest.TestCase):
                 row = backlog_row(rows[0])
                 assert row is not None, rows[0]
                 cells = [c.strip() for c in row.split("|")]
-                self.assertRegex(cells[4], r"^M(0|1a|1b|[2-9]|1[0-2])$", rows[0])
+                # due the roadmap's next milestone or the one after it (a failure first found at that milestone's
+                # exit), never a closed milestone nor a later one (ADR-0061 amendment of 2026-11-14; verifier F1)
+                found = re.search(r"(?m)^Next: \*\*(M\w+)\*\*", (REPO / "design/specs/roadmap.md").read_text())
+                assert found is not None, "roadmap §1 names the next milestone"
+                allowed = MILESTONES[MILESTONES.index(found.group(1)):MILESTONES.index(found.group(1)) + 2]
+                self.assertIn(cells[4], allowed, rows[0])
                 self.assertEqual(cells[5], "open", rows[0])
+                self.assertIn(f"fixme due {cells[4]}, {rows[0]}", comment, "the matrix comment names the row's milestone")
                 # quoted whole in the row, so a shorter reason (one that also accepts other failures) is refused
                 self.assertIn(f'"{known}"', row, "the known failure is the whole reason its row quotes")
 

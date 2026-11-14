@@ -28,9 +28,9 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # known_failure: empty, the OS is strict. Otherwise the OS is fixme due its row's milestone (ADR-0061 decision 4b and its amendment of 2026-11-14: the
-          # next milestone) and its
-          # first smoke run passes only when it fails with exactly this reason (smoke_packaged.py --expect-fail): a
+          # known_failure: empty, the OS is strict. Otherwise the OS is fixme due its row's milestone, the next one
+          # (ADR-0061 decision 4b and its amendment of 2026-11-14), and its first smoke run passes only when it fails
+          # with exactly this reason (smoke_packaged.py --expect-fail): a
           # different failure, a failure in any other run or step, and an unexpected pass fail the run (S0114; owner,
           # 2026-11-13: "Narrow it (Recommended)"). Remove the reason with its row.
           - os: macos-15  # Apple silicon; macOS 14 is the minimum (ADR-0007 amendment)

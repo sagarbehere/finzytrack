@@ -61,6 +61,11 @@ The publish's design was written as rules in `design/specs/mirror/publish.md` (S
 - **Names never reused** (owner, 2026-11-08, in session, after S0085's round-1 reviews found that a number could come again after the OS purges the cache while a request or an outside tool still opens the old name): **"Random tag in name (Recommended)"**: names become `gen-<N>-<random>.db`, so a name is never reused whatever is purged; `N` only orders them; nothing is written outside the mirror folder; within a session the version never goes backwards; only after the OS purges the cache may the next session's number start lower (nothing compares versions across that). This is the one stated exception to "`ledger_version` … monotonic across restarts" above.
 - Agent decisions after round 1 (S0085): the save's gate checks that the published generation is fresh against the disk on its own ledger set, beside the disk equal to the plan (comparing the generation with the plan's set refused every save that creates or includes a file); the folder sync after the swap is cut (the next job's folder sync makes the rename durable); each step works through one folder descriptor that follows no link. Reasons in `design/specs/mirror/publish.md` §7, §12 and the S0085 journal.
 
+
+## Amendment (2026-11-14): Windows in M1b
+
+Where this record says Windows "moves to M11 (ADR-0061): BL-0206", read M1b: the engine's write path is ported to Windows in M1b so its real-disk write-contract tests run on the Windows runner (ADR-0061 amendment of 2026-11-14; owner: "(b) for windows"), and the save gates on the published mirror, so the publish's Windows design (the pointer file, the retried deletion) comes with it (agent: a dependency of that port, an earlier move).
+
 ## References
 
 review:D1 §11; review:10 I4, D4, D5; review:23 §1.2, §3.4; review:00 §1b; ADR-0011, ADR-0016, ADR-0017; INV-05; CAP-DATA-MIRROR, CAP-MIRROR-EXTERNAL.
