@@ -36,6 +36,7 @@ from app.platform.engine_protocol import (
     PROTOCOL_VERSION,
     REFUSAL_KEYS,
     Accepted,
+    PreviewAnswer,
     Violation,
     decode_create,
     decode_create_outcome,
@@ -212,6 +213,23 @@ def test_the_decoder_refuses_exactly_what_the_schema_refuses(definition: str, op
             schema_ok = valid(definition, variant)
             verdict = decoded(variant, reply_op)
             assert schema_ok == (not isinstance(verdict, Violation)), (variant, verdict)
+
+
+def test_the_preview_decoder_keeps_each_line_it_is_given() -> None:
+    """S0116 round 2, G1: the answer's `line` (a load refusal's, F5) and each new error's `line` (F1) are decoded as
+    sent, and a missing line stays missing."""
+    ex = examples("PreviewReply")[0]
+    result = ex["result"]
+    error = {**result["new_errors"][0], "line": 17}
+    refused = {**result, "outcome": "refused", "step": "load", "reason": "plugin_failed", "line": 9}
+    answer = decoded({**ex, "result": {**refused, "new_errors": [error]}}, "preview")
+    assert isinstance(answer, PreviewAnswer), answer
+    assert answer.line == 9
+    assert [e.line for e in answer.new_errors] == [17]
+    unlined = decoded({**ex, "result": {**result, "new_errors": [{**error, "line": None}]}}, "preview")
+    assert isinstance(unlined, PreviewAnswer), unlined
+    assert unlined.line is None
+    assert [e.line for e in unlined.new_errors] == [None]
 
 
 def test_a_reply_to_another_request_is_a_violation() -> None:
