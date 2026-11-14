@@ -82,6 +82,8 @@ def entry_lines(draw: st.DrawFn, date: datetime.date) -> tuple[se.Keyword, list[
         lines.append((f"{indent}{account}" + ("" if elided else f"  {i + 1}.00 USD") + inline, account))
         if draw(st.booleans()):
             lines.append((f'{indent}{indent}memo: "{draw(st.sampled_from(PAYEES))}"', None))
+    if draw(st.booleans()):
+        lines.append((f"{indent}; after the last posting", None))  # still the entry's span (Fava; verifier F2)
     return "txn", lines
 
 

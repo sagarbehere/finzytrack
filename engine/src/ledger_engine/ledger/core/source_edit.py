@@ -15,7 +15,8 @@ run on those bytes (through `beancount_port`; INV-03), never from a load's outpu
    another file and nothing that is not in the text can be targeted.
 2. An insert goes where Fava's `insert-entry` options route it, else at the end of the default file (`route_insert`),
    and never inside a `pushtag` or `pushmeta` region (asked of the parser: a probe entry placed there must get no
-   pushed tag or metadata).
+   pushed tag or metadata). The option an insert is routed by must itself be a whole entry at column 0 (as `locate`
+   decides), else the insert is refused (`NOT_WHOLE`): Beancount keeps an indented directive after an error.
 3. Every byte outside the owned spans stays the same; new text takes the file's line ending (its first line's, as
    Fava does; `\\n` for a file without one) and a missing final newline stays missing. New text is exactly one
    entry, in complete `\\n` lines, and holds no `include`, `option`, `plugin`, `pushtag`, `poptag`, `pushmeta` or
@@ -80,7 +81,7 @@ from ledger_engine.ledger import grammar
 class Reason(StrEnum):
     MISSING_FILE = "file_missing"  # an edit, a target or the default file names a file the snapshot does not hold
     ENCRYPTED = "encrypted_file"  # a `.gpg` or `.asc` name, any case (ADR-0059; the save's step 0 rule)
-    NOT_UTF8 = "not_utf8"
+    NOT_UTF8 = "not_utf8"  # a file, or new text that cannot be UTF-8 (a lone surrogate)
     STALE = "stale_snapshot"  # the plan's (or the span's) snapshot is not the current bytes
     NOT_ALLOWED = "file_not_allowed"  # an edit in a file outside the plan's `files`
     NO_ENTRY = "no_entry_at_position"  # the parser found no entry at that line of the current text
@@ -350,6 +351,10 @@ def _entry_of(text: str, path: str | None) -> port.Directive | Refusal:
     """The one entry `text` holds (rule 3)."""
     if not text.endswith("\n") or "\r" in text or text[0].isspace():
         return Refusal(Reason.BAD_TEXT, path, "new text must be complete \\n lines starting at column 0")
+    try:
+        text.encode("utf-8")
+    except UnicodeEncodeError:  # a lone surrogate (S0115 verifier F4)
+        return Refusal(Reason.NOT_UTF8, path, "new text cannot be written as UTF-8")
     tokens = port.lex(text.encode())
     forbidden = sorted({t.kind.lower() for t in tokens if t.kind in _FORBIDDEN})
     if forbidden:
@@ -427,15 +432,15 @@ def _push_region(snapshot: Snapshot, text: _Text, line: int | None) -> Refusal |
     return snapshot._regions[key]  # pyright: ignore[reportPrivateUsage]
 
 
-def _route(entry: port.Directive, options: Sequence[_Option], default_file: str) -> tuple[str, int | None]:
-    """Fava's `find_insert_position`."""
+def _route(entry: port.Directive, options: Sequence[_Option]) -> _Option | None:
+    """Fava's `find_insert_position`: the option the entry goes before, or None for the default file's end."""
     for account in _entry_accounts(entry):
         for option in options:
             if option.date >= entry.date:
                 continue
             if option.pattern.match(account):
-                return option.path, option.lineno - 1
-    return default_file, None
+                return option
+    return None
 
 
 def route_insert(snapshot: Snapshot, text: str, default_file: str) -> Insert | Refusal:
@@ -449,7 +454,12 @@ def route_insert(snapshot: Snapshot, text: str, default_file: str) -> Insert | R
     options = _insert_options(snapshot)
     if isinstance(options, Refusal):
         return options
-    path, line = _route(entry, options, default_file)
+    option = _route(entry, options)
+    path, line = (default_file, None) if option is None else (option.path, option.lineno - 1)
+    if option is not None and isinstance(locate(snapshot, Target(path, option.lineno, option.date, "custom")), Refusal):
+        # Beancount may keep a directive whose line is indented after an error: its line is then inside the text of
+        # the entry above, and an insert there would split that text (S0115 verifier F1). Refused, as `locate` does.
+        return Refusal(Reason.NOT_WHOLE, path, f"the insert-entry option on line {option.lineno} is not a whole entry")
     target = snapshot.text(path)
     if isinstance(target, Refusal):
         return target

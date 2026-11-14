@@ -108,6 +108,35 @@ def test_a_span_ends_at_a_blank_line_and_at_the_end_of_the_file() -> None:
     assert last.end == len(LEDGER)
 
 
+def test_trailing_indented_lines_belong_to_the_span_and_go_with_a_delete() -> None:
+    """Fava's `find_entry_lines` keeps every indented line after the entry, comments and metadata alike (S0115
+    verifier F2): the expected bytes are written from that rule here, not from `locate`."""
+    text = (
+        "2024-01-01 open Assets:Cash USD\n"
+        "\n"
+        '2024-01-02 * "x"\n'
+        "  Assets:Cash  1 USD\n"
+        "  Assets:Bank\n"
+        '    memo: "last posting\'s"\n'
+        "  ; a trailing note\n"
+        "\n"
+        "2024-01-03 open Assets:Food USD\n"
+        '  note: "meta"\n'
+        "    ; deeper note\n"
+        "2024-01-04 open Assets:Bank USD\n"
+    )
+    s = snap({"m.bean": text})
+    txn = located(s, "m.bean", 3, D(2024, 1, 2), "txn")
+    out = applied(files_of(s), se.EditPlan.of(s, {"m.bean"}, [se.Delete(txn)]))
+    assert out.files["m.bean"] == text.replace(text[text.index("2024-01-02") : text.index("\n2024-01-03")], "").encode()
+    opened = located(s, "m.bean", 9, D(2024, 1, 3), "open")
+    out = applied(files_of(s), se.EditPlan.of(s, {"m.bean"}, [se.Delete(opened)]))
+    assert (
+        out.files["m.bean"]
+        == text.replace('2024-01-03 open Assets:Food USD\n  note: "meta"\n    ; deeper note\n', "").encode()
+    )
+
+
 def test_a_whitespace_only_line_ends_a_span_as_in_fava() -> None:
     text = "2024-01-01 open Assets:Cash USD\n  \t\n2024-01-02 open Assets:Bank USD\n"
     span = located(snap({"m.bean": text}), "m.bean", 1, D(2024, 1, 1), "open")
@@ -285,6 +314,8 @@ def test_apply_refuses_an_insert_at_an_option_line_whose_entry_it_also_replaces(
         ("; only a comment\n", se.Reason.BAD_TEXT),  # no entry
         ('2024-01-05 * "x\n', se.Reason.BAD_TEXT),  # a parser error
         ('  ; leading indent\n2024-01-05 * "x"\n', se.Reason.BAD_TEXT),  # would join the line above
+        ('\n2024-01-05 * "x"\n', se.Reason.BAD_TEXT),  # a leading blank line: not at column 0 (verifier F3)
+        ('\t2024-01-05 * "x"\n', se.Reason.BAD_TEXT),  # an indented first line
     ],
 )
 def test_new_text_is_one_entry_and_never_a_file_level_line(text: str, reason: se.Reason) -> None:
@@ -501,6 +532,35 @@ def test_an_insert_the_parser_cannot_place_is_refused() -> None:
     refused(
         se.route_insert(snap({"m.bean": '2024-01-01 note Assets:Cash "open\n'}), FOOD, "m.bean"), se.Reason.PUSH_REGION
     )
+
+
+OPTION = '2019-01-01 custom "fava-option" "insert-entry" "Assets:Cash"\n'
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        '2020-01-01 * "prev"\n  Assets:Cash  1 USD\n  Assets:Bank\n  ' + OPTION,
+        "2020-01-01 open Assets:Cash USD\n " + OPTION,
+    ],
+)
+def test_an_insert_is_never_routed_by_an_option_that_is_not_a_whole_column_0_entry(text: str) -> None:
+    """Beancount keeps the indented option after an error and drops the entry above; an insert before the option's
+    line would split that entry's text and bring it back (S0115 verifier F1). Refused, as `locate` refuses it."""
+    s = snap({"m.bean": text})
+    new = '2021-01-01 * "new"\n  Assets:Cash  5 USD\n  Assets:Bank\n'
+    refused(se.route_insert(s, new, "m.bean"), se.Reason.NOT_WHOLE)
+
+
+def test_text_that_cannot_be_utf8_is_refused_not_raised() -> None:
+    """A lone surrogate in new text or in a new account name (S0115 verifier F4)."""
+    s = snap({"m.bean": LEDGER})
+    refused(se.route_insert(s, '2024-02-01 note Assets:Cash "\udc80"\n', "m.bean"), se.Reason.NOT_UTF8)
+    span = located(s, "m.bean", 5, D(2024, 1, 5), "txn")
+    replace = se.Replace(span, '2024-01-05 * "\udc80"\n')
+    refused(se.apply_edits(files_of(s), se.EditPlan.of(s, {"m.bean"}, [replace])), se.Reason.NOT_UTF8)
+    bad = grammar.AccountName("Assets:\udc80")
+    refused(se.replace_token(s, span, 8, grammar.AccountName("Assets:Cash"), bad), se.Reason.NOT_ONE_ACCOUNT)
 
 
 def test_route_insert_refuses_a_default_file_the_snapshot_does_not_hold() -> None:

@@ -87,6 +87,11 @@ def account_token(line: str, old: str, new: str) -> TokenAt | Invalid:
     line lexed again: a place inside a comment, a string or a longer name changes another token or none, so it is not
     the token. Invalid when `old` is not exactly one account token of the line, `new` equals it, or `new` would not be
     read as one account token there."""
+    try:
+        for text in (line, old, new):
+            text.encode("utf-8")
+    except UnicodeEncodeError:  # a lone surrogate is no token Beancount can read (S0115 verifier F4)
+        return Invalid(())
     before = _tokens(line)
     if old == new or [text for kind, text in before if kind == "ACCOUNT"].count(old.encode()) != 1:
         return Invalid(())
