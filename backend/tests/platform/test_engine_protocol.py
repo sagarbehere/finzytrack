@@ -42,6 +42,7 @@ from app.platform.engine_protocol import (
     decode_info,
     decode_open,
     decode_pong,
+    decode_preview,
     decode_rebuild,
     decode_recover_act,
     decode_recover_list,
@@ -120,6 +121,7 @@ DECODERS: dict[str, Any] = {
     "save_outcome": decode_save_outcome,
     "rebuild": decode_rebuild,
     "open": decode_open,
+    "preview": decode_preview,
     "create": decode_create,
     "create_outcome": decode_create_outcome,
 }
@@ -198,6 +200,7 @@ def mutations(example: dict[str, Any]) -> list[dict[str, Any]]:
         ("SaveOutcomeReply", "save_outcome"),
         ("RebuildReply", "rebuild"),
         ("OpenReply", "open"),
+        ("PreviewReply", "preview"),
         ("CreateReply", "create"),
         ("CreateOutcomeReply", "create_outcome"),
     ],
@@ -356,7 +359,7 @@ def test_the_decoder_refuses_exactly_what_the_schema_refuses_for_a_decision(deci
 
 # -- Recover-all's ops (S0062) --------------------------------------------------------------------------------------
 
-RECOVER_OPS = (  # and the save's (S0063), the rebuild's (S0070) and the create's (S0080)
+RECOVER_OPS = (  # and the save's (S0063), the rebuild's (S0070), the create's (S0080) and the preview's (S0116)
     "recover_list",
     "recover_try",
     "recover_act",
@@ -364,6 +367,7 @@ RECOVER_OPS = (  # and the save's (S0063), the rebuild's (S0070) and the create'
     "save_outcome",
     "rebuild",
     "open",
+    "preview",
     "create",
     "create_outcome",
 )

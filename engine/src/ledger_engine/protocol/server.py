@@ -106,6 +106,7 @@ from ledger_engine.protocol.messages import (
     RefusalKey,
 )
 from ledger_engine.protocol.opening import OPEN_HANDLERS
+from ledger_engine.protocol.preview import PREVIEW_HANDLERS
 from ledger_engine.protocol.rebuild import REBUILD_HANDLERS
 from ledger_engine.protocol.recovery import RECOVERY_HANDLERS, BadParamsError
 from ledger_engine.protocol.save import APP_FOLDER_MISSING_HANDLERS, OUTCOME_HANDLERS, SAVE_HANDLERS
@@ -375,6 +376,7 @@ PRODUCTION: dict[str, Handler] = {
     **{op: _handler(op, run) for op, run in SAVE_HANDLERS.items()},
     **{op: _handler(op, run) for op, run in REBUILD_HANDLERS.items()},
     **{op: _handler(op, run) for op, run in OPEN_HANDLERS.items()},
+    **{op: _handler(op, run) for op, run in PREVIEW_HANDLERS.items()},
     **{op: _handler(op, run) for op, run in CREATE_HANDLERS.items()},
     **{op: _handler(op, run) for op, run in CREATE_OUTCOME_HANDLERS.items()},
     **{op: _handler(op, run) for op, run in COPY_HANDLERS.items()},

@@ -247,6 +247,11 @@ def test_apply_refuses_a_stale_snapshot() -> None:
     changed = (LEDGER + "; one more line\n").encode()
     refused(se.apply_edits({"m.bean": changed}, plan), se.Reason.STALE)
     refused(se.apply_edits({}, plan), se.Reason.STALE)
+    # The same when the current bytes come as a snapshot (S0116: the contract passes the producer's).
+    refused(se.apply_edits(snap({"m.bean": changed}), plan), se.Reason.STALE)
+    refused(se.apply_edits(snap({}), plan), se.Reason.STALE)
+    assert isinstance(se.apply_edits(s, plan), se.Applied)
+    assert se.apply_edits(s, plan) == se.apply_edits({"m.bean": LEDGER.encode(), "other.bean": b""}, plan)
 
 
 def test_apply_refuses_a_span_planned_from_another_text() -> None:

@@ -244,6 +244,8 @@ class _Text:
 class _Parsed:
     entries: Mapping[int, port.Directive]  # by line (1-based), as the parser found them in the text
     order: tuple[port.Directive, ...]  # in the parser's order
+    errors: tuple[port.BeancountError, ...]  # the parser's errors (the contract's step 1 compares them, S0116)
+    options: port.OptionsMap
 
 
 @dataclass(frozen=True, slots=True)
@@ -272,7 +274,8 @@ def _decode(path: str, data: bytes) -> _Text | Refusal:
 
 class Snapshot:
     """The bytes of every file of a ledger set at one moment, in the load's include order. Decoding and parsing are
-    done once per file, when first needed."""
+    done once per file, when first needed (the producer, `apply_edits` and the contract's step 1 share them when given
+    one snapshot, S0116: Beancount's parse of the same bytes)."""
 
     def __init__(self, files: Mapping[str, bytes]) -> None:
         self.files: Final[Mapping[str, bytes]] = dict(files)
@@ -294,8 +297,10 @@ class Snapshot:
         if isinstance(text, Refusal):
             return text
         if path not in self._parsed:
-            entries, _, _ = port.parse_string(self.files[path], path)
-            self._parsed[path] = _Parsed({int(e.meta["lineno"]): e for e in entries}, tuple(entries))
+            entries, errors, options = port.parse_string(self.files[path], path)
+            self._parsed[path] = _Parsed(
+                {int(e.meta["lineno"]): e for e in entries}, tuple(entries), tuple(errors), options
+            )
         return self._parsed[path]
 
 
@@ -593,12 +598,22 @@ def _overlap(pieces: Sequence[_Piece]) -> bool:
     return False
 
 
-def apply_edits(current: Mapping[str, bytes], plan: EditPlan) -> Applied | Refusal:
-    """The new bytes of every file the plan changes, from `current` (each file's bytes now), or the first refusal."""
+def apply_edits(current: Mapping[str, bytes] | Snapshot, plan: EditPlan) -> Applied | Refusal:
+    """The new bytes of every file the plan changes, from `current` (each file's bytes now, or a snapshot of them,
+    whose parses are then reused), or the first refusal."""
+    hashes: Mapping[str, str] = (
+        current.hashes
+        if isinstance(current, Snapshot)
+        else {p: _sha256(current[p]) for p in plan.snapshot if p in current}
+    )
     for path, sha in plan.snapshot.items():
-        if path not in current or _sha256(current[path]) != sha:
+        if hashes.get(path) != sha:
             return Refusal(Reason.STALE, path, "the file is not the bytes the plan was made from")
-    snapshot = Snapshot({p: current[p] for p in plan.snapshot})
+    if isinstance(current, Snapshot) and set(current.files) == set(plan.snapshot):
+        snapshot = current
+    else:
+        source = current.files if isinstance(current, Snapshot) else current
+        snapshot = Snapshot({p: source[p] for p in plan.snapshot})
     by_file: dict[str, list[Edit]] = {}
     for edit in plan.edits:
         path = _path(edit)

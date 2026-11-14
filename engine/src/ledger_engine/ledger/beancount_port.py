@@ -95,6 +95,7 @@ from beancount.parser.lexer import lex_iter as _lex_iter
 from beancount.parser.options import OPTIONS_DEFAULTS as _OPTIONS_DEFAULTS
 from beancount.parser.parser import parse_file as _parse_file
 from beancount.parser.parser import parse_string as _parse_string
+from beancount.parser.printer import format_entry as _format_entry
 from beancount.utils import encryption as _encryption
 from beancount.utils.encryption import is_encrypted_file as _is_encrypted_file
 
@@ -144,6 +145,7 @@ __all__ = [
     "fill_weight",
     "filled_amount",
     "find_modules",
+    "format_entry",
     "input_hash",
     "is_encrypted_file",
     "is_interpolated",
@@ -213,6 +215,7 @@ WRAPPERS: Final = frozenset(
         "is_interpolated",
         "written_numbers",
         "lex",
+        "format_entry",
         "custom_accounts",
         "beancount_context",
         "fill_weight",
@@ -287,6 +290,12 @@ class Token:
 def lex(data: bytes) -> list[Token]:
     """Every token of `data`, as Beancount's own lexer reads it (`lexer.lex_iter`, the parser's lexer; S0115)."""
     return [Token(kind, lineno, text, value) for kind, lineno, text, value in _lex_iter(io.BytesIO(data))]
+
+
+def format_entry(entry: Directive) -> str:
+    """The entry as Beancount's printer writes it (`printer.format_entry`, no display context: each number as
+    written): its location (`filename`, `lineno`) and `__` metadata left out (S0116: the contract's entry key)."""
+    return _format_entry(entry)
 
 
 def custom_accounts(entry: Custom) -> list[str]:

@@ -25,7 +25,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Annotated, Any, Literal, get_args
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, JsonValue
 
 PROTOCOL_VERSION = 2
 MAX_LINE_BYTES = 16 * 1024 * 1024
@@ -475,6 +475,76 @@ class OpenResult(Message):
     line: int | None = Field(ge=1)
 
 
+# -- The preview (S0116; engine-jobs §2, §7; ARCHITECTURE.md §9.2 steps 2 and 3; ADR-0008) -----------------------------
+
+type PreviewStep = Literal["plan", "apply", "parse", "diff", "spans", "load", "errors"]
+"""Where a preview was refused (`ledger.contract.Step`): `plan` the edit producer; `apply` the splice
+(`source_edit.apply_edits`); `parse`, `diff`, `spans` the contract's steps 1, 2 and 2b; `load` and `errors` step 3."""
+
+type PreviewStale = Literal["unpublished", "other_generation", "not_fresh"]
+
+
+class PreviewParams(Message):
+    """`preview` (S0116): plan the change `request` asks of the mutator `mutator` on the published mirror generation
+    numbered `generation` (the one the plan was made on) of the ledger rooted at `root`, and check it with the
+    write-safety contract's steps before any write (`ledger.contract.prepare`). The mirror is read from the cache
+    folder the engine was started with (`--app-cache`; no request names it), under `workspace_key`; `app_local_data`
+    and `lineage` name the `.open` journals looked for. `request` is the mutator's own (its producer reads it); the
+    engine registers no producer yet, so every mutator is refused `unknown_mutator` until its slice adds one."""
+
+    root: AbsPath
+    app_local_data: AbsPath
+    workspace_key: Component
+    lineage: str = Field(min_length=1, max_length=128)
+    generation: int = Field(ge=1, le=999_999_999_999)  # `mirror.publish.MAX_NUMBER`
+    mutator: str = Field(pattern=r"^[a-z0-9_.-]{1,64}$")  # an intent-table id (`account.create`)
+    request: dict[str, JsonValue]
+
+
+class PreviewFile(Message):
+    """A file the plan writes: its path, the SHA-256 of its bytes now (`pre`) and of its new text (`post`), and the
+    new text (UTF-8, as `save`'s `post`)."""
+
+    path: AbsPath
+    pre: Sha256
+    post: Sha256
+    text: str
+
+
+class PreviewError(Message):
+    """A new error the change brings (ADR-0067: listed, never a refusal): its key's SHA-256 (type, entry and message
+    without locations; `ledger.core.entry_keys`), Beancount's type name and message, and where Beancount puts it."""
+
+    key: Sha256
+    type: str = Field(min_length=1, max_length=128)
+    message: str
+    path: AbsPath | None
+    line: int | None = Field(ge=1)
+
+
+class PreviewResult(Message):
+    """`preview`'s answer. `prepared`: `files` (the write plan's texts and hashes), `fingerprint` (the plan's,
+    `ledger_set.encode`'s text, which the save's gate checks), `new_errors` (empty when the change brings none) and
+    `errors` (Beancount's errors in the candidate, as bean-check counts them). `refused`: `step` and `reason` say
+    where and why (`fault`: the step raised; `undecidable`: no result it could read), `path` the file when there is
+    one, `detail` more, without ledger content. `moved`: the disk changed during the job (run it again in a fresh
+    engine). `paused`: an unfinished save's `.open` journal. `stale`: the published generation cannot be the
+    plan's baseline (`unpublished`: none, or not complete; `other_generation`: not the plan's; `not_fresh`: not this
+    ledger's, another engine build's, or the disk changed since it was built). It runs the ledger's plugins, so the
+    engine is retired after it; it writes nothing."""
+
+    outcome: Literal["prepared", "refused", "moved", "paused", "stale"]
+    files: list[PreviewFile]
+    fingerprint: str | None = Field(min_length=1)
+    new_errors: list[PreviewError]
+    errors: int = Field(ge=0)
+    step: PreviewStep | None
+    reason: str | None = Field(min_length=1, max_length=64)
+    path: AbsPath | None
+    detail: str | None
+    stale: PreviewStale | None
+
+
 # -- The create (S0080; engine-jobs §1, §4, §8.2) ---------------------------------------------------------------------
 
 RelPath = Annotated[str, Field(min_length=1, max_length=1024, pattern=r"^[^/\x00]")]  # relative; checked by the job
@@ -750,6 +820,47 @@ OPS: dict[str, OpSpec] = {
             "floor": 0,
             "today": "2026-11-08",
             "built_at": "2026-11-08T10:00:00+05:30",
+        },
+        needs_engine_lock=True,
+    ),
+    "preview": OpSpec(
+        PreviewParams,
+        PreviewResult,
+        {
+            "outcome": "prepared",
+            "files": [
+                {
+                    "path": "/ledgers/L/main.bean",
+                    "pre": "0" * 64,
+                    "post": "1" * 64,
+                    "text": "2026-01-01 open Assets:Cash\n2026-01-02 open Expenses:Food\n",
+                }
+            ],
+            "fingerprint": _FP,
+            "new_errors": [
+                {
+                    "key": "2" * 64,
+                    "type": "BalanceError",
+                    "message": "Balance failed for 'Assets:Cash': expected 5 USD != accumulated 0 USD (5 too little)",
+                    "path": "/ledgers/L/main.bean",
+                    "line": 3,
+                }
+            ],
+            "errors": 1,
+            "step": None,
+            "reason": None,
+            "path": None,
+            "detail": None,
+            "stale": None,
+        },
+        {
+            "root": "/ledgers/L/main.bean",
+            "app_local_data": _ALD,
+            "workspace_key": "k1",
+            "lineage": "lin1",
+            "generation": 2,
+            "mutator": "account.create",
+            "request": {"account": "Expenses:Food", "date": "2026-01-02"},
         },
         needs_engine_lock=True,
     ),

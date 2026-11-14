@@ -1,6 +1,6 @@
 """What the two jobs that publish the mirror share: the `open` (`ledger_engine.ledger.opening`) and the `rebuild`
 (`ledger_engine.ledger.rebuild`) (`design/specs/engine-jobs.md` §7; `design/specs/mirror/publish.md` §4, §8; S0088,
-BL-0152).
+BL-0152). The `preview` (`ledger_engine.ledger.preview`, S0116) uses `unfinished` too.
 
 - `Target`: where and as of when a result is published;
 - `unfinished`: this workspace's `.open` journal, looked for before any result is returned (§7: "checks that this
@@ -17,6 +17,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import date
+from typing import Protocol
 
 from ledger_engine.fs.port import DirHandle, FileSystem
 from ledger_engine.ledger.core.ledger_set import Fingerprint, LedgerSet, decode
@@ -43,7 +44,18 @@ class Target:
     engine_build: str
 
 
-def unfinished(fs: FileSystem, target: Target) -> bool:
+class Journals(Protocol):
+    """Whose `.open` journal is looked for: the app's machine-local folder, the workspace's key and lineage id."""
+
+    @property
+    def app_local_data(self) -> str: ...
+    @property
+    def workspace_key(self) -> str: ...
+    @property
+    def lineage(self) -> str: ...
+
+
+def unfinished(fs: FileSystem, target: Journals) -> bool:
     """Whether this workspace has an unfinished save (an `.open` journal of its key or lineage, `save.records`); a
     journal folder that cannot be listed may hold one: True (fail closed)."""
     try:

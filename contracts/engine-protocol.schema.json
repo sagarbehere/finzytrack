@@ -15,6 +15,7 @@
     "save_outcome",
     "rebuild",
     "open",
+    "preview",
     "create",
     "create_outcome",
     "copy",
@@ -1242,6 +1243,7 @@
       "title": "JournalFile",
       "type": "object"
     },
+    "JsonValue": {},
     "KeptCopySeen": {
       "additionalProperties": false,
       "properties": {
@@ -1789,6 +1791,431 @@
       ],
       "title": "PingResult",
       "type": "object"
+    },
+    "PreviewError": {
+      "additionalProperties": false,
+      "description": "A new error the change brings (ADR-0067: listed, never a refusal): its key's SHA-256 (type, entry and message\nwithout locations; `ledger.core.entry_keys`), Beancount's type name and message, and where Beancount puts it.",
+      "properties": {
+        "key": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Key",
+          "type": "string"
+        },
+        "type": {
+          "maxLength": 128,
+          "minLength": 1,
+          "title": "Type",
+          "type": "string"
+        },
+        "message": {
+          "title": "Message",
+          "type": "string"
+        },
+        "path": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "pattern": "^/",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Path"
+        },
+        "line": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Line"
+        }
+      },
+      "required": [
+        "key",
+        "type",
+        "message",
+        "path",
+        "line"
+      ],
+      "title": "PreviewError",
+      "type": "object"
+    },
+    "PreviewFile": {
+      "additionalProperties": false,
+      "description": "A file the plan writes: its path, the SHA-256 of its bytes now (`pre`) and of its new text (`post`), and the\nnew text (UTF-8, as `save`'s `post`).",
+      "properties": {
+        "path": {
+          "minLength": 1,
+          "pattern": "^/",
+          "title": "Path",
+          "type": "string"
+        },
+        "pre": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Pre",
+          "type": "string"
+        },
+        "post": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Post",
+          "type": "string"
+        },
+        "text": {
+          "title": "Text",
+          "type": "string"
+        }
+      },
+      "required": [
+        "path",
+        "pre",
+        "post",
+        "text"
+      ],
+      "title": "PreviewFile",
+      "type": "object"
+    },
+    "PreviewParams": {
+      "additionalProperties": false,
+      "description": "`preview` (S0116): plan the change `request` asks of the mutator `mutator` on the published mirror generation\nnumbered `generation` (the one the plan was made on) of the ledger rooted at `root`, and check it with the\nwrite-safety contract's steps before any write (`ledger.contract.prepare`). The mirror is read from the cache\nfolder the engine was started with (`--app-cache`; no request names it), under `workspace_key`; `app_local_data`\nand `lineage` name the `.open` journals looked for. `request` is the mutator's own (its producer reads it); the\nengine registers no producer yet, so every mutator is refused `unknown_mutator` until its slice adds one.",
+      "properties": {
+        "root": {
+          "minLength": 1,
+          "pattern": "^/",
+          "title": "Root",
+          "type": "string"
+        },
+        "app_local_data": {
+          "minLength": 1,
+          "pattern": "^/",
+          "title": "App Local Data",
+          "type": "string"
+        },
+        "workspace_key": {
+          "maxLength": 255,
+          "minLength": 1,
+          "pattern": "^[^/\\x00]+$",
+          "title": "Workspace Key",
+          "type": "string"
+        },
+        "lineage": {
+          "maxLength": 128,
+          "minLength": 1,
+          "title": "Lineage",
+          "type": "string"
+        },
+        "generation": {
+          "maximum": 999999999999,
+          "minimum": 1,
+          "title": "Generation",
+          "type": "integer"
+        },
+        "mutator": {
+          "pattern": "^[a-z0-9_.-]{1,64}$",
+          "title": "Mutator",
+          "type": "string"
+        },
+        "request": {
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          },
+          "title": "Request",
+          "type": "object"
+        }
+      },
+      "required": [
+        "root",
+        "app_local_data",
+        "workspace_key",
+        "lineage",
+        "generation",
+        "mutator",
+        "request"
+      ],
+      "title": "PreviewParams",
+      "type": "object"
+    },
+    "PreviewReply": {
+      "additionalProperties": false,
+      "description": "The accepted reply to `preview`.",
+      "examples": [
+        {
+          "id": 1,
+          "ok": true,
+          "op": "preview",
+          "result": {
+            "detail": null,
+            "errors": 1,
+            "files": [
+              {
+                "path": "/ledgers/L/main.bean",
+                "post": "1111111111111111111111111111111111111111111111111111111111111111",
+                "pre": "0000000000000000000000000000000000000000000000000000000000000000",
+                "text": "2026-01-01 open Assets:Cash\n2026-01-02 open Expenses:Food\n"
+              }
+            ],
+            "fingerprint": "{\"document_files\":[],\"documents\":[],\"files\":[],\"globs\":[],\"modules\":[],\"root\":\"/ledgers/L/main.bean\",\"v\":2}",
+            "new_errors": [
+              {
+                "key": "2222222222222222222222222222222222222222222222222222222222222222",
+                "line": 3,
+                "message": "Balance failed for 'Assets:Cash': expected 5 USD != accumulated 0 USD (5 too little)",
+                "path": "/ledgers/L/main.bean",
+                "type": "BalanceError"
+              }
+            ],
+            "outcome": "prepared",
+            "path": null,
+            "reason": null,
+            "stale": null,
+            "step": null
+          },
+          "v": 2
+        }
+      ],
+      "properties": {
+        "v": {
+          "const": 2,
+          "title": "V",
+          "type": "integer"
+        },
+        "id": {
+          "maximum": 2147483647,
+          "minimum": 0,
+          "title": "Id",
+          "type": "integer"
+        },
+        "op": {
+          "const": "preview",
+          "title": "Op",
+          "type": "string"
+        },
+        "ok": {
+          "const": true,
+          "title": "Ok",
+          "type": "boolean"
+        },
+        "result": {
+          "$ref": "#/$defs/PreviewResult"
+        },
+        "decision": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Decision"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "v",
+        "id",
+        "op",
+        "ok",
+        "result"
+      ],
+      "title": "PreviewReply",
+      "type": "object"
+    },
+    "PreviewRequest": {
+      "additionalProperties": false,
+      "description": "The `preview` request.",
+      "examples": [
+        {
+          "id": 1,
+          "op": "preview",
+          "params": {
+            "app_local_data": "/app-data/com.finzytrack.desktop",
+            "generation": 2,
+            "lineage": "lin1",
+            "mutator": "account.create",
+            "request": {
+              "account": "Expenses:Food",
+              "date": "2026-01-02"
+            },
+            "root": "/ledgers/L/main.bean",
+            "workspace_key": "k1"
+          },
+          "v": 2
+        }
+      ],
+      "properties": {
+        "v": {
+          "const": 2,
+          "title": "V",
+          "type": "integer"
+        },
+        "id": {
+          "maximum": 2147483647,
+          "minimum": 0,
+          "title": "Id",
+          "type": "integer"
+        },
+        "op": {
+          "const": "preview",
+          "title": "Op",
+          "type": "string"
+        },
+        "params": {
+          "$ref": "#/$defs/PreviewParams"
+        }
+      },
+      "required": [
+        "v",
+        "id",
+        "op",
+        "params"
+      ],
+      "title": "PreviewRequest",
+      "type": "object"
+    },
+    "PreviewResult": {
+      "additionalProperties": false,
+      "description": "`preview`'s answer. `prepared`: `files` (the write plan's texts and hashes), `fingerprint` (the plan's,\n`ledger_set.encode`'s text, which the save's gate checks), `new_errors` (empty when the change brings none) and\n`errors` (Beancount's errors in the candidate, as bean-check counts them). `refused`: `step` and `reason` say\nwhere and why (`fault`: the step raised; `undecidable`: no result it could read), `path` the file when there is\none, `detail` more, without ledger content. `moved`: the disk changed during the job (run it again in a fresh\nengine). `paused`: an unfinished save's `.open` journal. `stale`: the published generation cannot be the\nplan's baseline (`unpublished`: none, or not complete; `other_generation`: not the plan's; `not_fresh`: not this\nledger's, another engine build's, or the disk changed since it was built). It runs the ledger's plugins, so the\nengine is retired after it; it writes nothing.",
+      "properties": {
+        "outcome": {
+          "enum": [
+            "prepared",
+            "refused",
+            "moved",
+            "paused",
+            "stale"
+          ],
+          "title": "Outcome",
+          "type": "string"
+        },
+        "files": {
+          "items": {
+            "$ref": "#/$defs/PreviewFile"
+          },
+          "title": "Files",
+          "type": "array"
+        },
+        "fingerprint": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Fingerprint"
+        },
+        "new_errors": {
+          "items": {
+            "$ref": "#/$defs/PreviewError"
+          },
+          "title": "New Errors",
+          "type": "array"
+        },
+        "errors": {
+          "minimum": 0,
+          "title": "Errors",
+          "type": "integer"
+        },
+        "step": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PreviewStep"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "maxLength": 64,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Reason"
+        },
+        "path": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "pattern": "^/",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Path"
+        },
+        "detail": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Detail"
+        },
+        "stale": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PreviewStale"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "outcome",
+        "files",
+        "fingerprint",
+        "new_errors",
+        "errors",
+        "step",
+        "reason",
+        "path",
+        "detail",
+        "stale"
+      ],
+      "title": "PreviewResult",
+      "type": "object"
+    },
+    "PreviewStale": {
+      "enum": [
+        "unpublished",
+        "other_generation",
+        "not_fresh"
+      ],
+      "type": "string"
+    },
+    "PreviewStep": {
+      "enum": [
+        "plan",
+        "apply",
+        "parse",
+        "diff",
+        "spans",
+        "load",
+        "errors"
+      ],
+      "type": "string"
     },
     "ProceedControl": {
       "additionalProperties": false,
@@ -3065,6 +3492,9 @@
           "$ref": "#/$defs/OpenReply"
         },
         {
+          "$ref": "#/$defs/PreviewReply"
+        },
+        {
           "$ref": "#/$defs/CreateReply"
         },
         {
@@ -3110,6 +3540,9 @@
         },
         {
           "$ref": "#/$defs/OpenRequest"
+        },
+        {
+          "$ref": "#/$defs/PreviewRequest"
         },
         {
           "$ref": "#/$defs/CreateRequest"

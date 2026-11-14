@@ -19,7 +19,8 @@ ledger set observed again, no `.open` journal), the swap (`swap`, step 8). A gen
 published and a name is never used twice (the random tag, §3), so readers that pinned a name read only that build.
 
 Readers resolve `current.db` once and open the generation (§7): the save's gate reads it with `read_published`, the
-sidecar with `app.mirror.files.pin`. `fresh` and `fresh_on_disk` are §8's freshness check and its gate part.
+preview its baseline errors with `read_baseline` (S0116), the sidecar with `app.mirror.files.pin`. `fresh` and
+`fresh_on_disk` are §8's freshness check and its gate part.
 
 Everything here goes through the file-system port (`ledger_engine.fs.port`): the in-memory fake's crash, power-loss and
 I/O-error sweeps test it (`tests/mirror/test_publish_crash.py`); the SQLite build and `meta` read are the store's
@@ -42,6 +43,7 @@ from ledger_engine.ledger.core import paths as core_paths
 from ledger_engine.ledger.core.ledger_set import Fingerprint, UndecodableError, decode, digest, encode
 from ledger_engine.mirror.build import BuildFailed, Built, Stamp
 from ledger_engine.mirror.core import schema
+from ledger_engine.mirror.core.rows import Row
 from ledger_engine.tla import tla_action
 
 CURRENT: Final = "current.db"
@@ -447,6 +449,41 @@ def read_published(fs: FileSystem, app_cache: str, key: str, store: Store) -> Cu
     if gen is None or facts is None or not facts.build_complete:
         return None
     return Current(gen, facts)
+
+
+class BaselineStore(Protocol):
+    """The reads of a published generation the preview needs (`ledger_engine.mirror.store.SqliteStore`)."""
+
+    def meta(self, d: DirHandle, name: str) -> Meta | None: ...
+
+    def errors(self, d: DirHandle, name: str) -> list[Row] | None:
+        """The generation's `ledger_errors` rows, read only, in their order; None when it cannot be read."""
+        ...
+
+
+@dataclass(frozen=True, slots=True)
+class Baseline:
+    """The published generation the preview compares with (ADR-0008 step 3): its name and `meta`, and its
+    `ledger_errors` rows."""
+
+    current: Current
+    errors: list[Row]
+
+
+def read_baseline(fs: FileSystem, app_cache: str, key: str, store: BaselineStore) -> Baseline | None:
+    """The preview's read (S0116): as `read_published`, and that same generation's `ledger_errors`, through the one
+    handle on `mirror/`. It makes, cleans and writes nothing. None when there is no complete published generation or
+    either read fails."""
+    try:
+        with fs.open_dir(_parent_path(app_cache, key)) as parent, parent.open_child(FOLDER) as d:
+            gen = current(d)
+            facts = None if gen is None else store.meta(d, gen.name)
+            errors = None if gen is None or facts is None else store.errors(d, gen.name)
+    except OSError:
+        return None
+    if gen is None or facts is None or not facts.build_complete or errors is None:
+        return None
+    return Baseline(Current(gen, facts), errors)
 
 
 def same_ledger(fs: FileSystem, a: str, b: str) -> bool:

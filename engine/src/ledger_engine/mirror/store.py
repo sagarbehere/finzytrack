@@ -25,7 +25,8 @@ from ledger_engine.ledger.beancount_port import ParseResult
 from ledger_engine.mirror import build as _build
 from ledger_engine.mirror import publish as pb
 from ledger_engine.mirror.build import FILE_MODE, BuildFailed, Built, Stamp
-from ledger_engine.mirror.core import rows
+from ledger_engine.mirror.core import rows, schema
+from ledger_engine.mirror.core.rows import Row
 from ledger_engine.tla import tla_action
 
 HEADER: Final = b"SQLite format 3\x00"
@@ -86,3 +87,21 @@ class SqliteStore:
         if len(found) > MAX_META_ROWS:
             return None
         return pb.meta_of(facts)
+
+    def errors(self, d: DirHandle, name: str) -> list[Row] | None:
+        """The generation's `ledger_errors` rows in their order (`pb.BaselineStore`, the preview's baseline, S0116),
+        opened read-only as `meta` is; None when it cannot be read."""
+        if self.meta(d, name) is None:  # the same checks of the file first: a regular file, rollback mode, whole
+            return None
+        table = next(t for t in schema.TABLES if t.name == "ledger_errors")  # columns in `rows.error_rows`' order
+        columns = ", ".join(c.name for c in table.columns)
+        try:
+            con = sqlite3.connect(_uri(d, name, "ro"), uri=True)
+            try:
+                con.execute("PRAGMA query_only = 1")
+                found = con.execute(f"SELECT {columns} FROM {table.base} ORDER BY id").fetchall()  # noqa: S608
+            finally:
+                con.close()
+        except sqlite3.Error:
+            return None
+        return [tuple(r) for r in found]

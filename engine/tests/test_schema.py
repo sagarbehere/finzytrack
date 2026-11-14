@@ -63,6 +63,7 @@ def test_every_op_has_a_request_and_a_reply_definition() -> None:
         "save_outcome",
         "rebuild",
         "open",
+        "preview",
         "create",
         "create_outcome",
         "copy",

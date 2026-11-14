@@ -50,8 +50,8 @@ Where it differs from Beancount, on purpose (each refuses the whole load, EP-13;
   (S0068 removed S0067's listing swap, whose names a user plugin could see; spec §15).
 
 A load holds `sys.path` and the plugin modules of the process while it runs; engine jobs run one at a time
-(ADR-0064). The preview will run it inside its engine job (TODO(BL-0106)), and the mirror build too (TODO(BL-0113));
-the save runs no load since S0070 (ADR-0068 D1).
+(ADR-0064). The preview runs it inside its engine job (`ledger.preview`, S0116), the open too (S0088); the save runs
+no load since S0070 (ADR-0068 D1).
 """
 
 from __future__ import annotations

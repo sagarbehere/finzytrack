@@ -49,6 +49,12 @@ from app.platform.engine import (
     OutcomeFacts,
     Phase,
     Pong,
+    PreviewAnswer,
+    PreviewError,
+    PreviewFile,
+    PreviewOutcome,
+    PreviewStale,
+    PreviewStep,
     Progress,
     Publish,
     RebuildAnswer,
@@ -75,6 +81,7 @@ OPS = (
     "save_outcome",
     "rebuild",
     "open",
+    "preview",
     "create",
     "create_outcome",
     "copy",
@@ -646,6 +653,78 @@ def _open(result: Mapping[str, object]) -> OpenAnswer:
 def decode_open(result: Mapping[str, object]) -> OpenAnswer | Violation:
     """The `open` result (S0088)."""
     return _decoded(_open, result)
+
+
+_PREVIEW = frozenset(
+    {"outcome", "files", "fingerprint", "new_errors", "errors", "step", "reason", "path", "detail", "stale"}
+)
+PREVIEW_OUTCOMES: frozenset[str] = frozenset({"prepared", "refused", "moved", "paused", "stale"})
+PREVIEW_STEPS: frozenset[str] = frozenset({"plan", "apply", "parse", "diff", "spans", "load", "errors"})
+PREVIEW_STALE: frozenset[str] = frozenset({"unpublished", "other_generation", "not_fresh"})
+REASON_CHARS = 64
+
+
+def _sha(value: object, what: str) -> str:
+    if not isinstance(value, str) or _SHA256.fullmatch(value) is None:
+        msg = f"{what} must be a SHA-256 in lower-case hex"
+        raise _Bad(msg)
+    return value
+
+
+def _preview_file(value: object) -> PreviewFile:
+    o = _keys(value, frozenset({"path", "pre", "post", "text"}), "a preview file")
+    return PreviewFile(
+        path=cast("str", _path(o["path"], "path")),
+        pre=_sha(o["pre"], "pre"),
+        post=_sha(o["post"], "post"),
+        text=cast("str", _text(o["text"], "text")),
+    )
+
+
+def _preview_error(value: object) -> PreviewError:
+    o = _keys(value, frozenset({"key", "type", "message", "path", "line"}), "a new error")
+    kind = _name(o["type"], "type")
+    if len(kind) > 128:
+        msg = "type must be at most 128 characters"
+        raise _Bad(msg)
+    return PreviewError(
+        key=_sha(o["key"], "key"),
+        type=kind,
+        message=cast("str", _text(o["message"], "message")),
+        path=_path(o["path"], "path", nullable=True),
+        line=_int(o["line"], "line", nullable=True, low=1),
+    )
+
+
+def _preview(result: Mapping[str, object]) -> PreviewAnswer:
+    """S0116: each field checked as the schema checks it; how they go together is the preview use case's (BL-0106)."""
+    o = _keys(dict(result), _PREVIEW, "the preview result")
+    fingerprint = _text(o["fingerprint"], "fingerprint", nullable=True)
+    if fingerprint == "":
+        msg = "fingerprint must not be empty"
+        raise _Bad(msg)
+    reason = _text(o["reason"], "reason", nullable=True)
+    if reason is not None and not 1 <= len(reason) <= REASON_CHARS:
+        msg = f"reason must be 1 to {REASON_CHARS} characters"
+        raise _Bad(msg)
+    step, stale = o["step"], o["stale"]
+    return PreviewAnswer(
+        outcome=cast("PreviewOutcome", _choice(o["outcome"], PREVIEW_OUTCOMES, "outcome")),
+        files=tuple(_preview_file(f) for f in _list(o["files"], "files")),
+        fingerprint=fingerprint,
+        new_errors=tuple(_preview_error(e) for e in _list(o["new_errors"], "new_errors")),
+        errors=cast("int", _int(o["errors"], "errors", low=0)),
+        step=None if step is None else cast("PreviewStep", _choice(step, PREVIEW_STEPS, "step")),
+        reason=reason,
+        path=_path(o["path"], "path", nullable=True),
+        detail=_text(o["detail"], "detail", nullable=True),
+        stale=None if stale is None else cast("PreviewStale", _choice(stale, PREVIEW_STALE, "stale")),
+    )
+
+
+def decode_preview(result: Mapping[str, object]) -> PreviewAnswer | Violation:
+    """The `preview` result (S0116)."""
+    return _decoded(_preview, result)
 
 
 _CREATE = frozenset({"outcome", "reason", "folder", "path", "detail", "errno", "left"})

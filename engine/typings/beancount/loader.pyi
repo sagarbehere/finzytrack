@@ -13,6 +13,14 @@ def load_file(
     extra_validations: list[Any] | None = None,
     encoding: str | None = None,
 ) -> tuple[Directives, list[BeancountError], OptionsMap]: ...
+def load_string(
+    string: str,
+    log_timings: Any = None,
+    log_errors: Any = None,
+    extra_validations: list[Any] | None = None,
+    dedent: bool = False,
+    encoding: str | None = None,
+) -> tuple[Directives, list[BeancountError], OptionsMap]: ...
 def run_transformations(
     entries: Directives, parse_errors: list[BeancountError], options_map: OptionsMap, log_timings: Any
 ) -> tuple[Directives, list[BeancountError]]: ...

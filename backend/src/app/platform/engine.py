@@ -339,6 +339,53 @@ class OpenAnswer:
     line: int | None = None
 
 
+type PreviewOutcome = Literal["prepared", "refused", "moved", "paused", "stale"]
+type PreviewStep = Literal["plan", "apply", "parse", "diff", "spans", "load", "errors"]
+type PreviewStale = Literal["unpublished", "other_generation", "not_fresh"]
+
+
+@dataclass(frozen=True, slots=True)
+class PreviewFile:
+    """A file a prepared plan writes: its path, the SHA-256 of its bytes now and of its new text, and the text."""
+
+    path: str
+    pre: str
+    post: str
+    text: str
+
+
+@dataclass(frozen=True, slots=True)
+class PreviewError:
+    """A new error the change brings (ADR-0067: listed, never a refusal): its key's SHA-256, Beancount's type name
+    and message, and where Beancount puts it."""
+
+    key: str
+    type: str
+    message: str
+    path: str | None
+    line: int | None
+
+
+@dataclass(frozen=True, slots=True)
+class PreviewAnswer:
+    """The result of the engine's `preview` (engine-jobs §2, §7; S0116): `prepared` (the write plan: `files`,
+    `fingerprint` for the save's gate, `new_errors`, `errors` in the candidate), `refused` (`step`, `reason`, `path`,
+    `detail`), `moved` (run it again in a fresh engine), `paused` (an unfinished save) or `stale` (`stale`: the
+    published generation cannot be the plan's baseline). It wrote nothing; the ledger's plugins ran in that engine.
+    The sidecar's preview use case, the `PlanStore` and the routes come with the confirm (BL-0106)."""
+
+    outcome: PreviewOutcome
+    files: tuple[PreviewFile, ...]
+    fingerprint: str | None
+    new_errors: tuple[PreviewError, ...]
+    errors: int
+    step: PreviewStep | None
+    reason: str | None
+    path: str | None
+    detail: str | None
+    stale: PreviewStale | None
+
+
 type CreateOutcomeKind = Literal["created", "not_created"]
 
 
