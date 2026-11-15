@@ -14,7 +14,7 @@ from typing import Any
 from beancount.core import account as bc_account
 from beancount.core import data
 
-from semantic_diff import FileDiff, LedgerSet, canonical_key, parse_entries_with_totals
+from semantic_diff import FileDiff, LedgerSet, Parsed, canonical_key, location, parse_entries_with_totals
 
 
 # Harness mutator → its row in the intent table (scripts/tests/test_intent_table.py checks both sides).
@@ -27,21 +27,35 @@ class NonComparable(Exception):
 
 @dataclass
 class Expected:
+    """The intended change: per file, the entries removed and added (a multiset of keys), and where each goes. An
+    entry that replaces another takes its place (its file and first line); a created entry is appended to its file,
+    `offset` lines into the appended text. The places matter only to Beancount's order (`intended_entries`)."""
     files: dict[str, FileDiff] = field(default_factory=dict)
     entries: dict[str, Any] = field(default_factory=dict)  # key → entry, for the intended new entries
     created: set[str] = field(default_factory=set)  # keys of entries the mutator creates (not replacements)
     totals: dict[str, dict[int, Decimal]] = field(default_factory=dict)  # key → {posting: `@@` total}
+    at: dict[tuple[str, int], str | None] = field(default_factory=dict)  # (file, line) removed → key put there
+    appended: list[tuple[str, str, int]] = field(default_factory=list)  # (file, key, line offset), in order
 
-    def add(self, rel: str, entry: Any, *, created: bool = False, totals: dict[int, Decimal] | None = None) -> None:
+    def add(self, rel: str, entry: Any, *, created: bool = False, totals: dict[int, Decimal] | None = None,
+            at: int | None = None, offset: int = 0) -> None:
+        """Add *entry* to *rel*: at line *at* (the place of an entry it replaces), else appended at *offset*."""
         k = canonical_key(entry)
         self.files.setdefault(rel, FileDiff()).added[k] += 1
         self.entries.setdefault(k, entry)
         self.totals.setdefault(k, totals or {})
         if created:
             self.created.add(k)
+        if at is not None:
+            self.at[(rel, at)] = k
+        else:
+            self.appended.append((rel, k, offset))
 
-    def remove(self, rel: str, key: str, n: int = 1) -> None:
+    def remove(self, rel: str, key: str, n: int = 1, *, at: tuple[int, ...] = ()) -> None:
+        """Remove *n* instances of *key* from *rel*, found at the lines *at*."""
         self.files.setdefault(rel, FileDiff()).removed[key] += n
+        for line in at:
+            self.at.setdefault((rel, line), None)
 
 
 def parse_intent(text: str) -> tuple[list[Any], dict[str, dict[int, Decimal]]]:
@@ -68,11 +82,12 @@ def find_by_legacy_id(before: LedgerSet, txn_id: str) -> tuple[str, str, Any]:
 
 def update_transaction(before: LedgerSet, txn_id: str, new_text: str) -> Expected:
     """Replace the transaction with legacy id *txn_id* by *new_text*, in the file it lives in."""
-    rel, key, _ = find_by_legacy_id(before, txn_id)
+    rel, key, target = find_by_legacy_id(before, txn_id)
     (new,), totals = parse_intent(new_text)
     exp = Expected()
-    exp.remove(rel, key)
-    exp.add(rel, new, totals=totals[canonical_key(new)])
+    line = target.meta["lineno"]
+    exp.remove(rel, key, at=(line,))
+    exp.add(rel, new, totals=totals[canonical_key(new)], at=line)  # Fava's splice: the replacement takes its place
     return exp
 
 
@@ -119,9 +134,9 @@ def rename_account(before: LedgerSet, old: str, new: str) -> Expected:
         for k, e in f.by_key.items():
             r = renamed(e, old, new)
             if canonical_key(r) != k:
-                exp.remove(rel, k, f.keys[k])
-                for _ in range(f.keys[k]):
-                    exp.add(rel, r, totals=f.totals.get(k))
+                exp.remove(rel, k, f.keys[k], at=f.lines[k])
+                for line in f.lines[k]:  # a rename edits each entry where it stands
+                    exp.add(rel, r, totals=f.totals.get(k), at=line)
     return exp
 
 
@@ -132,11 +147,64 @@ def import_append(before: LedgerSet, texts: list[str]) -> Expected:
         if any(isinstance(e, data.Custom) and e.type == "fava-option" and e.values and e.values[0].value == "insert-entry"
                for e in f.by_key.values()):
             raise NonComparable("the ledger routes new entries with insert-entry; the intended file is not modelled yet")
+    offset = 0
     for text in texts:
         entries, totals = parse_intent(text)
         for e in entries:
-            exp.add(before.root, e, created=True, totals=totals[canonical_key(e)])
+            exp.add(before.root, e, created=True, totals=totals[canonical_key(e)], offset=offset + e.meta["lineno"] - 1)
+        offset += text.count("\n") + (0 if text.endswith("\n") else 1) + 1  # each text after a blank line
     return exp
+
+
+class Unbuildable(Exception):
+    """The intended ledger cannot be placed: a removed entry is not where the model says (a model defect)."""
+
+
+def _placed(entry: Any, path: str, line: int) -> Any:
+    """*entry* at *line* of *path*; its postings keep their lines relative to its first line."""
+    first = (entry.meta or {}).get("lineno") or line
+
+    def meta(m: dict[str, Any] | None) -> dict[str, Any]:
+        m = dict(m or {})
+        return {**m, "filename": path, "lineno": line + (m.get("lineno") or first) - first}
+    entry = entry._replace(meta=meta(entry.meta))
+    if isinstance(entry, data.Transaction):
+        entry = entry._replace(postings=[p._replace(meta=meta(p.meta)) for p in entry.postings])
+    return entry
+
+
+def append_line(parsed: Parsed, path: str) -> int:
+    """The first line of text appended to *path* (v0.4's insert at a file's end, `semantic_diff._planned` in the
+    engine: a blank line, then the entry; in an empty file, no blank line)."""
+    lines, _ = parsed.files[path]
+    return 1 if lines == 0 else lines + 2
+
+
+def intended_entries(parsed: Parsed, before: LedgerSet, exp: Expected) -> list[Any]:
+    """The intended ledger as the loader would parse it, in its order, before booking: every entry of *parsed* at
+    its own file and line, except that each removed entry gives its place (file, first line, and its rank in the
+    loader's order) to the entry that replaces it, and each created entry follows the last entry of its file, at
+    the line v0.4 appends it to (`append_line`). Untargeted entries keep their lines: an intended change moves no
+    other entry in Beancount's order (entry_sortkey: date, kind, line, across files)."""
+    entries: list[Any | None] = list(parsed.entries)
+    where: dict[tuple[str, int], int] = {}
+    for i, e in enumerate(entries):
+        where.setdefault(location(e), i)
+    for rel, fd in exp.files.items():
+        placed = sum(1 for (r, _) in exp.at if r == rel)
+        if placed != sum(fd.removed.values()):
+            raise Unbuildable(f"{rel}: {sum(fd.removed.values())} entries removed, {placed} placed")
+    for (rel, line), key in exp.at.items():
+        path = str((before.base / rel).resolve())
+        i = where.get((path, line))
+        if i is None or entries[i] is None or exp.files[rel].removed[canonical_key(entries[i])] <= 0:
+            raise Unbuildable(f"{rel}:{line} does not hold an entry the change removes")
+        entries[i] = None if key is None else _placed(exp.entries[key], path, line)
+    for rel, key, offset in exp.appended:
+        path = str((before.base / rel).resolve())
+        last = max((i for i, e in enumerate(entries) if e is not None and location(e)[0] == path), default=-1)
+        entries.insert(last + 1, _placed(exp.entries[key], path, append_line(parsed, path) + offset))
+    return [e for e in entries if e is not None]
 
 
 def counts(exp: Expected) -> tuple[int, int]:

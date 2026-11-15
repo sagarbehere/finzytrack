@@ -8,9 +8,11 @@ This is the oracle's own copy of the idea; the app's contract implements step 2 
 
 from __future__ import annotations
 
+import copy
 import glob
 import os
 import re
+import sys
 from collections import Counter
 from dataclasses import dataclass, field
 from decimal import Decimal
@@ -18,6 +20,9 @@ from pathlib import Path
 from typing import Any
 
 from beancount import loader
+from beancount.core import data
+from beancount.ops import validation
+from beancount.parser import booking
 from beancount.parser import options as bc_options
 from beancount.parser import parser, printer
 
@@ -62,6 +67,7 @@ class ParsedFile:
     comment_lines: int
     errors: tuple[str, ...]
     totals: dict[str, dict[int, Decimal]]  # key → {posting index: total} for postings written with `@@`
+    lines: dict[str, tuple[int, ...]] = field(default_factory=dict)  # key → the line of each of its instances
 
 
 @dataclass(frozen=True)
@@ -119,11 +125,14 @@ def parse_file(path: Path) -> tuple[ParsedFile, list[str]]:
     entries, errors, opts, totals = parse_entries_with_totals(path.read_text(encoding="utf-8"), str(path))
     keys: Counter[str] = Counter()
     by_key: dict[str, Any] = {}
+    lines: dict[str, list[int]] = {}
     for e in entries:
         k = canonical_key(e)
         keys[k] += 1
         by_key.setdefault(k, e)
-    pf = ParsedFile(keys, by_key, _header(opts), _comment_lines(path), tuple(e.message for e in errors), totals)
+        lines.setdefault(k, []).append(e.meta["lineno"])
+    pf = ParsedFile(keys, by_key, _header(opts), _comment_lines(path), tuple(e.message for e in errors), totals,
+                    {k: tuple(v) for k, v in lines.items()})
     return pf, list(opts.get("include") or ())
 
 
@@ -159,6 +168,72 @@ def parse_set(base: Path, root_file: str) -> LedgerSet:
     return LedgerSet(base, Path(root_file).as_posix(), files, frozenset(via_glob), tuple(sorted(outside)))
 
 
+def location(entry: Any) -> tuple[str, int]:
+    """An entry's (resolved file, line), as the parser recorded it."""
+    meta = entry.meta or {}
+    return str(Path(meta.get("filename", "")).resolve()), meta.get("lineno")
+
+
+def at_kind(entry: Any) -> tuple[str, str, int]:
+    """An entry's kind and place: a generated entry may carry the place of the entry it came from (a pad's
+    padding transaction carries the pad's), never its kind."""
+    return (type(entry).__name__, *location(entry))
+
+
+@dataclass(frozen=True)
+class Parsed:
+    """A ledger set as Beancount's loader parses it, before booking: the entries in the loader's order (root first,
+    then each include as it is reached), the parse errors, the root's options, and per file its line count and
+    whether it ends with a line end (the place an appended entry would take). Never handed to `book` itself."""
+    entries: tuple[Any, ...]
+    errors: tuple[Any, ...]
+    options: dict[str, Any]
+    files: dict[str, tuple[int, bool]]  # resolved path → (lines, ends with a line end)
+
+
+def parse_ledger(base: Path, root_file: str) -> Parsed:
+    """The loader's own parse (`loader._parse_recursive`, the first step of `loader.load_file`)."""
+    entries, errors, options = loader._parse_recursive([(str(base.resolve() / root_file), True)], None)
+    files: dict[str, tuple[int, bool]] = {}
+    for path in {location(e)[0] for e in entries} | {str((base / root_file).resolve())}:
+        p = Path(path)
+        if p.is_file():
+            text = p.read_bytes()
+            files[path] = (text.count(b"\n") + (0 if not text or text.endswith(b"\n") else 1), text.endswith(b"\n"))
+    return Parsed(tuple(entries), tuple(errors), options, files)
+
+
+def _fresh(entries: list[Any]) -> list[Any]:
+    """Each entry with its own metadata dicts: booking and plugins may change them in place, and a `Parsed` is
+    booked more than once."""
+    def one(e: Any) -> Any:
+        e = e._replace(meta=dict(e.meta or {}))
+        if isinstance(e, data.Transaction):
+            e = e._replace(postings=[p._replace(meta=dict(p.meta) if p.meta is not None else None) for p in e.postings])
+        return e
+    return [one(e) for e in entries]
+
+
+def book(entries: list[Any], parsed: Parsed) -> tuple[list[Any], list[Any]]:
+    """What `loader.load_file` does after its parse, step for step (Beancount 3.2.0 `loader._load`): sort, book,
+    run the plugins (with the ledger's `pythonpath`), validate. `test_booked.FidelityTest` holds it to the loader's
+    own result on the repo's corpora."""
+    options = copy.deepcopy(parsed.options)
+    entries = sorted(_fresh(entries), key=data.entry_sortkey)
+    errors = list(parsed.errors)
+    entries, balance_errors = booking.book(entries, options)
+    errors.extend(balance_errors)
+    saved = list(sys.path)
+    try:
+        if "pythonpath" in options:
+            sys.path[0:0] = options["pythonpath"]
+        entries, errors = loader.run_transformations(entries, errors, options, None)
+    finally:
+        sys.path[:] = saved
+    errors.extend(validation.validate(entries, options, None, None))
+    return entries, errors
+
+
 @dataclass(frozen=True)
 class LoadFacts:
     """What one official full load (plugins, booking, validation) says about a ledger set."""
@@ -166,6 +241,9 @@ class LoadFacts:
     booked_at: dict[tuple[str, int], Any]  # (resolved file, line) → the booked entry parsed there
     booked_by_id: dict[str, Any]  # legacy `id` → booked transaction (ids carried twice left out)
     errors: Counter[str]  # error keys (review:D1 §12.1)
+    booked: tuple[Any, ...] = ()  # every entry of the load, in its order
+    keys_at: dict[tuple[str, str, int], str] = field(default_factory=dict)  # (kind, file, line) → parsed entry's key
+    parsed: Parsed | None = None  # the loader's parse, kept to book the intended ledger (BL-0275)
 
 
 def error_key(err: Any, base: Path) -> str:
@@ -175,29 +253,31 @@ def error_key(err: Any, base: Path) -> str:
     return f"{type(err).__name__}|{canonical_key(entry) if entry is not None and hasattr(entry, 'meta') else ''}|{msg}"
 
 
-def load_facts(base: Path, root_file: str) -> LoadFacts:
+def load_facts(base: Path, root_file: str, *, keep_parsed: bool = True) -> LoadFacts:
+    """One official load (`loader.load_file`); with *keep_parsed*, also the loader's parse, kept for booking the
+    intended ledger (the harness keeps it for the source only)."""
     base = base.resolve()
+    keys_at: dict[tuple[str, str, int], str] = {}
     parsed_at: set[tuple[type, str, int]] = set()
     for rel in parse_set(base, root_file).files:
         entries, _, _ = parser.parse_file(str(base / rel))
-        parsed_at |= {(type(e), str(Path(e.meta["filename"]).resolve()), e.meta["lineno"]) for e in entries}
+        for e in entries:
+            parsed_at.add((type(e), *location(e)))
+            keys_at.setdefault(at_kind(e), canonical_key(e))
     loader.initialize(use_cache=False)
     loaded, errors, _ = loader.load_file(str(base / root_file))
 
-    def at(e: Any) -> tuple[str, int]:
-        return str(Path(e.meta.get("filename", "")).resolve()), e.meta.get("lineno")
-
-    generated = frozenset(canonical_key(e) for e in loaded if (type(e), *at(e)) not in parsed_at)
-    booked_at = {at(e): e for e in loaded if (type(e), *at(e)) in parsed_at}
+    generated = frozenset(canonical_key(e) for e in loaded if (type(e), *location(e)) not in parsed_at)
+    booked_at = {location(e): e for e in loaded if (type(e), *location(e)) in parsed_at}
     ids = Counter(e.meta.get("id") for e in loaded if hasattr(e, "postings") and "id" in e.meta)
     by_id = {e.meta["id"]: e for e in loaded if hasattr(e, "postings") and ids.get(e.meta.get("id")) == 1}
-    return LoadFacts(generated, booked_at, by_id, Counter(error_key(e, base) for e in errors))
+    return LoadFacts(generated, booked_at, by_id, Counter(error_key(e, base) for e in errors), tuple(loaded), keys_at,
+                     parse_ledger(base, root_file) if keep_parsed else None)
 
 
 def booked_of(facts: LoadFacts, entry: Any) -> Any | None:
     """The booked form of a parsed entry, found by its file and line."""
-    meta = entry.meta or {}
-    return facts.booked_at.get((str(Path(meta.get("filename", "")).resolve()), meta.get("lineno")))
+    return facts.booked_at.get(location(entry))
 
 
 @dataclass
