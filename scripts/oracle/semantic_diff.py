@@ -2,8 +2,7 @@
 
 Each file of the set is parsed on its own with Beancount's parser (no plugins, no booking). An entry's canonical
 key is the printer's output for it with location-only meta removed and the remaining meta keys sorted. Files are
-compared as multisets of keys, plus their header (options, plugins, includes) and their count of comment lines. Each
-parsed file keeps its text and entries for step 2b, the byte check outside the intended change (`classify.outside_spans`).
+compared as multisets of keys, plus their header (options, plugins, includes) and their count of comment lines.
 This is the oracle's own copy of the idea; the app's contract implements step 2 in `ledger/contract` (M1b).
 """
 
@@ -63,8 +62,6 @@ class ParsedFile:
     comment_lines: int
     errors: tuple[str, ...]
     totals: dict[str, dict[int, Decimal]]  # key → {posting index: total} for postings written with `@@`
-    text: str = ""  # the file's text, for step 2b (classify.outside_spans)
-    entries: tuple[Any, ...] = ()  # the parser's entries in file order, with their line numbers
 
 
 @dataclass(frozen=True)
@@ -91,8 +88,8 @@ def _header(opts: dict[str, Any]) -> frozenset[tuple[str, str, Any]]:
     return frozenset(items)
 
 
-def _comment_lines(text: str) -> int:
-    return sum(1 for line in text.splitlines() if line.lstrip().startswith(";"))
+def _comment_lines(path: Path) -> int:
+    return sum(1 for line in path.read_text(encoding="utf-8").splitlines() if line.lstrip().startswith(";"))
 
 
 TOTAL_PRICE = re.compile(r"@@\s+(-?\d[\d,]*(?:\.\d+)?|-?\.\d+)\s+[A-Z]")
@@ -119,16 +116,14 @@ def parse_entries_with_totals(text: str, filename: str) -> tuple[list[Any], list
 
 def parse_file(path: Path) -> tuple[ParsedFile, list[str]]:
     """One file, parsed alone; returns it and its raw include strings."""
-    text = path.read_bytes().decode("utf-8")  # not read_text: it would turn `\r\n` into `\n` and hide a line end change
-    entries, errors, opts, totals = parse_entries_with_totals(text, str(path))
+    entries, errors, opts, totals = parse_entries_with_totals(path.read_text(encoding="utf-8"), str(path))
     keys: Counter[str] = Counter()
     by_key: dict[str, Any] = {}
     for e in entries:
         k = canonical_key(e)
         keys[k] += 1
         by_key.setdefault(k, e)
-    pf = ParsedFile(keys, by_key, _header(opts), _comment_lines(text), tuple(e.message for e in errors), totals, text,
-                    tuple(entries))
+    pf = ParsedFile(keys, by_key, _header(opts), _comment_lines(path), tuple(e.message for e in errors), totals)
     return pf, list(opts.get("include") or ())
 
 

@@ -1,5 +1,7 @@
 # S0122: the oracle's outside-span byte check and its classes (M1b, BL-0045)
 
+> **Reverted (2026-11-15).** The check was built (a9d48c73) and reverted before it was pushed, by the owner's decision below. This journal is the record of what was tried and why it was dropped; BL-0045 is closed, and its one useful finding is BL-0275.
+
 ## Brief
 - Goal: M1b's seventh slice. The differential oracle (`scripts/oracle/harness.py`, ADR-0014) compares the legacy app's change with the intended change at the entry level (`classify.compare`) and tags each divergence (I2, I3, I10, M28, FIX-…, UNEXPLAINED, NOT_APPLIED). Changes the printer cannot see are counted only as a file-level comment count today:
   - an untargeted `@@` rewritten as `@`;
@@ -78,5 +80,16 @@
 - **Population:** none claimed beyond the run's inputs, listed with their counts above (the nasty cases file, the demo's generated cases, the write corpus's 17 `load` folders from `cases.toml`).
 
 ## Verifier
+- Round 1, head a9d48c73: "PASS WITH FINDINGS", 16 attacks (permissive FORMAT rules against meaning changes, the `@@` mask, the byte reading, the run's numbers rerun on the nasty corpus, a demo sample and seven write-corpus folders, the T-local redaction, the copy guards unchanged, ADR-0014's diff).
+
+| ID | Severity | Class | Disposition |
+|---|---|---|---|
+| F1 | Medium | b | A layout-only reprint (blank lines removed in one file) flipped a same-date tie with another file; FIFO reduced another lot and a gain went from -10 USD to -20 USD, still classed FORMAT. Not fixed here: the slice is reverted; the oracle's meaning comparison gains booked results (BL-0275) |
+| F2 | Low | c | The FIX-L3-02 mask hid a re-spelled price on the entry's other postings. Moot: reverted |
+| F3 | Low | c | FORMAT let the intended replacement move across comment lines. Moot: reverted |
+| F4 | Low | d | ADR-0014's FORMAT text omitted the header-line rule; a note named target lines as outside. Moot: reverted, the amendment removed |
+
+- **The owner's decision.** Asked to approve the class FORMAT and to class the old app's `pushtag`/`pushmeta` flattening (BL-0273, never committed), the owner asked: "What is the format class and why is it even needed? Help me understand this in plain English. Is it just something we are creating to maintain compatibility with older versions of Finzytrack?" and "I don't understand why this is even a consideration. We're not trying to maintain compatibility with the old app's behavior or formatting. So what's going on? What are we trying to do?" (2026-11-15, in session). The orchestrator's answer: the oracle is a second opinion on what an edit **means**, not on the old app's bytes; every difference the byte check found was the old app reformatting a file, none a change of meaning; v0.4's own bytes are guarded by its contract's step 2b on every save; recommended reverting the check, removing FORMAT and the ADR-0014 amendment, and adding the booked comparison F1 showed the need for. Owner: "Revert and add the booked results row." Done: the code, its tests, the ADR-0014 amendment, the roadmap and write-path README lines reverted; BL-0045 closed with those words; BL-0274 (the pre-existing entry-level unexplained cases the runs listed) kept; BL-0275 added.
 
 ## Retro
+- Build about 64 min, then reverted; 1 verifier round, findings 0H/1M/3L (M: 1 b; L: 2 c, 1 d). Cheaper gate: at the brief, ask of a check what it is a second opinion **on**: BL-0045 compared the old app's bytes, which the oracle has no use for (it judges meaning; our bytes are guarded by our own contract), and the orchestrator's brief carried the row forward without asking; one plain-English question from the owner settled it. Also, my brief sent a new divergence class to the daily batch, but adding a class changes ADR-0014, which is the owner's (rubric item 4). Process checks: the verifier's meaning attack (F1) 1 catch / 0 false positive; the privacy scan on the brief 1 catch (the live data folder's path in my own brief) / 0 false positive.
