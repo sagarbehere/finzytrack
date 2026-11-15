@@ -86,19 +86,20 @@ class MustNotPassTest(unittest.TestCase):
         self.assertEqual(Case(before, intended, update_t1).report.verdict, "MATCH")
         c = Case(before, reprint, update_t1)
         self.assertEqual(c.report.verdict, "UNEXPLAINED", c)
-        self.assertEqual(c.booked(), ["balance", "booked"], c)  # the sale; Income:Gain's end balance
+        self.assertEqual(c.booked(), ["balance", "balance", "booked"], c)  # the sale; the lot held, the gain
         notes = [d.note for d in c.report.divergences]
         self.assertTrue(any("took another lot" in n or "other amounts" in n for n in notes), c)
 
-    def test_an_untargeted_sale_whose_lot_changes_and_no_balance_does(self) -> None:
+    def test_an_untargeted_sale_whose_lot_changes_with_the_same_money(self) -> None:
         # Two same-date lots at one cost, labelled; the legacy writes them in the other order, FIFO takes the other.
         a, b = buy("a", '10 USD, "a"'), buy("b", '10 USD, "b"')
         sell = SELL.replace("30 USD\n  Income:Gain\n", "10 USD\n")
         before = {"main.beancount": OPENS + T1 + a + b + sell}
         c = Case(before, {"main.beancount": OPENS + T1_EDITED + b + a + sell}, update_t1)
         self.assertEqual(c.report.verdict, "UNEXPLAINED", c)
-        self.assertEqual(c.booked(), ["booked"], c)
-        self.assertIn("took another lot", c.report.divergences[-1].note)
+        self.assertEqual(c.booked(), ["balance", "booked"], c)  # the sale, and the lot left (label "a", not "b")
+        self.assertIn("took another lot", next(d.note for d in c.report.divergences if d.check == "booked"))
+        self.assertIn('"a"', next(d.note for d in c.report.divergences if d.check == "balance"))
         self.assertEqual(Case(before, {"main.beancount": OPENS + T1_EDITED + a + b + sell}, update_t1).report.verdict,
                          "MATCH")
 
@@ -109,7 +110,10 @@ class MustNotPassTest(unittest.TestCase):
         self.assertEqual([d.cls for d in c.report.divergences if d.check == "parsed"], [], c)
         self.assertEqual(c.report.verdict, "UNEXPLAINED", c)
         balances = sorted(d.note for d in c.report.divergences if d.check == "balance")
-        self.assertEqual(balances, ["balance: Income:Gain USD: -20 -> -10"], c)
+        self.assertEqual(balances, ["balance: Assets:Broker TOK: 1 {20 USD, 2020-02-01} -> 1 {10 USD, 2020-02-01}",
+                                    "balance: Income:Gain USD: -20 -> -10"], c)
+        note = next(d.note for d in c.report.divergences if d.check == "booked")
+        self.assertIn("took another lot and booked other amounts", note)  # the gain is elided, the lot named
 
 
 class MustPassTest(unittest.TestCase):
@@ -218,7 +222,7 @@ class ExclusionTest(unittest.TestCase):
         c = Case(before, {"main.beancount": OPENS + a + b_early + baked}, edit)
         self.assertEqual(sorted(d.cls for d in c.report.divergences if d.check == "parsed"), ["I10"], c)
         self.assertEqual(c.report.verdict, "UNEXPLAINED", c)
-        self.assertEqual(c.booked(), ["balance", "booked"], c)
+        self.assertEqual(c.booked(), ["balance", "balance", "booked"], c)
 
     def test_an_i2_duplicate_is_left_out_but_its_effect_on_another_entry_is_not(self) -> None:
         glob_sell = '2020-02-15 * "sell one"\n  Assets:Broker  -1 TOK {}\n  Assets:Cash  10 USD\n  Income:Gain\n'
@@ -248,20 +252,79 @@ class ExclusionTest(unittest.TestCase):
         self.assertEqual(c.booked(), ["booked"], c)
 
 
+class WholeResultTest(unittest.TestCase):
+    """The end inventories come from the two full booked results: no class's leaving-out hides money (verifier F1)."""
+
+    def test_a_reduction_whose_lot_label_the_legacy_drops_takes_another_lot(self) -> None:
+        # Verifier A1: the sale names lot "lot-b"; the legacy drops the label (FIX-L3-02's cause), so FIFO takes
+        # lot A: the gain is -20 USD instead of -10 USD and the lot left is B, not A.
+        a, b = buy("a", '10 USD, "lot-a"'), buy("b", '20 USD, "lot-b"')
+        sell = '\n2020-03-01 * "sell"\n  id: "t-s"\n  Assets:Broker  -1 TOK {"lot-b"}\n  Assets:Cash  30 USD\n  Income:Gain\n'
+        intended = sell.replace('"sell"', '"sell" "memo"')
+
+        def edit(before: sd.LedgerSet) -> model.Expected:
+            return model.update_transaction(before, "t-s", intended.strip("\n") + "\n")
+        before = {"main.beancount": OPENS + a + b + sell}
+        self.assertEqual(Case(before, {"main.beancount": OPENS + a + b + intended}, edit).report.verdict, "MATCH")
+        c = Case(before, {"main.beancount": OPENS + a + b + intended.replace('{"lot-b"}', "{}")}, edit)
+        self.assertIn("FIX-L3-02", c.report.class_counts(), c)
+        self.assertEqual(c.report.verdict, "UNEXPLAINED", c)
+        notes = sorted(d.note for d in c.report.divergences if d.check == "balance")
+        self.assertEqual(notes, ['balance: Assets:Broker TOK: 1 {10 USD, 2020-02-01, "lot-a"} -> '
+                                 '1 {20 USD, 2020-02-01, "lot-b"}', "balance: Income:Gain USD: -10 -> -20"], c)
+
+    def test_a_label_dropped_on_a_lot_still_held_is_only_fix_l3_02(self) -> None:
+        lot = '\n2020-01-06 * "Buy"\n  id: "t-9"\n  Assets:Broker  2 TOK {5.00 USD, 2020-01-01, "lot-a"}\n  Assets:Cash  -10.00 USD\n'
+
+        def edit(before: sd.LedgerSet) -> model.Expected:
+            return model.update_transaction(before, "t-9", lot.replace('"Buy"', '"Buy" "x"').strip("\n") + "\n")
+        legacy = lot.replace('"Buy"', '"Buy" "x"').replace(', "lot-a"', "")
+        c = Case({"main.beancount": OPENS + lot}, {"main.beancount": OPENS + legacy}, edit)
+        self.assertEqual(c.report.verdict, "EXPECTED_DIVERGENCE", c)  # the same units at the same cost
+        # Its twin: the cost written differently as well is money, whatever the tag.
+        c = Case({"main.beancount": OPENS + lot}, {"main.beancount": OPENS + legacy.replace("5.00 USD", "5.01 USD")}, edit)
+        self.assertEqual(c.report.verdict, "UNEXPLAINED", c)
+
+    def test_an_edit_the_legacy_writes_into_the_root_beside_the_unchanged_glob_entry_doubles_the_money(self) -> None:
+        before = {"main.beancount": 'include "y/*.beancount"\n' + OPENS, "y/2020.beancount": T1}
+        after = {"main.beancount": 'include "y/*.beancount"\n' + OPENS + T1_EDITED, "y/2020.beancount": T1}
+        c = Case(before, after, update_t1)
+        self.assertEqual(sorted(d.cls for d in c.report.divergences if d.check == "parsed"), ["I2", "I2"], c)
+        self.assertEqual(c.report.verdict, "UNEXPLAINED", c)
+        self.assertEqual(sorted(d.note for d in c.report.divergences if d.check == "balance"),
+                         ["balance: Assets:Cash USD: -10.5 -> -21", "balance: Expenses:Food USD: 10.5 -> 21"], c)
+
+
+class ImportOrderTest(unittest.TestCase):
+    def test_imports_at_one_point_take_v04s_order_not_the_requests(self) -> None:
+        # Verifier A4: v0.4 orders inserts at one point by date, kind, then text (`source_edit.insert_key`).
+        zz = '2020-02-01 * "zz buy"\n  Assets:Broker  1 TOK {10 USD}\n  Assets:Cash  -10 USD\n'
+        aa = '2020-02-01 * "aa buy"\n  Assets:Broker  1 TOK {20 USD}\n  Assets:Cash  -20 USD\n'
+        sell = SELL.replace("2020-03-01", "2020-03-02")
+        src = OPENS + T1 + sell
+        before = {"main.beancount": src}
+
+        def imp(before: sd.LedgerSet) -> model.Expected:
+            return model.import_append(before, [zz, aa])
+        self.assertEqual(Case(before, {"main.beancount": src + "\n" + aa + "\n" + zz}, imp).report.verdict, "MATCH")
+        self.assertEqual(Case(before, {"main.beancount": src + "\n" + zz + "\n" + aa}, imp).report.verdict,
+                         "UNEXPLAINED")
+
+
 class ReportTest(unittest.TestCase):
     def test_a_t_local_report_of_a_booked_divergence_carries_no_amount_account_or_lot(self) -> None:
         a, b = buy("a", "10 USD"), buy("b", "20 USD")
         c = Case({"main.beancount": OPENS + T1 + a + b + SELL},
                  {"main.beancount": OPENS + T1_EDITED + b + a + SELL}, update_t1)
         fields = harness.case_fields(c.report.divergences)
-        self.assertEqual(fields["booked"], {"booked": 1, "balance": 1})
+        self.assertEqual(fields["booked"], {"booked": 1, "balance": 2})
         shown = json.dumps(fields)
         self.assertIn("Income:Gain", shown)  # the unredacted report names it (a repo corpus may show entries)
         redacted = json.dumps(harness.redact({"id": "upd-000", "mutator": "update_transaction", **fields}))
         for secret in ("Income", "Broker", "Cash", "TOK", "USD", "10", "20", "2020", "lot"):
             self.assertNotIn(secret, redacted)
         summary = harness.summarize([harness.redact({"id": "upd-000", **fields})])
-        self.assertEqual(summary["booked"], {"booked": 1, "balance": 1})
+        self.assertEqual(summary["booked"], {"booked": 1, "balance": 2})
 
 
 class FidelityTest(unittest.TestCase):

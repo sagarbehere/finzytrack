@@ -217,7 +217,8 @@ def _fresh(entries: list[Any]) -> list[Any]:
 def book(entries: list[Any], parsed: Parsed) -> tuple[list[Any], list[Any]]:
     """What `loader.load_file` does after its parse, step for step (Beancount 3.2.0 `loader._load`): sort, book,
     run the plugins (with the ledger's `pythonpath`), validate. `test_booked.FidelityTest` holds it to the loader's
-    own result on the repo's corpora."""
+    own result on the repo's corpora. Limit: its own `pythonpath` on `sys.path` is not exercised, since
+    `load_facts` has always imported the ledger's plugins first (Python's module cache answers)."""
     options = copy.deepcopy(parsed.options)
     entries = sorted(_fresh(entries), key=data.entry_sortkey)
     errors = list(parsed.errors)

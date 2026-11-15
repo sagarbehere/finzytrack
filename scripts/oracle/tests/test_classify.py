@@ -43,7 +43,8 @@ class Case:
         return classify.refused(self.before, self.after, self.expected, self.before_facts, self.after_facts, mutator, code)
 
     def classes(self) -> list[str]:
-        return sorted(d.cls for d in self.report.divergences)
+        """The parsed comparison's classes (the booked comparison's own are pinned in test_booked.py)."""
+        return sorted(d.cls for d in self.report.divergences if d.check == "parsed")
 
 
 def update_t1(before):
@@ -180,7 +181,7 @@ class ClassifyTest(unittest.TestCase):
     def test_a_refusal_that_still_changed_the_ledger_is_unexplained(self) -> None:
         c = Case({"main.beancount": OPENS + T1}, {"main.beancount": OPENS}, update_t1)
         r = c.refused("update_transaction", "X")
-        self.assertEqual(sorted(d.cls for d in r.divergences), ["NOT_APPLIED", "UNEXPLAINED"])
+        self.assertEqual(sorted(d.cls for d in r.divergences if d.check == "parsed"), ["NOT_APPLIED", "UNEXPLAINED"])
 
     def test_an_unexplained_header_change_is_reported(self) -> None:
         c = Case({"main.beancount": OPENS + T1}, {"main.beancount": 'option "title" "x"\n' + OPENS + T1_EDITED}, update_t1)

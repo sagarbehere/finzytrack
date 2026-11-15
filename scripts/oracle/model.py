@@ -147,12 +147,21 @@ def import_append(before: LedgerSet, texts: list[str]) -> Expected:
         if any(isinstance(e, data.Custom) and e.type == "fava-option" and e.values and e.values[0].value == "insert-entry"
                for e in f.by_key.values()):
             raise NonComparable("the ledger routes new entries with insert-entry; the intended file is not modelled yet")
-    offset = 0
+    pieces = []  # (entry, its own text, its `@@` totals): v0.4 inserts each entry as one text
     for text in texts:
         entries, totals = parse_intent(text)
-        for e in entries:
-            exp.add(before.root, e, created=True, totals=totals[canonical_key(e)], offset=offset + e.meta["lineno"] - 1)
-        offset += text.count("\n") + (0 if text.endswith("\n") else 1) + 1  # each text after a blank line
+        lines = text.splitlines(keepends=True)
+        starts = [e.meta["lineno"] - 1 for e in entries] + [len(lines)]
+        for e, first, stop in zip(entries, starts, starts[1:]):
+            own = "".join(lines[first:stop]).rstrip("\n") + "\n"
+            pieces.append((e, own, totals[canonical_key(e)]))
+    # v0.4 orders inserts at one point by date, Fava's order of kinds, then text (the engine's
+    # `source_edit.insert_key`), and puts each after a blank line (`semantic_diff._planned`).
+    pieces.sort(key=lambda p: (p[0].date, data.SORT_ORDER.get(type(p[0]), 0), p[1]))
+    offset = 0
+    for e, own, totals_of in pieces:
+        exp.add(before.root, e, created=True, totals=totals_of, offset=offset)
+        offset += own.count("\n") + 1
     return exp
 
 
@@ -175,7 +184,8 @@ def _placed(entry: Any, path: str, line: int) -> Any:
 
 def append_line(parsed: Parsed, path: str) -> int:
     """The first line of text appended to *path* (v0.4's insert at a file's end, `semantic_diff._planned` in the
-    engine: a blank line, then the entry; in an empty file, no blank line)."""
+    engine: a blank line, then the entry; in an empty file, no blank line). Further entries follow in the order
+    `import_append` gives them, each after its own blank line."""
     lines, _ = parsed.files[path]
     return 1 if lines == 0 else lines + 2
 

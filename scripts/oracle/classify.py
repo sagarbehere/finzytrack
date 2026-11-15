@@ -15,8 +15,9 @@ UNEXPLAINED (an unexpected change) or NOT_APPLIED (an intended change that did n
 The parsed comparison cannot see a change of money that leaves every entry as written: Beancount sorts entries by
 date, kind and line number, across files, so a reprint that moves lines can make a reduction take another lot and
 change a realized gain (S0122 verifier F1). `booked` (BL-0275) therefore compares Beancount's booked result of the
-intended ledger with the legacy's: the lots each reduction took, the amounts booking filled in, generated entries,
-and each account's end balance per currency. Its rules for each class are in its docstring.
+intended ledger with the legacy's: per entry, the lots each reduction took and the amounts booking filled in
+(generated entries too); and over the whole result, each account's end inventory per currency, lots included, with
+no entry left out. Its rules for each class are in its docstring.
 """
 
 from __future__ import annotations
@@ -332,7 +333,8 @@ def compare(before: LedgerSet, after: LedgerSet, expected: Expected, before_fact
     for f, n in actual.comments_lost.items():
         out.append(Divergence("I10", f, None, None, f"{n} comment line(s) lost"))
     out += new_errors(before_facts, after_facts, before.root)
-    return Report(out + booked(before, expected, before_facts, after_facts, pairs, standins))
+    relabelled = any("FIX-L3-02" in d.cls.split("+") for d in out)
+    return Report(out + booked(before, expected, before_facts, after_facts, pairs, standins, relabelled))
 
 
 # --- the booked comparison (BL-0275) ------------------------------------------------------------------------------
@@ -377,13 +379,38 @@ def _monies(entries: Any, keys_at: dict[tuple[str, str, int], str], keep: Counte
     return out
 
 
-def _balances(monies: Counter[Money]) -> Counter[tuple[str, str]]:
-    out: Counter[tuple[str, str]] = Counter()
-    for (_, postings), n in monies.items():
-        for account, number, currency, _ in postings:
-            if currency and number[:1] in "-0123456789":  # an amount booking could not fill has no number
-                out[(account, currency)] += Decimal(number) * n
-    return out
+Holdings = dict[tuple[str, str], Counter[tuple[str, ...] | None]]
+
+
+def holdings(entries: Any) -> Holdings:
+    """Each account's end inventory per currency, from every booked transaction of a load (generated ones
+    included): the units held of each lot (cost number, currency, date, label; None for units held without cost).
+    Booking puts the lot it reduced on a reducing posting, so the sums are Beancount's inventory."""
+    out: Holdings = {}
+    for e in entries:
+        if not isinstance(e, data.Transaction):
+            continue
+        for p in e.postings:
+            if _unset(p.units) or not isinstance(p.units.number, Decimal):  # an amount booking could not fill
+                continue
+            out.setdefault((p.account, str(p.units.currency)), Counter())[_lot(p.cost)] += p.units.number
+    return {k: Counter({lot: n for lot, n in v.items() if n != 0}) for k, v in out.items()}
+
+
+def _identity_only(x: Counter[Any], y: Counter[Any]) -> bool:
+    """Whether two inventories differ only in their lots' dates and labels (units and costs the same)."""
+    def strip(inv: Counter[Any]) -> Counter[Any]:
+        out: Counter[Any] = Counter()
+        for lot, n in inv.items():
+            out[None if lot is None else lot[:2]] += n
+        return out
+    return strip(x) == strip(y)
+
+
+def _held(inv: Counter[Any]) -> str:
+    def lot(c: tuple[str, ...] | None) -> str:
+        return "" if c is None else " {" + f"{c[0]} {c[1]}, {c[2]}" + ("" if c[3] == "None" else f', "{c[3]}"') + "}"
+    return ", ".join(f"{_num(n)}{lot(c)}" for c, n in sorted(inv.items(), key=repr)) or "0"
 
 
 def _show(m: Money) -> str:
@@ -394,7 +421,7 @@ def _show(m: Money) -> str:
 
 
 def booked(before: LedgerSet, expected: Expected, before_facts: LoadFacts, after_facts: LoadFacts,
-           pairs: list[tuple[str, str]], standins: Counter[str]) -> list[Divergence]:
+           pairs: list[tuple[str, str]], standins: Counter[str], lots_relabelled: bool = False) -> list[Divergence]:
     """Beancount's booked result of the intended ledger against the legacy's (INV-02: its booking, not ours).
 
     The reference is the intended ledger booked by Beancount (`model.intended_entries`, then `semantic_diff.book`,
@@ -403,10 +430,17 @@ def booked(before: LedgerSet, expected: Expected, before_facts: LoadFacts, after
     on both sides, and each pair it tagged with a class (an intended or untargeted entry and the legacy's version of
     it, e.g. I10 or M28). Each such entry must book the same: the same lots taken (cost number, currency, date,
     label) and the same amounts, including what booking fills in, such as a realized gain; generated entries (pads,
-    plugins) must come out the same too. Every difference is UNEXPLAINED, one per entry (`check` "booked"), and one
-    per account and currency whose end balance differs (`check` "balance", the same money summed per account).
+    plugins) must come out the same too. Every difference is UNEXPLAINED, one per entry (`check` "booked").
 
-    Classes and booked differences, case by case: an entry the parsed comparison reports on one side only is left
+    Then the whole result (`check` "balance"): each account's end inventory per currency, lots included
+    (`holdings`), from the two full booked results, with nothing left out. The reference holds the intended
+    names, so a rename needs no mapping. A difference is UNEXPLAINED, one per account and currency, whatever the
+    entries above say: no class's leaving-out hides a change of the money held (an I2 duplicate, which holds an
+    entry twice, blocks here). One exception, the cause of FIX-L3-02 itself, which is no change of money: when the
+    parsed comparison tagged a FIX-L3-02 entry (*lots_relabelled*) and two inventories differ only in their lots'
+    dates or labels (the same units at the same costs), that account is not reported again.
+
+    Classes and the per-entry differences, case by case: an entry the parsed comparison reports on one side only is left
     out, since its own money is that report's (a removed, unintended or not-applied entry, blocking already; I2's
     duplicate of a glob-included entry, whose doubled postings are that class's cause). So is a pair tagged
     FIX-L3-02 (`OWN_MONEY`): its cause changes that entry's own booked money (a lot's date or label dropped, a `@@`
@@ -433,19 +467,22 @@ def booked(before: LedgerSet, expected: Expected, before_facts: LoadFacts, after
         twin = next((n for n in only_new if n[0] == r[0] and accounts & {p[0] for p in n[1]}), None)
         if twin is not None:
             only_new.remove(twin)
-            what = "took another lot" if [p[:3] for p in twin[1]] == [p[:3] for p in r[1]] else "booked other amounts"
+            lots_differ = sorted((p[0], repr(p[3])) for p in twin[1]) != sorted((p[0], repr(p[3])) for p in r[1])
+            amounts_differ = sorted(p[:3] for p in twin[1]) != sorted(p[:3] for p in r[1])
+            what = " and ".join(w for w, on in (("took another lot", lots_differ),
+                                                ("booked other amounts", amounts_differ)) if on) or "booked otherwise"
             out.append(Divergence("UNEXPLAINED", before.root, None, None,
                                   f"booked: an entry {what}: {_show(r)} -> {_show(twin)}", "booked"))
         else:
             out.append(Divergence("UNEXPLAINED", before.root, None, None, f"booked: missing: {_show(r)}", "booked"))
     out += [Divergence("UNEXPLAINED", before.root, None, None, f"booked: not intended: {_show(n)}", "booked")
             for n in only_new]
-    b_ref, b_new = _balances(ref), _balances(new)
-    for account, currency in sorted(set(b_ref) | set(b_new)):
-        x, y = b_ref[(account, currency)], b_new[(account, currency)]
-        if x != y:
+    h_ref, h_new = holdings(reference), holdings(after_facts.booked)
+    for account, currency in sorted(set(h_ref) | set(h_new)):
+        x, y = h_ref.get((account, currency), Counter()), h_new.get((account, currency), Counter())
+        if x != y and not (lots_relabelled and _identity_only(x, y)):
             out.append(Divergence("UNEXPLAINED", before.root, None, None,
-                                  f"balance: {account} {currency}: {_num(x)} -> {_num(y)}", "balance"))
+                                  f"balance: {account} {currency}: {_held(x)} -> {_held(y)}", "balance"))
     return out
 
 
