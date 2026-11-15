@@ -83,5 +83,11 @@ Every run published, the plan listed the file (`large_files` 1). Between the two
 
 ## Verifier
 - Paused 2026-11-15 (the owner put the machine to sleep): round 1 was started on c9613f8b..020684cd and stopped before it reported, so it does not count. On resume: start a fresh verifier round 1 on c9613f8b..020684cd (the implementation is 020684cd); nothing is pushed past c9613f8b.
+- Round 1, head 020684cd (f0d31ff1 after it is the journal's pause note): verifier "PASS WITH FINDINGS", 9 attacks (byte identity end to end at 21.3 MB; the guard's off-by-one between the engine and the sidecar's reader; cut and over-long lines at 256 MiB; a save request larger than its preview answer, about 131 bytes shorter, not a finding; the plan store's byte bookkeeping on every removal path; the tip's threshold; `pre_size`'s decoding; INV-23; the generated artifacts), with mutants on `server.py`, `writes.py` and `plans.py`, each killed. No red team: no class (a) finding. No fresh round: the one fix is docs only.
+
+| ID | Severity | Class | Disposition |
+|---|---|---|---|
+| F1 | Low | d | Fixed: BL-0082's sentence stated the old 16 MiB line limit as today's; it now names the 256 MiB guard and the preview's refusal (INV-19) |
 
 ## Retro
+- Build about 30 min, fix about 2 min (docs), 1 verifier round, findings 0H/0M/1L (L: 1 d). Cheaper gate: when a constant that several docs quote changes, grep the docs for its old value in the slice itself (here `16 MiB`), not only the rows the brief names. Process checks: mutants 1 catch (a budget off-by-one survivor, test added) / 0 false positive; the owner's two-step answer (a limit, then no limit) was turned into an amendment before the brief, so the slice built one design with no rework.
