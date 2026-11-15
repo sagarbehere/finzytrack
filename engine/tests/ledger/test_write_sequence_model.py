@@ -53,11 +53,15 @@ profile (`FT_WRITE_MODEL=long`) is for T2 and the owner's long runs (random, Hyp
 `.hypothesis/`). The bounded run asserts at its end that every rule fired, and that a crash during each job kind and a
 power loss happened (`test_the_sequence_model_holds_and_reaches_every_rule`).
 
-**What the bounded run does not catch** (seeded mutants, S0121 journal; both killed by the per-effect suites): the
-save's gate skipping its mirror-freshness check (here a plan still at its fingerprint implies the generation the preview
-used is still fresh, since no job publishes a generation that is not fresh and nothing else writes the cache but
-`purge_mirror`); recovery skipping its flush of a file found at pre (it needs an unsynced outside edit, then a save cut
-before its first swap, then recovery, which the bounded run rarely draws; the long profile may).
+**What the bounded run does not catch** (seeded mutants, S0121 journal; each killed by the per-effect suites):
+- recovery skipping its flush of a file found at pre (`restore-skips-the-flush`): it needs an unsynced outside edit, a
+  save cut before its first swap and then recovery, which the bounded run rarely draws (the long profile may);
+  `test_recover_conformance.py`'s weak world and `test_restore.py` kill it;
+- a rollback that fails too: with one fault per job, `Unfinished` and `NotSaved(open_journal=True)` cannot happen (both
+  need the rollback to fail after the save's own fault), so their branch in `do_confirm` is kept for the long profile's
+  sake but dead here; `test_writer.py`'s faults inside the rollback cover them.
+The history's limit is reached by a sequence of its own (`test_the_history_keeps_the_newest_16_over_18_saves`), not by
+the bounded run (at most a few saves per example).
 
 **Fidelity limit** of the fake load: `memledger.py`'s docstring (plain includes only, no plugins of the ledger's own,
 no documents, no encrypted or special files, the rebuild's real load replaced by the overlay load; each covered on the
@@ -74,7 +78,7 @@ import itertools
 import os
 import time
 from collections import Counter
-from collections.abc import Generator, Mapping
+from collections.abc import Callable, Generator, Mapping
 from dataclasses import dataclass, field
 from typing import Any, Final, Literal
 
@@ -145,10 +149,10 @@ SPARE: Final = '2026-05-05 * "Cafe"\n  Expenses:Food  3.20 EUR\n  Assets:Cash\n'
 Job = Literal["preview", "confirm", "rebuild", "open", "recover"]
 JOBS: Final[tuple[Job, ...]] = ("preview", "confirm", "rebuild", "open", "recover")
 
-LENGTH: Final[Mapping[Job, int]] = {"preview": 8, "confirm": 36, "rebuild": 22, "open": 12, "recover": 12}
-"""About how many steps each job takes here (a save's 33, a rebuild's 21 when it loads, a preview's 7; an open's about 4
-when the mirror is fresh and 21 when it loads; recover-all's 1 with no `.open` journal, about 12 with one): a crash
-point is drawn up to it."""
+LENGTH: Final[Mapping[Job, int]] = {"preview": 8, "confirm": 36, "rebuild": 22, "open": 16, "recover": 12}
+"""At least as many steps as each job takes here, so a crash point drawn up to it can land on any of them (measured,
+and held by `test_each_job_s_steps_fit_its_crash_range`): a preview 7, a save 33, a rebuild that loads 21, an open 2
+with a fresh mirror and 15 when it loads, recover-all 0 with no journal folder and about 12 with an `.open` journal."""
 
 INJECTED: Final = "injected by the model"
 KEEP: Final = 16
@@ -664,6 +668,8 @@ class WriteSequence(RuleBasedStateMachine):
             self._gate_was_right(plan_fresh=plan_fresh, mirror_fresh=mirror_fresh, had_open=had_open)
         if isinstance(out, NotSaved):
             inv_unchanged(before, fs, "a save not saved")
+            # `open_journal` and `Unfinished` below need the rollback to fail too: never with one fault per job (the
+            # module's limits); kept for a profile that injects more
             if out.open_journal:
                 self._pending(name, pres, posts, plan, post_allowed=False)
             return
@@ -840,9 +846,8 @@ class WriteSequence(RuleBasedStateMachine):
     @precondition(lambda self: self._ready())
     @rule(text=txn_text(), edit_between=st.booleans(), path=st.sampled_from(FILES))
     def write(self, text: str, edit_between: bool, path: str) -> None:
-        """The commonest flow: an insert previewed and confirmed at once (so a run reaches the history's limits); with
-        `edit_between`, an outside program saves `path` (a comment) between the preview and the confirm, which the
-        save's gate must meet."""
+        """The commonest flow: an insert previewed and confirmed at once; with `edit_between`, an outside program saves
+        `path` (a comment) between the preview and the confirm, which the save's gate must meet."""
         TALLY["rule:write"] += 1
         self.do_preview("insert", 0, text, None)
         if self.ref.plan is None:
@@ -1059,6 +1064,59 @@ class WriteSequence(RuleBasedStateMachine):
             self.ref.blocking.discard(pend.name)
             self._settle("keep")
 
+    @precondition(lambda self: self._ready() and not open_journals(self.fs))
+    @rule(at=st.floats(0, 1), text=txn_text())
+    def confirm_beside_unfinished(self, at: float, text: str) -> None:
+        """Two plans held (the sidecar's plan store holds up to 4): plan A, then plan B, whose save is cut; when the cut
+        leaves B's journal `.open` with every file still at pre, A still matches the disk and the mirror, and only the
+        gate's `.open` check refuses it (`unfinished_save`)."""
+        TALLY["rule:confirm_beside_unfinished"] += 1
+        self.do_preview("insert", 0, text, None)
+        held = self.ref.plan
+        if held is None:
+            return
+        self.do_preview("insert", 0, SPARE, None)
+        if self.ref.plan is None or self.ref.plan is held:
+            return
+        self.do_confirm((round(at * LENGTH["confirm"]), False))
+        if self.ref.pending is None or at_post(self.fs, self.ref):
+            return
+        TALLY["confirm_beside_unfinished:reached"] += 1
+        self.ref.plan = held
+        self.do_confirm(None)
+
+    @precondition(lambda self: self._ready())
+    @rule(text=txn_text(), put_back=st.booleans(), path=st.sampled_from(FILES))
+    def confirm_on_a_newer_generation(self, text: str, put_back: bool, path: str) -> None:
+        """A plan whose generation was replaced: preview, an outside rewrite of a transaction in `path`, an open (it
+        publishes a generation of the rewritten disk), then confirm. Without `put_back` the mirror is fresh and the plan
+        is not: only the gate's fingerprint check refuses (`ledger_changed`). With `put_back` the file is first put
+        back to its bytes: the plan matches the disk, the current generation does not, and only the gate's freshness
+        check refuses (`mirror_stale`; verifier S0121 r1 F3)."""
+        TALLY["rule:confirm_on_a_newer_generation"] += 1
+        self.do_preview("insert", 0, SPARE, None)
+        if self.ref.plan is None:
+            return
+        old = self.fs.file(path)
+        assert old is not None
+        self.do_outside_edit(path, "rewrite", 0, text, durable=True)
+        self.do_open(None)
+        if put_back:
+            self.do_outside_put(path, old)
+        self.do_confirm(None)
+
+    def do_outside_put(self, path: str, data: bytes) -> None:
+        """An outside program writes `data` to `path`, durably (its entries as Beancount parses them)."""
+        before = self.fs.file(path)
+        assert before is not None
+        pend = self.ref.pending
+        if pend is not None and path in pend.files:
+            pend.displaced.add(path)
+        self.fs.outside_write(path, data)
+        self.ref.unsynced.pop(path, None)
+        self.ref.apply(path, data, keys_of({path: data}), keys_of({path: before}))
+        self.ref.saved_post.pop(path, None)
+
     @rule()
     def purge_mirror(self) -> None:
         """The OS or the user empties the app's cache folder (publish.md: the cache may be purged): the mirror is gone
@@ -1114,6 +1172,11 @@ REACHED: Final = (
     *(f"rule:{r}" for r in ("confirm", "rebuild", "open", "outside_edit", "crash_during", "power_loss")),
     *(f"rule:{r}" for r in ("restart", "restart_and_recover", "recover", "keep", "purge_mirror", "write")),
     *(f"rule:{r}" for r in ("edit_unfinished", "crash_during_save")),
+    *(f"rule:{r}" for r in ("confirm_beside_unfinished", "confirm_on_a_newer_generation")),
+    "confirm_beside_unfinished:reached",
+    "confirm:Refused:unfinished_save",
+    "confirm:Refused:ledger_changed",
+    "confirm:Refused:mirror_stale",
     "rule:read_mirror",
     "keep:Done",
     "crash:preview",
@@ -1249,3 +1312,60 @@ def test_a_crash_after_the_commit_point_leaves_a_save_the_model_tracks_until_rec
     m.restart_and_recover(then_keep=False)
     m.check_all()
     assert m.ref.pending is None
+
+
+def test_inv_recovered_fails_step_by_step_on_an_open_journal_that_is_neither_unfinished_nor_blocking() -> None:
+    m = saved_once()
+    name = m.ref.landed[-1][0]
+    data = m.fs.file(f"{JD}/{journal.file_name(name, State.CLOSED)}")
+    assert data is not None
+    m.fs.outside_write(f"{JD}/{journal.file_name('s9-j9', State.OPEN)}", data)
+    assert not m.ref.needs_recovery
+    with pytest.raises(AssertionError, match="did not report blocking"):
+        inv_recovered(m.fs, m.ref, just_recovered=False)
+
+
+def test_the_history_keeps_the_newest_16_over_18_saves() -> None:
+    """The history's limit, which the bounded run's examples never reach: 18 saves in a row, each with its rebuild,
+    every invariant checked after each (`inv_history` holds the newest 16 `.closed` records and their backups)."""
+    m = booted()
+    for i in range(KEEP + 2):
+        m.write(f'2026-06-{i + 1:02d} * "Market"\n  Expenses:Food  {i + 1}.00 EUR\n  Assets:Bank\n', False, TX)
+        m.check_all()
+        m.rebuild()
+        m.check_all()
+    assert len(m.ref.landed) == KEEP + 2
+
+
+def _steps(run: Callable[[WriteSequence, tuple[int, bool]], None], setup: Callable[[WriteSequence], None]) -> int:
+    """How many steps one job takes: the first crash point that does not fire."""
+    for k in range(200):
+        m = booted()
+        setup(m)
+        run(m, (k, False))
+        if not m.fired:
+            return k
+    pytest.fail("a job of more than 200 steps")
+
+
+def _saved(m: WriteSequence) -> None:
+    m.write(SPARE, False, TX)
+
+
+def _open_journal(m: WriteSequence) -> None:
+    m.do_preview("insert", 0, SPARE, None)
+    m.do_confirm((25, False))  # cut after its journal is `.open`
+    assert m.ref.pending is not None
+
+
+def test_each_job_s_steps_fit_its_crash_range() -> None:
+    """`LENGTH` covers every step of each job, so a crash point can land on any of them (verifier S0121 r1 F4)."""
+    jobs: dict[Job, int] = {
+        "preview": _steps(lambda m, f: m.do_preview("insert", 0, SPARE, f), lambda m: None),
+        "confirm": _steps(lambda m, f: m.do_confirm(f), lambda m: m.do_preview("insert", 0, SPARE, None)),
+        "rebuild": _steps(lambda m, f: m.do_rebuild(f), _saved),
+        "open": _steps(lambda m, f: m.do_open(f), lambda m: m.purge_mirror()),
+        "recover": _steps(lambda m, f: m.do_recover(f), _open_journal),
+    }
+    for job, n in jobs.items():
+        assert n <= LENGTH[job], f"{job} takes {n} steps; LENGTH draws up to {LENGTH[job]}"
