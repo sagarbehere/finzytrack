@@ -3,7 +3,9 @@
 the intended change, and tag every divergence.
 
 Each case runs in a fresh data root (a copy of --ledger-dir plus a seeded legacy config) with its own legacy
-process, so no state leaks between cases. The source folder is only read (INV-24). Reports carry entry text only
+process, so no state leaks between cases. Each file is compared twice (classify.compare): by entries (step 2), and
+byte for byte outside the intended change's spans (step 2b, classify.outside_spans); a case's `classes` count both,
+`classes_2b` step 2b's alone. The source folder is only read (INV-24). Reports carry entry text only
 for repo corpora and generated ledgers; for anything else (a copy of a real ledger, T-local) they carry counts,
 classes and case IDs only. A --ledger-dir that is not a repo corpus must be inside the T-local folder named by
 FT_LOCAL_TIER_DIR (PROCESS.md §8; copies.refuse_local_tier_source).
@@ -160,18 +162,24 @@ def run_case(case: dict[str, Any], run: Run) -> dict[str, Any]:
         report = classify.refused(run.before, after, expected, run.facts, after_facts, case["mutator"], error.get("code"))
     else:
         report = classify.compare(run.before, after, expected, run.facts, after_facts)
-    divergences = report.divergences + stray_files(run, ledgers, after)
-    verdict = classify.Report(divergences).verdict
-    out |= {"verdict": verdict, "legacy_http": status, "legacy_code": error.get("code"),
+    out |= result_fields(report.divergences + stray_files(run, ledgers, after))
+    out |= {"legacy_http": status, "legacy_code": error.get("code"),
             "legacy_message": error.get("message"), "legacy_details": error.get("details"),
-            "classes": dict(classify.Report(divergences).class_counts()), "divergences": [asdict(d) for d in divergences],
             "seconds": {"stage": round(t_staged - t0, 2), "start": round(t_up - t_staged, 2), "write": round(t_done - t_up, 2),
                         "compare": round(time.monotonic() - t_done, 2), "total": round(time.monotonic() - t0, 2)}}
     return out
 
 
+def result_fields(divergences: list[classify.Divergence]) -> dict[str, Any]:
+    """A case's verdict, its class counts (all steps, and step 2b's alone) and its divergences."""
+    report = classify.Report(divergences)
+    return {"verdict": report.verdict, "classes": dict(report.class_counts()),
+            "classes_2b": dict(classify.Report([d for d in divergences if d.step == "2b"]).class_counts()),
+            "divergences": [asdict(d) for d in divergences]}
+
+
 def redact(result: dict[str, Any]) -> dict[str, Any]:
-    """Counts, classes and case IDs only: no entry text, file names, notes or legacy messages."""
+    """Counts, classes and case IDs only: no entry text, file names, notes, step-2b lines or legacy messages."""
     return {k: v for k, v in result.items() if k not in ("divergences", "note", "legacy_message", "legacy_details")}
 
 
@@ -256,15 +264,19 @@ def summarize(results: list[dict[str, Any]]) -> dict[str, Any]:
     totals = [r["seconds"]["total"] for r in results if "seconds" in r]
     verdicts: dict[str, int] = {}
     classes: dict[str, int] = {}
+    classes_2b: dict[str, int] = {}
     for r in results:
         verdicts[r["verdict"]] = verdicts.get(r["verdict"], 0) + 1
         for c, n in r.get("classes", {}).items():
             classes[c] = classes.get(c, 0) + n
+        for c, n in r.get("classes_2b", {}).items():
+            classes_2b[c] = classes_2b.get(c, 0) + n
     timing = {}
     if totals:
         q = statistics.quantiles(totals, n=20, method="inclusive") if len(totals) > 1 else totals * 19
         timing = {"p50": round(statistics.median(totals), 2), "p95": round(q[18], 2), "max": max(totals)}
-    return {"cases": len(results), "verdicts": verdicts, "classes": classes, "seconds_per_case": timing}
+    return {"cases": len(results), "verdicts": verdicts, "classes": classes, "classes_2b": classes_2b,
+            "seconds_per_case": timing}
 
 
 def refuse_report(report: Path | None, src: Path | None) -> str | None:
