@@ -15,6 +15,7 @@ from collections.abc import Callable
 from importlib.metadata import version
 from typing import Final, Protocol
 
+from ledger_engine.fs.port import FolderId
 from ledger_engine.fs.this_os import for_this_os
 from ledger_engine.ledger import save as sv
 from ledger_engine.ledger.core import journal
@@ -47,7 +48,7 @@ class SaveJob(Decider, Protocol):
     def app_cache(self) -> str | None: ...
 
     @property
-    def app_folder_id(self) -> tuple[int, int] | None: ...
+    def app_folder_id(self) -> FolderId | None: ...
 
     def progress(self, phase: sv.Phase) -> None: ...
 
@@ -160,7 +161,7 @@ def app_folder_missing(params: Message, ctx: SaveJob) -> Message:
     return result
 
 
-def _app_folder_of(ctx: SaveJob) -> tuple[int, int]:
+def _app_folder_of(ctx: SaveJob) -> FolderId:
     """The app folder's identity at the engine's start: the server runs the save only with one (`app_folder.changed`
     is True without it), so its absence here is a bug."""
     identity = ctx.app_folder_id

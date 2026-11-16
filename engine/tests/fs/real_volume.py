@@ -173,5 +173,8 @@ class DyingFS:
     def resolve(self, path: str) -> object:
         return self._inner.resolve(path)
 
+    def same_path(self, now: str, recorded: str) -> bool:
+        return self._inner.same_path(now, recorded)
+
     def open_dir(self, path: str) -> DyingDir:
         return DyingDir(self._inner.open_dir(path), self._die_at)

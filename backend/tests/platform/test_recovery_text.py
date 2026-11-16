@@ -422,3 +422,16 @@ def test_S0100_BL0223_no_backup_sentence_no_drive_check(cause: str) -> None:
     for text in (blocked_screen(none, WS).message, keep_confirmation(none, WS)):
         assert CHECK_DRIVE not in text
         assert OTHERS not in text
+
+
+def test_BL0261_an_engine_without_a_port_names_the_platform_not_a_missing_data_folder(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """BL-0261 (S0112, S0125): off macOS and Linux the engine refuses `engine.unsupported_platform`; the screen names
+    the system and offers no Retry (it cannot help), and never says the data folder was removed."""
+    import platform
+
+    monkeypatch.setattr(platform, "system", lambda: "Windows")
+    screen = not_recovered_screen(NotRecovered(None, None, "engine.unsupported_platform"))
+    assert screen.message == "Finzytrack cannot open or save ledgers on Windows yet. It works on macOS and Linux."
+    assert screen.actions == ()

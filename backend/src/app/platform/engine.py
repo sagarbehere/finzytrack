@@ -32,6 +32,7 @@ type RefusalKey = Literal[
     "engine.no_engine_lock",
     "engine.app_folder_missing",
     "engine.result_too_large",  # S0120: the answer would pass the protocol's line guard; the engine did not send it
+    "engine.unsupported_platform",  # S0125 (BL-0261): no file-system port for this OS; the refusal names it
 ]
 
 type FailureKind = Literal[

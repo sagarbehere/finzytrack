@@ -75,13 +75,14 @@ from ledger_engine.fs.port import (
     DirHandle,
     EntryStat,
     FileSystem,
+    FolderId,
     FolderMark,
     FoldRule,
     Kind,
     Right,
     check_name,
     fold,
-    same_path,
+    same_folder,
     split_absolute,
 )
 from ledger_engine.ledger import restore as _restore
@@ -154,14 +155,14 @@ class Commit:
 @dataclass(frozen=True, slots=True)
 class Anchor:
     """Where a save's journal and backups must be (S0102 round 1, red team F1): the app folder of the sidecar's start
-    and the journal and backups folders step 8 made in it, each a path and the identity `(st_dev, st_ino)` it had
-    then. The writer checks every one by path before the backups, before the `.part` and before the rename to `.open`
-    (`anchored`): another folder put in place of any of them stops the save before its first swap,
-    `app_folder_missing` naming `app_local_data`. None (the writer called outside a save: tests staging a journal):
-    no check."""
+    and the journal and backups folders step 8 made in it, each a path and the identity it had then (`FolderId`: the
+    app folder's with its creation time on Linux, BL-0262). The writer checks every one by path before the backups,
+    before the `.part` and before the rename to `.open` (`anchored`): another folder put in place of any of them
+    stops the save before its first swap, `app_folder_missing` naming `app_local_data`. None (the writer called
+    outside a save: tests staging a journal): no check."""
 
     app_local_data: str
-    folders: tuple[tuple[str, tuple[int, int]], ...]
+    folders: tuple[tuple[str, FolderId], ...]
 
 
 def anchored(fs: FileSystem, anchor: Anchor) -> bool:
@@ -169,9 +170,13 @@ def anchored(fs: FileSystem, anchor: Anchor) -> bool:
     for path, identity in anchor.folders:
         try:
             r = fs.resolve(path)
+            if r.rest or r.identity is None or r.identity != identity[:2]:
+                return False
+            if len(identity) == 3:  # a creation time to compare too: asked through a descriptor on the folder
+                with fs.open_dir(path) as h:
+                    if not same_folder(h, identity):
+                        return False
         except (OSError, ValueError):
-            return False
-        if r.rest or r.identity != identity:
             return False
     return True
 
@@ -436,7 +441,7 @@ def _open_confined(fs: FileSystem, handles: Handles, confine: FolderEntry) -> st
         folder_verdict(confine, mark) != "same"
         or r.rest
         or r.identity != h.identity()
-        or not same_path(core_paths.canonical_path(r), path)  # S0117 round 4 (red team): a link above, to the same
+        or not fs.same_path(core_paths.canonical_path(r), path)  # S0117 round 4 (red team): a link above, to the same
     ):  # parent moved aside, names the same object by another path, whose keys are not this path's
         raise _Stop(Reason.COPY_FOLDER_MOVED, None, path)
     handles.confined = path

@@ -122,6 +122,7 @@ def test_every_refusal_key_the_engine_gives_is_in_the_schema() -> None:
         "engine.no_engine_lock",
         "engine.app_folder_missing",  # S0102 (BL-0244): a recovery op in a folder not of the engine's start
         "engine.result_too_large",  # S0120: a preview's answer over the line guard (test_preview_ops.py)
+        "engine.unsupported_platform",  # S0125 (BL-0261): no file-system port on this OS (tests/fs/test_this_os.py)
     }
 
 

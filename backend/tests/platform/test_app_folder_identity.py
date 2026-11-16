@@ -81,7 +81,7 @@ def test_S0102_the_start_records_the_folders_identity(tmp_path: Path) -> None:
 def test_S0102_the_engine_is_started_with_the_identity(app: AppFolder) -> None:
     command = EngineCommand(argv=("python",), env=None, engine_lock=engine_lock_path(app.path), app_folder=app)
     argv = command.spawn_argv(7)
-    assert argv[argv.index("--app-folder-id") + 1] == f"{app.dev}:{app.ino}"
+    assert argv[argv.index("--app-folder-id") + 1] == ":".join(str(n) for n in app.identity)
 
 
 def test_S0102_an_engine_lock_without_the_identity_is_refused(tmp_path: Path) -> None:

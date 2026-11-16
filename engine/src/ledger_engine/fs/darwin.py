@@ -30,9 +30,11 @@
   `ENOTDIR` for a link, probed S0061). `DarwinLegacyLocks`: the legacy app's write lock, tried only for Copy
   (INV-26, ADR-0068 D4; Copy is BL-0026's: the save no longer tries it).
 
-This module is macOS-only: importing it elsewhere raises `ImportError`. The engine selects the adapter in
-`ledger_engine.fs.this_os` (`for_this_os`, `legacy_locks_for_this_os`), which refuses other operating systems; their
-primitives are BL-0087 (spec §14).
+The calls macOS and Linux share (the reads, the exclusive create, the entry operations on the descriptor, the
+resolve walk, the legacy lock) are `ledger_engine.fs.posix` (S0125). This module is macOS-only: importing it elsewhere
+raises `ImportError`. The engine selects the adapter in `ledger_engine.fs.this_os` (`for_this_os`,
+`legacy_locks_for_this_os`), which gives Linux `ledger_engine.fs.linux` and refuses other operating systems (Windows is
+BL-0087; spec §14).
 """
 
 from __future__ import annotations
@@ -40,32 +42,16 @@ from __future__ import annotations
 import ctypes
 import errno
 import fcntl
-import hashlib
 import os
 import stat
 import struct
 import sys
 import uuid
-from collections.abc import Callable, Iterable
-from typing import Final, Self
+from collections.abc import Callable
+from typing import Final, override
 
-from ledger_engine.fs.port import (
-    CHUNK,
-    AclEntry,
-    Caps,
-    EntryStat,
-    FolderMark,
-    FoldRule,
-    Kind,
-    LegacyAbsent,
-    LegacyHeld,
-    MalformedPathError,
-    Resolved,
-    Right,
-    check_name,
-    fold,
-    split_absolute,
-)
+from ledger_engine.fs.port import AclEntry, Caps, FolderMark, FoldRule, Right, check_name, same_path, split_absolute
+from ledger_engine.fs.posix import PosixDir, PosixFS, PosixLegacyLocks
 
 # The one statement of this module's platform (not an `assert`, which `-O` strips): elsewhere the import fails, and
 # pyright checks the rest of the module for macOS only (`--pythonplatform`; S0113).
@@ -86,7 +72,6 @@ STATFS_FSTYPENAME: Final = 72  # offset of `f_fstypename` in it
 VOL_CAP_INT_RENAME_SWAP: Final = 0x00040000
 VOL_CAP_INT_RENAME_EXCL: Final = 0x00080000
 LOCK_FLAGS: Final = stat.UF_IMMUTABLE | stat.UF_APPEND | stat.SF_IMMUTABLE | stat.SF_APPEND
-MAX_LINKS: Final = 40
 RENAME_SWAP: Final = 0x2
 RENAME_EXCL: Final = 0x4
 PC_CASE_SENSITIVE: Final = 11  # <sys/unistd.h> _PC_CASE_SENSITIVE (absent from os.pathconf_names)
@@ -171,22 +156,6 @@ def _errno_raise() -> None:
     raise OSError(e, os.strerror(e))
 
 
-def _entry(st: os.stat_result) -> EntryStat:
-    m = st.st_mode
-    kind = (
-        Kind.FILE if stat.S_ISREG(m) else Kind.DIR if stat.S_ISDIR(m) else Kind.LINK if stat.S_ISLNK(m) else Kind.OTHER
-    )
-    return EntryStat(
-        kind=kind,
-        dev=st.st_dev,
-        ino=st.st_ino,
-        nlink=st.st_nlink,
-        mode=stat.S_IMODE(m),
-        locked=bool(getattr(st, "st_flags", 0) & LOCK_FLAGS),
-        mtime_ns=st.st_mtime_ns,
-    )
-
-
 def _named(
     word: ctypes.c_void_p, bits: tuple[tuple[str, int], ...], get: Callable[[ctypes.c_void_p, int], int]
 ) -> frozenset[str]:
@@ -207,130 +176,24 @@ def _getpath(fd: int) -> str:
     return os.fsdecode(raw.split(b"\0", 1)[0])
 
 
-class DarwinDir:
+class DarwinDir(PosixDir):
     """A handle on one directory (`ledger_engine.fs.port.DirHandle`)."""
 
     def __init__(self, fs: DarwinFS, path: str, *, fd: int | None = None) -> None:
-        self._fs = fs
-        self._fd: int | None = fd if fd is not None else os.open(path, os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC)
-
-    def __enter__(self) -> Self:
-        return self
-
-    def __exit__(self, *exc: object) -> None:
-        self.close()
-
-    def close(self) -> None:
-        if self._fd is not None:
-            os.close(self._fd)
-            self._fd = None
-
-    @property
-    def fd(self) -> int:
-        if self._fd is None:
-            raise MalformedPathError("closed_handle")
-        return self._fd
+        super().__init__(fs, path, fd=fd)
+        self._mac = fs
 
     def path(self) -> str:
         return _getpath(self.fd)
 
-    def device(self) -> int:
-        return os.fstat(self.fd).st_dev
+    @override
+    def locked(self, name: str, st: os.stat_result) -> bool:
+        return bool(getattr(st, "st_flags", 0) & LOCK_FLAGS)
 
-    def identity(self) -> tuple[int, int]:
-        st = os.fstat(self.fd)
-        return (st.st_dev, st.st_ino)
-
-    def stat(self, name: str) -> EntryStat | None:
-        try:
-            return _entry(os.stat(check_name(name), dir_fd=self.fd, follow_symlinks=False))
-        except FileNotFoundError:
-            return None
-
-    def _open_regular(self, name: str) -> int:
-        """A descriptor on the regular file `name`: checked by `lstat` before the open (a FIFO is never opened),
-        opened without following a link and without blocking, and checked again to be the same file."""
-        before = self.stat(name)
-        if before is None:
-            raise FileNotFoundError(errno.ENOENT, "no entry")
-        if before.kind is not Kind.FILE:
-            raise OSError(errno.EINVAL, "not a regular file")
-        fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC, dir_fd=self.fd)
-        st = os.fstat(fd)
-        if not stat.S_ISREG(st.st_mode) or (st.st_dev, st.st_ino) != before.identity:
-            os.close(fd)
-            raise OSError(errno.EINVAL, "changed while opened")
-        return fd
-
-    def read(self, name: str, limit: int | None = None) -> bytes | None:
-        try:
-            fd = self._open_regular(check_name(name))
-        except FileNotFoundError:
-            return None
-        try:
-            return _read_fd(fd, limit)
-        finally:
-            os.close(fd)
-
-    def read_identified(self, name: str) -> tuple[bytes, tuple[int, int]] | None:
-        try:
-            fd = self._open_regular(check_name(name))
-        except FileNotFoundError:
-            return None
-        try:
-            st = os.fstat(fd)
-            return _read_fd(fd, None), (st.st_dev, st.st_ino)
-        finally:
-            os.close(fd)
-
-    def sync_file(self, name: str) -> tuple[int, int]:
-        fd = self._open_regular(check_name(name))  # read-only: F_FULLFSYNC works on it (S0061 r4 probe, APFS)
-        try:
-            st = os.fstat(fd)
-            self._fs.durable_sync(fd)
-            return st.st_dev, st.st_ino
-        finally:
-            os.close(fd)
-
-    def sha256(self, name: str, limit: int) -> tuple[str, int] | None:
-        try:
-            fd = self._open_regular(check_name(name))
-        except FileNotFoundError:
-            return None
-        try:
-            h = hashlib.sha256()
-            n = 0
-            while n < limit:
-                chunk = os.read(fd, min(CHUNK, limit - n))
-                if not chunk:
-                    break
-                h.update(chunk)
-                n += len(chunk)
-            return h.hexdigest(), n
-        finally:
-            os.close(fd)
-
-    def create(self, name: str, data: bytes | Iterable[bytes], mode: int, like: str | None = None) -> tuple[int, int]:
-        flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC
-        fd = os.open(check_name(name), flags, mode & 0o7777, dir_fd=self.fd)
-        try:
-            for piece in (data,) if isinstance(data, bytes) else data:
-                view = memoryview(piece)
-                while view:
-                    view = view[os.write(fd, view) :]
-            if like is not None:
-                src = self._open_regular(check_name(like))
-                try:
-                    if self._fs.libc.fcopyfile(src, fd, None, COPYFILE_XATTR) != 0:
-                        _errno_raise()
-                finally:
-                    os.close(src)
-            os.fchmod(fd, mode & 0o7777)  # the mode as asked, not cut by the umask (a preserved mode)
-            self._fs.durable_sync(fd)
-            st = os.fstat(fd)
-            return (st.st_dev, st.st_ino)
-        finally:
-            os.close(fd)
+    @override
+    def copy_xattrs(self, src: int, dst: int) -> None:
+        if self._mac.libc.fcopyfile(src, dst, None, COPYFILE_XATTR) != 0:
+            _errno_raise()
 
     def allowed(self, name: str, right: Right) -> bool:
         mode = {
@@ -346,7 +209,7 @@ class DarwinDir:
     def caps(self) -> Caps:
         attrs = _AttrList(5, 0, 0, ATTR_VOL_INFO | ATTR_VOL_CAPABILITIES, 0, 0, 0)
         buf = ctypes.create_string_buffer(64)
-        if self._fs.libc.fgetattrlist(self.fd, ctypes.byref(attrs), buf, len(buf), 0) != 0:
+        if self._mac.libc.fgetattrlist(self.fd, ctypes.byref(attrs), buf, len(buf), 0) != 0:
             _errno_raise()
         # u_int32 length, then vol_capabilities_attr_t: capabilities[4], valid[4]; index 1 = the interfaces
         _, _, interfaces, _, _, _, valid, _, _ = struct.unpack("<9I", buf.raw[:36])
@@ -358,30 +221,33 @@ class DarwinDir:
         do not)."""
         attrs = _AttrList(5, 0, ATTR_CMN_RETURNED_ATTRS, ATTR_VOL_INFO | ATTR_VOL_UUID, 0, 0, 0)
         buf = ctypes.create_string_buffer(64)
-        if self._fs.libc.fgetattrlist(self.fd, ctypes.byref(attrs), buf, len(buf), 0) != 0:
+        if self._mac.libc.fgetattrlist(self.fd, ctypes.byref(attrs), buf, len(buf), 0) != 0:
             _errno_raise()
         # u_int32 length, then attribute_set_t (common, vol, dir, file, fork), then the uuid_t when returned
         returned_vol = struct.unpack_from("<I", buf.raw, 8)[0]
         return uuid_from(returned_vol, buf.raw[24:40])
 
-    def mark(self) -> FolderMark:
-        """`volume_id`; the type name from `fstatfs` (`f_fstypename`); the creation time from `fgetattrlist`
-        (`ATTR_CMN_CRTIME`, a `timespec`: whole precision; `fstat`'s `st_birthtime` is a float), None when the file
-        system returns none (S0089 round 2, verifier F2: never an error, so a drive with no UUID is still told
-        `no_drive_id`)."""
-        volume = self.volume_id()
-        buf = ctypes.create_string_buffer(STATFS_SIZE)
-        if self._fs.libc.fstatfs(self.fd, buf) != 0:
-            _errno_raise()
-        fs_type = fs_type_from(buf.raw[STATFS_FSTYPENAME : STATFS_FSTYPENAME + MFSTYPENAMELEN])
+    def born(self) -> int | None:
+        """The folder's creation time from `fgetattrlist` (`ATTR_CMN_CRTIME`, a `timespec`: whole precision;
+        `fstat`'s `st_birthtime` is a float), None when the file system returns none (S0089 round 2, verifier F2)."""
         attrs = _AttrList(5, 0, ATTR_CMN_RETURNED_ATTRS | ATTR_CMN_CRTIME, 0, 0, 0, 0)
         out = ctypes.create_string_buffer(64)
-        if self._fs.libc.fgetattrlist(self.fd, ctypes.byref(attrs), out, len(out), 0) != 0:
+        if self._mac.libc.fgetattrlist(self.fd, ctypes.byref(attrs), out, len(out), 0) != 0:
             _errno_raise()
         if not struct.unpack_from("<I", out.raw, 4)[0] & ATTR_CMN_CRTIME:
-            return FolderMark(volume, fs_type, None)
+            return None
         sec, nsec = struct.unpack_from("<qq", out.raw, 24)
-        return FolderMark(volume, fs_type, sec * 1_000_000_000 + nsec)
+        return sec * 1_000_000_000 + nsec
+
+    def mark(self) -> FolderMark:
+        """`volume_id`; the type name from `fstatfs` (`f_fstypename`); `born` (never an error when the file system
+        keeps no creation time, so a drive with no UUID is still told `no_drive_id`)."""
+        volume = self.volume_id()
+        buf = ctypes.create_string_buffer(STATFS_SIZE)
+        if self._mac.libc.fstatfs(self.fd, buf) != 0:
+            _errno_raise()
+        fs_type = fs_type_from(buf.raw[STATFS_FSTYPENAME : STATFS_FSTYPENAME + MFSTYPENAMELEN])
+        return FolderMark(volume, fs_type, self.born())
 
     def acl(self) -> tuple[AclEntry, ...]:
         """`acl_get_fd_np(ACL_TYPE_EXTENDED)` on the folder's descriptor, each entry read in full: its kind and its
@@ -389,7 +255,7 @@ class DarwinDir:
         `unknown`: the permission word and the flag word are also read whole where the permset and flagset point
         (probed on macOS 26: they point at the entry's own words) and must agree with the named bits, else `unknown`
         (fails closed). No ACL at all (`ENOENT`) is empty; any other error is raised."""
-        lib = self._fs.libc
+        lib = self._mac.libc
         acl = lib.acl_get_fd_np(self.fd, ACL_TYPE_EXTENDED)
         if not acl:
             e = ctypes.get_errno()
@@ -421,7 +287,9 @@ class DarwinDir:
             lib.acl_free(acl)
 
     def _renamex(self, a: str, b: str, flags: int) -> None:
-        rc = self._fs.libc.renameatx_np(self.fd, os.fsencode(check_name(a)), self.fd, os.fsencode(check_name(b)), flags)
+        rc = self._mac.libc.renameatx_np(
+            self.fd, os.fsencode(check_name(a)), self.fd, os.fsencode(check_name(b)), flags
+        )
         if rc != 0:
             _errno_raise()
 
@@ -435,30 +303,8 @@ class DarwinDir:
             raise OSError(errno.ENOTSUP, "the volume offers no RENAME_EXCL")
         self._renamex(src, dst, RENAME_EXCL)
 
-    def rename(self, src: str, dst: str) -> None:
-        os.rename(check_name(src), check_name(dst), src_dir_fd=self.fd, dst_dir_fd=self.fd)
-
-    def remove(self, name: str) -> None:
-        os.unlink(check_name(name), dir_fd=self.fd)
-
-    def mkdir(self, name: str, mode: int = 0o755) -> None:
-        os.mkdir(check_name(name), mode, dir_fd=self.fd)
-
-    def symlink(self, target: str, name: str) -> None:
-        os.symlink(check_name(target), check_name(name), dir_fd=self.fd)
-
-    def readlink(self, name: str) -> str | None:
-        try:
-            return os.readlink(check_name(name), dir_fd=self.fd)
-        except FileNotFoundError:
-            return None
-
-    def touch(self, name: str) -> None:
-        os.utime(check_name(name), dir_fd=self.fd, follow_symlinks=False)
-
     def open_child(self, name: str) -> DarwinDir:
-        fd = os.open(check_name(name), os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC, dir_fd=self.fd)
-        return DarwinDir(self._fs, "", fd=fd)
+        return DarwinDir(self._mac, "", fd=self.child_fd(name))
 
     def rule(self) -> FoldRule:
         try:
@@ -466,31 +312,8 @@ class DarwinDir:
         except OSError:
             return FoldRule(nfd=True, casefold=True)
 
-    def rmdir(self, name: str) -> None:
-        os.rmdir(check_name(name), dir_fd=self.fd)
 
-    def names(self) -> list[str]:
-        return sorted(os.listdir(self.fd))
-
-    def sync(self) -> None:
-        self._fs.durable_sync(self.fd)
-
-
-def _read_fd(fd: int, limit: int | None) -> bytes:
-    """The bytes from `fd`'s position on, at most `limit` of them (all with None), in chunks of 1 MiB."""
-    chunks: list[bytes] = []
-    left = limit
-    while left is None or left > 0:
-        chunk = os.read(fd, 1 << 20 if left is None else min(1 << 20, left))
-        if not chunk:
-            break
-        chunks.append(chunk)
-        if left is not None:
-            left -= len(chunk)
-    return b"".join(chunks)
-
-
-class DarwinFS:
+class DarwinFS(PosixFS):
     """The real file system on macOS (`ledger_engine.fs.port.FileSystem`)."""
 
     def __init__(self, on_fallback: Callable[[], None] | None = None) -> None:
@@ -498,6 +321,7 @@ class DarwinFS:
         self._fallback_volumes: set[int] = set()  # bounded by the number of mounted volumes (INV-10)
         self._on_fallback = on_fallback
 
+    @override
     def durable_sync(self, fd: int) -> None:
         """§6.2: `F_FULLFSYNC`, or `fsync` where the volume refuses it (reported once per volume)."""
         try:
@@ -512,18 +336,23 @@ class DarwinFS:
                 if self._on_fallback is not None:
                     self._on_fallback()
 
+    @override
+    def same_path(self, now: str, recorded: str) -> bool:
+        return same_path(now, recorded)
+
     def open_dir(self, path: str) -> DarwinDir:
         split_absolute(path)
         return DarwinDir(self, path)
 
-    def _case_insensitive(self, directory: str) -> bool:
+    @override
+    def rule_at(self, folder: str) -> FoldRule:
         try:
-            return os.pathconf(directory, PC_CASE_SENSITIVE) != 1
+            return FoldRule(nfd=True, casefold=os.pathconf(folder, PC_CASE_SENSITIVE) != 1)
         except OSError:
-            return True
+            return FoldRule(nfd=True, casefold=True)
 
-    def _folder(self, path: str) -> tuple[int, str]:
-        """A descriptor on the folder at `path` (links followed) and its canonical path."""
+    @override
+    def open_folder(self, path: str) -> tuple[int, str]:
         fd = os.open(path, os.O_EVTONLY | os.O_DIRECTORY | os.O_CLOEXEC)
         try:
             return fd, _getpath(fd)
@@ -531,113 +360,9 @@ class DarwinFS:
             os.close(fd)
             raise
 
-    def _file(self, path: str, rule_of: Callable[[str], FoldRule]) -> tuple[str, tuple[int, int]]:
-        """The canonical path of the file at `path`: its folder's canonical path and the entry's stored name."""
-        for _ in range(MAX_LINKS):
-            head, _, name = path.rpartition("/")
-            fd, folder = self._folder(head or "/")
-            try:
-                st = os.stat(name, dir_fd=fd, follow_symlinks=False)
-                if stat.S_ISLNK(st.st_mode):
-                    target = os.readlink(name, dir_fd=fd)
-                    path = target if target.startswith("/") else _join(folder, target)
-                    continue
-                rule = rule_of(folder)
-                want = fold(name, rule)
-                names = [n for n in os.listdir(fd) if fold(n, rule) == want]
-                same = [n for n in names if _identity(os.stat(n, dir_fd=fd, follow_symlinks=False)) == _identity(st)]
-                if len(same) != 1:
-                    raise OSError(errno.ENOENT, "the entry's stored name is not one name")
-                return _join(folder, same[0]), _identity(st)
-            finally:
-                os.close(fd)
-        raise OSError(errno.ELOOP, "too many links")
 
-    def resolve(self, path: str) -> Resolved:
-        parts = split_absolute(path)
-        cut = len(parts)
-        while True:
-            probe = "/" + "/".join(parts[:cut])
-            try:
-                st = os.stat(probe)  # opens nothing; a dangling link is absent
-            except (FileNotFoundError, NotADirectoryError):
-                if cut == 0:
-                    raise
-                cut -= 1
-                continue
-            break
-        is_dir = stat.S_ISDIR(st.st_mode)
-        rule_cache: dict[str, FoldRule] = {}
-
-        def rule_of(folder: str) -> FoldRule:
-            if folder not in rule_cache:
-                rule_cache[folder] = FoldRule(nfd=True, casefold=self._case_insensitive(folder))
-            return rule_cache[folder]
-
-        if is_dir:
-            fd, canonical = self._folder(probe)
-            try:
-                found = os.fstat(fd)
-            finally:
-                os.close(fd)
-            identity = (found.st_dev, found.st_ino)
-        else:
-            canonical, identity = self._file(probe, rule_of)
-        if identity != (st.st_dev, st.st_ino):
-            raise OSError(errno.ESTALE, "the path changed while it was resolved")
-        existing = split_absolute(canonical)
-        rest = parts[cut:]
-        rules = [rule_of("/" + "/".join(existing[:i])) for i in range(len(existing))]
-        if rest:
-            holder = canonical if is_dir else "/" + "/".join(existing[:-1])
-            rules.extend(rule_of(holder) for _ in rest)
-        return Resolved(existing=existing, rest=rest, rules=tuple(rules), identity=identity)
-
-
-class DarwinLock:
-    """A legacy write lock held by this process (`DarwinLegacyLocks`)."""
-
-    def __init__(self, fd: int) -> None:
-        self._fd: int | None = fd
-
-    def release(self) -> None:
-        if self._fd is not None:
-            os.close(self._fd)  # closing the descriptor releases its `flock`
-            self._fd = None
-
-
-class DarwinLegacyLocks:
-    """The legacy write lock (`ledger_engine.fs.port.LegacyLocks`; ADR-0062 decisions 2 and 5): the file opened
-    read-only, never through a link and without blocking on a FIFO, only if it exists (v0.4 never creates it), then
-    `flock(LOCK_EX | LOCK_NB)`: the call portalocker 3.2.0 makes on POSIX for `lock(fh, LOCK_EX | LOCK_NB)` (its
-    `PosixLocker` calls `fcntl.flock`; `EAGAIN` or `EACCES` is its `AlreadyLocked`, any other error its
-    `LockException`), so the detection sees the legacy app's lock and is tested against a holder that takes it with
-    portalocker 3.2.0 itself (`tests/ledger/test_save.py`); the engine does not import portalocker (it brings pywin32
-    on Windows; ADR-0062's 2026-10-31 amendment). Windows (`msvcrt.locking` over the first 64 KiB) is BL-0087's."""
-
-    def try_lock(self, path: str) -> DarwinLock | LegacyAbsent | LegacyHeld:
-        split_absolute(path)
-        flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC
-        try:
-            fd = os.open(path, flags)
-        except FileNotFoundError:
-            return LegacyAbsent()
-        try:
-            regular = stat.S_ISREG(os.fstat(fd).st_mode)
-            if regular:
-                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except OSError as e:
-            os.close(fd)
-            if e.errno in (errno.EAGAIN, errno.EACCES):
-                return LegacyHeld()
-            raise
-        except BaseException:
-            os.close(fd)
-            raise
-        if not regular:
-            os.close(fd)
-            raise OSError(errno.EINVAL, "the legacy lock is not a regular file")
-        return DarwinLock(fd)  # closing the descriptor releases the lock; nothing is written or removed
+class DarwinLegacyLocks(PosixLegacyLocks):
+    """The legacy write lock on macOS: `flock`, as portalocker 3.2.0 takes it there (`PosixLegacyLocks`)."""
 
 
 def caps_from(interfaces: int, valid: int) -> Caps:
@@ -664,11 +389,3 @@ def uuid_from(returned_vol: int, raw: bytes) -> str | None:
     if not returned_vol & ATTR_VOL_UUID or raw == bytes(16):
         return None
     return str(uuid.UUID(bytes=raw))
-
-
-def _identity(st: os.stat_result) -> tuple[int, int]:
-    return (st.st_dev, st.st_ino)
-
-
-def _join(folder: str, name: str) -> str:
-    return "/" + name if folder == "/" else f"{folder}/{name}"

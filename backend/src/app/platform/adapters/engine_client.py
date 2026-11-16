@@ -387,7 +387,7 @@ class EngineCommand:
                 "--engine-lock",
                 str(self.engine_lock),
                 "--app-folder-id",
-                f"{self.app_folder.dev}:{self.app_folder.ino}",
+                self.app_folder.id_text,
             ]
         cache = ["--app-cache", str(self.app_cache)] if self.app_cache is not None else []
         return [self.argv[0], *prefix, *self.argv[1:], "--parent-pid", str(parent_pid), *lock, *cache]

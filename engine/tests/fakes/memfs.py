@@ -90,6 +90,7 @@ from ledger_engine.fs.port import (
     Resolved,
     Right,
     check_name,
+    same_path,
     split_absolute,
 )
 
@@ -361,6 +362,10 @@ class MemFS:
         holder = last if isinstance(last, _Dir) else self._dir(self._walk("/" + "/".join(names[:-1]))[1])
         dev = holder.dev
         return Resolved(existing=tuple(names), rest=tuple(rest), rules=rules, identity=(dev, ino))
+
+    def same_path(self, now: str, recorded: str) -> bool:
+        """`FileSystem.same_path`: macOS's rule (after NFD), which the fake models."""
+        return same_path(now, recorded)
 
     def open_dir(self, path: str) -> MemDir:
         _, ino, rest, _ = self._walk(path, search=True)
@@ -810,8 +815,12 @@ class MemDir:
         """`DirHandle.mark` (S0089 round 1): `volume_id`, the drive's `fs_types` entry (`apfs` by default) and the
         folder's `born`. Asking writes nothing and is not an effect."""
         d = self._d
-        born = None if d.dev in self._fs.no_crtime else d.born
-        return FolderMark(self.volume_id(), self._fs.fs_types.get(d.dev, "apfs"), born)
+        return FolderMark(self.volume_id(), self._fs.fs_types.get(d.dev, "apfs"), self.born())
+
+    def born(self) -> int | None:
+        """`DirHandle.born`: the folder's `born`, None on a dev in `no_crtime`. Asking is not an effect."""
+        d = self._d
+        return None if d.dev in self._fs.no_crtime else d.born
 
     def path(self) -> str:
         """The folder's path now; for a folder removed meanwhile, its last path (probed on APFS, S0061 red team L5)."""

@@ -13,9 +13,10 @@ operation done before it in that directory durable, never the data of the files 
 unsynced in-place write needs `sync_file`; S0101, BL-0243). A swap and an exclusive rename are one operation: a power
 loss keeps or drops each whole; so is a plain rename, except over an existing file on a volume without a journal (exFAT,
 FAT: `rename`). Nothing is assumed about the order in which unsynced operations reach the disk. Every sync is
-`durable_sync`: `F_FULLFSYNC` on macOS.
+`durable_sync`: `F_FULLFSYNC` on macOS, `fsync` on Linux.
 
-Every operation may raise `OSError`. The real adapter is `ledger_engine.fs.darwin` (macOS), taken only through
+Every operation may raise `OSError`. The real adapters are `ledger_engine.fs.darwin` (macOS) and
+`ledger_engine.fs.linux` (Linux, S0125), sharing `ledger_engine.fs.posix`, taken only through
 `ledger_engine.fs.this_os.for_this_os` (S0113); the test adapter is the in-memory fake `tests/fakes/memfs.py`, with a
 separate durable layer, crash, I/O-error and power-loss injection.
 """
@@ -151,7 +152,14 @@ class DirHandle(Protocol):
         """The UUID of the drive this directory is on, in lower case (`8-4-4-4-12` hex digits), or None when the drive
         reports none (S0089, BL-0188: the journal names each folder's drive by it, and the undo writes only on that
         drive). Asking writes nothing; an error raises `OSError`. macOS: `ATTR_VOL_UUID` (APFS, HFS+, exFAT and FAT
-        report one; probed). TODO(BL-0218): Windows (the volume GUID) and Linux (the file system UUID)."""
+        report one; probed). Linux: the file system's UUID (`FS_IOC_GETFSUUID`, else udev's `/dev/disk/by-uuid`; a
+        format serial as a name-based UUID; S0125). TODO(BL-0218): Windows (the volume GUID)."""
+        ...
+
+    def born(self) -> int | None:
+        """This folder's creation time in nanoseconds since the epoch, asked through this descriptor, or None when its
+        file system keeps none (`FolderMark.born`; on Linux the app folder's identity too, BL-0262). Asking writes
+        nothing; an error raises `OSError`."""
         ...
 
     def mark(self) -> FolderMark:
@@ -288,6 +296,12 @@ class DirHandle(Protocol):
 
 
 class FileSystem(Protocol):
+    def same_path(self, now: str, recorded: str) -> bool:
+        """The path guard's comparison (§6.3): a folder's path now (`DirHandle.path`) names the recorded canonical
+        path, compared as this OS's volumes give paths back: after NFD on macOS (`same_path`), byte for byte on Linux
+        (S0125; a folder renamed to another spelling of its name has moved). Case stays exact everywhere."""
+        ...
+
     def resolve(self, path: str) -> Resolved:
         """Resolve an absolute path as far as it exists (§6.3). A missing component ends the existing part; any other
         error raises `OSError`. A relative path, or a `.` or `..` component, raises `ValueError`."""
@@ -330,8 +344,34 @@ def same_path(now: str, recorded: str) -> bool:
     """The path guard's comparison (§6.3): a folder's path now names the recorded canonical path, compared as the
     volume compares names. Every volume the save writes on (macOS) treats two normalizations of a name as one, and
     HFS+ answers NFD for a name made in NFC (S0061 probe), so both are compared after NFD; case stays exact, so a
-    folder renamed in case only counts as moved (fails closed). TODO(BL-0087): Linux compares bytes."""
+    folder renamed in case only counts as moved (fails closed). macOS's rule (`DarwinFS.same_path` and the fake);
+    Linux compares bytes (`LinuxFS.same_path`, S0125)."""
     return unicodedata.normalize("NFD", now) == unicodedata.normalize("NFD", recorded)
+
+
+type FolderId = tuple[int, int] | tuple[int, int, int]
+"""A folder's identity over time (S0102, BL-0262): `(st_dev, st_ino)`, and its creation time in ns where the OS's
+adapter adds one (`this_os.folder_identity`: Linux, where ext4 gives a folder removed and made again at once the freed
+inode number; macOS's APFS never reuses one, so its identity has none)."""
+
+
+def same_identity(now: FolderId, start: FolderId) -> bool:
+    """Whether a folder whose identity is `now` is the folder of `start`: the same `(st_dev, st_ino)` and, when
+    `start` has a creation time, the same one (a `now` without one fails)."""
+    if now[:2] != start[:2]:
+        return False
+    if len(start) == 2:
+        return True
+    return len(now) == 3 and now[2] == start[2]
+
+
+def same_folder(h: DirHandle, start: FolderId) -> bool:
+    """`same_identity` of the folder `h` holds, asked through its descriptor."""
+    dev, ino = h.identity()
+    if len(start) == 2:
+        return (dev, ino) == start
+    born = h.born()
+    return same_identity((dev, ino) if born is None else (dev, ino, born), start)
 
 
 def fold(component: str, rule: FoldRule) -> str:

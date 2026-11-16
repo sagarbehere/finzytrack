@@ -14,7 +14,9 @@ macOS, `fsync` where the volume refuses it, `fsync` elsewhere. Any failure is an
 (`msg:start.app_folder`): the sidecar then exits before its handshake.
 
 S0102 (BL-0244; owner, 2026-11-11: "BL-0244 slice in M1a (Recommended)"): `prepare` answers the folder's identity
-`(st_dev, st_ino)` (links followed, as the save and recover-all follow them), an `AppFolder`. Every process of ours
+`(st_dev, st_ino)` (links followed, as the save and recover-all follow them), an `AppFolder`; on Linux with the
+folder's creation time too (`statx`'s birth time, S0125, BL-0262: ext4 gives a folder removed and made again at once
+the freed inode number), as the engine asks it (`ledger_engine.fs.this_os.folder_identity`). Every process of ours
 that writes in the app folder later checks it against the object it is about to write in (`AppFolder.open`: the
 sidecar's lock wait and the bytecode fill here, the engine with `--app-folder-id`), so a folder removed while the app
 runs, or another folder put in its place, gets nothing of ours: its entry was never made durable by our start.
@@ -22,12 +24,15 @@ runs, or another folder put in its place, gets nothing of ours: its entry was ne
 
 from __future__ import annotations
 
+import ctypes
 import errno
 import os
 import stat
+import struct
 import sys
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Final
 
 from app.platform.engine import AppFolderChangedError
 
@@ -39,23 +44,66 @@ def directory_flags() -> int:
     return os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | os.O_CLOEXEC
 
 
+AT_EMPTY_PATH: Final = 0x1000
+STATX_BTIME: Final = 0x800
+STATX_BASIC: Final = 0x7FF
+
+
+def _birth(fd: int) -> int | None:
+    """Linux: the creation time in ns of the folder the descriptor `fd` holds, by `statx` (glibc 2.28), None where the
+    file system keeps none; an error raises `OSError`."""
+    libc = ctypes.CDLL(None, use_errno=True)
+    buf = ctypes.create_string_buffer(256)  # `struct statx` (<linux/stat.h>)
+    if libc.statx(fd, b"", AT_EMPTY_PATH, STATX_BASIC | STATX_BTIME, buf) != 0:
+        e = ctypes.get_errno()
+        raise OSError(e, os.strerror(e))
+    if not struct.unpack_from("<I", buf.raw, 0)[0] & STATX_BTIME:
+        return None
+    sec, nsec = struct.unpack_from("<qI", buf.raw, 80)
+    return sec * 1_000_000_000 + nsec
+
+
+def _identity_of_fd(fd: int) -> tuple[int, int, int | None]:
+    st = os.fstat(fd)
+    return st.st_dev, st.st_ino, _birth(fd) if sys.platform == "linux" else None
+
+
+def _identity_at(path: Path) -> tuple[int, int, int | None]:
+    """The identity of the folder at `path` now (links followed): on Linux through an `O_PATH` descriptor, which needs
+    no right to read the folder, so one object answers every part; elsewhere `stat`."""
+    if sys.platform == "linux":
+        fd = os.open(path, os.O_PATH | os.O_DIRECTORY | os.O_CLOEXEC)
+        try:
+            return _identity_of_fd(fd)
+        finally:
+            os.close(fd)
+    st = os.stat(path)
+    return st.st_dev, st.st_ino, None
+
+
 @dataclass(frozen=True, slots=True)
 class AppFolder:
-    """The app folder as the start made it durable: its path and its identity then."""
+    """The app folder as the start made it durable: its path and its identity then. `born`: its creation time in ns
+    on Linux (BL-0262), None on macOS (APFS reuses no inode number) and where the file system keeps none."""
 
     path: Path
     dev: int
     ino: int
+    born: int | None = None
 
     @property
-    def identity(self) -> tuple[int, int]:
-        return (self.dev, self.ino)
+    def identity(self) -> tuple[int, int] | tuple[int, int, int]:
+        return (self.dev, self.ino) if self.born is None else (self.dev, self.ino, self.born)
+
+    @property
+    def id_text(self) -> str:
+        """`--app-folder-id`: `DEV:INO`, or `DEV:INO:BORN` with a creation time."""
+        return ":".join(str(n) for n in self.identity)
 
     @classmethod
     def of(cls, path: Path) -> AppFolder:
         """The folder at `path` as it is now (links followed)."""
-        st = os.stat(path)
-        return cls(path, st.st_dev, st.st_ino)
+        return cls(path, *_identity_at(path))
 
     def open(self) -> int:
         """A descriptor on the folder, only while it is still the object of the start; the caller closes it and
@@ -67,8 +115,12 @@ class AppFolder:
             raise AppFolderChangedError(
                 e.errno, "the app folder is missing or cannot be read", str(self.path)
             ) from None
-        st = os.fstat(fd)
-        if (st.st_dev, st.st_ino) != self.identity:
+        try:
+            now = AppFolder(self.path, *_identity_of_fd(fd))
+        except OSError as e:
+            os.close(fd)
+            raise AppFolderChangedError(e.errno, "the app folder cannot be read", str(self.path)) from None
+        if now.identity != self.identity:
             os.close(fd)
             raise AppFolderChangedError(errno.ESTALE, "the app folder was replaced", str(self.path))
         return fd
@@ -76,10 +128,9 @@ class AppFolder:
     def same_now(self) -> bool:
         """Whether the path names the object of the start now (a missing folder: no)."""
         try:
-            st = os.stat(self.path)
+            return AppFolder(self.path, *_identity_at(self.path)).identity == self.identity
         except OSError:
             return False
-        return (st.st_dev, st.st_ino) == self.identity
 
 
 @dataclass(frozen=True, slots=True)

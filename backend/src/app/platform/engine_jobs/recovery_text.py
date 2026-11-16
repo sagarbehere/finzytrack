@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import errno as errnos
 import os
+import platform
 from dataclasses import dataclass
 from typing import Final, Literal
 
@@ -314,8 +315,18 @@ def blocked_screen(b: Blocking, workspace: str) -> Screen:
     return Screen(screen.message + _missing_now(b) + _drive_backups(b), screen.actions)
 
 
+UNSUPPORTED_PLATFORM: Final = "engine.unsupported_platform"
+"""The engine's refusal on an operating system without its file-system port (S0125, BL-0261)."""
+
+
 def not_recovered_screen(n: NotRecovered) -> Screen:
     """Every open is blocked: a journal folder could not be listed, or recover-all never listed (fail closed)."""
+    if n.why == UNSUPPORTED_PLATFORM:  # BL-0261: the platform, never "the data folder was removed"; Retry cannot help
+        return Screen(
+            f"Finzytrack cannot open or save ledgers on {platform.system() or 'this system'} yet. "
+            "It works on macOS and Linux.",
+            (),
+        )
     if n.why in APP_FOLDER_CAUSES:  # S0102 (BL-0244): Retry would meet the same folder
         return Screen(f"Finzytrack could not check for unfinished saves. {APP_FOLDER_GONE}", ())
     if n.folder is not None and n.linked:  # S0077 (BL-0193): the way out is the user's, so the screen names it

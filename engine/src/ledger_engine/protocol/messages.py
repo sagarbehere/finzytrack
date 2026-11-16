@@ -44,6 +44,7 @@ type RefusalKey = Literal[
     "engine.no_engine_lock",
     "engine.app_folder_missing",
     "engine.result_too_large",
+    "engine.unsupported_platform",
 ]
 REFUSAL_KEYS: frozenset[str] = frozenset(get_args(RefusalKey.__value__))
 

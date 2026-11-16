@@ -15,7 +15,7 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Final, Literal
 
-from ledger_engine.fs.port import AclEntry, DirHandle, EntryStat, FileSystem, FolderMark, Kind, Right, same_path
+from ledger_engine.fs.port import AclEntry, DirHandle, EntryStat, FileSystem, FolderMark, Kind, Right
 from ledger_engine.ledger.core.journal import FS_TYPE, MAX_KEPT, FolderEntry, kept_name
 
 
@@ -48,8 +48,9 @@ class LinkedPathError(PathMovedError):
         self.link = link
 
 
-SERIAL_IDENTIFIED: Final = frozenset({"msdos", "exfat"})
-"""File systems whose drive UUID macOS derives from a 32-bit format serial (a version 3 UUID; S0089 red team H1):
+SERIAL_IDENTIFIED: Final = frozenset({"msdos", "vfat", "exfat"})
+"""File systems whose drive UUID is derived from a 32-bit format serial (macOS: a version 3 UUID, S0089 red team H1;
+Linux, which names FAT `vfat`: a version 5 UUID of the serial, `ledger_engine.fs.linux`, S0125):
 two sticks formatted with one serial share it, and these keep no creation time for their top level."""
 UUID_UNSTABLE_ON: Final = frozenset({"msdos"})
 """File systems on which macOS gives a drive whose serial clashes with one already mounted a random version 4 UUID,
@@ -135,7 +136,7 @@ class WrongDriveError(Exception):
 class Handles:
     """One handle per folder, opened once and checked at every use (§6.3: the check and the write go through one
     descriptor). `at` raises `PathMovedError` when the folder's path now does not name the recorded canonical path,
-    compared as the volume compares names (`fs.port.same_path`).
+    compared as the OS gives paths back (`FileSystem.same_path`).
 
     **The drive** (S0089, BL-0188; owner, 2026-11-08: "Volume ID in journal (Recommended)", then "Drive ID + folder
     birth (Recommended)"): with `folders` (the journal's `journal.folders`, by canonical path), a folder named there is
@@ -183,13 +184,13 @@ class Handles:
                 raise
             self.open[canonical] = h
             return h
-        if not same_path(h.path(), canonical):
+        if not self.fs.same_path(h.path(), canonical):
             raise PathMovedError(canonical)
         return h
 
     def _check_new(self, h: DirHandle, canonical: str) -> None:
         """A handle just opened: the path guard first, then, for a recorded folder, `folder_verdict`."""
-        if not same_path(h.path(), canonical):
+        if not self.fs.same_path(h.path(), canonical):
             raise PathMovedError(canonical)
         recorded = self.folders.get(canonical)
         if recorded is not None:

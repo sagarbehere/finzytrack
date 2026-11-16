@@ -3479,7 +3479,8 @@
         "engine.internal",
         "engine.no_engine_lock",
         "engine.app_folder_missing",
-        "engine.result_too_large"
+        "engine.result_too_large",
+        "engine.unsupported_platform"
       ],
       "type": "string"
     },

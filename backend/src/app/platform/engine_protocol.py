@@ -102,6 +102,7 @@ REFUSAL_KEYS = frozenset(
         "engine.no_engine_lock",
         "engine.app_folder_missing",
         "engine.result_too_large",
+        "engine.unsupported_platform",
     }
 )
 OK_KEYS = frozenset({"v", "id", "op", "ok", "result"})

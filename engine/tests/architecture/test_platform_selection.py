@@ -14,16 +14,18 @@ import ast
 from pathlib import Path
 
 SRC = Path(__file__).resolve().parents[2] / "src" / "ledger_engine"
-# Every module of `fs/` except the port, the selection point and the package itself is an adapter (S0113 verifier V1:
-# a later `fs/linux.py` or `fs/windows.py` is covered without editing this test).
-NOT_ADAPTERS = frozenset({"__init__", "port", "this_os"})
+# Every module of `fs/` except the port, the selection point, the package itself and the code the POSIX adapters share
+# (`posix`, S0125: imported only by the adapters, below) is an adapter (S0113 verifier V1: `fs/linux.py` or
+# `fs/windows.py` is covered without editing this test).
+NOT_ADAPTERS = frozenset({"__init__", "port", "this_os", "posix"})
+SHARED = "ledger_engine.fs.posix"
 SELECTION = "fs/this_os.py"
 ADAPTERS = frozenset(f"ledger_engine.fs.{p.stem}" for p in (SRC / "fs").glob("*.py") if p.stem not in NOT_ADAPTERS)
 
 
 def test_the_adapter_set_is_read_from_the_fs_package() -> None:
-    assert "ledger_engine.fs.darwin" in ADAPTERS
-    assert not ADAPTERS & {"ledger_engine.fs.port", "ledger_engine.fs.this_os", "ledger_engine.fs.__init__"}
+    assert {"ledger_engine.fs.darwin", "ledger_engine.fs.linux"} <= ADAPTERS
+    assert not ADAPTERS & {"ledger_engine.fs.port", "ledger_engine.fs.this_os", "ledger_engine.fs.__init__", SHARED}
 
 
 def adapter_imports(rel: str, source: str) -> list[str]:
@@ -58,9 +60,31 @@ def test_only_the_selection_point_imports_an_adapter() -> None:
     )
 
 
-def test_the_selection_point_is_the_one_that_imports_the_macos_adapter() -> None:
-    """`@regression-guard`: the scan sees the selection point's own import, so it would see any other."""
-    assert adapter_imports(SELECTION, (SRC / SELECTION).read_text(encoding="utf-8")) == ["ledger_engine.fs.darwin"]
+def test_the_selection_point_is_the_one_that_imports_the_adapters() -> None:
+    """`@regression-guard`: the scan sees the selection point's own imports, so it would see any other."""
+    found = adapter_imports(SELECTION, (SRC / SELECTION).read_text(encoding="utf-8"))
+    assert sorted(found) == ["ledger_engine.fs.darwin", "ledger_engine.fs.linux"]
+
+
+def test_only_the_adapters_import_their_shared_posix_code() -> None:
+    """Must not pass: `fs/posix.py` is the adapters' shared code; anything else takes the port from `this_os`."""
+    offenders: list[str] = []
+    for path in sorted(SRC.rglob("*.py")):
+        rel = path.relative_to(SRC).as_posix()
+        if f"ledger_engine.{rel.removesuffix('.py').replace('/', '.')}" in ADAPTERS:
+            continue
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            names = (
+                [a.name for a in node.names]
+                if isinstance(node, ast.Import)
+                else [node.module or "", *(f"{node.module}.{a.name}" for a in node.names)]
+                if isinstance(node, ast.ImportFrom)
+                else []
+            )
+            if any(n == SHARED or n.endswith(".posix") for n in names):
+                offenders.append(rel)
+    assert not offenders, offenders
 
 
 def test_every_spelling_of_an_adapter_import_is_seen() -> None:

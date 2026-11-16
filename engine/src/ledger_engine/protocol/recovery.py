@@ -23,7 +23,7 @@ import os
 from collections.abc import Callable
 from typing import Final, Protocol
 
-from ledger_engine.fs.port import FileSystem, Kind, same_path
+from ledger_engine.fs.port import FileSystem, Kind
 from ledger_engine.fs.this_os import for_this_os
 from ledger_engine.ledger import recover_all as ra
 from ledger_engine.ledger.core import journal
@@ -90,7 +90,7 @@ def app_local_data_of(fs: FileSystem, app_local_data: str, ctx: Decider) -> str:
     lock = ctx.engine_lock
     mine = None if lock is None else _canonical(fs, os.path.dirname(os.path.dirname(os.path.abspath(lock))))
     given = _canonical(fs, app_local_data)
-    if mine is None or given is None or not same_path(given, mine):
+    if mine is None or given is None or not fs.same_path(given, mine):
         msg = "params.app_local_data: not the folder of this engine's engine lock"
         raise BadParamsError(msg)
     return app_local_data

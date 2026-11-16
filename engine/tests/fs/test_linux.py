@@ -388,6 +388,39 @@ def test_a_folder_made_again_at_the_same_path_is_another_folder_even_with_the_sa
     assert len(seen) == 5
 
 
+def test_the_app_folders_identity_carries_its_creation_time_and_tells_a_folder_made_again_apart(tmp_path: Path) -> None:
+    """BL-0262: `this_os.folder_identity` is `(st_dev, st_ino, birth time)` on Linux, the birth time `mark` reads (and
+    coreutils' `stat %W` to the second); a folder removed and made again at once is another identity even where ext4
+    gives it the same inode number."""
+    from ledger_engine.fs.port import FolderId, same_identity
+    from ledger_engine.fs.this_os import folder_identity
+
+    seen: list[FolderId] = []
+    for _ in range(3):
+        (tmp_path / "app").mkdir()
+        fd = os.open(tmp_path / "app", os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            ident = folder_identity(fd)
+        finally:
+            os.close(fd)
+        st = (tmp_path / "app").stat()
+        assert ident[:2] == (st.st_dev, st.st_ino)
+        assert len(ident) == 3
+        with for_this_os().open_dir(str(tmp_path / "app")) as d:
+            assert d.mark().born == ident[2]
+        assert not any(same_identity(ident, before) for before in seen)
+        seen.append(ident)
+        (tmp_path / "app").rmdir()
+
+
+def test_the_path_guard_compares_bytes_on_linux(fs: FileSystem) -> None:
+    """§6.3: Linux gives a path back as stored, so a folder renamed to another spelling of its name (NFC to NFD, or
+    case) has moved; macOS compares after NFD (`port.same_path`)."""
+    assert fs.same_path("/a/\u00e9", "/a/\u00e9")
+    assert not fs.same_path("/a/\u00e9", "/a/e\u0301")
+    assert not fs.same_path("/a/Main", "/a/main")
+
+
 # -- rights (§6.1 step 8 "folder rule"): POSIX modes, and ACLs as the system applies them ------------------------------
 
 
@@ -512,6 +545,7 @@ def _volumes() -> list[str]:
     return [v for v in os.environ.get("FT_TEST_VOLUMES", "").split(":") if v]
 
 
+SERIAL_NAMESPACE = uuid.UUID("3b1c6a52-8f0e-5d6a-9b1e-6c4f0f25a125")  # `linux.SERIAL_NAMESPACE`, fixed for good
 EXPECTED_SWAP = {"btrfs": True, "xfs": True, "ext4": True, "ext2": False, "vfat": False, "exfat": False}
 
 
@@ -526,8 +560,14 @@ def test_a_save_its_crash_and_its_recovery_on_a_real_scratch_volume(
     with fs.open_dir(volume) as v:
         kind = v.mark().fs_type
         caps = v.caps()
+        drive = v.volume_id()
     assert kind in EXPECTED_SWAP, kind
     assert caps.swap is EXPECTED_SWAP[kind], (kind, caps)
+    blkid = _findmnt(Path(volume), "UUID")  # udev's and blkid's name for the drive
+    if kind in ("vfat", "exfat"):  # a format serial, as a name-based UUID (`linux.uuid_of_name`)
+        assert drive == str(uuid.uuid5(SERIAL_NAMESPACE, blkid.upper())), (kind, blkid, drive)
+    else:
+        assert drive == blkid.lower(), (kind, blkid, drive)
     ledger = Path(volume) / f"ft-{uuid.uuid4().hex}"
     ledger.mkdir()
     try:

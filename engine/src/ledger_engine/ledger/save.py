@@ -63,7 +63,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field, replace
 from typing import Final, Literal, Protocol
 
-from ledger_engine.fs.port import FileSystem, Kind, split_absolute
+from ledger_engine.fs.port import FileSystem, FolderId, Kind, same_folder, split_absolute
 from ledger_engine.ledger import fingerprint as _fingerprint
 from ledger_engine.ledger import history, overlay
 from ledger_engine.ledger.core import journal
@@ -109,7 +109,7 @@ class SavePlan:
     """A confirmed plan (§2's `save`). `fingerprint`: the plan's, of the ledger set before the save; `changes`: each
     file as the ledger names it (absolute, normalized), its pre SHA-256 (None: the save creates it) and its post bytes;
     `app_cache`: the app's cache folder, where the gate reads the published mirror (publish.md §7); `app_local_data`:
-    the app's machine-local folder (journals, backups); `app_folder`: its identity `(st_dev, st_ino)` at the sidecar's
+    the app's machine-local folder (journals, backups); `app_folder`: its identity (`FolderId`) at the sidecar's
     start (S0102, BL-0244): step 8 makes `local/` only in a folder of that identity, and the writer checks it with the
     journal and backups folders before each of its writes up to the first swap (`writer.Anchor`), else
     `app_folder_missing`.
@@ -126,7 +126,7 @@ class SavePlan:
     fingerprint: Fingerprint
     app_cache: str
     app_local_data: str
-    app_folder: tuple[int, int]
+    app_folder: FolderId
     confine: FolderEntry | None = None
     """S0117 rounds 1 to 3 (owner, 2026-11-14: "Go with (2), fix it now", then "3", then "2"): the test copy's folder
     as its mark recorded it (its real path and identity); after the gate the writer opens it once and reaches every
@@ -332,7 +332,7 @@ class _AppFolderMissing(Exception):
 
 
 def _ensure_dir(
-    fs: FileSystem, parent: str, name: str, *, no_link: bool = False, parent_is: tuple[int, int]
+    fs: FileSystem, parent: str, name: str, *, no_link: bool = False, parent_is: FolderId
 ) -> tuple[str, tuple[int, int]]:
     """The folder `name` in `parent`, its entry durable: `parent` is synced whether or not the folder was made now. A
     folder that was there already may be the mkdir of an earlier engine that died before its sync; a power loss could
@@ -351,7 +351,7 @@ def _ensure_dir(
     except FileNotFoundError:
         raise _AppFolderMissing from None
     with h:
-        if h.identity() != parent_is:
+        if not same_folder(h, parent_is):
             raise _AppFolderMissing
         st = h.stat(name)
         if st is None:

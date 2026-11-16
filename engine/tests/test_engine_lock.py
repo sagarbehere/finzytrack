@@ -23,6 +23,9 @@ from typing import Any
 
 import pytest
 
+from ledger_engine.fs.port import FolderId
+from ledger_engine.fs.this_os import folder_identity
+
 pytestmark = pytest.mark.skipif(os.name != "posix", reason="flock is POSIX; Windows is BL-0087 (M1b)")
 
 DEADLINE = 15.0
@@ -69,8 +72,7 @@ class Replies:
 
 def folder_id(lock: Path) -> str:
     """`--app-folder-id` for the app folder `lock` lives in (`<app folder>/locks/engine.lock`; S0102)."""
-    st = os.stat(lock.parent.parent)
-    return f"{st.st_dev}:{st.st_ino}"
+    return ":".join(str(n) for n in identity(lock.parent.parent))
 
 
 def held_by_another(path: Path) -> bool:
@@ -200,9 +202,14 @@ def test_S0100_the_engine_never_makes_the_app_folder_above_its_locks_folder(tmp_
 # -- S0102 (BL-0244; owner, 2026-11-11: "BL-0244 slice in M1a (Recommended)"): the app folder's identity from start --
 
 
-def identity(p: Path) -> tuple[int, int]:
-    st = os.stat(p)
-    return (st.st_dev, st.st_ino)
+def identity(p: Path) -> FolderId:
+    """The folder's identity as the sidecar records it at start: `(st_dev, st_ino)`, with the creation time on Linux
+    (BL-0262; the sidecar's own computation is tested against `stat` in the backend's `test_app_folder_identity.py`)."""
+    fd = os.open(p, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        return folder_identity(fd)
+    finally:
+        os.close(fd)
 
 
 def replace_folder(ald: Path, how: str = "replaced") -> None:
@@ -258,11 +265,20 @@ def test_S0102_an_engine_whose_app_folder_was_replaced_ends_after_its_handshake_
 ) -> None:
     app = tmp_path / "app"
     app.mkdir()
-    dev, ino = identity(app)
+    start = identity(app)
     replace_folder(app, how)
     lock = app / "locks" / "engine.lock"
     proc = subprocess.run(  # noqa: S603 (this interpreter running the engine under test)
-        [sys.executable, "-I", "-m", "ledger_engine", "--engine-lock", str(lock), "--app-folder-id", f"{dev}:{ino}"],
+        [
+            sys.executable,
+            "-I",
+            "-m",
+            "ledger_engine",
+            "--engine-lock",
+            str(lock),
+            "--app-folder-id",
+            ":".join(map(str, start)),
+        ],
         input=b'{"v":2,"id":1,"op":"handshake","params":{}}\n{"v":2,"id":2,"op":"ping","params":{}}\n',
         capture_output=True,
         timeout=DEADLINE,

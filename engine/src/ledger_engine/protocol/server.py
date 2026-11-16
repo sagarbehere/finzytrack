@@ -1,6 +1,6 @@
 """The engine's protocol server: one request line in, one reply line out (ADR-0054 decisions 2 and 4).
 
-    python -s -S -B -P -c <bootstrap> <site> [--parent-pid PID] [--engine-lock PATH --app-folder-id DEV:INO]
+    python -s -S -B -P -c <bootstrap> <site> [--parent-pid PID] [--engine-lock PATH --app-folder-id DEV:INO[:BORN]]
         [--test-ops]
 
 (the main sidecar's bootstrap adds only the engine's site-packages, then runs this module; engine-jobs §5.1. Never
@@ -81,6 +81,8 @@ from typing import IO, Any, Final, Protocol
 
 from pydantic import BaseModel, ConfigDict, ValidationError
 
+from ledger_engine.fs import this_os
+from ledger_engine.fs.port import same_identity
 from ledger_engine.protocol import app_folder
 from ledger_engine.protocol.app_folder import AppFolderChangedError, Identity, parse_identity
 from ledger_engine.protocol.copy import COPY_HANDLERS, COPY_OUTCOME_HANDLERS
@@ -506,6 +508,8 @@ class Engine:
             return _refusal(rid, op, "protocol.invalid_params", where or "Invalid params.")
         if handler.needs_engine_lock and self._locked is None:
             return _refusal(rid, op, "engine.no_engine_lock", "This engine does not hold the engine lock.")
+        if handler.needs_engine_lock and not this_os.supported():  # BL-0261: the platform, never a missing folder
+            return _refusal(rid, op, "engine.unsupported_platform", unsupported_message())
         run = handler.run
         if handler.writes_app_folder and app_folder.changed(self._locked, self._app_folder):
             if handler.app_folder_missing is None:
@@ -533,6 +537,13 @@ class Engine:
 
 
 INTERNAL_MESSAGE = "The engine failed on this request; details are in its log."
+
+
+def unsupported_message() -> str:
+    """`engine.unsupported_platform`'s message: the platform named (`sys.platform`), and the ones with a port."""
+    return f"This engine has no file-system port for {sys.platform}; it reads and writes ledgers on macOS and Linux."
+
+
 SIZE_GUARDED: Final = frozenset({"preview"})
 """The ops whose answer the engine refuses `engine.result_too_large` when it would pass the line guard (S0120; ADR-0008
 amendment of 2026-11-15): the preview, whose answer carries each planned file's new text. A guard on every other
@@ -623,8 +634,7 @@ def hold_engine_lock(path: str, identity: Identity) -> None:
     except OSError as e:  # gone, not a folder, or not ours to judge (fail closed: S0102 round 1, red team F6)
         raise AppFolderChangedError(e.errno, "the app folder is missing or cannot be read", folder) from None
     try:
-        st = os.fstat(dfd)
-        if (st.st_dev, st.st_ino) != identity:
+        if not same_identity(this_os.folder_identity(dfd), identity):  # with its creation time on Linux: BL-0262
             raise AppFolderChangedError(errno.ESTALE, "the app folder was replaced", folder)
         locks = os.path.basename(os.path.dirname(os.path.abspath(path)))
         with contextlib.suppress(FileExistsError):
