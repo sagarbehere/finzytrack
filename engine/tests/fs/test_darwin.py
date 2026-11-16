@@ -1,6 +1,6 @@
 """The file-system port on macOS (`ledger_engine.fs.darwin`; `design/specs/engine-jobs.md` §6.2, §6.3; S0060): the
-primitives the durable order relies on, on the real file system (temp folders only, INV-24). Linux and Windows are
-BL-0087."""
+primitives the durable order relies on, on the real file system (temp folders only, INV-24). Linux:
+`test_linux.py` (S0125); Windows is BL-0087."""
 
 from __future__ import annotations
 

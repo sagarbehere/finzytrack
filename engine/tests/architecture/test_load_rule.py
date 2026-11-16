@@ -23,11 +23,12 @@ is resolved and followed as before; a star import from it off its OS is refused,
 from __future__ import annotations
 
 import ast
+import contextlib
 import functools
 import importlib
 import sys
 import typing
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
 from decimal import Decimal
 from pathlib import Path
 from types import ModuleType
@@ -430,6 +431,22 @@ def test_the_allowed_home_and_the_port_itself_are_exempt() -> None:
 # ---- a file-system adapter off its own OS (S0113 round 2: the Linux CI run of 2026-11-13) ------------------------
 
 DARWIN = "ledger_engine.fs.darwin"
+
+
+@pytest.fixture(autouse=True)
+def _no_adapter_left_loaded() -> Iterator[None]:
+    """An adapter the scan imported while it ran as on another OS (`as_on`: `ledger_engine.fs.linux` loaded on macOS
+    under a faked `sys.platform`) is dropped after the test, with the package's attribute for it, so no later test
+    meets a module imported for an OS it does not run on (S0125: the write-sequence model reached fewer rules after
+    this file had left the Linux adapter loaded on macOS)."""
+    before = {m for m in sys.modules if m.startswith("ledger_engine.")}
+    yield
+    package = sys.modules.get("ledger_engine.fs")
+    for m in [m for m in sys.modules if m.startswith("ledger_engine.") and m not in before]:
+        del sys.modules[m]
+        if package is not None and m.startswith("ledger_engine.fs.") and m.count(".") == 2:
+            with contextlib.suppress(AttributeError):
+                delattr(package, m.rpartition(".")[2])
 
 
 def as_on(monkeypatch: pytest.MonkeyPatch, platform: str) -> None:

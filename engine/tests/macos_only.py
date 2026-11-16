@@ -14,4 +14,4 @@ from __future__ import annotations
 
 from typing import Final
 
-MACOS_ONLY: Final = "macOS-only until BL-0087 (the Linux and Windows file-system adapters)"
+MACOS_ONLY: Final = "a macOS primitive (Linux: tests/fs/test_linux.py; Windows is BL-0087)"

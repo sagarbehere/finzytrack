@@ -168,8 +168,15 @@ REVIEWED: dict[Site, str] = {
         "ledger_engine.protocol.app_folder",
         "parse_identity",
         "account-grammar",
-        "an account name taken apart by hand (.partition)",
-    ): "splits the app folder's `<device>:<inode>` identity text (S0102), not an account name",
+        "an account name taken apart by hand (.split)",
+    ): "splits the app folder's `<device>:<inode>[:<birth>]` identity text (S0102, S0125), not an account name",
+    Site(
+        "app.platform.adapters.app_folder",
+        "AppFolder.id_text",
+        "account-grammar",
+        "an account name put together by hand",
+    ): "joins the app folder's `<device>:<inode>[:<birth>]` identity text for `--app-folder-id` (S0125), not an "
+    "account name",
     Site("ledger_engine.ledger.precision", "<module>", "number-parsing", "a regex on written numbers"): (
         "`_LONG_RUN` only picks the lines worth lexing; the numbers on them are read by Beancount's own lexer "
         "(`beancount_port.written_numbers`)"

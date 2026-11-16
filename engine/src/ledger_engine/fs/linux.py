@@ -51,7 +51,6 @@ from __future__ import annotations
 import ctypes
 import errno
 import fcntl
-import functools
 import os
 import re
 import stat
@@ -117,9 +116,9 @@ def _libc() -> ctypes.CDLL:
     return lib
 
 
-@functools.cache
 def _lib() -> ctypes.CDLL:
-    """The C library, loaded once (it never changes in a process)."""
+    """The C library with `renameat2` and `statx` typed (a handle on the library already loaded: no cache is held
+    across jobs, `tests/architecture/test_caches.py`)."""
     return _libc()
 
 
