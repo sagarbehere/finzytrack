@@ -23,7 +23,9 @@ from ledger_engine.ledger.paths import canonical_path, identify, path_key
 from tests.fakes.memfs import MemFS
 
 pytestmark = pytest.mark.inv("INV-32")
-macos = pytest.mark.skipif(sys.platform != "darwin", reason="the real adapter is macOS-only until BL-0087")
+macos = pytest.mark.skipif(
+    sys.platform not in ("darwin", "linux"), reason="the write path's port: macOS and Linux; Windows is BL-0087"
+)
 
 NFC = "Café.beancount"
 NFD = unicodedata.normalize("NFD", NFC)

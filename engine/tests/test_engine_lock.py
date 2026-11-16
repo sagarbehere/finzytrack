@@ -220,14 +220,10 @@ def replace_folder(ald: Path, how: str = "replaced") -> None:
 
 
 # A folder removed and made again at once can take the freed inode number on a file system that reuses it (the Linux
-# CI run of 2026-11-13 met it in the runner's temp folder: S0113 round 2), so `(st_dev, st_ino)` cannot tell the two
-# apart there (engine-jobs.md §6.1 step 8, limit (4)). APFS does not reuse an object's number. The Linux identity is
-# BL-0262 (with BL-0087's port); until then that case runs on macOS only, and `moved aside` checks the refusal
-# everywhere.
-REPLACED = pytest.param(
-    "replaced",
-    marks=pytest.mark.skipif(sys.platform != "darwin", reason="an inode number may be reused off APFS: BL-0262"),
-)
+# CI run of 2026-11-13 met it in the runner's temp folder: S0113 round 2), so `(st_dev, st_ino)` alone cannot tell the
+# two apart there (engine-jobs.md §6.1 step 8, limit (4)); on Linux the identity carries the folder's creation time too
+# (BL-0262, S0125), so `replaced` runs everywhere the engine lock does.
+REPLACED = "replaced"
 
 
 def test_S0102_the_lock_is_taken_in_the_folder_with_its_identity(tmp_path: Path) -> None:

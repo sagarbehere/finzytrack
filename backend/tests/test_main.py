@@ -227,7 +227,9 @@ ENGINE_VENV = REPO / "engine" / ".venv"
 DEADLINE = 30.0
 # S0113: a test of macOS-only names skips elsewhere with `raise pytest.skip.Exception(MACOS_ONLY)` before them; a
 # `raise`, not a call to `pytest.skip`, so pyright checks the code after it for macOS only (`--pythonplatform`).
-MACOS_ONLY = "macOS only: F_FULLFSYNC and F_GETPATH (the Linux and Windows ports are BL-0087)"
+MACOS_ONLY = "macOS only: F_FULLFSYNC (Linux syncs with fsync; Windows is BL-0087)"
+LINUX_SYNC = "Linux's sync (macOS: the F_FULLFSYNC tests)"
+NO_PORT = "the app folder's sync and its descriptor's path: macOS and Linux; Windows is BL-0087"
 
 
 def test_engine_venv_selects_the_venv_engine(dirs: tuple[Path, Path]) -> None:
@@ -297,8 +299,8 @@ def test_wire_builds_the_engine_client_without_starting_it(dirs: tuple[Path, Pat
 
 
 @pytest.mark.skipif(
-    sys.platform != "darwin",
-    reason="the boot's recover-all lists through the engine's file-system port, macOS-only until BL-0087 (S0113)",
+    sys.platform not in ("darwin", "linux"),
+    reason="the boot's recover-all lists through the engine's file-system port: macOS and Linux; Windows is BL-0087",
 )
 def test_the_boots_recover_all_starts_the_first_engine_through_the_scheduler(dirs: tuple[Path, Path]) -> None:
     """engine-jobs §5.1, §5.5: "The engine is spawned when a job needs one, not at boot; at start the first job is
@@ -317,7 +319,9 @@ def test_the_boots_recover_all_starts_the_first_engine_through_the_scheduler(dir
         wiring.engine.close()
 
 
-@pytest.mark.skipif(sys.platform != "darwin", reason="the write path's port is macOS-only until BL-0087")
+@pytest.mark.skipif(
+    sys.platform not in ("darwin", "linux"), reason="the write path's port: macOS and Linux; Windows is BL-0087"
+)
 def test_the_boots_recover_all_lists_the_journals_in_its_engine(dirs: tuple[Path, Path]) -> None:
     """engine-jobs §8.1 (S0062), end to end through the composition root and a real engine: the boot's recover-all
     removes a `.part` record and reports an `.open` record it cannot read as blocking every open."""
@@ -1119,8 +1123,8 @@ def _start(data: Path, cache: Path) -> subprocess.CompletedProcess[str]:
 def test_S0100_a_missing_app_folder_is_made_at_start_and_its_parent_synced(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    if sys.platform != "darwin":
-        raise pytest.skip.Exception(MACOS_ONLY)
+    if sys.platform not in ("darwin", "linux"):
+        raise pytest.skip.Exception(NO_PORT)
     from app.platform.adapters import app_folder
 
     synced: list[str] = []
@@ -1142,8 +1146,10 @@ def test_S0100_a_missing_app_folder_is_made_at_start_and_its_parent_synced(
 
 
 def _fd_path(fd: int) -> str:
+    if sys.platform == "linux":
+        return os.readlink(f"/proc/self/fd/{fd}")
     if sys.platform != "darwin":
-        raise pytest.skip.Exception(MACOS_ONLY)
+        raise pytest.skip.Exception(NO_PORT)
     import fcntl
 
     return os.fsdecode(fcntl.fcntl(fd, fcntl.F_GETPATH, bytes(1024)).rstrip(b"\0"))
@@ -1207,8 +1213,8 @@ def test_S0100_r1_an_app_folder_that_is_a_link_has_both_parents_synced(
 ) -> None:
     """Verifier r1 F2: the save and recover-all follow a link at the app folder's path, so the real folder's parent is
     synced too, beside the link's."""
-    if sys.platform != "darwin":
-        raise pytest.skip.Exception(MACOS_ONLY)
+    if sys.platform not in ("darwin", "linux"):
+        raise pytest.skip.Exception(NO_PORT)
     from app.platform.adapters import app_folder
 
     real = tmp_path / "elsewhere" / "app"
@@ -1255,6 +1261,22 @@ def test_S0100_r1_a_volume_that_refuses_the_full_sync_gets_fsync(
     monkeypatch.setattr(os, "fsync", fsync)
     assert isinstance(app_folder.prepare(tmp_path / "app"), AppFolder)
     assert len(fsynced) == 1
+
+
+def test_S0125_on_linux_an_fsync_error_refuses_the_start(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """@regression-guard (the base already fsyncs off macOS): Linux's sync is `fsync` (engine-jobs §6.2); its error
+    refuses the start, never ignored."""
+    if sys.platform != "linux":
+        raise pytest.skip.Exception(LINUX_SYNC)
+    from app.platform.adapters import app_folder
+
+    def failing(fd: int) -> None:
+        raise OSError(errno.EIO, "I/O error")
+
+    monkeypatch.setattr(os, "fsync", failing)
+    refusal = app_folder.prepare(tmp_path / "app")
+    assert isinstance(refusal, app_folder.AppFolderRefusal)
+    assert refusal.errno == errno.EIO
 
 
 def test_S0100_r1_another_full_sync_error_still_refuses_the_start(

@@ -133,7 +133,9 @@ CASES: dict[str, Callable[[Path], None]] = {
 
 
 NEEDS_ENGINE = pytest.mark.skipif(not ENGINE_VENV.is_dir(), reason="needs the engine's environment (engine/.venv)")
-MAC_ONLY = pytest.mark.skipif(sys.platform != "darwin", reason="the save's port is macOS-only until BL-0087")
+MAC_ONLY = pytest.mark.skipif(
+    sys.platform not in ("darwin", "linux"), reason="the save's port: macOS and Linux; Windows is BL-0087"
+)
 MARKS: dict[str, tuple[pytest.MarkDecorator, ...]] = {
     "measure_health.py": (NEEDS_ENGINE,),
     "measure_protocol.py": (NEEDS_ENGINE, MAC_ONLY),

@@ -39,7 +39,9 @@ from tests.test_save_ops import Channel as SaveChannel
 from tests.test_save_ops import engine, request
 
 pytestmark = [
-    pytest.mark.skipif(sys.platform != "darwin", reason="the write path's port is macOS-only until BL-0087"),
+    pytest.mark.skipif(
+        sys.platform not in ("darwin", "linux"), reason="the write path's port: macOS and Linux; Windows is BL-0087"
+    ),
     pytest.mark.inv("INV-22"),
     pytest.mark.inv("INV-26"),
     pytest.mark.inv("INV-32"),

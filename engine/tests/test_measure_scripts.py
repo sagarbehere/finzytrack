@@ -81,7 +81,7 @@ CASES: dict[str, Callable[[Path], None]] = {
 }
 
 
-MAC_ONLY = {"measure_save.py": "the save's port is macOS-only until BL-0087"}
+PORTED_ONLY = {"measure_save.py": "the save's port: macOS and Linux; Windows is BL-0087"}
 
 
 def test_every_measurement_script_has_a_case() -> None:
@@ -92,7 +92,9 @@ def test_every_measurement_script_has_a_case() -> None:
 @pytest.mark.parametrize(
     "name",
     [
-        pytest.param(n, marks=pytest.mark.skipif(sys.platform != "darwin", reason=MAC_ONLY[n])) if n in MAC_ONLY else n
+        pytest.param(n, marks=pytest.mark.skipif(sys.platform not in ("darwin", "linux"), reason=PORTED_ONLY[n]))
+        if n in PORTED_ONLY
+        else n
         for n in sorted(CASES)
     ],
 )

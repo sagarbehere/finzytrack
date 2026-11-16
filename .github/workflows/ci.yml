@@ -136,6 +136,34 @@ jobs:
         run: .venv/bin/ruff check --config ruff.toml .
       - name: pyright (strict, once per target platform; S0113)
         run: python3 ../scripts/pyright_platforms.py .
+      # S0125 (BL-0266): scratch volumes of each kind a Linux user may keep a ledger on, formatted in loop images, and
+      # the file-system probe on them and on the runner's own folders (prints only). The tests then run the save on
+      # each (`tests/fs/test_linux.py`: FT_TEST_VOLUMES, FT_TEST_CASEFOLD_DIR). A kind whose tools are missing is
+      # left out and said so.
+      - name: Scratch volumes and the Linux file-system probe (S0125; prints only)
+        run: |
+          sudo apt-get install -y -q dosfstools exfatprogs btrfs-progs xfsprogs > /dev/null || echo "some tools missing"
+          vols=""
+          for kind in vfat exfat btrfs xfs ext2 ext4cf; do
+            img="$RUNNER_TEMP/$kind.img"; mnt="$RUNNER_TEMP/vol-$kind"
+            truncate -s 320M "$img" && mkdir -p "$mnt"
+            case $kind in
+              vfat) fmt="mkfs.vfat -F 32 $img" ;; exfat) fmt="mkfs.exfat $img" ;; btrfs) fmt="mkfs.btrfs -q $img" ;;
+              xfs) fmt="mkfs.xfs -q $img" ;; ext2) fmt="mkfs.ext2 -q -F $img" ;; ext4cf) fmt="mkfs.ext4 -q -F -O casefold $img" ;;
+            esac
+            if ! $fmt > /dev/null; then echo "no $kind volume (format failed)"; continue; fi
+            case $kind in
+              vfat|exfat) sudo mount -o "loop,uid=$(id -u),gid=$(id -g)" "$img" "$mnt" ;;
+              *) sudo mount -o loop "$img" "$mnt" && sudo chown "$(id -u):$(id -g)" "$mnt" ;;
+            esac || { echo "no $kind volume (mount failed)"; continue; }
+            vols="$vols:$mnt"
+          done
+          if [ -d "$RUNNER_TEMP/vol-ext4cf" ] && mkdir "$RUNNER_TEMP/vol-ext4cf/cf" && chattr +F "$RUNNER_TEMP/vol-ext4cf/cf"; then
+            echo "FT_TEST_CASEFOLD_DIR=$RUNNER_TEMP/vol-ext4cf/cf" >> "$GITHUB_ENV"
+          fi
+          echo "FT_TEST_VOLUMES=${vols#:}" >> "$GITHUB_ENV"
+          uname -r
+          .venv/bin/python scripts/probe_linux_fs.py "$RUNNER_TEMP" /tmp /dev/shm "$HOME" ${vols//:/ } "$RUNNER_TEMP/vol-ext4cf/cf"
       - name: tests
         run: .venv/bin/python -m pytest -q
   frontend:

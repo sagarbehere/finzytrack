@@ -1477,7 +1477,9 @@ def _plan_fingerprint(main: Path) -> str:
 CLOCK = FrozenClock(datetime(2026, 11, 8, 12, 0, tzinfo=UTC))
 
 
-@pytest.mark.skipif(sys.platform != "darwin", reason="the save's swap and its checks are built for macOS first")
+@pytest.mark.skipif(
+    sys.platform not in ("darwin", "linux"), reason="the save's port: macOS and Linux; Windows is BL-0087"
+)
 def test_with_the_real_engine_a_save_job_lands_and_retires_its_engine(tmp_path: Path) -> None:
     """@regression-guard (S0069; it passes on the base: the path works, it had no test). Step-back area review F6: the
     sidecar's save job through the real client and engine, end to end, on a scratch
@@ -1536,7 +1538,9 @@ def test_with_the_real_engine_a_save_job_lands_and_retires_its_engine(tmp_path: 
         client.close()
 
 
-@pytest.mark.skipif(sys.platform != "darwin", reason="the save's swap and its checks are built for macOS first")
+@pytest.mark.skipif(
+    sys.platform not in ("darwin", "linux"), reason="the save's port: macOS and Linux; Windows is BL-0087"
+)
 def test_with_the_real_engine_a_landed_save_is_published_and_a_pinned_read_sees_it(tmp_path: Path) -> None:
     """S0087 (BL-0113), end to end: a save with no published generation is refused `WORKSPACE_NOT_READY {WARMING}`
     (publish.md §7); once a rebuild published the disk it lands; its background rebuild publishes the saved state; a

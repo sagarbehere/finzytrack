@@ -46,7 +46,9 @@ from app.platform.errors import EngineUnavailableDetails
 from tests.platform.test_engine_client import ENGINE_VENV
 from tests.platform.test_engine_queue import W1, run, submit, switch_job
 
-pytestmark = pytest.mark.skipif(sys.platform != "darwin", reason="the app folder's identity: macOS until BL-0087")
+pytestmark = pytest.mark.skipif(
+    sys.platform not in ("darwin", "linux"), reason="the app folder's identity: macOS and Linux; Windows is BL-0087"
+)
 
 
 def replace_folder(path: Path) -> None:

@@ -1,6 +1,6 @@
-"""The legacy app's write lock adapter (`ledger_engine.fs.darwin.DarwinLegacyLocks`, macOS only; INV-26, ADR-0062
-decisions 2 and 5, narrowed to Copy by ADR-0068 D4): tried once, without waiting, with the call portalocker 3.2.0
-makes, on the file opened read-only and only if it exists. Copy is BL-0026's; the save no longer tries the lock
+"""The legacy app's write lock adapter (`legacy_locks_for_this_os`: macOS and Linux, both `flock`, S0125; INV-26,
+ADR-0062 decisions 2 and 5, narrowed to Copy by ADR-0068 D4): tried once, without waiting, with the call portalocker
+3.2.0 makes, on the file opened read-only and only if it exists. Copy is BL-0026's; the save no longer tries the lock
 (S0071), so these are the adapter's own tests, against a holder that takes the lock with portalocker 3.2.0 itself, as
 v0.2.2 and v0.3.0 do."""
 
@@ -16,14 +16,14 @@ from pathlib import Path
 import pytest
 
 from ledger_engine.fs.port import LegacyAbsent, LegacyHeld
-from tests.macos_only import MACOS_ONLY
+from ledger_engine.fs.this_os import legacy_locks_for_this_os
 
-if sys.platform != "darwin":  # the adapter refuses to be imported elsewhere (S0113; `tests/macos_only.py`)
-    raise pytest.skip.Exception(MACOS_ONLY, allow_module_level=True)
-
-from ledger_engine.fs.darwin import DarwinLegacyLocks  # after the platform guard
-
-pytestmark = pytest.mark.inv("INV-26")
+pytestmark = [
+    pytest.mark.inv("INV-26"),
+    pytest.mark.skipif(
+        sys.platform not in ("darwin", "linux"), reason="the lock's adapter: macOS and Linux; Windows is BL-0087"
+    ),
+]
 
 HOLDER = """
 import sys, portalocker
@@ -80,13 +80,13 @@ def _lock_file(tmp_path: Path) -> Path:
 def test_a_lock_the_legacy_app_holds_is_reported_held_without_waiting(tmp_path: Path) -> None:
     lock = _lock_file(tmp_path)
     with legacy_app_saving(lock):
-        assert isinstance(DarwinLegacyLocks().try_lock(str(lock)), LegacyHeld)
+        assert isinstance(legacy_locks_for_this_os().try_lock(str(lock)), LegacyHeld)
     assert lock.read_bytes() == b""
 
 
 def test_a_free_lock_is_held_until_released_and_never_written(tmp_path: Path) -> None:
     lock = _lock_file(tmp_path)
-    held = DarwinLegacyLocks().try_lock(str(lock))
+    held = legacy_locks_for_this_os().try_lock(str(lock))
     assert not isinstance(held, LegacyAbsent | LegacyHeld)
     try:
         assert (legacy_state(lock), legacy_state(lock, "LOCK_SH")) == ("held", "held")
@@ -98,7 +98,7 @@ def test_a_free_lock_is_held_until_released_and_never_written(tmp_path: Path) ->
 
 def test_an_absent_lock_is_reported_absent_and_never_created(tmp_path: Path) -> None:
     lock = tmp_path / "legacy" / "data" / ".write.lock"
-    assert isinstance(DarwinLegacyLocks().try_lock(str(lock)), LegacyAbsent)
+    assert isinstance(legacy_locks_for_this_os().try_lock(str(lock)), LegacyAbsent)
     assert not lock.exists()
     assert not (tmp_path / "legacy").exists()
 
@@ -121,7 +121,7 @@ def test_a_lock_that_cannot_be_tried_raises(tmp_path: Path, kind: str) -> None:
             lock.chmod(0o000)
     try:
         with pytest.raises(OSError, match=r"."):
-            DarwinLegacyLocks().try_lock(str(lock))
+            legacy_locks_for_this_os().try_lock(str(lock))
     finally:
         if kind == "unreadable":
             lock.chmod(0o600)

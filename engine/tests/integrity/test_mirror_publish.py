@@ -29,7 +29,9 @@ from tests.mirror.publish_support import BUILT_AT, ENGINE_BUILD, KEY, TODAY, fs_
 
 pytestmark = [
     pytest.mark.inv("INV-05"),
-    pytest.mark.skipif(sys.platform != "darwin", reason="the write path's OS parts are macOS-only until BL-0087"),
+    pytest.mark.skipif(
+        sys.platform not in ("darwin", "linux"), reason="the write path's port: macOS and Linux; Windows is BL-0087"
+    ),
 ]
 
 # Two hand-written ledgers: A has 2 transactions (4 postings), B has 3 (6 postings).

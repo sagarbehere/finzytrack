@@ -27,7 +27,9 @@ from ledger_engine.ledger.writer import Change, Commit, Landed, durable_commit
 from ledger_engine.protocol.server import Engine
 
 pytestmark = [
-    pytest.mark.skipif(sys.platform != "darwin", reason="the write path's port is macOS-only until BL-0087"),
+    pytest.mark.skipif(
+        sys.platform not in ("darwin", "linux"), reason="the write path's port: macOS and Linux; Windows is BL-0087"
+    ),
     pytest.mark.inv("INV-32"),
 ]
 

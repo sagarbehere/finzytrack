@@ -27,7 +27,9 @@ from ledger_engine.protocol.server import Engine, InputEnded
 from tests.mirror.publish_support import publish_job
 
 pytestmark = [
-    pytest.mark.skipif(sys.platform != "darwin", reason="the write path's port is macOS-only until BL-0087"),
+    pytest.mark.skipif(
+        sys.platform not in ("darwin", "linux"), reason="the write path's port: macOS and Linux; Windows is BL-0087"
+    ),
     pytest.mark.inv("INV-22"),
 ]
 

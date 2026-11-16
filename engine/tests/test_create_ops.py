@@ -13,15 +13,17 @@ from typing import Any, override
 
 import pytest
 
+from ledger_engine.fs.port import DirHandle
 from ledger_engine.fs.this_os import for_this_os
 from ledger_engine.ledger import create as cr
 from ledger_engine.protocol.server import InputEnded
-from tests.macos_only import MACOS_ONLY
 from tests.test_save_ops import Channel as SaveChannel
 from tests.test_save_ops import engine, request
 
 pytestmark = [
-    pytest.mark.skipif(sys.platform != "darwin", reason="the write path's port is macOS-only until BL-0087"),
+    pytest.mark.skipif(
+        sys.platform not in ("darwin", "linux"), reason="the write path's port: macOS and Linux; Windows is BL-0087"
+    ),
     pytest.mark.inv("INV-22"),
 ]
 
@@ -190,33 +192,31 @@ def test_on_apfs_the_cleanup_never_removes_another_programs_file_or_folder_in_th
         "main.beancount",
         (cr.NewFile("rules/r.yaml", b"a: 1\n"), cr.NewFile("workspace.json", WS_JSON.encode())),
     )
-    if sys.platform != "darwin":  # skipped by the module's mark already; the raise is for pyright (tests/macos_only.py)
-        raise pytest.skip.Exception(MACOS_ONLY)
-    from ledger_engine.fs import darwin
+    with for_this_os().open_dir(str(tmp_path)) as h:
+        adapter = type(h)  # the real adapter's handle class on this OS (macOS or Linux)
+    real_mkdir = adapter.mkdir
+    real_create = adapter.create
 
-    real_mkdir = darwin.DarwinDir.mkdir
-    real_create = darwin.DarwinDir.create
-
-    def mkdir(self: darwin.DarwinDir, name: str) -> None:
+    def mkdir(self: DirHandle, name: str) -> None:
         if name == "rules":
             (temp / "rules").mkdir()
         real_mkdir(self, name)
 
     other = tmp_path.resolve() / "Other"
 
-    def create(self: darwin.DarwinDir, name: str, data: bytes, mode: int, like: str | None = None) -> tuple[int, int]:
+    def create(self: DirHandle, name: str, data: bytes, mode: int, like: str | None = None) -> tuple[int, int]:
         if name == "workspace.json":
             (other / ".finzytrack.ft-j1" / "workspace.json").write_bytes(b"")
         return real_create(self, name, data, mode, like)
 
-    monkeypatch.setattr(darwin.DarwinDir, "mkdir", mkdir)
+    monkeypatch.setattr(adapter, "mkdir", mkdir)
     out = cr.run(plan, cr.Ports(for_this_os(), lambda root: cr.LoadResult(0, (root,))), _Gate())
     assert isinstance(out, cr.NotCreated)
     assert out.reason == "taken"
     assert (temp / "rules").is_dir(), "another program's folder stays"
     assert not (target / "main.beancount").exists(), "what the job made is removed"
-    monkeypatch.setattr(darwin.DarwinDir, "create", create)
-    monkeypatch.setattr(darwin.DarwinDir, "mkdir", real_mkdir)
+    monkeypatch.setattr(adapter, "create", create)
+    monkeypatch.setattr(adapter, "mkdir", real_mkdir)
     out = cr.run(
         cr.CreatePlan("j1", str(other), plan.files, plan.root, plan.manifest),
         cr.Ports(for_this_os(), lambda root: cr.LoadResult(0, (root,))),
