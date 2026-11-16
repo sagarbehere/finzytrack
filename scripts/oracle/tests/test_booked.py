@@ -48,7 +48,7 @@ class Case:
             self.before_facts = sd.load_facts(src.path, "main.beancount")
             self.expected = expect(self.before)
             after_set = sd.parse_set(copy.path, "main.beancount")
-            after_facts = sd.load_facts(copy.path, "main.beancount", keep_parsed=False)
+            after_facts = sd.load_facts(copy.path, "main.beancount")
             self.report = classify.compare(self.before, after_set, self.expected, self.before_facts, after_facts)
         finally:
             src.close()
@@ -171,7 +171,8 @@ class MustPassTest(unittest.TestCase):
 
 
 class ExclusionTest(unittest.TestCase):
-    """What a class explains in the booked result, and only that (classify.booked's docstring)."""
+    """What a class explains in the booked result, and only that (classify.booked's docstring): since S0124, a
+    difference its own cause makes, undone (ADR-0014 amendment of 2026-11-16)."""
 
     def test_a_persisted_generated_entry_stands_in_only_when_the_load_no_longer_generates_it(self) -> None:
         # Must-pass: a pad's entry persisted (I3); the pad has nothing left to fill, the persisted entry counts.
@@ -188,7 +189,8 @@ class ExclusionTest(unittest.TestCase):
         self.assertIn("I3", c.report.class_counts(), c)
         self.assertEqual(c.booked(), [], c)  # the pad no longer generates; the persisted entry stands in
 
-        # Must-not-pass: a plugin's entry persisted (I3); the plugin generates it again, so the money doubles.
+        # A plugin's entry persisted (I3); the plugin generates it again, so the money doubles. Since S0124: taking
+        # out the persisted entry (I3's cause) gives the intended result, so I3 explains it.
         plugin = ('from beancount.core import data\nfrom beancount.core.amount import Amount\n'
                   'from decimal import Decimal\n__plugins__ = ["fee"]\n'
                   'def fee(entries, options_map):\n'
@@ -203,12 +205,17 @@ class ExclusionTest(unittest.TestCase):
         before = {"main.beancount": head + T1, "oracle_fee_plugin.py": plugin}
         c = Case(before, {"main.beancount": head + T1_EDITED + persisted}, update_t1)
         self.assertIn("I3", c.report.class_counts(), c)
+        self.assertEqual(c.report.verdict, "EXPECTED_DIVERGENCE", c)
+        self.assertEqual((c.booked(), dict(c.report.undone)), ([], {"I3": 1}), c)
+        # Must-not-pass: the same, and the lunch's amount changed as well: the undo does not touch it.
+        c = Case(before, {"main.beancount": head + T1_EDITED.replace("10.50", "10.60") + persisted}, update_t1)
         self.assertEqual(c.report.verdict, "UNEXPLAINED", c)
-        self.assertIn("booked", c.booked(), c)
+        self.assertIn("I3", c.report.class_counts(), c)
 
-    def test_a_reduction_baked_as_booked_before_an_edit_that_changes_its_lot_is_not_only_i10(self) -> None:
+    def test_a_reduction_baked_as_booked_before_an_edit_that_changes_its_lot_is_explained_by_undoing_i10(self) -> None:
         # The edit moves buy B before buy A, so FIFO now takes B; the legacy bakes the sale's lot as Beancount booked
-        # it before the edit (I10 accepts that), and the baked sale still takes A.
+        # it before the edit (I10 accepts that), and the baked sale still takes A. Since S0124: undoing I10 (the
+        # sale's `{}` back) lets FIFO take B, as intended, so I10 explains it.
         a = buy("a", "10 USD")
         b = '\n2020-02-05 * "buy b"\n  id: "t-b"\n  Assets:Broker  1 TOK {20 USD}\n  Assets:Cash  -20 USD\n'
         b_early = b.replace("2020-02-05", "2020-01-20")
@@ -221,24 +228,24 @@ class ExclusionTest(unittest.TestCase):
         baked = SELL.replace("{}", "{10 USD, 2020-02-01}").replace("  Income:Gain\n", "  Income:Gain  -20 USD\n")
         c = Case(before, {"main.beancount": OPENS + a + b_early + baked}, edit)
         self.assertEqual(sorted(d.cls for d in c.report.divergences if d.check == "parsed"), ["I10"], c)
-        self.assertEqual(c.report.verdict, "UNEXPLAINED", c)
-        self.assertEqual(c.booked(), ["balance", "balance", "booked"], c)
+        self.assertEqual(c.report.verdict, "EXPECTED_DIVERGENCE", c)
+        self.assertEqual((c.booked(), dict(c.report.undone)), ([], {"I10": 1}), c)
 
-    def test_an_i2_duplicate_is_left_out_but_its_effect_on_another_entry_is_not(self) -> None:
+    def test_an_i2_duplicate_and_its_effect_on_another_entry_are_explained_once_removed(self) -> None:
         glob_sell = '2020-02-15 * "sell one"\n  Assets:Broker  -1 TOK {}\n  Assets:Cash  10 USD\n  Income:Gain\n'
         lots = buy("a", "10 USD") + buy("b", "20 USD") + buy("c", "30 USD")
         head = 'include "y/*.beancount"\n' + OPENS
         before = {"main.beancount": head + T1 + lots + SELL, "y/2020.beancount": glob_sell}
         # The legacy copies the glob file's entry into the root and leaves it in place (I2): it now sells twice,
-        # so the later sale takes the third lot instead of the second.
+        # so the later sale takes the third lot instead of the second. Since S0124: taking the copy out gives the
+        # intended sale, so I2 explains it (its must-not-pass twin: UndoTest's duplicate plus an unrelated change).
         after = {"main.beancount": head + T1_EDITED + lots + "\n" + glob_sell + SELL, "y/2020.beancount": glob_sell}
         c = Case(before, after, update_t1)
         self.assertEqual(sorted(d.cls for d in c.report.divergences if d.check == "parsed"), ["I2"], c)
-        self.assertEqual(c.report.verdict, "UNEXPLAINED", c)
-        self.assertIn("booked", c.booked(), c)
-        self.assertEqual(len([d for d in c.report.divergences if d.check == "booked"]), 1, c)  # the sale, not the copy
+        self.assertEqual(c.report.verdict, "EXPECTED_DIVERGENCE", c)
+        self.assertEqual((c.booked(), dict(c.report.undone)), ([], {"I2": 1}), c)
 
-    def test_a_fix_l3_02_label_dropped_is_that_class_and_its_effect_on_a_later_sale_is_not(self) -> None:
+    def test_a_fix_l3_02_label_dropped_on_a_lot_a_later_sale_reduces_is_explained_by_the_undo(self) -> None:
         lot = '\n2020-01-06 * "Buy"\n  id: "t-9"\n  Assets:Broker  2 TOK {5.00 USD, 2020-01-01, "lot-a"}\n  Assets:Cash  -10.00 USD\n'
         legacy = lot.replace('"Buy"', '"Buy" "x"').replace(', "lot-a"', "")
 
@@ -246,10 +253,12 @@ class ExclusionTest(unittest.TestCase):
             return model.update_transaction(before, "t-9", lot.replace('"Buy"', '"Buy" "x"').strip("\n") + "\n")
         c = Case({"main.beancount": OPENS + lot}, {"main.beancount": OPENS + legacy}, edit)
         self.assertEqual(sorted(c.report.class_counts()), ["FIX-L3-02"], c)
+        # The brief's must-pass (S0123's exception, now by the rule): a later sale reduces the lot whose label the
+        # legacy dropped, so it books another lot label; putting the label back gives the intended sale.
         sell = '\n2020-03-01 * "sell"\n  Assets:Broker  -1 TOK {}\n  Assets:Cash  5.00 USD\n'
         c = Case({"main.beancount": OPENS + lot + sell}, {"main.beancount": OPENS + legacy + sell}, edit)
-        self.assertEqual(c.report.verdict, "UNEXPLAINED", c)
-        self.assertEqual(c.booked(), ["booked"], c)
+        self.assertEqual(c.report.verdict, "EXPECTED_DIVERGENCE", c)
+        self.assertEqual((c.booked(), dict(c.report.undone)), ([], {"FIX-L3-02": 1}), c)
 
 
 class WholeResultTest(unittest.TestCase):
@@ -257,7 +266,8 @@ class WholeResultTest(unittest.TestCase):
 
     def test_a_reduction_whose_lot_label_the_legacy_drops_takes_another_lot(self) -> None:
         # Verifier A1: the sale names lot "lot-b"; the legacy drops the label (FIX-L3-02's cause), so FIFO takes
-        # lot A: the gain is -20 USD instead of -10 USD and the lot left is B, not A.
+        # lot A: the gain is -20 USD instead of -10 USD and the lot left is B, not A. Since S0124 (the brief's
+        # question): the undo puts the label back, so the sale takes "lot-b" as intended: explained.
         a, b = buy("a", '10 USD, "lot-a"'), buy("b", '20 USD, "lot-b"')
         sell = '\n2020-03-01 * "sell"\n  id: "t-s"\n  Assets:Broker  -1 TOK {"lot-b"}\n  Assets:Cash  30 USD\n  Income:Gain\n'
         intended = sell.replace('"sell"', '"sell" "memo"')
@@ -266,12 +276,17 @@ class WholeResultTest(unittest.TestCase):
             return model.update_transaction(before, "t-s", intended.strip("\n") + "\n")
         before = {"main.beancount": OPENS + a + b + sell}
         self.assertEqual(Case(before, {"main.beancount": OPENS + a + b + intended}, edit).report.verdict, "MATCH")
-        c = Case(before, {"main.beancount": OPENS + a + b + intended.replace('{"lot-b"}', "{}")}, edit)
+        legacy = intended.replace('{"lot-b"}', "{}")
+        c = Case(before, {"main.beancount": OPENS + a + b + legacy}, edit)
         self.assertIn("FIX-L3-02", c.report.class_counts(), c)
+        self.assertEqual(c.report.verdict, "EXPECTED_DIVERGENCE", c)
+        self.assertEqual((c.booked(), dict(c.report.undone)), ([], {"FIX-L3-02": 1}), c)
+        # Must-not-pass: the same label drop, and buy A's cost changed as well: the undo does not touch buy A, so
+        # its lot is left as a booked difference.
+        c = Case(before, {"main.beancount": OPENS + a.replace("{10 USD", "{11 USD").replace("-10 USD", "-11 USD") + b + legacy}, edit)
         self.assertEqual(c.report.verdict, "UNEXPLAINED", c)
-        notes = sorted(d.note for d in c.report.divergences if d.check == "balance")
-        self.assertEqual(notes, ['balance: Assets:Broker TOK: 1 {10 USD, 2020-02-01, "lot-a"} -> '
-                                 '1 {20 USD, 2020-02-01, "lot-b"}', "balance: Income:Gain USD: -10 -> -20"], c)
+        self.assertTrue(any(d.note.startswith("after undoing FIX-L3-02: balance: Assets:Broker")
+                            for d in c.report.divergences), c)
 
     def test_a_label_dropped_on_a_lot_still_held_is_only_fix_l3_02(self) -> None:
         lot = '\n2020-01-06 * "Buy"\n  id: "t-9"\n  Assets:Broker  2 TOK {5.00 USD, 2020-01-01, "lot-a"}\n  Assets:Cash  -10.00 USD\n'
@@ -285,14 +300,150 @@ class WholeResultTest(unittest.TestCase):
         c = Case({"main.beancount": OPENS + lot}, {"main.beancount": OPENS + legacy.replace("5.00 USD", "5.01 USD")}, edit)
         self.assertEqual(c.report.verdict, "UNEXPLAINED", c)
 
-    def test_an_edit_the_legacy_writes_into_the_root_beside_the_unchanged_glob_entry_doubles_the_money(self) -> None:
+    def test_an_edit_the_legacy_writes_into_the_root_beside_the_unchanged_glob_entry_is_explained_by_the_undo(self) -> None:
+        # The legacy writes the edit into the root and leaves the old entry in the glob file: the money doubles.
+        # Since S0124: the edit goes back to the old entry's place and the old entry is taken out (I2's cause).
         before = {"main.beancount": 'include "y/*.beancount"\n' + OPENS, "y/2020.beancount": T1}
         after = {"main.beancount": 'include "y/*.beancount"\n' + OPENS + T1_EDITED, "y/2020.beancount": T1}
         c = Case(before, after, update_t1)
         self.assertEqual(sorted(d.cls for d in c.report.divergences if d.check == "parsed"), ["I2", "I2"], c)
+        self.assertEqual(c.report.verdict, "EXPECTED_DIVERGENCE", c)
+        self.assertEqual((c.booked(), dict(c.report.undone)), ([], {"I2": 2}), c)
+        # Must-not-pass: the same, and an untargeted entry of the root also written with another amount.
+        extra = '\n2020-01-03 * "Shop" "snack"\n  Expenses:Food  2.00 USD\n  Assets:Cash  -2.00 USD\n'
+        c = Case({**before, "main.beancount": before["main.beancount"] + extra},
+                 {**after, "main.beancount": after["main.beancount"] + extra.replace("2.00", "3.00")}, update_t1)
         self.assertEqual(c.report.verdict, "UNEXPLAINED", c)
         self.assertEqual(sorted(d.note for d in c.report.divergences if d.check == "balance"),
-                         ["balance: Assets:Cash USD: -10.5 -> -21", "balance: Expenses:Food USD: 10.5 -> 21"], c)
+                         ["after undoing I2: balance: Assets:Cash USD: -12.5 -> -13.5",
+                          "after undoing I2: balance: Expenses:Food USD: 12.5 -> 13.5"], c)
+
+
+COFFEE = ('2020-01-05 * "Cafe" "flat white"\n  Expenses:Coffee  4.20 USD\n  Assets:Cash\n\n'
+          '2020-01-06 * "Cafe" "beans"\n  Expenses:Coffee  12.00 USD\n  Assets:Cash  -12.00 USD\n')
+PAD_HEAD = ('include "y/*.beancount"\n' + OPENS + '2020-01-01 open Equity:Opening\n2020-01-01 open Expenses:Coffee USD\n'
+            '\n2020-01-10 pad Assets:Cash Equity:Opening\n2020-01-11 balance Assets:Cash 1000 USD\n')
+
+
+def padded(files: dict[str, str]) -> str:
+    """What the pad fills from Equity:Opening, as Beancount books it."""
+    d = LedgerDir(files)
+    try:
+        entries, _, _ = loader.load_file(str(d.path / "main.beancount"))
+    finally:
+        d.close()
+    pad = next(e for e in entries if getattr(e, "flag", "") == "P")
+    return str(next(p.units for p in pad.postings if p.account == "Equity:Opening"))
+
+
+class UndoTest(unittest.TestCase):
+    """ADR-0014's amendment of 2026-11-16 (S0124): a class explains a booked difference only when undoing its own
+    cause on the legacy's result, booked again by Beancount, gives exactly the intended booked result."""
+
+    def test_nastys_i2_shape_duplicates_before_a_pad_are_explained_once_removed(self) -> None:
+        # Must-pass: the legacy copies two glob entries into the root and leaves them in their file; they fall
+        # before a pad, so the pad fills 16.20 USD more. Removing the copies gives the intended pad.
+        before = {"main.beancount": PAD_HEAD + T1, "y/2020.beancount": COFFEE}
+        after = {"main.beancount": PAD_HEAD + T1_EDITED + "\n" + COFFEE, "y/2020.beancount": COFFEE}
+        self.assertNotEqual(padded(after), padded({"main.beancount": PAD_HEAD + T1_EDITED, "y/2020.beancount": COFFEE}))
+        c = Case(before, after, update_t1)
+        self.assertEqual(sorted(d.cls for d in c.report.divergences if d.check == "parsed"), ["I2", "I2"], c)
+        self.assertEqual(c.report.verdict, "EXPECTED_DIVERGENCE", c)
+        self.assertEqual(c.booked(), [], c)
+        self.assertEqual(dict(c.report.undone), {"I2": 2}, c)
+
+    def test_an_i2_duplicate_plus_an_unrelated_money_change_leaves_the_change(self) -> None:
+        # Must-not-pass: the same duplicates, and the legacy also writes two same-date buys in the other order, so
+        # FIFO sells the other lot. The undo removes the copies; the sale's change is left, and only it is reported.
+        a, b = buy("a", "10 USD"), buy("b", "20 USD")
+        before = {"main.beancount": PAD_HEAD + T1 + a + b + SELL, "y/2020.beancount": COFFEE}
+        after = {"main.beancount": PAD_HEAD + T1_EDITED + b + a + SELL + "\n" + COFFEE, "y/2020.beancount": COFFEE}
+        c = Case(before, after, update_t1)
+        self.assertEqual(sorted(d.cls for d in c.report.divergences if d.check == "parsed"), ["I2", "I2"], c)
+        self.assertEqual(c.report.verdict, "UNEXPLAINED", c)
+        self.assertEqual(c.booked(), ["balance", "balance", "booked"], c)
+        self.assertEqual(sorted(d.note for d in c.report.divergences if d.check == "balance"),
+                         ["after undoing I2: balance: Assets:Broker TOK: 1 {20 USD, 2020-02-01} -> 1 {10 USD, 2020-02-01}",
+                          "after undoing I2: balance: Income:Gain USD: -20 -> -10"], c)
+
+    def test_a_class_on_one_entry_does_not_explain_a_booked_difference_on_another(self) -> None:
+        # Must-not-pass: FIX-L3-02 on the edited buy (its label dropped); the legacy also writes two same-cost,
+        # same-date lots of another buy in the other order, so the sale takes lot "b": the undo does not touch them.
+        lot = '\n2020-01-06 * "Buy"\n  id: "t-9"\n  Assets:Broker  2 FUND {5.00 USD, 2020-01-01, "lot-a"}\n  Assets:Cash  -10.00 USD\n'
+        legacy = lot.replace('"Buy"', '"Buy" "x"').replace(', "lot-a"', "")
+        a, b = buy("a", '10 USD, "a"'), buy("b", '10 USD, "b"')
+        sell = SELL.replace("30 USD\n  Income:Gain\n", "10 USD\n")
+
+        def edit(before: sd.LedgerSet) -> model.Expected:
+            return model.update_transaction(before, "t-9", lot.replace('"Buy"', '"Buy" "x"').strip("\n") + "\n")
+        before = {"main.beancount": OPENS + lot + a + b + sell}
+        c = Case(before, {"main.beancount": OPENS + legacy + a + b + sell}, edit)
+        self.assertEqual(c.report.verdict, "EXPECTED_DIVERGENCE", c)
+        c = Case(before, {"main.beancount": OPENS + legacy + b + a + sell}, edit)
+        self.assertEqual(c.report.verdict, "UNEXPLAINED", c)
+        self.assertEqual(c.booked(), ["balance", "booked"], c)  # the sale, and the lot left ("a", not "b")
+        self.assertIn('"a"', next(d.note for d in c.report.divergences if d.check == "balance"))
+
+    def test_the_undo_keeps_the_place_the_legacy_wrote_an_entry_at(self) -> None:
+        # Must-not-pass: the edited buy is FIX-L3-02 (its label dropped) and the legacy's reprint moves it above a
+        # same-date buy in another file (S0122's tie). Undoing the label drop does not move it back: its place is
+        # not the class's cause, so FIFO's other lot is left.
+        sub = "; pad\n" * 14 + '2020-02-01 * "buy B"\n  Assets:Broker  1 TOK {20 USD}\n  Assets:Cash  -20 USD\n'
+        pad = "\n" * 8
+        buy_a = '2020-02-01 * "buy A"\n  id: "t-a"\n  Assets:Broker  1 TOK {10 USD, "a"}\n  Assets:Cash  -10 USD\n'
+        edited = buy_a.replace('"buy A"', '"buy A" "x"')
+        main = 'include "sub.beancount"\n' + OPENS + T1 + pad + buy_a + SELL
+
+        def edit(before: sd.LedgerSet) -> model.Expected:
+            return model.update_transaction(before, "t-a", edited)
+        before = {"main.beancount": main, "sub.beancount": sub}
+        written = main.replace(buy_a, edited.replace(', "a"', ""))
+        c = Case(before, {"main.beancount": written, "sub.beancount": sub}, edit)
+        self.assertEqual(c.report.verdict, "EXPECTED_DIVERGENCE", c)  # the label drop alone: undone, explained
+        c = Case(before, {"main.beancount": written.replace(pad, "\n"), "sub.beancount": sub}, edit)
+        self.assertEqual(sorted(d.cls for d in c.report.divergences if d.check == "parsed"), ["FIX-L3-02"], c)
+        self.assertEqual(c.report.verdict, "UNEXPLAINED", c)
+        self.assertTrue(all(d.note.startswith("after undoing FIX-L3-02: ")
+                            for d in c.report.divergences if d.check != "parsed"), c)
+        self.assertEqual(c.booked(), ["balance", "balance", "booked"], c)
+
+    def test_an_i2_move_out_of_a_glob_file_is_undone_by_moving_it_back(self) -> None:
+        # Must-pass: the legacy moves a glob file's buy into the root (I2), below a same-date buy, so FIFO sells
+        # the other lot. Moving it back to its line in its file gives the intended sale.
+        buy_b = '2020-02-01 * "buy B"\n  Assets:Broker  1 TOK {20 USD}\n  Assets:Cash  -20 USD\n'
+        head = 'include "y/*.beancount"\n' + OPENS
+        a = buy("a", "10 USD")
+        before = {"main.beancount": head + T1 + a + SELL, "y/2020.beancount": buy_b}
+        after = {"main.beancount": head + T1_EDITED + a + SELL + "\n" + buy_b, "y/2020.beancount": ""}
+        self.assertNotEqual(gain(after), gain(before))
+        c = Case(before, after, update_t1)
+        self.assertEqual(sorted(d.cls for d in c.report.divergences if d.check == "parsed"), ["I2"], c)
+        self.assertEqual(c.report.verdict, "EXPECTED_DIVERGENCE", c)
+        self.assertEqual(dict(c.report.undone), {"I2": 1}, c)
+
+    def test_only_the_copy_is_taken_out_when_the_root_holds_the_same_entry_too(self) -> None:
+        # Must-pass: the root already holds the same coffee as the glob file (the user's own); the legacy adds one
+        # more copy. Taking out that one copy, not every instance, gives the intended result.
+        coffee = COFFEE.split("\n\n")[1]
+        before = {"main.beancount": PAD_HEAD + T1 + "\n" + coffee, "y/2020.beancount": COFFEE}
+        after = {"main.beancount": PAD_HEAD + T1_EDITED + "\n" + coffee + "\n" + coffee, "y/2020.beancount": COFFEE}
+        c = Case(before, after, update_t1)
+        self.assertEqual(sorted(d.cls for d in c.report.divergences if d.check == "parsed"), ["I2"], c)
+        self.assertEqual(c.report.verdict, "EXPECTED_DIVERGENCE", c)
+        self.assertEqual(dict(c.report.undone), {"I2": 1}, c)
+
+    def test_a_t_local_report_names_the_classes_undone_and_no_amount(self) -> None:
+        a, b = buy("a", "10 USD"), buy("b", "20 USD")
+        before = {"main.beancount": PAD_HEAD + T1 + a + b + SELL, "y/2020.beancount": COFFEE}
+        after = {"main.beancount": PAD_HEAD + T1_EDITED + b + a + SELL + "\n" + COFFEE, "y/2020.beancount": COFFEE}
+        c = Case(before, after, update_t1)
+        fields = harness.case_fields(c.report.divergences, c.report.undone)
+        self.assertEqual((fields["undone"], fields["booked"]), ({"I2": 2}, {"booked": 1, "balance": 2}))
+        redacted = json.dumps(harness.redact({"id": "upd-000", **fields}))
+        for secret in ("Income", "Broker", "Cash", "Coffee", "Opening", "TOK", "USD", "10", "20", "2020", "lot"):
+            self.assertNotIn(secret, redacted)
+        summary = harness.summarize([harness.redact({"id": "upd-000", **fields})])
+        self.assertEqual(summary["undone"], {"I2": 2})
 
 
 class ImportOrderTest(unittest.TestCase):

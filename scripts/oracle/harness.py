@@ -5,9 +5,11 @@ the intended change, and tag every divergence.
 Each case runs in a fresh data root (a copy of --ledger-dir plus a seeded legacy config) with its own legacy
 process, so no state leaks between cases. The source folder is only read (INV-24). Each case is compared twice:
 the parsed entries per file, and Beancount's booked result against the intended ledger booked by Beancount
-(`classify.booked`, BL-0275; one more booking of the source's parse per case). Reports carry entry text only
-for repo corpora and generated ledgers; for anything else (a copy of a real ledger, T-local) they carry counts,
-classes and case IDs only (the booked divergences as a count per check: no amount, account or lot). A
+(`classify.booked`, BL-0275; one more booking of the source's parse per case, and one of the legacy's result with
+its tagged classes' causes undone when the two differ: ADR-0014 amendment of 2026-11-16). Reports carry entry text
+only for repo corpora and generated ledgers; for anything else (a copy of a real ledger, T-local) they carry counts,
+classes and case IDs only (the booked divergences as a count per check, and the causes undone as a count per class:
+no amount, account or lot). A
 --ledger-dir that is not a repo corpus must be inside the T-local folder named by FT_LOCAL_TIER_DIR (PROCESS.md
 §8; copies.refuse_local_tier_source).
 
@@ -156,14 +158,14 @@ def run_case(case: dict[str, Any], run: Run) -> dict[str, Any]:
     t_done = time.monotonic()
     assert_source_unchanged(run, case["id"])
     after = sd.parse_set(ledgers, run.root_file)
-    after_facts = sd.load_facts(ledgers, run.root_file, keep_parsed=False)
+    after_facts = sd.load_facts(ledgers, run.root_file)  # its parse: a class is undone on it (`classify.booked`)
     error = body.get("error") or {}
     error = error if isinstance(error, dict) else {}
     if status >= 400:
         report = classify.refused(run.before, after, expected, run.facts, after_facts, case["mutator"], error.get("code"))
     else:
         report = classify.compare(run.before, after, expected, run.facts, after_facts)
-    out |= case_fields(report.divergences + stray_files(run, ledgers, after))
+    out |= case_fields(report.divergences + stray_files(run, ledgers, after), report.undone)
     out |= {"legacy_http": status, "legacy_code": error.get("code"),
             "legacy_message": error.get("message"), "legacy_details": error.get("details"),
             "seconds": {"stage": round(t_staged - t0, 2), "start": round(t_up - t_staged, 2), "write": round(t_done - t_up, 2),
@@ -171,15 +173,16 @@ def run_case(case: dict[str, Any], run: Run) -> dict[str, Any]:
     return out
 
 
-def case_fields(divergences: list[classify.Divergence]) -> dict[str, Any]:
-    """A case's verdict, its class counts, its count of booked divergences per check, and the divergences."""
+def case_fields(divergences: list[classify.Divergence], undone: dict[str, int] | None = None) -> dict[str, Any]:
+    """A case's verdict, its class counts, its count of booked divergences per check, the count of causes undone per
+    class before the booked results were compared again (ADR-0014 amendment of 2026-11-16), and the divergences."""
     report = classify.Report(divergences)
     checks: dict[str, int] = {}
     for d in divergences:
         if d.check != "parsed":
             checks[d.check] = checks.get(d.check, 0) + 1
     return {"verdict": report.verdict, "classes": dict(report.class_counts()), "booked": checks,
-            "divergences": [asdict(d) for d in divergences]}
+            "undone": dict(undone or {}), "divergences": [asdict(d) for d in divergences]}
 
 
 def redact(result: dict[str, Any]) -> dict[str, Any]:
@@ -269,17 +272,21 @@ def summarize(results: list[dict[str, Any]]) -> dict[str, Any]:
     verdicts: dict[str, int] = {}
     classes: dict[str, int] = {}
     booked: dict[str, int] = {}
+    undone: dict[str, int] = {}
     for r in results:
         verdicts[r["verdict"]] = verdicts.get(r["verdict"], 0) + 1
         for c, n in r.get("classes", {}).items():
             classes[c] = classes.get(c, 0) + n
         for c, n in r.get("booked", {}).items():
             booked[c] = booked.get(c, 0) + n
+        for c, n in r.get("undone", {}).items():
+            undone[c] = undone.get(c, 0) + n
     timing = {}
     if totals:
         q = statistics.quantiles(totals, n=20, method="inclusive") if len(totals) > 1 else totals * 19
         timing = {"p50": round(statistics.median(totals), 2), "p95": round(q[18], 2), "max": max(totals)}
-    return {"cases": len(results), "verdicts": verdicts, "classes": classes, "booked": booked, "seconds_per_case": timing}
+    return {"cases": len(results), "verdicts": verdicts, "classes": classes, "booked": booked, "undone": undone,
+            "seconds_per_case": timing}
 
 
 def refuse_report(report: Path | None, src: Path | None) -> str | None:

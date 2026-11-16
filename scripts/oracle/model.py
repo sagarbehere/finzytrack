@@ -169,7 +169,7 @@ class Unbuildable(Exception):
     """The intended ledger cannot be placed: a removed entry is not where the model says (a model defect)."""
 
 
-def _placed(entry: Any, path: str, line: int) -> Any:
+def placed(entry: Any, path: str, line: int) -> Any:
     """*entry* at *line* of *path*; its postings keep their lines relative to its first line."""
     first = (entry.meta or {}).get("lineno") or line
 
@@ -201,19 +201,19 @@ def intended_entries(parsed: Parsed, before: LedgerSet, exp: Expected) -> list[A
     for i, e in enumerate(entries):
         where.setdefault(location(e), i)
     for rel, fd in exp.files.items():
-        placed = sum(1 for (r, _) in exp.at if r == rel)
-        if placed != sum(fd.removed.values()):
-            raise Unbuildable(f"{rel}: {sum(fd.removed.values())} entries removed, {placed} placed")
+        n_placed = sum(1 for (r, _) in exp.at if r == rel)
+        if n_placed != sum(fd.removed.values()):
+            raise Unbuildable(f"{rel}: {sum(fd.removed.values())} entries removed, {n_placed} placed")
     for (rel, line), key in exp.at.items():
         path = str((before.base / rel).resolve())
         i = where.get((path, line))
         if i is None or entries[i] is None or exp.files[rel].removed[canonical_key(entries[i])] <= 0:
             raise Unbuildable(f"{rel}:{line} does not hold an entry the change removes")
-        entries[i] = None if key is None else _placed(exp.entries[key], path, line)
+        entries[i] = None if key is None else placed(exp.entries[key], path, line)
     for rel, key, offset in exp.appended:
         path = str((before.base / rel).resolve())
         last = max((i for i, e in enumerate(entries) if e is not None and location(e)[0] == path), default=-1)
-        entries.insert(last + 1, _placed(exp.entries[key], path, append_line(parsed, path) + offset))
+        entries.insert(last + 1, placed(exp.entries[key], path, append_line(parsed, path) + offset))
     return [e for e in entries if e is not None]
 
 

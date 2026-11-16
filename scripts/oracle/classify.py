@@ -17,7 +17,14 @@ date, kind and line number, across files, so a reprint that moves lines can make
 change a realized gain (S0122 verifier F1). `booked` (BL-0275) therefore compares Beancount's booked result of the
 intended ledger with the legacy's: per entry, the lots each reduction took and the amounts booking filled in
 (generated entries too); and over the whole result, each account's end inventory per currency, lots included, with
-no entry left out. Its rules for each class are in its docstring.
+no entry left out.
+
+A class explains a booked difference only by undoing its own cause (ADR-0014 amendment of 2026-11-16): when the
+booked results differ and the parsed comparison tagged divergences with classes, each tagged cause is undone on the
+legacy's parsed result (`Undo`: I2's copies taken out, or moved back to their place; I3's persisted entries taken
+out; for every other class, the written entry with its eraser's change applied), that is booked again with
+Beancount's own steps, and only an exact match with the intended booked result explains the difference. Whatever is
+left is UNEXPLAINED. No class hides a booked difference by being present.
 """
 
 from __future__ import annotations
@@ -35,8 +42,8 @@ from beancount.core.number import MISSING
 from beancount.core.position import Cost, CostSpec
 from beancount.parser import printer
 
-from model import Expected, intended_entries
-from semantic_diff import LedgerSet, LoadFacts, at_kind, book, booked_of, canonical_key, diff, strip_location
+from model import Expected, intended_entries, placed
+from semantic_diff import LedgerSet, LoadFacts, Parsed, at_kind, book, booked_of, canonical_key, diff, location, strip_location
 
 BLOCKING = frozenset({"UNEXPLAINED", "NOT_APPLIED"})
 # ADR-0026: what the legacy app writes that v0.4 does not, and what v0.4 writes instead.
@@ -170,15 +177,13 @@ ERASERS: dict[str, Callable[[Any, Any, Ctx], Pair]] = {
 UNTARGETED = ("I10",)  # a full rewrite may only re-print what booking filled in
 REPLACED = ("I10", "FIX-L3-02", "FIX-L3-05", "FIX-L3-15")  # an entry the legacy payload carried
 CREATED = REPLACED + ("M28",)  # an entry the mutator creates
-OWN_MONEY = frozenset({"FIX-L3-02"})  # classes whose cause changes the entry's own booked money (`booked`)
 
 
 def _same_slot(x: Any, y: Any) -> bool:
     return type(x) is type(y) and x.date == y.date
 
 
-def explain(x: Any, y: Any, allowed: tuple[str, ...] = tuple(ERASERS), ctx: Ctx = Ctx()) -> str | None:
-    """The smallest set of allowed classes whose erasers make intended entry *x* and written entry *y* equal."""
+def _combo(x: Any, y: Any, allowed: tuple[str, ...], ctx: Ctx) -> tuple[str, ...] | None:
     if not _same_slot(x, y):
         return None
     for size in range(1, len(allowed) + 1):
@@ -187,8 +192,36 @@ def explain(x: Any, y: Any, allowed: tuple[str, ...] = tuple(ERASERS), ctx: Ctx 
             for name in combo:
                 a, b = ERASERS[name](a, b, ctx)
             if canonical_key(a) == canonical_key(b):
-                return "+".join(sorted(combo))
+                return combo
     return None
+
+
+def explain(x: Any, y: Any, allowed: tuple[str, ...] = tuple(ERASERS), ctx: Ctx = Ctx()) -> str | None:
+    """The smallest set of allowed classes whose erasers make intended entry *x* and written entry *y* equal."""
+    combo = _combo(x, y, allowed, ctx)
+    return None if combo is None else "+".join(sorted(combo))
+
+
+def undone(x: Any, y: Any, combo: tuple[str, ...], ctx: Ctx) -> Any:
+    """The written entry *y* with the causes of *combo* undone: each class's eraser applied in the order that made it
+    equal to *x*, and the written side kept. The erasers change *y*'s money only by taking *x*'s value (units, cost,
+    price), so it books as *x* would at *y*'s place; anything they do not name stays as the legacy wrote it."""
+    a, b = x, y
+    for name in combo:
+        a, b = ERASERS[name](a, b, ctx)
+    return b
+
+
+@dataclass(frozen=True)
+class Undo:
+    """One tagged divergence's cause, undone on the legacy's parsed result (ADR-0014 amendment of 2026-11-16): the
+    written instance of *key* in *file* is taken out (*entry* None) or replaced by *entry*, at its own place, or at
+    *to* (file, line) when the class's cause is the place itself (I2: the root instead of the glob-included file)."""
+    cls: str
+    file: str
+    key: str
+    entry: Any | None = None
+    to: tuple[str, int] | None = None
 
 
 @dataclass(frozen=True)
@@ -204,6 +237,7 @@ class Divergence:
 @dataclass
 class Report:
     divergences: list[Divergence]
+    undone: Counter[str] = field(default_factory=Counter)  # causes undone per class, when the booked results differed
 
     @property
     def verdict(self) -> str:
@@ -265,10 +299,22 @@ def compare(before: LedgerSet, after: LedgerSet, expected: Expected, before_fact
     def untargeted_ctx(key: str, facts: LoadFacts) -> tuple[tuple[str, ...], Ctx]:
         return UNTARGETED, Ctx(booked_of(facts, entry(key)))
 
+    def placed_at(rel: str, key: str) -> tuple[str, int]:
+        """The place an I2 entry goes back to in glob-included file *rel*: the line the intended change puts *key*
+        at, else the line *key* held in the source; each place used once."""
+        lines = [ln for (r, ln), k in sorted(expected.at.items(), key=lambda i: i[0][1]) if r == rel and k == key] \
+            or list(before.files[rel].lines.get(key, ()))
+        free = [ln for ln in lines if (rel, ln) not in used]
+        if not free:
+            raise ValueError(f"no place left for an I2 entry in {rel}")
+        used.add((rel, free[0]))
+        return rel, free[0]
+
     held_glob = [(c, e) for g in sorted(before.glob_files) if g in after.files for c, e in after.files[g].by_key.items()]
     out: list[Divergence] = []
     pairs: list[tuple[str, str]] = []  # (intended, written): one entry, written differently with a class
-    standins: Counter[str] = Counter()  # persisted generated entries (I3)
+    undo: list[Undo] = []  # each tagged cause, to undo when the booked results differ
+    used: set[tuple[str, int]] = set()
     for f in files:  # entries the legacy app wrote that were not intended
         for k in list(u_add[f].elements()):
             if not _take(u_add[f], k):
@@ -278,10 +324,12 @@ def compare(before: LedgerSet, after: LedgerSet, expected: Expected, before_fact
                 _take(u_rem[moved_from], k)
                 glob_to_root = moved_from in before.glob_files and f == before.root
                 out.append(Divergence("I2" if glob_to_root else "UNEXPLAINED", f, k, k, f"moved from {moved_from}"))
+                if glob_to_root:
+                    undo.append(Undo("I2", f, k, after.entry(k), placed_at(moved_from, k)))
                 continue
             if k in before_facts.generated:
                 out.append(Divergence("I3", f, None, k, "generated by a plugin or a pad"))
-                standins[k] += 1
+                undo.append(Undo("I3", f, k))
                 continue
             y = after.entry(k)
             to_root = f == before.root
@@ -291,28 +339,33 @@ def compare(before: LedgerSet, after: LedgerSet, expected: Expected, before_fact
                      if (cls := explain(e, y, UNTARGETED, Ctx(booked_of(after_facts, e)))) is not None), None)
                 if dup is not None:
                     out.append(Divergence(_tag("I2", dup[1]), f, dup[0], k, "a glob-included entry duplicated into the root"))
+                    undo.append(Undo(_tag("I2", dup[1]), f, k))
                     continue
             # Where the written entry may come from: an intended entry of this file, an untargeted entry of this
             # file, or (I2) an intended entry of a glob-included file that the legacy app wrote into the root.
             pools: list[tuple[Counter[str], str | None, Callable[[str], tuple[tuple[str, ...], Ctx]]]] = [
                 (n_add[f], None, intended_ctx), (u_rem[f], None, lambda c: untargeted_ctx(c, before_facts))]
             if to_root:
-                pools += [(n_add[g], "I2", intended_ctx) for g in sorted(before.glob_files) if g in n_add]
+                pools += [(n_add[g], g, intended_ctx) for g in sorted(before.glob_files) if g in n_add]
             match = None
-            for pool, tag, ctx_of in pools:
+            for pool, glob_file, ctx_of in pools:
                 for cand in [c for c in pool if pool[c] > 0]:
                     allowed, ctx = ctx_of(cand)
-                    cls = "" if cand == k else explain(entry(cand), y, allowed, ctx)
-                    if cls is not None and (cls or tag):
-                        match = (pool, cand, _tag(tag, cls))
+                    combo = () if cand == k else _combo(entry(cand), y, allowed, ctx)
+                    if combo is not None and (combo or glob_file):
+                        match = (pool, cand, combo, ctx, glob_file)
                         break
                 if match:
                     break
             if match:
-                pool, cand, cls = match
+                pool, cand, combo, ctx, glob_file = match
                 _take(pool, cand)
+                cls = _tag("I2" if glob_file else None, "+".join(combo))
                 out.append(Divergence(cls, f, cand, k))
-                if cand != k and not OWN_MONEY & set(cls.split("+")):
+                # The undo: the entry with its classes' changes undone, at its place (I2: back in its glob file).
+                undo.append(Undo(cls, f, k, undone(entry(cand), y, combo, ctx),
+                                 placed_at(glob_file, cand) if glob_file else None))
+                if cand != k:
                     pairs.append((cand, k))
                 continue
             was = next((c for c in u_rem[f] if u_rem[f][c] > 0 and _same_slot(entry(c), y)), None)
@@ -327,14 +380,16 @@ def compare(before: LedgerSet, after: LedgerSet, expected: Expected, before_fact
         unwritten_glob = f in before.glob_files and f not in actual.files
         cls, why = ("I2", "glob-included file not rewritten") if unwritten_glob else ("NOT_APPLIED", "")
         out += [Divergence(cls, f, k, None, why or "intended removal did not happen") for k in n_rem[f].elements()]
+        if unwritten_glob:  # the entry the change replaces, left in place: taken out
+            undo += [Undo("I2", f, k) for k in n_rem[f].elements()]
         out += [Divergence(cls, f, k, None, why or "intended entry was not written") for k in n_add[f].elements()]
     for f in actual.header_changed:
         out.append(Divergence("UNEXPLAINED", f, None, None, "options, plugins or includes changed"))
     for f, n in actual.comments_lost.items():
         out.append(Divergence("I10", f, None, None, f"{n} comment line(s) lost"))
     out += new_errors(before_facts, after_facts, before.root)
-    relabelled = any("FIX-L3-02" in d.cls.split("+") for d in out)
-    return Report(out + booked(before, expected, before_facts, after_facts, pairs, standins, relabelled))
+    left, undone_classes = booked(before, after, expected, before_facts, after_facts, pairs, undo)
+    return Report(out + left, undone_classes)
 
 
 # --- the booked comparison (BL-0275) ------------------------------------------------------------------------------
@@ -397,16 +452,6 @@ def holdings(entries: Any) -> Holdings:
     return {k: Counter({lot: n for lot, n in v.items() if n != 0}) for k, v in out.items()}
 
 
-def _identity_only(x: Counter[Any], y: Counter[Any]) -> bool:
-    """Whether two inventories differ only in their lots' dates and labels (units and costs the same)."""
-    def strip(inv: Counter[Any]) -> Counter[Any]:
-        out: Counter[Any] = Counter()
-        for lot, n in inv.items():
-            out[None if lot is None else lot[:2]] += n
-        return out
-    return strip(x) == strip(y)
-
-
 def _held(inv: Counter[Any]) -> str:
     def lot(c: tuple[str, ...] | None) -> str:
         return "" if c is None else " {" + f"{c[0]} {c[1]}, {c[2]}" + ("" if c[3] == "None" else f', "{c[3]}"') + "}"
@@ -420,46 +465,14 @@ def _show(m: Money) -> str:
     return f"{date} " + "; ".join(f"{a} {n} {c}{lot(cost)}" for a, n, c, cost in postings)
 
 
-def booked(before: LedgerSet, expected: Expected, before_facts: LoadFacts, after_facts: LoadFacts,
-           pairs: list[tuple[str, str]], standins: Counter[str], lots_relabelled: bool = False) -> list[Divergence]:
-    """Beancount's booked result of the intended ledger against the legacy's (INV-02: its booking, not ours).
-
-    The reference is the intended ledger booked by Beancount (`model.intended_entries`, then `semantic_diff.book`,
-    the loader's own steps): untargeted entries at their lines, a replacement at its target's, an import at the end
-    of its file. Both sides keep the entries the parsed comparison holds to be the same: an entry with the same key
-    on both sides, and each pair it tagged with a class (an intended or untargeted entry and the legacy's version of
-    it, e.g. I10 or M28). Each such entry must book the same: the same lots taken (cost number, currency, date,
-    label) and the same amounts, including what booking fills in, such as a realized gain; generated entries (pads,
-    plugins) must come out the same too. Every difference is UNEXPLAINED, one per entry (`check` "booked").
-
-    Then the whole result (`check` "balance"): each account's end inventory per currency, lots included
-    (`holdings`), from the two full booked results, with nothing left out. The reference holds the intended
-    names, so a rename needs no mapping. A difference is UNEXPLAINED, one per account and currency, whatever the
-    entries above say: no class's leaving-out hides a change of the money held (an I2 duplicate, which holds an
-    entry twice, blocks here). One exception, the cause of FIX-L3-02 itself, which is no change of money: when the
-    parsed comparison tagged a FIX-L3-02 entry (*lots_relabelled*) and two inventories differ only in their lots'
-    dates or labels (the same units at the same costs), that account is not reported again.
-
-    Classes and the per-entry differences, case by case: an entry the parsed comparison reports on one side only is left
-    out, since its own money is that report's (a removed, unintended or not-applied entry, blocking already; I2's
-    duplicate of a glob-included entry, whose doubled postings are that class's cause). So is a pair tagged
-    FIX-L3-02 (`OWN_MONEY`): its cause changes that entry's own booked money (a lot's date or label dropped, a `@@`
-    total rounded to a unit price, which moves an amount booking fills in); limit: another change to that one
-    entry's booked money is not seen, its effect on any other entry is. An entry I3 tagged (a generated entry the
-    legacy persisted) counts in place of the one the load would generate: it explains a booked difference only when
-    the load no longer generates that entry. No class explains a difference on any other entry: a reduction that
-    takes another lot, or a pad that fills another amount, because of an expected divergence elsewhere is
-    UNEXPLAINED. I10 explains nothing here: a baked lot books the same, or the difference is a change of meaning."""
-    if before_facts.parsed is None:
-        raise ValueError("the booked comparison needs the source's parse (load_facts(keep_parsed=True))")
-    intended = intended_entries(before_facts.parsed, before, expected)
-    ref_keys = {at_kind(e): canonical_key(e) for e in intended}
-    reference, _ = book(intended, before_facts.parsed)
-    common = Counter(ref_keys.values()) & Counter(after_facts.keys_at.values())
-    keep_ref = common + Counter(i for i, _ in pairs)
-    keep_new = common + Counter(w for _, w in pairs) + standins
-    ref = _monies(reference, ref_keys, keep_ref)
-    new = _monies(after_facts.booked, after_facts.keys_at, keep_new)
+def _differences(reference: Any, ref_keys: dict[tuple[str, str, int], str], legacy: Any,
+                 legacy_keys: dict[tuple[str, str, int], str], pairs: list[tuple[str, str]], root: str,
+                 prefix: str = "") -> list[Divergence]:
+    """Every difference between two booked results: per entry (`check` "booked"), then each account's end
+    inventory per currency, lots included, from the two full results (`check` "balance")."""
+    common = Counter(ref_keys.values()) & Counter(legacy_keys.values())
+    ref = _monies(reference, ref_keys, common + Counter(i for i, _ in pairs))
+    new = _monies(legacy, legacy_keys, common + Counter(w for _, w in pairs))
     only_ref, only_new = list((ref - new).elements()), list((new - ref).elements())
     out = []
     for r in only_ref:
@@ -471,19 +484,96 @@ def booked(before: LedgerSet, expected: Expected, before_facts: LoadFacts, after
             amounts_differ = sorted(p[:3] for p in twin[1]) != sorted(p[:3] for p in r[1])
             what = " and ".join(w for w, on in (("took another lot", lots_differ),
                                                 ("booked other amounts", amounts_differ)) if on) or "booked otherwise"
-            out.append(Divergence("UNEXPLAINED", before.root, None, None,
-                                  f"booked: an entry {what}: {_show(r)} -> {_show(twin)}", "booked"))
+            out.append(Divergence("UNEXPLAINED", root, None, None,
+                                  f"{prefix}booked: an entry {what}: {_show(r)} -> {_show(twin)}", "booked"))
         else:
-            out.append(Divergence("UNEXPLAINED", before.root, None, None, f"booked: missing: {_show(r)}", "booked"))
-    out += [Divergence("UNEXPLAINED", before.root, None, None, f"booked: not intended: {_show(n)}", "booked")
+            out.append(Divergence("UNEXPLAINED", root, None, None, f"{prefix}booked: missing: {_show(r)}", "booked"))
+    out += [Divergence("UNEXPLAINED", root, None, None, f"{prefix}booked: not intended: {_show(n)}", "booked")
             for n in only_new]
-    h_ref, h_new = holdings(reference), holdings(after_facts.booked)
+    h_ref, h_new = holdings(reference), holdings(legacy)
     for account, currency in sorted(set(h_ref) | set(h_new)):
         x, y = h_ref.get((account, currency), Counter()), h_new.get((account, currency), Counter())
-        if x != y and not (lots_relabelled and _identity_only(x, y)):
-            out.append(Divergence("UNEXPLAINED", before.root, None, None,
-                                  f"balance: {account} {currency}: {_held(x)} -> {_held(y)}", "balance"))
+        if x != y:
+            out.append(Divergence("UNEXPLAINED", root, None, None,
+                                  f"{prefix}balance: {account} {currency}: {_held(x)} -> {_held(y)}", "balance"))
     return out
+
+
+def apply_undo(parsed: Parsed, after: LedgerSet, keys_at: dict[tuple[str, str, int], str],
+               undo: list[Undo]) -> tuple[list[Any], dict[tuple[str, str, int], str]]:
+    """The legacy's parsed result (the loader's parse, in its order) with each cause in *undo* undone, and the key
+    of each parsed entry by its kind and place. Entries to take out go first; each undo takes the last written
+    instance of its key in its file; an entry moved back to a file (I2) follows that file's last entry in the list.
+    A written entry that is not there is a defect of this code, so it raises."""
+    entries: list[Any | None] = list(parsed.entries)
+    keys = {at_kind(e): keys_at[at_kind(e)] for e in entries if at_kind(e) in keys_at}
+    # Entries are taken out first: an I2 edit goes back to the place of the entry it replaces, taken out here.
+    for u in sorted(undo, key=lambda u: u.entry is not None):
+        path = str((after.base / u.file).resolve())
+        found = [i for i, e in enumerate(entries)
+                 if e is not None and location(e)[0] == path and keys.get(at_kind(e)) == u.key]
+        if not found:
+            raise ValueError(f"{u.cls}: the written entry to undo is not in {u.file}")
+        i = found[-1]
+        old, entries[i] = entries[i], None
+        if u.entry is None:
+            continue
+        if u.to is None:
+            entries[i] = placed(u.entry, path, location(old)[1])
+            keys[at_kind(entries[i])] = u.key
+            continue
+        to = str((after.base / u.to[0]).resolve())
+        new = placed(u.entry, to, u.to[1])
+        keys[at_kind(new)] = u.key
+        last = max((j for j, e in enumerate(entries) if e is not None and location(e)[0] == to), default=len(entries) - 1)
+        entries.insert(last + 1, new)
+    kept = [e for e in entries if e is not None]
+    return kept, {at_kind(e): keys[at_kind(e)] for e in kept if at_kind(e) in keys}
+
+
+def booked(before: LedgerSet, after: LedgerSet, expected: Expected, before_facts: LoadFacts, after_facts: LoadFacts,
+           pairs: list[tuple[str, str]], undo: list[Undo]) -> tuple[list[Divergence], Counter[str]]:
+    """Beancount's booked result of the intended ledger against the legacy's (INV-02: its booking, not ours).
+
+    The reference is the intended ledger booked by Beancount (`model.intended_entries`, then `semantic_diff.book`,
+    the loader's own steps): untargeted entries at their lines, a replacement at its target's, an import at the end
+    of its file. Per entry: both sides keep the entries the parsed comparison holds to be the same (an entry with the
+    same key on both sides, and each pair it tagged with a class: an intended or untargeted entry and the legacy's
+    version of it) and every generated entry (pads, plugins); each must book the same: the same lots taken (cost
+    number, currency, date, label) and the same amounts, including what booking fills in, such as a realized gain.
+    An entry the parsed comparison reports on one side only is left out of this per-entry check. Then the whole
+    result: each account's end inventory per currency, lots included (`holdings`), from the two full booked
+    results, with nothing left out. Every difference is UNEXPLAINED (one per entry, `check` "booked"; one per
+    account and currency, `check` "balance").
+
+    When the two differ and the parsed comparison tagged divergences with classes (*undo*), each class's own cause
+    is undone on the legacy's parsed result (`apply_undo`), booked again (`semantic_diff.book`) and compared again:
+    - I2: a copy of a glob-included entry left in its file is taken out; an entry moved out of it is put back at its
+      line there; an edit written into the root goes back to the place of the entry it replaces in the glob file,
+      and that entry, left in place, is taken out;
+    - I3: the persisted generated entry is taken out (the load generates it again, if it still does);
+    - I10, M28, FIX-L3-02, FIX-L3-05, FIX-L3-15: the written entry with its classes' erasers applied (`undone`), at
+      the place the legacy wrote it (a lot's label or date put back, a `@@` total's price, an elision, a scale).
+    Only an exact match explains the difference; what is left is UNEXPLAINED, its note starting "after undoing
+    <classes>:". The second result returned counts the causes undone per class (empty when nothing was undone).
+    Limits: the place of an entry is not a class's cause except for I2, so an entry the legacy moved stays moved;
+    an entry moved back to a file is ordered after that file's entries for Beancount's ties (same date, kind and
+    line) only; where a file holds several instances of the key undone, the last one is taken."""
+    if before_facts.parsed is None:
+        raise ValueError("the booked comparison needs the source's parse (load_facts(keep_parsed=True))")
+    intended = intended_entries(before_facts.parsed, before, expected)
+    ref_keys = {at_kind(e): canonical_key(e) for e in intended}
+    reference, _ = book(intended, before_facts.parsed)
+    left = _differences(reference, ref_keys, after_facts.booked, after_facts.keys_at, pairs, before.root)
+    if not left or not undo:
+        return left, Counter()
+    if after_facts.parsed is None:
+        raise ValueError("undoing a class needs the legacy result's parse (load_facts(keep_parsed=True))")
+    entries, keys = apply_undo(after_facts.parsed, after, after_facts.keys_at, undo)
+    rebooked, _ = book(entries, after_facts.parsed)
+    classes = Counter(c for u in undo for c in u.cls.split("+"))
+    prefix = f"after undoing {', '.join(sorted(classes))}: "
+    return _differences(reference, ref_keys, rebooked, keys, pairs, before.root, prefix), classes
 
 
 def balances(entries: list[Any], before: LedgerSet) -> bool:
@@ -513,4 +603,5 @@ def refused(before: LedgerSet, after: LedgerSet, expected: Expected, before_fact
         first = Divergence("FIX-L3-02", before.root, None, None, "refused: the legacy validator ignores price and cost weights")
     else:
         first = Divergence("NOT_APPLIED", before.root, None, None, f"the legacy app refused ({code})")
-    return Report([first] + compare(before, after, Expected(), before_facts, after_facts).divergences)
+    rest = compare(before, after, Expected(), before_facts, after_facts)
+    return Report([first] + rest.divergences, rest.undone)
