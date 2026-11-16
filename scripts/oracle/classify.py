@@ -69,9 +69,12 @@ def legacy_unit_price(units: Decimal, total: Decimal) -> Decimal:
 
 @dataclass(frozen=True)
 class Ctx:
-    """What an eraser may know about the intended entry *x*: its booked form and its `@@` postings."""
+    """What an eraser may know about the entry *x* the legacy should have written: its booked form (an untargeted
+    entry's in the source's load; an intended entry's in the reference, the intended ledger booked by Beancount),
+    its `@@` postings, and whether it is an intended entry."""
     booked: Any | None = None
     totals: dict[int, Decimal] = field(default_factory=dict)  # posting index → its `@@` total as written
+    intended: bool = False
 
 
 Pair = tuple[Any, Any]
@@ -153,8 +156,10 @@ def _as_spec(cost: Cost) -> CostSpec:
 
 def erase_i10(x: Any, y: Any, ctx: Ctx) -> Pair:
     """Where *x* left something for Beancount to fill (elided units, `{}`), accept what the legacy app wrote only if
-    it is what Beancount booked. Without a booked form (an intended new entry), only elided units may be filled; the
-    new-error check then catches a wrong number."""
+    it is exactly what Beancount booked for *x* (`ctx.booked`: for an intended entry, the reference's booking).
+    Without a booked form nothing is accepted: Beancount's tolerance loads a filled number that is off by less than
+    it (`-10.54` for `-10.5`) with no error, so no other check would see it (S0124 verifier F1). A `{}` on an
+    intended entry is not accepted baked (as before S0124)."""
     if not isinstance(x, data.Transaction):
         return x, y
     booked = ctx.booked if isinstance(ctx.booked, data.Transaction) and len(ctx.booked.postings) == len(x.postings) else None
@@ -162,10 +167,10 @@ def erase_i10(x: Any, y: Any, ctx: Ctx) -> Pair:
     def fix(i: int, px: Any, py: Any) -> Pair:
         pb = booked.postings[i] if booked is not None else None
         if px.units is MISSING or (not _unset(px.units) and px.units.number is MISSING):
-            if pb is None or (not _unset(pb.units) and not _unset(py.units) and pb.units == py.units):
+            if pb is not None and not _unset(pb.units) and not _unset(py.units) and pb.units == py.units:
                 py = py._replace(units=px.units)
         if isinstance(px.cost, CostSpec) and px.cost != py.cost and isinstance(py.cost, CostSpec) \
-                and pb is not None and isinstance(pb.cost, Cost) and _as_spec(pb.cost) == py.cost:
+                and not ctx.intended and pb is not None and isinstance(pb.cost, Cost) and _as_spec(pb.cost) == py.cost:
             py = py._replace(cost=px.cost)
         return px, py
     return _postings_pairwise(x, y, fix)
@@ -292,9 +297,15 @@ def compare(before: LedgerSet, after: LedgerSet, expected: Expected, before_fact
                 pass
         raise KeyError(key)
 
+    reference, ref_keys = _reference(before, expected, before_facts)
+    ref_booked: dict[str, Any] = {}  # an intended entry's key → its booked form in the reference
+    for e in reference:
+        if at_kind(e) in ref_keys:
+            ref_booked.setdefault(ref_keys[at_kind(e)], e)
+
     def intended_ctx(key: str) -> tuple[tuple[str, ...], Ctx]:
         allowed = CREATED if key in expected.created else REPLACED
-        return allowed, Ctx(None, expected.totals.get(key, {}))
+        return allowed, Ctx(ref_booked.get(key), expected.totals.get(key, {}), True)
 
     def untargeted_ctx(key: str, facts: LoadFacts) -> tuple[tuple[str, ...], Ctx]:
         return UNTARGETED, Ctx(booked_of(facts, entry(key)))
@@ -388,7 +399,7 @@ def compare(before: LedgerSet, after: LedgerSet, expected: Expected, before_fact
     for f, n in actual.comments_lost.items():
         out.append(Divergence("I10", f, None, None, f"{n} comment line(s) lost"))
     out += new_errors(before_facts, after_facts, before.root)
-    left, undone_classes = booked(before, after, expected, before_facts, after_facts, pairs, undo)
+    left, undone_classes = booked(before, after, reference, ref_keys, after_facts, pairs, undo)
     return Report(out + left, undone_classes)
 
 
@@ -531,8 +542,18 @@ def apply_undo(parsed: Parsed, after: LedgerSet, keys_at: dict[tuple[str, str, i
     return kept, {at_kind(e): keys[at_kind(e)] for e in kept if at_kind(e) in keys}
 
 
-def booked(before: LedgerSet, after: LedgerSet, expected: Expected, before_facts: LoadFacts, after_facts: LoadFacts,
-           pairs: list[tuple[str, str]], undo: list[Undo]) -> tuple[list[Divergence], Counter[str]]:
+def _reference(before: LedgerSet, expected: Expected, before_facts: LoadFacts) -> tuple[list[Any], dict[tuple[str, str, int], str]]:
+    """The intended ledger booked by Beancount (`model.intended_entries`, then `semantic_diff.book`), and the key of
+    each of its parsed entries by kind and place."""
+    if before_facts.parsed is None:
+        raise ValueError("the booked comparison needs the source's parse (load_facts(keep_parsed=True))")
+    intended = intended_entries(before_facts.parsed, before, expected)
+    reference, _ = book(intended, before_facts.parsed)
+    return reference, {at_kind(e): canonical_key(e) for e in intended}
+
+
+def booked(before: LedgerSet, after: LedgerSet, reference: list[Any], ref_keys: dict[tuple[str, str, int], str],
+           after_facts: LoadFacts, pairs: list[tuple[str, str]], undo: list[Undo]) -> tuple[list[Divergence], Counter[str]]:
     """Beancount's booked result of the intended ledger against the legacy's (INV-02: its booking, not ours).
 
     The reference is the intended ledger booked by Beancount (`model.intended_entries`, then `semantic_diff.book`,
@@ -558,12 +579,10 @@ def booked(before: LedgerSet, after: LedgerSet, expected: Expected, before_facts
     <classes>:". The second result returned counts the causes undone per class (empty when nothing was undone).
     Limits: the place of an entry is not a class's cause except for I2, so an entry the legacy moved stays moved;
     an entry moved back to a file is ordered after that file's entries for Beancount's ties (same date, kind and
-    line) only; where a file holds several instances of the key undone, the last one is taken."""
-    if before_facts.parsed is None:
-        raise ValueError("the booked comparison needs the source's parse (load_facts(keep_parsed=True))")
-    intended = intended_entries(before_facts.parsed, before, expected)
-    ref_keys = {at_kind(e): canonical_key(e) for e in intended}
-    reference, _ = book(intended, before_facts.parsed)
+    line) only; where a file holds several instances of the key undone, the last one is taken. No test pins three
+    of these placement rules (S0124 verifier F2): the last instance rather than the first, after the file's last
+    entry rather than at the end of the list, and the first free line rather than the last; each matters only for
+    Beancount's ties."""
     left = _differences(reference, ref_keys, after_facts.booked, after_facts.keys_at, pairs, before.root)
     if not left or not undo:
         return left, Counter()

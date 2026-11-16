@@ -446,6 +446,59 @@ class UndoTest(unittest.TestCase):
         self.assertEqual(summary["undone"], {"I2": 2})
 
 
+class FilledNumberTest(unittest.TestCase):
+    """S0124 verifier F1: an intended entry's elided posting, filled by the legacy, is I10 only when the number is
+    exactly what Beancount books for the intended entry (the reference); a number within Beancount's tolerance
+    loads with no error, so nothing else would see it."""
+
+    def edit_with_cash_elided(self, written: str, t: str = T1) -> Case:
+        edited = t.replace('"lunch"', '"dinner"')
+        edited = edited.replace(next(line for line in edited.splitlines() if line.startswith("  Assets:Cash")), "  Assets:Cash")
+
+        def edit(before: sd.LedgerSet) -> model.Expected:
+            return model.update_transaction(before, "t-1", edited.strip("\n") + "\n")
+        return Case({"main.beancount": OPENS + t},
+                    {"main.beancount": OPENS + t.replace('"lunch"', '"dinner"').replace("-10.50 USD", written)
+                     .replace("-10.5 USD", written)}, edit)
+
+    def test_an_edit_whose_elided_posting_is_filled_with_a_number_off_within_tolerance(self) -> None:
+        c = self.edit_with_cash_elided("-10.504 USD")
+        self.assertEqual(c.report.verdict, "UNEXPLAINED", c)
+        self.assertNotIn("I10", c.report.undone, c)
+        t = '\n2020-01-02 * "Shop" "lunch"\n  id: "t-1"\n  Expenses:Food  10.5 USD\n  Assets:Cash   -10.5 USD\n'
+        c = self.edit_with_cash_elided("-10.54 USD", t)
+        self.assertEqual(c.report.verdict, "UNEXPLAINED", c)
+        # Must-pass twin: the number Beancount books for the intended entry, written at another scale.
+        c = self.edit_with_cash_elided("-10.50 USD")
+        self.assertEqual((c.report.verdict, sorted(c.report.class_counts())), ("EXPECTED_DIVERGENCE", ["I10"]), c)
+
+    def test_a_filled_number_is_refused_where_booking_split_the_entry(self) -> None:
+        # The edited sale reduces two lots, so its booked form has a posting more than the entry: no booked posting
+        # pins the elided gain, and the legacy's -30.04 (within the tolerance `60.0` gives) is not accepted.
+        sale = '\n2020-03-01 * "sell"\n  id: "t-s"\n  Assets:Broker  -2 TOK {}\n  Assets:Cash  60.0 USD\n  Income:Gain\n'
+        edited = sale.replace('"sell"', '"sell" "both"')
+
+        def edit(before: sd.LedgerSet) -> model.Expected:
+            return model.update_transaction(before, "t-s", edited.strip("\n") + "\n")
+        src = OPENS + buy("a", "10 USD") + buy("b", "20 USD")
+        c = Case({"main.beancount": src + sale},
+                 {"main.beancount": src + edited.replace("  Income:Gain\n", "  Income:Gain  -30.04 USD\n")}, edit)
+        self.assertEqual([d.cls for d in c.report.divergences if d.note.startswith("new Beancount error")], [], c)
+        self.assertEqual(c.report.verdict, "UNEXPLAINED", c)
+        self.assertNotIn("I10", c.report.class_counts(), c)
+
+    def test_an_import_whose_elided_posting_is_filled_with_a_number_off_within_tolerance(self) -> None:
+        new = '2020-04-01 * "Shop" "tea"\n  Expenses:Food  3.5 USD\n  Assets:Cash\n'
+
+        def imp(before: sd.LedgerSet) -> model.Expected:
+            return model.import_append(before, [new])
+        written = '\n2020-04-01 * "Shop" "tea"\n  Expenses:Food  3.5 USD\n  Assets:Cash  -3.54 USD\n'
+        c = Case({"main.beancount": OPENS + T1}, {"main.beancount": OPENS + T1 + written}, imp)
+        self.assertEqual(c.report.verdict, "UNEXPLAINED", c)
+        c = Case({"main.beancount": OPENS + T1}, {"main.beancount": OPENS + T1 + written.replace("-3.54", "-3.5")}, imp)
+        self.assertEqual((c.report.verdict, sorted(c.report.class_counts())), ("EXPECTED_DIVERGENCE", ["I10"]), c)
+
+
 class ImportOrderTest(unittest.TestCase):
     def test_imports_at_one_point_take_v04s_order_not_the_requests(self) -> None:
         # Verifier A4: v0.4 orders inserts at one point by date, kind, then text (`source_edit.insert_key`).
