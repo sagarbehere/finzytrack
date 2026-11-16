@@ -25,6 +25,7 @@ import pytest
 
 from ledger_engine.ledger.writer import Change, Commit, Landed, durable_commit
 from ledger_engine.protocol.server import Engine
+from tests.fs.real_volume import app_identity, app_identity_text
 
 pytestmark = [
     pytest.mark.skipif(
@@ -83,14 +84,13 @@ class Rig:
 
 
 def folder_id(ald: Path) -> str:
-    st = os.stat(ald)
-    return f"{st.st_dev}:{st.st_ino}"
+    return app_identity_text(ald)
 
 
 def held(ald: Path) -> Engine:
     """An engine that took the engine lock `<ald>/locks/engine.lock` (as `--engine-lock` names it)."""
-    st = os.stat(ald)  # the app folder's identity at the start (S0102, BL-0244)
-    return Engine(engine_lock_held=str(ald / "locks" / "engine.lock"), app_folder_id=(st.st_dev, st.st_ino))
+    # the app folder's identity at the start (S0102, BL-0244; with its creation time on Linux, BL-0262)
+    return Engine(engine_lock_held=str(ald / "locks" / "engine.lock"), app_folder_id=app_identity(ald))
 
 
 @pytest.fixture

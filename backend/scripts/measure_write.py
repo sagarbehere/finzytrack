@@ -266,6 +266,13 @@ class Sampler:
         self.engines.clear()
 
     def _read(self, pid: int) -> tuple[int, int] | None:
+        if sys.platform == "linux":  # S0125: `/proc/<pid>/status`, resident (VmRSS) and its peak (VmHWM), in kB
+            try:
+                with open(f"/proc/{pid}/status", encoding="ascii") as f:
+                    fields = dict(line.split(":", 1) for line in f if ":" in line)
+                return int(fields["VmRSS"].split()[0]) * 1024, int(fields["VmHWM"].split()[0]) * 1024
+            except (OSError, KeyError, ValueError):
+                return None
         if self._lib is None or self._lib.proc_pid_rusage(pid, 4, self._buf) != 0:  # RUSAGE_INFO_V4
             return None
         raw = self._buf.raw

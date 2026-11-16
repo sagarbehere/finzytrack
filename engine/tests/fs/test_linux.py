@@ -24,7 +24,7 @@ from pathlib import Path
 
 import pytest
 
-from ledger_engine.fs.port import FileSystem, FoldRule, Kind, Right
+from ledger_engine.fs.port import Caps, FileSystem, FoldRule, Kind, Right
 from ledger_engine.fs.this_os import for_this_os, legacy_locks_for_this_os
 from ledger_engine.ledger.writer import Change, Landed, NotSaved, durable_commit, sha256
 from tests.fs.real_volume import commit, real_volume_run, settled_mkdir
@@ -339,26 +339,33 @@ def test_the_runners_disk_offers_the_swap_and_the_exclusive_rename(fs: FileSyste
 def test_a_save_on_a_volume_without_renameat2s_exchange_takes_the_best_effort_path(
     fs: FileSystem, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Acceptance (S0125 brief): a volume the adapter does not know to offer `RENAME_EXCHANGE` (an injected type list
-    without the runner's file system) is §6.8's case: the save lands by a plain rename, with the backup and the
-    read-back, and never calls `renameat2`."""
-    calls: list[int] = []
+    """Acceptance (S0125 brief): a ledger folder whose volume the adapter does not know to offer `RENAME_EXCHANGE`
+    (injected: the folder's caps, the app's journal folder keeping its own) is §6.8's case: the save lands by a plain
+    rename, with the backup and the read-back, and never calls `renameat2` in that folder."""
+    from ledger_engine.fs import linux
 
-    def no_rename2(dfd: int, a: str, b: str, flags: int) -> None:
-        calls.append(flags)
-        raise AssertionError
-
-    monkeypatch.setattr("ledger_engine.fs.linux.SWAP_TYPES", frozenset[str]())
-    monkeypatch.setattr("ledger_engine.fs.linux._renameat2", no_rename2)
     main = tmp_path / "L" / "main.bean"
     main.parent.mkdir()
     main.write_bytes(b"pre\n")
-    with fs.open_dir(str(main.parent)) as d:
+    ledger_folder = str(main.parent)
+    real_caps, real_rename2 = linux.LinuxDir.caps, linux._renameat2  # pyright: ignore[reportPrivateUsage]
+    calls: list[str] = []
+
+    def caps(self: linux.LinuxDir) -> Caps:
+        return Caps(swap=False, excl=False) if self.path() == ledger_folder else real_caps(self)
+
+    def rename2(dfd: int, a: str, b: str, flags: int) -> None:
+        calls.append(os.readlink(f"/proc/self/fd/{dfd}"))
+        real_rename2(dfd, a, b, flags)
+
+    monkeypatch.setattr(linux.LinuxDir, "caps", caps)
+    monkeypatch.setattr(linux, "_renameat2", rename2)
+    with fs.open_dir(ledger_folder) as d:
         assert (d.caps().swap, d.caps().excl) == (False, False)
     out = durable_commit(fs, commit(tmp_path, Change(str(main), sha256(b"pre\n"), b"post\n")))
     assert isinstance(out, Landed), out
     assert main.read_bytes() == b"post\n"
-    assert calls == []
+    assert ledger_folder not in calls, calls
     backups = [p for p in (tmp_path / "local" / "backups").rglob("*") if p.is_file()]
     assert [p.read_bytes() for p in backups] == [b"pre\n"]
 

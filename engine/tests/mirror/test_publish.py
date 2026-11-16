@@ -226,8 +226,22 @@ def test_a_build_that_fails_removes_its_file_and_journal_and_raises(
     assert sorted(p.name for p in mirror_of(cache).iterdir()) == sorted([first.name, pb.CURRENT])
 
 
+@pytest.mark.parametrize(
+    "how",
+    [
+        pytest.param(
+            "unlinked",
+            marks=pytest.mark.skipif(
+                sys.platform != "darwin",
+                reason="an unlinked file's number may be reused at once off APFS (publish.md §2 limit); moved aside "
+                "runs everywhere",
+            ),
+        ),
+        "moved aside",
+    ],
+)
 def test_a_generation_replaced_at_its_name_during_the_build_is_not_published(
-    fs: FileSystem, cache: Path, root: Path, monkeypatch: pytest.MonkeyPatch
+    fs: FileSystem, cache: Path, root: Path, monkeypatch: pytest.MonkeyPatch, how: str
 ) -> None:
     """§2: "After the build, the entry at its name ... must still be the file the create made"."""
     first = published(publish_job(fs, cache, root)).gen
@@ -236,8 +250,13 @@ def test_a_generation_replaced_at_its_name_during_the_build_is_not_published(
     def write_then_replace(path: str, made: Any) -> None:
         real(path, made)
         data = Path(path).read_bytes()
-        Path(path).unlink()
-        Path(path).write_bytes(data)  # the same bytes, another file: not the one the create made
+        if how == "unlinked":
+            Path(path).unlink()
+            Path(path).write_bytes(data)  # the same bytes, another file: not the one the create made
+        else:
+            Path(path).rename(path + ".aside")  # kept until the new file exists: it cannot take its number
+            Path(path).write_bytes(data)
+            Path(path + ".aside").unlink()
 
     monkeypatch.setattr(build_mod, "write", write_then_replace)
     assert publish_job(fs, cache, root) == pb.NotPublished("replaced")

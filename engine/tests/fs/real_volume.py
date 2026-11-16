@@ -9,8 +9,24 @@ from pathlib import Path
 
 import pytest
 
-from ledger_engine.fs.port import FileSystem
+from ledger_engine.fs.port import FileSystem, FolderId
+from ledger_engine.fs.this_os import folder_identity
 from ledger_engine.ledger.writer import Change, Commit, Landed, durable_commit, sha256
+
+
+def app_identity(path: Path) -> FolderId:
+    """The app folder's identity as the sidecar records it at start (`this_os.folder_identity`: with the creation
+    time on Linux, BL-0262, S0125); the sidecar's own computation is tested in the backend."""
+    fd = os.open(path, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        return folder_identity(fd)
+    finally:
+        os.close(fd)
+
+
+def app_identity_text(path: Path) -> str:
+    """`--app-folder-id` for the folder at `path`."""
+    return ":".join(str(n) for n in app_identity(path))
 
 
 def commit(root: Path, *changes: Change) -> Commit:

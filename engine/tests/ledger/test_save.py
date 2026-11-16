@@ -41,6 +41,7 @@ from ledger_engine.ledger.fingerprint import observe as observe_set
 from ledger_engine.ledger.policy import DesktopPolicy
 from ledger_engine.ledger.writer import BadPlanError, Change, NotSaved, Reason, sha256
 from ledger_engine.mirror import publish as pb
+from tests.fs.real_volume import app_identity
 from tests.ledger.worlds import with_folders
 from tests.mirror.publish_support import publish_job
 
@@ -166,7 +167,7 @@ def plan_for(led: Ledger, changes: tuple[Change, ...] | None = None, /, **kw: An
         fingerprint=fp,
         app_cache=str(led.cache),
         app_local_data=str(led.ald),
-        app_folder=(os.stat(led.ald).st_dev, os.stat(led.ald).st_ino),  # the identity at the start (S0102)
+        app_folder=app_identity(led.ald),  # the identity at the start (S0102; on Linux with its birth, BL-0262)
     )
     return replace(plan, **kw)
 
@@ -817,7 +818,7 @@ def test_S0102_a_folder_replaced_after_the_saves_start_gets_no_local_folder(
 ) -> None:
     """The op's start found the folder of the start; another program replaces it before step 8 (here: during the
     gate's observation). The save checks the identity of the handle it makes `local/` in: not saved, nothing made."""
-    plan = plan_for(led, app_folder=(os.stat(led.ald).st_dev, os.stat(led.ald).st_ino))
+    plan = plan_for(led, app_folder=app_identity(led.ald))
     out = sv.run(plan, ports_for(led, observe=hooked(before=lambda: _replace_folder(led.ald))), FakeJob())
     assert isinstance(out, NotSaved), out
     assert (out.reason, out.entry, out.unchanged) == (Reason.APP_FOLDER_MISSING, str(led.ald), True)

@@ -16,7 +16,7 @@ from typing import Any
 
 import pytest
 
-from ledger_engine.fs.port import FileSystem
+from ledger_engine.fs.port import FileSystem, FolderId
 from ledger_engine.fs.this_os import for_this_os
 from ledger_engine.ledger import overlay
 from ledger_engine.ledger.core.ledger_set import encode
@@ -24,6 +24,7 @@ from ledger_engine.ledger.policy import DesktopPolicy
 from ledger_engine.mirror import publish as pb
 from ledger_engine.protocol.messages import OPS
 from ledger_engine.protocol.server import Engine, InputEnded
+from tests.fs.real_volume import app_identity
 from tests.mirror.publish_support import publish_job
 
 pytestmark = [
@@ -100,7 +101,7 @@ def engine(ald: Path | None, cache: Path | None = None) -> Engine:
         cache = ald.parent / "cache"
     e = Engine(
         engine_lock_held=None if ald is None else str(ald / "locks" / "engine.lock"),
-        app_folder_id=None if ald is None else (os.stat(ald).st_dev, os.stat(ald).st_ino),
+        app_folder_id=None if ald is None else app_identity(ald),
         app_cache=None if cache is None else str(cache),
     )
     assert json.loads(e.handle(b'{"v":2,"id":0,"op":"handshake","params":{}}'))["ok"]
@@ -266,9 +267,8 @@ def test_S0100_r1_another_missing_folder_is_still_refused(setup: tuple[Path, Pat
 # -- S0102 (BL-0244; owner, 2026-11-11: "BL-0244 slice in M1a (Recommended)"): the app folder's identity from start --
 
 
-def identity(p: Path) -> tuple[int, int]:
-    st = os.stat(p)
-    return (st.st_dev, st.st_ino)
+def identity(p: Path) -> FolderId:
+    return app_identity(p)
 
 
 def replace_folder(ald: Path) -> None:
@@ -277,7 +277,7 @@ def replace_folder(ald: Path) -> None:
     ald.mkdir()
 
 
-def held(ald: Path, app_folder: tuple[int, int]) -> Engine:
+def held(ald: Path, app_folder: FolderId) -> Engine:
     """An engine holding the lock under `ald`, started with the app folder identity `app_folder`."""
     e = Engine(
         engine_lock_held=str(ald / "locks" / "engine.lock"),
@@ -334,7 +334,7 @@ def test_S0102_a_save_in_the_app_folder_of_its_start_lands(setup: tuple[Path, Pa
 def test_S0102_an_engine_started_with_another_identity_saves_nothing(setup: tuple[Path, Path, dict[str, Any]]) -> None:
     """The check compares with the identity the engine was started with, not with the folder found now."""
     main, ald, params = setup
-    dev, ino = identity(ald)
+    dev, ino = identity(ald)[:2]
     r = _save(held(ald, (dev, ino + 1)), params)
     assert (r["outcome"], r["reason"]) == ("not_saved", "app_folder_missing")
     assert not (ald / "local").exists()

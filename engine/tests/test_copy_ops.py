@@ -668,7 +668,17 @@ def test_a_documents_option_in_an_included_file_is_never_rewritten(ald: Path, tm
     assert (target / "outside" / "a.beancount").read_text() == inc
 
 
-@pytest.mark.parametrize("spelling", ["other case", "through a link", "the root itself"])
+OTHER_CASE = pytest.param(
+    "other case",
+    marks=pytest.mark.skipif(
+        sys.platform != "darwin",
+        reason="one folder under two case spellings needs a case-insensitive volume (APFS); on Linux `legacy` is "
+        "another, missing folder, and the copy refuses `no_parent` (the 2026-11-16 run 3)",
+    ),
+)
+
+
+@pytest.mark.parametrize("spelling", [OTHER_CASE, "through a link", "the root itself"])
 def test_a_new_folder_in_a_named_legacy_root_is_refused_however_it_is_spelled(
     ald: Path, tmp_path: Path, spelling: str
 ) -> None:
