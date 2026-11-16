@@ -24,7 +24,9 @@ from tests.fakes.memfs import MemFS
 
 pytestmark = pytest.mark.inv("INV-32")
 macos = pytest.mark.skipif(
-    sys.platform not in ("darwin", "linux"), reason="the write path's port: macOS and Linux; Windows is BL-0087"
+    sys.platform != "darwin",
+    reason="a corpus for macOS's case- and normalization-insensitive APFS; Linux's byte-exact names, links and hard "
+    "links: tests/fs/test_linux.py (S0125)",
 )
 
 NFC = "Café.beancount"

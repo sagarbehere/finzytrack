@@ -206,6 +206,46 @@ def test_names_are_case_sensitive_and_never_normalized_on_a_linux_disk(fs: FileS
     assert fs.resolve(str(tmp_path / nfd)).existing[-1] == nfd
 
 
+def test_a_hard_linked_file_has_one_identity_and_each_name_its_own_canonical_path(
+    fs: FileSystem, tmp_path: Path
+) -> None:
+    """S0060 red team 1, on Linux: the canonical path is the name asked for, read from its folder's listing, however
+    recently the other name was looked up (the `/proc/self/fd` link of a file would name either)."""
+    (tmp_path / "Ledger").mkdir()
+    (tmp_path / "Other").mkdir()
+    (tmp_path / "Ledger" / "Main.beancount").write_bytes(b"x")
+    os.link(tmp_path / "Ledger" / "Main.beancount", tmp_path / "Other" / "copy.beancount")
+    for _ in range(10):
+        os.stat(tmp_path / "Other" / "copy.beancount")
+        main = fs.resolve(f"{tmp_path}/Ledger/Main.beancount")
+        assert main.existing[-2:] == ("Ledger", "Main.beancount")
+        os.stat(tmp_path / "Ledger" / "Main.beancount")
+        other = fs.resolve(f"{tmp_path}/Other/copy.beancount")
+        assert other.existing[-2:] == ("Other", "copy.beancount")
+        assert main.identity is not None
+        assert main.identity == other.identity
+
+
+def test_a_dangling_link_resolves_as_absent_with_its_own_name_missing(fs: FileSystem, tmp_path: Path) -> None:
+    (tmp_path / "new.beancount").symlink_to(tmp_path / "nowhere" / "x.beancount")
+    r = fs.resolve(f"{tmp_path}/new.beancount")
+    assert r.rest == ("new.beancount",)
+    assert "/" + "/".join(r.existing) == str(tmp_path)
+
+
+def test_a_folder_that_may_be_searched_but_not_read_still_resolves(fs: FileSystem, tmp_path: Path) -> None:
+    """The resolve walk opens a folder read-only, and with `O_PATH` where it may only be searched (mode 0311)."""
+    if os.geteuid() == 0:
+        pytest.skip("root passes every mode check")
+    (tmp_path / "s" / "inner").mkdir(parents=True)
+    (tmp_path / "s").chmod(0o311)
+    try:
+        r = fs.resolve(f"{tmp_path}/s/inner")
+    finally:
+        (tmp_path / "s").chmod(0o755)
+    assert ("/" + "/".join(r.existing), r.rest) == (str(tmp_path / "s" / "inner"), ())
+
+
 def test_resolve_refuses_relative_paths_and_dots(fs: FileSystem, tmp_path: Path) -> None:
     for bad in ("rel/x", str(tmp_path) + "/../x", str(tmp_path) + "/./x"):
         with pytest.raises(ValueError, match="malformed"):

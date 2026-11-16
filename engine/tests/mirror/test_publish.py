@@ -719,27 +719,40 @@ def hdiutil(*args: str) -> subprocess.CompletedProcess[str]:
     return subprocess.run(["/usr/bin/hdiutil", *args], capture_output=True, text=True, check=False)  # noqa: S603
 
 
+def _sudo(*args: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(["sudo", "-n", *args], capture_output=True, text=True, check=False)  # noqa: S603, S607
+
+
 @pytest.fixture
 def mounted(tmp_path: Path) -> Any:
-    """A small disk image mounted at a folder (macOS `hdiutil`, no root needed); skipped where it cannot be made."""
+    """Another volume mounted at a folder: on macOS a small disk image (`hdiutil`, no root needed); on Linux a small
+    tmpfs (`sudo mount`, which the CI runner allows; S0125); skipped where it cannot be made."""
     image = tmp_path / "vol.dmg"
-    made = hdiutil("create", "-size", "4m", "-fs", "HFS+", "-volname", "ftvol", "-quiet", str(image))
-    if made.returncode != 0:
-        pytest.skip(f"hdiutil cannot make a disk image here: {made.stderr.strip()[:120]}")
+    if sys.platform == "darwin":
+        made = hdiutil("create", "-size", "4m", "-fs", "HFS+", "-volname", "ftvol", "-quiet", str(image))
+        if made.returncode != 0:
+            pytest.skip(f"hdiutil cannot make a disk image here: {made.stderr.strip()[:120]}")
     points: list[Path] = []
 
     def mount_at(point: Path) -> Path:
         point.mkdir(parents=True, exist_ok=True)
-        out = hdiutil("attach", "-nobrowse", "-quiet", "-mountpoint", str(point), str(image))
+        if sys.platform == "darwin":
+            out = hdiutil("attach", "-nobrowse", "-quiet", "-mountpoint", str(point), str(image))
+        else:
+            options = f"size=4m,uid={os.getuid()},gid={os.getgid()},mode=0755"
+            out = _sudo("mount", "-t", "tmpfs", "-o", options, "ftvol", str(point))
         if out.returncode != 0:
-            pytest.skip(f"hdiutil cannot mount here: {out.stderr.strip()[:120]}")
+            pytest.skip(f"cannot mount another volume here: {out.stderr.strip()[:120]}")
         points.append(point)
         (point / "volume-file.txt").write_bytes(b"another volume's file")
         return point
 
     yield mount_at
     for p in points:
-        hdiutil("detach", "-force", "-quiet", str(p))
+        if sys.platform == "darwin":
+            hdiutil("detach", "-force", "-quiet", str(p))
+        else:
+            _sudo("umount", "-l", str(p))
 
 
 def test_the_cleanup_never_enters_or_removes_another_volume_mounted_inside(

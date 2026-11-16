@@ -393,7 +393,12 @@ class LinuxFS(PosixFS):
 
     @override
     def open_folder(self, path: str) -> tuple[int, str]:
-        fd = os.open(path, os.O_PATH | os.O_DIRECTORY | os.O_CLOEXEC)
+        """Read-only, so the resolve walk may list the folder; a folder that may be searched but not read is opened
+        with `O_PATH` (its path is still read; a listing then fails, as it would on macOS)."""
+        try:
+            fd = os.open(path, os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC)
+        except PermissionError:
+            fd = os.open(path, os.O_PATH | os.O_DIRECTORY | os.O_CLOEXEC)
         try:
             return fd, _getpath(fd)
         except BaseException:
