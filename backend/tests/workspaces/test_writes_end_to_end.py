@@ -578,10 +578,13 @@ def test_the_shipped_engine_has_no_producer(tmp_path: Path) -> None:
     }
     assert PRODUCER_HOME in sources
     assert producer_writers(sources) == []
-    every_module = (  # every module of the engine imported, then the registry read (verifier V3)
-        "import importlib, pkgutil, ledger_engine; "
+    every_module = (  # every module of the engine imported, then the registry read (verifier V3); a file-system
+        # adapter refuses to be imported off its own OS (S0113), so the other OS's adapter is left out (S0125: the
+        # Linux one on macOS, the macOS one on Linux, where this failed since S0113)
+        "import importlib, pkgutil, sys, ledger_engine; "
+        "other = {'ledger_engine.fs.darwin', 'ledger_engine.fs.linux'} - {'ledger_engine.fs.' + sys.platform}; "
         "[importlib.import_module(m.name) for m in pkgutil.walk_packages(ledger_engine.__path__, 'ledger_engine.') "
-        "if m.name != 'ledger_engine.__main__']; "
+        "if m.name != 'ledger_engine.__main__' and m.name not in other]; "
         "from ledger_engine.ledger import preview; print(len(preview.PRODUCERS))"
     )
     out = subprocess.run(  # noqa: S603 (fixed argv: the engine's interpreter under the sidecar's bootstrap)

@@ -17,7 +17,7 @@ import pytest
 from ledger_engine.fs.port import Resolved
 from ledger_engine.ledger import save as sv
 from ledger_engine.ledger.core.ledger_set import Absent, Content, Fingerprint, Unreadable
-from ledger_engine.ledger.writer import Change, sha256
+from ledger_engine.ledger.writer import Change, NotSaved, Reason, sha256
 from tests.fakes.memfs import Crash, MemFS
 from tests.mirror.fake_store import FakeStore, outside_publish
 
@@ -426,3 +426,55 @@ def test_S0100_r1_a_file_standing_unreadable_where_the_save_creates_one_is_ledge
     out = _gate_with(observe, changes=changes, fingerprint=fp)
     assert isinstance(out, sv.Refused), out
     assert out.reason == "ledger_changed", out
+
+
+# -- S0125 (BL-0262): an app folder identity with its creation time, as the Linux sidecar records it ------------------
+
+
+def _born(fs: MemFS, path: str) -> int:
+    with fs.open_dir(path) as h:
+        born = h.born()
+    assert born is not None
+    return born
+
+
+def test_S0125_a_save_whose_app_folder_has_its_recorded_creation_time_lands() -> None:
+    """@regression-guard companion of the next test: the identity with the folder's own creation time is the folder."""
+    fs = save_world(CHAIN[0])
+    out = sv.run(two_file_plan(fs, app_folder=(*app_id(fs), _born(fs, ALD))), save_ports(fs), Job())
+    assert isinstance(out, sv.Saved), out
+
+
+def test_S0125_a_folder_with_the_same_inode_number_but_another_creation_time_is_another_app_folder() -> None:
+    """@regression-guard (the base refused every three-part identity) and must not pass: on Linux a folder removed and
+    made again at once may take the freed inode number (BL-0262);
+    its creation time differs, so the save makes nothing in it (`app_folder_missing`, as on macOS for a replaced
+    folder) and changes no ledger byte."""
+    fs = save_world(CHAIN[0])
+    out = sv.run(two_file_plan(fs, app_folder=(*app_id(fs), _born(fs, ALD) + 1)), save_ports(fs), Job())
+    assert isinstance(out, NotSaved), out
+    assert out.reason is Reason.APP_FOLDER_MISSING
+    assert (fs.file("/L/a.bean"), fs.file("/L/b.bean")) == (A, B)
+    assert fs.names_in(f"{ALD}/local") == [], "nothing is made in a folder that is not the app folder of the start"
+
+
+def test_S0125_an_app_folder_whose_creation_time_changes_after_step_8_stops_the_save_before_its_first_swap() -> None:
+    """@regression-guard (the base refused every three-part identity) and must not pass: the writer's anchor
+    (`writer.anchored`) compares the creation time too, before the backups, the
+    `.part` and the rename to `.open`: a folder put in place with the freed inode number gets no backup or record, and
+    no ledger file is swapped."""
+    fs = save_world(CHAIN[0])
+    start = (*app_id(fs), _born(fs, ALD))
+    flipped: list[str] = []
+
+    def flip(_: int, label: str) -> None:
+        if not flipped and "backups" in label:
+            flipped.append(label)
+            fs.outside_born(ALD, start[2] + 1)
+
+    fs.on_effect = flip
+    out = sv.run(two_file_plan(fs, app_folder=start), save_ports(fs), Job())
+    assert flipped, "the save made no backups folder"
+    assert isinstance(out, NotSaved), out
+    assert out.reason is Reason.APP_FOLDER_MISSING
+    assert (fs.file("/L/a.bean"), fs.file("/L/b.bean")) == (A, B)

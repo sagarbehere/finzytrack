@@ -314,3 +314,58 @@ def test_S0102_the_engines_arguments_refuse_a_lock_without_the_identity(tmp_path
         main(["--engine-lock", str(tmp_path / "locks" / "engine.lock")])
     assert refused.value.code == 2
     assert not (tmp_path / "locks").exists()
+
+
+# -- S0125 (BL-0262, BL-0261): the identity's text, its comparison, and a platform without a port --------------------
+
+
+def test_S0125_the_identity_text_is_dev_ino_or_dev_ino_born_and_nothing_else() -> None:
+    from ledger_engine.protocol.app_folder import parse_identity
+
+    assert parse_identity("1:2") == (1, 2)
+    assert parse_identity("1:2:3") == (1, 2, 3)
+    for bad in ("1", "1:2:3:4", "1:x", "1:2:", ":1:2", "1:-2", "1:2:3x", "\u0661:2"):
+        with pytest.raises(ValueError, match="DEV:INO"):
+            parse_identity(bad)
+
+
+def test_S0125_a_creation_time_recorded_at_start_must_be_the_folders_now() -> None:
+    """Must not pass: the same `(st_dev, st_ino)` with another creation time is another folder; a start without one
+    (macOS, or a Linux file system that keeps none) compares `(st_dev, st_ino)` alone."""
+    from ledger_engine.fs.port import same_identity
+
+    assert same_identity((1, 2, 3), (1, 2, 3))
+    assert not same_identity((1, 2, 4), (1, 2, 3))
+    assert not same_identity((1, 2), (1, 2, 3)), "a folder whose creation time cannot be read now is not the start's"
+    assert not same_identity((1, 3, 3), (1, 2, 3))
+    assert same_identity((1, 2, 9), (1, 2))
+    assert same_identity((1, 2), (1, 2))
+    assert not same_identity((2, 2), (1, 2))
+
+
+def test_S0125_the_lock_refuses_a_folder_with_another_creation_time(tmp_path: Path) -> None:
+    """Must not pass, on every OS: an identity whose creation time is not the folder's is refused before `locks/` is
+    made (on macOS the engine reads none, so a recorded one never matches: fails closed)."""
+    from ledger_engine.protocol.server import AppFolderChangedError, hold_engine_lock
+
+    app = tmp_path / "app"
+    app.mkdir()
+    dev, ino = identity(app)[:2]
+    with pytest.raises(AppFolderChangedError):
+        hold_engine_lock(str(app / "locks" / "engine.lock"), (dev, ino, 1))
+    assert os.listdir(app) == []
+
+
+def test_BL0261_the_app_folder_check_passes_an_unsupported_platform_through(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Must not pass: on an OS without a port the check raises `UnsupportedPlatform`, never "the folder changed"."""
+    from ledger_engine.fs import this_os
+    from ledger_engine.protocol import app_folder
+
+    app = tmp_path / "app"
+    app.mkdir()
+    start = identity(app)
+    monkeypatch.setattr(this_os.sys, "platform", "win32")
+    with pytest.raises(this_os.UnsupportedPlatform):
+        app_folder.changed(str(app / "locks" / "engine.lock"), start)

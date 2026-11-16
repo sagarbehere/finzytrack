@@ -791,3 +791,15 @@ def test_a_recorded_folder_that_now_reports_no_creation_time_is_another_folder()
     assert out.cause is Cause.WRONG_DRIVE
     assert state_of(w.fs) == before
     assert State.OPEN in journals(w.fs)
+
+
+@pytest.mark.parametrize("fs_type", ["msdos", "vfat", "exfat"])
+def test_S0125_a_fat_drive_on_linux_follows_the_fat_rules(fs_type: str) -> None:
+    """Linux names FAT `vfat` (`ledger_engine.fs.linux`; macOS says `msdos`): its drive UUID is a format serial's too,
+    so its top level's creation time 0 tells no folder apart, and a missing file needs evidence (§6.3)."""
+    from ledger_engine.fs.port import FolderMark
+    from ledger_engine.ledger.handles import SERIAL_IDENTIFIED, known_birth
+
+    assert fs_type in SERIAL_IDENTIFIED
+    assert known_birth(FolderMark("8ee4a534-0000-5000-8000-000000000000", fs_type, 0)) is None
+    assert known_birth(FolderMark("8ee4a534-0000-5000-8000-000000000000", fs_type, 5)) == 5
