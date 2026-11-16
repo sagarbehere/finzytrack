@@ -83,6 +83,10 @@
 - **How likely.** It needs a reduction left to the booking method (`{}`, FIFO or LIFO) over lots of the same date in different files, and an edit above one of them that changes its line number past the other's. Rare in a hand-kept ledger, plausible in one split per year or per account.
 - The owner decides what, if anything, follows (for example: the preview compares the booked result as this oracle now does; or a policy).
 
+- **The owner's decisions on the slice's two questions** (owner, 2026-11-16, in session: "I accept your recommendations for both questions."):
+  1. The v0.4 splice tie: a stated limit now (engine-jobs §2, "Limit (same-date entries across files)") and BL-0276 (M2) for the preview's advice on a changed booked result.
+  2. The old app's I2 duplicates that change a `pad`: "b. Undo the bug, then compare", recorded as ADR-0014's amendment of 2026-11-16 and built in S0124.
+
 ## Hand-off (PROCESS.md §3 step 4; ADR-0057)
 - **Checks that accept, tag or refuse, each with its must-not-pass test** (all in `scripts/oracle/tests/test_booked.py`):
   - `classify.booked` (every booked difference is UNEXPLAINED): the brief's three must-not-pass: the S0122 tie repro (`test_the_s0122_tie_repro_a_layout_reprint_flips_a_cross_file_fifo_tie`), an untargeted sale whose lot changes with no balance change (`test_an_untargeted_sale_whose_lot_changes_and_no_balance_does`, two same-cost lots told apart by label), an end balance that changes with no entry the parsed comparison flags (`test_an_end_balance_that_changes_with_no_entry_the_parsed_comparison_flags`). The brief's must-pass, each with its must-not-pass twin: an edit of an earlier buy's cost that changes a later sale's booked cost (`test_an_edit_of_an_earlier_buys_cost_changes_a_later_sales_booked_cost`), a rename (`test_a_rename_maps_the_accounts`), an import append at its place (`test_an_import_append_goes_after_the_last_line_of_its_file`); also a baked lot that books the same is only I10 (`test_a_baked_reduction_that_books_the_same_lot_is_only_i10`).

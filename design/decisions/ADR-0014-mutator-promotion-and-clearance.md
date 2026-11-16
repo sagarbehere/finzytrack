@@ -2,7 +2,7 @@
 
 This record decides when a feature that writes to the books is cleared for real use.
 
-- **Status:** Accepted
+- **Status:** Accepted. Amended on 2026-11-16 (S0123, S0124): how a class explains a difference in the booked result
 - **Date:** 2026-10-24
 - **Deciders:** owner
 - **Area:** write path, process
@@ -67,3 +67,13 @@ This record's notes are kept as written; this correction says which of their lin
 - The undo and recovery of a test copy's save open its folders by path, each path-guarded and identity-checked (engine-jobs §6.1 "A confined save", its limit).
 - **Left for M3** (BL-0267): the mark itself, set by the test copy's job; and "not in the file set of any non-copy workspace", which needs the registry.
 - Journal: `design/journal/S0117-contract-confirm.md`.
+
+## Amendment (2026-11-16): a class explains a booked difference only by undoing its own cause (S0123, S0124)
+
+Owner, 2026-11-16, in session, accepting the orchestrator's recommendation (option "b. Undo the bug, then compare"): "I accept your recommendations for both questions."
+
+- **Context:** since S0123 the oracle compares Beancount's booked result (the lots each sale takes, the gains, every account's end holdings per currency and lot) of the old app's write with the intended change booked by Beancount. A known fault of the old app can change money on entries it did not target: the I2 duplicates of glob-included entries, held twice, change what a later `pad` fills (the nasty corpus: Equity:Opening -1016.20 → -1032.40 USD).
+- **Decided:** a class explains a difference in the booked result only when removing that class's own cause from the old app's result (for I2, the duplicated entries; for each class, the change its eraser names) and booking again with Beancount gives exactly the intended booked result. Any difference left after that is UNEXPLAINED and blocks promotion, as before. No class hides a booked difference by being present.
+- **Unchanged:** the classes, their causes, the oracle's role (a second opinion on what an edit means, not on the old app's bytes or formatting; S0122), and that an untagged divergence blocks promotion.
+- Built in S0124 (`scripts/oracle/classify.py`).
+
