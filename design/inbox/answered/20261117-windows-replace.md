@@ -22,3 +22,4 @@ Option 1. It is the owner's rule for missing primitives (2026-11-16), needs no n
 Separately, for your information (no decision needed unless you disagree): the Windows port is too large for one slice. I propose to split it as in the S0126 journal ("Proposed split").
 
 ## Answer (owner, verbatim, with date)
+Owner, 2026-11-17, in session: "1a, split yes, keep red" (option 1: best-effort mode on every Windows drive; the four-part split of the Windows port; the `engine-windows` CI job kept, red until the port lands). Recorded as ADR-0069 (Accepted).

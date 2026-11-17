@@ -101,3 +101,7 @@ review:D1 §13.2; review:25 §8.3, §14 item 5; review:27 M1 risks; ADR-0008, AD
 ## Note (2026-11-01): the ACL exception, stated exactly
 
 - The Status line's "except a non-inherited one that protects only the folder itself" is loose. The exception, in the owner's words (`design/inbox/answered/20261030-acl-allowlist.md`, option 1, "Allowlist (Recommended)"), is "a deny entry that new entries do not inherit and that protects only the folder itself (delete, writeextattr, writeattr, writesecurity, chown)". What counts is whether the entry passes on to new entries (`file_inherit`, `directory_inherit`, `only_inherit`), not whether the folder got it from its parent: such an entry is allowed, and a direct entry that new entries inherit is refused (`ledger_engine.ledger.handles.blocking_entry`; spec §6.1 step 8). The decision is unchanged (S0073 part B, verifier round 1 F1).
+
+## Note (2026-11-17): Windows superseded by ADR-0069
+
+The Windows primitive above ("Windows `ReplaceFileW` with a backup name") is superseded: the S0126 probe on the Windows runner showed `ReplaceFileW` leaves the file's name empty for a moment on NTFS, ReFS, FAT32 and exFAT, and Windows has no one-step swap. Windows takes engine-jobs §6.8's best-effort mode on every volume (ADR-0069; owner, 2026-11-17, in session: "1a, split yes, keep red"). macOS and Linux are unchanged.

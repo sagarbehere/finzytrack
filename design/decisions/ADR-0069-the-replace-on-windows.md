@@ -2,9 +2,9 @@
 
 This record decides how a save replaces a ledger file on Windows, now that the runner's probe shows that `ReplaceFileW`, which ADR-0013 names for Windows, is not a one-step swap.
 
-- **Status:** Proposed: waiting for the owner's choice (`design/inbox/20261117-windows-replace.md`; blocks S0126). On acceptance it supersedes ADR-0013's Windows primitive ("Windows `ReplaceFileW` with a backup name") and the "NTFS (`ReplaceFileW`)" entry of `design/specs/engine-jobs.md` §6.8's list of disks that keep the swap.
+- **Status:** Accepted (owner, 2026-11-17, in session: "1a, split yes, keep red", choosing option 1). Supersedes ADR-0013's Windows primitive ("Windows `ReplaceFileW` with a backup name") and the "NTFS (`ReplaceFileW`)" entry of `design/specs/engine-jobs.md` §6.8's list
 - **Date:** 2026-11-17
-- **Deciders:** owner (pending); drafted by the agent in S0126.
+- **Deciders:** owner (2026-11-17); drafted by the agent in S0126.
 - **Area:** write path, data safety, platforms
 
 ## Context
@@ -26,7 +26,7 @@ The same probe found what the rest of the port can rely on: folders and files ca
 
 ## Decision
 
-Pending. The options, cheapest first (the inbox note has them in plain language):
+**Option 1** (owner, 2026-11-17, in session: "1a, split yes, keep red"): Windows takes §6.8's best-effort mode on every volume. The options as they were put, cheapest first (the inbox note has them in plain language):
 
 1. **Windows takes §6.8's best-effort mode on every volume** (the ownership rule's "same stated, reported best-effort mode", owner 2026-11-16): journal, synced backups and read-back kept; the new bytes put over the file by one plain rename (`MoveFileExW` with `REPLACE_EXISTING` and `WRITE_THROUGH`, or its handle-relative form); `writer._check_replaced` just before. No change to the save's model (§13 already covers this mode by the fake's sweeps). Lost against macOS: the displaced-file check, so another program's save in the same instant can be lost (§6.8 "Limit (no swap)"). A power loss keeps or drops the rename whole on NTFS and ReFS (by NTFS's metadata log and ReFS's copy-on-write; not power-cut tested: the runner cannot cut power). §6.8's notice at open (`msg:save.best_effort_drive`) would show for every Windows ledger unless its wording changes for Windows.
 2. **A locked rename aside, then an exclusive rename in** (Windows only): the file opened with delete access and shared for reading only, so no other program can write, rename or remove it; its bytes checked against the planned pre-hash; renamed aside by that handle to a name of ours; the new file renamed in exclusively (an entry another program put there in between stops the save and is kept). No other program's save is ever lost, but the file's name is empty between the two renames, so a power loss can leave it missing, which recovery puts back from the aside copy. A new write mode: the save's model (engine-jobs TLA+), its recovery rule, the spec and a full review change with it.
@@ -34,7 +34,7 @@ Pending. The options, cheapest first (the inbox note has them in plain language)
 
 ## Consequences
 
-- Until the owner chooses, the engine on Windows keeps refusing every file operation (`engine.unsupported_platform`), and `design/specs/engine-jobs.md` §6.8 no longer lists NTFS among the disks that keep the swap.
+- Until the Windows port lands (S0126's split: paths and types, the adapter with this replace, the Job Object, the publish's pointer file), the engine on Windows keeps refusing every file operation (`engine.unsupported_platform`), and `design/specs/engine-jobs.md` §6.8 no longer lists NTFS among the disks that keep the swap.
 - Whatever the choice, the Windows port needs the engine's paths in Windows form (drive letters and UNC roots, `\`, the `\\?\` prefix, reserved names and trailing dots or spaces refused: without the prefix Windows opens the device for `aux.txt` and drops a trailing dot or space, probed), which S0126 proposes as its own slice.
 - Folder identity on Windows cannot rest on the creation time: NTFS and ReFS give a folder or file removed and made again at once its predecessor's creation time (tunnelling, probed), though a new file ID; FAT and exFAT give no `FileIdInfo` at all. BL-0218's Windows part takes the 64-bit volume serial and the 128-bit file ID on NTFS and ReFS, and FAT and exFAT state their limit (as on macOS, §6.3).
 

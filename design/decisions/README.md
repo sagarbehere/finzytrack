@@ -84,7 +84,7 @@ This folder holds the architecture decision records of Finzytrack v0.4: why the 
 | [ADR-0066](ADR-0066-frontend-composables-folder-and-inv-12-wording.md) | The features' headless logic lives in `composables/`; INV-12 says "composables" | Accepted; note by S0056 (the check made exact) | 2026-10-29 | frontend, invariants |
 | [ADR-0067](ADR-0067-integrity-blocks-accounting-advises.md) | Integrity blocks, accounting advises | Accepted; parts superseded by ADR-0068 | 2026-10-31 | write path, data safety, engine |
 | [ADR-0068](ADR-0068-step-back-simplifications.md) | Step-back simplifications | Accepted; D6 narrowed and moved into the review budget (IMP-0067, IMP-0068) | 2026-11-01 | write path, data safety, engine, formal model, process |
-| [ADR-0069](ADR-0069-the-replace-on-windows.md) | The replace on Windows (Windows has no one-step swap) | Proposed (the owner's choice pending; S0126) | 2026-11-17 | write path, data safety, platforms |
+| [ADR-0069](ADR-0069-the-replace-on-windows.md) | The replace on Windows (Windows has no one-step swap) | Accepted (owner, 2026-11-17; S0126) | 2026-11-17 | write path, data safety, platforms |
 
 ## Template
 

@@ -56,9 +56,16 @@
   - **8b-3 the engine's process group on Windows:** the Job Object nested in the shell's with kill-on-close in the sidecar's `engine_group`, the drain, CPU from the Job Object, the app-instance lock; a backend job on the Windows runner.
   - **8b-4 the publish on Windows (BL-0206):** ADR-0015's pointer file, the retried removal of an open generation, the sidecar's pin reading it, the mirror-publish model's assumptions checked against it; then the write path is enabled on Windows (`this_os`), with the whole engine and backend suites green on the runner.
 
+- **The owner's answers** (2026-11-17, in session: "1a, split yes, keep red"):
+  1. ADR-0069 option 1: Windows takes §6.8's best-effort mode on every volume; ADR-0069 Accepted, ADR-0013's Windows line superseded (its note of 2026-11-17).
+  2. The four-part split: BL-0279 (paths and types), BL-0280 (the adapter and the replace), BL-0281 (the Job Object), BL-0206 (the pointer file), then turning writes on (BL-0087). This slice ends here as the probe, the CI job and the decision; each part is its own slice.
+  3. The `engine-windows` job stays in the manual run, red until the port lands.
+  Consequence, told to the owner: M1b cannot exit before the four parts land (ADR-0061 amendment of 2026-11-14: Windows write-contract tests at every exit from M1b on, never deferred).
+
 ## Hand-off (PROCESS.md §3 step 4; ADR-0057)
 - Stopped before any check or product code: no check accepts, tags or refuses anything new, so there is no must-not-pass test or mutant. The probe and the CI job are tooling that prints only; the probe writes only in a `.ft-probe-<pid>` folder it makes and removes inside each folder it is given (the runner's temp folders and its own VHDs).
 
 ## Verifier
 
 ## Retro
+- Build about 37 min, stopped before port code on two stop rules (the Windows swap the ADR named is not a swap; the slice too large to land as one). No verifier round: no product code changed (the probe and the CI job are print-only tooling, run on the runner). Cheaper gate: probe an OS primitive an ADR names before the slice that builds on it (here one CI run disproved ADR-0013's Windows line). Process checks: the brief's stop rules 2 catch / 0 false positive; the privacy scan 1 catch (a runner home path in the journal) / 0 false positive.
