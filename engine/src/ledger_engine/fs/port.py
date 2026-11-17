@@ -30,18 +30,11 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Final, Protocol, Self
 
+from ledger_engine.fs.pathmodel import FoldRule, MalformedPathError, fold, host
+
 CHUNK: Final = 1 << 20
 """How many bytes a streamed create or a hash reads or writes at a time (S0081: a copied document is never held whole
 in memory)."""
-
-
-@dataclass(frozen=True, slots=True)
-class FoldRule:
-    """How a directory's volume compares the names in it (§6.3): `nfd` (macOS: always), `casefold` (a
-    case-insensitive volume or directory)."""
-
-    nfd: bool
-    casefold: bool
 
 
 @dataclass(frozen=True, slots=True)
@@ -395,34 +388,42 @@ def same_folder(h: DirHandle, start: FolderId) -> bool:
     return same_identity((dev, ino) if born is None else (dev, ino, born), start)
 
 
-def fold(component: str, rule: FoldRule) -> str:
-    """One name folded by its directory's rule (§6.3). Caseless matching is NFD(casefold(NFD(x))) (Unicode §3.13)."""
-    out = unicodedata.normalize("NFD", component) if rule.nfd or rule.casefold else component
-    if rule.casefold:
-        out = unicodedata.normalize("NFD", out.casefold())
-    return out
-
-
-class MalformedPathError(ValueError):
-    """A caller's error: a path or a name the port does not take (nothing was done)."""
-
-    def __init__(self, what: str) -> None:
-        super().__init__(f"malformed path: {what}")
-
-
 def check_name(name: str) -> str:
-    """A single path component, or `ValueError`."""
-    if not name or name in (".", "..") or "/" in name or "\0" in name:
-        raise MalformedPathError("not_one_component")
-    return name
+    """A single path component this OS can hold, or `MalformedPathError` (`pathmodel`: POSIX as before S0127;
+    Windows also refuses reserved device names, a trailing dot or space and the characters no Windows name holds)."""
+    return host().check_name(name)
 
 
 def split_absolute(path: str) -> tuple[str, ...]:
-    """The components of an absolute POSIX path; `ValueError` for a relative path or a `.`/`..` component (they would
-    change meaning with links)."""
-    if not path.startswith("/"):
-        raise MalformedPathError("not_absolute")
-    parts = tuple(p for p in path.split("/") if p)
-    for p in parts:
-        check_name(p)
-    return parts
+    """The components of an absolute path of this OS (Windows: its root first); `ValueError` for a relative path or a
+    `.`/`..` component (they would change meaning with links), or a name `check_name` refuses."""
+    return host().split(path)
+
+
+__all__ = [
+    "CHUNK",
+    "AclEntry",
+    "Caps",
+    "DirHandle",
+    "EntryStat",
+    "FileSystem",
+    "FoldRule",
+    "FolderId",
+    "FolderMark",
+    "Kind",
+    "LegacyAbsent",
+    "LegacyHeld",
+    "LegacyLocks",
+    "Lock",
+    "MalformedPathError",
+    "NotOffered",
+    "Resolved",
+    "Right",
+    "check_name",
+    "fold",
+    "folder_id",
+    "same_folder",
+    "same_identity",
+    "same_path",
+    "split_absolute",
+]

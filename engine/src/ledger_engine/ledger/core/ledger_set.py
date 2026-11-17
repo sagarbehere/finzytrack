@@ -39,13 +39,14 @@ from __future__ import annotations
 import glob
 import hashlib
 import json
-import posixpath
 import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from decimal import Decimal
 from itertools import pairwise
 from typing import Final, cast
+
+from ledger_engine.fs.pathmodel import host
 
 ENCODING_VERSION: Final = 2
 """2 since S0099 (the `modules` part, BL-0124); a stamp of version 1 does not decode, so its generation is not fresh and
@@ -364,5 +365,5 @@ def as_before(loaded: Fingerprint, pre: Mapping[str, str | None]) -> Fingerprint
         (p, (Absent() if pre[p] is None else Content(cast(str, pre[p]))) if p in pre else s) for p, s in loaded.files
     )
     created = {p for p, h in pre.items() if h is None}
-    globs = tuple((g, () if not glob.has_magic(g) and posixpath.normpath(g) in created else m) for g, m in loaded.globs)
+    globs = tuple((g, () if not glob.has_magic(g) and host().normpath(g) in created else m) for g, m in loaded.globs)
     return Fingerprint(loaded.root, files, globs, loaded.documents, loaded.document_files, loaded.modules)

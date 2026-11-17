@@ -36,11 +36,11 @@ from __future__ import annotations
 
 import errno
 import gc
-import posixpath
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from typing import Final, Literal, Protocol
 
+from ledger_engine.fs.pathmodel import host
 from ledger_engine.fs.port import FileSystem
 from ledger_engine.fs.this_os import for_this_os
 from ledger_engine.ledger import beancount_port as port
@@ -151,7 +151,10 @@ def _listed(observed: Fingerprint) -> frozenset[str]:
     """Every file a documents root's listing named in `observed`, by the name `os.walk` joins to the root's own string
     (`root/...`), the same join Beancount's documents step makes for the `Document` entries it creates (S0070 r1 F1)."""
     return frozenset(
-        posixpath.join(root, name) for root, listing in observed.documents if listing is not None for name, _ in listing
+        host().joinpath(root, name)
+        for root, listing in observed.documents
+        if listing is not None
+        for name, _ in listing
     )
 
 

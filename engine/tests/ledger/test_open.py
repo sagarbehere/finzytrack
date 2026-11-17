@@ -42,7 +42,7 @@ pytestmark = [
     pytest.mark.inv("INV-05"),
     pytest.mark.inv("INV-30"),
     pytest.mark.skipif(
-        sys.platform not in ("darwin", "linux"), reason="the write path's port: macOS and Linux; Windows is BL-0087"
+        sys.platform not in ("darwin", "linux"), reason="the write path's port: macOS and Linux; Windows is BL-0280"
     ),
 ]
 

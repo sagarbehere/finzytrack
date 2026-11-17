@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import argparse
 import os
-import resource
 import sys
 import time
 from datetime import date
@@ -56,8 +55,11 @@ def main() -> int:
             f" load {t1 - t0:.2f}s rows {t2 - t1:.2f}s build (rows + write) {t3 - t2:.2f}s"
             f" file {out.stat().st_size / 1e6:.1f} MB\n"
         )
-    peak = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
-    sys.stdout.write(f"peak RSS {peak / (1e6 if sys.platform == 'darwin' else 1e3):.0f} MB\n")
+    if sys.platform != "win32":  # `resource` is POSIX only (S0127): Windows prints no peak
+        import resource
+
+        peak = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+        sys.stdout.write(f"peak RSS {peak / (1e6 if sys.platform == 'darwin' else 1e3):.0f} MB\n")
     return 0
 
 

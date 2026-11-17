@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import errno
 import os
-import resource
 import sys
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -36,6 +35,7 @@ from ledger_engine.ledger.writer import Change, sha256
 from tests.fakes.memfs import Crash, MemFS
 from tests.ledger.worlds import with_folders
 from tests.mirror.fake_store import FakeStore, outside_publish
+from tests.windows_pending import BL_0280
 
 pytestmark = [pytest.mark.inv("INV-32"), pytest.mark.inv("INV-27")]
 
@@ -1003,11 +1003,15 @@ def _free_descriptors_limit(free: int) -> int:
 
 
 @pytest.mark.skipif(
-    sys.platform not in ("darwin", "linux"), reason="the write path's port: macOS and Linux; Windows is BL-0087"
+    sys.platform not in ("darwin", "linux"), reason="the write path's port: macOS and Linux; Windows is BL-0280"
 )
 def test_a_long_backlog_is_trimmed_in_one_pass_under_a_low_descriptor_limit(tmp_path: Path) -> None:
     """Verifier F3: each save's folder handles are released before the next save, so descriptors stay bounded per
     save (a macOS app's soft limit is 256). 7687fadc held one per backups folder until the trim ended."""
+    if sys.platform == "win32":
+        raise pytest.skip.Exception(BL_0280)
+    import resource  # POSIX only
+
     jd, bd = tmp_path / "local" / "k1" / "journal", tmp_path / "local" / "k1" / "backups"
     jd.mkdir(parents=True)
     bd.mkdir(parents=True)
@@ -1017,7 +1021,7 @@ def test_a_long_backlog_is_trimmed_in_one_pass_under_a_low_descriptor_limit(tmp_
         (bd / tag(i)).mkdir()
         (bd / tag(i) / "0-a.bean").write_bytes(b"x")
         os.utime(jd / f"{tag(i)}.closed", ns=(10**9 * (i + 1), 10**9 * (i + 1)))
-    from ledger_engine.fs.this_os import for_this_os  # macOS only until BL-0087
+    from ledger_engine.fs.this_os import for_this_os  # macOS and Linux until BL-0280
 
     soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
     resource.setrlimit(resource.RLIMIT_NOFILE, (_free_descriptors_limit(40), hard))

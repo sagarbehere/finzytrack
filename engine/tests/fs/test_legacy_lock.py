@@ -17,6 +17,10 @@ import pytest
 
 from ledger_engine.fs.port import LegacyAbsent, LegacyHeld
 from ledger_engine.fs.this_os import legacy_locks_for_this_os
+from tests.windows_pending import BL_0280
+
+if sys.platform == "win32":
+    raise pytest.skip.Exception(BL_0280, allow_module_level=True)
 
 pytestmark = [
     pytest.mark.inv("INV-26"),

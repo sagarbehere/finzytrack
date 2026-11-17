@@ -82,6 +82,7 @@ from typing import IO, Any, Final, Protocol
 from pydantic import BaseModel, ConfigDict, ValidationError
 
 from ledger_engine.fs import this_os
+from ledger_engine.fs.pathmodel import host
 from ledger_engine.fs.port import same_identity
 from ledger_engine.protocol import app_folder
 from ledger_engine.protocol.app_folder import AppFolderChangedError, Identity, parse_identity
@@ -325,6 +326,8 @@ def _child(params: Message, _: JobContext) -> Message:
     """A stand-in for a plugin's child process holding a lock: the engine takes a `flock` on `lock` and starts
     a child that inherits the descriptor (so it holds the lock too) and sleeps."""
     assert isinstance(params, LockParams)  # noqa: S101 (the handler's own params model)
+    if sys.platform == "win32":  # TODO(BL-0281): a child holding the engine lock on Windows (`LockFileEx`)
+        raise OSError(errno.ENOTSUP, "the lock-holding child is POSIX only")
     import fcntl  # POSIX only (test op)
 
     fd = os.open(params.lock, os.O_RDWR | os.O_CREAT, 0o600)
@@ -624,8 +627,8 @@ def hold_engine_lock(path: str, identity: Identity) -> None:
     start (S0100, BL-0163 (a): nothing of ours writes in or above the app folder's parent). The app folder is opened
     first and must still be the object of the start (`identity`, S0102, BL-0244); `locks/` and the lock file are made
     through that descriptor, so a folder removed or put in its place since gets nothing (`AppFolderChangedError`)."""
-    if os.name != "posix":  # pragma: no cover (Windows)
-        return  # TODO(BL-0087): the Windows lock (LockFileEx), with the engine's nested Job Object.
+    if sys.platform == "win32":  # pragma: no cover (Windows)
+        return  # TODO(BL-0280): the Windows lock (LockFileEx), with the engine's nested Job Object (BL-0281).
     import fcntl  # POSIX only
 
     folder = app_folder.folder_of_lock(path)
@@ -710,7 +713,7 @@ def end_own_group(code: int) -> None:
     signal: with the sidecar alive its drain follows (`app.platform.adapters.engine_group`); with the sidecar gone
     nothing does, and on macOS a child forked in that instant can survive (engine-jobs §15, BL-0194)."""
     sys.stderr.flush()
-    if leads_own_group():
+    if sys.platform != "win32" and leads_own_group():  # TODO(BL-0281): the Job Object on Windows
         os.killpg(0, signal.SIGKILL)
     os._exit(code)
 
@@ -754,7 +757,7 @@ def _identity(text: str) -> Identity:
 
 
 def _absolute(text: str) -> str:
-    if not text.startswith("/"):
+    if not host().is_absolute(text):
         msg = f"{text} is not an absolute path"
         raise argparse.ArgumentTypeError(msg)
     return text

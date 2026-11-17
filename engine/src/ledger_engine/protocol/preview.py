@@ -19,6 +19,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Final, Protocol
 
+from ledger_engine.fs.pathmodel import host
 from ledger_engine.fs.this_os import for_this_os
 from ledger_engine.ledger import contract, preview
 from ledger_engine.ledger.core.ledger_set import encode
@@ -39,7 +40,7 @@ class PreviewJob(Publisher, Protocol):
 
 def _abs(path: str | None) -> str | None:
     """A path the answer may name (`AbsPath`): a refusal's subject can be a plugin's name, which is not one."""
-    return path if path is not None and path.startswith("/") else None
+    return path if path is not None and host().is_absolute(path) else None
 
 
 def _line(line: int | None) -> int | None:

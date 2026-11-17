@@ -399,7 +399,7 @@ def one_run(
         (copy / rel).write_text(text, encoding="utf-8", newline="")
     copy = copy.resolve()
     root, latest = copy / root_name, copy / layout.latest
-    result["load_average"] = round(os.getloadavg()[0], 2)
+    result["load_average"] = None if sys.platform == "win32" else round(os.getloadavg()[0], 2)  # POSIX only
     jobs.tickets = []
     stops.clear()
     sampler.reset()

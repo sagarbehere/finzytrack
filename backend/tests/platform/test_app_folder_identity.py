@@ -43,11 +43,16 @@ from app.platform.engine_jobs.queue import (
 )
 from app.platform.engine_jobs.text import unavailable_text
 from app.platform.errors import EngineUnavailableDetails
-from tests.platform.test_engine_client import ENGINE_VENV
 from tests.platform.test_engine_queue import W1, run, submit, switch_job
+from tests.windows_pending import BL_0281
+
+if sys.platform == "win32":
+    raise pytest.skip.Exception(BL_0281, allow_module_level=True)
+
+from tests.platform.test_engine_client import ENGINE_VENV
 
 pytestmark = pytest.mark.skipif(
-    sys.platform not in ("darwin", "linux"), reason="the app folder's identity: macOS and Linux; Windows is BL-0087"
+    sys.platform not in ("darwin", "linux"), reason="the app folder's identity: macOS and Linux; Windows is BL-0281"
 )
 
 

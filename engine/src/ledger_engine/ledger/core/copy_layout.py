@@ -29,6 +29,11 @@ as written in its error for a glob that matches nothing, so a rewrite reports ea
 (`Rewritten.quoted`) for that comparison to map back (S0081 r1 F4).
 
 `back` maps a path in the copy back to the source's place, for that comparison.
+
+**Paths per OS** (S0127): the source's paths are absolute in the OS's own form and are taken apart with its path
+model (`ledger_engine.fs.pathmodel`); every relative path here (a place in the copy, a rewritten text) uses `/` on
+every OS, as a plan's relative paths do. On Windows a relative `include` written with `\\` is compared in its `/`
+form, and a line that must be rewritten but holds a `\\` is refused as above.
 """
 
 from __future__ import annotations
@@ -39,6 +44,8 @@ import unicodedata
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from typing import Final
+
+from ledger_engine.fs.pathmodel import host
 
 OUTSIDE: Final = "outside"
 DOCUMENTS: Final = "documents"
@@ -84,7 +91,10 @@ class Refusal:
 
 def norm_path(p: str) -> str:
     """An absolute path as one file has one name: `.` and `..` resolved by text, and a leading `//` made `/` (POSIX
-    keeps it; Beancount keeps an absolute `document` path exactly as written, r2 F3)."""
+    keeps it; Beancount keeps an absolute `document` path exactly as written, r2 F3); on Windows its normal form
+    (`PathModel.normpath`)."""
+    if host().sep != "/":
+        return host().normpath(p)
     out = posixpath.normpath(p)
     return "/" + out.lstrip("/") if out.startswith("//") else out
 
@@ -97,14 +107,22 @@ def lines_of(data: bytes) -> list[bytes]:
 
 
 def _under(folder: str, p: str) -> str | None:
-    """`p` relative to `folder` ("" for the folder itself), or None when it is not under it."""
-    if folder == "/":
+    """`p` relative to `folder` ("" for the folder itself), with `/`, or None when it is not under it."""
+    sep = host().sep
+    if folder == "/" and sep == "/":
         return p[1:]
     if p == folder:
         return ""
-    if p.startswith(folder + "/"):
-        return p[len(folder) + 1 :]
+    prefix = folder if folder.endswith(sep) else folder + sep
+    if p.startswith(prefix):
+        return _slashed(p[len(prefix) :])
     return None
+
+
+def _slashed(rel: str) -> str:
+    """A relative path in this OS's form with `/` (the same text on macOS and Linux)."""
+    sep = host().sep
+    return rel if sep == "/" else rel.replace(sep, "/")
 
 
 def _fold(name: str) -> str:
@@ -114,11 +132,18 @@ def _fold(name: str) -> str:
 def literal_folder(pattern: str) -> str:
     """The folder of a glob pattern before its first component with a wildcard (the pattern's own folder when it has
     none)."""
-    parts = pattern.split("/")
+    m = host()
+    if m.sep == "/":
+        parts = pattern.split("/")
+        for i, part in enumerate(parts):
+            if _MAGIC.search(part):
+                return "/".join(parts[:i]) or "/"
+        return posixpath.dirname(pattern) or "/"
+    parts = pattern.split(m.sep)
     for i, part in enumerate(parts):
         if _MAGIC.search(part):
-            return "/".join(parts[:i]) or "/"
-    return posixpath.dirname(pattern) or "/"
+            return m.dirname(m.sep.join(parts[:i]) + m.sep + "x")  # a root kept whole (`C:\\`, `\\\\s\\sh\\`)
+    return m.dirname(pattern)
 
 
 def _free(name: str, used: set[str]) -> str:
@@ -133,12 +158,12 @@ def _free(name: str, used: set[str]) -> str:
 
 def _common(folders: Iterable[str]) -> str | None:
     folders = list(folders)
-    return posixpath.commonpath(folders) if folders else None
+    return host().commonpath(folders) if folders else None
 
 
 def layout(src: SourceSet) -> Layout:
     """The module's docstring: B, the moved documents roots, then the outside files' folder."""
-    base = posixpath.dirname(src.root) or "/"
+    base = host().dirname(src.root) or "/"
     used: set[str] = set()
     inside_paths = [
         *src.files,
@@ -146,7 +171,7 @@ def layout(src: SourceSet) -> Layout:
         *src.documents,
         *src.document_files,
         *src.listed,
-        *(literal_folder(posixpath.normpath(g)) for g in src.globs),
+        *(literal_folder(host().normpath(g)) for g in src.globs),
     ]
     for p in inside_paths:
         rel = _under(base, p)
@@ -162,14 +187,12 @@ def layout(src: SourceSet) -> Layout:
         return any(_under(m, p) is not None for m in moved)
 
     outside = [
-        posixpath.dirname(p)
+        host().dirname(p)
         for p in (*src.files, *src.missing, *src.document_files)
         if _under(base, p) is None and not placed_by_move(p)
     ]
     outside += [
-        f
-        for g in src.globs
-        if _under(base, f := literal_folder(posixpath.normpath(g))) is None and not placed_by_move(f)
+        f for g in src.globs if _under(base, f := literal_folder(host().normpath(g))) is None and not placed_by_move(f)
     ]
     a = _common(outside)
     if a is not None:
@@ -195,16 +218,17 @@ def back(lay: Layout, target: str) -> tuple[re.Pattern[str], dict[str, str]]:
     """The mapping from paths in the copy (in its folder `target`) back to the source's places, as one pattern and
     its replacements: every occurrence is replaced in one pass, longest first, so nothing is replaced twice
     (`loads_same`)."""
-    t = target.rstrip("/")
+    s = host().sep
+    t = target.rstrip(s)
     table: dict[str, str] = {}
     for src, dst in lay.moves:
-        table[f"{t}/{dst}/"] = src.rstrip("/") + "/"
-        table[f"{t}/{dst}"] = src  # the moved folder itself (a documents root, `pythonpath`)
-    table[f"{t}/"] = lay.base.rstrip("/") + "/"
+        table[f"{t}{s}{dst}{s}"] = src.rstrip(s) + s
+        table[f"{t}{s}{dst}"] = src  # the moved folder itself (a documents root, `pythonpath`)
+    table[f"{t}{s}"] = lay.base.rstrip(s) + s
     table[t] = lay.base
     # A key without its slash names a whole folder: it must not be followed by more of a name (`documents` is not
     # the start of `documentsX`).
-    parts = [re.escape(k) + ("" if k.endswith("/") else _END) for k in sorted(table, key=len, reverse=True)]
+    parts = [re.escape(k) + ("" if k.endswith(s) else _END) for k in sorted(table, key=len, reverse=True)]
     return re.compile("|".join(parts)), table
 
 
@@ -219,25 +243,27 @@ def _relative(to: str, start_folder: str) -> str:
 def _new_include(lay: Layout, source_file: str, s: str) -> str | None:
     """The new text of `include "s"` in `source_file`, or None when the line stays as it is. Raises `LookupError`
     when the include has no place in the copy."""
-    search = s if s.startswith("/") else posixpath.join(posixpath.dirname(source_file), s)
-    to = place(lay, posixpath.normpath(search))
+    m = host()
+    search = s if m.is_absolute(s) else m.joinpath(m.dirname(source_file), s)
+    to = place(lay, m.normpath(search))
     here = place(lay, source_file)
     if to is None or here is None:
         raise LookupError(s)
     new = _relative(to, posixpath.dirname(here))
-    if not s.startswith("/") and posixpath.normpath(s) == new:
+    if not m.is_absolute(s) and posixpath.normpath(_slashed(s)) == new:
         return None
     return new
 
 
 def _new_documents(lay: Layout, root_file: str, v: str) -> str | None:
     """The new value of the root's `option "documents" "v"`, or None when the line stays. `LookupError` as above."""
-    resolved = posixpath.normpath(v if v.startswith("/") else posixpath.join(posixpath.dirname(root_file), v))
+    m = host()
+    resolved = m.normpath(v if m.is_absolute(v) else m.joinpath(m.dirname(root_file), v))
     to = place(lay, resolved)
     if to is None:
         raise LookupError(v)
     new = to or "."
-    if not v.startswith("/") and posixpath.normpath(v) == new:
+    if not m.is_absolute(v) and posixpath.normpath(_slashed(v)) == new:
         return None
     return new
 
@@ -263,14 +289,15 @@ class Rewritten:
 def _new_document(lay: Layout, source_file: str, raw: str, resolved: str) -> str | None:
     """The new text of a `document` directive's `"raw"` (Beancount resolved it to `resolved`), or None when it stays.
     Raises `LookupError` when the text does not name that file or the file has no place in the copy."""
-    named = norm_path(raw if raw.startswith("/") else posixpath.join(posixpath.dirname(source_file), raw))
+    m = host()
+    named = norm_path(raw if m.is_absolute(raw) else m.joinpath(m.dirname(source_file), raw))
     resolved = norm_path(resolved)
     to = place(lay, resolved)
     here = place(lay, source_file)
     if named != resolved or to is None or here is None:
         raise LookupError(raw)
     new = _relative(to, posixpath.dirname(here))
-    if not raw.startswith("/") and posixpath.normpath(raw) == new:
+    if not m.is_absolute(raw) and posixpath.normpath(_slashed(raw)) == new:
         return None
     return new
 

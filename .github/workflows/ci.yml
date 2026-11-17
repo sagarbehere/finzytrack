@@ -210,7 +210,12 @@ jobs:
           [System.Environment]::OSVersion.VersionString
           .venv\Scripts\python.exe scripts\probe_windows_fs.py $env:RUNNER_TEMP $env:TEMP @vols
       - name: tests
-        run: .venv\Scripts\python.exe -m pytest -q -p no:cacheprovider
+        # INV-07 on Windows (S0127): its C runtime reads TZ only as a process starts and only in this form, so it is set
+        # before Python starts (Los Angeles: tests/conftest.py checks it). `-rs`: each skip prints its reason, the
+        # backlog item that turns it on (tests/windows_pending.py).
+        env:
+          TZ: PST8PDT
+        run: .venv\Scripts\python.exe -m pytest -q -rs -p no:cacheprovider
   frontend:
     # The Vue frontend (S0009; ARCHITECTURE.md §3, §10; ADR-0053): types, lint, format, unit tests (incl. the
     # pinned tsconfig and the lint bans), unused code, and the Playwright flows through the acceptance harness (S0030).

@@ -62,12 +62,13 @@ from collections.abc import Callable
 from typing import Final, override
 
 from ledger_engine.fs.port import AclEntry, Caps, FolderMark, FoldRule, NotOffered, Right, check_name, split_absolute
-from ledger_engine.fs.posix import PosixDir, PosixFS, PosixLegacyLocks
 
 # The one statement of this module's platform (not an `assert`, which `-O` strips): elsewhere the import fails, and
 # pyright checks the rest of the module for Linux only (`--pythonplatform`; S0113).
 if sys.platform != "linux":
     raise ImportError("the Linux adapter; select one with ledger_engine.fs.this_os")  # noqa: TRY003 (one raise site)
+
+from ledger_engine.fs.posix import PosixDir, PosixFS, PosixLegacyLocks
 
 RENAME_NOREPLACE: Final = 1
 RENAME_EXCHANGE: Final = 2

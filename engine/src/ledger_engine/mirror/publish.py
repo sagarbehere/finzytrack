@@ -37,6 +37,7 @@ from dataclasses import dataclass
 from datetime import date
 from typing import Final, Literal, Protocol
 
+from ledger_engine.fs.pathmodel import host
 from ledger_engine.fs.port import DirHandle, FileSystem, Kind, check_name, split_absolute
 from ledger_engine.ledger.beancount_port import ParseResult
 from ledger_engine.ledger.core import paths as core_paths
@@ -176,7 +177,8 @@ class Store(Protocol):
 
 
 def _join(*parts: str) -> str:
-    return "/".join([parts[0].rstrip("/"), *parts[1:]]) or "/"
+    sep = host().sep
+    return sep.join([parts[0].rstrip(sep), *parts[1:]]) or sep
 
 
 def _parent_path(app_cache: str, key: str) -> str:
@@ -199,9 +201,10 @@ def open_folder(fs: FileSystem, app_cache: str, key: str) -> DirHandle:
     the folder is made if missing (mode 0700) and its parent synced; then one handle on it, never through a link (if a
     link took its place meanwhile, the open fails and the job ends: §11 "Limit (link swapped in)")."""
     parent_path = _parent_path(app_cache, key)
-    above, _, name = app_cache.rstrip("/").rpartition("/")
+    trimmed = host().trim(app_cache)
+    above, name = ("", "") if host().is_root_path(trimmed) else host().parent_and_name(trimmed)
     if name:  # the app's cache folder itself may have been purged by the OS (§9): made again
-        _ensure(fs, above or "/", name)
+        _ensure(fs, above, name)
     _ensure(fs, app_cache, WORKSPACES)
     _ensure(fs, _join(app_cache, WORKSPACES), key)
     with fs.open_dir(parent_path) as parent:

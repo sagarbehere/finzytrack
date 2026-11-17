@@ -40,11 +40,11 @@ anything is read.
 from __future__ import annotations
 
 import gc
-import posixpath
 import unicodedata
 from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass, field
 
+from ledger_engine.fs.pathmodel import host
 from ledger_engine.fs.port import FileSystem, LegacyAbsent, LegacyHeld, LegacyLocks, Lock
 from ledger_engine.ledger import beancount_port as port
 from ledger_engine.ledger import copy_check, create, fingerprint, fresh_load, loads_same, overlay
@@ -116,7 +116,7 @@ class CopyPorts:
 
 
 def _absolute(p: str, what: str) -> None:
-    if not p.startswith("/") or p == "/" or posixpath.normpath(p) != p or "\0" in p:
+    if not host().is_absolute(p) or host().is_root_path(p) or host().normpath(p) != p or "\0" in p:
         raise BadPlanError(what)
 
 
@@ -179,7 +179,7 @@ class _CopySteps:
             if _in(self._key(legacy_root), target):
                 raise Stop("cannot_place", legacy_root, "inside_legacy")
         self._locks()
-        root = posixpath.normpath(self.plan.source)
+        root = host().normpath(self.plan.source)
         loaded = self._load_source(root)
         fp = loaded.fingerprint
         self.own_plugins = tuple(
@@ -198,7 +198,7 @@ class _CopySteps:
                 raise Stop("cannot_place", root_folder, "inside_documents")
         named = (
             *files,
-            *(cl.literal_folder(posixpath.normpath(g)) for g, _ in fp.globs),
+            *(cl.literal_folder(host().normpath(g)) for g, _ in fp.globs),
             *(p for p, _ in fp.document_files),
         )
         for p in named:  # a path the ledger names inside the new folder would read the copy (r2 F5)
@@ -406,7 +406,7 @@ class _CopySteps:
         copied = result.summary
         diff = loads_same.first_difference(self.summary, copied)
         if diff is not None:
-            where = diff.path if diff.path is not None and diff.path.startswith("/") else None  # not `<plugin>`
+            where = diff.path if diff.path is not None and host().is_absolute(diff.path) else None  # not `<plugin>`
             if self.own_plugins:  # their code is not copied (BL-0202): the likely cause, said
                 raise Stop("plugin_modules", where, self.own_plugins[0])
             raise Stop("load_differs", where, diff.what if diff.line is None or where is None else str(diff.line))
@@ -438,7 +438,7 @@ def _same(s: str) -> str:
 
 
 def _in(folder: str, p: str) -> bool:
-    return p == folder or p.startswith(folder.rstrip("/") + "/")
+    return host().is_under(p, folder)
 
 
 def _fold(name: str) -> str:

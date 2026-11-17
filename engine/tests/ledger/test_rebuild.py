@@ -35,11 +35,15 @@ from ledger_engine.ledger.policy import DesktopPolicy
 from ledger_engine.mirror import publish as pb
 from ledger_engine.mirror.store import SqliteStore
 from tests.mirror.publish_support import BUILT_AT, ENGINE_BUILD, KEY, TODAY, fs_now, meta
+from tests.windows_pending import BL_0280
+
+if sys.platform == "win32":
+    raise pytest.skip.Exception(BL_0280, allow_module_level=True)
 
 pytestmark = [
     pytest.mark.inv("INV-22"),
     pytest.mark.skipif(
-        sys.platform not in ("darwin", "linux"), reason="the write path's port: macOS and Linux; Windows is BL-0087"
+        sys.platform not in ("darwin", "linux"), reason="the write path's port: macOS and Linux; Windows is BL-0280"
     ),
 ]
 

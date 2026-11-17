@@ -25,11 +25,16 @@ import pytest
 from tests.mirror.support import build_loaded, load_root
 from tests.mirror.test_inv21 import INSTALL_GOLDENS, copy_install, first_difference, golden_postings, snapshot
 from tests.mirror.test_inv21 import mirror_postings as copy_postings
+from tests.windows_pending import BL_0280
+
+if sys.platform == "win32":
+    raise pytest.skip.Exception(BL_0280, allow_module_level=True)
+
 from tests.test_copy_ops import copy, params
 
 pytestmark = [
     pytest.mark.skipif(
-        sys.platform not in ("darwin", "linux"), reason="the write path's port: macOS and Linux; Windows is BL-0087"
+        sys.platform not in ("darwin", "linux"), reason="the write path's port: macOS and Linux; Windows is BL-0280"
     ),
     pytest.mark.inv("INV-21"),
     pytest.mark.inv("INV-26"),

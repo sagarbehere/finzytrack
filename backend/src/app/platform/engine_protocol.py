@@ -16,10 +16,11 @@ from __future__ import annotations
 
 import json
 import re
+import sys
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from decimal import Decimal
-from typing import Any, cast
+from typing import Any, Final, cast
 
 from app.platform.engine import (
     PHASES,
@@ -341,10 +342,23 @@ def _name(value: object, what: str) -> str:
     return value
 
 
+_WINDOWS_ABSOLUTE: Final = re.compile(r"^(?:[A-Za-z]:[\\/]|[\\/]{2}(?:[^.\\/]|[.][^\\/]))")
+
+
+def is_absolute(value: str, platform: str = sys.platform) -> bool:
+    """Whether `value` is an absolute path of the OS `platform` names, as the engine there sends it (S0127): `/...` on
+    macOS and Linux; on Windows a drive (`C:\\...`) or UNC (`\\\\server\\share...`, `\\\\?\\...`) path, never a
+    device path (`\\\\.\\`). The engine's own rule is its path model (`ledger_engine.fs.pathmodel`); the contract
+    states both spellings."""
+    if platform != "win32":
+        return value.startswith("/")
+    return _WINDOWS_ABSOLUTE.match(value) is not None
+
+
 def _path(value: object, what: str, *, nullable: bool = False) -> str | None:
     if value is None and nullable:
         return None
-    if not isinstance(value, str) or not value.startswith("/"):
+    if not isinstance(value, str) or not is_absolute(value):
         msg = f"{what} must be an absolute path"
         raise _Bad(msg)
     return value

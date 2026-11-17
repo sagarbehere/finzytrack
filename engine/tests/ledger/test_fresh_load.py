@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import os
 import signal
+import sys
 import threading
 from pathlib import Path
 
@@ -22,6 +23,10 @@ import pytest
 from ledger_engine.ledger import fresh_load
 from ledger_engine.ledger.copy_check import CheckRequest, CheckResult
 from ledger_engine.ledger.core import copy_layout as cl
+from tests.windows_pending import BL_0281
+
+if sys.platform == "win32":
+    raise pytest.skip.Exception(BL_0281, allow_module_level=True)
 
 LEDGER = "2026-01-01 open Assets:Cash EUR\n2026-01-02 open Income:Pay EUR\n"
 HEAD = "__plugins__ = ['run']\n"

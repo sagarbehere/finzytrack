@@ -5,6 +5,7 @@ a real volume without the swap (ADR-0068 D2), so each OS runs the same checks on
 from __future__ import annotations
 
 import os
+import sys
 from pathlib import Path
 
 import pytest
@@ -12,11 +13,14 @@ import pytest
 from ledger_engine.fs.port import FileSystem, FolderId
 from ledger_engine.fs.this_os import folder_identity
 from ledger_engine.ledger.writer import Change, Commit, Landed, durable_commit, sha256
+from tests.windows_pending import BL_0280
 
 
 def app_identity(path: Path) -> FolderId:
     """The app folder's identity as the sidecar records it at start (`this_os.folder_identity`: with the creation
     time on Linux, BL-0262, S0125); the sidecar's own computation is tested in the backend."""
+    if sys.platform == "win32":
+        raise pytest.skip.Exception(BL_0280)
     fd = os.open(path, os.O_RDONLY | os.O_DIRECTORY)
     try:
         return folder_identity(fd)

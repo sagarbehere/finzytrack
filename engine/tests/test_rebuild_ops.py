@@ -20,7 +20,7 @@ from tests.test_save_ops import setup as setup  # the fixture, shared
 
 pytestmark = [
     pytest.mark.skipif(
-        sys.platform not in ("darwin", "linux"), reason="the write path's port: macOS and Linux; Windows is BL-0087"
+        sys.platform not in ("darwin", "linux"), reason="the write path's port: macOS and Linux; Windows is BL-0280"
     ),
     pytest.mark.inv("INV-22"),
 ]

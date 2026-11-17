@@ -10,7 +10,6 @@ journal folders.
 
 from __future__ import annotations
 
-import fcntl
 import hashlib
 import json
 import os
@@ -26,10 +25,16 @@ import pytest
 from ledger_engine.ledger.writer import Change, Commit, Landed, durable_commit
 from ledger_engine.protocol.server import Engine
 from tests.fs.real_volume import app_identity, app_identity_text
+from tests.windows_pending import BL_0280
+
+if sys.platform == "win32":
+    raise pytest.skip.Exception(BL_0280, allow_module_level=True)
+
+import fcntl
 
 pytestmark = [
     pytest.mark.skipif(
-        sys.platform not in ("darwin", "linux"), reason="the write path's port: macOS and Linux; Windows is BL-0087"
+        sys.platform not in ("darwin", "linux"), reason="the write path's port: macOS and Linux; Windows is BL-0280"
     ),
     pytest.mark.inv("INV-32"),
 ]

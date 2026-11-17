@@ -15,6 +15,7 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Final, Literal
 
+from ledger_engine.fs.pathmodel import host
 from ledger_engine.fs.port import AclEntry, DirHandle, EntryStat, FileSystem, FolderMark, Kind, NotOffered, Right
 from ledger_engine.ledger.core.journal import FS_TYPE, MAX_KEPT, FolderEntry, kept_name
 
@@ -24,7 +25,8 @@ def sha256(data: bytes) -> str:
 
 
 def join(parent: str, name: str) -> str:
-    return "/" + name if parent == "/" else f"{parent}/{name}"
+    """The path of `name` (or a plan's relative path, with `/`) in the folder `parent`, in this OS's form."""
+    return host().child(parent, name)
 
 
 class PathMovedError(Exception):
@@ -158,16 +160,16 @@ class Handles:
 
     def _below(self, canonical: str) -> bool:
         root = self.confined
-        return root is not None and (canonical == root or canonical.startswith(root.rstrip("/") + "/"))
+        return root is not None and host().is_under(canonical, root)
 
     def _open(self, canonical: str) -> DirHandle:
         if not self._below(canonical):
             return self.fs.open_dir(canonical)
         if canonical == self.confined:
             raise PathMovedError(canonical)  # its handle is opened once, checked by the caller, and kept
-        parent, _, name = canonical.rpartition("/")
+        parent, name = host().parent_and_name(canonical)
         try:
-            return self.at(parent or "/").open_child(name)
+            return self.at(parent).open_child(name)
         except OSError as e:
             if e.errno in (errno.ELOOP, errno.ENOTDIR):  # O_NOFOLLOW: a link, or a file, stands at that name
                 raise LinkedPathError(canonical, link=e.errno == errno.ELOOP) from None

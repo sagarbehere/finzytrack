@@ -63,6 +63,7 @@ from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from typing import Final, Literal, Protocol
 
+from ledger_engine.fs.pathmodel import host
 from ledger_engine.fs.port import DirHandle, FileSystem, Kind, MalformedPathError, check_name
 from ledger_engine.ledger import beancount_port as port
 from ledger_engine.ledger import fingerprint, overlay
@@ -219,7 +220,7 @@ def _check_files(files: tuple[NewFile, ...], *, top_reserved: bool) -> None:
     dirs: set[str] = set()
     for f in files:
         p = f.path
-        if not p or p.startswith("/") or posixpath.normpath(p) != p:
+        if not p or p.startswith("/") or posixpath.normpath(p) != p:  # a plan's relative path: `/` on every OS
             raise BadPlanError("file_path")
         try:
             parts = [check_name(c) for c in p.split("/")]
@@ -245,7 +246,7 @@ def check_base(plan: CreatePlan) -> None:
     if not JOB.fullmatch(plan.job):
         raise BadPlanError("job_name")
     t = plan.target
-    if not t.startswith("/") or t == "/" or posixpath.normpath(t) != t or "\0" in t:
+    if not host().is_absolute(t) or host().is_root_path(t) or host().normpath(t) != t or "\0" in t:
         raise BadPlanError("target")
     _check_files(plan.manifest, top_reserved=False)
     if any(not isinstance(f.data, bytes) for f in plan.manifest):
@@ -430,8 +431,8 @@ class Run:
                     continue
                 h.sync()
             if self.made_target:  # its rmdir fails while anything is in it
-                parent, _, name = self.folder.rpartition("/")
-                ph = self.handles.at(parent or "/")
+                parent, name = host().parent_and_name(self.folder)
+                ph = self.handles.at(parent)
                 st = ph.stat(name)
                 if st is not None and self.target_identity is None:
                     kept.append(TARGET)  # not known as the job's: named, never removed
@@ -453,8 +454,7 @@ class Run:
         if len(r.rest) > 1:
             raise Stop("no_parent", core_paths.canonical_path(r))
         self.folder = core_paths.canonical_path(r)
-        parent, _, name = self.folder.rpartition("/")
-        parent = parent or "/"
+        parent, name = host().parent_and_name(self.folder)
         if r.rest:
             with self.fs.open_dir(parent) as h:
                 self._folder_rule(h, parent)
@@ -623,7 +623,7 @@ class Run:
 def _load_check(r: Run) -> None:
     """The create's load check (the module's docstring, step 5)."""
     r.job.progress("checking_change")
-    ours = {posixpath.normpath(join(r.folder, f.path)) for f in r.plan.files}
+    ours = {host().normpath(join(r.folder, f.path)) for f in r.plan.files}
     try:
         result = r.load(join(r.folder, r.plan.root))
     except Exception:  # noqa: BLE001 (the check could not run: an encrypted file met, a plugin, the disk)
@@ -631,7 +631,7 @@ def _load_check(r: Run) -> None:
     if result.errors:
         raise Stop("load_errors", detail=str(result.errors))
     for p in result.parsed:
-        if posixpath.normpath(p) not in ours:
+        if host().normpath(p) not in ours:
             raise Stop("load_outside", p)
 
 

@@ -26,6 +26,7 @@ from decimal import Decimal
 from enum import StrEnum
 from typing import Final, cast
 
+from ledger_engine.fs.pathmodel import host
 from ledger_engine.fs.port import FoldRule, check_name, fold, split_absolute
 
 FORMAT: Final = "finzytrack-save-journal"
@@ -155,7 +156,6 @@ def parse_file_name(file: str) -> tuple[str, State] | None:
 
 
 NAME_MAX: Final = 255  # bytes of one name (APFS, ext4, NTFS in UTF-16 units: at least this)
-_RULES: Final = tuple(FoldRule(nfd=n, casefold=c) for n in (False, True) for c in (False, True))
 
 
 def _short(name: str) -> str:
@@ -239,7 +239,7 @@ _KEPT_TAIL: Final = re.compile(r"(?:-[0-9]{1,3})?")
 def is_kept_name(entry: str, name: str, tag: str) -> bool:
     """`entry` is a kept name of the file `name` for the save `tag` (any number), compared after the widest folding,
     so a volume's own spelling of it still matches (more matches only stop more journals: fail closed)."""
-    wide = WIDE
+    wide = host().wide
     e = fold(entry, wide)
     for stem in (name, _short(name)):
         head = fold(f"{stem}.kept-{tag}", wide)
@@ -268,7 +268,7 @@ def backup_name(index: int, name: str) -> str:
 def _parts(path: str) -> tuple[str, ...]:
     """The components of an absolute path with no `.`, `..` or empty component, never the root alone."""
     parts = split_absolute(path)
-    if not parts:
+    if host().is_root(parts):
         raise BadRecordError("root")
     return parts
 
@@ -276,7 +276,7 @@ def _parts(path: str) -> tuple[str, ...]:
 def _key_folds(canonical: tuple[str, ...], key: tuple[str, ...]) -> bool:
     """The key folds from the canonical path, component by component, by one of the folding rules (§6.3)."""
     return len(canonical) == len(key) and all(
-        any(fold(c, r) == k for r in _RULES) for c, k in zip(canonical, key, strict=True)
+        any(fold(c, r) == k for r in host().rules) for c, k in zip(canonical, key, strict=True)
     )
 
 
@@ -298,8 +298,7 @@ def _volume(value: object) -> str:
 
 
 def _folder(canonical: str) -> str:
-    head = canonical.rpartition("/")[0]
-    return head or "/"
+    return host().parent_and_name(canonical)[0]
 
 
 def needed_folders(files: tuple[FileEntry, ...], created_dirs: tuple[DirEntry, ...]) -> list[str]:
@@ -356,22 +355,24 @@ def _str(value: object) -> str:
 
 def _abs(value: object) -> str:
     s = _str(value)
-    if not s.startswith("/"):
+    if not host().is_absolute(s):
         raise BadRecordError("absolute")
     return s
 
 
 WIDE: Final = FoldRule(nfd=True, casefold=True)
-"""The widest folding: two names a volume may treat as one are compared as one (a record does not say its volumes'
-rules, so recovery assumes the widest)."""
+"""The widest folding on macOS and Linux: two names a volume may treat as one are compared as one (a record does not
+say its volumes' rules, so recovery assumes the widest). Each OS's is its path model's `wide` (Windows adds ordinal
+upper case; S0127), which the record's checks use."""
 
 
 def _temps(record: Record, canonicals: list[tuple[str, ...]]) -> list[tuple[str, ...]]:
     """Every temp and staging name of the record's files (each file's temp, then each file's other scratch names in
     the files' order), folded the widest way."""
-    temps = [tuple(fold(c, WIDE) for c in (*fc[:-1], f.temp)) for fc, f in zip(canonicals, record.files, strict=True)]
+    wide = host().wide
+    temps = [tuple(fold(c, wide) for c in (*fc[:-1], f.temp)) for fc, f in zip(canonicals, record.files, strict=True)]
     temps += [
-        tuple(fold(c, WIDE) for c in (*fc[:-1], n)) for fc in canonicals for n in scratch_names(fc[-1], record.name)[1:]
+        tuple(fold(c, wide) for c in (*fc[:-1], n)) for fc in canonicals for n in scratch_names(fc[-1], record.name)[1:]
     ]
     return temps
 
@@ -434,7 +435,7 @@ def _check(record: Record) -> None:
     # every temp, staging name and restore temp is its own name, never a file's or a created folder's path, nor inside
     # one (S0060 red team r2 L1; the staging names, S0061 r3);
     # compared folded the widest way, so two names a volume may treat as one count as one
-    wide = WIDE
+    wide = host().wide
     taken = [tuple(fold(c, wide) for c in fc) for fc, _ in files]
     taken += [tuple(fold(c, wide) for c in _parts(d.canonical_path)) for d in record.created_dirs]
     temps = _temps(record, [fc for fc, _ in files])

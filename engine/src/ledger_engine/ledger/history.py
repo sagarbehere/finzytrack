@@ -40,6 +40,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Final
 
+from ledger_engine.fs.pathmodel import host
 from ledger_engine.fs.port import DirHandle, FileSystem, Kind
 from ledger_engine.ledger.core import history as core
 from ledger_engine.ledger.core import paths as core_paths
@@ -160,7 +161,7 @@ def trim(fs: FileSystem, app_local_data: str, workspace_key: str, current: str) 
     handles = Handles(fs)
     try:
         try:
-            r = fs.resolve(app_local_data.rstrip("/") or "/")
+            r = fs.resolve(host().trim(app_local_data))
             if r.rest:
                 return SKIPPED
             ald = core_paths.canonical_path(r)

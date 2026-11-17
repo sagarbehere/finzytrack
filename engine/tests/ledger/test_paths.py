@@ -21,6 +21,7 @@ from ledger_engine.fs.port import FileSystem, FoldRule, Resolved
 from ledger_engine.ledger.core import paths as core
 from ledger_engine.ledger.paths import canonical_path, identify, path_key
 from tests.fakes.memfs import MemFS
+from tests.macos_only import MACOS_ONLY
 
 pytestmark = pytest.mark.inv("INV-32")
 macos = pytest.mark.skipif(
@@ -64,6 +65,8 @@ class Real:
 
 @pytest.fixture
 def real(tmp_path: Path) -> Real:
+    if sys.platform != "darwin":
+        raise pytest.skip.Exception(MACOS_ONLY)
     from ledger_engine.fs.this_os import for_this_os
 
     if os.pathconf(tmp_path, 11) == 1:  # _PC_CASE_SENSITIVE

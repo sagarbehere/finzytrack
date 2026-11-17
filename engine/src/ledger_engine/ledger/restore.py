@@ -84,6 +84,7 @@ from __future__ import annotations
 import errno
 from dataclasses import dataclass
 
+from ledger_engine.fs.pathmodel import host
 from ledger_engine.fs.port import DirHandle, EntryStat, FileSystem, Kind, Right
 from ledger_engine.ledger.core import journal
 from ledger_engine.ledger.core import paths as core_paths
@@ -191,7 +192,7 @@ def _drives(handles: Handles, record: Record) -> None:
     folder the save made); one opened later is checked when it is opened. The outcome names the first file of the
     record in or under the folder (`handles.on`) and the folder (`handles.entry`)."""
     for folder in handles.folders:
-        inside = [f.canonical_path for f in record.files if f.canonical_path.startswith(folder.rstrip("/") + "/")]
+        inside = [f.canonical_path for f in record.files if host().is_under(f.canonical_path, folder, strict=True)]
         handles.on = next((p for p in inside if _parent(p)[0] == folder), inside[0] if inside else None)
         handles.entry = folder
         try:
@@ -254,8 +255,7 @@ class _Checked:
 
 
 def _parent(canonical: str) -> tuple[str, str]:
-    head, _, base = canonical.rpartition("/")
-    return head or "/", base
+    return host().parent_and_name(canonical)
 
 
 def _read(h: DirHandle, name: str, path: str) -> bytes | None:

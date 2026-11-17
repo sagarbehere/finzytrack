@@ -19,6 +19,7 @@ import json
 import os
 import random
 import shutil
+import sys
 from collections.abc import Callable
 from os import path
 from pathlib import Path
@@ -42,6 +43,7 @@ from ledger_engine.ledger.core.ledger_set import (
 from ledger_engine.ledger.fingerprint import chunks, file_state, observe, regular
 from ledger_engine.ledger.overlay import Loaded, load
 from ledger_engine.ledger.policy import DESKTOP
+from tests.windows_pending import NO_FIFO, NO_UID
 
 pytestmark = pytest.mark.inv("INV-22")
 
@@ -189,8 +191,11 @@ CHANGES: dict[str, Callable[[Path], None]] = {
 
 @pytest.mark.parametrize("change", sorted(CHANGES))
 def test_a_change_the_next_load_would_see_changes_the_fingerprint(change: str, tmp_path: Path) -> None:
-    if change == "a file made unreadable" and os.geteuid() == 0:
-        pytest.skip("root reads a file whatever its mode")
+    if change == "a file made unreadable":
+        if sys.platform == "win32":
+            raise pytest.skip.Exception(NO_UID)  # `chmod(0)` does not make a file unreadable there
+        if os.geteuid() == 0:
+            pytest.skip("root reads a file whatever its mode")
     root = book(tmp_path)
     before = fingerprint_of(root)
     assert observe(before.ledger_set) == before
@@ -230,6 +235,8 @@ def test_an_empty_documents_root_is_not_an_absent_one(tmp_path: Path) -> None:
 
 def test_an_absent_file_that_appears_unreadable_changes_the_fingerprint(tmp_path: Path) -> None:
     """The next load reports no match in one case and fails in the other: the include's glob now finds it."""
+    if sys.platform == "win32":
+        raise pytest.skip.Exception(NO_UID)  # `chmod(0)` does not make a file unreadable there
     if os.geteuid() == 0:
         pytest.skip("root reads a file whatever its mode")
     root = book(tmp_path)
@@ -244,6 +251,8 @@ def test_an_absent_file_that_appears_unreadable_changes_the_fingerprint(tmp_path
 
 def test_a_loaded_file_made_unreadable_is_observed_unreadable(tmp_path: Path) -> None:
     """Present and unreadable are two states: the next load parses it in one and fails in the other."""
+    if sys.platform == "win32":
+        raise pytest.skip.Exception(NO_UID)  # `chmod(0)` does not make a file unreadable there
     if os.geteuid() == 0:
         pytest.skip("root reads a file whatever its mode")
     root = book(tmp_path)
@@ -640,6 +649,8 @@ def test_the_ledger_set_is_the_fingerprints_keys(fp: Fingerprint) -> None:
 def test_a_copys_reader_refuses_a_fifo_without_blocking(tmp_path: Path) -> None:
     """S0081 r1 F5: `chunks` opens without blocking and reads only a regular file; a FIFO raises at once. Were the open
     blocking, this test would hang (no writer ever comes), and the gate's hang detector stops it (r2: no fixed wait)."""
+    if sys.platform == "win32":
+        raise pytest.skip.Exception(NO_FIFO)
     os.mkfifo(tmp_path / "pipe")
     assert not regular(str(tmp_path / "pipe"))
     with pytest.raises(OSError, match="not a regular file") as refused:
@@ -650,6 +661,8 @@ def test_a_copys_reader_refuses_a_fifo_without_blocking(tmp_path: Path) -> None:
 def test_a_copys_re_check_of_a_document_never_blocks_on_a_fifo(tmp_path: Path) -> None:
     """@regression-guard (it held on 8b50323a; it kills mutants M11 and S14). S0081 r2: a document replaced by a FIFO
     before the re-check is told unreadable, at once."""
+    if sys.platform == "win32":
+        raise pytest.skip.Exception(NO_FIFO)
     os.mkfifo(tmp_path / "pipe")
     assert file_state(str(tmp_path / "pipe")) == Unreadable("EINVAL")
     (tmp_path / "f").write_bytes(b"abc")

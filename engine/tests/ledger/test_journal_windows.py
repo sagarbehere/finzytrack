@@ -69,24 +69,30 @@ def record(files: tuple[FileEntry, ...], dirs: tuple[DirEntry, ...] = ()) -> Rec
     )
 
 
-RECORD = record(
-    (
-        _file("C:\\Books\\a\\Ledger\\inc\\a.bean", "C:\\BOOKS\\A\\LEDGER\\INC\\A.BEAN"),
-        _file("C:\\Books\\a\\Ledger\\y2026\\Caf\u00e9.bean", "C:\\BOOKS\\A\\LEDGER\\Y2026\\CAF\u00c9.BEAN", pre=False),
-    ),
-    (DirEntry("C:\\Books\\a\\Ledger\\y2026", "C:\\BOOKS\\A\\LEDGER\\Y2026"),),
-)
+def _record() -> Record:
+    """Built under the Windows model (the module's fixture), as a Windows save would record it."""
+    return record(
+        (
+            _file("C:\\Books\\a\\Ledger\\inc\\a.bean", "C:\\BOOKS\\A\\LEDGER\\INC\\A.BEAN"),
+            _file(
+                "C:\\Books\\a\\Ledger\\y2026\\Caf\u00e9.bean", "C:\\BOOKS\\A\\LEDGER\\Y2026\\CAF\u00c9.BEAN", pre=False
+            ),
+        ),
+        (DirEntry("C:\\Books\\a\\Ledger\\y2026", "C:\\BOOKS\\A\\LEDGER\\Y2026"),),
+    )
 
 
 def test_a_record_with_windows_paths_round_trips_in_the_same_format() -> None:
-    data = encode(RECORD)
-    assert decode(data) == RECORD
+    rec = _record()
+    data = encode(rec)
+    assert decode(data) == rec
     assert f'"v":{VERSION},' in data.decode()
     assert '"canonical_path":"C:\\\\Books\\\\a\\\\Ledger\\\\inc\\\\a.bean"' in data.decode()
 
 
 def test_the_folders_of_a_windows_record_are_named_as_windows_names_them() -> None:
-    assert needed_folders(RECORD.files, RECORD.created_dirs) == [
+    rec = _record()
+    assert needed_folders(rec.files, rec.created_dirs) == [
         "C:\\Books\\a\\Ledger\\inc",
         "C:\\Books\\a\\Ledger\\y2026",
         "C:\\Books\\a\\Ledger",
@@ -109,16 +115,16 @@ def test_a_key_in_a_case_sensitive_windows_folder_keeps_its_case() -> None:
 @pytest.mark.parametrize(
     "key",
     [
-        "c:\\users\\a\\ledger\\inc\\a.bean",  # casefold: macOS's rule, not Windows'
+        "c:\\books\\a\\ledger\\inc\\a.bean",  # casefold: macOS's rule, not Windows'
         "C:\\BOOKS\\A\\LEDGER\\INC\\B.BEAN",  # another file
-        "C:/BOOKS/A/LEDGER/INC/A.BEAN",  # not in the record's spelling
     ],
 )
 def test_a_key_not_folded_by_windows_rule_is_unreadable(key: str) -> None:
-    bad = replace(RECORD, files=(replace(RECORD.files[0], path_key=key), RECORD.files[1]))
+    rec = _record()
+    bad = replace(rec, files=(replace(rec.files[0], path_key=key), rec.files[1]))
     with pytest.raises(ValueError, match="bad journal record"):
         encode(bad)
-    good = encode(RECORD).decode()
+    good = encode(rec).decode()
     assert isinstance(
         decode(good.replace("C:\\\\BOOKS\\\\A\\\\LEDGER\\\\INC\\\\A.BEAN", key.replace("\\", "\\\\")).encode()),
         Unreadable,

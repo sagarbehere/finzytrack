@@ -10,7 +10,6 @@ packaged self-check, stand-ins) takes none. Waits are on a condition with a dead
 
 from __future__ import annotations
 
-import fcntl
 import json
 import os
 import shutil
@@ -25,8 +24,14 @@ import pytest
 
 from ledger_engine.fs.port import FolderId
 from ledger_engine.fs.this_os import folder_identity
+from tests.windows_pending import BL_0280
 
-pytestmark = pytest.mark.skipif(os.name != "posix", reason="flock is POSIX; Windows is BL-0087 (M1b)")
+if sys.platform == "win32":
+    raise pytest.skip.Exception(BL_0280, allow_module_level=True)
+
+import fcntl
+
+pytestmark = pytest.mark.skipif(os.name != "posix", reason="flock is POSIX; Windows is BL-0280")
 
 DEADLINE = 15.0
 

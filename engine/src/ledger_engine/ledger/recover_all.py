@@ -55,6 +55,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Final
 
+from ledger_engine.fs.pathmodel import host
 from ledger_engine.fs.port import DirHandle, EntryStat, FileSystem, Kind
 from ledger_engine.ledger.core import journal
 from ledger_engine.ledger.core import paths as core_paths
@@ -97,8 +98,7 @@ class Listing:
 
 
 def _parent(canonical: str) -> tuple[str, str]:
-    head, _, base = canonical.rpartition("/")
-    return head or "/", base
+    return host().parent_and_name(canonical)
 
 
 def _kind(h: DirHandle, name: str) -> Kind | None:
@@ -140,7 +140,7 @@ def list_journals(fs: FileSystem, app_local_data: str) -> Listing:
     found: list[Listed] = []
     unlisted: list[Unlisted] = []
     removed = 0
-    local = _join(app_local_data.rstrip("/") or "/", LOCAL)
+    local = _join(host().trim(app_local_data), LOCAL)
     handles = Handles(fs)
     try:
         try:
@@ -400,7 +400,7 @@ def keep(fs: FileSystem, journal_dir: str, name: str) -> ActOutcome:
                 h = _present(handles, d.canonical_path)
                 if h is not None:
                     folders[d.canonical_path] = h
-            for folder, h in sorted(folders.items(), key=lambda kv: kv[0].count("/"), reverse=True):
+            for folder, h in sorted(folders.items(), key=lambda kv: kv[0].count(host().sep), reverse=True):
                 at = folder
                 _tolerant_sync(h.sync)
             at = journal_dir

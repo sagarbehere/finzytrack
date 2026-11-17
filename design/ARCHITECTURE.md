@@ -338,7 +338,12 @@ engine/src/ledger_engine/
     beancount_port.py  the only module that imports beancount.*: typed facade, its LOAD_STAGES and WRAPPERS; the
                  one home of the tolerance and of number reading (`@concept`, S0104);
                  untyped Beancount modules have local stubs in engine/typings/ (S0049)
-  fs/            the file-system port for writes (S0060): port.py (FileSystem.resolve with the object's identity,
+  fs/            pathmodel.py (S0127, BL-0279: the path model per OS, pure; HOST by sys.platform, host() at each use:
+                 POSIX exactly as before, Windows a drive, UNC or volume-GUID root first, `\`, the `\\?\` prefix as a
+                 spelling, reserved device names, trailing dots and spaces and Windows' invalid characters refused,
+                 ordinal upper-case folding; split, join, normal form and the copy layout's lexical operations; every
+                 absolute path of the engine, the journal and the protocol goes through it; `simulating` for tests only);
+                 the file-system port for writes (S0060): port.py (FileSystem.resolve with the object's identity,
                  open_dir -> DirHandle: read, stat, sync_file, create exclusively with the xattrs of the file it replaces and
                  sync, swap, exclusive rename, plain rename (S0065), remove, mkdir, rmdir, sync, path by F_GETPATH,
                  allowed (access(2) with ACLs), caps (the volume's RENAME_SWAP and RENAME_EXCL, S0065), volume_id and mark (the drive's volume UUID, the file system, the folder's creation time, S0089), acl (the folder's ACL entries, each

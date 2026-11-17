@@ -2,19 +2,34 @@
 
 from __future__ import annotations
 
+import functools
 import os
 import sys
 import time
 from collections.abc import Iterator
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 import pytest
+
+from ledger_engine.fs import pathmodel
 
 # INV-07 (ADR-0023 Consequences): the suite runs in a time zone west of UTC, set before any test and inherited by
 # every process a test starts (the engine itself among them), so a UTC "today" taken for the local one fails instead
 # of passing by coincidence. `tests/test_runs_west_of_utc.py` fails if this is lost.
 WEST_OF_UTC = "America/Los_Angeles"
-os.environ["TZ"] = WEST_OF_UTC
-time.tzset()
+WINDOWS_TZ = "PST8PDT"
+"""Los Angeles in the one form Windows' C runtime reads (`_tzset`: a name, the hours west of UTC, a summer-time
+name; the US summer-time rules): it reads `TZ` only as a process starts, and Python has no `time.tzset` there, so the
+`TZ` variable must be set before the test run starts (the CI job's `engine-windows` sets it; S0127)."""
+if sys.platform == "win32":
+    os.environ["TZ"] = WINDOWS_TZ  # every process a test starts inherits it
+    _summer, _winter = (datetime(2026, m, 1, 12, tzinfo=UTC).astimezone().utcoffset() for m in (7, 1))
+    if (_summer, _winter) != (timedelta(hours=-7), timedelta(hours=-8)):
+        raise pytest.UsageError(f"INV-07: set TZ={WINDOWS_TZ} before the test run starts (Windows reads it only then)")  # noqa: TRY003
+else:
+    os.environ["TZ"] = WEST_OF_UTC
+    time.tzset()
 
 # The overlay's comparison with Beancount's loader lives in a helper module both corpus tests share (S0094); pytest
 # rewrites its asserts too, so a failure shows what differs.
@@ -35,3 +50,29 @@ def _forget_ledger_plugins(tmp_path_factory: pytest.TempPathFactory) -> Iterator
         file = getattr(sys.modules[name], "__file__", None)
         if isinstance(file, str) and os.path.realpath(file).startswith(base + os.sep):
             del sys.modules[name]
+
+
+POSIX_FAKES = frozenset(
+    {"tests.fakes.memfs", "tests.ledger.worlds", "tests.ledger.memledger", "tests.mirror.fake_store"}
+)
+"""The in-memory file system and the worlds built on it: a POSIX file system (its paths are `/...`)."""
+
+
+@functools.cache
+def _uses_the_fake(test_file: Path) -> bool:
+    """The test module imports the fake or a world built on it (by its source: it names the module)."""
+    source = test_file.read_text(encoding="utf-8")
+    return any(name in source for name in POSIX_FAKES)
+
+
+@pytest.fixture(autouse=True)
+def _posix_model_for_the_fake(request: pytest.FixtureRequest) -> Iterator[None]:
+    """On Windows a test over the in-memory fake (`tests/fakes/memfs.py`, a POSIX file system) runs with the POSIX path
+    model, as on macOS and Linux (S0127): its paths are `/...`, which Windows' model refuses. The Windows model's own
+    tests simulate it on every OS (`tests/fs/test_pathmodel.py`, `tests/ledger/test_journal_windows.py`); every other
+    test on Windows runs with Windows' model."""
+    if sys.platform == "win32" and _uses_the_fake(request.path):
+        with pathmodel.simulating(pathmodel.POSIX):
+            yield
+    else:
+        yield

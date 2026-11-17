@@ -71,6 +71,7 @@ from dataclasses import dataclass, field, replace
 from enum import StrEnum
 from typing import Final
 
+from ledger_engine.fs.pathmodel import host
 from ledger_engine.fs.port import (
     DirHandle,
     EntryStat,
@@ -333,7 +334,7 @@ class _Stop(Exception):
 
 def _within(key: str, folder: str) -> bool:
     """`key` is `folder` or inside it."""
-    return key == folder or key.startswith(folder.rstrip("/") + "/")
+    return host().is_under(key, folder)
 
 
 def _check_plan(c: Commit) -> None:
@@ -352,7 +353,7 @@ def _check_plan(c: Commit) -> None:
         if not field_value:
             raise BadPlanError("empty_record_field")  # the journal could not be written (S0060 verifier F5)
     for folder in (c.journal_dir, c.backups_dir):
-        if not split_absolute(folder):
+        if host().is_root(split_absolute(folder)):
             raise BadPlanError("app_folder_is_root")
 
 
@@ -362,7 +363,7 @@ def _app_folder(fs: FileSystem, path: str) -> tuple[str, str]:
     r = fs.resolve(path)
     if r.rest:
         raise FileNotFoundError(errno.ENOENT, "no such folder")
-    if not r.existing:
+    if host().is_root(r.existing):
         raise BadPlanError("app_folder_is_root")
     return core_paths.canonical_path(r), core_paths.path_key(r)
 
@@ -390,10 +391,10 @@ def _target(fs: FileSystem, handles: Handles, index: int, c: Commit, ch: Change)
     except UnicodeEncodeError:
         raise _Stop(Reason.NAME_NOT_UTF8, canonical.encode(errors="backslashreplace").decode()) from None
     parts, kparts = split_absolute(canonical), split_absolute(key)
-    if not parts:
+    if host().is_root(parts):
         raise BadPlanError("target_is_root")
     base = check_name(parts[-1])
-    parent, parent_key = "/" + "/".join(parts[:-1]), "/" + "/".join(kparts[:-1])
+    parent, parent_key = host().join(parts[:-1]), host().join(kparts[:-1])
     tag = journal.record_name(c.session, c.job)
     scratch = journal.scratch_names(base, tag)
     keys = tuple(_join(parent_key, fold(n, r.rules[-1])) for n in scratch)
@@ -401,7 +402,7 @@ def _target(fs: FileSystem, handles: Handles, index: int, c: Commit, ch: Change)
     if not r.rest:
         return _Target(index, ch, canonical, key, parent, parent_key, base, *names, r.identity, (), (), tag)
     n = len(r.existing)
-    new_dirs = tuple(("/" + "/".join(parts[:i]), "/" + "/".join(kparts[:i])) for i in range(n + 1, len(parts)))
+    new_dirs = tuple((host().join(parts[:i]), host().join(kparts[:i])) for i in range(n + 1, len(parts)))
     return _Target(index, ch, canonical, key, parent, parent_key, base, *names, None, new_dirs, r.rest, tag)
 
 
@@ -420,7 +421,7 @@ def _open_confined(fs: FileSystem, handles: Handles, confine: FolderEntry) -> st
     `outside_folder`."""
     path = confine.canonical_path
     try:
-        if not split_absolute(path):
+        if host().is_root(split_absolute(path)):
             raise _Stop(Reason.OUTSIDE_FOLDER, None, path)
     except ValueError:
         raise _Stop(Reason.OUTSIDE_FOLDER, None, path) from None
@@ -474,6 +475,7 @@ def _confined_target(handles: Handles, root: str, root_key: str, index: int, c: 
     if len(parts) <= len(top) or parts[: len(top)] != top:
         raise _Stop(Reason.OUTSIDE_FOLDER, ch.path, root)
     names = parts[len(top) :]
+    sep = host().sep  # the copy's folder (never a root: `_open_confined`), then names
     h = handles.at(root)
     canonical, key, depth = [root], [root_key], 0
     rule = h.rule()
@@ -488,18 +490,18 @@ def _confined_target(handles: Handles, root: str, root_key: str, index: int, c: 
         key.append(fold(stored, rule))
         depth = i + 1
         if st.kind is Kind.LINK:
-            raise _Stop(Reason.LINK_IN_COPY, "/".join(canonical), root)
+            raise _Stop(Reason.LINK_IN_COPY, sep.join(canonical), root)
         if i == len(names) - 1:
             identity = st.identity
         elif st.kind is not Kind.DIR:
-            raise _Stop(Reason.CHANGED, "/".join(canonical))
+            raise _Stop(Reason.CHANGED, sep.join(canonical))
         else:
-            h = handles.at("/".join(canonical))
+            h = handles.at(sep.join(canonical))
     rest = names[depth:]
     for name in rest:
         canonical.append(name)
         key.append(fold(name, rule))
-    full, full_key = "/".join(canonical), "/".join(key)
+    full, full_key = sep.join(canonical), sep.join(key)
     if full.lower().endswith(ENCRYPTED_SUFFIXES):
         raise _Stop(Reason.CHANGED, ch.path)
     try:
@@ -508,7 +510,7 @@ def _confined_target(handles: Handles, root: str, root_key: str, index: int, c: 
         raise _Stop(Reason.NAME_NOT_UTF8, full.encode(errors="backslashreplace").decode()) from None
     cparts, kparts = split_absolute(full), split_absolute(full_key)
     base = check_name(cparts[-1])
-    parent, parent_key = "/" + "/".join(cparts[:-1]), "/" + "/".join(kparts[:-1])
+    parent, parent_key = host().join(cparts[:-1]), host().join(kparts[:-1])
     tag = journal.record_name(c.session, c.job)
     scratch = journal.scratch_names(base, tag)
     keys = tuple(_join(parent_key, fold(n, rule)) for n in scratch)
@@ -516,7 +518,7 @@ def _confined_target(handles: Handles, root: str, root_key: str, index: int, c: 
     if not rest:
         return _Target(index, ch, full, full_key, parent, parent_key, base, *names4, identity, (), (), tag)
     n = len(top) + depth
-    new_dirs = tuple(("/" + "/".join(cparts[:i]), "/" + "/".join(kparts[:i])) for i in range(n + 1, len(cparts)))
+    new_dirs = tuple((host().join(cparts[:i]), host().join(kparts[:i])) for i in range(n + 1, len(cparts)))
     return _Target(index, ch, full, full_key, parent, parent_key, base, *names4, None, new_dirs, tuple(rest), tag)
 
 
@@ -589,7 +591,7 @@ def _check_target(handles: Handles, t: _Target) -> tuple[Mode, FolderEntry]:
     if t.change.pre is not None:
         raise _Stop(Reason.CHANGED, t.canonical)  # a file the save replaces vanished
     depth = len(split_absolute(t.canonical)) - len(t.rest)
-    existing = "/" + "/".join(split_absolute(t.canonical)[:depth])
+    existing = host().join(split_absolute(t.canonical)[:depth])
     try:
         holder = handles.at(existing)
     except NotADirectoryError:
@@ -617,7 +619,8 @@ def _prepare(fs: FileSystem, handles: Handles, c: Commit, targets: tuple[_Target
                 any(_within(b.key, k) for k in a.scratch_keys)
                 or (b.parent_key == a.parent_key and journal.is_kept_name(b.base, a.base, a.tag))
                 or any(  # a folder the save makes at a kept name (S0061 red team r2 L2)
-                    dk.rpartition("/")[0] == a.parent_key and journal.is_kept_name(dc.rpartition("/")[2], a.base, a.tag)
+                    dk.rpartition(host().sep)[0] == a.parent_key
+                    and journal.is_kept_name(dc.rpartition(host().sep)[2], a.base, a.tag)
                     for dc, dk in b.new_dirs
                 )
                 or set(b.scratch_keys) & set(a.scratch_keys)
@@ -794,8 +797,8 @@ def _replace(handles: Handles, t: _Target, progress: _Progress) -> None:
     for canonical, key in t.new_dirs:
         if key in progress.made:
             continue
-        parent, _, name = canonical.rpartition("/")
-        h = handles.at(parent or "/")
+        parent, name = host().parent_and_name(canonical)
+        h = handles.at(parent)
         progress.made.add(key)  # a mkdir that answers an error may still have happened...
         try:
             h.mkdir(name)

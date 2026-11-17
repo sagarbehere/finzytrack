@@ -32,6 +32,7 @@ import hashlib
 import importlib.machinery
 import os
 import stat
+import sys
 from collections.abc import Iterator
 from os import path
 from typing import Final
@@ -84,11 +85,17 @@ def chunks(p: str, size: int = 1 << 20) -> Iterator[bytes]:
     """The bytes of the regular file at `p`, as the loader opens it (links followed), `size` at a time: a copy streams
     its sources with it (S0081), never holding a document whole. Opened without blocking, so a FIFO swapped in never
     hangs the job (S0081 r1 F5): anything but a regular file raises `OSError` (`EINVAL`), as `open` and `read` do."""
-    fd = os.open(p, os.O_RDONLY | os.O_NONBLOCK | os.O_CLOEXEC)
+    # Without blocking (a FIFO swapped in never hangs) and never inherited, on POSIX; Windows has no FIFO a path opens
+    # and no `O_NONBLOCK` (S0127, BL-0260). Chosen at the call: the engine imports on any platform (`test_this_os`).
+    if sys.platform == "win32":
+        fd = os.open(p, os.O_RDONLY | os.O_BINARY | os.O_NOINHERIT)
+    else:
+        fd = os.open(p, os.O_RDONLY | os.O_NONBLOCK | os.O_CLOEXEC)
     with os.fdopen(fd, "rb") as f:
         if not stat.S_ISREG(os.fstat(fd).st_mode):
             raise OSError(errno.EINVAL, "not a regular file", p)
-        os.set_blocking(fd, True)
+        if sys.platform != "win32":
+            os.set_blocking(fd, True)
         while chunk := f.read(size):
             yield chunk
 

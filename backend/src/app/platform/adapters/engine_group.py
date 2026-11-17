@@ -41,6 +41,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
 
+from app.platform.adapters.windows_pending import NotOnWindowsError
+
 FIRST_PAUSE = 0.005  # the drain's first pause between two signals; it doubles up to `LONGEST_PAUSE`
 LONGEST_PAUSE = 0.25  # a member stuck in the kernel is probed four times a second, for as long as it lives
 
@@ -139,6 +141,8 @@ def status_reads_zombie(pid: int) -> bool:
 
 def is_exit_report(si_code: int) -> bool:
     """A `waitid` report of the leader's end (exited, killed, dumped core), not of a stop or a continue."""
+    if sys.platform == "win32":
+        raise NotOnWindowsError
     return si_code in (os.CLD_EXITED, os.CLD_KILLED, os.CLD_DUMPED)
 
 
@@ -171,10 +175,14 @@ class PosixGroupOps:
 
     def kill_group(self, pgid: int) -> None:
         # No member left, or only our zombie leader (macOS answers EPERM): nothing to signal.
+        if sys.platform == "win32":
+            raise NotOnWindowsError
         with contextlib.suppress(ProcessLookupError, PermissionError):
             os.killpg(pgid, signal.SIGKILL)
 
     def wait_leader(self, pid: int) -> None:
+        if sys.platform == "win32":
+            raise NotOnWindowsError
         while True:
             report = os.waitid(os.P_PID, pid, os.WEXITED | os.WNOWAIT)
             if report is None or is_exit_report(report.si_code):
@@ -184,6 +192,8 @@ class PosixGroupOps:
             os.waitid(os.P_PID, pid, os.WSTOPPED | os.WCONTINUED | os.WNOHANG)
 
     def leader_exited(self, pid: int) -> bool:
+        if sys.platform == "win32":
+            raise NotOnWindowsError
         report = os.waitid(os.P_PID, pid, os.WEXITED | os.WNOWAIT | os.WNOHANG)
         return report is not None and is_exit_report(report.si_code)
 
@@ -204,6 +214,8 @@ class PosixGroupOps:
             return True
 
     def reap(self, pid: int) -> Reaped:
+        if sys.platform == "win32":
+            raise NotOnWindowsError
         _, status, usage = os.wait4(pid, 0)
         rss = usage.ru_maxrss if sys.platform.startswith("linux") else usage.ru_maxrss // 1024  # macOS: bytes
         return Reaped(os.waitstatus_to_exitcode(status), rss)

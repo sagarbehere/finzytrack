@@ -7,7 +7,6 @@ stderr. Waits are explicit waits on a condition with a deadline (EP-28), never f
 
 from __future__ import annotations
 
-import fcntl
 import json
 import os
 import signal
@@ -23,10 +22,12 @@ import pytest
 
 from ledger_engine.protocol.messages import MAX_LINE_BYTES
 from ledger_engine.protocol.server import PARENT_POLL_SECONDS
+from tests.windows_pending import BL_0281
 
 ENGINE = [sys.executable, "-I", "-m", "ledger_engine", "--test-ops"]
 DEADLINE = 15.0
-POSIX = os.name == "posix"
+WATCHDOG = "the parent-pid poll is POSIX; Windows relies on stdin EOF and the Job Object (BL-0281)"
+GROUPS = "process groups are POSIX; Windows is the Job Object (BL-0281)"
 
 
 def wait_until(cond: Callable[[], bool], timeout: float = DEADLINE) -> bool:
@@ -190,8 +191,9 @@ def spawn_middle(mode: str, *extra: str, pass_fds: tuple[int, ...] = ()) -> tupl
     return middle, pid
 
 
-@pytest.mark.skipif(not POSIX, reason="the parent-pid poll is POSIX; Windows relies on stdin EOF and the Job Object")
 def test_the_engine_exits_when_its_parent_dies_though_its_stdin_stays_open() -> None:
+    if sys.platform == "win32":
+        raise pytest.skip.Exception(WATCHDOG)
     read_end, write_end = os.pipe()
     middle, pid = spawn_middle("held-stdin", str(read_end), pass_fds=(read_end,))
     os.close(read_end)
@@ -205,9 +207,10 @@ def test_the_engine_exits_when_its_parent_dies_though_its_stdin_stays_open() -> 
             os.kill(pid, signal.SIGKILL)
 
 
-@pytest.mark.skipif(not POSIX, reason="the parent-pid poll is POSIX; Windows relies on stdin EOF and the Job Object")
 def test_a_parent_that_died_while_the_engine_was_starting_is_caught() -> None:
     """The spawner names itself with --parent-pid; if the engine's parent is already someone else, it exits."""
+    if sys.platform == "win32":
+        raise pytest.skip.Exception(WATCHDOG)
     with subprocess.Popen([*ENGINE, "--parent-pid", "999999999"], stdin=subprocess.PIPE) as proc:  # noqa: S603
         assert proc.wait(DEADLINE) == 3  # EXIT_PARENT_GONE, while its stdin is still open
 
@@ -235,9 +238,10 @@ def test_a_parent_that_is_pid_1_starts_the_engine_without_the_parent_watchdog() 
         assert proc.wait(DEADLINE) == 0
 
 
-@pytest.mark.skipif(not POSIX, reason="the parent-pid poll is POSIX; Windows relies on stdin EOF and the Job Object")
 def test_a_busy_engine_exits_when_its_parent_dies() -> None:
     """Mid-request the read loop cannot see stdin EOF; the parent-pid watchdog still ends the engine."""
+    if sys.platform == "win32":
+        raise pytest.skip.Exception(WATCHDOG)
     middle, pid = spawn_middle("busy")
     try:
         middle.send_signal(signal.SIGKILL)
@@ -255,6 +259,10 @@ def test_a_busy_engine_exits_when_its_parent_dies() -> None:
 
 
 def lock_free(path: Path) -> bool:
+    if sys.platform == "win32":
+        raise pytest.skip.Exception(BL_0281)
+    import fcntl  # POSIX only
+
     fd = os.open(path, os.O_RDWR | os.O_CREAT, 0o600)
     try:
         fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -277,8 +285,9 @@ def start_child(proc: subprocess.Popen[bytes], lock: Path) -> int:
     return child
 
 
-@pytest.mark.skipif(not POSIX, reason="process groups are POSIX; Windows is the Job Object (BL-0087)")
 def test_the_end_of_input_exit_ends_the_engines_whole_group(tmp_path: Path) -> None:
+    if sys.platform == "win32":
+        raise pytest.skip.Exception(GROUPS)
     lock = tmp_path / "ledger.lock"
     with subprocess.Popen(  # noqa: S603
         ENGINE, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True
@@ -295,9 +304,10 @@ def test_the_end_of_input_exit_ends_the_engines_whole_group(tmp_path: Path) -> N
                 os.kill(child, signal.SIGKILL)
 
 
-@pytest.mark.skipif(not POSIX, reason="process groups are POSIX; Windows is the Job Object (BL-0087)")
 def test_an_engine_that_does_not_lead_its_group_ends_only_itself(tmp_path: Path) -> None:
     """Run by hand or by a test, the engine shares its group with its spawner: it must never signal that group."""
+    if sys.platform == "win32":
+        raise pytest.skip.Exception(GROUPS)
     lock = tmp_path / "ledger.lock"
     with subprocess.Popen(ENGINE, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE) as proc:  # noqa: S603
         child = start_child(proc, lock)
@@ -310,8 +320,9 @@ def test_an_engine_that_does_not_lead_its_group_ends_only_itself(tmp_path: Path)
             os.kill(child, signal.SIGKILL)
 
 
-@pytest.mark.skipif(not POSIX, reason="the parent-pid poll is POSIX; Windows relies on stdin EOF and the Job Object")
 def test_the_parent_death_watchdog_ends_the_engines_whole_group(tmp_path: Path) -> None:
+    if sys.platform == "win32":
+        raise pytest.skip.Exception(WATCHDOG)
     lock = tmp_path / "ledger.lock"
     read_end, write_end = os.pipe()
     for rid, op, params in ((1, "handshake", {}), (2, "test.child", {"lock": str(lock)})):

@@ -20,9 +20,7 @@ from __future__ import annotations
 
 import contextlib
 import faulthandler
-import fcntl
 import os
-import signal
 import subprocess
 import sys
 import threading
@@ -41,6 +39,13 @@ from app.platform.adapters.engine_group import (
     proc_stat_group,
     status_reads_zombie,
 )
+from tests.windows_pending import BL_0281
+
+if sys.platform == "win32":
+    raise pytest.skip.Exception(BL_0281, allow_module_level=True)
+
+import fcntl
+import signal
 
 pytestmark = pytest.mark.skipif(os.name != "posix", reason="process groups are POSIX; Windows is BL-0087")
 

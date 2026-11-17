@@ -5,8 +5,9 @@ otherwise checks for the platform it runs on, so a macOS-only name (`fcntl.F_FUL
 and failed it on the Linux CI runner; a module that states its platform once at its top
 (`if sys.platform != "darwin": raise ImportError(...)`) is checked in full for that platform and skipped for the others.
 
-PLATFORMS has no Windows yet: the product's POSIX-only process and lock code (process groups, `flock`, signals) has no
-Windows port to check until BL-0087; its pass is BL-0260.
+Windows joined in S0127 (BL-0260): each POSIX-only module states its platform once at its top or selects per platform
+(`ledger_engine.fs.this_os`; a function that uses a POSIX-only name starts with `if sys.platform == "win32": raise ...`;
+a POSIX-only test skips with `raise pytest.skip.Exception(...)`, the reason in `tests/windows_pending.py`).
 
 Passes only when every pass ran and reported no error; each pass's output is printed under its platform, and a failure
 names it. Used by the T0 pre-push hook and the manual CI run (`ci.yml`), for `backend/` and `engine/`.
@@ -21,7 +22,7 @@ import sys
 from pathlib import Path
 from typing import Final
 
-PLATFORMS: Final = ("Darwin", "Linux")
+PLATFORMS: Final = ("Darwin", "Linux", "Windows")
 
 
 def main(argv: list[str]) -> int:

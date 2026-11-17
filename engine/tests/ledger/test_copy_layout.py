@@ -271,8 +271,8 @@ def test_one_file_has_one_name_whatever_its_absolute_spelling() -> None:
 
 
 def test_on_windows_the_layout_places_files_in_windows_form_and_rewrites_with_forward_slashes() -> None:
-    """Beancount on Windows gives `os.path`'s paths (`C:\\...`); a rewritten line uses `/` (Beancount joins it with
-    `os.path`, which takes `/`; a `\\` in a ledger string is a refusal here)."""
+    """Beancount on Windows gives `os.path`'s paths (`C:\\...`); a place in the copy and a rewritten line use `/`
+    (Beancount joins an include with `os.path`, which takes `/`; a `\\` in a line to rewrite is a refusal here)."""
     wb = "C:\\Data\\Ledgers"
     wroot = f"{wb}\\main.beancount"
     with pathmodel.simulating(pathmodel.WINDOWS):
@@ -286,8 +286,8 @@ def test_on_windows_the_layout_places_files_in_windows_form_and_rewrites_with_fo
         )
         lay = layout(s)
         assert lay == Layout(wb, (("C:\\Data\\Documents\\books", "documents"), ("C:\\Data\\Shared\\a", "outside")))
-        assert place(lay, f"{wb}\\p\\p.beancount") == "p\\p.beancount"
-        assert place(lay, "C:\\Data\\Shared\\a\\r.beancount") == "outside\\r.beancount"
+        assert place(lay, f"{wb}\\p\\p.beancount") == "p/p.beancount"  # a place in the copy: `/`, as in a plan
+        assert place(lay, "C:\\Data\\Shared\\a\\r.beancount") == "outside/r.beancount"
         assert place(lay, "D:\\Data\\Ledgers\\x") is None
         data = (
             b'include "C:/Data/Shared/a/r.beancount"\n'

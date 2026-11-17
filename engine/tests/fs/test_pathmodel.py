@@ -337,7 +337,7 @@ def test_the_widest_rule_on_windows_takes_every_pair_ordinal_upper_case_makes_on
         ("\\\\?\\C:\\Books\\L", "C:\\Books\\L", True),  # GetFinalPathNameByHandleW's form
         ("c:\\Books\\L", "C:\\Books\\L", True),  # the drive letter has no case
         ("\\\\?\\UNC\\SERVER\\share\\L", "\\\\server\\Share\\L", True),  # nor the server and share
-        ("C:\\users\\L", "C:\\Books\\L", False),  # a folder renamed in case only has moved (fails closed)
+        ("C:\\books\\L", "C:\\Books\\L", False),  # a folder renamed in case only has moved (fails closed)
         ("C:\\Books\\L2", "C:\\Books\\L", False),
         ("D:\\Books\\L", "C:\\Books\\L", False),
         ("C:\\Caf\u00e9", unicodedata.normalize("NFD", "C:\\Caf\u00e9"), False),  # NTFS keeps both spellings

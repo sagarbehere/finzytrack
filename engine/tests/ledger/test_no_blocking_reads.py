@@ -24,10 +24,14 @@ from ledger_engine.ledger import overlay, precision
 from ledger_engine.ledger.core.ledger_set import Content, Unreadable
 from ledger_engine.ledger.policy import DesktopPolicy
 from ledger_engine.ledger.writer import sha256
+from tests.windows_pending import NO_FIFO
+
+if sys.platform == "win32":
+    raise pytest.skip.Exception(NO_FIFO, allow_module_level=True)
 
 pytestmark = [
     pytest.mark.skipif(
-        sys.platform not in ("darwin", "linux"), reason="the write path's port: macOS and Linux; Windows is BL-0087"
+        sys.platform not in ("darwin", "linux"), reason="the write path's port: macOS and Linux; Windows is BL-0280"
     ),
     pytest.mark.inv("INV-22"),
 ]

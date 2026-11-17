@@ -49,10 +49,13 @@ from app.platform.engine_jobs.scheduler import Done, EngineJobs, JobTicket
 from app.platform.observability import Event, EventLog, EventSink
 from app.workspaces.access import Unknown
 from tests.api.support import Counted, FakeContainer, FixedAccess
+from tests.windows_pending import BL_0281
 
 
 def lock_held(path: Path) -> bool:
     """Whether another process holds this `flock` (POSIX; a fresh open file description, never blocking)."""
+    if sys.platform == "win32":
+        raise pytest.skip.Exception(BL_0281)
     import fcntl  # POSIX only: the tests that call it skip elsewhere
 
     fd = os.open(path, os.O_RDWR)
@@ -498,6 +501,8 @@ def test_a_sidecar_ended_hard_leaves_no_engine_behind(dirs: tuple[Path, Path]) -
     """@regression-guard (S0041, failure-modes rows M1, M4, E5): a sidecar that crashes or is ended by the OS (SIGKILL:
     no handler, no `finally`, no close) cannot close its engine; the engine notices on its own (its parent watchdog,
     stdin EOF) and ends, so no orphan engine keeps running. The sidecar's log ends without `engine.closed`."""
+    if sys.platform == "win32":
+        raise pytest.skip.Exception(BL_0281)
     sidecar = Sidecar(dirs, "--engine-venv", str(ENGINE_VENV))
     try:
         sidecar.handshake()

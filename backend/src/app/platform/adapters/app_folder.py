@@ -34,6 +34,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Final
 
+from app.platform.adapters.windows_pending import NotOnWindowsError
 from app.platform.engine import AppFolderChangedError
 
 FOLDER_MODE = 0o700
@@ -41,6 +42,8 @@ FOLDER_MODE = 0o700
 
 def directory_flags() -> int:
     """`os.open`'s flags for a folder read through its descriptor (`dir_fd`), never inherited by a child."""
+    if sys.platform == "win32":
+        raise NotOnWindowsError
     return os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | os.O_CLOEXEC
 
 
@@ -180,6 +183,8 @@ def _full_sync(fd: int) -> None:
 def prepare(path: Path) -> AppFolder | AppFolderRefusal:
     """Make `path` if it is missing (its parent must exist) and sync its parent; the folder with its identity when both
     hold (recorded before the sync, so the folder whose entry the sync made durable is the one identified)."""
+    if sys.platform == "win32":
+        raise NotOnWindowsError
     folder = str(path)
     try:
         try:

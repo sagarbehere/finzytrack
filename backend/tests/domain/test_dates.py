@@ -6,6 +6,7 @@ boundary where the two differ, so a UTC "today" cannot pass.
 
 from __future__ import annotations
 
+import sys
 import time
 from collections.abc import Iterator
 from datetime import UTC, date, datetime, timedelta, timezone
@@ -19,6 +20,7 @@ from app.platform.clock import FrozenClock
 from app.platform.engine_jobs import opening, rebuild
 from app.platform.engine_jobs.opening import OpenTarget
 from app.platform.engine_jobs.rebuild import RebuildTarget
+from tests.windows_pending import TZSET
 
 pytestmark = pytest.mark.inv("INV-07")
 
@@ -56,6 +58,8 @@ def test_a_naive_instant_is_refused() -> None:
 # sidecar "today" is also taken in Kolkata, after local midnight, where the civil date is already UTC's next day.
 @pytest.fixture
 def kolkata(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    if sys.platform == "win32":
+        raise RuntimeError(TZSET)  # INV-07's run east of UTC cannot move the zone there: it fails, never passes
     monkeypatch.setenv("TZ", "Asia/Kolkata")
     time.tzset()
     yield

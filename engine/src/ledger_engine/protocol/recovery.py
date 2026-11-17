@@ -23,6 +23,7 @@ import os
 from collections.abc import Callable
 from typing import Final, Protocol
 
+from ledger_engine.fs.pathmodel import host
 from ledger_engine.fs.port import FileSystem, Kind
 from ledger_engine.fs.this_os import for_this_os
 from ledger_engine.ledger import recover_all as ra
@@ -98,10 +99,11 @@ def app_local_data_of(fs: FileSystem, app_local_data: str, ctx: Decider) -> str:
 
 def _journal_dir(fs: FileSystem, app_local_data: str, journal_dir: str) -> str:
     """`journal_dir` as the listing names it: `<canonical local>/<key>/journal`, one component for the key."""
-    r = fs.resolve(join(app_local_data.rstrip("/") or "/", ra.LOCAL))
+    r = fs.resolve(join(host().trim(app_local_data), ra.LOCAL))
     local = core_paths.canonical_path(r)
-    head, _, last = journal_dir.rpartition("/")
-    key_parent, _, key = head.rpartition("/")
+    sep = host().sep
+    head, _, last = journal_dir.rpartition(sep)
+    key_parent, _, key = head.rpartition(sep)
     if last != ra.JOURNAL or key_parent != local or not key or key in (".", ".."):
         msg = "params.journal_dir: not a journal folder of this app"
         raise BadParamsError(msg)

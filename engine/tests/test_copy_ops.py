@@ -17,7 +17,6 @@ lines and the owner's decisions of 2026-11-07:
 from __future__ import annotations
 
 import dataclasses
-import fcntl
 import hashlib
 import json
 import os
@@ -37,10 +36,16 @@ from ledger_engine.protocol.server import InputEnded
 from tests.ledger.worlds import with_folders
 from tests.test_save_ops import Channel as SaveChannel
 from tests.test_save_ops import engine, request
+from tests.windows_pending import BL_0280
+
+if sys.platform == "win32":
+    raise pytest.skip.Exception(BL_0280, allow_module_level=True)
+
+import fcntl
 
 pytestmark = [
     pytest.mark.skipif(
-        sys.platform not in ("darwin", "linux"), reason="the write path's port: macOS and Linux; Windows is BL-0087"
+        sys.platform not in ("darwin", "linux"), reason="the write path's port: macOS and Linux; Windows is BL-0280"
     ),
     pytest.mark.inv("INV-22"),
     pytest.mark.inv("INV-26"),

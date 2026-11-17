@@ -63,7 +63,7 @@ class PyrightPlatforms(unittest.TestCase):
         self.fake()
         r = self.run_script()
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
-        self.assertEqual(self.platforms(), ["Darwin", "Linux"])
+        self.assertEqual(self.platforms(), ["Darwin", "Linux", "Windows"])  # Windows: S0127, BL-0260
         for platform in self.platforms():
             log = (self.bin / f"pyright-{platform}.log").read_text()
             self.assertEqual(log, f"--pythonplatform {platform}\n", "only the platform: the config stays the pinned one")

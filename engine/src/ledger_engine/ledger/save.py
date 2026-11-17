@@ -57,12 +57,12 @@ then its record's state, and with no record (or a `.part`) every target hashed a
 from __future__ import annotations
 
 import gc
-import posixpath
 import re
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field, replace
 from typing import Final, Literal, Protocol
 
+from ledger_engine.fs.pathmodel import host
 from ledger_engine.fs.port import FileSystem, FolderId, Kind, folder_id, same_folder, split_absolute
 from ledger_engine.ledger import fingerprint as _fingerprint
 from ledger_engine.ledger import history, overlay
@@ -195,12 +195,12 @@ def _check(plan: SavePlan) -> dict[str, str | None]:
     """The plan against itself, before anything is read (`BadPlanError`); the pre hash of each change by its path."""
     if not SESSION.fullmatch(plan.session):
         raise BadPlanError("session_not_lower_case")
-    if posixpath.normpath(plan.root) != plan.root or plan.root != plan.fingerprint.root:
+    if host().normpath(plan.root) != plan.root or plan.root != plan.fingerprint.root:
         raise BadPlanError("root_not_the_fingerprints")
     states = dict(plan.fingerprint.files)
     pre: dict[str, str | None] = {}
     for c in plan.changes:
-        if not c.path.startswith("/") or posixpath.normpath(c.path) != c.path or c.path in pre:
+        if not host().is_absolute(c.path) or host().normpath(c.path) != c.path or c.path in pre:
             raise BadPlanError("change_path")
         state = states.get(c.path)
         if c.pre is None and state not in (None, Absent()):
@@ -300,8 +300,8 @@ def _rehash(fs: FileSystem, changes: tuple[Change, ...]) -> tuple[bool, str | No
                 now = None
             else:
                 canonical = core_paths.canonical_path(r)
-                folder, _, base = canonical.rpartition("/")
-                with fs.open_dir(folder or "/") as h:
+                folder, base = host().parent_and_name(canonical)
+                with fs.open_dir(folder) as h:
                     data = h.read(base)
                 now = None if data is None else sha256(data)
         except (OSError, ValueError):
@@ -479,7 +479,7 @@ def _gated(
         return _paused(open_journal, ports, plan)
     job.gate()  # step 7: past it, the save finishes (§4)
     job.progress("saving")
-    ald = plan.app_local_data.rstrip("/") or "/"
+    ald = host().trim(plan.app_local_data)
     try:
         # every folder below the app's own, its entry durable before the first write (round 1, verifier F1); the app's
         # folder is the sidecar's, made and its parent synced at start (S0100, BL-0163 (a)): never made or synced above

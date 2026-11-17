@@ -215,13 +215,13 @@
         },
         "target": {
           "minLength": 1,
-          "pattern": "^/",
+          "pattern": "^(?:/|[A-Za-z]:[\\\\/]|[\\\\/]{2})",
           "title": "Target",
           "type": "string"
         },
         "source": {
           "minLength": 1,
-          "pattern": "^/",
+          "pattern": "^(?:/|[A-Za-z]:[\\\\/]|[\\\\/]{2})",
           "title": "Source",
           "type": "string"
         },
@@ -235,14 +235,14 @@
         },
         "app_local_data": {
           "minLength": 1,
-          "pattern": "^/",
+          "pattern": "^(?:/|[A-Za-z]:[\\\\/]|[\\\\/]{2})",
           "title": "App Local Data",
           "type": "string"
         },
         "legacy_locks": {
           "items": {
             "minLength": 1,
-            "pattern": "^/",
+            "pattern": "^(?:/|[A-Za-z]:[\\\\/]|[\\\\/]{2})",
             "type": "string"
           },
           "title": "Legacy Locks",
@@ -587,7 +587,7 @@
         },
         "target": {
           "minLength": 1,
-          "pattern": "^/",
+          "pattern": "^(?:/|[A-Za-z]:[\\\\/]|[\\\\/]{2})",
           "title": "Target",
           "type": "string"
         },
@@ -776,7 +776,7 @@
         },
         "folder": {
           "minLength": 1,
-          "pattern": "^/",
+          "pattern": "^(?:/|[A-Za-z]:[\\\\/]|[\\\\/]{2})",
           "title": "Folder",
           "type": "string"
         },
@@ -784,7 +784,7 @@
           "anyOf": [
             {
               "minLength": 1,
-              "pattern": "^/",
+              "pattern": "^(?:/|[A-Za-z]:[\\\\/]|[\\\\/]{2})",
               "type": "string"
             },
             {
@@ -1134,7 +1134,7 @@
       "properties": {
         "path": {
           "minLength": 1,
-          "pattern": "^/",
+          "pattern": "^(?:/|[A-Za-z]:[\\\\/]|[\\\\/]{2})",
           "title": "Path",
           "type": "string"
         },
@@ -1178,7 +1178,7 @@
           "anyOf": [
             {
               "minLength": 1,
-              "pattern": "^/",
+              "pattern": "^(?:/|[A-Za-z]:[\\\\/]|[\\\\/]{2})",
               "type": "string"
             },
             {
@@ -1220,13 +1220,13 @@
       "properties": {
         "path": {
           "minLength": 1,
-          "pattern": "^/",
+          "pattern": "^(?:/|[A-Za-z]:[\\\\/]|[\\\\/]{2})",
           "title": "Path",
           "type": "string"
         },
         "path_key": {
           "minLength": 1,
-          "pattern": "^/",
+          "pattern": "^(?:/|[A-Za-z]:[\\\\/]|[\\\\/]{2})",
           "title": "Path Key",
           "type": "string"
         },
@@ -1254,7 +1254,7 @@
         },
         "path": {
           "minLength": 1,
-          "pattern": "^/",
+          "pattern": "^(?:/|[A-Za-z]:[\\\\/]|[\\\\/]{2})",
           "title": "Path",
           "type": "string"
         },
@@ -1276,7 +1276,7 @@
       "properties": {
         "journal_dir": {
           "minLength": 1,
-          "pattern": "^/",
+          "pattern": "^(?:/|[A-Za-z]:[\\\\/]|[\\\\/]{2})",
           "title": "Journal Dir",
           "type": "string"
         },
@@ -1362,13 +1362,13 @@
       "properties": {
         "root": {
           "minLength": 1,
-          "pattern": "^/",
+          "pattern": "^(?:/|[A-Za-z]:[\\\\/]|[\\\\/]{2})",
           "title": "Root",
           "type": "string"
         },
         "app_local_data": {
           "minLength": 1,
-          "pattern": "^/",
+          "pattern": "^(?:/|[A-Za-z]:[\\\\/]|[\\\\/]{2})",
           "title": "App Local Data",
           "type": "string"
         },
@@ -1617,7 +1617,7 @@
           "anyOf": [
             {
               "minLength": 1,
-              "pattern": "^/",
+              "pattern": "^(?:/|[A-Za-z]:[\\\\/]|[\\\\/]{2})",
               "type": "string"
             },
             {
@@ -1815,7 +1815,7 @@
           "anyOf": [
             {
               "minLength": 1,
-              "pattern": "^/",
+              "pattern": "^(?:/|[A-Za-z]:[\\\\/]|[\\\\/]{2})",
               "type": "string"
             },
             {
@@ -1853,7 +1853,7 @@
       "properties": {
         "path": {
           "minLength": 1,
-          "pattern": "^/",
+          "pattern": "^(?:/|[A-Za-z]:[\\\\/]|[\\\\/]{2})",
           "title": "Path",
           "type": "string"
         },
@@ -1893,13 +1893,13 @@
       "properties": {
         "root": {
           "minLength": 1,
-          "pattern": "^/",
+          "pattern": "^(?:/|[A-Za-z]:[\\\\/]|[\\\\/]{2})",
           "title": "Root",
           "type": "string"
         },
         "app_local_data": {
           "minLength": 1,
-          "pattern": "^/",
+          "pattern": "^(?:/|[A-Za-z]:[\\\\/]|[\\\\/]{2})",
           "title": "App Local Data",
           "type": "string"
         },
@@ -2159,7 +2159,7 @@
           "anyOf": [
             {
               "minLength": 1,
-              "pattern": "^/",
+              "pattern": "^(?:/|[A-Za-z]:[\\\\/]|[\\\\/]{2})",
               "type": "string"
             },
             {
@@ -2343,7 +2343,7 @@
       "properties": {
         "root": {
           "minLength": 1,
-          "pattern": "^/",
+          "pattern": "^(?:/|[A-Za-z]:[\\\\/]|[\\\\/]{2})",
           "title": "Root",
           "type": "string"
         },
@@ -2354,7 +2354,7 @@
         },
         "app_local_data": {
           "minLength": 1,
-          "pattern": "^/",
+          "pattern": "^(?:/|[A-Za-z]:[\\\\/]|[\\\\/]{2})",
           "title": "App Local Data",
           "type": "string"
         },
@@ -2613,7 +2613,7 @@
           "anyOf": [
             {
               "minLength": 1,
-              "pattern": "^/",
+              "pattern": "^(?:/|[A-Za-z]:[\\\\/]|[\\\\/]{2})",
               "type": "string"
             },
             {
@@ -2670,13 +2670,13 @@
       "properties": {
         "app_local_data": {
           "minLength": 1,
-          "pattern": "^/",
+          "pattern": "^(?:/|[A-Za-z]:[\\\\/]|[\\\\/]{2})",
           "title": "App Local Data",
           "type": "string"
         },
         "journal_dir": {
           "minLength": 1,
-          "pattern": "^/",
+          "pattern": "^(?:/|[A-Za-z]:[\\\\/]|[\\\\/]{2})",
           "title": "Journal Dir",
           "type": "string"
         },
@@ -2698,7 +2698,7 @@
           "anyOf": [
             {
               "minLength": 1,
-              "pattern": "^/",
+              "pattern": "^(?:/|[A-Za-z]:[\\\\/]|[\\\\/]{2})",
               "type": "string"
             },
             {
@@ -2882,7 +2882,7 @@
           "anyOf": [
             {
               "minLength": 1,
-              "pattern": "^/",
+              "pattern": "^(?:/|[A-Za-z]:[\\\\/]|[\\\\/]{2})",
               "type": "string"
             },
             {
@@ -2930,7 +2930,7 @@
       "properties": {
         "app_local_data": {
           "minLength": 1,
-          "pattern": "^/",
+          "pattern": "^(?:/|[A-Za-z]:[\\\\/]|[\\\\/]{2})",
           "title": "App Local Data",
           "type": "string"
         }
@@ -3106,13 +3106,13 @@
       "properties": {
         "app_local_data": {
           "minLength": 1,
-          "pattern": "^/",
+          "pattern": "^(?:/|[A-Za-z]:[\\\\/]|[\\\\/]{2})",
           "title": "App Local Data",
           "type": "string"
         },
         "journal_dir": {
           "minLength": 1,
-          "pattern": "^/",
+          "pattern": "^(?:/|[A-Za-z]:[\\\\/]|[\\\\/]{2})",
           "title": "Journal Dir",
           "type": "string"
         },
@@ -3294,7 +3294,7 @@
           "anyOf": [
             {
               "minLength": 1,
-              "pattern": "^/",
+              "pattern": "^(?:/|[A-Za-z]:[\\\\/]|[\\\\/]{2})",
               "type": "string"
             },
             {
@@ -3307,7 +3307,7 @@
           "anyOf": [
             {
               "minLength": 1,
-              "pattern": "^/",
+              "pattern": "^(?:/|[A-Za-z]:[\\\\/]|[\\\\/]{2})",
               "type": "string"
             },
             {
@@ -3587,7 +3587,7 @@
       "properties": {
         "path": {
           "minLength": 1,
-          "pattern": "^/",
+          "pattern": "^(?:/|[A-Za-z]:[\\\\/]|[\\\\/]{2})",
           "title": "Path",
           "type": "string"
         },
@@ -3622,7 +3622,7 @@
       "properties": {
         "path": {
           "minLength": 1,
-          "pattern": "^/",
+          "pattern": "^(?:/|[A-Za-z]:[\\\\/]|[\\\\/]{2})",
           "title": "Path",
           "type": "string"
         },
@@ -3667,7 +3667,7 @@
       "properties": {
         "app_local_data": {
           "minLength": 1,
-          "pattern": "^/",
+          "pattern": "^(?:/|[A-Za-z]:[\\\\/]|[\\\\/]{2})",
           "title": "App Local Data",
           "type": "string"
         },
@@ -3845,7 +3845,7 @@
           "anyOf": [
             {
               "minLength": 1,
-              "pattern": "^/",
+              "pattern": "^(?:/|[A-Za-z]:[\\\\/]|[\\\\/]{2})",
               "type": "string"
             },
             {
@@ -3904,7 +3904,7 @@
         },
         "root": {
           "minLength": 1,
-          "pattern": "^/",
+          "pattern": "^(?:/|[A-Za-z]:[\\\\/]|[\\\\/]{2})",
           "title": "Root",
           "type": "string"
         },
@@ -3923,7 +3923,7 @@
         },
         "app_local_data": {
           "minLength": 1,
-          "pattern": "^/",
+          "pattern": "^(?:/|[A-Za-z]:[\\\\/]|[\\\\/]{2})",
           "title": "App Local Data",
           "type": "string"
         },
@@ -4107,7 +4107,7 @@
           "anyOf": [
             {
               "minLength": 1,
-              "pattern": "^/",
+              "pattern": "^(?:/|[A-Za-z]:[\\\\/]|[\\\\/]{2})",
               "type": "string"
             },
             {
@@ -4120,7 +4120,7 @@
           "anyOf": [
             {
               "minLength": 1,
-              "pattern": "^/",
+              "pattern": "^(?:/|[A-Za-z]:[\\\\/]|[\\\\/]{2})",
               "type": "string"
             },
             {
@@ -4148,7 +4148,7 @@
           "anyOf": [
             {
               "minLength": 1,
-              "pattern": "^/",
+              "pattern": "^(?:/|[A-Za-z]:[\\\\/]|[\\\\/]{2})",
               "type": "string"
             },
             {
@@ -4176,7 +4176,7 @@
           "anyOf": [
             {
               "minLength": 1,
-              "pattern": "^/",
+              "pattern": "^(?:/|[A-Za-z]:[\\\\/]|[\\\\/]{2})",
               "type": "string"
             },
             {
@@ -4211,7 +4211,7 @@
       "properties": {
         "path": {
           "minLength": 1,
-          "pattern": "^/",
+          "pattern": "^(?:/|[A-Za-z]:[\\\\/]|[\\\\/]{2})",
           "title": "Path",
           "type": "string"
         },
@@ -4241,7 +4241,7 @@
       "properties": {
         "folder": {
           "minLength": 1,
-          "pattern": "^/",
+          "pattern": "^(?:/|[A-Za-z]:[\\\\/]|[\\\\/]{2})",
           "title": "Folder",
           "type": "string"
         },

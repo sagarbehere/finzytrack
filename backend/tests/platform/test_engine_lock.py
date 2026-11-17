@@ -9,7 +9,6 @@ earlier session would. Waits are on a condition with a deadline (EP-28).
 
 from __future__ import annotations
 
-import fcntl
 import os
 import subprocess
 import sys
@@ -22,6 +21,12 @@ import pytest
 from app.platform.adapters.app_folder import AppFolder
 from app.platform.adapters.engine_lock import engine_lock_path, wait_engine_lock
 from app.platform.engine import AppFolderChangedError
+from tests.windows_pending import BL_0281
+
+if sys.platform == "win32":
+    raise pytest.skip.Exception(BL_0281, allow_module_level=True)
+
+import fcntl
 
 pytestmark = pytest.mark.skipif(os.name != "posix", reason="flock is POSIX; Windows is BL-0087 (M1b)")
 

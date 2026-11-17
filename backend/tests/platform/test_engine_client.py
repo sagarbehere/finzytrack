@@ -15,12 +15,9 @@ from __future__ import annotations
 import contextlib
 import dataclasses
 import faulthandler
-import fcntl
 import inspect
 import os
 import queue
-import resource
-import signal
 import subprocess
 import sys
 import threading
@@ -72,6 +69,14 @@ from app.platform.engine_supervision import (
     Unavailable,
 )
 from app.platform.observability import Event
+from tests.windows_pending import BL_0281
+
+if sys.platform == "win32":
+    raise pytest.skip.Exception(BL_0281, allow_module_level=True)
+
+import fcntl
+import resource
+import signal
 
 REPO = Path(__file__).resolve().parents[3]
 ENGINE_VENV = REPO / "engine" / ".venv"

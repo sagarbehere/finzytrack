@@ -25,9 +25,11 @@ version. A side that reads another `v` reads no further and treats the peer as i
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Annotated, Any, Literal, get_args
+from typing import Annotated, Any, Final, Literal, get_args
 
-from pydantic import BaseModel, ConfigDict, Field, JsonValue
+from pydantic import BaseModel, ConfigDict, Field, JsonValue, WithJsonSchema
+
+from ledger_engine.fs.pathmodel import HOST, POSIX
 
 PROTOCOL_VERSION = 2
 MAX_LINE_BYTES = 256 * 1024 * 1024
@@ -163,7 +165,16 @@ class ProceedControl(Message):
 
 # -- Recover-all (S0062; engine-jobs §8.1, §11; ADR-0063 decision 2) --------------------------------------------------
 
-AbsPath = Annotated[str, Field(min_length=1, pattern=r"^/")]
+ABS_PATH_PATTERN: Final = r"^(?:/|[A-Za-z]:[\\/]|[\\/]{2})"
+"""The contract's absolute path (S0127): a POSIX path, or a Windows drive or UNC path (`\\\\?\\` included). Each
+engine takes only its own OS's (`HOST_ABS_PATH_PATTERN`), so the POSIX engine's validation is exactly as before."""
+# no look-around: pydantic's regex engine (Rust's) has none (`tests/fs/test_this_os.py` imports the engine as on win32)
+HOST_ABS_PATH_PATTERN: Final = r"^/" if HOST is POSIX else r"^(?:[A-Za-z]:[\\/]|[\\/]{2}(?:[^.\\/]|[.][^\\/]))"
+AbsPath = Annotated[
+    str,
+    Field(min_length=1, pattern=HOST_ABS_PATH_PATTERN),
+    WithJsonSchema({"minLength": 1, "pattern": ABS_PATH_PATTERN, "type": "string"}),
+]
 Sha256 = Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
 type EntryKind = Literal["file", "dir", "link", "other"]
 

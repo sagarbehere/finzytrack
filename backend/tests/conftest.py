@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import sys
 import time
 
 import pytest
@@ -13,8 +14,11 @@ from tests.integrity.planned import PlannedMissing
 # every process a test starts, so a UTC "today" taken for the local one fails instead of passing by coincidence.
 # `tests/test_runs_west_of_utc.py` fails if this is lost.
 WEST_OF_UTC = "America/Los_Angeles"
-os.environ["TZ"] = WEST_OF_UTC
-time.tzset()
+if sys.platform == "win32":  # Windows reads `TZ` only as a process starts, in its own form (the engine's conftest)
+    os.environ["TZ"] = "PST8PDT"
+else:
+    os.environ["TZ"] = WEST_OF_UTC
+    time.tzset()
 
 
 def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:

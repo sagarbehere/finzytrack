@@ -44,13 +44,17 @@ from ledger_engine.mirror import publish as pb
 from tests.fs.real_volume import app_identity
 from tests.ledger.worlds import with_folders
 from tests.mirror.publish_support import publish_job
+from tests.windows_pending import BL_0280
+
+if sys.platform == "win32":
+    raise pytest.skip.Exception(BL_0280, allow_module_level=True)
 
 pytestmark = [
     pytest.mark.inv("INV-01"),
     pytest.mark.inv("INV-22"),
     pytest.mark.inv("INV-26"),
     pytest.mark.skipif(
-        sys.platform not in ("darwin", "linux"), reason="the write path's port: macOS and Linux; Windows is BL-0087"
+        sys.platform not in ("darwin", "linux"), reason="the write path's port: macOS and Linux; Windows is BL-0280"
     ),
 ]
 

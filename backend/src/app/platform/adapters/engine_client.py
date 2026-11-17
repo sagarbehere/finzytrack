@@ -78,6 +78,7 @@ import queue
 import select
 import shutil
 import subprocess
+import sys
 import threading
 import time
 from collections import deque
@@ -88,6 +89,7 @@ from typing import IO, Literal
 
 from app.platform.adapters.app_folder import AppFolder, directory_flags
 from app.platform.adapters.engine_group import EngineGroup, GroupOps, PosixGroupOps, Reaped
+from app.platform.adapters.windows_pending import NotOnWindowsError
 from app.platform.engine import (
     Committed,
     EndReason,
@@ -280,6 +282,8 @@ def _opened_chain(bytecode: EngineBytecode, *, make: bool) -> Generator[_Build |
     """`engine/` and `bytecode/` opened (made when `make`) one by one through descriptors, from the app folder checked
     to be the object of the start (`AppFolder.open`, which raises `AppFolderChangedError` otherwise); never following a
     link. None when `make` is False and a folder of the chain is not there."""
+    if sys.platform == "win32":
+        raise NotOnWindowsError
     assert bytecode.app_folder is not None  # noqa: S101 (`parts` checked it)
     engine, codes, build = bytecode.parts()
     fds: list[int] = [bytecode.app_folder.open()]
@@ -552,6 +556,8 @@ def _pump_lines_until_reaped(pipe: IO[bytes], replies: queue.Queue[_Reply], wake
     writes to `wake`): then what the dead engine left in the pipe is read first, so its last reply is never lost
     behind the end, and a child that left the group (`setsid`, §15) holding the output open cannot hold the call
     (S0057 verifier R1-F2). Raw reads on the descriptor; the buffered `pipe` object is never read."""
+    if sys.platform == "win32":
+        raise NotOnWindowsError
     fd = pipe.fileno()
     lines = _Lines(replies)
     both, out = select.poll(), select.poll()  # poll, not select: any descriptor number (R2-F5)
@@ -629,6 +635,8 @@ class _Filler:
         round 2). `.complete` is written only when, after the child, the app folder and the build folder at their
         paths are still the objects made; otherwise nothing is marked or removed (what the fill made is gone with the
         old folder, or not ours to reach)."""
+        if sys.platform == "win32":
+            raise NotOnWindowsError
         bytecode = self._bytecode
         failure: str | None = None
         try:
@@ -649,6 +657,8 @@ class _Filler:
 
     def _fill(self, build: int) -> str | None:
         """Run the compiler child in the build folder `build` and mark it complete; the failure's words, or None."""
+        if sys.platform == "win32":
+            raise NotOnWindowsError
         bytecode = self._bytecode
         argv = bytecode.fill_argv
         with self._lock:

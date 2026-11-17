@@ -2,7 +2,9 @@
 
 `path_key` is the identity of every fingerprint entry, journal match and registry deduplication: the canonical
 spelling of the deepest existing ancestor joined with the rest as written, each component folded by the rule of the
-directory that holds it (macOS: NFD always, plus `casefold` on a case-insensitive volume). So the key of a path does
+directory that holds it (macOS: NFD always, plus `casefold` on a case-insensitive volume; Windows: ordinal upper case
+unless the folder is case-sensitive, its root among the components: S0127), joined as this OS joins a path
+(`ledger_engine.fs.pathmodel`). So the key of a path does
 not depend on whether its file exists: an absent `Prices.beancount` and the file a save then creates as
 `prices.beancount` on a case-insensitive volume have one key. Python's folding can only merge names a volume keeps
 apart, never split names it treats as one (§15: it fails closed).
@@ -10,6 +12,7 @@ apart, never split names it treats as one (§15: it fails closed).
 
 from __future__ import annotations
 
+from ledger_engine.fs.pathmodel import host
 from ledger_engine.fs.port import MalformedPathError, Resolved, fold
 
 __all__ = ["canonical_path", "fold", "path_key"]
@@ -17,7 +20,7 @@ __all__ = ["canonical_path", "fold", "path_key"]
 
 def canonical_path(resolved: Resolved) -> str:
     """The canonical path: the existing part's stored spelling, then the rest as written."""
-    return "/" + "/".join(resolved.existing + resolved.rest)
+    return host().join(resolved.existing + resolved.rest)
 
 
 def path_key(resolved: Resolved) -> str:
@@ -25,4 +28,4 @@ def path_key(resolved: Resolved) -> str:
     parts = resolved.existing + resolved.rest
     if len(resolved.rules) != len(parts):
         raise MalformedPathError("one_rule_per_component")
-    return "/" + "/".join(fold(p, r) for p, r in zip(parts, resolved.rules, strict=True))
+    return host().join([fold(p, r) for p, r in zip(parts, resolved.rules, strict=True)])

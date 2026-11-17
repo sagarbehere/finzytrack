@@ -14,6 +14,7 @@ spec's lines:
 from __future__ import annotations
 
 import json
+import sys
 import time
 from collections.abc import Iterator
 from dataclasses import replace
@@ -40,6 +41,7 @@ from app.platform.engine_jobs.scheduler import Done, EngineJobs, Failed, JobTick
 from app.platform.errors import ErrorCode, WritesPausedDetails
 from app.platform.observability import Event as LogEvent
 from tests.platform.fake_job_engine import CRASH, FakeEngine
+from tests.windows_pending import TZSET
 
 DEADLINE = 20.0
 REPO = Path(__file__).resolve().parents[3]
@@ -124,6 +126,8 @@ class Rig:
 @pytest.fixture(autouse=True)
 def zone(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     """The app's machine in a time zone west of UTC (the engine reads no clock: the sidecar sends the civil date)."""
+    if sys.platform == "win32":
+        raise pytest.skip.Exception(TZSET)
     monkeypatch.setenv("TZ", TZ)
     time.tzset()
     yield

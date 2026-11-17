@@ -61,12 +61,13 @@ from ledger_engine.fs.port import (
     same_path,
     split_absolute,
 )
-from ledger_engine.fs.posix import PosixDir, PosixFS, PosixLegacyLocks
 
 # The one statement of this module's platform (not an `assert`, which `-O` strips): elsewhere the import fails, and
 # pyright checks the rest of the module for macOS only (`--pythonplatform`; S0113).
 if sys.platform != "darwin":
     raise ImportError("the macOS adapter; select one with ledger_engine.fs.this_os")  # noqa: TRY003 (one raise site)
+
+from ledger_engine.fs.posix import PosixDir, PosixFS, PosixLegacyLocks
 
 COPYFILE_XATTR: Final = 1 << 2
 ACCESS_DELETE: Final = 1 << 12  # <sys/unistd.h> _DELETE_OK: access(2) answers it from the file's and folder's ACLs
