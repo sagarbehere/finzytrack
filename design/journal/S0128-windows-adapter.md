@@ -138,4 +138,16 @@
 | RT-O4 | d | A cloned NTFS disk shares its serial and file IDs | Stated: §6.3 "Limit (cloned NTFS disk)" |
 | RT-O5 | d | Delete-pending under antivirus on FAT is transient | Stated in §6.8 (fails closed) |
 
+- Round 2 (the fresh round on 169fe290..d5859ea7; the product fix 708d4b7a), head b7c20944: verifier "PASS WITH FINDINGS", no High, nothing in class (a) or (b); 11 attacks (a carry-over failing part-way, a restricted file readable during or after the save, backups of a restricted file, the EFS refusal, the rollback's flush skip, six new switch shapes, the engine lock without delete sharing, write-through, the 73 refused renames on C:, macOS unchanged, `allowed(READ_XATTRS)`). Windows: the 2026-11-17 run 13 at 51c1a851, only the known ten red. Under the fresh round's budget the findings are backlog rows.
+
+| ID | Severity | Class | Disposition |
+|---|---|---|---|
+| V2-F1 | Medium | e (privacy) | The staging file holds the new bytes under the folder's ACL until the DACL is set: BL-0285 (1), before BL-0087 |
+| V2-F2 | Low | c | The switch guard misses six reflection shapes, two live; the second round on V-F1's mechanism: BL-0286, a fix only after the owner's options note |
+| V2-F3 | Low | c | No test for an inherited DACL with an explicit entry, the archive attribute, or the rollback's put-back keeping the ACL: BL-0285 (2) |
+| V2-F4 | Low | c | The rollback's flush skip keyed on the file-system type's name, which macOS's own `ntfs` driver also reports: BL-0285 (3) |
+| V2-Q-A | question | — | Owner's 1a reaches the save; Copy writes an EFS ledger's bytes in the clear into its target, and the open's mirror holds its entries in the clear: taken to the owner (after this round) |
+| V2-Q-B | question | — | `_carry_over` skips the DACL on two error codes, not by volume kind: BL-0285 (4) |
+
 ## Retro
+- Build about 104 min (the adapter, about 1,100 lines of ctypes, and three Windows CI runs), fix about 82 min (the owner's 1a, the rollback's flush, the switch moved to its own module, three more Windows runs), 2 verifier rounds and 1 data-safety red-team run, findings 0H/5M/22L over both rounds (round 1: verifier 2M/6L plus 3 questions, red team 2M/5L plus 5 overflow; round 2: 1M/3L plus 2 questions); no class (a). Cheaper gate: before claiming a guard keeps a test-only mechanism out of the product, keep the mechanism out of the product's source tree (two rounds of name-ban scans missed reflection shapes); and when a port copies a file's bytes onto a new object, carry its protection at creation, not after the data (the staging window). Process checks: the owner's policy question before the fix round 1 offered / 1 taken ("1a, wording ok"); the data-safety red team 1 catch (the dropped ACL and EFS) / 0 false positive; the verifier's mutants 2 catch (the protected-DACL flag, the flush skip by name) / 0 false positive.
