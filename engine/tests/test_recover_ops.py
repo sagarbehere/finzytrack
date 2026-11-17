@@ -267,7 +267,7 @@ def test_the_app_folder_named_through_a_link_is_the_engine_locks(ald: Path, tmp_
     _, jd, _ = journalled(ald)
     (jd / "s0-j1.part").write_bytes(b"torn")
     link = tmp_path / "app-link"
-    link.symlink_to(ald)
+    link.symlink_to(ald, target_is_directory=True)
     reply = Rig(held(ald)).send("recover_list", {"app_local_data": str(link)})
     assert reply["ok"], reply
     assert reply["result"]["parts_removed"] == 1
@@ -281,10 +281,10 @@ def test_a_try_through_a_linked_key_or_journal_folder_is_refused_path_moved(ald:
     ledger, jd, name = journalled(ald)
     local = jd.parent.parent
     if link == "key":
-        (local / "evil").symlink_to(local / "k1")
+        (local / "evil").symlink_to(local / "k1", target_is_directory=True)
     else:
         (local / "evil").mkdir()
-        (local / "evil" / "journal").symlink_to(jd)
+        (local / "evil" / "journal").symlink_to(jd, target_is_directory=True)
     rig = Rig(held(ald))
     out = rig.send(
         "recover_try", {"app_local_data": str(ald), "journal_dir": str(local / "evil" / "journal"), "name": name}
@@ -308,7 +308,7 @@ def test_the_listing_names_a_linked_journal_folder_holding_an_open_record_and_wr
     link = ald / "local" / "k1" / "journal"
     moved = tmp_path / "elsewhere"
     os.rename(link, moved)
-    link.symlink_to(moved)
+    link.symlink_to(moved, target_is_directory=True)
     reply = Rig(held(ald)).send("recover_list", {"app_local_data": str(ald)})
     assert reply["ok"], reply
     result = reply["result"]
@@ -328,7 +328,7 @@ def test_the_listing_names_a_linked_backups_folder_beside_an_open_record_and_lis
     bd = ald / "local" / "k1" / "backups"
     moved = tmp_path / "elsewhere_b"
     os.rename(bd, moved)
-    bd.symlink_to(moved)
+    bd.symlink_to(moved, target_is_directory=True)
     reply = Rig(held(ald)).send("recover_list", {"app_local_data": str(ald)})
     assert reply["ok"], reply
     result = reply["result"]
