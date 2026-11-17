@@ -21,3 +21,5 @@ Option 1 for now: the Windows port's parts are near (BL-0280 turns the INV-10 te
 
 ## Answer (owner, verbatim, with date)
 Not asked separately: covered by the owner's answer of the same day to `answered/20261117-windows-replace.md`, "1a, split yes, keep red" (the `engine-windows` job kept, red until the port lands), so option 1, with no gate change (orchestrator, 2026-11-17; the owner was told in session and may reopen it).
+
+After the answer (S0127 round 1): the two `test_overlay.py` tests pass on the runner once their plugins use `os.path` (the 2026-11-17 run 7: 10 failed, all in `test_no_resident_ledger.py` and `test_parity_corpus.py`).
