@@ -14,4 +14,4 @@ from __future__ import annotations
 
 from typing import Final
 
-MACOS_ONLY: Final = "a macOS primitive (Linux: tests/fs/test_linux.py; Windows: BL-0280)"
+MACOS_ONLY: Final = "a macOS primitive (Linux: tests/fs/test_linux.py; Windows: tests/fs/test_windows.py)"

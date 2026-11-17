@@ -24,14 +24,14 @@ import pytest
 
 from ledger_engine.fs.port import FolderId
 from ledger_engine.fs.this_os import folder_identity
-from tests.windows_pending import BL_0280
+from tests.windows_pending import FLOCK_HOLDER
 
 if sys.platform == "win32":
-    raise pytest.skip.Exception(BL_0280, allow_module_level=True)
+    raise pytest.skip.Exception(FLOCK_HOLDER, allow_module_level=True)
 
 import fcntl
 
-pytestmark = pytest.mark.skipif(os.name != "posix", reason="flock is POSIX; Windows is BL-0280")
+pytestmark = pytest.mark.skipif(os.name != "posix", reason="flock is POSIX; Windows: tests/fs/test_windows.py")
 
 DEADLINE = 15.0
 

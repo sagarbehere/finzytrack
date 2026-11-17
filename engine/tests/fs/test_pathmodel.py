@@ -245,6 +245,47 @@ def test_windows_parent_and_name(path: str, parent: str, name: str) -> None:
 
 
 @pytest.mark.parametrize(
+    "root", ["C:\\", "\\\\srv\\sh", "\\\\srv\\sh\\", "\\\\?\\Volume{0b9e2c61-4d7f-4a38-8e15-92a6f0c3d7b4}\\"]
+)
+def test_S0128_F2_a_windows_root_has_no_parent_and_is_refused_as_a_malformed_path(root: str) -> None:
+    """S0127 verifier F2 (BL-0280): `parent_and_name` of a root raised `IndexError`, which no caller catches as a path
+    the engine does not take; it is `MalformedPathError` (a caller's error, nothing done), as POSIX's `/` gives no
+    name either."""
+    with pytest.raises(MalformedPathError, match="root_has_no_parent"):
+        WINDOWS.parent_and_name(root)
+
+
+@pytest.mark.parametrize(
+    ("path", "normal"),
+    [
+        ("C:\\\\x", "C:\\x"),
+        ("C:\\\\\\x\\\\y", "C:\\x\\y"),
+        ("C://x", "C:\\x"),
+        ("\\\\s\\sh\\\\x", "\\\\s\\sh\\x"),
+        ("\\\\?\\C:\\\\x", "C:\\x"),
+    ],
+)
+def test_S0128_F3_a_doubled_separator_after_the_root_is_collapsed(path: str, normal: str) -> None:
+    """S0127 verifier F3 (BL-0280): `normpath("C:\\\\\\\\x")` kept the doubled separator (ntpath read `\\\\x` as a UNC
+    start), so the save's `normpath(p) == p` check took a spelling the engine never records."""
+    assert WINDOWS.normpath(path) == normal
+    assert WINDOWS.normpath(path) == WINDOWS.join(WINDOWS.split(path))
+
+
+@given(
+    st.lists(st.text(alphabet="abcXYZ\u00e9_-", min_size=1, max_size=5), min_size=1, max_size=4),
+    st.lists(st.sampled_from(["\\", "\\\\", "/", "\\/", "\\\\\\"]), min_size=4, max_size=4),
+    st.sampled_from(["C:", "\\\\srv\\sh"]),
+)
+def test_S0128_F3_normpath_agrees_with_split_and_join_whatever_the_separators(
+    names: list[str], seps: list[str], root: str
+) -> None:
+    """For a path without `.` or `..`, the normal form is the joined form of its components (one rule, not two)."""
+    path = root + "".join(sep + n for sep, n in zip(seps, names, strict=False))
+    assert WINDOWS.normpath(path) == WINDOWS.join(WINDOWS.split(path))
+
+
+@pytest.mark.parametrize(
     ("path", "folder", "under", "strictly"),
     [
         ("C:\\a\\b", "C:\\a", True, True),

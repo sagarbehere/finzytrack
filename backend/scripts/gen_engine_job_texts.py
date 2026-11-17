@@ -325,6 +325,11 @@ SAVE: tuple[Row, ...] = (
         lambda: st.BEST_EFFORT_DRIVE,
     ),
     (
+        "msg:save.best_effort_windows",
+        "the open of a workspace on Windows, where every drive takes §6.8's mode (ADR-0069, S0128)",
+        lambda: st.BEST_EFFORT_WINDOWS,
+    ),
+    (
         "msg:preview.large_file",
         "a preview whose plan changes one file larger than 15 MB, now or after the change (S0120)",
         lambda: st.large_file_tip((FILE,)) or "",

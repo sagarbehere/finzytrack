@@ -61,7 +61,17 @@ import uuid
 from collections.abc import Callable
 from typing import Final, override
 
-from ledger_engine.fs.port import AclEntry, Caps, FolderMark, FoldRule, NotOffered, Right, check_name, split_absolute
+from ledger_engine.fs.port import (
+    SERIAL_NAMESPACE,
+    AclEntry,
+    Caps,
+    FolderMark,
+    FoldRule,
+    NotOffered,
+    Right,
+    check_name,
+    split_absolute,
+)
 
 # The one statement of this module's platform (not an `assert`, which `-O` strips): elsewhere the import fails, and
 # pyright checks the rest of the module for Linux only (`--pythonplatform`; S0113).
@@ -100,9 +110,6 @@ CASEFOLD_FLAG_TYPES: Final = frozenset({"ext4", "f2fs", "tmpfs", "bcachefs"})
 """File systems whose folders may carry the case-folding flag (`chattr +F`)."""
 BY_UUID: Final = "/dev/disk/by-uuid"
 SERIAL: Final = re.compile(r"[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}|[0-9A-Fa-f]{16}")
-SERIAL_NAMESPACE: Final = uuid.UUID("3b1c6a52-8f0e-5d6a-9b1e-6c4f0f25a125")
-"""The namespace of the version 5 UUID a Linux drive named only by a format serial gets (FAT, exFAT, NTFS), fixed
-here so that one serial always names one drive (S0125)."""
 DELETED: Final = " (deleted)"
 
 

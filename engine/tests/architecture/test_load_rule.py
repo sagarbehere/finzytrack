@@ -54,6 +54,7 @@ _ADAPTER = object()  # what a name bound to an adapter module, or to one of its 
 ADAPTER_OS = {
     "ledger_engine.fs.darwin": frozenset({"darwin"}),
     "ledger_engine.fs.linux": frozenset({"linux"}),
+    "ledger_engine.fs.windows": frozenset({"win32"}),
     "ledger_engine.fs.posix": frozenset({"darwin", "linux"}),
 }
 
@@ -509,5 +510,5 @@ def test_off_its_os_a_star_import_from_an_adapter_or_another_missing_module_is_f
     load, and the leaf is for adapters only."""
     as_on(monkeypatch, "linux")
     assert violations(REL, "from ledger_engine.fs.darwin import *\n", STAGES) != []
-    assert violations(REL, "from ledger_engine.fs.windows import WindowsFS\n", STAGES) != []  # no such module yet
+    assert violations(REL, "from ledger_engine.fs.solaris import SolarisFS\n", STAGES) != []  # no such module
     assert violations(REL, "import ledger_engine.fs.no_such_adapter as a\n", STAGES) != []

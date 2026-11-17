@@ -15,10 +15,6 @@ from ledger_engine.fs.this_os import for_this_os
 from ledger_engine.ledger.writer import Change, NotSaved, Reason, Step, durable_commit, sha256
 from tests.fs.real_volume import commit
 from tests.macos_only import MACOS_ONLY
-from tests.windows_pending import BL_0280
-
-if sys.platform == "win32":
-    raise pytest.skip.Exception(BL_0280, allow_module_level=True)
 
 if sys.platform != "darwin":
     raise pytest.skip.Exception(MACOS_ONLY, allow_module_level=True)

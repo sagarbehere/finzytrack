@@ -83,7 +83,7 @@ from pydantic import BaseModel, ConfigDict, ValidationError
 
 from ledger_engine.fs import this_os
 from ledger_engine.fs.pathmodel import host
-from ledger_engine.fs.port import same_identity
+from ledger_engine.fs.port import same_folder, same_identity
 from ledger_engine.protocol import app_folder
 from ledger_engine.protocol.app_folder import AppFolderChangedError, Identity, parse_identity
 from ledger_engine.protocol.copy import COPY_HANDLERS, COPY_OUTCOME_HANDLERS
@@ -627,11 +627,12 @@ def hold_engine_lock(path: str, identity: Identity) -> None:
     start (S0100, BL-0163 (a): nothing of ours writes in or above the app folder's parent). The app folder is opened
     first and must still be the object of the start (`identity`, S0102, BL-0244); `locks/` and the lock file are made
     through that descriptor, so a folder removed or put in its place since gets nothing (`AppFolderChangedError`)."""
-    if sys.platform == "win32":  # pragma: no cover (Windows)
-        return  # TODO(BL-0280): the Windows lock (LockFileEx), with the engine's nested Job Object (BL-0281).
+    folder = app_folder.folder_of_lock(path)
+    if sys.platform == "win32":  # S0128: `LockFileEx` through the Windows adapter, every name opened by handle
+        _hold_engine_lock_windows(path, folder, identity)
+        return
     import fcntl  # POSIX only
 
-    folder = app_folder.folder_of_lock(path)
     try:
         dfd = os.open(folder, os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC)
     except OSError as e:  # gone, not a folder, or not ours to judge (fail closed: S0102 round 1, red team F6)
@@ -646,6 +647,26 @@ def hold_engine_lock(path: str, identity: Identity) -> None:
     finally:
         os.close(dfd)
     fcntl.flock(fd, fcntl.LOCK_EX)
+
+
+def _hold_engine_lock_windows(path: str, folder: str, identity: Identity) -> None:
+    """`hold_engine_lock` on Windows (S0128): the app folder opened by the Windows adapter and checked against the
+    start's identity (`port.same_folder`: the volume serial and file ID, `--app-folder-id DEV:INO:BORN`), then
+    `locks/` and the lock file made or opened through its handle, never through a link, and `LockFileEx` over the whole
+    file, waiting (`this_os.take_engine_lock`)."""
+    try:
+        app = this_os.engine_lock_folder(folder)
+    except OSError as e:  # gone, not a folder, or not ours to judge (fail closed, as on POSIX)
+        raise AppFolderChangedError(e.errno, "the app folder is missing or cannot be read", folder) from None
+    with app:
+        try:
+            same = same_folder(app, identity)
+        except OSError as e:
+            raise AppFolderChangedError(e.errno, "the app folder cannot be read", folder) from None
+        if not same:
+            raise AppFolderChangedError(errno.ESTALE, "the app folder was replaced", folder)
+        locks = os.path.basename(os.path.dirname(os.path.abspath(path)))
+        this_os.take_engine_lock(app, locks, os.path.basename(path))
 
 
 class _Channel:

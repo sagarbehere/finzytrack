@@ -7,7 +7,6 @@ that holds the engine lock."""
 from __future__ import annotations
 
 import json
-import sys
 from pathlib import Path
 from typing import Any, override
 
@@ -20,12 +19,7 @@ from ledger_engine.protocol.server import InputEnded
 from tests.test_save_ops import Channel as SaveChannel
 from tests.test_save_ops import engine, request
 
-pytestmark = [
-    pytest.mark.skipif(
-        sys.platform not in ("darwin", "linux"), reason="the write path's port: macOS and Linux; Windows is BL-0280"
-    ),
-    pytest.mark.inv("INV-22"),
-]
+pytestmark = [pytest.mark.inv("INV-22"), pytest.mark.usefixtures("windows_port")]
 
 MAIN = 'option "title" "Books"\n2026-01-01 open Assets:Cash EUR\ninclude "prices/p.beancount"\n'
 PRICES = "2026-01-02 price EUR 1.10 USD\n"

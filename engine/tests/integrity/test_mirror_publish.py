@@ -30,7 +30,7 @@ from tests.mirror.publish_support import BUILT_AT, ENGINE_BUILD, KEY, TODAY, fs_
 pytestmark = [
     pytest.mark.inv("INV-05"),
     pytest.mark.skipif(
-        sys.platform not in ("darwin", "linux"), reason="the write path's port: macOS and Linux; Windows is BL-0280"
+        sys.platform not in ("darwin", "linux"), reason="the publish on Windows is BL-0206 (its pointer file)"
     ),
 ]
 

@@ -36,17 +36,15 @@ from ledger_engine.protocol.server import InputEnded
 from tests.ledger.worlds import with_folders
 from tests.test_save_ops import Channel as SaveChannel
 from tests.test_save_ops import engine, request
-from tests.windows_pending import BL_0280
+from tests.windows_pending import BL_0282
 
 if sys.platform == "win32":
-    raise pytest.skip.Exception(BL_0280, allow_module_level=True)
+    raise pytest.skip.Exception(BL_0282, allow_module_level=True)
 
 import fcntl
 
 pytestmark = [
-    pytest.mark.skipif(
-        sys.platform not in ("darwin", "linux"), reason="the write path's port: macOS and Linux; Windows is BL-0280"
-    ),
+    pytest.mark.skipif(sys.platform not in ("darwin", "linux"), reason="Copy loads with Beancount: Windows is BL-0282"),
     pytest.mark.inv("INV-22"),
     pytest.mark.inv("INV-26"),
     pytest.mark.inv("INV-32"),

@@ -565,6 +565,19 @@ def test_the_best_effort_drive_notice_is_the_owners_words_in_the_spec() -> None:
     assert rendered.endswith(f"| {save_text.BEST_EFFORT_DRIVE} |")
 
 
+def test_S0128_on_windows_the_notice_never_advises_the_computers_own_disk() -> None:
+    """ADR-0069: on Windows every drive takes §6.8's mode, the computer's own disk too, so its notice is its own §11 row
+    (`save_text.BEST_EFFORT_WINDOWS`), rendered from the code, and does not repeat the advice that only holds where a
+    disk keeps the swap."""
+    spec = (REPO / "design" / "specs" / "engine-jobs.md").read_text(encoding="utf-8")
+    row = next(ln for ln in spec.splitlines() if ln.startswith("| a workspace whose ledger is on Windows is opened"))
+    assert "| `msg:save.best_effort_windows` |" in row
+    texts = (REPO / "design" / "generated" / "engine-job-texts.md").read_text(encoding="utf-8")
+    rendered = next(ln for ln in texts.splitlines() if ln.startswith("| `msg:save.best_effort_windows` |"))
+    assert rendered.endswith(f"| {save_text.BEST_EFFORT_WINDOWS} |")
+    assert "own disk" not in save_text.BEST_EFFORT_WINDOWS
+
+
 # -- S0100: the write-path leftovers (BL-0162, BL-0163, BL-0182, BL-0183, BL-0187) ------------------------------------
 
 A_BEAN = "/L/a.bean"

@@ -25,19 +25,9 @@ import pytest
 from ledger_engine.ledger.writer import Change, Commit, Landed, durable_commit
 from ledger_engine.protocol.server import Engine
 from tests.fs.real_volume import app_identity, app_identity_text
-from tests.windows_pending import BL_0280
+from tests.windows_pending import FLOCK_HOLDER, NO_UID
 
-if sys.platform == "win32":
-    raise pytest.skip.Exception(BL_0280, allow_module_level=True)
-
-import fcntl
-
-pytestmark = [
-    pytest.mark.skipif(
-        sys.platform not in ("darwin", "linux"), reason="the write path's port: macOS and Linux; Windows is BL-0280"
-    ),
-    pytest.mark.inv("INV-32"),
-]
+pytestmark = [pytest.mark.inv("INV-32"), pytest.mark.usefixtures("windows_port")]
 
 DEADLINE = 15.0
 PRE = b"2026-01-01 open Assets:A\n"
@@ -377,6 +367,10 @@ def test_the_listing_waits_for_an_earlier_sessions_engine_to_let_the_engine_lock
     its `flock`. Recovery runs in an engine that takes the lock before it reads its next request, so while another
     process holds the lock the listing is not answered and the `.part` is still there; once it lets go, the listing
     runs."""
+    if sys.platform == "win32":
+        raise pytest.skip.Exception(FLOCK_HOLDER)
+    import fcntl  # POSIX only
+
     _, jd, _ = journalled(ald)
     (jd / "s0-j1.part").write_bytes(b"torn")
     lock = ald / "locks" / "engine.lock"
@@ -484,6 +478,8 @@ def test_S0102_r1_a_replaced_folder_whose_identity_cannot_be_read_is_refused(tmp
     """Round 1, verifier V1 and red team F6: a folder put in place of the app folder that may be searched and written
     but not read (0300): its descriptor cannot be opened, so its identity cannot be judged. Fail closed: refused, and
     the `.part` in it is left alone (the check used to let it through and the listing removed it)."""
+    if sys.platform == "win32":
+        raise pytest.skip.Exception(NO_UID)
     ald = tmp_path / "app"
     ald.mkdir()
     rig = Rig(held(ald))

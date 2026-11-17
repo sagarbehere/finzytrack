@@ -164,6 +164,11 @@ class PathModel:
         POSIX: the adapters' own rules (`DarwinFS.same_path`, `LinuxFS.same_path`)."""
         raise NotImplementedError
 
+    def extended(self, path: str) -> str:
+        """The path as the system's calls take it: on Windows with the long-path prefix (`WindowsPaths.extended`, for
+        the Windows adapter, S0128); the POSIX adapters take paths as they are and never ask."""
+        raise NotImplementedError
+
     # the lexical operations the copy layout needs, as this OS's `os.path` does them
     def dirname(self, path: str) -> str:
         raise NotImplementedError
@@ -367,7 +372,9 @@ class WindowsPaths(PathModel):
             root, rest = self._root(path)
         except MalformedPathError:
             return ntpath.normpath(path)
-        tail = ntpath.normpath("\\" + rest)  # `.` and `..` resolved below the root, never above it
+        # `.` and `..` resolved below the root, never above it; separators after the root collapsed first, or ntpath
+        # reads `\\\\x` as the start of a UNC path and keeps it (S0127 verifier F3)
+        tail = ntpath.normpath("\\" + rest.lstrip("\\/"))
         return root + tail
 
     @override
@@ -377,6 +384,8 @@ class WindowsPaths(PathModel):
     @override
     def parent_and_name(self, path: str) -> tuple[str, str]:
         parts = self.split(path)
+        if self.is_root(parts):
+            raise MalformedPathError("root_has_no_parent")  # S0127 verifier F2: was an `IndexError`
         return self.join(parts[:-1]), parts[-1]
 
     @override
@@ -398,9 +407,10 @@ class WindowsPaths(PathModel):
             return False
         return ordinal_upper(a[0]) == ordinal_upper(b[0]) and a[1:] == b[1:]
 
+    @override
     def extended(self, path: str) -> str:
-        """The path with the long-path prefix, as the system's calls take it (BL-0280): `\\\\?\\C:\\...`,
-        `\\\\?\\UNC\\server\\share\\...`; a volume GUID path has it already."""
+        """The path with the long-path prefix, as the system's calls take it (the Windows adapter, S0128):
+        `\\\\?\\C:\\...`, `\\\\?\\UNC\\server\\share\\...`; a volume GUID path has it already."""
         parts = self.split(path)
         root = parts[0]
         if root.startswith(_LONG):

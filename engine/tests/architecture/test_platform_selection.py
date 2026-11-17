@@ -66,7 +66,77 @@ def test_only_the_selection_point_imports_an_adapter() -> None:
 def test_the_selection_point_is_the_one_that_imports_the_adapters() -> None:
     """`@regression-guard`: the scan sees the selection point's own imports, so it would see any other."""
     found = adapter_imports(SELECTION, (SRC / SELECTION).read_text(encoding="utf-8"))
-    assert sorted(found) == ["ledger_engine.fs.darwin", "ledger_engine.fs.linux"]
+    assert sorted(set(found)) == ["ledger_engine.fs.darwin", "ledger_engine.fs.linux", "ledger_engine.fs.windows"]
+
+
+WINDOWS_SWITCH = frozenset({"windows_port_under_test", "_windows_under_test"})
+"""The test-only switch that selects the Windows adapter (S0128; BL-0087 turns writes on in the product)."""
+
+
+def switch_uses(source: str) -> list[int]:
+    """The lines of `source` that name the Windows test switch, in any position (a name, an attribute, an import)."""
+    found: list[int] = []
+    for node in ast.walk(ast.parse(source)):
+        name = (
+            node.id
+            if isinstance(node, ast.Name)
+            else node.attr
+            if isinstance(node, ast.Attribute)
+            else node.name
+            if isinstance(node, ast.alias)
+            else None
+        )
+        if name in WINDOWS_SWITCH:
+            found.append(getattr(node, "lineno", 0))
+    return found
+
+
+def test_the_product_never_turns_the_windows_port_on() -> None:
+    """Must not pass (@regression-guard: on the base there was no switch to name): the product refuses file operations
+    on Windows until BL-0087 (S0128), so nothing outside the selection point names the switch that selects the Windows
+    adapter for a test."""
+    offenders: list[str] = []
+    for path in sorted(SRC.rglob("*.py")):
+        rel = path.relative_to(SRC).as_posix()
+        if rel != SELECTION:
+            offenders.extend(f"{rel}:{n}" for n in switch_uses(path.read_text(encoding="utf-8")))
+    assert not offenders, offenders
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "from ledger_engine.fs.this_os import windows_port_under_test\n",
+        "from ledger_engine.fs import this_os\nwith this_os.windows_port_under_test():\n    pass\n",
+        "from ledger_engine.fs import this_os\nthis_os._windows_under_test.set(True)\n",
+    ],
+)
+def test_each_spelling_of_the_windows_switch_is_seen(source: str) -> None:
+    """Must not pass (@regression-guard: the scanner is the test's own): each spelling turns the Windows adapter on."""
+    assert switch_uses(source)
+
+
+def test_inside_the_selection_point_the_switch_only_selects_windows() -> None:
+    """The switch is read only beside a `win32` check, in `supported`, `for_this_os` and `legacy_locks_for_this_os`,
+    and set only in `windows_port_under_test`."""
+    tree = ast.parse((SRC / SELECTION).read_text(encoding="utf-8"))
+    reads: set[str] = set()
+    for f in tree.body:
+        if isinstance(f, ast.FunctionDef):
+            for n in ast.walk(f):
+                if (
+                    isinstance(n, ast.Attribute)
+                    and isinstance(n.value, ast.Name)
+                    and n.value.id == "_windows_under_test"
+                ):
+                    reads.add(f"{f.name}.{n.attr}")
+    assert reads == {
+        "supported.get",
+        "for_this_os.get",
+        "legacy_locks_for_this_os.get",
+        "windows_port_under_test.set",
+        "windows_port_under_test.reset",
+    }
 
 
 def test_only_the_adapters_import_their_shared_posix_code() -> None:

@@ -33,8 +33,8 @@
 The calls macOS and Linux share (the reads, the exclusive create, the entry operations on the descriptor, the
 resolve walk, the legacy lock) are `ledger_engine.fs.posix` (S0125). This module is macOS-only: importing it elsewhere
 raises `ImportError`. The engine selects the adapter in `ledger_engine.fs.this_os` (`for_this_os`,
-`legacy_locks_for_this_os`), which gives Linux `ledger_engine.fs.linux` and refuses other operating systems (Windows is
-BL-0087; spec §14).
+`legacy_locks_for_this_os`), which gives Linux `ledger_engine.fs.linux`, Windows `ledger_engine.fs.windows` only under
+test until BL-0087 (S0128), and refuses other operating systems (spec §14).
 """
 
 from __future__ import annotations

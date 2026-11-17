@@ -93,3 +93,18 @@ def pytest_make_collect_report(
         with pathmodel.simulating(pathmodel.POSIX):
             return (yield)
     return (yield)
+
+
+@pytest.fixture
+def windows_port() -> Iterator[None]:
+    """On Windows, the Windows adapter selected for the test (`this_os.windows_port_under_test`, S0128): the product
+    refuses file operations there until BL-0087 turns writes on, and a real-disk test runs the product's own code
+    paths on the adapter. A no-op on macOS and Linux. A module opts in with
+    `pytestmark = pytest.mark.usefixtures("windows_port")`."""
+    if sys.platform != "win32":
+        yield
+        return
+    from ledger_engine.fs import this_os
+
+    with this_os.windows_port_under_test():
+        yield

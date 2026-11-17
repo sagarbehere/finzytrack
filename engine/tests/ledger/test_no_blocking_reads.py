@@ -30,9 +30,7 @@ if sys.platform == "win32":
     raise pytest.skip.Exception(NO_FIFO, allow_module_level=True)
 
 pytestmark = [
-    pytest.mark.skipif(
-        sys.platform not in ("darwin", "linux"), reason="the write path's port: macOS and Linux; Windows is BL-0280"
-    ),
+    pytest.mark.skipif(sys.platform not in ("darwin", "linux"), reason="FIFOs: macOS and Linux"),
     pytest.mark.inv("INV-22"),
 ]
 

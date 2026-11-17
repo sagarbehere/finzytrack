@@ -49,16 +49,16 @@ from tests.mirror.publish_support import (
     publish_job,
     write_ledger,
 )
-from tests.windows_pending import BL_0280
+from tests.windows_pending import BL_0206
 
 if sys.platform == "win32":
-    raise pytest.skip.Exception(BL_0280, allow_module_level=True)
+    raise pytest.skip.Exception(BL_0206, allow_module_level=True)
 
 pytestmark = [
     pytest.mark.inv("INV-05"),
     pytest.mark.inv("INV-10"),
     pytest.mark.skipif(
-        sys.platform not in ("darwin", "linux"), reason="the write path's port: macOS and Linux; Windows is BL-0280"
+        sys.platform not in ("darwin", "linux"), reason="the publish on Windows is BL-0206 (its pointer file)"
     ),
 ]
 

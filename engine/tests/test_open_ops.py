@@ -18,9 +18,7 @@ from ledger_engine.protocol.server import Engine
 from tests.test_save_ops import Channel, engine, request
 
 pytestmark = [
-    pytest.mark.skipif(
-        sys.platform not in ("darwin", "linux"), reason="the write path's port: macOS and Linux; Windows is BL-0280"
-    ),
+    pytest.mark.skipif(sys.platform not in ("darwin", "linux"), reason="the publish on Windows is BL-0206"),
     pytest.mark.inv("INV-05"),
 ]
 

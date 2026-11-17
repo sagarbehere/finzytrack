@@ -1,4 +1,5 @@
-"""The legacy app's write lock adapter (`legacy_locks_for_this_os`: macOS and Linux, both `flock`, S0125; INV-26,
+"""The legacy app's write lock adapter (`legacy_locks_for_this_os`: macOS and Linux, both `flock`, S0125; Windows,
+`LockFileEx` over the range portalocker's `MsvcrtLocker` locks, S0128, reached under the `windows_port` fixture; INV-26,
 ADR-0062 decisions 2 and 5, narrowed to Copy by ADR-0068 D4): tried once, without waiting, with the call portalocker
 3.2.0 makes, on the file opened read-only and only if it exists. Copy is BL-0026's; the save no longer tries the lock
 (S0071), so these are the adapter's own tests, against a holder that takes the lock with portalocker 3.2.0 itself, as
@@ -17,17 +18,8 @@ import pytest
 
 from ledger_engine.fs.port import LegacyAbsent, LegacyHeld
 from ledger_engine.fs.this_os import legacy_locks_for_this_os
-from tests.windows_pending import BL_0280
 
-if sys.platform == "win32":
-    raise pytest.skip.Exception(BL_0280, allow_module_level=True)
-
-pytestmark = [
-    pytest.mark.inv("INV-26"),
-    pytest.mark.skipif(
-        sys.platform not in ("darwin", "linux"), reason="the lock's adapter: macOS and Linux; Windows is BL-0087"
-    ),
-]
+pytestmark = [pytest.mark.inv("INV-26"), pytest.mark.usefixtures("windows_port")]
 
 HOLDER = """
 import sys, portalocker
@@ -107,7 +99,11 @@ def test_an_absent_lock_is_reported_absent_and_never_created(tmp_path: Path) -> 
     assert not (tmp_path / "legacy").exists()
 
 
-@pytest.mark.parametrize("kind", ["folder", "fifo", "link", "unreadable"])
+KINDS = ["folder", "link"] if sys.platform == "win32" else ["folder", "fifo", "link", "unreadable"]
+"""Windows has no FIFO and no permission bits (`tests/windows_pending.py`: NO_FIFO, NO_UID)."""
+
+
+@pytest.mark.parametrize("kind", KINDS)
 def test_a_lock_that_cannot_be_tried_raises(tmp_path: Path, kind: str) -> None:
     """Any outcome other than held, free or absent is an error, so Copy refuses (fail closed, INV-22)."""
     lock = tmp_path / "legacy" / "data" / ".write.lock"
@@ -116,7 +112,8 @@ def test_a_lock_that_cannot_be_tried_raises(tmp_path: Path, kind: str) -> None:
         case "folder":
             lock.mkdir()
         case "fifo":
-            os.mkfifo(lock)
+            if sys.platform != "win32":  # never on Windows (`KINDS`)
+                os.mkfifo(lock)
         case "link":
             (lock.parent / "real").write_bytes(b"")
             lock.symlink_to(lock.parent / "real")

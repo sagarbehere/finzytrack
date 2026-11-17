@@ -13,10 +13,11 @@ operation done before it in that directory durable, never the data of the files 
 unsynced in-place write needs `sync_file`; S0101, BL-0243). A swap and an exclusive rename are one operation: a power
 loss keeps or drops each whole; so is a plain rename, except over an existing file on a volume without a journal (exFAT,
 FAT: `rename`). Nothing is assumed about the order in which unsynced operations reach the disk. Every sync is
-`durable_sync`: `F_FULLFSYNC` on macOS, `fsync` on Linux.
+`durable_sync`: `F_FULLFSYNC` on macOS, `fsync` on Linux, `FlushFileBuffers` on Windows.
 
 Every operation may raise `OSError`. The real adapters are `ledger_engine.fs.darwin` (macOS) and
-`ledger_engine.fs.linux` (Linux, S0125), sharing `ledger_engine.fs.posix`, taken only through
+`ledger_engine.fs.linux` (Linux, S0125), sharing `ledger_engine.fs.posix`, and `ledger_engine.fs.windows` (Windows,
+S0128: `FlushFileBuffers`, no swap; selected only under test until BL-0087), taken only through
 `ledger_engine.fs.this_os.for_this_os` (S0113); the test adapter is the in-memory fake `tests/fakes/memfs.py`, with a
 separate durable layer, crash, I/O-error and power-loss injection.
 """
@@ -25,12 +26,18 @@ from __future__ import annotations
 
 import errno
 import unicodedata
+import uuid
 from collections.abc import Iterable
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import Final, Protocol, Self
 
 from ledger_engine.fs.pathmodel import FoldRule, MalformedPathError, fold, host
+
+SERIAL_NAMESPACE: Final = uuid.UUID("3b1c6a52-8f0e-5d6a-9b1e-6c4f0f25a125")
+"""The namespace of the version 5 UUID a drive named only by a format serial gets (FAT, exFAT, NTFS, ReFS; Linux
+since S0125, Windows since S0128): the serial's upper-case hex, `XXXX-XXXX` for a 32-bit FAT or exFAT serial, 16
+digits for a 64-bit NTFS or ReFS serial, as udev spells them, so one serial names one drive on both systems."""
 
 CHUNK: Final = 1 << 20
 """How many bytes a streamed create or a hash reads or writes at a time (S0081: a copied document is never held whole
@@ -157,7 +164,7 @@ class DirHandle(Protocol):
         reports none (S0089, BL-0188: the journal names each folder's drive by it, and the undo writes only on that
         drive). Asking writes nothing; an error raises `OSError`. macOS: `ATTR_VOL_UUID` (APFS, HFS+, exFAT and FAT
         report one; probed). Linux: the file system's UUID (`FS_IOC_GETFSUUID`, else udev's `/dev/disk/by-uuid`; a
-        format serial as a name-based UUID; S0125). TODO(BL-0218): Windows (the volume GUID)."""
+        format serial as a name-based UUID; S0125). Windows: the volume serial as a name-based UUID (S0128)."""
         ...
 
     def born(self) -> int | None:
@@ -402,6 +409,7 @@ def split_absolute(path: str) -> tuple[str, ...]:
 
 __all__ = [
     "CHUNK",
+    "SERIAL_NAMESPACE",
     "AclEntry",
     "Caps",
     "DirHandle",

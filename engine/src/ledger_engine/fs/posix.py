@@ -343,8 +343,8 @@ class PosixLegacyLocks:
     `PosixLocker` calls `fcntl.flock` on macOS and Linux alike; `EAGAIN` or `EACCES` is its `AlreadyLocked`, any
     other error its `LockException`), so the detection sees the legacy app's lock and is tested against a holder that
     takes it with portalocker 3.2.0 itself (`tests/fs/test_legacy_lock.py`); the engine does not import portalocker
-    (it brings pywin32 on Windows; ADR-0062's 2026-10-31 amendment). Windows (`msvcrt.locking` over the first 64 KiB)
-    is BL-0087's."""
+    (it brings pywin32 on Windows; ADR-0062's 2026-10-31 amendment). Windows (`LockFileEx` over the first 64 KiB, the
+    range `msvcrt.locking` takes) is `ledger_engine.fs.windows.WindowsLegacyLocks` (S0128)."""
 
     def try_lock(self, path: str) -> PosixLock | LegacyAbsent | LegacyHeld:
         split_absolute(path)

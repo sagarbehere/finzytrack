@@ -50,9 +50,10 @@ class LinkedPathError(PathMovedError):
         self.link = link
 
 
-SERIAL_IDENTIFIED: Final = frozenset({"msdos", "vfat", "exfat"})
+SERIAL_IDENTIFIED: Final = frozenset({"msdos", "vfat", "exfat", "fat32", "fat"})
 """File systems whose drive UUID is derived from a 32-bit format serial (macOS: a version 3 UUID, S0089 red team H1;
-Linux, which names FAT `vfat`: a version 5 UUID of the serial, `ledger_engine.fs.linux`, S0125):
+Linux, which names FAT `vfat`: a version 5 UUID of the serial, `ledger_engine.fs.linux`, S0125; Windows, which names
+them `fat32`, `fat` and `exfat`: the same version 5 UUID, `ledger_engine.fs.windows`, S0128):
 two sticks formatted with one serial share it, and these keep no creation time for their top level."""
 UUID_UNSTABLE_ON: Final = frozenset({"msdos"})
 """File systems on which macOS gives a drive whose serial clashes with one already mounted a random version 4 UUID,

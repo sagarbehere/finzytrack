@@ -13,14 +13,18 @@ import pytest
 from ledger_engine.fs.port import FileSystem, FolderId
 from ledger_engine.fs.this_os import folder_identity
 from ledger_engine.ledger.writer import Change, Commit, Landed, durable_commit, sha256
-from tests.windows_pending import BL_0280
 
 
 def app_identity(path: Path) -> FolderId:
     """The app folder's identity as the sidecar records it at start (`this_os.folder_identity`: with the creation
-    time on Linux, BL-0262, S0125); the sidecar's own computation is tested in the backend."""
-    if sys.platform == "win32":
-        raise pytest.skip.Exception(BL_0280)
+    time on Linux, BL-0262, S0125; on Windows the volume serial and the file ID, `port.folder_id`, S0128; the
+    sidecar's side there is BL-0281's); the sidecar's own computation is tested in the backend."""
+    if sys.platform == "win32":  # through the Windows adapter (S0128: the test's `windows_port` selects it)
+        from ledger_engine.fs.port import folder_id
+        from ledger_engine.fs.this_os import for_this_os
+
+        with for_this_os().open_dir(str(path)) as d:
+            return folder_id(d)
     fd = os.open(path, os.O_RDONLY | os.O_DIRECTORY)
     try:
         return folder_identity(fd)
