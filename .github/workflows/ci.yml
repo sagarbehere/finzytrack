@@ -166,6 +166,51 @@ jobs:
           .venv/bin/python scripts/probe_linux_fs.py "$RUNNER_TEMP" /tmp /dev/shm "$HOME" ${vols//:/ } "$RUNNER_TEMP/vol-ext4cf/cf"
       - name: tests
         run: .venv/bin/python -m pytest -q
+  engine-windows:
+    # The ledger engine on Windows (S0126, BL-0087; ADR-0061 decision 6 and its 2026-11-14 amendment): the Windows
+    # file-system probe on the runner's folders and on scratch volumes (VHDs formatted FAT32, exFAT and ReFS; prints
+    # only), then the engine's tests. Until the Windows port lands, the engine refuses every file operation there
+    # (`engine.unsupported_platform`) and its real-disk write-contract tests skip.
+    runs-on: windows-2022
+    timeout-minutes: 60
+    defaults:
+      run:
+        working-directory: engine
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Install uv
+        run: python -m pip install uv==0.13.0
+      - name: Environment from the lockfile (Python from .python-version)
+        run: uv sync --locked
+      - name: Scratch volumes and the Windows file-system probe (S0126; prints only)
+        run: |
+          $vols = @()
+          foreach ($v in @(@{fs="fat32"; letter="R"}, @{fs="exfat"; letter="S"}, @{fs="refs"; letter="T"})) {
+            $vhd = Join-Path $env:RUNNER_TEMP ("vol-" + $v.fs + ".vhdx")
+            $size = if ($v.fs -eq "refs") { 2048 } else { 320 }
+            $script = Join-Path $env:RUNNER_TEMP ("dp-" + $v.fs + ".txt")
+            @(
+              "create vdisk file=`"$vhd`" maximum=$size type=expandable",
+              "select vdisk file=`"$vhd`"",
+              "attach vdisk",
+              "create partition primary",
+              "format fs=$($v.fs) quick label=FT$($v.fs.ToUpper())",
+              "assign letter=$($v.letter)"
+            ) | Set-Content -Encoding ascii $script
+            diskpart /s $script | Out-Null
+            if (Test-Path ($v.letter + ":\")) { $vols += ($v.letter + ":\") } else { Write-Output ("no " + $v.fs + " volume") }
+          }
+          "FT_TEST_VOLUMES=" + ($vols -join ";") | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          [System.Environment]::OSVersion.VersionString
+          .venv\Scripts\python.exe scripts\probe_windows_fs.py $env:RUNNER_TEMP $env:TEMP @vols
+      - name: tests
+        run: .venv\Scripts\python.exe -m pytest -q -p no:cacheprovider
   frontend:
     # The Vue frontend (S0009; ARCHITECTURE.md §3, §10; ADR-0053): types, lint, format, unit tests (incl. the
     # pinned tsconfig and the lint bans), unused code, and the Playwright flows through the acceptance harness (S0030).
