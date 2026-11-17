@@ -37,7 +37,7 @@ def strictness_comments(root: Path) -> list[str]:
     """Files that lower pyright's strictness with a file-level comment (`# pyright: basic` and similar)."""
     hits: list[str] = []
     for path in sorted(root.rglob("*.py")):
-        for line in path.read_text().splitlines():
+        for line in path.read_text(encoding="utf-8").splitlines():
             words = line.replace("#", " ").replace(":", " ").replace(",", " ").split()
             if words[:1] == ["pyright"] and {"basic", "standard", "off", "false"} & set(words[1:]):
                 hits.append(str(path))

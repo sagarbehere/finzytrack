@@ -49,8 +49,13 @@ REAL_HOME = frozenset({"ledger_engine/ledger/rebuild.py", "ledger_engine/ledger/
 ENGINE_PACKAGE = "ledger_engine"
 _MISSING = object()
 _ADAPTER = object()  # what a name bound to an adapter module, or to one of its names, holds off the adapter's OS
-# The OS each file-system adapter is for (`sys.platform`); every adapter of `fs/` must be named here.
-ADAPTER_OS = {"ledger_engine.fs.darwin": "darwin", "ledger_engine.fs.linux": "linux"}
+# The OSes each file-system adapter is for (`sys.platform`); every adapter of `fs/` must be named here, and the POSIX
+# adapters' shared code, which states its platform too (Windows refuses it: S0127).
+ADAPTER_OS = {
+    "ledger_engine.fs.darwin": frozenset({"darwin"}),
+    "ledger_engine.fs.linux": frozenset({"linux"}),
+    "ledger_engine.fs.posix": frozenset({"darwin", "linux"}),
+}
 
 
 def module_of(rel: str) -> str:
@@ -77,7 +82,7 @@ def _import(name: str) -> ModuleType | None:
 
 def off_its_os(module: str) -> bool:
     """An adapter module the scan is not on the OS of (S0113): it refuses to be imported here, so it is a leaf."""
-    return module in ADAPTER_OS and sys.platform != ADAPTER_OS[module]
+    return module in ADAPTER_OS and sys.platform not in ADAPTER_OS[module]
 
 
 def _in_engine(module: str) -> bool:
@@ -457,7 +462,7 @@ def as_on(monkeypatch: pytest.MonkeyPatch, platform: str) -> None:
 
 
 def test_every_adapter_names_its_os() -> None:
-    assert set(ADAPTER_OS) == set(ADAPTERS)
+    assert set(ADAPTER_OS) == {*ADAPTERS, "ledger_engine.fs.posix"}
 
 
 @pytest.mark.parametrize(
@@ -479,6 +484,8 @@ def test_off_its_os_an_adapter_is_a_leaf_of_the_scan(monkeypatch: pytest.MonkeyP
 
 def test_off_macos_the_selection_point_passes_the_scan(monkeypatch: pytest.MonkeyPatch) -> None:
     """The CI failure itself: `fs/this_os.py`, scanned as on Linux."""
+    if sys.platform == "win32":  # the Linux adapter needs `fcntl`, which Windows has not: no faked platform imports it
+        pytest.skip("the Linux adapter imports on a POSIX system only")
     source = (ENGINE_SRC / "ledger_engine" / "fs" / "this_os.py").read_text(encoding="utf-8")
     as_on(monkeypatch, "linux")
     assert violations("ledger_engine/fs/this_os.py", source, port.LOAD_STAGES) == []

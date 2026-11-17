@@ -57,7 +57,7 @@ def mirror_build(tmp_path: Path) -> None:
     out.mkdir()
     text = run("measure_mirror_build.py", str(ledger(tmp_path)), str(out), "--runs", "1")
     assert "run 0: entries 5 postings 4" in text, text
-    assert "peak RSS" in text, text
+    assert ("peak RSS" in text) is (sys.platform != "win32"), text  # `resource` is POSIX only (S0127)
 
 
 def save(tmp_path: Path) -> None:

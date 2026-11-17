@@ -108,9 +108,10 @@ def test_BL0261_an_op_that_needs_the_port_is_refused_naming_the_platform_not_a_m
 
     engine = Engine()
     assert json.loads(engine.handle(b'{"v": 2, "id": 1, "op": "handshake", "params": {}}\n'))["ok"] is True
-    engine.took_engine_lock("/nowhere/locks/engine.lock", (1, 2))
+    nowhere = "C:\\nowhere" if sys.platform == "win32" else "/nowhere"  # this OS's absolute path (S0127)
+    engine.took_engine_lock(f"{nowhere}/locks/engine.lock", (1, 2))
     monkeypatch.setattr(this_os.sys, "platform", "win32")
-    request = {"v": 2, "id": 2, "op": "recover_list", "params": {"app_local_data": "/nowhere"}}
+    request = {"v": 2, "id": 2, "op": "recover_list", "params": {"app_local_data": nowhere}}
     reply = json.loads(engine.handle(json.dumps(request).encode() + b"\n"))
     assert reply["ok"] is False, reply
     assert reply["error"]["key"] == "engine.unsupported_platform", reply
