@@ -451,10 +451,12 @@ class _Handle:
         return buf.raw
 
     def attrs_tag(self) -> tuple[int, int]:
-        """The attributes and the reparse tag (0: none)."""
-        raw = self.info(FILE_ATTRIBUTE_TAG_INFO, 8)
-        attrs, tag = struct.unpack_from("<II", raw, 0)
-        return attrs, tag if attrs & FILE_ATTRIBUTE_REPARSE_POINT else 0
+        """The attributes and the reparse tag (0: none). The attributes from `FileBasicInfo` (FAT32 and exFAT refuse
+        `FileAttributeTagInfo` for a drive's top level: the 2026-11-17 run 8), the tag only for a reparse point."""
+        attrs = self.basic()[2]
+        if not attrs & FILE_ATTRIBUTE_REPARSE_POINT:
+            return attrs, 0
+        return attrs, struct.unpack_from("<I", self.info(FILE_ATTRIBUTE_TAG_INFO, 8), 4)[0]
 
     def basic(self) -> tuple[int, int, int]:
         """Creation time, last write time (FILETIME) and attributes."""
@@ -1031,11 +1033,10 @@ class WindowsFS:
                 folder = d.path()
                 rule = rule_of(folder)
                 want = fold(name, rule)
-                same = [
-                    n
-                    for n in d.names()
-                    if fold(n, rule) == want and (x := d.stat(n)) is not None and x.identity == ident
-                ]
+                names = d.names()
+                same = [n for n in names if fold(n, rule) == want and _names(d, n, ident)]
+                if not same:  # an 8.3 short name (the 2026-11-17 run 8): the one entry that holds the object
+                    same = [n for n in names if _names(d, n, ident)]
                 if len(same) != 1:
                     raise OSError(errno.ENOENT, "the entry's stored name is not one name")
                 return model.child(folder, same[0])
@@ -1049,6 +1050,12 @@ class WindowsFS:
             if st is None or st.identity != ident:
                 raise OSError(errno.ESTALE, "the path changed while it was resolved")
         return final
+
+
+def _names(d: WindowsDir, name: str, ident: tuple[int, int]) -> bool:
+    """Whether the entry `name` of `d` is the object `ident` (never through a link)."""
+    st = d.stat(name)
+    return st is not None and st.identity == ident
 
 
 class WindowsLock:

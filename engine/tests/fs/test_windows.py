@@ -77,7 +77,8 @@ import json, sys
 import ledger_engine.protocol.server
 from ledger_engine.fs import this_os
 from ledger_engine.protocol.server import Engine
-replies = [json.loads(Engine().handle(json.dumps({"v": 2, "id": i, "op": op, "params": {}}).encode() + b"\\n"))
+e = Engine()
+replies = [json.loads(e.handle(json.dumps({"v": 2, "id": i, "op": op, "params": {}}).encode() + b"\\n"))
            for i, op in ((1, "handshake"), (2, "ping"))]
 try:
     this_os.for_this_os()

@@ -494,7 +494,7 @@ class Run:
 
     def _make(self, h: DirHandle, name: str, path: str, *, mkdir: bool = False, data: bytes | Streamed = b"") -> None:
         self.handles.on = path
-        rel = path[len(self.folder) + 1 :]
+        rel = path[len(self.folder) + 1 :].replace(host().sep, "/")  # a plan's relative path, `/` on every OS (S0128)
         feed: _Feed | None = None
         identity: tuple[int, int] | None = None
         try:

@@ -126,7 +126,7 @@ def test_the_listing_removes_a_part_and_names_each_open_journal(ald: Path) -> No
         "k1",
         "lin1",
     )
-    assert {(f["path"].rpartition("/")[2], f["created"]) for f in j["files"]} == {
+    assert {(f["path"].rpartition(os.sep)[2], f["created"]) for f in j["files"]} == {
         ("main.bean", False),
         ("prices.bean", True),
     }
@@ -148,7 +148,7 @@ def test_a_try_stops_at_the_created_path_with_what_stands_there_then_delete_it_a
         "inputs": {"cause": "created_path_taken"},
         "output": "stopped",
     }
-    seen = {i["path"].rpartition("/")[2]: i for i in out["inspection"]}
+    seen = {i["path"].rpartition(os.sep)[2]: i for i in out["inspection"]}
     assert seen["prices.bean"]["now"] == {"kind": "file", "sha256": sha(b"p\n"), "size": 2}
     assert seen["prices.bean"]["backup"] is None, "S0071 r2: a created file has no backup"
     assert seen["main.bean"]["backup"] == f"{os.path.realpath(ald)}/local/k1/backups/{name}/0-main.bean", (
@@ -175,7 +175,7 @@ def test_keep_and_delete_the_kept_copy_on_the_real_disk(ald: Path) -> None:
     base = {"app_local_data": str(ald), "journal_dir": str(jd), "name": name}
     out = rig.send("recover_try", base)["result"]
     assert (out["outcome"], out["cause"]) == ("stopped", "kept_copy")
-    main = next(i for i in out["inspection"] if i["path"].endswith("/main.bean"))
+    main = next(i for i in out["inspection"] if i["path"].endswith(os.sep + "main.bean"))
     assert [(k["name"], k["seen"]["sha256"]) for k in main["kept"]] == [(kept.name, sha(b"the editor's\n"))]
     act = {**base, "action": "delete_kept", "file": main["path"], "kept": kept.name, "sha256": sha(b"the editor's\n")}
     assert rig.send("recover_act", act)["result"]["outcome"] == "done"
@@ -314,7 +314,11 @@ def test_the_listing_names_a_linked_journal_folder_holding_an_open_record_and_wr
     result = reply["result"]
     assert (result["journals"], result["parts_removed"]) == ([], 0)
     [u] = result["unlisted"]
-    assert (u["folder"].endswith("/local/k1/journal"), u["errno"], u["linked"]) == (True, None, True)
+    assert (u["folder"].endswith(os.path.join(os.sep, "local", "k1", "journal")), u["errno"], u["linked"]) == (
+        True,
+        None,
+        True,
+    )
     assert sorted(p.name for p in moved.iterdir()) == ["s0-j1.part", f"{name}.open"]
     assert (ledger / "main.bean").read_bytes() == POST
 
@@ -334,7 +338,11 @@ def test_the_listing_names_a_linked_backups_folder_beside_an_open_record_and_lis
     result = reply["result"]
     assert result["journals"] == []
     [u] = result["unlisted"]
-    assert (u["folder"].endswith("/local/k1/backups"), u["errno"], u["linked"]) == (True, None, True)
+    assert (u["folder"].endswith(os.path.join(os.sep, "local", "k1", "backups")), u["errno"], u["linked"]) == (
+        True,
+        None,
+        True,
+    )
     assert (ledger / "main.bean").read_bytes() == POST
 
 

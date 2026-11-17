@@ -219,7 +219,7 @@ jobs:
           git fetch --no-tags --depth=1 origin d44062d520090994b51b44f437d5ca7bb5156b7f
           git checkout FETCH_HEAD -- src
           Remove-Item -ErrorAction SilentlyContinue src/ledger_engine/fs/windows.py
-          .venv\Scripts\python.exe -m pytest -q -rs -p no:cacheprovider tests/fs/test_windows.py tests/fs/test_legacy_lock.py tests/test_recover_ops.py tests/test_create_ops.py tests/fs/test_pathmodel.py
+          .venv\Scripts\python.exe -m pytest -q -rs -p no:cacheprovider --continue-on-collection-errors tests/fs/test_windows.py tests/fs/test_legacy_lock.py tests/test_recover_ops.py tests/test_create_ops.py tests/fs/test_pathmodel.py
           git checkout HEAD -- src
           git status --short
       - name: tests
