@@ -15,6 +15,7 @@ from __future__ import annotations
 import contextlib
 import ctypes
 import errno
+import functools
 import json
 import os
 import shutil
@@ -22,7 +23,7 @@ import subprocess
 import sys
 import threading
 import uuid
-from collections.abc import Iterator
+from collections.abc import Generator, Iterator
 from pathlib import Path
 from typing import Any
 
@@ -794,3 +795,167 @@ def test_the_path_models_upper_case_never_splits_two_names_windows_takes_as_one(
             merges += 1
     print(f"the model upper-cases {merges} characters Windows leaves as they are (merges, fail closed)")  # noqa: T201
     assert not splits, splits[:20]
+
+
+# -- round 1 (S0128: the verifier and the data-safety red team) --------------------------------------------------------
+
+
+def _watch_name(target: Path, stop: threading.Event, seen: dict[str, int]) -> None:
+    """Ask for `target` without opening it until `stop`, counting the looks that found it missing."""
+    while not stop.is_set():
+        seen["looks"] += 1
+        if not os.path.lexists(target):
+            seen["missing"] += 1
+
+
+@contextlib.contextmanager
+def _held_reading_only(path: Path) -> Generator[None]:
+    """Another program holds `path` open sharing reading only, as Word and Excel hold a document."""
+    k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    create = k32.CreateFileW
+    create.argtypes = [
+        ctypes.c_wchar_p,
+        ctypes.c_uint32,
+        ctypes.c_uint32,
+        ctypes.c_void_p,
+        ctypes.c_uint32,
+        ctypes.c_uint32,
+        ctypes.c_void_p,
+    ]
+    create.restype = ctypes.c_void_p
+    h = create(str(path), 0x80000000, 0x1, None, 3, 0x80, None)  # GENERIC_READ, FILE_SHARE_READ, OPEN_EXISTING
+    assert h not in (None, ctypes.c_void_p(-1).value), ctypes.get_last_error()
+    try:
+        yield
+    finally:
+        k32.CloseHandle(ctypes.c_void_p(h))
+
+
+def test_RT_F1_a_rollback_while_another_program_holds_the_file_reading_only_is_not_saved_and_pauses_nothing(
+    fs: FileSystem, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Red team F1: Word or Excel opens the document (sharing reading only) between the save's checks and its rename,
+    and keeps it open through the rollback. The rename fails with nothing changed; the rollback puts a.bean back and
+    needs no write-open of b.bean, which it never replaced, so the answer is "not saved", unchanged, nothing paused."""
+    from ledger_engine.fs import windows
+
+    led = tmp_path / "led"
+    led.mkdir()
+    a, b = led / "a.bean", led / "b.bean"
+    a.write_bytes(b"a\n")
+    b.write_bytes(b"b\n")
+    stack = contextlib.ExitStack()
+    held: list[bool] = []
+    real = windows.WindowsDir.rename
+
+    def rename(self: windows.WindowsDir, src: str, dst: str) -> None:
+        if dst == "b.bean" and not held:
+            held.append(True)
+            stack.enter_context(_held_reading_only(b))  # opened just before the replace, held to the end
+        real(self, src, dst)
+
+    monkeypatch.setattr(windows.WindowsDir, "rename", rename)
+    with stack:
+        c = commit(tmp_path / "app", Change(str(a), sha256(b"a\n"), b"A\n"), Change(str(b), sha256(b"b\n"), b"B\n"))
+        out = durable_commit(fs, c)
+        assert isinstance(out, NotSaved), out
+        assert (out.step, out.unchanged, out.open_journal) == (Step.REPLACE, True, False), out
+        assert (a.read_bytes(), b.read_bytes()) == (b"a\n", b"b\n")
+    assert not [n for n in os.listdir(led) if ".ft-" in n]
+
+
+def _icacls(path: Path) -> list[str]:
+    """The entries `icacls` lists for `path`, without the path itself."""
+    out = subprocess.run(["icacls", str(path)], capture_output=True, text=True, check=True).stdout  # noqa: S603, S607
+    lines = [ln.strip() for ln in out.splitlines() if ln.strip() and not ln.startswith("Successfully")]
+    return [lines[0][len(str(path)) :].strip(), *lines[1:]]
+
+
+def test_owner_1a_a_replaced_file_keeps_its_own_acl_hidden_flag_and_streams(fs: FileSystem, tmp_path: Path) -> None:
+    """Owner, 2026-11-17: "1a": a ledger file made private with its own ACL (inheritance off, the user alone) stays
+    private after a save, hidden stays hidden, and an alternate data stream comes along byte for byte."""
+    led = tmp_path / "led"
+    led.mkdir()
+    main = led / "main.bean"
+    main.write_bytes(b"pre\n")
+    user = os.environ["USERNAME"]
+    subprocess.run(["icacls", str(main), "/inheritance:r", "/grant:r", f"{user}:(F)"], check=True, capture_output=True)  # noqa: S603, S607
+    subprocess.run(["attrib", "+h", str(main)], check=True, capture_output=True)  # noqa: S603, S607
+    (led / "main.bean:note").write_bytes(b"a stream\n")
+    before = _icacls(main)
+    assert len(before) == 1, before  # the user alone, not inherited
+    out = durable_commit(fs, commit(tmp_path / "app", Change(str(main), sha256(b"pre\n"), b"post\n")))
+    assert isinstance(out, Landed), out
+    assert main.read_bytes() == b"post\n"
+    assert _icacls(main) == before, "the file's own ACL was dropped"
+    assert os.stat(main).st_file_attributes & 0x2, "the hidden attribute was dropped"
+    assert (led / "main.bean:note").read_bytes() == b"a stream\n"
+
+
+def test_owner_1a_an_efs_encrypted_file_is_refused_before_anything_is_written(fs: FileSystem, tmp_path: Path) -> None:
+    """Owner, 2026-11-17: "1a": a file Windows' EFS encrypts is never saved, so its bytes never reach a backup or a
+    staging file in the clear: `encrypted_file`, unchanged, no backup made."""
+    led = tmp_path / "led"
+    led.mkdir()
+    main = led / "main.bean"
+    main.write_bytes(b"pre\n")
+    run = subprocess.run(["cipher", "/e", str(main)], capture_output=True, text=True, check=False)  # noqa: S603, S607
+    if run.returncode != 0 or not os.stat(main).st_file_attributes & 0x4000:
+        pytest.skip(f"EFS is not available on this runner: {run.stdout.strip()} {run.stderr.strip()}")
+    out = durable_commit(fs, commit(tmp_path / "app", Change(str(main), sha256(b"pre\n"), b"post\n")))
+    assert isinstance(out, NotSaved), out
+    assert (out.step, out.reason, out.unchanged, out.path) == (Step.BACKUP, Reason.ENCRYPTED_FILE, True, str(main))
+    assert main.read_bytes() == b"pre\n"
+    assert not list((tmp_path / "app" / "local" / "backups").iterdir()), "a backup in the clear"
+    assert not [n for n in os.listdir(led) if ".ft-" in n]
+
+
+@pytest.mark.parametrize("where", ["tmp", "volumes"])
+def test_V_F6_the_adapters_own_rename_never_leaves_the_name_missing(fs: FileSystem, tmp_path: Path, where: str) -> None:
+    """Verifier F6, red team F3: S0126 measured `MoveFileExW`; this measures the adapter's rename by handle
+    (`FileRenameInformation` with `ReplaceIfExists`), 300 replaces while another thread asks for the name, on the
+    runner's disk and each scratch volume. A missing name is a state a power loss could keep."""
+    places = [tmp_path] if where == "tmp" else [Path(v) / f"ft-{uuid.uuid4().hex}" for v in _volumes()]
+    if not places:
+        pytest.skip("no scratch volumes given (FT_TEST_VOLUMES)")
+    for place in places:
+        place.mkdir(exist_ok=True)
+        try:
+            target = place / "x.bean"
+            target.write_bytes(b"0")
+            stop = threading.Event()
+            seen = {"looks": 0, "missing": 0}
+            look = functools.partial(_watch_name, target, stop, seen)
+            watcher = threading.Thread(target=look, daemon=True)
+            watcher.start()
+            try:
+                with fs.open_dir(str(place)) as d:
+                    for i in range(300):
+                        d.create(".x.bean.ft-s-j.new", str(i).encode(), 0o644)
+                        d.rename(".x.bean.ft-s-j.new", "x.bean")
+            finally:
+                stop.set()
+                watcher.join(DEADLINE)
+            print(f"{place.anchor} {_kind_of(fs, place)}: {seen}")  # noqa: T201 (recorded in the journal)
+            assert seen["looks"] > 0
+            assert seen["missing"] == 0, (str(place), seen)
+        finally:
+            if where == "volumes":
+                shutil.rmtree(place, ignore_errors=True)
+
+
+def test_RT_F6_the_engine_lock_file_cannot_be_removed_while_an_engine_holds_it(
+    fs: FileSystem, tmp_path: Path, procs: list[subprocess.Popen[bytes]]
+) -> None:
+    """Red team F6: the engine opens its lock file without sharing deletion, so no program (another engine among
+    them) removes it while it is held and takes a new lock beside the held one."""
+    lock = tmp_path / "locks" / "engine.lock"
+    proc = _engine("--engine-lock", str(lock), "--app-folder-id", _app_id(fs, tmp_path))
+    procs.append(proc)
+    assert _ask(proc, "handshake", 1)["ok"]
+    assert _ask(proc, "ping", 2)["ok"]
+    with pytest.raises(PermissionError):
+        lock.unlink()
+    with fs.open_dir(str(tmp_path / "locks")) as d, pytest.raises(OSError, match=r"."):
+        d.remove("engine.lock")
+    assert lock.is_file()

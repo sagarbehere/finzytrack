@@ -62,11 +62,12 @@ next try can resolve.
    before the rename. The save's temp beside it (none in this mode, unless a swap volume's save left one) is removed
    after that, as beside a file at post.
    Otherwise each folder the save made is removed if it is empty, deepest first, and their parents synced.
-4. The data of each replaced file found at pre flushed (`_flush`: `sync_file`, read-only, through its folder's guarded
-   handle; S0101, BL-0243; owner, 2026-11-11: "Flush named files only (Recommended)"): a folder's sync makes entries
-   durable, not the data of the files they name, so an outside revert to the pre bytes left unsynced could otherwise
-   come back as the post bytes, or torn, under `.resolved`. **Only then** `.open` renamed `.resolved` and the journal
-   folder synced: `Resolved`.
+4. The data of each replaced file found at pre flushed (`_flush`: `sync_file` through its folder's guarded handle,
+   read-only on macOS and Linux; the rollback skips a file it never replaced on NTFS and ReFS, S0128 round 1; S0101,
+   BL-0243; owner, 2026-11-11: "Flush named files only (Recommended)"): a folder's sync makes entries durable, not
+   the data of the files they name, so an outside revert to the pre bytes left unsynced could otherwise come back as
+   the post bytes, or torn, under `.resolved`. **Only then** `.open` renamed `.resolved` and the journal folder synced:
+   `Resolved`.
 
 **The step rule.** Every port operation may raise `OSError`, and the process may die at any effect. In steps 0-2 an
 `OSError` writes nothing to a ledger folder and is `Failed` (a check that answered an error, step 0's own rename, a
@@ -82,6 +83,7 @@ it, whatever shape a power loss tore it into.
 from __future__ import annotations
 
 import errno
+from collections.abc import Mapping
 from dataclasses import dataclass
 
 from ledger_engine.fs.pathmodel import host
@@ -103,6 +105,7 @@ from ledger_engine.ledger.core.recovery import (
     seen_file,
 )
 from ledger_engine.ledger.handles import (
+    FILE_ID_TYPES,
     SERIAL_IDENTIFIED,
     Displaced,
     Handles,
@@ -553,7 +556,13 @@ def _sync_folders(handles: Handles, folders: list[str]) -> None:
 
 
 @tla_action("RS_Sync", "RS_Clean", "RS_Temp", "RS_All")
-def _restore_all(handles: Handles, record: Record, checked: list[_Checked], removable: frozenset[str]) -> str | None:
+def _restore_all(
+    handles: Handles,
+    record: Record,
+    checked: list[_Checked],
+    removable: frozenset[str],
+    pristine: Mapping[str, tuple[int, int]] | None = None,
+) -> str | None:
     """Step 3 (the module's docstring); the canonical path of a created path that is `taken`, if any (then nothing
     more is done: the journal stops). The folders synced are every folder the record names, not only those this try
     changed: an earlier try cut off by a crash may have left its swaps and removals unsynced, and `.resolved` must
@@ -602,15 +611,16 @@ def _restore_all(handles: Handles, record: Record, checked: list[_Checked], remo
             raise
     handles.entry = None
     _sync_folders(handles, parents)  # every removal of a folder durable, this try's and an earlier one's
-    _flush(handles, checked)
+    _flush(handles, checked, pristine)
     return None
 
 
 @tla_action("RS_Flush")
-def _flush(handles: Handles, checked: list[_Checked]) -> None:
+def _flush(handles: Handles, checked: list[_Checked], pristine: Mapping[str, tuple[int, int]] | None = None) -> None:
     """Step 4's flush (S0101, BL-0243; owner, 2026-11-11: "Flush named files only (Recommended)"): the data of each
-    replaced file step 2 found at its pre bytes, `sync_file`d through its folder's guarded handle (read-only, never
-    through a link: the port refuses one, and a FIFO or a folder), so a revert another program made without a sync
+    replaced file step 2 found at its pre bytes, `sync_file`d through its folder's guarded handle (never through a
+    link: the port refuses one, and a FIFO or a folder; read-only on macOS and Linux, opened for writing on Windows,
+    where a read-only handle cannot be flushed), so a revert another program made without a sync
     (in place, or by a rename whose new file's data is not synced) is durable before the record says resolved. A
     folder sync makes entries durable, not the data of the files in them (§13). A file step 3 put back holds the
     restore's own bytes, synced by `create`; a created file judged absent has nothing to flush. Any error: `OSError`,
@@ -622,10 +632,21 @@ def _flush(handles: Handles, checked: list[_Checked]) -> None:
     loss drop the rename and bring back the judged object, its data never flushed (the post bytes, or torn). So the
     identity of the object it synced (`sync_file`'s, from its own descriptor) must be step 2's (`read_identified`);
     otherwise the try fails, `Failed(io_error)` with no error number (§11: "Press Retry to try again"), the journal
-    `.open`, and the next try judges the file again."""
+    `.open`, and the next try judges the file again.
+
+    **The rollback's untouched files** (S0128 round 1, red team F1): `pristine` (the rollback only: each file's
+    canonical path and the identity the save resolved before its first effect) skips the flush of a file found at its
+    pre bytes as that very object, on a file system whose file IDs are never reused (`handles.FILE_ID_TYPES`): the
+    save never replaced it, so no revert of the save is in it to make durable, and on Windows the flush's write-open
+    would fail on a file another program holds sharing reading only (an Office document), leaving a save it fully
+    undid paused. Elsewhere, and in recovery (`pristine` None), every such file is flushed as before."""
     for x in checked:
         if x.verdict is not Verdict.AT_PRE or x.entry.pre is None or x.folder_absent:
             continue
+        if pristine is not None and x.identity is not None and pristine.get(x.entry.canonical_path) == x.identity:
+            folder = handles.folders.get(x.parent)
+            if folder is not None and folder.fs_type in FILE_ID_TYPES:
+                continue  # the object the save started from, never replaced: nothing of the save's to make durable
         handles.on, handles.entry = x.entry.canonical_path, None
         synced = handles.at(x.parent).sync_file(x.base)
         if x.identity is None or synced != x.identity:
@@ -652,10 +673,12 @@ def restore(
     *,
     closed: bool = False,
     made: frozenset[str] | None = None,
+    pristine: Mapping[str, tuple[int, int]] | None = None,
 ) -> RestoreOutcome:
     """§8.1 steps 2-4 and §6.4 for one record (the module's docstring). `journal_dir`: the canonical path of its
     journal folder. `closed`: the record may be `.closed` (the rollback after a failed close). `made`: the `path_key`s
-    of the folders the save really made (the rollback; recovery: every recorded one)."""
+    of the folders the save really made (the rollback; recovery: every recorded one). `pristine`: the rollback's
+    identities of the files the save resolved (`_flush`); recovery passes none."""
     handles = Handles(fs, folders=journal.folders(record))
     name = record.name
     created = frozenset(d.canonical_path for d in record.created_dirs)
@@ -692,7 +715,7 @@ def restore(
             except OSError as e:  # a check that answered an error (a stat, a listing, an open): Retry may undo it
                 return Failed(Cause.IO_ERROR, handles.on, e.errno, handles.entry)
             try:
-                taken = _restore_all(handles, record, checked, removable)
+                taken = _restore_all(handles, record, checked, removable, pristine)
                 if taken is not None and not again and _vanished(handles, checked):
                     continue  # a taken path is empty now (S0061 verifier r6 F5): checked again from step 2
                 if taken is not None:

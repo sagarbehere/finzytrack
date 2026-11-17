@@ -30,12 +30,13 @@ BEST_EFFORT_DRIVE: Final = (
 """§11's notice when a workspace whose ledger is on a drive without the swap opens (ADR-0068 D2, the owner's words;
 §6.8). The workspace open shows it (BL-0166); this is the one place its words live."""
 BEST_EFFORT_WINDOWS: Final = (
-    "Windows can't replace a file in one safe step. Finzytrack still keeps a backup of every save, but if another "
-    "program changes the same file at the very moment you save, that change can be lost. Don't edit your ledger in "
-    "another program while Finzytrack saves."
+    "On Windows, Finzytrack can't check for another program's change at the very last moment of a save. It still "
+    "keeps a backup of every save, but if another program saves the same file while Finzytrack saves, that program's "
+    "change can be lost. Close other programs that edit your ledger while you save in Finzytrack."
 )
-"""§11's notice on Windows, where every drive takes §6.8's mode (ADR-0069; S0128): `BEST_EFFORT_DRIVE`'s advice to use
-the computer's own disk does not hold there. The workspace open shows it on Windows (BL-0166)."""
+"""§11's notice on Windows, where every drive takes §6.8's mode (ADR-0069; S0128): the owner's words (2026-11-17, "1a,
+wording ok"); `BEST_EFFORT_DRIVE`'s advice to use the computer's own disk does not hold there. The workspace open shows
+it on Windows (BL-0166)."""
 
 
 def _name(path: str | None) -> str:

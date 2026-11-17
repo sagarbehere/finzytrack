@@ -136,6 +136,10 @@ class EntryStat:
     mode: int
     locked: bool
     mtime_ns: int = 0
+    encrypted: bool = False
+    """The file is encrypted by the file system itself (Windows' EFS, S0128 round 1): the save never writes it, so its
+    bytes never reach a backup or a staging file in the clear (owner, 2026-11-17: "1a"). Never set on macOS or
+    Linux."""
 
     @property
     def identity(self) -> tuple[int, int]:

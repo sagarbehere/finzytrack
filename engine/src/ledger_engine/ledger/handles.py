@@ -73,6 +73,12 @@ def drive_of(mark: FolderMark) -> str | None:
     return mark.volume
 
 
+FILE_ID_TYPES: Final = frozenset({"ntfs", "refs"})
+"""File systems whose file ID is never given to another file (Windows' NTFS and ReFS: a file made again at once gets a
+new 128-bit ID, probed in S0126 and S0128): an object found with the ID it had before a save is the object the save
+started from, never one put there since (`restore._flush`, S0128 round 1). POSIX inode numbers can be reused, so no
+macOS or Linux file system is here."""
+
 WHOLE_SECONDS_ON: Final = frozenset({"exfat"})
 """File systems whose folder creation time is compared to the whole second (S0090, BL-0221; owner, 2026-11-09: "On
 exFAT, folder creation times are compared to the second, not 10 ms. The right stick is always recognized; a twin stick

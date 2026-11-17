@@ -25,7 +25,7 @@ import pytest
 from ledger_engine.ledger.writer import Change, Commit, Landed, durable_commit
 from ledger_engine.protocol.server import Engine
 from tests.fs.real_volume import app_identity, app_identity_text
-from tests.windows_pending import FLOCK_HOLDER, NO_UID
+from tests.windows_pending import FLOCK_HOLDER
 
 pytestmark = [pytest.mark.inv("INV-32"), pytest.mark.usefixtures("windows_port")]
 
@@ -485,21 +485,36 @@ def test_S0102_r1_the_outcome_in_the_app_folder_of_its_start_reads_the_record(tm
 def test_S0102_r1_a_replaced_folder_whose_identity_cannot_be_read_is_refused(tmp_path: Path) -> None:
     """Round 1, verifier V1 and red team F6: a folder put in place of the app folder that may be searched and written
     but not read (0300): its descriptor cannot be opened, so its identity cannot be judged. Fail closed: refused, and
-    the `.part` in it is left alone (the check used to let it through and the listing removed it)."""
-    if sys.platform == "win32":
-        raise pytest.skip.Exception(NO_UID)
+    the `.part` in it is left alone (the check used to let it through and the listing removed it). On Windows the
+    folder denies listing to everyone (`icacls`, S0128 round 1, verifier F3): the adapter opens it for traversal only
+    and reads its identity there, which is another folder's, so the outcome is the same."""
     ald = tmp_path / "app"
     ald.mkdir()
+    start = app_identity(ald)
     rig = Rig(held(ald))
     shutil.rmtree(ald)
     jd = ald / "local" / "k1" / "journal"
     jd.mkdir(parents=True)
     (jd / "s9-j1.part").write_bytes(b"x")
-    os.chmod(ald, 0o300)
+    unreadable = ["icacls", str(ald), "/deny", "*S-1-1-0:(RD)"]
+    readable = ["icacls", str(ald), "/remove:d", "*S-1-1-0"]
+    if sys.platform == "win32":
+        subprocess.run(unreadable, check=True, capture_output=True)  # noqa: S603 (the system's own tool)
+        with pytest.raises(PermissionError):
+            os.listdir(ald)
+        from ledger_engine.fs.this_os import for_this_os
+
+        with for_this_os().open_dir(str(ald)) as d:  # pinned: traversal only, its identity still read
+            assert d.identity() != start[:2]
+    else:
+        os.chmod(ald, 0o300)
     try:
         reply = rig.send("recover_list", {"app_local_data": str(ald)})
     finally:
-        os.chmod(ald, 0o700)
+        if sys.platform == "win32":
+            subprocess.run(readable, check=True, capture_output=True)  # noqa: S603
+        else:
+            os.chmod(ald, 0o700)
     assert not reply["ok"], reply
     assert reply["error"]["key"] == "engine.app_folder_missing"
     assert os.listdir(jd) == ["s9-j1.part"]

@@ -23,15 +23,9 @@ from typing import Any
 import pytest
 
 from ledger_engine.fs.port import FolderId
-from ledger_engine.fs.this_os import folder_identity
-from tests.windows_pending import FLOCK_HOLDER
+from tests.fs.real_volume import app_identity
 
-if sys.platform == "win32":
-    raise pytest.skip.Exception(FLOCK_HOLDER, allow_module_level=True)
-
-import fcntl
-
-pytestmark = pytest.mark.skipif(os.name != "posix", reason="flock is POSIX; Windows: tests/fs/test_windows.py")
+pytestmark = pytest.mark.usefixtures("windows_port")  # Windows: the identity through the adapter (S0128 round 1, F2)
 
 DEADLINE = 15.0
 
@@ -80,17 +74,36 @@ def folder_id(lock: Path) -> str:
     return ":".join(str(n) for n in identity(lock.parent.parent))
 
 
+def _lock(fd: int, *, wait: bool) -> bool:
+    """The engine lock's primitive on `fd` from this process: `flock` on POSIX, `LockFileEx` over the whole file on
+    Windows (S0128); False when another process holds it and `wait` is off."""
+    if sys.platform == "win32":
+        import ctypes
+        import msvcrt
+
+        k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        lock = k32.LockFileEx
+        lock.argtypes = [ctypes.c_void_p, ctypes.c_uint32, ctypes.c_uint32, ctypes.c_uint32, ctypes.c_uint32]
+        lock.argtypes += [ctypes.c_void_p]
+        lock.restype = ctypes.c_int
+        overlapped = ctypes.create_string_buffer(32)
+        flags = 0x2 | (0 if wait else 0x1)  # LOCKFILE_EXCLUSIVE_LOCK, LOCKFILE_FAIL_IMMEDIATELY
+        return bool(lock(msvcrt.get_osfhandle(fd), flags, 0, 0xFFFFFFFF, 0xFFFFFFFF, overlapped))
+    import fcntl
+
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | (0 if wait else fcntl.LOCK_NB))
+    except BlockingIOError:
+        return False
+    return True
+
+
 def held_by_another(path: Path) -> bool:
     fd = os.open(path, os.O_RDWR | os.O_CREAT, 0o600)
     try:
-        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-    except BlockingIOError:
-        return True
-    else:
-        fcntl.flock(fd, fcntl.LOCK_UN)
-        return False
+        return not _lock(fd, wait=False)
     finally:
-        os.close(fd)
+        os.close(fd)  # closing releases a lock this process took
 
 
 @pytest.fixture
@@ -134,7 +147,7 @@ def test_a_request_after_the_handshake_waits_while_an_earlier_engine_holds_the_l
     lock: Path, procs: list[subprocess.Popen[bytes]]
 ) -> None:
     fd = os.open(lock, os.O_RDWR | os.O_CREAT, 0o600)
-    fcntl.flock(fd, fcntl.LOCK_EX)  # an engine of an earlier session (this test process holds it)
+    assert _lock(fd, wait=True)  # an engine of an earlier session (this test process holds it)
     try:
         proc = engine("--engine-lock", str(lock), "--app-folder-id", folder_id(lock))
         procs.append(proc)
@@ -144,8 +157,7 @@ def test_a_request_after_the_handshake_waits_while_an_earlier_engine_holds_the_l
         send(proc, "ping", 2)
         assert not replies.wait(2, timeout=0.5), "a request was answered while another process held the engine lock"
     finally:
-        fcntl.flock(fd, fcntl.LOCK_UN)
-        os.close(fd)
+        os.close(fd)  # the earlier engine ends: closing releases its lock
     assert replies.wait(2), "the request was not answered once the lock was free"
     assert held_by_another(lock)
 
@@ -209,12 +221,9 @@ def test_S0100_the_engine_never_makes_the_app_folder_above_its_locks_folder(tmp_
 
 def identity(p: Path) -> FolderId:
     """The folder's identity as the sidecar records it at start: `(st_dev, st_ino)`, with the creation time on Linux
-    (BL-0262; the sidecar's own computation is tested against `stat` in the backend's `test_app_folder_identity.py`)."""
-    fd = os.open(p, os.O_RDONLY | os.O_DIRECTORY)
-    try:
-        return folder_identity(fd)
-    finally:
-        os.close(fd)
+    (BL-0262), the volume serial and the file ID on Windows (S0128; the sidecar's own computation is tested against
+    `stat` in the backend's `test_app_folder_identity.py`)."""
+    return app_identity(p)
 
 
 def replace_folder(ald: Path, how: str = "replaced") -> None:
@@ -371,6 +380,6 @@ def test_BL0261_the_app_folder_check_passes_an_unsupported_platform_through(
     app = tmp_path / "app"
     app.mkdir()
     start = identity(app)
-    monkeypatch.setattr(this_os.sys, "platform", "win32")
+    monkeypatch.setattr(this_os.sys, "platform", "freebsd14" if sys.platform == "win32" else "win32")
     with pytest.raises(this_os.UnsupportedPlatform):
         app_folder.changed(str(app / "locks" / "engine.lock"), start)

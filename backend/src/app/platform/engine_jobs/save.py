@@ -218,6 +218,8 @@ def answer_of(a: SaveAnswer) -> SaveValue:
                 return _paused()  # nothing replaced, the journal left open: Reopen resolves it
             if a.reason in OUTSIDE:
                 return _not_done(ErrorCode.LEDGER_EXTERNALLY_CHANGED)
+            if a.reason == "encrypted_file":  # S0128 round 1: a file Windows' EFS encrypts, refused before any write
+                return _not_done(ErrorCode.ENCRYPTED_FILE_NOT_EDITABLE, EncryptedFileDetails(a.path))
             if a.reason in WRITER_REASONS:
                 reason = cast("NotSavedReason", a.reason)
                 details = ChangeNotSavedDetails(reason, a.path, a.entry, a.detail, a.unchanged, a.changed)

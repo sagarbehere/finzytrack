@@ -7,24 +7,23 @@ macOS gets `ledger_engine.fs.darwin`, Linux `ledger_engine.fs.linux` (S0125, BL-
 `ledger_engine.fs.windows` (S0128, BL-0280), but **the product does not select it yet**: until BL-0206's pointer file
 lands and BL-0087 turns writes on, `for_this_os` and `legacy_locks_for_this_os` refuse there as on any other operating
 system without a port. Only a test reaches the Windows adapter through this selector, inside
-`windows_port_under_test()` (a context variable, off by default; the product never names it:
-`tests/architecture/test_platform_selection.py`), so the engine's real-disk tests run the product's own code paths on
-the Windows runner. The engine lock is the one Windows file operation the product takes (`engine_lock_folder`,
-`take_engine_lock`): a guard, written only in the app folder's `locks/`. Elsewhere `UnsupportedPlatform` is raised when
+`ledger_engine.fs.under_test.windows_port_under_test()` (a context variable, off by default, in a module no product
+module may reach: `tests/architecture/test_platform_selection.py`), so the engine's real-disk tests run the product's
+own code paths on the Windows runner. The engine lock is the one Windows file operation the product takes
+(`engine_lock_folder`, `take_engine_lock`, called only by `protocol/server.py`): a guard, written only in the app
+folder's `locks/`. Elsewhere `UnsupportedPlatform` is raised when
 a job asks for the port: the engine still starts and answers its handshake and ping there; an op that needs the port is
 refused `engine.unsupported_platform`, naming the platform (BL-0261).
 """
 
 from __future__ import annotations
 
-import contextvars
 import errno
 import os
 import sys
-from collections.abc import Callable, Generator
-from contextlib import contextmanager
-from typing import Final
+from collections.abc import Callable
 
+from ledger_engine.fs import under_test
 from ledger_engine.fs.port import DirHandle, FileSystem, FolderId, LegacyLocks
 
 if sys.platform == "darwin":
@@ -34,8 +33,6 @@ elif sys.platform == "linux":
 
 PORTED = ("darwin", "linux")
 
-_windows_under_test: Final = contextvars.ContextVar[bool]("windows_port_under_test", default=False)
-
 
 class UnsupportedPlatform(OSError):
     """An `OSError` (`ENOTSUP`): a file operation refuses on this OS like on any other I/O failure."""
@@ -44,22 +41,9 @@ class UnsupportedPlatform(OSError):
         super().__init__(errno.ENOTSUP, f"the write path's file-system port is for macOS and Linux, not {sys.platform}")
 
 
-@contextmanager
-def windows_port_under_test() -> Generator[None]:
-    """Tests only (S0128): on Windows, the Windows adapter is selected in this context until the block ends, so a test
-    runs the product's own code paths on it. Off Windows it raises `UnsupportedPlatform`."""
-    if sys.platform != "win32":
-        raise UnsupportedPlatform
-    token = _windows_under_test.set(True)
-    try:
-        yield
-    finally:
-        _windows_under_test.reset(token)
-
-
 def supported() -> bool:
     """Whether this operating system has a file-system port the product uses (Windows only under test)."""
-    return sys.platform in PORTED or (sys.platform == "win32" and _windows_under_test.get())
+    return sys.platform in PORTED or (sys.platform == "win32" and under_test.selected())
 
 
 def for_this_os(on_fallback: Callable[[], None] | None = None) -> FileSystem:
@@ -69,7 +53,7 @@ def for_this_os(on_fallback: Callable[[], None] | None = None) -> FileSystem:
         return DarwinFS(on_fallback)
     if sys.platform == "linux":
         return linux.LinuxFS(on_fallback)
-    if sys.platform == "win32" and _windows_under_test.get():
+    if sys.platform == "win32" and under_test.selected():
         from ledger_engine.fs import windows  # imported only here: the product never loads it (S0128)
 
         return windows.WindowsFS(on_fallback)
@@ -83,7 +67,7 @@ def legacy_locks_for_this_os() -> LegacyLocks:
         return DarwinLegacyLocks()
     if sys.platform == "linux":
         return linux.LinuxLegacyLocks()
-    if sys.platform == "win32" and _windows_under_test.get():
+    if sys.platform == "win32" and under_test.selected():
         from ledger_engine.fs import windows
 
         return windows.WindowsLegacyLocks()
@@ -104,9 +88,9 @@ def folder_identity(fd: int) -> FolderId:
 
 def engine_lock_folder(folder: str) -> DirHandle:
     """Windows only: the app folder at `folder` opened through the Windows adapter, for the engine lock (§5.1; its
-    identity is checked with `port.same_folder`, then `take_engine_lock`). Not behind `windows_port_under_test`: the
-    lock is a guard and writes only in the app folder's `locks/`. Elsewhere `UnsupportedPlatform` (the POSIX lock is
-    `protocol.server`'s `flock`)."""
+    identity is checked with `port.same_folder`, then `take_engine_lock`). Not behind the test switch
+    (`under_test`): the lock is a guard and writes only in the app folder's `locks/`. Elsewhere `UnsupportedPlatform`
+    (the POSIX lock is `protocol.server`'s `flock`)."""
     if sys.platform == "win32":
         from ledger_engine.fs import windows
 

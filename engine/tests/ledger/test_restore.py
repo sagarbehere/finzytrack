@@ -2397,3 +2397,63 @@ def test_S0101_the_rollback_flushes_a_file_an_editor_put_back_to_its_pre_bytes_b
     assert set(journals(w.fs)) == {State.RESOLVED}, journals(w.fs)
     for state in w.fs.power_loss_states():
         check_disk(state, w)
+
+
+# -- S0128 round 1 (red team F1, verifier Q-B): the rollback's flush of a file it never replaced -----------------------
+
+A_STAGE = EFFECTS.index("create /w/L/inc:.a.bean.ft-s1-j7.new")  # the first effect past `.open`: nothing replaced yet
+
+
+def _rollback_flushes(fs_type: str) -> list[str]:
+    """The `sync_file` effects of the rollback of a save that failed at its first effect past `.open`, on a drive of
+    `fs_type`: no file was replaced, each is found at its pre bytes as the object the save resolved."""
+    w = world()
+    w.fs.outside_fs_type(w.fs.open_dir("/w/L").identity()[0], fs_type)
+    w.fs.inject(A_STAGE, crash=False, err=errno.EIO)
+    n_before = len(w.fs.effects)
+    durable_commit(w.fs, w.commit)
+    assert set(journals(w.fs)) == {State.RESOLVED}, journals(w.fs)
+    rollback = w.fs.effects[n_before + A_STAGE :]
+    return sorted(x for x in rollback if x.startswith("sync_file "))
+
+
+def test_RT_F1_on_ntfs_and_refs_the_rollback_flushes_no_file_it_never_replaced() -> None:
+    """Red team F1: on Windows the flush opens a file for writing, which fails while Word or Excel holds it sharing
+    reading only, so a save the rollback fully undid ended paused. A file found at its pre bytes as the very object the
+    save started from, on a file system whose file IDs are never reused, holds nothing of the save: no flush."""
+    assert _rollback_flushes("ntfs") == []
+    assert _rollback_flushes("refs") == []
+
+
+def test_RT_F1_elsewhere_the_rollback_flushes_every_file_found_at_pre_as_before() -> None:
+    """@regression-guard (S0101's behaviour). Must not pass if the skip reaches a file system whose identities can be
+    reused (APFS, ext4, FAT): there the object found cannot prove the save never replaced it, so every file found at
+    pre is flushed, as since S0101."""
+    want = ["sync_file /w/L/inc:a.bean", "sync_file /w/L:main.bean"]
+    for fs_type in ("apfs", "ext4", "msdos", "fat32", "exfat"):
+        assert _rollback_flushes(fs_type) == want, fs_type
+
+
+def test_RT_F1_on_ntfs_the_rollback_still_flushes_a_file_an_editor_put_back_to_its_pre_bytes() -> None:
+    """@regression-guard (S0101's rollback test, on NTFS). Must not pass if the skip ignores the object: the save
+    replaced a.bean, an editor put it back to its old text
+    in place without a sync (another object than the one the save started from), so the rollback flushes it and
+    resolves only over durable pre bytes, on NTFS too."""
+    w = world()
+    w.fs.outside_fs_type(w.fs.open_dir("/w/L").identity()[0], "ntfs")
+    t = w.targets[0]
+    assert t.pre is not None
+    pre = t.pre
+
+    def revert(i: int, _: str) -> None:
+        if i == A_DURABLE:
+            w.fs.outside_write(t.path, pre)
+            w.fs.outside_unsynced(t.path, synced=t.post)
+
+    w.fs.on_effect = revert
+    w.fs.inject(A_DURABLE, crash=False, err=errno.EIO)
+    durable_commit(w.fs, w.commit)
+    w.fs.on_effect = None
+    assert set(journals(w.fs)) == {State.RESOLVED}, journals(w.fs)
+    for state in w.fs.power_loss_states():
+        check_disk(state, w)

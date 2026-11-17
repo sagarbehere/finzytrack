@@ -33,9 +33,10 @@ from ledger_engine.ledger import beancount_port
 from ledger_engine.protocol.server import Engine
 from tests.test_save_ops import Channel, engine, request, save_setup
 
-pytestmark = pytest.mark.inv("INV-10")
-# The jobs need the real file-system port: macOS and Linux (S0125); the engine's tests do not run on Windows yet
-# (BL-0087). The tests make their ledger in the body (`save_setup`), not in a fixture (S0113 round 2).
+pytestmark = [pytest.mark.inv("INV-10"), pytest.mark.usefixtures("windows_port")]
+# The jobs need the real file-system port: macOS and Linux (S0125); on Windows the adapter under test (S0128 round 1,
+# verifier F3), where the open's publish needs BL-0206's pointer file, so these stay red there until it lands. The
+# tests make their ledger in the body (`save_setup`), not in a fixture (S0113 round 2).
 
 DIRECTIVES = tuple(data.ALL_DIRECTIVES)
 

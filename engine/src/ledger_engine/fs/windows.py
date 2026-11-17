@@ -4,10 +4,10 @@ only these primitives differ (owner, 2026-11-16: "Rule unchanged (Recommended)")
 Windows runner (Windows Server 2022) are marked "probed".
 
 **Not selected by the product yet.** `ledger_engine.fs.this_os` gives this adapter only inside a test's
-`windows_port_under_test()` (BL-0087 turns writes on, after BL-0206's pointer file); the product on Windows refuses
-every file operation (`UnsupportedPlatform`). The engine lock (`take_engine_lock`) is the one exception: it is a guard
-that writes only `locks/engine.lock` in the app folder, and the sidecar cannot start an engine on Windows yet
-(BL-0281).
+`ledger_engine.fs.under_test.windows_port_under_test()` (BL-0087 turns writes on, after BL-0206's pointer file); the
+product on Windows refuses every file operation (`UnsupportedPlatform`). The engine lock (`take_engine_lock`) is the
+one exception: it is a guard that writes only `locks/engine.lock` in the app folder, and the sidecar cannot start an
+engine on Windows yet (BL-0281).
 
 - **Handles and names.** A `WindowsDir` holds a folder handle (shared for reading, writing and deleting, as a POSIX
   descriptor blocks nothing). Every entry is opened, made, renamed and removed **relative to that handle**
@@ -20,21 +20,25 @@ that writes only `locks/engine.lock` in the app folder, and the sidecar cannot s
 - **Kinds.** A reparse point whose tag is a symbolic link or a junction is a `LINK`; any other reparse point (a cloud
   placeholder, a deduplicated file, an AppExecLink) is `OTHER`, so the save refuses it (`not_a_file`; BL-0283).
   A file with the read-only attribute is `locked` (Windows refuses to replace or remove it): the save refuses it before
-  writing. Windows has no mode bits: `mode` reads 0o444 or 0o666 and `create` gives every file the folder's inherited
-  ACL and no read-only attribute (the save never replaces a read-only file).
+  writing. A file Windows' EFS encrypts is `encrypted`: the save refuses it before writing (`encrypted_file`; owner,
+  2026-11-17: "1a"), so its bytes never reach a backup or a staging file in the clear. Windows has no mode bits:
+  `mode` reads 0o444 or 0o666; a new file gets the folder's inherited ACL, and a replaced file's new version its own
+  security (`create(..., like=...)`, below).
 - **`durable_sync`:** `FlushFileBuffers`, which needs a handle opened for writing (probed: a read-only handle is
   refused): a file the adapter creates is flushed through its own handle; `sync_file` opens the file for writing (it
   writes nothing; a file another program holds without sharing writes cannot be synced, and the caller fails closed);
   a folder's `sync` opens the folder again for writing (`FILE_ADD_FILE`) and flushes it (probed: works on NTFS, ReFS,
-  FAT32 and exFAT). **What this makes durable for a rename** is what the file system does for that flush: NTFS and
-  ReFS commit their metadata log, so a rename flushed by the folder's sync survives a power loss whole; FAT32 and
-  exFAT write the folder's entries, with no log (a replace there may lose the old entry and keep no new one, as
-  macOS's FAT: §6.8). Not power-cut tested (the runner cannot cut power): engine-jobs §15 "Limit (Windows
-  durability)".
+  FAT32 and exFAT). The rename's source is opened with `FILE_WRITE_THROUGH`. **What this makes durable for a rename**
+  is relied on, not documented: Microsoft documents `FlushFileBuffers` for a file's data and metadata, not for a
+  folder's entries; NTFS and ReFS log a rename as one metadata operation and a flush of the folder commits that log
+  as far as it is known, and FAT32 and exFAT write the folder's entries with no log (a replace there may lose the old
+  entry and keep no new one, as macOS's FAT: §6.8). Not power-cut tested (the runner cannot cut power): engine-jobs
+  §15 "Limit (Windows durability)".
 - **The replace (ADR-0069):** Windows has no exchange of two names (probed), so `caps().swap` is False on every
   volume and the writer takes §6.8's best-effort mode: the new bytes synced at the staging name, then one plain rename
   over the file (`FileRenameInformation` with `ReplaceIfExists`, relative to the folder handle: the handle-relative
-  form of `MoveFileExW(MOVEFILE_REPLACE_EXISTING)`, probed never to leave the name missing on any volume kind), the
+  form of `MoveFileExW(MOVEFILE_REPLACE_EXISTING)`; S0126 probed `MoveFileExW`, and `tests/fs/test_windows.py` this
+  rename itself, for a moment when the name is missing during 300 replaces on each volume kind), the
   folder synced. `swap` raises `NotOffered`.
 - **The exclusive rename and create:** `FileRenameInformation` without `ReplaceIfExists`, and `FILE_CREATE`; both
   refuse an existing name on every volume (probed), so `caps().excl` is True everywhere (A2's rule: a volume that
@@ -74,8 +78,11 @@ that writes only `locks/engine.lock` in the app folder, and the sidecar cannot s
   granted is yes, `ACCESS_DENIED` no, a sharing violation `EBUSY` (above). `acl` reads the folder's DACL
   (`GetSecurityInfo`), each entry's kind, access bits and inheritance flags in `chmod`'s words, so `handles.acl_denial`
   judges it as on macOS (any deny entry, whoever it names, unless it is not inherited and denies only what protects
-  the folder itself). `create(..., like=...)` copies nothing: Windows' alternate data streams and extended attributes
-  are not kept (macOS keeps only its extended attributes; the ACL is kept nowhere: owner, 2026-10-29).
+  the folder itself). `create(..., like=...)` (a replaced file's new version) takes the old file's alternate data
+  streams, its hidden and archive attributes and its DACL with its protected or inherited state (owner, 2026-11-17:
+  "1a", replacing for Windows the 2026-10-29 rule that keeps no ACL: a Windows file's own ACL is its only privacy
+  setting, as the mode bits are on macOS); not its owner or SACL, which need a privilege. `allowed(name,
+  READ_XATTRS)` asks for what that copy reads.
 - **Links:** hard links on NTFS and ReFS only (probed); a file with several is refused as on macOS (`nlink`).
   `symlink` refuses (`ENOTSUP`): the mirror's `current.db` link is ADR-0015's pointer file on Windows (BL-0206), and
   `readlink` reads no link target (a link: `ENOTSUP`).
@@ -144,6 +151,7 @@ FILE_TRAVERSE: Final = 0x0020
 FILE_DELETE_CHILD: Final = 0x0040
 FILE_READ_ATTRIBUTES: Final = 0x0080
 FILE_WRITE_ATTRIBUTES: Final = 0x0100
+FILE_SHARE_READ_WRITE: Final = 0x3
 FILE_SHARE_ALL: Final = 0x7  # read, write and delete: a handle of ours blocks no other program, as a descriptor
 # CreateFileW
 OPEN_EXISTING: Final = 3
@@ -162,6 +170,20 @@ FILE_ATTRIBUTE_READONLY: Final = 0x1
 FILE_ATTRIBUTE_DIRECTORY: Final = 0x10
 FILE_ATTRIBUTE_NORMAL: Final = 0x80
 FILE_ATTRIBUTE_REPARSE_POINT: Final = 0x400
+FILE_ATTRIBUTE_HIDDEN: Final = 0x2
+FILE_ATTRIBUTE_ARCHIVE: Final = 0x20
+FILE_ATTRIBUTE_ENCRYPTED: Final = 0x4000
+KEPT_ATTRIBUTES: Final = FILE_ATTRIBUTE_HIDDEN | FILE_ATTRIBUTE_ARCHIVE
+"""The attributes a replaced file passes to its new version (owner, 2026-11-17: "1a"): hidden and archive. The
+read-only attribute never (the save refuses such a file: `locked`); encryption never (refused: `encrypted_file`)."""
+FILE_WRITE_THROUGH: Final = 0x00000002
+FILE_STREAM_INFO: Final = 7
+ERROR_MORE_DATA: Final = 234
+ERROR_HANDLE_EOF: Final = 38
+SE_DACL_PROTECTED: Final = 0x1000
+PROTECTED_DACL_SECURITY_INFORMATION: Final = 0x80000000
+UNPROTECTED_DACL_SECURITY_INFORMATION: Final = 0x20000000
+MAIN_STREAM: Final = "::$DATA"
 IO_REPARSE_TAG_MOUNT_POINT: Final = 0xA0000003
 IO_REPARSE_TAG_SYMLINK: Final = 0xA000000C
 LINK_TAGS: Final = frozenset({IO_REPARSE_TAG_MOUNT_POINT, IO_REPARSE_TAG_SYMLINK})
@@ -333,6 +355,10 @@ class _Api:
             adv.GetSecurityInfo, [h, ctypes.c_int, d, p, p, ctypes.POINTER(p), p, ctypes.POINTER(p)], d
         )
         self.GetAce = _sig(adv.GetAce, [p, d, ctypes.POINTER(p)], b)
+        self.SetSecurityInfo = _sig(adv.SetSecurityInfo, [h, ctypes.c_int, d, p, p, p, p], d)
+        self.GetSecurityDescriptorControl = _sig(
+            adv.GetSecurityDescriptorControl, [p, ctypes.POINTER(wintypes.WORD), ctypes.POINTER(d)], b
+        )
         self.NtCreateFile = _sig(
             nt.NtCreateFile,
             [
@@ -403,6 +429,79 @@ def _not_regular(api: _Api, h: _Handle) -> OSError | None:
     if _kind(attrs, tag) is not Kind.FILE or api.GetFileType(h.handle) != FILE_TYPE_DISK:
         return _refuse(errno.EINVAL, "not a regular file")
     return None
+
+
+def _streams(api: _Api, h: _Handle) -> list[str]:
+    """The names of the file's alternate data streams (`:name:$DATA`), its main stream left out; none where the volume
+    keeps none (FAT32, exFAT)."""
+    size = 64 * 1024
+    while True:
+        buf = ctypes.create_string_buffer(size)
+        if api.GetInfo(h.handle, FILE_STREAM_INFO, buf, size):
+            break
+        code = ctypes.get_last_error()
+        if code == ERROR_MORE_DATA and size < 1 << 24:
+            size *= 4
+            continue
+        if code in (ERROR_HANDLE_EOF, ERROR_INVALID_PARAMETER, ERROR_NOT_SUPPORTED):
+            return []
+        raise _win_error("FileStreamInfo", code=code)
+    raw = buf.raw
+    out: list[str] = []
+    at = 0
+    while True:
+        nxt, length = struct.unpack_from("<II", raw, at)
+        stream = raw[at + 24 : at + 24 + length].decode("utf-16-le", "surrogatepass")
+        if stream and stream != MAIN_STREAM:
+            out.append(stream)
+        if nxt == 0:
+            return out
+        at += nxt
+
+
+def _carry_over(api: _Api, src: _Handle, new: _Handle) -> None:
+    """The replaced file's own security and marks onto its new version (owner, 2026-11-17: "1a"; the counterpart of
+    macOS keeping the mode bits), in this order: its alternate data streams, byte for byte; its hidden and archive
+    attributes (`KEPT_ATTRIBUTES`); last its DACL, with its protected or inherited state (an explicit ACL that denies
+    us writing applies only to later opens). Not its owner nor its SACL: setting either needs a privilege the user's
+    process does not hold (the new file is owned by the user who saves, as on macOS). A volume without ACLs or streams
+    (FAT32, exFAT) passes the attributes only."""
+    for stream in _streams(api, src):
+        with (
+            _nt_open(api, src.handle, stream, GENERIC_READ, FILE_OPEN, FILE_NON_DIRECTORY_FILE) as a,
+            _nt_open(api, new.handle, stream, GENERIC_WRITE, FILE_CREATE, FILE_NON_DIRECTORY_FILE) as b,
+        ):
+            for chunk in a.chunks(1 << 62):
+                b.write_all(chunk)
+            b.flush()
+    attrs = new.basic()[2]
+    kept = (attrs & ~KEPT_ATTRIBUTES) | (src.basic()[2] & KEPT_ATTRIBUTES)
+    info = struct.pack("<qqqqI4x", 0, 0, 0, 0, kept or FILE_ATTRIBUTE_NORMAL)  # 0 leaves a time as it is
+    buf = ctypes.create_string_buffer(info, len(info))
+    if not api.SetInfo(new.handle, FILE_BASIC_INFO, buf, len(info)):
+        raise _win_error("SetFileInformationByHandle")
+    dacl, sd = ctypes.c_void_p(), ctypes.c_void_p()
+    rc = api.GetSecurityInfo(
+        src.handle, SE_FILE_OBJECT, DACL_SECURITY_INFORMATION, None, None, ctypes.byref(dacl), None, ctypes.byref(sd)
+    )
+    if rc in (ERROR_NOT_SUPPORTED, ERROR_INVALID_PARAMETER):
+        return  # no ACLs on this volume
+    if rc != 0:
+        raise _win_error("GetSecurityInfo", code=rc)
+    try:
+        control, revision = wintypes.WORD(), wintypes.DWORD()
+        if not api.GetSecurityDescriptorControl(sd, ctypes.byref(control), ctypes.byref(revision)):
+            raise _win_error("GetSecurityDescriptorControl")
+        state = (
+            PROTECTED_DACL_SECURITY_INFORMATION
+            if control.value & SE_DACL_PROTECTED
+            else UNPROTECTED_DACL_SECURITY_INFORMATION
+        )
+        rc = api.SetSecurityInfo(new.handle, SE_FILE_OBJECT, DACL_SECURITY_INFORMATION | state, None, None, dacl, None)
+        if rc != 0:
+            raise _win_error("SetSecurityInfo", code=rc)
+    finally:
+        api.LocalFree(sd)
 
 
 def _a_link(h: _Handle, name: str) -> OSError | None:
@@ -722,6 +821,7 @@ class WindowsDir:
                 mode=0o444 if attrs & FILE_ATTRIBUTE_READONLY else 0o666,
                 locked=bool(attrs & FILE_ATTRIBUTE_READONLY) and kind is Kind.FILE,
                 mtime_ns=_filetime_ns(written),
+                encrypted=bool(attrs & FILE_ATTRIBUTE_ENCRYPTED),
             )
 
     def sync_file(self, name: str) -> tuple[int, int]:
@@ -745,16 +845,17 @@ class WindowsDir:
 
     def create(self, name: str, data: bytes | Iterable[bytes], mode: int, like: str | None = None) -> tuple[int, int]:
         """`FILE_CREATE` (fails on any entry, a link included), the data written and flushed through the same handle.
-        `mode` and `like` give nothing on Windows (the module's docstring); `like` must still be a regular file."""
+        `mode` gives nothing on Windows. With `like` (a replaced file, S0128 round 1; owner, 2026-11-17: "1a"), the
+        new file takes the old one's own security and marks before the rename puts it at the name (`_carry_over`)."""
         del mode
-        h = self._open(
-            check_name(name), GENERIC_WRITE | FILE_READ_ATTRIBUTES, FILE_CREATE, options=FILE_NON_DIRECTORY_FILE
-        )
+        access = GENERIC_WRITE | FILE_READ_ATTRIBUTES | (READ_CONTROL | WRITE_DAC if like is not None else 0)
+        h = self._open(check_name(name), access, FILE_CREATE, options=FILE_NON_DIRECTORY_FILE)
         with h:
             for piece in (data,) if isinstance(data, bytes) else data:
                 h.write_all(piece)
             if like is not None:
-                self._regular(like, FILE_READ_ATTRIBUTES).close()
+                with self._regular(like, READ_CONTROL | GENERIC_READ) as src:
+                    _carry_over(self.api, src, h)
             h.flush()
             return h.identity()
 
@@ -763,9 +864,9 @@ class WindowsDir:
         violation is no answer: `OSError` `EBUSY` (another program holds the file)."""
         if name == "." and right is Right.DELETE:
             return False  # a folder's own removal is its parent's to judge; never asked of `.` (fails closed)
-        if name != "." and right is Right.READ_XATTRS:
-            return self.stat(check_name(name)) is not None  # the adapter copies none (`create`)
         access = RIGHT_ACCESS[right]
+        if name != "." and right is Right.READ_XATTRS:
+            access = READ_CONTROL | GENERIC_READ  # what `create(..., like=...)` reads: the DACL and the streams
         try:
             if name == ".":
                 self._reopen(access).close()
@@ -816,7 +917,7 @@ class WindowsDir:
         raise NotOffered(EXCHANGE)
 
     def _rename(self, src: str, dst: str, *, replace: bool) -> None:
-        with self._open(check_name(src), DELETE) as h:
+        with self._open(check_name(src), DELETE, options=FILE_WRITE_THROUGH) as h:
             status = h.set_info(NT_FILE_RENAME_INFORMATION, _rename_info(replace, self.handle, check_name(dst)))
         if status != 0:
             if not replace and status & 0xFFFFFFFF in REFUSED_STATUS:
@@ -1114,6 +1215,7 @@ def take_engine_lock(app: WindowsDir, locks: str, name: str) -> None:
             GENERIC_READ | GENERIC_WRITE,
             FILE_OPEN_IF,
             FILE_NON_DIRECTORY_FILE | FILE_OPEN_REPARSE_POINT,
+            share=FILE_SHARE_READ_WRITE,  # never delete: no program removes the lock file while held (red team F6)
         )
     _vetted(h, lambda x: _not_regular(app.api, x))
     if not app.api.LockFileEx(h.handle, LOCKFILE_EXCLUSIVE_LOCK, 0, 0xFFFFFFFF, 0xFFFFFFFF, OVERLAPPED()):

@@ -627,6 +627,16 @@ def test_S0100_BL0183_an_earlier_unfinished_save_has_its_own_reason_and_says_thi
     assert "could not finish your change" not in text
 
 
+def test_S0128_a_file_the_file_system_encrypts_is_the_encrypted_file_refusal() -> None:
+    """S0128 round 1 (owner, 2026-11-17: "1a"): the writer refuses a file Windows' EFS encrypts (`not_saved`,
+    `encrypted_file`, before any write); the sidecar says what it says for a `.gpg` name, naming the file, never an
+    unknown reason or "internal"."""
+    value = answer_of(SaveAnswer("not_saved", "encrypted_file", MAIN, None, None, True, False, None, None, False))
+    assert isinstance(value, NotDone)
+    assert code(value) == "ENCRYPTED_FILE_NOT_EDITABLE"
+    assert details(value) == EncryptedFileDetails(MAIN)
+
+
 def test_S0100_BL0183_this_saves_own_open_journal_still_reads_the_reopen_text() -> None:
     """@regression-guard (its logic holds on 437d6298). Must pass: a journal this save left open (`not_saved` with
     `open_journal`, `unfinished`) keeps its Reopen text."""

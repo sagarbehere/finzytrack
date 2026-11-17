@@ -224,6 +224,9 @@ class Reason(StrEnum):
     COPY_FOLDER_MOVED = "copy_folder_moved"  # the test copy's folder is not at its recorded path with its recorded
     # identity: a link at it or above it, or another folder there (S0117 rounds 2 and 3; owner: "3")
     COPY_FOLDER_MISSING = "copy_folder_missing"  # nothing at the test copy's recorded folder path
+    ENCRYPTED_FILE = "encrypted_file"  # a replaced file the file system encrypts (Windows' EFS; S0128 round 1, owner:
+    # "1a"): never written, so no backup or staging copy of it is ever in the clear; the sidecar says
+    # `ENCRYPTED_FILE_NOT_EDITABLE`, as for a `.gpg` name (ADR-0059)
     UNSAFE_APP_FOLDER = "unsafe_app_folder"  # the app's data folder is on a file system without the exclusive rename
     # (ecryptfs, an NFS home, overlay): the record could not become `.open` without the risk of replacing another
     # entry, so nothing is saved there (S0125 round 1; owner, 2026-11-17: "C1")
@@ -374,6 +377,8 @@ def _check_replaced(st: EntryStat | None, identity: tuple[int, int] | None, cano
         raise _Stop(Reason.CHANGED, canonical)  # it moved or was replaced since the path was resolved
     if st.kind is not Kind.FILE:
         raise _Stop(Reason.NOT_A_FILE, canonical)
+    if st.encrypted:
+        raise _Stop(Reason.ENCRYPTED_FILE, canonical)
     if st.locked:
         raise _Stop(Reason.LOCKED, canonical)
     if hard_links(st):
@@ -902,6 +907,7 @@ def _rollback(
         plan.journal_dir,
         closed=step is Step.CLOSE,
         made=frozenset(progress.made),
+        pristine={t.canonical: t.identity for t in plan.targets if t.identity is not None},
     )
 
 

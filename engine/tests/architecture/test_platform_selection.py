@@ -19,7 +19,7 @@ SRC = Path(__file__).resolve().parents[2] / "src" / "ledger_engine"
 # Every module of `fs/` except the port, the selection point, the package itself, the code the POSIX adapters share
 # (`posix`, S0125: imported only by the adapters, below) and the pure path model of every OS (`pathmodel`, S0127) is an
 # adapter (S0113 verifier V1: `fs/linux.py` or `fs/windows.py` is covered without editing this test).
-NOT_ADAPTERS = frozenset({"__init__", "port", "this_os", "posix", "pathmodel"})
+NOT_ADAPTERS = frozenset({"__init__", "port", "this_os", "posix", "pathmodel", "under_test"})
 SHARED = "ledger_engine.fs.posix"
 SELECTION = "fs/this_os.py"
 ADAPTERS = frozenset(f"ledger_engine.fs.{p.stem}" for p in (SRC / "fs").glob("*.py") if p.stem not in NOT_ADAPTERS)
@@ -69,14 +69,51 @@ def test_the_selection_point_is_the_one_that_imports_the_adapters() -> None:
     assert sorted(set(found)) == ["ledger_engine.fs.darwin", "ledger_engine.fs.linux", "ledger_engine.fs.windows"]
 
 
-WINDOWS_SWITCH = frozenset({"windows_port_under_test", "_windows_under_test"})
-"""The test-only switch that selects the Windows adapter (S0128; BL-0087 turns writes on in the product)."""
+SWITCH = "ledger_engine.fs.under_test"
+SWITCH_FILE = "fs/under_test.py"
+THIS_OS = "ledger_engine.fs.this_os"
+SWITCH_NAMES = frozenset({"windows_port_under_test", "_windows_under_test", "under_test", "ON", "selected"})
+"""The names that reach the test-only switch selecting the Windows adapter (S0128; BL-0087 turns writes on)."""
+REFLECTION = frozenset({"getattr", "setattr", "delattr", "vars", "__dict__", "globals", "__getattribute__"})
+CONTEXTVARS_HOMES = frozenset({"fs/pathmodel.py", SWITCH_FILE})
+"""Where the product may use `contextvars` (S0128 round 1, verifier F1): iterating a copied context reaches every
+context variable, the path model's and the switch's among them, so nowhere else."""
+ENGINE_LOCK_CALLERS = frozenset({"protocol/server.py", SELECTION})
+"""Where `this_os.engine_lock_folder` and `this_os.take_engine_lock` may be named (S0128 round 1, verifier F1)."""
 
 
-def switch_uses(source: str) -> list[int]:
-    """The lines of `source` that name the Windows test switch, in any position (a name, an attribute, an import)."""
-    found: list[int] = []
-    for node in ast.walk(ast.parse(source)):
+def switch_uses(source: str, rel: str = "ledger/x.py") -> list[str]:
+    """Every way `source` (the product module at `rel` under `ledger_engine/`) could reach the switch: an import of
+    `ledger_engine.fs.under_test` in any spelling; a name of `SWITCH_NAMES` in any position; reflection (`getattr`,
+    `setattr`, `vars`, `__dict__`, ...) on a name bound to `this_os`, to the switch module or to the `fs` package; and
+    `contextvars` outside `CONTEXTVARS_HOMES`. Stated limit: a dynamic import by name is out of an AST scan
+    (`check_engine_boundary.py` allows `import_module`, `__import__` and `exec` only in `ledger/beancount_port.py`)."""
+    found: list[str] = []
+    tree = ast.parse(source)
+    package = ("ledger_engine", *Path(rel).parent.parts)
+    guarded: set[str] = set()  # local names bound to this_os, the switch module or the fs package
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom):
+            base = node.module or ""
+            if node.level:
+                base = ".".join((*package[: len(package) - (node.level - 1)], *([node.module] if node.module else [])))
+            if base == "contextvars" and rel not in CONTEXTVARS_HOMES:
+                found.append(f"{node.lineno}: contextvars")
+            for a in node.names:
+                full = f"{base}.{a.name}"
+                if base == SWITCH or full == SWITCH:
+                    found.append(f"{node.lineno}: imports the switch")
+                if full in (THIS_OS, SWITCH, "ledger_engine.fs"):
+                    guarded.add(a.asname or a.name)
+        elif isinstance(node, ast.Import):
+            for a in node.names:
+                if a.name == SWITCH or a.name.startswith(SWITCH + "."):
+                    found.append(f"{node.lineno}: imports the switch")
+                if a.name == "contextvars" and rel not in CONTEXTVARS_HOMES:
+                    found.append(f"{node.lineno}: contextvars")
+                if a.name in (THIS_OS, SWITCH, "ledger_engine.fs", "ledger_engine"):
+                    guarded.add((a.asname or a.name).split(".")[0])
+    for node in ast.walk(tree):
         name = (
             node.id
             if isinstance(node, ast.Name)
@@ -86,20 +123,34 @@ def switch_uses(source: str) -> list[int]:
             if isinstance(node, ast.alias)
             else None
         )
-        if name in WINDOWS_SWITCH:
-            found.append(getattr(node, "lineno", 0))
+        line = getattr(node, "lineno", 0)
+        if name in SWITCH_NAMES:
+            found.append(f"{line}: names {name}")
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id in REFLECTION
+            and any(isinstance(a, ast.Name) and a.id in guarded for a in node.args)
+        ):
+            found.append(f"{line}: {node.func.id} on this_os or the switch")
+        if isinstance(node, ast.Attribute) and node.attr in REFLECTION:
+            base_name = node.value
+            while isinstance(base_name, ast.Attribute):
+                base_name = base_name.value
+            if isinstance(base_name, ast.Name) and base_name.id in guarded:
+                found.append(f"{line}: {node.attr} of this_os or the switch")
     return found
 
 
 def test_the_product_never_turns_the_windows_port_on() -> None:
-    """Must not pass (@regression-guard: on the base there was no switch to name): the product refuses file operations
-    on Windows until BL-0087 (S0128), so nothing outside the selection point names the switch that selects the Windows
-    adapter for a test."""
+    """Must not pass (@regression-guard: on the base there was no switch to reach): the product refuses file operations
+    on Windows until BL-0087 (S0128), so no product module but the selection point reaches the switch module, in any
+    of the ways `switch_uses` sees."""
     offenders: list[str] = []
     for path in sorted(SRC.rglob("*.py")):
         rel = path.relative_to(SRC).as_posix()
-        if rel != SELECTION:
-            offenders.extend(f"{rel}:{n}" for n in switch_uses(path.read_text(encoding="utf-8")))
+        if rel not in (SELECTION, SWITCH_FILE):
+            offenders.extend(f"{rel}:{n}" for n in switch_uses(path.read_text(encoding="utf-8"), rel))
     assert not offenders, offenders
 
 
@@ -109,75 +160,68 @@ def test_the_product_never_turns_the_windows_port_on() -> None:
         "from ledger_engine.fs.this_os import windows_port_under_test\n",
         "from ledger_engine.fs import this_os\nwith this_os.windows_port_under_test():\n    pass\n",
         "from ledger_engine.fs import this_os\nthis_os._windows_under_test.set(True)\n",
+        "from ledger_engine.fs import under_test\nunder_test.ON.set(True)\n",
+        "from ledger_engine.fs.under_test import ON as o\no.set(True)\n",
+        "import ledger_engine.fs.under_test as u\n",
+        "from ..fs import under_test\n",
+        # the verifier's four (S0128 round 1, F1): each passed the name-only guard
+        'from ledger_engine.fs import this_os\nwith getattr(this_os, "windows_port" + "_under_test")():\n    pass\n',
+        'from ledger_engine.fs import this_os\nvars(this_os)["_windows_under_test"].set(True)\n',
+        "import contextvars\nfor v in contextvars.copy_context():\n    if v.name == 'windows_port_under_test':\n"
+        "        v.set(True)\n",
+        'from ledger_engine.fs import this_os as t\nsw = t.__dict__["windows_port_under_test"]\n',
+        # and their neighbours
+        "from contextvars import copy_context\nlist(copy_context())\n",
+        'from ledger_engine.fs import this_os\nsetattr(this_os, "supported", lambda: True)\n',
+        "import ledger_engine.fs.this_os\nx = ledger_engine.fs.this_os.__dict__\n",
+        'from ledger_engine import fs\ngetattr(fs, "under" + "_test")\n',
     ],
 )
-def test_each_spelling_of_the_windows_switch_is_seen(source: str) -> None:
-    """Must not pass (@regression-guard: the scanner is the test's own): each spelling turns the Windows adapter on."""
+def test_each_way_to_the_windows_switch_is_seen(source: str) -> None:
+    """Must not pass: each spelling turns the Windows adapter on, or could."""
     assert switch_uses(source)
 
 
-def test_inside_the_selection_point_the_switch_only_selects_windows() -> None:
-    """The switch is read only beside a `win32` check, in `supported`, `for_this_os` and `legacy_locks_for_this_os`,
-    and set only in `windows_port_under_test`."""
+def test_the_products_own_uses_of_this_os_pass() -> None:
+    """@regression-guard: the product's spellings."""
+    source = (
+        "from ledger_engine.fs import this_os\nfrom ledger_engine.fs.this_os import for_this_os\n"
+        "this_os.supported()\nfor_this_os()\n"
+    )
+    assert switch_uses(source) == []
+
+
+def test_only_the_server_takes_the_engine_lock_through_the_selection_point() -> None:
+    """Must not pass (@regression-guard: the server was the only caller at the base): the Windows engine lock is the one
+    file operation the product takes on Windows (S0128), so only `protocol/server.py` names it."""
+    offenders = [
+        path.relative_to(SRC).as_posix()
+        for path in sorted(SRC.rglob("*.py"))
+        if path.relative_to(SRC).as_posix() not in ENGINE_LOCK_CALLERS
+        and any(
+            isinstance(n, ast.Attribute | ast.Name | ast.alias)
+            and getattr(n, "attr", getattr(n, "id", getattr(n, "name", None)))
+            in ("engine_lock_folder", "take_engine_lock")
+            for n in ast.walk(ast.parse(path.read_text(encoding="utf-8")))
+        )
+    ]
+    assert not offenders, offenders
+
+
+def test_the_selection_point_reads_the_switch_only_beside_a_windows_check() -> None:
+    """`supported`, `for_this_os` and `legacy_locks_for_this_os` read `under_test.selected()`, each in a condition that
+    also asks for win32; nothing else in the selection point reads it."""
     tree = ast.parse((SRC / SELECTION).read_text(encoding="utf-8"))
     reads: set[str] = set()
     for f in tree.body:
         if isinstance(f, ast.FunctionDef):
             for n in ast.walk(f):
-                if (
-                    isinstance(n, ast.Attribute)
-                    and isinstance(n.value, ast.Name)
-                    and n.value.id == "_windows_under_test"
-                ):
+                if isinstance(n, ast.Attribute) and isinstance(n.value, ast.Name) and n.value.id == "under_test":
                     reads.add(f"{f.name}.{n.attr}")
-    assert reads == {
-        "supported.get",
-        "for_this_os.get",
-        "legacy_locks_for_this_os.get",
-        "windows_port_under_test.set",
-        "windows_port_under_test.reset",
-    }
-
-
-def test_only_the_adapters_import_their_shared_posix_code() -> None:
-    """Must not pass: `fs/posix.py` is the adapters' shared code; anything else takes the port from `this_os`."""
-    offenders: list[str] = []
-    for path in sorted(SRC.rglob("*.py")):
-        rel = path.relative_to(SRC).as_posix()
-        if f"ledger_engine.{rel.removesuffix('.py').replace('/', '.')}" in ADAPTERS:
-            continue
-        tree = ast.parse(path.read_text(encoding="utf-8"))
-        for node in ast.walk(tree):
-            names = (
-                [a.name for a in node.names]
-                if isinstance(node, ast.Import)
-                else [node.module or "", *(f"{node.module}.{a.name}" for a in node.names)]
-                if isinstance(node, ast.ImportFrom)
-                else []
-            )
-            if any(n == SHARED or n.endswith(".posix") for n in names):
-                offenders.append(rel)
-    assert not offenders, offenders
-
-
-def test_every_spelling_of_an_adapter_import_is_seen() -> None:
-    """Must not pass: each spelling below is an adapter import; a plain port import is not."""
-    cases = {
-        "import ledger_engine.fs.darwin\n": ["ledger_engine.fs.darwin"],
-        "import ledger_engine.fs.darwin as d\n": ["ledger_engine.fs.darwin"],
-        "from ledger_engine.fs.darwin import DarwinFS\n": ["ledger_engine.fs.darwin"],
-        "from ledger_engine.fs import darwin\n": ["ledger_engine.fs.darwin"],
-        "def f():\n    from ledger_engine.fs.darwin import DarwinFS\n": ["ledger_engine.fs.darwin"],
-        "from ..fs.darwin import DarwinFS\n": ["ledger_engine.fs.darwin"],
-        "from ..fs import darwin\n": ["ledger_engine.fs.darwin"],
-        "from ledger_engine.fs.port import FileSystem\n": [],
-        "from ledger_engine.fs.this_os import for_this_os\n": [],
-        "from ..fs import port\n": [],
-    }
-    for source, want in cases.items():
-        assert adapter_imports("protocol/x.py", source) == want, source
-    assert adapter_imports("fs/x.py", "from . import darwin\n") == ["ledger_engine.fs.darwin"]
-    assert adapter_imports("fs/x.py", "from .darwin import DarwinFS\n") == ["ledger_engine.fs.darwin"]
+            for n in ast.walk(f):
+                if isinstance(n, ast.BoolOp) and any("under_test" in ast.unparse(v) for v in n.values):
+                    assert any("win32" in ast.unparse(v) for v in n.values), ast.unparse(n)
+    assert reads == {"supported.selected", "for_this_os.selected", "legacy_locks_for_this_os.selected"}
 
 
 PATHMODEL = "ledger_engine.fs.pathmodel"
