@@ -1,0 +1,218 @@
+{
+ "check_name": {
+  "": "MalformedPathError: malformed path: not_one_component",
+  ".": "MalformedPathError: malformed path: not_one_component",
+  "..": "MalformedPathError: malformed path: not_one_component",
+  "AUX.txt": "AUX.txt",
+  "a": "a",
+  "a\u0000b": "MalformedPathError: malformed path: not_one_component",
+  "a ": "a ",
+  "a.": "a.",
+  "a/b": "MalformedPathError: malformed path: not_one_component",
+  "a:b": "a:b",
+  "a\\b": "a\\b",
+  "com1": "com1",
+  "con": "con",
+  "lpt9.x": "lpt9.x",
+  "nul ": "nul "
+ },
+ "copy_layout": {
+  "back": [
+   "/new/copy/documents\\-2/|/new/copy/documents\\-2(?![^\\\"'\\s:,)\\]])|/new/copy/documents/|/new/copy/documents(?![^\\\"'\\s:,)\\]])|/new/copy/outside/|/new/copy/outside(?![^\\\"'\\s:,)\\]])|/new/copy/|/new/copy(?![^\\\"'\\s:,)\\]])",
+   {
+    "/new/copy": "/data/ledgers",
+    "/new/copy/": "/data/ledgers/",
+    "/new/copy/documents": "/data/documents/books",
+    "/new/copy/documents-2": "/other/docs",
+    "/new/copy/documents-2/": "/other/docs/",
+    "/new/copy/documents/": "/data/documents/books/",
+    "/new/copy/outside": "/",
+    "/new/copy/outside/": "/"
+   }
+  ],
+  "layout": [
+   "/data/ledgers",
+   [
+    [
+     "/data/documents/books",
+     "documents"
+    ],
+    [
+     "/other/docs",
+     "documents-2"
+    ],
+    [
+     "/",
+     "outside"
+    ]
+   ]
+  ],
+  "literal_folder": {
+   "/*": "/",
+   "/a/*/c": "/a",
+   "/a/b.x": "/a",
+   "/a/b/*.x": "/a/b"
+  },
+  "norm_path": {
+   "///x": "/x",
+   "//a/b": "/a/b",
+   "/a/./b/../c": "/a/c"
+  },
+  "places": {
+   "/data/documents/books/A/x.pdf": "documents/A/x.pdf",
+   "/data/ledgers/main.beancount": "main.beancount",
+   "/data/ledgers/p/p.beancount": "p/p.beancount",
+   "/data/shared/a/r.beancount": "outside/data/shared/a/r.beancount",
+   "/data/shared/b/m.beancount": "outside/data/shared/b/m.beancount",
+   "/elsewhere/z.pdf": "outside/elsewhere/z.pdf",
+   "/nowhere/q": "outside/nowhere/q"
+  },
+  "rewrite": [
+   "include \"outside/data/shared/a/r.beancount\"\ninclude \"outside/data/shared/b/m.beancount\"\ninclude \"p/p.beancount\"\noption \"documents\" \"documents\"\n2020-01-01 document Assets:A \"outside/elsewhere/z.pdf\"\n",
+   [
+    [
+     "outside/data/shared/a/r.beancount",
+     "/data/shared/a/r.beancount"
+    ],
+    [
+     "outside/data/shared/b/m.beancount",
+     "../shared/b/m.beancount"
+    ]
+   ]
+  ]
+ },
+ "join": [
+  "/a",
+  "/a/b",
+  "/a/b/c"
+ ],
+ "journal": {
+  "decode_reserved_folder": "Unreadable(why='malformed')",
+  "decode_windows_canonical": "Unreadable(why='malformed')",
+  "decode_windows_key": "Unreadable(why='malformed')",
+  "one_file": {
+   "bytes": "{\"backup_dir\":\"/app/local/k1/backups/s1-j7\",\"created_dirs\":[],\"engine_build\":\"build1\",\"files\":[{\"backup\":\"0-a.bean\",\"canonical_path\":\"/w/L/inc/a.bean\",\"path_key\":\"/w/l/inc/a.bean\",\"post\":\"2222222222222222222222222222222222222222222222222222222222222222\",\"pre\":\"1111111111111111111111111111111111111111111111111111111111111111\",\"temp\":\".a.bean.ft-s1-j7.tmp\"}],\"folders\":[{\"born\":1794157282123456789,\"canonical_path\":\"/w/L/inc\",\"fs_type\":\"apfs\",\"volume\":\"6d3f0a52-8b1c-4e7a-9f20-3c5b7d9e1a40\"}],\"format\":\"finzytrack-save-journal\",\"job\":\"j7\",\"lineage\":\"lin1\",\"session\":\"s1\",\"v\":6,\"workspace_key\":\"k1\"}\n",
+   "decodes": true,
+   "needed_folders": [
+    "/w/L/inc"
+   ]
+  },
+  "record": {
+   "bytes": "{\"backup_dir\":\"/app/local/k1/backups/s1-j7\",\"created_dirs\":[{\"canonical_path\":\"/w/L/y2026\",\"path_key\":\"/w/l/y2026\"}],\"engine_build\":\"build1\",\"files\":[{\"backup\":\"0-a.bean\",\"canonical_path\":\"/w/L/inc/a.bean\",\"path_key\":\"/w/l/inc/a.bean\",\"post\":\"2222222222222222222222222222222222222222222222222222222222222222\",\"pre\":\"1111111111111111111111111111111111111111111111111111111111111111\",\"temp\":\".a.bean.ft-s1-j7.tmp\"},{\"backup\":null,\"canonical_path\":\"/w/L/y2026/Café.bean\",\"path_key\":\"/w/l/y2026/café.bean\",\"post\":\"3333333333333333333333333333333333333333333333333333333333333333\",\"pre\":null,\"temp\":\".Café.bean.ft-s1-j7.tmp\"}],\"folders\":[{\"born\":1794157282123456789,\"canonical_path\":\"/w/L\",\"fs_type\":\"apfs\",\"volume\":\"6d3f0a52-8b1c-4e7a-9f20-3c5b7d9e1a40\"},{\"born\":1794157282123456790,\"canonical_path\":\"/w/L/inc\",\"fs_type\":\"apfs\",\"volume\":\"6d3f0a52-8b1c-4e7a-9f20-3c5b7d9e1a40\"},{\"born\":null,\"canonical_path\":\"/w/L/y2026\",\"fs_type\":\"apfs\",\"volume\":\"6d3f0a52-8b1c-4e7a-9f20-3c5b7d9e1a40\"}],\"format\":\"finzytrack-save-journal\",\"job\":\"j7\",\"lineage\":\"lin1\",\"session\":\"s1\",\"v\":6,\"workspace_key\":\"k1\"}\n",
+   "decodes": true,
+   "needed_folders": [
+    "/w/L/inc",
+    "/w/L/y2026",
+    "/w/L"
+   ]
+  },
+  "reserved_name": {
+   "bytes": "{\"backup_dir\":\"/app/local/k1/backups/s1-j7\",\"created_dirs\":[],\"engine_build\":\"build1\",\"files\":[{\"backup\":\"0-aux.bean\",\"canonical_path\":\"/w/L/aux.bean\",\"path_key\":\"/w/l/aux.bean\",\"post\":\"2222222222222222222222222222222222222222222222222222222222222222\",\"pre\":\"1111111111111111111111111111111111111111111111111111111111111111\",\"temp\":\".aux.bean.ft-s1-j7.tmp\"}],\"folders\":[{\"born\":1794157282123456789,\"canonical_path\":\"/w/L\",\"fs_type\":\"apfs\",\"volume\":\"6d3f0a52-8b1c-4e7a-9f20-3c5b7d9e1a40\"}],\"format\":\"finzytrack-save-journal\",\"job\":\"j7\",\"lineage\":\"lin1\",\"session\":\"s1\",\"v\":6,\"workspace_key\":\"k1\"}\n",
+   "decodes": true,
+   "needed_folders": [
+    "/w/L"
+   ]
+  },
+  "root_level": {
+   "bytes": "{\"backup_dir\":\"/app/local/k1/backups/s1-j7\",\"created_dirs\":[],\"engine_build\":\"build1\",\"files\":[{\"backup\":\"0-a.bean\",\"canonical_path\":\"/a.bean\",\"path_key\":\"/a.bean\",\"post\":\"2222222222222222222222222222222222222222222222222222222222222222\",\"pre\":\"1111111111111111111111111111111111111111111111111111111111111111\",\"temp\":\".a.bean.ft-s1-j7.tmp\"}],\"folders\":[{\"born\":1794157282123456789,\"canonical_path\":\"/\",\"fs_type\":\"apfs\",\"volume\":\"6d3f0a52-8b1c-4e7a-9f20-3c5b7d9e1a40\"}],\"format\":\"finzytrack-save-journal\",\"job\":\"j7\",\"lineage\":\"lin1\",\"session\":\"s1\",\"v\":6,\"workspace_key\":\"k1\"}\n",
+   "decodes": true,
+   "needed_folders": [
+    "/"
+   ]
+  },
+  "windows_paths": "BadRecordError: bad journal record: absolute"
+ },
+ "paths": [
+  [
+   "/",
+   "/"
+  ],
+  [
+   "/Vol/Ledger/New",
+   "/vol/Ledger/New"
+  ],
+  [
+   "/Café/STRASSE/ß/İx",
+   "/café/strasse/ß/i̇x"
+  ],
+  [
+   "/a/B/c",
+   "/a/B/c"
+  ]
+ ],
+ "protocol": {
+  "component 'a'": "{\"path\":\"/w\",\"volume\":\"6d3f0a52-8b1c-4e7a-9f20-3c5b7d9e1a40\",\"fs_type\":\"a\",\"born\":1}",
+  "component 'a/b'": "{\"path\":\"/w\",\"volume\":\"6d3f0a52-8b1c-4e7a-9f20-3c5b7d9e1a40\",\"fs_type\":\"a/b\",\"born\":1}",
+  "component 'a\\\\b'": "{\"path\":\"/w\",\"volume\":\"6d3f0a52-8b1c-4e7a-9f20-3c5b7d9e1a40\",\"fs_type\":\"a\\\\b\",\"born\":1}",
+  "component 'con'": "{\"path\":\"/w\",\"volume\":\"6d3f0a52-8b1c-4e7a-9f20-3c5b7d9e1a40\",\"fs_type\":\"con\",\"born\":1}",
+  "journal_file ''": [
+   "string_too_short",
+   "string_too_short"
+  ],
+  "journal_file '/a/b'": "{\"path\":\"/a/b\",\"path_key\":\"/a/b\",\"created\":false}",
+  "journal_file 'C:\\\\x'": [
+   "string_pattern_mismatch",
+   "string_pattern_mismatch"
+  ],
+  "journal_file '\\\\\\\\s\\\\sh\\\\x'": [
+   "string_pattern_mismatch",
+   "string_pattern_mismatch"
+  ],
+  "journal_file 'a'": [
+   "string_pattern_mismatch",
+   "string_pattern_mismatch"
+  ],
+  "save_change": "{\"path\":\"/w/L/Café.bean\",\"pre\":null,\"post\":\"x\\n\"}"
+ },
+ "split_absolute": {
+  "": "MalformedPathError: malformed path: not_absolute",
+  "./a": "MalformedPathError: malformed path: not_absolute",
+  "/": [],
+  "///a//b/": [
+   "a",
+   "b"
+  ],
+  "//a": [
+   "a"
+  ],
+  "/Café/é": [
+   "Café",
+   "é"
+  ],
+  "/a": [
+   "a"
+  ],
+  "/a\u0000b": "MalformedPathError: malformed path: not_one_component",
+  "/a ": [
+   "a "
+  ],
+  "/a.": [
+   "a."
+  ],
+  "/a/": [
+   "a"
+  ],
+  "/a/../b": "MalformedPathError: malformed path: not_one_component",
+  "/a/./b": "MalformedPathError: malformed path: not_one_component",
+  "/a:b": [
+   "a:b"
+  ],
+  "/a\\b": [
+   "a\\b"
+  ],
+  "/aux": [
+   "aux"
+  ],
+  "/a|b*?": [
+   "a|b*?"
+  ],
+  "/con.txt": [
+   "con.txt"
+  ],
+  "C:/x": "MalformedPathError: malformed path: not_absolute",
+  "C:\\x": "MalformedPathError: malformed path: not_absolute",
+  "\\\\?\\C:\\x": "MalformedPathError: malformed path: not_absolute",
+  "\\\\server\\share\\x": "MalformedPathError: malformed path: not_absolute",
+  "a": "MalformedPathError: malformed path: not_absolute"
+ }
+}

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import copy
 import json
+import sys
 from pathlib import Path
 from typing import Any, cast, get_args
 
@@ -53,6 +54,7 @@ from app.platform.engine_protocol import (
     decode_save_outcome,
     encode_proceed,
     encode_request,
+    is_absolute,
 )
 
 SCHEMA_PATH = Path(__file__).resolve().parents[3] / "contracts" / "engine-protocol.schema.json"
@@ -530,3 +532,39 @@ def test_a_refusals_fields_are_checked_as_the_schema_checks_them(definition: str
             verdict = decoded(variant, op)
             assert schema_ok == expected, (fields, "the schema")
             assert (not isinstance(verdict, Violation)) == expected, (fields, verdict)
+
+
+# -- each OS's absolute paths (S0127, BL-0279) ------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("platform", "path", "absolute"),
+    [
+        ("darwin", "/Books/a/L.beancount", True),
+        ("linux", "/srv/a/L.beancount", True),
+        ("darwin", "C:\\Books\\a\\L.beancount", False),
+        ("darwin", "Books/a", False),
+        ("win32", "C:\\Books\\a\\L.beancount", True),
+        ("win32", "\\\\nas\\Books\\L.beancount", True),
+        ("win32", "\\\\?\\C:\\Books\\a\\L.beancount", True),
+        ("win32", "/Books/a/L.beancount", False),
+        ("win32", "\\Books\\a", False),
+        ("win32", "C:Books", False),
+        ("win32", "Books\\a", False),
+        ("win32", "\\\\.\\C:\\a", False),
+        ("win32", "", False),
+    ],
+)
+def test_the_codec_reads_each_oss_absolute_paths(platform: str, path: str, absolute: bool) -> None:
+    """The engine sends each OS's own paths unchanged; the sidecar's codec takes exactly those (the engine's
+    `pathmodel.is_absolute`), so a Windows path reaches the sidecar's texts as the engine named it."""
+    assert is_absolute(path, platform) is absolute
+
+
+def test_the_codec_takes_this_oss_paths_in_a_reply() -> None:
+    """@regression-guard on macOS and Linux (it holds on the base): a reply's path is checked by this OS's rule."""
+    ex = examples("RecoverTryReply")[0]
+    windows = {**ex["result"]["inspection"][0], "backup": "C:\\app\\local\\k1\\backups\\s1-j7\\0-main.bean"}
+    reply = {**ex, "result": {**ex["result"], "inspection": [windows]}}
+    out = decoded(reply, "recover_try")
+    assert isinstance(out, TryOutcome) is is_absolute(windows["backup"], sys.platform)

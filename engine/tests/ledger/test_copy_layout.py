@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
+from ledger_engine.fs import pathmodel
 from ledger_engine.ledger.copy import parsed_from
 from ledger_engine.ledger.core.copy_layout import (
     Layout,
@@ -264,3 +265,42 @@ def test_one_file_has_one_name_whatever_its_absolute_spelling() -> None:
         text(rw(lay, ROOT, data))
         == b'2026-01-08 document A:B "outside/r.pdf"\n2026-01-09 document A:B "outside/r.pdf"\n'
     )
+
+
+# -- Windows paths (S0127, BL-0279): the same layout and rewrites in Windows' form ----------------------------------
+
+
+def test_on_windows_the_layout_places_files_in_windows_form_and_rewrites_with_forward_slashes() -> None:
+    """Beancount on Windows gives `os.path`'s paths (`C:\\...`); a rewritten line uses `/` (Beancount joins it with
+    `os.path`, which takes `/`; a `\\` in a ledger string is a refusal here)."""
+    wb = "C:\\Data\\Ledgers"
+    wroot = f"{wb}\\main.beancount"
+    with pathmodel.simulating(pathmodel.WINDOWS):
+        s = SourceSet(
+            wroot,
+            (wroot, f"{wb}\\p\\p.beancount", "C:\\Data\\Shared\\a\\r.beancount"),
+            (),
+            (),
+            ("C:\\Data\\Documents\\books",),
+            (),
+        )
+        lay = layout(s)
+        assert lay == Layout(wb, (("C:\\Data\\Documents\\books", "documents"), ("C:\\Data\\Shared\\a", "outside")))
+        assert place(lay, f"{wb}\\p\\p.beancount") == "p\\p.beancount"
+        assert place(lay, "C:\\Data\\Shared\\a\\r.beancount") == "outside\\r.beancount"
+        assert place(lay, "D:\\Data\\Ledgers\\x") is None
+        data = (
+            b'include "C:/Data/Shared/a/r.beancount"\n'
+            b'include "p/p.beancount"\n'
+            b'option "documents" "../Documents/books"\n'
+        )
+        parsed = Parsed(("C:/Data/Shared/a/r.beancount", "p/p.beancount"), ("../Documents/books",), ())
+        out = rewrite(lay, wroot, data, parsed)
+        assert isinstance(out, Rewritten)
+        assert out.data == b'include "outside/r.beancount"\ninclude "p/p.beancount"\noption "documents" "documents"\n'
+        assert norm_path("c:\\Data\\.\\x\\..\\y") == "C:\\Data\\y"
+        pattern, table = back(lay, "E:\\Copy")
+        assert table["E:\\Copy\\outside"] == "C:\\Data\\Shared\\a"
+        assert pattern.sub(lambda mt: table[mt.group(0)], "E:\\Copy\\outside\\r.beancount") == (
+            "C:\\Data\\Shared\\a\\r.beancount"
+        )

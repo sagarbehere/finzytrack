@@ -14,10 +14,10 @@ import ast
 from pathlib import Path
 
 SRC = Path(__file__).resolve().parents[2] / "src" / "ledger_engine"
-# Every module of `fs/` except the port, the selection point, the package itself and the code the POSIX adapters share
-# (`posix`, S0125: imported only by the adapters, below) is an adapter (S0113 verifier V1: `fs/linux.py` or
-# `fs/windows.py` is covered without editing this test).
-NOT_ADAPTERS = frozenset({"__init__", "port", "this_os", "posix"})
+# Every module of `fs/` except the port, the selection point, the package itself, the code the POSIX adapters share
+# (`posix`, S0125: imported only by the adapters, below) and the pure path model of every OS (`pathmodel`, S0127) is an
+# adapter (S0113 verifier V1: `fs/linux.py` or `fs/windows.py` is covered without editing this test).
+NOT_ADAPTERS = frozenset({"__init__", "port", "this_os", "posix", "pathmodel"})
 SHARED = "ledger_engine.fs.posix"
 SELECTION = "fs/this_os.py"
 ADAPTERS = frozenset(f"ledger_engine.fs.{p.stem}" for p in (SRC / "fs").glob("*.py") if p.stem not in NOT_ADAPTERS)
@@ -26,6 +26,7 @@ ADAPTERS = frozenset(f"ledger_engine.fs.{p.stem}" for p in (SRC / "fs").glob("*.
 def test_the_adapter_set_is_read_from_the_fs_package() -> None:
     assert {"ledger_engine.fs.darwin", "ledger_engine.fs.linux"} <= ADAPTERS
     assert not ADAPTERS & {"ledger_engine.fs.port", "ledger_engine.fs.this_os", "ledger_engine.fs.__init__", SHARED}
+    assert "ledger_engine.fs.pathmodel" not in ADAPTERS
 
 
 def adapter_imports(rel: str, source: str) -> list[str]:
@@ -105,3 +106,20 @@ def test_every_spelling_of_an_adapter_import_is_seen() -> None:
         assert adapter_imports("protocol/x.py", source) == want, source
     assert adapter_imports("fs/x.py", "from . import darwin\n") == ["ledger_engine.fs.darwin"]
     assert adapter_imports("fs/x.py", "from .darwin import DarwinFS\n") == ["ledger_engine.fs.darwin"]
+
+
+def test_the_product_never_simulates_another_path_model() -> None:
+    """@regression-guard (it holds on the base, where nothing simulates). Must not pass: `pathmodel.simulating` (S0127)
+    puts another OS's path model in force; only tests may use it, so
+    the product always splits, records and compares paths as the OS it runs on does. Checked from the source: any
+    name `simulating` outside `fs/pathmodel.py`, which defines it."""
+    offenders = [
+        f"{path.relative_to(SRC).as_posix()}:{node.lineno}"
+        for path in sorted(SRC.rglob("*.py"))
+        if path.relative_to(SRC).as_posix() != "fs/pathmodel.py"
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8")))
+        if (isinstance(node, ast.Name) and node.id == "simulating")
+        or (isinstance(node, ast.Attribute) and node.attr == "simulating")
+        or (isinstance(node, ast.alias) and node.name == "simulating")
+    ]
+    assert not offenders, offenders
