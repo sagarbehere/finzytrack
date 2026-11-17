@@ -7,7 +7,10 @@ point outside, so they point to the copies. ADR-0017 already says copied workspa
 
 from __future__ import annotations
 
+import sys
 from collections.abc import Sequence
+
+import pytest
 
 from ledger_engine.fs import pathmodel
 from ledger_engine.ledger.copy import parsed_from
@@ -24,6 +27,7 @@ from ledger_engine.ledger.core.copy_layout import (
     place,
     rewrite,
 )
+from tests.windows_pending import BL_0282
 
 B = "/data/ledgers"
 ROOT = f"{B}/main.beancount"
@@ -195,6 +199,8 @@ def test_an_indented_include_beancount_reads_is_rewritten() -> None:
 
 def test_a_document_directive_outside_is_pointed_at_its_copy() -> None:
     """r1 F3, owner's decision 3: the copy is self-contained; a v0.3 ledger-relative `document` path moves in."""
+    if sys.platform == "win32":
+        raise pytest.skip.Exception(BL_0282)  # Beancount resolves a `document` path by Windows' rules there
     doc = "/data/documents/books-1a2b/Assets/Bank/s.pdf"
     lay = layout(src(documents=["/data/documents/books-1a2b"], document_files=[doc, "/data/r/x.pdf"]))
     data = (
@@ -210,6 +216,8 @@ def test_a_document_directive_outside_is_pointed_at_its_copy() -> None:
 
 
 def test_an_absolute_document_path_inside_the_folder_becomes_relative() -> None:
+    if sys.platform == "win32":
+        raise pytest.skip.Exception(BL_0282)  # Beancount resolves a `document` path by Windows' rules there
     lay = layout(src(document_files=[f"{B}/r/x.pdf"]))
     data = f'2026-01-01 open Assets:Bank\n2026-01-08 document Assets:Bank "{B}/r/x.pdf"\n'.encode()
     assert text(rw(lay, ROOT, data)) == b'2026-01-01 open Assets:Bank\n2026-01-08 document Assets:Bank "r/x.pdf"\n'
@@ -246,6 +254,8 @@ def test_lines_end_at_a_newline_only_as_beancount_counts_them() -> None:
 
 
 def test_a_lone_carriage_return_does_not_shift_a_document_line() -> None:
+    if sys.platform == "win32":
+        raise pytest.skip.Exception(BL_0282)  # Beancount resolves a `document` path by Windows' rules there
     lay = layout(src(document_files=["/data/r/r.pdf"]))
     data = b'2026-01-01 open Assets:Bank\n; a\rb\n2026-01-08 document Assets:Bank "../r/r.pdf"\n'
     assert (
@@ -256,6 +266,8 @@ def test_a_lone_carriage_return_does_not_shift_a_document_line() -> None:
 
 def test_one_file_has_one_name_whatever_its_absolute_spelling() -> None:
     """r2 F3: Beancount keeps an absolute `document` path as written."""
+    if sys.platform == "win32":
+        raise pytest.skip.Exception(BL_0282)  # Beancount resolves a `document` path by Windows' rules there
     assert norm_path("/x/rec/../rec/r.pdf") == "/x/rec/r.pdf"
     assert norm_path("//x/r.pdf") == "/x/r.pdf"
     assert norm_path("///x//r.pdf") == "/x/r.pdf"

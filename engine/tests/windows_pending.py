@@ -19,7 +19,9 @@ NO_FIFO: Final = "Windows has no FIFO in its file system: the non-blocking read 
 NO_UID: Final = "Windows has no POSIX user and group ids or permission bits on files"
 BL_0282: Final = "BL-0282: Beancount's own paths, globs and messages on Windows (the engine's read side there)"
 
-POSIX_PATH_MODULES: Final = frozenset({"test_journal_record.py", "test_copy_layout.py"})
+POSIX_PATH_MODULES: Final = frozenset(
+    {"test_journal_record.py", "test_copy_layout.py", "test_v_journal_folder_born.py"}
+)
 """Pure tests written in POSIX paths: on Windows they run with the POSIX path model, as the tests over the fake do
 (`tests/conftest.py`); the Windows model has its own (`tests/fs/test_pathmodel.py`, `tests/ledger/
 test_journal_windows.py`, the Windows case of `test_copy_layout.py`, which simulates it inside)."""

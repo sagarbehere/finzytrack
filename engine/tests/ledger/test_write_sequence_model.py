@@ -84,6 +84,11 @@ from dataclasses import dataclass, field
 from typing import Any, Final, Literal
 
 import pytest
+
+from tests.windows_pending import BL_0282
+
+if sys.platform == "win32":
+    raise pytest.skip.Exception(BL_0282, allow_module_level=True)
 from hypothesis import HealthCheck, settings, stateful
 from hypothesis import strategies as st
 from hypothesis.stateful import RuleBasedStateMachine, initialize, invariant, precondition, rule
@@ -104,7 +109,6 @@ from ledger_engine.mirror import publish as pb
 from tests.fakes.memfs import Crash, MemFS, tears
 from tests.ledger import memledger, producer
 from tests.mirror.fake_store import FakeStore
-from tests.windows_pending import BL_0282
 
 pytestmark = [pytest.mark.inv("INV-01"), pytest.mark.inv("INV-22"), pytest.mark.inv("INV-32")]
 
@@ -1190,8 +1194,6 @@ REACHED: Final = (
 
 
 def test_the_sequence_model_holds_and_reaches_every_rule() -> None:
-    if sys.platform == "win32":
-        raise pytest.skip.Exception(BL_0282)
     TALLY.clear()
     started = time.perf_counter()
     stateful.run_state_machine_as_test(WriteSequence, settings=profile())  # pyright: ignore[reportUnknownMemberType]
@@ -1245,8 +1247,6 @@ def test_inv_entries_fails_on_a_changed_untargeted_entry_with_bytes_the_referenc
 
 
 def test_inv_saved_kept_fails_when_a_saved_change_is_gone() -> None:
-    if sys.platform == "win32":
-        raise pytest.skip.Exception(BL_0282)
     m = saved_once()
     m.fs.outside_write(TX, INITIAL[TX])
     with pytest.raises(AssertionError, match="called saved is lost"):
@@ -1284,8 +1284,6 @@ def test_the_freshness_agreement_fails_on_a_wrong_answer() -> None:
 
 
 def test_inv_history_fails_on_a_lost_backup_and_a_lost_record() -> None:
-    if sys.platform == "win32":
-        raise pytest.skip.Exception(BL_0282)
     m = saved_once()
     name = m.ref.landed[-1][0]
     rec = record_at(m.fs, name, State.CLOSED)
@@ -1301,8 +1299,6 @@ def test_inv_history_fails_on_a_lost_backup_and_a_lost_record() -> None:
 
 
 def test_inv_recovered_fails_on_an_open_journal_recovery_did_not_report() -> None:
-    if sys.platform == "win32":
-        raise pytest.skip.Exception(BL_0282)
     m = saved_once()
     name = m.ref.landed[-1][0]
     data = m.fs.file(f"{JD}/{journal.file_name(name, State.CLOSED)}")
@@ -1338,8 +1334,6 @@ def test_inv_recovered_fails_step_by_step_on_an_open_journal_that_is_neither_unf
 def test_the_history_keeps_the_newest_16_over_18_saves() -> None:
     """The history's limit, which the bounded run's examples never reach: 18 saves in a row, each with its rebuild,
     every invariant checked after each (`inv_history` holds the newest 16 `.closed` records and their backups)."""
-    if sys.platform == "win32":
-        raise pytest.skip.Exception(BL_0282)
     m = booted()
     for i in range(KEEP + 2):
         m.write(f'2026-06-{i + 1:02d} * "Market"\n  Expenses:Food  {i + 1}.00 EUR\n  Assets:Bank\n', False, TX)
@@ -1372,8 +1366,6 @@ def _open_journal(m: WriteSequence) -> None:
 
 def test_each_job_s_steps_fit_its_crash_range() -> None:
     """`LENGTH` covers every step of each job, so a crash point can land on any of them (verifier S0121 r1 F4)."""
-    if sys.platform == "win32":
-        raise pytest.skip.Exception(BL_0282)
     jobs: dict[Job, int] = {
         "preview": _steps(lambda m, f: m.do_preview("insert", 0, SPARE, f), lambda m: None),
         "confirm": _steps(lambda m, f: m.do_confirm(f), lambda m: m.do_preview("insert", 0, SPARE, None)),

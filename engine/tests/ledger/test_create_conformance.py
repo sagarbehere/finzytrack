@@ -75,6 +75,9 @@ from tests.ledger.test_save_conformance import REPO, Divergence, State, corpus
 from tests.ledger.worlds import with_folders
 from tests.windows_pending import BL_0282
 
+if sys.platform == "win32":
+    raise pytest.skip.Exception(BL_0282, allow_module_level=True)
+
 pytestmark = [pytest.mark.inv("INV-22"), pytest.mark.inv("INV-01"), pytest.mark.inv("INV-32")]
 
 MODEL = REPO / "formal" / "tla" / "engine-jobs" / "EngineJobs.tla"
@@ -771,8 +774,6 @@ def test_the_engine_create_follows_the_model(world_name: str) -> None:
 
 @pytest.mark.parametrize("world_name", worlds("copy"))
 def test_the_engine_copy_follows_the_model(world_name: str) -> None:
-    if sys.platform == "win32":
-        raise pytest.skip.Exception(BL_0282)
     run_world(world_name, "copy")
 
 
@@ -793,8 +794,6 @@ NOT_WALKED: Mapping[str, str] = {
 def test_the_replay_walks_the_create_and_the_copy() -> None:
     """Every step of `WALKED` is walked through the code at least once, and every branch of `CREATE_BRANCHES` and
     `COPY_BRANCHES`."""
-    if sys.platform == "win32":
-        raise pytest.skip.Exception(BL_0282)
     tally = every_world()
     assert set(tally.walked) <= set(WALKED), f"counted as walked, not in WALKED: {dict(tally.walked)}"
     missing = [a for a in WALKED if tally.walked[a] == 0]
@@ -818,8 +817,6 @@ STOP_COUNTS: Mapping[str, int] = {"cut": 0}
 
 
 def test_the_stops_are_counted() -> None:
-    if sys.platform == "win32":
-        raise pytest.skip.Exception(BL_0282)
     tally = every_world()
     assert set(tally.stops) <= set(STOPS), tally.stops
     assert {k: tally.stops[k] for k in STOP_COUNTS} == STOP_COUNTS, f"followed {tally.jobs}, stopped {tally.stops}"
