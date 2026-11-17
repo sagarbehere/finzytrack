@@ -111,4 +111,14 @@
 | RT-F8 | Low | d | xfs `ascii-ci` and case-insensitive ZFS datasets taken as byte-exact (fails closed). Stated: §6.3 "Limit (Linux case rules)". |
 | RT-F9 | Low | d | `fuseblk` exFAT not in `SERIAL_IDENTIFIED` (latent while FUSE reports no birth time). Stated: §6.3 "Limit (exFAT through FUSE)". |
 
+- Round 2 (the fresh round on the fix range 63b1a240..35ad5146; the product fix 6c42e4dd), head 35ad5146: verifier "PASS WITH FINDINGS", no High, nothing in class (a) or (b); 11 attacks (A2's fallback and its per-job memory, macOS outcomes under A2, B2's identity and coverage, C1 at both points and its text chain, regressions over the sweeps and replays, mutants on the B2 levels and on SWAP mode, the C1 file-system list against kernel sources). Linux: the 2026-11-17 run 1 on 6c42e4dd green on every job (engine 10317 passed, backend 3156 passed). Under the review budget's fresh round only High and (a)/(b) are fixed; the four Lows are backlog rows.
+
+| ID | Severity | Class | Disposition |
+|---|---|---|---|
+| V2-F1 | Low | c | Only `journal/`'s creation time is tested (B2), not `backups/` and `<key>/`: BL-0277 |
+| V2-F2 | Low | c | SWAP mode's "never fall back" on `NotOffered` is untested (unreachable on every probed volume): BL-0277 |
+| V2-F3 | Low | d | Overlay is named as lacking the exclusive rename; `ovl_rename` accepts it: BL-0278 |
+| V2-F4 | Low | d | The `unsafe_app_folder` text names Linux file systems on macOS, calls the journal folder "its data folder", and §6.8's "every save there" overstates; the text's way out assumes the data folder can be moved (a question for the owner): BL-0278 |
+
 ## Retro
+- Build about 190 min (the port, then four CI runs on Linux; the first dispatch of run 4 sat queued for over an hour), fix about 25 min plus one CI run, 2 verifier rounds and 1 data-safety red-team run, findings 0H/5M/16L over both rounds (round 1: verifier 3M/2L, red team 2M/7L; round 2: 4L), of which class (a): 3 (V-F1, RT-F1, RT-F2, all Medium, offered to the owner as policy options before the first fix round: "A2,B2,C1"). Cheaper gate: when a port ties one capability to another (`excl` to the swap types), probe and test each capability on its own; the probe the slice ran already showed `RENAME_NOREPLACE` on every type, so the coupling was visible in the slice's own evidence. And a port's identity rule must be applied to every folder the writer anchors, not only the one the brief names first. Process checks: the policy option before the first fix round 1 offered / 1 taken; the data-safety red team 1 catch (RT-F1) / 0 false positive; mutants 2 catch (C1's early refusal, the B2 levels in round 2) / 0 false positive.
