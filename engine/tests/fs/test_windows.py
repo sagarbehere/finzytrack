@@ -23,6 +23,7 @@ import subprocess
 import sys
 import threading
 import uuid
+import warnings
 from collections.abc import Generator, Iterator
 from pathlib import Path
 from typing import Any
@@ -923,7 +924,9 @@ def test_owner_1a_an_efs_encrypted_file_is_refused_before_anything_is_written(fs
 def test_V_F6_the_adapters_own_rename_never_leaves_the_name_missing(fs: FileSystem, tmp_path: Path, where: str) -> None:
     """Verifier F6, red team F3: S0126 measured `MoveFileExW`; this measures the adapter's rename by handle
     (`FileRenameInformation` with `ReplaceIfExists`), 300 replaces while another thread asks for the name, on the
-    runner's disk and each scratch volume. A missing name is a state a power loss could keep."""
+    runner's disk and each scratch volume. A missing name is a state a power loss could keep. A rename refused because
+    another program held the file at that instant (an antivirus scan on C:, the 2026-11-17 run 12) is counted, not a
+    failure: it is the open-file refusal, nothing done."""
     places = [tmp_path] if where == "tmp" else [Path(v) / f"ft-{uuid.uuid4().hex}" for v in _volumes()]
     if not places:
         pytest.skip("no scratch volumes given (FT_TEST_VOLUMES)")
@@ -941,13 +944,19 @@ def test_V_F6_the_adapters_own_rename_never_leaves_the_name_missing(fs: FileSyst
                 with fs.open_dir(str(place)) as d:
                     for i in range(300):
                         d.create(".x.bean.ft-s-j.new", str(i).encode(), 0o644)
-                        d.rename(".x.bean.ft-s-j.new", "x.bean")
+                        try:
+                            d.rename(".x.bean.ft-s-j.new", "x.bean")
+                        except PermissionError:  # another program held x.bean that instant (run 12, C:): counted
+                            seen["refused"] = seen.get("refused", 0) + 1
+                            d.remove(".x.bean.ft-s-j.new")
             finally:
                 stop.set()
                 watcher.join(DEADLINE)
-            print(f"{place.anchor} {_kind_of(fs, place)}: {seen}")  # noqa: T201 (recorded in the journal)
+            # a warning, so the counts show in the CI log's summary for a passing run too (recorded in the journal)
+            warnings.warn(f"S0128 rename probe: {place.anchor} {_kind_of(fs, place)}: {seen}", stacklevel=1)
             assert seen["looks"] > 0
             assert seen["missing"] == 0, (str(place), seen)
+            assert seen.get("refused", 0) < 300, (str(place), seen)  # the rename works, refused only at instants
         finally:
             if where == "volumes":
                 shutil.rmtree(place, ignore_errors=True)
