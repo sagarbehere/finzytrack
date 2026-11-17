@@ -23,6 +23,7 @@ import errno
 import hashlib
 import posixpath
 import re
+import sys
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 
@@ -38,6 +39,7 @@ from ledger_engine.ledger.create import MANIFEST_DIR, Created, CreateOutcome, Ne
 from ledger_engine.ledger.paths import path_key
 from tests.fakes.memfs import Crash, MemFS
 from tests.ledger.worlds import with_folders
+from tests.windows_pending import BL_0282
 
 pytestmark = [pytest.mark.inv("INV-01"), pytest.mark.inv("INV-22"), pytest.mark.inv("INV-32")]
 
@@ -304,6 +306,8 @@ def test_a_lock_file_that_appears_during_the_copy_refuses_it_before_its_manifest
 
 def test_a_lock_named_twice_is_tried_once() -> None:
     """A second `flock` of our own on the same file would see our first one as held and refuse the copy."""
+    if sys.platform == "win32":
+        raise pytest.skip.Exception(BL_0282)
     w = new_world()
     w.locks[LOCK] = ["free"]
     out, _ = go(w, plan=CopyPlan("j8", T, ROOT, PLAN.manifest, ALD, (LOCK, LOCK)))
@@ -421,6 +425,8 @@ def test_a_ledger_with_only_beancounts_own_plugins_that_differs_is_load_differs(
 def test_a_ledger_with_its_own_plugin_that_loads_the_same_is_copied() -> None:
     """A plugin that is not Beancount's (absent from the engine: an error on both sides, or copied in as a document)
     blocks nothing when the copy loads the same."""
+    if sys.platform == "win32":
+        raise pytest.skip.Exception(BL_0282)
     w = new_world()
     w.plugins = (("my_fx_rates", None),)
     assert go(w)[0] == Created(T)
@@ -523,12 +529,16 @@ def test_a_journal_folder_that_cannot_be_listed_refuses_the_copy(folder: str) ->
 
 @pytest.mark.parametrize("state", [State.CLOSED, State.RESOLVED, State.KEPT, State.PART])
 def test_a_journal_that_is_not_open_blocks_nothing(state: State) -> None:
+    if sys.platform == "win32":
+        raise pytest.skip.Exception(BL_0282)
     w = new_world()
     put_journal(w, ROOT, state)
     assert go(w)[0] == Created(T)
 
 
 def test_an_open_journal_of_another_file_blocks_nothing() -> None:
+    if sys.platform == "win32":
+        raise pytest.skip.Exception(BL_0282)
     w = new_world()
     put_journal(w, "/s/other/x.beancount", State.OPEN)
     assert go(w)[0] == Created(T)
@@ -734,6 +744,8 @@ def test_an_io_error_at_every_effect_is_told_as_the_disk_holds_it(no_excl: bool,
 
 
 def test_the_outcome_of_a_copy_is_ours_only_for_our_manifest() -> None:
+    if sys.platform == "win32":
+        raise pytest.skip.Exception(BL_0282)
     w = new_world()
     go(w)
     assert outcome(w.fs, PLAN).manifest == "ours"

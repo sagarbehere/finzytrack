@@ -483,11 +483,10 @@ def test_off_its_os_an_adapter_is_a_leaf_of_the_scan(monkeypatch: pytest.MonkeyP
 
 
 def test_off_macos_the_selection_point_passes_the_scan(monkeypatch: pytest.MonkeyPatch) -> None:
-    """The CI failure itself: `fs/this_os.py`, scanned as on Linux."""
-    if sys.platform == "win32":  # the Linux adapter needs `fcntl`, which Windows has not: no faked platform imports it
-        pytest.skip("the Linux adapter imports on a POSIX system only")
+    """The CI failure itself: `fs/this_os.py`, scanned as on Linux; on Windows, where the Linux adapter cannot import
+    (`fcntl`), as on Windows itself: both adapters are leaves there (S0127)."""
     source = (ENGINE_SRC / "ledger_engine" / "fs" / "this_os.py").read_text(encoding="utf-8")
-    as_on(monkeypatch, "linux")
+    as_on(monkeypatch, "win32" if sys.platform == "win32" else "linux")
     assert violations("ledger_engine/fs/this_os.py", source, port.LOAD_STAGES) == []
     assert violations("ledger_engine/fs/this_os.py", source, port.REAL_LOADS, REAL_HOME) == []
 

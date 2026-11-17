@@ -26,6 +26,7 @@ from ledger_engine.mirror.core.rows import Row
 from tests.ledger import parity
 from tests.mirror import checksums
 from tests.mirror.checksums import LEDGERS, NOT_READ, SNAPSHOT, Built, Root
+from tests.windows_pending import BL_0282
 
 pytestmark = pytest.mark.inv("INV-05")
 
@@ -124,6 +125,8 @@ def tables_with(postings: list[Row], options: list[Row] | None = None) -> dict[s
 
 
 def test_the_case_folder_becomes_a_placeholder_in_every_text_value() -> None:
+    if sys.platform == "win32":
+        raise pytest.skip.Exception(BL_0282)
     made = tables_with(
         [(1, '{"filename": "/w/case-a/main.beancount", "lineno": 3}', "/w/case-a/docs/a.pdf", "/w/other/b.pdf", 7)],
         [("filename", '"/w/case-a/main.beancount"'), ("input_hash", '"an md5 of names and times"')],
@@ -136,6 +139,8 @@ def test_the_case_folder_becomes_a_placeholder_in_every_text_value() -> None:
 
 
 def test_the_same_rows_in_another_order_or_folder_give_the_same_checksums() -> None:
+    if sys.platform == "win32":
+        raise pytest.skip.Exception(BL_0282)
     a = checksums.normalized(tables_with([(1, "/w/case-a/x"), (2, "y")]), FOLDER)
     b = checksums.normalized(tables_with([(2, "y"), (1, "/w/case-b/x")]), Path("/w/case-b"))
     assert {k: checksums.digest(v) for k, v in a.items()} == {k: checksums.digest(v) for k, v in b.items()}

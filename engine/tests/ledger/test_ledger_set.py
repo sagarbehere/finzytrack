@@ -14,6 +14,7 @@ from __future__ import annotations
 import glob
 import hashlib
 import shutil
+import sys
 import tomllib
 from collections.abc import Callable
 from os import path
@@ -36,6 +37,7 @@ from ledger_engine.ledger.core.ledger_set import (
 from ledger_engine.ledger.fingerprint import observe
 from ledger_engine.ledger.overlay import Loaded, load
 from ledger_engine.ledger.policy import DESKTOP
+from tests.windows_pending import BL_0282
 
 pytestmark = pytest.mark.inv("INV-22")
 
@@ -120,6 +122,8 @@ def test_a_missing_plain_include_is_recorded_as_its_globs_empty_answer(tmp_path:
 
 
 def test_a_glob_that_matches_nothing_is_recorded_with_no_matches(tmp_path: Path) -> None:
+    if sys.platform == "win32":
+        raise pytest.skip.Exception(BL_0282)
     root = write(tmp_path / "main.beancount", 'include "years/*.beancount"\n')
     fp = loaded(root).fingerprint
     assert fp.globs == ((str(tmp_path / "years/*.beancount"), ()),)
@@ -232,6 +236,8 @@ def test_a_document_a_plugin_makes_is_recorded(tmp_path: Path) -> None:
     """A plugin may add a `document` entry, and Beancount checks its file when its documents plugin runs after it
     (here `plugin_processing_mode "raw"` with `beancount.ops.documents` listed after the plugin): Beancount's error
     says the file is missing."""
+    if sys.platform == "win32":
+        raise pytest.skip.Exception(BL_0282)
     made = tmp_path / "made.pdf"
     write(
         tmp_path / "s0051_document_maker.py",
@@ -362,6 +368,8 @@ def test_a_document_directive_keeps_the_answer_asked_before_the_plugins(
 ) -> None:
     """A directive's file is asked before Beancount checks it; the plugin documents' record must not replace that
     answer with a later one (a delete after Beancount's check would then be hidden)."""
+    if sys.platform == "win32":
+        raise pytest.skip.Exception(BL_0282)
     pdf = write(tmp_path / "a.pdf", "%PDF")
     document_maker(tmp_path, "s0051_r2_directive_late")
     root = write(
@@ -382,6 +390,8 @@ def test_a_plugin_document_beancount_never_checks_is_not_recorded(tmp_path: Path
     """Default mode: Beancount's documents plugin runs before the user's plugins (`loader.PLUGINS_PRE`), so it never
     checks a document a plugin adds; the load does not depend on that file, and an unchanged set observes unchanged
     whether or not it exists."""
+    if sys.platform == "win32":
+        raise pytest.skip.Exception(BL_0282)
     made = tmp_path / "made.pdf"
     document_maker(tmp_path, "s0051_r2_unchecked")
     root = write(
@@ -396,6 +406,8 @@ def test_a_plugin_document_beancount_never_checks_is_not_recorded(tmp_path: Path
 
 def test_a_documents_plugin_listed_with_a_config_checks_nothing(tmp_path: Path) -> None:
     """Its functions take no config, so Beancount reports the plugin failing and checks no file."""
+    if sys.platform == "win32":
+        raise pytest.skip.Exception(BL_0282)
     made = tmp_path / "made.pdf"
     document_maker(tmp_path, "s0051_r2_configured")
     root = write(

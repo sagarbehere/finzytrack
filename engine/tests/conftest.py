@@ -13,7 +13,7 @@ from pathlib import Path
 import pytest
 
 from ledger_engine.fs import pathmodel
-from tests.windows_pending import PENDING, POSIX_PATH_MODULES
+from tests.windows_pending import POSIX_PATH_MODULES
 
 # INV-07 (ADR-0023 Consequences): the suite runs in a time zone west of UTC, set before any test and inherited by
 # every process a test starts (the engine itself among them), so a UTC "today" taken for the local one fails instead
@@ -67,17 +67,6 @@ def _uses_the_fake(test_file: Path) -> bool:
         return True
     source = test_file.read_text(encoding="utf-8")
     return any(name in source for name in POSIX_FAKES)
-
-
-def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
-    """On Windows the tests `windows_pending.PENDING` names skip, each with its backlog item (S0127)."""
-    if sys.platform != "win32":
-        return
-    for item in items:
-        pending = PENDING.get(item.path.name)
-        name = item.name.partition("[")[0]
-        if pending is not None and name in pending[1]:
-            item.add_marker(pytest.mark.skip(reason=pending[0]))
 
 
 @pytest.fixture(autouse=True)

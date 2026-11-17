@@ -35,6 +35,7 @@ from ledger_engine.ledger.core import source_edit as se
 from ledger_engine.ledger.policy import DESKTOP
 from ledger_engine.mirror.core import rows
 from tests.ledger import producer as pr
+from tests.windows_pending import BL_0282
 
 pytestmark = [pytest.mark.inv("INV-01"), pytest.mark.inv("INV-22"), pytest.mark.inv("INV-03")]
 
@@ -148,6 +149,8 @@ def test_a_replace_is_prepared_with_its_texts_hashes_and_the_fingerprint_the_sav
 
 
 def test_an_insert_a_delete_and_a_token_edit_in_one_plan_are_prepared(tmp_path: Path) -> None:
+    if sys.platform == "win32":
+        raise pytest.skip.Exception(BL_0282)
     root, current = ledger(tmp_path)
     requests: list[pr.Request] = [
         pr.InsertReq('2024-02-01 * "Bank" "fee"\n  Expenses:Food  1.00 USD\n  Assets:Bank\n', root),
@@ -518,6 +521,8 @@ def test_a_recorded_hash_that_is_not_the_candidate_s_is_refused(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """S0116 round 1 F3: the plan's `post` is the hash of the text it ships; a record that says otherwise refuses."""
+    if sys.platform == "win32":
+        raise pytest.skip.Exception(BL_0282)
     root, current = ledger(tmp_path)
     base = baseline(root)
     p = produced(current, DELETE_DINNER(root))
@@ -600,12 +605,16 @@ SELL = '2024-01-03 * "sell"\n  Assets:Broker  -1 HOO {11 USD}\n  Assets:Pay\n'
 
 
 def test_a_booking_error_is_listed_and_never_refuses(tmp_path: Path) -> None:
+    if sys.platform == "win32":
+        raise pytest.skip.Exception(BL_0282)
     root, current = ledger(tmp_path, {"main.beancount": BROKER})
     out = ok(prep(root, current, [pr.InsertReq(SELL, root)]))
     assert [e.type for e in out.new_errors] == ["ReductionError"]
 
 
 def test_a_plugin_error_is_listed_and_never_refuses(tmp_path: Path) -> None:
+    if sys.platform == "win32":
+        raise pytest.skip.Exception(BL_0282)
     text = 'plugin "beancount.plugins.check_commodity"\n2024-01-01 commodity USD\n' + MAIN.split("\n", 1)[1]
     root, current = ledger(tmp_path, {"main.beancount": text})
     out = ok(
@@ -617,6 +626,8 @@ def test_a_plugin_error_is_listed_and_never_refuses(tmp_path: Path) -> None:
 def test_an_old_error_is_not_new_after_a_splice_shifts_its_line(tmp_path: Path) -> None:
     """A failing assertion and a booking error (whose message holds the posting's line) are in the baseline; a replace
     above them adds a line, so both move down one line, and neither is new."""
+    if sys.platform == "win32":
+        raise pytest.skip.Exception(BL_0282)
     text = BROKER + SELL + "2024-01-10 balance Assets:Pay  5 USD\n"
     root, current = ledger(tmp_path, {"main.beancount": text})
     base = baseline(root)
@@ -635,6 +646,8 @@ def test_an_old_error_is_not_new_after_a_splice_shifts_its_line(tmp_path: Path) 
 
 
 def test_a_second_copy_of_an_old_error_is_new(tmp_path: Path) -> None:
+    if sys.platform == "win32":
+        raise pytest.skip.Exception(BL_0282)
     text = MAIN + "2024-01-11 balance Assets:Cash  1.00 USD\n"
     root, current = ledger(tmp_path, {"main.beancount": text})
     out = ok(prep(root, current, [pr.InsertReq("2024-01-11 balance Assets:Cash  1.00 USD\n", root)]))
@@ -660,6 +673,8 @@ def test_a_load_that_cannot_run_refuses(tmp_path: Path) -> None:
 
 
 def test_a_path_that_is_not_absolute_and_normal_is_refused(tmp_path: Path) -> None:
+    if sys.platform == "win32":
+        raise pytest.skip.Exception(BL_0282)
     root, current = ledger(tmp_path)
     odd = root.replace("/L/", "/L/./")
     p = produced({odd: current[root]}, [pr.DeleteReq(at(DINNER, odd))])

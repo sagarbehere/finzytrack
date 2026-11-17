@@ -16,6 +16,7 @@ balance tolerances, metadata.
 from __future__ import annotations
 
 import decimal
+import sys
 from decimal import Decimal
 from pathlib import Path
 
@@ -25,6 +26,7 @@ from ledger_engine.ledger import beancount_port as port
 from ledger_engine.ledger import precision
 from ledger_engine.ledger.overlay import Loaded, load
 from ledger_engine.ledger.policy import DESKTOP
+from tests.windows_pending import BL_0282
 
 pytestmark = [pytest.mark.inv("INV-02"), pytest.mark.inv("INV-22")]
 
@@ -271,6 +273,8 @@ def test_a_cut_before_the_quantize_warns(tmp_path: Path) -> None:
 def test_a_carry_past_28_digits_warns(tmp_path: Path) -> None:
     """The edge of `_may_round`: two whole numbers whose sum needs 29 digits; Beancount keeps 28, so it fills
     -1.000000000000000000000000000E+28, one less than the exact -10000000000000000000000000001."""
+    if sys.platform == "win32":
+        raise pytest.skip.Exception(BL_0282)
     body = txn("Assets:Wallet  9999999999999999999999999999 X", "Assets:Bank  2 X", "Equity:Opening")
     assert warned(tmp_path, body) == [(FIRST + 3, FILLED)]
     assert "The exact amount is -10000000000000000000000000001 X" in loaded(tmp_path, body).warnings[0].message

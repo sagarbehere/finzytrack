@@ -33,6 +33,7 @@ from ledger_engine.ledger import create, overlay
 from ledger_engine.ledger.core.ledger_set import Content, Fingerprint, Module
 from ledger_engine.ledger.fingerprint import observe
 from ledger_engine.ledger.policy import DESKTOP
+from tests.windows_pending import BL_0282
 
 pytestmark = pytest.mark.inv("INV-22")
 
@@ -510,6 +511,8 @@ def test_a_plugin_reads_its_package_data_as_under_beancount(tmp_path: Path, name
     """S0099 r2 (verifier F1; owner, 2026-11-10, "Narrow the refusal"): only bytecode reads are refused, so a package
     reads its own data files (`pkgutil.get_data`, `__loader__.get_data`) when imported and while it runs, as under
     bean-check."""
+    if sys.platform == "win32":
+        raise pytest.skip.Exception(BL_0282)
     pkg = names("rates")
     root = ledger(tmp_path / "L", pkg)
     read = 'pkgutil.get_data(__name__, "rates.csv") + __loader__.get_data(__file__.replace("__init__.py", "rates.csv"))'
@@ -662,6 +665,8 @@ def test_every_load_that_runs_plugins_records_its_imports() -> None:
     move. The loads that run plugins are the port's `real_load` and `run_transformations` (the overlay's), found by
     behaviour: every engine module that calls one of them (S0099). Each whose result carries a fingerprint wraps it in
     `imports.recording`; the create's load check keeps none (its count and parsed files only)."""
+    if sys.platform == "win32":
+        raise pytest.skip.Exception(BL_0282)
     callers: set[str] = set()
     for p in sorted(ENGINE_SRC.rglob("*.py")):
         text = p.read_text(encoding="utf-8")
