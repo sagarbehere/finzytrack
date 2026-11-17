@@ -7,7 +7,6 @@ from __future__ import annotations
 import contextlib
 import ctypes
 import errno
-import fcntl
 import hashlib
 import os
 import stat
@@ -37,6 +36,8 @@ from tests.macos_only import MACOS_ONLY
 # checks the rest of the module for macOS only (`tests/macos_only.py`).
 if sys.platform != "darwin":
     raise pytest.skip.Exception(MACOS_ONLY, allow_module_level=True)
+
+import fcntl  # macOS only: after the platform statement (Windows has none: S0127)
 
 from ledger_engine.fs.darwin import DarwinFS  # after the platform guard
 

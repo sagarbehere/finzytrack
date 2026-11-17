@@ -6,7 +6,7 @@ import functools
 import os
 import sys
 import time
-from collections.abc import Iterator
+from collections.abc import Generator, Iterator
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -76,3 +76,16 @@ def _posix_model_for_the_fake(request: pytest.FixtureRequest) -> Iterator[None]:
             yield
     else:
         yield
+
+
+@pytest.hookimpl(wrapper=True)
+def pytest_make_collect_report(
+    collector: pytest.Collector,
+) -> Generator[None, pytest.CollectReport, pytest.CollectReport]:
+    """On Windows a module over the fake is also imported with the POSIX model: some build their worlds at import."""
+    if sys.platform != "win32":
+        return (yield)
+    if isinstance(collector, pytest.Module) and _uses_the_fake(collector.path):
+        with pathmodel.simulating(pathmodel.POSIX):
+            return (yield)
+    return (yield)
