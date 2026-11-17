@@ -96,15 +96,15 @@
 
 | ID | Severity | Class | Disposition |
 |---|---|---|---|
-| V-F1 | not High | c | The journal, backups, `local/` and `<key>/` folders were identified by `(st_dev, st_ino)` only, so on ext4 a journal folder made again with the freed number passed the anchor. Fixed by B2 (`port.folder_id` in `_ensure_dir`); the verifier's repro `test_v_journal_folder_born.py` failed on 63b1a240 (the save landed). |
-| V-F2 | not High | c | The "refused after all" test refused every `renameat2`, so the journal's rename failed first and the swap was never reached. Fixed: only `RENAME_EXCHANGE` is refused, the outcome pinned (`NotSaved(replace, io_error, unchanged)`, `.resolved`); macOS twin `test_swap_refusal.py`. |
-| V-F3 | not High | e | An app data folder on a file system without the exclusive rename failed every save with a generic `io_error`. Fixed by C1 (`unsafe_app_folder`, its text, §6.8's limit). |
-| V-F4 | not High | d | The sidecar's `_birth` read `libc.statx` unguarded: an old glibc crashed the start (`AttributeError`). Fixed: an `OSError` (`ENOTSUP`), which `prepare` turns into `msg:start.app_folder`; test failed on 63b1a240. |
-| V-F5 | not High | c | The scratch swap volumes ran one landed save only. Fixed: a crash after the swap and its recovery from the backups, and a created file recovery never removes until the user does (`_swap_volume_run`). |
+| V-F1 | Medium | a | The journal, backups, `local/` and `<key>/` folders were identified by `(st_dev, st_ino)` only, so on ext4 a journal folder made again with the freed number passed the anchor. Fixed by B2 (`port.folder_id` in `_ensure_dir`); the verifier's repro `test_v_journal_folder_born.py` failed on 63b1a240 (the save landed). |
+| V-F2 | Medium | c | The "refused after all" test refused every `renameat2`, so the journal's rename failed first and the swap was never reached. Fixed: only `RENAME_EXCHANGE` is refused, the outcome pinned (`NotSaved(replace, io_error, unchanged)`, `.resolved`); macOS twin `test_swap_refusal.py`. |
+| V-F3 | Medium | e | An app data folder on a file system without the exclusive rename failed every save with a generic `io_error`. Fixed by C1 (`unsafe_app_folder`, its text, §6.8's limit). |
+| V-F4 | Low | d | The sidecar's `_birth` read `libc.statx` unguarded: an old glibc crashed the start (`AttributeError`). Fixed: an `OSError` (`ENOTSUP`), which `prepare` turns into `msg:start.app_folder`; test failed on 63b1a240. |
+| V-F5 | Low | c | The scratch swap volumes ran one landed save only. Fixed: a crash after the swap and its recovery from the backups, and a created file recovery never removes until the user does (`_swap_volume_run`). |
 | RT-F1 | Medium | a | `excl` was tied to the swap types, so on ext2, vfat, exFAT and `ntfs3` a created file was put by a plain rename, which replaced a file another program made there after the gate. Fixed by A2; tests failed on 63b1a240 (the fake on macOS; the scratch-volume test on Linux). |
 | RT-F2 | Medium | c | As V-F1. Fixed by B2. |
 | RT-F3 | Low | d | `ntfs3` reuses file numbers like ext2. Stated: §6.8 "Limit (no swap)". |
-| RT-F4 | Low | — | Not in the fix-round instructions this implementer received; its disposition is the orchestrator's. |
+| RT-F4 | Low | e | A mirror generation replaced at its name during the build can go unseen on Linux (inode reuse). Not class (a): the generation is a cache the open and the rebuild make again, never ledger bytes; the red team judged the existing stated limit (publish.md §2) adequate. No change (orchestrator). |
 | RT-F5 | Low | d | Linux reports an `fsync` writeback error once, across descriptors. Stated: §6.2 "Limit (Linux sync)". |
 | RT-F6 | Low | d | The byte-exact path guard against the dentry cache's spelling on case-insensitive volumes (a needless `path_moved`). Stated: §6.3 "Limit (Linux path spelling)". |
 | RT-F7 | Low | d | A lazy unmount in the middle of a save (`wrong_drive`, fails closed). Stated: §6.3 "Limit (lazy unmount)". |
