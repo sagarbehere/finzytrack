@@ -693,3 +693,14 @@ def test_S0102_r1_an_outcome_refused_for_the_app_folder_before_the_gate_says_qui
     value = rig.save()
     assert code(value) == ErrorCode.ENGINE_UNAVAILABLE
     assert details(value) == EngineUnavailableDetails(reason="app_folder_missing")
+
+
+def test_S0125_an_app_data_folder_that_cannot_save_safely_is_named_with_the_way_out() -> None:
+    """Must not pass (verifier F3; owner, 2026-11-17: "C1"): the engine's `unsafe_app_folder` is its own text naming
+    the folder and what it needs, not the generic disk error, and the ledger is said unchanged when it was hashed so."""
+    folder = "/data/finzytrack/local/k1/journal"
+    text = save_text.not_saved_text(ChangeNotSavedDetails("unsafe_app_folder", None, folder, None, True, None))
+    assert text.startswith("Finzytrack did not save your change. Its data folder " + folder), text
+    assert "cannot save safely" in text
+    assert "local disk" in text
+    assert "unchanged" in text

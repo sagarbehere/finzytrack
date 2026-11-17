@@ -63,7 +63,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field, replace
 from typing import Final, Literal, Protocol
 
-from ledger_engine.fs.port import FileSystem, FolderId, Kind, same_folder, split_absolute
+from ledger_engine.fs.port import FileSystem, FolderId, Kind, folder_id, same_folder, split_absolute
 from ledger_engine.ledger import fingerprint as _fingerprint
 from ledger_engine.ledger import history, overlay
 from ledger_engine.ledger.core import journal
@@ -333,7 +333,7 @@ class _AppFolderMissing(Exception):
 
 def _ensure_dir(
     fs: FileSystem, parent: str, name: str, *, no_link: bool = False, parent_is: FolderId
-) -> tuple[str, tuple[int, int]]:
+) -> tuple[str, FolderId]:
     """The folder `name` in `parent`, its entry durable: `parent` is synced whether or not the folder was made now. A
     folder that was there already may be the mkdir of an earlier engine that died before its sync; a power loss could
     then drop it, with the `.open` journal or the backups in it, while the ledger files stay swapped (round 1, verifier
@@ -344,7 +344,8 @@ def _ensure_dir(
     have, asked of the handle the folder is then made through (S0102, BL-0244: the app folder of the start for
     `local/`, the folder just found for the ones below): another object raises `_AppFolderMissing` before anything is
     made or synced in it. Returns the folder's path and the identity its path leads to now (links followed, as the
-    next level and the writer open it)."""
+    next level and the writer open it), with its creation time (`port.folder_id`; S0125 round 1, "B2"): the next
+    level and the writer's anchor then tell a folder made again with the freed inode number from this one."""
     path = join(parent, name)
     try:
         h = fs.open_dir(parent)
@@ -362,7 +363,11 @@ def _ensure_dir(
     identity = fs.resolve(path).identity
     if identity is None:
         raise _AppFolderMissing
-    return path, identity
+    with fs.open_dir(path) as made:  # links followed, as `resolve` follows them
+        found = folder_id(made)
+    if found[:2] != identity:
+        raise _AppFolderMissing  # another folder in its place between the two questions
+    return path, found
 
 
 def _name_taken(fs: FileSystem, plan: SavePlan) -> bool:

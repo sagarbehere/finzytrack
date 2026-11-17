@@ -79,6 +79,7 @@ from ledger_engine.fs.port import (
     FolderMark,
     FoldRule,
     Kind,
+    NotOffered,
     Right,
     check_name,
     fold,
@@ -222,6 +223,9 @@ class Reason(StrEnum):
     COPY_FOLDER_MOVED = "copy_folder_moved"  # the test copy's folder is not at its recorded path with its recorded
     # identity: a link at it or above it, or another folder there (S0117 rounds 2 and 3; owner: "3")
     COPY_FOLDER_MISSING = "copy_folder_missing"  # nothing at the test copy's recorded folder path
+    UNSAFE_APP_FOLDER = "unsafe_app_folder"  # the app's data folder is on a file system without the exclusive rename
+    # (ecryptfs, an NFS home, overlay): the record could not become `.open` without the risk of replacing another
+    # entry, so nothing is saved there (S0125 round 1; owner, 2026-11-17: "C1")
 
 
 class Step(StrEnum):
@@ -637,6 +641,8 @@ def _prepare(fs: FileSystem, handles: Handles, c: Commit, targets: tuple[_Target
                 raise BadPlanError("app_folder_and_ledger_folder_overlap")  # INV-27, INV-30
     for folder in (journal_dir, backups_dir):
         _check_app_folder(handles.at(folder), folder)
+    if not handles.at(journal_dir).caps().excl:  # C1: known before anything is written (macOS asks the volume)
+        raise _Stop(Reason.UNSAFE_APP_FOLDER, None, journal_dir)
     folders = tuple(seen[p] for p in sorted(seen))
     return _Plan(targets, tuple((cn, k) for k, cn in dirs.items()), journal_dir, backups_dir, folders)
 
@@ -948,7 +954,11 @@ def durable_commit(fs: FileSystem, c: Commit) -> Outcome:
         progress = _Progress()
         try:
             progress.open_journal = True  # set before the call: a rename that fails may still have happened
-            jd.rename_excl(journal.file_name(name, State.PART), journal.file_name(name, State.OPEN))
+            try:
+                jd.rename_excl(journal.file_name(name, State.PART), journal.file_name(name, State.OPEN))
+            except NotOffered:  # C1: Linux learns it here, at the first exclusive rename (nothing was done)
+                progress.open_journal = False
+                raise _Stop(Reason.UNSAFE_APP_FOLDER, None, plan.journal_dir) from None
             jd.sync()
             step = Step.REPLACE
             for t in plan.targets:

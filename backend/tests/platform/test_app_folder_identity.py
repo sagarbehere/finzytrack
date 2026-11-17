@@ -391,3 +391,25 @@ def test_S0102_r2_the_fill_compiles_in_one_process() -> None:
     test can time, so the text is pinned instead."""
     assert "workers=1" in BYTECODE_FILL
     assert "workers=0" not in BYTECODE_FILL
+
+
+def test_S0125_an_old_c_library_without_statx_refuses_the_start_instead_of_crashing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Must not pass (verifier F4): with glibc before 2.28 the birth time cannot be read; that is an `OSError`
+    (`ENOTSUP`), which the start turns into its refusal (`msg:start.app_folder`), never an `AttributeError`."""
+    import errno
+
+    from app.platform.adapters import app_folder
+
+    class NoStatx:
+        def __init__(self, *_: object, **__: object) -> None: ...
+
+    monkeypatch.setattr(app_folder.ctypes, "CDLL", NoStatx)
+    with pytest.raises(OSError, match="glibc") as refused:
+        app_folder._birth(0)  # pyright: ignore[reportPrivateUsage]
+    assert refused.value.errno == errno.ENOTSUP
+    if sys.platform == "linux":
+        out = app_folder.prepare(tmp_path / "app")
+        assert isinstance(out, app_folder.AppFolderRefusal), out
+        assert out.errno == errno.ENOTSUP

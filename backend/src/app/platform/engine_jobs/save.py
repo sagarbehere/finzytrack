@@ -80,6 +80,7 @@ WRITER_REASONS: Final[frozenset[str]] = frozenset(
         "link_in_copy",
         "copy_folder_moved",
         "copy_folder_missing",
+        "unsafe_app_folder",
     }
 )
 OUTSIDE: Final[frozenset[str]] = frozenset({"changed", "path_moved"})

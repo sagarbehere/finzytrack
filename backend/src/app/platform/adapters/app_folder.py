@@ -52,9 +52,12 @@ STATX_BASIC: Final = 0x7FF
 def _birth(fd: int) -> int | None:
     """Linux: the creation time in ns of the folder the descriptor `fd` holds, by `statx` (glibc 2.28), None where the
     file system keeps none; an error raises `OSError`."""
-    libc = ctypes.CDLL(None, use_errno=True)
+    try:
+        statx = ctypes.CDLL(None, use_errno=True).statx
+    except AttributeError:  # glibc before 2.28 (S0125 round 1, verifier F4): refused at start, never a crash
+        raise OSError(errno.ENOTSUP, "glibc 2.28 or later is needed (statx)") from None
     buf = ctypes.create_string_buffer(256)  # `struct statx` (<linux/stat.h>)
-    if libc.statx(fd, b"", AT_EMPTY_PATH, STATX_BASIC | STATX_BTIME, buf) != 0:
+    if statx(fd, b"", AT_EMPTY_PATH, STATX_BASIC | STATX_BTIME, buf) != 0:
         e = ctypes.get_errno()
         raise OSError(e, os.strerror(e))
     if not struct.unpack_from("<I", buf.raw, 0)[0] & STATX_BTIME:

@@ -4,15 +4,16 @@ BL-0266). It writes exactly what the macOS adapter writes, under the same contra
 
 - `durable_sync`: `fsync` (on Linux it reaches stable storage: no `F_FULLFSYNC` and no fallback to report; a mount
   with the disk's write cache trusted and barriers off is the system's own setting, §15).
-- Swap and exclusive rename: glibc's `renameat2(fd, a, fd, b, RENAME_EXCHANGE | RENAME_NOREPLACE)` on the directory's
-  own descriptor, each only where the volume's file system is one known to give it as one operation that a power loss
-  keeps or drops whole (`SWAP_TYPES`: ext3, ext4, xfs, btrfs and f2fs, by their journal or copy-on-write, and tmpfs,
-  which keeps nothing over a power loss anyway), else `ENOTSUP` before the call: §6.8's best-effort mode, as on
-  macOS's exFAT, FAT, HFS+ and network shares. Linux has no call that says whether a volume offers them without
-  making them (a call on missing names fails on the lookup first), so the type decides; a volume of such a type that
-  refuses the call after all (`EINVAL`, `ENOSYS`, `EOPNOTSUPP`) raises it with nothing done, and the save rolls back
-  ("not saved"), never a silent plain rename. ext2 (no journal), vfat, exFAT, NTFS, network and FUSE file systems get
-  the best-effort mode.
+- Swap and exclusive rename: glibc's `renameat2(fd, a, fd, b, RENAME_EXCHANGE | RENAME_NOREPLACE)` on the
+  directory's own descriptor. The swap only where the volume's file system is one known to give it as one operation
+  that a power loss keeps or drops whole (`SWAP_TYPES`: ext3, ext4, xfs, btrfs and f2fs, by their journal or
+  copy-on-write, and tmpfs, which keeps nothing over a power loss anyway), else `NotOffered` before the call: §6.8's
+  best-effort mode, as on macOS's exFAT, FAT, HFS+ and network shares (ext2, vfat, exFAT, NTFS, network and FUSE
+  file systems; Linux has no call that says whether a volume offers it without making it). A volume of a swap type
+  that refuses the exchange after all raises it with nothing done, and the save rolls back ("not saved"). The
+  exclusive rename is tried on every volume (owner, 2026-11-17: "A2"; probed: every tested type accepts it); a
+  refusal of the call (`REFUSED_FLAGS`) is `NotOffered`, nothing done, remembered per volume for this `LinuxFS` (one
+  job), and only then do the callers check that the name is free and rename plainly (`ledger.handles.move`).
 - A volume's file-system type is its mount's (`/proc/self/mountinfo`, found by `statx`'s mount ID, so ext2 and ext4,
   which share one `statfs` magic, are told apart); a mount not found there has the empty type, which the record
   refuses (`no_drive_id`) and which offers no swap.
@@ -60,7 +61,7 @@ import uuid
 from collections.abc import Callable
 from typing import Final, override
 
-from ledger_engine.fs.port import AclEntry, Caps, FolderMark, FoldRule, Right, check_name, split_absolute
+from ledger_engine.fs.port import AclEntry, Caps, FolderMark, FoldRule, NotOffered, Right, check_name, split_absolute
 from ledger_engine.fs.posix import PosixDir, PosixFS, PosixLegacyLocks
 
 # The one statement of this module's platform (not an `assert`, which `-O` strips): elsewhere the import fails, and
@@ -84,6 +85,8 @@ BTRFS_FS_INFO_SIZE: Final = 1024
 BTRFS_FSID: Final = 16  # offset of `fsid[16]`, after `max_id` and `num_devices`
 FS_IOC_GETFLAGS: Final = 0x80086601  # _IOR('f', 1, long), on 64-bit Linux; the kernel writes an int
 FS_CASEFOLD_FL: Final = 0x40000000
+REFUSED_FLAGS: Final = frozenset({errno.EINVAL, errno.ENOSYS, errno.EOPNOTSUPP})
+"""What `renameat2` answers on a file system without the flag asked (or a kernel without the call): nothing done."""
 NOT_OFFERED: Final = frozenset({errno.ENOTTY, errno.EINVAL, errno.EOPNOTSUPP, errno.ENOSYS})
 """What an `ioctl` a file system does not have answers: the question has no answer there (not an I/O error)."""
 SWAP_TYPES: Final = frozenset({"ext3", "ext4", "xfs", "btrfs", "f2fs", "tmpfs"})
@@ -280,6 +283,10 @@ def rule_of_fd(fd: int, fs_type: str) -> FoldRule:
 class LinuxDir(PosixDir):
     """A handle on one directory (`ledger_engine.fs.port.DirHandle`)."""
 
+    def __init__(self, fs: LinuxFS, path: str, *, fd: int | None = None) -> None:
+        super().__init__(fs, path, fd=fd)
+        self._linux = fs
+
     def path(self) -> str:
         return _getpath(self.fd)
 
@@ -334,8 +341,11 @@ class LinuxDir(PosixDir):
         )
 
     def caps(self) -> Caps:
-        offers = self.fs_type() in SWAP_TYPES
-        return Caps(swap=offers, excl=offers)
+        """The swap by the mount's type (`SWAP_TYPES`); the exclusive rename wherever the volume has not refused it in
+        this job (owner, 2026-11-17: "A2": it is tried everywhere, and a refusal at its first use, `NotOffered`, is
+        remembered per volume for this `LinuxFS`, which lives for one job, never across jobs)."""
+        excl = os.fstat(self.fd).st_dev not in self._linux.no_excl
+        return Caps(swap=excl and self.fs_type() in SWAP_TYPES, excl=excl)
 
     def acl(self) -> tuple[AclEntry, ...]:
         """A POSIX ACL has no deny entry, and `access(2)` applies it (`allowed`): none to judge here."""
@@ -353,16 +363,26 @@ class LinuxDir(PosixDir):
 
     def swap(self, a: str, b: str) -> None:
         if not self.caps().swap:
-            raise OSError(errno.ENOTSUP, "the volume is not known to offer RENAME_EXCHANGE")
+            raise NotOffered("RENAME_EXCHANGE")
         _renameat2(self.fd, check_name(a), check_name(b), RENAME_EXCHANGE)
 
     def rename_excl(self, src: str, dst: str) -> None:
-        if not self.caps().excl:
-            raise OSError(errno.ENOTSUP, "the volume is not known to offer RENAME_NOREPLACE")
-        _renameat2(self.fd, check_name(src), check_name(dst), RENAME_NOREPLACE)
+        """`renameat2(RENAME_NOREPLACE)`, tried on every volume (owner: "A2"): a refusal of the call itself
+        (`REFUSED_FLAGS`; the kernel checks a file system's flags only once both names are looked up, so there is no
+        asking without renaming) is `NotOffered`, nothing done, and the volume says so from then on in this job."""
+        dev = os.fstat(self.fd).st_dev
+        if dev in self._linux.no_excl:
+            raise NotOffered("RENAME_NOREPLACE")
+        try:
+            _renameat2(self.fd, check_name(src), check_name(dst), RENAME_NOREPLACE)
+        except OSError as e:
+            if e.errno not in REFUSED_FLAGS:
+                raise
+            self._linux.no_excl.add(dev)
+            raise NotOffered("RENAME_NOREPLACE") from None
 
     def open_child(self, name: str) -> LinuxDir:
-        return LinuxDir(self._fs, "", fd=self.child_fd(name))
+        return LinuxDir(self._linux, "", fd=self.child_fd(name))
 
     def rule(self) -> FoldRule:
         try:
@@ -378,6 +398,7 @@ class LinuxFS(PosixFS):
     def __init__(self, on_fallback: Callable[[], None] | None = None) -> None:
         _lib()  # glibc's renameat2 and statx, or `OSError` (ENOTSUP) before any file operation
         self._on_fallback = on_fallback
+        self.no_excl: set[int] = set()  # the volumes (`st_dev`) that refused RENAME_NOREPLACE in this job (INV-10)
 
     @override
     def durable_sync(self, fd: int) -> None:

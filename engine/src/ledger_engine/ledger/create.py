@@ -67,7 +67,7 @@ from ledger_engine.fs.port import DirHandle, FileSystem, Kind, MalformedPathErro
 from ledger_engine.ledger import beancount_port as port
 from ledger_engine.ledger import fingerprint, overlay
 from ledger_engine.ledger.core import paths as core_paths
-from ledger_engine.ledger.handles import Handles, PathMovedError, folder_blocked, join
+from ledger_engine.ledger.handles import Handles, Mode, PathMovedError, folder_blocked, join, move
 from ledger_engine.ledger.writer import BadPlanError
 from ledger_engine.tla import tla_action
 
@@ -583,12 +583,10 @@ class Run:
                 return self._stopped(Stop("taken", self.handles.on))
             return self._stopped(Stop("io_error", self.handles.on, err=e.errno))
         try:
-            if th.caps().excl:
-                th.rename_excl(temp, MANIFEST_DIR)
-            else:
-                if th.stat(MANIFEST_DIR) is not None:
-                    raise FileExistsError(_errno.EEXIST, "taken")
-                th.rename(temp, MANIFEST_DIR)  # §6.8: an entry put there in this instant can be replaced (r1 RT8)
+            # the exclusive rename wherever the volume has it (on Linux, wherever it is not refused at its first use:
+            # S0125 round 1, "A2"), else a check, then the plain rename: §6.8, an entry put there in this instant can
+            # be replaced (r1 RT8)
+            move(th, Mode.BEST_EFFORT, temp, MANIFEST_DIR)
         except OSError as e:
             if th.stat(temp) is None:
                 raise  # the rename may have happened: the disk tells (`outcome`)

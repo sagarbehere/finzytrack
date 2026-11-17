@@ -431,7 +431,7 @@ def test_S0100_r1_a_file_standing_unreadable_where_the_save_creates_one_is_ledge
 # -- S0125 (BL-0262): an app folder identity with its creation time, as the Linux sidecar records it ------------------
 
 
-def _born(fs: MemFS, path: str) -> int:
+def born_of(fs: MemFS, path: str) -> int:
     with fs.open_dir(path) as h:
         born = h.born()
     assert born is not None
@@ -441,7 +441,7 @@ def _born(fs: MemFS, path: str) -> int:
 def test_S0125_a_save_whose_app_folder_has_its_recorded_creation_time_lands() -> None:
     """@regression-guard companion of the next test: the identity with the folder's own creation time is the folder."""
     fs = save_world(CHAIN[0])
-    out = sv.run(two_file_plan(fs, app_folder=(*app_id(fs), _born(fs, ALD))), save_ports(fs), Job())
+    out = sv.run(two_file_plan(fs, app_folder=(*app_id(fs), born_of(fs, ALD))), save_ports(fs), Job())
     assert isinstance(out, sv.Saved), out
 
 
@@ -451,7 +451,7 @@ def test_S0125_a_folder_with_the_same_inode_number_but_another_creation_time_is_
     its creation time differs, so the save makes nothing in it (`app_folder_missing`, as on macOS for a replaced
     folder) and changes no ledger byte."""
     fs = save_world(CHAIN[0])
-    out = sv.run(two_file_plan(fs, app_folder=(*app_id(fs), _born(fs, ALD) + 1)), save_ports(fs), Job())
+    out = sv.run(two_file_plan(fs, app_folder=(*app_id(fs), born_of(fs, ALD) + 1)), save_ports(fs), Job())
     assert isinstance(out, NotSaved), out
     assert out.reason is Reason.APP_FOLDER_MISSING
     assert (fs.file("/L/a.bean"), fs.file("/L/b.bean")) == (A, B)
@@ -464,7 +464,7 @@ def test_S0125_an_app_folder_whose_creation_time_changes_after_step_8_stops_the_
     `.part` and the rename to `.open`: a folder put in place with the freed inode number gets no backup or record, and
     no ledger file is swapped."""
     fs = save_world(CHAIN[0])
-    start = (*app_id(fs), _born(fs, ALD))
+    start = (*app_id(fs), born_of(fs, ALD))
     flipped: list[str] = []
 
     def flip(_: int, label: str) -> None:

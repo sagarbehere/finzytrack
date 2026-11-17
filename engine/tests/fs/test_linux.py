@@ -26,8 +26,8 @@ import pytest
 
 from ledger_engine.fs.port import Caps, FileSystem, FoldRule, Kind, Right
 from ledger_engine.fs.this_os import for_this_os, legacy_locks_for_this_os
-from ledger_engine.ledger.writer import Change, Landed, NotSaved, durable_commit, sha256
-from tests.fs.real_volume import commit, real_volume_run, settled_mkdir
+from ledger_engine.ledger.writer import Change, Landed, NotSaved, Reason, Step, durable_commit, sha256
+from tests.fs.real_volume import Died, DyingFS, commit, real_volume_run, settled_mkdir
 
 LINUX_ONLY = "the Linux adapter's own tests (macOS: tests/fs/test_darwin.py)"
 
@@ -36,6 +36,7 @@ if sys.platform != "linux":
 
 pytestmark = pytest.mark.inv("INV-01")
 
+FOREIGN = b"; another program's file\n"
 UUID_SHAPE = r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
 SWAP_TYPES = frozenset({"ext4", "ext3", "xfs", "btrfs", "tmpfs", "f2fs"})
 
@@ -375,21 +376,31 @@ def test_a_swap_the_volume_refuses_after_all_is_not_saved_and_changes_nothing(
     fs: FileSystem, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, refusal: int
 ) -> None:
     """A volume of a swap type that still refuses `RENAME_EXCHANGE` (an old kernel, an odd mount): nothing is done by
-    the call, so the save rolls back and says "not saved"; never a silent plain rename."""
-    from ledger_engine.fs import this_os
+    the call, so the save rolls back and says "not saved"; never a silent plain rename. Only the exchange is refused
+    (verifier F2, round 1: refusing every call failed the journal's own exclusive rename first, and the swap was never
+    reached), so the save reaches the swap, the record ends `.resolved` and the ledger is as before."""
+    from ledger_engine.fs import linux
+
+    real = linux._renameat2  # pyright: ignore[reportPrivateUsage]
+    exchanges: list[str] = []
 
     def refusing(dfd: int, a: str, b: str, flags: int) -> None:
-        raise OSError(refusal, os.strerror(refusal))
+        if flags == linux.RENAME_EXCHANGE:
+            exchanges.append(b)
+            raise OSError(refusal, os.strerror(refusal))
+        real(dfd, a, b, flags)
 
-    monkeypatch.setattr("ledger_engine.fs.linux._renameat2", refusing)
+    monkeypatch.setattr(linux, "_renameat2", refusing)
     main = tmp_path / "L" / "main.bean"
     main.parent.mkdir()
     main.write_bytes(b"pre\n")
-    out = durable_commit(this_os.for_this_os(), commit(tmp_path, Change(str(main), sha256(b"pre\n"), b"post\n")))
+    out = durable_commit(fs, commit(tmp_path, Change(str(main), sha256(b"pre\n"), b"post\n")))
+    assert exchanges == ["main.bean"], "the swap was reached"
     assert isinstance(out, NotSaved), out
-    assert out.unchanged is True
+    assert (out.step, out.reason, out.unchanged) == (Step.REPLACE, Reason.IO_ERROR, True)
     assert main.read_bytes() == b"pre\n"
     assert sorted(p.name for p in main.parent.iterdir()) == ["main.bean"]
+    assert sorted(p.name for p in (tmp_path / "local" / "journal").iterdir()) == ["s1-j1.resolved"]
 
 
 # -- drive identity (BL-0218, Linux) and the folder's mark -------------------------------------------------------------
@@ -620,15 +631,169 @@ def test_a_save_its_crash_and_its_recovery_on_a_real_scratch_volume(
     try:
         settled_mkdir(ledger / "inc")
         if caps.swap:
-            main = ledger / "main.bean"
-            main.write_bytes(b"pre\n")
-            out = durable_commit(fs, commit(tmp_path, Change(str(main), sha256(b"pre\n"), b"post\n")))
-            assert isinstance(out, Landed), out
-            assert main.read_bytes() == b"post\n"
+            _swap_volume_run(fs, tmp_path, ledger)
         else:
             real_volume_run(fs, tmp_path, ledger)
     finally:
         shutil.rmtree(ledger, ignore_errors=True)
+
+
+def _swap_volume_run(fs: FileSystem, tmp_path: Path, ledger: Path) -> None:
+    """On a swap volume (verifier F5, round 1): a landed save; then a save that dies after its swap, before its close,
+    undone by recovery from the backups; then the crash of a save that creates a file, whose created file recovery
+    never removes (owner, 2026-10-30) until the user does."""
+    from ledger_engine.ledger.core.recovery import Cause
+    from ledger_engine.ledger.restore import Resolved, Stopped, recover_journal
+
+    main = ledger / "main.bean"
+    main.write_bytes(b"pre\n")
+    out = durable_commit(fs, commit(tmp_path, Change(str(main), sha256(b"pre\n"), b"post\n")))
+    assert isinstance(out, Landed), out
+    assert main.read_bytes() == b"post\n"
+    root2 = tmp_path / "second"
+    root2.mkdir()
+    created = ledger / "inc" / "new.bean"
+    c2 = commit(root2, Change(str(created), None, b"new\n"), Change(str(main), sha256(b"post\n"), b"post2\n"))
+    with pytest.raises(Died):
+        durable_commit(DyingFS(fs, ".closed"), c2)  # type: ignore[arg-type]
+    assert (main.read_bytes(), created.read_bytes()) == (b"post2\n", b"new\n")
+    out2 = recover_journal(fs, c2.journal_dir, "s1-j1")
+    assert out2 == Stopped(Cause.CREATED_PATH_TAKEN, str(created)), out2
+    created.unlink()  # the user removes it, then Retry
+    assert recover_journal(fs, c2.journal_dir, "s1-j1") == Resolved("s1-j1")
+    assert main.read_bytes() == b"post\n", "put back from the backup"
+    assert not created.exists()
+    assert not [n for n in os.listdir(ledger) + os.listdir(ledger / "inc") if ".ft-" in n], "a name of ours left"
+
+
+BEST_EFFORT_KINDS = frozenset({"vfat", "exfat", "ext2"})
+
+
+def _best_effort_volumes(fs: FileSystem) -> list[str]:
+    out: list[str] = []
+    for v in _volumes():
+        with fs.open_dir(v) as d:
+            if d.mark().fs_type in BEST_EFFORT_KINDS:
+                out.append(v)
+    return out
+
+
+def _put_at_the_name_after_its_staging(monkeypatch: pytest.MonkeyPatch, target: Path, data: bytes) -> None:
+    """Another program makes `target` right after the save wrote its new bytes at their staging name (between the
+    gate and the rename that puts them at the name)."""
+    from ledger_engine.fs import linux
+
+    real = linux.LinuxDir.create
+    done: list[bool] = []
+
+    def create(self: linux.LinuxDir, name: str, data_: object, mode: int, like: str | None = None) -> tuple[int, int]:
+        made = real(self, name, data_, mode, like)  # type: ignore[arg-type]
+        if not done and name.startswith(f".{target.name}.ft-") and name.endswith(".new"):
+            done.append(True)
+            target.write_bytes(data)
+        return made
+
+    monkeypatch.setattr(linux.LinuxDir, "create", create)
+
+
+@pytest.mark.skipif(not _volumes(), reason="no scratch volumes given (FT_TEST_VOLUMES)")
+def test_A2_a_file_another_program_makes_at_a_created_path_on_a_best_effort_volume_is_kept(
+    fs: FileSystem, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Must not pass (red team F1, class (a); owner, 2026-11-17: "A2"): on vfat, exFAT and ext2 the created file was
+    put at its name by a plain rename, which replaced a file another program had made there after the gate. Now the
+    exclusive rename (`RENAME_NOREPLACE`) is tried on every volume: `changed`, the other program's file kept."""
+    volumes = _best_effort_volumes(fs)
+    assert volumes, "no best-effort scratch volume"
+    for i, volume in enumerate(volumes):
+        ledger = Path(volume) / f"ft-{uuid.uuid4().hex}"
+        ledger.mkdir()
+        try:
+            created = ledger / "new.bean"
+            _put_at_the_name_after_its_staging(monkeypatch, created, FOREIGN)
+            root = tmp_path / str(i)
+            root.mkdir()
+            out = durable_commit(fs, commit(root, Change(str(created), None, b"ours\n")))
+            assert isinstance(out, NotSaved), (volume, out)
+            assert out.reason is Reason.CHANGED, (volume, out)
+            assert created.read_bytes() == FOREIGN, volume
+        finally:
+            shutil.rmtree(ledger, ignore_errors=True)
+
+
+def _refuse_noreplace_on(monkeypatch: pytest.MonkeyPatch, device: int) -> list[str]:
+    """`renameat2(RENAME_NOREPLACE)` refused (`EINVAL`, as a file system without the flag answers) in every folder of
+    the volume `device`; the names it was asked for are listed."""
+    from ledger_engine.fs import linux
+
+    real = linux._renameat2  # pyright: ignore[reportPrivateUsage]
+    asked: list[str] = []
+
+    def rename2(dfd: int, a: str, b: str, flags: int) -> None:
+        if flags == linux.RENAME_NOREPLACE and os.fstat(dfd).st_dev == device:
+            asked.append(b)
+            raise OSError(errno.EINVAL, os.strerror(errno.EINVAL))
+        real(dfd, a, b, flags)
+
+    monkeypatch.setattr(linux, "_renameat2", rename2)
+    return asked
+
+
+@pytest.mark.skipif(not _volumes(), reason="no scratch volumes given (FT_TEST_VOLUMES)")
+def test_A2_a_volume_that_refuses_the_exclusive_rename_at_first_use_saves_by_check_then_rename(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The first `RENAME_NOREPLACE` is the probe (owner: "A2"): refused, nothing done, the volume's `caps` says so for
+    the rest of the job, and a created file is put by §6.8's check, then a plain rename; a file another program made
+    at the name before the check is kept (`changed`)."""
+    volume = _best_effort_volumes(for_this_os())[0]
+    asked = _refuse_noreplace_on(monkeypatch, os.stat(volume).st_dev)
+    for i, outside in enumerate((None, FOREIGN)):
+        fs = for_this_os()  # one job: one adapter
+        ledger = Path(volume) / f"ft-{uuid.uuid4().hex}"
+        ledger.mkdir()
+        try:
+            created = ledger / "new.bean"
+            if outside is not None:
+                _put_at_the_name_after_its_staging(monkeypatch, created, outside)
+            with fs.open_dir(str(ledger)) as d:
+                assert d.caps().excl, "not known before its first use"
+            root = tmp_path / str(i)
+            root.mkdir()
+            out = durable_commit(fs, commit(root, Change(str(created), None, b"ours\n")))
+            if outside is None:
+                assert isinstance(out, Landed), out
+                assert created.read_bytes() == b"ours\n"
+            else:
+                assert isinstance(out, NotSaved), out
+                assert out.reason is Reason.CHANGED
+                assert created.read_bytes() == outside
+            assert asked, "the exclusive rename was tried first"
+            with fs.open_dir(str(ledger)) as d:
+                assert not d.caps().excl, "known after its first use, for the rest of the job"
+            with for_this_os().open_dir(str(ledger)) as d:
+                assert d.caps().excl, "never carried into another job"
+        finally:
+            shutil.rmtree(ledger, ignore_errors=True)
+
+
+def test_C1_an_app_data_folder_whose_volume_refuses_the_exclusive_rename_is_a_named_refusal(
+    fs: FileSystem, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Must not pass (verifier F3; owner: "C1"): the journal's `.part` to `.open` is the first exclusive rename in the
+    app's data folder; refused there, the save is `unsafe_app_folder`, naming the folder, with the ledger unchanged."""
+    _refuse_noreplace_on(monkeypatch, os.stat(tmp_path).st_dev)
+    main = tmp_path / "L" / "main.bean"
+    main.parent.mkdir()
+    main.write_bytes(b"pre\n")
+    out = durable_commit(fs, commit(tmp_path, Change(str(main), sha256(b"pre\n"), b"post\n")))
+    assert isinstance(out, NotSaved), out
+    assert (out.reason, out.unchanged, out.entry) == (
+        Reason.UNSAFE_APP_FOLDER,
+        True,
+        str(tmp_path / "local" / "journal"),
+    )
+    assert main.read_bytes() == b"pre\n"
 
 
 @pytest.mark.skipif(not os.environ.get("FT_TEST_CASEFOLD_DIR"), reason="no case-folding folder given")

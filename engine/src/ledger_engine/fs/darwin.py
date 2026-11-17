@@ -50,7 +50,17 @@ import uuid
 from collections.abc import Callable
 from typing import Final, override
 
-from ledger_engine.fs.port import AclEntry, Caps, FolderMark, FoldRule, Right, check_name, same_path, split_absolute
+from ledger_engine.fs.port import (
+    AclEntry,
+    Caps,
+    FolderMark,
+    FoldRule,
+    NotOffered,
+    Right,
+    check_name,
+    same_path,
+    split_absolute,
+)
 from ledger_engine.fs.posix import PosixDir, PosixFS, PosixLegacyLocks
 
 # The one statement of this module's platform (not an `assert`, which `-O` strips): elsewhere the import fails, and
@@ -295,12 +305,12 @@ class DarwinDir(PosixDir):
 
     def swap(self, a: str, b: str) -> None:
         if not self.caps().swap:
-            raise OSError(errno.ENOTSUP, "the volume offers no RENAME_SWAP")
+            raise NotOffered("RENAME_SWAP")
         self._renamex(a, b, RENAME_SWAP)
 
     def rename_excl(self, src: str, dst: str) -> None:
         if not self.caps().excl:
-            raise OSError(errno.ENOTSUP, "the volume offers no RENAME_EXCL")
+            raise NotOffered("RENAME_EXCL")
         self._renamex(src, dst, RENAME_EXCL)
 
     def open_child(self, name: str) -> DarwinDir:

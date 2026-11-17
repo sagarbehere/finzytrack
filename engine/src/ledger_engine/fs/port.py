@@ -23,6 +23,7 @@ separate durable layer, crash, I/O-error and power-loss injection.
 
 from __future__ import annotations
 
+import errno
 import unicodedata
 from collections.abc import Iterable
 from dataclasses import dataclass
@@ -102,6 +103,16 @@ class FolderMark:
     volume: str | None
     fs_type: str
     born: int | None  # None: the file system keeps no creation time (S0089 round 2, verifier F2)
+
+
+class NotOffered(OSError):
+    """The volume does not offer the call (`ENOTSUP`): nothing was done. Raised by `DirHandle.swap` and
+    `DirHandle.rename_excl` when `caps` says the volume lacks it, or when the volume refuses it at its first use (Linux
+    learns whether a volume has `RENAME_NOREPLACE` only by using it; S0125 round 1, owner: "A2"); `caps` then says so
+    for the rest of the job."""
+
+    def __init__(self, what: str) -> None:
+        super().__init__(errno.ENOTSUP, f"the volume does not offer {what}")
 
 
 class Kind(StrEnum):
@@ -214,7 +225,8 @@ class DirHandle(Protocol):
 
     def caps(self) -> Caps:
         """What this folder's volume offers: the swap (`RENAME_SWAP`) and the exclusive rename (`RENAME_EXCL`). Asking
-        writes nothing. The write path it chooses is `ledger.handles.write_mode`."""
+        writes nothing. The write path it chooses is `ledger.handles.write_mode`. Linux learns the exclusive rename's
+        answer at its first use (`NotOffered`): until then `excl` says it is offered (S0125 round 1)."""
         ...
 
     def acl(self) -> tuple[AclEntry, ...]:
@@ -224,12 +236,12 @@ class DirHandle(Protocol):
 
     def swap(self, a: str, b: str) -> None:
         """Exchange the entries `a` and `b` in one operation (`RENAME_SWAP`); both must exist. On a volume that does
-        not offer it (`caps`), `ENOTSUP` with nothing done."""
+        not offer it (`caps`), `NotOffered` (`ENOTSUP`) with nothing done."""
         ...
 
     def rename_excl(self, src: str, dst: str) -> None:
         """Rename `src` to `dst` in one operation that fails if `dst` exists (`RENAME_EXCL`). On a volume that does not
-        offer it (`caps`), `ENOTSUP` with nothing done."""
+        offer it (`caps`, or refused at its first use on Linux), `NotOffered` (`ENOTSUP`) with nothing done."""
         ...
 
     def rename(self, src: str, dst: str) -> None:
@@ -363,6 +375,15 @@ def same_identity(now: FolderId, start: FolderId) -> bool:
     if len(start) == 2:
         return True
     return len(now) == 3 and now[2] == start[2]
+
+
+def folder_id(h: DirHandle) -> FolderId:
+    """The identity of the folder `h` holds, with its creation time where its file system keeps one (S0125 round 1,
+    owner: "B2": the save's own folders, `local/`, `<key>/`, `journal/` and `backups/`, so that a folder made again
+    with a freed inode number is another folder on Linux too)."""
+    dev, ino = h.identity()
+    born = h.born()
+    return (dev, ino) if born is None else (dev, ino, born)
 
 
 def same_folder(h: DirHandle, start: FolderId) -> bool:

@@ -127,6 +127,13 @@ def not_saved_text(d: ChangeNotSavedDetails) -> str:
                 f"{did_not} {folder} is missing or was replaced. Quit Finzytrack and open it again, then try again. "
                 f"{_rehash(d)}"
             )
+        case "unsafe_app_folder":  # S0125 round 1 (owner, 2026-11-17: "C1"): ecryptfs, an NFS home, overlay
+            folder = "Its data folder" if d.folder is None else f"Its data folder {d.folder}"
+            return (
+                f"{did_not} {folder} is on a file system where Finzytrack cannot save safely: it cannot rename a file "
+                "there without the risk of replacing another one. Finzytrack needs its data folder on a local disk, "
+                f"such as one with ext4, xfs or btrfs. {_rehash(d)}"
+            )
         case "outside_folder" if d.path is None:  # S0117: a mark with the root or a relative path (a bug)
             return f"{did_not} The test copy's folder is not recorded correctly. Make the test copy again."
         case "outside_folder":  # S0117 round 1 (red team RT-F1): a file of the change outside the test copy

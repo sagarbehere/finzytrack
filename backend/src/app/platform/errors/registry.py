@@ -150,6 +150,7 @@ type NotSavedReason = Literal[
     "link_in_copy",  # a link met in a test copy: its save follows none (S0117 round 3; owner, 2026-11-14: "2")
     "copy_folder_moved",  # the test copy's folder is not the recorded one: a link at it or above it, another folder
     "copy_folder_missing",  # nothing at the test copy's recorded folder
+    "unsafe_app_folder",  # the app's data folder offers no exclusive rename (S0125 round 1; owner: "C1")
 ]
 
 

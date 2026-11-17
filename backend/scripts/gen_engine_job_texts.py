@@ -262,6 +262,11 @@ SAVE: tuple[Row, ...] = (
         "`CHANGE_NOT_SAVED {app_folder_missing}`: the app's own folder is gone (S0100, BL-0163 (a))",
         lambda: _not_saved("app_folder_missing", path=None, folder=FOLDER, unchanged=True),
     ),
+    (
+        "msg:save.unsafe_app_folder",
+        "`CHANGE_NOT_SAVED {unsafe_app_folder}`: the app's data folder offers no exclusive rename (S0125 round 1)",
+        lambda: _not_saved("unsafe_app_folder", path=None, folder=FOLDER, unchanged=True),
+    ),
     ("msg:save.ledger_changed", "`LEDGER_EXTERNALLY_CHANGED`", lambda: st.LEDGER_CHANGED),
     ("msg:save.hard_linked", "`CHANGE_NOT_SAVED {hard_linked}`", lambda: _not_saved("hard_linked")),
     ("msg:save.locked", "`CHANGE_NOT_SAVED {locked}`", lambda: _not_saved("locked")),

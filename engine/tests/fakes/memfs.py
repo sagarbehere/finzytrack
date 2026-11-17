@@ -87,6 +87,7 @@ from ledger_engine.fs.port import (
     FoldRule,
     Kind,
     MalformedPathError,
+    NotOffered,
     Resolved,
     Right,
     check_name,
@@ -140,6 +141,7 @@ class _Dir:
     deny: set[Right] = field(default_factory=lambda: set())  # CHANGE_ENTRIES: read-only; DELETE: deny delete_child
     no_swap: bool = False  # a volume without RENAME_SWAP (exFAT, FAT, HFS+, network shares)
     no_excl: bool = False  # a volume without RENAME_EXCL (exFAT, FAT, network shares); its replace may be split
+    excl_unknown: bool = False  # S0125 round 1: `no_excl`, but said only by the first exclusive rename (Linux)
     acl: list[_Ace] = field(default_factory=lambda: [])
     locked: bool = False  # `uchg`: no entry may be added, removed or renamed in it, and it may not be removed
     dev: int = 1  # its volume (S0087: `outside_mount` puts another volume at a folder)
@@ -487,6 +489,17 @@ class MemFS:
         d.durable = dict(d.entries)
         d.pending = []
 
+    def outside_excl_refused_at_use(self, path: str) -> None:
+        """The folder at `path` is on a volume without the swap and without the exclusive rename that says so only
+        when the exclusive rename is used (S0125 round 1, owner: "A2": Linux's `RENAME_NOREPLACE`): `caps` offers
+        `excl` until the first `rename_excl`, which raises `NotOffered` with nothing done; after it, `caps` says no.
+        Calling it again starts a fresh job's knowledge."""
+        node = self._at(path)
+        assert isinstance(node, _Dir)
+        node.no_swap = True
+        node.no_excl = True
+        node.excl_unknown = True
+
     def outside_no_swap(self, path: str, *, excl: bool = False) -> None:
         """The folder at `path` is now on a volume without RENAME_SWAP (as if the ledger were on another drive under
         the same path): with `excl`, one that has RENAME_EXCL (HFS+); without, one that has neither (exFAT, FAT, a
@@ -737,6 +750,7 @@ class MemFS:
                 deny=set(d.deny),
                 no_swap=d.no_swap,
                 no_excl=d.no_excl,
+                excl_unknown=d.excl_unknown,
                 acl=list(d.acl),
                 locked=d.locked,
                 dev=d.dev,
@@ -941,8 +955,11 @@ class MemDir:
     def _offers(self, swap: bool) -> None:
         """The volume offers the call (`swap`: RENAME_SWAP, else RENAME_EXCL); else `ENOTSUP`, nothing done, as exFAT
         and HFS+ answer (probed, S0065; FAT does worse, which the macOS adapter refuses before the call)."""
-        if self._d.no_swap if swap else self._d.no_excl:
-            raise OSError(errno.ENOTSUP, "no RENAME_SWAP" if swap else "no RENAME_EXCL")
+        d = self._d
+        if d.no_swap if swap else d.no_excl:
+            if not swap and d.excl_unknown:
+                d.excl_unknown = False  # S0125 round 1: refused at its first use, then known (as Linux learns it)
+            raise NotOffered("RENAME_SWAP" if swap else "RENAME_EXCL")
 
     def allowed(self, name: str, right: Right) -> bool:
         d = self._d
@@ -970,7 +987,8 @@ class MemDir:
         return right not in own
 
     def caps(self) -> Caps:
-        return Caps(swap=not self._d.no_swap, excl=not self._d.no_excl)
+        d = self._d
+        return Caps(swap=not d.no_swap, excl=not d.no_excl or d.excl_unknown)
 
     def acl(self) -> tuple[AclEntry, ...]:
         return tuple(a.entry for a in self._d.acl)
@@ -1145,6 +1163,7 @@ class MemDir:
                     dev=d.dev,
                     no_swap=d.no_swap,
                     no_excl=d.no_excl,
+                    excl_unknown=d.excl_unknown,
                     acl=_inherited(d, "directory_inherit"),
                 )
             )

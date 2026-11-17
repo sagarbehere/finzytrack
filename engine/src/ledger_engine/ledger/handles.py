@@ -15,7 +15,7 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Final, Literal
 
-from ledger_engine.fs.port import AclEntry, DirHandle, EntryStat, FileSystem, FolderMark, Kind, Right
+from ledger_engine.fs.port import AclEntry, DirHandle, EntryStat, FileSystem, FolderMark, Kind, NotOffered, Right
 from ledger_engine.ledger.core.journal import FS_TYPE, MAX_KEPT, FolderEntry, kept_name
 
 
@@ -236,13 +236,23 @@ def write_mode(h: DirHandle) -> Mode:
 
 
 def move(h: DirHandle, mode: Mode, src: str, dst: str) -> None:
-    """Rename `src` to `dst`: `RENAME_EXCL` (`FileExistsError` when an entry stands at `dst`, `dst` untouched) on
-    `SWAP`, and on `BEST_EFFORT` where the volume has it (HFS+); else a plain rename, which replaces an entry another
-    program put at `dst` in that instant (ADR-0068 D2's accepted loss, spec §6.8)."""
+    """Rename `src` to `dst`, where `dst` should name nothing: `RENAME_EXCL` (`FileExistsError` when an entry stands
+    at `dst`, `dst` untouched) on `SWAP`, and on `BEST_EFFORT` wherever the volume has it (HFS+; on Linux every volume
+    that does not refuse it at its first use: owner, 2026-11-17, "A2"); only where the volume has none (said by `caps`,
+    or by a refusal of the first use, `NotOffered`, nothing done), a check that `dst` is free, then a plain rename,
+    which replaces an entry another program put at `dst` in the instant between the two (ADR-0068 D2's accepted loss,
+    spec §6.8)."""
     if mode is Mode.SWAP or h.caps().excl:
-        h.rename_excl(src, dst)
-    else:
-        h.rename(src, dst)
+        try:
+            h.rename_excl(src, dst)
+        except NotOffered:
+            if mode is Mode.SWAP:
+                raise
+        else:
+            return
+    if h.stat(dst) is not None:
+        raise FileExistsError(errno.EEXIST, "an entry stands at the name")
+    h.rename(src, dst)
 
 
 FOLDER_SELF: Final = frozenset({"delete", "writeattr", "writeextattr", "writesecurity", "chown"})
@@ -341,13 +351,11 @@ def keep(h: DirHandle, name: str, base: str, job: str, mode: Mode) -> str | None
     (`journal.kept_name`, exclusive), then sync the folder: nothing of ours ever deletes it, and the journal stops
     while it exists. None when every kept name is taken: the entry stays where it is, and the journal stops anyway
     (those kept names exist). `mode`: the folder's write mode (`move`). Owner, 2026-10-29: "Yes" (ADR-0013
-    amendment). Where the volume has no exclusive rename (exFAT, FAT, network shares) the free name is chosen by a
-    check, then the plain rename: else a second outside save kept in the same try would replace the first (S0071 red
-    team F1); another program writing that kept name in the same instant is ADR-0068 D2's accepted loss."""
-    checked = mode is Mode.BEST_EFFORT and not h.caps().excl
+    amendment). Where the volume has no exclusive rename (exFAT and FAT on macOS, network shares, a volume that refused
+    it at its first use) `move` checks that the kept name is free, then renames: else a second outside save kept in
+    the same try would replace the first (S0071 red team F1); another program writing that kept name in the same
+    instant is ADR-0068 D2's accepted loss."""
     for n in range(1, MAX_KEPT + 1):
-        if checked and h.stat(kept_name(base, job, n)) is not None:
-            continue
         try:
             move(h, mode, name, kept_name(base, job, n))
         except FileExistsError:
