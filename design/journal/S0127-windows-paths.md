@@ -58,6 +58,7 @@
   - 2026-11-17 run 3 (head 242c4939): 177 failed, 9863 passed, 189 skipped: POSIX-path pure tests, Beancount on Windows, architecture tests' separators and encodings, the INV-10 real-disk jobs.
   - 2026-11-17 run 4 (head 86f1e98d): 46 failed, 9954 passed, 230 skipped: more tests over the fake that load real ledgers, the twelve enforcement cases.
   - 2026-11-17 run 5 (head 2a089535): 13 failed, 9764 passed, 206 skipped: the twelve enforcement cases (the inbox question) and one plugin-fingerprint test, now skipped (BL-0282).
+  - 2026-11-17 run 6 (head 9bf202c0): 12 failed, 9764 passed, 207 skipped: exactly the twelve cases in the enforcement files (`test_no_resident_ledger.py` 5, `test_overlay.py` 2, `test_parity_corpus.py` 5), held for the owner's answer; everything else that can run passes; Linux and the other jobs green.
 
 ## Open questions
 - `design/inbox/20261117-windows-skips-in-enforcement-files.md` (blocks nothing: whether the Windows job can be green before BL-0280 and BL-0282).
