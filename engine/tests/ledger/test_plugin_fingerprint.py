@@ -299,6 +299,8 @@ def test_a_plugin_edited_between_its_lookup_and_its_read_changes_it(
 def test_a_plugin_not_found_and_then_found_in_one_load_keeps_the_first_answer(tmp_path: Path, names: Names) -> None:
     """Listed twice, with a plugin between that writes it: the load holds the import error and the plugin's run, which
     the next load would not give (no error), so the first answer stays and the next observation differs."""
+    if sys.platform == "win32":
+        raise pytest.skip.Exception(BL_0282)  # the module a plugin writes during the load is not imported there
     late, maker = names("late"), names("maker")
     root = ledger(tmp_path / "L", late, maker, late)
     target = tmp_path / "L" / f"{late}.py"
