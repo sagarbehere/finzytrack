@@ -1,0 +1,24 @@
+# How should a save replace a ledger file on Windows, which has no one-step swap?
+- Asked: 2026-11-17 by the implementer, S0126-windows-port
+- blocks: S0126 (the Windows write path; Windows keeps refusing every file operation until this is answered and the port lands)
+- Rubric item: 4 (changing an ADR: ADR-0013 names `ReplaceFileW` for Windows; draft ADR-0069)
+- ADRs checked: ADR-0013 (names `ReplaceFileW` as Windows' swap; the probe shows it is not one), ADR-0068 D2 (the best-effort mode, decided for volumes without the swap, not for a whole OS), ADR-0061 and its 2026-11-14 amendment (Windows in M1b), the owner's ownership rule of 2026-11-16 ("Rule unchanged (Recommended)": where a primitive is missing, the same refusal or the same stated best-effort mode). The rule allows option 1, but applying the weaker mode to every Windows user, and changing ADR-0013's Windows line, is yours to decide.
+
+## Context (plain language, a concrete example first)
+On macOS and Linux a save puts the new version of `main.beancount` in place with a **swap**: the new file and the old one trade names in one step. Two things follow. A power cut leaves either the old file or the new one at `main.beancount`, never nothing. And the old file ends up beside it under a temporary name, so the save can check it: if your editor saved `main.beancount` at the very same moment, its bytes are not the ones Finzytrack read, and Finzytrack keeps them in a "kept" copy instead of losing them.
+
+ADR-0013 planned Windows' `ReplaceFileW` for this. The S0126 probe ran on GitHub's Windows Server 2022 runner (the 2026-11-17 run 1): it replaced a file 300 times while another thread kept looking for it. With `ReplaceFileW` the file was **missing** in hundreds of looks on every kind of drive (NTFS, ReFS, FAT32, exFAT): it is two renames, old file away, then new file in, with an empty moment between. A power cut in that moment leaves `main.beancount` missing. Windows has no swap at all. A plain rename over the file (`MoveFileExW` with "replace") was never seen missing (one step), but it deletes the old file, so the "your editor saved at the same moment" check is impossible with it.
+
+Other probe results are good news for the port: Windows can make files and folders durable, has exclusive create and rename on every drive, can open and rename relative to a folder handle, refuses to rename or replace a file another program holds open (so that save can refuse truthfully), and refuses to rename a folder while anything inside it is open (a strong path guard).
+
+## Options (cheapest first; PROCESS.md §5)
+1. **Best-effort mode on all Windows drives** (§6.8, the mode exFAT and FAT sticks already use on macOS). Journal, backups and read-back stay; the new file is put over the old by one plain rename; a last check just before that the file is still the one Finzytrack read. Power cut: safe on NTFS and ReFS (one logged step; from how those file systems log changes, not power-cut tested). Lost against macOS: if another program saves the same file in the same instant, its change can be lost (the backup still holds the version before the save). Cost: small, no change to the save's model. The open's notice for such drives ("this drive cannot save safely…") would show for every Windows ledger unless it is reworded for Windows; I would reword it.
+2. **Lock, rename the old file aside, rename the new one in.** Finzytrack holds the old file so no program can write, rename or delete it, checks its bytes, renames it aside, then renames the new file in, refusing if anything appeared there. No other program's save is ever lost, which is stronger than macOS. But for an instant the name is empty (measured), so a power cut can leave the file missing, which recovery puts back from the aside copy. Cost: a new write mode, a change to the save's formal model and recovery, its own slice and a full review (the save family took 4-5 fix rounds before: S0061, S0117).
+3. **`ReplaceFileW`, as ADR-0013 says.** Not recommended: the same empty moment as option 2 (measured), plus it works by path, copies the old file's permissions and streams onto the new one, and has no lock.
+
+## Recommendation
+Option 1. It is the owner's rule for missing primitives (2026-11-16), needs no new mechanism and no model change, and the loss it allows needs another program to save the same file in the same instant. The mode's review history: S0065 built it, S0071 simplified it into today's best-effort mode (ADR-0068 D2), S0125 extended it to Linux (one fix round, the exclusive-rename part). Option 2 can come later, as its own slice, if Windows users need macOS's detection.
+
+Separately, for your information (no decision needed unless you disagree): the Windows port is too large for one slice. I propose to split it as in the S0126 journal ("Proposed split").
+
+## Answer (owner, verbatim, with date)
