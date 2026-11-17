@@ -801,10 +801,17 @@ def test_the_path_models_upper_case_never_splits_two_names_windows_takes_as_one(
 
 
 def _watch_name(target: Path, stop: threading.Event, seen: dict[str, int]) -> None:
-    """Ask for `target` without opening it until `stop`, counting the looks that found it missing."""
+    """Ask for `target` until `stop`, counting the looks that found it missing: by `GetFileAttributesW`, which opens
+    no handle (as S0126's probe asked). Python's `os.stat` opens the file sharing nothing, which makes a rename over it
+    fail at that instant (the 2026-11-17 run 11): not a missing name, a refused rename."""
+    k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    attrs = k32.GetFileAttributesW
+    attrs.argtypes = [ctypes.c_wchar_p]
+    attrs.restype = ctypes.c_uint32
+    name = str(target)
     while not stop.is_set():
         seen["looks"] += 1
-        if not os.path.lexists(target):
+        if attrs(name) == 0xFFFFFFFF:
             seen["missing"] += 1
 
 
@@ -879,11 +886,13 @@ def test_owner_1a_a_replaced_file_keeps_its_own_acl_hidden_flag_and_streams(fs: 
     main = led / "main.bean"
     main.write_bytes(b"pre\n")
     user = os.environ["USERNAME"]
-    subprocess.run(["icacls", str(main), "/inheritance:r", "/grant:r", f"{user}:(F)"], check=True, capture_output=True)  # noqa: S603, S607
+    private = ["icacls", str(main), "/inheritance:r", "/grant:r", f"{user}:(F)", "/grant:r", "*S-1-5-32-545:(R)"]
+    subprocess.run(private, check=True, capture_output=True)  # noqa: S603 (the system's own tool)
     subprocess.run(["attrib", "+h", str(main)], check=True, capture_output=True)  # noqa: S603, S607
     (led / "main.bean:note").write_bytes(b"a stream\n")
     before = _icacls(main)
-    assert len(before) == 1, before  # the user alone, not inherited
+    assert not [e for e in before if "(I)" in e], before  # its own ACL: nothing inherited from the folder
+    assert any("Users:(R)" in e for e in before), before
     out = durable_commit(fs, commit(tmp_path / "app", Change(str(main), sha256(b"pre\n"), b"post\n")))
     assert isinstance(out, Landed), out
     assert main.read_bytes() == b"post\n"
