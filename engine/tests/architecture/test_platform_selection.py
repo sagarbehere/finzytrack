@@ -13,6 +13,8 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
+import pytest
+
 SRC = Path(__file__).resolve().parents[2] / "src" / "ledger_engine"
 # Every module of `fs/` except the port, the selection point, the package itself, the code the POSIX adapters share
 # (`posix`, S0125: imported only by the adapters, below) and the pure path model of every OS (`pathmodel`, S0127) is an
@@ -108,18 +110,127 @@ def test_every_spelling_of_an_adapter_import_is_seen() -> None:
     assert adapter_imports("fs/x.py", "from .darwin import DarwinFS\n") == ["ledger_engine.fs.darwin"]
 
 
-def test_the_product_never_simulates_another_path_model() -> None:
-    """@regression-guard (it holds on the base, where nothing simulates). Must not pass: `pathmodel.simulating` (S0127)
-    puts another OS's path model in force; only tests may use it, so
-    the product always splits, records and compares paths as the OS it runs on does. Checked from the source: any
-    name `simulating` outside `fs/pathmodel.py`, which defines it."""
-    offenders = [
-        f"{path.relative_to(SRC).as_posix()}:{node.lineno}"
-        for path in sorted(SRC.rglob("*.py"))
-        if path.relative_to(SRC).as_posix() != "fs/pathmodel.py"
-        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8")))
-        if (isinstance(node, ast.Name) and node.id == "simulating")
-        or (isinstance(node, ast.Attribute) and node.attr == "simulating")
-        or (isinstance(node, ast.alias) and node.name == "simulating")
-    ]
+PATHMODEL = "ledger_engine.fs.pathmodel"
+PATHMODEL_FILE = "fs/pathmodel.py"
+PATHMODEL_ALLOWED = frozenset({"host", "HOST", "POSIX", "FoldRule", "MalformedPathError", "fold", "PathModel"})
+"""What the product may take from the path model (S0127): the model in force (`host()`, `HOST`), POSIX's (the protocol's
+pattern), the fold rule and its error. Never `WINDOWS`, `for_platform`, `simulating` or `_current`: each would put a
+model other than this OS's in force, or apply one."""
+SWITCHES = frozenset({"simulating", "_current", "for_platform"})
+
+
+def model_switches(rel: str, source: str) -> list[str]:
+    """Every way `source` (the module at `rel` under `ledger_engine/`) could reach past `PATHMODEL_ALLOWED`: a name of
+    `SWITCHES` in any position (a name, an attribute, an import), an import of another name from the path model, and
+    any use of the path model module itself other than reading an allowed attribute from it (`getattr(p, ...)`,
+    passing it on). Stated limit: a dynamic import by name is out of an AST scan (`check_engine_boundary.py` allows
+    `import_module` only in `ledger/beancount_port.py`)."""
+    found: list[str] = []
+    tree = ast.parse(source)
+    package = ("ledger_engine", *Path(rel).parent.parts)
+    module_names: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom):
+            base = node.module or ""
+            if node.level:
+                base = ".".join((*package[: len(package) - (node.level - 1)], *([node.module] if node.module else [])))
+            for a in node.names:
+                if base == PATHMODEL and a.name not in PATHMODEL_ALLOWED:
+                    found.append(f"{rel}:{node.lineno}: imports {a.name} from the path model")
+                elif f"{base}.{a.name}" == PATHMODEL:
+                    module_names.add(a.asname or a.name)
+        elif isinstance(node, ast.Import):
+            for a in node.names:
+                if a.name == PATHMODEL:
+                    if a.asname is None:
+                        found.append(f"{rel}:{node.lineno}: imports the path model by its dotted name")
+                    else:
+                        module_names.add(a.asname)
+    allowed_reads = {
+        id(n.value)
+        for n in ast.walk(tree)
+        if isinstance(n, ast.Attribute)
+        and isinstance(n.value, ast.Name)
+        and n.value.id in module_names
+        and n.attr in PATHMODEL_ALLOWED
+    }
+    for node in ast.walk(tree):
+        name = (
+            node.id
+            if isinstance(node, ast.Name)
+            else node.attr
+            if isinstance(node, ast.Attribute)
+            else node.name
+            if isinstance(node, ast.alias)
+            else None
+        )
+        if name in SWITCHES:
+            found.append(f"{rel}:{getattr(node, 'lineno', '?')}: names {name}")
+        if isinstance(node, ast.Name) and node.id in module_names and id(node) not in allowed_reads:
+            found.append(f"{rel}:{node.lineno}: uses the path model module otherwise than by an allowed name")
+    return found
+
+
+def test_the_product_never_puts_another_path_model_in_force() -> None:
+    """Must not pass: only tests may put another OS's path model in force (`pathmodel.simulating`, S0127), so the
+    product always splits, records and compares paths as the OS it runs on does. Every product module outside the path
+    model takes only `PATHMODEL_ALLOWED` from it (`model_switches`)."""
+    offenders: list[str] = []
+    for path in sorted(SRC.rglob("*.py")):
+        rel = path.relative_to(SRC).as_posix()
+        if rel != PATHMODEL_FILE:
+            offenders.extend(model_switches(rel, path.read_text(encoding="utf-8")))
     assert not offenders, offenders
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "from ledger_engine.fs import pathmodel\npathmodel._current.set(pathmodel.WINDOWS)\n",
+        "from ledger_engine.fs.pathmodel import for_platform\nM = for_platform('win32')\nM.split('C:\\\\x')\n",
+        "from ledger_engine.fs import pathmodel as p\ngetattr(p, 'simul' + 'ating')(p.WINDOWS)\n",
+        "from ledger_engine.fs.pathmodel import WINDOWS\nWINDOWS.split('C:\\\\x')\n",
+        "from ledger_engine.fs.pathmodel import simulating\n",
+        "from ..fs import pathmodel\nx = pathmodel\n",
+        "import ledger_engine.fs.pathmodel\n",
+        "import ledger_engine.fs.pathmodel as pm\npm.WINDOWS\n",
+    ],
+)
+def test_each_way_past_the_path_models_allowed_names_is_found(source: str) -> None:
+    """Must not pass (S0127 verifier F4: the first three passed the name-only guard)."""
+    assert model_switches("ledger/x.py", source)
+
+
+def test_the_allowed_uses_pass() -> None:
+    """@regression-guard: the product's own spellings."""
+    source = (
+        "from ledger_engine.fs.pathmodel import FoldRule, MalformedPathError, fold, host\n"
+        "from ledger_engine.fs import pathmodel\nhost().split('/a')\npathmodel.host()\n"
+    )
+    assert model_switches("ledger/x.py", source) == []
+
+
+def test_the_path_model_uses_its_switches_only_where_listed() -> None:
+    """Inside the path model: `_current` only in `host` and `simulating`, `for_platform` only for `HOST`."""
+    tree = ast.parse((SRC / PATHMODEL_FILE).read_text(encoding="utf-8"))
+    current_in = {
+        f.name
+        for f in tree.body
+        if isinstance(f, ast.FunctionDef)
+        for n in ast.walk(f)
+        if isinstance(n, ast.Name) and n.id == "_current"
+    }
+    assert current_in == {"host", "simulating"}
+    calls = [
+        n
+        for n in ast.walk(tree)
+        if isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id == "for_platform"
+    ]
+    assert len(calls) == 1
+    hosts = [
+        n
+        for n in tree.body
+        if isinstance(n, ast.AnnAssign) and isinstance(n.target, ast.Name) and n.target.id == "HOST"
+    ]
+    assert len(hosts) == 1
+    assert hosts[0].value is calls[0]

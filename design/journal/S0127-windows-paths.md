@@ -79,5 +79,18 @@
 
 
 ## Verifier
+- **Round 1, head df3f8309: PASS WITH FINDINGS** (13 attacks; all Low, no class (a)). Fixed in "S0127-windows-paths: round 1": tests and docs only, no product code, so no fresh round.
+
+| ID | Class | Finding | Disposition |
+|---|---|---|---|
+| F1 | c | The POSIX pin did not cover `PosixPaths.is_under`, `trim`, `is_root_path`; three loosening mutants survived the pin and the macOS suite | Fixed: `test_the_posix_models_other_operations_are_the_bases_expressions` holds them (and `parent_and_name`) to the base's inline expressions, quoted; the three mutants killed (`scripts/mutants.py`). It found one difference of its own: the base's strict "under" took a path ending in `/` as under itself (`/` under `/`); the one caller passes a record's file, never a root, so it cannot arise; stated in the test and the pin's docstring narrowed to what it covers |
+| F2 | e | `WINDOWS.parent_and_name("C:\\")`, `("\\\\srv\\sh")` raise `IndexError`, not `MalformedPathError` | To BL-0280 (before the adapter writes) |
+| F3 | e | `WINDOWS.normpath("C:\\\\x")` keeps the doubled separator, so `normpath(p) == p` accepts a spelling the engine does not record | To BL-0280 |
+| F4 | c | The "never simulates" guard looked only for the name `simulating`; `_current.set`, `for_platform('win32')`, `getattr(p, 'simul'+'ating')` passed | Fixed: `model_switches` allows the product only `host`, `HOST`, `POSIX`, `FoldRule`, `MalformedPathError`, `fold`, `PathModel` from the path model, any other use of the module refused; the verifier's three shapes and five more are must-not-pass cases; the path model's own uses of `_current` and `for_platform` listed |
+| F5 | c/d | `test_overlay.py`'s decrypting plugin joined its path with `/`; the Windows failure was the test's, not Beancount's | Fixed: the test's three plugins use `os.path`; BL-0282 (4) and the answered inbox note corrected |
+| F6 | e | BL-0282's statement of the `entry_keys` `re.sub` bug was partly wrong | Restated in BL-0282 (1): every OS, a backslash with a letter the replacement syntax rejects raises; `\\n`, `\\t`, `\\\\` are rewritten the same on both sides |
+| Q1 | question | One place, two roots (volume GUID or drive letter, mapped drive or UNC, server case, 8.3 names): §6.3's "never split" depends on the adapter giving the canonical root | To BL-0280 |
+
+Also in the round: the two skips that still named BL-0087 (`tests/test_measure_scripts.py`, `tests/macos_only.py`, and `test_darwin.py`'s docstring) now name BL-0280.
 
 ## Retro

@@ -160,10 +160,11 @@ def test_an_asc_file_that_is_not_encrypted_still_loads(tmp_path: Path) -> None:
 
 
 DECRYPT_PLUGIN = b"""
+import os
 from beancount.utils import encryption
 __plugins__ = ["side"]
 def side(entries, options_map):
-    encryption.read_encrypted_file(options_map["filename"].rsplit("/", 1)[0] + "/side.gpg")
+    encryption.read_encrypted_file(os.path.join(os.path.dirname(options_map["filename"]), "side.gpg"))
     return entries, []
 """
 
@@ -197,8 +198,9 @@ def test_a_plugin_that_decrypts_a_side_file_meets_the_same_refusal_as_the_real_l
 
 
 DECRYPT_AT_IMPORT = b"""
+import os
 from beancount.utils import encryption
-encryption.read_encrypted_file(__file__.rsplit("/", 1)[0] + "/side.gpg")
+encryption.read_encrypted_file(os.path.join(os.path.dirname(__file__), "side.gpg"))
 __plugins__ = []
 """
 
@@ -252,6 +254,7 @@ def test_the_documents_step_reads_the_disk_as_beancount_does(tmp_path: Path, mon
 
 
 WALKING_PLUGIN = b"""
+import os
 from beancount.core import data
 from beancount.ops import documents
 from beancount.ops.documents import *  # noqa: F403 (S0067 red team r2 F1: `account` and `path` come along)
@@ -260,7 +263,7 @@ __plugins__ = ["walk"]
 
 
 def walk(entries, options_map):
-    docs = options_map["filename"].rsplit("/", 1)[0] + "/docs"
+    docs = os.path.join(os.path.dirname(options_map["filename"]), "docs")
     seen = [f"{a}:{len(d)}" for a, _, d, _ in documents.account.walk(docs)]
     seen += [f"star:{a}:{len(d)}" for a, _, d, _ in account.walk(docs)]  # noqa: F405
     meta = data.new_metadata(options_map["filename"], 0)
