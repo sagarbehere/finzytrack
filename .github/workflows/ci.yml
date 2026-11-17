@@ -209,19 +209,6 @@ jobs:
           "FT_TEST_VOLUMES=" + ($vols -join ";") | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
           [System.Environment]::OSVersion.VersionString
           .venv\Scripts\python.exe scripts\probe_windows_fs.py $env:RUNNER_TEMP $env:TEMP @vols
-      - name: "S0128 tests first (temporary step): the slice's Windows tests against the base's engine source"
-        # Removed again by the slice's last commit: the tests the slice adds or turns on for Windows, run against the
-        # engine source of the slice's base (d44062d5), to record that they fail there (PROCESS.md §3 step 3).
-        continue-on-error: true
-        env:
-          TZ: PST8PDT
-        run: |
-          git fetch --no-tags --depth=1 origin d44062d520090994b51b44f437d5ca7bb5156b7f
-          git checkout FETCH_HEAD -- src
-          Remove-Item -ErrorAction SilentlyContinue src/ledger_engine/fs/windows.py
-          .venv\Scripts\python.exe -m pytest -q -rs -p no:cacheprovider --continue-on-collection-errors tests/fs/test_windows.py tests/fs/test_legacy_lock.py tests/test_recover_ops.py tests/test_create_ops.py tests/fs/test_pathmodel.py
-          git checkout HEAD -- src
-          git status --short
       - name: tests
         # INV-07 on Windows (S0127): its C runtime reads TZ only as a process starts and only in this form, so it is set
         # before Python starts (Los Angeles: tests/conftest.py checks it). `-rs`: each skip prints its reason, the
