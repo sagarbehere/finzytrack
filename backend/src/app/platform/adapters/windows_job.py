@@ -20,9 +20,12 @@ signal after the reap) runs unchanged on Windows.
 - **Our signal** (`kill_group`): first no new member (`JOB_OBJECT_LIMIT_ACTIVE_PROCESS` of 1: a process started by a
   member is ended as it is made, before it runs; nothing outside the job can add one, since only we hold its handle),
   then a handle on every listed member, then `TerminateJobObject`. The handles are held until the reap: a pid we hold
-  cannot pass to another program, and each one tells when that member has ended.
-- **"No live member"** (`live_member`): no member listed (`JobObjectBasicProcessIdList`) and every member we hold
-  signalled. A process object is signalled only after Windows has closed its handles, but it leaves the job's list
+  cannot pass to another program, and each one tells when that member has ended. The job is ended only in a round
+  where every listed member is held; otherwise (a failed or partial listing, a member we cannot open) the leader
+  alone is ended and the drain lists again (S0129 round 1, V1; owner, 2026-11-18: "b").
+- **"No live member"** (`live_member`): every listed member (`JobObjectBasicProcessIdList`) held, and every member we
+  hold signalled (one still listed but signalled has closed its files; our handle keeps its pid from passing to another
+  program). A process object is signalled only after Windows has closed its handles, but it leaves the job's list
   earlier, while it is still exiting, so the list alone would let the drain reap while a member still holds a file
   (the macOS listing's "exiting member" case, §5.2); the held handles close that gap. A failed listing, or a listed
   member we cannot open (other than one already gone), counts as live: the drain never reaps on a guess.
@@ -157,6 +160,7 @@ class _Api:
         )
         self.AssignProcessToJobObject = _sig(k32.AssignProcessToJobObject, [h, h], b)
         self.TerminateJobObject = _sig(k32.TerminateJobObject, [h, wintypes.UINT], b)
+        self.TerminateProcess = _sig(k32.TerminateProcess, [h, wintypes.UINT], b)
         self.IsProcessInJob = _sig(k32.IsProcessInJob, [h, h, ctypes.POINTER(b)], b)
         self.OpenProcess = _sig(k32.OpenProcess, [d, b, d], h)
         self.WaitForSingleObject = _sig(k32.WaitForSingleObject, [h, d], d)
@@ -183,9 +187,10 @@ class EngineJob:
         self.ops = JobOps(self)
 
     @classmethod
-    def around(cls, proc: subprocess.Popen[Any]) -> EngineJob:
-        """A new job with kill-on-close and no breakaway, the engine `proc` in it; `OSError` if Windows refuses."""
-        api = _Api()
+    def around(cls, proc: subprocess.Popen[Any], api: _Api | None = None) -> EngineJob:
+        """A new job with kill-on-close and no breakaway, the engine `proc` in it; `OSError` if Windows refuses, every
+        handle opened for it closed. `api`: the system calls (a test's fake; the real ones by default)."""
+        api = api or _Api()
         leader = api.OpenProcess(LEADER_ACCESS, False, proc.pid)  # `proc` holds its own handle: the pid is its
         if not leader:
             raise _error("OpenProcess")
@@ -221,6 +226,9 @@ class EngineJob:
             return self._listing()
 
     def _listing(self) -> list[int] | None:
+        """Every pid the job has, or None (not judged): the listing failed, or it listed fewer pids than the job has
+        assigned (`NumberOfProcessIdsInList` below `NumberOfAssignedProcesses`) even with room for them all (S0129
+        round 1, V2: a partial list is never taken for the whole job)."""
         if self._job is None:
             return None
         room = 64
@@ -228,7 +236,13 @@ class EngineJob:
             size = 8 + room * ctypes.sizeof(ctypes.c_size_t)
             buf = ctypes.create_string_buffer(size)
             if self._api.QueryInformationJobObject(self._job, JOB_OBJECT_BASIC_PROCESS_ID_LIST, buf, size, None):
+                assigned = int.from_bytes(buf.raw[0:4], "little")
                 listed = int.from_bytes(buf.raw[4:8], "little")
+                if listed < assigned:
+                    if room >= assigned:
+                        return None
+                    room = 2 * assigned  # more members than the buffer held: list again
+                    continue
                 ids = (ctypes.c_size_t * listed).from_buffer_copy(
                     buf.raw[8 : 8 + listed * ctypes.sizeof(ctypes.c_size_t)]
                 )
@@ -266,7 +280,14 @@ class EngineJob:
         return self._api.WaitForSingleObject(handle, 0) == WAIT_OBJECT_0
 
     def terminate(self) -> None:
-        """Our signal (§5.2): no new member, a handle on every member, then every member ended. Nothing once closed."""
+        """Our signal (§5.2): no new member, a handle on every member, then every member ended. Nothing once closed.
+
+        The job is ended only in a round where every member is held (S0129 round 1, V1; owner, 2026-11-18: "b"): a
+        member we do not hold would leave the job's list as it is ended, still closing its handles, and the drain
+        would reap on a guess. In a round whose listing is not judged (it failed, or was partial) or that lists a
+        member we cannot open, only the leader is ended (held by its own handle: a Cancel still ends the engine), and
+        the drain's next round lists again. A member that can never be opened keeps the job unended and the drain
+        going, with the advice on the timer (§5.2, "stuck process")."""
         with self._lock:
             if self._job is None:
                 return
@@ -275,9 +296,10 @@ class EngineJob:
             with contextlib.suppress(OSError):
                 self._set_limits(JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE | JOB_OBJECT_LIMIT_ACTIVE_PROCESS, 1)
             listed = self._listing()
-            if listed is not None:
-                self._hold(listed)
-            self._api.TerminateJobObject(self._job, ENDED_BY_US)
+            if listed is not None and self._hold(listed):
+                self._api.TerminateJobObject(self._job, ENDED_BY_US)
+            elif self._leader:
+                self._api.TerminateProcess(self._leader, ENDED_BY_US)
 
     def live_member(self) -> bool:
         """Whether a member may still hold a file (the module's docstring, "No live member")."""

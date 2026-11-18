@@ -243,6 +243,25 @@ jobs:
         run: uv sync --locked
       - name: Engine environment (the engine client tests spawn the real engine)
         run: uv sync --locked --directory ../engine
+      - name: Scratch volumes (S0129 round 1: the app folder's identity on FAT32, exFAT and ReFS, as engine-windows)
+        run: |
+          $vols = @()
+          foreach ($v in @(@{fs="fat32"; letter="R"}, @{fs="exfat"; letter="S"}, @{fs="refs"; letter="T"})) {
+            $vhd = Join-Path $env:RUNNER_TEMP ("vol-" + $v.fs + ".vhdx")
+            $size = if ($v.fs -eq "refs") { 2048 } else { 320 }
+            $script = Join-Path $env:RUNNER_TEMP ("dp-" + $v.fs + ".txt")
+            @(
+              "create vdisk file=`"$vhd`" maximum=$size type=expandable",
+              "select vdisk file=`"$vhd`"",
+              "attach vdisk",
+              "create partition primary",
+              "format fs=$($v.fs) quick label=FT$($v.fs.ToUpper())",
+              "assign letter=$($v.letter)"
+            ) | Set-Content -Encoding ascii $script
+            diskpart /s $script | Out-Null
+            if (Test-Path ($v.letter + ":\")) { $vols += ($v.letter + ":\") } else { Write-Output ("no " + $v.fs + " volume") }
+          }
+          "FT_TEST_VOLUMES=" + ($vols -join ";") | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
       - name: tests
         # INV-07 on Windows (S0127): `TZ` in the C runtime's form, set before Python starts (tests/conftest.py checks
         # Los Angeles). `-rs`: each skip prints its reason.
@@ -251,6 +270,8 @@ jobs:
         run: >-
           .venv\Scripts\python.exe -m pytest -q -rs -p no:cacheprovider
           tests/platform/test_engine_windows.py tests/platform/test_windows_job_decision.py
+          tests/platform/test_windows_job_fake.py tests/platform/test_windows_files_fake.py
+          tests/platform/test_engine_client_spawn.py
           "tests/test_main.py::test_on_windows_the_boots_recover_all_runs_in_an_engine_and_answers_the_platform_unsupported"
   frontend:
     # The Vue frontend (S0009; ARCHITECTURE.md §3, §10; ADR-0053): types, lint, format, unit tests (incl. the

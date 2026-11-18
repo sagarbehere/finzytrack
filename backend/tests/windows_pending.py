@@ -1,7 +1,10 @@
-"""Why a backend test skips on Windows (S0127, BL-0260), written as the engine's `tests/windows_pending.py`: the
-POSIX-only test (process groups, signals, `flock`, descriptors) names the Windows tests that cover the same rule
-there (`tests/platform/test_engine_windows.py`, S0129); the `backend-windows` CI job runs `pytest -rs`, so each skip
-prints its reason. These lines also keep the Windows type check (`scripts/pyright_platforms.py`) at 0 errors.
+"""Why a backend test skips on Windows (S0127, BL-0260), written as the engine's `tests/windows_pending.py`: the test
+that skips there either uses POSIX-only names (process groups, signals, `flock`, descriptors, `ps`) and names the
+Windows tests that cover the same rule there (`tests/platform/test_engine_windows.py`, S0129), or needs the engine's
+write path, which Windows refuses until BL-0087; `test_engine_client.py` skips whole for the first reason, and its OS-
+agnostic tests live in `test_engine_client_spawn.py`, which runs on Windows too (S0129 round 1); the `backend-windows`
+CI job runs `pytest -rs`, so each skip prints its reason. These lines also keep the Windows type check
+(`scripts/pyright_platforms.py`) at 0 errors.
 
     if sys.platform == "win32":
         raise pytest.skip.Exception(POSIX_SUPERVISION, allow_module_level=True)  # before its POSIX imports

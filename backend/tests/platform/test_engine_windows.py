@@ -518,3 +518,74 @@ def test_the_engine_takes_its_lock_with_the_sidecars_identity(folder: AppFolder)
     finally:
         c.close()
     assert lock_free(lock)
+
+
+def test_a_new_engine_starts_only_after_the_previous_engines_job_is_drained(tmp_path: Path) -> None:
+    """The stop rule's invariant on Windows (S0129 round 1, V3; §5.1: "A new engine is spawned ... only after the
+    previous one is reaped and its process group has no live member"): at the moment the next engine is spawned,
+    the retired engine's plugin child is gone and the lock it held is free."""
+    lock = tmp_path / "ledger.lock"
+    watched: list[Watched] = []
+    at_spawn: list[tuple[int, bool, bool]] = []
+
+    def spawned(serial: int) -> None:
+        if watched:
+            at_spawn.append((serial, lock_free(lock), watched[0].gone()))
+
+    c = EngineClient(engine_command(), on_engine_spawned=spawned)
+    try:
+        out = c.call("test.child", {"lock": str(lock)})
+        assert isinstance(out, dict), out
+        watched.append(Watched(int(out["pid"])))  # pyright: ignore[reportArgumentType]
+        c.end("retire")
+        assert c.ping() is not None  # a fresh engine
+        assert at_spawn, "no second engine was spawned"
+        assert all(free and gone for _, free, gone in at_spawn), f"a new engine started beside the old job: {at_spawn}"
+    finally:
+        c.close()
+        for w in watched:
+            w.end()
+            w.close()
+
+
+def volumes() -> list[Path]:
+    """The scratch drives `ci.yml` formats on the runner (FAT32, exFAT, ReFS), as the engine's tests use them."""
+    import os
+
+    return [Path(v) for v in os.environ.get("FT_TEST_VOLUMES", "").split(";") if v]
+
+
+@pytest.mark.parametrize("kind", ["fat32", "exfat", "refs"])
+def test_the_app_folders_identity_is_the_engines_on_each_volume_kind(kind: str) -> None:
+    """V3 (S0129 round 1): the sidecar's identity (`windows_files`) and the engine's (`port.folder_id`) agree on
+    FAT32, exFAT and ReFS too: the file ID as `born` on ReFS, the creation time on FAT32 and exFAT."""
+    if not ENGINE_PYTHON.exists():
+        pytest.skip("no engine environment")
+    import uuid
+
+    drives = [v for v in volumes() if _fs_of(v) == kind]
+    if not drives:
+        pytest.skip(f"no {kind} scratch drive (FT_TEST_VOLUMES)")
+    made = app_folder.prepare(drives[0] / f"ft-app-{uuid.uuid4().hex}")
+    assert isinstance(made, AppFolder), made
+    engines = subprocess.run(  # noqa: S603 (the engine's interpreter running a fixed script)
+        [str(ENGINE_PYTHON), "-I", "-c", ENGINE_IDENTITY, str(made.path)],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+    assert made.id_text == engines
+    assert made.born is not None
+    if kind == "refs":
+        assert made.born == made.ino, "on ReFS `born` is the file ID"
+    else:
+        assert made.born != made.ino, "on FAT `born` is the creation time"
+
+
+def _fs_of(drive: Path) -> str:
+    import ctypes
+
+    name = ctypes.create_unicode_buffer(261)
+    if not ctypes.windll.kernel32.GetVolumeInformationW(str(drive), None, 0, None, None, None, name, 261):
+        return ""
+    return name.value.lower()

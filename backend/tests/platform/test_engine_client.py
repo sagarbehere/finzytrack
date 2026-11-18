@@ -546,29 +546,6 @@ def test_close_ends_the_engine_and_later_calls_fail(client: EngineClient) -> Non
     client.close()  # closing twice is harmless
 
 
-def test_the_engine_environment_drops_the_shell_token_and_python_overrides() -> None:
-    environ = {
-        "FT_SHELL_TOKEN": "secret",
-        "FT_OTHER": "x",
-        "PYTHONPATH": "/x",
-        "PYTHONHOME": "/y",
-        "ft_lower": "x",  # Windows names are case-insensitive (S0035 independent verifier F8, M4)
-        "Python_Mixed": "x",
-        "HOME": "/var/empty",
-        "PATH": "/bin",
-        "TZ": "Asia/Kolkata",
-        "LANG": "C.UTF-8",
-    }
-    command = EngineCommand.for_venv(ENGINE_VENV, environ=environ)
-    assert command.env == {
-        "HOME": "/var/empty",
-        "PATH": "/bin",
-        "TZ": "Asia/Kolkata",
-        "LANG": "C.UTF-8",
-        "PYTHONHASHSEED": "0",  # S0057: the one PYTHON* variable, set by us (engine-jobs §5.1)
-    }
-
-
 def test_the_engine_is_told_its_parent(client: EngineClient) -> None:
     """The engine watches the pid the client gives it, so a parent that dies during start-up is caught."""
     client.start()
@@ -1256,59 +1233,10 @@ def test_the_engine_leads_its_own_process_group(client: EngineClient) -> None:
     assert os.getpgid(pid) != os.getpgrp()
 
 
-def venv_site() -> Path:
-    (site,) = (
-        ENGINE_VENV.glob("lib/python*/site-packages") if os.name == "posix" else [ENGINE_VENV / "Lib/site-packages"]
-    )
-    return site
-
-
-def test_the_development_command_is_s_S_B_P_with_the_venvs_site_and_never_I() -> None:
-    """§5.1: "flags `-s -S -B -P ...`, never `-I`"; "the development form runs the same bootstrap with the virtual
-    environment's site-packages" (it needs them, since `-S` keeps a venv's packages off the path)."""
-    command = EngineCommand.for_venv(ENGINE_VENV, environ={})
-    python = Path(command.argv[0])
-    assert python.parent.parent == ENGINE_VENV
-    assert command.argv[1:5] == ("-s", "-S", "-B", "-P")
-    assert command.argv[5] == "-c"
-    assert command.argv[7] == str(venv_site())
-    assert "-I" not in command.argv
-    assert "-E" not in command.argv
-    assert EngineCommand.for_venv(ENGINE_VENV, environ={}, test_ops=True).argv[-1] == "--test-ops"
-
-
-def test_the_engine_environment_sets_the_hash_seed() -> None:
-    """§5.1: "Environment: the parent's, minus `FT_*` and every `PYTHON*` variable, plus `PYTHONHASHSEED=0`"."""
-    command = EngineCommand.for_venv(ENGINE_VENV, environ={"PYTHONHASHSEED": "random", "HOME": "/h"})
-    assert command.env == {"HOME": "/h", "PYTHONHASHSEED": "0"}
-
-
 def interpreter(c: EngineClient) -> dict[str, Any]:
     out = c.call("test.interpreter", {})
     assert isinstance(out, dict), out
     return dict(out)
-
-
-def test_two_engines_hash_a_string_alike_and_run_with_the_specs_flags() -> None:
-    """§5.1: a load of the same bytes gives the same result in every engine (string hashing decides set order):
-    "two runs under `-s -S -B -P` [with PYTHONHASHSEED=0] the same"; `-B`: no `__pycache__` written into a user's
-    folder (INV-30); `-I` would ignore the seed."""
-    seen: list[dict[str, Any]] = []
-    for _ in range(2):
-        c = EngineClient(engine_command())
-        try:
-            seen.append(interpreter(c))
-        finally:
-            c.close()
-    assert seen[0]["hash_abc"] == seen[1]["hash_abc"]
-    for flags in seen:
-        assert flags["no_site"] == 1
-        assert flags["no_user_site"] == 1
-        assert flags["safe_path"] is True
-        assert flags["dont_write_bytecode"] is True
-        assert flags["isolated"] == 0
-        assert flags["ignore_environment"] == 0
-        assert flags["hash_seed"] == "0"
 
 
 class Ends:
