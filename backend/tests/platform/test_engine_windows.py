@@ -202,25 +202,40 @@ def test_a_member_starting_processes_in_a_loop_does_not_outlive_the_drain(tmp_pa
 
 
 BREAKAWAY = r"""
-import subprocess, sys
+import subprocess, sys, time
 CREATE_BREAKAWAY_FROM_JOB = 0x01000000
 try:
-    p = subprocess.Popen([sys.executable, "-I", "-c", "import time; time.sleep(30)"],
+    p = subprocess.Popen([sys.executable, "-I", "-c", "import time; time.sleep(60)"],
                          creationflags=CREATE_BREAKAWAY_FROM_JOB)
 except OSError as e:
     print("refused", getattr(e, "winerror", None), flush=True)
 else:
-    print("escaped", p.pid, flush=True)
+    print("created", p.pid, flush=True)
+time.sleep(3600)
 """
 
 
-def test_a_member_cannot_leave_the_engines_job() -> None:
-    """The engine's job allows no breakaway (S0129's journal): a plugin's child that asks to leave it is refused, so
-    nothing the engine starts is out of the drain's reach by that way."""
-    with in_a_job(LEADER, BREAKAWAY) as (proc, _, _):
-        assert proc.stdout is not None
-        _, first = proc.stdout.readline().split(maxsplit=1)
-        assert first.split()[0] == "refused", first
+def test_a_member_that_asks_to_leave_the_engines_job_stays_in_the_drains_reach() -> None:
+    """The engine's job allows no breakaway (S0129's journal): a plugin's child started with
+    `CREATE_BREAKAWAY_FROM_JOB` is either refused or, where the shell's job above allows breakaway, leaves only the
+    jobs that allow it and stays in the engine's, so the drain ends it like any member."""
+    with in_a_job(LEADER, BREAKAWAY) as (proc, job, leader):
+        member, first = child_of(proc)
+        member.close()
+        word, value = first.split()
+        if word == "refused":
+            return
+        asked = Watched(int(value))
+        try:
+            listed = job.member_ids() or []
+            leader.end()
+            proc.returncode = EngineGroup(job.ops, proc.pid).drain().returncode
+            where = f"listed in the job before the drain: {asked.pid in listed}"
+            assert asked.gone(), f"a child that asked to leave the job outlived the drain ({where})"
+            assert asked.pid in listed
+        finally:
+            asked.end()
+            asked.close()
 
 
 BURNER = r"""
