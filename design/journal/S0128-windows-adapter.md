@@ -146,7 +146,7 @@
 | V2-F2 | Low | c | The switch guard misses six reflection shapes, two live; the second round on V-F1's mechanism: BL-0286, a fix only after the owner's options note |
 | V2-F3 | Low | c | No test for an inherited DACL with an explicit entry, the archive attribute, or the rollback's put-back keeping the ACL: BL-0285 (2) |
 | V2-F4 | Low | c | The rollback's flush skip keyed on the file-system type's name, which macOS's own `ntfs` driver also reports: BL-0285 (3) |
-| V2-Q-A | question | — | Owner's 1a reaches the save; Copy writes an EFS ledger's bytes in the clear into its target, and the open's mirror holds its entries in the clear: taken to the owner (after this round) |
+| V2-Q-A | question | — | Owner's 1a reaches the save; Copy writes an EFS ledger's bytes in the clear into its target, and the open's mirror holds its entries in the clear. Owner, 2026-11-18, in session: "a" ("Refuse Copy of an EFS-encrypted ledger, and state the mirror as a limit"): BL-0287 and engine-jobs §6.3's new limit |
 | V2-Q-B | question | — | `_carry_over` skips the DACL on two error codes, not by volume kind: BL-0285 (4) |
 
 ## Retro
