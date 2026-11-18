@@ -59,7 +59,7 @@ def test_a_naive_instant_is_refused() -> None:
 # sidecar "today" is also taken in Kolkata, after local midnight, where the civil date is already UTC's next day.
 def test_east_of_utc_every_sidecar_today_is_the_local_date(monkeypatch: pytest.MonkeyPatch) -> None:
     """In this process where the OS can move its zone (macOS, Linux), and on every OS in a child whose zone is set
-    before it starts (S0131): Windows' C runtime reads `TZ` only then (`TZSET`), so there the child is the only form.
+    before it starts (S0131): Windows' C runtime reads `TZ` only then, so there the child is the only form.
     `IST-5:30` is UTC+5:30 in both the POSIX and the Windows C runtime's spelling; the child first checks its zone is
     that, so a `TZ` it ignored fails instead of passing west of UTC."""
     if sys.platform != "win32":

@@ -578,7 +578,7 @@ def test_the_shipped_engine_has_no_producer(tmp_path: Path) -> None:
     product = EngineCommand.for_venv(ENGINE_VENV).argv
     assert "producer" not in " ".join(product)
     sources = {
-        str(p.relative_to(ENGINE)): p.read_text(encoding="utf-8") for p in sorted((ENGINE / "src").rglob("*.py"))
+        p.relative_to(ENGINE).as_posix(): p.read_text(encoding="utf-8") for p in sorted((ENGINE / "src").rglob("*.py"))
     }
     assert PRODUCER_HOME in sources
     assert producer_writers(sources) == []

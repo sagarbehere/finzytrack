@@ -990,7 +990,7 @@ The versions below are the newest stable releases published on or before **2026-
 | structlog | 26.1.0 | EP-15 |
 | uuid-utils | 0.17.1 | uuid7 ids (the 1.x line is under 14 days old); since S0048, the request ids (`app.platform.adapters.ids.Uuid7Ids`) |
 | python-dateutil | 2.9.0.post0 | 3.0.0 is under 14 days old |
-| tzdata | 2026.5 | Windows `zoneinfo` |
+| tzdata | 2026.5 | Windows `zoneinfo`; a test dependency (the `dev` group, `sys_platform == 'win32'`) until product code names a zone: the sidecar's "today" reads the machine's zone through the C runtime (S0131) |
 | casparser | 1.4.1 | CAS adapter (ports) |
 | ofxtools | 1.0.1 | OFX parsing moves to the backend (ADR-0027); 1.1.x is under 14 days old |
 | openpyxl / xlrd | 3.1.5 / 2.0.2 | tabular reader (XLS semantics characterized first, review:12 M5) |
