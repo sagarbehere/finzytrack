@@ -4,9 +4,9 @@ folder's identity (`FileIdInfo`, creation time, Python's `os.stat`), the paths `
 sensitivity, a folder's and a read-only file's `FlushFileBuffers`, the exclusive create and renames, `ReplaceFileW` and
 its error names, whether a concurrent reader ever finds the target missing during each replace primitive (a state a
 power loss could keep), renames and removals of open files and of folders holding open entries, renames and opens
-relative to a folder handle (`NtCreateFile`, `FileRenameInformation` with a root directory), hard links, NTFS
-tunnelling of creation times, file-ID reuse, reserved names and trailing dots, and `LockFileEx` against
-`msvcrt.locking`.
+relative to a folder handle (`NtCreateFile`, `FileRenameInformation` with a root directory), hard links, the
+mirror's pointer file (BL-0206: a generation held by SQLite, the pointer's swap under readers), NTFS tunnelling
+of creation times, file-ID reuse, reserved names and trailing dots, and `LockFileEx` against `msvcrt.locking`.
 
 Prints only; it writes only scratch entries inside a folder `.ft-probe-<pid>` it makes in each folder given and
 removes. The manual CI run runs it on the runner's folders and on scratch volumes (VHDs) it formats (`ci.yml`, the
@@ -698,6 +698,166 @@ def probe_links(d: str) -> dict[str, Any]:
     return out
 
 
+_sig(k32.SetFileTime, [wintypes.HANDLE, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p], wintypes.BOOL)
+_sig(k32.GetSystemTimeAsFileTime, [ctypes.c_void_p], None)
+_sig(k32.ReadFile, [wintypes.HANDLE, ctypes.c_void_p, wintypes.DWORD, ctypes.c_void_p, ctypes.c_void_p], wintypes.BOOL)
+
+
+def write_synced(path: str, data: bytes) -> None:
+    """A new file holding `data`, its data flushed (the port's `create`)."""
+    h = open_path(path, GENERIC_WRITE, FILE_SHARE_ALL, CREATE_NEW)
+    try:
+        n = wintypes.DWORD()
+        if not k32.WriteFile(h, data, len(data), ctypes.byref(n), None) or not k32.FlushFileBuffers(h):
+            raise OSError(ctypes.get_last_error(), err())
+    finally:
+        close(h)
+
+
+def set_mtime(path: str) -> str:
+    """The modification time set to now through a handle that shares everything (the adapter's `touch`)."""
+    try:
+        h = open_path(path, FILE_WRITE_ATTRIBUTES, FILE_SHARE_ALL, OPEN_EXISTING, FILE_FLAG_OPEN_REPARSE_POINT)
+    except OSError as e:
+        return f"open {e.args[1]}"
+    try:
+        now = ctypes.c_ulonglong()
+        k32.GetSystemTimeAsFileTime(ctypes.byref(now))
+        return bool_call(k32.SetFileTime(h, None, None, ctypes.byref(now)))
+    finally:
+        close(h)
+
+
+def probe_pointer(d: str) -> dict[str, Any]:
+    """BL-0206 (S0130): the primitives of the mirror's pointer file. P1: a generation held by a read-only `sqlite3`
+    connection (removal, rename, modification time; removal after it closes). P2-P4: the pointer swap (a synced
+    temporary pointer, then a rename with replace relative to the folder handle) at three spacings, while a reader
+    reads the pointer, sharing delete (P3: missing, empty or other content seen) or not (P4: the swaps it refuses)."""
+    import sqlite3
+
+    out: dict[str, Any] = {}
+    gen = os.path.join(d, "gen-1-0000000000000001.db")
+    con = sqlite3.connect(gen)
+    con.execute("create table t (x)")
+    con.execute("insert into t values (1)")
+    con.commit()
+    con.close()
+    reader = sqlite3.connect(f"file:{gen.replace(os.sep, '/')}?mode=ro", uri=True)
+    try:
+        out["p1_read_while_open"] = reader.execute("select x from t").fetchone()
+        out["p1_set_mtime_while_open"] = set_mtime(gen)
+        out["p1_delete_while_open"] = bool_call(k32.DeleteFileW(gen))
+        out["p1_name_after_delete_while_open"] = exists(gen)
+        out["p1_rename_while_open"] = bool_call(k32.MoveFileExW(gen, gen + ".aside", 0))
+        try:
+            root = open_dir(d, GENERIC_READ | FILE_LIST_DIRECTORY)
+            try:
+                h = nt_open(root, os.path.basename(gen), DELETE, FILE_OPEN, FILE_NON_DIRECTORY_FILE)
+                close(h)
+                out["p1_nt_open_for_delete_while_open"] = "ok"
+            finally:
+                close(root)
+        except OSError as e:
+            out["p1_nt_open_for_delete_while_open"] = e.args[1]
+    finally:
+        reader.close()
+    out["p1_delete_after_close"] = bool_call(k32.DeleteFileW(gen)) if exists(gen) else "already gone"
+
+    names = [f"gen-{i}-{i:016x}.db" for i in range(1, 4)]
+    ptr = os.path.join(d, "current.txt")
+    root = open_dir(d, GENERIC_READ | FILE_LIST_DIRECTORY)
+    try:
+
+        def swap(i: int, gap: float) -> str:
+            tmp = f"current.txt.{i:016x}.tmp"
+            write_synced(os.path.join(d, tmp), names[i % 3].encode("ascii"))
+            if gap:
+                threading.Event().wait(gap)
+            try:
+                h = nt_open(root, tmp, DELETE, FILE_OPEN, FILE_NON_DIRECTORY_FILE)
+            except OSError as e:
+                return f"open {e.args[1]}"
+            try:
+                r = nt_rename(h, root, "current.txt", 1, ex=False)
+            finally:
+                close(h)
+            if r != "ok":
+                with contextlib.suppress(OSError):
+                    os.remove(os.path.join(d, tmp))
+            return r
+
+        def read_shared() -> bytes | str:
+            try:
+                h = open_path(ptr, GENERIC_READ, FILE_SHARE_ALL)
+            except OSError as e:
+                return f"open {e.args[1]}"
+            try:
+                buf = ctypes.create_string_buffer(64)
+                n = wintypes.DWORD()
+                if not k32.ReadFile(h, buf, 64, ctypes.byref(n), None):
+                    return f"read {err()}"
+                return buf.raw[: n.value]
+            finally:
+                close(h)
+
+        def read_plain() -> bytes | str:
+            try:
+                with open(ptr, "rb") as f:  # Python's own open: no delete sharing
+                    return f.read(64)
+            except OSError as e:
+                return f"open {e}"
+
+        for reader_label, read in (("shared", read_shared), ("plain_open", read_plain)):
+            for gap, rounds in ((0.0, 300), (0.05, 100), (0.5, 20)):
+                write_synced(ptr + ".init", names[0].encode("ascii"))
+                with contextlib.suppress(OSError):
+                    os.remove(ptr)
+                k32.MoveFileExW(ptr + ".init", ptr, 0)
+                stop = threading.Event()
+                seen: dict[str, int] = {"reads": 0}
+
+                def look(read: Any = read, stop: threading.Event = stop, seen: dict[str, int] = seen) -> None:
+                    while not stop.is_set():
+                        r = read()
+                        seen["reads"] += 1
+                        key = (
+                            "ok"
+                            if r in {n.encode("ascii") for n in names}
+                            else ("empty" if r == b"" else (r if isinstance(r, str) else "other_content"))
+                        )
+                        if key != "ok":
+                            seen[key] = seen.get(key, 0) + 1
+
+                t = threading.Thread(target=look, daemon=True)
+                t.start()
+                failures: dict[str, int] = {}
+                try:
+                    for i in range(rounds):
+                        r = swap(i, gap)
+                        if r != "ok":
+                            failures[r] = failures.get(r, 0) + 1
+                finally:
+                    stop.set()
+                    t.join()
+                out[f"p{3 if reader_label == 'shared' else 4}_swaps_{reader_label}_gap_{int(gap * 1000)}ms"] = {
+                    "rounds": rounds,
+                    "swap_failures": failures,
+                    **seen,
+                }
+        # P2 alone: no reader, so a refusal is the system's (an antivirus scan), not ours
+        for gap, rounds in ((0.0, 300), (0.05, 100), (0.5, 20)):
+            failures = {}
+            for i in range(rounds):
+                r = swap(i, gap)
+                if r != "ok":
+                    failures[r] = failures.get(r, 0) + 1
+            out[f"p2_swaps_alone_gap_{int(gap * 1000)}ms"] = {"rounds": rounds, "swap_failures": failures}
+    finally:
+        close(root)
+    out["names_left"] = sorted(os.listdir(d))
+    return out
+
+
 def probe_locks(d: str) -> dict[str, Any]:
     out: dict[str, Any] = {}
     p = os.path.join(d, "lock")
@@ -746,6 +906,7 @@ def probe(folder: str) -> dict[str, Any]:
             ("names", probe_names),
             ("links", probe_links),
             ("locks", probe_locks),
+            ("pointer", probe_pointer),
         ):
             out[name] = attempt(functools.partial(fn, d))
             for n in os.listdir(d):
