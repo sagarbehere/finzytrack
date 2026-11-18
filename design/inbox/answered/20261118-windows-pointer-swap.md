@@ -49,3 +49,9 @@ A `current.txt` with the read-only attribute (set in Properties, or by a restore
 The mechanism's review history (the publish): S0085 (1 round), S0087 (2 rounds), S0088 (2 rounds, 1 High fixed: the stamp), S0118. The swap itself has had one fix (S0087 round 1, red team F6). The POSIX rename for the pointer is new in S0130, and its reviews are under way.
 
 ## Answer (owner, verbatim, with date)
+Owner, 2026-11-18, in session: "I agree with your recommendations on the 4 questions you raised. Proceed accordingly."
+- Question 1: option 1. On ReFS, FAT32 and exFAT the swap takes the plain rename, stated as a limit (publish.md §11), as built in S0130.
+- Question 2: option 1. Copy path on Windows gives the current generation's own file, and the user docs state the limit (BL-0293, M7).
+- Question 3: option 2. `rename_shared` is offered by what the volume offers: the flag `FILE_SUPPORTS_POSIX_UNLINK_RENAME`, and not a network share. Anything else takes the plain rename with its stated limit. The minimum Windows version goes in the release notes (BL-0294).
+- Question 4: option 2. The cleanup and the swap clear the read-only attribute on what they remove or replace in the mirror folder (BL-0294).
+Recorded in ADR-0015's amendment of 2026-11-18 (commit of this answer).

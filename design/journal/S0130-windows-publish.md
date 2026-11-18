@@ -105,3 +105,7 @@
 
 ## Retro
 - Build about 300 min (the brief and the probe, five design-and-test iterations on the Windows runner, runs 6 to 11, each about 40 min), fix about 25 min (round 1: one test, docs, backlog, two inbox questions), 1 verifier round with the data-safety red team; findings 0H/2M/8L and one note (M: two class e, both in rare setups, sent to the owner as policy options before any fix: BL-0294). Cheaper gate: the probe's first version measured the rename with no reader and with one reader, but not with the readers the product has. P3 found the plain rename refused under a delete-sharing reader only because the loop happened to include one; a probe brief that lists "every handle the product holds on the target" would have asked it on purpose, a run earlier. Process checks: invariants 0 catch / 0 false positive; capabilities 0/0; retired terms 0/0; deferrals 0/0; push gate 0 catch / 0 false positive (7 pushes, each about 9 min); gate timer 0/0; generated 0/0.
+
+## After landing
+- **The owner's answers** (2026-11-18, in session, on `design/inbox/answered/20261118-windows-pointer-swap.md`): "I agree with your recommendations on the 4 questions you raised. Proceed accordingly." Question 1, option 1 (as built); question 2, option 1 (BL-0293, M7); questions 3 and 4, option 2 each (BL-0294, before BL-0087). Recorded in ADR-0015's amendment of 2026-11-18. BL-0294's product fix is the next session's, with its own review round.
+- **Not yet answered:** the drain-lock diagnosis on BL-0291 (S0129's test; the owner was asked to agree before any edit).

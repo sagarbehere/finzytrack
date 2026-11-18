@@ -66,6 +66,14 @@ The publish's design was written as rules in `design/specs/mirror/publish.md` (S
 
 Where this record says Windows "moves to M11 (ADR-0061): BL-0206", read M1b: the engine's write path is ported to Windows in M1b so its real-disk write-contract tests run on the Windows runner (ADR-0061 amendment of 2026-11-14; owner: "(b) for windows"), and the save gates on the published mirror, so the publish's Windows design (the pointer file, the retried deletion) comes with it (agent: a dependency of that port, an earlier move).
 
+## Amendment (2026-11-18): the pointer file on Windows (S0130)
+
+Owner, 2026-11-18, in session, on `design/inbox/answered/20261118-windows-pointer-swap.md`: "I agree with your recommendations on the 4 questions you raised. Proceed accordingly."
+- **The pointer** (built in S0130, BL-0206; agent decisions within this record's "pointer file on Windows"): `mirror/current.txt`, whose whole content is the current generation's name. It is written as a new synced file and renamed over `current.txt` with POSIX semantics, so a reader that shares deletion never refuses it (probed: the plain rename is refused while any handle holds the target). Every reader of ours shares deletion. A removal refused because a generation is open is retried at the next cleanup (the amendment of 2026-10-25). The TLA+ model is unchanged (`formal/tla/mirror-publish/MAPPING.md` §6).
+- **Where the POSIX rename is offered** (question 3, option 2): by what the volume offers, i.e. the flag `FILE_SUPPORTS_POSIX_UNLINK_RENAME` and not a network share, never by the file system's name or an error. Elsewhere (question 1, option 1) the swap takes the plain rename, which a read in flight can refuse; that is a stated limit (publish.md §11), never a silent one. The minimum Windows version is stated in the release notes. To build: BL-0294.
+- **Read-only entries** (question 4, option 2): "the whole folder is ours" (2026-11-07) includes clearing the read-only attribute on what the cleanup removes and what the swap replaces in the mirror folder, so a read-only `current.txt` or generation neither blocks the publish nor stays on disk forever. To build: BL-0294.
+- **Outside tools on Windows** (question 2, option 1): there is no stable path SQLite can open there. Copy path gives the current generation's own file, which Windows keeps while a tool holds it and the cleanup removes after the grace period; the user docs state it (CAP-MIRROR-EXTERNAL, M7: BL-0293). This narrows this record's "Outside tools may open the current generation read-only" on Windows to that generation's own path.
+
 ## References
 
 review:D1 §11; review:10 I4, D4, D5; review:23 §1.2, §3.4; review:00 §1b; ADR-0011, ADR-0016, ADR-0017; INV-05; CAP-DATA-MIRROR, CAP-MIRROR-EXTERNAL.
