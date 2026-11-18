@@ -6,6 +6,7 @@ boundary where the two differ, so a UTC "today" cannot pass.
 
 from __future__ import annotations
 
+import contextlib
 import os
 import subprocess
 import sys
@@ -22,7 +23,6 @@ from app.platform.clock import FrozenClock
 from app.platform.engine_jobs import opening, rebuild
 from app.platform.engine_jobs.opening import OpenTarget
 from app.platform.engine_jobs.rebuild import RebuildTarget
-from tests.windows_pending import TZSET
 
 pytestmark = pytest.mark.inv("INV-07")
 BACKEND = Path(__file__).resolve().parents[2]
@@ -59,27 +59,25 @@ def test_a_naive_instant_is_refused() -> None:
 
 # ADR-0023 Consequences: one run east of UTC (S0092 verifier V5). The whole suite runs in Los Angeles; here every
 # sidecar "today" is also taken in Kolkata, after local midnight, where the civil date is already UTC's next day.
-@pytest.fixture
+@contextlib.contextmanager
 def kolkata(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
-    if sys.platform == "win32":  # the same checks run in a process started east of UTC (below)
-        pytest.skip(TZSET)
     monkeypatch.setenv("TZ", "Asia/Kolkata")
     time.tzset()
-    yield
-    monkeypatch.undo()
-    time.tzset()
+    try:
+        yield
+    finally:
+        monkeypatch.undo()
+        time.tzset()
 
 
-@pytest.mark.usefixtures("kolkata")
-def test_east_of_utc_every_sidecar_today_is_the_local_date() -> None:
-    east_of_utc_checks()
-
-
-def test_east_of_utc_every_sidecar_today_is_the_local_date_in_a_process_started_there() -> None:
-    """The same checks in a child whose zone is set before it starts (S0131): on Windows the only way, since its C
-    runtime reads `TZ` only then (`TZSET`); elsewhere a second form of the case above. `IST-5:30` is UTC+5:30 in both
-    the POSIX and the Windows C runtime's spelling; the child first checks its zone is that, so a `TZ` it ignored
-    fails instead of passing west of UTC."""
+def test_east_of_utc_every_sidecar_today_is_the_local_date(monkeypatch: pytest.MonkeyPatch) -> None:
+    """In this process where the OS can move its zone (macOS, Linux), and on every OS in a child whose zone is set
+    before it starts (S0131): Windows' C runtime reads `TZ` only then (`TZSET`), so there the child is the only form.
+    `IST-5:30` is UTC+5:30 in both the POSIX and the Windows C runtime's spelling; the child first checks its zone is
+    that, so a `TZ` it ignored fails instead of passing west of UTC."""
+    if sys.platform != "win32":
+        with kolkata(monkeypatch):
+            east_of_utc_checks()
     code = (
         "import time; assert time.timezone == -19800, time.timezone; "
         "from tests.domain.test_dates import east_of_utc_checks; east_of_utc_checks()"
