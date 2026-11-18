@@ -863,13 +863,21 @@ def test_the_tip_names_each_large_file_and_says_to_split_it_with_include() -> No
         ("darwin", "/c", "/main.bean", False),
         ("win32", "C:\\c", "C:\\c\\main.bean", True),
         ("win32", "C:\\c", "C:\\c", True),
-        ("win32", "C:\\", "C:\\main.bean", True),  # a copy at a drive's root
+        ("win32", "C:\\", "C:\\main.bean", False),  # a root is never a copy's folder (round 2; the engine refuses one)
         ("win32", "\\\\nas\\s\\c", "\\\\nas\\s\\c\\y2026\\main.bean", True),
         ("win32", "C:\\c", "C:\\cx\\main.bean", False),
         ("win32", "C:\\c", "C:\\C\\main.bean", False),  # another spelling of the folder: refused (fail closed)
         ("win32", "C:\\c", "D:\\c\\main.bean", False),
-        ("win32", "C:\\c", "C:/c/main.bean", False),  # not as `realpath` spells it
-        ("win32", "\\\\?\\C:\\c", "C:\\c\\main.bean", False),
+        ("win32", "C:\\c", "C:/c/main.bean", True),  # `/` separates names on Windows, as the engine splits (round 2)
+        ("win32", "\\\\?\\C:\\c", "C:\\c\\main.bean", True),  # the long-path prefix is a spelling (round 2; V2)
+        ("win32", "C:\\c", "c:\\c\\main.bean", True),  # the root without case, as the engine compares it
+        # S0131 round 2 (fresh verifier R2-1, class a): incomplete roots and device paths are never a copy's folder
+        ("win32", "\\\\?\\C:", "\\\\?\\C:\\real\\main.bean", False),
+        ("win32", "\\\\?\\", "\\\\?\\C:\\real\\main.bean", False),
+        ("win32", "\\\\?\\UNC", "\\\\?\\UNC\\nas\\s\\x.bean", False),
+        ("win32", "\\\\nas", "\\\\nas\\s\\x.bean", False),
+        ("win32", "\\\\nas\\s", "\\\\nas\\s\\x.bean", False),  # a share is a root
+        ("win32", "\\\\.\\C:\\c", "\\\\.\\C:\\c\\x.bean", False),
         ("win32", "C:\\c", "C:\\main.bean", False),
         # S0131 round 1 (verifier V1, class a): a recorded folder that is not an absolute path is never a copy's
         ("win32", "", "\\\\nas\\s\\x.bean", False),

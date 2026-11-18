@@ -167,6 +167,9 @@ REVIEWED: dict[Site, str] = {
     Site("ledger_engine.fs.pathmodel", "<module>", "account-grammar", "a regex on account names"): (
         "`_DRIVE` is a Windows drive letter and its colon (`C:`; S0127), not an account name"
     ),
+    Site("app.platform.windows_paths", "<module>", "account-grammar", "a regex on account names"): (
+        "`_DRIVE` is a Windows drive letter and its colon (`C:`), the sidecar's twin of the engine's (S0131)"
+    ),
     Site("app.platform.engine_protocol", "<module>", "account-grammar", "a regex on account names"): (
         "`_WINDOWS_ABSOLUTE` is a Windows absolute path (`C:\\`, `\\\\server`; S0127), not an account name"
     ),

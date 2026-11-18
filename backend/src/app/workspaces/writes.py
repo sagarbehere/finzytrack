@@ -71,6 +71,7 @@ from typing import Final
 
 from app.domain.errors import DomainError
 from app.mirror.files import generation_number, pin
+from app.platform import windows_paths
 from app.platform.clock import Clock
 from app.platform.engine import PreviewError
 from app.platform.engine_jobs.preview import NotPrepared, Prepared, PreviewOrder, PreviewTarget
@@ -78,7 +79,6 @@ from app.platform.engine_jobs.preview import submit_preview as submit_preview_jo
 from app.platform.engine_jobs.rebuild import rebuild_submitter
 from app.platform.engine_jobs.save import ChangeText, NotDone, SaveConfine, SaveRequest, save_spec, save_work
 from app.platform.engine_jobs.scheduler import EngineJobs, Failed, JobContext, JobTicket, Work, WorkResult
-from app.platform.engine_protocol import is_absolute
 from app.platform.errors import (
     AckRequiredDetails,
     ContractStepDetails,
@@ -89,6 +89,7 @@ from app.platform.errors import (
 )
 from app.platform.ids import Ids
 from app.platform.plans import PlanId, PlannedFile, PlanStore, PreviewHash, WritePlan, is_large, new_plan
+from app.platform.windows_paths import ordinal_upper
 
 PROMOTED: Final[frozenset[str]] = frozenset()
 """The mutators promoted for real ledgers (ADR-0014), by intent-table id: none yet."""
@@ -210,17 +211,22 @@ def _where_written(path: str) -> str:
 
 
 def is_inside(folder: str, path: str, platform: str = sys.platform) -> bool:
-    """Whether `path` is `folder` or lies below it, compared as the OS `platform` names spells paths, component by
-    component and exactly. Both come from `realpath` or the copy's record of one, so another spelling (case, the other
-    separator, a long-path prefix) is outside: the guard refuses, never folds (INV-22). Before S0131 the POSIX rule
-    ran on Windows too, where no file was ever inside (BL-0295). A folder or path that is not an absolute path of that
-    OS is never inside: on Windows `""`, `\\` or a bare drive would otherwise hold a whole share or drive (S0131
-    round 1, verifier V1)."""
-    if not (is_absolute(folder, platform) and is_absolute(path, platform)):
-        return False
+    """Whether `path` is `folder` or lies below it (rule 6's look, INV-22: the guard refuses, never folds).
+
+    On Windows by the engine's own rule (`app.platform.windows_paths`, its twin of `ledger_engine.fs.pathmodel`;
+    S0131 round 2, the owner, 2026-11-18: "Full rule now"): both split into a root and names, the root compared
+    without case and every name exactly, the long-path prefix a spelling of the same place. A path that is not an
+    absolute Windows path, an incomplete root (`\\\\?\\C:` is a root; `\\\\nas` has no share) or a device path is never
+    inside, and neither is anything under a folder that is a root itself (a copy's folder is never a drive or a share;
+    the engine refuses one). On macOS and Linux: an absolute path, compared component by component as before. Before
+    S0131 the POSIX rule ran on Windows too, where no file was ever inside (BL-0295)."""
     if platform == "win32":
-        below = folder if folder.endswith("\\") else folder + "\\"
-        return path == folder or path.startswith(below)
+        f, p = windows_paths.split(folder), windows_paths.split(path)
+        if f is None or p is None or len(f) < 2:
+            return False
+        return ordinal_upper(f[0]) == ordinal_upper(p[0]) and p[1 : len(f)] == f[1:]
+    if not (folder.startswith("/") and path.startswith("/")):
+        return False
     return posixpath.commonpath([folder, path]) == folder
 
 
