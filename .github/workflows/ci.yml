@@ -262,12 +262,13 @@ jobs:
           "FT_TEST_VOLUMES=" + ($vols -join ";") | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
       - name: tests
         # INV-07 on Windows (S0127): `TZ` in the C runtime's form, set before Python starts (tests/conftest.py checks
-        # Los Angeles). `-rs`: each skip prints its reason; `--durations`: the slowest tests, since Windows' waits differ
-        # (S0131: one run took 59 of the job's 60 minutes).
+        # Los Angeles). `-rs`: each skip prints its reason; `-v`: a line per test, so the log's timestamps show a slow
+        # one even in a job cut at its limit, and `--durations` lists the slowest (S0131: one run took 59 of the job's
+        # 60 minutes).
         env:
           TZ: PST8PDT
         run: >-
-          .venv\Scripts\python.exe -m pytest -q -rs --durations=25 -p no:cacheprovider tests
+          .venv\Scripts\python.exe -m pytest -v -rs --durations=25 -p no:cacheprovider tests
   frontend:
     # The Vue frontend (S0009; ARCHITECTURE.md §3, §10; ADR-0053): types, lint, format, unit tests (incl. the
     # pinned tsconfig and the lint bans), unused code, and the Playwright flows through the acceptance harness (S0030).
