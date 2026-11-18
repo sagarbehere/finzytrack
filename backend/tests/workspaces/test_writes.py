@@ -871,6 +871,13 @@ def test_the_tip_names_each_large_file_and_says_to_split_it_with_include() -> No
         ("win32", "C:\\c", "C:/c/main.bean", False),  # not as `realpath` spells it
         ("win32", "\\\\?\\C:\\c", "C:\\c\\main.bean", False),
         ("win32", "C:\\c", "C:\\main.bean", False),
+        # S0131 round 1 (verifier V1, class a): a recorded folder that is not an absolute path is never a copy's
+        ("win32", "", "\\\\nas\\s\\x.bean", False),
+        ("win32", "\\", "\\\\nas\\s\\x.bean", False),
+        ("win32", "C:", "C:\\real\\main.bean", False),
+        ("win32", "c", "c\\main.bean", False),
+        ("darwin", "", "/real/main.bean", False),
+        ("darwin", "c", "c/main.bean", False),
     ],
 )
 def test_inside_the_copy_is_judged_exactly_as_the_os_spells_paths(

@@ -78,6 +78,7 @@ from app.platform.engine_jobs.preview import submit_preview as submit_preview_jo
 from app.platform.engine_jobs.rebuild import rebuild_submitter
 from app.platform.engine_jobs.save import ChangeText, NotDone, SaveConfine, SaveRequest, save_spec, save_work
 from app.platform.engine_jobs.scheduler import EngineJobs, Failed, JobContext, JobTicket, Work, WorkResult
+from app.platform.engine_protocol import is_absolute
 from app.platform.errors import (
     AckRequiredDetails,
     ContractStepDetails,
@@ -212,7 +213,11 @@ def is_inside(folder: str, path: str, platform: str = sys.platform) -> bool:
     """Whether `path` is `folder` or lies below it, compared as the OS `platform` names spells paths, component by
     component and exactly. Both come from `realpath` or the copy's record of one, so another spelling (case, the other
     separator, a long-path prefix) is outside: the guard refuses, never folds (INV-22). Before S0131 the POSIX rule
-    ran on Windows too, where no file was ever inside (BL-0295)."""
+    ran on Windows too, where no file was ever inside (BL-0295). A folder or path that is not an absolute path of that
+    OS is never inside: on Windows `""`, `\\` or a bare drive would otherwise hold a whole share or drive (S0131
+    round 1, verifier V1)."""
+    if not (is_absolute(folder, platform) and is_absolute(path, platform)):
+        return False
     if platform == "win32":
         below = folder if folder.endswith("\\") else folder + "\\"
         return path == folder or path.startswith(below)

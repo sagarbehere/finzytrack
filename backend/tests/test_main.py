@@ -207,7 +207,6 @@ def test_the_process_prints_the_handshake_and_serves_health(dirs: tuple[Path, Pa
         proc.wait(timeout=10)
 
 
-@pytest.mark.skipif(os.name != "posix", reason=NO_SIGTERM)
 def test_an_unknown_route_is_route_not_found_in_the_envelope_from_the_real_server(dirs: tuple[Path, Path]) -> None:
     sidecar = Sidecar(dirs)
     try:
@@ -221,7 +220,7 @@ def test_an_unknown_route_is_route_not_found_in_the_envelope_from_the_real_serve
         assert status == 404
         assert cast("dict[str, object]", answer["error"])["code"] == "ROUTE_NOT_FOUND"
     finally:
-        assert sidecar.stop() == 0
+        assert sidecar.stop() == 0 or not GRACEFUL_STOP
 
 
 # -- The engine at boot (S0038; BL-0083; ADR-0054 decision 4) ---------------------------------------------------
@@ -371,6 +370,11 @@ def test_the_boots_recover_all_lists_the_journals_in_its_engine(dirs: tuple[Path
     finally:
         wiring.jobs.close()
         wiring.engine.close()
+
+
+GRACEFUL_STOP = os.name == "posix"
+"""Whether `Sidecar.stop` stops gracefully (exit 0, `engine.closed` logged): on Windows `terminate()` ends the sidecar
+at once, with code 1 (no SIGTERM; its stop there is BL-0296), so a test asserts those only here and keeps the rest."""
 
 
 class Sidecar:
@@ -542,7 +546,6 @@ def test_a_sidecar_ended_hard_leaves_no_engine_behind(dirs: tuple[Path, Path]) -
     assert "engine.closed" not in [e.get("event") for e in sidecar.events()]
 
 
-@pytest.mark.skipif(os.name != "posix", reason=NO_SIGTERM)
 def test_a_missing_engine_is_a_reported_state_and_the_sidecar_keeps_answering(
     tmp_path: Path, dirs: tuple[Path, Path]
 ) -> None:
@@ -557,7 +560,7 @@ def test_a_missing_engine_is_a_reported_state_and_the_sidecar_keeps_answering(
         assert sidecar.proc.poll() is None, "the sidecar crashed with its engine"
         assert health_status(port) == 200
     finally:
-        assert sidecar.stop() == 0
+        assert sidecar.stop() == 0 or not GRACEFUL_STOP
 
 
 @pytest.mark.skipif(os.name != "posix", reason=SHELL_STAND_IN)
@@ -601,7 +604,6 @@ def test_a_bad_session_id_is_refused(dirs: tuple[Path, Path], bad: str) -> None:
     assert exc.value.code == 2
 
 
-@pytest.mark.skipif(os.name != "posix", reason=NO_SIGTERM)
 def test_the_sidecars_events_go_to_the_log_file_with_its_session_and_never_to_stderr(
     tmp_path: Path, dirs: tuple[Path, Path]
 ) -> None:
@@ -615,13 +617,13 @@ def test_the_sidecars_events_go_to_the_log_file_with_its_session_and_never_to_st
         assert str(failed["detail"]).startswith("<text len=")  # free text, shown only in debug mode
         assert str(empty) not in sidecar.log_path.read_text(encoding="utf-8")
     finally:
-        assert sidecar.stop() == 0
-    closed = sidecar.event("engine.closed")
-    assert closed["session_id"] == "0f3c2a1b-from-shell"
+        assert sidecar.stop() == 0 or not GRACEFUL_STOP
+    if GRACEFUL_STOP:
+        closed = sidecar.event("engine.closed")
+        assert closed["session_id"] == "0f3c2a1b-from-shell"
     assert '"event"' not in sidecar.stderr_after_exit(), "an event reached stderr"
 
 
-@pytest.mark.skipif(os.name != "posix", reason=NO_SIGTERM)
 def test_a_generated_session_id_is_the_same_on_every_line_of_a_launch(tmp_path: Path, dirs: tuple[Path, Path]) -> None:
     empty = tmp_path / "no-engine"
     empty.mkdir()
@@ -631,7 +633,8 @@ def test_a_generated_session_id_is_the_same_on_every_line_of_a_launch(tmp_path: 
         sidecar.event("engine.start_failed")
     finally:
         sidecar.stop()
-    sidecar.event("engine.closed")
+    if GRACEFUL_STOP:
+        sidecar.event("engine.closed")
     ids = {e["session_id"] for e in sidecar.events()}
     assert len(ids) == 1
     (only,) = ids
