@@ -54,6 +54,7 @@ class Reaped:
 
     returncode: int
     max_rss_kib: int
+    cpu_ns: int | None = None
 
 
 class GroupOps(Protocol):

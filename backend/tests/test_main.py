@@ -322,6 +322,25 @@ def test_the_boots_recover_all_starts_the_first_engine_through_the_scheduler(dir
         wiring.engine.close()
 
 
+@pytest.mark.skipif(sys.platform != "win32", reason="the boot on Windows before its write path (BL-0087)")
+def test_on_windows_the_boots_recover_all_runs_in_an_engine_and_answers_the_platform_unsupported(
+    dirs: tuple[Path, Path],
+) -> None:
+    """S0129 (BL-0281; BL-0261): on Windows the sidecar waits for the engine lock and starts the boot's engine in its
+    job; the engine refuses every file operation there until BL-0087, so recover-all ends unlisted with
+    `engine.unsupported_platform` (the boot's screen names the platform), never "the app folder is missing"."""
+    wiring = _wire(main.parse_args(argv(*dirs, "--engine-venv", str(ENGINE_VENV))), no_log, VERSION)
+    try:
+        boot = wiring.jobs.start()
+        assert isinstance(boot, JobTicket)
+        assert boot.wait(DEADLINE) == Done(Report(listed=False, why_not_listed="engine.unsupported_platform"))
+        assert wiring.engine.pid is not None
+        assert (dirs[0] / "locks" / "engine.lock").exists(), "the engine did not take the engine lock"
+    finally:
+        wiring.jobs.close()
+        wiring.engine.close()
+
+
 @pytest.mark.skipif(
     sys.platform not in ("darwin", "linux"), reason="the write path's port: macOS and Linux; Windows is BL-0087"
 )

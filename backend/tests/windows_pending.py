@@ -12,3 +12,4 @@ from typing import Final
 
 BL_0281: Final = "BL-0281: the sidecar's engine supervision on Windows (process groups, the Job Object, the locks)"
 TZSET: Final = "Windows has no `time.tzset`: its C runtime reads `TZ` only as a process starts"
+WINDOWS_ONLY: Final = "the sidecar on Windows (S0129): these tests run on the Windows runner"

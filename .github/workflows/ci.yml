@@ -216,6 +216,37 @@ jobs:
         env:
           TZ: PST8PDT
         run: .venv\Scripts\python.exe -m pytest -q -rs -p no:cacheprovider
+  backend-windows:
+    # The main sidecar on Windows (S0129, BL-0281; ADR-0061 and its 2026-11-14 amendment): the engine's Job Object, the
+    # app folder's identity and the engine lock run on the runner (`tests/platform/test_engine_windows.py`); tests that
+    # need the engine to write skip, naming the row that turns them on (`tests/windows_pending.py`). Lint and types run
+    # in the `backend` job (pyright for all three platforms).
+    runs-on: windows-2022
+    timeout-minutes: 60
+    defaults:
+      run:
+        working-directory: backend
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Install uv
+        run: python -m pip install uv==0.13.0
+      - name: Environment from the lockfile (Python from .python-version)
+        run: uv sync --locked
+      - name: Engine environment (the engine client tests spawn the real engine)
+        run: uv sync --locked --directory ../engine
+      - name: tests
+        # INV-07 on Windows (S0127): `TZ` in the C runtime's form, set before Python starts (tests/conftest.py checks
+        # Los Angeles). `-rs`: each skip prints its reason.
+        env:
+          TZ: PST8PDT
+        run: .venv\Scripts\python.exe -m pytest -q -rs -p no:cacheprovider
   frontend:
     # The Vue frontend (S0009; ARCHITECTURE.md §3, §10; ADR-0053): types, lint, format, unit tests (incl. the
     # pinned tsconfig and the lint bans), unused code, and the Playwright flows through the acceptance harness (S0030).
