@@ -12,7 +12,9 @@ signal after the reap) runs unchanged on Windows.
   inheritable; the engine gets none). When the sidecar ends, however it ends, Windows closes that handle and ends every
   member: the engine's end "when the sidecar is gone" (§5.2) on Windows, the engine's own end-of-input exit aside.
 - **No breakaway.** The job sets neither `BREAKAWAY_OK` nor `SILENT_BREAKAWAY_OK`, so a member that asks to leave
-  (`CREATE_BREAKAWAY_FROM_JOB`) is refused by Windows: no process the engine starts leaves the drain's reach that way.
+  (`CREATE_BREAKAWAY_FROM_JOB`) is refused, or, where a job above allows breakaway, leaves only that one and stays in
+  the engine's (observed on the runner, whose job allows it: the 2026-11-18 runs 3 and 4): no process the engine starts
+  leaves the drain's reach that way.
   A process another program starts on a member's behalf (a service, the task scheduler, a COM server, the shell's
   `ShellExecute`) is not in the job and is out of reach, as a `setsid` child is on POSIX (§15).
 - **Our signal** (`kill_group`): first no new member (`JOB_OBJECT_LIMIT_ACTIVE_PROCESS` of 1: a process started by a
