@@ -4,8 +4,8 @@ only these primitives differ (owner, 2026-11-16: "Rule unchanged (Recommended)")
 Windows runner (Windows Server 2022) are marked "probed".
 
 **Not selected by the product yet.** `ledger_engine.fs.this_os` gives this adapter only inside a test's
-`ledger_engine.fs.under_test.windows_port_under_test()` (BL-0087 turns writes on, after BL-0206's pointer file); the
-product on Windows refuses every file operation (`UnsupportedPlatform`). The engine lock (`take_engine_lock`) is the
+`ledger_engine.fs.under_test.windows_port_under_test()` (BL-0087 turns writes on; the mirror's pointer file is S0130's);
+the product on Windows refuses every file operation (`UnsupportedPlatform`). The engine lock (`take_engine_lock`) is the
 one exception: it is a guard that writes only `locks/engine.lock` in the app folder (the sidecar starts engines on
 Windows since S0129, each in its own Job Object).
 
@@ -84,8 +84,11 @@ Windows since S0129, each in its own Job Object).
   setting, as the mode bits are on macOS); not its owner or SACL, which need a privilege. `allowed(name,
   READ_XATTRS)` asks for what that copy reads.
 - **Links:** hard links on NTFS and ReFS only (probed); a file with several is refused as on macOS (`nlink`).
-  `symlink` refuses (`ENOTSUP`): the mirror's `current.db` link is ADR-0015's pointer file on Windows (BL-0206), and
-  `readlink` reads no link target (a link: `ENOTSUP`).
+  `symlink` refuses (`ENOTSUP`): the mirror's `current.db` link is ADR-0015's pointer file `current.txt` on Windows
+  (`caps().links` False; S0130, BL-0206), and `readlink` reads no link target (a link: `ENOTSUP`).
+- **The rename over a file readers hold** (`rename_shared`, S0130): the rename with POSIX semantics, which NTFS offers
+  and the mirror's pointer swap takes; a reader that shares deletion does not refuse it, where it refuses the plain
+  `rename` (probed, S0130's P3 and P5). ReFS, FAT32 and exFAT do not offer it: `NotOffered`, by the volume's kind.
 - **Locks:** `WindowsLegacyLocks` takes the legacy app's lock as portalocker 3.2.0 does on Windows (its default
   `MsvcrtLocker`: `msvcrt.locking` of the first 64 KiB, `LockFile` underneath, which `LockFileEx` sees; INV-26);
   `take_engine_lock` takes the engine lock with `LockFileEx` over the whole file, waiting (engine-jobs §5.1; the
@@ -981,7 +984,7 @@ class WindowsDir:
     def symlink(self, target: str, name: str) -> None:
         check_name(target)
         check_name(name)
-        raise OSError(errno.ENOTSUP, "no links are made on Windows (the mirror's pointer file: BL-0206)")
+        raise OSError(errno.ENOTSUP, "no links are made on Windows (the mirror's pointer file: S0130)")
 
     def readlink(self, name: str) -> str | None:
         st = self.stat(name)
@@ -989,7 +992,7 @@ class WindowsDir:
             return None
         if st.kind is not Kind.LINK:
             raise OSError(errno.EINVAL, "not a link")
-        raise OSError(errno.ENOTSUP, "link targets are not read on Windows (BL-0206)")
+        raise OSError(errno.ENOTSUP, "link targets are not read on Windows (the mirror's pointer file: S0130)")
 
     def touch(self, name: str) -> None:
         now = ctypes.c_ulonglong()

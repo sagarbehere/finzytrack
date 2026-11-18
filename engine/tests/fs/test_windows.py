@@ -98,7 +98,7 @@ print(json.dumps({"ok": [r["ok"] for r in replies], "port": port, "locks": locks
 
 
 def test_the_product_on_windows_still_refuses_file_operations_and_never_loads_the_adapter() -> None:
-    """Must not pass if the product selects the Windows adapter (BL-0087 turns writes on, after BL-0206): a fresh
+    """Must not pass if the product selects the Windows adapter (BL-0087 turns writes on): a fresh
     engine process answers its handshake and ping, refuses the port and the legacy locks, says the platform is not
     supported, and has not imported `ledger_engine.fs.windows`."""
     run = subprocess.run(  # noqa: S603 (our own interpreter and code)
@@ -219,7 +219,7 @@ def test_entry_operations_relative_to_the_folder_handle(fs: FileSystem, tmp_path
         assert (tmp_path / "sub").is_dir()
         with pytest.raises(OSError, match=r".") as symlink:
             d.symlink("f", "lnk")
-        assert symlink.value.errno == errno.ENOTSUP, "the mirror's pointer file is BL-0206's"
+        assert symlink.value.errno == errno.ENOTSUP, "the mirror's pointer file (S0130) makes no link"
         assert d.readlink("none") is None
         with pytest.raises(OSError, match=r"."):
             d.readlink("f")

@@ -74,8 +74,9 @@ def _posix_model_for_the_fake(request: pytest.FixtureRequest) -> Iterator[None]:
     """On Windows a test over the in-memory fake (`tests/fakes/memfs.py`, a POSIX file system) runs with the POSIX path
     model, as on macOS and Linux (S0127): its paths are `/...`, which Windows' model refuses. The Windows model's own
     tests simulate it on every OS (`tests/fs/test_pathmodel.py`, `tests/ledger/test_journal_windows.py`); every other
-    test on Windows runs with Windows' model."""
-    if sys.platform == "win32" and _uses_the_fake(request.path):
+    test on Windows runs with Windows' model, and so does every test that asks for `windows_port` (a real-disk test
+    on the adapter, even in a module that also names the fake: S0130, the 2026-11-18 run 8, `test_save.py`)."""
+    if sys.platform == "win32" and _uses_the_fake(request.path) and "windows_port" not in request.fixturenames:
         with pathmodel.simulating(pathmodel.POSIX):
             yield
     else:
@@ -93,6 +94,16 @@ def pytest_make_collect_report(
         with pathmodel.simulating(pathmodel.POSIX):
             return (yield)
     return (yield)
+
+
+@pytest.fixture(autouse=True)
+def _windows_port_first(request: pytest.FixtureRequest) -> None:
+    """A test that asks for `windows_port` (`pytestmark = pytest.mark.usefixtures("windows_port")`) gets it before any
+    other fixture of its own: autouse fixtures are set up first, so a fixture that touches the disk (a ledger, a
+    published mirror) already runs on the Windows adapter and its path model (S0130, the 2026-11-18 run 7: `led`
+    published before the switch and met the POSIX model)."""
+    if "windows_port" in request.fixturenames:
+        request.getfixturevalue("windows_port")
 
 
 @pytest.fixture

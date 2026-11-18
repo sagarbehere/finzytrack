@@ -4,17 +4,16 @@ from an adapter module, so an adapter states its own platform once and is never 
 (`tests/architecture/test_platform_selection.py`).
 
 macOS gets `ledger_engine.fs.darwin`, Linux `ledger_engine.fs.linux` (S0125, BL-0266). Windows has its adapter,
-`ledger_engine.fs.windows` (S0128, BL-0280), but **the product does not select it yet**: until BL-0206's pointer file
-lands and BL-0087 turns writes on, `for_this_os` and `legacy_locks_for_this_os` refuse there as on any other operating
-system without a port. Only a test reaches the Windows adapter through this selector, inside
+`ledger_engine.fs.windows` (S0128, BL-0280; the mirror's pointer file since S0130, BL-0206), but **the product does not
+select it yet**: until BL-0087 turns writes on, `for_this_os` and `legacy_locks_for_this_os` refuse there as on any
+other operating system without a port. Only a test reaches the Windows adapter through this selector, inside
 `ledger_engine.fs.under_test.windows_port_under_test()` (a context variable, off by default, in a module no product
 module may reach: `tests/architecture/test_platform_selection.py`), so the engine's real-disk tests run the product's
 own code paths on the Windows runner. The engine lock is the one Windows file operation the product takes
 (`engine_lock_folder`, `take_engine_lock`, called only by `protocol/server.py`): a guard, written only in the app
-folder's `locks/`. Elsewhere `UnsupportedPlatform` is raised when
-a job asks for the port: the engine still starts and answers its handshake and ping there; an op that needs the port is
-refused `engine.unsupported_platform`, naming the platform (BL-0261).
-"""
+folder's `locks/`. Elsewhere `UnsupportedPlatform` is raised when a job asks for the port: the engine still starts and
+answers its handshake and ping there; an op that needs the port is refused `engine.unsupported_platform`, naming the
+platform (BL-0261)."""
 
 from __future__ import annotations
 

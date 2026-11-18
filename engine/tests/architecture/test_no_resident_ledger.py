@@ -35,7 +35,7 @@ from tests.test_save_ops import Channel, engine, request, save_setup
 
 pytestmark = [pytest.mark.inv("INV-10"), pytest.mark.usefixtures("windows_port")]
 # The jobs need the real file-system port: macOS and Linux (S0125); on Windows the adapter under test (S0128 round 1,
-# verifier F3), where the open's publish needs BL-0206's pointer file, so these stay red there until it lands. The
+# verifier F3), whose open publishes through the pointer file since S0130 (BL-0206). The
 # tests make their ledger in the body (`save_setup`), not in a fixture (S0113 round 2).
 
 DIRECTIVES = tuple(data.ALL_DIRECTIVES)

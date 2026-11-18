@@ -8,7 +8,6 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
-import sys
 from pathlib import Path
 from typing import Any
 
@@ -19,7 +18,7 @@ from tests.test_save_ops import Channel, engine, request
 from tests.test_save_ops import setup as setup  # the fixture, shared
 
 pytestmark = [
-    pytest.mark.skipif(sys.platform not in ("darwin", "linux"), reason="the publish on Windows is BL-0206"),
+    pytest.mark.usefixtures("windows_port"),  # Windows: the adapter (S0130, BL-0206 done)
     pytest.mark.inv("INV-22"),
 ]
 

@@ -15,7 +15,6 @@ act and assert are as written: ledger A and ledger B published alternately while
 from __future__ import annotations
 
 import sqlite3
-import sys
 import threading
 from collections.abc import Iterator
 from pathlib import Path
@@ -29,9 +28,7 @@ from tests.mirror.publish_support import BUILT_AT, ENGINE_BUILD, KEY, TODAY, fs_
 
 pytestmark = [
     pytest.mark.inv("INV-05"),
-    pytest.mark.skipif(
-        sys.platform not in ("darwin", "linux"), reason="the publish on Windows is BL-0206 (its pointer file)"
-    ),
+    pytest.mark.usefixtures("windows_port"),  # Windows: the adapter (S0130, BL-0206 done)
 ]
 
 # Two hand-written ledgers: A has 2 transactions (4 postings), B has 3 (6 postings).

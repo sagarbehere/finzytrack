@@ -10,7 +10,6 @@ import hashlib
 import json
 import os
 import shutil
-import sys
 from pathlib import Path
 from typing import Any
 
@@ -28,7 +27,7 @@ from tests.fs.real_volume import app_identity
 from tests.mirror.publish_support import publish_job
 
 pytestmark = [
-    pytest.mark.skipif(sys.platform not in ("darwin", "linux"), reason="the publish on Windows is BL-0206"),
+    pytest.mark.usefixtures("windows_port"),  # Windows: the adapter (S0130, BL-0206 done)
     pytest.mark.inv("INV-22"),
 ]
 

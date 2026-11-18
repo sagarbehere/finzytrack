@@ -81,7 +81,7 @@ CASES: dict[str, Callable[[Path], None]] = {
 }
 
 
-PORTED_ONLY = {"measure_save.py": "the save gates on the published mirror: Windows is BL-0206"}
+PORTED_ONLY = {"measure_save.py": "the save as the product runs it: Windows writes are off until BL-0087"}
 
 
 def test_every_measurement_script_has_a_case() -> None:
