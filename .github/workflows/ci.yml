@@ -207,8 +207,18 @@ jobs:
             if (Test-Path ($v.letter + ":\")) { $vols += ($v.letter + ":\") } else { Write-Output ("no " + $v.fs + " volume") }
           }
           "FT_TEST_VOLUMES=" + ($vols -join ";") | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          # A network share on this machine (S0132, BL-0294): an SMB volume that may report NTFS without offering the
+          # rename with POSIX semantics; its tests take `FT_TEST_SHARE`.
+          $shares = @()
+          try {
+            $dir = Join-Path $env:RUNNER_TEMP "ftshare"
+            New-Item -ItemType Directory -Force $dir | Out-Null
+            New-SmbShare -Name ftshare -Path $dir -FullAccess Everyone -ErrorAction Stop | Out-Null
+            if (Test-Path "\\localhost\ftshare") { $shares += "\\localhost\ftshare" }
+          } catch { Write-Output ("no share: " + $_) }
+          "FT_TEST_SHARE=" + ($shares -join ";") | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
           [System.Environment]::OSVersion.VersionString
-          .venv\Scripts\python.exe scripts\probe_windows_fs.py $env:RUNNER_TEMP $env:TEMP @vols
+          .venv\Scripts\python.exe scripts\probe_windows_fs.py $env:RUNNER_TEMP $env:TEMP @vols @shares
       - name: tests
         # INV-07 on Windows (S0127): its C runtime reads TZ only as a process starts and only in this form, so it is set
         # before Python starts (Los Angeles: tests/conftest.py checks it). `-rs`: each skip prints its reason, the

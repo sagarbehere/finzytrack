@@ -6,7 +6,10 @@ its error names, whether a concurrent reader ever finds the target missing durin
 power loss could keep), renames and removals of open files and of folders holding open entries, renames and opens
 relative to a folder handle (`NtCreateFile`, `FileRenameInformation` with a root directory), hard links, the
 mirror's pointer file (BL-0206: a generation held by SQLite, the pointer's swap under readers), NTFS tunnelling
-of creation times, file-ID reuse, reserved names and trailing dots, and `LockFileEx` against `msvcrt.locking`.
+of creation times, file-ID reuse, reserved names and trailing dots, and `LockFileEx` against `msvcrt.locking`; and
+(BL-0294, S0132) whether the volume is remote, the read-only attribute against the publish's removals and renames and
+its clearing under each handle the product holds, and the POSIX rename on a network share (a UNC folder gets only the
+volume and these two parts).
 
 Prints only; it writes only scratch entries inside a folder `.ft-probe-<pid>` it makes in each folder given and
 removes. The manual CI run runs it on the runner's folders and on scratch volumes (VHDs) it formats (`ci.yml`, the
@@ -172,6 +175,13 @@ _sig(
     wintypes.BOOL,
 )
 _sig(ntdll.RtlNtStatusToDosError, [ctypes.c_long], wintypes.ULONG)
+_sig(k32.SetFileAttributesW, [wintypes.LPCWSTR, wintypes.DWORD], wintypes.BOOL)
+FILE_ATTRIBUTE_READONLY = 0x1
+FILE_ATTRIBUTE_VALID_SET_FLAGS = 0x31A7
+NT_FILE_DISPOSITION_INFORMATION_EX = 64
+FILE_DISPOSITION_DELETE_POSIX = 0x3  # DELETE | POSIX_SEMANTICS
+FILE_FS_DEVICE_INFORMATION = 4
+FILE_REMOTE_DEVICE = 0x10
 
 
 class UNICODE_STRING(ctypes.Structure):
@@ -212,6 +222,11 @@ _sig(
 )
 _sig(
     ntdll.NtSetInformationFile,
+    [wintypes.HANDLE, ctypes.POINTER(IO_STATUS_BLOCK), ctypes.c_void_p, wintypes.ULONG, ctypes.c_int],
+    ctypes.c_long,
+)
+_sig(
+    ntdll.NtQueryVolumeInformationFile,
     [wintypes.HANDLE, ctypes.POINTER(IO_STATUS_BLOCK), ctypes.c_void_p, wintypes.ULONG, ctypes.c_int],
     ctypes.c_long,
 )
@@ -311,6 +326,13 @@ def volume(path: str, h: int) -> dict[str, Any]:
         )
     else:
         out["error"] = err()
+    # BL-0294 (S0132): a network share (`FILE_REMOTE_DEVICE`), as the adapter's `remote()` asks it
+    dev = ctypes.create_string_buffer(8)
+    io = IO_STATUS_BLOCK()
+    status = ntdll.NtQueryVolumeInformationFile(h, ctypes.byref(io), dev, 8, FILE_FS_DEVICE_INFORMATION)
+    out["remote"] = (
+        bool(struct.unpack_from("<I", dev.raw, 4)[0] & FILE_REMOTE_DEVICE) if status == 0 else nt_err(status)
+    )
     root = ctypes.create_unicode_buffer(1024)
     if k32.GetVolumePathNameW(path, root, 1024):
         out["mount_root"] = root.value
@@ -884,6 +906,203 @@ def probe_pointer(d: str) -> dict[str, Any]:
     return out
 
 
+def set_readonly(path: str, on: bool) -> str:
+    attrs = k32.GetFileAttributesW(path)
+    if attrs == 0xFFFFFFFF:
+        return err()
+    new = (attrs | FILE_ATTRIBUTE_READONLY) if on else (attrs & ~FILE_ATTRIBUTE_READONLY)
+    return bool_call(k32.SetFileAttributesW(path, (new & FILE_ATTRIBUTE_VALID_SET_FLAGS) or FILE_ATTRIBUTE_NORMAL))
+
+
+def attrs_of(path: str) -> str:
+    a = k32.GetFileAttributesW(path)
+    return err() if a == 0xFFFFFFFF else hex(a)
+
+
+def clear_readonly(root: int, name: str, options: int = 0) -> str:
+    """The planned port operation (BL-0294): the entry opened relative to the folder handle, never through a link,
+    for its attributes only (sharing everything), and its read-only attribute cleared with `FileBasicInfo` (times 0:
+    left as they are; the attributes masked as `SetFileAttributesW` masks them)."""
+    try:
+        h = nt_open(
+            root, name, FILE_READ_ATTRIBUTES | FILE_WRITE_ATTRIBUTES, FILE_OPEN, options | FILE_OPEN_REPARSE_POINT
+        )
+    except OSError as e:
+        return f"open {e.args[1]}"
+    try:
+        buf = ctypes.create_string_buffer(40)
+        if not k32.GetFileInformationByHandleEx(h, FILE_BASIC_INFO_CLASS, buf, 40):
+            return f"get {err()}"
+        attrs = struct.unpack_from("<I", buf.raw, 32)[0]
+        new = (attrs & FILE_ATTRIBUTE_VALID_SET_FLAGS & ~FILE_ATTRIBUTE_READONLY) or FILE_ATTRIBUTE_NORMAL
+        info = struct.pack("<qqqqI4x", 0, 0, 0, 0, new)
+        ib = ctypes.create_string_buffer(info, len(info))
+        return bool_call(k32.SetFileInformationByHandle(h, FILE_BASIC_INFO_CLASS, ib, len(info)))
+    finally:
+        close(h)
+
+
+def nt_delete_posix(root: int, name: str, options: int = FILE_NON_DIRECTORY_FILE) -> str:
+    """The adapter's `remove` (`rmdir` with `FILE_DIRECTORY_FILE`): opened for delete relative to the folder handle,
+    then `FileDispositionInformationEx` with POSIX semantics."""
+    try:
+        h = nt_open(root, name, DELETE | FILE_READ_ATTRIBUTES, FILE_OPEN, options | FILE_OPEN_REPARSE_POINT)
+    except OSError as e:
+        return f"open {e.args[1]}"
+    try:
+        info = ctypes.create_string_buffer(struct.pack("<I", FILE_DISPOSITION_DELETE_POSIX), 4)
+        io = IO_STATUS_BLOCK()
+        status = ntdll.NtSetInformationFile(h, ctypes.byref(io), info, 4, NT_FILE_DISPOSITION_INFORMATION_EX)
+        return "ok" if status == 0 else nt_err(status)
+    finally:
+        close(h)
+
+
+def nt_rename_over(root: int, src: str, dst: str, *, posix: bool) -> str:
+    """The adapter's `rename_shared` (`posix`) or `rename`: `src` opened for delete relative to the folder handle,
+    renamed over `dst` with replace."""
+    try:
+        h = nt_open(root, src, DELETE, FILE_OPEN, FILE_NON_DIRECTORY_FILE)
+    except OSError as e:
+        return f"open {e.args[1]}"
+    try:
+        flags = FILE_RENAME_FLAG_REPLACE_IF_EXISTS | FILE_RENAME_FLAG_POSIX_SEMANTICS if posix else 1
+        return nt_rename(h, root, dst, flags, ex=posix)
+    finally:
+        close(h)
+
+
+def probe_readonly(d: str) -> dict[str, Any]:
+    """BL-0294 (S0132): what a read-only entry in the mirror folder does to the publish and its cleanup, and whether
+    clearing the attribute (the planned `clear_readonly`) works under every handle the product holds there: SQLite's
+    read-only connection on a generation (no delete sharing), the pin's share-all read of `current.txt`, and Python's
+    own `open()` (another program's usual open)."""
+    import sqlite3
+
+    out: dict[str, Any] = {}
+    root = open_dir(d, GENERIC_READ | FILE_LIST_DIRECTORY)
+    try:
+        # R1: a read-only generation, held by SQLite, then not
+        gen = "gen-7-0000000000000007.db"
+        path = os.path.join(d, gen)
+        con = sqlite3.connect(path)
+        con.execute("create table t (x)")
+        con.commit()
+        con.close()
+        out["r1_set_readonly"] = set_readonly(path, True)
+        out["r1_attrs"] = attrs_of(path)
+        out["r1_set_mtime_readonly"] = set_mtime(path)  # the swap's touch of the replaced generation
+        out["r1_delete_posix_readonly"] = nt_delete_posix(root, gen)
+        out["r1_deletefile_readonly"] = bool_call(k32.DeleteFileW(path))
+        reader = sqlite3.connect(f"file:{path.replace(os.sep, '/')}?mode=ro", uri=True)
+        try:
+            out["r1_read_readonly_while_held"] = reader.execute("select count(*) from t").fetchone()
+            out["r1_clear_while_sqlite_holds"] = clear_readonly(root, gen)
+            out["r1_attrs_after_clear"] = attrs_of(path)
+            out["r1_delete_posix_while_sqlite_holds"] = nt_delete_posix(root, gen)
+        finally:
+            reader.close()
+        out["r1_delete_posix_after_close"] = nt_delete_posix(root, gen) if exists(path) else "already gone"
+        out["r1_name_after"] = exists(path)
+        # R2: a read-only pointer, held by the pin's share-all read, replaced by each rename
+        ptr = os.path.join(d, "current.txt")
+        write_synced(ptr, b"gen-1-0000000000000001.db")
+        out["r2_set_readonly"] = set_readonly(ptr, True)
+        h = open_path(ptr, GENERIC_READ, FILE_SHARE_ALL)
+        try:
+            for posix in (True, False):
+                write_synced(os.path.join(d, "t.tmp"), b"gen-2-0000000000000002.db")
+                key = "posix" if posix else "plain"
+                out[f"r2_{key}_rename_over_readonly_held_shared"] = nt_rename_over(
+                    root, "t.tmp", "current.txt", posix=posix
+                )
+                if exists(os.path.join(d, "t.tmp")):
+                    os.remove(os.path.join(d, "t.tmp"))
+            out["r2_clear_while_held_shared"] = clear_readonly(root, "current.txt")
+            out["r2_attrs_after_clear"] = attrs_of(ptr)
+            write_synced(os.path.join(d, "t.tmp"), b"gen-2-0000000000000002.db")
+            out["r2_posix_rename_over_cleared_held_shared"] = nt_rename_over(root, "t.tmp", "current.txt", posix=True)
+        finally:
+            close(h)
+        out["r2_attrs_of_new_pointer"] = attrs_of(ptr)
+        for n in ("t.tmp", "current.txt"):
+            if exists(os.path.join(d, n)):
+                set_readonly(os.path.join(d, n), False)
+                os.remove(os.path.join(d, n))
+        # R2b: a read-only pointer with no holder: the plain rename (ReFS, FAT32, exFAT) after the clear
+        write_synced(ptr, b"gen-1-0000000000000001.db")
+        set_readonly(ptr, True)
+        write_synced(os.path.join(d, "t.tmp"), b"gen-2-0000000000000002.db")
+        out["r2b_plain_rename_over_readonly"] = nt_rename_over(root, "t.tmp", "current.txt", posix=False)
+        out["r2b_clear"] = clear_readonly(root, "current.txt")
+        out["r2b_plain_rename_over_cleared"] = nt_rename_over(root, "t.tmp", "current.txt", posix=False)
+        for n in ("t.tmp", "current.txt"):
+            if exists(os.path.join(d, n)):
+                set_readonly(os.path.join(d, n), False)
+                os.remove(os.path.join(d, n))
+        # R3: a read-only file held by Python's open() (no delete sharing)
+        f = os.path.join(d, "held.bin")
+        write_synced(f, b"x")
+        set_readonly(f, True)
+        with open(f, "rb"):
+            out["r3_clear_while_held_plain_open"] = clear_readonly(root, "held.bin")
+            out["r3_attrs_after_clear"] = attrs_of(f)
+        out["r3_delete_posix_after_close"] = nt_delete_posix(root, "held.bin")
+        # R4: a read-only folder (with a read-only file in it), as the cleanup's `_remove_tree` meets it
+        sub = os.path.join(d, "rodir")
+        os.mkdir(sub)
+        write_synced(os.path.join(sub, "in.txt"), b"x")
+        set_readonly(os.path.join(sub, "in.txt"), True)
+        out["r4_set_readonly_folder"] = set_readonly(sub, True)
+        out["r4_folder_attrs"] = attrs_of(sub)
+        out["r4_rename_readonly_folder_aside"] = bool_call(k32.MoveFileExW(sub, sub + ".aside", 0))
+        if exists(sub + ".aside"):
+            k32.MoveFileExW(sub + ".aside", sub, 0)
+        sroot = open_dir(sub, GENERIC_READ | FILE_LIST_DIRECTORY)
+        try:
+            out["r4_delete_readonly_file_in_readonly_folder"] = nt_delete_posix(sroot, "in.txt")
+            out["r4_clear_file"] = clear_readonly(sroot, "in.txt")
+            out["r4_delete_cleared_file_in_readonly_folder"] = nt_delete_posix(sroot, "in.txt")
+        finally:
+            close(sroot)
+        out["r4_rmdir_readonly_empty_folder"] = nt_delete_posix(root, "rodir", FILE_DIRECTORY_FILE)
+        if exists(sub):
+            out["r4_clear_folder"] = clear_readonly(root, "rodir", FILE_DIRECTORY_FILE)
+            out["r4_rmdir_cleared_folder"] = nt_delete_posix(root, "rodir", FILE_DIRECTORY_FILE)
+    finally:
+        close(root)
+    for n in os.listdir(d):  # leave nothing read-only behind for the probe's own cleanup
+        set_readonly(os.path.join(d, n), False)
+    out["names_left"] = sorted(os.listdir(d))
+    return out
+
+
+def probe_share_rename(d: str) -> dict[str, Any]:
+    """BL-0294 (S0132): on this folder's volume, the rename with POSIX semantics and the plain rename over a file, with
+    no reader and with a reader that shares deletion (the question for a network share: does it offer the POSIX
+    rename, and does it answer `NotOffered`-like statuses or others?)."""
+    out: dict[str, Any] = {}
+    root = open_dir(d, GENERIC_READ | FILE_LIST_DIRECTORY)
+    try:
+        for held in (False, True):
+            for posix in (True, False):
+                write_synced(os.path.join(d, "dst.txt"), b"old")
+                write_synced(os.path.join(d, "src.tmp"), b"new")
+                h = open_path(os.path.join(d, "dst.txt"), GENERIC_READ, FILE_SHARE_ALL) if held else None
+                try:
+                    key = f"{'posix' if posix else 'plain'}_{'held_shared' if held else 'alone'}"
+                    out[key] = nt_rename_over(root, "src.tmp", "dst.txt", posix=posix)
+                finally:
+                    if h is not None:
+                        close(h)
+                for n in ("src.tmp", "dst.txt"):
+                    with contextlib.suppress(OSError):
+                        os.remove(os.path.join(d, n))
+    finally:
+        close(root)
+    return out
+
+
 def probe_locks(d: str) -> dict[str, Any]:
     out: dict[str, Any] = {}
     p = os.path.join(d, "lock")
@@ -922,17 +1141,25 @@ def probe(folder: str) -> dict[str, Any]:
         close(h)
     d = os.path.join(folder, f".ft-probe-{os.getpid()}")
     os.mkdir(d)
+    share = folder.startswith("\\\\")  # a UNC path: only the volume and the BL-0294 questions (S0132)
     try:
         for name, fn in (
-            ("sync", probe_sync),
-            ("exclusive", probe_exclusive),
-            ("replace", probe_replace),
-            ("open_entries", probe_open_entries),
-            ("identity", probe_identity),
-            ("names", probe_names),
-            ("links", probe_links),
-            ("locks", probe_locks),
-            ("pointer", probe_pointer),
+            ("readonly", probe_readonly),
+            ("share_rename", probe_share_rename),
+        ) + (
+            ()
+            if share
+            else (
+                ("sync", probe_sync),
+                ("exclusive", probe_exclusive),
+                ("replace", probe_replace),
+                ("open_entries", probe_open_entries),
+                ("identity", probe_identity),
+                ("names", probe_names),
+                ("links", probe_links),
+                ("locks", probe_locks),
+                ("pointer", probe_pointer),
+            )
         ):
             out[name] = attempt(functools.partial(fn, d))
             for n in os.listdir(d):
