@@ -28,6 +28,7 @@ from __future__ import annotations
 import argparse
 import http.client
 import json
+import os
 import shutil
 import statistics
 import subprocess
@@ -225,16 +226,22 @@ def main(argv: list[str] | None = None) -> int:
         during: list[float] = []
         done = threading.Event()
 
+        bean_check = ENGINE_VENV / ("Scripts/bean-check.exe" if os.name == "nt" else "bin/bean-check")
+
         def load_repeatedly() -> None:
-            for _ in range(args.loads):
-                began = time.perf_counter()
-                checked = subprocess.run(  # noqa: S603 (fixed argv: Beancount's checker from the engine's environment)
-                    [str(ENGINE_VENV / "bin" / "bean-check"), "--no-cache", str(ledger / "main.beancount")],
-                    check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                )  # fmt: skip
-                loads.append(round(time.perf_counter() - began, 2))
-                failed.append(checked.returncode)
-            done.set()
+            try:
+                for _ in range(args.loads):
+                    began = time.perf_counter()
+                    checked = subprocess.run(  # noqa: S603 (fixed argv: Beancount's checker from the engine's venv)
+                        [str(bean_check), "--no-cache", str(ledger / "main.beancount")],
+                        check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                    )  # fmt: skip
+                    loads.append(round(time.perf_counter() - began, 2))
+                    failed.append(checked.returncode)
+            except OSError:
+                failed.append(-1)  # the checker could not start: nothing measured (S0131: it looped on Windows)
+            finally:
+                done.set()
 
         reads_phase(control, on=True, phase=2)
         loader = threading.Thread(target=load_repeatedly)
