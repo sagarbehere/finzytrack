@@ -88,7 +88,14 @@ Windows since S0129, each in its own Job Object).
   (`caps().links` False; S0130, BL-0206), and `readlink` reads no link target (a link: `ENOTSUP`).
 - **The rename over a file readers hold** (`rename_shared`, S0130): the rename with POSIX semantics, which NTFS offers
   and the mirror's pointer swap takes; a reader that shares deletion does not refuse it, where it refuses the plain
-  `rename` (probed, S0130's P3 and P5). ReFS, FAT32 and exFAT do not offer it: `NotOffered`, by the volume's kind.
+  `rename` (probed, S0130's P3 and P5). Offered by what the volume offers (S0132, BL-0294; owner, 2026-11-18): the flag
+  `FILE_SUPPORTS_POSIX_UNLINK_RENAME`, and not a network share (probed, S0132's P6: an SMB share reports NTFS and the
+  flag and refuses the rename, `INVALID_PARAMETER`); ReFS, FAT32 and exFAT clear the flag. Elsewhere `NotOffered`.
+- **The read-only attribute** (`clear_readonly`, S0132, BL-0294): only the mirror's publish clears it, on what it
+  removes or replaces in its own folder (ADR-0015 amendment of 2026-11-18). Probed (S0132's P7) on NTFS, ReFS, FAT32
+  and exFAT: a read-only file refuses its removal and a rename over it (POSIX or plain), and a read-only folder its
+  removal; clearing the attribute works while SQLite, a share-all reader or a plain `open()` holds the file, and then
+  the removal (once no reader holds it) and the renames land. Setting a read-only file's modification time works.
 - **Locks:** `WindowsLegacyLocks` takes the legacy app's lock as portalocker 3.2.0 does on Windows (its default
   `MsvcrtLocker`: `msvcrt.locking` of the first 64 KiB, `LockFile` underneath, which `LockFileEx` sees; INV-26);
   `take_engine_lock` takes the engine lock with `LockFileEx` over the whole file, waiting (engine-jobs §5.1; the
@@ -202,10 +209,14 @@ NT_FILE_RENAME_INFORMATION: Final = 10  # NtSetInformationFile
 NT_FILE_RENAME_INFORMATION_EX: Final = 65
 FILE_RENAME_REPLACE_IF_EXISTS: Final = 0x1
 FILE_RENAME_POSIX_SEMANTICS: Final = 0x2
-POSIX_RENAME_TYPES: Final = frozenset({"ntfs"})
-"""The file systems that offer the rename with POSIX semantics (probed, S0130's P5: FAT32 and exFAT answer
-`INVALID_PARAMETER`, ReFS `NOT_SUPPORTED`)."""
+FILE_SUPPORTS_POSIX_UNLINK_RENAME: Final = 0x400
+"""The volume flag (`GetVolumeInformationByHandleW`) that says the rename with POSIX semantics is offered (S0132,
+BL-0294; probed: set on NTFS, clear on FAT32, exFAT and ReFS, and set on an SMB share, which refuses the rename with
+`INVALID_PARAMETER`: so a remote volume is never offered it, whatever its flags say)."""
 POSIX_RENAME: Final = "a rename over a file that readers hold while sharing deletion"
+FILE_ATTRIBUTE_VALID_SET_FLAGS: Final = 0x31A7
+"""The attributes a caller may set (`SetFileAttributesW` masks with the same value): read-only, hidden, system,
+archive, normal, temporary, offline, not content indexed."""
 NT_FILE_DISPOSITION_INFORMATION: Final = 13
 NT_FILE_DISPOSITION_INFORMATION_EX: Final = 64
 FILE_DISPOSITION_DELETE: Final = 0x1
@@ -591,15 +602,23 @@ class _Handle:
         serial, _, _, _, high, low = struct.unpack_from("<IIIIII", info.raw, 28)
         return serial, (high << 32) | low
 
-    def volume(self) -> tuple[str, int]:
-        """The file system's name in lower case and the volume's 32-bit serial."""
+    def _volume_info(self) -> tuple[str, int, int]:
         fs = ctypes.create_unicode_buffer(261)
         serial, maxlen, flags = wintypes.DWORD(), wintypes.DWORD(), wintypes.DWORD()
         if not self.api.GetVolumeInformationByHandleW(
             self.handle, None, 0, ctypes.byref(serial), ctypes.byref(maxlen), ctypes.byref(flags), fs, 261
         ):
             raise _win_error("GetVolumeInformationByHandleW")
-        return fs.value.lower(), serial.value
+        return fs.value.lower(), serial.value, flags.value
+
+    def volume(self) -> tuple[str, int]:
+        """The file system's name in lower case and the volume's 32-bit serial."""
+        fs, serial, _ = self._volume_info()
+        return fs, serial
+
+    def flags(self) -> int:
+        """The volume's file-system flags (`FILE_SUPPORTS_*`)."""
+        return self._volume_info()[2]
 
     def remote(self) -> bool:
         buf = ctypes.create_string_buffer(8)
@@ -940,14 +959,40 @@ class WindowsDir:
         """The rename with POSIX semantics (`FileRenameInformationEx`, `REPLACE_IF_EXISTS | POSIX_SEMANTICS`),
         relative to the folder handle: it replaces `dst` even while readers that share deletion hold it, which the
         plain rename refuses (probed, S0130's P3, P5). A reader holding `dst` without sharing deletion still refuses
-        it. NTFS only (`POSIX_RENAME_TYPES`); elsewhere `NotOffered`, nothing done."""
-        if self.fs_type() not in POSIX_RENAME_TYPES:
+        it, and so does a read-only `dst` (the publish clears that first: `clear_readonly`). Offered by what the
+        volume offers (owner, 2026-11-18; ADR-0015 amendment; S0132, BL-0294): not a network share (`remote()`,
+        asked first) and the flag `FILE_SUPPORTS_POSIX_UNLINK_RENAME`; else `NotOffered` before any call, nothing
+        done, never decided by the file system's name or by an error."""
+        if self._h.remote() or not self._h.flags() & FILE_SUPPORTS_POSIX_UNLINK_RENAME:
             raise NotOffered(POSIX_RENAME)
         flags = FILE_RENAME_REPLACE_IF_EXISTS | FILE_RENAME_POSIX_SEMANTICS
         with self._open(check_name(src), DELETE, options=FILE_WRITE_THROUGH) as h:
             status = h.set_info(NT_FILE_RENAME_INFORMATION_EX, _rename_info(flags, self.handle, check_name(dst)))
         if status != 0:
             raise _nt_error(status, "rename", src, dst)
+
+    def clear_readonly(self, name: str) -> None:
+        """The read-only attribute of the entry `name` (a file, a folder or a link itself: opened with
+        `FILE_OPEN_REPARSE_POINT`, never followed) cleared, through handles that share everything, so a reader that
+        holds it (SQLite, the pin, another program's plain open) never refuses it (probed, S0132's P7). Asked first for
+        the attributes only; written (`FileBasicInfo`, times left as they are) only when the bit is set. No entry:
+        nothing done. The mirror's publish and cleanup only (BL-0294): `remove` and `rename` still refuse a read-only
+        file, which the save's `locked` outcome relies on."""
+        target = check_name(name)
+        try:
+            with self._open(target, FILE_READ_ATTRIBUTES) as h:
+                attrs = h.basic()[2]
+        except FileNotFoundError:
+            return
+        if not attrs & FILE_ATTRIBUTE_READONLY:
+            return
+        with self._open(target, FILE_READ_ATTRIBUTES | FILE_WRITE_ATTRIBUTES) as h:
+            attrs = h.basic()[2]
+            kept = attrs & FILE_ATTRIBUTE_VALID_SET_FLAGS & ~FILE_ATTRIBUTE_READONLY
+            info = struct.pack("<qqqqI4x", 0, 0, 0, 0, kept or FILE_ATTRIBUTE_NORMAL)  # 0 leaves a time as it is
+            buf = ctypes.create_string_buffer(info, len(info))
+            if not self.api.SetInfo(h.handle, FILE_BASIC_INFO, buf, len(info)):
+                raise _win_error("clear_readonly", name)
 
     def rename_excl(self, src: str, dst: str) -> None:
         if self.device() in self._fs.no_excl:

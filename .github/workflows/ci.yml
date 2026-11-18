@@ -208,13 +208,17 @@ jobs:
           }
           "FT_TEST_VOLUMES=" + ($vols -join ";") | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
           # A network share on this machine (S0132, BL-0294): an SMB volume that may report NTFS without offering the
-          # rename with POSIX semantics; its tests take `FT_TEST_SHARE`.
+          # rename with POSIX semantics; its tests take `FT_TEST_SHARE` (a mapped drive first, then the UNC path).
           $shares = @()
           try {
             $dir = Join-Path $env:RUNNER_TEMP "ftshare"
             New-Item -ItemType Directory -Force $dir | Out-Null
             New-SmbShare -Name ftshare -Path $dir -FullAccess Everyone -ErrorAction Stop | Out-Null
-            if (Test-Path "\\localhost\ftshare") { $shares += "\\localhost\ftshare" }
+            if (Test-Path "\\localhost\ftshare") {
+              net use Z: "\\localhost\ftshare" /persistent:no | Out-Null
+              if (Test-Path "Z:\") { $shares += "Z:\" }  # the share as a mapped drive (S0132)
+              $shares += "\\localhost\ftshare"
+            }
           } catch { Write-Output ("no share: " + $_) }
           "FT_TEST_SHARE=" + ($shares -join ";") | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
           [System.Environment]::OSVersion.VersionString

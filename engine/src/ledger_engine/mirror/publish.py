@@ -20,10 +20,13 @@ published and a name is never used twice (the random tag, §3), so readers that 
 
 **Windows: the pointer file** (ADR-0015; S0130, BL-0206): Windows makes no link without a privilege and cannot rename
 over a file a reader holds open, so there the current generation is named by `current.txt`, a file whose whole content
-is exactly the generation's name in ASCII, written as a new synced file and renamed over `current.txt` in one plain
-rename (ADR-0069's replace). The volume says which form it takes (`caps().links`); everything else is the same. A
-generation a reader holds cannot be removed there: the cleanup counts it failed and the next one tries again (ADR-0015
-amendment of 2026-10-25).
+is exactly the generation's name in ASCII, written as a new synced file and renamed over `current.txt` with the rename
+with POSIX semantics where the volume offers it (`DirHandle.rename_shared`), else the plain rename (ADR-0069's replace;
+§11). The volume says which form it takes (`caps().links`); everything else is the same. A generation a reader holds
+cannot be removed there: the cleanup counts it failed and the next one tries again (ADR-0015 amendment of 2026-10-25).
+The read-only attribute, which Windows lets stop a removal or a rename over a file, is cleared on everything the
+cleanup removes and the swap replaces (`DirHandle.clear_readonly`; ADR-0015 amendment of 2026-11-18; S0132, BL-0294);
+a no-op elsewhere.
 
 Readers resolve `current.db` (Windows: read `current.txt`) once and open the generation (§7): the save's gate reads it
 with `read_published`, the preview its baseline errors with `read_baseline` (S0116), the sidecar with
@@ -222,6 +225,7 @@ def open_folder(fs: FileSystem, app_cache: str, key: str) -> DirHandle:
     with fs.open_dir(parent_path) as parent:
         st = parent.stat(FOLDER)
         if st is not None and st.kind is not Kind.DIR:
+            parent.clear_readonly(FOLDER)
             parent.remove(FOLDER)  # a link (never followed), a file or any other entry: ours to remove
             st = None
         if st is None:
@@ -334,7 +338,9 @@ def _remove_tree(d: DirHandle, name: str, depth: int, dev: int) -> None:
             if st.kind is Kind.DIR:
                 _remove_tree(c, entry, depth + 1, dev)
             else:
+                c.clear_readonly(entry)
                 c.remove(entry)
+    d.clear_readonly(name)  # a read-only folder refuses its removal on Windows (S0132's P7)
     d.rmdir(name)
 
 
@@ -345,8 +351,9 @@ def clean(d: DirHandle, store: Store, now_ns: int, *, grace_ns: int = GRACE_NS, 
     at most `extra` others below the current whose modification time (their replacement time, §4 step 8) is less
     than `grace_ns` before `now_ns`, the newest first; a journal beside a kept generation is left. Everything else
     is removed: generations above the current one (never published), other generations and journals, temporary links,
-    `current.db` when it is not a kept link, `current.db-*`, any other file, link or folder. A removal that fails is
-    counted and skipped (the next cleanup tries again). Another volume mounted in the folder is never entered or
+    `current.db` when it is not a kept link, `current.db-*`, any other file, link or folder, each with its read-only
+    attribute cleared first (Windows; S0132). A removal that fails is counted and skipped (the next cleanup tries
+    again). Another volume mounted in the folder is never entered or
     removed: counted as failed (round 1, red team F1: "the folder is ours" never meant another volume's files)."""
     names = set(d.names())
     keep = _keep(d, store, names, now_ns, grace_ns, extra)
@@ -363,6 +370,7 @@ def clean(d: DirHandle, store: Store, now_ns: int, *, grace_ns: int = GRACE_NS, 
             if st.kind is Kind.DIR:
                 _remove_tree(d, name, 0, dev)
             else:
+                d.clear_readonly(name)
                 d.remove(name)
             removed += 1
         except OSError:
@@ -454,8 +462,8 @@ def publish(
 def swap(d: DirHandle, gen: Gen) -> None:
     """§4 step 8: the replaced generation's modification time set to now (its replacement time, §6), then a temporary
     link to the new generation's name renamed over `current.db` (Windows: a temporary pointer file holding the name,
-    its data synced by `create`, renamed over `current.txt`; S0130): readers see the old one or the new one, never
-    neither, and the temporary one is never read."""
+    its data synced by `create`, renamed over `current.txt`, its read-only attribute cleared first; S0130, S0132):
+    readers see the old one or the new one, never neither, and the temporary one is never read."""
     old = current(d)
     if old is not None:
         d.touch(old.name)
@@ -467,12 +475,15 @@ def swap(d: DirHandle, gen: Gen) -> None:
         if st.kind is Kind.DIR:
             _remove_tree(d, tmp, 0, d.device())
         else:
+            d.clear_readonly(tmp)
             d.remove(tmp)
     if name == CURRENT:
         d.symlink(gen.name, tmp)
     else:
         d.create(tmp, gen.name.encode("ascii"), POINTER_MODE)  # its data synced before the rename (the port's create)
     cur = d.stat(name)
+    if cur is not None:
+        d.clear_readonly(name)  # Windows: a read-only `current.txt` refuses every rename over it (BL-0294)
     if cur is not None and cur.kind is Kind.DIR:
         # a folder the cleanup could not remove (round 1, red team F6): moved aside whole, for the next cleanup, so a
         # link can replace it; renaming a folder needs no right inside it

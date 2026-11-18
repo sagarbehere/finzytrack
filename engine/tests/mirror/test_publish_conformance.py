@@ -459,9 +459,10 @@ class Driver:
             return "dsync"
         if gen is None and self.built and name.startswith(pb.POINTER) and op in ("create", "write", "fsync"):
             return "swap"  # Windows (S0130): the temporary pointer, written and synced, is the swap's first part
-        if op in ("touch", "symlink", "move", "rename") or (op == "remove" and self.built):
+        # S0132 (BL-0294): Windows clears the read-only attribute of what it removes or replaces: it moves no name
+        if op in ("touch", "symlink", "move", "rename") or (op in ("remove", "clear_readonly") and self.built):
             return "swap"
-        if op in ("remove", "rmdir") and not self.built:
+        if op in ("remove", "rmdir", "clear_readonly") and not self.built:
             return "clean"
         msg = f"{self.where}: an effect the replay cannot place: {label}"
         raise Divergence(msg)

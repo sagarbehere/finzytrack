@@ -1100,6 +1100,21 @@ def probe_share_rename(d: str) -> dict[str, Any]:
                         os.remove(os.path.join(d, n))
     finally:
         close(root)
+    # the store's build opens its file by `Path.as_uri()` with `mode=rw` (mirror/build.py): does SQLite open that here?
+    import pathlib
+    import sqlite3
+
+    db = os.path.join(d, "uri.db")
+    write_file(db, b"")
+    try:
+        con = sqlite3.connect(f"{pathlib.Path(db).as_uri()}?mode=rw", uri=True)
+        con.execute("CREATE TABLE t (x)")
+        con.close()
+        out["sqlite_as_uri_rw"] = "ok"
+    except sqlite3.Error as e:
+        out["sqlite_as_uri_rw"] = f"error {e} ({pathlib.Path(db).as_uri()})"
+    with contextlib.suppress(OSError):
+        os.remove(db)
     return out
 
 

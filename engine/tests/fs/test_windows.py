@@ -1038,7 +1038,7 @@ def test_rename_shared_is_refused_by_a_reader_that_does_not_share_deletion(fs: F
 @pytest.mark.parametrize("volume", _volumes() or ["-"])
 def test_rename_shared_is_not_offered_off_ntfs_and_does_nothing(fs: FileSystem, volume: str) -> None:
     """FAT32, exFAT and ReFS have no rename with POSIX semantics (probed, S0130's P5): `NotOffered`, decided by the
-    volume's kind before any call, nothing done."""
+    volume's flag before any call, nothing done (S0132)."""
     folder = Path(volume) / f"ft-{uuid.uuid4().hex}"
     folder.mkdir()
     try:
@@ -1049,4 +1049,194 @@ def test_rename_shared_is_not_offered_off_ntfs_and_does_nothing(fs: FileSystem, 
         assert (folder / "current.txt").read_bytes() == b"old"
         assert (folder / "b.tmp").read_bytes() == b"new"
     finally:
+        shutil.rmtree(folder, ignore_errors=True)
+
+
+# -- S0132 (BL-0294): where the POSIX rename is offered; clearing the read-only attribute ------------------------------
+
+
+def _shares() -> list[str]:
+    return [v for v in os.environ.get("FT_TEST_SHARE", "").split(";") if v]
+
+
+def _read_only(path: Path) -> bool:
+    return bool(os.stat(path, follow_symlinks=False).st_file_attributes & 0x1)  # FILE_ATTRIBUTE_READONLY
+
+
+@pytest.mark.skipif(not _shares(), reason="no network share given (FT_TEST_SHARE)")
+@pytest.mark.parametrize("share", _shares() or ["-"])
+def test_rename_shared_is_not_offered_on_a_network_share_and_does_nothing(fs: FileSystem, share: str) -> None:
+    """ADR-0015 amendment of 2026-11-18 (question 3): a network share is never offered the rename with POSIX
+    semantics, whatever its server reports (`remote()` first; Microsoft documents that SMB does not support
+    `GetVolumeInformationByHandleW`): `NotOffered`, nothing done, and the plain rename there lands."""
+    folder = Path(share) / f"ft-{uuid.uuid4().hex}"
+    folder.mkdir()
+    try:
+        (folder / "current.txt").write_bytes(b"old")
+        (folder / "b.tmp").write_bytes(b"new")
+        with fs.open_dir(str(folder)) as d:
+            with pytest.raises(NotOffered):
+                d.rename_shared("b.tmp", "current.txt")
+            assert (folder / "current.txt").read_bytes() == b"old"
+            assert (folder / "b.tmp").read_bytes() == b"new"
+            d.rename("b.tmp", "current.txt")
+        assert (folder / "current.txt").read_bytes() == b"new"
+    finally:
+        shutil.rmtree(folder, ignore_errors=True)
+
+
+@pytest.mark.parametrize("answer", ["remote", "no-flag"])
+def test_rename_shared_is_decided_by_the_volumes_flag_and_remote_never_by_its_name(
+    fs: FileSystem, tmp_path: Path, answer: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """On the runner's NTFS (which offers it), a volume that answered remote, or one whose flags lack
+    `FILE_SUPPORTS_POSIX_UNLINK_RENAME`, is `NotOffered` before any call, nothing done: the name `ntfs` decides
+    nothing (BL-0294)."""
+    from ledger_engine.fs import windows
+
+    assert _kind_of(fs, tmp_path) == "ntfs"
+    handle = windows._Handle  # pyright: ignore[reportPrivateUsage]
+    real = handle.flags
+
+    def remote(self: object) -> bool:
+        del self
+        return True
+
+    def no_flag(self: windows._Handle) -> int:  # pyright: ignore[reportPrivateUsage]
+        return real(self) & ~windows.FILE_SUPPORTS_POSIX_UNLINK_RENAME
+
+    if answer == "remote":
+        monkeypatch.setattr(handle, "remote", remote)
+    else:
+        monkeypatch.setattr(handle, "flags", no_flag)
+    (tmp_path / "current.txt").write_bytes(b"old")
+    (tmp_path / "b.tmp").write_bytes(b"new")
+    with fs.open_dir(str(tmp_path)) as d, pytest.raises(NotOffered):
+        d.rename_shared("b.tmp", "current.txt")
+    assert (tmp_path / "current.txt").read_bytes() == b"old"
+    assert (tmp_path / "b.tmp").read_bytes() == b"new"
+
+
+@contextlib.contextmanager
+def sqlite_reader(path: Path) -> Generator[object]:
+    """SQLite's read-only connection on `path` (no delete sharing: S0130's P1)."""
+    import sqlite3
+
+    con = sqlite3.connect(f"{path.as_uri()}?mode=ro", uri=True)
+    try:
+        con.execute("PRAGMA schema_version").fetchone()
+        yield con
+    finally:
+        con.close()
+
+
+def _a_database(path: Path) -> None:
+    import sqlite3
+
+    con = sqlite3.connect(path)
+    con.execute("CREATE TABLE t (x)")
+    con.commit()
+    con.close()
+
+
+@pytest.mark.parametrize("holder", ["none", "sqlite", "shared", "plain-open"])
+def test_clear_readonly_clears_the_attribute_under_every_handle_the_product_holds(
+    fs: FileSystem, tmp_path: Path, holder: str
+) -> None:
+    """BL-0294: the publish clears the read-only attribute on what it removes or replaces; Windows lets it through a
+    handle that shares everything while SQLite (no delete sharing), the pin (sharing deletion) or another program's
+    plain open holds the file. Only the attribute changes: the bytes stay."""
+    f = tmp_path / "gen-1-0000000000000001.db"
+    _a_database(f)
+    data = f.read_bytes()
+    os.chmod(f, 0o444)
+    assert _read_only(f)
+    with contextlib.ExitStack() as stack:
+        if holder == "sqlite":
+            stack.enter_context(sqlite_reader(f))
+        elif holder == "shared":
+            stack.enter_context(held(f, SHARE_ALL))
+        elif holder == "plain-open":
+            stack.enter_context(open(f, "rb"))
+        with fs.open_dir(str(tmp_path)) as d:
+            d.clear_readonly(f.name)
+            st = d.stat(f.name)
+            assert st is not None
+            assert not st.locked
+        assert not _read_only(f)
+    assert f.read_bytes() == data
+    with fs.open_dir(str(tmp_path)) as d:
+        d.clear_readonly(f.name)  # not read-only: nothing to do
+        d.clear_readonly("absent")  # no entry: nothing to do
+        d.remove(f.name)
+    assert not f.exists()
+
+
+def test_clear_readonly_follows_no_link(fs: FileSystem, tmp_path: Path) -> None:
+    """A junction in the folder: only its own attribute may change, never its target's (the folder is ours, what a
+    link leads to is not: ADR-0015 amendment of 2026-11-07)."""
+    import _winapi
+
+    target = tmp_path / "target"
+    target.mkdir()
+    os.chmod(target, 0o444)
+    folder = tmp_path / "m"
+    folder.mkdir()
+    _winapi.CreateJunction(str(target), str(folder / "j"))
+    try:
+        assert _read_only(target)
+        with fs.open_dir(str(folder)) as d:
+            d.clear_readonly("j")
+        assert _read_only(target)
+    finally:
+        os.chmod(target, 0o700)  # the read-only attribute cleared
+
+
+def test_the_ports_remove_and_rename_still_refuse_a_read_only_file(fs: FileSystem, tmp_path: Path) -> None:
+    """The save's `locked` outcome relies on this (S0128): only the publish's own `clear_readonly` clears it."""
+    f = tmp_path / "main.bean"
+    f.write_bytes(b"pre")
+    (tmp_path / "new.tmp").write_bytes(b"post")
+    os.chmod(f, 0o444)
+    try:
+        with fs.open_dir(str(tmp_path)) as d:
+            with pytest.raises(OSError, match="rename"):
+                d.rename("new.tmp", "main.bean")
+            with pytest.raises(OSError, match="rename"):
+                d.rename_shared("new.tmp", "main.bean")
+            with pytest.raises(OSError, match="remove"):
+                d.remove("main.bean")
+        assert f.read_bytes() == b"pre"
+    finally:
+        os.chmod(f, 0o644)
+
+
+@pytest.mark.skipif(not _volumes(), reason="no scratch volumes given (FT_TEST_VOLUMES)")
+@pytest.mark.parametrize("volume", _volumes() or ["-"])
+def test_clear_readonly_then_the_plain_rename_and_the_removal_land_on_a_scratch_volume(
+    fs: FileSystem, volume: str
+) -> None:
+    """FAT32, exFAT and ReFS: the swap's plain rename over a read-only pointer and the cleanup's removal of a read-only
+    file land once the attribute is cleared (refused before)."""
+    folder = Path(volume) / f"ft-{uuid.uuid4().hex}"
+    folder.mkdir()
+    try:
+        (folder / "current.txt").write_bytes(b"old")
+        (folder / "b.tmp").write_bytes(b"new")
+        (folder / "stray").write_bytes(b"s")
+        os.chmod(folder / "current.txt", 0o444)
+        os.chmod(folder / "stray", 0o444)
+        with fs.open_dir(str(folder)) as d:
+            with pytest.raises(OSError, match="rename"):
+                d.rename("b.tmp", "current.txt")
+            d.clear_readonly("current.txt")
+            d.rename("b.tmp", "current.txt")
+            d.clear_readonly("stray")
+            d.remove("stray")
+        assert (folder / "current.txt").read_bytes() == b"new"
+        assert not (folder / "stray").exists()
+    finally:
+        for p in folder.iterdir():
+            with contextlib.suppress(OSError):
+                os.chmod(p, 0o644)
         shutil.rmtree(folder, ignore_errors=True)

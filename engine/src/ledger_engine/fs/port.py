@@ -262,8 +262,18 @@ class DirHandle(Protocol):
         """`rename`, which also replaces a `dst` that readers hold open while sharing deletion (S0130: the mirror's
         pointer file, `design/specs/mirror/publish.md` §4 step 8). POSIX: `rename` itself (no open file blocks a rename
         there). Windows: the rename with POSIX semantics, which NTFS offers (probed, S0130's P5: never refused under
-        such readers, never a missing name); on any other file system `NotOffered`, nothing done, decided by the
-        volume's kind, never by an error."""
+        such readers, never a missing name); where the volume does not offer it (a network share, or its flag
+        `FILE_SUPPORTS_POSIX_UNLINK_RENAME` clear; S0132, BL-0294) `NotOffered`, nothing done, decided by what the
+        volume offers, never by its name or an error."""
+        ...
+
+    def clear_readonly(self, name: str) -> None:
+        """Clear the read-only attribute of the entry `name` itself (never through a link), so it can be removed or
+        renamed over; no entry: nothing done (S0132, BL-0294: the mirror's publish and cleanup only, in the folder
+        that is the app's; ADR-0015 amendment of 2026-11-18). Windows: the attribute, cleared through handles that
+        share everything. POSIX: nothing (a file's mode never stops its removal or a rename over it; macOS's `uchg`
+        flag is not this and stays). `remove` and `rename` never clear it: the save's `locked` outcome relies on
+        that."""
         ...
 
     def remove(self, name: str) -> None:

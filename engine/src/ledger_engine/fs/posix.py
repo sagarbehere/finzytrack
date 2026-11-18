@@ -281,6 +281,9 @@ class PosixDir:
     def rename_shared(self, src: str, dst: str) -> None:
         self.rename(src, dst)  # an open file never blocks a rename on POSIX
 
+    def clear_readonly(self, name: str) -> None:
+        check_name(name)  # a mode never stops a removal or a rename over a file on POSIX; `uchg` is not cleared
+
     def remove(self, name: str) -> None:
         os.unlink(check_name(name), dir_fd=self.fd)
 

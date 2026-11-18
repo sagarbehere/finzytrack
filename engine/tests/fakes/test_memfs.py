@@ -10,7 +10,7 @@ from collections.abc import Callable
 
 import pytest
 
-from ledger_engine.fs.port import AclEntry, Caps, Right
+from ledger_engine.fs.port import AclEntry, Caps, NotOffered, Right
 from tests.fakes.memfs import Crash, MemDir, MemFS
 
 
@@ -839,3 +839,72 @@ def test_a_folders_mark_is_its_drive_file_system_and_birth() -> None:
     assert fs.effects == []
     for state in fs.power_loss_states():
         assert state.open_dir("/a/b").mark() == fs.open_dir("/a/b").mark()
+
+
+# -- S0132 (BL-0294): Windows' read-only attribute and the POSIX rename's offer --------------------------------------
+
+
+def test_windows_mode_clear_readonly_is_an_effect_that_lets_a_read_only_file_go() -> None:
+    fs = MemFS(windows=True)
+    fs.outside_mkdirs("/m")
+    fs.outside_write("/m/f", b"x")
+    fs.outside_lock("/m/f")
+    with fs.open_dir("/m") as d:
+        with pytest.raises(PermissionError):
+            d.remove("f")
+        n = len(fs.effects)
+        d.clear_readonly("f")
+        d.clear_readonly("absent")  # nothing to clear: still an effect, nothing done
+        assert [e.split(" ")[0] for e in fs.effects[n:]] == ["clear_readonly", "clear_readonly"]
+        st = d.stat("f")
+        assert st is not None
+        assert not st.locked
+        d.remove("f")
+    assert fs.names_in("/m") == []
+
+
+def test_windows_mode_clear_readonly_can_fail_and_crash_like_any_effect() -> None:
+    fs = MemFS(windows=True)
+    fs.outside_mkdirs("/m")
+    fs.outside_write("/m/f", b"x")
+    fs.outside_lock("/m/f")
+    with fs.open_dir("/m") as d:
+        fs.inject(len(fs.effects), crash=False, err=errno.EIO)
+        with pytest.raises(OSError, match="injected"):
+            d.clear_readonly("f")
+        st = d.stat("f")
+        assert st is not None
+        assert st.locked  # an error before the effect: nothing done
+
+
+def test_posix_mode_clear_readonly_makes_no_call_and_keeps_uchg() -> None:
+    fs = MemFS()
+    fs.outside_mkdirs("/m")
+    fs.outside_write("/m/f", b"x")
+    fs.outside_lock("/m/f")
+    with fs.open_dir("/m") as d:
+        n = len(fs.effects)
+        d.clear_readonly("f")
+        assert fs.effects[n:] == []
+        with pytest.raises(PermissionError):
+            d.remove("f")
+
+
+def test_windows_mode_offers_the_posix_rename_unless_the_flag_is_clear_or_the_drive_is_remote() -> None:
+    for where in ("", "no-flag", "remote"):
+        fs = MemFS(windows=True)
+        fs.outside_mkdirs("/m")
+        fs.outside_write("/m/a", b"a")
+        fs.outside_write("/m/b", b"b")
+        with fs.open_dir("/m") as d:
+            if where == "no-flag":
+                fs.no_posix_rename.add(d.device())
+            elif where == "remote":
+                fs.remote.add(d.device())
+            if where:
+                with pytest.raises(NotOffered):
+                    d.rename_shared("a", "b")
+                assert fs.file("/m/b") == b"b"
+            else:
+                d.rename_shared("a", "b")
+                assert fs.file("/m/b") == b"a"

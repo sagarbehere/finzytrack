@@ -283,7 +283,9 @@ def test_a_journal_the_cleanup_cannot_remove_still_raises_the_next_number(window
     assert isinstance(job(fs), pb.Published)
     stuck = f"{MIRROR}/gen-9-{'e' * 16}.db-journal"
     fs.outside_write(stuck, b"x")
-    fs.outside_lock(stuck)  # its removal fails: it stays
+    # its removal fails: it stays (Windows: a reader holds it; the read-only attribute no longer keeps a file there,
+    # S0132, BL-0294)
+    fs.outside_hold(stuck) if fs.windows else fs.outside_lock(stuck)
     out = job(fs)
     assert isinstance(out, pb.Published)
     assert out.gen.number == 10
@@ -423,7 +425,8 @@ def test_the_pointer_is_written_whole_and_synced_before_its_rename() -> None:
     assert isinstance(job(fs), pb.Published)
     tail = [e for e in fs.effects[start:] if "current.txt" in e]
     kinds = [e.partition(" ")[0] for e in tail]
-    assert kinds[-4:] == ["create", "write", "fsync", "move"], tail
+    # S0132 (BL-0294): the read-only attribute of `current.txt` cleared just before the rename over it (no name moves)
+    assert kinds[-5:] == ["create", "write", "fsync", "clear_readonly", "move"], tail
 
 
 def test_a_pointer_renamed_before_its_data_is_synced_is_caught(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -444,12 +447,24 @@ def test_a_pointer_renamed_before_its_data_is_synced_is_caught(monkeypatch: pyte
         test_a_power_loss_after_a_publish_lands_on_the_new_or_the_previous_generation(windows=True)
 
 
-def test_off_ntfs_the_pointer_swap_takes_the_plain_rename() -> None:
-    """§4 step 8, §11 "Limit (Windows without the POSIX rename)": on a Windows volume that does not offer the rename
-    with POSIX semantics (ReFS, FAT32, exFAT), the swap takes the plain rename, stated, and publishes."""
-    fs = world(windows=True)
+def without_posix_rename(fs: MemFS, how: str) -> None:
+    """The cache's drive lacks the rename with POSIX semantics: its volume flag clear (ReFS, FAT32, exFAT, an older
+    Windows), or a network share, which may report NTFS and the flag (S0132, BL-0294)."""
     with fs.open_dir(CACHE) as d:
-        fs.fs_types[d.device()] = "refs"
+        if how == "no-flag":
+            fs.no_posix_rename.add(d.device())
+        elif how == "remote":
+            fs.fs_types[d.device()] = "ntfs"  # what a share's server may report: never asked (BL-0294)
+            fs.remote.add(d.device())
+
+
+@pytest.mark.parametrize("how", ["no-flag", "remote"])
+def test_without_the_posix_rename_the_pointer_swap_takes_the_plain_rename(how: str) -> None:
+    """§4 step 8, §11 "Limit (Windows without the POSIX rename)": on a Windows volume that does not offer the rename
+    with POSIX semantics (its flag clear, or a network share), the swap takes the plain rename, stated, and
+    publishes."""
+    fs = world(windows=True)
+    without_posix_rename(fs, how)
     first = job(fs)
     second = job(fs)
     assert isinstance(first, pb.Published)
@@ -457,16 +472,13 @@ def test_off_ntfs_the_pointer_swap_takes_the_plain_rename() -> None:
     assert seen_by_a_reader(fs) == second.gen.name
 
 
-@pytest.mark.parametrize("fs_type", ["ntfs", "refs"])
-def test_a_reader_holding_the_pointer_without_sharing_deletion_refuses_the_swap_and_changes_nothing(
-    fs_type: str,
-) -> None:
+@pytest.mark.parametrize("how", ["offered", "no-flag", "remote"])
+def test_a_reader_holding_the_pointer_without_sharing_deletion_refuses_the_swap_and_changes_nothing(how: str) -> None:
     """§11 "Limit (a program holding the pointer)": a program that holds `current.txt` open without sharing deletion
     refuses the swap's rename on every volume: the job raises, `current.txt` still names the generation it named,
     and once the program closes it the next job publishes."""
     fs = world(windows=True)
-    with fs.open_dir(CACHE) as d:
-        fs.fs_types[d.device()] = fs_type
+    without_posix_rename(fs, how)
     first = job(fs)
     assert isinstance(first, pb.Published)
     fs.outside_hold(f"{MIRROR}/current.txt")
@@ -493,3 +505,138 @@ def test_on_ntfs_a_refused_posix_rename_is_never_retried_as_the_plain_rename(mon
     with pytest.raises(PermissionError, match="refused"):
         job(fs)
     assert seen_by_a_reader(fs) == first.gen.name
+
+
+# -- S0132 (BL-0294): read-only entries in the mirror folder on Windows ------------------------------------------------
+
+
+def read_only_junk(fs: MemFS) -> None:
+    """Windows: what has the read-only attribute in the folder (set in Properties, or by a copy or restore tool): the
+    pointer, every generation, a stale temporary pointer, an unknown file, and a folder holding a read-only file. The
+    fake's `outside_lock` is the attribute in Windows mode."""
+    for n in fs.names_in(MIRROR):
+        fs.outside_lock(f"{MIRROR}/{n}")
+    fs.outside_write(f"{MIRROR}/current.txt.{'b' * 16}.tmp", f"gen-1-{'f' * 16}.db".encode())
+    fs.outside_lock(f"{MIRROR}/current.txt.{'b' * 16}.tmp")
+    fs.outside_write(f"{MIRROR}/stray.bin", b"s")
+    fs.outside_lock(f"{MIRROR}/stray.bin")
+    fs.outside_mkdirs(f"{MIRROR}/ro")
+    fs.outside_write(f"{MIRROR}/ro/inside", b"i")
+    fs.outside_lock(f"{MIRROR}/ro/inside")
+
+
+def read_only_prepared(prepare: int) -> MemFS:
+    fs, _ = prepared(prepare, with_junk=False, windows=True)
+    read_only_junk(fs)
+    return fs
+
+
+def test_a_read_only_pointer_neither_refuses_the_swap_nor_stays() -> None:
+    """ADR-0015 amendment of 2026-11-18 (question 4): the swap clears the read-only attribute on `current.txt` before
+    the rename over it; on the base every swap was refused until the user cleared it."""
+    fs = world(windows=True)
+    first = job(fs)
+    assert isinstance(first, pb.Published)
+    fs.outside_lock(f"{MIRROR}/current.txt")
+    second = job(fs)
+    assert isinstance(second, pb.Published), second
+    assert seen_by_a_reader(fs) == second.gen.name
+
+
+def test_read_only_generations_go_in_their_turn_and_the_folder_stays_bounded() -> None:
+    """§6 on Windows: a read-only generation is removed when the keep set drops it (the disk stays bounded), and an
+    unknown read-only entry, a read-only temporary pointer and a folder holding a read-only file are removed at the
+    first cleanup."""
+    fs = read_only_prepared(3)
+    for _ in range(4):
+        assert isinstance(job(fs), pb.Published)
+    assert_clean_after_the_next_job(fs)
+
+
+@pytest.mark.parametrize("prepare", [1, 3])
+def test_a_death_at_every_effect_among_read_only_entries_never_leaves_a_reader_a_partial_mirror(prepare: int) -> None:
+    """§9 with read-only entries (Windows): a crash at every effect, the clears included, and every state a power loss
+    leaves from it: a reader sees the old or the new generation, and the next job publishes and cleans."""
+    total = len(_effects_read_only(prepare))
+    assert any(e.startswith("clear_readonly") for e in _effects_read_only(prepare))
+    for i in range(total):
+        fs = read_only_prepared(prepare)
+        fs.inject(len(fs.effects) + i, crash=True)
+        with contextlib.suppress(Crash):
+            job(fs)
+        for s in states(fs):
+            assert seen_by_a_reader(s) is not None
+            assert_clean_after_the_next_job(s)
+
+
+@pytest.mark.parametrize("prepare", [1, 3])
+def test_an_io_error_at_every_effect_among_read_only_entries_changes_nothing_a_reader_sees_unless_published(
+    prepare: int,
+) -> None:
+    total = len(_effects_read_only(prepare))
+    for i in range(total):
+        fs = read_only_prepared(prepare)
+        before = seen_by_a_reader(fs)
+        fs.inject(len(fs.effects) + i, crash=False, err=errno.EIO)
+        try:
+            out = job(fs)
+        except OSError:
+            out = None
+        after = seen_by_a_reader(fs)
+        assert after is not None
+        if out is None or isinstance(out, pb.NotPublished):
+            assert after == before
+        assert_clean_after_the_next_job(fs)
+
+
+def _effects_read_only(prepare: int) -> list[str]:
+    fs = read_only_prepared(prepare)
+    n = len(fs.effects)
+    assert isinstance(job(fs), pb.Published)
+    return fs.effects[n:]
+
+
+def test_a_read_only_file_at_the_mirror_folders_name_is_replaced_by_the_folder() -> None:
+    """§2 "The folder itself" on Windows: a file at `mirror/` is removed, even with the read-only attribute."""
+    fs = world(windows=True)
+    fs.outside_mkdirs(f"{CACHE}/workspaces/{KEY}")
+    fs.outside_write(MIRROR, b"not a folder")
+    fs.outside_lock(MIRROR)
+    out = job(fs)
+    assert isinstance(out, pb.Published), out
+    assert seen_by_a_reader(fs) == out.gen.name
+
+
+def test_the_link_form_makes_no_clear_and_a_locked_entry_still_stays() -> None:
+    """macOS and Linux: `clear_readonly` makes no call (a mode never stops a removal there); `uchg` (`outside_lock`)
+    is not the read-only attribute and is never cleared, so such an entry stays (publish.md §11)."""
+    fs = world(windows=False)
+    assert isinstance(job(fs), pb.Published)
+    stuck = f"{MIRROR}/stray.bin"
+    fs.outside_write(stuck, b"s")
+    fs.outside_lock(stuck)
+    n = len(fs.effects)
+    assert isinstance(job(fs), pb.Published)
+    assert not any(e.startswith("clear_readonly") for e in fs.effects[n:])
+    assert "stray.bin" in fs.names_in(MIRROR)
+
+
+def test_a_ledger_files_read_only_refusal_is_unchanged_on_windows() -> None:
+    """The save's `locked` outcome relies on the port's `remove` and `rename` refusing a read-only file: only the
+    publish's own `clear_readonly` clears it, never those (S0132's design note)."""
+    fs = MemFS(windows=True)
+    fs.outside_mkdirs("/L")
+    fs.outside_write("/L/main.bean", b"pre")
+    fs.outside_write("/L/new.tmp", b"post")
+    fs.outside_lock("/L/main.bean")
+    with fs.open_dir("/L") as d:
+        st = d.stat("main.bean")
+        assert st is not None
+        assert st.locked
+        with pytest.raises(PermissionError):
+            d.rename("new.tmp", "main.bean")
+        with pytest.raises(PermissionError):
+            d.rename_shared("new.tmp", "main.bean")
+        with pytest.raises(PermissionError):
+            d.remove("main.bean")
+    assert fs.file("/L/main.bean") == b"pre"

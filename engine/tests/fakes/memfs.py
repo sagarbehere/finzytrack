@@ -62,6 +62,15 @@ entry at its target; on a volume without RENAME_EXCL such a replace is two entry
 drops on their own (the entry removed, the rename), so a file can be **missing** after a power loss there, never
 torn; elsewhere it is one. `lost_power` marks a state a power loss left (and every state reached from it), so the
 oracle can allow what only a power loss leaves (S0065 red team r1 F5).
+
+**Windows mode** (`MemFS(windows=True)`; S0130, BL-0206; S0132, BL-0294): no link is made (`caps().links` False), a
+file a reader holds without sharing deletion (`outside_hold`) cannot be removed or renamed, away or over, and a file
+with the read-only attribute is `outside_lock` (the adapter reports it `locked`, and Windows refuses its removal and a
+rename over it). `clear_readonly` is then an effect (labelled `clear_readonly`) that clears the mark on the entry (a
+file's or a folder's), and does nothing on an absent name; in POSIX mode it is a no-op and no effect, as the macOS and
+Linux adapters make no call (`uchg` stays). A power loss keeps the attribute as last set: an attribute cleared and then
+lost only makes the next job clear it again. The rename with POSIX semantics (`rename_shared`) is offered on a drive
+unless its volume lacks the flag (`no_posix_rename`) or is a network share (`remote`), as the adapter decides it.
 """
 
 # pyright: reportPrivateUsage=false
@@ -250,6 +259,8 @@ class MemFS:
         # away or over (probed, S0126 and S0130's P1); its modification time can still be set
         self.windows = windows
         self.held: set[int] = set()
+        self.no_posix_rename: set[int] = set()  # devs whose volume lacks `FILE_SUPPORTS_POSIX_UNLINK_RENAME` (S0132)
+        self.remote: set[int] = set()  # devs that are network shares (S0132)
 
     def stored(self, name: str) -> str:
         """The spelling the volume keeps for a name it is given."""
@@ -759,6 +770,8 @@ class MemFS:
         out.volume_errors = set(self.volume_errors)
         out.fs_types = dict(self.fs_types)
         out.no_crtime = set(self.no_crtime)
+        out.no_posix_rename = set(self.no_posix_rename)
+        out.remote = set(self.remote)
         for ino in reach:
             d = self.nodes[ino]
             assert isinstance(d, _Dir)
@@ -1124,11 +1137,30 @@ class MemDir:
         self._fs._effect(self._label("rename", src, dst), do)
 
     def rename_shared(self, src: str, dst: str) -> None:
-        """`rename` (S0130): on Windows a volume whose `fs_types` entry is not `ntfs` refuses it (`NotOffered`), as
-        the adapter does; a file held without delete sharing (`outside_hold`) still refuses it."""
-        if self._fs.windows and self._fs.fs_types.get(self._d.dev, "ntfs") != "ntfs":
+        """`rename` (S0130): on Windows a drive in `no_posix_rename` or `remote` refuses it (`NotOffered`, nothing
+        done), as the adapter decides it by the volume's flag and `remote()` (S0132, BL-0294); a file held without
+        delete sharing (`outside_hold`) still refuses it."""
+        if self._fs.windows and (self._d.dev in self._fs.no_posix_rename or self._d.dev in self._fs.remote):
             raise NotOffered(POSIX_RENAME)
         self.rename(src, dst)
+
+    def clear_readonly(self, name: str) -> None:
+        """Windows mode: the entry's read-only mark cleared (`outside_lock` undone), one effect; an absent name: the
+        effect, nothing done. POSIX mode: nothing, and no effect (S0132, BL-0294; the module's docstring)."""
+        key = _key(check_name(name), self._d.ci)
+        if not self._fs.windows:
+            return
+
+        def do() -> None:
+            _no_search(self._d)
+            hit = self._d.entries.get(key)
+            if hit is None:
+                return
+            node = self._fs.nodes[hit[1]]
+            if isinstance(node, _File | _Dir):
+                node.locked = False
+
+        self._fs._effect(self._label("clear_readonly", name), do)
 
     def rename(self, src: str, dst: str) -> None:
         """A plain rename (`renameat`): it replaces an entry at `dst` (not a folder). On a volume without RENAME_EXCL

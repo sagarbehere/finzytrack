@@ -942,3 +942,75 @@ def test_on_windows_a_publish_lands_while_a_reader_holds_the_pointer_sharing_del
     finally:
         _winapi.CloseHandle(h)
     assert current(cache) == second.name
+
+
+# -- S0132 (BL-0294): read-only entries; a cache folder on a network share ---------------------------------------------
+
+
+def test_on_windows_a_publish_lands_over_a_read_only_pointer_a_reader_holds_sharing_deletion(
+    fs: FileSystem, cache: Path, root: Path
+) -> None:
+    """ADR-0015 amendment of 2026-11-18 (question 4): a `current.txt` with the read-only attribute (set in Properties,
+    or by a copy or restore tool) no longer refuses every swap: the swap clears it, here while a pin's read holds it."""
+    if sys.platform != "win32":
+        raise pytest.skip.Exception(WINDOWS_CASE)
+    import _winapi
+
+    first = published(publish_job(fs, cache, root)).gen
+    pointer = mirror_of(cache) / pb.POINTER
+    os.chmod(pointer, 0o444)
+    h = _winapi.CreateFile(str(pointer), 0x80000000, 0x7, 0, _winapi.OPEN_EXISTING, 0, 0)
+    try:
+        second = published(publish_job(fs, cache, root)).gen
+        data, _ = _winapi.ReadFile(h, 64)
+        assert data == first.name.encode("ascii")
+    finally:
+        _winapi.CloseHandle(h)
+    assert current(cache) == second.name
+
+
+def test_on_windows_a_read_only_generation_goes_at_the_cleanup_after_its_reader_closes(
+    fs: FileSystem, cache: Path, root: Path
+) -> None:
+    """§6 on Windows: a read-only generation is removed in its turn (the disk stays bounded), even one SQLite held
+    while earlier cleanups ran."""
+    windows_only()
+    first = published(publish_job(fs, cache, root)).gen
+    path = mirror_of(cache) / first.name
+    os.chmod(path, 0o444)
+    con = sqlite3.connect(f"{path.as_uri()}?mode=ro", uri=True)
+    try:
+        con.execute("SELECT count(*) FROM m_meta").fetchone()
+        for _ in range(4):
+            published(publish_job(fs, cache, root))
+        assert first.name in names(cache)
+    finally:
+        con.close()
+    published(publish_job(fs, cache, root))
+    assert first.name not in names(cache)
+
+
+def _shares() -> list[str]:
+    return [v for v in os.environ.get("FT_TEST_SHARE", "").split(";") if v]
+
+
+@pytest.mark.skipif(not _shares(), reason="no network share given (FT_TEST_SHARE)")
+def test_on_windows_a_publish_into_a_cache_folder_on_a_network_share_lands(
+    fs: FileSystem, tmp_path: Path, root: Path
+) -> None:
+    """ADR-0015 amendment of 2026-11-18 (question 3): a share is not offered the POSIX rename, so the swap takes the
+    plain rename (§11, stated) and publishes, where it was refused with another error on the base."""
+    drives = [s for s in _shares() if not s.startswith("\\\\")]  # SQLite's URI open needs a drive (BL-0298)
+    if not drives:
+        pytest.skip("no network share mapped to a drive letter (FT_TEST_SHARE)")
+    share_cache = Path(drives[0]) / f"ft-{tmp_path.name}-{os.getpid()}" / "cache"
+    share_cache.mkdir(parents=True)
+    try:
+        first = published(publish_job(fs, share_cache, root))
+        second = published(publish_job(fs, share_cache, root))
+        assert second.gen.number > first.gen.number
+        assert (mirror_of(share_cache) / pb.POINTER).read_bytes() == second.gen.name.encode("ascii")
+    finally:
+        import shutil
+
+        shutil.rmtree(share_cache.parent, ignore_errors=True)
