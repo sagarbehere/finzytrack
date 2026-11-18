@@ -900,7 +900,8 @@ def test_on_windows_a_generation_sqlite_holds_open_survives_the_cleanup_and_goes
         con.close()
     published(publish_job(fs, cache, root))
     assert first.name not in names(cache)
-    assert len([n for n in names(cache) if pb.gen_of(n)]) <= 4
+    # the cleanup runs before the build (§6): current, previous and 2 young ones stay, then the new one is added
+    assert len([n for n in names(cache) if pb.gen_of(n)]) <= 5
 
 
 def test_on_windows_the_replaced_generation_gets_its_time_while_a_reader_holds_it(

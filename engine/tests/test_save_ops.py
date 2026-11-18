@@ -10,6 +10,7 @@ import hashlib
 import json
 import os
 import shutil
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -25,6 +26,7 @@ from ledger_engine.protocol.messages import OPS
 from ledger_engine.protocol.server import Engine, InputEnded
 from tests.fs.real_volume import app_identity
 from tests.mirror.publish_support import publish_job
+from tests.windows_pending import HELD_FOLDER
 
 pytestmark = [
     pytest.mark.usefixtures("windows_port"),  # Windows: the adapter (S0130, BL-0206 done)
@@ -415,6 +417,8 @@ def test_S0102_r1_a_folder_replaced_after_step_8_and_before_the_first_swap_is_ap
     """`rt102/test_rt_engine.py::test_A2_swap_after_step8`: the journal and the backups would land in the replacement,
     and the save would answer `saved`. The writer checks the app folder, the journal and the backups folders by
     identity before the backups, before the `.part` and before the rename to `.open`: not saved, nothing swapped."""
+    if sys.platform == "win32" and when != "after_step_8":
+        raise pytest.skip.Exception(HELD_FOLDER)  # the save holds the app folder's entries open by then
     from ledger_engine.ledger import save as sv
     from ledger_engine.ledger import writer
 

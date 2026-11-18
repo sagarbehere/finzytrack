@@ -14,6 +14,10 @@ from __future__ import annotations
 
 from typing import Final
 
+HELD_FOLDER: Final = (
+    "Windows refuses to rename a folder whose entries are held open (probed, S0126): "
+    "the replacement cannot happen there"
+)
 NO_MOUNT: Final = (
     "a volume mounted inside the mirror folder needs hdiutil or sudo mount; Windows' mount folders: untested"
 )

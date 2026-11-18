@@ -757,6 +757,8 @@ def test_a_change_whose_pre_is_not_the_plans_raises(led: Ledger) -> None:
 def test_a_ledger_folder_that_cannot_be_searched_is_not_saved_and_names_the_file(led: Ledger) -> None:
     """Spec §15: a folder that denies looking names up in it stops even the resolution of the file: not saved, as an
     I/O error, before anything is written (the mode is restored after; no ACL or flag is set)."""
+    if sys.platform == "win32":
+        raise pytest.skip.Exception(NO_UID)  # `chmod` sets only the read-only attribute there
     sub = led.root / "y2026"
     sub.mkdir()
     (sub / "a.bean").write_bytes(b"")
