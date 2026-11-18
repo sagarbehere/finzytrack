@@ -523,6 +523,7 @@ def read_only_junk(fs: MemFS) -> None:
     fs.outside_mkdirs(f"{MIRROR}/ro")
     fs.outside_write(f"{MIRROR}/ro/inside", b"i")
     fs.outside_lock(f"{MIRROR}/ro/inside")
+    fs.outside_lock(f"{MIRROR}/ro")  # Windows refuses to remove a read-only folder (S0132's P7)
 
 
 def read_only_prepared(prepare: int) -> MemFS:
@@ -640,3 +641,33 @@ def test_a_ledger_files_read_only_refusal_is_unchanged_on_windows() -> None:
         with pytest.raises(PermissionError):
             d.remove("main.bean")
     assert fs.file("/L/main.bean") == b"pre"
+
+
+def test_a_read_only_temporary_pointer_at_the_swaps_own_name_is_cleared_and_replaced() -> None:
+    """§4 step 8: an entry already at the temporary pointer's name is ours and removed first, even read-only. The
+    cleanup removes stale ones before the build, so only a program writing between the cleanup and the swap leaves one
+    there (self-mutation: dropping this clear survived every sweep)."""
+    fs = world(windows=True)
+    assert isinstance(job(fs), pb.Published)
+    tag = "c" * 16
+    store = FakeStore()
+    with pb.open_folder(fs, CACHE, KEY) as d:
+        cleaned = pb.clean(d, store, NOW)
+        fs.outside_write(f"{MIRROR}/current.txt.{tag}.tmp", b"stale")
+        fs.outside_lock(f"{MIRROR}/current.txt.{tag}.tmp")
+        out = pb.publish(
+            d,
+            cleaned,
+            store,
+            ([], [], {}),
+            FP,
+            floor=0,
+            today=TODAY,
+            built_at=BUILT_AT,
+            engine_build=ENGINE_BUILD,
+            recheck=lambda: "same",
+            by="rebuild",
+            tag=tag,
+        )
+    assert isinstance(out, pb.Published), out
+    assert seen_by_a_reader(fs) == out.gen.name

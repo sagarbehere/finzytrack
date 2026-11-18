@@ -66,7 +66,8 @@ oracle can allow what only a power loss leaves (S0065 red team r1 F5).
 **Windows mode** (`MemFS(windows=True)`; S0130, BL-0206; S0132, BL-0294): no link is made (`caps().links` False), a
 file a reader holds without sharing deletion (`outside_hold`) cannot be removed or renamed, away or over, and a file
 with the read-only attribute is `outside_lock` (the adapter reports it `locked`, and Windows refuses its removal and a
-rename over it). `clear_readonly` is then an effect (labelled `clear_readonly`) that clears the mark on the entry (a
+rename over it); on a folder it refuses only the folder's own removal (probed, S0132's P7: renaming it and changing
+what it holds work). `clear_readonly` is then an effect (labelled `clear_readonly`) that clears the mark on the entry (a
 file's or a folder's), and does nothing on an absent name; in POSIX mode it is a no-op and no effect, as the macOS and
 Linux adapters make no call (`uchg` stays). A power loss keeps the attribute as last set: an attribute cleared and then
 lost only makes the next job clear it again. The rename with POSIX semantics (`rename_shared`) is offered on a drive
@@ -933,7 +934,8 @@ class MemDir:
             raise PermissionError(errno.EACCES, "stat denied")  # `lstat` answers EACCES (probed on APFS, S0061 r6)
         kind = {_File: Kind.FILE, _Dir: Kind.DIR, _Link: Kind.LINK, _Other: Kind.OTHER}[type(node)]
         mode = node.mode if isinstance(node, _File | _Dir) else 0o777
-        locked = isinstance(node, _File | _Dir) and node.locked
+        # Windows reports only a read-only file `locked` (the adapter's `stat`); a folder's attribute is not that
+        locked = (isinstance(node, _File) or (isinstance(node, _Dir) and not self._fs.windows)) and node.locked
         return EntryStat(
             kind=kind,
             dev=node.dev if isinstance(node, _Dir) else self._d.dev,
@@ -949,8 +951,8 @@ class MemDir:
         hit = self._d.entries.get(key)
         if hit is not None:
             node = self._fs.nodes[hit[1]]
-            if isinstance(node, _File | _Dir) and node.locked:
-                raise PermissionError(errno.EPERM, "locked")
+            if (isinstance(node, _File) or (isinstance(node, _Dir) and not self._fs.windows)) and node.locked:
+                raise PermissionError(errno.EPERM, "locked")  # Windows renames a read-only folder (S0132's P7)
             if hit[1] in self._fs.held:
                 raise PermissionError(errno.EACCES, "in use by another program")
             if not self._may_delete(node):
@@ -962,7 +964,7 @@ class MemDir:
             self._may_remove()
             and Right.DELETE not in own
             and not _denies(node, "delete")
-            and not (isinstance(node, _Dir) and node.locked)
+            and not (isinstance(node, _Dir) and node.locked and not self._fs.windows)
         )
 
     def _may_remove(self) -> bool:
@@ -973,13 +975,18 @@ class MemDir:
             and Right.DELETE not in d.deny
             and not _denies(d, "delete_child")
             and not _denies(d, "search")  # probed on APFS: `_RMFILE_OK` answers no under `deny search`
-            and not d.locked
+            and not self._folder_locked()
         )
+
+    def _folder_locked(self) -> bool:
+        """`uchg` on this folder: no entry added, removed or renamed in it. Windows' read-only attribute on a folder
+        refuses only the folder's own removal (probed, S0132's P7), never what happens inside it."""
+        return self._d.locked and not self._fs.windows
 
     def _writable(self) -> None:
         d = self._d
         _no_search(d)  # every operation by name looks the name up first
-        if d.locked:
+        if self._folder_locked():
             raise PermissionError(errno.EPERM, "folder locked")
         if Right.CHANGE_ENTRIES in d.deny:
             raise PermissionError(errno.EACCES, "folder not writable")
@@ -1005,7 +1012,7 @@ class MemDir:
             if right is Right.SEARCH:
                 return not _denies(d, "search")
             if right is Right.CHANGE_ENTRIES and (
-                d.locked or any(_denies(d, p) for p in ("add_file", "add_subdirectory", "search"))
+                self._folder_locked() or any(_denies(d, p) for p in ("add_file", "add_subdirectory", "search"))
             ):
                 return False  # write and search, as `access(W_OK | X_OK)` answers (probed on APFS, S0061 r6)
             return right not in d.deny
@@ -1250,6 +1257,8 @@ class MemDir:
                 raise NotADirectoryError(errno.ENOTDIR, "not a directory")
             if node.entries:
                 raise OSError(errno.ENOTEMPTY, "directory not empty")
+            if self._fs.windows and node.locked:
+                raise PermissionError(errno.EACCES, "a read-only folder")  # Windows: CANNOT_DELETE (S0132's P7)
             if not self._may_delete(node):
                 raise PermissionError(errno.EACCES, "delete denied")
             del d.entries[key]

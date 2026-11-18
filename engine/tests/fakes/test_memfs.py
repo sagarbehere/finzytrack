@@ -908,3 +908,26 @@ def test_windows_mode_offers_the_posix_rename_unless_the_flag_is_clear_or_the_dr
             else:
                 d.rename_shared("a", "b")
                 assert fs.file("/m/b") == b"a"
+
+
+def test_windows_mode_a_read_only_folder_refuses_only_its_own_removal() -> None:
+    """Probed (S0132's P7, NTFS and ReFS): a folder with the read-only attribute can be renamed and its entries
+    changed, but not removed until the attribute is cleared."""
+    fs = MemFS(windows=True)
+    fs.outside_mkdirs("/m/ro")
+    fs.outside_write("/m/ro/f", b"x")
+    fs.outside_lock("/m/ro")
+    with fs.open_dir("/m") as d:
+        st = d.stat("ro")
+        assert st is not None
+        assert not st.locked  # the adapter reports only a read-only file `locked`
+        with d.open_child("ro") as c:
+            c.remove("f")
+            c.create("g", b"g", 0o600)
+            c.remove("g")
+        d.rename("ro", "ro2")
+        with pytest.raises(PermissionError):
+            d.rmdir("ro2")
+        d.clear_readonly("ro2")
+        d.rmdir("ro2")
+    assert fs.names_in("/m") == []

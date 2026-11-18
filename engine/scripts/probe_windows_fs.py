@@ -1141,7 +1141,7 @@ def probe_locks(d: str) -> dict[str, Any]:
     return out
 
 
-def probe(folder: str) -> dict[str, Any]:
+def probe(folder: str, index: int = 0) -> dict[str, Any]:
     out: dict[str, Any] = {"folder": folder}
     try:
         h = open_dir(folder)
@@ -1154,7 +1154,8 @@ def probe(folder: str) -> dict[str, Any]:
         out["basic"] = basic(h)
     finally:
         close(h)
-    d = os.path.join(folder, f".ft-probe-{os.getpid()}")
+    # one name per folder given: two of them may be one place (a share and the drive mapped to it; S0132's run 22)
+    d = os.path.join(folder, f".ft-probe-{os.getpid()}-{index}")
     os.mkdir(d)
     share = folder.startswith("\\\\")  # a UNC path: only the volume and the BL-0294 questions (S0132)
     try:
@@ -1191,8 +1192,8 @@ def main(argv: list[str]) -> int:
     if not argv:
         print(str(__doc__).strip().splitlines()[-1], file=sys.stderr)  # noqa: T201 (prints only)
         return 2
-    for folder in argv:
-        print(json.dumps(probe(os.path.abspath(folder)), default=str))  # noqa: T201 (prints only)
+    for index, folder in enumerate(argv):
+        print(json.dumps(probe(os.path.abspath(folder), index), default=str))  # noqa: T201 (prints only)
     return 0
 
 
