@@ -27,9 +27,24 @@ The capability promises a stable read-only path. On macOS and Linux that is `cur
 2. **Also keep `current.db` as a hard link to the current generation on NTFS, refreshed at each publish when no tool holds it.** A tool reopening `current.db` gets a recent whole generation, but while a tool holds it, it is not refreshed (SQLite opens without sharing deletion). Cost: a second mechanism with its own crash cases, an M7 slice.
 3. **A symbolic link where Windows lets the app make one** (Developer Mode, or an administrator), else option 1. Cost: two behaviours depending on a Windows setting.
 
+## Question 3: a volume that reports NTFS but does not offer the POSIX rename (round 1: red team F1, verifier Q1; Medium, availability; BL-0294)
+The swap picks the POSIX rename by the file system's **name**. An SMB share whose server reports NTFS, or a Windows build older than the one that added this rename, would refuse it with an error other than "not offered". Every swap there would then fail: no mirror, and every save refused as "not ready". The cache folder is the app's, so this setup is rare (a redirected profile on a share, an unsupported old Windows). Options, cheapest first:
+1. **Policy: a cache folder on a network share is refused, and Windows 10 1709 or newer is required.** Cost: one check at the open with a named reason, plus a stated minimum version.
+2. **Decide by what the volume offers:** the flag `FILE_SUPPORTS_POSIX_UNLINK_RENAME`, which the probe saw set on both NTFS volumes and clear on FAT32, exFAT and ReFS, together with "not remote". Anything else takes the plain rename with its stated limit. Cost: a few lines in the adapter and a runner test.
+3. Both.
+
+## Question 4: a read-only `current.txt` (round 1: verifier V1, red team F3; Medium, availability; BL-0294)
+A `current.txt` with the read-only attribute (set in Properties, or by a restore or copy tool) refuses every swap. The cleanup keeps it, since it names the current generation, so the mirror stays stale until the user clears the attribute. A read-only generation file is likewise never removed. Options, cheapest first:
+1. **State it as a limit** (the docs say to clear the attribute). Cost: none; the user meets a stale mirror and saves refused as "not ready".
+2. **The mirror folder is ours (your 2026-11-07 decision), so the cleanup clears the read-only attribute on what it removes or replaces in it.** Cost: one call per entry, plus a runner test. ADR-0015's amendment already covers it: "may delete anything in that folder and replace whatever sits at `current.db`".
+3. Pass `FILE_RENAME_IGNORE_READONLY_ATTRIBUTE` to the POSIX rename. NTFS only; FAT32, exFAT and ReFS would still need option 2.
+
 ## Recommendation
 - Question 1: option 1 as built. The setup is rare, the failure is availability only and truthful, and option 2 trades an occasional failed publish for no mirror at all. If you want your "never a silent fallback" rule applied to the mirror too, option 2 is the policy form and costs little.
 - Question 2: option 1 for v0.4, with a backlog row on M7 (CAP-MIRROR-EXTERNAL's Windows note) so the docs state it.
+- Question 3: option 2. It decides by what the volume offers, which is the rule's own spirit ("never by an error"), and it keeps a share working with the stated plain-rename limit. Add option 1's minimum Windows version to the release notes regardless.
+- Question 4: option 2. Your "the folder is ours" decision already licenses it, and it closes the unbounded-disk side too.
+- The first fix round on these waits for your answer, as your rule for a rare setup asks. Windows writes stay off until BL-0087, so no user meets them meanwhile.
 
 The mechanism's review history (the publish): S0085 (1 round), S0087 (2 rounds), S0088 (2 rounds, 1 High fixed: the stamp), S0118. The swap itself has had one fix (S0087 round 1, red team F6). The POSIX rename for the pointer is new in S0130, and its reviews are under way.
 

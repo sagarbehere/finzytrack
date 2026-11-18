@@ -475,3 +475,21 @@ def test_a_reader_holding_the_pointer_without_sharing_deletion_refuses_the_swap_
     assert seen_by_a_reader(fs) == first.gen.name
     fs.outside_release(f"{MIRROR}/current.txt")
     assert_clean_after_the_next_job(fs)
+
+
+def test_on_ntfs_a_refused_posix_rename_is_never_retried_as_the_plain_rename(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The brief: the form is never guessed from a failure. Only `NotOffered` (the volume lacks the rename) takes the
+    plain rename; any other refusal of `rename_shared` ends the job, even where the plain rename would land (S0130
+    round 1, verifier V5: a catch-all fallback survived every other test)."""
+    fs = world(windows=True)
+    first = job(fs)
+    assert isinstance(first, pb.Published)
+
+    def refused(self: MemDir, src: str, dst: str) -> None:
+        del self, src, dst
+        raise PermissionError(errno.EACCES, "refused")
+
+    monkeypatch.setattr(MemDir, "rename_shared", refused)
+    with pytest.raises(PermissionError, match="refused"):
+        job(fs)
+    assert seen_by_a_reader(fs) == first.gen.name
