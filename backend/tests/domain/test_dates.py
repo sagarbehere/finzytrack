@@ -6,6 +6,8 @@ boundary where the two differ, so a UTC "today" cannot pass.
 
 from __future__ import annotations
 
+import os
+import subprocess
 import sys
 import time
 from collections.abc import Iterator
@@ -23,6 +25,7 @@ from app.platform.engine_jobs.rebuild import RebuildTarget
 from tests.windows_pending import TZSET
 
 pytestmark = pytest.mark.inv("INV-07")
+BACKEND = Path(__file__).resolve().parents[2]
 
 # 04:30 UTC on 1 April 2026: still 31 March in Los Angeles (UTC-7), already 1 April in Kolkata (UTC+5:30).
 INSTANT = datetime(2026, 4, 1, 4, 30, tzinfo=UTC)
@@ -58,8 +61,8 @@ def test_a_naive_instant_is_refused() -> None:
 # sidecar "today" is also taken in Kolkata, after local midnight, where the civil date is already UTC's next day.
 @pytest.fixture
 def kolkata(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
-    if sys.platform == "win32":
-        raise RuntimeError(TZSET)  # INV-07's run east of UTC cannot move the zone there: it fails, never passes
+    if sys.platform == "win32":  # the same checks run in a process started east of UTC (below)
+        pytest.skip(TZSET)
     monkeypatch.setenv("TZ", "Asia/Kolkata")
     time.tzset()
     yield
@@ -69,6 +72,27 @@ def kolkata(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
 
 @pytest.mark.usefixtures("kolkata")
 def test_east_of_utc_every_sidecar_today_is_the_local_date() -> None:
+    east_of_utc_checks()
+
+
+def test_east_of_utc_every_sidecar_today_is_the_local_date_in_a_process_started_there() -> None:
+    """The same checks in a child whose zone is set before it starts (S0131): on Windows the only way, since its C
+    runtime reads `TZ` only then (`TZSET`); elsewhere a second form of the case above. `IST-5:30` is UTC+5:30 in both
+    the POSIX and the Windows C runtime's spelling; the child first checks its zone is that, so a `TZ` it ignored
+    fails instead of passing west of UTC."""
+    code = (
+        "import time; assert time.timezone == -19800, time.timezone; "
+        "from tests.domain.test_dates import east_of_utc_checks; east_of_utc_checks()"
+    )
+    env = {**os.environ, "TZ": "IST-5:30"}
+    done = subprocess.run(  # noqa: S603 (fixed argv: this interpreter and a constant)
+        [sys.executable, "-c", code], cwd=BACKEND, env=env, capture_output=True, text=True, timeout=120, check=False
+    )
+    assert done.returncode == 0, done.stdout + done.stderr
+
+
+def east_of_utc_checks() -> None:
+    """Every sidecar "today" in a zone east of UTC, where 19:00 UTC on 31 March is already 1 April."""
     # 19:00 UTC on 31 March is 00:30 on 1 April in Kolkata: a UTC "today" would send 31 March.
     clock = FrozenClock(EVENING)
     assert civil_date(EVENING) == date(2026, 4, 1)

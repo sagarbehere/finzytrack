@@ -431,12 +431,12 @@ def test_not_saved_says_unchanged_only_after_the_rehash() -> None:
         ),
         (
             ChangeNotSavedDetails("permission", None, host("/L"), "deny delete_child,directory_inherit", True, None),
-            "The folder /L has a permission entry (ACL) that stops Finzytrack from saving safely: "
+            f"The folder {host('/L')} has a permission entry (ACL) that stops Finzytrack from saving safely: "
             "deny delete_child,directory_inherit. Remove that entry, then try again.",
         ),
         (
             ChangeNotSavedDetails("permission", None, host("/app/local/k1/journal"), None, True, None),
-            "allow changes to /app/local/k1/journal.",
+            f"allow changes to {host('/app/local/k1/journal')}.",
         ),
         (  # S0100 (BL-0163 (b)): the file named
             ChangeNotSavedDetails("io_error", MAIN, None, None, True, None),
@@ -444,23 +444,24 @@ def test_not_saved_says_unchanged_only_after_the_rehash() -> None:
         ),
         (
             ChangeNotSavedDetails("linked_folder", None, host("/app/local/k1/journal"), None, True, None),
-            "The folder /app/local/k1/journal is a link to another place. Finzytrack keeps its save records and "
-            "backups only in a real folder. Put the real folder back in its place, or remove the link, then try again.",
+            f"The folder {host('/app/local/k1/journal')} is a link to another place. "
+            "Finzytrack keeps its save records and backups only in a real folder. Put the real folder back in its "
+            "place, or remove the link, then try again.",
         ),
         (
             ChangeNotSavedDetails("no_folder_id", MAIN, None, None, True, None),
-            f"The folder that holds {MAIN.rpartition('/')[2]} has no creation time that Finzytrack can read, so "
+            "The folder that holds main.bean has no creation time that Finzytrack can read, so "
             "Finzytrack cannot tell it from a folder at the same place on another drive.",
         ),
         (  # S0090 (BL-0220 V2-1): a drive that keeps no creation time at all gets a way out that works there too
             ChangeNotSavedDetails("no_folder_id", MAIN, None, None, True, None),
-            f"If {MAIN.rpartition('/')[2]} is at the top level of a USB drive, make a folder on the drive, move your "
+            "If main.bean is at the top level of a USB drive, make a folder on the drive, move your "
             "ledger into it, and open it from there. Otherwise keep your ledger on another drive, such as your "
             "Mac's own disk.",
         ),
         (
             ChangeNotSavedDetails("no_drive_id", MAIN, None, None, True, None),
-            f"Finzytrack cannot identify the drive that holds {MAIN.rpartition('/')[2]}, so it could not undo the "
+            "Finzytrack cannot identify the drive that holds main.bean, so it could not undo the "
             "change if saving were interrupted.",
         ),
     ],
@@ -712,13 +713,13 @@ def test_S0100_the_outcome_after_a_death_carries_the_changed_file_in_its_own_fie
         ),
         (
             ChangeNotSavedDetails("folder_appeared", NEW, host("/L/y2026"), None, True, None),
-            "Finzytrack did not save your change. A folder /L/y2026 appeared where Finzytrack was about to make one. "
-            "Try again. Your ledger is unchanged.",
+            f"Finzytrack did not save your change. A folder {host('/L/y2026')} appeared where Finzytrack was about "
+            "to make one. Try again. Your ledger is unchanged.",
         ),
         (
             ChangeNotSavedDetails("app_folder_missing", None, host("/app"), None, True, None),
-            "Finzytrack did not save your change. Its data folder /app is missing or was replaced. Quit Finzytrack and "
-            "open it again, then try again. Your ledger is unchanged.",
+            f"Finzytrack did not save your change. Its data folder {host('/app')} is missing or was replaced. "
+            "Quit Finzytrack and open it again, then try again. Your ledger is unchanged.",
         ),
     ],
 )

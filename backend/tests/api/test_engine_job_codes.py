@@ -192,9 +192,9 @@ def scenarios() -> Iterator[Scenarios]:
 
 
 def job_router(scenarios: Scenarios) -> APIRouter:
-    router = APIRouter(prefix=host("/api/test"))
+    router = APIRouter(prefix="/api/test")
 
-    @router.get(host("/job/{name}"), openapi_extra=declare("app"))
+    @router.get("/job/{name}", openapi_extra=declare("app"))
     async def job(name: str) -> Envelope[Counted]:
         raise scenarios.run(name).error
 

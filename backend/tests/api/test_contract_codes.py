@@ -130,9 +130,9 @@ def scenarios() -> Iterator[Scenarios]:
 
 
 def app_for(scenarios: Scenarios) -> FastAPI:
-    router = APIRouter(prefix=host("/api/test"))
+    router = APIRouter(prefix="/api/test")
 
-    @router.get(host("/contract/{name}"), openapi_extra=declare("app"))
+    @router.get("/contract/{name}", openapi_extra=declare("app"))
     async def contract(name: str) -> Envelope[Counted]:
         raise scenarios.run(name)
 

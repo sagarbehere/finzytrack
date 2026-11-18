@@ -141,7 +141,7 @@ def test_what_a_stopped_copy_kept_is_named_in_the_creates_words(make: Any) -> No
     assert isinstance(value, NotCopied)
     assert copy_text.text(value) == (
         "Not copied. The copy did not load the same as your ledger (first at Main Books.beancount, line 12). "
-        "Finzytrack left these in /u/Books copy because it could not be sure they are only its own: x. Check them, "
+        f"Finzytrack left these in {FOLDER} because it could not be sure they are only its own: x. Check them, "
         "and remove any you do not need."
     )
 
@@ -173,7 +173,7 @@ def test_an_engine_death_that_finds_only_the_folder_never_says_finzytrack_left_i
     assert isinstance(value, NotCopied)
     text = copy_text.text(value)
     assert text == (
-        "Not copied. Finzytrack stopped before it finished. Finzytrack may have made the folder /u/Books copy. Check "
+        f"Not copied. Finzytrack stopped before it finished. Finzytrack may have made the folder {FOLDER}. Check "
         "it, and remove it if you do not need it."
     )
     assert "left the folder" not in text
@@ -184,7 +184,7 @@ def test_a_live_copy_stop_that_kept_only_its_folder_says_finzytrack_left_it() ->
     (`msg:copy.left_folder`), never the after-death words."""
     text = copy_text.text(NotCopied("load_differs", FOLDER, (".",)))
     assert text.endswith(
-        "Finzytrack left the folder /u/Books copy because it could not be sure everything in it is its own. Check "
+        f"Finzytrack left the folder {FOLDER} because it could not be sure everything in it is its own. Check "
         "it, and remove it if you do not need it."
     )
     assert "may have made" not in text
