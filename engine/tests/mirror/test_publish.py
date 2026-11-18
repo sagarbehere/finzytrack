@@ -9,7 +9,9 @@
   in a generation name or a journal name in the folder after the cleanup, the current generation's, and the floor";
 - §4 steps 4, 7, 8; §6 the keep set (current, previous, at most 2 others younger than the grace, oldest going first);
   §7 the gate's read; §8 what `meta` carries and when a generation is fresh.
-The crash, power-loss and I/O-error sweeps are `test_publish_crash.py`'s (the in-memory fake).
+The crash, power-loss and I/O-error sweeps are `test_publish_crash.py`'s (the in-memory fake). On Windows (S0130,
+BL-0206) the same tests run on the adapter (`windows_port`), with the pointer file `current.txt` where POSIX has the
+link `current.db` (`CUR`, `current_in`, `point_at`), plus the Windows cases at the end of this file.
 """
 
 from __future__ import annotations
@@ -37,30 +39,25 @@ from ledger_engine.mirror import publish as pb
 from ledger_engine.mirror.core import rows, schema
 from ledger_engine.mirror.store import SqliteStore
 from tests.mirror.publish_support import (
+    CUR,
     ENGINE_BUILD,
     KEY,
     TODAY,
     current,
+    current_in,
     fs_now,
     ledger_set,
     loaded,
     meta,
     mirror_of,
+    point_at,
     publish_job,
     write_ledger,
 )
-from tests.windows_pending import BL_0206
+from tests.windows_pending import NO_MOUNT
 
-if sys.platform == "win32":
-    raise pytest.skip.Exception(BL_0206, allow_module_level=True)
-
-pytestmark = [
-    pytest.mark.inv("INV-05"),
-    pytest.mark.inv("INV-10"),
-    pytest.mark.skipif(
-        sys.platform not in ("darwin", "linux"), reason="the publish on Windows is BL-0206 (its pointer file)"
-    ),
-]
+pytestmark = [pytest.mark.inv("INV-05"), pytest.mark.inv("INV-10"), pytest.mark.usefixtures("windows_port")]
+WINDOWS = sys.platform == "win32"
 
 MINUTE_NS = 60 * 10**9
 NAME = re.compile(r"gen-([1-9][0-9]*)-([0-9a-f]{16})\.db")
@@ -120,13 +117,15 @@ def test_a_publish_makes_the_folder_builds_a_tagged_generation_and_links_current
 ) -> None:
     out = published(publish_job(fs, cache, root))
     m = mirror_of(cache)
-    assert stat.S_IMODE(m.stat().st_mode) == 0o700
+    if not WINDOWS:  # Windows has no mode bits: the folder and the file take the cache folder's ACL
+        assert stat.S_IMODE(m.stat().st_mode) == 0o700
     name = current(cache)
     assert name is not None
     assert NAME.fullmatch(name), name  # a relative link to a tagged generation name
     assert out.gen == pb.Gen(1, name)
-    assert stat.S_IMODE((m / name).stat().st_mode) == 0o600
-    assert sorted(p.name for p in m.iterdir()) == sorted([name, pb.CURRENT])  # no journal, no temporary link
+    if not WINDOWS:
+        assert stat.S_IMODE((m / name).stat().st_mode) == 0o600
+    assert sorted(p.name for p in m.iterdir()) == sorted([name, CUR])  # no journal, no temporary link or pointer
     _, fp = loaded(root)
     facts = meta(m / name)
     assert facts["ledger_version"] == f"1/{digest(fp)}" == out.ledger_version
@@ -227,7 +226,7 @@ def test_a_build_that_fails_removes_its_file_and_journal_and_raises(
     monkeypatch.setattr(schema, "statements", lambda: ["CREATE TABLE x (", "nonsense"])
     with pytest.raises(sqlite3.Error):
         publish_job(fs, cache, root)
-    assert sorted(p.name for p in mirror_of(cache).iterdir()) == sorted([first.name, pb.CURRENT])
+    assert sorted(p.name for p in mirror_of(cache).iterdir()) == sorted([first.name, CUR])
 
 
 @pytest.mark.parametrize(
@@ -288,25 +287,25 @@ def test_the_cleanup_keeps_current_previous_and_at_most_two_others(fs: FileSyste
     cleaned = clean_at(fs, cache, fs_now(cache))
     assert cleaned.current == gens[-1]
     # current, previous, and the 2 newest of the others (each young): the oldest go first (owner, 2026-11-08)
-    assert names(cache) == {pb.CURRENT, *(g.name for g in gens[-4:])}
+    assert names(cache) == {CUR, *(g.name for g in gens[-4:])}
 
 
 def test_after_the_grace_period_only_current_and_previous_stay(fs: FileSystem, cache: Path, root: Path) -> None:
     gens = publish_n(fs, cache, root, 4)
     clean_at(fs, cache, fs_now(cache) + 11 * MINUTE_NS)
-    assert names(cache) == {pb.CURRENT, gens[-1].name, gens[-2].name}
+    assert names(cache) == {CUR, gens[-1].name, gens[-2].name}
 
 
 def test_the_oldest_others_go_first_by_their_replacement_time(fs: FileSystem, cache: Path, root: Path) -> None:
     gens = publish_n(fs, cache, root, 6)
     m = mirror_of(cache)
-    assert names(cache) == {pb.CURRENT, *(g.name for g in gens[1:])}  # the 6th job's cleanup took gens[0]
+    assert names(cache) == {CUR, *(g.name for g in gens[1:])}  # the 6th job's cleanup took gens[0]
     now = fs_now(cache)
     # the others now are gens[1..3]; make gens[1] and gens[2] the most recently replaced, gens[3] the oldest
     for g, ago in zip(gens[1:4], (1, 2, 5), strict=True):
         os.utime(m / g.name, ns=(now - ago * MINUTE_NS, now - ago * MINUTE_NS))
     clean_at(fs, cache, now)
-    assert names(cache) == {pb.CURRENT, gens[5].name, gens[4].name, gens[1].name, gens[2].name}
+    assert names(cache) == {CUR, gens[5].name, gens[4].name, gens[1].name, gens[2].name}
 
 
 def test_the_previous_generation_is_the_highest_below_current_that_is_whole_and_complete(
@@ -316,7 +315,7 @@ def test_the_previous_generation_is_the_highest_below_current_that_is_whole_and_
     m = mirror_of(cache)
     (m / f"{gens[2].name}-journal").write_bytes(b"hot")  # a stopped outside writer's journal: not whole
     clean_at(fs, cache, fs_now(cache) + 11 * MINUTE_NS)
-    assert names(cache) == {pb.CURRENT, gens[3].name, gens[1].name}  # gens[2] and its journal went: not previous
+    assert names(cache) == {CUR, gens[3].name, gens[1].name}  # gens[2] and its journal went: not previous
 
 
 def test_a_journal_beside_a_kept_generation_is_left(fs: FileSystem, cache: Path, root: Path) -> None:
@@ -336,7 +335,7 @@ def test_what_the_rules_do_not_name_is_removed(fs: FileSystem, cache: Path, root
     (m / "gen-x.db").write_bytes(b"x")
     (m / "folder" / "inner").mkdir(parents=True)
     cleaned = clean_at(fs, cache, fs_now(cache))
-    assert names(cache) == {pb.CURRENT, gens[0].name}
+    assert names(cache) == {CUR, gens[0].name}
     assert cleaned.failed == 0
     assert cleaned.removed == 8
     assert cleaned.top == 1
@@ -384,7 +383,7 @@ def test_links_inside_are_removed_as_links_and_their_targets_are_untouched(
     (m / "dangling").symlink_to(tmp_path / "nothing")
     clean_at(fs, cache, fs_now(cache))
     assert tree(o) == before
-    assert names(cache) == {pb.CURRENT, gens[0].name}
+    assert names(cache) == {CUR, gens[0].name}
 
 
 def test_a_folder_inside_is_removed_with_everything_in_it_and_no_link_in_it_is_followed(
@@ -401,7 +400,7 @@ def test_a_folder_inside_is_removed_with_everything_in_it_and_no_link_in_it_is_f
     (m / "f" / "g" / "h" / "b.txt").write_bytes(b"b")
     clean_at(fs, cache, fs_now(cache))
     assert tree(o) == before
-    assert names(cache) == {pb.CURRENT, gens[0].name}
+    assert names(cache) == {CUR, gens[0].name}
 
 
 def test_current_db_pointing_outside_the_folder_is_not_kept_and_its_target_is_untouched(
@@ -411,13 +410,11 @@ def test_current_db_pointing_outside_the_folder_is_not_kept_and_its_target_is_un
     o = outside(tmp_path)
     (o / gens[0].name).write_bytes((mirror_of(cache) / gens[0].name).read_bytes())  # a generation-like file outside
     before = tree(o)
-    link = mirror_of(cache) / pb.CURRENT
-    link.unlink()
-    link.symlink_to(o / gens[0].name)  # absolute: not exactly a generation name of this folder
+    point_at(mirror_of(cache), str(o / gens[0].name))  # absolute: not exactly a generation name of this folder
     cleaned = clean_at(fs, cache, fs_now(cache))
     assert cleaned.current is None
     assert tree(o) == before
-    assert pb.CURRENT not in names(cache)
+    assert CUR not in names(cache)
 
 
 @pytest.mark.parametrize("kind", ["file", "folder"])
@@ -427,10 +424,10 @@ def test_current_db_a_file_or_a_folder_is_replaced_by_the_link(
     m = mirror_of(cache)
     m.mkdir(parents=True)
     if kind == "file":
-        (m / pb.CURRENT).write_bytes(b"SQLite format 3\x00 not ours")
+        (m / CUR).write_bytes(b"SQLite format 3\x00 not ours")
     else:
-        (m / pb.CURRENT / "inner").mkdir(parents=True)
-        (m / pb.CURRENT / "inner" / "x").write_bytes(b"x")
+        (m / CUR / "inner").mkdir(parents=True)
+        (m / CUR / "inner" / "x").write_bytes(b"x")
     out = published(publish_job(fs, cache, root))
     assert current(cache) == out.gen.name
 
@@ -452,7 +449,7 @@ def test_mirror_swapped_for_a_link_during_the_job_writes_nothing_behind_the_link
 
     out = published(publish_job(fs, cache, root, around=swap_in_a_link))
     assert tree(o) == before
-    assert os.readlink(away / pb.CURRENT) == out.gen.name  # the job finished in its own folder
+    assert current_in(away) == out.gen.name  # the job finished in its own folder
     assert (away / out.gen.name).is_file()
 
 
@@ -531,7 +528,7 @@ def test_read_published_is_none_for_anything_but_a_whole_published_generation(
     m = mirror_of(cache)
     gen = m / out.gen.name
     if damage == "no_link":
-        (m / pb.CURRENT).unlink()
+        (m / CUR).unlink()
     elif damage == "link_to_missing":
         gen.unlink()
     elif damage == "garbage":
@@ -539,8 +536,7 @@ def test_read_published_is_none_for_anything_but_a_whole_published_generation(
     elif damage == "journal":
         (m / f"{out.gen.name}-journal").write_bytes(b"hot")
     elif damage == "absolute":
-        (m / pb.CURRENT).unlink()
-        (m / pb.CURRENT).symlink_to(gen)
+        point_at(m, str(gen))
     else:
         m.rename(m.parent / "away")
         m.symlink_to(m.parent / "away")  # a whole generation behind a link at `mirror/`: never followed
@@ -595,11 +591,11 @@ def test_readers_during_continuous_publishes_read_only_whole_generations(
     def reader() -> None:
         while not stop.is_set():
             try:
-                name = os.readlink(m / pb.CURRENT)
+                name = current_in(m)  # Windows: through a handle that shares deletion, as the sidecar's pin
             except OSError as e:
-                errors.append(f"no current.db: {e}")
+                errors.append(f"no current entry: {e}")
                 continue
-            if not NAME.fullmatch(name):
+            if name is None or not NAME.fullmatch(name):
                 errors.append(f"current.db names {name}")
                 continue
             try:
@@ -692,8 +688,7 @@ def test_naming_and_recognition_agree_on_the_largest_number(fs: FileSystem, cach
     m = mirror_of(cache)
     big = f"gen-{pb.MAX_NUMBER}-{'b' * 16}.db"
     (m / big).write_bytes((m / first.name).read_bytes())
-    (m / pb.CURRENT).unlink()
-    (m / pb.CURRENT).symlink_to(big)  # another program made the current one the largest number
+    point_at(m, big)  # another program made the current one the largest number
     out = published(publish_job(fs, cache, root))
     assert out.gen.number == pb.MAX_NUMBER
     assert current(cache) == out.gen.name != big
@@ -704,10 +699,13 @@ def test_a_folder_at_current_db_the_cleanup_cannot_remove_is_moved_aside(
 ) -> None:
     """Red team F6: such a folder would stop every publish; the swap moves it aside whole for the next cleanup."""
     m = mirror_of(cache)
-    stuck = m / pb.CURRENT / "inner"
+    stuck = m / CUR / "inner"
     stuck.mkdir(parents=True)
     (stuck / "x").write_bytes(b"x")
-    stuck.chmod(0o500)  # its entries cannot be removed
+    if WINDOWS:
+        (stuck / "x").chmod(0o444)  # the read-only attribute: Windows refuses to remove the file
+    else:
+        stuck.chmod(0o500)  # its entries cannot be removed
     try:
         out = published(publish_job(fs, cache, root))
         assert current(cache) == out.gen.name
@@ -717,6 +715,8 @@ def test_a_folder_at_current_db_the_cleanup_cannot_remove_is_moved_aside(
     finally:
         for p in m.rglob("inner"):
             p.chmod(0o700)
+            if WINDOWS:
+                (p / "x").chmod(0o666)
 
 
 def test_an_incomplete_generation_below_current_is_not_previous(fs: FileSystem, cache: Path, root: Path) -> None:
@@ -727,7 +727,7 @@ def test_an_incomplete_generation_below_current_is_not_previous(fs: FileSystem, 
     con.commit()
     con.close()
     clean_at(fs, cache, fs_now(cache) + 11 * MINUTE_NS)
-    assert names(cache) == {pb.CURRENT, gens[2].name, gens[0].name}
+    assert names(cache) == {CUR, gens[2].name, gens[0].name}
 
 
 def test_a_generation_with_any_journal_beside_it_is_not_previous(fs: FileSystem, cache: Path, root: Path) -> None:
@@ -735,7 +735,7 @@ def test_a_generation_with_any_journal_beside_it_is_not_previous(fs: FileSystem,
     gens = publish_n(fs, cache, root, 3)
     (mirror_of(cache) / f"{gens[1].name}-journal").write_bytes(b"")
     clean_at(fs, cache, fs_now(cache) + 11 * MINUTE_NS)
-    assert names(cache) == {pb.CURRENT, gens[2].name, gens[0].name}
+    assert names(cache) == {CUR, gens[2].name, gens[0].name}
 
 
 def hdiutil(*args: str) -> subprocess.CompletedProcess[str]:
@@ -750,6 +750,8 @@ def _sudo(*args: str) -> subprocess.CompletedProcess[str]:
 def mounted(tmp_path: Path) -> Any:
     """Another volume mounted at a folder: on macOS a small disk image (`hdiutil`, no root needed); on Linux a small
     tmpfs (`sudo mount`, which the CI runner allows; S0125); skipped where it cannot be made."""
+    if sys.platform == "win32":
+        raise pytest.skip.Exception(NO_MOUNT)
     image = tmp_path / "vol.dmg"
     if sys.platform == "darwin":
         made = hdiutil("create", "-size", "4m", "-fs", "HFS+", "-volname", "ftvol", "-quiet", str(image))
@@ -787,7 +789,7 @@ def test_the_cleanup_never_enters_or_removes_another_volume_mounted_inside(
     cleaned = clean_at(fs, cache, fs_now(cache))
     assert (point / "volume-file.txt").read_bytes() == b"another volume's file"
     assert cleaned.failed == 1
-    assert names(cache) == {pb.CURRENT, gens[0].name, "mnt"}
+    assert names(cache) == {CUR, gens[0].name, "mnt"}
 
 
 def test_a_volume_mounted_deeper_in_a_folder_is_left_and_the_folder_stays(
@@ -845,3 +847,68 @@ def test_a_generation_without_published_by_is_not_a_mirror_of_this_kind() -> Non
     assert set(pb.META_KEYS) == {*facts, "published_by"}
     assert pb.meta_of(facts) is None
     assert pb.meta_of({**facts, "published_by": "open"}) is not None
+
+
+# -- Windows (S0130, BL-0206): the pointer file and the retried removal, on the adapter ------------------------------
+
+
+def windows_only() -> None:
+    if not WINDOWS:
+        pytest.skip("Windows' pointer file and open-file removal: the fake's Windows mode covers them elsewhere")
+
+
+def test_on_windows_the_current_generation_is_named_by_the_pointer_and_no_link_is_made(
+    fs: FileSystem, cache: Path, root: Path
+) -> None:
+    windows_only()
+    first = published(publish_job(fs, cache, root))
+    second = published(publish_job(fs, cache, root))
+    m = mirror_of(cache)
+    assert (m / pb.POINTER).read_bytes() == second.gen.name.encode("ascii")  # nothing before or after the name
+    assert not (m / pb.CURRENT).exists()
+    assert not any(p.is_symlink() for p in m.iterdir())
+    assert names(cache) == {pb.POINTER, first.gen.name, second.gen.name}
+
+
+def test_on_windows_a_generation_sqlite_holds_open_survives_the_cleanup_and_goes_after_it_closes(
+    fs: FileSystem, cache: Path, root: Path
+) -> None:
+    """ADR-0015 amendment of 2026-10-25: a deletion that fails because a file is open is retried at the next
+    collection, never reported as an error. A reader's SQLite connection holds the first generation while 4 more are
+    published (it would have gone at the third); each job publishes, and the cleanup after the reader closes removes
+    it."""
+    windows_only()
+    first = published(publish_job(fs, cache, root)).gen
+    m = mirror_of(cache)
+    con = sqlite3.connect(f"{(m / first.name).as_uri()}?mode=ro", uri=True)
+    try:
+        assert con.execute("SELECT count(*) FROM m_meta").fetchone()[0] > 0
+        for _ in range(4):
+            published(publish_job(fs, cache, root))
+        assert first.name in names(cache)
+        cleaned = clean_at(fs, cache, fs_now(cache))
+        assert cleaned.failed == 1
+        assert con.execute("SELECT count(*) FROM m_meta").fetchone()[0] > 0  # the reader read on, unharmed
+    finally:
+        con.close()
+    published(publish_job(fs, cache, root))
+    assert first.name not in names(cache)
+    assert len([n for n in names(cache) if pb.gen_of(n)]) <= 4
+
+
+def test_on_windows_the_replaced_generation_gets_its_time_while_a_reader_holds_it(
+    fs: FileSystem, cache: Path, root: Path
+) -> None:
+    """§4 step 8: the replaced generation's modification time is its replacement time, set while SQLite holds it."""
+    windows_only()
+    first = published(publish_job(fs, cache, root)).gen
+    path = mirror_of(cache) / first.name
+    old = 1_000_000_000  # 2001: long before any replacement
+    os.utime(path, (old, old))
+    con = sqlite3.connect(f"{path.as_uri()}?mode=ro", uri=True)
+    try:
+        con.execute("SELECT count(*) FROM m_meta").fetchone()
+        published(publish_job(fs, cache, root))
+        assert path.stat().st_mtime > old + 10**8
+    finally:
+        con.close()

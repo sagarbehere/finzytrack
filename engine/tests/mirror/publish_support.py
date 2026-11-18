@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import os
 import sqlite3
+import sys
 from collections.abc import Callable
 from datetime import date
 from pathlib import Path
@@ -105,6 +106,31 @@ def meta(path: Path) -> dict[str, str]:
         con.close()
 
 
+CUR = pb.POINTER if sys.platform == "win32" else pb.CURRENT
+"""The entry that names the current generation on this OS: the link `current.db`, Windows' pointer `current.txt`."""
+
+
+def current_in(m: Path) -> str | None:
+    """What the mirror folder `m`'s current entry names, read as a reader does: the link's target (POSIX), or the
+    pointer's whole content through the port, whose handles share deletion and never block a swap (Windows; a plain
+    `open` would refuse the engine's rename while it reads). None when there is none."""
+    if sys.platform != "win32":
+        return os.readlink(m / CUR) if (m / CUR).is_symlink() else None
+    from ledger_engine.fs.this_os import for_this_os
+
+    with for_this_os().open_dir(str(m)) as d:
+        data = d.read(CUR) if d.stat(CUR) is not None and not (m / CUR).is_dir() else None
+    return None if data is None else data.decode("ascii", "replace")
+
+
 def current(cache: Path) -> str | None:
-    link = mirror_of(cache) / pb.CURRENT
-    return os.readlink(link) if link.is_symlink() else None
+    return current_in(mirror_of(cache))
+
+
+def point_at(m: Path, target: str) -> None:
+    """Another program makes the current entry name `target`: a link (POSIX), the pointer's content (Windows)."""
+    (m / CUR).unlink(missing_ok=True)
+    if sys.platform == "win32":
+        (m / CUR).write_bytes(target.encode("ascii"))
+    else:
+        (m / CUR).symlink_to(target)

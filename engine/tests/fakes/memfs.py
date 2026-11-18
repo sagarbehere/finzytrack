@@ -226,7 +226,7 @@ def tears(data: bytes) -> tuple[bytes, ...]:
 class MemFS:
     """The fake (`ledger_engine.fs.port.FileSystem`)."""
 
-    def __init__(self, *, case_insensitive: bool = True, stores_nfd: bool = False) -> None:
+    def __init__(self, *, case_insensitive: bool = True, stores_nfd: bool = False, windows: bool = False) -> None:
         self.nodes: dict[int, _Node] = {ROOT: _Dir(ci=case_insensitive, parent=ROOT)}
         self._next = ROOT + 1
         self.effects: list[str] = []
@@ -242,6 +242,11 @@ class MemFS:
         self.volume_errors: set[int] = set()  # devs whose UUID cannot be read (`volume_id` raises `EIO`)
         self.fs_types: dict[int, str] = {}  # dev -> its file-system type name (default `apfs`; S0089 round 1)
         self.no_crtime: set[int] = set()  # devs whose file system keeps no creation time (`mark`: None; round 2)
+        # S0130 (BL-0206): Windows' semantics for the mirror's publish: no link is made (`caps().links` False,
+        # `symlink` refused), and a file another program holds open (`outside_hold`) cannot be removed or renamed,
+        # away or over (probed, S0126 and S0130's P1); its modification time can still be set
+        self.windows = windows
+        self.held: set[int] = set()
 
     def stored(self, name: str) -> str:
         """The spelling the volume keeps for a name it is given."""
@@ -526,6 +531,19 @@ class MemFS:
         assert isinstance(node, _File | _Dir)
         node.locked = True
 
+    def outside_hold(self, path: str) -> None:
+        """Windows (S0130): a reader holds the file open without sharing deletion (SQLite's own open, Python's
+        `open`): until `outside_release`, removing it, renaming it away or renaming over it is refused (`EACCES`)."""
+        _, ino, rest, _ = self._walk(path)
+        assert not rest
+        assert isinstance(self.nodes[ino], _File)
+        self.held.add(ino)
+
+    def outside_release(self, path: str) -> None:
+        _, ino, rest, _ = self._walk(path)
+        assert not rest
+        self.held.discard(ino)
+
     def outside_unlock(self, path: str) -> None:
         node = self._at(path)
         assert isinstance(node, _File | _Dir)
@@ -728,7 +746,7 @@ class MemFS:
     def _durable_copy(
         self, tables: dict[int, dict[str, tuple[str, int]]], datas: dict[int, bytes], reach: list[int]
     ) -> MemFS:
-        out = MemFS(stores_nfd=self.stores_nfd)
+        out = MemFS(stores_nfd=self.stores_nfd, windows=self.windows)  # a power loss ends every reader's hold
         out.lost_power = True
         out.nodes = {}
         out._next = self._next
@@ -917,6 +935,8 @@ class MemDir:
             node = self._fs.nodes[hit[1]]
             if isinstance(node, _File | _Dir) and node.locked:
                 raise PermissionError(errno.EPERM, "locked")
+            if hit[1] in self._fs.held:
+                raise PermissionError(errno.EACCES, "in use by another program")
             if not self._may_delete(node):
                 raise PermissionError(errno.EACCES, "delete denied")
 
@@ -988,7 +1008,7 @@ class MemDir:
 
     def caps(self) -> Caps:
         d = self._d
-        return Caps(swap=not d.no_swap, excl=not d.no_excl or d.excl_unknown)
+        return Caps(swap=not d.no_swap, excl=not d.no_excl or d.excl_unknown, links=not self._fs.windows)
 
     def acl(self) -> tuple[AclEntry, ...]:
         return tuple(a.entry for a in self._d.acl)
@@ -1201,6 +1221,8 @@ class MemDir:
         d = self._d
         key = _key(check_name(name), d.ci)
         check_name(target)
+        if self._fs.windows:
+            raise OSError(errno.ENOTSUP, "no links are made on Windows (the mirror's pointer file)")
 
         def do() -> None:
             self._writable()

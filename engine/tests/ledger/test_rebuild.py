@@ -34,18 +34,10 @@ from ledger_engine.ledger.fingerprint import observe
 from ledger_engine.ledger.policy import DesktopPolicy
 from ledger_engine.mirror import publish as pb
 from ledger_engine.mirror.store import SqliteStore
-from tests.mirror.publish_support import BUILT_AT, ENGINE_BUILD, KEY, TODAY, fs_now, meta
-from tests.windows_pending import BL_0206
+from tests.mirror.publish_support import BUILT_AT, CUR, ENGINE_BUILD, KEY, TODAY, current_in, fs_now, meta
+from tests.windows_pending import NO_FIFO
 
-if sys.platform == "win32":
-    raise pytest.skip.Exception(BL_0206, allow_module_level=True)
-
-pytestmark = [
-    pytest.mark.inv("INV-22"),
-    pytest.mark.skipif(
-        sys.platform not in ("darwin", "linux"), reason="the publish on Windows is BL-0206 (its pointer file)"
-    ),
-]
+pytestmark = [pytest.mark.inv("INV-22"), pytest.mark.usefixtures("windows_port")]
 
 MAIN = b'option "operating_currency" "USD"\ninclude "inc.bean"\n2026-01-01 open Assets:Cash\n'
 INC = b'2026-01-01 open Expenses:Food\n2026-01-02 * "Lunch"\n  Expenses:Food  5 USD\n  Assets:Cash\n'
@@ -246,7 +238,8 @@ def test_a_loaded_result_is_published_with_its_number_and_ledger_version(root: P
     a = go(rebuild.Ports(), hint_of(root), FakeJob())
     assert a.outcome == "loaded"
     assert isinstance(a.published, pb.Published), a
-    name = os.readlink(mirror(cache) / pb.CURRENT)
+    name = current_in(mirror(cache))
+    assert name is not None
     assert a.published.gen == pb.Gen(1, name)
     facts = meta(mirror(cache) / name)
     assert facts["ledger_version"] == a.published.ledger_version == f"1/{digest(a.fingerprint)}"
@@ -302,7 +295,7 @@ def test_an_open_journal_seen_at_the_recheck_publishes_nothing(root: Path, cache
     a = go(with_load(cut_save), hint_of(root), FakeJob())
     assert a.outcome == "paused"
     assert a.published is None
-    assert not (mirror(cache) / pb.CURRENT).exists()
+    assert not (mirror(cache) / CUR).exists()
 
 
 class EditingStore(SqliteStore):
@@ -327,7 +320,7 @@ def test_an_edit_during_the_build_is_moved_and_not_published(root: Path, cache: 
     a = go(ports, hint_of(root), FakeJob())
     assert a.outcome == "moved"
     assert a.fingerprint == observe(hint_of(root).ledger_set)  # the next try starts from the disk as it is now
-    assert os.readlink(mirror(cache) / pb.CURRENT) == first.published.gen.name
+    assert current_in(mirror(cache)) == first.published.gen.name
     assert len(generations(cache)) == 2  # the unpublished build waits for the next cleanup
 
 
@@ -413,7 +406,7 @@ def test_an_edit_between_the_load_and_the_stamp_is_moved_never_published(root: P
     a = go(rebuild.Ports(observe=observe_with_edit), hint_of(root), FakeJob())
     assert a.outcome == "moved"
     assert a.published is None
-    assert not (mirror(cache) / pb.CURRENT).exists()
+    assert not (mirror(cache) / CUR).exists()
 
 
 # -- S0088: BL-0212 (the stamp and the fresh shortcut) and §7 before a fresh answer ------------------------------------
@@ -477,7 +470,7 @@ def test_a_file_the_ledger_no_longer_reads_changing_during_the_build_does_not_st
     a = go(rebuild.Ports(store=EditingStore(lambda: inc.write_bytes(INC + b"; edited\n"))), hint, FakeJob())
     assert a.outcome == "loaded"
     assert isinstance(a.published, pb.Published)
-    assert os.readlink(mirror(cache) / pb.CURRENT) == a.published.gen.name
+    assert current_in(mirror(cache)) == a.published.gen.name
 
 
 def test_an_open_journal_beside_a_fresh_generation_is_paused_not_fresh(root: Path, cache: Path) -> None:
@@ -917,6 +910,8 @@ def test_S0102_r1_an_include_its_observation_found_to_be_a_fifo_is_never_loaded(
     """Round 1, red team F5: the rebuild's own observation before its load sees an include swapped for a FIFO as no
     regular file; Beancount's real load would open it with a blocking `open` and wait for ever. It raises at once, as
     a load that cannot read a file does (BL-0249 keeps a FIFO swapped in after this observation)."""
+    if sys.platform == "win32":
+        raise pytest.skip.Exception(NO_FIFO)
     hint = hint_of(root)
     inc = root.parent / "inc.bean"
     inc.unlink()

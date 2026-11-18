@@ -43,17 +43,14 @@ from ledger_engine.ledger.writer import BadPlanError, Change, NotSaved, Reason, 
 from ledger_engine.mirror import publish as pb
 from tests.fs.real_volume import app_identity
 from tests.ledger.worlds import with_folders
-from tests.mirror.publish_support import publish_job
-from tests.windows_pending import BL_0206
-
-if sys.platform == "win32":
-    raise pytest.skip.Exception(BL_0206, allow_module_level=True)
+from tests.mirror.publish_support import CUR, current_in, publish_job
+from tests.windows_pending import NO_FIFO
 
 pytestmark = [
     pytest.mark.inv("INV-01"),
     pytest.mark.inv("INV-22"),
     pytest.mark.inv("INV-26"),
-    pytest.mark.skipif(sys.platform not in ("darwin", "linux"), reason="the publish on Windows is BL-0206"),
+    pytest.mark.usefixtures("windows_port"),
 ]
 
 MAIN = b'option "operating_currency" "USD"\ninclude "inc.bean"\n2026-01-01 open Assets:Cash\n'
@@ -512,13 +509,14 @@ def test_a_fresh_generation_after_the_outside_edit_lets_the_same_plan_pass(led: 
 )
 def test_no_published_generation_or_an_unreadable_one_is_refused(led: Ledger, damage: str) -> None:
     m = led.cache / "workspaces" / KEY / "mirror"
-    name = os.readlink(m / "current.db")
+    name = current_in(m)
+    assert name is not None
     if damage == "no_folder":
         for p in m.iterdir():
             p.unlink()
         m.rmdir()
     elif damage == "no_link":
-        (m / "current.db").unlink()
+        (m / CUR).unlink()
     elif damage == "garbage":
         (m / name).write_bytes(b"SQLite format 3\x00" + bytes(200))
     elif damage == "journal":
@@ -830,6 +828,8 @@ def test_S0102_a_folder_replaced_after_the_saves_start_gets_no_local_folder(
 def test_S0102_BL0245_a_target_replaced_by_a_fifo_never_hangs_the_gate(led: Ledger) -> None:
     """`rt2/test_rt2_gate.py::test_l_target_replaced_by_fifo`: after the preview, a FIFO put in place of a file the
     save writes. The save ends without the user's Cancel, writes nothing and never says the ledger is unchanged."""
+    if sys.platform == "win32":
+        raise pytest.skip.Exception(NO_FIFO)
     changes = (Change(str(led.inc), sha256(INC), EDIT),)
 
     def act() -> None:

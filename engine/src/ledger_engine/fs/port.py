@@ -86,10 +86,14 @@ class AclEntry:
 class Caps:
     """What a folder's volume offers (S0065): `swap`, the atomic exchange of two entries (`RENAME_SWAP`); `excl`, a
     rename that fails when its target exists (`RENAME_EXCL`). APFS offers both; HFS+ only `excl`; exFAT, FAT and
-    network shares neither (probed on disk images, S0065)."""
+    network shares neither (probed on disk images, S0065). `links`: the mirror's current generation is named by a
+    symbolic link renamed over `current.db` (macOS, Linux), or by a pointer file (Windows, which makes no link without a
+    privilege and cannot rename over an open file; ADR-0015, `design/specs/mirror/publish.md` §4 step 8; S0130). One
+    answer per OS, never learnt from a failure."""
 
     swap: bool
     excl: bool
+    links: bool = True
 
 
 @dataclass(frozen=True, slots=True)

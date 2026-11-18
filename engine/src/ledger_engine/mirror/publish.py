@@ -18,9 +18,16 @@ incomplete build (step 4), the file synced (step 5), the folder synced (step 6),
 ledger set observed again, no `.open` journal), the swap (`swap`, step 8). A generation is never written after it is
 published and a name is never used twice (the random tag, §3), so readers that pinned a name read only that build.
 
-Readers resolve `current.db` once and open the generation (§7): the save's gate reads it with `read_published`, the
-preview its baseline errors with `read_baseline` (S0116), the sidecar with `app.mirror.files.pin`. `fresh` and
-`fresh_on_disk` are §8's freshness check and its gate part.
+**Windows: the pointer file** (ADR-0015; S0130, BL-0206): Windows makes no link without a privilege and cannot rename
+over a file a reader holds open, so there the current generation is named by `current.txt`, a file whose whole content
+is exactly the generation's name in ASCII, written as a new synced file and renamed over `current.txt` in one plain
+rename (ADR-0069's replace). The volume says which form it takes (`caps().links`); everything else is the same. A
+generation a reader holds cannot be removed there: the cleanup counts it failed and the next one tries again (ADR-0015
+amendment of 2026-10-25).
+
+Readers resolve `current.db` (Windows: read `current.txt`) once and open the generation (§7): the save's gate reads it
+with `read_published`, the preview its baseline errors with `read_baseline` (S0116), the sidecar with
+`app.mirror.files.pin`. `fresh` and `fresh_on_disk` are §8's freshness check and its gate part.
 
 Everything here goes through the file-system port (`ledger_engine.fs.port`): the in-memory fake's crash, power-loss and
 I/O-error sweeps test it (`tests/mirror/test_publish_crash.py`); the SQLite build and `meta` read are the store's
@@ -48,6 +55,11 @@ from ledger_engine.mirror.core.rows import Row
 from ledger_engine.tla import tla_action
 
 CURRENT: Final = "current.db"
+POINTER: Final = "current.txt"
+"""Windows' pointer file (S0130): its whole content is exactly one generation name (`GEN_NAME`), in ASCII."""
+POINTER_LIMIT: Final = 64
+"""More than any generation name (at most 36 bytes): a longer pointer names no generation, and is never read whole."""
+POINTER_MODE: Final = 0o600
 WORKSPACES: Final = "workspaces"
 FOLDER: Final = "mirror"
 FOLDER_MODE: Final = 0o700
@@ -222,13 +234,41 @@ def open_folder(fs: FileSystem, app_cache: str, key: str) -> DirHandle:
         return d
 
 
-def current(d: DirHandle) -> Gen | None:
-    """The current generation (§6 "Kept"): `current.db` is a link whose target is exactly a generation name and that
-    entry is a regular file of the folder. Anything else: none."""
-    st = d.stat(CURRENT)
-    if st is None or st.kind is not Kind.LINK:
+def named_by_fs(windows: bool) -> str:
+    """`named_by` for a folder whose form is known: `current.txt` on Windows, else `current.db`."""
+    return POINTER if windows else CURRENT
+
+
+def named_by(d: DirHandle) -> str:
+    """The entry that names the current generation in this folder: the link `current.db`, or Windows' pointer file
+    `current.txt` (`caps().links`; S0130)."""
+    return named_by_fs(not d.caps().links)
+
+
+def _target(d: DirHandle, name: str) -> str | None:
+    """What the entry `name` names: a link's target, or a pointer file's whole content as ASCII; None for any other
+    kind of entry, a pointer longer than `POINTER_LIMIT` or not ASCII."""
+    st = d.stat(name)
+    if st is None:
         return None
-    target = d.readlink(CURRENT)
+    if name == CURRENT:
+        return d.readlink(name) if st.kind is Kind.LINK else None
+    if st.kind is not Kind.FILE:
+        return None
+    data = d.read(name, POINTER_LIMIT + 1)
+    if data is None or len(data) > POINTER_LIMIT:
+        return None
+    try:
+        return data.decode("ascii")
+    except UnicodeDecodeError:
+        return None
+
+
+def current(d: DirHandle) -> Gen | None:
+    """The current generation (§6 "Kept"): `current.db` is a link (Windows: `current.txt` is a file) whose target
+    (its whole content) is exactly a generation name, and that entry is a regular file of the folder. Anything else:
+    none."""
+    target = _target(d, named_by(d))
     gen = None if target is None else gen_of(target)
     if gen is None:
         return None
@@ -275,7 +315,7 @@ def _keep(d: DirHandle, store: Store, names: set[str], now_ns: int, grace_ns: in
         ((g, t) for g, t in below if g != previous and now_ns - t < grace_ns), key=lambda x: x[1], reverse=True
     )
     gens = {cur.name, *(g.name for g, _ in young[:extra]), *([previous.name] if previous else [])}
-    return {CURRENT, *gens, *(f"{g}{s}" for g in gens for s in JOURNALS if f"{g}{s}" in names)}
+    return {named_by(d), *gens, *(f"{g}{s}" for g in gens for s in JOURNALS if f"{g}{s}" in names)}
 
 
 def _remove_tree(d: DirHandle, name: str, depth: int, dev: int) -> None:
@@ -413,25 +453,31 @@ def publish(
 @tla_action("P_Swap", model="mirror-publish")
 def swap(d: DirHandle, gen: Gen) -> None:
     """§4 step 8: the replaced generation's modification time set to now (its replacement time, §6), then a temporary
-    link to the new generation's name renamed over `current.db`: readers see the old link or the new one, never
-    neither."""
+    link to the new generation's name renamed over `current.db` (Windows: a temporary pointer file holding the name,
+    its data synced by `create`, renamed over `current.txt`; S0130): readers see the old one or the new one, never
+    neither, and the temporary one is never read."""
     old = current(d)
     if old is not None:
         d.touch(old.name)
-    tmp = f"{CURRENT}.{gen.name[len(f'gen-{gen.number}-') : -len('.db')]}.tmp"
+    name = named_by(d)
+    tag = gen.name[len(f"gen-{gen.number}-") : -len(".db")]
+    tmp = f"{name}.{tag}.tmp"
     st = d.stat(tmp)
     if st is not None:  # ours: whatever stands there goes
         if st.kind is Kind.DIR:
             _remove_tree(d, tmp, 0, d.device())
         else:
             d.remove(tmp)
-    d.symlink(gen.name, tmp)
-    cur = d.stat(CURRENT)
+    if name == CURRENT:
+        d.symlink(gen.name, tmp)
+    else:
+        d.create(tmp, gen.name.encode("ascii"), POINTER_MODE)  # its data synced before the rename (the port's create)
+    cur = d.stat(name)
     if cur is not None and cur.kind is Kind.DIR:
         # a folder the cleanup could not remove (round 1, red team F6): moved aside whole, for the next cleanup, so a
         # link can replace it; renaming a folder needs no right inside it
-        d.rename(CURRENT, f"{CURRENT}.{tmp[len(CURRENT) + 1 : -len('.tmp')]}.aside")
-    d.rename(tmp, CURRENT)
+        d.rename(name, f"{name}.{tag}.aside")
+    d.rename(tmp, name)
 
 
 # -- §7, §8: what the gate reads; freshness ----------------------------------------------------------------------------

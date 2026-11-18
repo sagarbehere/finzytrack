@@ -877,7 +877,7 @@ class WindowsDir:
         return True
 
     def caps(self) -> Caps:
-        return Caps(swap=False, excl=self.device() not in self._fs.no_excl)
+        return Caps(swap=False, excl=self.device() not in self._fs.no_excl, links=False)
 
     def acl(self) -> tuple[AclEntry, ...]:
         """The folder's DACL entries in order (none: empty; a volume without ACLs, FAT32 and exFAT: empty). A DACL we

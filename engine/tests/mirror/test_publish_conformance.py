@@ -55,7 +55,7 @@ from typing import Any, Final, override
 
 import pytest
 
-from ledger_engine.fs.port import DirHandle
+from ledger_engine.fs.port import DirHandle, Kind
 from ledger_engine.ledger import opening as op
 from ledger_engine.ledger import publishing
 from ledger_engine.ledger import rebuild as rb
@@ -244,20 +244,25 @@ def file_content(data: bytes | None) -> tuple[str, tuple[int, ...], tuple[int, .
 def code_view(fs: MemFS) -> View:
     gens: dict[int, Gen] = {}
     lk = 0
+    pointer = pb.named_by_fs(fs.windows)
     names = fs.names_in(MIRROR) if not fs.resolve(MIRROR).rest else []
     for n in names:
         base = n.removesuffix("-journal")
         if pb.gen_of(base) is None:
-            assert n.startswith(pb.CURRENT), f"a name the model has no counterpart for: {n}"
+            assert n.startswith(pb.named_by_fs(fs.windows)), f"a name the model has no counterpart for: {n}"
             continue
         g = g_of(base)
         if g in gens:
             continue
         k, rows, lab = file_content(fs.file(f"{MIRROR}/{base}"))
         gens[g] = Gen(k, rows, lab, f"{base}-journal" in names)
-    if pb.CURRENT in names:
+    if pointer in names:
         with fs.open_dir(MIRROR) as d:
-            target = d.readlink(pb.CURRENT)
+            if fs.windows:  # S0130: Windows' pointer file, its whole content a generation name
+                data = d.read(pointer) if d.stat(pointer).kind is Kind.FILE else None  # type: ignore[union-attr]
+                target = data.decode("ascii", "replace") if data is not None else None
+            else:
+                target = d.readlink(pb.CURRENT)
         lk = g_of(target) if target is not None and pb.gen_of(target) is not None else -1
     disk = tuple(version(i, sha256(fs.file(PATH[i]) or b"")) for i in (1, 2))
     jopen = journal.file_name(journal.record_name(SESSION, "j"), State.OPEN) in (fs.names_in(JD))
@@ -452,6 +457,8 @@ class Driver:
             return "sync"
         if op == "sync" and self.built:
             return "dsync"
+        if gen is None and self.built and name.startswith(pb.POINTER) and op in ("create", "write", "fsync"):
+            return "swap"  # Windows (S0130): the temporary pointer, written and synced, is the swap's first part
         if op in ("touch", "symlink", "move", "rename") or (op == "remove" and self.built):
             return "swap"
         if op in ("remove", "rmdir") and not self.built:
@@ -526,7 +533,7 @@ def code_end(out: rb.Answer | op.Answer | None) -> str:
 
 
 class Replay:
-    def __init__(self, trace: St, tally: Tally) -> None:
+    def __init__(self, trace: St, tally: Tally, *, windows: bool = False) -> None:
         self.states: list[St] = trace["states"]
         self.where0 = f"{trace['world']} trace {trace['trace']}"
         self.parity = int(trace["trace"]) % 2  # which jobs are the open's: each job position is both, across traces
@@ -534,7 +541,7 @@ class Replay:
         self.ghosts: set[int] = set()
         self.pins: dict[str, str] = {}
         self.jobs = 0
-        self.fs = MemFS()
+        self.fs = MemFS(windows=windows)
         self.fs.outside_mkdirs(LEDGER)
         self.fs.outside_mkdirs(CACHE)
         self.fs.outside_mkdirs(JD)
@@ -724,23 +731,24 @@ class Replay:
         return nxt
 
 
-def replay_trace(trace: St, tally: Tally) -> None:
-    Replay(trace, tally).run()
+def replay_trace(trace: St, tally: Tally, *, windows: bool = False) -> None:
+    Replay(trace, tally, windows=windows).run()
 
 
-def run_world(world_name: str) -> Tally:
+def run_world(world_name: str, *, windows: bool = False) -> Tally:
+    """Every trace of the world, replayed in the link form (macOS, Linux) or Windows' pointer form (S0130)."""
     tally = Tally()
     for trace in corpus()[1]:
         if trace["world"] == world_name:
-            replay_trace(trace, tally)
+            replay_trace(trace, tally, windows=windows)
     return tally
 
 
 @cache
-def every_world() -> Tally:
+def every_world(*, windows: bool = False) -> Tally:
     tally = Tally()
     for w in worlds():
-        t = run_world(w)
+        t = run_world(w, windows=windows)
         tally.jobs += t.jobs
         tally.compared += t.compared
         tally.reads += t.reads
@@ -765,9 +773,10 @@ def test_the_corpus_is_current() -> None:
     )
 
 
+@pytest.mark.parametrize("windows", [False, True], ids=["link", "pointer"])
 @pytest.mark.parametrize("world_name", worlds())
-def test_the_publish_follows_the_model(world_name: str) -> None:
-    run_world(world_name)
+def test_the_publish_follows_the_model(world_name: str, windows: bool) -> None:
+    run_world(world_name, windows=windows)
 
 
 WALKED: tuple[str, ...] = (
@@ -789,8 +798,9 @@ NOT_WALKED: Mapping[str, str] = {
 }
 
 
-def test_the_replay_walks_the_publish() -> None:
-    tally = every_world()
+@pytest.mark.parametrize("windows", [False, True], ids=["link", "pointer"])
+def test_the_replay_walks_the_publish(windows: bool) -> None:
+    tally = every_world(windows=windows)
     walked = Counter(tally.walked)
     walked["StartPublish"] = tally.jobs  # each job of the model is a call of `rebuild.run` or `opening.run`
     missing = [a for a in WALKED if walked[a] == 0]
@@ -828,8 +838,9 @@ def test_the_steps_are_the_models() -> None:
     assert set(WALKED) | set(NOT_WALKED) == steps
 
 
-def test_no_job_is_cut() -> None:
-    assert every_world().stops["cut"] == 0
+@pytest.mark.parametrize("windows", [False, True], ids=["link", "pointer"])
+def test_no_job_is_cut(windows: bool) -> None:
+    assert every_world(windows=windows).stops["cut"] == 0
 
 
 def _returns[T](value: T) -> Callable[..., T]:
@@ -840,10 +851,10 @@ def _returns[T](value: T) -> Callable[..., T]:
     return stand_in
 
 
-def _first_failure() -> str:
+def _first_failure(*, windows: bool = False) -> str:
     every_world.cache_clear()
     try:
-        every_world()
+        every_world(windows=windows)
     except AssertionError as e:
         return str(e)
     finally:

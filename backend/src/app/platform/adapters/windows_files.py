@@ -12,6 +12,9 @@ calls it needs are bound here, with the same rules:
   rename or replace it: its path names the object whose identity was read. Every handle is closed before return.
 - **The sync** (`sync_folder`): `FlushFileBuffers` on the folder opened for adding a file (a read-only handle is
   refused the flush; probed in S0126), as the engine's `WindowsDir.sync`.
+- **The mirror's pointer** (`read_shared`; S0130, BL-0206; `design/specs/mirror/publish.md` §7): a bounded read of
+  `current.txt` opened sharing reading, writing and deleting, so a pin's read never refuses the engine's rename over it
+  (Python's `open` shares no deletion: probed, S0126 and S0130's P4), and never through a link at its name.
 - **The engine lock** (`wait_lock`): `LockFileEx(LOCKFILE_EXCLUSIVE_LOCK)` over the whole file, waiting, then released
   and closed at once, the range and sharing the engine takes (`ledger_engine.fs.windows.take_engine_lock`). The file is
   opened only if it exists: an engine that holds the lock opened or made the file and keeps it open without delete
@@ -46,6 +49,8 @@ FILE_SHARE_READ_WRITE: Final = 0x3
 FILE_SHARE_ALL: Final = 0x7
 OPEN_EXISTING: Final = 3
 FILE_FLAG_BACKUP_SEMANTICS: Final = 0x02000000
+FILE_FLAG_OPEN_REPARSE_POINT: Final = 0x00200000
+FILE_ATTRIBUTE_REPARSE_POINT: Final = 0x400
 FILE_ATTRIBUTE_DIRECTORY: Final = 0x10
 FILE_BASIC_INFO: Final = 0
 FILE_ID_INFO: Final = 18
@@ -85,6 +90,7 @@ class _Api:
         self.CreateFileW = _sig(k32.CreateFileW, [wintypes.LPCWSTR, d, d, p, d, d, h], h)
         self.CloseHandle = _sig(k32.CloseHandle, [h], b)
         self.FlushFileBuffers = _sig(k32.FlushFileBuffers, [h], b)
+        self.ReadFile = _sig(k32.ReadFile, [h, p, d, ctypes.POINTER(d), p], b)
         self.GetInfo = _sig(k32.GetFileInformationByHandleEx, [h, ctypes.c_int, p, d], b)
         self.GetFileInformationByHandle = _sig(k32.GetFileInformationByHandle, [h, p], b)
         self.GetVolumeInformationByHandleW = _sig(
@@ -126,6 +132,30 @@ def open_folder(path: Path) -> Generator[tuple[_Api, int]]:
         if not _attributes(api, h) & FILE_ATTRIBUTE_DIRECTORY:
             raise OSError(errno.ENOTDIR, "not a folder", str(path))
         yield api, h
+    finally:
+        api.CloseHandle(h)
+
+
+def read_shared(path: Path, limit: int) -> bytes:
+    """At most `limit` bytes of the regular file at `path`, read through a handle that shares reading, writing and
+    deleting (another program may rename over it or remove it meanwhile) and that does not follow a link or a
+    junction at its name. `FileNotFoundError` when nothing is there; `OSError` for a folder or a link."""
+    api = _Api()
+    h = _open(api, path, GENERIC_READ | SYNCHRONIZE, FILE_SHARE_ALL, FILE_FLAG_OPEN_REPARSE_POINT)
+    try:
+        attrs = _attributes(api, h)
+        if attrs & (FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_REPARSE_POINT):
+            raise OSError(errno.EINVAL, "not a regular file", str(path))
+        out = b""
+        while len(out) < limit:
+            buf = ctypes.create_string_buffer(limit - len(out))
+            n = wintypes.DWORD()
+            if not api.ReadFile(h, buf, limit - len(out), ctypes.byref(n), None):
+                raise _error("read", path)
+            if n.value == 0:
+                break
+            out += buf.raw[: n.value]
+        return out
     finally:
         api.CloseHandle(h)
 

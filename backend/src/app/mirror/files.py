@@ -13,7 +13,9 @@ or reads (`out_of_memory`): its hard heap limit is process-wide (`query.QueryLim
 same moment can use it up; that says nothing about the file, so the caller tries again later and never rebuilds.
 
 **The pin** (`design/specs/mirror/publish.md` §7; S0087, BL-0113): a request resolves the workspace's `current.db`
-once (`pin`: one `readlink`; a link at `mirror/` is not followed) and reads that generation's path
+once (`pin`: one `readlink`; a link at `mirror/` is not followed; on Windows one bounded read of the pointer file
+`current.txt`, whose whole content is the generation's name, through a handle that shares deletion so the engine's
+swap is never refused by it, and a junction at `mirror/` is a link too; S0130, BL-0206) and reads that generation's path
 for its whole life (`Reader`, `QueryRunner` take it), so all its reads come from one generation, the one built under
 that name: a name is never used twice (§3). A pinned file that is gone (the cleanup removed it, or the OS purged the
 cache) is `cannot_open`: the route answers "try again" and the next request pins again. No `current.db`, or one that
@@ -26,6 +28,7 @@ import os
 import re
 import sqlite3
 import stat
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Final, Literal, LiteralString
@@ -71,6 +74,10 @@ META_KEYS: Final = (
     "as_of",
 )  # publish.md §8; a file an older build left without the last two is not a mirror of this app: it is rebuilt
 CURRENT: Final = "current.db"
+POINTER: Final = "current.txt"
+"""Windows' pointer file (S0130): its whole content is exactly one generation name, in ASCII."""
+POINTER_LIMIT: Final = 64
+FILE_ATTRIBUTE_REPARSE_POINT: Final = 0x400
 GENERATION: Final = re.compile(r"gen-[1-9][0-9]{0,11}-[0-9a-f]{16}\.db")  # publish.md §3: N has at most 12 digits
 SURFACE_VERSION: Final = re.compile(r"[0-9]{1,9}")  # ASCII digits only; `int()` would also take other scripts' digits
 
@@ -172,14 +179,31 @@ def pin(mirror_dir: str) -> str | MirrorUnavailable:
     at `mirror/` in between leads this one read elsewhere, where the open's header and `meta` checks still apply."""
     folder = absolute(mirror_dir)
     try:
-        if stat.S_ISLNK(os.lstat(folder).st_mode):
+        st = os.lstat(folder)
+        if stat.S_ISLNK(st.st_mode) or getattr(st, "st_file_attributes", 0) & FILE_ATTRIBUTE_REPARSE_POINT:
             return MirrorUnavailable("not_published", "a link stands at the mirror folder")
-        target = os.readlink(folder / CURRENT)
+        target = _pointed(folder) if sys.platform == "win32" else os.readlink(folder / CURRENT)
     except OSError as e:
         return MirrorUnavailable("not_published", e.strerror or type(e).__name__)
     if not GENERATION.fullmatch(target):
-        return MirrorUnavailable("not_published", "current.db names no generation of the folder")
+        return MirrorUnavailable("not_published", "the mirror's current entry names no generation of the folder")
     return str(folder / target)
+
+
+def _pointed(folder: Path) -> str:
+    """Windows: the whole content of `current.txt` as ASCII, or "" when it is longer than any generation name or not
+    ASCII (it then names no generation)."""
+    if sys.platform != "win32":
+        raise NotImplementedError  # the pointer is Windows' (publish.md §4 step 8)
+    from app.platform.adapters import windows_files  # Windows only
+
+    data = windows_files.read_shared(folder / POINTER, POINTER_LIMIT + 1)
+    if len(data) > POINTER_LIMIT:
+        return ""
+    try:
+        return data.decode("ascii")
+    except UnicodeDecodeError:
+        return ""
 
 
 def generation_number(pinned: str) -> int | None:

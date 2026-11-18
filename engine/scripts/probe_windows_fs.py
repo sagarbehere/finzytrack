@@ -768,19 +768,31 @@ def probe_pointer(d: str) -> dict[str, Any]:
     root = open_dir(d, GENERIC_READ | FILE_LIST_DIRECTORY)
     try:
 
-        def swap(i: int, gap: float) -> str:
+        def swap(i: int, gap: float, how: str = "handle") -> str:
+            """One pointer swap: `handle` (FileRenameInformation, ReplaceIfExists, relative to the folder handle: the
+            adapter's rename), `posix` (FileRenameInformationEx with ReplaceIfExists and POSIX semantics, relative to
+            the folder handle), `movefileex` (MoveFileExW with REPLACE_EXISTING and WRITE_THROUGH, by path)."""
             tmp = f"current.txt.{i:016x}.tmp"
             write_synced(os.path.join(d, tmp), names[i % 3].encode("ascii"))
             if gap:
                 threading.Event().wait(gap)
-            try:
-                h = nt_open(root, tmp, DELETE, FILE_OPEN, FILE_NON_DIRECTORY_FILE)
-            except OSError as e:
-                return f"open {e.args[1]}"
-            try:
-                r = nt_rename(h, root, "current.txt", 1, ex=False)
-            finally:
-                close(h)
+            if how == "movefileex":
+                r = bool_call(
+                    k32.MoveFileExW(os.path.join(d, tmp), ptr, MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)
+                )
+            else:
+                try:
+                    h = nt_open(root, tmp, DELETE, FILE_OPEN, FILE_NON_DIRECTORY_FILE)
+                except OSError as e:
+                    return f"open {e.args[1]}"
+                try:
+                    if how == "posix":
+                        flags = FILE_RENAME_FLAG_REPLACE_IF_EXISTS | FILE_RENAME_FLAG_POSIX_SEMANTICS
+                        r = nt_rename(h, root, "current.txt", flags, ex=True)
+                    else:
+                        r = nt_rename(h, root, "current.txt", 1, ex=False)
+                finally:
+                    close(h)
             if r != "ok":
                 with contextlib.suppress(OSError):
                     os.remove(os.path.join(d, tmp))
@@ -807,43 +819,57 @@ def probe_pointer(d: str) -> dict[str, Any]:
             except OSError as e:
                 return f"open {e}"
 
-        for reader_label, read in (("shared", read_shared), ("plain_open", read_plain)):
-            for gap, rounds in ((0.0, 300), (0.05, 100), (0.5, 20)):
-                write_synced(ptr + ".init", names[0].encode("ascii"))
-                with contextlib.suppress(OSError):
-                    os.remove(ptr)
-                k32.MoveFileExW(ptr + ".init", ptr, 0)
-                stop = threading.Event()
-                seen: dict[str, int] = {"reads": 0}
+        loops = [
+            ("p3", "handle", "shared", read_shared, 0.0, 300),
+            ("p3", "handle", "shared", read_shared, 0.05, 100),
+            ("p3", "handle", "shared", read_shared, 0.5, 20),
+            ("p4", "handle", "plain_open", read_plain, 0.0, 300),
+            ("p4", "handle", "plain_open", read_plain, 0.05, 100),
+            ("p4", "handle", "plain_open", read_plain, 0.5, 20),
+            # P5 (S0130 run 2): the other two replace primitives under the same readers
+            ("p5", "posix", "shared", read_shared, 0.0, 300),
+            ("p5", "posix", "shared", read_shared, 0.05, 100),
+            ("p5", "posix", "plain_open", read_plain, 0.0, 300),
+            ("p5", "movefileex", "shared", read_shared, 0.0, 300),
+            ("p5", "movefileex", "shared", read_shared, 0.05, 100),
+            ("p5", "movefileex", "plain_open", read_plain, 0.0, 300),
+        ]
+        for part, how, reader_label, read, gap, rounds in loops:
+            write_synced(ptr + ".init", names[0].encode("ascii"))
+            with contextlib.suppress(OSError):
+                os.remove(ptr)
+            k32.MoveFileExW(ptr + ".init", ptr, 0)
+            stop = threading.Event()
+            seen: dict[str, int] = {"reads": 0}
 
-                def look(read: Any = read, stop: threading.Event = stop, seen: dict[str, int] = seen) -> None:
-                    while not stop.is_set():
-                        r = read()
-                        seen["reads"] += 1
-                        key = (
-                            "ok"
-                            if r in {n.encode("ascii") for n in names}
-                            else ("empty" if r == b"" else (r if isinstance(r, str) else "other_content"))
-                        )
-                        if key != "ok":
-                            seen[key] = seen.get(key, 0) + 1
+            def look(read: Any = read, stop: threading.Event = stop, seen: dict[str, int] = seen) -> None:
+                while not stop.is_set():
+                    r = read()
+                    seen["reads"] += 1
+                    key = (
+                        "ok"
+                        if r in {n.encode("ascii") for n in names}
+                        else ("empty" if r == b"" else (r if isinstance(r, str) else "other_content"))
+                    )
+                    if key != "ok":
+                        seen[key] = seen.get(key, 0) + 1
 
-                t = threading.Thread(target=look, daemon=True)
-                t.start()
-                failures: dict[str, int] = {}
-                try:
-                    for i in range(rounds):
-                        r = swap(i, gap)
-                        if r != "ok":
-                            failures[r] = failures.get(r, 0) + 1
-                finally:
-                    stop.set()
-                    t.join()
-                out[f"p{3 if reader_label == 'shared' else 4}_swaps_{reader_label}_gap_{int(gap * 1000)}ms"] = {
-                    "rounds": rounds,
-                    "swap_failures": failures,
-                    **seen,
-                }
+            t = threading.Thread(target=look, daemon=True)
+            t.start()
+            failures: dict[str, int] = {}
+            try:
+                for i in range(rounds):
+                    r = swap(i, gap, how)
+                    if r != "ok":
+                        failures[r] = failures.get(r, 0) + 1
+            finally:
+                stop.set()
+                t.join()
+            out[f"{part}_{how}_swaps_{reader_label}_gap_{int(gap * 1000)}ms"] = {
+                "rounds": rounds,
+                "swap_failures": failures,
+                **seen,
+            }
         # P2 alone: no reader, so a refusal is the system's (an antivirus scan), not ours
         for gap, rounds in ((0.0, 300), (0.05, 100), (0.5, 20)):
             failures = {}
