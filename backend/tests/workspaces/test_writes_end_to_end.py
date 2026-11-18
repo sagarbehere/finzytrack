@@ -584,11 +584,12 @@ def test_the_shipped_engine_has_no_producer(tmp_path: Path) -> None:
     assert producer_writers(sources) == []
     every_module = (  # every module of the engine imported, then the registry read (verifier V3); a file-system
         # adapter refuses to be imported off its own OS (S0113), so the other OS's adapter is left out (S0125: the
-        # Linux one on macOS, the macOS one on Linux, where this failed since S0113; the Windows one off Windows, S0128)
+        # Linux one on macOS, the macOS one on Linux, where this failed since S0113; the Windows one off Windows, S0128;
+        # on Windows also the POSIX adapters' shared code, S0131)
         "import importlib, pkgutil, sys, ledger_engine; "
         "own = {'win32': 'windows'}.get(sys.platform, sys.platform); "
         "other = {'ledger_engine.fs.darwin', 'ledger_engine.fs.linux', 'ledger_engine.fs.windows'} "
-        "- {'ledger_engine.fs.' + own}; "
+        "- {'ledger_engine.fs.' + own} | ({'ledger_engine.fs.posix'} if own == 'windows' else set()); "
         "[importlib.import_module(m.name) for m in pkgutil.walk_packages(ledger_engine.__path__, 'ledger_engine.') "
         "if m.name != 'ledger_engine.__main__' and m.name not in other]; "
         "from ledger_engine.ledger import preview; print(len(preview.PRODUCERS))"
@@ -598,11 +599,11 @@ def test_the_shipped_engine_has_no_producer(tmp_path: Path) -> None:
         capture_output=True,
         text=True,
         timeout=120,
-        check=True,
+        check=False,
         cwd=tmp_path,
         env=engine_env(os.environ),
     )
-    assert out.stdout.split() == ["0"], out
+    assert (out.returncode, out.stdout.split()) == (0, ["0"]), out.stderr[-2000:]
 
 
 # -- S0120: no size limit on a ledger file (ADR-0008 amendment of 2026-11-15) ------------------------------------------

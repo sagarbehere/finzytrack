@@ -40,14 +40,15 @@ from app.platform.engine_jobs.opening import (
 from app.platform.engine_jobs.scheduler import Done, EngineJobs, Failed, JobTicket
 from app.platform.errors import ErrorCode, WritesPausedDetails
 from app.platform.observability import Event as LogEvent
+from tests.host_paths import host
 from tests.platform.fake_job_engine import CRASH, FakeEngine
 
 DEADLINE = 20.0
 REPO = Path(__file__).resolve().parents[3]
 W1 = "ws-1"
 W2 = "ws-2"
-MAIN = "/L/main.bean"
-ALD = Path("/app")
+MAIN = host("/L/main.bean")
+ALD = Path(host("/app"))
 LV = "1/sha256:" + "1" * 64
 CLOCK = FrozenClock(datetime(2026, 11, 9, 3, 30, tzinfo=UTC))
 TZ = "America/Los_Angeles"  # west of UTC: there it is still 8 November
@@ -246,12 +247,12 @@ def test_an_unfinished_save_is_writes_paused_and_not_tried_again(make: Any) -> N
 
 
 def test_an_encrypted_file_is_refused_and_named_but_never_logged(make: Any) -> None:
-    rig = make({"open": [outcome("refused", refused="/L/secret.bean.gpg", refusal="encrypted")]})
-    assert rig.value() == EncryptedFile("/L/secret.bean.gpg")
+    rig = make({"open": [outcome("refused", refused=host("/L/secret.bean.gpg"), refusal="encrypted")]})
+    assert rig.value() == EncryptedFile(host("/L/secret.bean.gpg"))
     assert rig.ops() == ["open"]
     ((name, fields),) = rig.lines()
     assert (name, fields["why"]) == ("open.not_loaded", "encrypted")
-    assert "/L/secret.bean.gpg" not in repr(fields)
+    assert host("/L/secret.bean.gpg") not in repr(fields)
 
 
 @pytest.mark.parametrize(
@@ -262,10 +263,10 @@ def test_an_encrypted_file_is_refused_and_named_but_never_logged(make: Any) -> N
         outcome("fresh", publish="published", number=1, ledger_version=LV),
         outcome("refused"),  # a refusal names its file
         outcome("refused", refusal="encrypted"),  # and its file
-        outcome("refused", refused="/L/x.gpg"),  # and why
-        loaded(refused="/L/x.gpg"),  # only a refusal does
+        outcome("refused", refused=host("/L/x.gpg")),  # and why
+        loaded(refused=host("/L/x.gpg")),  # only a refusal does
         loaded(refusal="number_failed"),  # only a refusal says why
-        outcome("refused", refused="/L/x.gpg", refusal="encrypted", line=3),  # an encrypted file has no line
+        outcome("refused", refused=host("/L/x.gpg"), refusal="encrypted", line=3),  # an encrypted file has no line
         loaded(line=3),  # only a refusal of the ledger names a line
         loaded(number=None),  # S0088 round 1 (verifier F5): a published generation is named by its number
         loaded(ledger_version=None),  # and by its version
@@ -288,12 +289,12 @@ def test_a_ledger_beancount_cannot_load_is_named_tried_once_and_never_logged(
     make: Any, why: str, line: int | None
 ) -> None:
     """S0098 (BL-0123): Beancount's own load raised; bean-check fails the same way, so no try again."""
-    rig = make({"open": [outcome("refused", refused="/L/main.bean", refusal=why, line=line)]})
-    assert rig.value() == NotLoadable(why, "/L/main.bean", line)  # type: ignore[arg-type]
+    rig = make({"open": [outcome("refused", refused=host("/L/main.bean"), refusal=why, line=line)]})
+    assert rig.value() == NotLoadable(why, host("/L/main.bean"), line)  # type: ignore[arg-type]
     assert rig.ops() == ["open"]
     ((name, fields),) = rig.lines()
     assert (name, fields["why"]) == ("open.not_loaded", why)
-    assert "/L/main.bean" not in repr(fields)
+    assert host("/L/main.bean") not in repr(fields)
 
 
 def test_a_refusal_from_the_engine_is_internal(make: Any) -> None:
