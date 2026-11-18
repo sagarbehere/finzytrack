@@ -16,6 +16,7 @@ from typing import Final
 
 from app.platform.engine_jobs import recovery_text
 from app.platform.engine_jobs.create import NotCreated
+from app.platform.engine_paths import last_name
 
 NOT_CREATED: Final = "Not created."
 NOT_EMPTY: Final = "This folder is not empty. Choose an empty folder or a new name."
@@ -25,7 +26,7 @@ REPORT: Final = "This is a fault in Finzytrack; please report it."
 
 
 def name_of(path: str | None) -> str:
-    return "A file" if not path else path.rpartition("/")[2]
+    return "A file" if not path else last_name(path)
 
 
 UNFINISHED: Final = "an unfinished new workspace"

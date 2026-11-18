@@ -51,11 +51,12 @@ from app.platform.errors import (
     WritesPausedDetails,
 )
 from app.platform.observability import Event as LogEvent
+from tests.host_paths import host
 from tests.platform.fake_job_engine import BLOCK, CRASH, FakeEngine
 
 DEADLINE = 20.0
 W1 = "k1"
-TARGET = PreviewTarget(workspace_key=W1, root="/L/main.bean", lineage="lin1", app_local_data=Path("/app"))
+TARGET = PreviewTarget(workspace_key=W1, root=host("/L/main.bean"), lineage="lin1", app_local_data=Path(host("/app")))
 ORDER = PreviewOrder(generation=3, mutator="test.edits", request={"edits": []})
 SHA = "a" * 64
 FINGERPRINT = '{"document_files":[],"documents":[],"files":[],"globs":[],"modules":[],"root":"/L/main.bean","v":2}'
@@ -66,7 +67,7 @@ HINT = (
 CLOCK = FrozenClock(datetime(2026, 11, 14, 10, 0, tzinfo=UTC))
 BLANK: dict[str, object] = {
     "outcome": "prepared",
-    "files": [{"path": "/L/main.bean", "pre": SHA, "post": "b" * 64, "text": "x\n", "pre_size": 1}],
+    "files": [{"path": host("/L/main.bean"), "pre": SHA, "post": "b" * 64, "text": "x\n", "pre_size": 1}],
     "fingerprint": FINGERPRINT,
     "new_errors": [],
     "errors": 0,
@@ -163,8 +164,8 @@ def error_of(value: PreviewValue | Failed) -> tuple[str, object]:
 
 def test_the_request_names_the_generation_the_mutator_and_its_request() -> None:
     assert params_of(TARGET, ORDER) == {
-        "root": "/L/main.bean",
-        "app_local_data": "/app",
+        "root": host("/L/main.bean"),
+        "app_local_data": host("/app"),
         "workspace_key": W1,
         "lineage": "lin1",
         "generation": 3,
@@ -182,11 +183,11 @@ def test_a_preview_is_waited_for_and_writes_nothing() -> None:
 
 
 def test_a_prepared_plan_is_its_files_fingerprint_and_new_errors_and_its_engine_is_retired(make: Any) -> None:
-    err = {"key": "c" * 64, "type": "ValidationError", "message": "m", "path": "/L/main.bean", "line": 4}
+    err = {"key": "c" * 64, "type": "ValidationError", "message": "m", "path": host("/L/main.bean"), "line": 4}
     rig = make({"preview": [answer(new_errors=[err], errors=2)]})
     value = rig.preview()
     assert isinstance(value, Prepared), value
-    assert [f.path for f in value.files] == ["/L/main.bean"]
+    assert [f.path for f in value.files] == [host("/L/main.bean")]
     assert value.fingerprint == FINGERPRINT
     assert [e.key for e in value.new_errors] == ["c" * 64]
     assert (value.errors, value.tries) == (2, 1)
@@ -225,10 +226,10 @@ def test_a_check_that_could_not_run_is_refused_check_failed(make: Any, step: str
 
 @pytest.mark.parametrize(("step", "reason"), [("apply", "encrypted_file"), ("load", "encrypted")])
 def test_an_encrypted_file_is_refused_with_its_own_code(make: Any, step: str, reason: str) -> None:
-    rig = make({"preview": [refused(step, reason, "/L/secret.bean.gpg")]})
+    rig = make({"preview": [refused(step, reason, host("/L/secret.bean.gpg"))]})
     assert error_of(rig.preview()) == (
         ErrorCode.ENCRYPTED_FILE_NOT_EDITABLE,
-        EncryptedFileDetails("/L/secret.bean.gpg"),
+        EncryptedFileDetails(host("/L/secret.bean.gpg")),
     )
 
 
@@ -262,11 +263,11 @@ def test_a_not_fresh_baseline_queues_the_rebuild_with_the_answers_hint(make: Any
     assert wait_ops(rig, 2) == ["preview", "rebuild"]
     _, _, params = rig.engine.params[-1]
     assert {k: params[k] for k in ("root", "fingerprint", "workspace_key", "lineage", "app_local_data")} == {
-        "root": "/L/main.bean",
+        "root": host("/L/main.bean"),
         "fingerprint": HINT,  # the engine's hint, not a plan's: no plan was made
         "workspace_key": W1,
         "lineage": "lin1",
-        "app_local_data": "/app",
+        "app_local_data": host("/app"),
     }
 
 

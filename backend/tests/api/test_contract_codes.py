@@ -34,6 +34,7 @@ from app.platform.errors import ErrorCode, spec_for
 from app.workspaces.access import Unknown
 from app.workspaces.writes import submit_preview
 from tests.api.support import Counted, body, client, make_app
+from tests.host_paths import host
 from tests.workspaces.test_writes import KEY_A, MUTATOR, Rig
 
 DEADLINE = 20.0
@@ -61,7 +62,13 @@ class Scenarios:
 
     def _refused(self, step: str, reason: str) -> dict[str, object]:
         return self.rig.answer(
-            outcome="refused", files=[], fingerprint=None, step=step, reason=reason, path="/L/a.gpg", detail="d"
+            outcome="refused",
+            files=[],
+            fingerprint=None,
+            step=step,
+            reason=reason,
+            path=host("/L/a.gpg"),
+            detail="d",
         )
 
     def ack_required(self) -> object:
@@ -123,9 +130,9 @@ def scenarios() -> Iterator[Scenarios]:
 
 
 def app_for(scenarios: Scenarios) -> FastAPI:
-    router = APIRouter(prefix="/api/test")
+    router = APIRouter(prefix=host("/api/test"))
 
-    @router.get("/contract/{name}", openapi_extra=declare("app"))
+    @router.get(host("/contract/{name}"), openapi_extra=declare("app"))
     async def contract(name: str) -> Envelope[Counted]:
         raise scenarios.run(name)
 
@@ -176,7 +183,7 @@ def test_an_encrypted_file_is_refused_at_422_naming_it(scenarios: Scenarios) -> 
     status, error = answer(scenarios, "encrypted")
     assert status == 422
     assert (error["code"], error["class"]) == ("ENCRYPTED_FILE_NOT_EDITABLE", "contract_refused")
-    assert error["details"] == {"path": "/L/a.gpg"}
+    assert error["details"] == {"path": host("/L/a.gpg")}
 
 
 @pytest.mark.error_code("LEDGER_FILE_TOO_LARGE")

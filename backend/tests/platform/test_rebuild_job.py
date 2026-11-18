@@ -53,13 +53,14 @@ from app.platform.engine_jobs.save import (
 from app.platform.engine_jobs.scheduler import Done, EngineJobs, Failed, JobContext, JobTicket, WorkResult
 from app.platform.errors import ErrorCode, WorkspaceNotReadyDetails
 from app.platform.observability import Event as LogEvent
+from tests.host_paths import host
 from tests.platform.fake_job_engine import BLOCK, CRASH, CRASH_TO_BOUND, GATE_DIE, FakeEngine, Gated
 
 DEADLINE = 20.0
 REPO = Path(__file__).resolve().parents[3]
 W1 = "ws-1"
-MAIN = "/L/main.bean"
-ALD = Path("/app")
+MAIN = host("/L/main.bean")
+ALD = Path(host("/app"))
 FP = '{"document_files":[],"documents":[],"files":[],"globs":[],"modules":[],"root":"/L/main.bean","v":2}'
 FP2 = (
     '{"document_files":[],"documents":[],"files":[["/L/main.bean",["absent"]]],"globs":[],"modules":[],'
@@ -485,23 +486,23 @@ def test_a_ledger_beancount_cannot_load_is_logged_with_why_and_not_tried_again(
     make: Any, why: str, line: int | None
 ) -> None:
     """S0098 (BL-0123): Beancount's own load raised on the ledger; the same ledger fails the same way."""
-    refused = {**moved(), "outcome": "refused", "refusal": why, "refused": "/L/main.bean", "line": line}
+    refused = {**moved(), "outcome": "refused", "refusal": why, "refused": host("/L/main.bean"), "line": line}
     rig = make({"rebuild": [refused, loaded()]})
     assert background(rig) == NotLoaded(why)  # type: ignore[arg-type]
     assert rig.ops() == ["rebuild"]
     ((name, fields),) = rig.lines()
     assert (name, fields["why"]) == ("rebuild.not_loaded", why)
-    assert "/L/main.bean" not in repr(fields)  # INV-23: never the path
+    assert host("/L/main.bean") not in repr(fields)  # INV-23: never the path
 
 
 @pytest.mark.parametrize(
     "bad",
     [
         {"outcome": "refused", "refusal": "number_failed"},  # a refusal names its file
-        {"outcome": "refused", "refused": "/L/main.bean"},  # and why
-        {"outcome": "moved", "refused": "/L/main.bean"},  # only a refusal names a file
+        {"outcome": "refused", "refused": host("/L/main.bean")},  # and why
+        {"outcome": "moved", "refused": host("/L/main.bean")},  # only a refusal names a file
         {"outcome": "moved", "line": 3},  # or a line
-        {"outcome": "loaded", "refused": "/L/main.bean", "refusal": "beancount_failed"},
+        {"outcome": "loaded", "refused": host("/L/main.bean"), "refusal": "beancount_failed"},
         {"outcome": "fresh", "publish": "fresh", "number": 1, "ledger_version": LV, "line": 3},
     ],
 )

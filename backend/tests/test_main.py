@@ -49,7 +49,7 @@ from app.platform.engine_jobs.scheduler import Done, EngineJobs, JobTicket
 from app.platform.observability import Event, EventLog, EventSink
 from app.workspaces.access import Unknown
 from tests.api.support import Counted, FakeContainer, FixedAccess
-from tests.windows_pending import POSIX_SUPERVISION
+from tests.windows_pending import NO_MODE_BITS, NO_SIGTERM, POSIX_SUPERVISION, SHELL_STAND_IN
 
 
 def lock_held(path: Path) -> bool:
@@ -207,6 +207,7 @@ def test_the_process_prints_the_handshake_and_serves_health(dirs: tuple[Path, Pa
         proc.wait(timeout=10)
 
 
+@pytest.mark.skipif(os.name != "posix", reason=NO_SIGTERM)
 def test_an_unknown_route_is_route_not_found_in_the_envelope_from_the_real_server(dirs: tuple[Path, Path]) -> None:
     sidecar = Sidecar(dirs)
     try:
@@ -239,7 +240,7 @@ def test_engine_venv_selects_the_venv_engine(dirs: tuple[Path, Path]) -> None:
     args = main.parse_args(argv(*dirs, "--engine-venv", str(ENGINE_VENV)))
     assert args.engine_venv == ENGINE_VENV
     lock = dirs[0] / "locks" / "engine.lock"
-    python = ENGINE_VENV / "bin" / "python"
+    python = ENGINE_VENV / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
     bytecode = bytecode_build_dir(dirs[0], python, venv_site(ENGINE_VENV), VERSION)
     expected = EngineCommand.for_venv(
         ENGINE_VENV, engine_lock=lock, bytecode_dir=bytecode, app_folder=AppFolder.of(dirs[0])
@@ -446,7 +447,7 @@ def pid_alive(pid: int) -> bool:
     return True
 
 
-@pytest.mark.skipif(os.name != "posix", reason="SIGTERM and pid probes as on POSIX; Windows is the manual CI run")
+@pytest.mark.skipif(os.name != "posix", reason=NO_SIGTERM)
 def test_the_sidecar_starts_a_real_engine_and_closes_it_on_sigterm(dirs: tuple[Path, Path]) -> None:
     sidecar = Sidecar(dirs, "--engine-venv", str(ENGINE_VENV))
     try:
@@ -517,7 +518,7 @@ def test_an_earlier_sessions_engine_holding_the_engine_lock_keeps_the_first_engi
             sidecar.stop()
 
 
-@pytest.mark.skipif(os.name != "posix", reason="the parent-death watchdog is POSIX; Windows is the manual CI run")
+@pytest.mark.skipif(os.name != "posix", reason=POSIX_SUPERVISION)
 def test_a_sidecar_ended_hard_leaves_no_engine_behind(dirs: tuple[Path, Path]) -> None:
     """@regression-guard (S0041, failure-modes rows M1, M4, E5): a sidecar that crashes or is ended by the OS (SIGKILL:
     no handler, no `finally`, no close) cannot close its engine; the engine notices on its own (its parent watchdog,
@@ -541,6 +542,7 @@ def test_a_sidecar_ended_hard_leaves_no_engine_behind(dirs: tuple[Path, Path]) -
     assert "engine.closed" not in [e.get("event") for e in sidecar.events()]
 
 
+@pytest.mark.skipif(os.name != "posix", reason=NO_SIGTERM)
 def test_a_missing_engine_is_a_reported_state_and_the_sidecar_keeps_answering(
     tmp_path: Path, dirs: tuple[Path, Path]
 ) -> None:
@@ -558,7 +560,7 @@ def test_a_missing_engine_is_a_reported_state_and_the_sidecar_keeps_answering(
         assert sidecar.stop() == 0
 
 
-@pytest.mark.skipif(os.name != "posix", reason="the delayed stand-in engine is a shell script")
+@pytest.mark.skipif(os.name != "posix", reason=SHELL_STAND_IN)
 def test_the_handshake_does_not_wait_for_the_engine(tmp_path: Path, dirs: tuple[Path, Path]) -> None:
     """The engine starts in parallel with the sidecar (ADR-0054 Consequences): a slow engine delays only itself."""
     slow = tmp_path / "slow-venv"
@@ -599,6 +601,7 @@ def test_a_bad_session_id_is_refused(dirs: tuple[Path, Path], bad: str) -> None:
     assert exc.value.code == 2
 
 
+@pytest.mark.skipif(os.name != "posix", reason=NO_SIGTERM)
 def test_the_sidecars_events_go_to_the_log_file_with_its_session_and_never_to_stderr(
     tmp_path: Path, dirs: tuple[Path, Path]
 ) -> None:
@@ -618,6 +621,7 @@ def test_the_sidecars_events_go_to_the_log_file_with_its_session_and_never_to_st
     assert '"event"' not in sidecar.stderr_after_exit(), "an event reached stderr"
 
 
+@pytest.mark.skipif(os.name != "posix", reason=NO_SIGTERM)
 def test_a_generated_session_id_is_the_same_on_every_line_of_a_launch(tmp_path: Path, dirs: tuple[Path, Path]) -> None:
     empty = tmp_path / "no-engine"
     empty.mkdir()
@@ -916,7 +920,7 @@ class SyncWorkSidecar(Sidecar):
         self._pumping.start()
 
 
-@pytest.mark.skipif(os.name != "posix", reason="signals and pid probes as on POSIX; Windows is the manual CI run")
+@pytest.mark.skipif(os.name != "posix", reason=NO_SIGTERM)
 def test_a_second_stop_closes_the_engine_while_sync_work_is_in_flight(tmp_path: Path, dirs: tuple[Path, Path]) -> None:
     """S0048 verifier F1: work on a worker thread cannot be ended from outside it. The second stop still ends the serve,
     so `engine.close()` runs while the work is in flight; the process ends once the work returns (the thread is not
@@ -998,7 +1002,7 @@ def test_the_stop_handler_is_in_place_before_the_engine_can_start(
     assert all(isinstance(h, main.StopRequest) for h in seen.values()), seen
 
 
-@pytest.mark.skipif(os.name != "posix", reason="SIGINT and pid probes as on POSIX; Windows is the manual CI run")
+@pytest.mark.skipif(os.name != "posix", reason=NO_SIGTERM)
 def test_sigint_stops_the_sidecar_like_sigterm(dirs: tuple[Path, Path]) -> None:
     sidecar = Sidecar(dirs, "--engine-venv", str(ENGINE_VENV))
     try:
@@ -1096,7 +1100,7 @@ class StormedSidecar(Sidecar):
         return lines, [str(r) for r in cast("list[object]", raised)]
 
 
-@pytest.mark.skipif(os.name != "posix", reason="signals to itself as on POSIX; Windows is the manual CI run")
+@pytest.mark.skipif(os.name != "posix", reason=NO_SIGTERM)
 def test_a_signal_at_any_line_of_the_start_never_skips_the_engines_close(
     tmp_path: Path, dirs: tuple[Path, Path]
 ) -> None:
@@ -1109,7 +1113,7 @@ def test_a_signal_at_any_line_of_the_start_never_skips_the_engines_close(
     engine_gone(sidecar)
 
 
-@pytest.mark.skipif(os.name != "posix", reason="signals to itself as on POSIX; Windows is the manual CI run")
+@pytest.mark.skipif(os.name != "posix", reason=NO_SIGTERM)
 def test_a_signal_at_any_line_of_the_stop_after_serving_never_skips_the_engines_close(
     tmp_path: Path, dirs: tuple[Path, Path]
 ) -> None:
@@ -1209,6 +1213,8 @@ def test_S0100_a_parent_that_cannot_be_read_refuses_the_start_with_the_text_befo
 ) -> None:
     """The owner's "if that fails, the app says so at start": a parent that may be searched but not read (0311) cannot
     be opened to be synced (S0063 verifier r2 F-B's shape, now met once at start instead of at every save)."""
+    if sys.platform == "win32":
+        pytest.skip(NO_MODE_BITS)
     parent = tmp_path / "searchonly"
     parent.mkdir()
     (parent / "app").mkdir()

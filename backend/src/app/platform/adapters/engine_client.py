@@ -564,6 +564,8 @@ def _pump_stderr(pipe: IO[bytes], tail: deque[str], sink: Callable[[str], None] 
             if not line:
                 return
             text = line.decode("utf-8", errors="replace").rstrip("\n")
+            if sys.platform == "win32":  # S0131: Windows' text mode ends the engine's lines with CRLF
+                text = text.rstrip("\r")
             tail.append(text)
             if sink is not None:
                 try:

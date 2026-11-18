@@ -29,6 +29,7 @@ from app.platform.engine_jobs.scheduler import Done, EngineJobs, Failed, JobCont
 from app.platform.errors import ErrorCode, WritesPausedDetails, spec_for
 from app.workspaces.access import Unknown
 from tests.api.support import Counted, body, client, make_app
+from tests.host_paths import host
 from tests.platform.fake_job_engine import CRASH_TO_BOUND, GATE_DIE, FakeEngine
 
 DEADLINE = 20.0
@@ -50,10 +51,10 @@ REQUEST = SaveRequest(
     session="s1",
     workspace_key="k1",
     lineage="lin1",
-    root="/L/main.bean",
-    changes=(ChangeText("/L/main.bean", "0" * 64, "x"),),
+    root=host("/L/main.bean"),
+    changes=(ChangeText(host("/L/main.bean"), "0" * 64, "x"),),
     fingerprint="{}",
-    app_local_data=Path("/app"),
+    app_local_data=Path(host("/app")),
     confine=None,
 )
 
@@ -112,13 +113,17 @@ class Scenarios:
         self.engine.scripted["open"] = [moved, moved, moved]
         self.jobs.workspace_closed()  # a switch past its close: only its own jobs start (§3, BL-0154)
         self.jobs.exclusive_began()
-        target = OpenTarget(workspace_key="k2", root="/L/main.bean", lineage="lin2", app_local_data=Path("/app"))
+        target = OpenTarget(
+            workspace_key="k2", root=host("/L/main.bean"), lineage="lin2", app_local_data=Path(host("/app"))
+        )
         ticket = submit_open(self.jobs, "ws-2", target, clock=FrozenClock(datetime(2026, 11, 8, tzinfo=UTC)))
         assert isinstance(ticket, JobTicket)
         return self._outcome(ticket)
 
     def not_saved(self) -> object:
-        return self._save({"outcome": "not_saved", "reason": "hard_linked", "path": "/L/main.bean", "unchanged": True})
+        return self._save(
+            {"outcome": "not_saved", "reason": "hard_linked", "path": host("/L/main.bean"), "unchanged": True}
+        )
 
     def _submit(self, work: Work, kind: str = "preview") -> JobTicket:
         spec = JobSpec(kind=kind, workspace=W1, waited_for=True, confirmed=False, owner="user")  # type: ignore[arg-type]
@@ -187,9 +192,9 @@ def scenarios() -> Iterator[Scenarios]:
 
 
 def job_router(scenarios: Scenarios) -> APIRouter:
-    router = APIRouter(prefix="/api/test")
+    router = APIRouter(prefix=host("/api/test"))
 
-    @router.get("/job/{name}", openapi_extra=declare("app"))
+    @router.get(host("/job/{name}"), openapi_extra=declare("app"))
     async def job(name: str) -> Envelope[Counted]:
         raise scenarios.run(name).error
 
@@ -353,7 +358,7 @@ def test_a_save_the_writer_refused_is_change_not_saved_with_its_reason_and_file(
     assert error["code"] == "CHANGE_NOT_SAVED"
     assert error["details"] == {
         "reason": "hard_linked",
-        "path": "/L/main.bean",
+        "path": host("/L/main.bean"),
         "folder": None,
         "acl_entry": None,
         "unchanged": True,

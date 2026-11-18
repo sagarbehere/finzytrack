@@ -23,6 +23,7 @@ from typing import Final, Literal
 
 from app.platform.engine import ActOutcome
 from app.platform.engine_jobs.recovery import ENGINE_STOPPED, UNREADABLE, Blocking, NotRecovered
+from app.platform.engine_paths import folder_of, last_name
 
 type Action = Literal["retry", "stay_or_back", "keep", "show_both", "delete_kept", "show_it", "delete_created"]
 
@@ -36,7 +37,7 @@ class Screen:
 
 
 def _name(path: str | None) -> str:
-    return "A ledger file" if not path else path.rpartition("/")[2]
+    return "A ledger file" if not path else last_name(path)
 
 
 def _file_of(b: Blocking) -> str | None:
@@ -224,7 +225,7 @@ def _drive(b: Blocking, workspace: str) -> Screen:
         )
     if b.cause == MISSING_UNCONFIRMED:  # round 2 (owner, 2026-11-09: "Evidence for missing (Recommended)")
         path = b.path or "the file"
-        folder = path.rpartition("/")[0] or "its folder"
+        folder = folder_of(path) or "its folder"
         return Screen(
             f"{head} {file} is missing on the drive at {folder}, and nothing else on that drive shows that it is the "
             "drive that held your ledger, so Finzytrack did not put the file back. If it is that drive, copy "

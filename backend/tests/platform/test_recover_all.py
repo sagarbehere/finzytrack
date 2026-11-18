@@ -37,14 +37,15 @@ from app.platform.engine_jobs.recovery import (
 )
 from app.platform.engine_jobs.scheduler import Done, EngineJobs, Failed, JobContext, JobTicket
 from app.platform.errors import ErrorCode
+from tests.host_paths import host
 from tests.platform.fake_job_engine import BLOCK, CRASH, CRASH_TO_BOUND, FakeEngine
 from tests.platform.test_engine_scheduler import DEADLINE, LockWait, wait_until
 
 pytestmark = [pytest.mark.inv("INV-32"), pytest.mark.cap("CAP-WS-RECOVER-FIRST")]
 
-ALD = Path("/app-data")
-JD1 = "/app-data/local/k1/journal"
-JD2 = "/app-data/local/k2/journal"
+ALD = Path(host("/app-data"))
+JD1 = host("/app-data/local/k1/journal")
+JD2 = host("/app-data/local/k2/journal")
 
 
 @pytest.fixture(autouse=True)
@@ -56,7 +57,9 @@ def hang_guard() -> Iterator[None]:
         faulthandler.cancel_dump_traceback_later()
 
 
-def listed(name: str, jd: str = JD1, *, key: str = "k1", lineage: str = "lin1", files: tuple[str, ...] = ("/L/a",)):
+def listed(
+    name: str, jd: str = JD1, *, key: str = "k1", lineage: str = "lin1", files: tuple[str, ...] = (host("/L/a"),)
+):
     return {
         "journal_dir": jd,
         "name": name,
@@ -161,8 +164,8 @@ def test_each_listed_journal_is_tried_after_the_listing_and_ends_with_its_try() 
             "recover_list": [listing(listed("s1-j1"), listed("s1-j2", JD2, key="k2"), listed("s1-j3"))],
             "recover_try": [
                 tried("resolved"),
-                tried("stopped", "kept_copy", path="/L/a"),
-                tried("failed", "io_error", path="/L/a", entry="/L/.a.ft-s1-j3.tmp", errno=5),
+                tried("stopped", "kept_copy", path=host("/L/a")),
+                tried("failed", "io_error", path=host("/L/a"), entry=host("/L/.a.ft-s1-j3.tmp"), errno=5),
             ],
         }
     )
@@ -174,7 +177,12 @@ def test_each_listed_journal_is_tried_after_the_listing_and_ends_with_its_try() 
     assert [j.name for j in report.undone] == ["s1-j1"]
     assert reasons(report) == {"s1-j2": "stopped", "s1-j3": "failed"}
     failed = next(b for b in report.blocking if b.journal.name == "s1-j3")
-    assert (failed.cause, failed.path, failed.entry, failed.errno) == ("io_error", "/L/a", "/L/.a.ft-s1-j3.tmp", 5)
+    assert (failed.cause, failed.path, failed.entry, failed.errno) == (
+        "io_error",
+        host("/L/a"),
+        host("/L/.a.ft-s1-j3.tmp"),
+        5,
+    )
     every_journal_ends_once(report, {"s1-j1", "s1-j2", "s1-j3"})
 
 
@@ -340,10 +348,10 @@ def test_delete_the_kept_copy_then_the_journal_is_tried() -> None:
             "recover_try": [tried("resolved")],
         }
     )
-    report = run(s, DeleteKept(JD1, "s1-j1", "/L/a", "a.kept-s1-j1", "0" * 64))
+    report = run(s, DeleteKept(JD1, "s1-j1", host("/L/a"), "a.kept-s1-j1", "0" * 64))
     act = next(p for op, p in s.log if op == "recover_act")
     assert act["action"] == "delete_kept"
-    assert (act["file"], act["kept"], act["sha256"]) == ("/L/a", "a.kept-s1-j1", "0" * 64)
+    assert (act["file"], act["kept"], act["sha256"]) == (host("/L/a"), "a.kept-s1-j1", "0" * 64)
     assert [j.name for j in report.undone] == ["s1-j1"]
     assert [a.outcome.outcome for a in report.actions] == ["done"]
 
@@ -352,7 +360,7 @@ def test_an_action_on_a_journal_the_listing_did_not_find_open_is_not_sent() -> N
     """The blocked screen showed a journal that has since resolved (or a Retry undid it first): its action is refused
     `not_open` without a call, so nothing acts on what the user did not see."""
     s = Script({"recover_list": [listing(listed("s1-j1"))], "recover_try": [tried("resolved")]})
-    report = run(s, DeleteCreated(JD1, "s7-j7", "/L/p", "0" * 64))
+    report = run(s, DeleteCreated(JD1, "s7-j7", host("/L/p"), "0" * 64))
     assert "recover_act" not in s.ops()
     assert [(a.outcome.outcome, a.outcome.reason) for a in report.actions] == [("refused", "not_open")]
 
@@ -370,10 +378,10 @@ def test_a_refused_delete_leaves_the_journal_to_its_try() -> None:
         {
             "recover_list": [listing(listed("s1-j1"))],
             "recover_act": [acted("refused", "changed")],
-            "recover_try": [tried("stopped", "kept_copy", path="/L/a")],
+            "recover_try": [tried("stopped", "kept_copy", path=host("/L/a"))],
         }
     )
-    report = run(s, DeleteKept(JD1, "s1-j1", "/L/a", "a.kept-s1-j1", "0" * 64))
+    report = run(s, DeleteKept(JD1, "s1-j1", host("/L/a"), "a.kept-s1-j1", "0" * 64))
     assert reasons(report) == {"s1-j1": "stopped"}
     assert [(a.outcome.outcome, a.outcome.reason) for a in report.actions] == [("refused", "changed")]
 
@@ -441,18 +449,21 @@ def test_a_blocking_journal_blocks_the_workspaces_that_use_its_files(
 
 def test_a_journal_whose_file_list_cannot_be_read_blocks_every_open() -> None:
     b = Blocking(journal(key=None, lineage=None, keys=()), "stopped", "unreadable")
-    assert blocking_for(report_with(b), workspace_key="k7", lineage="lin7", ledger_keys={"/x"}) == (b,)
+    assert blocking_for(report_with(b), workspace_key="k7", lineage="lin7", ledger_keys={host("/x")}) == (b,)
 
 
 def test_a_journal_folder_that_could_not_be_listed_blocks_every_open() -> None:
-    out = blocking_for(report_with(unlisted=((JD2, 5),)), workspace_key="k7", lineage="lin7", ledger_keys={"/x"})
+    out = blocking_for(report_with(unlisted=((JD2, 5),)), workspace_key="k7", lineage="lin7", ledger_keys={host("/x")})
     assert out == (NotRecovered(JD2, 5),)
 
 
 def test_a_linked_journal_folder_blocks_every_open_and_says_it_is_a_link() -> None:
     """S0077 (BL-0193): the engine's `linked` reaches the screen's input."""
     out = blocking_for(
-        report_with(unlisted=((JD2, None),), linked=True), workspace_key="k7", lineage="lin7", ledger_keys={"/x"}
+        report_with(unlisted=((JD2, None),), linked=True),
+        workspace_key="k7",
+        lineage="lin7",
+        ledger_keys={host("/x")},
     )
     assert out == (NotRecovered(JD2, None, linked=True),)
 

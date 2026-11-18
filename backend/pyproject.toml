@@ -27,6 +27,9 @@ dev = [
   "pytest==9.1.1",
   "pytest-xdist==3.8.0",
   "ruff==0.17.0",
+  # `zoneinfo` finds IANA zones on Windows only in this package; the tests name zones (tests/domain/test_dates.py).
+  # The product names none yet, so it is a test dependency until the first product code that does (S0131, BL-0290).
+  "tzdata==2026.5 ; sys_platform == 'win32'",
 ]
 
 [build-system]

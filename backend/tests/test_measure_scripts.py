@@ -10,6 +10,7 @@ mirror in a scratch folder, and must print its JSON report. The cases are checke
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 from collections.abc import Callable
@@ -37,6 +38,20 @@ LEDGER = b"""option "operating_currency" "USD"
 """
 
 
+def bare_env(tmp_path: Path) -> dict[str, str]:
+    """A script's environment: nothing of the caller's but what the OS needs to start Python. Windows needs
+    `SYSTEMROOT` (without it Winsock cannot load and `asyncio` fails to import) and takes its temp folder from `TEMP`
+    and `TMP` (S0131)."""
+    if sys.platform == "win32":
+        return {
+            "PATH": os.environ["PATH"],
+            "SYSTEMROOT": os.environ["SYSTEMROOT"],
+            "TEMP": str(tmp_path),
+            "TMP": str(tmp_path),
+        }
+    return {"PATH": "/usr/bin:/bin", "TMPDIR": str(tmp_path)}
+
+
 def run(script: str, *args: str, tmp_path: Path, scripts: Path = SCRIPTS) -> dict[str, object]:
     done = subprocess.run(  # noqa: S603 (fixed argv: a script of this repository)
         [sys.executable, "-I", str(scripts / script), *args],
@@ -44,7 +59,7 @@ def run(script: str, *args: str, tmp_path: Path, scripts: Path = SCRIPTS) -> dic
         capture_output=True,
         text=True,
         check=False,
-        env={"PATH": "/usr/bin:/bin", "TMPDIR": str(tmp_path)},
+        env=bare_env(tmp_path),
     )
     assert done.returncode == 0, done.stdout + done.stderr
     report = json.loads(done.stdout)

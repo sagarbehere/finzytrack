@@ -41,18 +41,19 @@ from app.platform.engine_jobs.scheduler import Done, EngineJobs, JobTicket
 from app.platform.errors import ErrorCode
 from app.workspaces.creation import copy_manifest_files
 from app.workspaces.format.manifest import Inside, Manifest, read_manifest
+from tests.host_paths import host
 from tests.platform.fake_job_engine import CRASH, CRASH_TO_BOUND, GATE_DIE, FakeEngine, Gated
 
 DEADLINE = 20.0
-FOLDER = "/u/Books copy"
-SOURCE = "/data/ledgers/Main Books.beancount"
+FOLDER = host("/u/Books copy")
+SOURCE = host("/data/ledgers/Main Books.beancount")
 MANIFEST = copy_manifest_files(SOURCE)
 REQUEST = CopyRequest(
     target=FOLDER,
     source=SOURCE,
     manifest=MANIFEST,
-    app_local_data=Path("/app"),
-    legacy_locks=("/legacy/data/.write.lock",),
+    app_local_data=Path(host("/app")),
+    legacy_locks=(host("/legacy/data/.write.lock"),),
 )
 BLANK: dict[str, object] = {
     "outcome": "created",
@@ -113,8 +114,8 @@ def test_a_copy_that_lands_is_copied_and_its_engine_is_retired(make: Any) -> Non
     assert any(reason == "retire" for _, reason in rig.engine.ends), "its loads ran user code: a fresh engine next"
     [(_, _, params)] = rig.engine.params
     assert params == params_of(REQUEST, params["job"])
-    assert params["legacy_locks"] == ["/legacy/data/.write.lock"]
-    assert params["app_local_data"] == "/app"
+    assert params["legacy_locks"] == [host("/legacy/data/.write.lock")]
+    assert params["app_local_data"] == host("/app")
 
 
 def test_a_changed_source_is_not_copied_with_the_owners_words(make: Any) -> None:
@@ -126,7 +127,7 @@ def test_a_changed_source_is_not_copied_with_the_owners_words(make: Any) -> None
 
 
 def test_a_held_legacy_lock_says_to_quit_the_old_app(make: Any) -> None:
-    rig = make({"copy": [answer(outcome="not_created", reason="legacy_saving", path="/legacy/data/.write.lock")]})
+    rig = make({"copy": [answer(outcome="not_created", reason="legacy_saving", path=host("/legacy/data/.write.lock"))]})
     value = rig.copy()
     assert isinstance(value, NotCopied)
     assert copy_text.text(value) == (
@@ -281,11 +282,15 @@ def test_a_ledger_with_its_own_plugin_is_told_why_it_cannot_be_copied() -> None:
 @pytest.mark.parametrize(
     ("detail", "path", "start"),
     [
-        ("reserved_name", "/s/.finzytrack/x.beancount", "Your ledger uses a folder named .finzytrack (x.beancount)"),
-        ("inside_documents", "/s/docs", "The new folder is inside your ledger's documents folder."),
-        ("inside_legacy", "/legacy", "The new folder is inside the old Finzytrack app's folder."),
-        ("inside_target", "/u/Books copy/x.beancount", "Your ledger names a file inside the new folder"),
-        ("two_sources", "/s/a.pdf", "a.pdf and another of your files would get the same name"),
+        (
+            "reserved_name",
+            host("/s/.finzytrack/x.beancount"),
+            "Your ledger uses a folder named .finzytrack (x.beancount)",
+        ),
+        ("inside_documents", host("/s/docs"), "The new folder is inside your ledger's documents folder."),
+        ("inside_legacy", host("/legacy"), "The new folder is inside the old Finzytrack app's folder."),
+        ("inside_target", host("/u/Books copy/x.beancount"), "Your ledger names a file inside the new folder"),
+        ("two_sources", host("/s/a.pdf"), "a.pdf and another of your files would get the same name"),
         ("two_files_one_name", None, "Finzytrack could not place the files of the copy. This is a fault"),
     ],
 )

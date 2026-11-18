@@ -48,13 +48,14 @@ from app.platform.errors import (
     WorkspaceNotReadyDetails,
     WritesPausedDetails,
 )
+from tests.host_paths import host
 from tests.platform.fake_job_engine import CRASH, CRASH_TO_BOUND, GATE_DIE, FakeEngine, Gated
 
 REPO = Path(__file__).resolve().parents[3]
 DEADLINE = 20.0
 W1 = "ws-1"
-MAIN = "/L/main.bean"
-NEW = "/L/prices.bean"
+MAIN = host("/L/main.bean")
+NEW = host("/L/prices.bean")
 REQUEST = SaveRequest(
     session="a1b2",
     workspace_key="k1",
@@ -62,7 +63,7 @@ REQUEST = SaveRequest(
     root=MAIN,
     changes=(ChangeText(MAIN, "0" * 64, "post\n"), ChangeText(NEW, None, "p\n")),
     fingerprint='{"document_files":[],"documents":[],"files":[],"globs":[],"modules":[],"root":"/L/main.bean","v":2}',
-    app_local_data=Path("/app"),
+    app_local_data=Path(host("/app")),
     confine=None,
 )
 BLANK: dict[str, object] = {
@@ -182,34 +183,51 @@ def test_a_save_that_lands_is_saved_and_its_engine_is_retired(make: Any) -> None
             ChangeNotSavedDetails("hard_linked", MAIN, None, None, True, None),
         ),
         (
-            answer(outcome="not_saved", reason="permission", entry="/L", detail="deny delete_child", unchanged=True),
+            answer(
+                outcome="not_saved",
+                reason="permission",
+                entry=host("/L"),
+                detail="deny delete_child",
+                unchanged=True,
+            ),
             "CHANGE_NOT_SAVED",
-            ChangeNotSavedDetails("permission", None, "/L", "deny delete_child", True, None),
+            ChangeNotSavedDetails("permission", None, host("/L"), "deny delete_child", True, None),
         ),
         (  # S0077 (BL-0193): a link in place of the workspace's own journal, backups or key folder
-            answer(outcome="not_saved", reason="linked_folder", entry="/app/local/k1/journal", unchanged=True),
+            answer(outcome="not_saved", reason="linked_folder", entry=host("/app/local/k1/journal"), unchanged=True),
             "CHANGE_NOT_SAVED",
-            ChangeNotSavedDetails("linked_folder", None, "/app/local/k1/journal", None, True, None),
+            ChangeNotSavedDetails("linked_folder", None, host("/app/local/k1/journal"), None, True, None),
         ),
         (  # S0117 round 1 (red team RT-F1): a file of the test copy led out of it after the confirm
-            answer(outcome="not_saved", reason="outside_folder", path="/real/main.bean", entry="/copy", unchanged=True),
+            answer(
+                outcome="not_saved",
+                reason="outside_folder",
+                path=host("/real/main.bean"),
+                entry=host("/copy"),
+                unchanged=True,
+            ),
             "CHANGE_NOT_SAVED",
-            ChangeNotSavedDetails("outside_folder", "/real/main.bean", "/copy", None, True, None),
+            ChangeNotSavedDetails("outside_folder", host("/real/main.bean"), host("/copy"), None, True, None),
         ),
         (  # S0117 round 3 (owner, 2026-11-14: "2"): a test copy's save follows no link; its folder's own refusals
-            answer(outcome="not_saved", reason="link_in_copy", path="/copy/main.bean", entry="/copy"),
+            answer(
+                outcome="not_saved",
+                reason="link_in_copy",
+                path=host("/copy/main.bean"),
+                entry=host("/copy"),
+            ),
             "CHANGE_NOT_SAVED",
-            ChangeNotSavedDetails("link_in_copy", "/copy/main.bean", "/copy", None, False, None),
+            ChangeNotSavedDetails("link_in_copy", host("/copy/main.bean"), host("/copy"), None, False, None),
         ),
         (
-            answer(outcome="not_saved", reason="copy_folder_moved", entry="/copy"),
+            answer(outcome="not_saved", reason="copy_folder_moved", entry=host("/copy")),
             "CHANGE_NOT_SAVED",
-            ChangeNotSavedDetails("copy_folder_moved", None, "/copy", None, False, None),
+            ChangeNotSavedDetails("copy_folder_moved", None, host("/copy"), None, False, None),
         ),
         (
-            answer(outcome="not_saved", reason="copy_folder_missing", entry="/copy"),
+            answer(outcome="not_saved", reason="copy_folder_missing", entry=host("/copy")),
             "CHANGE_NOT_SAVED",
-            ChangeNotSavedDetails("copy_folder_missing", None, "/copy", None, False, None),
+            ChangeNotSavedDetails("copy_folder_missing", None, host("/copy"), None, False, None),
         ),
         (  # S0089 (BL-0188): a drive with no volume UUID; its journal could never be undone
             answer(outcome="not_saved", reason="no_drive_id", path=MAIN, unchanged=True),
@@ -293,7 +311,7 @@ def test_a_save_cut_past_its_gate_is_told_what_the_disk_says(
     assert calls[0][0] != calls[1][0], "the outcome is read by a fresh engine"
     [(_, _, params)] = [p for p in rig.engine.params if p[1] == "save_outcome"]
     assert params == {
-        "app_local_data": "/app",
+        "app_local_data": host("/app"),
         "workspace_key": "k1",
         "session": "a1b2",
         "job": rig.engine.params[0][2]["job"],
@@ -412,12 +430,12 @@ def test_not_saved_says_unchanged_only_after_the_rehash() -> None:
             "Your Mac does not allow changes to main.bean.",
         ),
         (
-            ChangeNotSavedDetails("permission", None, "/L", "deny delete_child,directory_inherit", True, None),
+            ChangeNotSavedDetails("permission", None, host("/L"), "deny delete_child,directory_inherit", True, None),
             "The folder /L has a permission entry (ACL) that stops Finzytrack from saving safely: "
             "deny delete_child,directory_inherit. Remove that entry, then try again.",
         ),
         (
-            ChangeNotSavedDetails("permission", None, "/app/local/k1/journal", None, True, None),
+            ChangeNotSavedDetails("permission", None, host("/app/local/k1/journal"), None, True, None),
             "allow changes to /app/local/k1/journal.",
         ),
         (  # S0100 (BL-0163 (b)): the file named
@@ -425,7 +443,7 @@ def test_not_saved_says_unchanged_only_after_the_rehash() -> None:
             "Your change was not saved. Finzytrack could not read or write main.bean. Your ledger is unchanged.",
         ),
         (
-            ChangeNotSavedDetails("linked_folder", None, "/app/local/k1/journal", None, True, None),
+            ChangeNotSavedDetails("linked_folder", None, host("/app/local/k1/journal"), None, True, None),
             "The folder /app/local/k1/journal is a link to another place. Finzytrack keeps its save records and "
             "backups only in a real folder. Put the real folder back in its place, or remove the link, then try again.",
         ),
@@ -580,23 +598,23 @@ def test_S0128_on_windows_the_notice_never_advises_the_computers_own_disk() -> N
 
 # -- S0100: the write-path leftovers (BL-0162, BL-0163, BL-0182, BL-0183, BL-0187) ------------------------------------
 
-A_BEAN = "/L/a.bean"
+A_BEAN = host("/L/a.bean")
 
 
 @pytest.mark.parametrize(
     ("result", "want"),
     [
         (  # BL-0162
-            answer(outcome="not_saved", reason="case_twins", path="/L/A.bean", unchanged=True),
-            ChangeNotSavedDetails("case_twins", "/L/A.bean", None, None, True, None),
+            answer(outcome="not_saved", reason="case_twins", path=host("/L/A.bean"), unchanged=True),
+            ChangeNotSavedDetails("case_twins", host("/L/A.bean"), None, None, True, None),
         ),
         (  # BL-0187: never LEDGER_EXTERNALLY_CHANGED
-            answer(outcome="not_saved", reason="folder_appeared", path=NEW, entry="/L/y2026", unchanged=True),
-            ChangeNotSavedDetails("folder_appeared", NEW, "/L/y2026", None, True, None),
+            answer(outcome="not_saved", reason="folder_appeared", path=NEW, entry=host("/L/y2026"), unchanged=True),
+            ChangeNotSavedDetails("folder_appeared", NEW, host("/L/y2026"), None, True, None),
         ),
         (  # BL-0163 (a)
-            answer(outcome="not_saved", reason="app_folder_missing", entry="/app", unchanged=True),
-            ChangeNotSavedDetails("app_folder_missing", None, "/app", None, True, None),
+            answer(outcome="not_saved", reason="app_folder_missing", entry=host("/app"), unchanged=True),
+            ChangeNotSavedDetails("app_folder_missing", None, host("/app"), None, True, None),
         ),
         (  # BL-0163 (b): the changed file apart from the failed one
             answer(outcome="not_saved", reason="io_error", path=MAIN, unchanged=False, changed=A_BEAN),
@@ -616,7 +634,16 @@ def test_S0100_BL0183_an_earlier_unfinished_save_has_its_own_reason_and_says_thi
     not written: not the Reopen text of "could not finish your change"."""
     value = answer_of(
         SaveAnswer(
-            "refused", "unfinished_save", "/app/local/k1/journal/x.open", None, None, True, False, None, None, False
+            "refused",
+            "unfinished_save",
+            host("/app/local/k1/journal/x.open"),
+            None,
+            None,
+            True,
+            False,
+            None,
+            None,
+            False,
         )
     )
     assert details(value) == WritesPausedDetails("earlier_unfinished", None)
@@ -678,18 +705,18 @@ def test_S0100_the_outcome_after_a_death_carries_the_changed_file_in_its_own_fie
     ("d", "want"),
     [
         (
-            ChangeNotSavedDetails("case_twins", "/L/A.bean", None, None, True, None),
+            ChangeNotSavedDetails("case_twins", host("/L/A.bean"), None, None, True, None),
             "Finzytrack did not save your change. A.bean and another file in this change have names this drive may "
             "treat as the same (for example, they differ only in capital letters). Finzytrack cannot save both in "
             "one change. Rename one of them, then try again. Your ledger is unchanged.",
         ),
         (
-            ChangeNotSavedDetails("folder_appeared", NEW, "/L/y2026", None, True, None),
+            ChangeNotSavedDetails("folder_appeared", NEW, host("/L/y2026"), None, True, None),
             "Finzytrack did not save your change. A folder /L/y2026 appeared where Finzytrack was about to make one. "
             "Try again. Your ledger is unchanged.",
         ),
         (
-            ChangeNotSavedDetails("app_folder_missing", None, "/app", None, True, None),
+            ChangeNotSavedDetails("app_folder_missing", None, host("/app"), None, True, None),
             "Finzytrack did not save your change. Its data folder /app is missing or was replaced. Quit Finzytrack and "
             "open it again, then try again. Your ledger is unchanged.",
         ),
@@ -721,7 +748,7 @@ def test_S0102_r1_an_outcome_refused_for_the_app_folder_before_the_gate_says_qui
 def test_S0125_an_app_data_folder_that_cannot_save_safely_is_named_with_the_way_out() -> None:
     """Must not pass (verifier F3; owner, 2026-11-17: "C1"): the engine's `unsafe_app_folder` is its own text naming
     the folder and what it needs, not the generic disk error, and the ledger is said unchanged when it was hashed so."""
-    folder = "/data/finzytrack/local/k1/journal"
+    folder = host("/data/finzytrack/local/k1/journal")
     text = save_text.not_saved_text(ChangeNotSavedDetails("unsafe_app_folder", None, folder, None, True, None))
     assert text.startswith("Finzytrack did not save your change. Its data folder " + folder), text
     assert "cannot save safely" in text

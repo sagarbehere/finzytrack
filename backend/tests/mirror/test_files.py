@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sqlite3
+import sys
 from pathlib import Path
 
 import pytest
@@ -11,6 +12,7 @@ from app.mirror.files import MirrorInfo, MirrorUnavailable, OpenMirror, open_mir
 from app.mirror.query import QueryRows, QueryRunner, UserSql
 from app.mirror.reader import Reader
 from tests.mirror.support import META, make_mirror
+from tests.windows_pending import LINK_FORM
 
 
 def test_the_connection_is_read_only_and_query_only(tmp_path: Path) -> None:
@@ -47,7 +49,10 @@ GEN2 = "gen-2-" + "b" * 16 + ".db"
 
 
 def published(tmp_path: Path) -> Path:
-    """A mirror folder as the engine's publish leaves it: two generations and `current.db` on the first."""
+    """A mirror folder as the engine's publish leaves it on macOS and Linux: two generations and `current.db` on the
+    first (the link form; Windows' pointer form is `test_pin_windows.py`, S0130)."""
+    if sys.platform == "win32":
+        pytest.skip(LINK_FORM)
     folder = tmp_path / "workspaces" / "k1" / "mirror"
     folder.mkdir(parents=True)
     for name, version in ((GEN1, "1/sha256:" + "1" * 64), (GEN2, "2/sha256:" + "2" * 64)):

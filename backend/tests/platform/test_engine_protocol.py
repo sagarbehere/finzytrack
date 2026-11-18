@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import copy
 import json
+import os
 import sys
 from pathlib import Path
 from typing import Any, cast, get_args
@@ -56,6 +57,7 @@ from app.platform.engine_protocol import (
     encode_request,
     is_absolute,
 )
+from tests.host_paths import host, hosted
 
 SCHEMA_PATH = Path(__file__).resolve().parents[3] / "contracts" / "engine-protocol.schema.json"
 
@@ -75,7 +77,7 @@ def valid(definition: str, instance: Any) -> bool:
 def examples(definition: str) -> list[dict[str, Any]]:
     found = schema()["$defs"][definition].get("examples", [])
     assert found, f"{definition} has no examples"
-    return found
+    return hosted(found)  # this OS's spelling of their paths (S0131)
 
 
 def test_version_ops_keys_and_limit_agree_with_the_schema() -> None:
@@ -431,7 +433,7 @@ def nested_mutations(value: object) -> list[object]:
     a list, a string, null, a negative number, a relative path, or an empty string; a list emptied or given a bad
     item. The decoder must refuse exactly the variants the schema refuses."""
     out: list[object] = []
-    replacements: tuple[object, ...] = ([], "x", None, -1, "relative/path", "", True, {"k": 1}, "/abs")
+    replacements: tuple[object, ...] = ([], "x", None, -1, "relative/path", "", True, {"k": 1}, host("/abs"))
     if isinstance(value, dict):
         obj = cast("dict[str, object]", value)
         for key in obj:
@@ -487,7 +489,7 @@ def test_the_try_result_decodes_to_its_fields() -> None:
     [main] = out.inspection
     assert main.kept[0].name == "main.bean.kept-s1-j7"
     assert main.kept[0].seen.sha256 == "0" * 64
-    assert main.backup == "/app/local/k1/backups/s1-j7/0-main.bean", "S0090: the backup's path reaches the text"
+    assert main.backup == host("/app/local/k1/backups/s1-j7/0-main.bean"), "S0090: the backup's path reaches the text"
     missing = {k: v for k, v in ex["result"]["inspection"][0].items() if k != "backup"}
     no_flag = {**ex, "result": {**ex["result"], "inspection": [missing]}}
     assert isinstance(decoded(no_flag, "recover_try"), Violation), "an inspection without `backup` is refused"
@@ -503,7 +505,7 @@ def test_the_listing_decodes_to_its_fields() -> None:
     assert (j.name, j.readable, j.workspace_key, j.lineage) == ("s1-j7", True, "k1", "lin1")
     assert j.files[0].created is False
     [u] = out.unlisted  # S0077 (BL-0193): a link in place of a journal folder is named as one
-    assert (u.folder.endswith("/local/k2/journal"), u.errno, u.linked) == (True, None, True)
+    assert (u.folder.endswith(os.sep + os.path.join("local", "k2", "journal")), u.errno, u.linked) == (True, None, True)
 
 
 def test_no_engine_lock_is_a_refusal_key() -> None:
@@ -515,7 +517,7 @@ def test_a_refusals_fields_are_checked_as_the_schema_checks_them(definition: str
     """S0098: `refusal` is one of its words, `line` a line number from 1, `refused` an absolute path; the decoder and
     the schema agree on each, and each bad value is refused by both."""
     for ex in examples(definition):
-        good = [{"refusal": "number_failed", "refused": "/L/main.bean", "line": 3}]
+        good = [{"refusal": "number_failed", "refused": host("/L/main.bean"), "line": 3}]
         bad = [
             {"refusal": "other"},
             {"refusal": "Number_failed"},

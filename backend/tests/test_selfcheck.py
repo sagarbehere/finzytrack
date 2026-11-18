@@ -50,7 +50,10 @@ def test_a_working_engine_is_reported_with_both_views() -> None:
     assert report["site"] == str(engine_site())
     assert report["main_finds"] == {"beancount": False, "beanquery": False, "ledger_engine": False}
     assert report["engine_finds_app"] is False
-    assert resolved(report["main_sites"]) == {str(Path(p).resolve()) for p in site.getsitepackages()}
+    # Windows lists the interpreter's prefix too, which the report drops (S0114); elsewhere the prefix is not listed
+    prefix = Path(sys.prefix).resolve()
+    want = {str(Path(p).resolve()) for p in site.getsitepackages() if Path(p).resolve() != prefix}
+    assert resolved(report["main_sites"]) == want
     assert not resolved(report["engine_path"]) & resolved(report["main_sites"])
     assert str(engine_site().resolve()) in resolved(report["engine_path"])
     assert str(engine_site().resolve()) not in resolved(report["main_path"])
@@ -99,7 +102,7 @@ def test_main_finds_reports_what_this_process_finds(monkeypatch: pytest.MonkeyPa
 
 def test_engine_finds_app_reports_an_engine_site_that_holds_the_main_sidecar() -> None:
     """Must not pass: an engine whose site holds `app` is reported as such (here: this venv's own site-packages)."""
-    own = Path(site.getsitepackages()[0])
+    own = next(Path(p) for p in site.getsitepackages() if Path(p).name.lower() == "site-packages")  # not the prefix
     report = selfcheck.report(Path(sys.executable), own)
     assert report["engine_finds_app"] is True
     assert str(own.resolve()) in resolved(report["engine_path"])

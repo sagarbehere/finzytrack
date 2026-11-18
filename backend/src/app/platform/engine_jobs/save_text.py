@@ -14,6 +14,7 @@ from typing import Final
 
 from app.domain.errors import DomainError
 from app.platform.engine_jobs.recovery_text import REOPEN, reopen_after_created
+from app.platform.engine_paths import last_name
 from app.platform.errors import ChangeNotSavedDetails, ErrorCode, WritesPausedDetails, spec_for
 from app.platform.plans import LARGE_FILE_BYTES
 
@@ -40,7 +41,7 @@ it on Windows (BL-0166)."""
 
 
 def _name(path: str | None) -> str:
-    return "A ledger file" if not path else path.rpartition("/")[2]
+    return "A ledger file" if not path else last_name(path)
 
 
 NOT_CHECKED: Final = "Finzytrack could not check whether your ledger changed."

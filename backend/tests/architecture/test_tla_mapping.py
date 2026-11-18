@@ -129,7 +129,9 @@ def markers(roots: Iterable[Path]) -> list[Marker]:
                     name = func.id if isinstance(func, ast.Name) else getattr(func, "attr", None)
                     if name != "tla_action":
                         continue
-                    shown = path.relative_to(REPO) if path.is_relative_to(REPO) else path
+                    shown = (
+                        path.relative_to(REPO).as_posix() if path.is_relative_to(REPO) else path.as_posix()
+                    )  # `/` on every OS
                     where = f"{shown}:{node.lineno} {node.name}"
                     model = ENGINE_JOBS
                     for kw in deco.keywords:

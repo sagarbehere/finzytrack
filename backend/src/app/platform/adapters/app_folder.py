@@ -38,6 +38,7 @@ from typing import Final
 
 from app.platform.adapters.windows_pending import NotOnWindowsError
 from app.platform.engine import AppFolderChangedError
+from app.platform.engine_paths import folder_of
 
 FOLDER_MODE = 0o700
 
@@ -167,7 +168,7 @@ class AppFolderRefusal:
 def refusal_text(folder: str, answer: str | None) -> str:
     """`msg:start.app_folder`: what the user reads when the app cannot start (the shell shows it: BL-0095)."""
     said = f" ({answer})" if answer else ""
-    parent = folder.rstrip("/").rpartition("/")[0] or "/"
+    parent = folder_of(folder.rstrip("/")) or "/"  # Windows: never empty
     return (
         f"Finzytrack cannot start: it could not set up its data folder {folder}{said}. Check that your user account "
         f"may write in {parent}, then open Finzytrack again."

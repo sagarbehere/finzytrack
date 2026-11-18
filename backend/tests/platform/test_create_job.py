@@ -42,10 +42,11 @@ from app.platform.engine_jobs.scheduler import Done, EngineJobs, JobTicket
 from app.platform.errors import ErrorCode, spec_for
 from app.workspaces.creation import manifest_files
 from app.workspaces.format.manifest import Inside, Manifest, read_manifest
+from tests.host_paths import host
 from tests.platform.fake_job_engine import CRASH, CRASH_TO_BOUND, GATE_DIE, FakeEngine, Gated
 
 DEADLINE = 20.0
-FOLDER = "/u/Books"
+FOLDER = host("/u/Books")
 MANIFEST = manifest_files(WorkspacePath.parse("main.beancount"))
 REQUEST = CreateRequest(
     target=FOLDER,
@@ -380,7 +381,7 @@ def test_a_manifest_that_appeared_says_to_check_the_folder() -> None:
 def test_the_text_names_what_the_job_left_and_never_says_to_delete_anything() -> None:
     """Owner, 2026-11-07 (the middle path): the job removes what it made; what it kept because it could not be sure
     is named with the advice to check it; nothing left, nothing said of the folder (verifier r2 F1)."""
-    named = create_text.text(NotCreated("taken", FOLDER, ("main.beancount",), path="/u/Books/main.beancount"))
+    named = create_text.text(NotCreated("taken", FOLDER, ("main.beancount",), path=host("/u/Books/main.beancount")))
     unknown = create_text.text(NotCreated("stopped", FOLDER, None))
     nothing = create_text.text(NotCreated("load_failed", FOLDER, ()))
     assert named.endswith(
@@ -441,7 +442,7 @@ def test_a_long_list_of_kept_names_shows_five_and_how_many_more() -> None:
 
 
 def test_a_folder_the_job_wrote_into_but_could_not_list_says_to_check_it_and_blames_no_one() -> None:
-    text = create_text.text(NotCreated("io_error", FOLDER, None, path="/u/Books/x"))
+    text = create_text.text(NotCreated("io_error", FOLDER, None, path=host("/u/Books/x")))
     assert "You can delete it." not in text
     assert "left these" not in text, "it was not listed: it names nothing"
     assert text.endswith("Check it before you delete anything.")
@@ -456,6 +457,6 @@ def test_a_cancelled_create_says_to_check_the_folder_first() -> None:
 
 @pytest.mark.parametrize("reason", sorted(get_args(NotCreatedReason.__value__)))
 def test_every_reason_has_its_words(reason: str) -> None:
-    text = create_text.text(NotCreated(reason, FOLDER, (), path="/u/Books/x"))  # type: ignore[arg-type]
+    text = create_text.text(NotCreated(reason, FOLDER, (), path=host("/u/Books/x")))  # type: ignore[arg-type]
     assert text
     assert "None" not in text

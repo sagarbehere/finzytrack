@@ -21,6 +21,8 @@ from types import ModuleType
 
 import pytest
 
+from tests.windows_pending import RESOLVED_CASE
+
 pytestmark = pytest.mark.cap("CAP-DATA-DEMO-GEN")
 
 BACKEND = Path(__file__).resolve().parents[2]
@@ -148,6 +150,8 @@ def test_the_repository_spelled_in_another_case_is_refused() -> None:
 
 def test_build_spelled_in_another_case_is_refused(tmp_path: Path) -> None:
     # Only the exact ignored folder `build/` is allowed; `BUILD/` is not in .gitignore on a case-sensitive disk.
+    if sys.platform == "win32":
+        pytest.skip(RESOLVED_CASE)
     target = REPO / "BUILD" / f"s0027-{tmp_path.name}"
     r = run("--size", "demo", "--anchor", "2026-10-25", "--out", str(target))
     assert r.returncode == 2

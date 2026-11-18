@@ -32,6 +32,7 @@ from app.mirror.query import (
     row_bound,
 )
 from tests.mirror.support import heap_sweep, make_mirror, starve
+from tests.windows_pending import NO_RUSAGE
 
 BACKEND = Path(__file__).resolve().parents[2]
 
@@ -439,6 +440,8 @@ def test_row_bound_holds_for_the_worst_row() -> None:
 def _probe(tmp_path: Path, sql: str) -> dict[str, object]:
     """Run one query in a fresh interpreter (SQLite's heap limit is process-wide and only ever lowered, and peak RSS
     is per process): its outcome and how much its peak RSS grew, in bytes."""
+    if sys.platform == "win32":
+        pytest.skip(NO_RUSAGE)
     code = f"""
 import json, resource, sys
 from pathlib import Path
@@ -632,7 +635,8 @@ def test_a_wal_mode_file_is_unavailable_and_nothing_is_created(tmp_path: Path) -
 
 
 def test_a_path_with_uri_characters_opens_that_file(tmp_path: Path) -> None:
-    folder = tmp_path / "a?mode=rwc#b %41"
+    # `?`, `#` and `%` mean something in a URI; Windows refuses `?` in a name, so there the name keeps the other two
+    folder = tmp_path / ("a#mode=rwc b %41" if sys.platform == "win32" else "a?mode=rwc#b %41")
     folder.mkdir()
     path = make_mirror(folder / "m.db")
     assert answered(run(path, "SELECT COUNT(*) FROM postings")).rows == ((4,),)
