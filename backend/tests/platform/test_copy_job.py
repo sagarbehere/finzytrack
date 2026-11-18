@@ -316,3 +316,11 @@ def test_a_source_beancount_cannot_load_names_its_file_and_line(make: Any) -> No
         "Not copied. Beancount cannot load your ledger (Main Books.beancount). bean-check fails on it too. A plugin of "
         "the ledger may have made an entry Beancount cannot check."
     )
+
+
+def test_the_copys_manifest_names_the_roots_file_as_this_os_cuts_its_path() -> None:
+    """S0131 (BL-0295): the manifest's root is the source root's file name, cut at this OS's separator. Must not pass:
+    on Windows the whole path taken as the name (refused as a workspace path, so no copy could start there)."""
+    (manifest,) = copy_manifest_files(host("/data/ledgers/Main Books.beancount"))
+    assert "Main Books.beancount" in manifest.text
+    assert "ledgers" not in manifest.text

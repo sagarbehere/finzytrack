@@ -21,7 +21,6 @@ import dataclasses
 import hashlib
 import json
 import os
-import sys
 from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -54,7 +53,6 @@ from app.workspaces.writes import (
 )
 from tests.platform.fake_job_engine import FakeEngine, Gated
 from tests.platform.test_rebuild_job import loaded
-from tests.windows_pending import GUARD_PATHS
 
 DEADLINE = 20.0
 W1 = "k1"
@@ -94,12 +92,6 @@ class Ids:
 
 
 IDENTITY = ("0b3d5c1e-2f4a-4c6b-8d7e-9f0a1b2c3d4e", "apfs", 1_731_580_000_000_000_000)
-
-
-def guard_passes_on_this_os() -> None:
-    """A test whose guard must pass a test copy's file skips on Windows (BL-0295); its refusals run there."""
-    if sys.platform == "win32":
-        pytest.skip(GUARD_PATHS)
 
 
 def mark(folder: Path) -> CopyMark:
@@ -208,7 +200,6 @@ class Rig:
         target: WriteTarget | None = None,
         preview_hash: str | None = None,
     ) -> Saved | NotDone | Failed:
-        guard_passes_on_this_os()
         out = submit_confirm(
             self.services, target or self.target, p.plan_id, preview_hash or p.preview_hash, acknowledged=acks
         )
@@ -357,7 +348,6 @@ def test_two_confirms_of_one_plan_queued_together_save_once(rig: Rig) -> None:
     blocker = rig.jobs.submit(busy, lambda ctx: WorkResult(ctx.call("block", {})))
     assert isinstance(blocker, JobTicket)
     threading_wait(lambda: "block" in [op for _, op in rig.engine.calls])
-    guard_passes_on_this_os()
     first = submit_confirm(rig.services, rig.target, p.plan_id, p.preview_hash, acknowledged=frozenset())
     second = submit_confirm(rig.services, rig.target, p.plan_id, p.preview_hash, acknowledged=frozenset())
     assert isinstance(first, JobTicket)
@@ -602,7 +592,6 @@ def test_a_folder_beside_the_copy_whose_name_starts_with_it_is_outside(tmp_path:
 
 def test_a_resolution_that_fails_refuses(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """INV-22: a guard that cannot decide refuses."""
-    guard_passes_on_this_os()
     (tmp_path / "main.bean").write_text("x")
     target = WriteTarget("k1", "/r", "lin1", tmp_path, tmp_path, mark(tmp_path))
     p = make_plan(files=(PlannedFile(str(tmp_path / "main.bean"), "a" * 64, "b" * 64, "x"),))
@@ -744,7 +733,6 @@ def test_a_fault_before_the_queue_raises_and_queues_no_save(
         monkeypatch.setattr(rig.plans, "find", boom)
     else:
         monkeypatch.setattr(writes, step, boom)
-    guard_passes_on_this_os()
     with pytest.raises(Broken):
         submit_confirm(rig.services, rig.target, p.plan_id, p.preview_hash, acknowledged=frozenset())
     assert rig.saves() == 0
@@ -785,7 +773,6 @@ def test_a_file_the_save_creates_in_the_copy_is_judged_by_its_folder(tmp_path: P
     """S0117 round 4 (red team overflow): a created file (and a folder made for it) does not exist yet; the guard
     judges it by the real path of its deepest existing folder, so a new file in the copy passes and one whose folder
     leads out of it does not."""
-    guard_passes_on_this_os()
     copy, real = tmp_path / "copy", tmp_path / "real"
     copy.mkdir()
     real.mkdir()
@@ -861,3 +848,35 @@ def test_the_tip_names_each_large_file_and_says_to_split_it_with_include() -> No
     assert several is not None
     assert "/L/a.bean" in several
     assert "/L/b.bean" in several
+
+
+# -- S0131 (BL-0295): the guard's "inside the copy" as each OS spells paths -------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("platform", "folder", "path", "inside"),
+    [
+        ("darwin", "/c", "/c/main.bean", True),
+        ("darwin", "/c", "/c", True),
+        ("darwin", "/c", "/cx/main.bean", False),  # a name that only starts like the folder's
+        ("darwin", "/c", "/C/main.bean", False),  # another spelling: refused, never folded
+        ("darwin", "/c", "/main.bean", False),
+        ("win32", "C:\\c", "C:\\c\\main.bean", True),
+        ("win32", "C:\\c", "C:\\c", True),
+        ("win32", "C:\\", "C:\\main.bean", True),  # a copy at a drive's root
+        ("win32", "\\\\nas\\s\\c", "\\\\nas\\s\\c\\y2026\\main.bean", True),
+        ("win32", "C:\\c", "C:\\cx\\main.bean", False),
+        ("win32", "C:\\c", "C:\\C\\main.bean", False),  # another spelling of the folder: refused (fail closed)
+        ("win32", "C:\\c", "D:\\c\\main.bean", False),
+        ("win32", "C:\\c", "C:/c/main.bean", False),  # not as `realpath` spells it
+        ("win32", "\\\\?\\C:\\c", "C:\\c\\main.bean", False),
+        ("win32", "C:\\c", "C:\\main.bean", False),
+    ],
+)
+def test_inside_the_copy_is_judged_exactly_as_the_os_spells_paths(
+    platform: str, folder: str, path: str, inside: bool
+) -> None:
+    """Rule 6's look (INV-22): a file is inside the copy's recorded folder only when its real path is that folder or
+    lies below it, component by component and exactly. Must not pass: on Windows every file judged outside (the POSIX
+    rule there, BL-0295's base), a prefix of a name taken as a folder, or another spelling folded into the folder's."""
+    assert writes.is_inside(folder, path, platform) is inside

@@ -63,6 +63,7 @@ from __future__ import annotations
 import hashlib
 import os
 import posixpath
+import sys
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -207,7 +208,14 @@ def _where_written(path: str) -> str:
     return os.path.join(os.path.realpath(head, strict=True), *tail)
 
 
-def _inside(folder: str, path: str) -> bool:
+def is_inside(folder: str, path: str, platform: str = sys.platform) -> bool:
+    """Whether `path` is `folder` or lies below it, compared as the OS `platform` names spells paths, component by
+    component and exactly. Both come from `realpath` or the copy's record of one, so another spelling (case, the other
+    separator, a long-path prefix) is outside: the guard refuses, never folds (INV-22). Before S0131 the POSIX rule
+    ran on Windows too, where no file was ever inside (BL-0295)."""
+    if platform == "win32":
+        below = folder if folder.endswith("\\") else folder + "\\"
+        return path == folder or path.startswith(below)
     return posixpath.commonpath([folder, path]) == folder
 
 
@@ -224,7 +232,7 @@ def promotion_refusal(plan: WritePlan, target: WriteTarget) -> DomainError | Non
     folder = target.copy.path
     try:
         for f in plan.files:
-            if not _inside(folder, _where_written(f.path)):
+            if not is_inside(folder, _where_written(f.path)):
                 return refused
     except (OSError, ValueError):
         return refused

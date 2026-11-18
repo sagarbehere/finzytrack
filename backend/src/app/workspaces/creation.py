@@ -9,10 +9,10 @@ rest of a create are M3's (CAP-WS-CREATE, CAP-SETUP-FRESH). `copy_manifest_files
 from __future__ import annotations
 
 import uuid
-from pathlib import PurePosixPath
 
 from app.domain.paths import WorkspacePath
 from app.platform.engine_jobs.create import NewFile
+from app.platform.engine_paths import last_name
 from app.workspaces.format.manifest import FORMAT, MANIFEST_PATH, Inside, LineageId, Manifest, encode_manifest
 
 
@@ -32,4 +32,4 @@ def copy_manifest_files(source: str) -> tuple[NewFile, ...]:
     (a copy is a new set of books, ADR-0017: "only "copy" writes a new lineage id"), and the root's file name, where
     the `copy` job puts it (`ledger_engine.ledger.core.copy_layout`: the root's folder becomes the copy's folder;
     S0081)."""
-    return manifest_files(WorkspacePath.parse(PurePosixPath(source).name))
+    return manifest_files(WorkspacePath.parse(last_name(source)))  # this OS's separator (S0131)
