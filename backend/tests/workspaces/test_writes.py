@@ -888,10 +888,10 @@ def test_the_tip_names_each_large_file_and_says_to_split_it_with_include() -> No
         ("darwin", "c", "c/main.bean", False),
     ],
 )
-def test_inside_the_copy_is_judged_exactly_as_the_os_spells_paths(
-    platform: str, folder: str, path: str, inside: bool
-) -> None:
+def test_inside_the_copy_is_judged_as_each_os_spells_paths(platform: str, folder: str, path: str, inside: bool) -> None:
     """Rule 6's look (INV-22): a file is inside the copy's recorded folder only when its real path is that folder or
-    lies below it, component by component and exactly. Must not pass: on Windows every file judged outside (the POSIX
-    rule there, BL-0295's base), a prefix of a name taken as a folder, or another spelling folded into the folder's."""
+    lies below it. On Windows by the engine's rule (S0131 round 2): the root without case, the long-path prefix and `/`
+    as spellings of one place, every name exactly; on macOS and Linux component by component. Must not pass: on
+    Windows every file judged outside (the POSIX rule there, BL-0295's base), a prefix of a name taken as a folder, a
+    name in another case folded into the folder's, or an incomplete root, a root or a malformed path taken as a copy."""
     assert writes.is_inside(folder, path, platform) is inside
