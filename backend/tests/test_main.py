@@ -49,13 +49,13 @@ from app.platform.engine_jobs.scheduler import Done, EngineJobs, JobTicket
 from app.platform.observability import Event, EventLog, EventSink
 from app.workspaces.access import Unknown
 from tests.api.support import Counted, FakeContainer, FixedAccess
-from tests.windows_pending import BL_0281
+from tests.windows_pending import POSIX_SUPERVISION
 
 
 def lock_held(path: Path) -> bool:
     """Whether another process holds this `flock` (POSIX; a fresh open file description, never blocking)."""
     if sys.platform == "win32":
-        raise pytest.skip.Exception(BL_0281)
+        raise pytest.skip.Exception(POSIX_SUPERVISION)
     import fcntl  # POSIX only: the tests that call it skip elsewhere
 
     fd = os.open(path, os.O_RDWR)
@@ -328,7 +328,9 @@ def test_on_windows_the_boots_recover_all_runs_in_an_engine_and_answers_the_plat
 ) -> None:
     """S0129 (BL-0281; BL-0261): on Windows the sidecar waits for the engine lock and starts the boot's engine in its
     job; the engine refuses every file operation there until BL-0087, so recover-all ends unlisted with
-    `engine.unsupported_platform` (the boot's screen names the platform), never "the app folder is missing"."""
+    `engine.unsupported_platform` (the boot's screen names the platform), never "the app folder is missing".
+    @regression-guard (it passes on the base, where the wait returned at once and the engine ran alone; it must keep
+    passing with the real wait and the job)."""
     wiring = _wire(main.parse_args(argv(*dirs, "--engine-venv", str(ENGINE_VENV))), no_log, VERSION)
     try:
         boot = wiring.jobs.start()
@@ -472,7 +474,7 @@ def test_the_sidecar_starts_a_real_engine_and_closes_it_on_sigterm(dirs: tuple[P
     assert code == 0, "".join(sidecar.raw)
 
 
-@pytest.mark.skipif(os.name != "posix", reason="flock is POSIX; Windows is BL-0087 (M1b)")
+@pytest.mark.skipif(os.name != "posix", reason="flock is POSIX; Windows: test_engine_windows.py")
 def test_an_earlier_sessions_engine_holding_the_engine_lock_keeps_the_first_engine_from_starting(
     dirs: tuple[Path, Path],
 ) -> None:
@@ -521,7 +523,7 @@ def test_a_sidecar_ended_hard_leaves_no_engine_behind(dirs: tuple[Path, Path]) -
     no handler, no `finally`, no close) cannot close its engine; the engine notices on its own (its parent watchdog,
     stdin EOF) and ends, so no orphan engine keeps running. The sidecar's log ends without `engine.closed`."""
     if sys.platform == "win32":
-        raise pytest.skip.Exception(BL_0281)
+        raise pytest.skip.Exception(POSIX_SUPERVISION)
     sidecar = Sidecar(dirs, "--engine-venv", str(ENGINE_VENV))
     try:
         sidecar.handshake()

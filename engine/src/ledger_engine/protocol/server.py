@@ -33,16 +33,18 @@
   end-of-input exit send `killpg(0, SIGKILL)`, the engine included, and a plugin's child cannot outlive the engine
   holding the engine lock. An engine that does not lead its group (run by hand or by a test) only exits: it never
   signals a group that is not its own (`end_own_group`).
-  On Windows the engine ends on stdin EOF when the sidecar is gone (its pipe closes), and the shell's Job Object
-  (ARCHITECTURE.md §5) covers the sidecar and the engine.
+  On Windows the engine leads no group: the sidecar puts it in a Job Object of its own, nested in the shell's, with
+  kill-on-close (S0129; `app.platform.adapters.windows_job`), so when the sidecar is gone Windows ends the engine and
+  every process it started; the end-of-input exit then only ends the engine itself (with the sidecar alive, its
+  drain ends the rest of the job).
 - **The engine lock** (S0053; `design/specs/engine-jobs.md` §5.1; ADR-0064 amendment of 2026-10-28): started with
   `--engine-lock PATH` (the main sidecar always passes `app_local_data/locks/engine.lock`), the engine takes a
   whole-file `flock` on it right after its handshake reply and before it reads any other request, waiting, and holds
   it for its whole life (the descriptor is never closed; the OS releases it when the process and every process that
   inherited it have ended). So an engine of an earlier session (left by a crash, Quit anyway or a quit) keeps a new
   session's engines from doing any ledger work until it has ended, and the new session's recovery never runs beside
-  it. Opened with `os.open`, so a forked child holds it too. POSIX only;
-  Windows is BL-0087.
+  it. Opened with `os.open`, so a forked child holds it too. On Windows `LockFileEx` over the whole file through the
+  Windows adapter (S0128), which no child inherits.
 - **The app folder of the start** (S0102, BL-0244; `ledger_engine.protocol.app_folder`): `--app-folder-id DEV:INO`
   (required with `--engine-lock`) is the app folder's identity when the sidecar made it durable. The lock's `locks/`
   is made through a descriptor on that folder only while it is that object; otherwise the engine takes no lock and
@@ -326,8 +328,8 @@ def _child(params: Message, _: JobContext) -> Message:
     """A stand-in for a plugin's child process holding a lock: the engine takes a `flock` on `lock` and starts
     a child that inherits the descriptor (so it holds the lock too) and sleeps."""
     assert isinstance(params, LockParams)  # noqa: S101 (the handler's own params model)
-    if sys.platform == "win32":  # TODO(BL-0281): a child holding the engine lock on Windows (`LockFileEx`)
-        raise OSError(errno.ENOTSUP, "the lock-holding child is POSIX only")
+    if sys.platform == "win32":
+        return _child_windows(params.lock)
     import fcntl  # POSIX only (test op)
 
     fd = os.open(params.lock, os.O_RDWR | os.O_CREAT, 0o600)
@@ -339,6 +341,29 @@ def _child(params: Message, _: JobContext) -> Message:
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
     )
+    return ChildResult(pid=child.pid)
+
+
+CHILD_HOLDING_A_LOCK_WINDOWS: Final = (
+    "import msvcrt, os, sys, time; fd = os.open(sys.argv[1], os.O_RDWR | os.O_CREAT | os.O_BINARY); "
+    "msvcrt.locking(fd, msvcrt.LK_NBLCK, 1); print('held', flush=True); time.sleep(3600)"
+)
+"""Windows has no lock a child inherits (a `LockFileEx` lock is its taker's), so the child takes its own on the file's
+first byte (S0129)."""
+
+
+def _child_windows(lock: str) -> Message:
+    """`test.child` on Windows: the child opens `lock`, locks it and sleeps; answered once it holds the lock."""
+    child = subprocess.Popen(  # noqa: S603 (this interpreter with a fixed script: a test op)
+        [sys.executable, "-c", CHILD_HOLDING_A_LOCK_WINDOWS, lock],
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+        text=True,
+    )
+    assert child.stdout is not None  # noqa: S101 (a pipe was asked for)
+    if child.stdout.readline() != "held\n":
+        raise OSError(errno.EIO, "the child could not lock the file")
     return ChildResult(pid=child.pid)
 
 
@@ -734,7 +759,7 @@ def end_own_group(code: int) -> None:
     signal: with the sidecar alive its drain follows (`app.platform.adapters.engine_group`); with the sidecar gone
     nothing does, and on macOS a child forked in that instant can survive (engine-jobs §15, BL-0194)."""
     sys.stderr.flush()
-    if sys.platform != "win32" and leads_own_group():  # TODO(BL-0281): the Job Object on Windows
+    if sys.platform != "win32" and leads_own_group():  # Windows: the sidecar's job ends the rest (S0129)
         os.killpg(0, signal.SIGKILL)
     os._exit(code)
 

@@ -16,10 +16,12 @@ macOS, `fsync` where the volume refuses it, `fsync` elsewhere. Any failure is an
 S0102 (BL-0244; owner, 2026-11-11: "BL-0244 slice in M1a (Recommended)"): `prepare` answers the folder's identity
 `(st_dev, st_ino)` (links followed, as the save and recover-all follow them), an `AppFolder`; on Linux with the
 folder's creation time too (`statx`'s birth time, S0125, BL-0262: ext4 gives a folder removed and made again at once
-the freed inode number), as the engine asks it (`ledger_engine.fs.this_os.folder_identity`). Every process of ours
-that writes in the app folder later checks it against the object it is about to write in (`AppFolder.open`: the
-sidecar's lock wait and the bytecode fill here, the engine with `--app-folder-id`), so a folder removed while the app
-runs, or another folder put in its place, gets nothing of ours: its entry was never made durable by our start.
+the freed inode number), as the engine asks it (`ledger_engine.fs.this_os.folder_identity`); on Windows the volume
+serial and the file ID, with the file ID as `born` on NTFS and ReFS (S0129, `windows_files`), as the engine's Windows
+adapter gives it (`port.folder_id`). Every process of ours that writes in the app folder later checks it against the
+object it is about to write in (`AppFolder.open`: the sidecar's lock wait and the bytecode fill here, the engine with
+`--app-folder-id`), so a folder removed while the app runs, or another folder put in its place, gets nothing of
+ours: its entry was never made durable by our start.
 """
 
 from __future__ import annotations
@@ -76,7 +78,12 @@ def _identity_of_fd(fd: int) -> tuple[int, int, int | None]:
 
 def _identity_at(path: Path) -> tuple[int, int, int | None]:
     """The identity of the folder at `path` now (links followed): on Linux through an `O_PATH` descriptor, which needs
-    no right to read the folder, so one object answers every part; elsewhere `stat`."""
+    no right to read the folder, so one object answers every part; on Windows through a handle (the volume serial and
+    the file ID, `windows_files.identity`; S0129); elsewhere `stat`."""
+    if sys.platform == "win32":
+        from app.platform.adapters import windows_files  # Windows only
+
+        return windows_files.identity_at(path)
     if sys.platform == "linux":
         fd = os.open(path, os.O_PATH | os.O_DIRECTORY | os.O_CLOEXEC)
         try:
@@ -90,7 +97,9 @@ def _identity_at(path: Path) -> tuple[int, int, int | None]:
 @dataclass(frozen=True, slots=True)
 class AppFolder:
     """The app folder as the start made it durable: its path and its identity then. `born`: its creation time in ns
-    on Linux (BL-0262), None on macOS (APFS reuses no inode number) and where the file system keeps none."""
+    on Linux (BL-0262), None on macOS (APFS reuses no inode number) and where the file system keeps none; on Windows
+    (S0129) `dev` and `ino` are the volume serial and the file ID, and `born` the file ID again on NTFS and ReFS (never
+    the creation time, which tunnelling repeats), the creation time on FAT32 and exFAT, as the engine computes it."""
 
     path: Path
     dev: int
@@ -114,7 +123,11 @@ class AppFolder:
     def open(self) -> int:
         """A descriptor on the folder, only while it is still the object of the start; the caller closes it and
         writes only through it (`dir_fd`). Gone, not a folder, another object, or a folder that cannot be opened to
-        be judged (a permission taken away: fail closed, S0102 round 1, red team F6): `AppFolderChangedError`."""
+        be judged (a permission taken away: fail closed, S0102 round 1, red team F6): `AppFolderChangedError`. POSIX
+        only: on Windows the one writer of the sidecar's in the app folder, the bytecode fill, does not run (S0129),
+        and the engine-lock wait holds the folder itself (`engine_lock`)."""
+        if sys.platform == "win32":
+            raise NotOnWindowsError
         try:
             fd = os.open(self.path, directory_flags())
         except OSError as e:
@@ -180,11 +193,22 @@ def _full_sync(fd: int) -> None:
         os.fsync(fd)
 
 
+def _sync_folder(path: Path) -> None:
+    if sys.platform == "win32":  # S0129: `FlushFileBuffers` on the folder opened for adding a file
+        from app.platform.adapters import windows_files  # Windows only
+
+        windows_files.sync_folder(path)
+        return
+    fd = os.open(path, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | os.O_CLOEXEC)
+    try:
+        _full_sync(fd)
+    finally:
+        os.close(fd)
+
+
 def prepare(path: Path) -> AppFolder | AppFolderRefusal:
     """Make `path` if it is missing (its parent must exist) and sync its parent; the folder with its identity when both
     hold (recorded before the sync, so the folder whose entry the sync made durable is the one identified)."""
-    if sys.platform == "win32":
-        raise NotOnWindowsError
     folder = str(path)
     try:
         try:
@@ -194,11 +218,7 @@ def prepare(path: Path) -> AppFolder | AppFolderRefusal:
                 return AppFolderRefusal(folder, errno.ENOTDIR)
         made = AppFolder.of(path)
         for parent in dict.fromkeys((path.parent, path.resolve(strict=True).parent)):  # a link: its folder's too
-            fd = os.open(parent, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | os.O_CLOEXEC)
-            try:
-                _full_sync(fd)
-            finally:
-                os.close(fd)
+            _sync_folder(parent)
     except OSError as e:
         return AppFolderRefusal(folder, e.errno)
     return made

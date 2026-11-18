@@ -103,9 +103,10 @@ class ChangeText:
 @dataclass(frozen=True, slots=True)
 class SaveConfine:
     """A test copy's folder as its mark recorded it when the copy was made (S0117 round 2; owner, 2026-11-14: "3"): its
-    real path and its identity (the drive's volume UUID, the file system's type name, the folder's creation time in
-    ns: the engine's journal folder identity, S0089). Sent as it is, never resolved by the sidecar; the engine's writer
-    refuses unless the folder at that path, with no link in it or above it, has that identity."""
+    real path and its identity (the drive's volume UUID, the file system's type name, the folder's `born`: the engine's
+    journal folder identity, S0089; its creation time in ns, or on Windows' NTFS and ReFS its file ID, never the
+    creation time, S0128, S0129). Sent as it is, never resolved by the sidecar; the engine's writer refuses unless the
+    folder at that path, with no link in it or above it, has that identity."""
 
     path: str
     volume: str

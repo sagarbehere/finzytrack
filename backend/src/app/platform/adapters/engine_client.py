@@ -19,8 +19,9 @@ ARCHITECTURE.md §2.0, §5, §7; `design/specs/engine-jobs.md` §5.1-§5.5 since
   Each engine has a reaper thread that holds its leader unreaped once it exits, signals the group until it has no
   live member, then reaps it (`app.platform.adapters.engine_group`; restored in S0075, BL-0190); after that no signal
   goes to the group. Once drained, the end is reported to `on_engine_ended` (its spawn serial, pid, our reason, exit,
-  peak memory). A new engine is spawned only after the previous one is drained (§5.1). Windows has no groups: the
-  engine is ended and waited for alone until its nested Job Object (BL-0087).
+  peak memory). A new engine is spawned only after the previous one is drained (§5.1). On Windows the group is a Job
+  Object made for the engine right after its spawn, nested in the shell's, with kill-on-close and no breakaway
+  (`app.platform.adapters.windows_job`, S0129); the same drain runs over it.
 - **`close()`** (§5.5, §9.3 step 4) records `close` and signals the group once; it takes no call lock (a call to a
   hung engine cannot hold it), and the call in flight fails `closed`. Then it **waits for the drain** of every engine
   that is ending (the one it signalled, one that had already exited or been ended, a previous one still draining),
@@ -88,7 +89,7 @@ from pathlib import Path
 from typing import IO, Literal
 
 from app.platform.adapters.app_folder import AppFolder, directory_flags
-from app.platform.adapters.engine_group import EngineGroup, GroupOps, PosixGroupOps, Reaped
+from app.platform.adapters.engine_group import EngineGroup, GroupOps, PosixGroupOps
 from app.platform.adapters.windows_pending import NotOnWindowsError
 from app.platform.engine import (
     Committed,
@@ -412,45 +413,11 @@ type _Ours = EndReason | Literal["close"]
 """Why we ended an engine: recorded before its group is signalled (§5.2)."""
 
 
-class _AloneProcess:
-    """Windows: no process group; the engine alone is ended and waited for. TODO(BL-0087): the engine's Job Object
-    nested in the shell's, with kill-on-close (engine-jobs §5.2)."""
-
-    def __init__(self, proc: subprocess.Popen[bytes]) -> None:
-        self._proc = proc
-        self._lock = threading.Lock()
-        self._reaping = False
-        self.exited = threading.Event()
-
-    @property
-    def reaped(self) -> bool:
-        with self._lock:
-            return self._reaping
-
-    def leader_exited(self) -> bool:
-        return self.exited.is_set()
-
-    def signal(self) -> bool:
-        with self._lock:
-            if self._reaping:
-                return False
-            with contextlib.suppress(OSError):
-                self._proc.kill()
-            return True
-
-    def drain(self) -> Reaped:
-        code = self._proc.wait()
-        with self._lock:
-            self._reaping = True
-        self.exited.set()
-        return Reaped(code, 0)
-
-
 @dataclass(eq=False)
 class _Running:
     proc: subprocess.Popen[bytes]
     serial: int
-    group: EngineGroup | _AloneProcess
+    group: EngineGroup
     replies: queue.Queue[_Reply] = field(default_factory=lambda: queue.Queue[_Reply]())
     requests: queue.Queue[bytes | None] = field(default_factory=lambda: queue.Queue[bytes | None]())
     stderr: deque[str] = field(default_factory=lambda: deque[str](maxlen=STDERR_LINES))
@@ -615,7 +582,7 @@ class _Filler:
         self._log = log
         self._lock = threading.Lock()
         self._stopped = False
-        self._group: EngineGroup | _AloneProcess | None = None
+        self._group: EngineGroup | None = None
 
     def start(self) -> None:
         threading.Thread(target=self._run, name="engine-bytecode-fill", daemon=True).start()
@@ -676,7 +643,7 @@ class _Filler:
                 start_new_session=os.name == "posix",
                 creationflags=creation_flags(os.name),
             )
-            group = EngineGroup(self._ops, proc.pid) if os.name == "posix" else _AloneProcess(proc)
+            group = EngineGroup(self._ops, proc.pid)  # POSIX only: no bytecode directory on Windows (S0129)
             self._group = group
         reaped = group.drain()
         proc.returncode = reaped.returncode
@@ -1240,8 +1207,17 @@ class EngineClient:
                 )
             except OSError as e:
                 return SpawnFailed(f"the engine could not be started: {e}", self._monotonic())
+            try:
+                group = self._group_of(proc)
+            except OSError as e:  # Windows: no job for it; it is alone and has started nothing yet (S0129)
+                with contextlib.suppress(OSError):
+                    proc.kill()
+                proc.wait()
+                for pipe in (proc.stdin, proc.stdout, proc.stderr):
+                    if pipe is not None:
+                        pipe.close()
+                return SpawnFailed(f"the engine could not be put in its job: {e}", self._monotonic())
             self._serial += 1
-            group = EngineGroup(self._ops, proc.pid) if os.name == "posix" else _AloneProcess(proc)
             run = _Running(proc, self._serial, group)
             self._run = run  # at once, so an interrupted start ends it (the table's `End`)
         if self._on_engine_spawned is not None:
@@ -1259,7 +1235,10 @@ class EngineClient:
                 name="engine-replies",
                 daemon=True,
             )
-        else:  # TODO(BL-0087): Windows pipes cannot be selected; the replies end only at the end of the output
+        else:
+            # Windows (S0129): pipes cannot be polled, so the replies end at the end of the output. Only the engine
+            # holds its write end (its protocol copy is not inherited, `claim_stdio`), and the drain ends every member
+            # of its job (none can leave it), so that end comes at the drain at the latest.
             replies = threading.Thread(
                 target=_pump_lines, args=(proc.stdout, run.replies), name="engine-replies", daemon=True
             )
@@ -1278,10 +1257,20 @@ class EngineClient:
             run.threads.append(thread)
         return Spawned(proc.pid, bytecode=pycache is not None)
 
+    def _group_of(self, proc: subprocess.Popen[bytes]) -> EngineGroup:
+        """The engine's group (§5.2): on POSIX its process group, which it leads (`start_new_session`); on Windows a
+        Job Object made for it now, before its first line is sent, so every process it starts is in it
+        (`app.platform.adapters.windows_job`; S0129). `OSError` if Windows refuses the job."""
+        if sys.platform == "win32":
+            from app.platform.adapters.windows_job import EngineJob  # Windows only
+
+            return EngineGroup(EngineJob.around(proc).ops, proc.pid)
+        return EngineGroup(self._ops, proc.pid)
+
     def _bytecode_for_spawn(self, allowed: bool) -> Path | None:
         """The bytecode directory to start with, if allowed and complete; else None, and a fill begins (once)."""
         bytecode = self._command.bytecode
-        if not allowed or bytecode is None:
+        if not allowed or bytecode is None or sys.platform == "win32":  # none on Windows yet (S0129, BL-0288)
             return None
         if bytecode.ready():
             return bytecode.directory

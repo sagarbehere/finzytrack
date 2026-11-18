@@ -15,7 +15,7 @@ from __future__ import annotations
 from typing import Final
 
 BL_0206: Final = "BL-0206: the mirror publish on Windows (its pointer file): the open, rebuild and save need it"
-BL_0281: Final = "BL-0281: the engine's process group and signals on Windows (the Job Object)"
+COPY_CHECK: Final = "BL-0087: the copy's check (a fresh load) runs on Windows once writes are on (tests: POSIX signals)"
 NO_FIFO: Final = "Windows has no FIFO in its file system: the non-blocking read it guards against cannot arise there"
 NO_UID: Final = "Windows has no POSIX user and group ids or permission bits on files"
 FLOCK_HOLDER: Final = "a POSIX `flock` holder; the Windows engine lock's own tests are tests/fs/test_windows.py"

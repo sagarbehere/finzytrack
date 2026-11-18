@@ -69,10 +69,10 @@ from app.platform.engine_supervision import (
     Unavailable,
 )
 from app.platform.observability import Event
-from tests.windows_pending import BL_0281
+from tests.windows_pending import POSIX_SUPERVISION
 
 if sys.platform == "win32":
-    raise pytest.skip.Exception(BL_0281, allow_module_level=True)
+    raise pytest.skip.Exception(POSIX_SUPERVISION, allow_module_level=True)
 
 import fcntl
 import resource
@@ -1352,7 +1352,7 @@ def gone(pid: int) -> bool:
     return not alive(pid)
 
 
-@pytest.mark.skipif(os.name != "posix", reason="process groups and flock are POSIX; Windows is BL-0087")
+@pytest.mark.skipif(os.name != "posix", reason="process groups and flock are POSIX; Windows: test_engine_windows.py")
 @pytest.mark.parametrize("how", ["cancel", "crash of the leader alone"])
 def test_a_plugins_child_holding_a_lock_is_ended_with_the_engine(tmp_path: Path, how: str) -> None:
     """§5.2: "a plugin's child processes go too and cannot outlive their engine" (a lock it inherited included); the
@@ -1409,7 +1409,7 @@ class RecordingOps(PosixGroupOps):
         return reaped
 
 
-@pytest.mark.skipif(os.name != "posix", reason="process groups are POSIX; Windows is BL-0087")
+@pytest.mark.skipif(os.name != "posix", reason="process groups are POSIX; Windows: test_engine_windows.py")
 def test_no_signal_reaches_the_group_after_the_reap() -> None:
     """§5.2: "After the reap no signal is sent to that group: its id may already belong to another program." A later
     Cancel, retire or close of the same engine sends nothing."""
@@ -1425,7 +1425,7 @@ def test_no_signal_reaches_the_group_after_the_reap() -> None:
     assert ops.calls[ops.calls.index("reap") + 1 :] == after == []
 
 
-@pytest.mark.skipif(os.name != "posix", reason="process groups are POSIX; Windows is BL-0087")
+@pytest.mark.skipif(os.name != "posix", reason="process groups are POSIX; Windows: test_engine_windows.py")
 def test_close_waits_for_the_drain_of_the_engine_it_ended() -> None:
     """BL-0194 (owner, 2026-11-07: "Yes, make quit wait for the drain."; §9.3 step 4): `close()` returns only once the
     drain of the engine it ended is done, so the drain's later signals reach a member forked during the first one
@@ -1448,7 +1448,7 @@ def test_close_waits_for_the_drain_of_the_engine_it_ended() -> None:
         ops.release.set()
 
 
-@pytest.mark.skipif(os.name != "posix", reason="process groups are POSIX; Windows is BL-0087")
+@pytest.mark.skipif(os.name != "posix", reason="process groups are POSIX; Windows: test_engine_windows.py")
 def test_close_waits_for_the_drain_of_the_engine_of_a_call_in_flight() -> None:
     """BL-0194 (S0076 verifier V1): the engine `close()` signalled while a call was in flight, before its commit
     point, is one that is ending: the close returns only once its drain is done (the call fails `closed`)."""
@@ -1634,7 +1634,7 @@ assert json.loads(sys.stdin.readline())["control"] == "proceed"
 """
 
 
-@pytest.mark.skipif(os.name != "posix", reason="process groups are POSIX; Windows is BL-0087")
+@pytest.mark.skipif(os.name != "posix", reason="process groups are POSIX; Windows: test_engine_windows.py")
 def test_a_close_past_the_commit_point_waits_for_its_line_once_that_engine_has_exited() -> None:
     """S0078 verifier Q1: a close past a job's commit point is deferred while that engine runs, but once the engine
     has exited by itself there is no job left to wait for: the close's drain and its step are waited for, as
@@ -1681,7 +1681,7 @@ def test_a_close_past_the_commit_point_waits_for_its_line_once_that_engine_has_e
         c.close()
 
 
-@pytest.mark.skipif(os.name != "posix", reason="process groups are POSIX; Windows is BL-0087")
+@pytest.mark.skipif(os.name != "posix", reason="process groups are POSIX; Windows: test_engine_windows.py")
 def test_close_waits_for_a_previous_engine_still_draining() -> None:
     """BL-0194: an engine already ended (here retired after its job) whose drain is still under way is waited for
     too: the quit is the last chance to finish its drain."""
@@ -1703,7 +1703,7 @@ def test_close_waits_for_a_previous_engine_still_draining() -> None:
         ops.release.set()
 
 
-@pytest.mark.skipif(os.name != "posix", reason="process groups are POSIX; Windows is BL-0087")
+@pytest.mark.skipif(os.name != "posix", reason="process groups are POSIX; Windows: test_engine_windows.py")
 def test_close_waits_for_the_drain_of_an_engine_that_died_by_itself() -> None:
     """BL-0194: an engine that died between requests (not ended by us, so no reason is recorded) is drained like any
     other (§5.2: "this also ends the members of an engine that died by itself"), and the close waits for that drain."""
@@ -1726,7 +1726,7 @@ def test_close_waits_for_the_drain_of_an_engine_that_died_by_itself() -> None:
         ops.release.set()
 
 
-@pytest.mark.skipif(os.name != "posix", reason="process groups are POSIX; Windows is BL-0087")
+@pytest.mark.skipif(os.name != "posix", reason="process groups are POSIX; Windows: test_engine_windows.py")
 def test_close_stops_waiting_for_a_drain_that_does_not_end() -> None:
     """§9.3 step 4: a stuck process cannot hold the quit. `close()` waits for the drain at most `close_wait`, then
     returns while the drain goes on (here a fake reap that never returns). Replaces S0057's "returns without waiting
@@ -1758,7 +1758,7 @@ def test_the_quit_waits_for_the_drain_at_most_the_display_delay() -> None:
     assert CLOSE_WAIT == DISPLAY_DELAY
 
 
-@pytest.mark.skipif(os.name != "posix", reason="process groups and flock are POSIX; Windows is BL-0087")
+@pytest.mark.skipif(os.name != "posix", reason="process groups and flock are POSIX; Windows: test_engine_windows.py")
 @pytest.mark.parametrize("how", ["close", "quit anyway, then close"])
 def test_after_a_close_the_plugins_child_is_gone_and_the_lock_free(tmp_path: Path, how: str) -> None:
     """BL-0194, on the real engine: at `close()`'s return (the sidecar exits right after it) a plugin's child that
@@ -1784,7 +1784,7 @@ def test_after_a_close_the_plugins_child_is_gone_and_the_lock_free(tmp_path: Pat
                 kill(child)
 
 
-@pytest.mark.skipif(os.name != "posix", reason="process groups are POSIX; Windows is BL-0087")
+@pytest.mark.skipif(os.name != "posix", reason="process groups are POSIX; Windows: test_engine_windows.py")
 def test_quit_anyway_returns_while_the_reap_never_returns() -> None:
     ops = RecordingOps(hold_reap=True)
     c = EngineClient(engine_command(), group_ops=ops)
@@ -1799,7 +1799,7 @@ def test_quit_anyway_returns_while_the_reap_never_returns() -> None:
         c.close()
 
 
-@pytest.mark.skipif(os.name != "posix", reason="process groups are POSIX; Windows is BL-0087")
+@pytest.mark.skipif(os.name != "posix", reason="process groups are POSIX; Windows: test_engine_windows.py")
 def test_a_new_engine_starts_only_after_the_previous_ones_group_is_drained() -> None:
     """§5.1: "A new engine is spawned when a job needs one, only after the previous one is reaped and its process
     group has no live member" (`AtMostOneEngine`)."""
@@ -1878,7 +1878,7 @@ def test_cancel_ends_a_large_request_to_an_engine_that_stops_reading(fake_time: 
         c.close()
 
 
-@pytest.mark.skipif(os.name != "posix", reason="process groups are POSIX; Windows is BL-0087")
+@pytest.mark.skipif(os.name != "posix", reason="process groups are POSIX; Windows: test_engine_windows.py")
 def test_close_ends_a_child_of_the_engine_that_holds_its_output() -> None:
     """S0042 left such a child (and its pipe threads) behind; it is in the engine's group now, so the close's group
     signal ends it, and with it the pipes."""
@@ -2169,7 +2169,7 @@ sys.stdin.read()
 """
 
 
-@pytest.mark.skipif(os.name != "posix", reason="process groups are POSIX; Windows is BL-0087")
+@pytest.mark.skipif(os.name != "posix", reason="process groups are POSIX; Windows: test_engine_windows.py")
 def test_a_cancel_ends_the_call_even_when_an_escaped_child_keeps_the_output_open() -> None:
     """§5.1, limit "inherited lock": a plugin child that left the engine's group (`setsid`) "holds the lock until it
     exits": our group signal
@@ -2201,7 +2201,7 @@ class Unendable(PosixGroupOps):
         pass
 
 
-@pytest.mark.skipif(os.name != "posix", reason="process groups are POSIX; Windows is BL-0087")
+@pytest.mark.skipif(os.name != "posix", reason="process groups are POSIX; Windows: test_engine_windows.py")
 def test_close_returns_while_a_call_waits_on_an_engine_our_signal_cannot_end() -> None:
     """§9.3 step 4: "an engine stuck on a dead disk cannot hold the quit". Here the call in flight never ends, so a
     `close()` that waited for the call (its lock) would never return."""
@@ -2322,7 +2322,7 @@ def escaped_pid(c: EngineClient) -> int:
     return int(c.stderr_tail().split("marker: escaped ")[1].split()[0])
 
 
-@pytest.mark.skipif(os.name != "posix", reason="process groups are POSIX; Windows is BL-0087")
+@pytest.mark.skipif(os.name != "posix", reason="process groups are POSIX; Windows: test_engine_windows.py")
 def test_an_engine_that_ends_by_itself_while_an_escaped_child_holds_its_output_ends_the_call() -> None:
     """R1-F2 (§5.3: "A crash is noticed by the engine's exit"; ADR-0063 decision 1: every wait has an exit): the end of
     output never comes while a child that left the group holds it, so the reaped engine must end the call itself."""
@@ -2342,7 +2342,7 @@ def test_an_engine_that_ends_by_itself_while_an_escaped_child_holds_its_output_e
         c.close()
 
 
-@pytest.mark.skipif(os.name != "posix", reason="process groups are POSIX; Windows is BL-0087")
+@pytest.mark.skipif(os.name != "posix", reason="process groups are POSIX; Windows: test_engine_windows.py")
 def test_a_reply_written_just_before_the_engine_ends_reaches_the_caller() -> None:
     """@regression-guard (S0057 verifier R1 note): the reaped engine ends the stream only after everything it
     wrote, so its last reply is never lost behind the end (the ordering the reaper relies on), also with an escaped
@@ -2376,7 +2376,7 @@ sys.stdin.read()
 """
 
 
-@pytest.mark.skipif(os.name != "posix", reason="process groups are POSIX; Windows is BL-0087")
+@pytest.mark.skipif(os.name != "posix", reason="process groups are POSIX; Windows: test_engine_windows.py")
 def test_every_end_we_cause_is_reported_with_its_reason() -> None:
     """R1-F3 (§5.2: "The reason is recorded before the signal"; §5.3: a SIGKILL we did not cause is
     `killed_by_system`): the end report tells our kills from the OS's. A violation before the commit point is ended
@@ -2506,7 +2506,7 @@ def test_a_failed_bytecode_fill_is_logged_and_never_marked_complete(tmp_path: Pa
         c.close()
 
 
-@pytest.mark.skipif(os.name != "posix", reason="the reply pump selects on pipes; Windows is BL-0087")
+@pytest.mark.skipif(os.name != "posix", reason="the reply pump polls pipes on POSIX; Windows reads to the output's end")
 def test_once_reaped_the_reply_pump_hands_on_what_the_engine_left_before_it_ends_the_stream() -> None:
     """The ordering the reaper relies on (S0057 verifier R1 note), pinned without a race: the engine's last reply is
     already in the pipe when the reaper wakes the pump; the pump hands it on, then ends the stream, although the
@@ -2544,7 +2544,7 @@ class SlowToNotice(PosixGroupOps):
         super().wait_leader(pid)
 
 
-@pytest.mark.skipif(os.name != "posix", reason="process groups are POSIX; Windows is BL-0087")
+@pytest.mark.skipif(os.name != "posix", reason="process groups are POSIX; Windows: test_engine_windows.py")
 def test_an_engine_dead_between_requests_is_noticed_before_its_reaper_sees_it(fake_time: FakeTime) -> None:
     """Found under load in S0057's fix round: the next call took a dead idle engine for a live one when its reaper
     had not yet seen the exit, and failed `crashed` instead of starting a new engine (S0035: "an engine found dead
@@ -2693,7 +2693,7 @@ def test_many_small_lines_in_one_chunk_are_split_in_order() -> None:
     assert got == [b"%d\n" % i for i in range(5000)] + [b"tail", None]
 
 
-@pytest.mark.skipif(os.name != "posix", reason="the reply pump runs on POSIX; Windows is BL-0087")
+@pytest.mark.skipif(os.name != "posix", reason="the reply pump polls pipes on POSIX; Windows reads to the output's end")
 def test_the_reply_pump_reads_a_descriptor_above_fd_setsize() -> None:
     """R2-F5: `select.select` refuses a descriptor at or above FD_SETSIZE (1024), which a sidecar with many open files
     can reach; the pump must still read the live engine's reply."""

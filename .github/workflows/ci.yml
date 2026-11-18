@@ -218,9 +218,11 @@ jobs:
         run: .venv\Scripts\python.exe -m pytest -q -rs -p no:cacheprovider
   backend-windows:
     # The main sidecar on Windows (S0129, BL-0281; ADR-0061 and its 2026-11-14 amendment): the engine's Job Object, the
-    # app folder's identity and the engine lock run on the runner (`tests/platform/test_engine_windows.py`); tests that
-    # need the engine to write skip, naming the row that turns them on (`tests/windows_pending.py`). Lint and types run
-    # in the `backend` job (pyright for all three platforms).
+    # app folder's identity and the engine lock (`tests/platform/test_engine_windows.py`), the pure "no live member" and
+    # the boot's recover-all there. The rest of the backend suite on Windows is BL-0290 (the 2026-11-18 run 2: 170
+    # failed and 23 errors, mostly tests written in POSIX paths and the engine's write path, which Windows refuses until
+    # BL-0087); this job runs the whole suite once that lands. Lint and types run in the `backend` job (pyright for all
+    # three platforms).
     runs-on: windows-2022
     timeout-minutes: 60
     defaults:
@@ -246,7 +248,10 @@ jobs:
         # Los Angeles). `-rs`: each skip prints its reason.
         env:
           TZ: PST8PDT
-        run: .venv\Scripts\python.exe -m pytest -q -rs -p no:cacheprovider
+        run: >-
+          .venv\Scripts\python.exe -m pytest -q -rs -p no:cacheprovider
+          tests/platform/test_engine_windows.py tests/platform/test_windows_job_decision.py
+          "tests/test_main.py::test_on_windows_the_boots_recover_all_runs_in_an_engine_and_answers_the_platform_unsupported"
   frontend:
     # The Vue frontend (S0009; ARCHITECTURE.md §3, §10; ADR-0053): types, lint, format, unit tests (incl. the
     # pinned tsconfig and the lint bans), unused code, and the Playwright flows through the acceptance harness (S0030).

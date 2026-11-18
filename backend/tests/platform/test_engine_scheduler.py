@@ -1284,7 +1284,7 @@ def real_rig(tmp_path: Path, ends: list[EngineEnd] | None = None) -> tuple[Engin
     return jobs, client
 
 
-@pytest.mark.skipif(os.name != "posix", reason="process groups and flock are POSIX; Windows is BL-0087")
+@pytest.mark.skipif(os.name != "posix", reason="process groups and flock are POSIX; Windows: test_engine_windows.py")
 def test_with_the_real_engine_the_boot_starts_it_and_a_stalled_read_is_cancelled(tmp_path: Path) -> None:
     jobs, client = real_rig(tmp_path)
     try:
@@ -1311,7 +1311,7 @@ def test_with_the_real_engine_the_boot_starts_it_and_a_stalled_read_is_cancelled
         client.close()
 
 
-@pytest.mark.skipif(os.name != "posix", reason="process groups and flock are POSIX; Windows is BL-0087")
+@pytest.mark.skipif(os.name != "posix", reason="process groups and flock are POSIX; Windows: test_engine_windows.py")
 def test_with_the_real_engine_a_cancel_at_the_gate_leaves_no_file_and_after_proceed_is_too_late(
     tmp_path: Path,
 ) -> None:
@@ -1364,7 +1364,7 @@ class ResetHeld(EngineClient):
             self._drive(Reset())
 
 
-@pytest.mark.skipif(os.name != "posix", reason="process groups and flock are POSIX; Windows is BL-0087")
+@pytest.mark.skipif(os.name != "posix", reason="process groups and flock are POSIX; Windows: test_engine_windows.py")
 def test_with_the_real_engine_a_retire_during_another_client_call_does_not_wedge_the_queue(tmp_path: Path) -> None:
     """S0058 verifier F1: a user-code job finishing while another public client call is in flight (a reset) made
     `EngineClient.end("retire")` raise on the scheduler thread, and the slot stayed `ending` for the session. Our
@@ -1424,7 +1424,7 @@ def test_with_the_real_engine_a_retire_during_another_client_call_does_not_wedge
         client.close()
 
 
-@pytest.mark.skipif(os.name != "posix", reason="process groups and flock are POSIX; Windows is BL-0087")
+@pytest.mark.skipif(os.name != "posix", reason="process groups and flock are POSIX; Windows: test_engine_windows.py")
 def test_with_the_real_engine_try_again_pressed_while_jobs_run_never_wedges_the_queue(tmp_path: Path) -> None:
     """The verifier's hammer, bounded: Try again pressed over and over while jobs that run user code come and go."""
     jobs, client = real_rig(tmp_path)

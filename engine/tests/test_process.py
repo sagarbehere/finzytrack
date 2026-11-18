@@ -22,12 +22,12 @@ import pytest
 
 from ledger_engine.protocol.messages import MAX_LINE_BYTES
 from ledger_engine.protocol.server import PARENT_POLL_SECONDS
-from tests.windows_pending import BL_0281
+from tests.windows_pending import FLOCK_HOLDER
 
 ENGINE = [sys.executable, "-I", "-m", "ledger_engine", "--test-ops"]
 DEADLINE = 15.0
-WATCHDOG = "the parent-pid poll is POSIX; Windows relies on stdin EOF and the Job Object (BL-0281)"
-GROUPS = "process groups are POSIX; Windows is the Job Object (BL-0281)"
+WATCHDOG = "the parent-pid poll is POSIX; on Windows stdin EOF and the sidecar's Job Object (S0129, backend tests)"
+GROUPS = "process groups are POSIX; on Windows the sidecar's Job Object (S0129: the backend's tests)"
 
 
 def wait_until(cond: Callable[[], bool], timeout: float = DEADLINE) -> bool:
@@ -260,7 +260,7 @@ def test_a_busy_engine_exits_when_its_parent_dies() -> None:
 
 def lock_free(path: Path) -> bool:
     if sys.platform == "win32":
-        raise pytest.skip.Exception(BL_0281)
+        raise pytest.skip.Exception(FLOCK_HOLDER)
     import fcntl  # POSIX only
 
     fd = os.open(path, os.O_RDWR | os.O_CREAT, 0o600)

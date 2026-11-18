@@ -99,7 +99,9 @@ ENCRYPTED_SUFFIXES: Final = (".gpg", ".asc")
 class CopyMark:
     """The workspace is a test copy (CAP-WS-TEST-COPY): the folder it was copied into, as the copy recorded it when it
     made the folder (S0117 round 2; owner, 2026-11-14: "3"): its real path and its identity, the engine's journal
-    folder identity (S0089): the drive's volume UUID, the file system's type name, the folder's creation time in ns.
+    folder identity (S0089): the drive's volume UUID, the file system's type name, the folder's `born` (its creation
+    time in ns; on Windows' NTFS and ReFS its file ID, never the creation time: S0128, S0129). The sidecar records
+    what the engine's copy reports and never computes it.
     Defined now; the test copy's job fills it (BL-0267, M3)."""
 
     path: str

@@ -22,7 +22,9 @@ M3).
   exiting (listed, not yet a zombie) keeps the drain going, and so do a listing that fails and a status that cannot
   be read. Linux: no process in `/proc` has that group in a state other than `Z` (a zombie's files are closed before
   it becomes one; it still answers `killpg(pgid, 0)` there).
-- **Windows** has no process groups: the Job Object nested in the shell's is BL-0087.
+- **Windows** has no process groups: each engine gets a Job Object nested in the shell's, with kill-on-close and no
+  breakaway (`app.platform.adapters.windows_job.JobOps`, S0129), and the same drain runs over it; its "no live member"
+  is `live_member_in_job`.
 
 `GroupOps` is the port to the OS, so a test can record every signal; `PosixGroupOps` is the real one. The pure
 decisions (`live_member_in_group_listing`, `live_member_in_proc`, `proc_stat_group`) are tested on their own.
@@ -36,7 +38,7 @@ import os
 import signal
 import sys
 import threading
-from collections.abc import Collection, Iterable
+from collections.abc import Collection, Iterable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
@@ -145,6 +147,16 @@ def is_exit_report(si_code: int) -> bool:
     if sys.platform == "win32":
         raise NotOnWindowsError
     return si_code in (os.CLD_EXITED, os.CLD_KILLED, os.CLD_DUMPED)
+
+
+def live_member_in_job(listed: list[int] | None, judged: bool, ended: Mapping[int, bool]) -> bool:
+    """Windows (`app.platform.adapters.windows_job`): a live member is any member whose handle we hold that has not
+    ended (`ended`: each held pid, True once its process object is signalled, which comes only after Windows has
+    closed its handles). Every pid the job lists is held first; one that is gone or no longer in the job is no
+    member. A failed listing (None), or a listed member that could not be judged (`judged` False: it could not be
+    opened, or its membership not read), counts as live, so the drain never reaps on a guess. The list alone is not
+    enough: an exiting process leaves it before its handles are closed."""
+    return listed is None or not judged or not all(ended.values())
 
 
 def proc_stat_group(text: str) -> tuple[int, str]:
@@ -280,6 +292,7 @@ __all__ = [
     "Reaped",
     "is_exit_report",
     "live_member_in_group_listing",
+    "live_member_in_job",
     "live_member_in_proc",
     "proc_stat_group",
     "status_reads_zombie",

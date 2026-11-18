@@ -39,15 +39,15 @@ from app.platform.adapters.engine_group import (
     proc_stat_group,
     status_reads_zombie,
 )
-from tests.windows_pending import BL_0281
+from tests.windows_pending import POSIX_SUPERVISION
 
 if sys.platform == "win32":
-    raise pytest.skip.Exception(BL_0281, allow_module_level=True)
+    raise pytest.skip.Exception(POSIX_SUPERVISION, allow_module_level=True)
 
 import fcntl
 import signal
 
-pytestmark = pytest.mark.skipif(os.name != "posix", reason="process groups are POSIX; Windows is BL-0087")
+pytestmark = pytest.mark.skipif(os.name != "posix", reason="process groups are POSIX; Windows: test_engine_windows.py")
 
 DEADLINE = 20.0
 HANG_GUARD = 15 * DEADLINE  # the test's own hang detector (below), far above its longest wait (a bytecode fill)

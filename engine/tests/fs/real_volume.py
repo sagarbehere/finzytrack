@@ -18,7 +18,7 @@ from ledger_engine.ledger.writer import Change, Commit, Landed, durable_commit, 
 def app_identity(path: Path) -> FolderId:
     """The app folder's identity as the sidecar records it at start (`this_os.folder_identity`: with the creation
     time on Linux, BL-0262, S0125; on Windows the volume serial and the file ID, `port.folder_id`, S0128; the
-    sidecar's side there is BL-0281's); the sidecar's own computation is tested in the backend."""
+    sidecar's side since S0129); the sidecar's own computation is tested in the backend."""
     if sys.platform == "win32":  # through the Windows adapter (S0128: the test's `windows_port` selects it)
         from ledger_engine.fs.port import folder_id
         from ledger_engine.fs.this_os import for_this_os

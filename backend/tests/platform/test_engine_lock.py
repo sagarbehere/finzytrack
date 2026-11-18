@@ -21,14 +21,14 @@ import pytest
 from app.platform.adapters.app_folder import AppFolder
 from app.platform.adapters.engine_lock import engine_lock_path, wait_engine_lock
 from app.platform.engine import AppFolderChangedError
-from tests.windows_pending import BL_0281
+from tests.windows_pending import POSIX_SUPERVISION
 
 if sys.platform == "win32":
-    raise pytest.skip.Exception(BL_0281, allow_module_level=True)
+    raise pytest.skip.Exception(POSIX_SUPERVISION, allow_module_level=True)
 
 import fcntl
 
-pytestmark = pytest.mark.skipif(os.name != "posix", reason="flock is POSIX; Windows is BL-0087 (M1b)")
+pytestmark = pytest.mark.skipif(os.name != "posix", reason="flock is POSIX; Windows: test_engine_windows.py")
 
 HOLDER = Path(__file__).with_name("lock_holder.py")
 DEADLINE = 15.0

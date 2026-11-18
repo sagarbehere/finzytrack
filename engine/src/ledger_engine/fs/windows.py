@@ -6,8 +6,8 @@ Windows runner (Windows Server 2022) are marked "probed".
 **Not selected by the product yet.** `ledger_engine.fs.this_os` gives this adapter only inside a test's
 `ledger_engine.fs.under_test.windows_port_under_test()` (BL-0087 turns writes on, after BL-0206's pointer file); the
 product on Windows refuses every file operation (`UnsupportedPlatform`). The engine lock (`take_engine_lock`) is the
-one exception: it is a guard that writes only `locks/engine.lock` in the app folder, and the sidecar cannot start an
-engine on Windows yet (BL-0281).
+one exception: it is a guard that writes only `locks/engine.lock` in the app folder (the sidecar starts engines on
+Windows since S0129, each in its own Job Object).
 
 - **Handles and names.** A `WindowsDir` holds a folder handle (shared for reading, writing and deleting, as a POSIX
   descriptor blocks nothing). Every entry is opened, made, renamed and removed **relative to that handle**
@@ -89,7 +89,7 @@ engine on Windows yet (BL-0281).
 - **Locks:** `WindowsLegacyLocks` takes the legacy app's lock as portalocker 3.2.0 does on Windows (its default
   `MsvcrtLocker`: `msvcrt.locking` of the first 64 KiB, `LockFile` underneath, which `LockFileEx` sees; INV-26);
   `take_engine_lock` takes the engine lock with `LockFileEx` over the whole file, waiting (engine-jobs §5.1; the
-  sidecar's wait takes the same, BL-0281).
+  sidecar's wait takes the same, S0129).
 
 This module is Windows-only: importing it elsewhere raises `ImportError`.
 """
