@@ -6,7 +6,6 @@ engine that holds the engine lock, and only for a fingerprint of its root. The R
 from __future__ import annotations
 
 import json
-import os
 import sqlite3
 from pathlib import Path
 from typing import Any
@@ -14,6 +13,7 @@ from typing import Any
 import pytest
 
 from ledger_engine.protocol.server import Engine
+from tests.mirror.publish_support import current_in
 from tests.test_save_ops import Channel, engine, request
 from tests.test_save_ops import setup as setup  # the fixture, shared
 
@@ -59,7 +59,8 @@ def test_a_saved_ledger_is_rebuilt_through_the_protocol(setup: tuple[Path, Path,
     # S0087 (BL-0113): published after the save's generation (number 1, the setup's), the save's change in it
     assert (result["publish"], result["number"]) == ("published", 2)
     mirror = ald.parent / "cache" / "workspaces" / "k1" / "mirror"
-    name = os.readlink(mirror / "current.db")
+    name = current_in(mirror)
+    assert name is not None
     assert result["ledger_version"].startswith("2/sha256:")
     con = sqlite3.connect(f"{(mirror / name).as_uri()}?mode=ro", uri=True)
     try:

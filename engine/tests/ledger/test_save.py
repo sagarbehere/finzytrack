@@ -44,7 +44,7 @@ from ledger_engine.mirror import publish as pb
 from tests.fs.real_volume import app_identity
 from tests.ledger.worlds import with_folders
 from tests.mirror.publish_support import CUR, current_in, publish_job
-from tests.windows_pending import NO_FIFO
+from tests.windows_pending import NO_FIFO, NO_UID
 
 pytestmark = [
     pytest.mark.inv("INV-01"),
@@ -554,6 +554,11 @@ def test_the_gate_reads_the_published_generation_once_after_the_disk_check(led: 
     assert len(calls) == 2  # the plan's set, then the generation's own set
 
 
+X_A = os.path.abspath("/x/a.bean")
+"""A file a hand-written record names, absolute on this OS (`/x/a.bean`; on Windows its drive's `\\x\\a.bean`: the
+Windows path model refuses a POSIX path, S0130)."""
+
+
 def _record(led: Ledger, key: str, name: str, state: State, *, lineage: str = LINEAGE, owner: str = KEY) -> Path:
     """A record of workspace `owner` (lineage `lineage`) in `local/<key>/journal/`, in `state`."""
     folder = led.ald / "local" / key / "journal"
@@ -566,11 +571,11 @@ def _record(led: Ledger, key: str, name: str, state: State, *, lineage: str = LI
         workspace_key=owner,
         lineage=lineage,
         engine_build="b",
-        backup_dir="/b/" + name,
+        backup_dir=os.path.abspath("/b/" + name),
         files=(
             FileEntry(
-                "/x/a.bean",
-                "/x/a.bean",
+                X_A,
+                X_A,
                 "1" * 64,
                 "2" * 64,
                 "0-a.bean",
@@ -617,11 +622,11 @@ def test_records_a_development_build_left_do_not_refuse(led: Ledger, suffix: str
                 workspace_key=KEY,
                 lineage=LINEAGE,
                 engine_build="b",
-                backup_dir="/b/s0-j1",
+                backup_dir=os.path.abspath("/b/s0-j1"),
                 files=(
                     FileEntry(
-                        "/x/a.bean",
-                        "/x/a.bean",
+                        X_A,
+                        X_A,
                         "1" * 64,
                         "2" * 64,
                         "0-a.bean",
@@ -667,6 +672,8 @@ def test_an_unreadable_gating_record_under_another_key_refuses(led: Ledger) -> N
 
 
 def test_a_journal_folder_that_cannot_be_listed_refuses(led: Ledger) -> None:
+    if sys.platform == "win32":
+        raise pytest.skip.Exception(NO_UID)  # `chmod` sets only the read-only attribute there
     folder = led.ald / "local" / "other" / "journal"
     folder.mkdir(parents=True)
     folder.chmod(0o000)
@@ -948,6 +955,8 @@ def test_the_copys_folder_deleted_and_made_again_is_refused(led: Ledger) -> None
 def test_a_copys_folder_that_may_not_be_opened_is_refused(led: Ledger) -> None:
     """A folder the save may not look into is refused before the writer (step 3 resolves every path: `io_error`
     naming the file), so nothing reaches the folder check."""
+    if sys.platform == "win32":
+        raise pytest.skip.Exception(NO_UID)  # `chmod` sets only the read-only attribute there
     plan = plan_for(led, confine=recorded(led.root))
     os.chmod(led.root, 0o000)
     try:

@@ -6,7 +6,6 @@ an engine that holds the engine lock."""
 from __future__ import annotations
 
 import json
-import os
 import sqlite3
 from pathlib import Path
 from typing import Any
@@ -14,6 +13,7 @@ from typing import Any
 import pytest
 
 from ledger_engine.protocol.server import Engine
+from tests.mirror.publish_support import current_in
 from tests.test_save_ops import Channel, engine, request
 
 pytestmark = [
@@ -64,7 +64,8 @@ def test_the_open_loads_and_publishes_through_the_protocol(ws: tuple[Path, Path,
     assert reply["events"] == ["reading"]
     assert (reply["decision"]["table"], reply["decision"]["version"]) == ("engine.open", 2)
     mirror = ald.parent / "cache" / "workspaces" / "k1" / "mirror"
-    name = os.readlink(mirror / "current.db")
+    name = current_in(mirror)
+    assert name is not None
     con = sqlite3.connect(f"{(mirror / name).as_uri()}?mode=ro", uri=True)
     try:
         accounts = {a for (a,) in con.execute("SELECT name FROM r_accounts")}

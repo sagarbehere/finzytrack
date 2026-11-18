@@ -36,7 +36,8 @@ from ledger_engine.ledger.fingerprint import observe
 from ledger_engine.ledger.policy import DESKTOP
 from ledger_engine.mirror import publish as pb
 from ledger_engine.mirror.store import SqliteStore
-from tests.mirror.publish_support import BUILT_AT, ENGINE_BUILD, KEY, TODAY, fs_now, meta
+from tests.mirror.publish_support import BUILT_AT, ENGINE_BUILD, KEY, TODAY, current_in, fs_now, meta
+from tests.windows_pending import NO_UID
 
 pytestmark = [
     pytest.mark.inv("INV-05"),
@@ -88,8 +89,7 @@ class World:
         return self.app / "local" / KEY / "journal"
 
     def current(self) -> str | None:
-        link = self.mirror / pb.CURRENT
-        return os.readlink(link) if link.is_symlink() else None
+        return current_in(self.mirror)
 
     def generations(self) -> list[str]:
         return sorted(p.name for p in self.mirror.iterdir() if pb.gen_of(p.name) is not None)
@@ -313,6 +313,8 @@ def test_an_open_journal_seen_at_the_recheck_publishes_nothing(w: World) -> None
 
 def test_a_journal_folder_that_cannot_be_listed_is_paused(w: World) -> None:
     """Fail closed, as the save's step 1: an unlisted folder may hold an unfinished save."""
+    if sys.platform == "win32":
+        raise pytest.skip.Exception(NO_UID)  # `chmod` sets only the read-only attribute there
     w.journal.mkdir(parents=True)
     w.journal.chmod(0)
     loads: list[str] = []

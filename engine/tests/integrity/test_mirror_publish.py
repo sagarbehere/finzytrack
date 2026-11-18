@@ -14,7 +14,9 @@ act and assert are as written: ledger A and ledger B published alternately while
 
 from __future__ import annotations
 
+import contextvars
 import sqlite3
+import sys
 import threading
 from collections.abc import Iterator
 from pathlib import Path
@@ -24,7 +26,7 @@ import pytest
 
 from ledger_engine.ledger import opening
 from ledger_engine.mirror import build as mirror_build
-from tests.mirror.publish_support import BUILT_AT, ENGINE_BUILD, KEY, TODAY, fs_now
+from tests.mirror.publish_support import BUILT_AT, ENGINE_BUILD, KEY, TODAY, current_in, fs_now
 
 pytestmark = [
     pytest.mark.inv("INV-05"),
@@ -104,7 +106,18 @@ def test_readers_never_see_an_empty_or_partial_mirror(tmp_path: Path, monkeypatc
         return opening.run(opening.Ports(), str(roots[name]), _Job(), target)
 
     assert publish("B").outcome == "loaded"  # then A, B, A, ...: another ledger each time
-    current = cache / "workspaces" / KEY / "mirror" / "current.db"
+    mirror = cache / "workspaces" / KEY / "mirror"
+    NO_POINTER = "no current pointer"
+
+    def current() -> Path:
+        """What a reader opens: `current.db` as an outside tool does (macOS, Linux); on Windows, where no such path
+        exists (S0130), the generation `current.txt` names, resolved once per read as the pin does."""
+        if sys.platform != "win32":
+            return mirror / "current.db"
+        name = current_in(mirror)
+        if name is None:
+            raise sqlite3.OperationalError(NO_POINTER)
+        return mirror / name
 
     seen: list[int] = []
     errors: list[str] = []
@@ -113,11 +126,11 @@ def test_readers_never_see_an_empty_or_partial_mirror(tmp_path: Path, monkeypatc
     def reader() -> None:
         while not stop.is_set():
             try:
-                seen.append(_postings(current))
+                seen.append(_postings(current()))
             except sqlite3.Error as exc:  # "no such table" or a torn file is exactly the I4 defect
                 errors.append(repr(exc))
 
-    thread = threading.Thread(target=reader)
+    thread = threading.Thread(target=contextvars.copy_context().run, args=(reader,))  # the Windows test switch
     thread.start()
     try:
         for i in range(200):
@@ -132,4 +145,4 @@ def test_readers_never_see_an_empty_or_partial_mirror(tmp_path: Path, monkeypatc
     assert errors == []
     assert seen, "the reader never ran"
     assert set(seen) <= set(POSTINGS.values())
-    assert _postings(current) == POSTINGS["B"]  # the failed build published nothing; the last good one stays
+    assert _postings(current()) == POSTINGS["B"]  # the failed build published nothing; the last good one stays

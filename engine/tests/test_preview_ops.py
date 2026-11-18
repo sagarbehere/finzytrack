@@ -23,7 +23,12 @@ from ledger_engine.mirror.core import schema
 from ledger_engine.mirror.store import SqliteStore
 from ledger_engine.protocol.save import engine_build
 from tests.ledger import producer
+from tests.mirror.publish_support import current_in
 from tests.test_save_ops import Channel, engine, request
+from tests.windows_pending import BL_0282
+
+if sys.platform == "win32":  # every preview keys the baseline's errors: `entry_keys`' re.sub of a Windows path
+    raise pytest.skip.Exception(BL_0282, allow_module_level=True)
 
 pytestmark = [
     pytest.mark.usefixtures("windows_port"),  # Windows: the adapter (S0130, BL-0206 done)
@@ -170,7 +175,7 @@ def test_a_target_the_producer_cannot_locate_is_refused_at_the_plan(ws: tuple[Pa
 
 def published_stamp(ald: Path) -> str:
     mirror = ald.parent / "cache" / "workspaces" / "k1" / "mirror"
-    con = sqlite3.connect(f"{(mirror / os.readlink(mirror / 'current.db')).as_uri()}?mode=ro", uri=True)
+    con = sqlite3.connect(f"{(mirror / str(current_in(mirror))).as_uri()}?mode=ro", uri=True)
     try:
         return str(dict(con.execute("SELECT key, value FROM m_meta").fetchall())["fingerprint"])
     finally:
@@ -294,7 +299,7 @@ def drop_errors(ald: Path) -> None:
     """The published generation's `ledger_errors` made unreadable (its table gone), the rest of it intact."""
     mirror = ald.parent / "cache" / "workspaces" / "k1" / "mirror"
     table = next(t for t in schema.TABLES if t.name == "ledger_errors")
-    con = sqlite3.connect(mirror / os.readlink(mirror / "current.db"))
+    con = sqlite3.connect(mirror / str(current_in(mirror)))
     try:
         con.execute(f"DROP TABLE {table.base}")
         con.commit()
@@ -453,7 +458,7 @@ def test_the_preview_s_fingerprint_names_the_plugin_code_the_open_s_stamp_names(
     result = call(ald, params, number, req)["result"]
     assert result["outcome"] == "prepared", result
     mirror = ald.parent / "cache" / "workspaces" / "k1" / "mirror"
-    con = sqlite3.connect(f"{(mirror / os.readlink(mirror / 'current.db')).as_uri()}?mode=ro", uri=True)
+    con = sqlite3.connect(f"{(mirror / str(current_in(mirror))).as_uri()}?mode=ro", uri=True)
     try:
         stamp = dict(con.execute("SELECT key, value FROM m_meta").fetchall())["fingerprint"]
     finally:
