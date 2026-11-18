@@ -243,7 +243,7 @@ jobs:
         run: uv sync --locked
       - name: Engine environment (the engine client tests spawn the real engine)
         run: uv sync --locked --directory ../engine
-      - name: Scratch volumes (S0129 round 1: the app folder's identity on FAT32, exFAT and ReFS, as engine-windows)
+      - name: Scratch volumes (S0129 round 1, the app folder's identity on FAT32, exFAT and ReFS, as engine-windows)
         run: |
           $vols = @()
           foreach ($v in @(@{fs="fat32"; letter="R"}, @{fs="exfat"; letter="S"}, @{fs="refs"; letter="T"})) {
