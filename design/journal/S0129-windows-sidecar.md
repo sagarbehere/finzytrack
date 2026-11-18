@@ -99,4 +99,13 @@
 | V5 | Low | d | `tests/windows_pending.py` said every skipped test is POSIX-only | Fixed: it names both reasons (POSIX-only names, or the write path until BL-0087) and the moved spawn tests |
 | Q | question | e | The boot test's `@regression-guard` ("passes on the base") | Checked against run 2's log: it passed there (`_wire` uses `AppFolder.of`, not `prepare`); the tag stands |
 
+- Round 2 (the fresh round on 18f8a43e..1cb3b2fd; the product fix 89a61f03), head 1cb3b2fd: verifier "PASS WITH FINDINGS", no High, nothing in class (a) or (b), nothing letting two engines run at once or an engine outlive its drain; 11 attacks (every mix of listing and hold results within a drain round, ending the leader alone against the dispatch's wait for the drain, Cancel and retire in a leader-only round, the partial listing, four mutants of `windows_job`, the fake API's fidelity, the `api` parameter's reach, the runner tests of run 5, the moved spawn tests, macOS and Linux unchanged, the unparsable workflow file). Under the fresh round's budget the two Lows are a backlog row.
+
+| ID | Severity | Class | Disposition |
+|---|---|---|---|
+| R2-1 | Low | c | A failed `IsProcessInJob` treated as judged survives every test (the fake never fails it): BL-0291 (1) |
+| R2-2 | Low | c | The `ERROR_MORE_DATA` retry and buffer doubling untested (no test has more than 64 members): BL-0291 (2) |
+| process note | — | — | The pre-push hook does not parse the workflow files (89a61f03 shipped an unparsable `ci.yml`; it misled nothing): BL-0292 |
+
 ## Retro
+- Build about 96 min (the Job Object, the lock wait, the app folder's identity, a `backend-windows` job, four Windows runs), fix about 60 min (the owner's "b", the fake Win32 API, one more Windows run), 2 verifier rounds, findings 0H/1M/6L (round 1: 1M class a, 4L; round 2: 2L c), the class (a) one offered to the owner as a policy option before the fix round ("b"). Cheaper gate: a component that is only testable on a remote runner should get its OS calls behind an injectable API with a fake from the start (the verifier's fake made the drain's rules testable on every push and found V1); and parse every file the push changes that a remote service reads (BL-0292). Process checks: the policy option before the first fix round 1 offered / 1 taken; mutants under the fake 11 catch / 0 false positive; the verifier's fake API 1 catch (V1) / 0 false positive.
