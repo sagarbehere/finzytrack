@@ -442,3 +442,36 @@ def test_a_pointer_renamed_before_its_data_is_synced_is_caught(monkeypatch: pyte
     monkeypatch.setattr(MemDir, "create", unsynced)
     with pytest.raises(AssertionError, match=r"current\.txt|names"):
         test_a_power_loss_after_a_publish_lands_on_the_new_or_the_previous_generation(windows=True)
+
+
+def test_off_ntfs_the_pointer_swap_takes_the_plain_rename() -> None:
+    """§4 step 8, §11 "Limit (Windows without the POSIX rename)": on a Windows volume that does not offer the rename
+    with POSIX semantics (ReFS, FAT32, exFAT), the swap takes the plain rename, stated, and publishes."""
+    fs = world(windows=True)
+    with fs.open_dir(CACHE) as d:
+        fs.fs_types[d.device()] = "refs"
+    first = job(fs)
+    second = job(fs)
+    assert isinstance(first, pb.Published)
+    assert isinstance(second, pb.Published)
+    assert seen_by_a_reader(fs) == second.gen.name
+
+
+@pytest.mark.parametrize("fs_type", ["ntfs", "refs"])
+def test_a_reader_holding_the_pointer_without_sharing_deletion_refuses_the_swap_and_changes_nothing(
+    fs_type: str,
+) -> None:
+    """§11 "Limit (a program holding the pointer)": a program that holds `current.txt` open without sharing deletion
+    refuses the swap's rename on every volume: the job raises, `current.txt` still names the generation it named,
+    and once the program closes it the next job publishes."""
+    fs = world(windows=True)
+    with fs.open_dir(CACHE) as d:
+        fs.fs_types[d.device()] = fs_type
+    first = job(fs)
+    assert isinstance(first, pb.Published)
+    fs.outside_hold(f"{MIRROR}/current.txt")
+    with pytest.raises(PermissionError, match="in use"):
+        job(fs)
+    assert seen_by_a_reader(fs) == first.gen.name
+    fs.outside_release(f"{MIRROR}/current.txt")
+    assert_clean_after_the_next_job(fs)

@@ -6,7 +6,6 @@ runner (`backend-windows` in `ci.yml`)."""
 
 from __future__ import annotations
 
-import os
 import sys
 from pathlib import Path
 from typing import Any
@@ -19,11 +18,37 @@ if sys.platform != "win32":
     raise pytest.skip.Exception(WINDOWS_ONLY, allow_module_level=True)
 
 import _winapi
+import ctypes
+import struct
+from ctypes import wintypes
 
 from app.mirror import files
 from app.platform.adapters import windows_files
 
 pytestmark = [pytest.mark.inv("INV-05")]
+
+DELETE = 0x00010000
+SYNCHRONIZE = 0x00100000
+FILE_RENAME_INFO_EX = 22
+REPLACE_POSIX = 0x1 | 0x2  # FILE_RENAME_FLAG_REPLACE_IF_EXISTS | FILE_RENAME_FLAG_POSIX_SEMANTICS
+
+
+def posix_rename(src: Path, dst: Path) -> None:
+    """The engine's pointer swap on NTFS (`ledger_engine.fs.windows.WindowsDir.rename_shared`, S0130): a rename with
+    POSIX semantics over `dst`. The sidecar never imports the engine, so the call is made here."""
+    k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    k32.SetFileInformationByHandle.argtypes = [wintypes.HANDLE, ctypes.c_int, ctypes.c_void_p, wintypes.DWORD]
+    k32.SetFileInformationByHandle.restype = wintypes.BOOL
+    h = _winapi.CreateFile(str(src), DELETE | SYNCHRONIZE, 0x7, 0, _winapi.OPEN_EXISTING, 0, 0)
+    try:
+        raw = str(dst).encode("utf-16-le")
+        info = struct.pack("<I4xQI", REPLACE_POSIX, 0, len(raw)) + raw + b"\0\0"
+        buf = ctypes.create_string_buffer(info, len(info))
+        if not k32.SetFileInformationByHandle(h, FILE_RENAME_INFO_EX, buf, len(info)):
+            raise ctypes.WinError(ctypes.get_last_error())
+    finally:
+        _winapi.CloseHandle(h)
+
 
 GEN = "gen-3-" + "a" * 16 + ".db"
 NEXT = "gen-4-" + "b" * 16 + ".db"
@@ -94,9 +119,10 @@ def test_a_folder_or_a_junction_at_the_pointer_is_not_read(tmp_path: Path) -> No
 
 
 def test_a_swap_during_a_pins_read_is_never_refused(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """publish.md §7 on Windows: the engine renames a new pointer over `current.txt` while a pin may be reading it.
-    Here the rename runs inside the pin's own read, while its handle is open: it succeeds, and the pin reads one
-    whole name (the old one: its handle still reads the file it opened)."""
+    """publish.md §7 on Windows: the engine renames a new pointer over `current.txt` (on NTFS with POSIX semantics)
+    while a pin may be reading it. Here that rename runs inside the pin's own read, while its handle is open: it
+    succeeds, and the pin reads one whole name (the old one: its handle still reads the file it opened). A pin whose
+    handle did not share deletion would refuse it."""
     m = mirror(tmp_path)
     (m / NEXT).write_bytes(b"")
     swapped: list[bool] = []
@@ -110,7 +136,7 @@ def test_a_swap_during_a_pins_read_is_never_refused(tmp_path: Path, monkeypatch:
             def read_then_swap(*args: Any) -> Any:
                 if not swapped:
                     (m / "current.txt.tmp").write_bytes(NEXT.encode("ascii"))
-                    os.replace(m / "current.txt.tmp", m / "current.txt")  # MoveFileExW(REPLACE_EXISTING)
+                    posix_rename(m / "current.txt.tmp", m / "current.txt")
                     swapped.append(True)
                 return read(*args)
 

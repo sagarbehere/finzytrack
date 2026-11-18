@@ -223,6 +223,9 @@ def tears(data: bytes) -> tuple[bytes, ...]:
     return data[:half], bytes(len(data)), bytes(half) + data[half:]
 
 
+POSIX_RENAME = "a rename over a file that readers hold while sharing deletion"
+
+
 class MemFS:
     """The fake (`ledger_engine.fs.port.FileSystem`)."""
 
@@ -1119,6 +1122,13 @@ class MemDir:
             self._fs.tick(self._ino)
 
         self._fs._effect(self._label("rename", src, dst), do)
+
+    def rename_shared(self, src: str, dst: str) -> None:
+        """`rename` (S0130): on Windows a volume whose `fs_types` entry is not `ntfs` refuses it (`NotOffered`), as
+        the adapter does; a file held without delete sharing (`outside_hold`) still refuses it."""
+        if self._fs.windows and self._fs.fs_types.get(self._d.dev, "ntfs") != "ntfs":
+            raise NotOffered(POSIX_RENAME)
+        self.rename(src, dst)
 
     def rename(self, src: str, dst: str) -> None:
         """A plain rename (`renameat`): it replaces an entry at `dst` (not a folder). On a volume without RENAME_EXCL

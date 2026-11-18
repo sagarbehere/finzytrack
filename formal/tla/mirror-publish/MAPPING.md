@@ -62,7 +62,7 @@
 | `P_DirSync` | §4 step 6 | `ledger_engine.mirror.publish.publish` through `ledger_engine.fs.port.DirHandle.sync` |
 | `P_ReObs` | §4 step 7 | `ledger_engine.ledger.fingerprint.observe`, called by `ledger_engine.mirror.publish.publish` (the rebuild's re-check) |
 | `P_JCheck` | §4 step 7 | `ledger_engine.ledger.save.records`, called by `ledger_engine.mirror.publish.publish` (the rebuild's re-check) |
-| `P_Swap` | §4 step 8 | `ledger_engine.mirror.publish.swap` (the port's `touch`, `symlink`, `rename`) |
+| `P_Swap` | §4 step 8 | `ledger_engine.mirror.publish.swap` (the port's `touch`, `symlink`, `rename`; Windows: `touch`, `create`, `rename`, section 6) |
 | `SaveCut` | §1, §4 step 7 | `ledger_engine.ledger.save.run` ended by an engine death |
 | `Recover` | §1 | `ledger_engine.ledger.restore.recover_journal` |
 | `R_Resolve` | §7 | `app.mirror.files.pin`; the gate's `ledger_engine.mirror.publish.read_published` |
@@ -80,7 +80,7 @@
 | `hist` | ghost: the committed ledger states (§1) |
 | `gens` | per generation name: content `c` (`abs`, `part`, `inc`, `torn`, `done`, with the `rows` and `lab` states), journal `jl`, power-loss outcomes `pl` |
 | `used` | the names ever created: the tag of §3 makes each new name one not in it |
-| `lk`, `lkpl` | the generation `current.db` names (0: none) and what a power loss may leave |
+| `lk`, `lkpl` | the generation `current.db` names (Windows: `current.txt`'s content, section 6; 0: none) and what a power loss may leave |
 | `ctl` | the publish job: its step, its name, its stamp (`lab`), its rows |
 | `rd` | per reader: idle, resolved, one read, two reads; the pinned name; the snapshots |
 | `n`, `gh` | bounds; ghost flags for the witnesses |
@@ -96,7 +96,7 @@
 - **SQLite** is reduced to: one transaction whose commit deletes the journal; a read-only open that refuses a file a build is still writing or a file with a journal beside it; a read of whatever file is at the opened name. No assumption about stale journals is needed: names are never reused.
 - **The purge** is modelled as the whole folder going at once, durably; a job running then is ended, since its later writes go into a folder nobody can reach.
 - **The `.open` journal and recovery** are reduced to one cut save of one file; their durability is engine-jobs' model.
-- **Windows** (BL-0206).
+- **Windows' pointer file** (S0130, BL-0206): the model is unchanged; section 6 maps it both ways.
 - **The rebuild's own steps around the publish** (S0091, met by the replay of section 5): the rebuild looks for this workspace's `.open` journal right after the cleanup and ends `paused` before its load (engine-jobs 7, S0088), where the model's job builds a generation and refuses it at `P_JCheck`; it skips the build when the published generation is fresh (§8); it observes the whole ledger set before its load and again after it, and ends `moved` there when the disk changed, where the model observes file by file, reads, and finds the change at `P_ReObs` after its build. Each refuses earlier and builds less than the model, never more: what a reader reads is the same. The replay runs each job on another day (no generation is fresh) and its worlds make no outside edit inside the load (`gen_traces.py` `edit_outside_the_load`).
 - **The model's cleanup may stop anywhere; the code's removes everything it does not keep** once the grace period is over (§6). The replay runs every job long after the last one and walks only cleanups that remove all they may (`whole_cleanup`); a cleanup cut by a death or an I/O error is `test_publish_crash.py`'s.
 - **A world runs out of names** (`P_Create` ends a job when `Gens` is used up); the code's names have no such bound. The replay's worlds start a job only while a name is left (`names_left`).
@@ -140,3 +140,18 @@
 - `StartPublish`: each call of `rebuild.run`; `P_CleanDb`, `P_CleanJl`, `P_CleanDone`: the folder made and the cleanup's removals, as one block compared at its end; `P_Obs`: the observation before the load; `P_Read`: the load; `P_Create`: the store's exclusive create of the file and its journal; `P_Commit`: its write and the journal's removal; `P_Check`: the answer `incomplete`; `P_SyncFile`, `P_DirSync`: the file's and the folder's syncs; `P_ReObs`: the re-check's observation; `P_JCheck`: the answer `paused` (in the code, before the load: section 3); `P_Swap`: the replaced generation's time, the temporary link and its rename; `Recover`: `recover_journal`; `R_Resolve`: `read_published`.
 - Not walked by the replay: `SaveCut` (a cut save's effects are the engine-jobs save replay's: `engine/tests/ledger/test_save_conformance.py`); `R_Read1`, `R_Read2` (the sidecar's `app.mirror.files.open_mirror`, which an engine test cannot run: the replay reads as it does, and the sidecar's tests are `backend/tests/mirror/`'s); `R_End` (no code); `P_CleanJl` alone (a journal without its file is left only by a death or a power loss inside a build; the block counts it with `P_CleanDb`).
 
+
+## 6. Windows: the pointer file (S0130, BL-0206)
+
+ADR-0015 names the current generation on Windows with a pointer file, `current.txt`, whose whole content is the generation's name (publish.md §4 step 8, §6, §7). The model needs no Windows variant; each difference maps onto it as follows.
+
+**Spec → model:**
+- **The swap** (§4 step 8): a temporary pointer `current.txt.<tag>.tmp` made by the port's `create` (its data synced before it returns), then one rename over `current.txt`. `P_Swap` is that rename: the temporary pointer is never read (no reader resolves it, the cleanup removes it), as the temporary link is not, and the time set on the replaced generation comes first in both forms. `lk` is the name `current.txt` holds.
+- **What a power loss leaves** (`lkpl`): the temporary pointer's data is durable before the rename, so `current.txt`, wherever a power loss leaves it, holds a whole name: the old one or the new one, as the link's target. On FAT32 and exFAT (no log) a replace may lose both names, which is `lk = 0`: no published mirror, availability only, not a property (§9; the model already reaches `lk = 0` after a purge). The crash sweeps check every power-loss state of the fake's Windows mode (`engine/tests/mirror/test_publish_crash.py`, the `pointer` cases, and its seeded unsynced pointer).
+- **The retried removal** (ADR-0015 amendment of 2026-10-25): a generation a reader holds open cannot be removed on Windows (probed, S0130's P1). The model's cleanup may remove any subset of what it does not keep (`P_CleanDb`, `P_CleanJl`), so a refused removal is one of its behaviours already. Windows only removes fewer of them; both properties are about what readers read, and keeping a file never makes a reader read a wrong one, since names are never reused (§3).
+- **A reader that holds a file blocks its removal** and, while its read of `current.txt` is in flight, can refuse the swap's rename (probed, S0130's P3). A refused swap changes nothing (the rename did not happen): the job ends without publishing, which is the model's job ending before `P_Swap` (`ctl` reset; the built file left for the cleanup). Neither property depends on a swap happening.
+- **Readers resolve once** (§7): one bounded read of `current.txt` (the engine's `ledger_engine.mirror.publish.current`, the sidecar's `app.mirror.files.pin`) is `R_Resolve`; a pointer that is not exactly a generation name is `lk` naming no generation (`NoRd`).
+
+**Model → spec:** no action, variable or property is added or changed. `P_Swap`'s one step stands for the rename alone in both forms; `R_Resolve` for one read of the link or of the pointer; `P_CleanDb` and `P_CleanJl` for removals that may fail.
+
+**Code:** the form is chosen by `ledger_engine.fs.port.Caps.links` (False on Windows, `ledger_engine.fs.windows`), never by a refused link. The replay of section 5 runs every trace in both forms (`engine/tests/mirror/test_publish_conformance.py`, `windows` parametrized), with the fake's Windows mode (`tests/fakes/memfs.py`: no link made; a held file not removed or renamed); there the temporary pointer's create, write and sync are the first part of `P_Swap`.

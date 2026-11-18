@@ -258,6 +258,14 @@ class DirHandle(Protocol):
         may keep the removal of the old `dst` and lose the rename: `dst` is then missing, never torn."""
         ...
 
+    def rename_shared(self, src: str, dst: str) -> None:
+        """`rename`, which also replaces a `dst` that readers hold open while sharing deletion (S0130: the mirror's
+        pointer file, `design/specs/mirror/publish.md` §4 step 8). POSIX: `rename` itself (no open file blocks a rename
+        there). Windows: the rename with POSIX semantics, which NTFS offers (probed, S0130's P5: never refused under
+        such readers, never a missing name); on any other file system `NotOffered`, nothing done, decided by the
+        volume's kind, never by an error."""
+        ...
+
     def remove(self, name: str) -> None:
         """Remove the file `name` (not a directory)."""
         ...

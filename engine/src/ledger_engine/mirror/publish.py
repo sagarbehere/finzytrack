@@ -45,7 +45,7 @@ from datetime import date
 from typing import Final, Literal, Protocol
 
 from ledger_engine.fs.pathmodel import host
-from ledger_engine.fs.port import DirHandle, FileSystem, Kind, check_name, split_absolute
+from ledger_engine.fs.port import DirHandle, FileSystem, Kind, NotOffered, check_name, split_absolute
 from ledger_engine.ledger.beancount_port import ParseResult
 from ledger_engine.ledger.core import paths as core_paths
 from ledger_engine.ledger.core.ledger_set import Fingerprint, UndecodableError, decode, digest, encode
@@ -477,7 +477,13 @@ def swap(d: DirHandle, gen: Gen) -> None:
         # a folder the cleanup could not remove (round 1, red team F6): moved aside whole, for the next cleanup, so a
         # link can replace it; renaming a folder needs no right inside it
         d.rename(name, f"{name}.{tag}.aside")
-    d.rename(tmp, name)
+    if name == CURRENT:
+        d.rename(tmp, name)
+        return
+    try:
+        d.rename_shared(tmp, name)  # Windows, NTFS: a pin's read of the pointer never refuses it (S0130's P5)
+    except NotOffered:
+        d.rename(tmp, name)  # stated: §11 "Limit (Windows without the POSIX rename)": a read in flight refuses it
 
 
 # -- §7, §8: what the gate reads; freshness ----------------------------------------------------------------------------

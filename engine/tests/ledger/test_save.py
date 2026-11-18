@@ -113,7 +113,8 @@ class Ledger:
 
 
 @pytest.fixture
-def led(tmp_path: Path) -> Ledger:
+def led(tmp_path: Path, windows_port: None) -> Ledger:  # the adapter on Windows before the setup's publish
+    del windows_port
     root = tmp_path / "L"
     root.mkdir()
     (root / "main.bean").write_bytes(MAIN)

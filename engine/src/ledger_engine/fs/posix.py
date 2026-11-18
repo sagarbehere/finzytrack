@@ -278,6 +278,9 @@ class PosixDir:
     def rename(self, src: str, dst: str) -> None:
         os.rename(check_name(src), check_name(dst), src_dir_fd=self.fd, dst_dir_fd=self.fd)
 
+    def rename_shared(self, src: str, dst: str) -> None:
+        self.rename(src, dst)  # an open file never blocks a rename on POSIX
+
     def remove(self, name: str) -> None:
         os.unlink(check_name(name), dir_fd=self.fd)
 

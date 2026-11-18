@@ -136,7 +136,7 @@ def test_every_windows_volume_offers_the_exclusive_rename_and_no_swap(fs: FileSy
     (tmp_path / "a").write_bytes(b"A")
     (tmp_path / "b").write_bytes(b"B")
     with fs.open_dir(str(tmp_path)) as d:
-        assert d.caps() == Caps(swap=False, excl=True)
+        assert d.caps() == Caps(swap=False, excl=True, links=False)
         with pytest.raises(NotOffered):
             d.swap("a", "b")
         with pytest.raises(FileExistsError):
@@ -570,7 +570,7 @@ def test_a_save_its_crash_and_its_recovery_on_a_real_scratch_volume(
         mark = v.mark()
         caps = v.caps()
         dev, ino = v.identity()
-    assert caps == Caps(swap=False, excl=True)
+    assert caps == Caps(swap=False, excl=True, links=False)
     assert mark.fs_type in ("fat32", "exfat", "refs"), mark
     assert mark.volume is not None
     if mark.fs_type == "refs":
@@ -977,3 +977,76 @@ def test_RT_F6_the_engine_lock_file_cannot_be_removed_while_an_engine_holds_it(
     with fs.open_dir(str(tmp_path / "locks")) as d, pytest.raises(OSError, match=r"."):
         d.remove("engine.lock")
     assert lock.is_file()
+
+
+# -- S0130 (BL-0206): the rename the mirror's pointer swap takes -------------------------------------------------------
+
+GENERIC_READ_ = 0x80000000
+SHARE_ALL = 0x7
+SHARE_READ_WRITE = 0x3
+
+
+@contextlib.contextmanager
+def held(path: Path, share: int) -> Generator[int]:
+    """Another reader holds `path` open with `share` (with deletion: the sidecar's pin; without: Python's `open`)."""
+    import _winapi
+
+    h = _winapi.CreateFile(str(path), GENERIC_READ_, share, 0, _winapi.OPEN_EXISTING, 0, 0)
+    try:
+        yield h
+    finally:
+        _winapi.CloseHandle(h)
+
+
+def test_rename_shared_replaces_a_file_a_reader_holds_sharing_deletion_where_the_plain_rename_cannot(
+    fs: FileSystem, tmp_path: Path
+) -> None:
+    """Probed in S0130 (P3, P5) and pinned here on NTFS: while a reader that shares deletion holds `current.txt`, the
+    plain rename over it is refused (nothing done) and the rename with POSIX semantics lands; the reader's handle
+    still reads the old bytes."""
+    import _winapi
+
+    assert _kind_of(fs, tmp_path) == "ntfs"
+    (tmp_path / "current.txt").write_bytes(b"old")
+    (tmp_path / "a.tmp").write_bytes(b"plain")
+    (tmp_path / "b.tmp").write_bytes(b"new")
+    with fs.open_dir(str(tmp_path)) as d, held(tmp_path / "current.txt", SHARE_ALL) as h:
+        with pytest.raises(OSError, match="rename"):
+            d.rename("a.tmp", "current.txt")
+        assert (tmp_path / "a.tmp").read_bytes() == b"plain"  # nothing done
+        d.rename_shared("b.tmp", "current.txt")
+        data, _ = _winapi.ReadFile(h, 16)
+        assert data == b"old"
+    assert (tmp_path / "current.txt").read_bytes() == b"new"
+    assert not (tmp_path / "b.tmp").exists()
+
+
+def test_rename_shared_is_refused_by_a_reader_that_does_not_share_deletion(fs: FileSystem, tmp_path: Path) -> None:
+    (tmp_path / "current.txt").write_bytes(b"old")
+    (tmp_path / "b.tmp").write_bytes(b"new")
+    with (
+        fs.open_dir(str(tmp_path)) as d,
+        held(tmp_path / "current.txt", SHARE_READ_WRITE),
+        pytest.raises(OSError, match="rename"),
+    ):
+        d.rename_shared("b.tmp", "current.txt")
+    assert (tmp_path / "current.txt").read_bytes() == b"old"
+    assert (tmp_path / "b.tmp").read_bytes() == b"new"
+
+
+@pytest.mark.skipif(not _volumes(), reason="no scratch volumes given (FT_TEST_VOLUMES)")
+@pytest.mark.parametrize("volume", _volumes() or ["-"])
+def test_rename_shared_is_not_offered_off_ntfs_and_does_nothing(fs: FileSystem, volume: str) -> None:
+    """FAT32, exFAT and ReFS have no rename with POSIX semantics (probed, S0130's P5): `NotOffered`, decided by the
+    volume's kind before any call, nothing done."""
+    folder = Path(volume) / f"ft-{uuid.uuid4().hex}"
+    folder.mkdir()
+    try:
+        (folder / "current.txt").write_bytes(b"old")
+        (folder / "b.tmp").write_bytes(b"new")
+        with fs.open_dir(str(folder)) as d, pytest.raises(NotOffered):
+            d.rename_shared("b.tmp", "current.txt")
+        assert (folder / "current.txt").read_bytes() == b"old"
+        assert (folder / "b.tmp").read_bytes() == b"new"
+    finally:
+        shutil.rmtree(folder, ignore_errors=True)

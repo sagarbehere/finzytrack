@@ -196,6 +196,13 @@ FILE_FULL_DIRECTORY_RESTART_INFO: Final = 15
 FILE_ID_INFO: Final = 18
 FILE_CASE_SENSITIVE_INFO: Final = 23
 NT_FILE_RENAME_INFORMATION: Final = 10  # NtSetInformationFile
+NT_FILE_RENAME_INFORMATION_EX: Final = 65
+FILE_RENAME_REPLACE_IF_EXISTS: Final = 0x1
+FILE_RENAME_POSIX_SEMANTICS: Final = 0x2
+POSIX_RENAME_TYPES: Final = frozenset({"ntfs"})
+"""The file systems that offer the rename with POSIX semantics (probed, S0130's P5: FAT32 and exFAT answer
+`INVALID_PARAMETER`, ReFS `NOT_SUPPORTED`)."""
+POSIX_RENAME: Final = "a rename over a file that readers hold while sharing deletion"
 NT_FILE_DISPOSITION_INFORMATION: Final = 13
 NT_FILE_DISPOSITION_INFORMATION_EX: Final = 64
 FILE_DISPOSITION_DELETE: Final = 0x1
@@ -707,8 +714,9 @@ def _kind(attrs: int, tag: int) -> Kind:
     return Kind.DIR if attrs & FILE_ATTRIBUTE_DIRECTORY else Kind.FILE
 
 
-def _rename_info(replace: bool, root: int, name: str) -> bytes:
-    """A `FILE_RENAME_INFORMATION`: `ReplaceIfExists`, the root folder handle, the name's length in bytes, the name."""
+def _rename_info(replace: bool | int, root: int, name: str) -> bytes:
+    """A `FILE_RENAME_INFORMATION`: `ReplaceIfExists` (or, for `FileRenameInformationEx`, its flags in the same
+    place), the root folder handle, the name's length in bytes, the name."""
     raw = name.encode("utf-16-le")
     return struct.pack("<I4xQI", int(replace), root, len(raw)) + raw + b"\0\0"
 
@@ -923,6 +931,19 @@ class WindowsDir:
             if not replace and status & 0xFFFFFFFF in REFUSED_STATUS:
                 self._fs.no_excl.add(self.device())
                 raise NotOffered(EXCLUSIVE_RENAME)
+            raise _nt_error(status, "rename", src, dst)
+
+    def rename_shared(self, src: str, dst: str) -> None:
+        """The rename with POSIX semantics (`FileRenameInformationEx`, `REPLACE_IF_EXISTS | POSIX_SEMANTICS`),
+        relative to the folder handle: it replaces `dst` even while readers that share deletion hold it, which the
+        plain rename refuses (probed, S0130's P3, P5). A reader holding `dst` without sharing deletion still refuses
+        it. NTFS only (`POSIX_RENAME_TYPES`); elsewhere `NotOffered`, nothing done."""
+        if self.fs_type() not in POSIX_RENAME_TYPES:
+            raise NotOffered(POSIX_RENAME)
+        flags = FILE_RENAME_REPLACE_IF_EXISTS | FILE_RENAME_POSIX_SEMANTICS
+        with self._open(check_name(src), DELETE, options=FILE_WRITE_THROUGH) as h:
+            status = h.set_info(NT_FILE_RENAME_INFORMATION_EX, _rename_info(flags, self.handle, check_name(dst)))
+        if status != 0:
             raise _nt_error(status, "rename", src, dst)
 
     def rename_excl(self, src: str, dst: str) -> None:

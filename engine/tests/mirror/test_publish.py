@@ -16,6 +16,7 @@ link `current.db` (`CUR`, `current_in`, `point_at`), plus the Windows cases at t
 
 from __future__ import annotations
 
+import contextvars
 import os
 import re
 import sqlite3
@@ -64,7 +65,8 @@ NAME = re.compile(r"gen-([1-9][0-9]*)-([0-9a-f]{16})\.db")
 
 
 @pytest.fixture
-def fs() -> FileSystem:
+def fs(windows_port: None) -> FileSystem:
+    del windows_port  # the adapter on Windows (the test's context) before the port is chosen
     return for_this_os()
 
 
@@ -589,7 +591,7 @@ def test_readers_during_continuous_publishes_read_only_whole_generations(
     errors: list[str] = []
 
     def reader() -> None:
-        while not stop.is_set():
+        while not stop.is_set() and len(errors) < 20:  # a few are enough to see; never a flood
             try:
                 name = current_in(m)  # Windows: through a handle that shares deletion, as the sidecar's pin
             except OSError as e:
@@ -620,7 +622,9 @@ def test_readers_during_continuous_publishes_read_only_whole_generations(
                 errors.append("meta names another generation")
             counts["reads"] += 1
 
-    threads = [threading.Thread(target=reader) for _ in range(4)]
+    # each thread runs in a copy of the test's context: the Windows adapter's test switch is a context variable, and a
+    # new thread starts with an empty context
+    threads = [threading.Thread(target=contextvars.copy_context().run, args=(reader,)) for _ in range(4)]
     for t in threads:
         t.start()
     swaps = 0
@@ -852,9 +856,12 @@ def test_a_generation_without_published_by_is_not_a_mirror_of_this_kind() -> Non
 # -- Windows (S0130, BL-0206): the pointer file and the retried removal, on the adapter ------------------------------
 
 
+WINDOWS_CASE = "Windows' pointer file and open-file removal: the fake's Windows mode covers them elsewhere"
+
+
 def windows_only() -> None:
     if not WINDOWS:
-        pytest.skip("Windows' pointer file and open-file removal: the fake's Windows mode covers them elsewhere")
+        pytest.skip(WINDOWS_CASE)
 
 
 def test_on_windows_the_current_generation_is_named_by_the_pointer_and_no_link_is_made(
@@ -912,3 +919,25 @@ def test_on_windows_the_replaced_generation_gets_its_time_while_a_reader_holds_i
         assert path.stat().st_mtime > old + 10**8
     finally:
         con.close()
+
+
+def test_on_windows_a_publish_lands_while_a_reader_holds_the_pointer_sharing_deletion(
+    fs: FileSystem, cache: Path, root: Path
+) -> None:
+    """§7 on Windows: a pin reads `current.txt` through a handle that shares deletion; the swap's rename with POSIX
+    semantics lands while such a handle is open (the plain rename would be refused: S0130's P3), and the reader's
+    handle keeps reading the name it opened."""
+    if sys.platform != "win32":
+        raise pytest.skip.Exception(WINDOWS_CASE)
+    import _winapi
+
+    first = published(publish_job(fs, cache, root)).gen
+    pointer = mirror_of(cache) / pb.POINTER
+    h = _winapi.CreateFile(str(pointer), 0x80000000, 0x7, 0, _winapi.OPEN_EXISTING, 0, 0)
+    try:
+        second = published(publish_job(fs, cache, root)).gen
+        data, _ = _winapi.ReadFile(h, 64)
+        assert data == first.name.encode("ascii")
+    finally:
+        _winapi.CloseHandle(h)
+    assert current(cache) == second.name
