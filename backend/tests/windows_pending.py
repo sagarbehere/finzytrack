@@ -14,7 +14,7 @@ from typing import Final
 
 POSIX_SUPERVISION: Final = "POSIX groups, signals, flock, descriptors; Windows: test_engine_windows.py (S0129)"
 WINDOWS_ONLY: Final = "the sidecar on Windows (S0129): these tests run on the Windows runner"
-WRITE_PATH: Final = "the engine's write path (and the preview's error keys, BL-0282): Windows refuses it until BL-0087"
+WRITE_PATH: Final = "the engine's write path: Windows refuses it until BL-0087"
 NO_SIGTERM: Final = (
     "Windows has no SIGTERM: `terminate()` ends the sidecar at once, with no graceful close; its stop there is BL-0296"
 )

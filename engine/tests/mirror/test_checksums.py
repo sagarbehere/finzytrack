@@ -137,12 +137,13 @@ def test_the_case_folder_becomes_a_placeholder_in_every_text_value() -> None:
 
 def test_a_windows_case_folder_becomes_a_placeholder_as_written_and_inside_json_and_repr_texts() -> None:
     """S0133 (BL-0282; the 2026-11-19 run 5): on Windows a row's JSON (`entry_json`, an option's value) and a message
-    that prints an entry hold the folder with each backslash doubled; it is the placeholder there too, and a folder
-    beside it (`case-ab`) is not."""
+    that prints an entry hold the folder with each backslash doubled, and a `document` path written with `/` keeps
+    that spelling (run 6); it is the placeholder in each, and a folder beside it (`case-ab`) is not."""
     folder = PureWindowsPath("C:\\w\\case-a")
     made = tables_with(
         [
             (1, '{"filename": "C:\\\\w\\\\case-a\\\\main.beancount"}', "C:\\w\\case-a\\docs\\a.pdf", 7),
+            (3, "C:/w/case-a/receipts/r.txt", "C:/w/case-ab/r.txt", 9),  # a `document` path written with `/`
             (
                 2,
                 "Duplicate entry: Transaction(meta={'filename': 'C:\\\\w\\\\case-a\\\\m.beancount'})",
@@ -156,6 +157,7 @@ def test_a_windows_case_folder_becomes_a_placeholder_as_written_and_inside_json_
     assert out["postings"] == [
         [1, '{"filename": "<case>\\\\main.beancount"}', "<case>\\docs\\a.pdf", 7],
         [2, "Duplicate entry: Transaction(meta={'filename': '<case>\\\\m.beancount'})", "C:\\w\\case-ab\\x", 8],
+        [3, "<case>/receipts/r.txt", "C:/w/case-ab/r.txt", 9],
     ]
     assert out["ledger_options"] == [["include", '["<case>\\\\main.beancount"]'], ["input_hash", '"<input_hash>"']]
 

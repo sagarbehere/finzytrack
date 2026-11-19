@@ -4,7 +4,7 @@ S0128 (BL-0280: `tests/fs/test_windows.py`, and the modules that take the `windo
 macOS-only skip is (`tests/macos_only.py`), so pyright checks the code after it for the other platforms only:
 
     if sys.platform == "win32":
-        raise pytest.skip.Exception(BL_0282, allow_module_level=True)  # a whole module, before its POSIX imports
+        raise pytest.skip.Exception(NO_FIFO, allow_module_level=True)  # a whole module, before its POSIX imports
 
 and the same `raise` (without `allow_module_level`) inside one test. The engine-windows CI job runs pytest with `-rs`,
 so each skip prints its one line there.
@@ -29,7 +29,6 @@ NO_FIFO: Final = "Windows has no FIFO in its file system: the non-blocking read 
 NO_UID: Final = "Windows has no POSIX user and group ids or permission bits on files"
 FLOCK_HOLDER: Final = "a POSIX `flock` holder; the Windows engine lock's own tests are tests/fs/test_windows.py"
 NO_RLIMIT: Final = "Windows has no descriptor limit to lower (`resource.RLIMIT_NOFILE`)"
-BL_0282: Final = "BL-0282: Beancount's own paths, globs and messages on Windows (the engine's read side there)"
 
 POSIX_PATH_MODULES: Final = frozenset(
     {"test_journal_record.py", "test_copy_layout.py", "test_v_journal_folder_born.py"}

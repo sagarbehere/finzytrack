@@ -232,10 +232,13 @@ def _without_frames(message: str) -> str:
 def normalized(made: Tables, folder: PurePath) -> dict[str, list[list[Any]]]:
     """Every table's rows with the case folder's path as `<case>` and `input_hash` as `<input_hash>`, sorted. The
     folder is found as written and as JSON and `repr` write it inside a text (an entry's metadata, a message that
-    prints an entry): each backslash doubled, or doubled twice for JSON of such a text. On macOS and Linux the path
-    holds no backslash, so the three are one (S0133, BL-0282: the Windows runner's paths)."""
+    prints an entry): each backslash doubled, or doubled twice for JSON of such a text; and with `/` for `\\`, as a
+    ledger line on Windows may name it and Beancount keeps an absolute `document` path as written (the generated
+    `parity/absolute-paths` case). On macOS and Linux the path holds no backslash, so the four are one (S0133, BL-0282:
+    the Windows runner's paths, the 2026-11-19 runs 5 and 6)."""
     text = str(folder)
-    spellings = sorted({text, text.replace("\\", "\\\\"), text.replace("\\", "\\\\\\\\")}, key=len, reverse=True)
+    doubled = (text.replace("\\", "\\\\"), text.replace("\\", "\\\\\\\\"))
+    spellings = sorted({text, *doubled, text.replace("\\", "/")}, key=len, reverse=True)
     # the folder itself, not `<folder>b` beside it
     where = re.compile("(?:" + "|".join(re.escape(t) for t in spellings) + r")(?![\w.-])")
     out: dict[str, list[list[Any]]] = {}

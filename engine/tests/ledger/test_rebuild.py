@@ -592,7 +592,13 @@ def test_a_document_file_under_its_root_added_after_the_plan_and_deleted_during_
         )  # outside edit, before the rebuild
         a = go(with_load(doc.unlink), hint, FakeJob())
         assert a.outcome == "moved", a
-        assert str(doc) in dict(a.fingerprint.document_files)
+        if sys.platform == "win32":
+            # Windows has no folder that can be entered but not listed (`chmod` sets only the read-only attribute;
+            # the 2026-11-19 run 6): the root's listing names the file, so the hint observed it there, and its
+            # deletion moved the listing, which the set to try next holds without it.
+            assert dict(a.fingerprint.documents)[str(docs)] == ()
+        else:
+            assert str(doc) in dict(a.fingerprint.document_files)
         assert generations(cache) == []
     finally:
         (docs / "priv").chmod(0o700)
