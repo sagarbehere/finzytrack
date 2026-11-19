@@ -55,7 +55,8 @@ def test_a_saved_ledger_is_rebuilt_through_the_protocol(setup: tuple[Path, Path,
     assert (result["outcome"], result["errors"]) == ("loaded", 0)
     assert result["entries"] > 0
     assert reply["events"] == ["updating_views"]
-    assert (reply["decision"]["table"], reply["decision"]["version"]) == ("engine.rebuild", 3)
+    assert (reply["decision"]["table"], reply["decision"]["version"]) == ("engine.rebuild", 4)
+    assert reply["decision"]["inputs"]["sync_refused"] is False  # a local disk syncs (S0132)
     # S0087 (BL-0113): published after the save's generation (number 1, the setup's), the save's change in it
     assert (result["publish"], result["number"]) == ("published", 2)
     mirror = ald.parent / "cache" / "workspaces" / "k1" / "mirror"
@@ -159,3 +160,34 @@ def test_a_ledger_beancount_cannot_load_is_refused_through_the_protocol(
     )
     assert (result["publish"], result["number"]) == (None, None)
     assert reply["decision"]["inputs"]["refusal"] == "number-failed"
+
+
+def test_a_share_that_refuses_the_mirrors_folder_syncs_publishes_and_logs_it_once(
+    setup: tuple[Path, Path, dict[str, Any]], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """S0132 (owner, 2026-11-19: "Best effort on a share (Recommended)"): every folder sync under the app's cache is
+    refused as a network share's server refuses it (`SyncRefused`); the rebuild still publishes, and its decision
+    says so once, content-free (`sync_refused`)."""
+    import sys
+
+    from ledger_engine.fs.port import SyncRefused
+
+    _, ald, params = setup
+    target = saved(ald, params)
+    cache = str(ald.parent / "cache")
+    if sys.platform == "win32":
+        from ledger_engine.fs.windows import WindowsDir as Dir
+    else:
+        from ledger_engine.fs.posix import PosixDir as Dir
+    real = Dir.sync
+
+    def refused(self: Any) -> None:
+        if str(self.path()).startswith(cache):
+            raise SyncRefused
+        real(self)
+
+    monkeypatch.setattr(Dir, "sync", refused)
+    reply = call(ald, "rebuild", target)
+    assert reply["ok"], reply
+    assert reply["result"]["publish"] == "published", reply
+    assert reply["decision"]["inputs"]["sync_refused"] is True

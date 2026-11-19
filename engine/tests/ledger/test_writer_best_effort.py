@@ -700,3 +700,21 @@ def test_the_saves_own_rollback_meeting_a_missing_file_on_a_fat_stick_writes_not
     assert got == Stopped(Cause.MISSING_UNCONFIRMED, MAIN, f"{BD}/{NAME}/0-main.bean"), got
     assert (w.fs.snapshot(), dict(w.fs.mtimes)) == before
     _settle(w.fs, w, got, [])
+
+
+def test_a_save_on_a_share_that_refuses_folder_syncs_never_lands() -> None:
+    """@regression-guard (S0132; owner, 2026-11-19: "Best effort on a share (Recommended)"): the best effort is the
+    mirror's alone.
+    Where a network share's server refuses every folder sync (`SyncRefused`), the ledger's save never answers
+    "saved" on a sync that did not happen: it fails as on any refused sync (whether a ledger on a share may be written
+    at all is BL-0087's question)."""
+    w = world(volume="plain")
+    with w.fs.open_dir("/w/L") as d:
+        dev = d.device()
+    w.fs.remote.add(dev)
+    w.fs.sync_refused.add(dev)
+    try:
+        out = durable_commit(w.fs, w.commit)
+    except OSError:
+        out = None
+    assert not isinstance(out, Landed), out

@@ -32,14 +32,16 @@ REFUSAL: Final[dict[opening.Refusal, OpenRefusal]] = {
     "beancount-failed": "beancount_failed",
 }
 TABLE: Final = "engine.open"
-TABLE_VERSION: Final = 2  # 1 (S0088): the open's load and publish; 2 (S0098): `refusal` among the inputs
+TABLE_VERSION: Final = 3  # 1 (S0088): the open's load and publish; 2 (S0098): `refusal` among the inputs; 3 (S0132):
+# `sync_refused`, a folder sync a network share refused, taken as best effort (publish.md §11)
 
 
 def run(params: Message, ctx: OpenJob) -> Message:
     assert isinstance(params, OpenParams)  # noqa: S101 (the handler's own params model)
     fs = for_this_os()
     target = target_of(params, ctx, fs)
-    a = opening.run(opening.Ports(fs=fs), params.root, ctx, target)
+    ports = opening.Ports(fs=fs)
+    a = opening.run(ports, params.root, ctx, target)
     f = fields_of(a.outcome, a.published, a.cleaned)
     inputs = {
         "errors": a.errors,
@@ -47,6 +49,7 @@ def run(params: Message, ctx: OpenJob) -> Message:
         "removed": f.removed,
         "remove_failed": f.remove_failed,
         "refusal": a.refusal,
+        "sync_refused": ports.note.refused,
     }
     ctx.decide(TABLE, TABLE_VERSION, inputs, a.outcome)
     return OpenResult(

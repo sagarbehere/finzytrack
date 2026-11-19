@@ -32,7 +32,8 @@ from ledger_engine.protocol.save import app_cache_of, engine_build
 TABLE: Final = "engine.rebuild"
 EPOCH: Final = datetime(1970, 1, 1, tzinfo=UTC)
 TABLE_VERSION: Final = (
-    3  # 1 (S0070): the rebuild after a save (ADR-0068 D1); 2 (S0087): its publish; 3 (S0098): `refused`
+    4  # 1 (S0070): the rebuild after a save (ADR-0068 D1); 2 (S0087): its publish; 3 (S0098): `refused`;
+    # 4 (S0132): `sync_refused`, a folder sync a network share refused, taken as best effort (publish.md §11)
 )
 REFUSAL: Final[dict[load_failure.Reason, LoadRefusal]] = {
     "number-failed": "number_failed",
@@ -143,7 +144,8 @@ def run(params: Message, ctx: RebuildJob) -> Message:
         raise BadParamsError(msg)
     fs = for_this_os()
     target = target_of(params, ctx, fs)
-    a = rebuild.run(rebuild.Ports(fs=fs), hint, ctx, target)
+    ports = rebuild.Ports(fs=fs)
+    a = rebuild.run(ports, hint, ctx, target)
     f = fields_of(a.outcome, a.published, a.cleaned)
     inputs = {
         "errors": a.errors,
@@ -151,6 +153,7 @@ def run(params: Message, ctx: RebuildJob) -> Message:
         "removed": f.removed,
         "remove_failed": f.remove_failed,
         "refusal": a.refusal,
+        "sync_refused": ports.note.refused,
     }
     ctx.decide(TABLE, TABLE_VERSION, inputs, a.outcome)
     return RebuildResult(

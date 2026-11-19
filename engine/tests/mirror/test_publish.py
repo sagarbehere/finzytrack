@@ -701,13 +701,16 @@ def test_naming_and_recognition_agree_on_the_largest_number(fs: FileSystem, cach
 def test_a_folder_at_current_db_the_cleanup_cannot_remove_is_moved_aside(
     fs: FileSystem, cache: Path, root: Path
 ) -> None:
-    """Red team F6: such a folder would stop every publish; the swap moves it aside whole for the next cleanup."""
+    """Red team F6: such a folder would stop every publish; the swap moves it aside whole for the next cleanup.
+    Windows (S0132): the read-only attribute no longer keeps it (the cleanup clears it), and a file held open would
+    also stop the aside rename (S0126: held handles pin the path above them), so another program's ACL denying the
+    file's removal keeps it there."""
     m = mirror_of(cache)
     stuck = m / CUR / "inner"
     stuck.mkdir(parents=True)
     (stuck / "x").write_bytes(b"x")
     if WINDOWS:
-        (stuck / "x").chmod(0o444)  # the read-only attribute: Windows refuses to remove the file
+        _deny_removal(stuck / "x", stuck)
     else:
         stuck.chmod(0o500)  # its entries cannot be removed
     try:
@@ -720,7 +723,25 @@ def test_a_folder_at_current_db_the_cleanup_cannot_remove_is_moved_aside(
         for p in m.rglob("inner"):
             p.chmod(0o700)
             if WINDOWS:
-                (p / "x").chmod(0o666)
+                _allow_removal(p / "x", p)
+
+
+EVERYONE = "*S-1-1-0"
+
+
+def _icacls(*args: str) -> None:
+    subprocess.run(["icacls", *args], check=True, capture_output=True)  # noqa: S603, S607 (the system's own tool)
+
+
+def _deny_removal(file: Path, folder: Path) -> None:
+    """Windows: an ACL denying everyone the file's deletion and the folder's deleting of its entries."""
+    _icacls(str(file), "/deny", f"{EVERYONE}:(D)")
+    _icacls(str(folder), "/deny", f"{EVERYONE}:(DC)")
+
+
+def _allow_removal(file: Path, folder: Path) -> None:
+    for p in (folder, file):
+        _icacls(str(p), "/remove:d", EVERYONE)
 
 
 def test_an_incomplete_generation_below_current_is_not_previous(fs: FileSystem, cache: Path, root: Path) -> None:

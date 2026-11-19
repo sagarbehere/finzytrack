@@ -119,6 +119,17 @@ class NotOffered(OSError):
         super().__init__(errno.ENOTSUP, f"the volume does not offer {what}")
 
 
+class SyncRefused(OSError):
+    """A network share's server refused a folder's `sync` itself (Windows: `FlushFileBuffers` on the folder answers
+    `ERROR_INVALID_FUNCTION`; probed on an SMB share, S0132's 2026-11-18 run 23): nothing was made durable by the call.
+    Raised only for a remote volume; any other refusal of a sync is a plain `OSError`. It is an `OSError`, so every
+    caller that needs the sync fails as before; only the mirror's publish takes it as best effort (owner, 2026-11-19,
+    `design/specs/mirror/publish.md` §11 "Mode (a cache folder on a network share)")."""
+
+    def __init__(self) -> None:
+        super().__init__(errno.EINVAL, "the network share refused the folder's sync")
+
+
 class Kind(StrEnum):
     FILE = "file"
     DIR = "dir"
@@ -323,7 +334,8 @@ class DirHandle(Protocol):
         ...
 
     def sync(self) -> None:
-        """`durable_sync` of the directory: every entry operation made in it before this call is durable."""
+        """`durable_sync` of the directory: every entry operation made in it before this call is durable. A network
+        share whose server refuses it raises `SyncRefused` (an `OSError`; S0132)."""
         ...
 
     def close(self) -> None: ...

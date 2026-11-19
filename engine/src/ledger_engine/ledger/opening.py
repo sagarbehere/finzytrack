@@ -86,6 +86,7 @@ class Ports:
     fs: FileSystem = field(default_factory=for_this_os)
     store: pb.Store = field(default_factory=SqliteStore)
     tag: Callable[[], str] = pb.new_tag
+    note: pb.SyncNote = field(default_factory=pb.SyncNote)  # a folder sync a network share refused (S0132)
 
 
 @dataclass(frozen=True, slots=True)
@@ -116,7 +117,7 @@ def run(ports: Ports, root: str, job: Job, target: Target) -> Answer:
     def observe(fp: Fingerprint) -> Fingerprint:
         return ports.observe(fp.ledger_set)
 
-    with pb.open_folder(ports.fs, target.app_cache, target.workspace_key) as d:  # step 0 (publish.md §4 step 1)
+    with pb.open_folder(ports.fs, target.app_cache, target.workspace_key, ports.note) as d:  # step 0 (§4 step 1)
         cleaned = pb.clean(d, ports.store, target.now_ns)
         if publishing.unfinished(ports.fs, target):  # step 1 (engine-jobs §7)
             return Answer("paused", cleaned=cleaned)
@@ -147,6 +148,7 @@ def run(ports: Ports, root: str, job: Job, target: Target) -> Answer:
             recheck=publishing.recheck(ports.fs, ports.observe, stamp, target),
             by="open",
             tag=ports.tag(),
+            note=ports.note,
         )
     if isinstance(out, pb.NotPublished) and out.why in ("moved", "paused"):
         return Answer(out.why, cleaned=cleaned)
