@@ -706,6 +706,27 @@ def test_on_windows_a_cache_folder_on_a_network_share_is_refused_before_any_effe
     assert (fs.snapshot(), len(fs.effects)) == before
 
 
+@SHARE_AT
+def test_on_windows_the_refusal_closes_every_handle_it_opened(where: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    """S0134 round 1, verifier V1: the handle refused on the share is closed (`publish._local`), and so is every
+    handle opened before it: on Windows a folder handle left open on a share would stay open in the engine."""
+    opened: list[MemDir] = []
+    real_init = MemDir.__init__
+
+    def init(self: MemDir, *a: object, **k: object) -> None:
+        real_init(self, *a, **k)  # pyright: ignore[reportArgumentType]
+        opened.append(self)
+
+    monkeypatch.setattr(MemDir, "__init__", init)
+    fs = world(windows=True)
+    on_a_share(fs, where)
+    opened.clear()
+    with pytest.raises(pb.CacheOnShare):
+        job(fs)
+    assert opened
+    assert all(h._closed for h in opened), [h._closed for h in opened]  # pyright: ignore[reportPrivateUsage]
+
+
 def test_on_windows_the_cache_folders_parent_on_a_share_is_refused_before_the_cache_folder_is_made() -> None:
     """The cache folder purged by the OS (§9) and its parent on a share: refused before `open_folder` makes it."""
     fs = MemFS(windows=True)

@@ -239,9 +239,11 @@ def _ensure(fs: FileSystem, folder: str, name: str) -> None:
 
 def open_folder(fs: FileSystem, app_cache: str, key: str) -> DirHandle:
     """§2 "The folder itself", first in every job (the app's folders above it made if missing, following links: they
-    are the app's): a link at `mirror/` is removed as a link, a file there is removed,
-    the folder is made if missing (mode 0700) and its parent synced; then one handle on it, never through a link (if a
-    link took its place meanwhile, the open fails and the job ends: §11 "Limit (link swapped in)").
+    are the app's): a link at `mirror/` is removed as a link, a file there is removed, the folder is made if missing
+    (mode 0700); then one handle on it, never through a link (if a link took its place meanwhile, the open fails and
+    the job ends: §11 "Limit (link swapped in)"), checked (`_local`; not another volume, `EXDEV`), and only then its
+    parent synced (S0134). A job refused at the check has not synced the parent: a removal or `mkdir` made there just
+    before may be lost at a power loss, which the next job redoes (a rebuildable cache).
 
     §2 "On a network share" (S0134; Windows only): each folder handle opened here (the cache folder's parent, the
     cache folder, `workspaces/`, `<key>/`, `mirror/`) is asked `remote()` as soon as it is opened, before any effect
