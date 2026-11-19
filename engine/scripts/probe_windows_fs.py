@@ -8,8 +8,8 @@ relative to a folder handle (`NtCreateFile`, `FileRenameInformation` with a root
 mirror's pointer file (BL-0206: a generation held by SQLite, the pointer's swap under readers), NTFS tunnelling
 of creation times, file-ID reuse, reserved names and trailing dots, and `LockFileEx` against `msvcrt.locking`; and
 (BL-0294, S0132) whether the volume is remote, the read-only attribute against the publish's removals and renames and
-its clearing under each handle the product holds, and the POSIX rename on a network share (a UNC folder gets only the
-volume and these two parts).
+its clearing under each handle the product holds, and the POSIX rename on a network share; and (BL-0298) the forms in
+which SQLite opens a mirror generation there (a UNC folder gets only the volume and these three parts).
 
 Prints only; it writes only scratch entries inside a folder `.ft-probe-<pid>` it makes in each folder given and
 removes. The manual CI run runs it on the runner's folders and on scratch volumes (VHDs) it formats (`ci.yml`, the
@@ -29,6 +29,7 @@ import os
 import struct
 import sys
 import threading
+from collections.abc import Callable
 from ctypes import wintypes
 from typing import Any
 
@@ -1118,6 +1119,97 @@ def probe_share_rename(d: str) -> dict[str, Any]:
     return out
 
 
+def unc_uri(path: str, query: str) -> str:
+    """BL-0298's candidate: a UNC path as SQLite's documented UNC URI form (`file:////server/share/...`, an empty
+    authority and the UNC path with `/`, percent-encoded); any other path as `Path.as_uri()` gives it."""
+    import pathlib
+    import urllib.parse
+
+    w = pathlib.PureWindowsPath(path)
+    if w.drive.startswith("\\\\"):
+        return f"file://{urllib.parse.quote(w.as_posix(), safe='/')}?{query}"
+    return f"{pathlib.Path(path).as_uri()}?{query}"
+
+
+def probe_sqlite_forms(d: str) -> dict[str, Any]:
+    """BL-0298: how SQLite opens a mirror generation in this folder. The store's build (`mirror/build.py`, `mode=rw`
+    into an existing empty file, one transaction in rollback mode), its `meta` read and the sidecar's reader
+    (`mode=ro`) all open by `Path(<the folder handle's path>).as_uri()`; on a share that path is the UNC one whatever
+    drive letter opened it (`final_path`, printed here). Asked: that form; the candidate UNC URI form (`unc_uri`), as
+    the build writes and as two readers read at once while a third reader holds a read transaction; a folder name
+    with `#`, `%` and a space (percent-encoding); and a plain path with no URI."""
+    import pathlib
+    import sqlite3
+
+    out: dict[str, Any] = {}
+    h = open_dir(d)
+    try:
+        out["final_path"] = final_paths(h)
+    finally:
+        close(h)
+
+    def build_and_read(folder: str, form: Callable[[str, str], str]) -> str:
+        db = os.path.join(folder, "gen.db")
+        write_file(db, b"")
+        try:
+            con = sqlite3.connect(form(db, "mode=rw"), uri=True, isolation_level=None)
+            try:
+                con.execute("BEGIN")
+                con.execute("CREATE TABLE t (x)")
+                con.executemany("INSERT INTO t VALUES (?)", [(i,) for i in range(2000)])
+                con.execute("COMMIT")
+            finally:
+                con.close()
+            journal_left = exists(f"{db}-journal")
+            holder = sqlite3.connect(form(db, "mode=ro"), uri=True, isolation_level=None)
+            try:
+                holder.execute("BEGIN")
+                holder.execute("SELECT count(*) FROM t").fetchone()
+                counts: list[Any] = []
+                for _ in range(2):
+                    r = sqlite3.connect(form(db, "mode=ro"), uri=True)
+                    try:
+                        counts.append(r.execute("SELECT count(*) FROM t").fetchone()[0])
+                    finally:
+                        r.close()
+                holder.execute("COMMIT")
+            finally:
+                holder.close()
+            return f"ok counts={counts} journal_left={journal_left} sidecar_files={sorted(os.listdir(folder))}"
+        except sqlite3.Error as e:
+            return f"error {e} ({form(db, 'mode=rw')})"
+        finally:
+            for n in os.listdir(folder):
+                with contextlib.suppress(OSError):
+                    os.remove(os.path.join(folder, n))
+
+    def as_uri(path: str, query: str) -> str:
+        return f"{pathlib.Path(path).as_uri()}?{query}"
+
+    out["as_uri"] = build_and_read(d, as_uri)
+    out["unc_uri"] = build_and_read(d, unc_uri)
+    odd = os.path.join(d, "a#b%c d")
+    os.mkdir(odd)
+    try:
+        out["unc_uri_odd_name"] = build_and_read(odd, unc_uri)
+    finally:
+        with contextlib.suppress(OSError):
+            os.rmdir(odd)
+    db = os.path.join(d, "plain.db")
+    write_file(db, b"")
+    try:
+        con = sqlite3.connect(db)
+        con.execute("CREATE TABLE t (x)")
+        con.commit()
+        con.close()
+        out["plain_path"] = "ok"
+    except sqlite3.Error as e:
+        out["plain_path"] = f"error {e}"
+    with contextlib.suppress(OSError):
+        os.remove(db)
+    return out
+
+
 def probe_locks(d: str) -> dict[str, Any]:
     out: dict[str, Any] = {}
     p = os.path.join(d, "lock")
@@ -1162,6 +1254,7 @@ def probe(folder: str, index: int = 0) -> dict[str, Any]:
         for name, fn in (
             ("readonly", probe_readonly),
             ("share_rename", probe_share_rename),
+            ("sqlite_forms", probe_sqlite_forms),
         ) + (
             ()
             if share

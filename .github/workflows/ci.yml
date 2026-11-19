@@ -219,7 +219,8 @@ jobs:
           $shares = @("Z:\", "\\localhost\ftshare")  # the share as a mapped drive, then its UNC path
           "FT_TEST_SHARE=" + ($shares -join ";") | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
           [System.Environment]::OSVersion.VersionString
-          .venv\Scripts\python.exe scripts\probe_windows_fs.py $env:RUNNER_TEMP $env:TEMP @vols @shares
+          # BL-0298: the share by the machine's own name too (a server name other than localhost, probe only)
+          .venv\Scripts\python.exe scripts\probe_windows_fs.py $env:RUNNER_TEMP $env:TEMP @vols @shares "\\$env:COMPUTERNAME\ftshare"
       - name: tests
         # INV-07 on Windows (S0127): its C runtime reads TZ only as a process starts and only in this form, so it is set
         # before Python starts (Los Angeles: tests/conftest.py checks it). `-rs`: each skip prints its reason, the
