@@ -978,9 +978,14 @@ class WindowsDir:
         """The read-only attribute of the entry `name` (a file, a folder or a link itself: opened with
         `FILE_OPEN_REPARSE_POINT`, never followed) cleared, through handles that share everything, so a reader that
         holds it (SQLite, the pin, another program's plain open) never refuses it (probed, S0132's P7). Asked first for
-        the attributes only; written (`FileBasicInfo`, times left as they are) only when the bit is set. No entry:
-        nothing done. The mirror's publish and cleanup only (BL-0294): `remove` and `rename` still refuse a read-only
-        file, which the save's `locked` outcome relies on."""
+        the attributes only; written (`FileBasicInfo`, times left as they are) only when the bit is set. No entry, or
+        an entry gone between the two opens: nothing done. **A file with several links is never cleared** (owner,
+        2026-11-19: "Never clear a linked file (Recommended)"; S0132 round 1, verifier V1, red team F1): NTFS keeps the
+        attribute on the file, not the name, so clearing it through a link in the mirror folder would unprotect the
+        file the other name leads to (a read-only ledger file, whose save then no longer answers `locked`). The link
+        count is read on the handle that would write the attributes; above 1, `OSError` (`EMLINK`), nothing done, which
+        the cleanup counts as a removal that failed. The mirror's publish and cleanup only (BL-0294): `remove` and
+        `rename` still refuse a read-only file, which the save's `locked` outcome relies on."""
         target = check_name(name)
         try:
             with self._open(target, FILE_READ_ATTRIBUTES) as h:
@@ -989,8 +994,16 @@ class WindowsDir:
             return
         if not attrs & FILE_ATTRIBUTE_READONLY:
             return
-        with self._open(target, FILE_READ_ATTRIBUTES | FILE_WRITE_ATTRIBUTES) as h:
+        try:
+            h = self._open(target, FILE_READ_ATTRIBUTES | FILE_WRITE_ATTRIBUTES)
+        except FileNotFoundError:
+            return  # gone since the first open (S0132 round 1, red team F4)
+        with h:
             attrs = h.basic()[2]
+            if not attrs & FILE_ATTRIBUTE_READONLY:
+                return
+            if not attrs & FILE_ATTRIBUTE_DIRECTORY and h.links() > 1:
+                raise OSError(errno.EMLINK, "a file with several links: its read-only attribute is not ours", name)
             kept = attrs & FILE_ATTRIBUTE_VALID_SET_FLAGS & ~FILE_ATTRIBUTE_READONLY
             info = struct.pack("<qqqqI4x", 0, 0, 0, 0, kept or FILE_ATTRIBUTE_NORMAL)  # 0 leaves a time as it is
             buf = ctypes.create_string_buffer(info, len(info))

@@ -1240,3 +1240,97 @@ def test_clear_readonly_then_the_plain_rename_and_the_removal_land_on_a_scratch_
             with contextlib.suppress(OSError):
                 os.chmod(p, 0o644)
         shutil.rmtree(folder, ignore_errors=True)
+
+
+# -- S0132 round 1: a linked file is never cleared; the sync's mapping; folders; an entry gone between the opens ------
+
+
+def test_clear_readonly_never_clears_a_file_with_several_links(fs: FileSystem, tmp_path: Path) -> None:
+    """Owner, 2026-11-19: "Never clear a linked file (Recommended)" (verifier V1, red team F1): NTFS keeps the
+    attribute on the file, so clearing it through a second name would unprotect the first (a read-only ledger file).
+    `EMLINK`, nothing done: the attribute and both names stay."""
+    ledger = tmp_path / "main.bean"
+    ledger.write_bytes(b"pre\n")
+    os.chmod(ledger, 0o444)
+    folder = tmp_path / "m"
+    folder.mkdir()
+    os.link(ledger, folder / "stray.bean")
+    try:
+        with fs.open_dir(str(folder)) as d:
+            with pytest.raises(OSError, match="several links") as e:
+                d.clear_readonly("stray.bean")
+            assert e.value.errno == errno.EMLINK
+        assert _read_only(ledger)
+        assert os.stat(ledger).st_nlink == 2
+    finally:
+        os.chmod(ledger, 0o644)
+
+
+def test_clear_readonly_clears_a_read_only_folder_which_then_goes(fs: FileSystem, tmp_path: Path) -> None:
+    """Red team F3: the folder branch (a read-only folder refuses its removal until cleared; S0132's P7)."""
+    ro = tmp_path / "ro"
+    ro.mkdir()
+    os.chmod(ro, 0o444)
+    assert _read_only(ro)
+    with fs.open_dir(str(tmp_path)) as d:
+        with pytest.raises(OSError, match="rmdir"):
+            d.rmdir("ro")
+        d.clear_readonly("ro")
+        assert not _read_only(ro)
+        d.rmdir("ro")
+    assert not ro.exists()
+
+
+def test_clear_readonly_on_an_entry_gone_between_its_two_opens_does_nothing(
+    fs: FileSystem, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Red team F4: the entry removed by another program after the attribute read and before the write: nothing
+    done, as for no entry."""
+    from ledger_engine.fs import windows
+
+    f = tmp_path / "f"
+    f.write_bytes(b"x")
+    os.chmod(f, 0o444)
+    real = windows.WindowsDir._open  # pyright: ignore[reportPrivateUsage]
+    calls: list[int] = []
+
+    def racing(self: windows.WindowsDir, name: str, access: int, disposition: int = 1, options: int = 0) -> Any:
+        calls.append(access)
+        if len(calls) == 2:  # the second open: another program removed it first
+            os.chmod(f, 0o644)
+            f.unlink()
+        return real(self, name, access, disposition, options)
+
+    monkeypatch.setattr(windows.WindowsDir, "_open", racing)
+    with fs.open_dir(str(tmp_path)) as d:
+        d.clear_readonly("f")
+    assert len(calls) == 2
+    assert not f.exists()
+
+
+@pytest.mark.parametrize("remote", [False, True])
+def test_a_refused_folder_flush_is_sync_refused_only_on_a_remote_volume(
+    fs: FileSystem, tmp_path: Path, remote: bool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Verifier V4: `ERROR_INVALID_FUNCTION` from the folder's flush is `SyncRefused` on a remote volume and a plain
+    `OSError` on a local one, which every caller, the publish included, takes as a failed sync."""
+    from ledger_engine.fs import windows
+    from ledger_engine.fs.port import SyncRefused
+
+    def is_remote(self: object) -> bool:
+        del self
+        return remote
+
+    monkeypatch.setattr(windows._Handle, "remote", is_remote)  # pyright: ignore[reportPrivateUsage]
+    with fs.open_dir(str(tmp_path)) as d:
+        assert isinstance(d, windows.WindowsDir)
+
+        def refused(h: int) -> int:
+            del h
+            ctypes.set_last_error(1)  # ERROR_INVALID_FUNCTION, as the share's server answered (run 23)
+            return 0
+
+        monkeypatch.setattr(d.api, "FlushFileBuffers", refused)
+        with pytest.raises(OSError, match=r"FlushFileBuffers|refused") as e:
+            d.sync()
+    assert isinstance(e.value, SyncRefused) is remote

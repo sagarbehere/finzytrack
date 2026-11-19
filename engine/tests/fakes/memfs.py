@@ -68,7 +68,8 @@ file a reader holds without sharing deletion (`outside_hold`) cannot be removed 
 with the read-only attribute is `outside_lock` (the adapter reports it `locked`, and Windows refuses its removal and a
 rename over it); on a folder it refuses only the folder's own removal (probed, S0132's P7: renaming it and changing
 what it holds work). `clear_readonly` is then an effect (labelled `clear_readonly`) that clears the mark on the entry (a
-file's or a folder's), and does nothing on an absent name; in POSIX mode it is a no-op and no effect, as the macOS and
+file's or a folder's), and does nothing on an absent name; a read-only file with several links refuses it
+(`EMLINK`, nothing done; owner, 2026-11-19); in POSIX mode it is a no-op and no effect, as the macOS and
 Linux adapters make no call (`uchg` stays). A power loss keeps the attribute as last set: an attribute cleared and then
 lost only makes the next job clear it again. The rename with POSIX semantics (`rename_shared`) is offered on a drive
 unless its volume lacks the flag (`no_posix_rename`) or is a network share (`remote`), as the adapter decides it. A
@@ -1169,6 +1170,9 @@ class MemDir:
             if hit is None:
                 return
             node = self._fs.nodes[hit[1]]
+            if isinstance(node, _File) and node.locked and self._fs.nlink(hit[1]) > 1:
+                # never through a link (owner, 2026-11-19: "Never clear a linked file (Recommended)")
+                raise OSError(errno.EMLINK, "a file with several links: its read-only attribute is not ours")
             if isinstance(node, _File | _Dir):
                 node.locked = False
 

@@ -1064,3 +1064,43 @@ def test_on_windows_a_publish_into_a_cache_folder_on_a_network_share_lands(
         import shutil
 
         shutil.rmtree(share_cache.parent, ignore_errors=True)
+
+
+def test_on_windows_a_hard_link_in_the_mirror_folder_never_clears_its_files_read_only_attribute(
+    fs: FileSystem, cache: Path, root: Path, tmp_path: Path
+) -> None:
+    """S0132 round 1 (verifier V1, red team F1; owner, 2026-11-19: "Never clear a linked file (Recommended)"): a
+    read-only file elsewhere with a second name in the mirror folder keeps its attribute and both names through a
+    job; the cleanup counts the link as a removal that failed and the job publishes."""
+    windows_only()
+    published(publish_job(fs, cache, root))
+    ledger = tmp_path / "elsewhere.bean"
+    ledger.write_bytes(b"pre\n")
+    os.chmod(ledger, 0o444)
+    link = mirror_of(cache) / "stray.bean"
+    os.link(ledger, link)
+    try:
+        published(publish_job(fs, cache, root))
+        assert link.exists()
+        assert os.stat(ledger).st_nlink == 2
+        attrs: int = getattr(os.stat(ledger), "st_file_attributes", 0)
+        assert attrs & 0x1  # FILE_ATTRIBUTE_READONLY: kept
+        assert ledger.read_bytes() == b"pre\n"
+    finally:
+        os.chmod(ledger, 0o644)
+
+
+def test_on_windows_the_cleanup_removes_a_read_only_folder_with_a_read_only_file(
+    fs: FileSystem, cache: Path, root: Path
+) -> None:
+    """S0132 round 1 (red team F3): on the real disk, a read-only folder holding a read-only file in the mirror
+    folder goes at the next cleanup (each cleared first)."""
+    windows_only()
+    published(publish_job(fs, cache, root))
+    ro = mirror_of(cache) / "ro"
+    ro.mkdir()
+    (ro / "inner").write_bytes(b"x")
+    os.chmod(ro / "inner", 0o444)
+    os.chmod(ro, 0o444)
+    published(publish_job(fs, cache, root))
+    assert not ro.exists()

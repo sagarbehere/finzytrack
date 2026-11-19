@@ -790,3 +790,47 @@ def test_a_death_at_every_effect_on_a_share_that_refuses_syncs_never_leaves_a_re
         for s in states(fs) if prepare == 0 else [fs]:
             seen_on_a_share(s)
             assert_publishes_again_on_a_share(s, power_loss=False)  # the crashed state's power losses: above
+
+
+# -- S0132 round 1 (verifier V1, red team F1; owner, 2026-11-19: "Never clear a linked file (Recommended)") ----------
+
+
+@pytest.mark.parametrize("name", ["stray.bean", "current.txt"])
+def test_a_hard_link_in_the_mirror_folder_never_clears_a_ledger_files_read_only_attribute(name: str) -> None:
+    """The reviewers' repros: a read-only ledger file with a second name in the mirror folder (left there, or at the
+    pointer's name) keeps its attribute and both its names through the next job, so the save still answers `locked`
+    and `hard_linked`. The cleanup counts the link as a removal that failed; at the pointer's name the swap fails
+    truthfully (nothing published by it)."""
+    fs = world(windows=True)
+    first = job(fs)
+    assert isinstance(first, pb.Published)
+    fs.outside_mkdirs("/L")
+    fs.outside_write("/L/main.bean", b"2026-01-01 open Assets:Cash\n")
+    fs.outside_lock("/L/main.bean")  # the user marked the ledger file read-only: the save answers `locked`
+    if name == "current.txt":
+        fs.outside_remove(f"{MIRROR}/current.txt")
+    fs.outside_link("/L/main.bean", f"{MIRROR}/{name}")
+    if name == "current.txt":
+        with pytest.raises(OSError, match="several links"):  # the swap fails truthfully: nothing published by it
+            job(fs)
+    else:
+        assert isinstance(job(fs), pb.Published)
+    with fs.open_dir("/L") as d:
+        st = d.stat("main.bean")
+    assert st is not None
+    assert st.locked, "the ledger file's read-only attribute was cleared through a hard link in mirror/"
+    assert st.nlink == 2
+    assert fs.file("/L/main.bean") == b"2026-01-01 open Assets:Cash\n"
+
+
+def test_a_linked_file_that_is_not_read_only_is_removed_as_a_name() -> None:
+    """Only the clear is refused: a hard link with no read-only attribute is removed as any entry (its other name and
+    bytes untouched), as before."""
+    fs = world(windows=True)
+    assert isinstance(job(fs), pb.Published)
+    fs.outside_mkdirs("/L")
+    fs.outside_write("/L/main.bean", b"x")
+    fs.outside_link("/L/main.bean", f"{MIRROR}/stray.bean")
+    assert isinstance(job(fs), pb.Published)
+    assert "stray.bean" not in fs.names_in(MIRROR)
+    assert fs.file("/L/main.bean") == b"x"
