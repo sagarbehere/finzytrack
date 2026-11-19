@@ -309,15 +309,19 @@ def test_a_plugin_not_found_and_then_found_in_one_load_keeps_the_first_answer(tm
     loaded = load(root)
     importing = [e for e in loaded.errors if "Error importing" in e.message]
     if sys.platform == "win32":
-        # Windows: the second import in the same load does not find the module either (the 2026-11-19 run 5), so the
-        # load holds two import errors; the record still keeps the first answer, which the load did use.
-        assert len(importing) == 2, loaded.errors
-        assert late not in sys.modules
+        # Windows: whether the second import in the same load finds the module depends on CPython's `FileFinder`
+        # cache, refreshed only when the folder's modification time differs from the one it cached (at Windows'
+        # timestamp resolution the plugin's write may not change it): the 2026-11-19 run 5 saw two import errors,
+        # run 10 one (S0133 follow-up, Q2). Either way the two agree with what the load imported, and the record
+        # keeps the first answer, which the load did use (below).
+        assert len(importing) in (1, 2), loaded.errors
+        assert (late in sys.modules) is (len(importing) == 1), loaded.errors
     else:
         assert len(importing) == 1, loaded.errors
         assert late in sys.modules  # the second import found it
     assert answers(loaded.fingerprint)[late] is None
     assert not unchanged(loaded.fingerprint)
+    assert answers(observe(loaded.fingerprint.ledger_set))[late] is not None  # the change is that module's: found now
 
 
 def test_the_load_lists_each_folder_afresh(tmp_path: Path, names: Names) -> None:
