@@ -40,7 +40,7 @@ from collections.abc import Callable, Generator, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import date
-from pathlib import Path
+from pathlib import Path, PurePath
 from typing import Any
 
 from ledger_engine.ledger.overlay import Loaded, load
@@ -229,9 +229,15 @@ def _without_frames(message: str) -> str:
     return head + "<traceback> " + (last[0].strip() if last else "")
 
 
-def normalized(made: Tables, folder: Path) -> dict[str, list[list[Any]]]:
-    """Every table's rows with the case folder's path as `<case>` and `input_hash` as `<input_hash>`, sorted."""
-    where = re.compile(re.escape(str(folder)) + r"(?![\w.-])")  # the folder itself, not `<folder>b` beside it
+def normalized(made: Tables, folder: PurePath) -> dict[str, list[list[Any]]]:
+    """Every table's rows with the case folder's path as `<case>` and `input_hash` as `<input_hash>`, sorted. The
+    folder is found as written and as JSON and `repr` write it inside a text (an entry's metadata, a message that
+    prints an entry): each backslash doubled, or doubled twice for JSON of such a text. On macOS and Linux the path
+    holds no backslash, so the three are one (S0133, BL-0282: the Windows runner's paths)."""
+    text = str(folder)
+    spellings = sorted({text, text.replace("\\", "\\\\"), text.replace("\\", "\\\\\\\\")}, key=len, reverse=True)
+    # the folder itself, not `<folder>b` beside it
+    where = re.compile("(?:" + "|".join(re.escape(t) for t in spellings) + r")(?![\w.-])")
     out: dict[str, list[list[Any]]] = {}
     for name, table in made.items():
         rows: list[list[Any]] = []

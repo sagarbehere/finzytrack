@@ -14,6 +14,7 @@ from __future__ import annotations
 import dataclasses
 import datetime
 import hashlib
+import os
 import shutil
 import sys
 import tomllib
@@ -661,7 +662,8 @@ def test_a_load_that_cannot_run_refuses(tmp_path: Path) -> None:
 
 def test_a_path_that_is_not_absolute_and_normal_is_refused(tmp_path: Path) -> None:
     root, current = ledger(tmp_path)
-    odd = root.replace("/L/", "/L/./")
+    odd = root.replace(f"{os.sep}L{os.sep}", f"{os.sep}L{os.sep}.{os.sep}")  # this OS's separator
+    assert odd != root
     p = produced({odd: current[root]}, [pr.DeleteReq(at(DINNER, odd))])
     refused(contract.prepare({odd: current[root]}, p, root, baseline(root), DESKTOP), "apply", "path_not_normal")
 

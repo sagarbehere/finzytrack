@@ -23,6 +23,7 @@ import errno
 import hashlib
 import posixpath
 import re
+import sys
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 
@@ -213,6 +214,21 @@ class World:
             regular=lambda path: path in self.src,
             check=self.check,
         )
+
+
+def posix_documents_roots(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The fake is a POSIX file system (its paths `/...`; `tests/conftest.py` gives these tests the POSIX path model on
+    Windows). The loads here are stand-ins, but the copy's "loads the same" resolves each documents root by Beancount's
+    own formula (`overlay.documents_roots`, `os.path`: `ntpath` on Windows), so on Windows it is pointed at POSIX's
+    rules for the test, as `memledger` points the overlay's `path` at the fake (S0133, BL-0282). Beancount's reading
+    of Windows paths runs on the real disk: `test_copy_layout.py`, `test_parity_corpus.py`."""
+    if sys.platform == "win32":
+        monkeypatch.setattr(overlay, "path", posixpath)
+
+
+@pytest.fixture(autouse=True)
+def _posix_documents_roots(monkeypatch: pytest.MonkeyPatch) -> None:
+    posix_documents_roots(monkeypatch)
 
 
 def new_world(*, target: str = "absent", no_excl: bool = False, case_insensitive: bool = True) -> World:

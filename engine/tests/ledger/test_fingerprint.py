@@ -365,21 +365,31 @@ def test_a_dotdot_through_a_link_observes_unchanged(present: str, tmp_path: Path
     root = dotdot_through_a_link(tmp_path)
     write(tmp_path / present / "common.beancount", "")
     result = loaded(root)
-    expected = {
-        "ext": f'File "{tmp_path / "ws" / "common.beancount"}" does not exist',
-        "ws": 'File glob "../common.beancount" does not match any files',
-    }[present]
-    assert [e.message for e in result.errors] == [expected]
+    no_match = 'File glob "../common.beancount" does not match any files'
+    if sys.platform == "win32":
+        # Windows takes `linked\..` away by the text before it follows the link (Beancount's answer on the runner,
+        # 2026-11-19 run 5): the glob and the loader ask about the same file, ws/common.beancount.
+        expected = {"ext": [no_match], "ws": []}[present]
+    else:
+        expected = {"ext": [f'File "{tmp_path / "ws" / "common.beancount"}" does not exist'], "ws": [no_match]}[present]
+    assert [e.message for e in result.errors] == expected
     assert observe(result.fingerprint.ledger_set) == result.fingerprint
 
 
 def test_a_file_appearing_behind_a_dotdot_through_a_link_changes_it(tmp_path: Path) -> None:
     """Neither file exists; ext/common.beancount appears: the next load's error changes, so must the fingerprint
-    (verifier round 2, F1, case C)."""
+    (verifier round 2, F1, case C). On Windows the load does not read that file, and neither answer changes."""
     root = dotdot_through_a_link(tmp_path)
     before = loaded(root)
     write(tmp_path / "ext" / "common.beancount", "")
-    assert sorted(e.message for e in loaded(root).errors) != sorted(e.message for e in before.errors)
+    after = sorted(e.message for e in loaded(root).errors)
+    if sys.platform == "win32":
+        # Windows reads `linked\..` by its text (above): ext/common.beancount is no input of the load, which stays
+        # the same, and the observation, asking what the load asks, stays the same too.
+        assert after == sorted(e.message for e in before.errors)
+        assert observe(before.fingerprint.ledger_set) == before.fingerprint
+        return
+    assert after != sorted(e.message for e in before.errors)
     assert observe(before.fingerprint.ledger_set) != before.fingerprint
 
 

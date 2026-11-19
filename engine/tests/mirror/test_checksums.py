@@ -16,7 +16,7 @@ import sys
 import tomllib
 from collections.abc import Callable, Generator
 from contextlib import contextmanager
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any
 
 import pytest
@@ -116,7 +116,7 @@ def test_exactly_the_refuse_cases_are_refused_each_with_a_file_beancount_would_d
 # ---- normalization ------------------------------------------------------------------------------------------------
 
 
-FOLDER = Path("/w/case-a")
+FOLDER = PurePosixPath("/w/case-a")  # the same text on every OS (a Windows folder: the test below)
 
 
 def tables_with(postings: list[Row], options: list[Row] | None = None) -> dict[str, list[Row]]:
@@ -135,9 +135,34 @@ def test_the_case_folder_becomes_a_placeholder_in_every_text_value() -> None:
     assert out["ledger_options"] == [["filename", '"<case>/main.beancount"'], ["input_hash", '"<input_hash>"']]
 
 
+def test_a_windows_case_folder_becomes_a_placeholder_as_written_and_inside_json_and_repr_texts() -> None:
+    """S0133 (BL-0282; the 2026-11-19 run 5): on Windows a row's JSON (`entry_json`, an option's value) and a message
+    that prints an entry hold the folder with each backslash doubled; it is the placeholder there too, and a folder
+    beside it (`case-ab`) is not."""
+    folder = PureWindowsPath("C:\\w\\case-a")
+    made = tables_with(
+        [
+            (1, '{"filename": "C:\\\\w\\\\case-a\\\\main.beancount"}', "C:\\w\\case-a\\docs\\a.pdf", 7),
+            (
+                2,
+                "Duplicate entry: Transaction(meta={'filename': 'C:\\\\w\\\\case-a\\\\m.beancount'})",
+                "C:\\w\\case-ab\\x",
+                8,
+            ),
+        ],
+        [("include", '["C:\\\\w\\\\case-a\\\\main.beancount"]'), ("input_hash", '"x"')],
+    )
+    out = checksums.normalized(made, folder)
+    assert out["postings"] == [
+        [1, '{"filename": "<case>\\\\main.beancount"}', "<case>\\docs\\a.pdf", 7],
+        [2, "Duplicate entry: Transaction(meta={'filename': '<case>\\\\m.beancount'})", "C:\\w\\case-ab\\x", 8],
+    ]
+    assert out["ledger_options"] == [["include", '["<case>\\\\main.beancount"]'], ["input_hash", '"<input_hash>"']]
+
+
 def test_the_same_rows_in_another_order_or_folder_give_the_same_checksums() -> None:
     a = checksums.normalized(tables_with([(1, "/w/case-a/x"), (2, "y")]), FOLDER)
-    b = checksums.normalized(tables_with([(2, "y"), (1, "/w/case-b/x")]), Path("/w/case-b"))
+    b = checksums.normalized(tables_with([(2, "y"), (1, "/w/case-b/x")]), PurePosixPath("/w/case-b"))
     assert {k: checksums.digest(v) for k, v in a.items()} == {k: checksums.digest(v) for k, v in b.items()}
 
 

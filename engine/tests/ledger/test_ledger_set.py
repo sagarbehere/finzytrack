@@ -36,6 +36,7 @@ from ledger_engine.ledger.core.ledger_set import (
 from ledger_engine.ledger.fingerprint import observe
 from ledger_engine.ledger.overlay import Loaded, load
 from ledger_engine.ledger.policy import DESKTOP
+from tests.beancount_text import escaped
 
 pytestmark = pytest.mark.inv("INV-22")
 
@@ -122,7 +123,7 @@ def test_a_missing_plain_include_is_recorded_as_its_globs_empty_answer(tmp_path:
 def test_a_glob_that_matches_nothing_is_recorded_with_no_matches(tmp_path: Path) -> None:
     root = write(tmp_path / "main.beancount", 'include "years/*.beancount"\n')
     fp = loaded(root).fingerprint
-    assert fp.globs == ((str(tmp_path / "years/*.beancount"), ()),)
+    assert fp.globs == ((path.join(str(tmp_path), "years/*.beancount"), ()),)  # Beancount's own join of the pattern
 
 
 def test_a_missing_root_is_recorded_absent(tmp_path: Path) -> None:
@@ -245,7 +246,7 @@ def test_a_document_a_plugin_makes_is_recorded(tmp_path: Path) -> None:
     root = write(
         tmp_path / "main.beancount",
         'option "plugin_processing_mode" "raw"\noption "insert_pythonpath" "TRUE"\n'
-        f'plugin "s0051_document_maker" "{made}"\nplugin "beancount.ops.documents"\n'
+        f'plugin "s0051_document_maker" "{escaped(made)}"\nplugin "beancount.ops.documents"\n'
         "2020-01-01 open Assets:Cash USD\n",
     )
     result = loaded(root)
@@ -307,7 +308,10 @@ def test_a_plugin_document_beancount_checked_is_recorded_as_beancount_saw_it(
     again, so the next observation differs (verifier round 2, F2)."""
     made = write(tmp_path / "made.pdf", "%PDF")
     document_maker(tmp_path, "s0051_r2_checked")
-    lines = {"maker": f'plugin "s0051_r2_checked" "{made}"\n', "documents": 'plugin "beancount.ops.documents"\n'}
+    lines = {
+        "maker": f'plugin "s0051_r2_checked" "{escaped(made)}"\n',
+        "documents": 'plugin "beancount.ops.documents"\n',
+    }
     root = write(
         tmp_path / "main.beancount", RAW + "".join(lines[p] for p in plugins) + "2020-01-01 open Assets:Cash USD\n"
     )
@@ -327,7 +331,8 @@ def test_a_plugin_document_appearing_after_beancounts_check_is_recorded_missing(
     root = write(
         tmp_path / "main.beancount",
         RAW
-        + f'plugin "s0051_r2_appears" "{made}"\nplugin "beancount.ops.documents"\n2020-01-01 open Assets:Cash USD\n',
+        + f'plugin "s0051_r2_appears" "{escaped(made)}"\nplugin "beancount.ops.documents"\n'
+        + "2020-01-01 open Assets:Cash USD\n",
     )
     after_the_plugins(monkeypatch, lambda: made.write_bytes(b"%PDF"))
     result = loaded(root)
@@ -347,8 +352,8 @@ def test_with_a_plugin_after_the_check_a_document_is_asked_before_validation(
     document_maker(tmp_path, "s0051_r2_window_late")
     root = write(
         tmp_path / "main.beancount",
-        RAW + f'plugin "s0051_r2_window_early" "{early}"\nplugin "beancount.ops.documents"\n'
-        f'plugin "s0051_r2_window_late" "{tmp_path / "late.pdf"}"\n2020-01-01 open Assets:Cash USD\n',
+        RAW + f'plugin "s0051_r2_window_early" "{escaped(early)}"\nplugin "beancount.ops.documents"\n'
+        f'plugin "s0051_r2_window_late" "{escaped(tmp_path / "late.pdf")}"\n2020-01-01 open Assets:Cash USD\n',
     )
     during_validation(monkeypatch, early.unlink)
     result = loaded(root)
@@ -367,7 +372,7 @@ def test_a_document_directive_keeps_the_answer_asked_before_the_plugins(
     root = write(
         tmp_path / "main.beancount",
         RAW + 'plugin "beancount.ops.documents"\n'
-        f'plugin "s0051_r2_directive_late" "{tmp_path / "late.pdf"}"\n'
+        f'plugin "s0051_r2_directive_late" "{escaped(tmp_path / "late.pdf")}"\n'
         '2020-01-01 open Assets:Cash USD\n2024-01-01 document Assets:Cash "a.pdf"\n',
     )
     after_the_plugins(monkeypatch, pdf.unlink)
@@ -386,7 +391,8 @@ def test_a_plugin_document_beancount_never_checks_is_not_recorded(tmp_path: Path
     document_maker(tmp_path, "s0051_r2_unchecked")
     root = write(
         tmp_path / "main.beancount",
-        f'option "insert_pythonpath" "TRUE"\nplugin "s0051_r2_unchecked" "{made}"\n2020-01-01 open Assets:Cash USD\n',
+        f'option "insert_pythonpath" "TRUE"\nplugin "s0051_r2_unchecked" "{escaped(made)}"\n'
+        "2020-01-01 open Assets:Cash USD\n",
     )
     result = loaded(root)
     assert result.errors == []
@@ -401,7 +407,7 @@ def test_a_documents_plugin_listed_with_a_config_checks_nothing(tmp_path: Path) 
     root = write(
         tmp_path / "main.beancount",
         'option "plugin_processing_mode" "raw"\noption "insert_pythonpath" "TRUE"\n'
-        f'plugin "s0051_r2_configured" "{made}"\nplugin "beancount.ops.documents" "x"\n'
+        f'plugin "s0051_r2_configured" "{escaped(made)}"\nplugin "beancount.ops.documents" "x"\n'
         "2020-01-01 open Assets:Cash USD\n",
     )
     result = loaded(root)
@@ -420,7 +426,8 @@ def test_a_plugin_after_the_documents_plugin_leaves_its_document_unchecked_and_o
     root = write(
         tmp_path / "main.beancount",
         'option "plugin_processing_mode" "raw"\noption "insert_pythonpath" "TRUE"\n'
-        f'plugin "s0051_r2_early" "{early}"\nplugin "beancount.ops.documents"\nplugin "s0051_r2_late" "{late}"\n'
+        f'plugin "s0051_r2_early" "{escaped(early)}"\nplugin "beancount.ops.documents"\n'
+        f'plugin "s0051_r2_late" "{escaped(late)}"\n'
         "2020-01-01 open Assets:Cash USD\n",
     )
     result = loaded(root)
@@ -442,7 +449,7 @@ def test_a_plugin_document_named_by_a_path_object_is_recorded_by_its_text_and_ne
         root = write(
             tmp_path / f"{mode}.beancount",
             f'option "plugin_processing_mode" "{mode}"\noption "insert_pythonpath" "TRUE"\n'
-            f'plugin "s0051_r2_pathobj" "{made}"\n{listed}2020-01-01 open Assets:Cash USD\n'
+            f'plugin "s0051_r2_pathobj" "{escaped(made)}"\n{listed}2020-01-01 open Assets:Cash USD\n'
             f'2024-01-01 document Assets:Cash "y.pdf"\n',
         )
         result = loaded(root)

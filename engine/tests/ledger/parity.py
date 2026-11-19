@@ -36,6 +36,7 @@ from beancount.scripts import example
 from beancount.utils import encryption
 
 from ledger_engine.ledger.overlay import Loaded, LoadRefused
+from tests.beancount_text import escaped
 
 REPO = Path(__file__).resolve().parents[3]
 CORPUS = REPO / "corpora" / "ledgers" / "parity"
@@ -176,11 +177,6 @@ def split_by_heading(text: str) -> tuple[str, list[tuple[str, str]]]:
         # Two depths, so the recursion is used: `parts/03-banking/ledger.beancount`, `parts/04/credit-cards/...`.
         parts.append((f"{i:02d}-{slug}" if i % 2 else f"{i:02d}/{slug}", text[start:end]))
     return head, parts
-
-
-def escaped(p: Path) -> str:
-    """`p` as a Beancount string's text that its lexer reads back as `str(p)`: each backslash doubled."""
-    return str(p).replace("\\", "\\\\")
 
 
 def generated_cases(tmp: Path) -> list[Case]:

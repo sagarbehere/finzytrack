@@ -30,12 +30,12 @@ the new errors; and the count of Beancount's errors in the candidate. No entry o
 from __future__ import annotations
 
 import hashlib
-import os
 from collections import Counter
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Final, Literal, get_args
 
+from ledger_engine.fs.pathmodel import host
 from ledger_engine.ledger import overlay
 from ledger_engine.ledger.core import entry_keys, ledger_set
 from ledger_engine.ledger.core import semantic_diff as sd
@@ -136,7 +136,10 @@ def prepare(
 
 
 def _normal(path: str) -> bool:
-    return os.path.isabs(path) and os.path.normpath(path) == path
+    """Absolute and in its normal form by the engine's path model (`fs.pathmodel.host()`: POSIX's rules on macOS and
+    Linux, as `os.path` there; Windows' there; S0133, BL-0282)."""
+    m = host()
+    return m.is_absolute(path) and m.normpath(path) == path
 
 
 def _apply(current: se.Snapshot, plan: se.EditPlan) -> se.Applied:

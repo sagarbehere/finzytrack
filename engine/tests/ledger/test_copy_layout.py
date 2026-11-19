@@ -7,7 +7,10 @@ point outside, so they point to the copies. ADR-0017 already says copied workspa
 
 from __future__ import annotations
 
+import contextlib
+import sys
 from collections.abc import Sequence
+from contextlib import AbstractContextManager
 
 from ledger_engine.fs import pathmodel
 from ledger_engine.ledger.copy import parsed_from
@@ -30,8 +33,9 @@ ROOT = f"{B}/main.beancount"
 
 
 def src(
-    files: Sequence[str] = (ROOT,),
+    files: Sequence[str] | None = None,
     *,
+    root: str = ROOT,
     missing: Sequence[str] = (),
     globs: Sequence[str] = (),
     documents: Sequence[str] = (),
@@ -39,8 +43,35 @@ def src(
     listed: Sequence[str] = (),
 ) -> SourceSet:
     return SourceSet(
-        ROOT, tuple(files), tuple(missing), tuple(globs), tuple(documents), tuple(document_files), tuple(listed)
+        root,
+        tuple(files) if files is not None else (root,),
+        tuple(missing),
+        tuple(globs),
+        tuple(documents),
+        tuple(document_files),
+        tuple(listed),
     )
+
+
+WINDOWS = sys.platform == "win32"
+
+
+def native() -> AbstractContextManager[object]:
+    """This OS's own path model. Beancount's parser resolves a `document` path with this OS's `os.path` (`ntpath` on
+    Windows), so a test that reads one through `parsed_from` runs in this OS's paths; the module's other tests are
+    written in POSIX paths and run with the POSIX model on Windows (`windows_pending.POSIX_PATH_MODULES`; S0133)."""
+    return pathmodel.simulating(pathmodel.WINDOWS) if WINDOWS else contextlib.nullcontext()
+
+
+def on_host(posix: str) -> str:
+    """An absolute POSIX path as the load names it on this OS: unchanged off Windows, on drive `C:` there."""
+    return "C:" + posix.replace("/", "\\") if WINDOWS else posix
+
+
+def written(posix: str) -> str:
+    """An absolute POSIX path as a ledger line spells it on this OS: on Windows with its drive and `/`, which Beancount
+    reads as written (a `\\` in a string is an escape, and the copy refuses to rewrite such a line)."""
+    return "C:" + posix if WINDOWS else posix
 
 
 def rw(lay: Layout, file: str, data: bytes, *, root: bool = True, parsed: Parsed | None = None) -> object:
@@ -195,24 +226,34 @@ def test_an_indented_include_beancount_reads_is_rewritten() -> None:
 
 def test_a_document_directive_outside_is_pointed_at_its_copy() -> None:
     """r1 F3, owner's decision 3: the copy is self-contained; a v0.3 ledger-relative `document` path moves in."""
-    doc = "/data/documents/books-1a2b/Assets/Bank/s.pdf"
-    lay = layout(src(documents=["/data/documents/books-1a2b"], document_files=[doc, "/data/r/x.pdf"]))
-    data = (
-        b"2026-01-01 open Assets:Bank\n"
-        b'2026-01-07 document Assets:Bank "../documents/books-1a2b/Assets/Bank/s.pdf" #t\n'
-        b'2026-01-08 document Assets:Bank "/data/r/x.pdf"\n'
-    )
-    assert text(rw(lay, ROOT, data)) == (
-        b"2026-01-01 open Assets:Bank\n"
-        b'2026-01-07 document Assets:Bank "documents/Assets/Bank/s.pdf" #t\n'
-        b'2026-01-08 document Assets:Bank "outside/x.pdf"\n'
-    )
+    with native():
+        doc = on_host("/data/documents/books-1a2b/Assets/Bank/s.pdf")
+        lay = layout(
+            src(
+                root=on_host(ROOT),
+                documents=[on_host("/data/documents/books-1a2b")],
+                document_files=[doc, on_host("/data/r/x.pdf")],
+            )
+        )
+        data = (
+            b"2026-01-01 open Assets:Bank\n"
+            b'2026-01-07 document Assets:Bank "../documents/books-1a2b/Assets/Bank/s.pdf" #t\n'
+            + f'2026-01-08 document Assets:Bank "{written("/data/r/x.pdf")}"\n'.encode()
+        )
+        assert text(rw(lay, on_host(ROOT), data)) == (
+            b"2026-01-01 open Assets:Bank\n"
+            b'2026-01-07 document Assets:Bank "documents/Assets/Bank/s.pdf" #t\n'
+            b'2026-01-08 document Assets:Bank "outside/x.pdf"\n'
+        )
 
 
 def test_an_absolute_document_path_inside_the_folder_becomes_relative() -> None:
-    lay = layout(src(document_files=[f"{B}/r/x.pdf"]))
-    data = f'2026-01-01 open Assets:Bank\n2026-01-08 document Assets:Bank "{B}/r/x.pdf"\n'.encode()
-    assert text(rw(lay, ROOT, data)) == b'2026-01-01 open Assets:Bank\n2026-01-08 document Assets:Bank "r/x.pdf"\n'
+    with native():
+        lay = layout(src(root=on_host(ROOT), document_files=[on_host(f"{B}/r/x.pdf")]))
+        data = f'2026-01-01 open Assets:Bank\n2026-01-08 document Assets:Bank "{written(f"{B}/r/x.pdf")}"\n'.encode()
+        assert text(rw(lay, on_host(ROOT), data)) == (
+            b'2026-01-01 open Assets:Bank\n2026-01-08 document Assets:Bank "r/x.pdf"\n'
+        )
 
 
 def test_a_document_line_whose_text_does_not_name_beancounts_file_refuses() -> None:
@@ -246,25 +287,36 @@ def test_lines_end_at_a_newline_only_as_beancount_counts_them() -> None:
 
 
 def test_a_lone_carriage_return_does_not_shift_a_document_line() -> None:
-    lay = layout(src(document_files=["/data/r/r.pdf"]))
-    data = b'2026-01-01 open Assets:Bank\n; a\rb\n2026-01-08 document Assets:Bank "../r/r.pdf"\n'
-    assert (
-        text(rw(lay, ROOT, data))
-        == b'2026-01-01 open Assets:Bank\n; a\rb\n2026-01-08 document Assets:Bank "outside/r.pdf"\n'
-    )
+    with native():
+        lay = layout(src(root=on_host(ROOT), document_files=[on_host("/data/r/r.pdf")]))
+        data = b'2026-01-01 open Assets:Bank\n; a\rb\n2026-01-08 document Assets:Bank "../r/r.pdf"\n'
+        assert (
+            text(rw(lay, on_host(ROOT), data))
+            == b'2026-01-01 open Assets:Bank\n; a\rb\n2026-01-08 document Assets:Bank "outside/r.pdf"\n'
+        )
 
 
 def test_one_file_has_one_name_whatever_its_absolute_spelling() -> None:
     """r2 F3: Beancount keeps an absolute `document` path as written."""
-    assert norm_path("/x/rec/../rec/r.pdf") == "/x/rec/r.pdf"
-    assert norm_path("//x/r.pdf") == "/x/r.pdf"
-    assert norm_path("///x//r.pdf") == "/x/r.pdf"
-    lay = layout(src(document_files=["/x/rec/r.pdf"]))
-    data = b'2026-01-08 document A:B "/x/rec/../rec/r.pdf"\n2026-01-09 document A:B "//x/rec/r.pdf"\n'
-    assert (
-        text(rw(lay, ROOT, data))
-        == b'2026-01-08 document A:B "outside/r.pdf"\n2026-01-09 document A:B "outside/r.pdf"\n'
-    )
+    with native():
+        if WINDOWS:
+            assert norm_path("C:\\x\\rec\\..\\rec\\r.pdf") == "C:\\x\\rec\\r.pdf"
+            assert norm_path("C:/x/rec/r.pdf") == "C:\\x\\rec\\r.pdf"
+            assert norm_path("C:\\\\x\\r.pdf") == "C:\\x\\r.pdf"
+            other = "C:/x//rec/./r.pdf"  # Beancount keeps it as written; Windows reads `//` and `.` away
+        else:
+            assert norm_path("/x/rec/../rec/r.pdf") == "/x/rec/r.pdf"
+            assert norm_path("//x/r.pdf") == "/x/r.pdf"
+            assert norm_path("///x//r.pdf") == "/x/r.pdf"
+            other = "//x/rec/r.pdf"
+        lay = layout(src(root=on_host(ROOT), document_files=[on_host("/x/rec/r.pdf")]))
+        data = (
+            f'2026-01-08 document A:B "{written("/x/rec/../rec/r.pdf")}"\n2026-01-09 document A:B "{other}"\n'.encode()
+        )
+        assert (
+            text(rw(lay, on_host(ROOT), data))
+            == b'2026-01-08 document A:B "outside/r.pdf"\n2026-01-09 document A:B "outside/r.pdf"\n'
+        )
 
 
 # -- Windows paths (S0127, BL-0279): the same layout and rewrites in Windows' form ----------------------------------

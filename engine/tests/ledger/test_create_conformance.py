@@ -137,6 +137,11 @@ def durable(fs: MemFS) -> dict[str, set[str]]:
     return out
 
 
+@pytest.fixture(autouse=True)
+def _posix_documents_roots(monkeypatch: pytest.MonkeyPatch) -> None:
+    tc.posix_documents_roots(monkeypatch)  # the copy over the fake on Windows (`test_copy.posix_documents_roots`)
+
+
 @dataclass(frozen=True)
 class TView:
     ex: bool

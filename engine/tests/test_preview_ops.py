@@ -250,7 +250,8 @@ def test_a_rebuild_from_the_hint_keeps_the_stamps_include_patterns(ws: tuple[Pat
     assert decode(first["fingerprint"].encode()).globs  # the stamp names the pattern
     done = rebuilt(ald, params, first["fingerprint"])
     assert (done["outcome"], done["publish"]) == ("loaded", "published")
-    assert [g for g, _ in decode(published_stamp(ald).encode()).globs] == [str(sub / "*.bean")]
+    # the pattern as Beancount joins it (`os.path.join(folder, "sub/*.bean")`: `...\\sub/*.bean` on Windows)
+    assert [g for g, _ in decode(published_stamp(ald).encode()).globs] == [os.path.join(str(main.parent), "sub/*.bean")]
     assert call(ald, params, done["number"], replace_buy(main))["result"]["outcome"] == "prepared"
     (sub / "c.bean").write_text("2024-01-01 open Assets:C\n")
     again = call(ald, params, done["number"], replace_buy(main))["result"]
@@ -635,9 +636,10 @@ def test_a_load_refusal_names_its_plugin_and_line_in_the_answer() -> None:
     assert (out.path, out.line) == (None, 7)
     assert out.detail is not None
     assert out.detail.startswith("my_plugin: ")
-    on_disk = contract.Refused("load", "number-failed", "/l/main.bean", "the load of the candidate cannot run", 0)
+    main = "C:\\l\\main.bean" if sys.platform == "win32" else "/l/main.bean"  # an absolute path of this OS
+    on_disk = contract.Refused("load", "number-failed", main, "the load of the candidate cannot run", 0)
     out = result_of(preview.Answer("refused", refused=on_disk))
-    assert (out.path, out.line, out.detail) == ("/l/main.bean", None, "the load of the candidate cannot run")
+    assert (out.path, out.line, out.detail) == (main, None, "the load of the candidate cannot run")
 
 
 # -- S0120: no size limit on a ledger file; the answer's guard ---------------------------------------------------------

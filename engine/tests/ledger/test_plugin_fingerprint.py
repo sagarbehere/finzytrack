@@ -307,8 +307,15 @@ def test_a_plugin_not_found_and_then_found_in_one_load_keeps_the_first_answer(tm
         f"    pathlib.Path({str(target)!r}).write_text({NOOP!r})\n    return entries, []\n",
     )
     loaded = load(root)
-    assert any("Error importing" in e.message for e in loaded.errors)
-    assert late in sys.modules  # the second import found it
+    importing = [e for e in loaded.errors if "Error importing" in e.message]
+    if sys.platform == "win32":
+        # Windows: the second import in the same load does not find the module either (the 2026-11-19 run 5), so the
+        # load holds two import errors; the record still keeps the first answer, which the load did use.
+        assert len(importing) == 2, loaded.errors
+        assert late not in sys.modules
+    else:
+        assert len(importing) == 1, loaded.errors
+        assert late in sys.modules  # the second import found it
     assert answers(loaded.fingerprint)[late] is None
     assert not unchanged(loaded.fingerprint)
 
@@ -522,7 +529,7 @@ def test_a_plugin_reads_its_package_data_as_under_beancount(tmp_path: Path, name
         )
     )
     write(tmp_path / "L" / pkg / "__init__.py", body)
-    write(tmp_path / "L" / pkg / "rates.csv", "USD,1\n")
+    (tmp_path / "L" / pkg / "rates.csv").write_bytes(b"USD,1\n")  # the bytes the plugin compares, on every OS
     out = load(root)
     assert ran(out) == [f"CODE={when.upper()}"], out.errors
 

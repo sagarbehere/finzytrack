@@ -34,6 +34,7 @@ from ledger_engine.ledger.fingerprint import observe
 from ledger_engine.ledger.policy import DesktopPolicy
 from ledger_engine.mirror import publish as pb
 from ledger_engine.mirror.store import SqliteStore
+from tests.beancount_text import escaped
 from tests.mirror.publish_support import BUILT_AT, CUR, ENGINE_BUILD, KEY, TODAY, current_in, fs_now, meta
 from tests.windows_pending import NO_FIFO, NO_UID
 
@@ -507,7 +508,7 @@ def test_a_glob_the_hint_names_that_matches_nothing_and_the_stamp_lacks_is_not_f
 def _document_ledger(root: Path, doc: str) -> None:
     root.write_bytes(
         b'option "operating_currency" "USD"\noption "documents" "docs"\n2026-01-01 open Assets:Cash\n'
-        + f'2026-01-02 document Assets:Cash "{doc}"\n'.encode()
+        + f'2026-01-02 document Assets:Cash "{escaped(doc)}"\n'.encode()
     )
 
 
@@ -559,7 +560,9 @@ def test_a_document_file_outside_its_roots_by_a_dotdot_is_moved_with_it(root: Pa
     root.write_bytes(MAIN + b'option "documents" "docs"\n')
     hint = hint_of(root)
     root.write_bytes(
-        MAIN + b'option "documents" "docs"\n' + f'2026-01-03 document Assets:Cash "{docs}/../receipt.pdf"\n'.encode()
+        MAIN
+        + b'option "documents" "docs"\n'
+        + f'2026-01-03 document Assets:Cash "{escaped(docs)}/../receipt.pdf"\n'.encode()
     )
     a = go(rebuild.Ports(), hint, FakeJob())
     assert a.outcome == "moved"
@@ -585,7 +588,7 @@ def test_a_document_file_under_its_root_added_after_the_plan_and_deleted_during_
         root.write_bytes(base)
         hint = hint_of(root)  # the save's plan
         root.write_bytes(
-            base + f'2026-01-02 document Assets:Cash "{doc}"\n'.encode()
+            base + f'2026-01-02 document Assets:Cash "{escaped(doc)}"\n'.encode()
         )  # outside edit, before the rebuild
         a = go(with_load(doc.unlink), hint, FakeJob())
         assert a.outcome == "moved", a

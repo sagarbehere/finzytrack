@@ -41,7 +41,9 @@ FILLED = precision.FILLED_KEY
 
 def loaded(tmp_path: Path, body: str, name: str = "main.beancount") -> Loaded:
     root = tmp_path / name
-    root.write_text(OPEN + body, encoding="utf-8")
+    # `\n` on every OS: Windows' `write_text` writes `\r\n`, and Beancount 3.2.0's lexer refuses a one-letter
+    # currency before a `\r` ("Invalid token: 'X'", on every OS; the 2026-11-19 run 5).
+    root.write_text(OPEN + body, encoding="utf-8", newline="\n")
     out = load(str(root), {}, DESKTOP)
     assert isinstance(out, Loaded), out
     return out
