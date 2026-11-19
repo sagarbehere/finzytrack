@@ -35,10 +35,6 @@ from ledger_engine.ledger.core import source_edit as se
 from ledger_engine.ledger.policy import DESKTOP
 from ledger_engine.mirror.core import rows
 from tests.ledger import producer as pr
-from tests.windows_pending import BL_0282
-
-if sys.platform == "win32":
-    raise pytest.skip.Exception(BL_0282, allow_module_level=True)
 
 pytestmark = [pytest.mark.inv("INV-01"), pytest.mark.inv("INV-22"), pytest.mark.inv("INV-03")]
 

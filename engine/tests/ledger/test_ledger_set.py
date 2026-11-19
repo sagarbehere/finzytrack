@@ -14,7 +14,6 @@ from __future__ import annotations
 import glob
 import hashlib
 import shutil
-import sys
 import tomllib
 from collections.abc import Callable
 from os import path
@@ -37,10 +36,6 @@ from ledger_engine.ledger.core.ledger_set import (
 from ledger_engine.ledger.fingerprint import observe
 from ledger_engine.ledger.overlay import Loaded, load
 from ledger_engine.ledger.policy import DESKTOP
-from tests.windows_pending import BL_0282
-
-if sys.platform == "win32":
-    raise pytest.skip.Exception(BL_0282, allow_module_level=True)
 
 pytestmark = pytest.mark.inv("INV-22")
 

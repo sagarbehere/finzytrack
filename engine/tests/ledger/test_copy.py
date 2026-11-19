@@ -23,7 +23,6 @@ import errno
 import hashlib
 import posixpath
 import re
-import sys
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 
@@ -39,10 +38,6 @@ from ledger_engine.ledger.create import MANIFEST_DIR, Created, CreateOutcome, Ne
 from ledger_engine.ledger.paths import path_key
 from tests.fakes.memfs import Crash, MemFS
 from tests.ledger.worlds import with_folders
-from tests.windows_pending import BL_0282
-
-if sys.platform == "win32":
-    raise pytest.skip.Exception(BL_0282, allow_module_level=True)
 
 pytestmark = [pytest.mark.inv("INV-01"), pytest.mark.inv("INV-22"), pytest.mark.inv("INV-32")]
 

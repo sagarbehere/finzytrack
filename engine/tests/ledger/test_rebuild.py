@@ -35,7 +35,7 @@ from ledger_engine.ledger.policy import DesktopPolicy
 from ledger_engine.mirror import publish as pb
 from ledger_engine.mirror.store import SqliteStore
 from tests.mirror.publish_support import BUILT_AT, CUR, ENGINE_BUILD, KEY, TODAY, current_in, fs_now, meta
-from tests.windows_pending import BL_0282, NO_FIFO, NO_UID
+from tests.windows_pending import NO_FIFO, NO_UID
 
 pytestmark = [pytest.mark.inv("INV-22"), pytest.mark.usefixtures("windows_port")]
 
@@ -552,8 +552,6 @@ def test_a_document_file_outside_its_roots_by_a_dotdot_is_moved_with_it(root: Pa
     """S0088 round 1 (mutant `under-not-normalized`): a `document` path that starts with a documents root's string
     but leaves it by `..` is outside the root's listing, so a load that used it while the set did not name it is moved
     with it in the set (its bytes were not observed before the load)."""
-    if sys.platform == "win32":
-        raise pytest.skip.Exception(BL_0282)  # Beancount's document paths on Windows
     docs = root.parent / "docs"
     docs.mkdir()
     receipt = root.parent / "receipt.pdf"
@@ -577,8 +575,6 @@ def test_a_document_file_under_its_root_added_after_the_plan_and_deleted_during_
     of it was not a moved disk, and the stamp observed it only after the load, when it was already deleted: the
     generation was published with rows lacking Beancount's "File does not exist" error and stayed fresh. Every
     `document` file the load used and the hint lacks is now counted by itself: the try is `moved`, nothing published."""
-    if sys.platform == "win32":
-        raise pytest.skip.Exception(BL_0282)  # the `entry_keys` re.sub of a Windows path (BL-0282)
     docs = root.parent / "docs"
     (docs / "priv").mkdir(parents=True)
     doc = docs / "priv" / "r.pdf"

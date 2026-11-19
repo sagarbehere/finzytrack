@@ -25,10 +25,6 @@ from ledger_engine.protocol.save import engine_build
 from tests.ledger import producer
 from tests.mirror.publish_support import current_in
 from tests.test_save_ops import Channel, engine, request
-from tests.windows_pending import BL_0282
-
-if sys.platform == "win32":  # every preview keys the baseline's errors: `entry_keys`' re.sub of a Windows path
-    raise pytest.skip.Exception(BL_0282, allow_module_level=True)
 
 pytestmark = [
     pytest.mark.usefixtures("windows_port"),  # Windows: the adapter (S0130, BL-0206 done)

@@ -76,7 +76,6 @@ import errno
 import hashlib
 import itertools
 import os
-import sys
 import time
 from collections import Counter
 from collections.abc import Callable, Generator, Mapping
@@ -84,11 +83,6 @@ from dataclasses import dataclass, field
 from typing import Any, Final, Literal
 
 import pytest
-
-from tests.windows_pending import BL_0282
-
-if sys.platform == "win32":
-    raise pytest.skip.Exception(BL_0282, allow_module_level=True)
 from hypothesis import HealthCheck, settings, stateful
 from hypothesis import strategies as st
 from hypothesis.stateful import RuleBasedStateMachine, initialize, invariant, precondition, rule

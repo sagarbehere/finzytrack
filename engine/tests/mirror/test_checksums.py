@@ -26,10 +26,6 @@ from ledger_engine.mirror.core.rows import Row
 from tests.ledger import parity
 from tests.mirror import checksums
 from tests.mirror.checksums import LEDGERS, NOT_READ, SNAPSHOT, Built, Root
-from tests.windows_pending import BL_0282
-
-if sys.platform == "win32":
-    raise pytest.skip.Exception(BL_0282, allow_module_level=True)
 
 pytestmark = pytest.mark.inv("INV-05")
 

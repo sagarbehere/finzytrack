@@ -43,7 +43,7 @@ from ledger_engine.ledger.core.ledger_set import (
 from ledger_engine.ledger.fingerprint import chunks, file_state, observe, regular
 from ledger_engine.ledger.overlay import Loaded, load
 from ledger_engine.ledger.policy import DESKTOP
-from tests.windows_pending import BL_0282, NO_FIFO, NO_UID
+from tests.windows_pending import NO_FIFO, NO_UID
 
 pytestmark = pytest.mark.inv("INV-22")
 
@@ -362,8 +362,6 @@ def dotdot_through_a_link(tmp_path: Path) -> Path:
 def test_a_dotdot_through_a_link_observes_unchanged(present: str, tmp_path: Path) -> None:
     """The glob's question and the loader's are about two different files: each answer is recorded under the string
     it was asked of, so an unchanged set observes unchanged (verifier round 2, F1, cases A and B)."""
-    if sys.platform == "win32":
-        raise pytest.skip.Exception(BL_0282)
     root = dotdot_through_a_link(tmp_path)
     write(tmp_path / present / "common.beancount", "")
     result = loaded(root)
@@ -378,8 +376,6 @@ def test_a_dotdot_through_a_link_observes_unchanged(present: str, tmp_path: Path
 def test_a_file_appearing_behind_a_dotdot_through_a_link_changes_it(tmp_path: Path) -> None:
     """Neither file exists; ext/common.beancount appears: the next load's error changes, so must the fingerprint
     (verifier round 2, F1, case C)."""
-    if sys.platform == "win32":
-        raise pytest.skip.Exception(BL_0282)
     root = dotdot_through_a_link(tmp_path)
     before = loaded(root)
     write(tmp_path / "ext" / "common.beancount", "")

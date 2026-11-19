@@ -74,7 +74,10 @@ def message_without_locations(message: str, source_file: str | None) -> str:
     out = _PRINTED_LINENO.sub("'lineno': _", message)
     out = _PRINTED_FILENAME.sub("'filename': _", out)
     if source_file:
-        out = re.sub(re.escape(source_file) + r":\d+", source_file + ":_", out)
+        # A function as the replacement: the path is text, never `re.sub`'s template syntax (`\1`, `\x`, `\n` in a
+        # file's name, every Windows path; BL-0282, S0133).
+        placed = source_file + ":_"
+        out = re.sub(re.escape(source_file) + r":\d+", lambda _: placed, out)
     return out
 
 

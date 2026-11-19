@@ -52,7 +52,6 @@ from __future__ import annotations
 
 import posixpath
 import re
-import sys
 from collections import Counter
 from collections.abc import Iterator, Mapping
 from dataclasses import dataclass, field
@@ -73,10 +72,6 @@ from tests.fakes.memfs import Crash, MemFS
 from tests.ledger import test_copy as tc
 from tests.ledger.test_save_conformance import REPO, Divergence, State, corpus
 from tests.ledger.worlds import with_folders
-from tests.windows_pending import BL_0282
-
-if sys.platform == "win32":
-    raise pytest.skip.Exception(BL_0282, allow_module_level=True)
 
 pytestmark = [pytest.mark.inv("INV-22"), pytest.mark.inv("INV-01"), pytest.mark.inv("INV-32")]
 

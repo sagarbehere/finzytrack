@@ -178,6 +178,11 @@ def split_by_heading(text: str) -> tuple[str, list[tuple[str, str]]]:
     return head, parts
 
 
+def escaped(p: Path) -> str:
+    """`p` as a Beancount string's text that its lexer reads back as `str(p)`: each backslash doubled."""
+    return str(p).replace("\\", "\\\\")
+
+
 def generated_cases(tmp: Path) -> list[Case]:
     """The cases built at test time, each in its own folder under `tmp`."""
     text = example_ledger()
@@ -193,7 +198,7 @@ def generated_cases(tmp: Path) -> list[Case]:
         folder = tmp / name
         for rel, content in files.items():
             (folder / rel).parent.mkdir(parents=True, exist_ok=True)
-            (folder / rel).write_text(content, encoding="utf-8")
+            (folder / rel).write_text(content, encoding="utf-8", newline="\n")  # the same bytes on every OS
         folder.mkdir(parents=True, exist_ok=True)
         cases.append(Case(name, folder / root, "load", features, errors=errors or {}, generated=True))
 
@@ -212,13 +217,16 @@ def generated_cases(tmp: Path) -> list[Case]:
     other, docs = folder / "elsewhere" / "other.beancount", folder / "scans"
     statement = docs / "Assets" / "Cash" / "2024-01-31.statement.txt"
     receipt = folder / "receipts" / "2024-02-01.receipt.txt"
+    # Beancount's lexer unescapes a string (`\U` is `U`), so a Windows ledger spells an absolute path with `/` or with
+    # doubled backslashes: both forms here, and on POSIX the same bytes as before (BL-0282, S0133).
     case(
         "absolute-paths",
         ("include-absolute", "documents-root", "documents-root-absolute", "document-directive"),
         {
             "main.beancount": (
-                f'option "documents" "{docs}"\ninclude "{other}"\n2024-01-01 open Assets:Cash USD\n'
-                f'2024-02-01 document Assets:Cash "{receipt}"\n'
+                f'option "documents" "{docs.as_posix()}"\ninclude "{escaped(other)}"\n'
+                "2024-01-01 open Assets:Cash USD\n"
+                f'2024-02-01 document Assets:Cash "{receipt.as_posix()}"\n'
             ),
             "elsewhere/other.beancount": "2024-01-01 open Expenses:Food USD\n",
             str(statement.relative_to(folder)): "synthetic placeholder (S0094)\n",
@@ -313,7 +321,7 @@ def _include_recursive_glob(x: Facts) -> bool:
     """A `**` pattern whose matches lie at two depths or more (the recursion is used, not only one level)."""
     for f, p in x.includes():
         if "**" in p:
-            depths = {m.count("/") for m in glob.glob(_resolved(f, p), recursive=True)}
+            depths = {len(Path(m).parts) for m in glob.glob(_resolved(f, p), recursive=True)}  # Windows' glob gives `\`
             if len(depths) >= 2:
                 return True
     return False

@@ -21,7 +21,10 @@ HELD_FOLDER: Final = (
 NO_MOUNT: Final = (
     "a volume mounted inside the mirror folder needs hdiutil or sudo mount; Windows' mount folders: untested"
 )
-COPY_CHECK: Final = "BL-0087: the copy's check (a fresh load) runs on Windows once writes are on (tests: POSIX signals)"
+COPY_CHECK: Final = (
+    "BL-0087: the copy's check (a fresh load) runs on Windows once writes are on "
+    "(it reads the child's answer with `selectors` on a pipe, POSIX only; its own tests send POSIX signals)"
+)
 NO_FIFO: Final = "Windows has no FIFO in its file system: the non-blocking read it guards against cannot arise there"
 NO_UID: Final = "Windows has no POSIX user and group ids or permission bits on files"
 FLOCK_HOLDER: Final = "a POSIX `flock` holder; the Windows engine lock's own tests are tests/fs/test_windows.py"

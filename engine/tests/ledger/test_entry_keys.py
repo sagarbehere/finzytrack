@@ -98,3 +98,29 @@ def test_what_the_parser_does_not_tell_apart_has_one_key() -> None:
 def test_a_payee_written_as_empty_is_not_no_payee() -> None:
     """S0116 round 1 F4: Beancount's printer writes both as `* "lunch"`; the parse holds `""` and None."""
     assert key(TXN.replace('"Shop" "lunch"', '"" "lunch"')) != key(TXN.replace('"Shop" "lunch"', '"lunch"'))
+
+
+BACKSLASH_PATHS = (
+    "/l/a\\x41b/main.bean",  # `\x` with hex digits: re's replacement syntax rejects it ("bad escape")
+    "/l/a\\1/main.bean",  # a group reference
+    "/l/a\\Users/main.bean",  # `\U`
+    "/l/a\\new/main.bean",  # `\n`: re rewrote it to a newline
+    "/l/a\\\\b/main.bean",  # `\\`: re rewrote it to one backslash
+    "C:\\Books\\x\\1\\new\\main.bean",  # a Windows path holds several of them
+)
+
+
+def test_a_path_holding_backslashes_is_left_out_of_its_message_as_written() -> None:
+    """BL-0282 (1), S0127 verifier F6: the error's file is text to match, never `re.sub`'s replacement syntax. With
+    a location in the message it becomes `<path>:_`, the path kept exactly; without one the message is unchanged.
+    Before S0133, `\\x`, `\\1` and `\\U` raised `re.PatternError` (the contract refused `fault`), and `\\n` and `\\\\`
+    were rewritten."""
+    for p in BACKSLASH_PATHS:
+        assert entry_keys.message_without_locations(f"bad at {p}:3 here", p) == f"bad at {p}:_ here", p
+        assert entry_keys.message_without_locations("bad here", p) == "bad here", p
+        assert entry_keys.message_without_locations(f"{p}:3 and {p}:12", p) == f"{p}:_ and {p}:_", p
+        row = (1, p, 3, f"bad at {p}:3 here", None, "PluginError")
+        moved = (1, p, 9, f"bad at {p}:9 here", None, "PluginError")
+        other = (1, p, 9, f"bad at {p}x:9 here", None, "PluginError")
+        assert entry_keys.error_key(row) == entry_keys.error_key(moved), p
+        assert entry_keys.error_key(row) != entry_keys.error_key(other), p
