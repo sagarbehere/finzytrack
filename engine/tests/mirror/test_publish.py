@@ -17,6 +17,7 @@ link `current.db` (`CUR`, `current_in`, `point_at`), plus the Windows cases at t
 from __future__ import annotations
 
 import contextvars
+import json
 import os
 import re
 import sqlite3
@@ -39,6 +40,7 @@ from ledger_engine.mirror import build as build_mod
 from ledger_engine.mirror import publish as pb
 from ledger_engine.mirror.core import rows, schema
 from ledger_engine.mirror.store import SqliteStore
+from tests.mirror.fake_store import MAGIC, FakeStore
 from tests.mirror.publish_support import (
     CUR,
     ENGINE_BUILD,
@@ -717,13 +719,13 @@ def test_a_folder_at_current_db_the_cleanup_cannot_remove_is_moved_aside(
         out = published(publish_job(fs, cache, root))
         assert current(cache) == out.gen.name
         aside = [p for p in m.iterdir() if p.name.endswith(".aside")]
-        assert len(aside) == 1
-        assert (aside[0] / "inner" / "x").read_bytes() == b"x"
     finally:
         for p in m.rglob("inner"):
             p.chmod(0o700)
             if WINDOWS:
                 _allow_removal(p / "x", p)
+    assert len(aside) == 1
+    assert (aside[0] / "inner" / "x").read_bytes() == b"x"  # read once the deny entries are gone (Windows)
 
 
 EVERYONE = "*S-1-1-0"
@@ -1015,22 +1017,49 @@ def _shares() -> list[str]:
     return [v for v in os.environ.get("FT_TEST_SHARE", "").split(";") if v]
 
 
+class PortStore(FakeStore):
+    """The fake store's generations written through the port itself (one synced `create`), so the publish's own
+    steps (the folder, the cleanup, the syncs, the swap) run on a real share where SQLite's open by URI cannot (the
+    2026-11-19 run 1: the folder handle's path is the share's UNC path; BL-0298). Its `meta` is the fake store's,
+    which reads through the port."""
+
+    @override
+    def build(
+        self, d: DirHandle, name: str, result: Any, today: Any, stamp: build_mod.Stamp
+    ) -> build_mod.Built | build_mod.BuildFailed | pb.Replaced:
+        del result
+        facts = {
+            "surface_version": str(schema.SURFACE_VERSION),
+            "ledger_version": stamp.ledger_version,
+            "fingerprint": stamp.fingerprint,
+            "export_version": schema.EXPORT_VERSION,
+            "built_at": stamp.built_at,
+            "build_complete": "1",
+            "engine_build": stamp.engine_build,
+            "as_of": today.isoformat(),
+            "published_by": stamp.published_by,
+        }
+        made = d.create(name, MAGIC + json.dumps(facts, sort_keys=True).encode(), 0o600)
+        st = d.stat(name)
+        if st is None or st.identity != made:
+            return pb.Replaced()
+        return build_mod.Built(name, {}, rows.COMPLETE)
+
+
 @pytest.mark.skipif(not _shares(), reason="no network share given (FT_TEST_SHARE)")
 def test_on_windows_a_publish_into_a_cache_folder_on_a_network_share_lands(
     fs: FileSystem, tmp_path: Path, root: Path
 ) -> None:
     """ADR-0015 amendment of 2026-11-18 (question 3): a share is not offered the POSIX rename, so the swap takes the
     plain rename (§11, stated) and publishes, where it was refused with another error on the base."""
-    drives = [s for s in _shares() if not s.startswith("\\\\")]  # SQLite's URI open needs a drive (BL-0298)
-    if not drives:
-        pytest.skip("no network share mapped to a drive letter (FT_TEST_SHARE)")
-    share_cache = Path(drives[0]) / f"ft-{tmp_path.name}-{os.getpid()}" / "cache"
+    share_cache = Path(_shares()[0]) / f"ft-{tmp_path.name}-{os.getpid()}" / "cache"
     share_cache.mkdir(parents=True)
+    store = PortStore()  # SQLite cannot open a generation on a share by its URI yet (BL-0298)
     try:
-        first = published(publish_job(fs, share_cache, root))
-        second = published(publish_job(fs, share_cache, root))
+        first = published(publish_job(fs, share_cache, root, store=store))
+        second = published(publish_job(fs, share_cache, root, store=store))
         assert second.gen.number > first.gen.number
-        assert (mirror_of(share_cache) / pb.POINTER).read_bytes() == second.gen.name.encode("ascii")
+        assert current(share_cache) == second.gen.name
     finally:
         import shutil
 
