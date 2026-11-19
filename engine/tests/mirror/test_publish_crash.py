@@ -450,7 +450,7 @@ def test_a_pointer_renamed_before_its_data_is_synced_is_caught(monkeypatch: pyte
 def without_posix_rename(fs: MemFS, how: str) -> None:
     """The cache's drive lacks the rename with POSIX semantics: its volume flag clear (ReFS, FAT32, exFAT, an older
     Windows; S0132, BL-0294). A network share, which the adapter never offers it either, is refused before the swap
-    (S0134: `test_a_cache_folder_on_a_network_share_is_refused_before_any_effect`)."""
+    (S0134: `test_on_windows_a_cache_folder_on_a_network_share_is_refused_before_any_effect`)."""
     with fs.open_dir(CACHE) as d:
         if how == "no-flag":
             fs.no_posix_rename.add(d.device())
@@ -683,18 +683,19 @@ def on_a_share(fs: MemFS, where: str) -> None:
     fs.remote.add(SHARE)
 
 
-@pytest.mark.parametrize("earlier", [False, True], ids=["fresh", "published"])
-@pytest.mark.parametrize(
+SHARE_AT = pytest.mark.parametrize(
     "where", [CACHE, f"{CACHE}/workspaces", f"{CACHE}/workspaces/{KEY}", MIRROR], ids=["cache", "ws", "key", "mirror"]
 )
-def test_a_cache_folder_on_a_network_share_is_refused_before_any_effect(
-    windows: bool, where: str, earlier: bool
-) -> None:
-    """publish.md §2 "On a network share" (owner, 2026-11-19: "Ok. Option 1 for Bl-0298."): when any folder of the
-    mirror's path is on a remote volume, at the cache folder or at a folder inside it (a share can be mounted at any
-    folder on macOS and Linux, and a link can lead there on Windows), `open_folder` refuses it, naming that folder,
-    before any effect: no folder made, synced or removed, nothing cleaned, built or swapped."""
-    fs = world(windows)
+
+
+@pytest.mark.parametrize("earlier", [False, True], ids=["fresh", "published"])
+@SHARE_AT
+def test_on_windows_a_cache_folder_on_a_network_share_is_refused_before_any_effect(where: str, earlier: bool) -> None:
+    """publish.md §2 "On a network share" (owner, 2026-11-19: "Ok. Option 1 for Bl-0298." and "Windows only
+    (Recommended)"): on Windows, when any folder of the mirror's path is on a remote volume, at the cache folder or at
+    a folder inside it (a symbolic link can lead there), `open_folder` refuses it, naming that folder, before any
+    effect: no folder made, synced or removed, nothing cleaned, built or swapped."""
+    fs = world(windows=True)
     if earlier:
         assert isinstance(job(fs), pb.Published)
     on_a_share(fs, where)
@@ -705,9 +706,9 @@ def test_a_cache_folder_on_a_network_share_is_refused_before_any_effect(
     assert (fs.snapshot(), len(fs.effects)) == before
 
 
-def test_the_cache_folders_parent_on_a_share_is_refused_before_the_cache_folder_is_made(windows: bool) -> None:
+def test_on_windows_the_cache_folders_parent_on_a_share_is_refused_before_the_cache_folder_is_made() -> None:
     """The cache folder purged by the OS (§9) and its parent on a share: refused before `open_folder` makes it."""
-    fs = MemFS(windows=windows)
+    fs = MemFS(windows=True)
     on_a_share(fs, "/apps")
     before = (fs.snapshot(), len(fs.effects))
     with pytest.raises(pb.CacheOnShare) as e, pb.open_folder(fs, "/apps/cache", KEY):
@@ -716,11 +717,33 @@ def test_the_cache_folders_parent_on_a_share_is_refused_before_the_cache_folder_
     assert (fs.snapshot(), len(fs.effects)) == before
 
 
+@pytest.mark.parametrize("earlier", [False, True], ids=["fresh", "published"])
+@SHARE_AT
+def test_on_macos_and_linux_a_cache_folder_on_a_network_share_publishes_as_before(where: str, earlier: bool) -> None:
+    """@regression-guard. The refusal's scope (owner, 2026-11-19: "Windows only (Recommended)"; publish.md §11
+    "Limit (a cache folder on a network share on macOS and Linux)"): the POSIX adapters do not answer `remote()`, so
+    a share there refuses nothing and the job publishes as before; one mounted at `mirror/` itself is another volume
+    there, refused as before (`EXDEV`, §2 "Never another volume")."""
+    fs = world(windows=False)
+    if earlier:
+        assert isinstance(job(fs), pb.Published)
+    on_a_share(fs, where)
+    if where == MIRROR:
+        with pytest.raises(OSError, match="another volume") as e:
+            job(fs)
+        assert not isinstance(e.value, pb.CacheOnShare)
+        return
+    out = job(fs)
+    assert isinstance(out, pb.Published), out
+    assert seen_by_a_reader(fs) == out.gen.name
+
+
 @pytest.mark.parametrize("where", ["local-volume", "share-inside-mirror", "share-elsewhere"])
-def test_a_local_cache_folder_still_publishes(windows: bool, where: str) -> None:
-    """@regression-guard. The must-not-pass of the refusal: another local volume at `<key>/`, a share mounted inside
-    `mirror/` (never entered: the cleanup counts it failed) and a share elsewhere on the machine refuse nothing."""
-    fs = world(windows)
+def test_on_windows_a_local_cache_folder_still_publishes(where: str) -> None:
+    """@regression-guard. The must-not-pass of the refusal on Windows: another local volume at `<key>/`, a share
+    mounted inside `mirror/` (never entered: the cleanup counts it failed) and a share elsewhere on the machine refuse
+    nothing."""
+    fs = world(windows=True)
     if where == "local-volume":
         fs.outside_mkdirs(f"{CACHE}/workspaces/{KEY}")
         fs.outside_mount(f"{CACHE}/workspaces/{KEY}", SHARE)

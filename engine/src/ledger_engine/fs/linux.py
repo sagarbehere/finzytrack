@@ -78,7 +78,7 @@ from ledger_engine.fs.port import (
 if sys.platform != "linux":
     raise ImportError("the Linux adapter; select one with ledger_engine.fs.this_os")  # noqa: TRY003 (one raise site)
 
-from ledger_engine.fs.posix import PosixDir, PosixFS, PosixLegacyLocks, network_type
+from ledger_engine.fs.posix import PosixDir, PosixFS, PosixLegacyLocks
 
 RENAME_NOREPLACE: Final = 1
 RENAME_EXCHANGE: Final = 2
@@ -303,10 +303,6 @@ class LinuxDir(PosixDir):
 
     def fs_type(self) -> str:
         return mount_type(self._statx().mnt_id, os.fstat(self.fd).st_dev)
-
-    def remote(self) -> bool:
-        """The mount's type in Linux's list of network file systems (`posix.network_type`; S0134)."""
-        return network_type(self.fs_type())
 
     @override
     def locked(self, name: str, st: os.stat_result) -> bool:

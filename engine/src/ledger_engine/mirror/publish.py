@@ -12,9 +12,9 @@ above `mirror/` are the app's and may be links (§2).
 **One job at a time** (ADR-0064): only an engine job (`open` or `rebuild`) holding the engine lock runs the publish
 and the cleanup, so no two run together and none runs beside a save.
 
-The steps of a job (§4): `open_folder` and `clean` first (step 1, before the job's load; `open_folder` refuses a
-folder of the path on a network share before any effect, `CacheOnShare`: §2, S0134); after the load, `publish`:
-the name (`new_name`, step 2), the build into it (`Store.build`, step 3, with the identity check), never an
+The steps of a job (§4): `open_folder` and `clean` first (step 1, before the job's load; on Windows `open_folder`
+refuses a folder of the path on a network share before any effect, `CacheOnShare`: §2, S0134); after the load,
+`publish`: the name (`new_name`, step 2), the build into it (`Store.build`, step 3, with the identity check), never an
 incomplete build (step 4), the file synced (step 5), the folder synced (step 6), the caller's re-check (step 7: the
 ledger set observed again, no `.open` journal), the swap (`swap`, step 8). A generation is never written after it is
 published and a name is never used twice (the random tag, §3), so readers that pinned a name read only that build.
@@ -204,9 +204,9 @@ def _parent_path(app_cache: str, key: str) -> str:
 
 
 class CacheOnShare(Exception):
-    """§2 "On a network share" (owner, 2026-11-19: "Ok. Option 1 for Bl-0298."; S0134): a folder of the mirror's
-    path is on a network share (`DirHandle.remote`); `folder` is that folder's path, for the user's text only (never
-    logged, INV-23). Raised before any effect in it."""
+    """§2 "On a network share" (owner, 2026-11-19: "Ok. Option 1 for Bl-0298." and "Windows only (Recommended)";
+    S0134): a folder of the mirror's path is on a network share (`DirHandle.remote` True, Windows only); `folder` is
+    that folder's path, for the user's text only (never logged, INV-23). Raised before any effect in it."""
 
     def __init__(self, folder: str) -> None:
         super().__init__("the cache folder is on a network share")
@@ -214,10 +214,10 @@ class CacheOnShare(Exception):
 
 
 def _local(h: DirHandle) -> DirHandle:
-    """`h` when its volume is not a network share; else `h` closed and `CacheOnShare` raised, before any effect
-    through it."""
+    """`h` unless its volume answers that it is a network share (`remote()` True: Windows only; macOS and Linux do not
+    answer, None, and are never refused); else `h` closed and `CacheOnShare` raised, before any effect through it."""
     try:
-        remote = h.remote()
+        remote = h.remote() is True
         folder = h.path() if remote else ""
     except BaseException:
         h.close()
@@ -243,10 +243,11 @@ def open_folder(fs: FileSystem, app_cache: str, key: str) -> DirHandle:
     the folder is made if missing (mode 0700) and its parent synced; then one handle on it, never through a link (if a
     link took its place meanwhile, the open fails and the job ends: §11 "Limit (link swapped in)").
 
-    §2 "On a network share" (S0134): each folder handle opened here (the cache folder's parent, the cache folder,
-    `workspaces/`, `<key>/`, `mirror/`) is asked `remote()` as soon as it is opened, before any effect through it, so a
-    share at any of them, by a link or a mount point, is refused `CacheOnShare` before anything is made, synced,
-    removed or built. Below `mirror/` nothing is followed or entered on another volume (`clean`)."""
+    §2 "On a network share" (S0134; Windows only): each folder handle opened here (the cache folder's parent, the
+    cache folder, `workspaces/`, `<key>/`, `mirror/`) is asked `remote()` as soon as it is opened, before any effect
+    through it, so a share at any of them, by a link, is refused `CacheOnShare` before anything is made, synced,
+    removed or built. macOS and Linux do not answer (`None`): nothing is refused there (§11). Below `mirror/` nothing
+    is followed or entered on another volume (`clean`)."""
     parent_path = _parent_path(app_cache, key)
     trimmed = host().trim(app_cache)
     above, name = ("", "") if host().is_root_path(trimmed) else host().parent_and_name(trimmed)

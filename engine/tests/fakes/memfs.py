@@ -73,7 +73,8 @@ file's or a folder's), and does nothing on an absent name; a read-only file with
 Linux adapters make no call (`uchg` stays). A power loss keeps the attribute as last set: an attribute cleared and then
 lost only makes the next job clear it again. The rename with POSIX semantics (`rename_shared`) is offered on a drive
 unless its volume lacks the flag (`no_posix_rename`) or is a network share (`remote`), as the adapter decides it. A
-drive in `remote` is a network share in either mode: `remote()` says so (S0134), which the mirror's publish refuses.
+drive in `remote` is a network share; only the Windows mode's `remote()` says so (S0134), which the mirror's publish
+refuses; in POSIX mode `remote()` answers None, as the macOS and Linux adapters do.
 """
 
 # pyright: reportPrivateUsage=false
@@ -851,9 +852,11 @@ class MemDir:
     def device(self) -> int:
         return self._d.dev
 
-    def remote(self) -> bool:
-        """`DirHandle.remote` (S0134): whether this folder's drive is in `remote`. Asking is not an effect."""
-        return self._d.dev in self._fs.remote
+    def remote(self) -> bool | None:
+        """`DirHandle.remote` (S0134): in Windows mode whether this folder's drive is in `remote`; in POSIX mode None,
+        not answered, as the macOS and Linux adapters (owner, 2026-11-19: "Windows only (Recommended)"). Asking is not
+        an effect."""
+        return self._d.dev in self._fs.remote if self._fs.windows else None
 
     def identity(self) -> tuple[int, int]:
         return (self._d.dev, self._ino)

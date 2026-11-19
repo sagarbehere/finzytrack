@@ -39,40 +39,6 @@ if sys.platform == "win32":
     raise ImportError("the POSIX adapters' shared code; select an adapter with ledger_engine.fs.this_os")  # noqa: TRY003
 
 MAX_LINKS: Final = 40
-NETWORK_TYPES: Final = frozenset(
-    {
-        "nfs",
-        "nfs4",
-        "cifs",
-        "smb3",
-        "smbfs",
-        "ncpfs",
-        "afs",
-        "auristorfs",
-        "coda",
-        "ceph",
-        "glusterfs",
-        "lustre",
-        "gpfs",
-        "beegfs",
-        "davfs",
-        "fuse.sshfs",
-        "fuse.rclone",
-        "fuse.s3fs",
-        "fuse.gcsfuse",
-        "fuse.glusterfs",
-        "fuse.cephfs",
-    }
-)
-"""Linux's network file systems by their mount type (S0134, BL-0298; GNU `df -l`'s kinds, and FUSE's common network
-clients). Linux has no flag that says a volume is local, so `LinuxDir.remote` asks this list. Limit (stated in
-`design/specs/mirror/publish.md` §11): a network file system not named here is taken as local; `9p` and `virtiofs`
-(WSL's own drives, a virtual machine's shared folder) are on this machine and taken as local."""
-
-
-def network_type(fs_type: str) -> bool:
-    """Whether a Linux mount of type `fs_type` is a network share (`NETWORK_TYPES`)."""
-    return fs_type in NETWORK_TYPES
 
 
 def kind_of(mode: int) -> Kind:
@@ -197,6 +163,11 @@ class PosixDir:
 
     def device(self) -> int:
         return os.fstat(self.fd).st_dev
+
+    def remote(self) -> None:
+        """Not answered on macOS and Linux (`DirHandle.remote`; owner, 2026-11-19: "Windows only (Recommended)"; S0134):
+        no share was probed there (BL-0219's M11 probe), so nothing is refused on a share."""
+        return None
 
     def identity(self) -> tuple[int, int]:
         st = os.fstat(self.fd)

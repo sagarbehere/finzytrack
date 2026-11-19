@@ -164,15 +164,16 @@ def test_a_ledger_beancount_cannot_load_is_refused_through_the_protocol(ws: tupl
 
 
 def on_a_share(monkeypatch: pytest.MonkeyPatch, folder: Path) -> None:
-    """The adapter answers `remote()` True for `folder` and every folder in it (as for a network share mounted
-    there), False elsewhere (S0134)."""
+    """The adapter answers `remote()` True for `folder` and every folder in it, as Windows' answers for a network
+    share there, and its own answer elsewhere (S0134). On macOS and Linux, whose adapters never answer True (owner,
+    2026-11-19: "Windows only (Recommended)"), this tests the ops' handling of the refusal only."""
     from ledger_engine.fs.this_os import for_this_os
 
     with for_this_os().open_dir(str(folder)) as h:
         cls = type(h)
     real = cls.remote
 
-    def remote(self: Any) -> bool:
+    def remote(self: Any) -> bool | None:
         p = Path(self.path()).resolve()
         return p == folder or folder in p.parents or real(self)
 

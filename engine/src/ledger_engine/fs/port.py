@@ -162,11 +162,11 @@ class DirHandle(Protocol):
         point)."""
         ...
 
-    def remote(self) -> bool:
-        """Whether this folder's volume is a network share (S0134, BL-0298): Windows' `FILE_REMOTE_DEVICE`; macOS's
-        `statfs` flags without `MNT_LOCAL`; on Linux, which has no such flag, the mount's type in a list of network
-        file systems (`ledger_engine.fs.posix.network_type`). Asking writes nothing. The mirror's publish refuses a
-        cache folder there (`design/specs/mirror/publish.md` §2)."""
+    def remote(self) -> bool | None:
+        """Whether this folder's volume is a network share (S0134, BL-0298): on Windows `FILE_REMOTE_DEVICE`, True or
+        False; on macOS and Linux None, not answered (owner, 2026-11-19: "Windows only (Recommended)": no share was
+        probed there, BL-0219's M11 probe). Never None for "local". Asking writes nothing. The mirror's publish
+        refuses a cache folder where it answers True (`design/specs/mirror/publish.md` §2)."""
         ...
 
     def identity(self) -> tuple[int, int]:
