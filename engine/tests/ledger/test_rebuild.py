@@ -604,6 +604,27 @@ def test_a_document_file_under_its_root_added_after_the_plan_and_deleted_during_
         (docs / "priv").chmod(0o700)
 
 
+def test_a_document_file_outside_every_root_added_after_the_plan_and_deleted_during_the_load_is_moved(
+    root: Path, cache: Path
+) -> None:
+    """@regression-guard (the rule held on the base). BL-0217's rule on every OS (S0133 verifier Q1: Windows has no
+    unlistable folder, so the test above checks the root's listing there): a `document` file the load used and the
+    hint lacks is counted by itself, here one outside every documents root, added after the plan and deleted during
+    the load: `moved`, recorded, nothing published."""
+    (root.parent / "docs").mkdir()
+    (root.parent / "elsewhere").mkdir()
+    doc = root.parent / "elsewhere" / "r.pdf"
+    doc.write_bytes(b"x")
+    base = MAIN + b'option "documents" "docs"\n'
+    root.write_bytes(base)
+    hint = hint_of(root)  # the save's plan
+    root.write_bytes(base + f'2026-01-02 document Assets:Cash "{escaped(doc)}"\n'.encode())  # outside edit
+    a = go(with_load(doc.unlink), hint, FakeJob())
+    assert a.outcome == "moved", a
+    assert dict(a.fingerprint.document_files)[str(doc)] is False  # observed after the load: gone
+    assert generations(cache) == []
+
+
 # -- a ledger Beancount's own load fails on, and numbers it rounds (BL-0123, S0098) ----------------------------------
 
 

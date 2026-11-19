@@ -378,7 +378,8 @@ def test_a_dotdot_through_a_link_observes_unchanged(present: str, tmp_path: Path
 
 def test_a_file_appearing_behind_a_dotdot_through_a_link_changes_it(tmp_path: Path) -> None:
     """Neither file exists; ext/common.beancount appears: the next load's error changes, so must the fingerprint
-    (verifier round 2, F1, case C). On Windows the load does not read that file, and neither answer changes."""
+    (verifier round 2, F1, case C). On Windows the load does not read that file, and neither answer changes; the file
+    it does read there, ws/common.beancount, appearing changes both."""
     root = dotdot_through_a_link(tmp_path)
     before = loaded(root)
     write(tmp_path / "ext" / "common.beancount", "")
@@ -388,6 +389,11 @@ def test_a_file_appearing_behind_a_dotdot_through_a_link_changes_it(tmp_path: Pa
         # the same, and the observation, asking what the load asks, stays the same too.
         assert after == sorted(e.message for e in before.errors)
         assert observe(before.fingerprint.ledger_set) == before.fingerprint
+        # The file the load does read behind the dotdot there, ws/common.beancount, appearing changes both (S0133
+        # verifier F1: an observation resolving `linked\..` through the link would miss it).
+        write(tmp_path / "ws" / "common.beancount", "")
+        assert sorted(e.message for e in loaded(root).errors) != sorted(e.message for e in before.errors)
+        assert observe(before.fingerprint.ledger_set) != before.fingerprint
         return
     assert after != sorted(e.message for e in before.errors)
     assert observe(before.fingerprint.ledger_set) != before.fingerprint
