@@ -42,7 +42,6 @@ from app.platform.engine import (
     JournalListing,
     KeptCopySeen,
     ListedJournal,
-    LoadRefusal,
     ManifestSeen,
     OpenAnswer,
     OpenOutcome,
@@ -60,6 +59,7 @@ from app.platform.engine import (
     Publish,
     RebuildAnswer,
     RebuildOutcome,
+    RebuildRefusal,
     RecordSeen,
     RefusalKey,
     SaveAnswer,
@@ -582,8 +582,8 @@ _REBUILD = frozenset(
     }
 )
 REBUILD_OUTCOMES: frozenset[str] = frozenset({"loaded", "moved", "fresh", "paused", "refused"})
-LOAD_REFUSALS: frozenset[str] = frozenset({"number_failed", "beancount_failed"})
-OPEN_REFUSALS: frozenset[str] = frozenset({"encrypted", "number_failed", "beancount_failed"})
+REBUILD_REFUSALS: frozenset[str] = frozenset({"number_failed", "beancount_failed", "cache_on_share"})
+OPEN_REFUSALS: frozenset[str] = frozenset({"encrypted", "number_failed", "beancount_failed", "cache_on_share"})
 PUBLISH: frozenset[str] = frozenset({"published", "fresh", "inexact", "replaced", "incomplete"})
 _LEDGER_VERSION = re.compile(r"[1-9][0-9]*/sha256:[0-9a-f]{64}")
 
@@ -617,7 +617,9 @@ def _rebuild(result: Mapping[str, object]) -> RebuildAnswer:
         ledger_version=version,
         removed=cast("int", _int(o["removed"], "removed", low=0)),
         remove_failed=cast("int", _int(o["remove_failed"], "remove_failed", low=0)),
-        refusal=None if o["refusal"] is None else cast("LoadRefusal", _choice(o["refusal"], LOAD_REFUSALS, "refusal")),
+        refusal=None
+        if o["refusal"] is None
+        else cast("RebuildRefusal", _choice(o["refusal"], REBUILD_REFUSALS, "refusal")),
         refused=_path(o["refused"], "refused", nullable=True),
         line=_int(o["line"], "line", nullable=True, low=1),
     )

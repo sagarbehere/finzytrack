@@ -803,3 +803,14 @@ def test_a_case_folding_ext4_folder_is_probed_not_assumed(fs: FileSystem) -> Non
         assert d.rule().casefold
     r = fs.resolve(folder + "/Main.bean")
     assert r.rules[-1].casefold
+
+
+def test_S0134_remote_is_the_mounts_type_in_the_network_list(fs: FileSystem, tmp_path: Path) -> None:
+    """`DirHandle.remote()` on Linux: the mount's type (`/proc/self/mountinfo`) in `posix.network_type`'s list
+    (`tests/fs/test_remote_types.py`). The runner's temporary folder is local; asked through the descriptor, as `mark`
+    asks the type."""
+    from ledger_engine.fs.posix import network_type
+
+    with fs.open_dir(str(tmp_path)) as d:
+        assert d.remote() is False
+        assert d.remote() is network_type(d.mark().fs_type)

@@ -6,11 +6,13 @@ decrypted), so the screens show Beancount's result and its errors, not a predict
 nothing. Nothing gates on it and nothing compares it with anything.
 
 `run(ports, hint, job, target)` (it runs the ledger's plugins, so the sidecar retires its engine after it):
-0. the mirror folder and its cleanup (`design/specs/mirror/publish.md` §4 step 1, S0087, BL-0113): first in every
-   try, whatever follows; then this workspace's `.open` journal (one, or a journal folder that cannot be listed:
-   `paused`, engine-jobs §7, before any result is returned; S0088); a published generation that is already fresh (§8:
-   the disk, this engine build, its DDL, today) and whose stamp names all the hint names (BL-0212 V1: a glob or a file
-   the hint names and the stamp lacks may have changed unseen) ends the job here: `fresh`, nothing loaded or built;
+0. the mirror folder and its cleanup (`design/specs/mirror/publish.md` §4 step 1, S0087, BL-0113): first in every try,
+   whatever follows (a folder of its path on a network share is refused there, before any effect: `refused`,
+   `cache-on-share`, the folder named; publish.md §2, S0134); then this workspace's `.open` journal (one, or a journal
+   folder that cannot be listed: `paused`, engine-jobs §7, before any result is returned; S0088); a published generation
+   that is already fresh (§8: the disk, this engine build, its DDL, today) and whose stamp names all the hint names
+   (BL-0212 V1: a glob or a file the hint names and the stamp lacks may have changed unseen) ends the job here: `fresh`,
+   nothing loaded or built;
 1. the ledger set named by `hint` (the saved plan's fingerprint, or the previous try's answer) observed;
 2. Beancount's real load of its root;
 3. the same set observed again.
@@ -55,6 +57,9 @@ from ledger_engine.tla import tla_action
 type Phase = Literal["updating_views"]
 PHASE: Final[Phase] = "updating_views"
 type Outcome = Literal["loaded", "moved", "fresh", "paused", "refused"]
+type Refusal = load_failure.Reason | Literal["cache-on-share"]
+"""Why `refused`: Beancount's own load raised on the ledger (`load_failure.Reason`), or the mirror's cache folder is
+on a network share, refused before any effect (`cache-on-share`; publish.md §2, S0134)."""
 
 
 class Job(Protocol):
@@ -89,7 +94,6 @@ class Ports:
     fs: FileSystem = field(default_factory=for_this_os)
     store: pb.Store = field(default_factory=SqliteStore)
     tag: Callable[[], str] = pb.new_tag
-    note: pb.SyncNote = field(default_factory=pb.SyncNote)  # a folder sync a network share refused (S0132)
 
 
 Target = publishing.Target
@@ -110,7 +114,7 @@ class Answer:
     errors: int = 0
     published: pb.Published | pb.NotPublished | None = None
     cleaned: pb.Cleaned | None = None
-    refusal: load_failure.Reason | None = None
+    refusal: Refusal | None = None
     refused: str | None = None
     line: int | None = None
 
@@ -206,7 +210,11 @@ def run(ports: Ports, hint: Fingerprint, job: Job, target: Target) -> Answer:
     def observe(fp: Fingerprint) -> Fingerprint:
         return ports.observe(fp.ledger_set)
 
-    with pb.open_folder(ports.fs, target.app_cache, target.workspace_key, ports.note) as d:  # step 0 (§4 step 1)
+    try:
+        folder = pb.open_folder(ports.fs, target.app_cache, target.workspace_key)  # step 0 (§4 step 1)
+    except pb.CacheOnShare as e:  # publish.md §2 "On a network share" (S0134): refused before any effect
+        return Answer("refused", hint, refusal="cache-on-share", refused=e.folder)
+    with folder as d:
         cleaned = pb.clean(d, ports.store, target.now_ns)
         if publishing.unfinished(ports.fs, target):  # engine-jobs §7: before any result (S0088)
             return Answer("paused", hint, cleaned=cleaned)
@@ -296,7 +304,6 @@ def run(ports: Ports, hint: Fingerprint, job: Job, target: Target) -> Answer:
             recheck=recheck,
             by="rebuild",
             tag=ports.tag(),
-            note=ports.note,
         )
     if isinstance(out, pb.NotPublished) and out.why == "moved":
         return Answer("moved", seen[-1], cleaned=cleaned)

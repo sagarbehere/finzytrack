@@ -8,7 +8,8 @@ reads ledger and journal files, engine-jobs §5.1).
   the rebuild); the mirror folder is always `<app cache>/workspaces/<workspace_key>/mirror/` under the cache folder
   the engine was started with (`--app-cache`), so no request names another folder to clean.
 
-Any `OSError` reaches the server as `engine.internal`: the open did not run to a result.
+Any `OSError` reaches the server as `engine.internal`: the open did not run to a result. A cache folder on a network
+share is a named refusal (`cache_on_share`, S0134), never `engine.internal`.
 """
 
 from __future__ import annotations
@@ -30,18 +31,18 @@ REFUSAL: Final[dict[opening.Refusal, OpenRefusal]] = {
     "encrypted": "encrypted",
     "number-failed": "number_failed",
     "beancount-failed": "beancount_failed",
+    "cache-on-share": "cache_on_share",
 }
 TABLE: Final = "engine.open"
-TABLE_VERSION: Final = 3  # 1 (S0088): the open's load and publish; 2 (S0098): `refusal` among the inputs; 3 (S0132):
-# `sync_refused`, a folder sync a network share refused, taken as best effort (publish.md §11)
+TABLE_VERSION: Final = 4  # 1 (S0088): the open's load and publish; 2 (S0098): `refusal` among the inputs; 3 (S0132):
+# `sync_refused`; 4 (S0134): `sync_refused` gone with the share's best effort, `refusal` `cache-on-share` (§2)
 
 
 def run(params: Message, ctx: OpenJob) -> Message:
     assert isinstance(params, OpenParams)  # noqa: S101 (the handler's own params model)
     fs = for_this_os()
     target = target_of(params, ctx, fs)
-    ports = opening.Ports(fs=fs)
-    a = opening.run(ports, params.root, ctx, target)
+    a = opening.run(opening.Ports(fs=fs), params.root, ctx, target)
     f = fields_of(a.outcome, a.published, a.cleaned)
     inputs = {
         "errors": a.errors,
@@ -49,7 +50,6 @@ def run(params: Message, ctx: OpenJob) -> Message:
         "removed": f.removed,
         "remove_failed": f.remove_failed,
         "refusal": a.refusal,
-        "sync_refused": ports.note.refused,
     }
     ctx.decide(TABLE, TABLE_VERSION, inputs, a.outcome)
     return OpenResult(

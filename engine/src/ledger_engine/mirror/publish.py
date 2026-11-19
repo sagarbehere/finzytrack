@@ -12,7 +12,8 @@ above `mirror/` are the app's and may be links (§2).
 **One job at a time** (ADR-0064): only an engine job (`open` or `rebuild`) holding the engine lock runs the publish
 and the cleanup, so no two run together and none runs beside a save.
 
-The steps of a job (§4): `open_folder` and `clean` first (step 1, before the job's load); after the load, `publish`:
+The steps of a job (§4): `open_folder` and `clean` first (step 1, before the job's load; `open_folder` refuses a
+folder of the path on a network share before any effect, `CacheOnShare`: §2, S0134); after the load, `publish`:
 the name (`new_name`, step 2), the build into it (`Store.build`, step 3, with the identity check), never an
 incomplete build (step 4), the file synced (step 5), the folder synced (step 6), the caller's re-check (step 7: the
 ledger set observed again, no `.open` journal), the swap (`swap`, step 8). A generation is never written after it is
@@ -48,7 +49,7 @@ from datetime import date
 from typing import Final, Literal, Protocol
 
 from ledger_engine.fs.pathmodel import host
-from ledger_engine.fs.port import DirHandle, FileSystem, Kind, NotOffered, SyncRefused, check_name, split_absolute
+from ledger_engine.fs.port import DirHandle, FileSystem, Kind, NotOffered, check_name, split_absolute
 from ledger_engine.ledger.beancount_port import ParseResult
 from ledger_engine.ledger.core import paths as core_paths
 from ledger_engine.ledger.core.ledger_set import Fingerprint, UndecodableError, decode, digest, encode
@@ -202,48 +203,58 @@ def _parent_path(app_cache: str, key: str) -> str:
     return _join(app_cache, WORKSPACES, key)
 
 
-@dataclass(slots=True)
-class SyncNote:
-    """Whether a folder sync of this job's publish was refused by a network share (`SyncRefused`) and taken as best
-    effort; the job logs it once, content-free (its decision's `sync_refused`; INV-23)."""
+class CacheOnShare(Exception):
+    """§2 "On a network share" (owner, 2026-11-19: "Ok. Option 1 for Bl-0298."; S0134): a folder of the mirror's
+    path is on a network share (`DirHandle.remote`); `folder` is that folder's path, for the user's text only (never
+    logged, INV-23). Raised before any effect in it."""
 
-    refused: bool = False
+    def __init__(self, folder: str) -> None:
+        super().__init__("the cache folder is on a network share")
+        self.folder = folder
 
 
-def _sync(d: DirHandle, note: SyncNote | None) -> None:
-    """A folder sync of the publish (the app's cache folders, `mirror/` and its parent). **Mode (a cache folder on a
-    network share)** (owner, 2026-11-19: "Best effort on a share (Recommended)"; §11): a sync the share's server
-    refuses (`SyncRefused`, raised only for a remote volume) counts as done for the mirror, which is a rebuildable
-    cache; a power loss there costs a rebuild, never ledger bytes. Any other failure raises. The ledger's own folder
-    syncs (the save, restore, recover-all, create, copy) never come here."""
+def _local(h: DirHandle) -> DirHandle:
+    """`h` when its volume is not a network share; else `h` closed and `CacheOnShare` raised, before any effect
+    through it."""
     try:
-        d.sync()
-    except SyncRefused:
-        if note is not None:
-            note.refused = True
+        remote = h.remote()
+        folder = h.path() if remote else ""
+    except BaseException:
+        h.close()
+        raise
+    if remote:
+        h.close()
+        raise CacheOnShare(folder)
+    return h
 
 
-def _ensure(fs: FileSystem, folder: str, name: str, note: SyncNote | None) -> None:
-    """The app's folder `name` in `folder` (following links: the app's own folders), made if missing."""
-    with fs.open_dir(folder) as h:
+def _ensure(fs: FileSystem, folder: str, name: str) -> None:
+    """The app's folder `name` in `folder` (following links: the app's own folders), made if missing; `folder` on a
+    network share is refused first (`CacheOnShare`)."""
+    with _local(fs.open_dir(folder)) as h:
         if h.stat(name) is None:
             h.mkdir(name, FOLDER_MODE)
-            _sync(h, note)
+            h.sync()
 
 
-def open_folder(fs: FileSystem, app_cache: str, key: str, note: SyncNote | None = None) -> DirHandle:
+def open_folder(fs: FileSystem, app_cache: str, key: str) -> DirHandle:
     """§2 "The folder itself", first in every job (the app's folders above it made if missing, following links: they
     are the app's): a link at `mirror/` is removed as a link, a file there is removed,
     the folder is made if missing (mode 0700) and its parent synced; then one handle on it, never through a link (if a
-    link took its place meanwhile, the open fails and the job ends: §11 "Limit (link swapped in)")."""
+    link took its place meanwhile, the open fails and the job ends: §11 "Limit (link swapped in)").
+
+    §2 "On a network share" (S0134): each folder handle opened here (the cache folder's parent, the cache folder,
+    `workspaces/`, `<key>/`, `mirror/`) is asked `remote()` as soon as it is opened, before any effect through it, so a
+    share at any of them, by a link or a mount point, is refused `CacheOnShare` before anything is made, synced,
+    removed or built. Below `mirror/` nothing is followed or entered on another volume (`clean`)."""
     parent_path = _parent_path(app_cache, key)
     trimmed = host().trim(app_cache)
     above, name = ("", "") if host().is_root_path(trimmed) else host().parent_and_name(trimmed)
     if name:  # the app's cache folder itself may have been purged by the OS (§9): made again
-        _ensure(fs, above, name, note)
-    _ensure(fs, app_cache, WORKSPACES, note)
-    _ensure(fs, _join(app_cache, WORKSPACES), key, note)
-    with fs.open_dir(parent_path) as parent:
+        _ensure(fs, above, name)
+    _ensure(fs, app_cache, WORKSPACES)
+    _ensure(fs, _join(app_cache, WORKSPACES), key)
+    with _local(fs.open_dir(parent_path)) as parent:
         st = parent.stat(FOLDER)
         if st is not None and st.kind is not Kind.DIR:
             parent.clear_readonly(FOLDER)
@@ -251,11 +262,15 @@ def open_folder(fs: FileSystem, app_cache: str, key: str, note: SyncNote | None 
             st = None
         if st is None:
             parent.mkdir(FOLDER, FOLDER_MODE)
-        _sync(parent, note)
-        d = parent.open_child(FOLDER)
+        d = _local(parent.open_child(FOLDER))  # a share mounted at `mirror/` is refused before the sync below (S0134)
         if d.device() != parent.device():  # another volume mounted at `mirror/`: not ours (round 1, red team F1)
             d.close()
             raise OSError(errno.EXDEV, "another volume is mounted at the mirror folder")
+        try:
+            parent.sync()  # what was removed or made at `mirror/` durable before the job goes on
+        except BaseException:
+            d.close()
+            raise
         return d
 
 
@@ -452,7 +467,6 @@ def publish(
     recheck: Callable[[], Recheck],
     by: PublishedBy,
     tag: str | None = None,
-    note: SyncNote | None = None,
 ) -> Published | NotPublished:
     """§4 steps 2 to 8, after the load (`result`, stamped with `fingerprint`: the observation before it, equal to the
     one after it). `recheck` is step 7: the ledger set observed again equals `fingerprint` (else `moved`) and this
@@ -468,7 +482,7 @@ def publish(
     if not built.complete:  # step 4: a published generation always says `build_complete = 1`
         return NotPublished("incomplete")
     d.sync_file(gen.name)  # step 5: `F_FULLFSYNC`; SQLite's own syncs do not reach the disk on macOS
-    _sync(d, note)  # step 6: availability (the entry before the link; the previous job's rename made durable)
+    d.sync()  # step 6: availability (the entry before the link; the previous job's rename made durable)
     match recheck():  # step 7
         case "moved":
             return NotPublished("moved")

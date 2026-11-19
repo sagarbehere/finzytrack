@@ -208,7 +208,8 @@ jobs:
           }
           "FT_TEST_VOLUMES=" + ($vols -join ";") | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
           # A network share on this machine (S0132, BL-0294): an SMB volume that may report NTFS without offering the
-          # rename with POSIX semantics; its tests take `FT_TEST_SHARE` (a mapped drive first, then the UNC path).
+          # rename with POSIX semantics; its tests take `FT_TEST_SHARE` (a mapped drive first, then the UNC path, then
+          # the UNC path by the machine's own name: S0134, BL-0298's three spellings).
           # Never a quiet skip (S0132 round 1, verifier V5): a share that cannot be made fails the job here.
           $dir = Join-Path $env:RUNNER_TEMP "ftshare"
           New-Item -ItemType Directory -Force $dir | Out-Null
@@ -216,11 +217,10 @@ jobs:
           if (-not (Test-Path "\\localhost\ftshare")) { throw "the CI share \\localhost\ftshare is not reachable" }
           net use Z: "\\localhost\ftshare" /persistent:no | Out-Null
           if ($LASTEXITCODE -ne 0 -or -not (Test-Path "Z:\")) { throw "the CI share could not be mapped to Z:" }
-          $shares = @("Z:\", "\\localhost\ftshare")  # the share as a mapped drive, then its UNC path
+          $shares = @("Z:\", "\\localhost\ftshare", "\\$env:COMPUTERNAME\ftshare")  # mapped drive, UNC, UNC by name
           "FT_TEST_SHARE=" + ($shares -join ";") | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
           [System.Environment]::OSVersion.VersionString
-          # BL-0298: the share by the machine's own name too (a server name other than localhost, probe only)
-          .venv\Scripts\python.exe scripts\probe_windows_fs.py $env:RUNNER_TEMP $env:TEMP @vols @shares "\\$env:COMPUTERNAME\ftshare"
+          .venv\Scripts\python.exe scripts\probe_windows_fs.py $env:RUNNER_TEMP $env:TEMP @vols @shares
       - name: tests
         # INV-07 on Windows (S0127): its C runtime reads TZ only as a process starts and only in this form, so it is set
         # before Python starts (Los Angeles: tests/conftest.py checks it). `-rs`: each skip prints its reason, the

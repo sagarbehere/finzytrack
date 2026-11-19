@@ -22,6 +22,10 @@ an outside edit. `submit_open` queues it as the switch's own job (waited-for); i
   `beancount_failed` (a plugin's entry its checks cannot read, a plugin that fails while imported). bean-check fails on
   the same ledger. `path` and `line` (when known) name the place; the open's screen names them (BL-0154). No try
   again: the same ledger fails the same way.
+- **`CacheOnShare(folder)`** (S0134, BL-0298; owner, 2026-11-19: "Ok. Option 1 for Bl-0298."): the app's cache folder
+  for the mirror is on a network share, which the engine refuses before any effect (`design/specs/mirror/publish.md`
+  §2); `folder` names the first folder of its path there, for the open's screen (`msg:open.cache_on_share`,
+  `app.platform.engine_jobs.text.cache_on_share_text`; BL-0154). No try again: the same folder refuses the same way.
 
 An engine death ends the job as any waited-for read's (§5.3: `ENGINE_STOPPED` with Try again, from the scheduler;
 each try is counted, since a user waits for it); a Cancel ends it with nothing to undo (§4). Each try after the first
@@ -111,9 +115,17 @@ class NotLoadable:
     line: int | None
 
 
-type OpenValue = Opened | NotOpened | EncryptedFile | NotLoadable
+@dataclass(frozen=True, slots=True)
+class CacheOnShare:
+    """The app's cache folder for the mirror is on a network share, refused before any effect (S0134): `folder`
+    names the first folder of its path there, for the open's screen (never logged, INV-23)."""
+
+    folder: str
+
+
+type OpenValue = Opened | NotOpened | EncryptedFile | NotLoadable | CacheOnShare
 type NotLoadedWhy = Literal[
-    "changing", "paused", "encrypted", "refused", "violation", "number_failed", "beancount_failed"
+    "changing", "paused", "encrypted", "refused", "violation", "number_failed", "beancount_failed", "cache_on_share"
 ]
 
 
@@ -186,6 +198,8 @@ def run_open(ctx: JobContext, target: OpenTarget, clock: Clock) -> tuple[OpenVal
                 assert a.refused is not None  # noqa: S101 (`_holds_together`)
                 if a.refusal == "number_failed" or a.refusal == "beancount_failed":
                     return NotLoadable(a.refusal, a.refused, a.line), a.refusal
+                if a.refusal == "cache_on_share":
+                    return CacheOnShare(a.refused), "cache_on_share"
                 return EncryptedFile(a.refused), "encrypted"
             case "moved":
                 continue

@@ -80,6 +80,8 @@ ATTR_CMN_CRTIME: Final = 0x00000200  # <sys/attr.h>: the creation time, a `struc
 MFSTYPENAMELEN: Final = 16
 STATFS_SIZE: Final = 2168  # `struct statfs` (64-bit inodes, the only layout on arm64 and macOS 11+), checked: SDK 26
 STATFS_FSTYPENAME: Final = 72  # offset of `f_fstypename` in it
+STATFS_FLAGS: Final = 64  # offset of `f_flags` (u32) in it, checked: SDK 26 (S0134)
+MNT_LOCAL: Final = 0x00001000  # `sys/mount.h`: the file system is stored locally (smbfs, nfs, afpfs, webdav lack it)
 VOL_CAP_INT_RENAME_SWAP: Final = 0x00040000
 VOL_CAP_INT_RENAME_EXCL: Final = 0x00080000
 LOCK_FLAGS: Final = stat.UF_IMMUTABLE | stat.UF_APPEND | stat.SF_IMMUTABLE | stat.SF_APPEND
@@ -250,14 +252,22 @@ class DarwinDir(PosixDir):
         sec, nsec = struct.unpack_from("<qq", out.raw, 24)
         return sec * 1_000_000_000 + nsec
 
+    def _statfs(self) -> bytes:
+        buf = ctypes.create_string_buffer(STATFS_SIZE)
+        if self._mac.libc.fstatfs(self.fd, buf) != 0:
+            _errno_raise()
+        return buf.raw
+
+    def remote(self) -> bool:
+        """`fstatfs`'s `f_flags` without `MNT_LOCAL` (S0134): what `mount` prints without "local"."""
+        return not struct.unpack_from("<I", self._statfs(), STATFS_FLAGS)[0] & MNT_LOCAL
+
     def mark(self) -> FolderMark:
         """`volume_id`; the type name from `fstatfs` (`f_fstypename`); `born` (never an error when the file system
         keeps no creation time, so a drive with no UUID is still told `no_drive_id`)."""
         volume = self.volume_id()
-        buf = ctypes.create_string_buffer(STATFS_SIZE)
-        if self._mac.libc.fstatfs(self.fd, buf) != 0:
-            _errno_raise()
-        fs_type = fs_type_from(buf.raw[STATFS_FSTYPENAME : STATFS_FSTYPENAME + MFSTYPENAMELEN])
+        raw = self._statfs()
+        fs_type = fs_type_from(raw[STATFS_FSTYPENAME : STATFS_FSTYPENAME + MFSTYPENAMELEN])
         return FolderMark(volume, fs_type, self.born())
 
     def acl(self) -> tuple[AclEntry, ...]:

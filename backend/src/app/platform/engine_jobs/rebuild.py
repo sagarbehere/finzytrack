@@ -85,15 +85,16 @@ class Loaded:
 
 
 type NotLoadedWhy = Literal[
-    "changing", "engine_failed", "refused", "violation", "paused", "number_failed", "beancount_failed"
+    "changing", "engine_failed", "refused", "violation", "paused", "number_failed", "beancount_failed", "cache_on_share"
 ]
 
 
 @dataclass(frozen=True, slots=True)
 class NotLoaded:
     """The rebuild did not reach a result: logged, nothing shown, nothing gated, nothing owed. `number_failed` and
-    `beancount_failed`: Beancount's own load raised on the ledger (S0098); the file and line it names are never logged
-    (INV-23), and no screen shows a rebuild's result yet."""
+    `beancount_failed`: Beancount's own load raised on the ledger (S0098); `cache_on_share`: the cache folder is on a
+    network share, refused before any effect (S0134; the open names it to the user). The file or folder named is never
+    logged (INV-23), and no screen shows a rebuild's result yet."""
 
     why: NotLoadedWhy
 
@@ -159,11 +160,12 @@ def _loaded(answer: RebuildAnswer, tries: int) -> Loaded | NotLoaded:
 
 
 def _refusal_holds_together(answer: RebuildAnswer) -> bool:
-    """A refusal, and only a refusal, says why and names its file (S0098); only a refusal names a line."""
+    """A refusal, and only a refusal, says why and names its file (S0098); only a refusal of the ledger by Beancount
+    names a line (not a cache folder on a share, S0134)."""
     refused = answer.outcome == "refused"
     if refused != (answer.refusal is not None) or refused != (answer.refused is not None):
         return False
-    return refused or answer.line is None
+    return answer.line is None or answer.refusal in ("number_failed", "beancount_failed")
 
 
 def run_rebuild(ctx: JobContext, target: RebuildTarget, clock: Clock) -> RebuildResult:
@@ -186,7 +188,7 @@ def run_rebuild(ctx: JobContext, target: RebuildTarget, clock: Clock) -> Rebuild
             return _loaded(answer, tries)
         if answer.outcome == "paused":
             return NotLoaded("paused")  # an unfinished save: no try again, only recovery ends it (§7)
-        if answer.refusal is not None:  # Beancount's own load raised on the ledger: the same in every try
+        if answer.refusal is not None:  # Beancount's own load raised, or a cache on a share: the same in every try
             return NotLoaded(answer.refusal)
         hint = answer.fingerprint
     return NotLoaded("changing")

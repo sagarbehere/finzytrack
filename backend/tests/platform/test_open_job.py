@@ -29,6 +29,7 @@ from app.platform.clock import FrozenClock
 from app.platform.engine import EngineRefusal
 from app.platform.engine_jobs.opening import (
     MAX_TRIES,
+    CacheOnShare,
     EncryptedFile,
     NotLoadable,
     NotOpened,
@@ -267,6 +268,7 @@ def test_an_encrypted_file_is_refused_and_named_but_never_logged(make: Any) -> N
         loaded(refused=host("/L/x.gpg")),  # only a refusal does
         loaded(refusal="number_failed"),  # only a refusal says why
         outcome("refused", refused=host("/L/x.gpg"), refusal="encrypted", line=3),  # an encrypted file has no line
+        outcome("refused", refused=host("/C/cache"), refusal="cache_on_share", line=3),  # nor a cache folder (S0134)
         loaded(line=3),  # only a refusal of the ledger names a line
         loaded(number=None),  # S0088 round 1 (verifier F5): a published generation is named by its number
         loaded(ledger_version=None),  # and by its version
@@ -295,6 +297,25 @@ def test_a_ledger_beancount_cannot_load_is_named_tried_once_and_never_logged(
     ((name, fields),) = rig.lines()
     assert (name, fields["why"]) == ("open.not_loaded", why)
     assert host("/L/main.bean") not in repr(fields)
+
+
+def test_a_cache_folder_on_a_network_share_is_named_tried_once_and_never_logged(make: Any) -> None:
+    """S0134 (BL-0298; owner, 2026-11-19: "Ok. Option 1 for Bl-0298."): the engine refused a cache folder on a network
+    share before any effect; the same folder refuses the same way, so no try again. The open's screen names the folder
+    (`msg:open.cache_on_share`); the log says only why (INV-23)."""
+    from app.platform.engine_jobs.text import cache_on_share_text
+
+    rig = make({"open": [outcome("refused", refused=host("/C/cache"), refusal="cache_on_share")]})
+    value = rig.value()
+    assert value == CacheOnShare(host("/C/cache"))
+    assert rig.ops() == ["open"]
+    ((name, fields),) = rig.lines()
+    assert (name, fields["why"]) == ("open.not_loaded", "cache_on_share")
+    assert host("/C/cache") not in repr(fields)
+    text = cache_on_share_text(value.folder)
+    assert host("/C/cache") in text
+    assert "network share" in text
+    assert "local disk" in text
 
 
 def test_a_refusal_from_the_engine_is_internal(make: Any) -> None:

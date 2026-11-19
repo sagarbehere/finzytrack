@@ -62,8 +62,7 @@ def test_the_open_loads_and_publishes_through_the_protocol(ws: tuple[Path, Path,
     assert result["entries"] > 0
     assert (result["refused"], result["refusal"], result["line"]) == (None, None, None)
     assert reply["events"] == ["reading"]
-    assert (reply["decision"]["table"], reply["decision"]["version"]) == ("engine.open", 3)
-    assert reply["decision"]["inputs"]["sync_refused"] is False  # a local disk syncs (S0132)
+    assert (reply["decision"]["table"], reply["decision"]["version"]) == ("engine.open", 4)
     mirror = ald.parent / "cache" / "workspaces" / "k1" / "mirror"
     name = current_in(mirror)
     assert name is not None
@@ -164,33 +163,49 @@ def test_a_ledger_beancount_cannot_load_is_refused_through_the_protocol(ws: tupl
     assert reply["decision"]["inputs"]["refusal"] == "number-failed"
 
 
-def test_a_share_that_refuses_the_mirrors_folder_syncs_publishes_the_open_and_logs_it_once(
+def on_a_share(monkeypatch: pytest.MonkeyPatch, folder: Path) -> None:
+    """The adapter answers `remote()` True for `folder` and every folder in it (as for a network share mounted
+    there), False elsewhere (S0134)."""
+    from ledger_engine.fs.this_os import for_this_os
+
+    with for_this_os().open_dir(str(folder)) as h:
+        cls = type(h)
+    real = cls.remote
+
+    def remote(self: Any) -> bool:
+        p = Path(self.path()).resolve()
+        return p == folder or folder in p.parents or real(self)
+
+    monkeypatch.setattr(cls, "remote", remote)
+
+
+def tree(folder: Path) -> list[str]:
+    return sorted(str(p.relative_to(folder)) for p in folder.rglob("*"))
+
+
+def test_a_cache_folder_on_a_network_share_refuses_the_open_by_name(
     ws: tuple[Path, Path, dict[str, Any]], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """S0132 (owner, 2026-11-19: "Best effort on a share (Recommended)"): as the rebuild's case
-    (`tests/test_rebuild_ops.py`), for the open: it publishes and its decision says `sync_refused` once."""
-    import sys
-
-    from ledger_engine.fs.port import SyncRefused
+    """S0134 (owner, 2026-11-19: "Ok. Option 1 for Bl-0298."): the open refuses a cache folder on a network share
+    before any effect, a named refusal (`cache_on_share`, the folder named), never `engine.internal`; its decision
+    says why, content-free."""
+    import os
 
     _, ald, params = ws
-    cache = str(ald.parent / "cache")
-    if sys.platform == "win32":
-        from ledger_engine.fs.windows import WindowsDir as Dir
-    else:
-        from ledger_engine.fs.posix import PosixDir as Dir
-    real = Dir.sync
-
-    def refused(self: Any) -> None:
-        if str(self.path()).startswith(cache):
-            raise SyncRefused
-        real(self)
-
-    monkeypatch.setattr(Dir, "sync", refused)
+    cache = (ald.parent / "cache").resolve()
+    on_a_share(monkeypatch, cache)
+    before = tree(cache)
     reply = call(ald, params)
     assert reply["ok"], reply
-    assert reply["result"]["publish"] == "published", reply
-    assert reply["decision"]["inputs"]["sync_refused"] is True
-    again = call(ald, params)  # fresh: nothing built, only the folder's syncs, still noted
-    assert again["result"]["publish"] == "fresh", again
-    assert again["decision"]["inputs"]["sync_refused"] is True
+    result = reply["result"]
+    assert (result["outcome"], result["refusal"], result["publish"], result["line"]) == (
+        "refused",
+        "cache_on_share",
+        None,
+        None,
+    )
+    assert os.path.samefile(result["refused"], cache)
+    assert reply["events"] == []  # nothing loaded
+    assert tree(cache) == before
+    assert reply["decision"]["inputs"]["refusal"] == "cache-on-share"
+    assert str(cache) not in json.dumps(reply["decision"])  # INV-23: the folder is never in the decision

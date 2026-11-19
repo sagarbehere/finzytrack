@@ -1309,13 +1309,15 @@ def test_clear_readonly_on_an_entry_gone_between_its_two_opens_does_nothing(
 
 
 @pytest.mark.parametrize("remote", [False, True])
-def test_a_refused_folder_flush_is_sync_refused_only_on_a_remote_volume(
+def test_a_refused_folder_flush_is_a_plain_os_error_on_every_volume(
     fs: FileSystem, tmp_path: Path, remote: bool, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Verifier V4: `ERROR_INVALID_FUNCTION` from the folder's flush is `SyncRefused` on a remote volume and a plain
-    `OSError` on a local one, which every caller, the publish included, takes as a failed sync."""
+    """S0134 (owner, 2026-11-19: "Let's remove the best effort sync code, but only if it's dead code and
+    unreachable"): `ERROR_INVALID_FUNCTION` from the folder's flush, as the share's server answered (S0132's run 23),
+    is a plain `OSError` (`EINVAL`, Windows' own mapping) on a remote volume as on a local one, which every caller
+    takes as a failed sync; no caller reaches a share's folder sync any more (the mirror refuses a cache folder
+    there)."""
     from ledger_engine.fs import windows
-    from ledger_engine.fs.port import SyncRefused
 
     def is_remote(self: object) -> bool:
         del self
@@ -1324,13 +1326,32 @@ def test_a_refused_folder_flush_is_sync_refused_only_on_a_remote_volume(
     monkeypatch.setattr(windows._Handle, "remote", is_remote)  # pyright: ignore[reportPrivateUsage]
     with fs.open_dir(str(tmp_path)) as d:
         assert isinstance(d, windows.WindowsDir)
+        assert d.remote() is remote
 
         def refused(h: int) -> int:
             del h
-            ctypes.set_last_error(1)  # ERROR_INVALID_FUNCTION, as the share's server answered (run 23)
+            ctypes.set_last_error(1)  # ERROR_INVALID_FUNCTION
             return 0
 
         monkeypatch.setattr(d.api, "FlushFileBuffers", refused)
-        with pytest.raises(OSError, match=r"FlushFileBuffers|refused") as e:
+        with pytest.raises(OSError, match=r"FlushFileBuffers") as e:
             d.sync()
-    assert isinstance(e.value, SyncRefused) is remote
+    assert type(e.value) is OSError
+    assert e.value.errno == errno.EINVAL
+
+
+@pytest.mark.skipif(not _shares(), reason="no network share given (FT_TEST_SHARE)")
+def test_remote_is_true_on_every_spelling_of_the_ci_share_and_false_on_local_volumes(
+    fs: FileSystem, tmp_path: Path
+) -> None:
+    """S0134 (BL-0298): `DirHandle.remote()` is `FILE_REMOTE_DEVICE`: True on the CI share by each spelling
+    (`FT_TEST_SHARE`: a mapped drive, the UNC path, the UNC path by the machine's name), False on the runner's NTFS
+    and the scratch volumes (`FT_TEST_VOLUMES`)."""
+    shares = _shares()
+    assert len(shares) == 3, shares  # the CI share step fails the job when it cannot make them (S0132 round 1, V5)
+    for share in shares:
+        with fs.open_dir(share) as d:
+            assert d.remote() is True, share
+    for local in [str(tmp_path), *[v for v in os.environ.get("FT_TEST_VOLUMES", "").split(";") if v]]:
+        with fs.open_dir(local) as d:
+            assert d.remote() is False, local

@@ -55,8 +55,7 @@ def test_a_saved_ledger_is_rebuilt_through_the_protocol(setup: tuple[Path, Path,
     assert (result["outcome"], result["errors"]) == ("loaded", 0)
     assert result["entries"] > 0
     assert reply["events"] == ["updating_views"]
-    assert (reply["decision"]["table"], reply["decision"]["version"]) == ("engine.rebuild", 4)
-    assert reply["decision"]["inputs"]["sync_refused"] is False  # a local disk syncs (S0132)
+    assert (reply["decision"]["table"], reply["decision"]["version"]) == ("engine.rebuild", 5)
     # S0087 (BL-0113): published after the save's generation (number 1, the setup's), the save's change in it
     assert (result["publish"], result["number"]) == ("published", 2)
     mirror = ald.parent / "cache" / "workspaces" / "k1" / "mirror"
@@ -162,32 +161,32 @@ def test_a_ledger_beancount_cannot_load_is_refused_through_the_protocol(
     assert reply["decision"]["inputs"]["refusal"] == "number-failed"
 
 
-def test_a_share_that_refuses_the_mirrors_folder_syncs_publishes_and_logs_it_once(
+def test_a_cache_folder_on_a_network_share_refuses_the_rebuild_by_name(
     setup: tuple[Path, Path, dict[str, Any]], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """S0132 (owner, 2026-11-19: "Best effort on a share (Recommended)"): every folder sync under the app's cache is
-    refused as a network share's server refuses it (`SyncRefused`); the rebuild still publishes, and its decision
-    says so once, content-free (`sync_refused`)."""
-    import sys
+    """S0134 (owner, 2026-11-19: "Ok. Option 1 for Bl-0298."): as the open's case (`tests/test_open_ops.py`), for the
+    rebuild: refused `cache_on_share` before any effect, the folder named, never `engine.internal`."""
+    import os
 
-    from ledger_engine.fs.port import SyncRefused
+    from tests.test_open_ops import on_a_share, tree
 
     _, ald, params = setup
     target = saved(ald, params)
-    cache = str(ald.parent / "cache")
-    if sys.platform == "win32":
-        from ledger_engine.fs.windows import WindowsDir as Dir
-    else:
-        from ledger_engine.fs.posix import PosixDir as Dir
-    real = Dir.sync
-
-    def refused(self: Any) -> None:
-        if str(self.path()).startswith(cache):
-            raise SyncRefused
-        real(self)
-
-    monkeypatch.setattr(Dir, "sync", refused)
+    cache = (ald.parent / "cache").resolve()
+    cache.mkdir(exist_ok=True)
+    on_a_share(monkeypatch, cache)
+    before = tree(cache)
     reply = call(ald, "rebuild", target)
     assert reply["ok"], reply
-    assert reply["result"]["publish"] == "published", reply
-    assert reply["decision"]["inputs"]["sync_refused"] is True
+    result = reply["result"]
+    assert (result["outcome"], result["refusal"], result["publish"], result["line"]) == (
+        "refused",
+        "cache_on_share",
+        None,
+        None,
+    )
+    assert os.path.samefile(result["refused"], cache)
+    assert result["fingerprint"] == target["fingerprint"]
+    assert tree(cache) == before
+    assert reply["decision"]["inputs"]["refusal"] == "cache-on-share"
+    assert str(cache) not in json.dumps(reply["decision"])  # INV-23

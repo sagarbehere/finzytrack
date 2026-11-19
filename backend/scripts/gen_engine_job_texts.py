@@ -174,6 +174,11 @@ JOB: tuple[Row, ...] = (
         (f"msg:unavailable.{reason}", f"`ENGINE_UNAVAILABLE {{{reason}}}`", lambda r=reason: _unavailable(r))
         for reason, _ in jt.UNAVAILABLE
     ),
+    (
+        "msg:open.cache_on_share",
+        "the open refused `cache_on_share`: the cache folder is on a network share (S0134, BL-0298)",
+        lambda: jt.cache_on_share_text(FOLDER),
+    ),
 )
 
 

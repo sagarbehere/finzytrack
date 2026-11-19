@@ -7,7 +7,9 @@ the job that publishes it. It reads the ledger and writes only the workspace's m
 (owner, 2026-11-08, "Only its own mirror": never the ledger, the journals, `.finzytrack/` or another key's folder).
 
 `run(ports, root, job, target)` (it runs the ledger's plugins, so the sidecar retires its engine after it):
-0. the mirror folder and its cleanup (publish.md §4 step 1), first in every try, whatever follows;
+0. the mirror folder and its cleanup (publish.md §4 step 1), first in every try, whatever follows; a folder of its
+   path on a network share is refused there, before any effect (`refused`, `cache-on-share`, the folder named;
+   publish.md §2, S0134);
 1. this workspace's `.open` journal (one, or a journal folder that cannot be listed: `paused`; §7, ADR-0012 F-6: no
    result is returned over an unfinished save, and nothing is loaded);
 2. a published generation that an open published (its `meta.published_by`) and that is still fresh (§8: this
@@ -51,7 +53,7 @@ from ledger_engine.tla import tla_action
 type Phase = Literal["reading"]
 PHASE: Final[Phase] = "reading"
 type Outcome = Literal["loaded", "moved", "fresh", "paused", "refused"]
-type Refusal = Literal["encrypted", "number-failed", "beancount-failed"]
+type Refusal = Literal["encrypted", "number-failed", "beancount-failed", "cache-on-share"]
 
 Target = publishing.Target
 
@@ -86,7 +88,6 @@ class Ports:
     fs: FileSystem = field(default_factory=for_this_os)
     store: pb.Store = field(default_factory=SqliteStore)
     tag: Callable[[], str] = pb.new_tag
-    note: pb.SyncNote = field(default_factory=pb.SyncNote)  # a folder sync a network share refused (S0132)
 
 
 @dataclass(frozen=True, slots=True)
@@ -117,7 +118,11 @@ def run(ports: Ports, root: str, job: Job, target: Target) -> Answer:
     def observe(fp: Fingerprint) -> Fingerprint:
         return ports.observe(fp.ledger_set)
 
-    with pb.open_folder(ports.fs, target.app_cache, target.workspace_key, ports.note) as d:  # step 0 (§4 step 1)
+    try:
+        folder = pb.open_folder(ports.fs, target.app_cache, target.workspace_key)  # step 0 (§4 step 1)
+    except pb.CacheOnShare as e:  # publish.md §2 "On a network share" (S0134): refused before any effect
+        return Answer("refused", refused=e.folder, refusal="cache-on-share")
+    with folder as d:
         cleaned = pb.clean(d, ports.store, target.now_ns)
         if publishing.unfinished(ports.fs, target):  # step 1 (engine-jobs §7)
             return Answer("paused", cleaned=cleaned)
@@ -148,7 +153,6 @@ def run(ports: Ports, root: str, job: Job, target: Target) -> Answer:
             recheck=publishing.recheck(ports.fs, ports.observe, stamp, target),
             by="open",
             tag=ports.tag(),
-            note=ports.note,
         )
     if isinstance(out, pb.NotPublished) and out.why in ("moved", "paused"):
         return Answer(out.why, cleaned=cleaned)

@@ -28,13 +28,13 @@ Windows since S0129, each in its own Job Object).
   refused): a file the adapter creates is flushed through its own handle; `sync_file` opens the file for writing (it
   writes nothing; a file another program holds without sharing writes cannot be synced, and the caller fails closed);
   a folder's `sync` opens the folder again for writing (`FILE_ADD_FILE`) and flushes it (probed: works on NTFS, ReFS,
-  FAT32 and exFAT; a network share's server refuses it, `ERROR_INVALID_FUNCTION`, probed in S0132: `SyncRefused`, which
-  only the mirror's publish takes as best effort). The rename's source is opened with `FILE_WRITE_THROUGH`. **What this
-  makes durable for a rename** is relied on, not documented: Microsoft documents `FlushFileBuffers` for a file's data
-  and metadata, not for a folder's entries; NTFS and ReFS log a rename as one metadata operation and a flush of the
-  folder commits that log as far as it is known, and FAT32 and exFAT write the folder's entries with no log (a replace
-  there may lose the old entry and keep no new one, as macOS's FAT: §6.8). Not power-cut tested (the runner cannot cut
-  power): engine-jobs §15 "Limit (Windows durability)".
+  FAT32 and exFAT; a network share's server refuses it, `ERROR_INVALID_FUNCTION`, probed in S0132: an `OSError` like
+  any failed sync, and the mirror refuses a cache folder on a share before any sync, S0134). The rename's source is
+  opened with `FILE_WRITE_THROUGH`. **What this makes durable for a rename** is relied on, not documented: Microsoft
+  documents `FlushFileBuffers` for a file's data and metadata, not for a folder's entries; NTFS and ReFS log a rename as
+  one metadata operation and a flush of the folder commits that log as far as it is known, and FAT32 and exFAT write the
+  folder's entries with no log (a replace there may lose the old entry and keep no new one, as macOS's FAT: §6.8). Not
+  power-cut tested (the runner cannot cut power): engine-jobs §15 "Limit (Windows durability)".
 - **The replace (ADR-0069):** Windows has no exchange of two names (probed), so `caps().swap` is False on every
   volume and the writer takes §6.8's best-effort mode: the new bytes synced at the staging name, then one plain rename
   over the file (`FileRenameInformation` with `ReplaceIfExists`, relative to the folder handle: the handle-relative
@@ -132,7 +132,6 @@ from ledger_engine.fs.port import (
     NotOffered,
     Resolved,
     Right,
-    SyncRefused,
     check_name,
     fold,
 )
@@ -239,7 +238,6 @@ EPOCH_AS_FILETIME: Final = 116_444_736_000_000_000
 """1970-01-01 in 100 ns units since 1601-01-01 (a FILETIME)."""
 MAX_PATH_CHARS: Final = 32_768
 # Win32 errors
-ERROR_INVALID_FUNCTION: Final = 1
 ERROR_FILE_NOT_FOUND: Final = 2
 ERROR_PATH_NOT_FOUND: Final = 3
 ERROR_ACCESS_DENIED: Final = 5
@@ -783,6 +781,11 @@ class WindowsDir:
     def device(self) -> int:
         return self._h.identity()[0]
 
+    def remote(self) -> bool:
+        """`FILE_REMOTE_DEVICE` (S0134; probed in S0132: True on the CI share by its mapped drive and its UNC paths,
+        False on NTFS, ReFS, FAT32 and exFAT)."""
+        return self._h.remote()
+
     def identity(self) -> tuple[int, int]:
         return self._h.identity()
 
@@ -1119,15 +1122,10 @@ class WindowsDir:
 
     def sync(self) -> None:
         """`FlushFileBuffers` on the folder, opened again for writing (probed: a read-only handle is refused). A
-        network share's server answers `ERROR_INVALID_FUNCTION` (probed, S0132's 2026-11-18 run 23): `SyncRefused`,
-        only when the volume is remote; any other failure raises as it is."""
+        network share's server answers `ERROR_INVALID_FUNCTION` (probed, S0132's 2026-11-18 run 23): an `OSError`,
+        as any failure is."""
         with self._reopen(FILE_ADD_FILE) as h:  # FlushFileBuffers needs a handle opened for writing (probed)
-            if self.api.FlushFileBuffers(h.handle):
-                return
-            code = ctypes.get_last_error()
-            if code == ERROR_INVALID_FUNCTION and self._h.remote():
-                raise SyncRefused
-            raise _win_error("FlushFileBuffers", code=code)
+            h.flush()
 
 
 def _ace(kind: int, flags: int, mask: int) -> AclEntry:

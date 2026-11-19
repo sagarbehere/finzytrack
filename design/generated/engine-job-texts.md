@@ -25,6 +25,7 @@ What the user reads about engine jobs, saves and recovery, rendered from the cod
 | `msg:unavailable.incompatible` | `ENGINE_UNAVAILABLE {incompatible}` | This installation is damaged. Please reinstall Finzytrack. |
 | `msg:unavailable.closing` | `ENGINE_UNAVAILABLE {closing}` | Finzytrack is closing. |
 | `msg:unavailable.app_folder_missing` | `ENGINE_UNAVAILABLE {app_folder_missing}` | Finzytrack's data folder was removed or replaced while Finzytrack was open. Your ledger files are safe. Quit Finzytrack and open it again. |
+| `msg:open.cache_on_share` | the open refused `cache_on_share`: the cache folder is on a network share (S0134, BL-0298) | Finzytrack cannot open this workspace. Finzytrack's cache is in <folder>, which is on a network share. Finzytrack keeps its cache only on a local disk. Your ledger files are not changed. |
 
 ## Saves (`app.platform.engine_jobs.save_text`)
 

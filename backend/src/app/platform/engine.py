@@ -286,7 +286,10 @@ type Publish = Literal["published", "fresh", "inexact", "replaced", "incomplete"
 type LoadRefusal = Literal["number_failed", "beancount_failed"]
 """Beancount's own load raised on the ledger (S0098): its arithmetic failed on the transaction the line names, or
 anything else of its load failed (a plugin's entry its checks cannot read). bean-check fails on the same ledger."""
-type OpenRefusal = Literal["encrypted", "number_failed", "beancount_failed"]
+type RebuildRefusal = Literal["number_failed", "beancount_failed", "cache_on_share"]
+"""`LoadRefusal`, or `cache_on_share`: the mirror's cache folder is on a network share, refused before any effect
+(`design/specs/mirror/publish.md` §2, S0134); `refused` names that folder."""
+type OpenRefusal = Literal["encrypted", "number_failed", "beancount_failed", "cache_on_share"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -296,9 +299,10 @@ class RebuildAnswer:
     `entries` and `errors` its counts), `moved` (try again with `fingerprint`, opaque here), `fresh` (the published
     generation already describes the disk: nothing loaded), `paused` (an unfinished save's `.open` journal: not
     published) or `refused` (Beancount's own load raised on the ledger: `refusal` why, `refused` the file, `line` the
-    line when known; S0098). `publish`: what became of a loaded result (`published`, or why not), `fresh`, or None.
-    `number` and `ledger_version` name the current generation when published or fresh. `removed`, `remove_failed`:
-    the cleanup's counts. It wrote only the workspace's mirror folder; the ledger's plugins ran in that engine."""
+    line when known; S0098; or the cache folder is on a network share, `refused` that folder, S0134). `publish`:
+    what became of a loaded result (`published`, or why not), `fresh`, or None. `number` and `ledger_version` name
+    the current generation when published or fresh. `removed`, `remove_failed`: the cleanup's counts. It wrote only
+    the workspace's mirror folder; the ledger's plugins ran in that engine."""
 
     outcome: RebuildOutcome
     fingerprint: str
@@ -309,7 +313,7 @@ class RebuildAnswer:
     ledger_version: str | None
     removed: int
     remove_failed: int
-    refusal: LoadRefusal | None = None
+    refusal: RebuildRefusal | None = None
     refused: str | None = None
     line: int | None = None
 
@@ -324,7 +328,8 @@ class OpenAnswer:
     `entries` and `errors` its counts), `moved` (the disk changed before the swap: run it again), `fresh` (the
     published generation already describes the disk: nothing loaded), `paused` (an unfinished save's `.open`
     journal) or `refused` (nothing loaded: `refusal` says why, `refused` names the file, `line` the line when known:
-    an encrypted file, ADR-0059; or Beancount's own load raised on the ledger, S0098). `publish`, `number`,
+    an encrypted file, ADR-0059; or Beancount's own load raised on the ledger, S0098; or the cache folder is on a
+    network share, `refused` that folder, S0134). `publish`, `number`,
     `ledger_version`, `removed`, `remove_failed`: as for the rebuild. It wrote only the workspace's mirror folder; the
     ledger's plugins ran in that engine."""
 

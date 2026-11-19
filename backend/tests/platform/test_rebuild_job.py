@@ -481,11 +481,13 @@ def test_an_unfinished_save_seen_at_the_recheck_stops_the_rebuild(make: Any) -> 
     assert [(n, f["why"]) for n, f in rig.lines()] == [("rebuild.not_loaded", "paused")]
 
 
-@pytest.mark.parametrize(("why", "line"), [("number_failed", 4), ("beancount_failed", None)])
+@pytest.mark.parametrize(("why", "line"), [("number_failed", 4), ("beancount_failed", None), ("cache_on_share", None)])
 def test_a_ledger_beancount_cannot_load_is_logged_with_why_and_not_tried_again(
     make: Any, why: str, line: int | None
 ) -> None:
-    """S0098 (BL-0123): Beancount's own load raised on the ledger; the same ledger fails the same way."""
+    """S0098 (BL-0123): Beancount's own load raised on the ledger; the same ledger fails the same way. S0134
+    (BL-0298): a cache folder on a network share, refused before any effect, the same way (`refused` names the
+    folder)."""
     refused = {**moved(), "outcome": "refused", "refusal": why, "refused": host("/L/main.bean"), "line": line}
     rig = make({"rebuild": [refused, loaded()]})
     assert background(rig) == NotLoaded(why)  # type: ignore[arg-type]
@@ -503,6 +505,7 @@ def test_a_ledger_beancount_cannot_load_is_logged_with_why_and_not_tried_again(
         {"outcome": "moved", "refused": host("/L/main.bean")},  # only a refusal names a file
         {"outcome": "moved", "line": 3},  # or a line
         {"outcome": "loaded", "refused": host("/L/main.bean"), "refusal": "beancount_failed"},
+        {"outcome": "refused", "refusal": "cache_on_share", "refused": host("/C/cache"), "line": 3},  # S0134
         {"outcome": "fresh", "publish": "fresh", "number": 1, "ledger_version": LV, "line": 3},
     ],
 )

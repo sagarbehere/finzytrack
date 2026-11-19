@@ -206,9 +206,19 @@ REBUILD_NOT_LOADED = Event(
         Field(
             "why",
             Kind.ENUM,  # `changing`: the disk moved in every try; the rest: why no try reached a result
-            # paused: an `.open` journal; number_failed, beancount_failed: Beancount's own load raised (S0098)
+            # paused: an `.open` journal; number_failed, beancount_failed: Beancount's own load raised (S0098);
+            # cache_on_share: the cache folder is on a network share (S0134)
             frozenset(
-                {"changing", "engine_failed", "refused", "violation", "paused", "number_failed", "beancount_failed"}
+                {
+                    "changing",
+                    "engine_failed",
+                    "refused",
+                    "violation",
+                    "paused",
+                    "number_failed",
+                    "beancount_failed",
+                    "cache_on_share",
+                }
             ),
         ),
     ),
@@ -261,9 +271,21 @@ OPEN_NOT_LOADED = Event(
         Field(
             "why",
             # `changing`: the disk moved in every try; `paused`: an `.open` journal; `encrypted`: ADR-0059;
-            # `number_failed`, `beancount_failed`: Beancount's own load raised on the ledger (S0098)
+            # `number_failed`, `beancount_failed`: Beancount's own load raised on the ledger (S0098);
+            # `cache_on_share`: the cache folder is on a network share (S0134)
             Kind.ENUM,
-            frozenset({"changing", "paused", "encrypted", "refused", "violation", "number_failed", "beancount_failed"}),
+            frozenset(
+                {
+                    "changing",
+                    "paused",
+                    "encrypted",
+                    "refused",
+                    "violation",
+                    "number_failed",
+                    "beancount_failed",
+                    "cache_on_share",
+                }
+            ),
         ),
     ),
 )

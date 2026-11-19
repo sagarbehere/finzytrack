@@ -73,8 +73,7 @@ file's or a folder's), and does nothing on an absent name; a read-only file with
 Linux adapters make no call (`uchg` stays). A power loss keeps the attribute as last set: an attribute cleared and then
 lost only makes the next job clear it again. The rename with POSIX semantics (`rename_shared`) is offered on a drive
 unless its volume lacks the flag (`no_posix_rename`) or is a network share (`remote`), as the adapter decides it. A
-drive in `sync_refused` is a network share whose server refuses a folder's `sync`: one effect that raises `SyncRefused`
-and makes nothing durable (probed, S0132), in either mode.
+drive in `remote` is a network share in either mode: `remote()` says so (S0134), which the mirror's publish refuses.
 """
 
 # pyright: reportPrivateUsage=false
@@ -103,7 +102,6 @@ from ledger_engine.fs.port import (
     NotOffered,
     Resolved,
     Right,
-    SyncRefused,
     check_name,
     same_path,
     split_absolute,
@@ -265,8 +263,7 @@ class MemFS:
         self.windows = windows
         self.held: set[int] = set()
         self.no_posix_rename: set[int] = set()  # devs whose volume lacks `FILE_SUPPORTS_POSIX_UNLINK_RENAME` (S0132)
-        self.remote: set[int] = set()  # devs that are network shares (S0132)
-        self.sync_refused: set[int] = set()  # devs whose server refuses a folder's sync: `SyncRefused` (S0132)
+        self.remote: set[int] = set()  # devs that are network shares: `remote()` (S0132, S0134)
 
     def stored(self, name: str) -> str:
         """The spelling the volume keeps for a name it is given."""
@@ -778,7 +775,6 @@ class MemFS:
         out.no_crtime = set(self.no_crtime)
         out.no_posix_rename = set(self.no_posix_rename)
         out.remote = set(self.remote)
-        out.sync_refused = set(self.sync_refused)
         for ino in reach:
             d = self.nodes[ino]
             assert isinstance(d, _Dir)
@@ -854,6 +850,10 @@ class MemDir:
 
     def device(self) -> int:
         return self._d.dev
+
+    def remote(self) -> bool:
+        """`DirHandle.remote` (S0134): whether this folder's drive is in `remote`. Asking is not an effect."""
+        return self._d.dev in self._fs.remote
 
     def identity(self) -> tuple[int, int]:
         return (self._d.dev, self._ino)
@@ -1110,7 +1110,7 @@ class MemDir:
         self._fs._effect(self._label("create", name), link)
         self._fs._effect(self._label("write", name), write, cut)
         self._fs._effect(self._label("fsync", name), fsync)
-        return (1, made[0])  # as `fstat` on its own descriptor would
+        return (self._d.dev, made[0])  # as `fstat` on its own descriptor would (its folder's volume: S0134)
 
     def swap(self, a: str, b: str) -> None:
         d = self._d
@@ -1365,8 +1365,6 @@ class MemDir:
         d = self._d
 
         def do() -> None:
-            if d.dev in self._fs.sync_refused:
-                raise SyncRefused  # nothing made durable (a network share's server, S0132)
             d.durable = dict(d.entries)
             d.pending = []
 

@@ -119,17 +119,6 @@ class NotOffered(OSError):
         super().__init__(errno.ENOTSUP, f"the volume does not offer {what}")
 
 
-class SyncRefused(OSError):
-    """A network share's server refused a folder's `sync` itself (Windows: `FlushFileBuffers` on the folder answers
-    `ERROR_INVALID_FUNCTION`; probed on an SMB share, S0132's 2026-11-18 run 23): nothing was made durable by the call.
-    Raised only for a remote volume; any other refusal of a sync is a plain `OSError`. It is an `OSError`, so every
-    caller that needs the sync fails as before; only the mirror's publish takes it as best effort (owner, 2026-11-19,
-    `design/specs/mirror/publish.md` §11 "Mode (a cache folder on a network share)")."""
-
-    def __init__(self) -> None:
-        super().__init__(errno.EINVAL, "the network share refused the folder's sync")
-
-
 class Kind(StrEnum):
     FILE = "file"
     DIR = "dir"
@@ -171,6 +160,13 @@ class DirHandle(Protocol):
     def device(self) -> int:
         """The volume this directory is on (`fstat`'s `st_dev`; S0087: the mirror's cleanup never crosses a mount
         point)."""
+        ...
+
+    def remote(self) -> bool:
+        """Whether this folder's volume is a network share (S0134, BL-0298): Windows' `FILE_REMOTE_DEVICE`; macOS's
+        `statfs` flags without `MNT_LOCAL`; on Linux, which has no such flag, the mount's type in a list of network
+        file systems (`ledger_engine.fs.posix.network_type`). Asking writes nothing. The mirror's publish refuses a
+        cache folder there (`design/specs/mirror/publish.md` §2)."""
         ...
 
     def identity(self) -> tuple[int, int]:
@@ -334,8 +330,7 @@ class DirHandle(Protocol):
         ...
 
     def sync(self) -> None:
-        """`durable_sync` of the directory: every entry operation made in it before this call is durable. A network
-        share whose server refuses it raises `SyncRefused` (an `OSError`; S0132)."""
+        """`durable_sync` of the directory: every entry operation made in it before this call is durable."""
         ...
 
     def close(self) -> None: ...

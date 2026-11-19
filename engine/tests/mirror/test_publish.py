@@ -17,7 +17,6 @@ link `current.db` (`CUR`, `current_in`, `point_at`), plus the Windows cases at t
 from __future__ import annotations
 
 import contextvars
-import json
 import os
 import re
 import sqlite3
@@ -40,7 +39,6 @@ from ledger_engine.mirror import build as build_mod
 from ledger_engine.mirror import publish as pb
 from ledger_engine.mirror.core import rows, schema
 from ledger_engine.mirror.store import SqliteStore
-from tests.mirror.fake_store import MAGIC, FakeStore
 from tests.mirror.publish_support import (
     CUR,
     ENGINE_BUILD,
@@ -1017,53 +1015,28 @@ def _shares() -> list[str]:
     return [v for v in os.environ.get("FT_TEST_SHARE", "").split(";") if v]
 
 
-class PortStore(FakeStore):
-    """The fake store's generations written through the port itself (one synced `create`), so the publish's own
-    steps (the folder, the cleanup, the syncs, the swap) run on a real share where SQLite's open by URI cannot (the
-    2026-11-19 run 1: the folder handle's path is the share's UNC path; BL-0298). Its `meta` is the fake store's,
-    which reads through the port."""
-
-    @override
-    def build(
-        self, d: DirHandle, name: str, result: Any, today: Any, stamp: build_mod.Stamp
-    ) -> build_mod.Built | build_mod.BuildFailed | pb.Replaced:
-        del result
-        facts = {
-            "surface_version": str(schema.SURFACE_VERSION),
-            "ledger_version": stamp.ledger_version,
-            "fingerprint": stamp.fingerprint,
-            "export_version": schema.EXPORT_VERSION,
-            "built_at": stamp.built_at,
-            "build_complete": "1",
-            "engine_build": stamp.engine_build,
-            "as_of": today.isoformat(),
-            "published_by": stamp.published_by,
-        }
-        made = d.create(name, MAGIC + json.dumps(facts, sort_keys=True).encode(), 0o600)
-        st = d.stat(name)
-        if st is None or st.identity != made:
-            return pb.Replaced()
-        return build_mod.Built(name, {}, rows.COMPLETE)
-
-
 @pytest.mark.skipif(not _shares(), reason="no network share given (FT_TEST_SHARE)")
-def test_on_windows_a_publish_into_a_cache_folder_on_a_network_share_lands(
+def test_on_windows_a_cache_folder_on_a_network_share_is_refused_and_nothing_is_written(
     fs: FileSystem, tmp_path: Path, root: Path
 ) -> None:
-    """ADR-0015 amendment of 2026-11-18 (question 3): a share is not offered the POSIX rename, so the swap takes the
-    plain rename (§11, stated) and publishes, where it was refused with another error on the base."""
-    share_cache = Path(_shares()[0]) / f"ft-{tmp_path.name}-{os.getpid()}" / "cache"
-    share_cache.mkdir(parents=True)
-    store = PortStore()  # SQLite cannot open a generation on a share by its URI yet (BL-0298)
-    try:
-        first = published(publish_job(fs, share_cache, root, store=store))
-        second = published(publish_job(fs, share_cache, root, store=store))
-        assert second.gen.number > first.gen.number
-        assert current(share_cache) == second.gen.name
-    finally:
-        import shutil
+    """publish.md §2 "On a network share" (owner, 2026-11-19: "Ok. Option 1 for Bl-0298."; S0134): a cache folder on
+    the CI share, by each of its spellings (a mapped drive, the UNC path, the UNC path by the machine's name), is
+    refused `CacheOnShare` naming the first folder of its path there, before anything is written. A second opinion on
+    the adapter's `remote()` for every spelling, against the fake's `remote`."""
+    import shutil
 
-        shutil.rmtree(share_cache.parent, ignore_errors=True)
+    for share in _shares():
+        base = Path(share) / f"ft-{tmp_path.name}-{os.getpid()}"
+        cache = base / "cache"
+        cache.mkdir(parents=True)
+        try:
+            with pytest.raises(pb.CacheOnShare) as e:
+                publish_job(fs, cache, root)
+            # the first folder of the path on the share is named: the cache folder's parent here, opened first
+            assert e.value.folder.lower().endswith(base.name.lower()), (share, e.value.folder)
+            assert list(cache.iterdir()) == [], share
+        finally:
+            shutil.rmtree(base, ignore_errors=True)
 
 
 def test_on_windows_a_hard_link_in_the_mirror_folder_never_clears_its_files_read_only_attribute(

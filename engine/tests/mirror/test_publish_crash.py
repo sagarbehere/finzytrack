@@ -449,20 +449,17 @@ def test_a_pointer_renamed_before_its_data_is_synced_is_caught(monkeypatch: pyte
 
 def without_posix_rename(fs: MemFS, how: str) -> None:
     """The cache's drive lacks the rename with POSIX semantics: its volume flag clear (ReFS, FAT32, exFAT, an older
-    Windows), or a network share, which may report NTFS and the flag (S0132, BL-0294)."""
+    Windows; S0132, BL-0294). A network share, which the adapter never offers it either, is refused before the swap
+    (S0134: `test_a_cache_folder_on_a_network_share_is_refused_before_any_effect`)."""
     with fs.open_dir(CACHE) as d:
         if how == "no-flag":
             fs.no_posix_rename.add(d.device())
-        elif how == "remote":
-            fs.fs_types[d.device()] = "ntfs"  # what a share's server may report: never asked (BL-0294)
-            fs.remote.add(d.device())
 
 
-@pytest.mark.parametrize("how", ["no-flag", "remote"])
+@pytest.mark.parametrize("how", ["no-flag"])
 def test_without_the_posix_rename_the_pointer_swap_takes_the_plain_rename(how: str) -> None:
     """§4 step 8, §11 "Limit (Windows without the POSIX rename)": on a Windows volume that does not offer the rename
-    with POSIX semantics (its flag clear, or a network share), the swap takes the plain rename, stated, and
-    publishes."""
+    with POSIX semantics (its flag clear), the swap takes the plain rename, stated, and publishes."""
     fs = world(windows=True)
     without_posix_rename(fs, how)
     first = job(fs)
@@ -472,7 +469,7 @@ def test_without_the_posix_rename_the_pointer_swap_takes_the_plain_rename(how: s
     assert seen_by_a_reader(fs) == second.gen.name
 
 
-@pytest.mark.parametrize("how", ["offered", "no-flag", "remote"])
+@pytest.mark.parametrize("how", ["offered", "no-flag"])
 def test_a_reader_holding_the_pointer_without_sharing_deletion_refuses_the_swap_and_changes_nothing(how: str) -> None:
     """§11 "Limit (a program holding the pointer)": a program that holds `current.txt` open without sharing deletion
     refuses the swap's rename on every volume: the job raises, `current.txt` still names the generation it named,
@@ -673,123 +670,68 @@ def test_a_read_only_temporary_pointer_at_the_swaps_own_name_is_cleared_and_repl
     assert seen_by_a_reader(fs) == out.gen.name
 
 
-# -- S0132 (the owner, 2026-11-19: "Best effort on a share (Recommended)"): a share that refuses folder syncs ---------
+# -- S0134 (BL-0298; owner, 2026-11-19: "Ok. Option 1 for Bl-0298."): a cache folder on a network share -----------
+
+SHARE = 2
 
 
-def seen_on_a_share(fs: MemFS) -> str | None:
-    """What a reader reads where no folder sync makes anything durable (publish.md §11 "Mode (a cache folder on a
-    network share)"): after a power loss the pointer may name a generation whose entry was lost, or one with its
-    journal beside it; the reader then finds no published mirror (`current` None, or the store refuses it), which
-    costs a rebuild. What it does read is always a whole, complete generation of this stamp."""
-    try:
-        d = fs.open_dir(MIRROR)
-    except OSError:
-        return None
-    with d:
-        gen = pb.current(d)
-        facts = None if gen is None else FakeStore().meta(d, gen.name)
-        if gen is None or facts is None:
-            return None
-        assert facts.build_complete
-        assert facts.ledger_version == f"{gen.number}/{digest(FP)}"
-        return gen.name
+def on_a_share(fs: MemFS, where: str) -> None:
+    """A network share mounted at the folder `where` (a remote drive, the fake's `remote`): it and every folder in it
+    report the share's device, as a mount point does."""
+    fs.outside_mkdirs(where)
+    fs.outside_mount(where, SHARE)
+    fs.remote.add(SHARE)
 
 
-def assert_publishes_again_on_a_share(fs: MemFS, *, power_loss: bool = True) -> None:
-    """The next job publishes and leaves only what §6 keeps; with `power_loss`, every state a power loss may then
-    leave is read (one level: nothing on such a share is ever durable, so the states multiply)."""
+@pytest.mark.parametrize("earlier", [False, True], ids=["fresh", "published"])
+@pytest.mark.parametrize(
+    "where", [CACHE, f"{CACHE}/workspaces", f"{CACHE}/workspaces/{KEY}", MIRROR], ids=["cache", "ws", "key", "mirror"]
+)
+def test_a_cache_folder_on_a_network_share_is_refused_before_any_effect(
+    windows: bool, where: str, earlier: bool
+) -> None:
+    """publish.md §2 "On a network share" (owner, 2026-11-19: "Ok. Option 1 for Bl-0298."): when any folder of the
+    mirror's path is on a remote volume, at the cache folder or at a folder inside it (a share can be mounted at any
+    folder on macOS and Linux, and a link can lead there on Windows), `open_folder` refuses it, naming that folder,
+    before any effect: no folder made, synced or removed, nothing cleaned, built or swapped."""
+    fs = world(windows)
+    if earlier:
+        assert isinstance(job(fs), pb.Published)
+    on_a_share(fs, where)
+    before = (fs.snapshot(), len(fs.effects))
+    with pytest.raises(pb.CacheOnShare) as e:
+        job(fs)
+    assert e.value.folder == where
+    assert (fs.snapshot(), len(fs.effects)) == before
+
+
+def test_the_cache_folders_parent_on_a_share_is_refused_before_the_cache_folder_is_made(windows: bool) -> None:
+    """The cache folder purged by the OS (§9) and its parent on a share: refused before `open_folder` makes it."""
+    fs = MemFS(windows=windows)
+    on_a_share(fs, "/apps")
+    before = (fs.snapshot(), len(fs.effects))
+    with pytest.raises(pb.CacheOnShare) as e, pb.open_folder(fs, "/apps/cache", KEY):
+        pass
+    assert e.value.folder == "/apps"
+    assert (fs.snapshot(), len(fs.effects)) == before
+
+
+@pytest.mark.parametrize("where", ["local-volume", "share-inside-mirror", "share-elsewhere"])
+def test_a_local_cache_folder_still_publishes(windows: bool, where: str) -> None:
+    """@regression-guard. The must-not-pass of the refusal: another local volume at `<key>/`, a share mounted inside
+    `mirror/` (never entered: the cleanup counts it failed) and a share elsewhere on the machine refuse nothing."""
+    fs = world(windows)
+    if where == "local-volume":
+        fs.outside_mkdirs(f"{CACHE}/workspaces/{KEY}")
+        fs.outside_mount(f"{CACHE}/workspaces/{KEY}", SHARE)
+    assert isinstance(job(fs), pb.Published)
+    if where == "share-inside-mirror":
+        on_a_share(fs, f"{MIRROR}/mnt")
+    elif where == "share-elsewhere":
+        on_a_share(fs, "/elsewhere")
     out = job(fs)
     assert isinstance(out, pb.Published), out
-    assert seen_on_a_share(fs) == out.gen.name
-    left = set(fs.names_in(MIRROR))
-    gens = {n for n in left if pb.gen_of(n) is not None}
-    # a journal a power loss brought back beside a kept generation stays (§6: such a file is not read, not removed)
-    journals = {f"{g}{x}" for g in gens for x in pb.JOURNALS} & left
-    assert left == {"current.txt", *gens, *journals}, left
-    if power_loss:
-        for s in fs.power_loss_states():
-            seen_on_a_share(s)
-
-
-def share_world() -> MemFS:
-    """The cache folder on a network share whose server refuses a folder's sync (the 2026-11-18 run 23)."""
-    fs = world(windows=True)
-    with fs.open_dir(CACHE) as d:
-        fs.remote.add(d.device())
-        fs.sync_refused.add(d.device())
-    return fs
-
-
-def test_on_a_share_that_refuses_folder_syncs_the_publish_is_best_effort_and_noted_once() -> None:
-    """publish.md §11 "Mode (a cache folder on a network share)": every folder sync of the publish is refused there;
-    each counts as done for the mirror, the job publishes (the plain rename), and the note says so for the log."""
-    fs = share_world()
-    note = pb.SyncNote()
-    store = FakeStore()
-    with pb.open_folder(fs, CACHE, KEY, note) as d:
-        cleaned = pb.clean(d, store, NOW)
-        out = pb.publish(
-            d,
-            cleaned,
-            store,
-            ([], [], {}),
-            FP,
-            floor=0,
-            today=TODAY,
-            built_at=BUILT_AT,
-            engine_build=ENGINE_BUILD,
-            recheck=lambda: "same",
-            by="rebuild",
-            note=note,
-        )
-    assert isinstance(out, pb.Published), out
-    assert note.refused
-    assert seen_on_a_share(fs) == out.gen.name
-    assert_publishes_again_on_a_share(fs)
-
-
-def test_a_local_volumes_failed_folder_sync_still_fails_the_publish() -> None:
-    """The must-not-pass of the mode: a folder sync refused with any other error (here `EIO` at step 6, on a local
-    volume) ends the job unpublished, as before; only `SyncRefused` is best effort."""
-    fs = world(windows=True)
-    first = job(fs)
-    assert isinstance(first, pb.Published)
-    start = len(fs.effects)
-    assert isinstance(job(fs), pb.Published)
-    labels = fs.effects[start:]
-    step6 = max(i for i, e in enumerate(labels) if e.startswith("sync "))  # the last folder sync: step 6
-    fs2 = world(windows=True)
-    assert isinstance(job(fs2), pb.Published)
-    fs2.inject(len(fs2.effects) + step6, crash=False, err=errno.EIO)
-    with pytest.raises(OSError, match="injected"):
-        job(fs2)
-    assert seen_by_a_reader(fs2) is not None  # the job ended before its swap: the earlier generation stays current
-
-
-@pytest.mark.parametrize("prepare", [0, 1])
-def test_a_death_at_every_effect_on_a_share_that_refuses_syncs_never_leaves_a_reader_a_partial_mirror(
-    prepare: int,
-) -> None:
-    """§9 on such a share: a crash at every effect, and every state a power loss leaves (nothing a refused sync
-    would have made durable is): a reader sees a whole generation or none, and the next job publishes and cleans."""
-    base = share_world()
-    for _ in range(prepare):
-        assert isinstance(job(base), pb.Published)
-    n = len(base.effects)
-    assert isinstance(job(base), pb.Published)
-    total = len(base.effects) - n
-    for i in range(total):
-        fs = share_world()
-        for _ in range(prepare):
-            assert isinstance(job(fs), pb.Published)
-        fs.inject(len(fs.effects) + i, crash=True)
-        with contextlib.suppress(Crash):
-            job(fs)
-        # nothing on such a share is ever durable, so a power loss's states multiply with each job: every one after
-        # the first job's crash, the crashed state alone after later jobs
-        for s in states(fs) if prepare == 0 else [fs]:
-            seen_on_a_share(s)
-            assert_publishes_again_on_a_share(s, power_loss=False)  # the crashed state's power losses: above
+    assert seen_by_a_reader(fs) == out.gen.name
 
 
 # -- S0132 round 1 (verifier V1, red team F1; owner, 2026-11-19: "Never clear a linked file (Recommended)") ----------

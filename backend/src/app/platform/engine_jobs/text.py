@@ -116,6 +116,15 @@ cannot start; an incompatible one, a damaged install); the app closing; the app 
 (S0102, BL-0244)."""
 
 
+def cache_on_share_text(folder: str) -> str:
+    """§11, the open refused `cache_on_share` (S0134, BL-0298; owner, 2026-11-19: "Ok. Option 1 for Bl-0298."):
+    `folder`, the first folder of the cache's path on the share, as the engine named it."""
+    return (
+        f"Finzytrack cannot open this workspace. Finzytrack's cache is in {folder}, which is on a network share. "
+        "Finzytrack keeps its cache only on a local disk. Your ledger files are not changed."
+    )
+
+
 def unavailable_text(details: EngineUnavailableDetails) -> str:
     """`ENGINE_UNAVAILABLE` worded by its reason (§11; the registry's message is the code's short form)."""
     return next(text for reason, text in UNAVAILABLE if reason == details.reason)

@@ -432,13 +432,15 @@ class RebuildParams(Message):
 type Publish = Literal["published", "fresh", "inexact", "replaced", "incomplete"]
 
 
-type LoadRefusal = Literal["number_failed", "beancount_failed"]
-"""Why a load did not happen although Beancount ran (S0098, `ledger.load_failure`): `number_failed`, its decimal
-arithmetic raised while it worked on the transaction `line` names (a filled-in amount it cannot quantize, a total price
-or cost for a quantity of 0); `beancount_failed`, anything else of its own load raised (a plugin's entry its checks
-cannot read, a plugin that fails while imported). bean-check fails on the same ledger."""
+type RebuildRefusal = Literal["number_failed", "beancount_failed", "cache_on_share"]
+"""Why a rebuild was refused. Beancount's own load raised although it ran (S0098, `ledger.load_failure`):
+`number_failed`, its decimal arithmetic raised while it worked on the transaction `line` names (a filled-in amount it
+cannot quantize, a total price or cost for a quantity of 0); `beancount_failed`, anything else of its own load raised
+(a plugin's entry its checks cannot read, a plugin that fails while imported); bean-check fails on the same ledger. Or
+`cache_on_share`: the mirror's cache folder is on a network share, refused before any effect, `refused` naming that
+folder (`design/specs/mirror/publish.md` §2, S0134)."""
 
-type OpenRefusal = Literal["encrypted", "number_failed", "beancount_failed"]
+type OpenRefusal = Literal["encrypted", "number_failed", "beancount_failed", "cache_on_share"]
 
 
 class RebuildResult(Message):
@@ -450,8 +452,9 @@ class RebuildResult(Message):
     `fresh`, null otherwise. `number` and `ledger_version`: the current generation's when `publish` is `published` or
     `fresh`, else null. `removed`, `remove_failed`: the cleanup's counts. `refused` (S0098): Beancount's own load
     raised on the ledger, nothing published: `refusal` says why (`number_failed`, its arithmetic failed on the
-    transaction `line` names; `beancount_failed`, any other failure), `refused` names the file and `line` the line
-    when known; all three are null otherwise. `errors` counts Beancount's errors, as bean-check does (the warnings on
+    transaction `line` names; `beancount_failed`, any other failure; `cache_on_share`, the cache folder is on a network
+    share, nothing done, S0134), `refused` names the file (the folder) and `line` the line when known; all three are
+    null otherwise. `errors` counts Beancount's errors, as bean-check does (the warnings on
     numbers it rounded are rows of `ledger_errors`, not errors). It runs the ledger's plugins, so the engine is retired
     after it."""
 
@@ -464,7 +467,7 @@ class RebuildResult(Message):
     ledger_version: str | None = Field(pattern=r"^[1-9][0-9]*/sha256:[0-9a-f]{64}$")
     removed: int = Field(ge=0)
     remove_failed: int = Field(ge=0)
-    refusal: LoadRefusal | None
+    refusal: RebuildRefusal | None
     refused: AbsPath | None
     line: int | None = Field(ge=1)
 
@@ -491,7 +494,8 @@ class OpenResult(Message):
     published generation already describes the disk: nothing loaded), `paused` (an unfinished save's `.open` journal:
     nothing published) or `refused` (nothing loaded: `refusal` says why, `refused` names the file and `line` the line
     when known: `encrypted`, an encrypted file, ADR-0059; `number_failed` and `beancount_failed`, Beancount's own load
-    raised on the ledger, S0098; all three null otherwise). `publish`: what became of a
+    raised on the ledger, S0098; `cache_on_share`, the cache folder is on a network share, nothing done, `refused`
+    naming that folder, S0134; all three null otherwise). `publish`: what became of a
     `loaded` result (`published`, or why not), `fresh` for `fresh`, null otherwise. `number` and `ledger_version`: the
     current generation's when `publish` is `published` or `fresh`, else null. `removed`, `remove_failed`: the
     cleanup's counts. It runs the ledger's plugins, so the engine is retired after it."""

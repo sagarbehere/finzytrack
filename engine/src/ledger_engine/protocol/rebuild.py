@@ -10,7 +10,8 @@ files, engine-jobs §5.1).
   (`--app-cache`, S0087 round 1), so no request names another folder to clean.
 
 An encrypted file met (`EncryptedFileMet`, never decrypted) and any `OSError` reach the server as `engine.internal`:
-the rebuild did not run to a result, which the sidecar logs.
+the rebuild did not run to a result, which the sidecar logs. A cache folder on a network share is a named refusal
+(`cache_on_share`, S0134).
 """
 
 from __future__ import annotations
@@ -22,22 +23,24 @@ from typing import Final, Protocol
 
 from ledger_engine.fs.port import FileSystem
 from ledger_engine.fs.this_os import for_this_os
-from ledger_engine.ledger import load_failure, publishing, rebuild
+from ledger_engine.ledger import publishing, rebuild
 from ledger_engine.ledger.core.ledger_set import UndecodableError, decode, encode
 from ledger_engine.mirror import publish as pb
-from ledger_engine.protocol.messages import LoadRefusal, Message, Publish, RebuildParams, RebuildResult
+from ledger_engine.protocol.messages import Message, Publish, RebuildParams, RebuildRefusal, RebuildResult
 from ledger_engine.protocol.recovery import BadParamsError, Decider, app_local_data_of
 from ledger_engine.protocol.save import app_cache_of, engine_build
 
 TABLE: Final = "engine.rebuild"
 EPOCH: Final = datetime(1970, 1, 1, tzinfo=UTC)
 TABLE_VERSION: Final = (
-    4  # 1 (S0070): the rebuild after a save (ADR-0068 D1); 2 (S0087): its publish; 3 (S0098): `refused`;
-    # 4 (S0132): `sync_refused`, a folder sync a network share refused, taken as best effort (publish.md §11)
+    5  # 1 (S0070): the rebuild after a save (ADR-0068 D1); 2 (S0087): its publish; 3 (S0098): `refused`;
+    # 4 (S0132): `sync_refused`; 5 (S0134): `sync_refused` gone with the share's best effort, `refusal`
+    # `cache-on-share` (publish.md §2)
 )
-REFUSAL: Final[dict[load_failure.Reason, LoadRefusal]] = {
+REFUSAL: Final[dict[rebuild.Refusal, RebuildRefusal]] = {
     "number-failed": "number_failed",
     "beancount-failed": "beancount_failed",
+    "cache-on-share": "cache_on_share",
 }
 
 
@@ -144,8 +147,7 @@ def run(params: Message, ctx: RebuildJob) -> Message:
         raise BadParamsError(msg)
     fs = for_this_os()
     target = target_of(params, ctx, fs)
-    ports = rebuild.Ports(fs=fs)
-    a = rebuild.run(ports, hint, ctx, target)
+    a = rebuild.run(rebuild.Ports(fs=fs), hint, ctx, target)
     f = fields_of(a.outcome, a.published, a.cleaned)
     inputs = {
         "errors": a.errors,
@@ -153,7 +155,6 @@ def run(params: Message, ctx: RebuildJob) -> Message:
         "removed": f.removed,
         "remove_failed": f.remove_failed,
         "refusal": a.refusal,
-        "sync_refused": ports.note.refused,
     }
     ctx.decide(TABLE, TABLE_VERSION, inputs, a.outcome)
     return RebuildResult(

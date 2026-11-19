@@ -1958,3 +1958,27 @@ def test_S0117_r4_a_folders_rule_is_asked_through_its_descriptor_as_resolve_asks
             child.close()
     finally:
         h.close()
+
+
+def test_S0134_remote_agrees_with_mounts_local_flag_on_every_mounted_volume(fs: DarwinFS, tmp_path: Path) -> None:
+    """`DirHandle.remote()` is `fstatfs`'s `f_flags` without `MNT_LOCAL`, the flag `mount` prints as "local"
+    (smbfs, nfs, afpfs and webdav lack it). A second opinion on the decoding: every volume mounted here that can be
+    opened answers as `mount` says (autofs's maps lack the flag too). The temporary folder is local."""
+    import re
+
+    with fs.open_dir(str(tmp_path)) as d:
+        assert d.remote() is False
+    seen = {False: 0, True: 0}
+    for line in subprocess.run(["/sbin/mount"], capture_output=True, text=True, check=True).stdout.splitlines():
+        m = re.fullmatch(r".+? on (.+) \(([^()]*)\)", line)
+        assert m is not None, line
+        point, flags = m[1], [f.strip() for f in m[2].split(",")]
+        try:
+            d = fs.open_dir(point)
+        except OSError:
+            continue  # a mount point this user cannot open
+        with d:
+            remote = "local" not in flags
+            assert d.remote() is remote, line
+            seen[remote] += 1
+    assert seen[False] > 0
