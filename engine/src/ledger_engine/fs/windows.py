@@ -28,13 +28,15 @@ Windows since S0129, each in its own Job Object).
   refused): a file the adapter creates is flushed through its own handle; `sync_file` opens the file for writing (it
   writes nothing; a file another program holds without sharing writes cannot be synced, and the caller fails closed);
   a folder's `sync` opens the folder again for writing (`FILE_ADD_FILE`) and flushes it (probed: works on NTFS, ReFS,
-  FAT32 and exFAT; a network share's server refuses it, `ERROR_INVALID_FUNCTION`, probed in S0132: an `OSError` like
-  any failed sync, and the mirror refuses a cache folder on a share before any sync, S0134). The rename's source is
-  opened with `FILE_WRITE_THROUGH`. **What this makes durable for a rename** is relied on, not documented: Microsoft
-  documents `FlushFileBuffers` for a file's data and metadata, not for a folder's entries; NTFS and ReFS log a rename as
-  one metadata operation and a flush of the folder commits that log as far as it is known, and FAT32 and exFAT write the
-  folder's entries with no log (a replace there may lose the old entry and keep no new one, as macOS's FAT: §6.8). Not
-  power-cut tested (the runner cannot cut power): engine-jobs §15 "Limit (Windows durability)".
+  FAT32 and exFAT; a network share's server refuses it, `ERROR_INVALID_FUNCTION`, probed in S0132 and the 2026-11-20
+  runs 2 and 3: `SyncRefused` on a remote volume only, which only a ledger folder's sync takes as done,
+  `ledger.handles.ledger_sync`, S0136; the mirror refuses a cache folder on a share before any sync, S0134). The
+  rename's source is opened with `FILE_WRITE_THROUGH`. **What this makes durable for a rename** is relied on, not
+  documented: Microsoft documents `FlushFileBuffers` for a file's data and metadata, not for a folder's entries; NTFS
+  and ReFS log a rename as one metadata operation and a flush of the folder commits that log as far as it is known, and
+  FAT32 and exFAT write the folder's entries with no log (a replace there may lose the old entry and keep no new one, as
+  macOS's FAT: §6.8). Not power-cut tested (the runner cannot cut power): engine-jobs §15 "Limit (Windows
+  durability)".
 - **The replace (ADR-0069):** Windows has no exchange of two names (probed), so `caps().swap` is False on every
   volume and the writer takes §6.8's best-effort mode: the new bytes synced at the staging name, then one plain rename
   over the file (`FileRenameInformation` with `ReplaceIfExists`, relative to the folder handle: the handle-relative
@@ -56,9 +58,10 @@ Windows since S0129, each in its own Job Object).
   name expanded, each name as stored), the prefix taken off; a volume with no drive letter or mount folder gives its
   volume GUID path instead (`VOLUME_NAME_GUID`). **The canonical root (Q1)** is therefore the one the handle gives,
   whatever spelling opened it: a short name, the prefix, a `subst` drive or a volume GUID path of a lettered volume
-  all give the drive letter; a root's key is folded by ordinal upper case (a server name's case). A network share
-  (a mapped drive or a UNC path) has no drive ID here (`volume_id` None: the save refuses `no_drive_id`, as on macOS,
-  BL-0219), so its two spellings never hold a journal.
+  all give the drive letter; a root's key is folded by ordinal upper case (a server name's case). A mapped drive
+  gives its share's UNC path. A network share has the drive ID of the server's volume (below; S0136), so each of its
+  spellings (`\\\\localhost\\...`, `\\\\<machine>\\...`, and `\\\\localhost\\C$` for a local folder) is another
+  root and key for a folder with one identity (engine-jobs §6.3, "Limit (share spellings)").
 - **Identity (BL-0218):** `identity()` and `stat`'s `(dev, ino)` are `FileIdInfo`'s 64-bit volume serial and 128-bit
   file ID on NTFS and ReFS; FAT32 and exFAT have no `FileIdInfo` (probed), so there they are the 32-bit volume serial
   and the file index `GetFileInformationByHandle` gives. `born()` is the file ID on NTFS and ReFS (the creation time is
@@ -69,7 +72,9 @@ Windows since S0129, each in its own Job Object).
   replacement is not caught there (as macOS's FAT, whose 2 s creation time catches it only by chance).
   `volume_id`: the serial as a version 5 UUID in `port.SERIAL_NAMESPACE` (16 hex digits for NTFS and ReFS, `XXXX-XXXX`
   for FAT32 and exFAT: the names Linux's udev gives the same drives), so twin sticks share it, as on macOS and Linux;
-  a remote volume or another file system has none. The file-system type is `GetVolumeInformationByHandleW`'s name in
+  on a network share the server volume's serial, as the share's `FileIdInfo` gives it (S0136, BL-0219; probed equal
+  through every spelling and the server's own path, stable across a remap and a server restart); another file system
+  has none. The file-system type is `GetVolumeInformationByHandleW`'s name in
   lower case (`ntfs`, `refs`, `fat32`, `fat`, `exfat`).
 - **Names and folding:** NTFS, ReFS, FAT32 and exFAT compare names without case (probed); a folder compares by
   ordinal upper case (`FoldRule(upper=True)`), except an NTFS folder with its case-sensitive flag
@@ -139,6 +144,7 @@ from ledger_engine.fs.port import (
     NotOffered,
     Resolved,
     Right,
+    SyncRefused,
     check_name,
     fold,
 )
@@ -254,6 +260,7 @@ EPOCH_AS_FILETIME: Final = 116_444_736_000_000_000
 """1970-01-01 in 100 ns units since 1601-01-01 (a FILETIME)."""
 MAX_PATH_CHARS: Final = 32_768
 # Win32 errors
+ERROR_INVALID_FUNCTION: Final = 1
 ERROR_FILE_NOT_FOUND: Final = 2
 ERROR_PATH_NOT_FOUND: Final = 3
 ERROR_ACCESS_DENIED: Final = 5
@@ -815,8 +822,10 @@ class WindowsDir:
         return self._h.volume()[0]
 
     def volume_id(self) -> str | None:
-        if self._h.remote():
-            return None  # a network share: no drive ID (BL-0219), the save refuses `no_drive_id`
+        """The drive ID (the module's docstring, "Identity"), on a network share too: the server volume's serial, as
+        `FileIdInfo` gives it there (S0136, BL-0219; owner, 2026-11-20: "Best effort + open notice (Recommended)"):
+        probed equal through a mapped drive, every UNC spelling and the server's own local path, and stable across a
+        remap and a restart of the file server (the 2026-11-20 runs 2 and 3)."""
         fs_type, serial32 = self._h.volume()
         if fs_type in FS_SERIAL64:
             serial = self._h.identity()[0]
@@ -1145,10 +1154,16 @@ class WindowsDir:
 
     def sync(self) -> None:
         """`FlushFileBuffers` on the folder, opened again for writing (probed: a read-only handle is refused). A
-        network share's server answers `ERROR_INVALID_FUNCTION` (probed, S0132's 2026-11-18 run 23): an `OSError`,
-        as any failure is."""
+        network share's server answers `ERROR_INVALID_FUNCTION` (probed, S0132's 2026-11-18 run 23, the 2026-11-20
+        runs 2 and 3): `SyncRefused`, only when the volume is remote; any other failure, and that code on a local
+        volume, raises as it is (S0136)."""
         with self._reopen(FILE_ADD_FILE) as h:  # FlushFileBuffers needs a handle opened for writing (probed)
-            h.flush()
+            if self.api.FlushFileBuffers(h.handle):
+                return
+            code = ctypes.get_last_error()
+            if code == ERROR_INVALID_FUNCTION and self._h.remote():
+                raise SyncRefused
+            raise _win_error("FlushFileBuffers", code=code)
 
 
 def _ace(kind: int, flags: int, mask: int) -> AclEntry:

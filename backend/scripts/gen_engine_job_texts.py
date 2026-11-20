@@ -335,6 +335,11 @@ SAVE: tuple[Row, ...] = (
         lambda: st.BEST_EFFORT_WINDOWS,
     ),
     (
+        "msg:save.best_effort_share",
+        "the open of a workspace whose ledger is on a network share (§6.8; Windows, S0136)",
+        lambda: st.BEST_EFFORT_SHARE,
+    ),
+    (
         "msg:preview.large_file",
         "a preview whose plan changes one file larger than 15 MB, now or after the change (S0120)",
         lambda: st.large_file_tip((FILE,)) or "",

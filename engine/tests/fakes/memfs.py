@@ -75,6 +75,13 @@ lost only makes the next job clear it again. The rename with POSIX semantics (`r
 unless its volume lacks the flag (`no_posix_rename`) or is a network share (`remote`), as the adapter decides it. A
 drive in `remote` is a network share; only the Windows mode's `remote()` says so (S0134), which the mirror's publish
 refuses; in POSIX mode `remote()` answers None, as the macOS and Linux adapters do.
+
+**A share whose server refuses a folder's sync** (S0136, BL-0219; probed on the CI share): a drive in `sync_refused`
+answers a folder's `sync` with `SyncRefused` when it is a network share (`remote`, in Windows mode), else with a plain
+`OSError(EINVAL)` (the code on a local volume, which the adapter never tolerates); either way the sync is one effect
+(labelled `sync`) that makes nothing durable. On such a drive the server makes the folder's entries durable when it
+does, which the fake models as never: a power loss may keep or drop each entry operation made there since the folder
+was made (`power_loss_states`), and a file's own sync works as anywhere.
 """
 
 # pyright: reportPrivateUsage=false
@@ -103,6 +110,7 @@ from ledger_engine.fs.port import (
     NotOffered,
     Resolved,
     Right,
+    SyncRefused,
     check_name,
     same_path,
     split_absolute,
@@ -206,27 +214,38 @@ class _Fault:
     after: bool
 
 
+def _is(entries: dict[str, tuple[str, int]], key: str, ino: str | None) -> bool:
+    """`key` names an entry, and, when the operation recorded which object it acted on (`ino`), that object."""
+    return key in entries and (ino is None or entries[key][1] == int(ino))
+
+
 def _apply(entries: dict[str, tuple[str, int]], op: tuple[str, ...]) -> None:
-    """One entry operation on `entries`; it does nothing when its precondition does not hold."""
+    """One entry operation on `entries`; it does nothing when its precondition does not hold. An unlink, a swap, a
+    rename and a move recorded with the inode(s) they acted on (S0136) act only on those objects: a power loss that
+    dropped the entry an earlier operation made under the same name never lets a later one move another object (a
+    file system acts on the entry it found, not on a name; on a network share nothing is ever synced in between)."""
     kind = op[0]
+    o = list(op)  # a list: each kind's own length
     if kind == "link":
-        _, key, stored, ino = op
+        _, key, stored, ino = o
         if key not in entries:
             entries[key] = (stored, int(ino))
     elif kind == "unlink":
-        entries.pop(op[1], None)
+        if _is(entries, o[1], o[2] if len(o) > 2 else None):
+            entries.pop(o[1])
     elif kind == "swap":
-        _, ka, kb = op
-        if ka in entries and kb in entries:
+        ka, kb = o[1], o[2]
+        ia_, ib_ = (o[3], o[4]) if len(o) > 3 else (None, None)
+        if _is(entries, ka, ia_) and _is(entries, kb, ib_):
             (sa, ia), (sb, ib) = entries[ka], entries[kb]
             entries[ka], entries[kb] = (sa, ib), (sb, ia)
     elif kind == "rename":
-        _, ks, kd, stored = op
-        if ks in entries and kd not in entries:
+        ks, kd, stored = o[1], o[2], o[3]
+        if _is(entries, ks, o[4] if len(o) > 4 else None) and kd not in entries:
             entries[kd] = (stored, entries.pop(ks)[1])
     elif kind == "move":  # a plain rename: it replaces an entry at its target
-        _, ks, kd, stored = op
-        if ks in entries:
+        ks, kd, stored = o[1], o[2], o[3]
+        if _is(entries, ks, o[4] if len(o) > 4 else None):
             entries[kd] = (stored, entries.pop(ks)[1])
 
 
@@ -265,6 +284,7 @@ class MemFS:
         self.held: set[int] = set()
         self.no_posix_rename: set[int] = set()  # devs whose volume lacks `FILE_SUPPORTS_POSIX_UNLINK_RENAME` (S0132)
         self.remote: set[int] = set()  # devs that are network shares: `remote()` (S0132, S0134)
+        self.sync_refused: set[int] = set()  # devs whose server refuses a folder's sync (S0136; the docstring)
 
     def stored(self, name: str) -> str:
         """The spelling the volume keeps for a name it is given."""
@@ -288,7 +308,8 @@ class MemFS:
             do()
             return
         if f.after:
-            do()
+            with contextlib.suppress(OSError):  # the call answers the injected error (a share's refused sync, S0136)
+                do()
         elif write is not None and f.cut is not None:
             write(f.cut)
         if f.crash:
@@ -490,7 +511,7 @@ class MemFS:
         tk = _key(tmp, d.ci)
         d.entries[k] = (self.stored(name), ino)
         d.pending.append(("link", tk, self.stored(tmp), str(ino)))
-        d.pending.append(("move", tk, k, self.stored(name)))
+        d.pending.append(("move", tk, k, self.stored(name), str(ino)))
 
     def outside_unsynced(self, path: str, synced: bytes = b"") -> None:
         """The file at `path` was last written in place by a program that did not sync it (many editors do not): its
@@ -776,6 +797,7 @@ class MemFS:
         out.no_crtime = set(self.no_crtime)
         out.no_posix_rename = set(self.no_posix_rename)
         out.remote = set(self.remote)
+        out.sync_refused = set(self.sync_refused)
         for ino in reach:
             d = self.nodes[ino]
             assert isinstance(d, _Dir)
@@ -1126,8 +1148,9 @@ class MemDir:
                 raise FileNotFoundError(errno.ENOENT, "no entry")
             self._unlocked(ka)
             self._unlocked(kb)
+            guard = (str(d.entries[ka][1]), str(d.entries[kb][1]))
             _apply(d.entries, ("swap", ka, kb))
-            d.pending.append(("swap", ka, kb))
+            d.pending.append(("swap", ka, kb, *guard))
             self._fs.tick(self._ino)
 
         self._fs._effect(self._label("swap", a, b), do)
@@ -1146,8 +1169,9 @@ class MemDir:
             self._may_add()
             self._unlocked(ks)
             stored = self._fs.stored(dst)
+            src = str(d.entries[ks][1])
             _apply(d.entries, ("rename", ks, kd, stored))
-            d.pending.append(("rename", ks, kd, stored))
+            d.pending.append(("rename", ks, kd, stored, src))
             self._fs.tick(self._ino)
 
         self._fs._effect(self._label("rename", src, dst), do)
@@ -1200,11 +1224,12 @@ class MemDir:
             if old is not None and old[1] != d.entries[ks][1]:
                 self._unlocked(kd)
             stored = self._fs.stored(dst)
+            src = str(d.entries[ks][1])
             _apply(d.entries, ("move", ks, kd, stored))
             if old is not None and d.no_excl:
-                d.pending += [("unlink", kd), ("rename", ks, kd, stored)]
+                d.pending += [("unlink", kd, str(old[1])), ("rename", ks, kd, stored, src)]
             else:
-                d.pending.append(("move", ks, kd, stored))
+                d.pending.append(("move", ks, kd, stored, src))
             self._fs.tick(self._ino)
 
         self._fs._effect(self._label("move", src, dst), do)
@@ -1222,7 +1247,7 @@ class MemDir:
                 raise IsADirectoryError(errno.EISDIR, "a directory")
             self._unlocked(key)
             del d.entries[key]
-            d.pending.append(("unlink", key))
+            d.pending.append(("unlink", key, str(hit[1])))
             self._fs.tick(self._ino)
 
         self._fs._effect(self._label("remove", name), do)
@@ -1368,6 +1393,10 @@ class MemDir:
         d = self._d
 
         def do() -> None:
+            if d.dev in self._fs.sync_refused:  # nothing made durable (a share's server, S0136)
+                if self.remote() is True:
+                    raise SyncRefused
+                raise OSError(errno.EINVAL, "the folder's sync refused (a local volume)")
             d.durable = dict(d.entries)
             d.pending = []
 

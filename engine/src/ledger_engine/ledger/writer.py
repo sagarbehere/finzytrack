@@ -104,6 +104,7 @@ from ledger_engine.ledger.handles import (
     hard_links,
     keep,
     known_birth,
+    ledger_sync,
     move,
     sha256,
     write_mode,
@@ -774,7 +775,7 @@ def _stage(h: DirHandle, t: _Target, mode: int, like: str | None) -> None:
         h.rename_excl(t.staging, t.temp)
     except FileExistsError:
         raise _Stop(Reason.CHANGED, t.canonical) from None
-    h.sync()
+    ledger_sync(h)
 
 
 def _best_effort(h: DirHandle, t: _Target, mode: int, like: str | None, progress: _Progress) -> None:
@@ -792,7 +793,7 @@ def _best_effort(h: DirHandle, t: _Target, mode: int, like: str | None, progress
     except FileExistsError:
         progress.replaced = before  # ...except this one: a file stood at a created path, nothing was replaced
         raise _Stop(Reason.CHANGED, t.canonical) from None
-    h.sync()
+    ledger_sync(h)
 
 
 @tla_action("S_Swap", "S_DirSync")
@@ -811,7 +812,7 @@ def _replace(handles: Handles, t: _Target, progress: _Progress) -> None:
             progress.made.discard(key)  # ...except this one: a folder stood there (another program's, or on a network
             # share our own retried `mkdir`), never removed; not "the ledger changed" (S0100, BL-0187)
             raise _Stop(Reason.FOLDER_APPEARED, t.canonical, canonical) from None
-        h.sync()
+        ledger_sync(h)
     h = handles.at(t.parent)
     if t.mode is Mode.BEST_EFFORT:
         if t.change.pre is None:
@@ -830,7 +831,7 @@ def _replace(handles: Handles, t: _Target, progress: _Progress) -> None:
             progress.replaced = before  # ...except this one: a file stood there, nothing was replaced (the
             # rollback never touches it: anything at a created path is left alone, owner, 2026-10-30)
             raise _Stop(Reason.CHANGED, t.canonical) from None
-        h.sync()
+        ledger_sync(h)
         return
     st = _check_replaced(h.stat(t.base), t.identity, t.canonical)
     _stage(h, t, st.mode, t.base)
@@ -839,7 +840,7 @@ def _replace(handles: Handles, t: _Target, progress: _Progress) -> None:
     progress.replaced = True
     h.swap(t.temp, t.base)
     _check_displaced(h, t.temp, t)
-    h.sync()
+    ledger_sync(h)
 
 
 @tla_action("S_ReadBack")
@@ -869,7 +870,7 @@ def _remove_temps(handles: Handles, targets: tuple[_Target, ...]) -> None:
         touched[t.parent] = h
     handles.on = None
     for h in touched.values():
-        h.sync()
+        ledger_sync(h)
 
 
 def _why(e: Exception, handles: Handles) -> tuple[Reason, str | None]:

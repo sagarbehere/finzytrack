@@ -60,7 +60,14 @@ from ledger_engine.fs.port import DirHandle, EntryStat, FileSystem, Kind
 from ledger_engine.ledger.core import journal
 from ledger_engine.ledger.core import paths as core_paths
 from ledger_engine.ledger.core.journal import FileEntry, Record, State
-from ledger_engine.ledger.handles import Handles, PathMovedError, WrongDriveError, folder_blocked, sha256
+from ledger_engine.ledger.handles import (
+    Handles,
+    PathMovedError,
+    WrongDriveError,
+    folder_blocked,
+    ledger_sync,
+    sha256,
+)
 from ledger_engine.ledger.handles import join as _join
 from ledger_engine.tla import tla_action
 
@@ -402,7 +409,7 @@ def keep(fs: FileSystem, journal_dir: str, name: str) -> ActOutcome:
                     folders[d.canonical_path] = h
             for folder, h in sorted(folders.items(), key=lambda kv: kv[0].count(host().sep), reverse=True):
                 at = folder
-                _tolerant_sync(h.sync)
+                _tolerant_sync(lambda h=h: ledger_sync(h))  # a ledger folder (S0136)
             at = journal_dir
             jd.rename_excl(journal.file_name(name, State.OPEN), journal.file_name(name, State.KEPT))
             jd.sync()
@@ -510,7 +517,7 @@ def _delete_one(
             if sha256(data) != seen:
                 return Refused("changed", target)
             h.remove(entry)
-            h.sync()
+            ledger_sync(h)
         except OSError as e:
             return ActFailed(target, e.errno)
         return Done()

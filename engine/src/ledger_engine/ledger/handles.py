@@ -16,7 +16,17 @@ from enum import StrEnum
 from typing import Final, Literal
 
 from ledger_engine.fs.pathmodel import host
-from ledger_engine.fs.port import AclEntry, DirHandle, EntryStat, FileSystem, FolderMark, Kind, NotOffered, Right
+from ledger_engine.fs.port import (
+    AclEntry,
+    DirHandle,
+    EntryStat,
+    FileSystem,
+    FolderMark,
+    Kind,
+    NotOffered,
+    Right,
+    SyncRefused,
+)
 from ledger_engine.ledger.core.journal import FS_TYPE, MAX_KEPT, FolderEntry, kept_name
 
 
@@ -77,11 +87,11 @@ FILE_ID_TYPES: Final = frozenset({"ntfs", "refs"})
 """File systems whose file ID is never given to another file (Windows' NTFS and ReFS: a file made again at once gets a
 new 128-bit ID, probed in S0126 and S0128): an object found with the ID it had before a save is the object the save
 started from, never one put there since (`restore._flush`, S0128 round 1). POSIX inode numbers can be reused, so no
-macOS or Linux file system is meant here. **Limit** (S0135, BL-0285; owner, 2026-11-20: "State it as a limit
-(Recommended)"): the key is the type's name only, and macOS's own NTFS driver (writable only by a setting Apple does
-not support) also reports `ntfs`, and so does a Windows network share, whose file ID comes from the server (no save
-reaches a share yet: `no_drive_id`; BL-0219 decides the key there; engine-jobs §8.1 step 4, "Limit (the skip's
-key)")."""
+macOS or Linux file system is meant here. A Windows network share reports `NTFS` too, with a file ID its server gives
+(Samba or a NAS may reuse one), so the skip also needs the folder not to be remote (`remote()` not True; S0136,
+BL-0219). **Limit** (S0135, BL-0285; owner, 2026-11-20: "State it as a limit (Recommended)"): otherwise the key is
+the type's name only, and macOS's own NTFS driver (writable only by a setting Apple does not support) also reports
+`ntfs` (engine-jobs §8.1 step 4, "Limit (the skip's key)")."""
 
 WHOLE_SECONDS_ON: Final = frozenset({"exfat"})
 """File systems whose folder creation time is compared to the whole second (S0090, BL-0221; owner, 2026-11-09: "On
@@ -248,6 +258,37 @@ def write_mode(h: DirHandle) -> Mode:
     return Mode.SWAP if c.swap and c.excl else Mode.BEST_EFFORT
 
 
+class DriveKind(StrEnum):
+    """What the open's notice tells about the folder a ledger is in (`drive_kind`; spec §11's notice rows, BL-0166)."""
+
+    SWAP = "swap"  # the swap: no notice
+    BEST_EFFORT = "best_effort"  # a drive without the swap (a USB stick, an old Mac disk; every Windows drive)
+    NETWORK_SHARE = "network_share"  # a network share (Windows: `remote()` True; S0136, BL-0219)
+
+
+def drive_kind(h: DirHandle) -> DriveKind:
+    """The kind of drive the folder `h` is on, for the open's notice (spec §11; the open's call and screen are BL-0166):
+    a network share when the volume answers so (`remote()` True: Windows only; macOS and Linux do not answer, and a
+    share there refuses `no_drive_id`), else by `write_mode`. It tells, and changes nothing about how a save writes
+    there (`write_mode` decides that). The one place this rule lives."""
+    if h.remote() is True:
+        return DriveKind.NETWORK_SHARE
+    return DriveKind.SWAP if write_mode(h) is Mode.SWAP else DriveKind.BEST_EFFORT
+
+
+def ledger_sync(h: DirHandle) -> None:
+    """`h.sync()` for a folder of the ledger (a folder a save, an undo, Keep, a delete, a create or a copy writes ledger
+    files in), never for the journal, backups or app folders, whose sync is always needed (INV-27, INV-30). A network
+    share's refusal of the folder's sync (`SyncRefused`: Windows, a remote volume, `ERROR_INVALID_FUNCTION`) counts as
+    done: on a share the server makes the folder's entries durable when it does (owner, 2026-11-20: "Best effort +
+    open notice (Recommended)"; S0136, BL-0219; spec §6.8 and its "Limit (network share durability)"). Any other error
+    raises. The only place `SyncRefused` is caught (`tests/architecture/test_share_sync.py`)."""
+    try:
+        h.sync()
+    except SyncRefused:
+        return
+
+
 def move(h: DirHandle, mode: Mode, src: str, dst: str) -> None:
     """Rename `src` to `dst`, where `dst` should name nothing: `RENAME_EXCL` (`FileExistsError` when an entry stands
     at `dst`, `dst` untouched) on `SWAP`, and on `BEST_EFFORT` wherever the volume has it (HFS+; on Linux every volume
@@ -373,6 +414,6 @@ def keep(h: DirHandle, name: str, base: str, job: str, mode: Mode) -> str | None
             move(h, mode, name, kept_name(base, job, n))
         except FileExistsError:
             continue
-        h.sync()
+        ledger_sync(h)
         return kept_name(base, job, n)
     return None

@@ -29,6 +29,16 @@ Commands (run from `engine/`, on Windows only):
      a file and on the folder; `SetSecurityInfo` of the file's DACL onto itself (protected) and onto a new file; the
      file's named streams, the adapter's way (`FileStreamInfo`) and by `FindFirstStreamW`; and the adapter's own
      `create(..., like=...)` with what the copy then holds. Each call's outcome or its error code.
+- `cut <share> <backing>` (S0136, the brief's question (a)): a save of two files on the share, through the product's
+  own code (since S0136 the adapter gives a share its drive ID and the ledger's folder syncs take the share's refusal
+  as done: no patch), cut by a restart of the file server (LanmanServer) at each of `CUTS`; the outcome told, the files
+  as the share serves them, §6.6's reading, and recovery's try when the journal is left `.open`; a `verdict` line per
+  cut says whether anything broke the accepted limit (a false "saved", a file neither old nor new, a recovery that did
+  not resolve or left a file not at its old bytes). `<backing>` is the share's folder on the server, to make the share
+  again if the restart lost it.
+- `readback <share> <backing>` (S0136, question (b)): the same save, with other bytes written to the root through the
+  server's own path `<backing>` right before the read-back's first read: whether the read-back reads the server's bytes
+  (the save stops `read_back`) or the PC's cache (it would be told "saved").
 - `identity <label> <root> [<root> ...]`: for the folder `.ft-identity-probe` under each root (made under the first
   root if missing; each root a spelling of the same place), `FileIdInfo`, the 32-bit serial, the creation time, the
   final paths, and what the engine's identity rule would compare (`volume_id`, the folder's mark, `drive_of`,
@@ -54,7 +64,7 @@ import tempfile
 import threading
 from collections.abc import Callable, Generator
 from ctypes import wintypes
-from dataclasses import asdict, dataclass, field, is_dataclass
+from dataclasses import asdict, dataclass, field, is_dataclass, replace
 from datetime import date
 from pathlib import Path
 from typing import Any
@@ -190,6 +200,8 @@ class Trace:
 
     roots: list[tuple[str, str]]
     step: str = ""
+    before: Callable[[str, str, tuple[Any, ...]], None] | None = None  # S0136: a hook before each call
+    show_reads: bool = False  # S0136: print the hash of each ledger read
     tolerate_share_sync: bool = False
     fail_sync_after_rename: bool = False
     renamed: bool = False
@@ -215,6 +227,8 @@ class Trace:
         """`fn(*args, **kwargs)`, printed (positional and keyword arguments alike: the port's callers pass some by
         keyword, `read(name, limit=...)`, `create(..., like=...)`; run 2's probe passed positional ones only)."""
         shown: list[str] = [_shown(a) for a in args] + [f"{k}={_shown(v)}" for k, v in sorted(kwargs.items())]
+        if self.before is not None:
+            self.before(label, name, args)
         if name == "sync" and label == "ledger" and self.fail_sync_after_rename and self.renamed:
             self.fail_sync_after_rename = False
             e = OSError(errno.EIO, "injected by the probe after the rename")
@@ -240,6 +254,8 @@ class Trace:
             raise
         if name in ("rename", "rename_excl") and label == "ledger":
             self.renamed = True
+        if name == "read" and label == "ledger" and self.show_reads:
+            say("read", step=self.step, args=shown, sha256=None if out is None else sha256(out))
         if name in EFFECTS:
             say("effect", step=self.step, on=label, call=name, args=shown, outcome="ok", result=out)
         elif name in ASKED and (label, name) not in self.asked:
@@ -1055,13 +1071,265 @@ def probe(folders: list[str]) -> None:
             say("cleanup", folder=folder, scratch_left=os.path.exists(base))
 
 
-USAGE = "usage: probe_windows_share_save.py probe <folder>... | identity <label> <root>... | identity-remove <root>"
+# -- S0136: a save cut by a network drop, and where the read-back reads -----------------------------------------------
+
+RESTART = """
+$deps = @((Get-Service LanmanServer).DependentServices | Where-Object Status -eq "Running")
+Restart-Service LanmanServer -Force -ErrorAction Stop
+foreach ($d in $deps) { Start-Service $d.Name -ErrorAction Continue }
+if (-not (Get-SmbShare -Name ftshare -ErrorAction SilentlyContinue)) {
+  New-SmbShare -Name ftshare -Path $args[0] -FullAccess Everyone -ErrorAction Stop | Out-Null; "share made again"
+}
+if (-not (Test-Path "Z:\\")) {
+  net use Z: /delete /y 2>$null | Out-Null
+  net use Z: "\\\\localhost\\ftshare" /persistent:no | Out-Null; "Z: mapped again"
+}
+(Get-Service LanmanServer).Status
+"""
+"""Restart the file server (it drops every SMB session, as the 2026-11-20 run 3 saw), then make the CI share and its
+mapping again if they are gone (`ci.yml`'s names: `ftshare`, `Z:`)."""
+
+CUTS = ("after_staging", "after_rename", "before_read_back", "before_close")
+"""Where the server restart cuts the save (S0136, BL-0219 limit 3; the brief's question (a)): after a ledger file's
+new bytes are written and flushed at the staging name, before its rename; right after a ledger rename, before the
+folder's flush; after the last rename, before the read-back's first read; before the journal's close (on the machine's
+own disk), after every ledger effect."""
+
+
+def restart_server(backing: str) -> None:
+    import subprocess
+
+    r = subprocess.run(  # noqa: S603
+        ["powershell", "-NoProfile", "-NonInteractive", "-Command", f"& {{{RESTART}}} '{backing}'"],  # noqa: S607
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    say("server_restarted", exit=r.returncode, out=r.stdout.strip(), err=r.stderr.strip()[-2000:])
+
+
+def _ledger(folder: str) -> tuple[str, str]:
+    os.makedirs(folder)
+    ledger = os.path.join(folder, "L")
+    os.mkdir(ledger)
+    with open(os.path.join(ledger, "main.bean"), "wb") as f:
+        f.write(MAIN)
+    with open(os.path.join(ledger, "inc.bean"), "wb") as f:
+        f.write(INC)
+    return ledger, os.path.join(ledger, "main.bean")
+
+
+def _whole(r: Run, posts: dict[str, bytes], pres: dict[str, bytes]) -> dict[str, object]:
+    """Each ledger file's state through a fresh open on the share: pre, post or neither (torn, missing, foreign)."""
+    out: dict[str, object] = {}
+    for name in sorted(set(posts) | set(pres)):
+        try:
+            data: bytes | None = Path(r.folder, name).read_bytes()
+        except OSError as e:
+            out[name] = failure(e)
+            continue
+        out[name] = "pre" if data == pres.get(name) else "post" if data == posts.get(name) else f"other {data!r}"
+    return out
+
+
+def _interrupted(
+    share_folder: str,
+    backing: str,
+    variant: str,
+    hook: Callable[[Run], Callable[[str, str, tuple[Any, ...]], None]],
+    *,
+    outside: bool = False,
+) -> None:
+    """One save of two files (`inc.bean` and the root) on the share, with `hook` acting before a chosen call, then the
+    outcome told, the files as the share serves them, §6.6's reading of the journal and, when it is `.open`, recovery's
+    try and the files after it. A verdict line says whether anything breaks the accepted limit; with `outside` (another
+    program wrote the root before the read-back), only a "saved" breaks it: the other program's bytes are expected in
+    the file, and recovery is expected to stop on them (fails closed)."""
+    ledger, root = _ledger(share_folder)
+    app = tempfile.mkdtemp(prefix="ft-share-cut-")
+    try:
+        ald = os.path.join(app, "app")
+        os.makedirs(os.path.join(ald, "locks"))
+        cache = os.path.join(app, "cache")
+        os.mkdir(cache)
+        with windows.WindowsFS().open_dir(app) as d:
+            app_named = d.path()
+        with windows.WindowsFS().open_dir(ledger) as d:
+            roots = [("ledger", ledger), ("ledger", d.path()), ("app", app), ("app", app_named)]
+            remote = d.remote()
+        trace = Trace(roots=roots)
+        r = Run(variant, ledger, root, ald, cache, trace)
+        say("cut_folder", variant=variant, ledger=ledger, remote=remote)
+        if not opened(r):
+            return
+        inc_post = INC + b"2026-01-02 open Expenses:Rent\n"
+        post = MAIN + b'2026-01-02 * "Lunch"\n  Expenses:Food  5 USD\n  Assets:Cash\n'
+        r.trace.step = "cut"
+        p, pre = plan_two(r, post, inc_post)
+        trace.before = hook(r)
+        trace.show_reads = True
+        job = Job()
+        out: sv.SaveOutcome | None = None
+        try:
+            out = sv.run(p, sv.Ports(TracedFS(for_this_os(), trace), sv._observe), job)
+        except Exception as e:  # noqa: BLE001
+            say("cut_save", variant=variant, outcome="raised", **failure(e))
+        trace.before = None
+        trace.show_reads = False
+        pres, posts = {"main.bean": pre, "inc.bean": INC}, {"main.bean": post, "inc.bean": inc_post}
+        files = _whole(r, posts, pres)
+        told = None if out is None else protocol_save._result(out)
+        read = attempt(lambda: sv.outcome(for_this_os(), r.ald, KEY, SESSION, p.job, p.changes))
+        say(
+            "cut_save",
+            variant=variant,
+            outcome=out,
+            protocol=told,
+            files=files,
+            app_folder=listing(r.ald),
+            outcome_read=read,
+        )
+        bad: list[str] = []
+        if isinstance(out, sv.Saved) and any(v != "post" for v in files.values()):
+            bad.append("told saved, but a file is not at its new bytes")
+        if not outside and any(v not in ("pre", "post") for v in files.values()):
+            bad.append("a file is neither its old nor its new bytes (torn, missing or foreign)")
+        recovered: dict[str, object] | None = None
+        jd = os.path.join(r.ald, "local", KEY, "journal")
+        name = f"{SESSION}-{p.job}"
+        if os.path.exists(os.path.join(jd, f"{name}.open")):
+            res = attempt(lambda: restore.recover_journal(TracedFS(for_this_os(), Trace(roots=roots)), jd, name))
+            recovered = _whole(r, posts, pres)
+            say("cut_recover", variant=variant, outcome=res, files=recovered, app_folder=listing(r.ald))
+            if outside:
+                pass  # the other program's bytes stop the try, never overwritten
+            elif not isinstance(res, restore.Resolved):
+                bad.append("recovery did not resolve")
+            elif any(v != "pre" for v in recovered.values()):
+                bad.append("recovery resolved, but a file is not at its old bytes")
+        say("verdict", variant=variant, within_the_limit=not bad, problems=bad)
+    finally:
+        shutil.rmtree(app, ignore_errors=True)
+
+
+def plan_two(r: Run, post: bytes, inc_post: bytes) -> tuple[sv.SavePlan, bytes]:
+    """`plan` for a save of both files: the include first, the root last (the caller's order, ADR-0012 F-5)."""
+    inc = os.path.join(r.folder, "inc.bean")
+    pre = Path(r.root).read_bytes()
+    planned = overlay.load(r.root, {r.root: post, inc: inc_post}, r.policy)
+    if not isinstance(planned, overlay.Loaded):
+        raise TypeError(f"the preview's load refused: {planned}")  # noqa: TRY003 (a probe's own stop)
+    fp = as_before(planned.fingerprint, {r.root: sha256(pre), inc: sha256(INC)})
+    p, _, _ = plan(r, post)
+    return replace(
+        p, changes=(Change(inc, sha256(INC), inc_post), Change(r.root, sha256(pre), post)), fingerprint=fp
+    ), pre
+
+
+def cut_part(share: str, backing: str) -> None:
+    """(a): the save cut by a restart of the file server at each of `CUTS`."""
+    base = os.path.join(os.path.abspath(share), f".ft-share-cut-{os.getpid()}")
+    os.mkdir(base)
+    try:
+        for cut in CUTS:
+
+            def hook(r: Run, cut: str = cut) -> Callable[[str, str, tuple[Any, ...]], None]:
+                state = {"done": False, "renames": 0}
+
+                def before(label: str, name: str, args: tuple[Any, ...]) -> None:
+                    if state["done"]:
+                        return
+                    hit = False
+                    if cut == "after_staging":
+                        hit = label == "ledger" and name in ("rename", "rename_excl")
+                    elif cut == "after_rename":
+                        hit = label == "ledger" and name == "sync" and r.trace.renamed
+                    elif cut == "before_read_back":
+                        if label == "ledger" and name in ("rename", "rename_excl"):
+                            state["renames"] += 1
+                        hit = label == "ledger" and name == "read" and state["renames"] >= 2
+                    elif cut == "before_close":
+                        hit = label == "app" and name == "rename_excl" and str(args[1]).endswith(".closed")
+                    if hit:
+                        state["done"] = True
+                        say("cut_at", variant=cut, call=name, on=label, args=[_shown(a) for a in args])
+                        restart_server(backing)
+
+                return before
+
+            say("part", name="cut", variant=cut, folder=share)
+            try:
+                _interrupted(os.path.join(base, cut), backing, cut, hook)
+            except Exception as e:  # noqa: BLE001
+                say("cut", variant=cut, outcome="raised", **failure(e))
+    finally:
+        shutil.rmtree(base, ignore_errors=True)
+        say("cleanup", folder=share, scratch_left=os.path.exists(base))
+
+
+def readback_part(share: str, backing: str) -> None:
+    """(b): between the root's rename (and its folder's refused flush) and the read-back, other bytes written to the
+    root through the server's own local path (`backing`, the folder the share serves): in place (the same length),
+    or longer. On a local disk the read-back sees them and the save stops (`read_back`); if the PC's cache answered the
+    read-back instead, the save would be told "saved" over another program's bytes."""
+    share_root, backing_root = os.path.abspath(share), os.path.abspath(backing)
+    base = os.path.join(share_root, f".ft-share-readback-{os.getpid()}")
+    os.mkdir(base)
+    try:
+        for variant in ("in_place", "longer"):
+
+            def hook(r: Run, variant: str = variant) -> Callable[[str, str, tuple[Any, ...]], None]:
+                state = {"done": False, "renames": 0}
+                local = os.path.join(backing_root, os.path.relpath(r.root, share_root))
+
+                def before(label: str, name: str, args: tuple[Any, ...]) -> None:
+                    if label == "ledger" and name in ("rename", "rename_excl"):
+                        state["renames"] += 1
+                    if state["done"] or not (label == "ledger" and name == "read" and state["renames"] >= 2):
+                        return
+                    state["done"] = True
+                    with open(local, "r+b") as f:
+                        now = f.read()
+                        f.seek(0)
+                        other = bytes(b if b in (10, 13) else ord("x") for b in now)
+                        f.write(other if variant == "in_place" else other + b"; longer\n")
+                        f.truncate()
+                        f.flush()
+                        os.fsync(f.fileno())
+                    say(
+                        "server_side_write",
+                        variant=variant,
+                        path=local,
+                        was=sha256(now),
+                        now=sha256(other if variant == "in_place" else other + b"; longer\n"),
+                    )
+
+                return before
+
+            say("part", name="readback", variant=variant, folder=share)
+            try:
+                _interrupted(os.path.join(base, variant), backing, variant, hook, outside=True)
+            except Exception as e:  # noqa: BLE001
+                say("readback", variant=variant, outcome="raised", **failure(e))
+    finally:
+        shutil.rmtree(base, ignore_errors=True)
+        say("cleanup", folder=share, scratch_left=os.path.exists(base))
+
+
+USAGE = (
+    "usage: probe_windows_share_save.py probe <folder>... | cut <share> <backing> | readback <share> <backing> |"
+    " identity <label> <root>... | identity-remove <root>"
+)
 
 
 def main(argv: list[str]) -> int:
     if len(argv) >= 2 and argv[0] == "probe":
         with under_test.windows_port_under_test():
             probe(argv[1:])
+        return 0
+    if len(argv) == 3 and argv[0] in ("cut", "readback"):
+        with under_test.windows_port_under_test():
+            (cut_part if argv[0] == "cut" else readback_part)(argv[1], argv[2])
         return 0
     if len(argv) >= 3 and argv[0] == "identity":
         identity(argv[1], argv[2:])

@@ -158,3 +158,7 @@ review:D1 §12.10, §13.1, §13.3; review:15 §2; review:25 §8.3, §9.2, §9.7,
 - **Cost:** one `F_FULLFSYNC` per replaced file found at pre, only in the rollback and recovery (after a failure or a crash).
 - **Model:** a folder sync covers entries only; a file's data has its own sync (`formal/tla/engine-jobs`: `dpl`, `RS_Flush`; the mutant `rs_no_file_sync` breaks `NoTornLedgerAfterRecovery`). Spec §13's file-system assumption reworded.
 - **Unchanged:** the path guard, the drive check, the temp rule, the kept-name design and everything else in this record.
+
+## Note (2026-11-20): a Windows network share has a drive identity; the undo's flush skip needs a local folder (S0136)
+
+ADR-0068's amendment of 2026-11-20 (the owner: "Best effort + open notice (Recommended)") gives a Windows network share the drive identity of its server's volume (the share's `FileIdInfo` serial), so the journal's folder check (`handles.folder_verdict`) works there as on a local disk, and a save there is no longer refused `no_drive_id`. The undo's flush (the amendment of 2026-11-11, S0101) skips a file the save never replaced only on a local folder: a share reports `NTFS` with a file ID its server gives (S0135 verifier F1).

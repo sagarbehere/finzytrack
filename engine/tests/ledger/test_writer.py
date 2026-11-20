@@ -176,8 +176,12 @@ def check_told(fs: MemFS, w: World, out: Outcome, *, kept: str | None = None) ->
             case NotSaved():
                 assert State.CLOSED not in js, "not saved, but a closed record"
                 for t in w.targets:
-                    if t.path != kept:
-                        assert state.file(t.path) == t.pre, f"not saved, but {t.path} is not at pre"
+                    if t.path == kept:
+                        continue
+                    if w.share and state.lost_power:  # a share's power loss may drop the undo (worlds.py; S0136)
+                        assert state.file(t.path) in (t.pre, t.post), f"{t.path} torn after a share's power loss"
+                        continue
+                    assert state.file(t.path) == t.pre, f"not saved, but {t.path} is not at pre"
                 if not out.open_journal:
                     assert State.OPEN not in js, "an .open journal left behind and not told (writes must pause)"
                 if out.unchanged:

@@ -597,6 +597,21 @@ def test_S0128_on_windows_the_notice_never_advises_the_computers_own_disk() -> N
     assert "own disk" not in save_text.BEST_EFFORT_WINDOWS
 
 
+def test_S0136_the_network_share_notice_is_its_own_row_and_says_a_server_crash_can_undo_a_save() -> None:
+    """BL-0219 (owner, 2026-11-20: "Best effort + open notice (Recommended)"): a ledger on a network share gets its own
+    notice (§11's row, `save_text.BEST_EFFORT_SHARE`, rendered from the code), which names the share's limit: a crash
+    or power loss of the file server right after a save can undo it."""
+    spec = (REPO / "design" / "specs" / "engine-jobs.md").read_text(encoding="utf-8")
+    row = next(ln for ln in spec.splitlines() if ln.startswith("| a workspace whose ledger is on a network share"))
+    assert "| `msg:save.best_effort_share` |" in row
+    assert "Don't show again for this ledger" in row
+    texts = (REPO / "design" / "generated" / "engine-job-texts.md").read_text(encoding="utf-8")
+    rendered = next(ln for ln in texts.splitlines() if ln.startswith("| `msg:save.best_effort_share` |"))
+    assert rendered.endswith(f"| {save_text.BEST_EFFORT_SHARE} |")
+    assert "network share" in save_text.BEST_EFFORT_SHARE
+    assert "file server crashes or loses power right after a save" in save_text.BEST_EFFORT_SHARE
+
+
 # -- S0100: the write-path leftovers (BL-0162, BL-0163, BL-0182, BL-0183, BL-0187) ------------------------------------
 
 A_BEAN = host("/L/a.bean")

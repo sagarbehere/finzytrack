@@ -38,6 +38,16 @@ BEST_EFFORT_WINDOWS: Final = (
 """§11's notice on Windows, where every drive takes §6.8's mode (ADR-0069; S0128): the owner's words (2026-11-17, "1a,
 wording ok"); `BEST_EFFORT_DRIVE`'s advice to use the computer's own disk does not hold there. The workspace open shows
 it on Windows (BL-0166)."""
+BEST_EFFORT_SHARE: Final = (
+    "Your ledger is on a network share. Finzytrack keeps a backup of every save, but if the file server crashes or "
+    "loses power right after a save, that save can be undone. For full protection, keep your ledger on your "
+    "computer's own disk."
+)
+"""§11's notice when a workspace whose ledger is on a network share opens (S0136, BL-0219: Windows; the owner's answer
+of 2026-11-20, "Best effort + open notice (Recommended)", and the example words of its note): the share's server
+makes a save durable when it does, so a crash or power loss of the server right after "saved" can bring back the old
+file (§6.8, "Limit (network share durability)"). The engine tells a share apart (`handles.drive_kind`:
+`network_share`); the workspace open shows it (BL-0166)."""
 
 
 def _name(path: str | None) -> str:

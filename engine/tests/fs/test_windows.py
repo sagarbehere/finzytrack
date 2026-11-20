@@ -35,6 +35,7 @@ from ledger_engine.fs.port import (
     SERIAL_NAMESPACE,
     Caps,
     FileSystem,
+    FolderMark,
     FoldRule,
     Kind,
     NotOffered,
@@ -306,12 +307,12 @@ def test_a_subst_drive_resolves_to_the_drive_it_names(fs: FileSystem, tmp_path: 
         subprocess.run(["subst", f"{letter}:", "/d"], check=False)  # noqa: S603, S607
 
 
-def test_a_network_spelling_of_a_local_folder_has_no_drive_id_so_the_save_refuses_it(
-    fs: FileSystem, tmp_path: Path
-) -> None:
-    """Q1: `\\\\localhost\\C$\\...` is another root for the same folder (Windows gives the share's path back), so a
-    network share has no drive ID on Windows (as on macOS, BL-0219): the save refuses it before writing, and its two
-    spellings never hold one journal. A server name in any case has one key."""
+def test_S0136_a_network_spelling_of_a_local_folder_is_the_same_drive_and_saves(fs: FileSystem, tmp_path: Path) -> None:
+    """Q1, as changed by S0136 (owner, 2026-11-20: "Best effort + open notice (Recommended)"): `\\\\localhost\\C$\\...`
+    is another root for the same folder (Windows gives the share's path back), and since a network share has a drive
+    ID (the server volume's serial, `FileIdInfo`) its mark is the local folder's: the same drive and folder. A save
+    through it lands in best-effort mode; its root is its own path key (engine-jobs §6.3, "Limit (share spellings)").
+    A server name in any case has one key."""
     drive = str(tmp_path)[0]
     unc = f"\\\\localhost\\{drive}$" + str(tmp_path)[2:]
     try:
@@ -322,12 +323,13 @@ def test_a_network_spelling_of_a_local_folder_has_no_drive_id_so_the_save_refuse
     a = fs.resolve(unc + "\\main.bean")
     b = fs.resolve(f"\\\\LOCALHOST\\{drive.lower()}$" + str(tmp_path)[2:] + "\\main.bean")
     assert core_paths.path_key(a) == core_paths.path_key(b)
-    with fs.open_dir(unc) as d:
-        assert d.volume_id() is None
+    with fs.open_dir(unc) as d, fs.open_dir(str(tmp_path)) as local:
+        assert d.remote() is True
+        assert d.volume_id() is not None
+        assert d.mark() == local.mark(), "the same drive and folder by both roots"
     out = durable_commit(fs, commit(tmp_path / "app", Change(unc + "\\main.bean", sha256(b"pre\n"), b"post\n")))
-    assert isinstance(out, NotSaved), out
-    assert out.reason is Reason.NO_DRIVE_ID
-    assert (tmp_path / "main.bean").read_bytes() == b"pre\n"
+    assert isinstance(out, Landed), out
+    assert (tmp_path / "main.bean").read_bytes() == b"post\n"
 
 
 def test_names_compare_without_case_on_the_runners_disk(fs: FileSystem, tmp_path: Path) -> None:
@@ -1621,15 +1623,15 @@ def test_clear_readonly_on_an_entry_gone_between_its_two_opens_does_nothing(
 
 
 @pytest.mark.parametrize("remote", [False, True])
-def test_a_refused_folder_flush_is_a_plain_os_error_on_every_volume(
+def test_S0136_a_refused_folder_flush_is_sync_refused_only_on_a_remote_volume(
     fs: FileSystem, tmp_path: Path, remote: bool, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """S0134 (owner, 2026-11-19: "Let's remove the best effort sync code, but only if it's dead code and
-    unreachable"): `ERROR_INVALID_FUNCTION` from the folder's flush, as the share's server answered (S0132's run 23),
-    is a plain `OSError` (`EINVAL`, Windows' own mapping) on a remote volume as on a local one, which every caller
-    takes as a failed sync; no caller reaches a share's folder sync any more (the mirror refuses a cache folder
-    there)."""
+    """S0136 (owner, 2026-11-20: "Best effort + open notice (Recommended)"; as S0132 round 1's V4): the folder's flush
+    answered `ERROR_INVALID_FUNCTION`, as the share's server answers it, is `SyncRefused` only when the volume is
+    remote; on a local volume it is the plain `OSError` (`EINVAL`), which every caller takes as a failed sync. Any other
+    code is a plain `OSError` on a remote volume too."""
     from ledger_engine.fs import windows
+    from ledger_engine.fs.port import SyncRefused
 
     def is_remote(self: object) -> bool:
         del self
@@ -1639,17 +1641,22 @@ def test_a_refused_folder_flush_is_a_plain_os_error_on_every_volume(
     with fs.open_dir(str(tmp_path)) as d:
         assert isinstance(d, windows.WindowsDir)
         assert d.remote() is remote
+        code = [1]  # ERROR_INVALID_FUNCTION
 
         def refused(h: int) -> int:
             del h
-            ctypes.set_last_error(1)  # ERROR_INVALID_FUNCTION
+            ctypes.set_last_error(code[0])
             return 0
 
         monkeypatch.setattr(d.api, "FlushFileBuffers", refused)
-        with pytest.raises(OSError, match=r"FlushFileBuffers") as e:
+        with pytest.raises(OSError, match=r"FlushFileBuffers|refused the folder") as e:
             d.sync()
-    assert type(e.value) is OSError
-    assert e.value.errno == errno.EINVAL
+        assert e.value.errno == errno.EINVAL
+        assert (type(e.value) is SyncRefused) is remote
+        code[0] = 87  # ERROR_INVALID_PARAMETER: never the share's refusal
+        with pytest.raises(OSError, match=r"FlushFileBuffers") as e2:
+            d.sync()
+        assert type(e2.value) is OSError
 
 
 @pytest.mark.skipif(not _shares(), reason="no network share given (FT_TEST_SHARE)")
@@ -1667,3 +1674,171 @@ def test_remote_is_true_on_every_spelling_of_the_ci_share_and_false_on_local_vol
     for local in [str(tmp_path), *[v for v in os.environ.get("FT_TEST_VOLUMES", "").split(";") if v]]:
         with fs.open_dir(local) as d:
             assert d.remote() is False, local
+
+
+# -- S0136 (BL-0219): saves on the CI share ----------------------------------------------------------------------------
+
+
+def _share_local() -> str | None:
+    """The CI share's folder by its own local path on the server (this machine; `FT_TEST_SHARE_LOCAL`)."""
+    return os.environ.get("FT_TEST_SHARE_LOCAL") or None
+
+
+@pytest.mark.skipif(not _shares(), reason="no network share given (FT_TEST_SHARE)")
+def test_S0136_a_share_has_one_drive_identity_through_every_spelling_and_its_local_path(
+    fs: FileSystem, tmp_path: Path
+) -> None:
+    """The share's drive ID (the server volume's serial as a version 5 UUID, as an NTFS volume's) and the folder's
+    mark are one through the mapped drive, both UNC spellings and the server's own local path (probed in the
+    2026-11-20 runs 2 and 3); each spelling is remote, the local path is not; the runner's own disk is another drive."""
+    from ledger_engine.ledger.handles import DriveKind, drive_kind, drive_of
+
+    shares = _shares()
+    assert len(shares) == 3, shares
+    name = f"ft-{uuid.uuid4().hex}"
+    (Path(shares[0]) / name).mkdir()
+    try:
+        marks: list[FolderMark] = []
+        for share in shares:
+            with fs.open_dir(str(Path(share) / name)) as d:
+                assert d.remote() is True, share
+                assert drive_kind(d) is DriveKind.NETWORK_SHARE, share
+                mark = d.mark()
+                assert drive_of(mark) is not None, (share, mark)
+                assert mark.fs_type == "ntfs", mark
+                assert mark.born is not None, mark
+                assert mark.born != 0, mark
+                serial = d.identity()[0]
+                assert mark.volume == str(uuid.uuid5(SERIAL_NAMESPACE, f"{serial:016X}")), mark
+                marks.append(mark)
+        assert len(set(marks)) == 1, marks
+        local = _share_local()
+        if local is not None:
+            with fs.open_dir(str(Path(local) / name)) as d:
+                assert d.remote() is False
+                assert d.mark() == marks[0], "the server's own local path is the same drive and folder"
+        with fs.open_dir(str(tmp_path)) as d:
+            assert drive_kind(d) is DriveKind.BEST_EFFORT
+            if local is None or Path(local).drive.upper() != Path(str(tmp_path)).drive.upper():
+                assert d.mark().volume != marks[0].volume
+    finally:
+        shutil.rmtree(Path(shares[0]) / name, ignore_errors=True)
+
+
+@pytest.mark.skipif(not _shares(), reason="no network share given (FT_TEST_SHARE)")
+@pytest.mark.parametrize("share", _shares() or ["-"])
+def test_S0136_a_save_its_crash_and_its_recovery_on_the_ci_share(fs: FileSystem, tmp_path: Path, share: str) -> None:
+    """The best-effort mode in full on each spelling of the share (`real_volume.py`: a save, a crash before the
+    close, recovery from the backups with a file missing and one reverted, an outside save never replaced, an empty
+    file judged as any content, two kept copies), the journal and backups on the runner's own disk. The share refuses
+    every folder sync of the ledger (`SyncRefused`), taken as done (owner, 2026-11-20)."""
+    ledger = Path(share) / f"ft-{uuid.uuid4().hex}"
+    (ledger / "inc").mkdir(parents=True)
+    try:
+        with fs.open_dir(str(ledger)) as d:
+            assert d.remote() is True
+        real_volume_run(fs, tmp_path, ledger)
+    finally:
+        shutil.rmtree(ledger, ignore_errors=True)
+
+
+class _FailClose:
+    """The port with the journal's close (`.open` renamed `.closed`) answering `EIO`: the save rolls back."""
+
+    def __init__(self, inner: FileSystem) -> None:
+        self._inner = inner
+
+    def resolve(self, path: str) -> Any:
+        return self._inner.resolve(path)
+
+    def same_path(self, now: str, recorded: str) -> bool:
+        return self._inner.same_path(now, recorded)
+
+    def open_dir(self, path: str) -> Any:
+        return _FailCloseDir(self._inner.open_dir(path))
+
+
+class _FailCloseDir:
+    def __init__(self, inner: Any) -> None:
+        self._inner = inner
+
+    def rename_excl(self, src: str, dst: str) -> None:
+        if dst.endswith(".closed"):
+            raise OSError(errno.EIO, "injected: the close failed")
+        self._inner.rename_excl(src, dst)
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._inner, name)
+
+    def __enter__(self) -> _FailCloseDir:
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        self._inner.close()
+
+
+@pytest.mark.skipif(not _shares(), reason="no network share given (FT_TEST_SHARE)")
+@pytest.mark.parametrize("share", _shares() or ["-"])
+def test_S0136_the_rollback_on_the_ci_share_puts_the_old_bytes_back_and_says_unchanged(
+    fs: FileSystem, tmp_path: Path, share: str
+) -> None:
+    """A save whose close fails after every file was replaced: the rollback puts each file back from its backup (its
+    folder syncs refused by the share, taken as done), flushes each file it found at pre (the skip needs a local
+    folder: S0135 F1), and resolves: "not saved", "unchanged"."""
+    ledger = Path(share) / f"ft-{uuid.uuid4().hex}"
+    (ledger / "inc").mkdir(parents=True)
+    try:
+        main, inc = ledger / "main.bean", ledger / "inc" / "a.bean"
+        main.write_bytes(b"pre\n")
+        inc.write_bytes(b"inc\n")
+        c = commit(
+            tmp_path,
+            Change(str(inc), sha256(b"inc\n"), b"inc2\n"),
+            Change(str(main), sha256(b"pre\n"), b"post\n"),
+        )
+        out = durable_commit(_FailClose(fs), c)
+        assert isinstance(out, NotSaved), out
+        assert (out.reason, out.unchanged, out.open_journal) == (Reason.IO_ERROR, True, False), out
+        assert (main.read_bytes(), inc.read_bytes()) == (b"pre\n", b"inc\n")
+        assert sorted(os.listdir(tmp_path / "local" / "journal")) == ["s1-j1.resolved"]
+        assert not [n for n in os.listdir(ledger) + os.listdir(ledger / "inc") if ".ft-" in n], "a name of ours left"
+    finally:
+        shutil.rmtree(ledger, ignore_errors=True)
+
+
+@pytest.mark.skipif(not _shares(), reason="no network share given (FT_TEST_SHARE)")
+@pytest.mark.parametrize("share", _shares() or ["-"])
+def test_S0136_a_create_on_the_ci_share_is_created(fs: FileSystem, share: str) -> None:
+    """The create job's writes on each spelling (copy writes through the same code; its own Windows test waits for
+    BL-0087's `COPY_CHECK`): every folder sync of the target refused by the share and taken as done; the manifest last;
+    "created" with every file whole."""
+    from ledger_engine.ledger.create import Created, CreatePlan, LoadResult, NewFile, Ports, run
+
+    target = Path(share) / f"ft-{uuid.uuid4().hex}"
+    plan = CreatePlan(
+        job="j7",
+        target=str(target),
+        files=(NewFile("main.beancount", b'include "prices/p.beancount"\n'), NewFile("prices/p.beancount", b"; p\n")),
+        root="main.beancount",
+        manifest=(NewFile("workspace.json", b"{}\n"),),
+    )
+
+    def load(root: str) -> LoadResult:
+        return LoadResult(errors=0, parsed=(root, root.rsplit("\\", 1)[0] + "\\prices\\p.beancount"))
+
+    class Job:
+        def progress(self, phase: object) -> None:
+            del phase
+
+        def gate(self) -> None:
+            pass
+
+    try:
+        out = run(plan, Ports(fs, load), Job())
+        assert out == Created(str(target)), out
+        assert (target / "main.beancount").read_bytes() == b'include "prices/p.beancount"\n'
+        assert (target / "prices" / "p.beancount").read_bytes() == b"; p\n"
+        assert (target / ".finzytrack" / "workspace.json").read_bytes() == b"{}\n"
+        assert sorted(os.listdir(target)) == [".finzytrack", "main.beancount", "prices"]
+    finally:
+        shutil.rmtree(target, ignore_errors=True)

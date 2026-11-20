@@ -931,3 +931,44 @@ def test_windows_mode_a_read_only_folder_refuses_only_its_own_removal() -> None:
         d.clear_readonly("ro2")
         d.rmdir("ro2")
     assert fs.names_in("/m") == []
+
+
+# -- S0136: a share that refuses a folder's sync; entry operations act on the object they found -----------------------
+
+
+def test_a_share_refuses_a_folder_sync_as_sync_refused_only_when_remote_and_makes_nothing_durable() -> None:
+    from ledger_engine.fs.port import SyncRefused
+
+    fs = MemFS(windows=True)
+    fs.outside_mkdirs("/s")
+    fs.outside_mount("/s", 5)
+    fs.sync_refused.add(5)
+    fs.remote.add(5)
+    with fs.open_dir("/s") as d:
+        d.create("a", b"x", 0o644)
+        with pytest.raises(SyncRefused):
+            d.sync()
+    assert fs.effects[-1] == "sync /s:", "the refused sync is one effect"
+    assert any(s.file("/s/a") is None for s in fs.power_loss_states()), "nothing was made durable"
+    fs.remote.discard(5)
+    with fs.open_dir("/s") as d, pytest.raises(OSError, match="local volume") as e:
+        d.sync()
+    assert type(e.value) is OSError
+    assert e.value.errno == errno.EINVAL
+
+
+def test_a_replayed_rename_moves_only_the_object_it_moved() -> None:
+    """An unlink and a new link under one name, then a plain rename of that name, all pending: a power loss that keeps
+    the old link and the rename but drops the unlink and the new link must not move the old object (a file system
+    acts on the entry it found). Without the inode guard the old, empty staging file landed on the target."""
+    fs = MemFS()
+    fs.outside_mkdirs("/m")
+    fs.outside_write("/m/t", b"target\n")
+    with fs.open_dir("/m") as d:
+        d.create("s", b"old\n", 0o644)
+        d.sync()
+        d.remove("s")
+        d.create("s", b"new\n", 0o644)
+        d.rename("s", "t")
+    seen = {s.file("/m/t") for s in fs.power_loss_states()}
+    assert seen == {b"target\n", b"new\n"}, seen

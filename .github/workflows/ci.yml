@@ -219,18 +219,22 @@ jobs:
           if ($LASTEXITCODE -ne 0 -or -not (Test-Path "Z:\")) { throw "the CI share could not be mapped to Z:" }
           $shares = @("Z:\", "\\localhost\ftshare", "\\$env:COMPUTERNAME\ftshare")  # mapped drive, UNC, UNC by name
           "FT_TEST_SHARE=" + ($shares -join ";") | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "FT_TEST_SHARE_LOCAL=$dir" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8  # the server's own path (S0136)
           [System.Environment]::OSVersion.VersionString
           .venv\Scripts\python.exe scripts\probe_windows_fs.py $env:RUNNER_TEMP $env:TEMP @vols @shares
-      - name: The whole save on the network share, its exclusive create, replace and identity (BL-0219; prints only)
-        # The engine's own save, run by the probe on the share's three spellings and, for comparison, a local NTFS
-        # folder; then the share folder's identity read once, after remapping the drive, and after restarting the
+      - name: A save on the network share cut by a server restart, the read-back, and the identity (BL-0219; prints only)
+        # S0136's two questions with the product's own code (the brief's (a) and (b)): a save cut by a restart of the
+        # file server at four points, then recovery; and other bytes written through the server's own path before the
+        # read-back. Then the share folder's identity read once, after remapping the drive, and after restarting the
         # server service. The later test step needs the share and the mapping: both are checked again at the end, and
         # the step fails if either cannot be remade.
         run: |
           $shares = $env:FT_TEST_SHARE -split ";"
           $backing = Join-Path $env:RUNNER_TEMP "ftshare"
           $roots = $shares + @($backing)
-          .venv\Scripts\python.exe scripts\probe_windows_share_save.py probe $env:RUNNER_TEMP @shares
+          .venv\Scripts\python.exe scripts\probe_windows_share_save.py cut $shares[0] $backing
+          .venv\Scripts\python.exe scripts\probe_windows_share_save.py readback $shares[0] $backing
+          .venv\Scripts\python.exe scripts\probe_windows_share_save.py readback $shares[1] $backing
           try {
             .venv\Scripts\python.exe scripts\probe_windows_share_save.py identity first @roots
             Get-SmbConnection | Format-Table -AutoSize | Out-String | Write-Output
@@ -302,6 +306,43 @@ jobs:
             if (-not (Test-Path $s)) { throw "the CI share is not reachable as $s after the identity probe" }
           }
           $global:LASTEXITCODE = 0
+      - name: "S0136 tests first (temporary step): the slice's Windows tests against the base's engine source"
+        # Removed again by the slice's last commit: the tests S0136 adds or changes (BL-0219), run against the engine
+        # source of the slice's base (3884fdcf), to record which fail there (PROCESS.md §3 step 3).
+        continue-on-error: true
+        env:
+          TZ: PST8PDT
+        run: |
+          git fetch --no-tags --depth=1 origin 3884fdcfceedf5d58fa58c4759463606bfd31b82
+          git checkout FETCH_HEAD -- src
+          .venv\Scripts\python.exe -m pytest -q -rs -p no:cacheprovider tests/fs/test_windows.py -k "S0136"
+          git checkout HEAD -- src
+          git status --short
+      - name: "S0136 loosening mutants (temporary step): the share's tolerance and identity on the runner (scripts/mutants.py)"
+        # Removed again by the slice's last commit (ADR-0057: a check guarding ledger data gets loosening mutants; these
+        # run only on Windows). Each mutant is one line of fs/windows.py.
+        continue-on-error: true
+        env:
+          TZ: PST8PDT
+        run: |
+          $py = Join-Path $env:GITHUB_WORKSPACE "engine\.venv\Scripts\python.exe"
+          $plan = Join-Path $env:RUNNER_TEMP "mutants-s0136.toml"
+          $f = "engine/src/ledger_engine/fs/windows.py"
+          $q = "'" * 3
+          $cmd = "cd engine && set PYTHONPATH=src&& `"$py`" -m pytest -q -p no:cacheprovider tests/fs/test_windows.py -k `"S0136`""
+          $m = @(
+            @("refusal-tolerated-on-local-volumes", 'if code == ERROR_INVALID_FUNCTION and self._h.remote():', 'if code == ERROR_INVALID_FUNCTION:'),
+            @("any-refusal-tolerated-on-shares", 'if code == ERROR_INVALID_FUNCTION and self._h.remote():', 'if self._h.remote():'),
+            @("one-drive-id-for-every-serial", 'name = f"{serial:016X}"', 'name = "0"'),
+            @("share-serial-from-the-32-bit-field", 'serial = self._h.identity()[0]', 'serial = serial32')
+          )
+          $toml = @("cmd = $q$cmd$q", "timeout = 1800")
+          foreach ($x in $m) { $toml += @("[[mutant]]", "id = '$($x[0])'", "file = '$f'", "find = $q$($x[1])$q", "replace = $q$($x[2])$q") }
+          $toml | Set-Content -Encoding utf8 $plan
+          Get-Content $plan
+          & $py -m pytest -q -p no:cacheprovider tests/fs/test_windows.py -k "S0136"
+          Push-Location $env:GITHUB_WORKSPACE
+          try { & $py scripts\mutants.py $plan --work (Join-Path $env:RUNNER_TEMP "mutants-work") } finally { Pop-Location }
       - name: tests
         # INV-07 on Windows (S0127): its C runtime reads TZ only as a process starts and only in this form, so it is set
         # before Python starts (Los Angeles: tests/conftest.py checks it). `-rs`: each skip prints its reason, the

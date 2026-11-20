@@ -119,6 +119,19 @@ class NotOffered(OSError):
         super().__init__(errno.ENOTSUP, f"the volume does not offer {what}")
 
 
+class SyncRefused(OSError):
+    """A network share's server refused a folder's `sync` itself (Windows: `FlushFileBuffers` on the folder answers
+    `ERROR_INVALID_FUNCTION`; probed on the CI share, S0132's 2026-11-18 run 23 and the 2026-11-20 runs 2 and 3):
+    nothing was made durable by the call, and the server makes the folder's entries durable when it does. Raised only
+    on a remote volume (`DirHandle.remote()` True); any other refusal of a sync, and this code on a local volume, is a
+    plain `OSError`. It is an `OSError` (`EINVAL`, Windows' own mapping of the code), so a caller that needs the sync
+    fails as before; only `ledger.handles.ledger_sync`, the sync of a ledger folder, takes it as done (owner,
+    2026-11-20: "Best effort + open notice (Recommended)"; S0136, BL-0219; engine-jobs §6.8)."""
+
+    def __init__(self) -> None:
+        super().__init__(errno.EINVAL, "the network share refused the folder's sync")
+
+
 class Kind(StrEnum):
     FILE = "file"
     DIR = "dir"
@@ -330,7 +343,8 @@ class DirHandle(Protocol):
         ...
 
     def sync(self) -> None:
-        """`durable_sync` of the directory: every entry operation made in it before this call is durable."""
+        """`durable_sync` of the directory: every entry operation made in it before this call is durable. A network
+        share whose server refuses it raises `SyncRefused` (an `OSError`; Windows only, S0136)."""
         ...
 
     def close(self) -> None: ...
@@ -460,6 +474,7 @@ __all__ = [
     "NotOffered",
     "Resolved",
     "Right",
+    "SyncRefused",
     "check_name",
     "fold",
     "folder_id",

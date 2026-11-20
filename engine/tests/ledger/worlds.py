@@ -22,6 +22,17 @@ answered `Resolved`, nothing of ours left at all (`leftovers`). A try that stops
 path (`created_path_taken`, owner, 2026-10-30: "Never remove it (Recommended)") must have left that entry as it was,
 every replaced file durably at pre and no name of ours anywhere (`check_taken`); then the user deletes the file and
 presses Retry, which must resolve.
+
+**On a network share** (`volume="share"`; S0136, BL-0219; owner, 2026-11-20: "Best effort + open notice
+(Recommended)"): `/w/L` is on a Windows share whose server refuses a folder's sync (`MemFS.sync_refused`), so nothing
+the save, the rollback or recovery does there is ever made durable by us: the accepted limit is that a file-server
+crash or power loss right after a save can undo it, and an undo likewise. Without a power loss the oracle above holds
+as it is. In a state a power loss left (`MemFS.lost_power`, and every state reached from one), the share's files may be
+at their pre or post bytes whatever the journal says (a `.closed` save undone in whole or in part, a `.resolved` undo
+undone), and names of ours may stay beside a `.closed` or `.resolved` journal; still every file is whole (never torn,
+never missing: the share has the exclusive rename, so a replace is one entry operation), nothing outside our names is
+changed or removed, and the journal and backups, on the machine's own disk, keep every rule. `check_recovered` still
+requires recovery to resolve, and the disk as recovery left it (before any further power loss) at pre.
 """
 
 from __future__ import annotations
@@ -107,7 +118,8 @@ class World:
     targets: tuple[Target, ...]
     before: dict[str, tuple[object, ...]]
     new_dirs: tuple[str, ...] = ()
-    volume: str = "swap"  # the ledger folder's volume (S0065): "swap" (APFS), "no_swap" (HFS+), "plain" (exFAT)
+    volume: str = "swap"  # the ledger folder's volume (S0065): "swap" (APFS), "no_swap" (HFS+), "plain" (exFAT),
+    # "share" (a Windows network share whose server refuses a folder's sync; S0136)
 
     @property
     def plain(self) -> bool:
@@ -115,8 +127,27 @@ class World:
         never torn), and a created file made in place by an exclusive create (part of it there after a crash)."""
         return self.volume == "plain"
 
+    @property
+    def share(self) -> bool:
+        """`/w/L` is on a network share (the module's docstring)."""
+        return self.volume == "share"
 
-VOLUMES = ("swap", "no_swap", "plain")
+
+VOLUMES = ("swap", "no_swap", "plain", "share")
+SHARE_DEV = 7  # the share's drive in the fake; the journal and backups stay on the default one
+
+
+def on_a_share(fs: MemFS, path: str) -> None:
+    """The folder `path` (made already) and every folder in it on a Windows network share whose server refuses a
+    folder's sync (S0136): no swap, the exclusive rename (probed truly exclusive on the CI share), `remote()` True,
+    the file system `ntfs` as the share reports it."""
+    for folder, entry in fs.snapshot().items():
+        if entry == ("dir",) and (folder == path or folder.startswith(path + "/")):
+            fs.outside_no_swap(folder, excl=True)  # a folder the code makes there inherits it
+    fs.outside_mount(path, SHARE_DEV)
+    fs.remote.add(SHARE_DEV)
+    fs.sync_refused.add(SHARE_DEV)
+    fs.outside_fs_type(SHARE_DEV, "ntfs")
 
 
 def world(*, new_dir: bool = False, mode: int = 0o644, stores_nfd: bool = False, volume: str = "swap") -> World:
@@ -124,11 +155,14 @@ def world(*, new_dir: bool = False, mode: int = 0o644, stores_nfd: bool = False,
     folder `y2026/`), `main.bean` (the root, replaced last) and `other.bean` (in the set, not written). `volume`: the
     drive `/w/L` is on (S0065); the journal and backups stay on the Mac's own disk (INV-27, INV-30)."""
     assert volume in VOLUMES, volume
-    fs = MemFS(stores_nfd=stores_nfd)
+    fs = MemFS(stores_nfd=stores_nfd, windows=volume == "share")
     for d in (JD, BD):
         fs.outside_mkdirs(d)
     if volume == "swap":
         fs.outside_mkdirs("/w/L/inc")
+    elif volume == "share":
+        fs.outside_mkdirs("/w/L/inc")
+        on_a_share(fs, "/w/L")
     else:
         fs.outside_mkdirs("/w/L", no_swap=True, no_excl=volume == "plain")
         fs.outside_mkdirs("/w/L/inc")
@@ -186,6 +220,7 @@ def check_disk(fs: MemFS, w: World) -> None:
     record = journal.decode(data) if state not in (None, State.PART) else None
     if state not in (None, State.PART):
         assert isinstance(record, Record), f"a {state} journal is never torn: {record}"
+    lost = w.share and fs.lost_power  # the share's accepted limit (the module's docstring)
     at_post = False
     for t in w.targets:
         now = fs.file(t.path)
@@ -200,14 +235,15 @@ def check_disk(fs: MemFS, w: World) -> None:
         if now == t.post and now != t.pre:
             at_post = True
     if at_post:
-        assert state in (State.OPEN, State.CLOSED), f"a target at post under a {state} journal"
+        if not (lost and state is State.RESOLVED):  # an undo a share's power loss dropped (the limit)
+            assert state in (State.OPEN, State.CLOSED), f"a target at post under a {state} journal"
         assert isinstance(record, Record)
         for f in record.files:
             if f.backup is not None:
                 backup = fs.file(f"{record.backup_dir}/{f.backup}")
                 assert backup is not None, "a replaced file whose backup is gone"
                 assert sha256(backup) == f.pre, "a replaced file whose backup does not hold its pre bytes"
-    if state in (State.CLOSED, State.RESOLVED):
+    if state in (State.CLOSED, State.RESOLVED) and not lost:
         for t in w.targets:
             want = t.post if state is State.CLOSED else t.pre
             assert fs.file(t.path) == want, f"{state}, but {t.path} is not at {'post' if want == t.post else 'pre'}"
@@ -216,7 +252,10 @@ def check_disk(fs: MemFS, w: World) -> None:
                     assert name not in snap, f"{state} with a temp of ours left: {name}"
             if state is State.RESOLVED:
                 assert t.kept not in snap, f"resolved while a kept copy exists: {t.kept}"
-    if state is State.RESOLVED:
+    if state is State.RESOLVED and lost:
+        for t in w.targets:
+            assert t.kept not in snap, f"resolved while a kept copy exists: {t.kept}"
+    if state is State.RESOLVED and not lost:
         for name in leftovers(fs, w):
             assert name in w.new_dirs, f"a name of ours left beside a resolved journal: {name}"
             assert not any(p.startswith(name + "/") for p in snap), f"resolved, but the save's folder holds: {name}"
@@ -270,9 +309,11 @@ def check_taken(fs: MemFS, w: World, out: RestoreOutcome | None) -> None:
     assert isinstance(out, Stopped), out
     assert out.cause is Cause.CREATED_PATH_TAKEN, out
     assert out.path in {t.path for t in created(w)}, out
-    for state in (fs, *fs.power_loss_states()):
+    for k, state in enumerate((fs, *fs.power_loss_states())):
         check_disk(state, w)
         assert set(journals(state)) == {State.OPEN}, "the journal stops: it stays .open"
+        if w.share and k > 0:
+            continue  # a power loss of the share may drop what the try did there (the module's docstring)
         assert out.path in state.snapshot(), "the entry at the created path was removed"
         for t in w.targets:
             if t.pre is not None:
@@ -307,12 +348,15 @@ def check_recovered(fs: MemFS, w: World, out: RestoreOutcome | None) -> None:
         out = recover(fs)
         assert isinstance(out, Resolved), f"the user deleted the file and pressed Retry: {out}"
     assert not isinstance(out, Stopped | Failed), f"recovery with no outside program could not finish: {out}"
-    for state in (fs, *fs.power_loss_states()):
+    for k, state in enumerate((fs, *fs.power_loss_states())):
         check_disk(state, w)
         js = journals(state)
         assert State.OPEN not in js, "recovery left an .open journal"
         if isinstance(out, Resolved):
             assert set(js) == {State.RESOLVED}, f"told resolved, the disk has {sorted(js)}"
+        if w.share and (k > 0 or (fs.lost_power and out is None)):
+            continue  # a share's power loss, after recovery or with nothing for it to do: an undo may be undone
+        if isinstance(out, Resolved):
             assert leftovers(state, w) == [], "told resolved, but something of ours is left"
         if State.CLOSED not in js:
             for t in w.targets:

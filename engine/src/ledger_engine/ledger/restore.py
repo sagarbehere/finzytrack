@@ -117,6 +117,7 @@ from ledger_engine.ledger.handles import (
     folder_blocked,
     hard_links,
     keep,
+    ledger_sync,
     move,
     sha256,
     write_mode,
@@ -517,13 +518,15 @@ def _put_back(handles: Handles, record: Record, x: _Checked) -> None:
                 h.rename(rs, x.base)
         except FileExistsError:
             raise _Halt(Cause.FOREIGN, f.canonical_path) from None
-        h.sync()
+        ledger_sync(h)
         return
     handles.entry = _join(x.parent, rt)
     h.rename_excl(rs, rt)  # exclusive: an entry that appeared there since its clean-up is never replaced
-    h.sync()  # the restore temp's name durable before its swap (S0061 r3: verifier F1, red team F1)
+    ledger_sync(h)  # the restore temp's name durable before its swap (S0061 r3: verifier F1, red team F1)
     h.swap(rt, x.base)
-    h.sync()  # the swap durable before what it displaced is removed (S0061 r4: an in-place write, then a power loss)
+    ledger_sync(
+        h
+    )  # the swap durable before what it displaced is removed (S0061 r4: an in-place write, then a power loss)
     _settle(h, rt, x, record, (f.post, f.pre))
     handles.entry = None
 
@@ -551,7 +554,7 @@ def _sync_folders(handles: Handles, folders: list[str]) -> None:
             h = handles.at(folder)
         except (FileNotFoundError, NotADirectoryError):
             continue  # a folder the save made, not there (checked at step 2)
-        h.sync()
+        ledger_sync(h)
     handles.entry = None
 
 
@@ -639,13 +642,15 @@ def _flush(handles: Handles, checked: list[_Checked], pristine: Mapping[str, tup
     pre bytes as that very object, on a file system whose file IDs are never reused (`handles.FILE_ID_TYPES`): the
     save never replaced it, so no revert of the save is in it to make durable, and on Windows the flush's write-open
     would fail on a file another program holds sharing reading only (an Office document), leaving a save it fully
-    undid paused. Elsewhere, and in recovery (`pristine` None), every such file is flushed as before."""
+    undid paused. Not on a network share (`remote()` True: a share reports `NTFS` with a file ID its server gives,
+    which Samba or a NAS may reuse; S0136, BL-0219, S0135 verifier F1). Elsewhere, and in recovery (`pristine` None),
+    every such file is flushed as before."""
     for x in checked:
         if x.verdict is not Verdict.AT_PRE or x.entry.pre is None or x.folder_absent:
             continue
         if pristine is not None and x.identity is not None and pristine.get(x.entry.canonical_path) == x.identity:
             folder = handles.folders.get(x.parent)
-            if folder is not None and folder.fs_type in FILE_ID_TYPES:
+            if folder is not None and folder.fs_type in FILE_ID_TYPES and handles.at(x.parent).remote() is not True:
                 continue  # the object the save started from, never replaced: nothing of the save's to make durable
         handles.on, handles.entry = x.entry.canonical_path, None
         synced = handles.at(x.parent).sync_file(x.base)

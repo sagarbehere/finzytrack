@@ -68,7 +68,7 @@ from ledger_engine.fs.port import DirHandle, FileSystem, Kind, MalformedPathErro
 from ledger_engine.ledger import beancount_port as port
 from ledger_engine.ledger import fingerprint, overlay
 from ledger_engine.ledger.core import paths as core_paths
-from ledger_engine.ledger.handles import Handles, Mode, PathMovedError, folder_blocked, join, move
+from ledger_engine.ledger.handles import Handles, Mode, PathMovedError, folder_blocked, join, ledger_sync, move
 from ledger_engine.ledger.writer import BadPlanError
 from ledger_engine.tla import tla_action
 
@@ -429,7 +429,7 @@ class Run:
                 else:
                     kept.append(rel)
                     continue
-                h.sync()
+                ledger_sync(h)
             if self.made_target:  # its rmdir fails while anything is in it
                 parent, name = host().parent_and_name(self.folder)
                 ph = self.handles.at(parent)
@@ -440,7 +440,7 @@ class Run:
                     try:
                         self.handles.release(self.folder)
                         ph.rmdir(name)
-                        ph.sync()
+                        ledger_sync(ph)
                     except OSError:
                         kept.append(TARGET)  # the folder the job made stays (another program's entry in it): named
         except (OSError, PathMovedError):
@@ -465,7 +465,7 @@ class Run:
                 except OSError:
                     st = None  # its identity unknown: the cleanup names it, never removes it (r3 F3, V2)
                 self.target_identity = None if st is None else st.identity
-                h.sync()
+                ledger_sync(h)
             return
         with self.fs.open_dir(parent) as h:
             st = h.stat(name)
@@ -549,9 +549,9 @@ class Run:
     def _sync(self) -> None:
         for d in reversed(_folders(self.plan.files, self.plan.folders)):
             self.handles.on = join(self.folder, d)
-            self.handles.at(join(self.folder, d)).sync()
+            ledger_sync(self.handles.at(join(self.folder, d)))
         self.handles.on = self.folder
-        self.handles.at(self.folder).sync()
+        ledger_sync(self.handles.at(self.folder))
 
     # step 4 ------------------------------------------------------------------------------------------------------
     @tla_action("CR_ReadBack")
@@ -593,7 +593,7 @@ class Run:
             if e.errno in TAKEN or th.stat(MANIFEST_DIR) is not None:
                 return self._stopped(Stop("manifest_taken", join(self.folder, MANIFEST_DIR)))
             return self._stopped(Stop("io_error", join(self.folder, MANIFEST_DIR), err=e.errno))
-        th.sync()  # an error here is raised: the sidecar reads the disk
+        ledger_sync(th)  # an error here is raised: the sidecar reads the disk
         self.made = {
             (MANIFEST_DIR + rel[len(temp) :] if rel.split("/")[0] == temp else rel): m for rel, m in self.made.items()
         }
@@ -611,8 +611,8 @@ class Run:
             parent, _, name = f.path.rpartition("/")
             self._make(self.handles.at(_under(tpath, parent)), name, join(tpath, f.path), data=f.data)
         for d in reversed(_folders(self.plan.manifest)):
-            self.handles.at(join(tpath, d)).sync()
-        self.handles.at(tpath).sync()
+            ledger_sync(self.handles.at(join(tpath, d)))
+        ledger_sync(self.handles.at(tpath))
         for f in self.plan.manifest:  # read back before the rename (ADR-0008 step 6; r1 RT2)
             parent, _, name = f.path.rpartition("/")
             if self.handles.at(_under(tpath, parent)).read(name, limit=len(_text(f)) + 1) != f.data:
@@ -808,7 +808,7 @@ def outcome_of(fs: FileSystem, plan: CreatePlan, *, every: bool = False) -> Fact
         if r.rest:
             return Facts("absent", ())
         folder = core_paths.canonical_path(r)
-        handles.at(folder).sync()  # what is read below is what a power loss keeps
+        ledger_sync(handles.at(folder))  # what is read below is what a power loss keeps
         seen = _manifest_seen(handles, plan, folder)
         return Facts(seen, () if seen == "ours" else _at_our_names(handles, plan, folder, every=every))
     except NotADirectoryError:
