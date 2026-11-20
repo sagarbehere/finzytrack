@@ -302,6 +302,30 @@ jobs:
             if (-not (Test-Path $s)) { throw "the CI share is not reachable as $s after the identity probe" }
           }
           $global:LASTEXITCODE = 0
+      - name: "S0135 verifier F2 mutants (temporary step): rule 1a's carry-over, on the runner (scripts/mutants.py)"
+        # Removed again by the slice's landing commit: the two mutants V2-F3's tests exist to kill (the S0135
+        # verifier's plan): the DACL always marked protected, and the rollback's put-back without the old file's security.
+        continue-on-error: true
+        env:
+          TZ: PST8PDT
+        run: |
+          $py = Join-Path $env:GITHUB_WORKSPACE "engine\.venv\Scripts\python.exe"
+          $plan = Join-Path $env:RUNNER_TEMP "mutants-v2f3.toml"
+          $q = "'" * 3
+          $sel = "V2_F3 or owner_1a"
+          $cmd = "cd engine && set PYTHONPATH=src&& `"$py`" -m pytest -q -p no:cacheprovider tests/fs/test_windows.py -k `"$sel`""
+          $m = @(
+            @("dacl-always-protected", "engine/src/ledger_engine/fs/windows.py", 'if control.value & SE_DACL_PROTECTED', 'if True'),
+            @("put-back-without-like", "engine/src/ledger_engine/ledger/restore.py", 'like = None if x.verdict is Verdict.MISSING else x.base', 'like = None')
+          )
+          $toml = @("cmd = $q$cmd$q", "timeout = 1800")
+          foreach ($x in $m) { $toml += @("[[mutant]]", "id = '$($x[0])'", "file = '$($x[1])'", "find = $q$($x[2])$q", "replace = $q$($x[3])$q") }
+          $toml | Set-Content -Encoding utf8 $plan
+          Get-Content $plan
+          # The same selection in the checkout first, its output shown (mutants.py hides each run's output).
+          & $py -m pytest -q -p no:cacheprovider tests/fs/test_windows.py -k $sel
+          Push-Location $env:GITHUB_WORKSPACE
+          try { & $py scripts\mutants.py $plan --work (Join-Path $env:RUNNER_TEMP "mutants-work") } finally { Pop-Location }
       - name: tests
         # INV-07 on Windows (S0127): its C runtime reads TZ only as a process starts and only in this form, so it is set
         # before Python starts (Los Angeles: tests/conftest.py checks it). `-rs`: each skip prints its reason, the

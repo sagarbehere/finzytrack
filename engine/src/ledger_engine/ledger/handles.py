@@ -79,7 +79,9 @@ new 128-bit ID, probed in S0126 and S0128): an object found with the ID it had b
 started from, never one put there since (`restore._flush`, S0128 round 1). POSIX inode numbers can be reused, so no
 macOS or Linux file system is meant here. **Limit** (S0135, BL-0285; owner, 2026-11-20: "State it as a limit
 (Recommended)"): the key is the type's name only, and macOS's own NTFS driver (writable only by a setting Apple does
-not support) also reports `ntfs` (engine-jobs §8.1 step 4, "Limit (the skip's key)")."""
+not support) also reports `ntfs`, and so does a Windows network share, whose file ID comes from the server (no save
+reaches a share yet: `no_drive_id`; BL-0219 decides the key there; engine-jobs §8.1 step 4, "Limit (the skip's
+key)")."""
 
 WHOLE_SECONDS_ON: Final = frozenset({"exfat"})
 """File systems whose folder creation time is compared to the whole second (S0090, BL-0221; owner, 2026-11-09: "On

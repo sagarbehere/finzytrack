@@ -43,7 +43,7 @@ from ledger_engine.fs.port import (
     same_folder,
 )
 from ledger_engine.ledger.core import paths as core_paths
-from ledger_engine.ledger.writer import Change, Landed, NotSaved, Reason, Step, durable_commit, sha256
+from ledger_engine.ledger.writer import Change, Landed, NotSaved, Reason, Step, Unfinished, durable_commit, sha256
 from tests.fs.real_volume import commit, real_volume_run
 
 WINDOWS_ONLY = "the Windows adapter's own tests (macOS: tests/fs/test_darwin.py; Linux: tests/fs/test_linux.py)"
@@ -1091,6 +1091,43 @@ def test_V2_F3_a_rollbacks_put_back_keeps_the_files_own_acl(
     assert (out.step, out.unchanged, out.open_journal) == (Step.REPLACE, True, False), out
     assert a.read_bytes() == b"pre\n"
     assert _icacls(a) == before, "the put-back took its folder's ACL"
+
+
+def test_Q_B_a_refusal_met_by_the_rollbacks_put_back_leaves_every_file_whole_and_the_journal_open(
+    fs: FileSystem, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """S0135 verifier F3 (owner, 2026-11-20, item 4: a drive that claims the flag and then refuses gives no silent
+    fallback; engine-jobs §6.4): the second replace fails, and from then on the volume refuses the files' DACL, so the
+    rollback's put-back of the first file (`create(..., like=...)`) raises before its rename. The save is
+    `Unfinished`, never "not saved, unchanged": the first file whole at its new bytes, the second untouched, the
+    journal left `.open` for recovery (fails closed)."""
+    from ledger_engine.fs import windows
+
+    led, a = _ledger(tmp_path)
+    b = led / "b.bean"
+    b.write_bytes(b"b\n")
+    real = windows.WindowsDir.rename
+    refusing: list[bool] = []
+
+    def rename(self: windows.WindowsDir, src: str, dst: str) -> None:
+        if dst == "b.bean":
+            refusing.append(True)  # from now on the files' DACL read is refused: the put-back's carry-over
+            raise OSError(errno.EIO, "the second replace fails")
+        real(self, src, dst)
+
+    def refuse(call: str, on_folder: bool) -> int | None:
+        return NOT_SUPPORTED if refusing and call == "GetSecurityInfo" and not on_folder else None
+
+    monkeypatch.setattr(windows.WindowsDir, "rename", rename)
+    _security_calls(fs, monkeypatch, refuse)
+    app = tmp_path / "app"
+    out = durable_commit(
+        fs, commit(app, Change(str(a), sha256(b"pre\n"), b"A\n"), Change(str(b), sha256(b"b\n"), b"B\n"))
+    )
+    assert isinstance(out, Unfinished), out
+    assert a.read_bytes() == b"A\n"  # whole: the put-back stopped before its rename
+    assert b.read_bytes() == b"b\n"
+    assert [n for n in os.listdir(app / "local" / "journal") if n.endswith(".open")], "the journal is not left open"
 
 
 @pytest.mark.parametrize("code", [NOT_SUPPORTED, INVALID_PARAMETER])

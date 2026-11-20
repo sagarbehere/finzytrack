@@ -101,5 +101,14 @@
 - **Population** (item 4 claims every security fallback keyed by an error in the adapter): inventory by behaviour, every branch of `fs/windows.py` that compares an error code with `ERROR_NOT_SUPPORTED` or `ERROR_INVALID_PARAMETER` (grep of both names at 08f38970): 4 sites. In: 3 (`_carry_over`'s DACL read, `_streams`, `WindowsDir.acl`), now decided by the volume's flags. Out: 1 (`_Handle.identity`'s `FileIdInfo` fallback for FAT32 and exFAT: an identity question, not a security one; it gives a coarser identity, never a skipped check; Decisions).
 
 ## Verifier
+- Round 1, head 2f2b5903: PASS WITH FINDINGS, 0H/0M/3L, nothing of class (a) or (b), so the data-safety red team does not join. 13 attacks (among them: no false refusal on NTFS, ReFS or the share; nothing skipped where a flag is set; every `create(..., like=...)` raises before the rename on all three callers). The fixes are tests and docs only, so no fresh round follows (PROCESS.md §3 review budget).
+
+| ID | Severity | Class | Disposition |
+|---|---|---|---|
+| F1 | Low | d | §8.1 step 4's "Limit (the skip's key)" and `handles.FILE_ID_TYPES`' docstring named only macOS's NTFS driver; a Windows share also reports `NTFS`, its file ID the server's. No impact today (`no_drive_id`). Fixed: both state the share case; BL-0219's row says its slice decides the key on a share and brings it to the owner if it stays name-only |
+| F2 | Low | c | The two mutants V2-F3's tests exist to kill (the DACL always protected; the put-back without `like`) were never run. A temporary `engine-windows` step runs the verifier's plan on the runner (the 2026-11-20 run 7) |
+| F3 | Low | c | No test of a flag-set refusal met by the rollback's put-back. Fixed: the verifier's proposed test, adapted: `test_Q_B_a_refusal_met_by_the_rollbacks_put_back_leaves_every_file_whole_and_the_journal_open` (`Unfinished`, the first file whole at its new bytes, the second untouched, the journal `.open`) |
+
+- **The verifier's question (not a finding):** the `FileIdInfo` fallback in `_Handle.identity` (keyed by `ERROR_INVALID_PARAMETER`/`ERROR_NOT_SUPPORTED`) is unreachable on ReFS (it gives `FileIdInfo`) and outside BL-0285 (Decisions: an identity question, never a skipped check).
 
 ## Retro
