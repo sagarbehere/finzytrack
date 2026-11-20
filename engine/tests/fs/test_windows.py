@@ -1042,20 +1042,21 @@ def test_V2_F3_the_archive_attribute_is_kept_as_it_was_on_every_volume(
     """@regression-guard (it holds on the base; V2-F3): rule 1a keeps the archive attribute, set or clear (a new file
     gets it set by Windows, so the clear case is the one that shows the carry-over), on the runner's disk and on each
     scratch volume."""
-    places = [tmp_path, *[Path(v) / f"ft-{uuid.uuid4().hex}" for v in _volumes()]]
-    for place in places:
+    places = [tmp_path / "led", *[Path(v) / f"ft-{uuid.uuid4().hex}" for v in _volumes()]]
+    for i, place in enumerate(places):
         place.mkdir(exist_ok=True)
         try:
             main = place / "main.bean"
             main.write_bytes(b"pre\n")
             subprocess.run(["attrib", "+a" if archive else "-a", str(main)], check=True, capture_output=True)  # noqa: S603, S607
             assert bool(os.stat(main).st_file_attributes & 0x20) is archive, place
-            out = durable_commit(fs, commit(tmp_path / "app", Change(str(main), sha256(b"pre\n"), b"post\n")))
+            app = tmp_path / f"app{i}"  # beside the ledger's folder, never above it; one per save
+            out = durable_commit(fs, commit(app, Change(str(main), sha256(b"pre\n"), b"post\n")))
             assert isinstance(out, Landed), (place, out)
             assert main.read_bytes() == b"post\n"
             assert bool(os.stat(main).st_file_attributes & 0x20) is archive, (place, _kind_of(fs, place))
         finally:
-            if place != tmp_path:
+            if place.parent != tmp_path:  # a scratch volume's folder
                 shutil.rmtree(place, ignore_errors=True)
 
 

@@ -345,6 +345,8 @@ jobs:
           foreach ($x in $m) { $toml += @("[[mutant]]", "id = '$($x[0])'", "file = '$f'", "find = $q$($x[1])$q", "replace = $q$($x[2])$q") }
           $toml | Set-Content -Encoding utf8 $plan
           Get-Content $plan
+          # The same selection in the checkout first, its output shown (mutants.py hides each run's output).
+          & $py -m pytest -q -p no:cacheprovider tests/fs/test_windows.py -k "V2_F3 or Q_B or owner_1a"
           Push-Location $env:GITHUB_WORKSPACE
           try { & $py scripts\mutants.py $plan --work (Join-Path $env:RUNNER_TEMP "mutants-work") } finally { Pop-Location }
       - name: tests

@@ -84,7 +84,9 @@
 - The brief stopped before tests until the answer (orchestrator, 2026-11-20; PROCESS.md §3 step 2).
 
 ## Hand-off (PROCESS.md §3 step 4; ADR-0057)
-(Not started: the slice waits on the owner's answer.)
+(In progress: completed after the Windows runs.)
+- **CI runs** (manual, by date and order; the orchestrator starts them):
+  - 2026-11-20 run 4 (head fec34968): every job green but `engine-windows`. Volume flags printed: `D:` NTFS `0x3e706ff`, `R:` FAT32 `0x20206`, `S:` exFAT `0x20206`, `T:` ReFS `0x5f4402cf`: ACLs and streams kept on NTFS and ReFS, neither on FAT32 and exFAT. **Tests first** (the new tests against the base's engine source, 08f38970): 11 failed, 3 passed. Failed as predicted: the six refusal cases (the base saved, `Landed`, or `acl()` did not raise), the FAT32 and exFAT cases of the per-volume test (the base asked the folder's and the file's DACL there: `('GetSecurityInfo', True), ('FileStreamInfo', False), ('GetSecurityInfo', False)`), the masked-flags test (five calls asked). Passed as predicted: the inherited-plus-own ACL test, the rollback's put-back test, ReFS's per-volume case (it keeps both). **Not predicted:** the archive test's two cases failed on the base and on the head alike with `BadPlanError: app_folder_and_ledger_folder_overlap`: a test fault (the ledger folder was `tmp_path`, above the app folder `tmp_path/app`); fixed (the ledger in `tmp_path/led`, an app folder per save). **Main tests:** 2 failed, 10621 passed: only those two archive cases; every item-4 test and S0128's ACL test passed on NTFS, ReFS, FAT32 and exFAT, so no false refusal on a real volume. **Mutants:** none counted: the baseline failed, because the selection included the failing archive test; the step now also runs the selection in the checkout first, its output shown.
 
 ## Verifier
 
