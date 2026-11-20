@@ -617,15 +617,22 @@ class _Handle:
     def links(self) -> int:
         return struct.unpack_from("<I", self.info(FILE_STANDARD_INFO, 24), 16)[0]
 
+    def file_id_info(self) -> tuple[int, int] | None:
+        """`FileIdInfo`'s `(64-bit volume serial, 128-bit file ID)`, or None where the volume has none (FAT32, exFAT:
+        `INVALID_PARAMETER`, probed; a server that does not offer it: `INVALID_PARAMETER` or `NOT_SUPPORTED`)."""
+        buf = ctypes.create_string_buffer(24)
+        if self.api.GetInfo(self.handle, FILE_ID_INFO, buf, 24):
+            return struct.unpack_from("<Q", buf.raw, 0)[0], int.from_bytes(buf.raw[8:24], "little")
+        if ctypes.get_last_error() not in (ERROR_INVALID_PARAMETER, ERROR_NOT_SUPPORTED):
+            raise _win_error("FileIdInfo")
+        return None
+
     def identity(self) -> tuple[int, int]:
         """`(volume serial, file ID)`: `FileIdInfo` on NTFS and ReFS (64-bit serial, 128-bit ID); where a volume has
         none (FAT32, exFAT: `INVALID_PARAMETER`, probed), the 32-bit serial and the file index."""
-        buf = ctypes.create_string_buffer(24)
-        if self.api.GetInfo(self.handle, FILE_ID_INFO, buf, 24):
-            serial = struct.unpack_from("<Q", buf.raw, 0)[0]
-            return serial, int.from_bytes(buf.raw[8:24], "little")
-        if ctypes.get_last_error() not in (ERROR_INVALID_PARAMETER, ERROR_NOT_SUPPORTED):
-            raise _win_error("FileIdInfo")
+        ids = self.file_id_info()
+        if ids is not None:
+            return ids
         info = ctypes.create_string_buffer(52)
         if not self.api.GetFileInformationByHandle(self.handle, info):
             raise _win_error("GetFileInformationByHandle")
@@ -825,8 +832,15 @@ class WindowsDir:
         """The drive ID (the module's docstring, "Identity"), on a network share too: the server volume's serial, as
         `FileIdInfo` gives it there (S0136, BL-0219; owner, 2026-11-20: "Best effort + open notice (Recommended)"):
         probed equal through a mapped drive, every UNC spelling and the server's own local path, and stable across a
-        remap and a restart of the file server (the 2026-11-20 runs 2 and 3)."""
+        remap and a restart of the file server (the 2026-11-20 runs 2 and 3). On a share only `FileIdInfo`'s serial
+        counts: a server that does not offer it has no drive ID here (`no_drive_id`; S0136 round 1, verifier F1: the
+        32-bit fallback would name it by a serial a local NTFS volume's 64-bit one could equal)."""
         fs_type, serial32 = self._h.volume()
+        if self._h.remote():
+            ids = self._h.file_id_info()
+            if ids is None or ids[0] == 0 or fs_type not in FS_SERIAL64 | FS_SERIAL32:
+                return None
+            return str(uuid.uuid5(SERIAL_NAMESPACE, f"{ids[0]:016X}"))
         if fs_type in FS_SERIAL64:
             serial = self._h.identity()[0]
             name = f"{serial:016X}"
@@ -838,6 +852,11 @@ class WindowsDir:
         return None if serial == 0 else str(uuid.uuid5(SERIAL_NAMESPACE, name))
 
     def born(self) -> int | None:
+        """The folder's identity within its drive (the module's docstring, "Identity"): the file ID on NTFS and ReFS,
+        the creation time on FAT32 and exFAT. On a network share it is what the server gives (S0136 round 1, L3):
+        Windows' own server gives NTFS's file ID; Samba or a NAS may give one it reuses, so a folder removed and made
+        again at once may not be told apart there (engine-jobs §6.3, "Limit (share spellings)" and its neighbours).
+        It stays in the folder mark: leaving it out would refuse every save on a share (`no_folder_id`)."""
         fs_type = self.fs_type()
         if fs_type in FS_SERIAL64:
             return self._h.identity()[1]  # the file ID: the creation time is tunnelled (the module's docstring)

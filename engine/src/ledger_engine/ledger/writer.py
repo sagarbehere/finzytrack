@@ -610,6 +610,18 @@ def _check_target(handles: Handles, t: _Target) -> tuple[Mode, FolderEntry]:
     return mode, _seen(holder, existing, t.canonical)  # a folder the save makes is on its parent's drive
 
 
+def _try_share_syncs(handles: Handles, targets: tuple[_Target, ...]) -> None:
+    """On a network share (`remote()` True: Windows), each ledger folder the save writes in is synced once before the
+    first write (S0136 round 1, red team RT2): a server that refuses the flush otherwise than the one refusal a ledger
+    folder's sync takes as done (`handles.ledger_sync`) then stops the save here, "not saved" and unchanged, instead of
+    after its first replace, where its rollback would fail at the same sync and leave the workspace paused for good.
+    The sync writes nothing. Not on a local volume (no extra effect where a sync is never refused)."""
+    for folder in sorted({t.seen.canonical_path for t in targets if t.seen is not None}):
+        h = handles.at(folder)
+        if h.remote() is True:
+            ledger_sync(h)
+
+
 def _prepare(fs: FileSystem, handles: Handles, c: Commit, targets: tuple[_Target, ...]) -> _Plan:
     """Step 0: check each target and the plan as a whole before the first effect (the module's docstring)."""
     targets = tuple(replace(t, mode=m, seen=v) for t in targets for m, v in (_check_target(handles, t),))
@@ -652,6 +664,7 @@ def _prepare(fs: FileSystem, handles: Handles, c: Commit, targets: tuple[_Target
         _check_app_folder(handles.at(folder), folder)
     if not handles.at(journal_dir).caps().excl:  # C1: known before anything is written (macOS asks the volume)
         raise _Stop(Reason.UNSAFE_APP_FOLDER, None, journal_dir)
+    _try_share_syncs(handles, targets)
     folders = tuple(seen[p] for p in sorted(seen))
     return _Plan(targets, tuple((cn, k) for k, cn in dirs.items()), journal_dir, backups_dir, folders)
 

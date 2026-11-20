@@ -23,16 +23,17 @@ path (`created_path_taken`, owner, 2026-10-30: "Never remove it (Recommended)") 
 every replaced file durably at pre and no name of ours anywhere (`check_taken`); then the user deletes the file and
 presses Retry, which must resolve.
 
-**On a network share** (`volume="share"`; S0136, BL-0219; owner, 2026-11-20: "Best effort + open notice
-(Recommended)"): `/w/L` is on a Windows share whose server refuses a folder's sync (`MemFS.sync_refused`), so nothing
-the save, the rollback or recovery does there is ever made durable by us: the accepted limit is that a file-server
-crash or power loss right after a save can undo it, and an undo likewise. Without a power loss the oracle above holds
-as it is. In a state a power loss left (`MemFS.lost_power`, and every state reached from one), the share's files may be
-at their pre or post bytes whatever the journal says (a `.closed` save undone in whole or in part, a `.resolved` undo
-undone), and names of ours may stay beside a `.closed` or `.resolved` journal; still every file is whole (never torn,
-never missing: the share has the exclusive rename, so a replace is one entry operation), nothing outside our names is
-changed or removed, and the journal and backups, on the machine's own disk, keep every rule. `check_recovered` still
-requires recovery to resolve, and the disk as recovery left it (before any further power loss) at pre.
+**On a network share** (`volume="share"`; S0136, BL-0219; owner, 2026-11-20: "Best effort + open notice (Recommended)"):
+`/w/L` is on a Windows share whose server refuses a folder's sync (`MemFS.sync_refused`), so nothing the save, the
+rollback or recovery does there is ever made durable by us: the accepted limit is that a file-server crash or power loss
+right after a save can undo it, and an undo likewise. Without a power loss the oracle above holds as it is. In a state a
+power loss left (`MemFS.lost_power`, and every state reached from one), the share's files may be at their pre or post
+bytes whatever the journal says (a `.closed` save undone in whole or in part, a `.resolved` undo undone), and names of
+ours may stay beside a `.closed` or `.resolved` journal; still every file is whole (never torn, never missing: the
+world's share is kept on NTFS by its server, whose replace is one entry operation; a share kept on exFAT or FAT can
+leave a file missing after a power loss, the stated limit `test_share_saves.py`'s RT1 tests pin), nothing outside our
+names is changed or removed, and the journal and backups, on the machine's own disk, keep every rule. `check_recovered`
+still requires recovery to resolve, and the disk as recovery left it (before any further power loss) at pre.
 """
 
 from __future__ import annotations

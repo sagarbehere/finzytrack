@@ -33,11 +33,11 @@ from tests.ledger.worlds import (
     JD,
     NAME,
     SHARE_DEV,
+    World,
     check_disk,
     check_every_power_loss,
     check_recovered,
     journals,
-    leftovers,
     on_a_share,
     recover,
     world,
@@ -374,7 +374,6 @@ def test_without_a_power_loss_the_share_oracle_is_the_full_one() -> None:
     lost = next(s for s in w.fs.power_loss_states())
     lost.outside_write(MAIN, pre)
     check_disk(lost, w)  # the same disk after a power loss: the limit
-    assert leftovers(lost, w) == [] or lost.lost_power
 
 
 def test_recovery_after_a_power_loss_still_resolves_and_ends_at_pre() -> None:
@@ -396,3 +395,219 @@ def test_recovery_after_a_power_loss_still_resolves_and_ends_at_pre() -> None:
             if t.pre is not None:
                 assert state.file(t.path) == t.pre
     assert n > 0
+
+
+# -- S0136 round 1: what the reviews asked for ---------------------------------------------------------------------
+
+
+class _OtherCode(OSError):
+    """A share whose server refuses the folder's flush with another code (an untested NAS): never `SyncRefused`."""
+
+    def __init__(self) -> None:
+        super().__init__(errno.EOPNOTSUPP, "the server refused the folder's flush (another code)")
+
+
+def test_RT2_a_share_refusing_the_flush_otherwise_stops_the_save_before_any_write(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Red team RT2: each ledger folder on a share is synced once before the first write (`writer._try_share_syncs`),
+    so a server answering another code stops the save there: "not saved", unchanged, no journal, nothing written; never
+    a half-applied save whose rollback fails at the same sync and pauses the workspace for good."""
+    from tests.fakes import memfs
+
+    monkeypatch.setattr(memfs, "SyncRefused", _OtherCode)
+    w = world(volume="share")
+    before = w.fs.snapshot()
+    out = durable_commit(w.fs, w.commit)
+    assert isinstance(out, NotSaved), out
+    assert (out.step, out.reason, out.unchanged, out.open_journal) == (Step.BACKUP, Reason.IO_ERROR, True, False), out
+    assert journals(w.fs) == {}
+    assert w.fs.snapshot() == before, "nothing written"
+    assert all(e.startswith("sync /w/L") for e in w.fs.effects), w.fs.effects
+
+
+def test_RT2_the_pre_write_sync_is_only_on_a_share() -> None:
+    """On a local volume no extra effect: the save's first effect is the backups folder's `mkdir`, as before."""
+    for volume in ("swap", "plain"):
+        w = world(volume=volume)
+        assert isinstance(durable_commit(w.fs, w.commit), Landed)
+        assert w.fs.effects[0].startswith("mkdir /w/local/backups:"), (volume, w.fs.effects[:2])
+    assert clean_effects()[0].startswith("sync /w/L"), clean_effects()[:3]
+
+
+def test_F4_a_journal_folder_on_a_share_stops_the_save_before_any_replace() -> None:
+    """The journal folder's syncs are never `ledger_sync` (verifier M5): with only the journal folder on a share, the
+    save stops at the `.open` record's sync, before any ledger file is replaced, and says so."""
+    w = world()
+    on_a_share(w.fs, JD)
+    w.fs.windows = True
+    out = durable_commit(w.fs, w.commit)
+    assert isinstance(out, NotSaved), out
+    assert (out.step, out.reason, out.unchanged) == (Step.JOURNAL, Reason.IO_ERROR, True), out
+    assert not any(e.startswith(("move /w/L", "swap /w/L", "rename /w/L")) for e in w.fs.effects), w.fs.effects
+
+
+def test_F4_a_backups_folder_on_a_share_stops_the_save_at_its_first_sync() -> None:
+    """The backups' syncs are never `ledger_sync` (verifier M6): with only the backups folder on a share, the save
+    stops at the sync after the backup folder's `mkdir`, before any backup is written."""
+    w = world()
+    on_a_share(w.fs, BD)
+    w.fs.windows = True
+    out = durable_commit(w.fs, w.commit)
+    assert isinstance(out, NotSaved), out
+    assert (out.step, out.reason, out.unchanged) == (Step.BACKUP, Reason.IO_ERROR, True), out
+    assert w.fs.effects == [f"mkdir {BD}:{NAME}", f"sync {BD}:"], w.fs.effects
+
+
+def test_F4_a_creates_outcome_on_a_share_reads_the_disk() -> None:
+    """`create.outcome_of` syncs the target with `ledger_sync` (verifier M10): after a create's engine died past its
+    manifest's rename, the outcome on a share is "ours", not "unknown"."""
+    from ledger_engine.ledger.create import outcome
+
+    fs0 = MemFS(windows=True)
+    fs0.outside_mkdirs(tc.U)
+    on_a_share(fs0, tc.U)
+    assert tc.go(fs0)[0] == Created(tc.T)
+    at = next(i for i, e in enumerate(fs0.effects) if e.startswith(f"rename {tc.T}:.finzytrack.ft-j7"))
+    fs = MemFS(windows=True)
+    fs.outside_mkdirs(tc.U)
+    on_a_share(fs, tc.U)
+    fs.inject(at + 1)
+    with pytest.raises(Crash):
+        tc.go(fs)
+    assert outcome(fs, tc.PLAN).manifest == "ours"
+
+
+def _share_create_fs() -> MemFS:
+    fs = MemFS(windows=True)
+    fs.outside_mkdirs(tc.U)
+    on_a_share(fs, tc.U)
+    return fs
+
+
+@pytest.mark.parametrize("after", [False, True])
+def test_L2_an_io_error_at_every_effect_of_a_create_on_a_share_is_told_as_the_disk_holds_it(after: bool) -> None:
+    """The red team's rt3: "created" only with every file whole; "not created" never over our manifest."""
+    from ledger_engine.ledger.create import NotCreated, outcome
+
+    fs0 = _share_create_fs()
+    assert tc.go(fs0)[0] == Created(tc.T)
+    for i in range(len(fs0.effects)):
+        fs = _share_create_fs()
+        fs.inject(i, crash=False, err=errno.EIO, after=after)
+        try:
+            out, _ = tc.go(fs)
+        except OSError:
+            assert outcome(fs, tc.PLAN).manifest in ("ours", "absent"), (i, fs0.effects[i])
+            continue
+        if isinstance(out, Created):
+            assert tc.created_whole(fs), (i, fs0.effects[i])
+        else:
+            assert isinstance(out, NotCreated), out
+            assert outcome(fs, tc.PLAN).manifest != "ours", (i, fs0.effects[i])
+
+
+def test_L2_a_crash_at_every_effect_of_a_create_on_a_share_never_leaves_a_manifest_over_an_incomplete_folder() -> None:
+    """Without a power loss: the manifest only over every file whole (`NoManifestOverIncompleteFolder`)."""
+    from ledger_engine.ledger.create import outcome
+
+    fs0 = _share_create_fs()
+    tc.go(fs0)
+    for i in range(len(fs0.effects)):
+        fs = _share_create_fs()
+        fs.inject(i)
+        with pytest.raises(Crash):
+            tc.go(fs)
+        tc.check_disk(fs)
+        if outcome(fs, tc.PLAN).manifest == "ours":
+            assert tc.created_whole(fs), (i, fs0.effects[i])
+
+
+def test_L2_keep_and_a_delete_at_every_effect_on_a_share_never_lose_a_byte() -> None:
+    """Keep and a kept copy's delete on a share, an I/O error at each of their effects: the journal is never `.kept`
+    unless Keep said done or only its last sync failed, and the kept copy is gone only when the delete removed it."""
+    from ledger_engine.ledger.recover_all import ActFailed
+
+    def stopped_world() -> tuple[World, str]:
+        w = world(volume="share")
+        w.fs.inject(clean_effects().index("move /w/L:.main.bean.ft-s1-j7.new,main.bean") + 1, crash=True)
+        with pytest.raises(Crash):
+            durable_commit(w.fs, w.commit)
+        w.fs.outside_write("/w/L/.main.bean.ft-s1-j7.tmp", FOREIGN)
+        assert isinstance(recover(w.fs), Stopped)
+        return w, next(n for n in w.fs.names_in("/w/L") if ".kept-" in n)
+
+    w0, kept0 = stopped_world()
+    start = len(w0.fs.effects)
+    assert keep(w0.fs, JD, NAME) == Done()
+    for i in range(start, len(w0.fs.effects)):
+        w, _ = stopped_world()
+        w.fs.inject(i, crash=False, err=errno.EIO)
+        out = keep(w.fs, JD, NAME)
+        assert isinstance(out, Done | ActFailed), out
+        js = set(journals(w.fs))
+        if isinstance(out, Done):
+            assert js == {State.KEPT}, (i, js)
+        else:  # nothing renamed, or only the journal folder's last sync failed (recover_all's docstring)
+            assert js in ({State.OPEN}, {State.KEPT}), (i, js)
+            assert js == {State.OPEN} or w.fs.effects[i] == f"sync {JD}:", (i, w.fs.effects[i])
+    w1, kept1 = stopped_world()
+    start = len(w1.fs.effects)
+    assert delete_kept(w1.fs, JD, NAME, MAIN, kept1, sha256(FOREIGN)) == Done()
+    for i in range(start, len(w1.fs.effects)):
+        w, kept = stopped_world()
+        w.fs.inject(i, crash=False, err=errno.EIO)
+        out = delete_kept(w.fs, JD, NAME, MAIN, kept, sha256(FOREIGN))
+        assert isinstance(out, Done | ActFailed), out
+        if isinstance(out, Done):
+            assert kept not in w.fs.names_in("/w/L")
+    assert kept0
+
+
+def _fat_backed_share() -> World:
+    """A share whose server keeps the files on exFAT (red team RT1): a replace there is two entry operations a power
+    loss of the server may split, as on a local exFAT drive."""
+    w = world(volume="share")
+    for folder in ("/w/L", "/w/L/inc"):
+        w.fs.outside_no_swap(folder, excl=False)
+    w.fs.outside_fs_type(SHARE_DEV, "exfat")
+    return w
+
+
+def test_RT1_on_a_share_kept_on_exfat_a_server_power_loss_can_leave_a_saved_file_missing_never_torn() -> None:
+    """The accepted limit (owner, 2026-11-20: "State it, in limit and notice (Recommended)"): after "saved", a power
+    loss of a server that keeps the files on exFAT, FAT or a USB drive can leave a ledger file missing; the previous
+    version is in the backup on this PC. Nothing beyond it: no file is ever torn, and "saved" was true when told."""
+    w = _fat_backed_share()
+    assert isinstance(durable_commit(w.fs, w.commit), Landed)
+    for t in w.targets:
+        assert w.fs.file(t.path) == t.post, "saved was true when told"
+    missing = 0
+    for state in w.fs.power_loss_states():
+        assert set(journals(state)) == {State.CLOSED}
+        for t in w.targets:
+            assert state.file(t.path) in (t.pre, t.post, None), (t.path, "torn")
+        if state.file(MAIN) is None:
+            missing += 1
+            assert state.file(f"{BD}/{NAME}/2-main.bean") == w.targets[2].pre, "the previous version is in the backup"
+    assert missing > 0, "the limit is reachable in the fake"
+
+
+def test_RT1_on_a_share_kept_on_exfat_an_undone_save_can_come_back_missing_its_backup_holding_it() -> None:
+    """The same server: a save rolled back after its first replace is "not saved", unchanged, true when told; a
+    server power loss afterwards can leave that file missing, its previous version in the backup."""
+    probe = _fat_backed_share()
+    assert isinstance(durable_commit(probe.fs, probe.commit), Landed)
+    at = next(i for i, x in enumerate(probe.fs.effects) if x.startswith("move /w/L/inc:.a.bean.ft-s1-j7.new,a.bean"))
+    w = _fat_backed_share()
+    w.fs.inject(at + 1, crash=False, err=errno.EIO)
+    out = durable_commit(w.fs, w.commit)
+    assert isinstance(out, NotSaved), out
+    assert out.unchanged, out
+    for t in w.targets:
+        if t.pre is not None:
+            assert w.fs.file(t.path) == t.pre, "unchanged was true when told"
+    missing = [s for s in w.fs.power_loss_states() if s.file("/w/L/inc/a.bean") is None]
+    assert missing, "the limit is reachable in the fake"
+    for s in missing:
+        assert s.file(f"{BD}/{NAME}/0-a.bean") == w.targets[0].pre

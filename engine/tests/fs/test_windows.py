@@ -1842,3 +1842,69 @@ def test_S0136_a_create_on_the_ci_share_is_created(fs: FileSystem, share: str) -
         assert sorted(os.listdir(target)) == [".finzytrack", "main.beancount", "prices"]
     finally:
         shutil.rmtree(target, ignore_errors=True)
+
+
+@pytest.mark.skipif(not _shares(), reason="no network share given (FT_TEST_SHARE)")
+def test_S0136_F1_a_share_without_file_id_info_has_no_drive_id_and_the_save_refuses_it(
+    fs: FileSystem, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """S0136 round 1, verifier F1: a server that does not offer `FileIdInfo` (an older SMB server, some NAS) would
+    have given the 32-bit fallback's serial, a value a local NTFS volume's 64-bit serial could equal. On a share
+    only `FileIdInfo` counts: without it `volume_id` is None and the save refuses `no_drive_id` before writing."""
+    from ledger_engine.fs import windows
+
+    share = _shares()[1]
+    ledger = Path(share) / f"ft-{uuid.uuid4().hex}"
+    ledger.mkdir()
+    try:
+        (ledger / "main.bean").write_bytes(b"pre\n")
+        with fs.open_dir(str(ledger)) as d:
+            assert d.volume_id() is not None
+
+        def none(self: object) -> None:
+            del self
+
+        monkeypatch.setattr(windows._Handle, "file_id_info", none)  # pyright: ignore[reportPrivateUsage]
+        with fs.open_dir(str(ledger)) as d:
+            assert d.volume_id() is None
+        with fs.open_dir(str(tmp_path)) as d:
+            assert d.volume_id() is not None, "a local NTFS volume keeps its drive ID (identity() falls back there)"
+        out = durable_commit(fs, commit(tmp_path / "app", Change(str(ledger / "main.bean"), sha256(b"pre\n"), b"p\n")))
+        assert isinstance(out, NotSaved), out
+        assert out.reason is Reason.NO_DRIVE_ID, out
+        assert (ledger / "main.bean").read_bytes() == b"pre\n"
+    finally:
+        shutil.rmtree(ledger, ignore_errors=True)
+
+
+@pytest.mark.skipif(not _shares(), reason="no network share given (FT_TEST_SHARE)")
+def test_S0136_RT2_a_share_refusing_the_flush_with_another_code_stops_the_save_before_any_write(
+    fs: FileSystem, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """S0136 round 1, red team RT2: a server answering the folder's flush with another code (here
+    `ERROR_INVALID_PARAMETER`) is never `SyncRefused`; the save syncs each share folder once before its first write,
+    so it stops there: "not saved", unchanged, no journal, no name of ours, nothing backed up."""
+    share = _shares()[1]
+    ledger = Path(share) / f"ft-{uuid.uuid4().hex}"
+    ledger.mkdir()
+    try:
+        (ledger / "main.bean").write_bytes(b"pre\n")
+        c = commit(tmp_path / "app", Change(str(ledger / "main.bean"), sha256(b"pre\n"), b"post\n"))
+        from ledger_engine.fs import windows
+
+        def refused(h: int) -> int:
+            del h
+            ctypes.set_last_error(87)  # ERROR_INVALID_PARAMETER
+            return 0
+
+        assert isinstance(fs, windows.WindowsFS)
+        monkeypatch.setattr(fs.api, "FlushFileBuffers", refused)  # every flush: the share's comes first
+        out = durable_commit(fs, c)
+        assert isinstance(out, NotSaved), out
+        assert (out.reason, out.unchanged, out.open_journal) == (Reason.IO_ERROR, True, False), out
+        assert (ledger / "main.bean").read_bytes() == b"pre\n"
+        assert os.listdir(ledger) == ["main.bean"]
+        assert os.listdir(tmp_path / "app" / "local" / "journal") == []
+        assert os.listdir(tmp_path / "app" / "local" / "backups") == []
+    finally:
+        shutil.rmtree(ledger, ignore_errors=True)

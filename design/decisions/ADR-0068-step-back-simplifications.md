@@ -156,3 +156,12 @@ The owner, 2026-11-19, in session: **"For bl-0219, I think we need to ensure tha
 ## Note (2026-11-20): the share notice's wording tightened (S0136)
 
 The owner, 2026-11-20, in session, on the notice of the amendment above: **"Tighten the sentence"**. Its backup clause ("Finzytrack keeps a backup of every save, but …") could read as if the backup restores an undone save; it does not (a backup holds the version before a save). The notice, `msg:save.best_effort_share` (`save_text.BEST_EFFORT_SHARE`), now reads: "Your ledger is on a network share. If the file server crashes or loses power right after a save, that save can be lost. For full protection, keep your ledger on your computer's own disk."
+
+## Note (2026-11-20): the share mode after S0136's first review (S0136 round 1)
+
+The owner's answers, 2026-11-20, in session, asked before the first fix round:
+- "Which kinds of network drive should get best-effort saves?" (options "SMB shares only (Recommended)", "Any network drive"): **"Any network drive"**. No protocol check: a WebDAV drive, a Remote Desktop drive, a WinFsp or Dokan mount or Offline Files take the mode, where "saved" may mean "in this computer's cache" (engine-jobs §6.8, a stated limit).
+- A share whose server keeps the files on exFAT, FAT or a USB drive, where a server power loss can leave a ledger file missing (red team RT1): **"State it, in limit and notice (Recommended)"**.
+- Saves that change several files, which a server crash can undo in part (verifier F2): **"Allow, state it"**.
+- Whether to keep the notice short: **"Short, plus what you chose (Recommended)"**. `msg:save.best_effort_share` now reads: "Your ledger is on a network drive. If the file server crashes or loses power right after a save, that save, or part of it, can be lost, and a file can even go missing. Finzytrack keeps the previous version in its backup on this computer. For full protection, keep your ledger on your computer's own disk."
+- Also from the review, decided by the orchestrator (each fails closed): the save syncs each share folder once before its first write, so a server refusing the flush with any other answer stops it "not saved", unchanged (RT2); a share's drive ID only from `FileIdInfo` (F1).

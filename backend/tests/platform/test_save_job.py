@@ -608,9 +608,11 @@ def test_S0136_the_network_share_notice_is_its_own_row_and_says_a_server_crash_c
     texts = (REPO / "design" / "generated" / "engine-job-texts.md").read_text(encoding="utf-8")
     rendered = next(ln for ln in texts.splitlines() if ln.startswith("| `msg:save.best_effort_share` |"))
     assert rendered.endswith(f"| {save_text.BEST_EFFORT_SHARE} |")
-    assert "network share" in save_text.BEST_EFFORT_SHARE
-    assert "file server crashes or loses power right after a save, that save can be lost" in save_text.BEST_EFFORT_SHARE
-    assert "backup" not in save_text.BEST_EFFORT_SHARE  # owner, 2026-11-20: "Tighten the sentence"
+    assert save_text.BEST_EFFORT_SHARE == (  # owner, 2026-11-20: "Short, plus what you chose (Recommended)"
+        "Your ledger is on a network drive. If the file server crashes or loses power right after a save, that save, "
+        "or part of it, can be lost, and a file can even go missing. Finzytrack keeps the previous version in its "
+        "backup on this computer. For full protection, keep your ledger on your computer's own disk."
+    )
 
 
 # -- S0100: the write-path leftovers (BL-0162, BL-0163, BL-0182, BL-0183, BL-0187) ------------------------------------
