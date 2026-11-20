@@ -1036,12 +1036,14 @@ def test_V2_F3_a_file_that_inherits_its_folders_acl_and_has_an_entry_of_its_own_
 
 
 @pytest.mark.parametrize("archive", [True, False])
-def test_V2_F3_the_archive_attribute_is_kept_as_it_was_on_every_volume(
+def test_V2_F3_a_saved_file_has_the_archive_attribute_whatever_it_had_before_on_every_volume(
     fs: FileSystem, tmp_path: Path, archive: bool
 ) -> None:
-    """@regression-guard (it holds on the base; V2-F3): rule 1a keeps the archive attribute, set or clear (a new file
-    gets it set by Windows, so the clear case is the one that shows the carry-over), on the runner's disk and on each
-    scratch volume."""
+    """@regression-guard (the 2026-11-20 run 5 saw it hold on the base on NTFS; V2-F3): the archive attribute means
+    "changed since the last backup", so a saved file has it set, as Windows sets it on any changed file, whether the
+    old file had it set or cleared (owner, 2026-11-20: "Drop archive from rule 1a (Recommended)"; rule 1a keeps only
+    the hidden attribute). A carry-over of a cleared archive attribute would hide the save from a backup tool. On the
+    runner's disk and on each scratch volume."""
     places = [tmp_path / "led", *[Path(v) / f"ft-{uuid.uuid4().hex}" for v in _volumes()]]
     for i, place in enumerate(places):
         place.mkdir(exist_ok=True)
@@ -1054,7 +1056,7 @@ def test_V2_F3_the_archive_attribute_is_kept_as_it_was_on_every_volume(
             out = durable_commit(fs, commit(app, Change(str(main), sha256(b"pre\n"), b"post\n")))
             assert isinstance(out, Landed), (place, out)
             assert main.read_bytes() == b"post\n"
-            assert bool(os.stat(main).st_file_attributes & 0x20) is archive, (place, _kind_of(fs, place))
+            assert os.stat(main).st_file_attributes & 0x20, (place, _kind_of(fs, place))
         finally:
             if place.parent != tmp_path:  # a scratch volume's folder
                 shutil.rmtree(place, ignore_errors=True)

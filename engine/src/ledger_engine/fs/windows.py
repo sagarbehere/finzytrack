@@ -78,18 +78,19 @@ Windows since S0129, each in its own Job Object).
   access to a file it replaces, `FILE_ADD_FILE` and `FILE_DELETE_CHILD` on a folder it writes in, traverse to search):
   granted is yes, `ACCESS_DENIED` no, a sharing violation `EBUSY` (above). `acl` reads the folder's DACL
   (`GetSecurityInfo`), each entry's kind, access bits and inheritance flags in `chmod`'s words, so `handles.acl_denial`
-  judges it as on macOS (any deny entry, whoever it names, unless it is not inherited and denies only what protects
-  the folder itself). `create(..., like=...)` (a replaced file's new version) takes the old file's alternate data
-  streams, its hidden and archive attributes and its DACL with its protected or inherited state (owner, 2026-11-17:
-  "1a", replacing for Windows the 2026-10-29 rule that keeps no ACL: a Windows file's own ACL is its only privacy
-  setting, as the mode bits are on macOS); not its owner or SACL, which need a privilege. `allowed(name,
-  READ_XATTRS)` asks for what that copy reads. **The volume's own flags decide** what is asked (S0135, BL-0285;
-  owner, 2026-11-20: "The drive's own flags (Recommended)"): a DACL (the file's, and the folder's in `acl`) only
-  where `FILE_PERSISTENT_ACLS` is set, the streams only where `FILE_NAMED_STREAMS` is; where a flag is set, any
-  refusal raises (the save is "not saved", nothing changed), never read as "this volume keeps none". **Limit
-  (Windows privacy during a save)** (owner, 2026-11-20: "State it as a limit"): the new bytes are written into the
-  staging file, which has the folder's ACL, before its own DACL is set, and a put-back likewise: on Windows a ledger
-  is as private as its folder (engine-jobs §6.3).
+  judges it as on macOS (any deny entry, whoever it names, unless it is not inherited and denies only what protects the
+  folder itself). `create(..., like=...)` (a replaced file's new version) takes the old file's alternate data streams,
+  its hidden attribute and its DACL with its protected or inherited state (owner, 2026-11-17: "1a", narrowed 2026-11-20:
+  "Drop archive from rule 1a (Recommended)", so the archive attribute is Windows' own, set on the saved file as on any
+  edit; replacing for Windows the 2026-10-29 rule that keeps no ACL: a Windows file's own ACL is its only privacy
+  setting, as the mode bits are on macOS); not its owner or SACL, which need a privilege. `allowed(name, READ_XATTRS)`
+  asks for what that copy reads. **The volume's own flags decide** what is asked (S0135, BL-0285; owner, 2026-11-20:
+  "The drive's own flags (Recommended)"): a DACL (the file's, and the folder's in `acl`) only where
+  `FILE_PERSISTENT_ACLS` is set, the streams only where `FILE_NAMED_STREAMS` is; where a flag is set, any refusal raises
+  (the save is "not saved", nothing changed), never read as "this volume keeps none". **Limit (Windows privacy during a
+  save)** (owner, 2026-11-20: "State it as a limit"): the new bytes are written into the staging file, which has the
+  folder's ACL, before its own DACL is set, and a put-back likewise: on Windows a ledger is as private as its folder
+  (engine-jobs §6.3).
 - **Links:** hard links on NTFS and ReFS only (probed); a file with several is refused as on macOS (`nlink`).
   `symlink` refuses (`ENOTSUP`): the mirror's `current.db` link is ADR-0015's pointer file `current.txt` on Windows
   (`caps().links` False; S0130, BL-0206), and `readlink` reads no link target (a link: `ENOTSUP`).
@@ -190,8 +191,10 @@ FILE_ATTRIBUTE_REPARSE_POINT: Final = 0x400
 FILE_ATTRIBUTE_HIDDEN: Final = 0x2
 FILE_ATTRIBUTE_ARCHIVE: Final = 0x20
 FILE_ATTRIBUTE_ENCRYPTED: Final = 0x4000
-KEPT_ATTRIBUTES: Final = FILE_ATTRIBUTE_HIDDEN | FILE_ATTRIBUTE_ARCHIVE
-"""The attributes a replaced file passes to its new version (owner, 2026-11-17: "1a"): hidden and archive. The
+KEPT_ATTRIBUTES: Final = FILE_ATTRIBUTE_HIDDEN
+"""The attributes a replaced file passes to its new version (owner, 2026-11-17: "1a"): hidden only. Not archive
+(owner, 2026-11-20: "Drop archive from rule 1a (Recommended)"; S0135): it means "changed since the last backup", so
+the saved file keeps the archive attribute Windows gives a new or changed file, and a backup tool sees the save. The
 read-only attribute never (the save refuses such a file: `locked`); encryption never (refused: `encrypted_file`)."""
 FILE_WRITE_THROUGH: Final = 0x00000002
 FILE_STREAM_INFO: Final = 7
@@ -498,14 +501,14 @@ def _streams(api: _Api, h: _Handle, flags: int) -> list[str]:
 
 def _carry_over(api: _Api, src: _Handle, new: _Handle) -> None:
     """The replaced file's own security and marks onto its new version (owner, 2026-11-17: "1a"; the counterpart of
-    macOS keeping the mode bits), in this order: its alternate data streams, byte for byte; its hidden and archive
-    attributes (`KEPT_ATTRIBUTES`); last its DACL, with its protected or inherited state (an explicit ACL that denies
-    us writing applies only to later opens). Not its owner nor its SACL: setting either needs a privilege the user's
-    process does not hold (the new file is owned by the user who saves, as on macOS). What is asked is decided by the
-    volume's own flags (S0135, BL-0285; owner, 2026-11-20: "The drive's own flags (Recommended)"): streams only where
-    it sets `FILE_NAMED_STREAMS`, the DACL only where it sets `FILE_PERSISTENT_ACLS` (FAT32 and exFAT set neither: the
-    attributes only); where it sets one, any refusal raises, so the save is "not saved", never a file saved without
-    its own ACL or streams."""
+    macOS keeping the mode bits), in this order: its alternate data streams, byte for byte; its hidden attribute
+    (`KEPT_ATTRIBUTES`; not archive, which Windows sets on the saved file: owner, 2026-11-20); last its DACL, with its
+    protected or inherited state (an explicit ACL that denies us writing applies only to later opens). Not its owner nor
+    its SACL: setting either needs a privilege the user's process does not hold (the new file is owned by the user who
+    saves, as on macOS). What is asked is decided by the volume's own flags (S0135, BL-0285; owner, 2026-11-20: "The
+    drive's own flags (Recommended)"): streams only where it sets `FILE_NAMED_STREAMS`, the DACL only where it sets
+    `FILE_PERSISTENT_ACLS` (FAT32 and exFAT set neither: the attributes only); where it sets one, any refusal raises, so
+    the save is "not saved", never a file saved without its own ACL or streams."""
     flags = src.flags()
     for stream in _streams(api, src, flags):
         with (
