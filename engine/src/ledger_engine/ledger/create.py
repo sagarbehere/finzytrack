@@ -406,7 +406,9 @@ class Run:
         failed otherwise than `EEXIST` but whose name stands there now, a made name whose identity could not be read;
         it may be ours or another program's). Every folder is reached through the path guard. Returns the names
         kept (relative to the target, a folder only when nothing kept is inside it), or None when the cleanup could
-        not finish (a folder moved, an error): the user is asked to check the folder."""
+        not finish (a folder moved, an error): the user is asked to check the folder. A name it removed is never named
+        as kept: a removal whose folder's sync then fails (the target's included, S0136 round 2, V2-2: a share's
+        server refusing the flush otherwise) is a cleanup that could not finish, None, as for a file's."""
         kept = list(self.unsure)
         try:
             for rel, m in reversed(list(self.made.items())):
@@ -440,9 +442,10 @@ class Run:
                     try:
                         self.handles.release(self.folder)
                         ph.rmdir(name)
-                        ledger_sync(ph)
                     except OSError:
                         kept.append(TARGET)  # the folder the job made stays (another program's entry in it): named
+                    else:
+                        ledger_sync(ph)  # removed: an error here is the cleanup not finishing (None), never "kept"
         except (OSError, PathMovedError):
             return None
         return _named(kept)

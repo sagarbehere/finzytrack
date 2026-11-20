@@ -611,3 +611,21 @@ def test_RT1_on_a_share_kept_on_exfat_an_undone_save_can_come_back_missing_its_b
     assert missing, "the limit is reachable in the fake"
     for s in missing:
         assert s.file(f"{BD}/{NAME}/0-a.bean") == w.targets[0].pre
+
+
+def test_V2_2_a_create_on_a_share_refusing_the_flush_otherwise_never_names_a_removed_folder_kept(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """S0136 round 2, V2-2 (the verifier's repro; owner, 2026-11-20: "Fix it now"): on a share whose server refuses
+    the folder's flush with another code, the create stops at its first sync (`io_error`) and removes the target folder
+    it made; the parent's sync then fails the same way. The folder is gone: `left` is None (check the folder), never
+    `('.',)`."""
+    from ledger_engine.ledger.create import NotCreated
+    from tests.fakes import memfs
+
+    monkeypatch.setattr(memfs, "SyncRefused", _OtherCode)
+    fs = _share_create_fs()
+    out, _ = tc.go(fs)
+    assert isinstance(out, NotCreated), out
+    assert (out.reason, out.left) == ("io_error", None), out
+    assert fs.names_in(tc.U) == [], "the target folder the job made is gone"

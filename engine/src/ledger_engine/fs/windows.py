@@ -855,7 +855,7 @@ class WindowsDir:
         """The folder's identity within its drive (the module's docstring, "Identity"): the file ID on NTFS and ReFS,
         the creation time on FAT32 and exFAT. On a network share it is what the server gives (S0136 round 1, L3):
         Windows' own server gives NTFS's file ID; Samba or a NAS may give one it reuses, so a folder removed and made
-        again at once may not be told apart there (engine-jobs §6.3, "Limit (share spellings)" and its neighbours).
+        again at once may not be told apart there (engine-jobs §6.3, "Limit (a share's file ID)").
         It stays in the folder mark: leaving it out would refuse every save on a share (`no_folder_id`)."""
         fs_type = self.fs_type()
         if fs_type in FS_SERIAL64:

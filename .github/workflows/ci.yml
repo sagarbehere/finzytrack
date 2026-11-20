@@ -222,27 +222,6 @@ jobs:
           "FT_TEST_SHARE_LOCAL=$dir" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8  # the server's own path (S0136)
           [System.Environment]::OSVersion.VersionString
           .venv\Scripts\python.exe scripts\probe_windows_fs.py $env:RUNNER_TEMP $env:TEMP @vols @shares
-      - name: "S0136 round 1 loosening mutants (temporary step): F1 and RT2 on the runner (scripts/mutants.py)"
-        # Removed again by the slice's next commit (ADR-0057). Each mutant is one line of the engine's source.
-        continue-on-error: true
-        env:
-          TZ: PST8PDT
-        run: |
-          $py = Join-Path $env:GITHUB_WORKSPACE "engine\.venv\Scripts\python.exe"
-          $plan = Join-Path $env:RUNNER_TEMP "mutants-s0136-r1.toml"
-          $q = "'" * 3
-          $cmd = "cd engine && set PYTHONPATH=src&& `"$py`" -m pytest -q -p no:cacheprovider tests/fs/test_windows.py -k `"S0136`""
-          $m = @(
-            @("F1-share-falls-back-to-the-32-bit-serial", "engine/src/ledger_engine/fs/windows.py", '            ids = self._h.file_id_info()', '            ids = self._h.identity()'),
-            @("RT2-no-pre-write-sync", "engine/src/ledger_engine/ledger/writer.py", '        if h.remote() is True:', '        if False:')
-          )
-          $toml = @("cmd = $q$cmd$q", "timeout = 1800")
-          foreach ($x in $m) { $toml += @("[[mutant]]", "id = '$($x[0])'", "file = '$($x[1])'", "find = $q$($x[2])$q", "replace = $q$($x[3])$q") }
-          $toml | Set-Content -Encoding utf8 $plan
-          Get-Content $plan
-          & $py -m pytest -q -p no:cacheprovider tests/fs/test_windows.py -k "S0136"
-          Push-Location $env:GITHUB_WORKSPACE
-          try { & $py scripts\mutants.py $plan --work (Join-Path $env:RUNNER_TEMP "mutants-work") } finally { Pop-Location }
       - name: tests
         # INV-07 on Windows (S0127): its C runtime reads TZ only as a process starts and only in this form, so it is set
         # before Python starts (Los Angeles: tests/conftest.py checks it). `-rs`: each skip prints its reason, the

@@ -1274,3 +1274,23 @@ def test_a_failed_create_whose_name_cannot_be_checked_is_named(monkeypatch: pyte
     assert out.reason == "io_error"
     assert out.left is not None
     assert "main.beancount" in out.left
+
+
+def test_V2_2_a_target_folder_removed_then_its_parents_sync_failing_is_never_named_kept() -> None:
+    """S0136 round 2, V2-2 (owner, 2026-11-20: "Fix it now"): the cleanup removes the target folder the job made,
+    then its parent's sync fails. The folder is gone, so naming it as kept (`left=('.',)`) would be false; the cleanup
+    could not finish (`left` None: the user is asked to check the folder), and the reason stays the stop's own."""
+
+    def errors(_root: str) -> LoadResult:
+        return LoadResult(errors=2, parsed=(f"{T}/main.beancount",))
+
+    fs0 = new_fs()
+    assert go(fs0, load=errors)[0] == NotCreated("load_errors", T, (), None, "2")
+    at = fs0.effects.index(f"rmdir {U}:new") + 1
+    assert fs0.effects[at] == f"sync {U}:", fs0.effects[at - 1 :]
+    fs = new_fs()
+    fs.inject(at, crash=False, err=errno.EIO)
+    out, _ = go(fs, load=errors)
+    assert isinstance(out, NotCreated), out
+    assert (out.reason, out.left) == ("load_errors", None), out
+    assert names(fs, U) == [], "the folder is gone"
