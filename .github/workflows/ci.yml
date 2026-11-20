@@ -302,6 +302,45 @@ jobs:
             if (-not (Test-Path $s)) { throw "the CI share is not reachable as $s after the identity probe" }
           }
           $global:LASTEXITCODE = 0
+      - name: "S0135 tests first (temporary step): the slice's Windows tests against the base's engine source"
+        # Removed again by the slice's last commit: the tests S0135 adds (BL-0285), run against the engine source of
+        # the slice's base (08f38970), to record which fail there (PROCESS.md §3 step 3).
+        continue-on-error: true
+        env:
+          TZ: PST8PDT
+        run: |
+          git fetch --no-tags --depth=1 origin 08f389701c6ea0ce07b7ad2ec3d94911ce3ed885
+          git checkout FETCH_HEAD -- src
+          .venv\Scripts\python.exe -m pytest -q -rs -p no:cacheprovider tests/fs/test_windows.py -k "V2_F3 or Q_B"
+          git checkout HEAD -- src
+          git status --short
+      - name: "S0135 loosening mutants (temporary step): item 4's checks on the runner (scripts/mutants.py)"
+        # Removed again by the slice's last commit (ADR-0057: a check guarding privacy gets loosening mutants; these
+        # checks run only on Windows). Each mutant is one line of fs/windows.py (the checkout may have CRLF endings).
+        continue-on-error: true
+        env:
+          TZ: PST8PDT
+        run: |
+          $py = Join-Path $env:GITHUB_WORKSPACE "engine\.venv\Scripts\python.exe"
+          $plan = Join-Path $env:RUNNER_TEMP "mutants-s0135.toml"
+          $f = "engine/src/ledger_engine/fs/windows.py"
+          $q = "'" * 3
+          $cmd = "cd engine && set PYTHONPATH=src&& `"$py`" -m pytest -q -p no:cacheprovider tests/fs/test_windows.py -k `"V2_F3 or Q_B or owner_1a`""
+          $m = @(
+            @("carry-over-refusal-swallowed", 'raise _win_error("GetSecurityInfo", "the replaced file", code=rc)', 'return'),
+            @("folder-acl-refusal-swallowed", 'raise _win_error("GetSecurityInfo", "the folder", code=rc)', 'return ()'),
+            @("streams-refusal-swallowed", 'if code == ERROR_HANDLE_EOF:', 'if code in (ERROR_HANDLE_EOF, ERROR_INVALID_PARAMETER, ERROR_NOT_SUPPORTED):'),
+            @("carry-over-acl-asked-everywhere", 'if not flags & FILE_PERSISTENT_ACLS:', 'if False:'),
+            @("streams-asked-everywhere", 'if not flags & FILE_NAMED_STREAMS:', 'if False:'),
+            @("folder-acl-asked-everywhere", 'if not self._h.flags() & FILE_PERSISTENT_ACLS:', 'if False:'),
+            @("no-flags-read", 'flags = src.flags()', 'flags = 0')
+          )
+          $toml = @("cmd = $q$cmd$q", "timeout = 1800")
+          foreach ($x in $m) { $toml += @("[[mutant]]", "id = '$($x[0])'", "file = '$f'", "find = $q$($x[1])$q", "replace = $q$($x[2])$q") }
+          $toml | Set-Content -Encoding utf8 $plan
+          Get-Content $plan
+          Push-Location $env:GITHUB_WORKSPACE
+          try { & $py scripts\mutants.py $plan --work (Join-Path $env:RUNNER_TEMP "mutants-work") } finally { Pop-Location }
       - name: tests
         # INV-07 on Windows (S0127): its C runtime reads TZ only as a process starts and only in this form, so it is set
         # before Python starts (Los Angeles: tests/conftest.py checks it). `-rs`: each skip prints its reason, the

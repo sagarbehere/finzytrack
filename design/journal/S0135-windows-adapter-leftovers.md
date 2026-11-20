@@ -1,7 +1,7 @@
 # S0135: the Windows adapter's leftovers from S0128 round 2 (BL-0285, M1b)
 
 ## Brief
-- Goal: close BL-0285 before BL-0087 turns Windows writes on. Its five items, each with the owner's options in `design/inbox/20261120-windows-adapter-leftovers.md` (cheapest first). **This brief stops before tests and code** (PROCESS.md §3 step 2: the carry-over and the rollback's flush skip are S0128 round 1's own fixes, and BL-0285 is what round 2 found in them).
+- Goal: close BL-0285 before BL-0087 turns Windows writes on. Its five items, each with the owner's options in `design/inbox/answered/20261120-windows-adapter-leftovers.md` (cheapest first; answered 2026-11-20, see Decisions). The brief first stopped before tests and code (PROCESS.md §3 step 2: the carry-over and the rollback's flush skip are S0128 round 1's own fixes, and BL-0285 is what round 2 found in them). **As answered:** item 4 is built (the volume's own flags decide, in three places); item 2's three runner tests are written; items 1, 3 and 5 are stated limits.
   1. **V2-F1 (Medium, e: privacy).** `WindowsDir.create(..., like=...)` writes the new bytes into the staging file, which Windows gives the folder's inherited ACL, and sets the file's own DACL last (`_carry_over`).
   2. **V2-F3 (Low, c).** Three runner tests missing: an unprotected DACL with an explicit entry (a mutant that always sets the protected flag survives today's test), the archive attribute, and the rollback's put-back keeping the file's own ACL.
   3. **V2-F4 (Low, c).** `restore._flush` skips the rollback's flush by `handles.FILE_ID_TYPES` (`ntfs`, `refs`), the file-system type's name only; macOS's own driver also reports `ntfs`.
@@ -12,7 +12,7 @@
 - Capabilities: none changes status (Windows does not write in the product until BL-0087).
 - Invariants touched: INV-01 (item 3: the rollback's truth), INV-22 (item 4: a failed security read today passes silently instead of failing closed).
 - Risk class / lane: High / full. Review budget row: **Hardening an existing write path** (PROCESS.md §3): the verifier; the data-safety red team joins when the verifier reports a class (a) finding; a fresh round after any fix that changes product code, in which only High and (a)/(b) findings are fixed.
-- **Batching (agent; IMP-0072, PROCESS.md §3: "Never put … a mechanism that needed two fix rounds before, into a batch").** Items 1, 2, 4 and 5 are one mechanism, the carry-over of a file's own security (built in S0128 round 1; its first review findings are these). Item 3 is the rollback's flush, which needed two rounds in S0101 (a High in round 1) and a change in S0128 round 1: it has the history that rule names. So item 3 is **not** batched here: it becomes its own small slice (or a stated limit, if the owner takes option 1), and this slice is items 1, 2, 4 and 5. The note asks the owner to confirm.
+- **Batching (agent; IMP-0072, PROCESS.md §3: "Never put … a mechanism that needed two fix rounds before, into a batch").** Items 1, 2, 4 and 5 are one mechanism, the carry-over of a file's own security (built in S0128 round 1; its first review findings are these). Item 3 is the rollback's flush, which needed two rounds in S0101 (a High in round 1) and a change in S0128 round 1. **After the owner's answer** item 3 is a stated-limit line only ("State it as a limit (Recommended)"): it changes no code and adds no mechanism, so it sits in this slice's docs without breaking the batching rule. Items 1 and 5 are stated limits too; the code is item 4, the tests items 2 and 4.
 
 ### The mechanism questions (PROCESS.md §3 step 2)
 | Item | Which real setup needs this? Can a policy forbid the rest? | Two or more fix rounds before? |
@@ -43,11 +43,15 @@
 - P5 (item 4, option 2). The volume flags `FILE_PERSISTENT_ACLS` (0x8) and `FILE_NAMED_STREAMS` (0x40000) on the runner's NTFS (C:, D:), ReFS, FAT32 and exFAT volumes.
 - P6 (likelihood, items 1 and 5). `icacls` of the profile folder, `Documents`, `%LOCALAPPDATA%`, the system drive's root, and a freshly formatted NTFS volume's root (the scratch VHD). The agent's understanding, to confirm: a profile grants SYSTEM, Administrators and the user only; a drive root grants Users read and Authenticated Users modify to new subfolders.
 
-### Acceptance tests (written after the owner's answer; each must fail on the base, on the runner)
-- Item 1 (options 2 or 3): a runner test that stops `create(..., like=...)` at its first data write (a wrapped `_Handle.write_all`) and lists the staging file with `icacls`: it equals the target's listing (protected; and unprotected with an explicit entry) before any byte of the new content is written. The same through the rollback's put-back. Must not pass: today's order (DACL after the data) fails it.
-- Item 2: an unprotected DACL with an explicit entry survives a save unchanged (kills the always-protected mutant); the archive attribute (set and clear) survives; a rollback's put-back keeps a protected DACL.
-- Item 4 (option 2): fake-level tests of the rule (a volume with `FILE_PERSISTENT_ACLS` whose `GetSecurityInfo` refuses: the save is "not saved", nothing replaced; a volume without the flag: the DACL skipped); the same for streams and `acl()`; runner tests that FAT32 and exFAT still save.
-- Item 5 (option 1): none (a doc line).
+### Acceptance tests (after the owner's answer; each must fail on the base, on the runner, in a temporary CI step as S0128's)
+- Item 2 (runner): (a) an unprotected DACL with an explicit entry beside its inherited ones survives a save exactly as `icacls` lists it (kills the always-protected mutant); (b) the archive attribute survives a save, set and cleared; (c) a rollback's put-back keeps a file's own protected DACL. These hold today's behaviour, so they are `@regression-guard` (PROCESS.md §3 step 3's exemption) except where the base fails them.
+- Item 4 (runner; the refusal simulated by wrapping `_Api` calls, since no local volume refuses):
+  - on NTFS (flags set), `GetSecurityInfo` on the replaced file answering `ERROR_NOT_SUPPORTED`, and again `ERROR_INVALID_PARAMETER`: the save is "not saved", every file at its pre bytes, no scratch name left (base: lands silently, the file's own ACL dropped);
+  - on NTFS, `FileStreamInfo` answering either code: the same (base: lands, the stream dropped);
+  - on NTFS, the folder's `GetSecurityInfo` answering either code: `acl()` raises, so the save refuses before its first effect (base: `()`, nothing denied);
+  - on FAT32 and exFAT (flags clear): a save lands, and neither `GetSecurityInfo` nor `FileStreamInfo` is asked of the file or the folder (base: both asked, the answer decides);
+  - the volume's flags read with `FILE_PERSISTENT_ACLS` cleared on NTFS (a wrapped `GetVolumeInformationByHandleW`): the DACL and the folder's ACL are not asked (the flag, not the name, decides).
+- Items 1, 3, 5: none (stated limits).
 
 ### What each check is a second opinion on (S0122's lesson)
 - The staging-ACL runner test: on "the new bytes are never readable by more accounts than the old file was", judged by Windows' own `icacls`, not by our `GetSecurityInfo` reading, so a fault in our reading cannot hide one in our writing.
@@ -56,12 +60,23 @@
 - Item 3's key: the skip is a second opinion on "this object was never replaced", and it is only as good as the file system's promise that an ID is never given to another file; the key must name exactly the adapters that make that promise.
 
 - Expected doc impact: engine-jobs §6.3 ("The Windows adapter": the carry-over's order, the volume rule, the stated limits chosen), the `fs/windows.py` docstring, `handles.FILE_ID_TYPES`'s docstring (if item 3 changes), BL-0285 closed or narrowed; no user docs (Windows writes are off), unless the owner takes a stated limit that BL-0087's user docs must carry.
-- Open questions: `design/inbox/20261120-windows-adapter-leftovers.md` (blocks S0135).
+- Open questions: `design/inbox/answered/20261120-windows-adapter-leftovers.md`, answered 2026-11-20 (Decisions).
+- **For BL-0219's options note (a fact it must carry; orchestrator, 2026-11-20):** BL-0219's Windows part (owner, 2026-11-19: "ensure that Finzytrack works for ledgers on windows shares, possibly with reduced guarantees") will let saves run on a share. Under item 4, a share that claims `FILE_PERSISTENT_ACLS` or `FILE_NAMED_STREAMS` and then refuses `GetSecurityInfo` or `FileStreamInfo` gives every save there "not saved". That is the owner's rule (2026-11-18, and item 4's answer), not softened here; BL-0219's note must say so, with the 2026-11-20 run 3's answers for the CI share.
 - Base: 08f38970.
 
 ## Decisions
-- Item 3 is split out of this slice (agent; IMP-0072: the flush has needed two fix rounds before, S0101 and S0128). The note asks the owner to confirm.
-- The brief stops before tests (orchestrator's instruction for this turn; PROCESS.md §3 step 2).
+- **The owner's answers** (2026-11-20, in session, choosing among the options as the orchestrator put them; recorded in the answered note):
+  - Item 1 (offered "Reorder the write (Recommended)", "State it as a limit", "Create with the permissions"): "State it as a limit". No code: "on Windows a ledger is as private as its folder", in engine-jobs §6.3, whose "a ledger made private with its own ACL stays private" is corrected to hold after a save, not during it.
+  - Item 2: not asked; the orchestrator took the recommendation: write the three runner tests.
+  - Item 3: "State it as a limit (Recommended)". A stated-limit line only.
+  - Item 4: "The drive's own flags (Recommended)". `FILE_PERSISTENT_ACLS` and `FILE_NAMED_STREAMS` decide in `_carry_over`'s DACL read, the stream copy and `WindowsDir.acl()`; a drive that claims the flag and then refuses gives "not saved", nothing changed (the owner's rule of 2026-11-18).
+  - Item 5: "State it (Recommended)". In the spec and the docs for `--app-root`.
+- **Item 4, as built (agent).** `fs/windows.py`: `FILE_PERSISTENT_ACLS` (0x8) and `FILE_NAMED_STREAMS` (0x40000), read from the volume (`_Handle.flags`, `GetVolumeInformationByHandleW`). `_carry_over` reads the flags once from the replaced file's handle; `_streams(api, h, flags)` lists nothing, unasked, without `FILE_NAMED_STREAMS`, and otherwise raises on any refusal but `ERROR_HANDLE_EOF` (no stream at all); the DACL is read only with `FILE_PERSISTENT_ACLS`, and any refusal then raises (`GetSecurityInfo the replaced file`). `WindowsDir.acl()` asks the flags of the folder's own handle (not of the `READ_CONTROL`-only reopen) and raises on any refusal where the flag is set (`GetSecurityInfo the folder`; `ERROR_ACCESS_DENIED` stays `PermissionError`, `handles.UNREADABLE_ACL`). A raise from `create(..., like=...)` comes before the rename, so the save stops with the rollback's "not saved", unchanged; the same raise in a put-back fails the try closed (the journal stays `.open`). The BL-0219 probe's two `_streams` calls pass `FILE_NAMED_STREAMS`, so it still asks the raw question.
+- **Not changed, noted (agent):** `_Handle.identity` still falls back on `ERROR_INVALID_PARAMETER`/`ERROR_NOT_SUPPORTED` from `FileIdInfo` (FAT32, exFAT) to the 32-bit serial and the file index: an identity question, not a security one, outside BL-0285; the fallback gives a coarser identity, never a skipped check.
+- **The user docs (agent):** Windows writes are off until BL-0087, so items 1 and 5's lines for the user docs (and `--app-root`'s) ride with BL-0087's Windows user docs (a sentence added to BL-0087's row); the spec carries both limits now.
+- **Tests first and mutants on the runner (agent):** two temporary steps in `ci.yml`'s `engine-windows` job, removed by the slice's last commit, as S0128's: the new tests against the base's engine source, and `scripts/mutants.py` with item 4's loosening mutants (the checks run only on Windows, so a macOS mutant run would pass them all by skipping).
+- Item 3 was proposed out of the batch (agent; IMP-0072). With the owner's stated-limit answer it is a doc line, so it stays (orchestrator, 2026-11-20).
+- The brief stopped before tests until the answer (orchestrator, 2026-11-20; PROCESS.md §3 step 2).
 
 ## Hand-off (PROCESS.md §3 step 4; ADR-0057)
 (Not started: the slice waits on the owner's answer.)

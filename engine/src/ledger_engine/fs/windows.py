@@ -83,7 +83,13 @@ Windows since S0129, each in its own Job Object).
   streams, its hidden and archive attributes and its DACL with its protected or inherited state (owner, 2026-11-17:
   "1a", replacing for Windows the 2026-10-29 rule that keeps no ACL: a Windows file's own ACL is its only privacy
   setting, as the mode bits are on macOS); not its owner or SACL, which need a privilege. `allowed(name,
-  READ_XATTRS)` asks for what that copy reads.
+  READ_XATTRS)` asks for what that copy reads. **The volume's own flags decide** what is asked (S0135, BL-0285;
+  owner, 2026-11-20: "The drive's own flags (Recommended)"): a DACL (the file's, and the folder's in `acl`) only
+  where `FILE_PERSISTENT_ACLS` is set, the streams only where `FILE_NAMED_STREAMS` is; where a flag is set, any
+  refusal raises (the save is "not saved", nothing changed), never read as "this volume keeps none". **Limit
+  (Windows privacy during a save)** (owner, 2026-11-20: "State it as a limit"): the new bytes are written into the
+  staging file, which has the folder's ACL, before its own DACL is set, and a put-back likewise: on Windows a ledger
+  is as private as its folder (engine-jobs §6.3).
 - **Links:** hard links on NTFS and ReFS only (probed); a file with several is refused as on macOS (`nlink`).
   `symlink` refuses (`ENOTSUP`): the mirror's `current.db` link is ADR-0015's pointer file `current.txt` on Windows
   (`caps().links` False; S0130, BL-0206), and `readlink` reads no link target (a link: `ENOTSUP`).
@@ -215,6 +221,13 @@ FILE_SUPPORTS_POSIX_UNLINK_RENAME: Final = 0x400
 BL-0294; probed: set on NTFS, clear on FAT32, exFAT and ReFS, and set on an SMB share, which refuses the rename with
 `INVALID_PARAMETER`: so a remote volume is never offered it, whatever its flags say)."""
 POSIX_RENAME: Final = "a rename over a file that readers hold while sharing deletion"
+FILE_PERSISTENT_ACLS: Final = 0x8
+"""The volume flag that says the volume keeps ACLs (S0135, BL-0285; owner, 2026-11-20: "The drive's own flags
+(Recommended)"): where it is set, a refused read of a file's or a folder's DACL raises (the save is "not saved",
+nothing changed); where it is clear, no DACL is asked or carried. Never decided by an error code or the name."""
+FILE_NAMED_STREAMS: Final = 0x40000
+"""The volume flag that says the volume keeps alternate data streams (S0135): where it is set, a refused listing of
+a file's streams raises; where it is clear, no listing is asked and none is carried."""
 FILE_ATTRIBUTE_VALID_SET_FLAGS: Final = 0x31A7
 """The attributes a caller may set (`SetFileAttributesW` masks with the same value): read-only, hidden, system,
 archive, normal, temporary, offline, not content indexed."""
@@ -453,9 +466,11 @@ def _not_regular(api: _Api, h: _Handle) -> OSError | None:
     return None
 
 
-def _streams(api: _Api, h: _Handle) -> list[str]:
-    """The names of the file's alternate data streams (`:name:$DATA`), its main stream left out; none where the volume
-    keeps none (FAT32, exFAT)."""
+def _streams(api: _Api, h: _Handle, flags: int) -> list[str]:
+    """The names of the file's alternate data streams (`:name:$DATA`), its main stream left out; none, unasked, where
+    the volume's `flags` lack `FILE_NAMED_STREAMS` (FAT32, exFAT). Elsewhere a refused listing raises (S0135)."""
+    if not flags & FILE_NAMED_STREAMS:
+        return []
     size = 64 * 1024
     while True:
         buf = ctypes.create_string_buffer(size)
@@ -465,8 +480,8 @@ def _streams(api: _Api, h: _Handle) -> list[str]:
         if code == ERROR_MORE_DATA and size < 1 << 24:
             size *= 4
             continue
-        if code in (ERROR_HANDLE_EOF, ERROR_INVALID_PARAMETER, ERROR_NOT_SUPPORTED):
-            return []
+        if code == ERROR_HANDLE_EOF:
+            return []  # no stream at all
         raise _win_error("FileStreamInfo", code=code)
     raw = buf.raw
     out: list[str] = []
@@ -486,9 +501,13 @@ def _carry_over(api: _Api, src: _Handle, new: _Handle) -> None:
     macOS keeping the mode bits), in this order: its alternate data streams, byte for byte; its hidden and archive
     attributes (`KEPT_ATTRIBUTES`); last its DACL, with its protected or inherited state (an explicit ACL that denies
     us writing applies only to later opens). Not its owner nor its SACL: setting either needs a privilege the user's
-    process does not hold (the new file is owned by the user who saves, as on macOS). A volume without ACLs or streams
-    (FAT32, exFAT) passes the attributes only."""
-    for stream in _streams(api, src):
+    process does not hold (the new file is owned by the user who saves, as on macOS). What is asked is decided by the
+    volume's own flags (S0135, BL-0285; owner, 2026-11-20: "The drive's own flags (Recommended)"): streams only where
+    it sets `FILE_NAMED_STREAMS`, the DACL only where it sets `FILE_PERSISTENT_ACLS` (FAT32 and exFAT set neither: the
+    attributes only); where it sets one, any refusal raises, so the save is "not saved", never a file saved without
+    its own ACL or streams."""
+    flags = src.flags()
+    for stream in _streams(api, src, flags):
         with (
             _nt_open(api, src.handle, stream, GENERIC_READ, FILE_OPEN, FILE_NON_DIRECTORY_FILE) as a,
             _nt_open(api, new.handle, stream, GENERIC_WRITE, FILE_CREATE, FILE_NON_DIRECTORY_FILE) as b,
@@ -502,14 +521,14 @@ def _carry_over(api: _Api, src: _Handle, new: _Handle) -> None:
     buf = ctypes.create_string_buffer(info, len(info))
     if not api.SetInfo(new.handle, FILE_BASIC_INFO, buf, len(info)):
         raise _win_error("SetFileInformationByHandle")
+    if not flags & FILE_PERSISTENT_ACLS:
+        return  # the volume keeps no ACLs
     dacl, sd = ctypes.c_void_p(), ctypes.c_void_p()
     rc = api.GetSecurityInfo(
         src.handle, SE_FILE_OBJECT, DACL_SECURITY_INFORMATION, None, None, ctypes.byref(dacl), None, ctypes.byref(sd)
     )
-    if rc in (ERROR_NOT_SUPPORTED, ERROR_INVALID_PARAMETER):
-        return  # no ACLs on this volume
     if rc != 0:
-        raise _win_error("GetSecurityInfo", code=rc)
+        raise _win_error("GetSecurityInfo", "the replaced file", code=rc)
     try:
         control, revision = wintypes.WORD(), wintypes.DWORD()
         if not api.GetSecurityDescriptorControl(sd, ctypes.byref(control), ctypes.byref(revision)):
@@ -916,8 +935,11 @@ class WindowsDir:
         return Caps(swap=False, excl=self.device() not in self._fs.no_excl, links=False)
 
     def acl(self) -> tuple[AclEntry, ...]:
-        """The folder's DACL entries in order (none: empty; a volume without ACLs, FAT32 and exFAT: empty). A DACL we
-        may not read raises `PermissionError` (`handles.UNREADABLE_ACL`)."""
+        """The folder's DACL entries in order (none: empty). A volume whose flags lack `FILE_PERSISTENT_ACLS` (FAT32,
+        exFAT) keeps none: empty, unasked (S0135). Elsewhere a DACL we may not read raises `PermissionError`
+        (`handles.UNREADABLE_ACL`), and any other refusal `OSError` (the folder cannot be judged: the save stops)."""
+        if not self._h.flags() & FILE_PERSISTENT_ACLS:
+            return ()
         with self._reopen(READ_CONTROL) as h:
             dacl, sd = ctypes.c_void_p(), ctypes.c_void_p()
             rc = self.api.GetSecurityInfo(
@@ -930,10 +952,8 @@ class WindowsDir:
                 None,
                 ctypes.byref(sd),
             )
-            if rc in (ERROR_NOT_SUPPORTED, ERROR_INVALID_PARAMETER):
-                return ()
             if rc != 0:
-                raise _win_error("GetSecurityInfo", code=rc)
+                raise _win_error("GetSecurityInfo", "the folder", code=rc)
             try:
                 if not dacl.value:
                     return ()  # no DACL: every access granted, nothing denied

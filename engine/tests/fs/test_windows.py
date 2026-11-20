@@ -24,7 +24,7 @@ import sys
 import threading
 import uuid
 import warnings
-from collections.abc import Generator, Iterator
+from collections.abc import Callable, Generator, Iterator
 from pathlib import Path
 from typing import Any
 
@@ -918,6 +918,278 @@ def test_owner_1a_an_efs_encrypted_file_is_refused_before_anything_is_written(fs
     assert main.read_bytes() == b"pre\n"
     assert not list((tmp_path / "app" / "local" / "backups").iterdir()), "a backup in the clear"
     assert not [n for n in os.listdir(led) if ".ft-" in n]
+
+
+# -- S0135 (BL-0285): the carry-over's tests (V2-F3) and the volume's own flags (V2-Q-B) ------------------------------
+
+PERSISTENT_ACLS = 0x8  # FILE_PERSISTENT_ACLS (winnt.h): the volume keeps ACLs
+NAMED_STREAMS = 0x40000  # FILE_NAMED_STREAMS: the volume keeps alternate data streams
+NOT_SUPPORTED, INVALID_PARAMETER = 50, 87  # the two answers the base took as "this volume keeps none"
+
+
+def _ledger(tmp_path: Path) -> tuple[Path, Path]:
+    led = tmp_path / "led"
+    led.mkdir()
+    main = led / "main.bean"
+    main.write_bytes(b"pre\n")
+    return led, main
+
+
+def _save(fs: FileSystem, tmp_path: Path, *changes: Change) -> Landed | NotSaved:
+    out = durable_commit(fs, commit(tmp_path / "app", *changes))
+    assert isinstance(out, Landed | NotSaved), out
+    return out
+
+
+def _windows_fs(fs: FileSystem) -> Any:
+    from ledger_engine.fs import windows
+
+    assert isinstance(fs, windows.WindowsFS)
+    return fs
+
+
+def _security_calls(
+    fs: FileSystem, monkeypatch: pytest.MonkeyPatch, refuse: Callable[[str, bool], int | None] | None = None
+) -> list[tuple[str, bool, str]]:
+    """Every `GetSecurityInfo` and `FileStreamInfo` the adapter asks from now on, as (call, on a folder, the volume's
+    file-system name); `refuse(call, on_folder)` gives an error code to answer instead of asking Windows, or None.
+    A folder's DACL is read through a handle `WindowsDir._reopen` gives (`READ_CONTROL` only, which cannot be asked
+    its attributes), so those handles are noted as they are made, with their folder's file system, until closed; a
+    file's through a handle opened for reading, which is asked its volume."""
+    from ledger_engine.fs import windows
+
+    api = _windows_fs(fs).api
+    calls: list[tuple[str, bool, str]] = []
+    folders: dict[int, str] = {}
+    real_sec, real_info = api.GetSecurityInfo, api.GetInfo
+    real_reopen, real_close = windows.WindowsDir._reopen, windows._Handle.close  # pyright: ignore[reportPrivateUsage]
+
+    def reopen(self: windows.WindowsDir, access: int) -> windows._Handle:  # pyright: ignore[reportPrivateUsage]
+        h = real_reopen(self, access)
+        folders[h.handle] = self.fs_type()
+        return h
+
+    def close(self: windows._Handle) -> None:  # pyright: ignore[reportPrivateUsage]
+        if self.h is not None:
+            folders.pop(self.h, None)
+        real_close(self)
+
+    def kind_of(h: int) -> tuple[bool, str]:
+        if h in folders:
+            return True, folders[h]
+        return False, windows._Handle(api, h).volume()[0]  # pyright: ignore[reportPrivateUsage] (not closed)
+
+    def security(h: int, *rest: object) -> int:
+        folder, kind = kind_of(h)
+        calls.append(("GetSecurityInfo", folder, kind))
+        code = refuse("GetSecurityInfo", folder) if refuse else None
+        return code if code is not None else real_sec(h, *rest)
+
+    def info(h: int, cls: int, buf: object, size: int) -> int:
+        if cls != 7:  # FileStreamInfo only
+            return real_info(h, cls, buf, size)
+        folder, kind = kind_of(h)
+        calls.append(("FileStreamInfo", folder, kind))
+        code = refuse("FileStreamInfo", folder) if refuse else None
+        if code is None:
+            return real_info(h, cls, buf, size)
+        ctypes.set_last_error(code)
+        return 0
+
+    monkeypatch.setattr(windows.WindowsDir, "_reopen", reopen)
+    monkeypatch.setattr(windows._Handle, "close", close)  # pyright: ignore[reportPrivateUsage]
+    monkeypatch.setattr(api, "GetSecurityInfo", security)
+    monkeypatch.setattr(api, "GetInfo", info)
+    return calls
+
+
+def _refusing(which: str, *, folder: bool, code: int) -> Callable[[str, bool], int | None]:
+    """A `refuse` for `_security_calls`: `code` for the call `which` on a folder (or on a file), else Windows' own."""
+
+    def refuse(call: str, on_folder: bool) -> int | None:
+        return code if call == which and on_folder is folder else None
+
+    return refuse
+
+
+def _unchanged(out: Landed | NotSaved, led: Path, main: Path) -> None:
+    assert isinstance(out, NotSaved), out
+    assert out.unchanged, out
+    assert main.read_bytes() == b"pre\n"
+    assert not [n for n in os.listdir(led) if ".ft-" in n]
+
+
+def test_V2_F3_a_file_that_inherits_its_folders_acl_and_has_an_entry_of_its_own_keeps_both(
+    fs: FileSystem, tmp_path: Path
+) -> None:
+    """@regression-guard (it holds on the base; S0128 round 2, V2-F3): rule 1a keeps the DACL's inherited state, so
+    a file with an explicit entry beside the entries it inherits keeps exactly that listing. A carry-over that always
+    marks the DACL protected turns the inherited entries into its own (`icacls` drops their `(I)`)."""
+    _, main = _ledger(tmp_path)
+    subprocess.run(["icacls", str(main), "/grant", "*S-1-5-32-545:(R)"], check=True, capture_output=True)  # noqa: S603, S607
+    before = _icacls(main)
+    assert [e for e in before if "(I)" in e], before  # inherited entries
+    assert any("Users:(R)" in e and "(I)" not in e for e in before), before  # and one of its own
+    out = _save(fs, tmp_path, Change(str(main), sha256(b"pre\n"), b"post\n"))
+    assert isinstance(out, Landed), out
+    assert _icacls(main) == before
+
+
+@pytest.mark.parametrize("archive", [True, False])
+def test_V2_F3_the_archive_attribute_is_kept_as_it_was_on_every_volume(
+    fs: FileSystem, tmp_path: Path, archive: bool
+) -> None:
+    """@regression-guard (it holds on the base; V2-F3): rule 1a keeps the archive attribute, set or clear (a new file
+    gets it set by Windows, so the clear case is the one that shows the carry-over), on the runner's disk and on each
+    scratch volume."""
+    places = [tmp_path, *[Path(v) / f"ft-{uuid.uuid4().hex}" for v in _volumes()]]
+    for place in places:
+        place.mkdir(exist_ok=True)
+        try:
+            main = place / "main.bean"
+            main.write_bytes(b"pre\n")
+            subprocess.run(["attrib", "+a" if archive else "-a", str(main)], check=True, capture_output=True)  # noqa: S603, S607
+            assert bool(os.stat(main).st_file_attributes & 0x20) is archive, place
+            out = durable_commit(fs, commit(tmp_path / "app", Change(str(main), sha256(b"pre\n"), b"post\n")))
+            assert isinstance(out, Landed), (place, out)
+            assert main.read_bytes() == b"post\n"
+            assert bool(os.stat(main).st_file_attributes & 0x20) is archive, (place, _kind_of(fs, place))
+        finally:
+            if place != tmp_path:
+                shutil.rmtree(place, ignore_errors=True)
+
+
+def test_V2_F3_a_rollbacks_put_back_keeps_the_files_own_acl(
+    fs: FileSystem, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """@regression-guard (it holds on the base; V2-F3): a save whose second replace fails is rolled back; the first
+    file, made private with its own ACL, comes back through the restore's staging name (`create(..., like=...)`)
+    with that ACL, not its folder's."""
+    from ledger_engine.fs import windows
+
+    led, a = _ledger(tmp_path)
+    b = led / "b.bean"
+    b.write_bytes(b"b\n")
+    user = os.environ["USERNAME"]
+    private = ["icacls", str(a), "/inheritance:r", "/grant:r", f"{user}:(F)", "/grant:r", "*S-1-5-32-545:(R)"]
+    subprocess.run(private, check=True, capture_output=True)  # noqa: S603 (the system's own tool)
+    before = _icacls(a)
+    assert not [e for e in before if "(I)" in e], before
+    real = windows.WindowsDir.rename
+
+    def rename(self: windows.WindowsDir, src: str, dst: str) -> None:
+        if dst == "b.bean":
+            raise OSError(errno.EIO, "the second replace fails")
+        real(self, src, dst)
+
+    monkeypatch.setattr(windows.WindowsDir, "rename", rename)
+    out = _save(fs, tmp_path, Change(str(a), sha256(b"pre\n"), b"A\n"), Change(str(b), sha256(b"b\n"), b"B\n"))
+    assert isinstance(out, NotSaved), out
+    assert (out.step, out.unchanged, out.open_journal) == (Step.REPLACE, True, False), out
+    assert a.read_bytes() == b"pre\n"
+    assert _icacls(a) == before, "the put-back took its folder's ACL"
+
+
+@pytest.mark.parametrize("code", [NOT_SUPPORTED, INVALID_PARAMETER])
+def test_Q_B_a_volume_that_keeps_acls_refusing_a_files_acl_is_not_saved_unchanged(
+    fs: FileSystem, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, code: int
+) -> None:
+    """V2-Q-B (owner, 2026-11-20: "The drive's own flags (Recommended)"): NTFS says it keeps ACLs
+    (`FILE_PERSISTENT_ACLS`), so a refused read of the replaced file's DACL is never "this volume keeps none": the
+    save is "not saved", every file as it was, its own ACL kept. The base saved it with its folder's ACL."""
+    led, main = _ledger(tmp_path)
+    user = os.environ["USERNAME"]
+    subprocess.run(["icacls", str(main), "/inheritance:r", "/grant:r", f"{user}:(F)"], check=True, capture_output=True)  # noqa: S603, S607
+    before = _icacls(main)
+    _security_calls(fs, monkeypatch, _refusing("GetSecurityInfo", folder=False, code=code))
+    out = _save(fs, tmp_path, Change(str(main), sha256(b"pre\n"), b"post\n"))
+    _unchanged(out, led, main)
+    assert _icacls(main) == before
+
+
+@pytest.mark.parametrize("code", [NOT_SUPPORTED, INVALID_PARAMETER])
+def test_Q_B_a_volume_that_keeps_streams_refusing_a_files_stream_listing_is_not_saved_unchanged(
+    fs: FileSystem, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, code: int
+) -> None:
+    """V2-Q-B: NTFS says it keeps alternate data streams (`FILE_NAMED_STREAMS`), so a refused listing of the
+    replaced file's streams is never "none": "not saved", the file and its stream as they were. The base saved it
+    without the stream."""
+    led, main = _ledger(tmp_path)
+    (led / "main.bean:note").write_bytes(b"a stream\n")
+    _security_calls(fs, monkeypatch, _refusing("FileStreamInfo", folder=False, code=code))
+    out = _save(fs, tmp_path, Change(str(main), sha256(b"pre\n"), b"post\n"))
+    _unchanged(out, led, main)
+    assert (led / "main.bean:note").read_bytes() == b"a stream\n"
+
+
+@pytest.mark.parametrize("code", [NOT_SUPPORTED, INVALID_PARAMETER])
+def test_Q_B_a_volume_that_keeps_acls_refusing_a_folders_acl_cannot_be_judged_and_refuses_the_save(
+    fs: FileSystem, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, code: int
+) -> None:
+    """V2-Q-B: the folder rule's ACL check (`handles.acl_denial`) on a volume that keeps ACLs: a refused read of the
+    folder's DACL raises (the base answered no entries, so nothing counted as denied), and the save is "not saved"
+    before its first effect."""
+    led, main = _ledger(tmp_path)
+    _security_calls(fs, monkeypatch, _refusing("GetSecurityInfo", folder=True, code=code))
+    with fs.open_dir(str(led)) as d, pytest.raises(OSError, match=r"GetSecurityInfo"):
+        d.acl()
+    out = _save(fs, tmp_path, Change(str(main), sha256(b"pre\n"), b"post\n"))
+    _unchanged(out, led, main)
+
+
+@pytest.mark.skipif(not _volumes(), reason="no scratch volumes given (FT_TEST_VOLUMES)")
+@pytest.mark.parametrize("volume", _volumes() or ["-"])
+def test_Q_B_a_volume_is_asked_for_acls_and_streams_only_when_its_flags_say_it_keeps_them(
+    fs: FileSystem, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, volume: str
+) -> None:
+    """V2-Q-B: on each scratch volume a save lands, and the file's and folder's DACL are asked only where the volume
+    sets `FILE_PERSISTENT_ACLS`, the file's streams only where it sets `FILE_NAMED_STREAMS` (FAT32 and exFAT set
+    neither: never asked, where the base asked and took the answer's error code as "none")."""
+    place = Path(volume) / f"ft-{uuid.uuid4().hex}"
+    place.mkdir()
+    try:
+        main = place / "main.bean"
+        main.write_bytes(b"pre\n")
+        with fs.open_dir(str(place)) as d:
+            from ledger_engine.fs import windows
+
+            assert isinstance(d, windows.WindowsDir)
+            flags = d._h.flags()  # pyright: ignore[reportPrivateUsage]
+            kind = d.fs_type()
+        calls = _security_calls(fs, monkeypatch)
+        out = durable_commit(fs, commit(tmp_path / "app", Change(str(main), sha256(b"pre\n"), b"post\n")))
+        assert isinstance(out, Landed), out
+        assert main.read_bytes() == b"post\n"
+        here = [(call, folder) for call, folder, k in calls if k == kind]
+        acl_asked = any(call == "GetSecurityInfo" for call, _ in here)
+        streams_asked = any(call == "FileStreamInfo" for call, _ in here)
+        assert acl_asked is bool(flags & PERSISTENT_ACLS), (kind, hex(flags), here)
+        assert streams_asked is bool(flags & NAMED_STREAMS), (kind, hex(flags), here)
+    finally:
+        shutil.rmtree(place, ignore_errors=True)
+
+
+def test_Q_B_the_volumes_flags_decide_never_its_name(
+    fs: FileSystem, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """V2-Q-B: the runner's NTFS with `FILE_PERSISTENT_ACLS` and `FILE_NAMED_STREAMS` taken out of its flags: the
+    save lands and asks no DACL and no stream listing (the name `ntfs` decides nothing)."""
+    from ledger_engine.fs import windows
+
+    _, main = _ledger(tmp_path)
+    assert _kind_of(fs, tmp_path) == "ntfs"
+    handle = windows._Handle  # pyright: ignore[reportPrivateUsage]
+    real = handle.flags
+
+    def without(self: windows._Handle) -> int:  # pyright: ignore[reportPrivateUsage]
+        return real(self) & ~(PERSISTENT_ACLS | NAMED_STREAMS)
+
+    monkeypatch.setattr(handle, "flags", without)
+    calls = _security_calls(fs, monkeypatch)
+    out = _save(fs, tmp_path, Change(str(main), sha256(b"pre\n"), b"post\n"))
+    assert isinstance(out, Landed), out
+    assert main.read_bytes() == b"post\n"
+    assert calls == [], calls
 
 
 @pytest.mark.parametrize("where", ["tmp", "volumes"])

@@ -1,6 +1,6 @@
 # The Windows adapter's leftovers (BL-0285): how far should a ledger file's own Windows permissions be kept, and three smaller gaps?
 - Asked: 2026-11-20 by the implementer, S0135-windows-adapter-leftovers
-- blocks: S0135 (no test or code until answered); BL-0087 should not turn Windows writes on before it lands
+- blocks: nothing (answered 2026-11-20; S0135 builds items 2 and 4 and states items 1, 3 and 5)
 - Rubric item: a rare setup and a mechanism with fix-round history (PROCESS.md §3 step 2: the policy option goes to the owner first); item 4 is a fail-closed question (INV-22)
 - ADRs checked: ADR-0069 (the replace; silent on file security), your rule 1a (S0128 round 1, 2026-11-17: "1a, wording ok"; it says what is kept, not when), ADR-0015's amendment of 2026-11-18 (the precedent "decide by what the volume offers")
 
@@ -55,3 +55,9 @@ On macOS the save's backups and journal files are made "only me" (mode 600). On 
 The mechanism's review history: the carry-over (items 1, 2, 4) was built as a fix in S0128 round 1 (your 1a); its first review, round 2, found these items. The Windows adapter took 2 rounds in S0128: 0 High, 5 Medium and 22 Low, none in class (a). The undo's flush (item 3): S0101 took 2 rounds and fixed 1 High (the flush must sync the very file it judged); S0128 round 1 added the skip (red team F1); round 2 found V2-F4.
 
 ## Answer (owner, verbatim, with date)
+Owner, 2026-11-20, in session, choosing among the options as the orchestrator put them:
+- Item 1 (the staging file under the folder's permissions; offered "Reorder the write (Recommended)", "State it as a limit", "Create with the permissions"): "State it as a limit". No code: on Windows a ledger is as private as its folder, stated in engine-jobs §6.3, whose sentence "a ledger made private with its own ACL stays private" is corrected to hold after a save, not during it.
+- Item 2 (the three runner tests): not asked separately; the orchestrator took the recommendation (write them).
+- Item 3 (the rollback's flush skip keyed on `ntfs`): "State it as a limit (Recommended)". A stated-limit line only, no code; it adds no mechanism, so it stays in S0135's docs.
+- Item 4 (the ACL and stream copy's silent fallback): "The drive's own flags (Recommended)". Decided by the volume's `FILE_PERSISTENT_ACLS` and `FILE_NAMED_STREAMS` in all three places (`_carry_over`'s DACL read, the stream copy, the pre-save check of the folder's own ACL); a drive that claims the flag and then refuses the call gives "not saved", nothing changed (the owner's rule of 2026-11-18).
+- Item 5 (backups and journals take the app folder's ACL): "State it (Recommended)". In the spec and in the docs for `--app-root`; no code.

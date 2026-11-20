@@ -77,7 +77,9 @@ FILE_ID_TYPES: Final = frozenset({"ntfs", "refs"})
 """File systems whose file ID is never given to another file (Windows' NTFS and ReFS: a file made again at once gets a
 new 128-bit ID, probed in S0126 and S0128): an object found with the ID it had before a save is the object the save
 started from, never one put there since (`restore._flush`, S0128 round 1). POSIX inode numbers can be reused, so no
-macOS or Linux file system is here."""
+macOS or Linux file system is meant here. **Limit** (S0135, BL-0285; owner, 2026-11-20: "State it as a limit
+(Recommended)"): the key is the type's name only, and macOS's own NTFS driver (writable only by a setting Apple does
+not support) also reports `ntfs` (engine-jobs §8.1 step 4, "Limit (the skip's key)")."""
 
 WHOLE_SECONDS_ON: Final = frozenset({"exfat"})
 """File systems whose folder creation time is compared to the whole second (S0090, BL-0221; owner, 2026-11-09: "On

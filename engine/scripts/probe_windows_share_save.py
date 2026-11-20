@@ -943,7 +943,7 @@ def acl_part(folder: str) -> None:
             say(
                 "acl",
                 case="the file's streams, the adapter's way (FileStreamInfo)",
-                streams=attempt(lambda: windows._streams(api, src)),
+                streams=attempt(lambda: windows._streams(api, src, windows.FILE_NAMED_STREAMS)),
             )
             say("acl", case="the file's streams, FindFirstStreamW", streams=sec.streams_by_path(path))
             say("acl", case="the file's DACL set protected on itself", result=attempt(protect_itself))
@@ -958,7 +958,7 @@ def acl_part(folder: str) -> None:
                     "acl",
                     case="the copy's DACL and streams",
                     security=sec.read(c),
-                    streams=attempt(lambda: windows._streams(api, c)),
+                    streams=attempt(lambda: windows._streams(api, c, windows.FILE_NAMED_STREAMS)),
                     stream_bytes=attempt(lambda: Path(os.path.join(folder, "copy.txt") + ":" + STREAM).read_bytes()),
                 )
 
