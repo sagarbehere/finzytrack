@@ -238,14 +238,52 @@ jobs:
             net use Z: "\\localhost\ftshare" /persistent:no | Out-Null
             Write-Output ("remapped Z: exit " + $LASTEXITCODE)
             .venv\Scripts\python.exe scripts\probe_windows_share_save.py identity remapped @roots
+            # Did the restart drop the sessions? The sessions and connections around it, and a handle held across it.
+            $held = Join-Path "Z:\" ".ft-identity-probe\held.txt"
+            $fs = $null
             try {
-              $deps = @((Get-Service LanmanServer).DependentServices | Where-Object Status -eq "Running")
-              Write-Output ("restarting LanmanServer; running dependants: " + (($deps | ForEach-Object Name) -join ", "))
-              Restart-Service LanmanServer -Force -ErrorAction Stop
-              foreach ($d in $deps) { Start-Service $d.Name -ErrorAction Continue }
-              Write-Output ("LanmanServer: " + (Get-Service LanmanServer).Status)
+              [System.IO.File]::WriteAllText($held, "held")
+              $fs = [System.IO.File]::Open($held, "Open", "ReadWrite", "ReadWrite")
             } catch {
-              Write-Output ("the server service could not be restarted: " + $_)
+              Write-Output ("no handle could be held across the restart: " + $_.Exception.Message)
+            }
+            try {
+              $smb = {
+                param($when)
+                Write-Output ("SMB sessions " + $when + ":")
+                Get-SmbSession | Format-Table SessionId, ClientComputerName, ClientUserName, NumOpens, SecondsExists -AutoSize | Out-String | Write-Output
+                Write-Output ("SMB connections " + $when + ":")
+                Get-SmbConnection | Format-Table ServerName, ShareName, Dialect, NumOpens -AutoSize | Out-String | Write-Output
+              }
+              & $smb "before the restart"
+              try {
+                $deps = @((Get-Service LanmanServer).DependentServices | Where-Object Status -eq "Running")
+                Write-Output ("restarting LanmanServer; running dependants: " + (($deps | ForEach-Object Name) -join ", "))
+                Restart-Service LanmanServer -Force -ErrorAction Stop
+                foreach ($d in $deps) { Start-Service $d.Name -ErrorAction Continue }
+                Write-Output ("LanmanServer: " + (Get-Service LanmanServer).Status)
+              } catch {
+                Write-Output ("the server service could not be restarted: " + $_)
+              }
+              & $smb "after the restart"
+              if ($fs) { try {
+                $fs.Position = 0
+                $buf = New-Object byte[] 16
+                $n = $fs.Read($buf, 0, 16)
+                Write-Output ("read through the handle held across the restart: ok, " + $n + " bytes")
+              } catch {
+                Write-Output ("read through the handle held across the restart: failed: " + $_.Exception.Message)
+              }
+              try {
+                $fs.Position = 0
+                $fs.Write([byte[]](104, 101, 108, 100), 0, 4)
+                $fs.Flush($true)
+                Write-Output "write and flush through the handle held across the restart: ok"
+              } catch {
+                Write-Output ("write and flush through the handle held across the restart: failed: " + $_.Exception.Message)
+              } }
+            } finally {
+              if ($fs) { try { $fs.Close() } catch { Write-Output ("closing the held handle: " + $_.Exception.Message) } }
             }
             if (-not (Get-SmbShare -Name ftshare -ErrorAction SilentlyContinue)) {
               Write-Output "the share is gone after the restart: made again"

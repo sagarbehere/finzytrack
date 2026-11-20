@@ -24,11 +24,17 @@ Commands (run from `engine/`, on Windows only):
   3. `replace`: the adapter's own replace (`WindowsDir.rename`: `FileRenameInformation` with `ReplaceIfExists`,
      relative to the folder handle; ADR-0069) over an existing file, alone, under a reader sharing deletion, under a
      reader that does not, and 300 times while another thread looks for the target; and the exclusive rename over it.
+  4. `acl` (BL-0285 item 4: the drive's own flags decide whether a save copies the old file's ACL and streams): the
+     volume flags `FILE_PERSISTENT_ACLS` and `FILE_NAMED_STREAMS`; `GetSecurityInfo` (owner, DACL, protected flag) on
+     a file and on the folder; `SetSecurityInfo` of the file's DACL onto itself (protected) and onto a new file; the
+     file's named streams, the adapter's way (`FileStreamInfo`) and by `FindFirstStreamW`; and the adapter's own
+     `create(..., like=...)` with what the copy then holds. Each call's outcome or its error code.
 - `identity <label> <root> [<root> ...]`: for the folder `.ft-identity-probe` under each root (made under the first
   root if missing; each root a spelling of the same place), `FileIdInfo`, the 32-bit serial, the creation time, the
   final paths, and what the engine's identity rule would compare (`volume_id`, the folder's mark, `drive_of`,
   `known_birth`) if `volume_id` used the share's serial. The CI step runs it before and after remapping the drive
-  and after restarting the server service.
+  and after restarting the server service (with the SMB sessions and connections printed around the restart, and a
+  handle held open on the share across it).
 - `identity-remove <root>`: removes that folder (the last step).
 
 It writes only the scratch folders it makes on the share and in the runner's temp folder, and removes them.
@@ -42,6 +48,7 @@ import errno
 import json
 import os
 import shutil
+import struct
 import sys
 import tempfile
 import threading
@@ -162,6 +169,16 @@ def drive_id_on_shares() -> Generator[None]:
 # -- the traced port ---------------------------------------------------------------------------------------------------
 
 
+def _shown(a: object) -> str:
+    if isinstance(a, str):
+        return a
+    if isinstance(a, bytes):
+        return f"<{len(a)} bytes>"
+    if isinstance(a, int | None):
+        return str(a)
+    return "<data>"
+
+
 @dataclass
 class Trace:
     """What the traced port prints and injects. `roots`: each label's folders, as given and as the adapter names them
@@ -187,16 +204,24 @@ class Trace:
         return "other"
 
     def call(
-        self, label: str, remote: Callable[[], bool], name: str, args: tuple[Any, ...], fn: Callable[..., Any]
+        self,
+        label: str,
+        remote: Callable[[], bool],
+        name: str,
+        args: tuple[Any, ...],
+        kwargs: dict[str, Any],
+        fn: Callable[..., Any],
     ) -> Any:
-        shown = [a if isinstance(a, str) else f"<{len(a)} bytes>" if isinstance(a, bytes) else "<data>" for a in args]
+        """`fn(*args, **kwargs)`, printed (positional and keyword arguments alike: the port's callers pass some by
+        keyword, `read(name, limit=...)`, `create(..., like=...)`; run 2's probe passed positional ones only)."""
+        shown: list[str] = [_shown(a) for a in args] + [f"{k}={_shown(v)}" for k, v in sorted(kwargs.items())]
         if name == "sync" and label == "ledger" and self.fail_sync_after_rename and self.renamed:
             self.fail_sync_after_rename = False
             e = OSError(errno.EIO, "injected by the probe after the rename")
             say("effect", step=self.step, on=label, call=name, args=shown, outcome="injected", **failure(e))
             raise e
         try:
-            out = fn(*args)
+            out = fn(*args, **kwargs)
         except Exception as e:
             if (
                 name == "sync"
@@ -236,7 +261,7 @@ class TracedDir:
         return bool(self._inner.remote())
 
     def open_child(self, name: str) -> TracedDir:
-        child = self._trace.call(self._label, self._remote, "open_child", (name,), self._inner.open_child)
+        child = self._trace.call(self._label, self._remote, "open_child", (name,), {}, self._inner.open_child)
         return TracedDir(child, self._label, self._trace)
 
     def __getattr__(self, name: str) -> Any:
@@ -244,8 +269,8 @@ class TracedDir:
         if not callable(attr) or name in ("close", "__enter__", "__exit__"):
             return attr
 
-        def call(*args: Any) -> Any:
-            return self._trace.call(self._label, self._remote, name, args, attr)
+        def call(*args: Any, **kwargs: Any) -> Any:
+            return self._trace.call(self._label, self._remote, name, args, kwargs, attr)
 
         return call
 
@@ -741,6 +766,203 @@ def replaces_watched(d: windows.WindowsDir, how: str, look: Callable[[], str]) -
     say("replace", case=f"300 replaces while another thread looks: {how}", looks=looks, failures=failures)
 
 
+# -- part 5: the ACL and the streams a replaced file passes on (BL-0285 item 4) -------------------------------------
+
+FILE_PERSISTENT_ACLS = 0x8
+FILE_NAMED_STREAMS = 0x40000
+OWNER_SECURITY_INFORMATION = 0x1
+STREAM = "probe"
+
+
+class WIN32_FIND_STREAM_DATA(ctypes.Structure):
+    _fields_ = (("StreamSize", ctypes.c_longlong), ("cStreamName", ctypes.c_wchar * (260 + 36)))
+
+
+class Sec:
+    """The security and stream calls the probe asks itself (typed here, apart from the adapter's own `_Api`)."""
+
+    def __init__(self) -> None:
+        adv = ctypes.WinDLL("advapi32", use_last_error=True)
+        k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        p, d = ctypes.c_void_p, wintypes.DWORD
+        pp = ctypes.POINTER(ctypes.c_void_p)
+        self.get = adv.GetSecurityInfo
+        self.get.argtypes = [wintypes.HANDLE, ctypes.c_int, d, pp, pp, pp, pp, pp]
+        self.get.restype = d
+        self.set = adv.SetSecurityInfo
+        self.set.argtypes = [wintypes.HANDLE, ctypes.c_int, d, p, p, p, p]
+        self.set.restype = d
+        self.control = adv.GetSecurityDescriptorControl
+        self.control.argtypes = [p, ctypes.POINTER(wintypes.WORD), ctypes.POINTER(d)]
+        self.control.restype = wintypes.BOOL
+        self.sid_text = adv.ConvertSidToStringSidW
+        self.sid_text.argtypes = [p, ctypes.POINTER(wintypes.LPWSTR)]
+        self.sid_text.restype = wintypes.BOOL
+        self.free = k32.LocalFree
+        self.free.argtypes = [p]
+        self.free.restype = p
+        self.first_stream = k32.FindFirstStreamW
+        self.first_stream.argtypes = [wintypes.LPCWSTR, ctypes.c_int, ctypes.POINTER(WIN32_FIND_STREAM_DATA), d]
+        self.first_stream.restype = wintypes.HANDLE
+        self.next_stream = k32.FindNextStreamW
+        self.next_stream.argtypes = [wintypes.HANDLE, ctypes.POINTER(WIN32_FIND_STREAM_DATA)]
+        self.next_stream.restype = wintypes.BOOL
+        self.find_close = k32.FindClose
+        self.find_close.argtypes = [wintypes.HANDLE]
+        self.find_close.restype = wintypes.BOOL
+
+    def read(self, h: windows._Handle) -> dict[str, object]:
+        """`GetSecurityInfo` of the owner and the DACL: the owner's SID, the DACL's entry count, the protected flag."""
+        owner, dacl, sd = ctypes.c_void_p(), ctypes.c_void_p(), ctypes.c_void_p()
+        rc = self.get(
+            h.handle,
+            windows.SE_FILE_OBJECT,
+            OWNER_SECURITY_INFORMATION | windows.DACL_SECURITY_INFORMATION,
+            ctypes.byref(owner),
+            None,
+            ctypes.byref(dacl),
+            None,
+            ctypes.byref(sd),
+        )
+        if rc != 0:
+            return {"GetSecurityInfo": f"error {rc}: {ctypes.FormatError(rc).strip()}"}
+        try:
+            out: dict[str, object] = {"GetSecurityInfo": "ok"}
+            text = wintypes.LPWSTR()
+            if owner.value and self.sid_text(owner, ctypes.byref(text)):
+                out["owner"] = text.value
+                self.free(ctypes.cast(text, ctypes.c_void_p))
+            else:
+                out["owner"] = None if not owner.value else f"error {ctypes.get_last_error()}"
+            out["dacl_entries"] = (
+                None if not dacl.value else struct.unpack_from("<H", ctypes.string_at(dacl.value, 8), 4)[0]
+            )
+            control, revision = wintypes.WORD(), wintypes.DWORD()
+            if self.control(sd, ctypes.byref(control), ctypes.byref(revision)):
+                out["protected"] = bool(control.value & windows.SE_DACL_PROTECTED)
+            return out
+        finally:
+            self.free(sd)
+
+    def copy_dacl(self, src: windows._Handle, dst: windows._Handle, *, protect: bool | None = None) -> str:
+        """`SetSecurityInfo` of `src`'s DACL onto `dst`, with its protected or inherited state (as the adapter's
+        `_carry_over` does), or forced protected when `protect`."""
+        dacl, sd = ctypes.c_void_p(), ctypes.c_void_p()
+        rc = self.get(
+            src.handle,
+            windows.SE_FILE_OBJECT,
+            windows.DACL_SECURITY_INFORMATION,
+            None,
+            None,
+            ctypes.byref(dacl),
+            None,
+            ctypes.byref(sd),
+        )
+        if rc != 0:
+            return f"GetSecurityInfo error {rc}: {ctypes.FormatError(rc).strip()}"
+        try:
+            control, revision = wintypes.WORD(), wintypes.DWORD()
+            self.control(sd, ctypes.byref(control), ctypes.byref(revision))
+            protected = bool(control.value & windows.SE_DACL_PROTECTED) if protect is None else protect
+            state = (
+                windows.PROTECTED_DACL_SECURITY_INFORMATION
+                if protected
+                else windows.UNPROTECTED_DACL_SECURITY_INFORMATION
+            )
+            rc = self.set(
+                dst.handle, windows.SE_FILE_OBJECT, windows.DACL_SECURITY_INFORMATION | state, None, None, dacl, None
+            )
+            return "ok" if rc == 0 else f"SetSecurityInfo error {rc}: {ctypes.FormatError(rc).strip()}"
+        finally:
+            self.free(sd)
+
+    def streams_by_path(self, path: str) -> object:
+        """`FindFirstStreamW` / `FindNextStreamW`: every stream's name and size."""
+        data = WIN32_FIND_STREAM_DATA()
+        h = self.first_stream(path, 0, ctypes.byref(data), 0)
+        if h is None or h == ctypes.c_void_p(-1).value:
+            code = ctypes.get_last_error()
+            return f"FindFirstStreamW error {code}: {ctypes.FormatError(code).strip()}"
+        out = [(data.cStreamName, data.StreamSize)]
+        try:
+            while self.next_stream(h, ctypes.byref(data)):
+                out.append((data.cStreamName, data.StreamSize))
+            code = ctypes.get_last_error()
+            if code != 38:  # ERROR_HANDLE_EOF: no more streams
+                out.append((f"FindNextStreamW error {code}", -1))
+        finally:
+            self.find_close(h)
+        return out
+
+
+def acl_part(folder: str) -> None:
+    os.mkdir(folder)
+    fs = windows.WindowsFS()
+    api = fs.api
+    sec = Sec()
+    with fs.open_dir(folder) as d:
+        flags = d._h.flags()
+        say(
+            "acl",
+            case="volume flags",
+            remote=d.remote(),
+            fs_type=d.fs_type(),
+            flags=f"{flags:#x}",
+            persistent_acls=bool(flags & FILE_PERSISTENT_ACLS),
+            named_streams=bool(flags & FILE_NAMED_STREAMS),
+        )
+
+        def folder_security() -> object:
+            with d._reopen(windows.READ_CONTROL) as h:
+                return sec.read(h)
+
+        say("acl", case="the folder's owner and DACL", security=attempt(folder_security))
+        d.create("src.txt", b"source", 0o644)
+        path = os.path.join(folder, "src.txt")
+        say(
+            "acl",
+            case="a named stream written by path",
+            outcome=attempt(lambda: Path(path + ":" + STREAM).write_bytes(b"extra")),
+        )
+        read_access = windows.READ_CONTROL | windows.GENERIC_READ
+        dac_access = windows.READ_CONTROL | windows.WRITE_DAC
+        plain = windows.FILE_NON_DIRECTORY_FILE
+
+        def protect_itself() -> object:
+            with d._open("src.txt", dac_access, options=plain) as h:
+                return {"outcome": sec.copy_dacl(h, h, protect=True), "security": sec.read(h)}
+
+        def onto_new(src: windows._Handle) -> object:
+            new_access = windows.GENERIC_WRITE | dac_access
+            with d._open("new.txt", new_access, windows.FILE_CREATE, plain) as new:
+                before = sec.read(new)
+                return {"before": before, "outcome": sec.copy_dacl(src, new), "after": sec.read(new)}
+
+        with d._open("src.txt", read_access, options=plain) as src:
+            say("acl", case="the file's owner and DACL", security=sec.read(src))
+            say(
+                "acl",
+                case="the file's streams, the adapter's way (FileStreamInfo)",
+                streams=attempt(lambda: windows._streams(api, src)),
+            )
+            say("acl", case="the file's streams, FindFirstStreamW", streams=sec.streams_by_path(path))
+            say("acl", case="the file's DACL set protected on itself", result=attempt(protect_itself))
+            say("acl", case="SetSecurityInfo of the file's DACL onto a new file", result=attempt(lambda: onto_new(src)))
+        out = attempt(lambda: d.create("copy.txt", b"copy", 0o644, like="src.txt"))
+        say("acl", case="the adapter's create(..., like=src.txt): _carry_over", outcome=out)
+        if not isinstance(out, dict):
+            with d._open(
+                "copy.txt", windows.READ_CONTROL | windows.GENERIC_READ, options=windows.FILE_NON_DIRECTORY_FILE
+            ) as c:
+                say(
+                    "acl",
+                    case="the copy's DACL and streams",
+                    security=sec.read(c),
+                    streams=attempt(lambda: windows._streams(api, c)),
+                    stream_bytes=attempt(lambda: Path(os.path.join(folder, "copy.txt") + ":" + STREAM).read_bytes()),
+                )
+
+
 # -- part 4: identity --------------------------------------------------------------------------------------------------
 
 
@@ -822,7 +1044,7 @@ def probe(folders: list[str]) -> None:
                         save_part(os.path.join(base, variant), variant)
                     except Exception as e:  # noqa: BLE001
                         say("save_part", variant=variant, outcome="raised", **failure(e))
-            for name, fn in (("exclusive", exclusive_part), ("replace", replace_part)):
+            for name, fn in (("exclusive", exclusive_part), ("replace", replace_part), ("acl", acl_part)):
                 say("part", name=name, folder=folder)
                 try:
                     fn(os.path.join(base, name))
