@@ -221,6 +221,49 @@ jobs:
           "FT_TEST_SHARE=" + ($shares -join ";") | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
           [System.Environment]::OSVersion.VersionString
           .venv\Scripts\python.exe scripts\probe_windows_fs.py $env:RUNNER_TEMP $env:TEMP @vols @shares
+      - name: The whole save on the network share, its exclusive create, replace and identity (BL-0219; prints only)
+        # The engine's own save, run by the probe on the share's three spellings and, for comparison, a local NTFS
+        # folder; then the share folder's identity read once, after remapping the drive, and after restarting the
+        # server service. The later test step needs the share and the mapping: both are checked again at the end, and
+        # the step fails if either cannot be remade.
+        run: |
+          $shares = $env:FT_TEST_SHARE -split ";"
+          $backing = Join-Path $env:RUNNER_TEMP "ftshare"
+          $roots = $shares + @($backing)
+          .venv\Scripts\python.exe scripts\probe_windows_share_save.py probe $env:RUNNER_TEMP @shares
+          try {
+            .venv\Scripts\python.exe scripts\probe_windows_share_save.py identity first @roots
+            Get-SmbConnection | Format-Table -AutoSize | Out-String | Write-Output
+            net use Z: /delete /y | Out-Null
+            net use Z: "\\localhost\ftshare" /persistent:no | Out-Null
+            Write-Output ("remapped Z: exit " + $LASTEXITCODE)
+            .venv\Scripts\python.exe scripts\probe_windows_share_save.py identity remapped @roots
+            try {
+              $deps = @((Get-Service LanmanServer).DependentServices | Where-Object Status -eq "Running")
+              Write-Output ("restarting LanmanServer; running dependants: " + (($deps | ForEach-Object Name) -join ", "))
+              Restart-Service LanmanServer -Force -ErrorAction Stop
+              foreach ($d in $deps) { Start-Service $d.Name -ErrorAction Continue }
+              Write-Output ("LanmanServer: " + (Get-Service LanmanServer).Status)
+            } catch {
+              Write-Output ("the server service could not be restarted: " + $_)
+            }
+            if (-not (Get-SmbShare -Name ftshare -ErrorAction SilentlyContinue)) {
+              Write-Output "the share is gone after the restart: made again"
+              New-SmbShare -Name ftshare -Path $backing -FullAccess Everyone -ErrorAction Stop | Out-Null
+            }
+            if (-not (Test-Path "Z:\")) {
+              Write-Output "Z: is not reachable after the restart: mapped again"
+              net use Z: /delete /y 2>$null | Out-Null
+              net use Z: "\\localhost\ftshare" /persistent:no | Out-Null
+            }
+            .venv\Scripts\python.exe scripts\probe_windows_share_save.py identity restarted @roots
+          } finally {
+            .venv\Scripts\python.exe scripts\probe_windows_share_save.py identity-remove $backing
+          }
+          foreach ($s in $shares) {
+            if (-not (Test-Path $s)) { throw "the CI share is not reachable as $s after the identity probe" }
+          }
+          $global:LASTEXITCODE = 0
       - name: tests
         # INV-07 on Windows (S0127): its C runtime reads TZ only as a process starts and only in this form, so it is set
         # before Python starts (Los Angeles: tests/conftest.py checks it). `-rs`: each skip prints its reason, the
