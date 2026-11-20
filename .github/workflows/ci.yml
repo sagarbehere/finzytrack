@@ -306,18 +306,6 @@ jobs:
             if (-not (Test-Path $s)) { throw "the CI share is not reachable as $s after the identity probe" }
           }
           $global:LASTEXITCODE = 0
-      - name: "S0136 tests first (temporary step): the slice's Windows tests against the base's engine source"
-        # Removed again by the slice's last commit: the tests S0136 adds or changes (BL-0219), run against the engine
-        # source of the slice's base (3884fdcf), to record which fail there (PROCESS.md §3 step 3).
-        continue-on-error: true
-        env:
-          TZ: PST8PDT
-        run: |
-          git fetch --no-tags --depth=1 origin 3884fdcfceedf5d58fa58c4759463606bfd31b82
-          git checkout FETCH_HEAD -- src
-          .venv\Scripts\python.exe -m pytest -q -rs -p no:cacheprovider tests/fs/test_windows.py -k "S0136"
-          git checkout HEAD -- src
-          git status --short
       - name: "S0136 loosening mutants (temporary step): the share's tolerance and identity on the runner (scripts/mutants.py)"
         # Removed again by the slice's last commit (ADR-0057: a check guarding ledger data gets loosening mutants; these
         # run only on Windows). Each mutant is one line of fs/windows.py.

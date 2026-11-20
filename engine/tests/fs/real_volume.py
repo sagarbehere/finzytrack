@@ -74,6 +74,7 @@ def settled_mkdir(path: Path) -> None:
 
 
 def real_volume_run(fs: FileSystem, tmp_path: Path, ledger: Path) -> None:
+    from ledger_engine.ledger.core import paths as core_paths
     from ledger_engine.ledger.core.recovery import Cause
     from ledger_engine.ledger.handles import SERIAL_IDENTIFIED
     from ledger_engine.ledger.restore import Resolved, Stopped, recover_journal
@@ -114,8 +115,10 @@ def real_volume_run(fs: FileSystem, tmp_path: Path, ledger: Path) -> None:
     with pytest.raises(Died):
         durable_commit(DyingFS(fs, ".closed"), c3)  # type: ignore[arg-type]
     main.write_bytes(b"; an editor\n")  # an outside save before the restore: never replaced
+    # the engine names a file by its canonical path: a mapped drive's is its share's UNC path (S0136's run 8)
+    named = core_paths.canonical_path(fs.resolve(str(main)))
     out3 = recover_journal(fs, c3.journal_dir, "s1-j1")
-    assert out3 == Stopped(Cause.FOREIGN, str(main)), out3
+    assert out3 == Stopped(Cause.FOREIGN, named), out3
     assert main.read_bytes() == b"; an editor\n"
     # an empty file at a replaced path is judged like any other content (ADR-0068 D2): the try stops; once the user
     # deletes it, the file is missing and Retry puts the old version back from the backup
@@ -127,7 +130,7 @@ def real_volume_run(fs: FileSystem, tmp_path: Path, ledger: Path) -> None:
     main.unlink()
     main.write_bytes(b"")
     out4 = recover_journal(fs, c4.journal_dir, "s1-j1")
-    assert out4 == Stopped(Cause.FOREIGN, str(main)), out4
+    assert out4 == Stopped(Cause.FOREIGN, named), out4
     assert main.read_bytes() == b""
     main.unlink()
     out5 = recover_journal(fs, c4.journal_dir, "s1-j1")

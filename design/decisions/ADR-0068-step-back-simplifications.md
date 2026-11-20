@@ -152,3 +152,7 @@ The owner, 2026-11-19, in session: **"For bl-0219, I think we need to ensure tha
 - **What the user is told:** the open's notice for a ledger on a share (`msg:save.best_effort_share`, the note's example words): "Your ledger is on a network share. Finzytrack keeps a backup of every save, but if the file server crashes or loses power right after a save, that save can be undone. For full protection, keep your ledger on your computer's own disk." Shown by the workspace open (BL-0166).
 - **Limits** (engine-jobs §6.8 "Limit (network share durability)", §6.3 "Limit (share spellings)", "Limit (twin server disks)"): a server crash right after a save can undo it, in whole or in part, and an undo likewise, never tearing a file; one folder has several paths with one identity; tested on Windows Server's own SMB server only.
 - Built in S0136 (`design/journal/S0136-windows-share-saves.md`).
+
+## Note (2026-11-20): the share notice's wording tightened (S0136)
+
+The owner, 2026-11-20, in session, on the notice of the amendment above: **"Tighten the sentence"**. Its backup clause ("Finzytrack keeps a backup of every save, but …") could read as if the backup restores an undone save; it does not (a backup holds the version before a save). The notice, `msg:save.best_effort_share` (`save_text.BEST_EFFORT_SHARE`), now reads: "Your ledger is on a network share. If the file server crashes or loses power right after a save, that save can be lost. For full protection, keep your ledger on your computer's own disk."
