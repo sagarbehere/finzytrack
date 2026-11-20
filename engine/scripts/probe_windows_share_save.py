@@ -48,6 +48,12 @@ Commands (run from `engine/`, on Windows only):
 - `identity-remove <root>`: removes that folder (the last step).
 
 It writes only the scratch folders it makes on the share and in the runner's temp folder, and removes them.
+
+**No CI step runs it since S0136** (removed after the 2026-11-20 run 9): it answered BL-0219's questions (the 2026-11-20
+runs 2, 3, 8 and 9; their results are in `design/inbox/answered/20261120-ledgers-on-windows-shares.md` and the S0136
+journal), and the runner's tests now hold the behaviour. To ask the share again, add a temporary step to the
+`engine-windows` job that runs it after the CI share is made (`ftshare`, mapped to `Z:`, as `cut` and `readback`
+expect).
 """
 
 from __future__ import annotations
