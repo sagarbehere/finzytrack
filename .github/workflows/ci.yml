@@ -309,6 +309,12 @@ jobs:
         env:
           TZ: PST8PDT
         run: |
+          # The volume flags of each local volume (prints only): FILE_PERSISTENT_ACLS 0x8, FILE_NAMED_STREAMS 0x40000.
+          $vols = @($env:RUNNER_TEMP) + ($env:FT_TEST_VOLUMES -split ";" | Where-Object { $_ })
+          foreach ($v in $vols) {
+            $root = [System.IO.Path]::GetPathRoot($v)
+            .venv\Scripts\python.exe -c "import ctypes,sys; f=ctypes.c_ulong(); n=ctypes.create_unicode_buffer(64); ok=ctypes.windll.kernel32.GetVolumeInformationW(sys.argv[1],None,0,None,None,ctypes.byref(f),n,64); print({'root':sys.argv[1],'ok':bool(ok),'fs':n.value,'flags':hex(f.value),'persistent_acls':bool(f.value&8),'named_streams':bool(f.value&0x40000)})" $root
+          }
           git fetch --no-tags --depth=1 origin 08f389701c6ea0ce07b7ad2ec3d94911ce3ed885
           git checkout FETCH_HEAD -- src
           .venv\Scripts\python.exe -m pytest -q -rs -p no:cacheprovider tests/fs/test_windows.py -k "V2_F3 or Q_B"
