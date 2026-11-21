@@ -5,6 +5,22 @@ folder, delete ignored files, write into the read-only legacy worktree, or switc
 in scripts/tests/test_guards.py). Commands built on purpose to slip past the parser are a stated limit, not a
 target (S0054). The owner's running app is not guarded: agents never stop, start or call it, and ask the owner
 when it is in their way (INV-24, a working rule; owner, 2026-10-29). The rules are in design/process/PROCESS.md §8.
+
+Generated files (INV-19, BL-0307): a write to a file with a GENERATED first line is refused when the file is under
+the repository (this checkout, by any spelling: a symlink, `..`, a case variant, a relative path), or when it has
+another hard link (it may be the repository's file by another name). A copy outside the repository, such as a
+reviewer's in a temp folder, may be written or removed.
+
+Option values: the value of a glued `--opt=VALUE`, and of `-tDIR` for cp, mv, ln and install, is checked like any
+other argument, so the live data folder, the legacy worktree and generated files are seen through `=` as well.
+
+Stated limits (PROCESS.md §11; S0139):
+- A write aimed at a generated file's folder, not at the file (`cp page.md design/generated/`, `rm -r
+  design/generated`), is not seen: `scripts/check_generated.py`, INV-19's gate, catches the drift at commit and push.
+- In-place edits spelled other than `sed -i...`/`perl -i...`/`--in-place` (`perl -pi -e`, `sed -Ei`) are not read as
+  writes, so they are not refused in the legacy worktree (owner, 2026-11-21: "Stated limit only"; a list of shapes
+  cannot be complete, and the worktree is under git, so a stray write is visible and reversible). The live data
+  folder is still refused for them: any argument naming it is refused, read or write.
 """
 
 from __future__ import annotations
@@ -100,7 +116,9 @@ def _expand(raw: str, cwd: Path) -> list[Path]:
 
 
 def path_problem(raw: str, cwd: Path, writing: bool) -> str | None:
-    """Why an agent may not read or write this path, or None if it may."""
+    """Why an agent may not read or write this path, or None if it may. The live data folder is refused for reading
+    and writing; the legacy worktree, `.git/config` and `.git/hooks`, `corpora/MANIFEST.tsv` and a generated file
+    under the repository (or one with another hard link) for writing. Limits: the module docstring."""
     if LIVE_NAME.search(raw):
         return "the owner's live data folder is off-limits to agents (INV-24); use copies under a temp dir"
     for p in _expand(raw, cwd):
@@ -115,10 +133,30 @@ def path_problem(raw: str, cwd: Path, writing: bool) -> str | None:
             return ("only the owner adds rows to corpora/MANIFEST.tsv (INV-23: owner-reviewed exports); ask the owner "
                     "to review the anonymized file and add its row")
         # INV-19 covers the repository's generated files, by any spelling (`_under` compares the resolved,
-        # lower-cased path); a copy outside it, such as a reviewer's in a temp folder, is not one (BL-0307).
-        if writing and any(_under(p, r) for r in repo_roots()) and p.is_file() and _generated(p):
+        # lower-cased path); a copy outside it, such as a reviewer's in a temp folder, is not one (BL-0307). A file
+        # with another hard link may be the repository's file by another name, so it stays refused (S0139 F1).
+        if writing and p.is_file() and _generated(p) and (any(_under(p, r) for r in repo_roots()) or _links(p) > 1):
             return "this file is generated (GENERATED header); edit its source and rerun the generator (INV-19)"
     return None
+
+
+def _links(p: Path) -> int:
+    try:
+        return os.stat(p).st_nlink
+    except OSError:
+        return 2  # cannot tell: refuse, as a hard link would be
+
+
+GLUED = re.compile(r"^--[\w-]+=(.+)$")  # `--opt=VALUE`
+GLUED_T = {"cp", "mv", "ln", "install"}  # their `-tDIR` names the destination folder
+
+
+def _glued(cmd: str, args: list[str]) -> list[str]:
+    """The values glued to their options: `--opt=VALUE`, and `-tDIR` where `-t` names a folder (S0139 F3-live)."""
+    values = [m.group(1) for a in args if (m := GLUED.match(a))]
+    if cmd in GLUED_T:
+        values += [a[2:] for a in args if re.match(r"^-t.", a)]
+    return values
 
 
 def _first_problem(args: list[str], cwd: Path) -> str | None:
@@ -269,8 +307,9 @@ def bash_problem(command: str, cwd: Path) -> str | None:
                 return "find -delete/-exec in the legacy worktree is refused; it is read-only"
         # Writers: the refusal names its own reason (BL-0307), not one text for every rule.
         problem = None
+        glued = _glued(cmd, args)  # option values are arguments too (S0139 F3-live)
         if cmd in WRITE_ANY_ARG or cmd in ("sed", "perl") and any(a.startswith("-i") or a == "--in-place" for a in args):
-            problem = _first_problem(plain, here)
+            problem = _first_problem(plain + glued, here)
             if not problem and any(_under(here, r) for r in legacy_roots()):
                 problem = "it runs inside the legacy worktree, which is read-only"
         elif cmd in WRITE_LAST_ARG:
@@ -279,15 +318,15 @@ def bash_problem(command: str, cwd: Path) -> str | None:
                 dest = args[args.index("-t") + 1]
             elif plain:
                 dest = plain[-1]
-            problem = _first_problem([dest], here) if dest else None
+            problem = _first_problem(([dest] if dest else []) + glued, here)
             if not problem and cmd == "mv":
                 problem = _first_problem(plain, here)
-        elif cmd in ("npm", "pnpm", "yarn", "pip", "uv") and "--prefix" in args:
-            i = args.index("--prefix")
-            problem = _first_problem(args[i + 1:i + 2], here)
+        elif cmd in ("npm", "pnpm", "yarn", "pip", "uv"):
+            prefix = args[args.index("--prefix") + 1:args.index("--prefix") + 2] if "--prefix" in args else []
+            problem = _first_problem(prefix + glued, here)  # `--prefix DIR`, `--prefix=DIR`, `--target=DIR`
         if problem:
             return f"{cmd} refused: {problem}"
-        for a in plain:
+        for a in plain + glued:
             if (p := path_problem(a, here, writing=False)) and "live data" in p:
                 return p
         if any(_under(here, r) for r in legacy_roots()) and cmd not in READONLY_CMDS and cmd not in ("sed", "find"):

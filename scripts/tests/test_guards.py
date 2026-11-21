@@ -416,9 +416,47 @@ class GuardTest(unittest.TestCase):
                         if other != kind:
                             self.assertNotIn(marker, reason, f"{cmd}: {reason}")
 
+    def test_a_hard_link_outside_the_repo_to_a_generated_file_stays_refused(self) -> None:
+        """S0139 verifier F1: a hard link is the repository's file by another name; the base refused it (no scope),
+        and the scope must not open it. A copy (one link) outside the repo may be written."""
+        gen = self.generated(self.repo / "design" / "generated" / "page.md")
+        os.link(gen, self.t / "hard.md")
+        self.assert_generated_refused(str(self.t / "hard.md"), self.t)
+        self.assert_generated_refused("hard.md", self.t)
+        (self.t / "copy.md").write_text(gen.read_text())
+        self.assertIsNone(guards.bash_problem(f"tee {self.t}/copy.md", self.t))
 
-# A path under the system temp folder, in any of its spellings ("t" "mp" in parts, so this file's text passes).
-FIXED_TEMP = re.compile(r"(?<![\w.~-])/(?:private/|var/)?" + "t" + r"mp(?![\w.-])")
+    def test_option_values_glued_with_equals_are_checked_like_arguments(self) -> None:
+        """S0139 F3-live (pre-existing): `npm --prefix=DIR` passed with DIR the live data folder by a symlink or `..`,
+        since an argument that starts with `-` was never checked. A glued value is now an argument the path rules
+        check, for every writer and, for the live data folder, every command."""
+        L, T, V = self.legacy, self.t, self.live
+        (T / "ll").symlink_to(V)
+        (T / "lg").symlink_to(L)
+        spellings = {"live": [str(V), f"{T}/ll", f"{T}/../live"], "legacy": [str(L), f"{T}/lg", f"{T}/../legacy"]}
+        shapes = ["npm --prefix={}/fe install", "pnpm --prefix={} install", "pip install --target={}/site",
+                  "cp --target-directory={} y", "cp -t{} y", "mv --target-directory={} y", "ln -s -t{} y",
+                  "rm --dir={}/x", "uv pip install --target={}/x"]
+        for kind, dirs in spellings.items():
+            for d in dirs:
+                for shape in shapes:
+                    cmd = shape.format(d)
+                    with self.subTest(cmd=cmd):
+                        self.assertIn(self.MARKERS[kind], guards.bash_problem(cmd, self.repo) or "", cmd)
+        for d in spellings["live"]:  # a reader too: the live data folder is refused for reading
+            with self.subTest(reader=d):
+                self.assertIn("live data folder", guards.bash_problem(f"pytest --rootdir={d}", self.repo) or "")
+        for cmd in ("npm --prefix=frontend install", f"pip install --target={T}/site", f"cp --target-directory={T} y",
+                    f"cp -t{T} y", f"pytest --rootdir={T}", "uv run --directory=backend pytest", f"rsync -tv y {T}/z",
+                    f"pytest --rootdir={L}"):  # reading the legacy worktree is allowed
+            with self.subTest(allowed=cmd):
+                self.assertIsNone(guards.bash_problem(cmd, self.repo), cmd)
+
+
+# A path under the system temp folder, by its four absolute spellings (with or without the `private` and `var`
+# parents), or a name joined to the result of tempfile's temp-folder call (both written in parts here, so this file's
+# own text passes). Limit: a path assembled from parts, as here, is not seen.
+FIXED_TEMP = re.compile(r"(?<![\w.~-])/(?:private/)?(?:var/)?" + "t" + r"mp(?![\w.-])|\bget" + "tempdir" + r"\(")
 
 
 class NoFixedTempPath(unittest.TestCase):
@@ -428,7 +466,8 @@ class NoFixedTempPath(unittest.TestCase):
 
     def test_the_pattern_catches_the_temp_spellings(self) -> None:
         tmp = "t" + "mp"
-        for text in (f'"/{tmp}/x"', f"cat > /{tmp}/x.sh", f"'/private/{tmp}/y'", f"/var/{tmp}/z", f"git log > /{tmp}",
+        for text in (f'"/{tmp}/x"', f"cat > /{tmp}/x.sh", f"'/private/{tmp}/y'", f"/var/{tmp}/z", f"/private/var/{tmp}/w",
+                     f"git log > /{tmp}", "Path(tempfile.get" + "tempdir()) / 'x'", "os.path.join(get" + "tempdir(), 'x')",
                      f"--root /{tmp}/ft"):
             with self.subTest(text=text):
                 self.assertTrue(FIXED_TEMP.search(text), text)
