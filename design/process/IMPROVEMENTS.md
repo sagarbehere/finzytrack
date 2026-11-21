@@ -700,3 +700,11 @@ Format:
 - Why: a refusal keeps an unknown setup safe at the cost of one check and one text; accommodations and row-per-Low cost slices.
 - Expected effect: fewer slices and rounds per milestone with no class (a)/(b) escape. Metric: time per slice and slices per milestone in M2 against M1b's, from the retros; class (a)/(b) findings in later rounds or after landing (target 0).
 - Status: new.
+
+## IMP-0076: the push gate parses the workflow files (S0140, BL-0292, 2026-11-21)
+- Trigger: an escape. S0129's 89a61f03 pushed a `ci.yml` GitHub could not parse (a step name holding `: ` in a plain scalar); since ADR-0060 CI runs only by hand, so it was found only when the manual run did not start (S0129 round 2, the verifier's process note). Owner, 2026-11-21, in session: "Yes, go ahead" (to taking BL-0292 and BL-0302 as one slice; agent-approved as a tightening).
+- What changed: gate (tightening). `scripts/check_workflows.py` (every `*.yml` and `*.yaml` in `.github/workflows/` is UTF-8, one YAML 1.2 document with no duplicate key, and a mapping with a non-empty `on` and `jobs`; an empty folder is refused), run by the T0 pre-push hook in the oracle environment, whose pinned ruamel.yaml it uses (no new dependency); tests in `scripts/oracle/tests/test_check_workflows.py`, the hook pin.
+- PROCESS.md section: §6 (T0 pre-push).
+- Why: the cheapest gate that sees an unparseable workflow before it leaves the machine (well under a second).
+- Expected effect: no manual CI run fails to start for a parse error. Metric: such runs after S0140 (target 0); GitHub schema errors stay possible (the script's stated limits).
+- Status: new.

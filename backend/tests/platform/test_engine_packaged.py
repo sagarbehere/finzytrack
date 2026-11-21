@@ -17,6 +17,9 @@ import os
 import site
 import subprocess
 import sys
+import threading
+import time
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
@@ -35,6 +38,17 @@ from app.platform.engine import EngineFailure, EngineInfo, Pong
 REPO = Path(__file__).resolve().parents[3]
 ENGINE_VENV = REPO / "engine" / ".venv"
 DEADLINE = 20.0
+
+
+def wait_until(cond: Callable[[], bool], timeout: float = DEADLINE) -> bool:
+    """The platform tests' bounded wait: true as soon as `cond` holds, false once `timeout` has passed without it."""
+    end = time.monotonic() + timeout
+    step = threading.Event()
+    while time.monotonic() < end:
+        if cond():
+            return True
+        step.wait(0.02)
+    return cond()
 
 
 def engine_site() -> Path:
@@ -157,7 +171,9 @@ def test_a_failing_stderr_callback_does_not_stop_the_engine_or_the_tail() -> Non
         client.call("test.noise", {})
         assert client.ping() == Pong()
         client.call("test.noise", {})
-        assert client.stderr_tail().count("noise via print") == 2
+        # BL-0302: the reply comes on stdout and the tail fills from stderr on another thread, so the reply can come
+        # first; the line must still arrive, within the file's deadline.
+        assert wait_until(lambda: client.stderr_tail().count("noise via print") == 2), client.stderr_tail()
     finally:
         client.close()
 
