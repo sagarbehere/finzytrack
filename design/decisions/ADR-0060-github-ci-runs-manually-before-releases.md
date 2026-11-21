@@ -2,7 +2,7 @@
 
 This record moves the per-push and nightly gates off GitHub Actions: the workflows stay in the repo and run when started by hand, before each release.
 
-- **Status:** Accepted
+- **Status:** Accepted. **Amended 2026-11-21 (below): a push that does not land a slice runs a lighter pre-push gate.**
 - **Date:** 2026-10-25
 - **Deciders:** owner: "I think we should do a manual GitHub CI run prior to each release." (2026-10-25, in session, after "I don't think we need to run any CI jobs on GitHub at this time. What possible advantage would it give over everything that we are already doing?")
 - **Area:** process, CI
@@ -30,6 +30,13 @@ On a single-owner repo where only agents push, the T1 jobs on GitHub mostly repe
 - Windows and Linux regressions are found at the next manual run instead of within a day; a packaging slice should ask for a manual run before it is called done.
 - `scripts/check_cargo_age.py`'s CI mode ("since the last green CI run") is replaced by the pre-push mode (since the remote branch); the full re-read runs in the manual `nightly.yml`.
 - The hooks must stay installed (`git config core.hooksPath .githooks`); a clone without them has no gate at all until the release run.
+
+## Amendment (2026-11-21): a lighter pre-push gate for a push that does not land a slice
+
+Owner, 2026-11-21, in session: "I'm accepting the inbox note as written" (`design/inbox/answered/20261121-pace-and-scope.md`, change C; BL-0308, S0141).
+- Decision 3 ("the T0 pre-push hook is the per-push gate") now reads: the pre-push hook is the per-push gate, in two modes. A push whose HEAD commit has exactly the trailer `Gate: mid-slice` runs the checks that protect what leaves the machine: the push gate, the staged-file guard and the privacy scans (INV-23, INV-24, on every push without exception), invariants, the workflow parse and the checks that read only the pushed range (deferrals, the Cargo dates of new entries). Every other push runs the whole gate, the landing push of a slice included.
+- Why: a slice pushes three or four times only so that a manual run can see its commit, and the whole gate takes 10 to 15 minutes. The checks a mid-slice push skips read the whole tree, so the next full push runs them on a tree that holds the skipped commit; finding a failure is delayed, not escaped.
+- Rejected: an environment variable (it is not per push, and the sandbox runs only a bare `git push origin next`), a rule from the branch state (its default would be the lighter gate), `git push -o` (the pre-push hook does not receive push options). Details: journal S0141.
 
 ## References
 

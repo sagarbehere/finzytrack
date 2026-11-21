@@ -117,14 +117,15 @@ class EngineChecksAreWired(unittest.TestCase):
     def test_pre_push_runs_the_engine_checks_when_the_engine_exists(self) -> None:
         text = (REPO / ".githooks/pre-push").read_text()
         block = text[text.index("if [[ -f engine/pyproject.toml ]]; then\n"):]
-        block = block[:block.index("\nfi\n")]
+        block = block[:block.index("fi\n")]  # the block's own `fi` (S0141 indented it inside the full-mode block)
+        lines = [s.strip() for s in block.splitlines()]
         for line in ('run "ruff format (engine)" bash -c "cd engine && .venv/bin/ruff format --check --config '
                      'ruff.toml ."',
                      'run "ruff lint (engine)" bash -c "cd engine && .venv/bin/ruff check --config ruff.toml ."',
                      'run "pyright (engine)" python3 scripts/pyright_platforms.py engine',
                      'run "engine tests" bash -c "cd engine && .venv/bin/python -m pytest -q -x '
                      "--junitxml='$reports/engine.xml'\""):
-            self.assertIn("\n  " + line + "\n", block + "\n")
+            self.assertIn(line, lines)
         # before the final checks: the time report and the tree re-check stay last
         self.assertLess(text.index('run "engine tests"'), text.index('run "check times"'))
 

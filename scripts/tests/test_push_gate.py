@@ -9,7 +9,9 @@ skipped pre-commit; the secret removed again in the next commit), the other-bran
 
 from __future__ import annotations
 
+import io
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -572,6 +574,295 @@ class RangeScans(Scratch):
         self.git("rm", "-q", "main.beancount")
         self.commit("gone")
         self.assertEqual(self.staged(self.head()).returncode, 1)
+
+
+# S0141 (BL-0308): a push whose HEAD commit carries the trailer `Gate: mid-slice` runs only the checks that protect
+# what leaves the machine; anything else runs the whole gate. The mark is read from one place only: the trailer
+# block of the pushed HEAD commit's message.
+MARK = "Gate: mid-slice"
+TRAILERS = "Co-Authored-By: t <t@example.com>\nClaude-Session: https://example.com/s"
+
+
+class PushModes(Scratch):
+    """`check_push.py --mode`: prints `mid-slice` for exactly one shape, `full` for every other."""
+
+    def commit_message(self, message: str, path: str = "a.txt") -> str:
+        p = self.clone / path
+        p.write_text(p.read_text() + "x\n" if p.exists() else "x\n")
+        msg = self.clone.parent / "msg.txt"
+        msg.write_bytes(message.encode())
+        self.git("add", "-A")
+        self.git("commit", "-q", "--cleanup=verbatim", "-F", str(msg))
+        return self.head()
+
+    def mode(self, stdin: str | None = None, env: dict[str, str] | None = None) -> str:
+        r = subprocess.run([sys.executable, str(SCRIPTS / "check_push.py"), "--mode"], cwd=self.clone,
+                           env={**self.env, **(env or {})}, input=self.push_line() if stdin is None else stdin,
+                           capture_output=True, text=True)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        return r.stdout
+
+    def test_the_exact_trailer_is_mid_slice(self) -> None:
+        for label, message in (
+                ("alone", f"S9: work\n\nbody\n\n{MARK}\n"),
+                ("among the trailers", f"S9: work\n\nbody\n\n{MARK}\n{TRAILERS}\n"),
+                ("after the trailers", f"S9: work\n\n{TRAILERS}\n{MARK}\n"),
+                ("no body", f"S9: work\n\n{MARK}\n"),
+                ("no final newline", f"S9: work\n\n{TRAILERS}\n{MARK}")):
+            with self.subTest(label):
+                self.commit_message(message)
+                self.assertEqual(self.mode(), "mid-slice\n")
+
+    def test_no_mark_or_a_malformed_one_is_full(self) -> None:  # must-not-pass: the default is the whole gate
+        for label, message in (
+                ("no trailer", f"S9: work\n\nbody\n\n{TRAILERS}\n"),
+                ("no message body", "S9: work\n"),
+                ("another value", f"S9: work\n\n{TRAILERS}\nGate: full\n"),
+                ("a near value", f"S9: work\n\n{TRAILERS}\nGate: midslice\n"),
+                ("value case", f"S9: work\n\n{TRAILERS}\nGate: Mid-slice\n"),
+                ("key case", f"S9: work\n\n{TRAILERS}\ngate: mid-slice\n"),
+                ("no space", f"S9: work\n\n{TRAILERS}\nGate:mid-slice\n"),
+                ("two spaces", f"S9: work\n\n{TRAILERS}\nGate:  mid-slice\n"),
+                ("a trailing space", f"S9: work\n\n{TRAILERS}\nGate: mid-slice \n"),
+                ("a carriage return", f"S9: work\n\n{TRAILERS}\r\nGate: mid-slice\r\n"),
+                ("a space before the colon", f"S9: work\n\n{TRAILERS}\nGate : mid-slice\n"),
+                ("an indented line", f"S9: work\n\n{TRAILERS}\n {MARK}\n"),
+                ("two Gate lines", f"S9: work\n\n{MARK}\n{TRAILERS}\nGate: full\n"),
+                ("the mark twice", f"S9: work\n\n{MARK}\n{MARK}\n"),
+                ("a value after the mark", f"S9: work\n\n{TRAILERS}\n{MARK} lands\n"),
+                ("only in the subject", f"{MARK}\n\nbody\n\n{TRAILERS}\n"),
+                ("the subject alone", f"{MARK}\n"),
+                ("in a body paragraph", f"S9: work\n\n{MARK}\n\nbody\n\n{TRAILERS}\n"),
+                ("in a last paragraph with prose", f"S9: work\n\nbody\n\nsome prose here\n{MARK}\n{TRAILERS}\n"),
+                ("in the body's last line", f"S9: work\n\nthe body ends\n{MARK}\n"),
+                ("a lookalike dash", f"S9: work\n\n{TRAILERS}\nGate: mid‑slice\n")):
+            with self.subTest(label):
+                self.commit_message(message)
+                self.assertEqual(self.mode(), "full\n")
+
+    def test_a_mark_on_an_earlier_commit_of_the_range_is_full(self) -> None:
+        self.commit_message(f"S9: work\n\n{MARK}\n")
+        self.commit_message(f"S9: lands\n\n{TRAILERS}\n")
+        self.assertEqual(self.mode(), "full\n")
+
+    def test_an_environment_variable_is_not_a_mark(self) -> None:
+        self.commit_message(f"S9: lands\n\n{TRAILERS}\n")
+        for name in ("Gate", "GATE", "FT_GATE", "FT_PUSH_GATE", "FT_GATE_MODE", "FINZYTRACK_GATE"):
+            with self.subTest(name):
+                self.assertEqual(self.mode(env={name: "mid-slice"}), "full\n")
+
+    def test_a_tag_push_is_full_even_at_a_marked_head(self) -> None:
+        tip = self.commit_message(f"S9: work\n\n{MARK}\n")
+        self.git("tag", "-a", "-m", f"t\n\n{MARK}", "v9")
+        tag = self.git("rev-parse", "v9").strip()
+        self.assertEqual(self.mode(f"refs/tags/v9 {tag} refs/tags/v9 {ZERO}\n"), "full\n")
+        both = self.push_line() + f"refs/tags/v9 {tag} refs/tags/v9 {ZERO}\n"
+        self.assertEqual(self.mode(both), "full\n")
+        self.git("tag", "v10")  # a lightweight tag at the marked commit
+        self.assertEqual(self.mode(f"refs/heads/next {tip} refs/tags/v10 {ZERO}\n"), "full\n")
+
+    def test_a_push_that_is_not_one_marked_head_is_full(self) -> None:
+        older = self.commit_message(f"S9: work\n\n{MARK}\n")
+        self.commit_message(f"S9: more\n\n{MARK}\n")
+        for label, stdin in (
+                ("a ref that is not HEAD", self.push_line(local_sha=older)),
+                ("a deletion only", f"(delete) {ZERO} refs/heads/old {self.remote_next()}\n"),
+                ("nothing pushed", ""),
+                ("malformed input", "refs/heads/next HEAD refs/heads/next abc\n"),
+                ("a good line and a malformed one", self.push_line() + "junk\n"),
+                ("a sha that is not here", self.push_line(local_sha="1" * 40)),
+                ("a marked push and a deletion", self.push_line() + f"(delete) {ZERO} refs/heads/old {older}\n")):
+            with self.subTest(label):
+                self.assertEqual(self.mode(stdin), "full\n")
+        # the marked HEAD itself, pushed as one branch, is mid-slice
+        self.assertEqual(self.mode(), "mid-slice\n")
+
+    def test_a_message_that_is_not_utf8_is_full(self) -> None:  # S0141 mutant default-unreadable-message-mid
+        parent = self.commit_message("S9: base\n")
+        tree = self.git("rev-parse", "HEAD^{tree}").strip()
+        raw = (f"tree {tree}\nparent {parent}\nauthor t <t@example.com> 1 +0000\ncommitter t <t@example.com> 1 +0000"
+               f"\n\nS9: caf\xe9\n\n{MARK}\n").encode("latin-1")  # written as is: git commit would re-encode it
+        sha = subprocess.run(["git", "hash-object", "-t", "commit", "-w", "--stdin"], cwd=self.clone, env=self.env,
+                             input=raw, capture_output=True, check=True).stdout.decode().strip()
+        self.git("reset", "-q", "--hard", sha)
+        self.assertEqual(self.mode(), "full\n")
+
+    def test_a_failure_inside_the_mode_step_is_full(self) -> None:  # S0141 mutant default-exception-mid
+        self.commit_message(f"S9: work\n\n{MARK}\n")
+        r = subprocess.run([sys.executable, str(SCRIPTS / "check_push.py"), "--mode"], cwd=self.clone, env=self.env,
+                           input=self.push_line().encode() + b"\xff\n", capture_output=True)
+        self.assertEqual((r.returncode, r.stdout), (0, b"full\n"), r.stderr)
+        sys.path.insert(0, str(SCRIPTS))
+        import check_push
+
+        with unittest.mock.patch.object(check_push, "push_mode", side_effect=RuntimeError("x")), \
+                unittest.mock.patch("sys.stdout", new_callable=io.StringIO) as out, \
+                unittest.mock.patch("sys.stderr", new_callable=io.StringIO):
+            self.assertEqual(check_push.print_mode("anything"), 0)
+        self.assertEqual(out.getvalue(), "full\n")
+
+    def test_outside_a_repository_it_is_full(self) -> None:
+        r = subprocess.run([sys.executable, str(SCRIPTS / "check_push.py"), "--mode"], cwd=self.clone.parent,
+                           env=self.env, input=f"refs/heads/next {'1' * 40} refs/heads/next {ZERO}\n",
+                           capture_output=True, text=True)
+        self.assertEqual((r.returncode, r.stdout), (0, "full\n"), r.stderr)
+
+
+# The stub check timer for HookModes: it records each `run` label, runs only `true` and `false` (the canary), and
+# passes every other check without running it.
+STUB_TIMER = '''import os, subprocess, sys
+args = sys.argv[1:]
+with open(os.environ["FT_TEST_GATE_LOG"], "a") as f:
+    f.write(("run\\t" + args[2] if args[0] == "run" else args[0]) + "\\n")
+cmd = [a for a in args[3:] if a != "--size-dependent"]
+sys.exit(subprocess.run(cmd).returncode if args[0] == "run" and cmd in (["true"], ["false"]) else 0)
+'''
+# What a mid-slice push runs (BL-0308, the brief's list): the labels of the pre-push hook's `run` lines.
+MID_SLICE_CHECKS = [
+    "canary",
+    "staged-file guard (pushed commits <range>)",
+    "privacy scan (pushed commits and messages <range>)",
+    "deferred backlog items (pushed commits <range>)",
+    "staged-file guard (all tracked files)",
+    "privacy scan (all tracked files)",
+    "invariants",
+    "workflow files parse",
+    "cargo 14-day rule (new entries verified)",
+    "check times",
+    "tree unchanged during the checks",
+]
+# The privacy and real-data guards and the preconditions' last check: never skipped (INV-23, INV-24)
+GUARDS = ["staged-file guard (pushed commits <range>)", "privacy scan (pushed commits and messages <range>)",
+          "staged-file guard (all tracked files)", "privacy scan (all tracked files)",
+          "tree unchanged during the checks"]
+
+
+def hook_labels(text: str) -> list[str]:
+    """Every check the hook can run, in order: the labels of its `run` lines and the canary."""
+    out = []
+    for line in text.splitlines():
+        s = line.strip()
+        if "gate_timer.py run pre-push canary false" in s:
+            out.append("canary")
+        elif s.startswith("run "):
+            label = s.split('"')[1]
+            out.append(label.replace("${range#tag }", "<range>").replace("$range", "<range>"))
+    return out
+
+
+class HookModes(Scratch):
+    """The real pre-push hook's bytes, run in the scratch clone with a stub check timer: which checks each mode runs."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.git("config", "finzytrack.allowPush", "true")
+        hook = (REPO / ".githooks/pre-push").read_bytes()
+        self.write(".githooks/pre-push", hook)
+        self.write("scripts/check_push.py", (SCRIPTS / "check_push.py").read_bytes())
+        self.write("scripts/gate_timer.py", STUB_TIMER)
+        for gate in ("backend/pyproject.toml", "engine/pyproject.toml", "shell/src-tauri/Cargo.toml",
+                     "frontend/package.json"):  # every package section of the hook is entered
+            self.write(gate, "\n")
+        self.commit("the hook and its scripts")
+        self.git("push", "-q", "origin", "next")
+        self.log = Path(self.tmp.name) / "gate.log"
+        # macOS `mktemp -d` ignores TMPDIR, and a sandboxed run may not write its default folder: the hook's report
+        # folder comes from a shim in the scratch folder (the report folder is not what these tests test)
+        shim = Path(self.tmp.name) / "bin"
+        shim.mkdir()
+        (shim / "mktemp").write_text(f'#!/bin/sh\nexec /usr/bin/mktemp -d "{self.tmp.name}/reports.XXXXXX"\n')
+        (shim / "mktemp").chmod(0o755)
+        self.hook_env = {**self.env, "FT_TEST_GATE_LOG": str(self.log), "PATH": f"{shim}:{self.env['PATH']}"}
+        self.all_checks = hook_labels(hook.decode("ascii"))
+        # every check of a branch push (a pushed tag's message scan runs only when a tag is pushed)
+        self.everything = [x for x in self.all_checks if x != "privacy scan (pushed tag message <range>)"]
+
+    def push(self, message: str, stdin: str | None = None) -> tuple[int, list[str], str]:
+        self.write("work.txt", message)
+        msg = Path(self.tmp.name) / "msg.txt"
+        msg.write_text(message)
+        self.git("add", "-A")
+        self.git("commit", "-q", "--cleanup=verbatim", "-F", str(msg))
+        return self.run_hook(stdin)
+
+    def run_hook(self, stdin: str | None = None) -> tuple[int, list[str], str]:
+        self.log.write_text("")
+        r = subprocess.run(["bash", ".githooks/pre-push", "origin", str(self.origin)], cwd=self.clone,
+                           env=self.hook_env,
+                           input=self.push_line() if stdin is None else stdin, capture_output=True, text=True)
+        labels = [re.sub(r"(?:[0-9a-f]{40}\.\.)?[0-9a-f]{40}", "<range>", line[4:])
+                  for line in self.log.read_text().splitlines() if line.startswith("run\t")]
+        return r.returncode, labels, r.stderr
+
+    def test_the_hook_reads_its_labels(self) -> None:  # the static list below is the hook's own
+        for label in MID_SLICE_CHECKS:
+            self.assertIn(label, self.all_checks)
+        self.assertGreater(len(self.all_checks), len(MID_SLICE_CHECKS) + 20)
+
+    def test_a_marked_push_runs_exactly_the_mid_slice_checks(self) -> None:
+        code, labels, err = self.push(f"S9: work\n\nbody\n\n{MARK}\n{TRAILERS}\n")
+        self.assertEqual(code, 0, err)
+        self.assertEqual(labels, MID_SLICE_CHECKS, err)
+        self.assertIn("mid-slice", err)
+
+    # The tests below pass on the base too (it runs everything on every push): they guard the default.
+    def test_an_unmarked_push_runs_every_check(self) -> None:  # @regression-guard (must-not-pass: the landing push)
+        code, labels, err = self.push(f"S9: lands\n\nbody\n\n{TRAILERS}\n")
+        self.assertEqual(code, 0, err)
+        self.assertEqual(labels, self.everything)
+
+    def test_a_malformed_mark_runs_every_check(self) -> None:  # @regression-guard (must-not-pass)
+        for label, message in (("a near value", f"S9: work\n\n{TRAILERS}\nGate: midslice\n"),
+                               ("the mark in the body", f"S9: work\n\n{MARK}\n\nbody\n\n{TRAILERS}\n"),
+                               ("the mark in the subject", f"{MARK}\n\n{TRAILERS}\n")):
+            with self.subTest(label):
+                code, labels, err = self.push(message)
+                self.assertEqual(code, 0, err)
+                self.assertEqual(labels, self.everything)
+
+    def test_a_tag_push_at_a_marked_head_runs_every_check(self) -> None:  # @regression-guard
+        self.push(f"S9: work\n\n{MARK}\n")
+        self.git("tag", "-a", "-m", "t", "v9")
+        tag = self.git("rev-parse", "v9").strip()
+        code, labels, err = self.run_hook(self.push_line() + f"refs/tags/v9 {tag} refs/tags/v9 {ZERO}\n")
+        self.assertEqual(code, 0, err)
+        self.assertEqual(set(labels), set(self.all_checks))
+
+    def test_the_guards_run_in_both_modes(self) -> None:  # @regression-guard (must-not-pass: INV-23, INV-24)
+        for label, message in (("mid-slice", f"S9: work\n\n{MARK}\n"), ("full", f"S9: lands\n\n{TRAILERS}\n")):
+            with self.subTest(label):
+                code, labels, err = self.push(message)
+                self.assertEqual(code, 0, err)
+                for guard in GUARDS:
+                    self.assertIn(guard, labels)
+
+    def test_the_preconditions_refuse_before_any_check_in_both_modes(self) -> None:  # @regression-guard
+        for label, message in (("mid-slice", f"S9: work\n\n{MARK}\n"), ("full", f"S9: lands\n\n{TRAILERS}\n")):
+            with self.subTest(label):
+                self.push(message)
+                self.write("untracked.txt", "not pushed\n")
+                code, labels, err = self.run_hook()
+                self.assertEqual((code, labels), (1, []), err)
+                self.assertIn("refused before the checks ran", err)
+                (self.clone / "untracked.txt").unlink()
+                code, labels, err = self.run_hook(self.push_line(local_sha=self.git("rev-parse", "HEAD~1").strip()))
+                self.assertEqual((code, labels), (1, []), err)
+
+    def test_a_failing_or_odd_mode_step_runs_every_check(self) -> None:  # @regression-guard (the hook's default)
+        real = (SCRIPTS / "check_push.py").read_text()
+        for label, mode_step in (("it prints mid-slice and fails", 'print("mid-slice"); sys.exit(1)'),
+                                 ("it prints a near value", 'print(" mid-slice"); sys.exit(0)'),
+                                 ("it prints two lines", 'print("mid-slice"); print("full"); sys.exit(0)'),
+                                 ("it prints nothing", "sys.exit(0)")):
+            with self.subTest(label):
+                wrapped = real.replace('if __name__ == "__main__":\n',
+                                       'if __name__ == "__main__" and sys.argv[1:2] == ["--mode"]:\n    '
+                                       + mode_step + '\nif __name__ == "__main__":\n', 1)
+                self.assertNotEqual(wrapped, real)
+                self.write("scripts/check_push.py", wrapped)
+                code, labels, err = self.push(f"S9: work\n\n{MARK}\n")
+                self.assertEqual(code, 0, err)
+                self.assertEqual(labels, self.everything)
 
 
 class HookFiles(unittest.TestCase):

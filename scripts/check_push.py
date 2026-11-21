@@ -37,7 +37,24 @@ HEAD_SHA and the tree is still clean: another process (a parallel agent, an edit
 tree during the ~90 s of checks changed what they tested. Stated limit: a change made and undone between the two
 checks is not seen.
 
+With `--mode` (S0141, BL-0308; owner, 2026-11-21: "I'm accepting the inbox note as written", change C) it reads the
+pre-push lines on stdin and prints the gate's mode, `mid-slice` or `full`, and always exits 0. It prints `mid-slice`
+only when all of these hold, and `full` otherwise (also when it cannot read something, so the default is the whole
+gate):
+  - the input is well formed and pushes at least one branch; every pushed ref is a branch (`refs/heads/`) whose new
+    commit is HEAD; no tag is pushed (a tag is a release mark) and nothing is only deleted;
+  - the HEAD commit's message, read from the raw commit object (so no git configuration changes the reading), has a
+    trailer block: a last paragraph after the subject, every line of it `Key: value` (the key letters, digits and
+    `-`, then `: `), and in that block exactly one line whose key is `Gate` in any case, and that line is exactly
+    `Gate: mid-slice`.
+A mark anywhere else (the subject, a body paragraph, a last paragraph with a prose line, an earlier commit of the
+range, a tag message, an environment variable) is not read. The pre-push hook runs the full-only checks unless this
+prints exactly `mid-slice` and exits 0. Stated limit: nothing stops a commit that lands a slice from carrying the
+mark (the gates' self-defence is frozen, PROCESS.md section 9); the whole-tree checks then run at the next unmarked
+push, and the range checks ran on this one.
+
 Usage (from .githooks/pre-push):  python3 scripts/check_push.py <remote> [<push url>] < <pre-push stdin>
+                                  python3 scripts/check_push.py --mode < <pre-push stdin>
                                   python3 scripts/check_push.py --still <HEAD sha>
 Exit 0 = lines printed (maybe none), 1 = refused.
 """
@@ -216,6 +233,8 @@ def main(argv: list[str] | None = None, stdin: str | None = None) -> int:
     argv = sys.argv[1:] if argv is None else argv
     if argv[:1] == ["--still"]:
         return still(argv[1] if len(argv) > 1 else "")
+    if argv[:1] == ["--mode"]:
+        return print_mode(stdin)
     remote = (argv[1] if len(argv) > 1 and argv[1] else argv[0]) if argv else ""  # the push URL when git gives it
     refs, problems = parse_refs(sys.stdin.read() if stdin is None else stdin)
     head = commit_of("HEAD")
@@ -236,6 +255,74 @@ def main(argv: list[str] | None = None, stdin: str | None = None) -> int:
         return 1
     for rng in ranges_for(refs, remote):
         print(rng)
+    return 0
+
+
+MID_SLICE = "mid-slice"
+FULL = "full"
+MARK = "Gate: mid-slice"
+TRAILER_LINE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9-]*: ")
+
+
+def raw_message(sha: str) -> str | None:
+    """The commit's message as stored: the raw object after its header (no git configuration applies)."""
+    proc = subprocess.run(["git", "--no-replace-objects", "cat-file", "commit", sha], capture_output=True,
+                          env={**os.environ, "GIT_NO_REPLACE_OBJECTS": "1"})
+    if proc.returncode != 0 or b"\n\n" not in proc.stdout:
+        return None
+    try:
+        return proc.stdout.split(b"\n\n", 1)[1].decode("utf-8")
+    except UnicodeDecodeError:
+        return None
+
+
+def mode_of_message(message: str) -> tuple[str, str]:
+    """`mid-slice` when the message's trailer block holds exactly the one `Gate` line `Gate: mid-slice`."""
+    paragraphs = re.split(r"\n(?:[ \t]*\n)+", message.strip("\n"))
+    if len(paragraphs) < 2:
+        return FULL, "no trailer block"
+    block = paragraphs[-1].split("\n")
+    if not all(TRAILER_LINE.match(line) for line in block):
+        return FULL, "the last paragraph is not a trailer block"
+    gates = [line for line in block if line.split(":", 1)[0].lower() == "gate"]
+    if not gates:
+        return FULL, "no Gate trailer"
+    if gates != [MARK]:
+        return FULL, f"the Gate trailer is not exactly {MARK!r}: {gates[:2]!r}"
+    return MID_SLICE, f"HEAD's trailer {MARK!r}"
+
+
+def push_mode(stdin: str) -> tuple[str, str]:
+    """The gate's mode for this push (the module docstring); anything unclear is `full`."""
+    refs, problems = parse_refs(stdin)
+    if problems:
+        return FULL, "the push input is not well formed"
+    pushed = [r for r in refs if r.local_sha != ZERO]
+    if not pushed or len(pushed) != len(refs):
+        return FULL, "nothing is pushed, or a ref is deleted"
+    if any(not r.remote_ref.startswith("refs/heads/") or not r.local_ref.startswith("refs/heads/") for r in pushed):
+        return FULL, "a tag or a ref that is not a branch is pushed"
+    head = commit_of("HEAD")
+    if head is None or any(r.local_sha != head for r in pushed):
+        return FULL, "a pushed ref is not HEAD"
+    message = raw_message(head)
+    if message is None:
+        return FULL, "HEAD's message cannot be read"
+    return mode_of_message(message)
+
+
+def print_mode(stdin: str | None = None) -> int:
+    """`--mode`: print the mode on stdout and its reason on stderr; exit 0 whatever happens."""
+    try:
+        mode, reason = push_mode(sys.stdin.read() if stdin is None else stdin)
+    except Exception as e:  # noqa: BLE001 - any failure means the whole gate
+        mode, reason = FULL, f"the mode could not be read ({type(e).__name__})"
+    if mode == MID_SLICE:
+        print(f"pre-push: mid-slice push ({reason}): only the privacy, real-data, range, invariant and workflow "
+              "checks run; the landing push runs everything", file=sys.stderr)
+    else:
+        print(f"pre-push: the whole gate runs ({reason})", file=sys.stderr)
+    print(mode)
     return 0
 
 
