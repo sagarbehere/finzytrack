@@ -35,3 +35,14 @@
   - BL-0302's test, `test_a_failing_stderr_callback_does_not_stop_the_engine_or_the_tail`: a scratch pytest plugin (session scratchpad, not in the repo) wrapping `engine_client._pump_stderr`'s tail. Each stderr line 0.5 s late: the base form fails (the tail read empty right after the reply), the new form passes in 1.65 s. Lines after the second never reaching the tail: the new form fails at the deadline (20.14 s, `wait_until` false, the tail `noise via print / noise via fd 1` in the message). Unchanged pump: passes in 0.13 s.
 - Self-mutation (optional on tooling; done): plan in the session scratchpad (`s0140-mutants.toml`), run on `test_check_workflows.py` in the oracle environment: 8 loosening mutants, 8 killed: YAML errors ignored, UTF-8 not required, the top-level mapping not required, `on: null` accepted, empty `jobs` accepted, an empty folder passing, YAML 1.1 instead of 1.2 (killed by the repository's own workflows: `on:` reads as true), `.yaml` files not read.
 - Population: the workflow files are every `*.yml` and `*.yaml` directly in `.github/workflows/` (GitHub reads no subfolder): 3 in, 3 checked, 0 refused.
+
+## Verifier
+- Round 1, head `f5ea67c4`: PASS WITH FINDINGS, no High, no class (a)/(b). One round (review row "Tooling, gates"); the fix changes only tests, so no further round (IMP-0075).
+
+| ID | Severity | Class | Disposition |
+|---|---|---|---|
+| F1 | Low | c | Fixed (tests only): `on: {}`, `on: []` and `on: ""` added to `test_yaml_that_is_not_one_workflow_is_refused`; the mutant reducing the rule to `doc.get("on") is None` now dies (session scratchpad `s0140-f1-mutant.toml`: 1 tried, 1 killed) |
+| F2 | Low | e | Dropped: `wait_until` is copied a sixth time; it follows the platform tests' existing pattern (each file keeps its own copy), and merging the copies is outside this slice |
+
+## Retro
+- Build about 45 min (plus an 11 min push gate), fix about 5 min, 1 verifier round, findings 0H/0M/2L. Cheaper gate: an "on" rule written as a set of empty values wants each value in its test list, which the seeded mutants missed by mutating only to `"on" not in doc`. Process checks: none fired on the slice; the sandbox refused a redirected `git push` once (my mistake, not a false positive).
