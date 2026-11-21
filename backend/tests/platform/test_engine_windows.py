@@ -526,7 +526,8 @@ def test_the_engine_takes_its_lock_with_the_sidecars_identity(folder: AppFolder)
         assert wait_until(lambda: lock.exists() and not lock_free(lock)), "the engine did not take the engine lock"
     finally:
         c.close()
-    assert lock_free(lock)
+    # Free soon after the engine's end, not at once (§5.2, "Limit (lock release on Windows)"; BL-0291, S0137).
+    assert wait_until(lambda: lock_free(lock)), "the engine's lock outlived it"
 
 
 def test_a_new_engine_starts_only_after_the_previous_engines_job_is_drained(tmp_path: Path) -> None:

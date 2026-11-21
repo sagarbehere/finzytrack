@@ -12,9 +12,10 @@ lists again (owner, 2026-11-18: "b"). A member that can never be opened keeps th
 from __future__ import annotations
 
 import ctypes
+import faulthandler
 import subprocess
 import threading
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from types import SimpleNamespace
 from typing import Any, cast
 
@@ -24,6 +25,26 @@ from app.platform.adapters.engine_group import EngineGroup
 from tests.platform.fake_win32 import CHILD, LEADER, FakeWin, windows_job
 
 DEADLINE = 10.0
+
+
+@pytest.fixture(autouse=True)
+def hang_guard() -> Iterator[None]:
+    """The test's own hang detector (S0137, verifier F3): a drain or a listing that never ends dumps the stacks and
+    fails the run, instead of hanging it. A listing is also run on a thread joined with `DEADLINE` (`within`)."""
+    faulthandler.dump_traceback_later(6 * DEADLINE, exit=True)
+    try:
+        yield
+    finally:
+        faulthandler.cancel_dump_traceback_later()
+
+
+def within(fn: Callable[[], Any]) -> list[Any]:
+    """`fn()`'s answer in a one-item list, or an empty list if it has not returned within `DEADLINE`."""
+    out: list[Any] = []
+    t = threading.Thread(target=lambda: out.append(fn()), daemon=True)
+    t.start()
+    t.join(DEADLINE)
+    return out
 
 
 @pytest.fixture
@@ -159,9 +180,29 @@ def test_a_job_with_more_members_than_the_first_buffer_holds_is_listed_whole_and
     fake = FakeWin(extra=70)
     fake_errors.append(fake)
     job = job_over(fake)
-    assert sorted(job.member_ids() or []) == sorted(fake.listed), "the job was not listed whole"
+    listed = within(job.member_ids)
+    assert listed, "the listing never ended"
+    assert sorted(listed[0] or []) == sorted(fake.listed), "the job was not listed whole"
     t, out = drain_in_thread(job)
     t.join(DEADLINE)
     assert out, "the drain did not end"
     assert fake.job_terminations >= 1
+    assert fake.reaped_early is False, "the drain reaped while the child was still closing its handles"
+
+
+def test_a_short_buffer_answered_with_a_truncated_list_is_listed_again_whole(fake_errors: list[FakeWin]) -> None:
+    """S0137, verifier F4: Windows may answer a buffer too small for the job with success and a truncated list
+    (`NumberOfProcessIdsInList` below `NumberOfAssignedProcesses`); with 72 members and room for 64, the listing grows
+    its buffer to the job's size and lists every member, and the drain ends the job and reaps after the child's
+    handles are closed. Kills the mutants that keep the buffer's size and that answer None for every truncated list.
+    @regression-guard (the product is right on the base 53db6dac; the mutants are the evidence)."""
+    fake = FakeWin(extra=70, short_succeeds=True)
+    fake_errors.append(fake)
+    job = job_over(fake)
+    listed = within(job.member_ids)
+    assert listed, "the listing never ended"
+    assert sorted(listed[0] or []) == sorted(fake.listed), "the job was not listed whole"
+    t, out = drain_in_thread(job)
+    t.join(DEADLINE)
+    assert out, "the drain did not end"
     assert fake.reaped_early is False, "the drain reaped while the child was still closing its handles"

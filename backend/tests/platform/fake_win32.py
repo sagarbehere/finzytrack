@@ -11,7 +11,9 @@ repro). `windows_job` is imported with `sys.platform` set to `win32` for the imp
 - `IsProcessInJob` can fail (`in_job_fails`), for as long as the test says (S0137, BL-0291 (1));
 - `extra` more members (pids from `EXTRA`), each ended and gone at once by `TerminateJobObject`, so that a job can
   have more members than the module's first buffer holds (64; S0137, BL-0291 (2)): a buffer too small for the whole
-  list fails with `ERROR_MORE_DATA`.
+  list fails with `ERROR_MORE_DATA`, or, with `short_succeeds`, succeeds with as many pids as fit and
+  `NumberOfProcessIdsInList` below `NumberOfAssignedProcesses` (the other answer Microsoft's
+  `JOBOBJECT_BASIC_PROCESS_ID_LIST` documents for a short buffer; S0137, verifier F4).
 
 `reaped_early` records whether the reap read the leader while the child was still running or closing its handles:
 the false "drained" the drain must never give.
@@ -68,7 +70,9 @@ class FakeWin:
         assign_fails: bool = False,
         in_job_fails: bool = False,
         extra: int = 0,
+        short_succeeds: bool = False,
     ) -> None:
+        self.short_succeeds = short_succeeds
         self.extras = [EXTRA + i for i in range(extra)]
         self.extras_ended = False
         self.listed = [LEADER, CHILD, *self.extras]
@@ -123,8 +127,11 @@ class FakeWin:
         if self.partial > 0 and len(ids) > 1:
             self.partial -= 1
             shown = ids[:1]
+        pid_size = ctypes.sizeof(ctypes.c_size_t)
+        if self.short_succeeds and 8 + len(shown) * pid_size > size:
+            shown = shown[: (size - 8) // pid_size]  # as many as fit, and success
         raw = len(ids).to_bytes(4, "little") + len(shown).to_bytes(4, "little")
-        raw += b"".join(p.to_bytes(ctypes.sizeof(ctypes.c_size_t), "little") for p in shown)
+        raw += b"".join(p.to_bytes(pid_size, "little") for p in shown)
         if len(raw) > size:
             self.error = wj.ERROR_MORE_DATA
             return 0

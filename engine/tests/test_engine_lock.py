@@ -16,6 +16,7 @@ import shutil
 import subprocess
 import sys
 import threading
+import time
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
@@ -106,6 +107,21 @@ def held_by_another(path: Path) -> bool:
         os.close(fd)  # closing releases a lock this process took
 
 
+def freed_after_its_end(path: Path) -> bool:
+    """Whether the lock of an engine that has ended is free: at once on POSIX (a `flock` lock goes with its last
+    descriptor); on Windows within `DEADLINE`, since Windows frees a dead process's locks shortly after it ends, not
+    at its end (engine-jobs §5.2, "Limit (lock release on Windows)"; BL-0291, S0137)."""
+    if sys.platform != "win32":
+        return not held_by_another(path)
+    end = time.monotonic() + DEADLINE
+    tick = threading.Event()
+    while time.monotonic() < end:
+        if not held_by_another(path):
+            return True
+        tick.wait(0.02)
+    return not held_by_another(path)
+
+
 @pytest.fixture
 def lock(tmp_path: Path) -> Path:
     path = tmp_path / "locks" / "engine.lock"
@@ -140,7 +156,7 @@ def test_after_its_handshake_the_engine_holds_the_lock_until_it_ends(
     assert proc.stdin is not None
     proc.stdin.close()  # the engine ends at the end of its input
     proc.wait(DEADLINE)
-    assert not held_by_another(lock)
+    assert freed_after_its_end(lock), "the engine's lock outlived it"
 
 
 def test_a_request_after_the_handshake_waits_while_an_earlier_engine_holds_the_lock(

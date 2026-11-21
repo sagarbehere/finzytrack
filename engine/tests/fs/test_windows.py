@@ -22,6 +22,7 @@ import shutil
 import subprocess
 import sys
 import threading
+import time
 import uuid
 import warnings
 from collections.abc import Callable, Generator, Iterator
@@ -689,7 +690,13 @@ def test_the_engine_lock_is_held_after_the_handshake_until_the_engine_ends(
     proc.stdin.close()
     proc.wait(DEADLINE)
     assert lock.is_file()
-    assert not _held_by_another(lock)
+    # Windows frees a dead process's locks shortly after it ends, not at its end (engine-jobs §5.2, "Limit (lock
+    # release on Windows)"; BL-0291, S0137): free within the deadline, not at once.
+    end = time.monotonic() + DEADLINE
+    tick = threading.Event()
+    while _held_by_another(lock) and time.monotonic() < end:
+        tick.wait(0.02)
+    assert not _held_by_another(lock), "the engine's lock outlived it"
 
 
 def test_an_engine_waits_for_the_lock_an_earlier_engine_holds(
