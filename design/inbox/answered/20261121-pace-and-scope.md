@@ -76,3 +76,12 @@ Accept A, B and D as written, and C if a faster mid-slice push is worth one tool
 The write path keeps its full rigor where bytes are at stake. After M2, compare the time per feature slice with M1b's, so we know from numbers whether the rest goes faster.
 
 ## Answer (owner, verbatim, with date)
+Owner, 2026-11-21, in session: "I'm accepting the inbox note as written"
+
+**Decision: A, B, C and D as written.**
+- A and B are in PROCESS.md §3 steps 2 and 7 and the review budget (IMP-0075).
+- C is BL-0308, a tooling slice.
+- D is BL-0283's new text.
+- The rows are edited as the table under A says, each with the owner's words; BL-0303 moved to M11.
+
+Earlier in the same session, on OneDrive: the owner has a Windows PC signed in to OneDrive and will turn it on for the one-off check by hand ("I can do so for a one off check if there is no other/better way"). The Cloud Files simulation in CI covers the rest.

@@ -692,3 +692,11 @@ Format:
 - Why: the cheapest gate that sees the Linux run's type errors before the push.
 - Expected effect: no type error reaches a Linux CI run. Metric: pyright failures in T1 that T0 passed (target 0); the pre-push check's time (measured once locally with both passes in parallel: about 8 s for the engine, 7 s for the backend; the gate timer's history shows the change against one pass).
 - Status: new.
+
+## IMP-0075: refuse rare setups first; Low (c)/(d) findings stay in their round (2026-11-21)
+- Trigger: the owner's question on M1b's pace. Since 2026-11-13 the slice journals record about 9 h of build and fix time on the write contract (S0115 to S0124), 3.5 h on the Linux port (S0125) and about 44 h on the Windows port (S0126 to S0137), most of it on rare setups, plus Low test and docs findings turned into backlog rows and later slices. Owner, 2026-11-21, in session: "I'm accepting the inbox note as written"; `design/inbox/answered/20261121-pace-and-scope.md`.
+- What changed: process (loosening for rare setups and Low (c)/(d) findings; the safety core unchanged). PROCESS.md §3 step 2 "Refuse first"; step 7 and the review budget's fresh-round column: a Low (c)/(d) finding is fixed (tests or docs only, no further round) or dropped with a reason, never a backlog row; options notes only for (a)/(b) findings and policy questions. The note's change C (a lighter push gate for mid-slice pushes) is BL-0308; change D (typical OneDrive setups supported) is BL-0283's new text.
+- PROCESS.md section: §3 steps 2 and 7, the review budget.
+- Why: a refusal keeps an unknown setup safe at the cost of one check and one text; accommodations and row-per-Low cost slices.
+- Expected effect: fewer slices and rounds per milestone with no class (a)/(b) escape. Metric: time per slice and slices per milestone in M2 against M1b's, from the retros; class (a)/(b) findings in later rounds or after landing (target 0).
+- Status: new.
