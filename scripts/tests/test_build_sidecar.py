@@ -107,7 +107,7 @@ class Extract(unittest.TestCase):
     def test_unsafe_members_are_refused(self) -> None:
         cases = {
             "dot-dot": [member("../escape")],
-            "absolute": [member("/tmp/escape")],
+            "absolute": [member("/escape")],  # an absolute name; no fixed temp path (BL-0307)
             "symlink out": [member("python/link", tarfile.SYMTYPE, "/etc/passwd")],
             "relative symlink out": [member("python/link", tarfile.SYMTYPE, "../../outside")],
             "hard link out": [member("python/hard", tarfile.LNKTYPE, "/etc/passwd")],

@@ -32,6 +32,15 @@ def legacy_roots() -> list[Path]:
     return roots
 
 
+def repo_roots() -> list[Path]:
+    """The repository whose generated files INV-19 covers: the checkout this hook lives in, plus a test's stand-in
+    (`FT_GUARD_REPO` only adds a folder, so it can only refuse more)."""
+    roots = [REPO]
+    if os.environ.get("FT_GUARD_REPO"):
+        roots.append(Path(os.environ["FT_GUARD_REPO"]).expanduser())
+    return roots
+
+
 # Back-compat names used by other scripts and tests.
 def live_data_root() -> Path:
     return live_data_roots()[-1]
@@ -105,8 +114,18 @@ def path_problem(raw: str, cwd: Path, writing: bool) -> str | None:
         if writing and rp.name == "manifest.tsv" and rp.parent.name == "corpora":
             return ("only the owner adds rows to corpora/MANIFEST.tsv (INV-23: owner-reviewed exports); ask the owner "
                     "to review the anonymized file and add its row")
-        if writing and p.is_file() and _generated(p):
+        # INV-19 covers the repository's generated files, by any spelling (`_under` compares the resolved,
+        # lower-cased path); a copy outside it, such as a reviewer's in a temp folder, is not one (BL-0307).
+        if writing and any(_under(p, r) for r in repo_roots()) and p.is_file() and _generated(p):
             return "this file is generated (GENERATED header); edit its source and rerun the generator (INV-19)"
+    return None
+
+
+def _first_problem(args: list[str], cwd: Path) -> str | None:
+    """The first argument a writer may not write, with its own reason."""
+    for a in args:
+        if problem := path_problem(a, cwd, writing=True):
+            return f"{a}: {problem}"
     return None
 
 
@@ -248,24 +267,26 @@ def bash_problem(command: str, cwd: Path) -> str | None:
                 return "find over a folder that contains the owner's live data is refused; search inside the repo"
             if any(a in ("-delete", "-exec", "-execdir", "-ok") for a in args) and any(_under(root, r) for r in legacy_roots()):
                 return "find -delete/-exec in the legacy worktree is refused; it is read-only"
-        writes = False
+        # Writers: the refusal names its own reason (BL-0307), not one text for every rule.
+        problem = None
         if cmd in WRITE_ANY_ARG or cmd in ("sed", "perl") and any(a.startswith("-i") or a == "--in-place" for a in args):
-            writes = any(path_problem(a, here, writing=True) for a in plain) or any(
-                _under(here, r) for r in legacy_roots())
+            problem = _first_problem(plain, here)
+            if not problem and any(_under(here, r) for r in legacy_roots()):
+                problem = "it runs inside the legacy worktree, which is read-only"
         elif cmd in WRITE_LAST_ARG:
             dest = None
             if "-t" in args and args.index("-t") + 1 < len(args):
                 dest = args[args.index("-t") + 1]
             elif plain:
                 dest = plain[-1]
-            writes = bool(dest and path_problem(dest, here, writing=True))
-            if cmd == "mv" and any(path_problem(a, here, writing=True) for a in plain):
-                writes = True
+            problem = _first_problem([dest], here) if dest else None
+            if not problem and cmd == "mv":
+                problem = _first_problem(plain, here)
         elif cmd in ("npm", "pnpm", "yarn", "pip", "uv") and "--prefix" in args:
             i = args.index("--prefix")
-            writes = i + 1 < len(args) and bool(path_problem(args[i + 1], here, writing=True))
-        if writes:
-            return f"{cmd} would write into the legacy worktree (read-only) or the live data folder; refused"
+            problem = _first_problem(args[i + 1:i + 2], here)
+        if problem:
+            return f"{cmd} refused: {problem}"
         for a in plain:
             if (p := path_problem(a, here, writing=False)) and "live data" in p:
                 return p

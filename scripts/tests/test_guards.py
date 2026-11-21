@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -24,7 +25,9 @@ class GuardTest(unittest.TestCase):
         self.repo = base / "repo"
         for d in (self.live, self.legacy, self.repo):
             d.mkdir()
-        self.env = {"FT_LIVE_DATA": str(self.live), "FT_LEGACY_ROOT": str(self.legacy)}
+        self.t = base / "scratch"  # the test's own folder for files it writes: outside the stand-in repo (BL-0307)
+        self.t.mkdir()
+        self.env = {"FT_LIVE_DATA": str(self.live), "FT_LEGACY_ROOT": str(self.legacy), "FT_GUARD_REPO": str(self.repo)}
         self.old = {k: os.environ.get(k) for k in self.env}
         os.environ.update(self.env)
 
@@ -54,23 +57,23 @@ class GuardTest(unittest.TestCase):
         """S0054 verifier F2, F3: a body is parsed as commands (as before S0054) only when a shell word stands on
         its opener's line; any other body is data. A here-string (<<<) opens no heredoc, so the lines after it are
         commands. Stated limits (PROCESS.md §11; rounds 2 and 3; BL-0155): a script written to a file by a heredoc
-        (or by the Write tool) and run later, by `bash /tmp/x.sh` after the end line or by running the file
+        (or by the Write tool) and run later, by `bash x.sh` after the end line or by running the file
         directly, is not inspected; a "<<EOF" inside quotes or a comment is taken as an opener, so
         `echo "<<EOF"`, then commands, then an EOF line, hides those commands."""
-        L = self.legacy
+        L, T = self.legacy, self.t
         refused = [
             f"bash <<'EOF'\nrm -rf {L}/backend\nEOF", "sh <<EOF\ngit push --force origin next\nEOF",
             f"cat <<'EOF' | bash\nrm -rf {L}/backend\nEOF",
-            f"cat > /tmp/x.sh <<'EOF' && bash /tmp/x.sh\nrm -rf {L}/backend\nEOF",
+            f"cat > {T}/x.sh <<'EOF' && bash {T}/x.sh\nrm -rf {L}/backend\nEOF",
             f"cat <<<EOF\nrm -rf {L}/backend\nEOF",  # F3: a here-string is not a heredoc opener
             # a body with no end line is not taken as data; the end line is the delimiter alone
-            f"cat > /tmp/x <<'EOF'\nrm -rf {L}/backend", f"cat > /tmp/x <<'EOF'\nrm -rf {L}/backend # EOF",
+            f"cat > {T}/x <<'EOF'\nrm -rf {L}/backend", f"cat > {T}/x <<'EOF'\nrm -rf {L}/backend # EOF",
         ]
         for cmd in refused:
             with self.subTest(cmd=cmd):
                 self.assertTrue(self.blocked(cmd), cmd)
         allowed = [
-            f"cat > /tmp/x.sh <<'EOF'\nrm -rf {L}/backend\nEOF", "tee /tmp/x <<EOF\ngit push --force origin next\nEOF",
+            f"cat > {T}/x.sh <<'EOF'\nrm -rf {L}/backend\nEOF", f"tee {T}/x <<EOF\ngit push --force origin next\nEOF",
             # R2-F3: `.` on the opener's line is an argument, not the `.` builtin
             f"git add . && git commit -q -F - <<'EOF'\nS1: a message\n\nrm -rf {L}/backend\ngit push --force origin next\nEOF",
             "git commit -F - <<'EOF'\nS1: notes # with a hash\ngit push --force is refused\nEOF",
@@ -84,29 +87,29 @@ class GuardTest(unittest.TestCase):
         just ask me to kill the app myself, so you can proceed."): the guard has no rules about the owner's app.
         Agents never stop, start or call it; if it is in their way they ask the owner (INV-24, a working rule).
         These commands pass on purpose, so a rule that comes back is a deliberate change."""
-        L = self.legacy
+        L, T = self.legacy, self.t
         net = "/dev/" + "tcp"
         for cmd in ("pkill -f uvicorn", "killall python3", "lsof -ti:8001 | xargs kill", "kill -9 $(pgrep -f app.main)",
                     "fuser -k 8001/tcp", "npx kill-port 8001", "kill -TERM -1", "curl -s http://localhost:8001/health",
                     "nc -z 127.0.0.1 8001", f"cat < {net}/127.0.0.1/8001", f"bash {L}/run-v0.3.sh",
-                    "git grep -n pkill", "cat > /tmp/n.md <<'EOF'\nlocalhost:8001\nEOF"):
+                    "git grep -n pkill", f"cat > {T}/n.md <<'EOF'\nlocalhost:8001\nEOF"):
             with self.subTest(cmd=cmd):
                 self.assertFalse(self.blocked(cmd), cmd)
 
     def test_a_heredoc_body_is_data(self) -> None:
         """S0054 (BL-0042's false positive): the lines of a heredoc body written to a file or a non-shell command
         are not parsed as commands; the opener's line still is."""
-        L = self.legacy
+        L, T = self.legacy, self.t
         allowed = [
-            f"cat > /tmp/notes.md <<'EOF'\nrm -rf {L}/backend\ngit push --force origin next\nEOF",
+            f"cat > {T}/notes.md <<'EOF'\nrm -rf {L}/backend\ngit push --force origin next\nEOF",
             "git commit -q -F - <<'EOF'\nS0054: the guard no longer refuses git push --force in a message body\nEOF",
             "git commit -q -m \"$(cat <<'EOF'\nS1: msg\n\ngit push --force origin next\nEOF\n)\"",
-            f"cat > /tmp/x <<-EOF\n\trm -rf {L}/backend\n\tEOF",
+            f"cat > {T}/x <<-EOF\n\trm -rf {L}/backend\n\tEOF",
         ]
         for cmd in allowed:
             self.assertFalse(self.blocked(cmd), cmd)
         self.assertTrue(self.blocked(f"cat <<EOF && rm -rf {L}/backend\nbody\nEOF"))  # the opener's line runs
-        self.assertTrue(self.blocked("cat > /tmp/x <<'EOF'\nsee ~/FinzytrackData\nEOF"))  # live data: any mention
+        self.assertTrue(self.blocked(f"cat > {T}/x <<'EOF'\nsee ~/FinzytrackData\nEOF"))  # live data: any mention
 
     def test_pushes(self) -> None:
         self.assertTrue(self.blocked("git push --force origin next"))
@@ -145,7 +148,7 @@ class GuardTest(unittest.TestCase):
         L = self.legacy
         refused = [
             # G-12 hook skipping
-            "git commit -qnm msg", "git -c core.hooksPath=/dev/null commit -m x", "git config core.hooksPath /tmp/h",
+            "git commit -qnm msg", "git -c core.hooksPath=/dev/null commit -m x", "git config core.hooksPath hooks-off",
             "git commit --no-v -m x",
             # G-13 push gate and refspecs
             "git config finzytrack.allowPush true", "git -c core.hooksPath=/dev/null push", "git push origin +next",
@@ -195,6 +198,7 @@ class GuardTest(unittest.TestCase):
         in round 2, every network redirect rule: stated limits, PROCESS.md §11."""
         nv = "--no-" + "verify"  # spelled in two parts so this file's text is not itself a command the guard reads
         net = "/dev/" + "tcp"
+        T = self.t
         refused = [
             "git log > .git/config", "printf x >> .git/hooks/pre-commit", "git show HEAD:x > .git/config",
             f"git commit -m \"it's\" {nv} -m 'x'",  # an apostrophe inside double quotes is not a quote
@@ -206,11 +210,11 @@ class GuardTest(unittest.TestCase):
         allowed = [
             'git commit -q -m "S0001: msg $(date)"', 'git commit -m "$MSG"', "git push origin next",
             f"git commit -q -F - <<'EOF'\nmsg with $(echo {nv}) inside the body\nEOF",
-            "git log --oneline $(git merge-base HEAD main)..HEAD", "git log > /tmp/x.txt", "cat .git/config",
+            "git log --oneline $(git merge-base HEAD main)..HEAD", f"git log > {T}/x.txt", "cat .git/config",
             "printf x > .githooks/pre-push.tmp", "git add $FILES", "git commit -F \"$F\" $EXTRA",
             "echo hi > /dev/" + "udp/localhost/9",
-            "cat > /tmp/notes.md <<'EOF'\ngit push origin next $(echo x)\nEOF",
-            f"cat > /tmp/notes.md <<'EOF'\na doc that mentions {net} in its text\nEOF",
+            f"cat > {T}/notes.md <<'EOF'\ngit push origin next $(echo x)\nEOF",
+            f"cat > {T}/notes.md <<'EOF'\na doc that mentions {net} in its text\nEOF",
             "git commit -m \"user's fix\" -m 'costs $5'",
         ]
         for cmd in allowed:
@@ -315,6 +319,129 @@ class GuardTest(unittest.TestCase):
         ]
         for cmd in allowed:
             self.assertFalse(self.blocked(cmd), cmd)
+
+    # BL-0307 (S0139): the generated-file rule covers the repository only, and each refusal says its own reason.
+
+    def generated(self, path: Path) -> Path:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("<!-- GENERATED by x. Do not edit. -->\n")
+        return path
+
+    def test_a_generated_file_outside_the_repo_may_be_written_or_removed(self) -> None:
+        """2026-11-21: `rm` of a reviewer's copy of a generated page (and of a backup beside it) in a temp folder was
+        refused as if it were the repository's page. INV-19 covers the repository's generated files only."""
+        T = self.t
+        f, g = self.generated(T / "x"), self.generated(T / "ct.bak")
+        for raw, cwd in ((str(f), self.repo), ("../scratch/x", self.repo), ("x", T)):
+            with self.subTest(raw=raw):
+                self.assertIsNone(guards.path_problem(raw, cwd, writing=True))
+        for cmd in (f"rm {f} {g}", f"rm -f {T}/*", f"tee {f}", f"cp y {f}", f"mv {f} {g}", f"echo y > {f}",
+                    f"cd {T} && rm x ct.bak", f"sed -i '' s/a/b/ {f}", f"touch {f}", f"cp -t {T} y"):
+            with self.subTest(cmd=cmd):
+                self.assertIsNone(guards.bash_problem(cmd, self.repo), cmd)
+
+    def test_a_heredoc_over_a_stray_generated_copy_is_allowed(self) -> None:
+        """The incident's shape: a generated page's copy left where a heredoc writes made every push gate fail."""
+        f, L = self.generated(self.t / "x"), self.legacy
+        for cmd in (f"cat > {f} <<'EOF'\nrm -rf {L}/backend\ngit push --force origin next\nEOF",
+                    f"tee {f} <<EOF\nbody\nEOF", f"cat > {f} <<-EOF\n\tbody\n\tEOF"):
+            with self.subTest(cmd=cmd):
+                self.assertFalse(self.blocked(cmd), cmd)
+
+    def assert_generated_refused(self, raw: str, cwd: Path) -> None:
+        self.assertIn("is generated", guards.path_problem(raw, cwd, writing=True) or "", raw)
+        self.assertIsNone(guards.path_problem(raw, cwd, writing=False), raw)
+        for cmd in (f"rm {raw}", f"tee {raw}", f"cp y {raw}", f"printf y > {raw}", f"sed -i '' s/a/b/ {raw}"):
+            with self.subTest(cmd=cmd, cwd=str(cwd)):
+                self.assertIn("is generated", guards.bash_problem(cmd, cwd) or "", cmd)
+
+    def test_a_generated_file_in_the_repo_stays_refused_by_every_spelling(self) -> None:
+        """The scope check must not open another spelling of a repository file: absolute, relative from another
+        cwd, `..`, a case variant (on a case-insensitive volume), a symlinked folder or file outside the repo."""
+        R, T = self.repo, self.t
+        gen = self.generated(R / "design" / "generated" / "page.md")
+        (T / "into-repo").symlink_to(R / "design")
+        (T / "page-link.md").symlink_to(gen)
+        spellings = [(str(gen), T), ("design/generated/page.md", R), ("generated/page.md", R / "design"),
+                     ("design/generated/../generated/page.md", R), ("../repo/design/generated/page.md", T),
+                     (f"{T}/into-repo/generated/page.md", T), ("into-repo/generated/page.md", T), ("page-link.md", T),
+                     (f"{T}/../repo/design/generated/page.md", R), ("design/generated/*.md", R), (f"{T}/into-repo/*/p*", T)]
+        if Path(str(gen).upper()).exists():  # a case-insensitive volume: the variant names the same file
+            spellings += [(str(gen).upper(), T), ("Design/GENERATED/Page.md", R)]
+        for raw, cwd in spellings:
+            with self.subTest(raw=raw):
+                self.assert_generated_refused(raw, cwd)
+
+    def test_the_repos_own_generated_page_stays_refused(self) -> None:
+        """The checkout the hook lives in is the repository, whatever the stand-in says (only read here)."""
+        rel = "design/generated/engine-job-texts.md"
+        real = guards.REPO / rel
+        self.assertTrue(guards._generated(real), "the page this test reads must carry its GENERATED header")
+        (self.t / "r").symlink_to(guards.REPO / "design")
+        for raw, cwd in ((str(real), self.t), (rel, guards.REPO), ("generated/engine-job-texts.md", guards.REPO / "design"),
+                         ("design/generated/../generated/engine-job-texts.md", guards.REPO),
+                         (f"{self.t}/r/generated/engine-job-texts.md", self.t)):
+            with self.subTest(raw=raw):
+                self.assert_generated_refused(raw, cwd)
+
+    MARKERS = {"live": "live data folder", "legacy": "legacy worktree", "generated": "is generated",
+               "git": ".git/config or .git/hooks", "manifest": "only the owner adds rows"}
+
+    def test_each_writer_refusal_names_its_own_reason(self) -> None:
+        """A refusal by `rm`, `tee`, `cp` and the other writers says why: before S0139 every one read "would write
+        into the legacy worktree (read-only) or the live data folder", so a generated-file refusal read as live data."""
+        L, T = self.legacy, self.t
+        self.generated(self.repo / "out.md")
+        (T / "live-link").symlink_to(self.live)  # the live folder by another name: the path rule decides, not the text
+        (T / "legacy-link").symlink_to(L)
+        live = f"{T}/live-link/ledger.beancount"
+        cases = {
+            "legacy": [f"rm -rf {L}/backend", f"rmdir {L}/x", f"tee {L}/f", f"touch {L}/x", f"chmod +x {L}/run.sh",
+                       f"cp x.py {L}/x.py", f"cp -t {L} x.py", f"mv {L}/a.py b.py", f"mv b.py {L}/a.py",
+                       f"ln -s x {L}/y", f"sed -i '' s/a/b/ {L}/f.py", f"perl -i -pe s/a/b/ {L}/f.py",
+                       f"npm --prefix {L}/frontend install", f"rm {T}/legacy-link/f", f"cd {L} && touch",
+                       f"cd {L} && sed -i -es/a/b/ {T}/f"],  # an in-place edit run from inside it, as before S0139
+            "generated": [f"rm {self.repo}/out.md", "tee -a out.md", "cp x out.md", "mv x out.md", "mv out.md y",
+                          "sed -i '' s/a/b/ out.md", "touch out.md", "truncate -s 0 out.md"],
+            "live": [f"rm {live}", f"tee {live}", f"cp x {live}", f"mv {live} x", f"touch {live}"],
+            "git": ["cp x .git/config", "tee .git/hooks/pre-push", "rm .git/hooks/pre-commit"],
+            "manifest": ["tee -a corpora/MANIFEST.tsv", "cp x corpora/MANIFEST.tsv"],
+        }
+        for kind, cmds in cases.items():
+            for cmd in cmds:
+                with self.subTest(cmd=cmd):
+                    reason = guards.bash_problem(cmd, self.repo) or ""
+                    self.assertIn(self.MARKERS[kind], reason, cmd)
+                    for other, marker in self.MARKERS.items():
+                        if other != kind:
+                            self.assertNotIn(marker, reason, f"{cmd}: {reason}")
+
+
+# A path under the system temp folder, in any of its spellings ("t" "mp" in parts, so this file's text passes).
+FIXED_TEMP = re.compile(r"(?<![\w.~-])/(?:private/|var/)?" + "t" + r"mp(?![\w.-])")
+
+
+class NoFixedTempPath(unittest.TestCase):
+    """BL-0307 (S0139): a meta-test that writes or reads a fixed global path fails when a stray file is there (twice
+    on 2026-11-21: a reviewer's copy of a generated page made every push gate and the Stop hook fail). Each test
+    writes in its own temporary folder."""
+
+    def test_the_pattern_catches_the_temp_spellings(self) -> None:
+        tmp = "t" + "mp"
+        for text in (f'"/{tmp}/x"', f"cat > /{tmp}/x.sh", f"'/private/{tmp}/y'", f"/var/{tmp}/z", f"git log > /{tmp}",
+                     f"--root /{tmp}/ft"):
+            with self.subTest(text=text):
+                self.assertTrue(FIXED_TEMP.search(text), text)
+        for text in (f"/d/{tmp}", f"self.{tmp}.name", f"~/{tmp}/x", f"/{tmp}x", f"{tmp}_path", f"/{tmp}.bak"):
+            with self.subTest(text=text):
+                self.assertFalse(FIXED_TEMP.search(text), text)
+
+    def test_no_meta_test_names_a_fixed_temp_path(self) -> None:
+        root = Path(__file__).resolve().parents[2]
+        hits = [f"{f.relative_to(root)}:{n}" for folder in ("scripts/tests", "scripts/oracle/tests")
+                for f in sorted((root / folder).rglob("*.py"))
+                for n, line in enumerate(f.read_text(encoding="utf-8").splitlines(), 1) if FIXED_TEMP.search(line)]
+        self.assertEqual(hits, [], "use the test's own temporary folder (tempfile), never a fixed global path")
 
 
 if __name__ == "__main__":
