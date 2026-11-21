@@ -86,8 +86,14 @@ def switch_uses(source: str, rel: str = "ledger/x.py") -> list[str]:
     """Every way `source` (the product module at `rel` under `ledger_engine/`) could reach the switch: an import of
     `ledger_engine.fs.under_test` in any spelling; a name of `SWITCH_NAMES` in any position; reflection (`getattr`,
     `setattr`, `vars`, `__dict__`, ...) on a name bound to `this_os`, to the switch module or to the `fs` package; and
-    `contextvars` outside `CONTEXTVARS_HOMES`. Stated limit: a dynamic import by name is out of an AST scan
-    (`check_engine_boundary.py` allows `import_module`, `__import__` and `exec` only in `ledger/beancount_port.py`)."""
+    `contextvars` outside `CONTEXTVARS_HOMES`. Stated limits: a dynamic import by name is out of an AST scan
+    (`check_engine_boundary.py` allows `import_module`, `__import__` and `exec` only in `ledger/beancount_port.py`);
+    and a name scan cannot see every reflection path to a module object. These reach the switch and pass this scan
+    (BL-0286): `getattr` with an attribute chain as its first argument, `object.__getattribute__`,
+    `operator.attrgetter`, `sys.modules[...]`, a walk of `gc.get_objects()`, `inspect.getmembers`, a function's
+    `__globals__`. The behavioural check is the runner's fresh engine process
+    (`tests/fs/test_windows.py::test_the_product_on_windows_still_refuses_file_operations_and_never_loads_the_adapter`).
+    BL-0087 removes the switch, its fixture and this scan (owner, 2026-11-21: "option 1")."""
     found: list[str] = []
     tree = ast.parse(source)
     package = ("ledger_engine", *Path(rel).parent.parts)
