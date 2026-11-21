@@ -50,3 +50,5 @@ Review history of the mechanism (the switch and `switch_uses`): S0128 round 1, V
 Owner, 2026-11-21, in session: "option 1"
 
 **Decision: option 1.** A stated limit in `switch_uses` (the seven shapes, the runner's fresh-process test as the behavioural check), with no third round on the scan. BL-0286 moves with BL-0087 (IMP-0070), whose row now says that turning writes on deletes the switch, its fixture and the scan. The path model's `simulating` question was not answered, and no row was opened for it.
+
+**Later the same day, the related point (the path model's `simulating`).** The orchestrator offered, cheapest first: no row; a one-line stated limit; moving the switch out of the product's source (only a partial fix here, since the product needs the Windows model in its source); widening the scan (not recommended). Owner, 2026-11-21, in session: "option 2". **Decision:** a stated limit in `model_switches`'s docstring (`engine/tests/architecture/test_platform_selection.py`), listing the seven shapes that get past it; no backlog row.

@@ -243,8 +243,13 @@ def model_switches(rel: str, source: str) -> list[str]:
     """Every way `source` (the module at `rel` under `ledger_engine/`) could reach past `PATHMODEL_ALLOWED`: a name of
     `SWITCHES` in any position (a name, an attribute, an import), an import of another name from the path model, and
     any use of the path model module itself other than reading an allowed attribute from it (`getattr(p, ...)`,
-    passing it on). Stated limit: a dynamic import by name is out of an AST scan (`check_engine_boundary.py` allows
-    `import_module` only in `ledger/beancount_port.py`)."""
+    passing it on). Stated limits: a dynamic import by name is out of an AST scan (`check_engine_boundary.py` allows
+    `import_module` only in `ledger/beancount_port.py`); and a name scan cannot see every reflection path to a module
+    object. These reach `simulating` and pass this scan (checked 2026-11-21): `sys.modules[...]`, `getattr` on the `fs`
+    package with a joined name, `object.__getattribute__`, `operator.attrgetter`, `inspect.getmembers`, a walk of
+    `gc.get_objects()`, an allowed function's `__globals__`. Unlike the Windows switch (BL-0286), this one stays: the
+    product needs the Windows model in its source, so moving the switch out would not make the model unreachable
+    (owner, 2026-11-21: "option 2", a stated limit)."""
     found: list[str] = []
     tree = ast.parse(source)
     package = ("ledger_engine", *Path(rel).parent.parts)
