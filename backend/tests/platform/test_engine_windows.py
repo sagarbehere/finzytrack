@@ -150,7 +150,9 @@ def test_the_drain_ends_a_plugins_child_and_every_handle_it_held_is_closed_at_th
     """§5.2 ("none outlives its engine's drain") and "no live member" on Windows: the leader crashes alone (Task
     Manager's end), the drain ends the rest; at the reap the child is gone and the file it held open with a lock on it
     can be opened with no sharing at all, at once. Repeated: an exiting process leaves the job's list before its
-    handles are closed, so a drain that read only the list would reap too early in some runs."""
+    handles are closed, so a drain that read only the list would reap too early in some runs. The child's lock is
+    free soon after, not at once: Windows frees a dead process's locks after it ends (§5.2, "Limit (lock release on
+    Windows)"; BL-0291, S0137)."""
     for run in range(RUNS):
         held = tmp_path / f"held-{run}.lock"
         with in_a_job(LEADER, HOLDER, str(held)) as (proc, job, leader):
@@ -160,8 +162,11 @@ def test_the_drain_ends_a_plugins_child_and_every_handle_it_held_is_closed_at_th
                 leader.end()
                 reaped = EngineGroup(job.ops, proc.pid).drain()
                 proc.returncode = reaped.returncode
-                free, opened = lock_free(held), open_exclusively(held)
-                assert (free, opened, child.gone()) == (True, True, True), f"run {run}: the child outlived the drain"
+                opened, gone = open_exclusively(held), child.gone()
+                assert (opened, gone) == (True, True), f"run {run}: the child outlived the drain"
+                assert wait_until(lambda held=held: lock_free(held)), (
+                    f"run {run}: the dead child's lock was never freed"
+                )
             finally:
                 child.close()
 
@@ -286,11 +291,14 @@ class Ends:
 @pytest.mark.parametrize("how", ["cancel", "retire", "crash of the engine alone", "close"])
 def test_a_plugins_child_holding_a_lock_is_ended_with_the_engine(tmp_path: Path, how: str) -> None:
     """§5.2 on Windows, on the real engine: Cancel, a retire, an engine that died by itself and the close each end
-    the engine through its job; the end is reported only once the job has no live member, so the next engine never
-    starts beside the child or its lock."""
+    the engine through its job; the end is reported (for the close: `close()` returns) only once the job has no live
+    member, so the child is gone then and the next engine never starts beside it. The lock the child held is free
+    soon after, within the test's wait, not at that moment: Windows frees a dead process's locks after it ends, "the
+    time it takes ... depends upon available system resources" (Microsoft's LockFileEx documentation; §5.2, "Limit
+    (lock release on Windows)"; BL-0291, S0137: the close case saw the lock still held at its return 4 times)."""
     lock = tmp_path / "ledger.lock"
     watched: list[Watched] = []
-    ends = Ends(lambda: (lock_free(lock), bool(watched) and watched[0].gone()))
+    ends = Ends(lambda: bool(watched) and watched[0].gone())
     c = EngineClient(engine_command(), on_engine_ended=ends)
     try:
         out = c.call("test.child", {"lock": str(lock)})
@@ -305,13 +313,14 @@ def test_a_plugins_child_holding_a_lock_is_ended_with_the_engine(tmp_path: Path,
             c.end("retire")
         elif how == "close":
             c.close()
-            assert (lock_free(lock), watched[0].gone()) == (True, True), "the close returned before the drain"
-            return
+            assert watched[0].gone(), "the close returned before the drain"
         else:
             Watched(pid).end()
-        assert ends.wait(1)
-        assert ends.seen == [(True, True)], "the end was reported while the job still held the child or its lock"
-        assert ends.reports[0].pid == pid
+        if how != "close":
+            assert ends.wait(1)
+            assert ends.seen == [True], "the end was reported while the job still held the child"
+            assert ends.reports[0].pid == pid
+        assert wait_until(lambda: lock_free(lock)), "the dead child's lock was never freed"
     finally:
         c.close()
         for w in watched:
@@ -523,14 +532,15 @@ def test_the_engine_takes_its_lock_with_the_sidecars_identity(folder: AppFolder)
 def test_a_new_engine_starts_only_after_the_previous_engines_job_is_drained(tmp_path: Path) -> None:
     """The stop rule's invariant on Windows (S0129 round 1, V3; §5.1: "A new engine is spawned ... only after the
     previous one is reaped and its process group has no live member"): at the moment the next engine is spawned,
-    the retired engine's plugin child is gone and the lock it held is free."""
+    the retired engine's plugin child is gone. The lock it held is free soon after, not necessarily at that moment
+    (§5.2, "Limit (lock release on Windows)"; BL-0291, S0137)."""
     lock = tmp_path / "ledger.lock"
     watched: list[Watched] = []
-    at_spawn: list[tuple[int, bool, bool]] = []
+    at_spawn: list[tuple[int, bool]] = []
 
     def spawned(serial: int) -> None:
         if watched:
-            at_spawn.append((serial, lock_free(lock), watched[0].gone()))
+            at_spawn.append((serial, watched[0].gone()))
 
     c = EngineClient(engine_command(), on_engine_spawned=spawned)
     try:
@@ -540,7 +550,8 @@ def test_a_new_engine_starts_only_after_the_previous_engines_job_is_drained(tmp_
         c.end("retire")
         assert c.ping() is not None  # a fresh engine
         assert at_spawn, "no second engine was spawned"
-        assert all(free and gone for _, free, gone in at_spawn), f"a new engine started beside the old job: {at_spawn}"
+        assert all(gone for _, gone in at_spawn), f"a new engine started beside the old job: {at_spawn}"
+        assert wait_until(lambda: lock_free(lock)), "the dead child's lock was never freed"
     finally:
         c.close()
         for w in watched:

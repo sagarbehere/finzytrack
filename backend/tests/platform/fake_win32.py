@@ -7,7 +7,11 @@ repro). `windows_job` is imported with `sys.platform` set to `win32` for the imp
   `exiting_checks` more looks (it is still closing its handles: the module's docstring, "No live member");
 - the listing can fail (`fail_listings` times), or list fewer pids than are assigned (`partial` times);
 - the child's process can refuse our open (`deny_open`: a plugin's child with a DACL on itself), for as long as the
-  test says.
+  test says;
+- `IsProcessInJob` can fail (`in_job_fails`), for as long as the test says (S0137, BL-0291 (1));
+- `extra` more members (pids from `EXTRA`), each ended and gone at once by `TerminateJobObject`, so that a job can
+  have more members than the module's first buffer holds (64; S0137, BL-0291 (2)): a buffer too small for the whole
+  list fails with `ERROR_MORE_DATA`.
 
 `reaped_early` records whether the reap read the leader while the child was still running or closing its handles:
 the false "drained" the drain must never give.
@@ -27,6 +31,7 @@ ERROR_INVALID_PARAMETER = 87
 WAIT_OBJECT_0 = 0
 WAIT_TIMEOUT = 0x102
 LEADER, CHILD = 1, 2
+EXTRA = 1000
 
 
 def windows_job() -> ModuleType:
@@ -55,9 +60,18 @@ class FakeWin:
     """A fake `windows_job._Api` (the module's docstring)."""
 
     def __init__(
-        self, *, fail_listings: int = 0, partial: int = 0, deny_open: bool = False, assign_fails: bool = False
+        self,
+        *,
+        fail_listings: int = 0,
+        partial: int = 0,
+        deny_open: bool = False,
+        assign_fails: bool = False,
+        in_job_fails: bool = False,
+        extra: int = 0,
     ) -> None:
-        self.listed = [LEADER, CHILD]
+        self.extras = [EXTRA + i for i in range(extra)]
+        self.extras_ended = False
+        self.listed = [LEADER, CHILD, *self.extras]
         self.leader_ended = False
         self.child_exiting = False
         self.child_signalled = False
@@ -66,6 +80,7 @@ class FakeWin:
         self.partial = partial
         self.deny_open = deny_open
         self.assign_fails = assign_fails
+        self.in_job_fails = in_job_fails
         self.listings = 0
         self.job_terminations = 0
         self.leader_terminations = 0
@@ -124,6 +139,8 @@ class FakeWin:
         if CHILD in self.listed:
             self.listed.remove(CHILD)  # it leaves the list at once ...
             self.child_exiting = True  # ... while it is still closing its handles
+        self.extras_ended = True
+        self.listed = [p for p in self.listed if p not in self.extras]  # ended and gone at once
         return 1
 
     def TerminateProcess(self, h: int, code: int) -> int:
@@ -134,6 +151,9 @@ class FakeWin:
         return 1
 
     def IsProcessInJob(self, h: int, job: int, out: Any) -> int:
+        if self.in_job_fails:
+            self.error = ERROR_ACCESS_DENIED
+            return 0
         ctypes.cast(out, ctypes.POINTER(ctypes.c_int)).contents.value = 1
         return 1
 
@@ -145,6 +165,8 @@ class FakeWin:
             return self.handle("proc", CHILD)
         if pid == LEADER and not self.leader_ended:
             return self.handle("proc", LEADER)
+        if pid in self.extras and not self.extras_ended:
+            return self.handle("proc", pid)
         self.error = ERROR_INVALID_PARAMETER  # gone
         return 0
 
@@ -158,6 +180,8 @@ class FakeWin:
             return WAIT_OBJECT_0 if self.child_signalled else WAIT_TIMEOUT
         if kind == "leader" or (kind == "proc" and pid == LEADER):
             return WAIT_OBJECT_0 if self.leader_ended else WAIT_TIMEOUT
+        if kind == "proc" and pid in self.extras:
+            return WAIT_OBJECT_0 if self.extras_ended else WAIT_TIMEOUT
         return WAIT_OBJECT_0
 
     def GetExitCodeProcess(self, h: int, out: Any) -> int:

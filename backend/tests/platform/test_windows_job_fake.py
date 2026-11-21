@@ -128,3 +128,40 @@ def test_a_job_windows_refuses_closes_what_it_opened_and_raises(fake_errors: lis
     with pytest.raises(OSError, match="AssignProcessToJobObject"):
         windows_job().EngineJob.around(proc, api=fake)
     assert not fake.handles, f"handles left open: {fake.handles}"
+
+
+def test_a_member_whose_membership_cannot_be_read_is_not_judged(fake_errors: list[FakeWin]) -> None:
+    """S0129 round 2, R2-1 (BL-0291 (1); §5.2: "a listed member that cannot be opened or judged counts as live"): a
+    member we can open but whose `IsProcessInJob` fails is not held and not judged, so the job is not ended and the
+    drain does not reap while it fails; once it answers, the drain holds it, ends the job and reaps after the child's
+    handles are closed. Kills the mutant that takes the failed call as judged. @regression-guard (the product is
+    right on the base 53db6dac; the mutant is the evidence)."""
+    fake = crashed_leader(in_job_fails=True)
+    fake_errors.append(fake)
+    t, out = drain_in_thread(job_over(fake))
+    assert until(lambda: fake.listings >= 6), "the drain stopped listing"
+    assert not out, "the drain reaped while a member's membership could not be read"
+    assert fake.job_terminations == 0, "the job was ended with a member we do not hold"
+    fake.in_job_fails = False
+    t.join(DEADLINE)
+    assert out, "the drain did not end once the membership could be read"
+    assert fake.reaped_early is False
+
+
+def test_a_job_with_more_members_than_the_first_buffer_holds_is_listed_whole_and_drained(
+    fake_errors: list[FakeWin],
+) -> None:
+    """S0129 round 2, R2-2 (BL-0291 (2)): with 70 more members than the leader and the child (the first buffer holds
+    64 pids), the listing fails with `ERROR_MORE_DATA`, grows its buffer and lists every member; the drain then ends
+    the job and reaps after the child's handles are closed. Kills the mutants that answer None (not judged: the drain
+    would never end) and that keep the buffer's size (the listing would never end). @regression-guard (the product is
+    right on the base 53db6dac; the mutants are the evidence)."""
+    fake = FakeWin(extra=70)
+    fake_errors.append(fake)
+    job = job_over(fake)
+    assert sorted(job.member_ids() or []) == sorted(fake.listed), "the job was not listed whole"
+    t, out = drain_in_thread(job)
+    t.join(DEADLINE)
+    assert out, "the drain did not end"
+    assert fake.job_terminations >= 1
+    assert fake.reaped_early is False, "the drain reaped while the child was still closing its handles"
