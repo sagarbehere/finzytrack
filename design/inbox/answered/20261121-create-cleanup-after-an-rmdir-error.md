@@ -37,3 +37,6 @@ Review history of this mechanism, the create's and copy's stop and cleanup: buil
 Owner, 2026-11-21, in session, asked "S0136 round 3 found V3-1: … What should happen?" with the options "Say "check the folder" (Recommended)", "State it, fix later" and "Look again after the error": "Say "check the folder" (Recommended)".
 
 **Decision: option 2.** On any removal error in the create's and copy's cleanup (the target folder, a nested folder or a file), the cleanup reports nothing as kept or removed: `left` is None, told as `unknown_folder` ("check the folder"). The verifier's V3-1 repro becomes its test; a fourth, fresh verifier round follows.
+
+## Later answer (owner, verbatim, with date)
+Owner, 2026-11-21, in session, asked "V3-1 fix: every removal error now reports only "check the folder", except "folder not empty". That error proves the folder is still there with another program's entry in it, so it is still named as kept, per your rule of 2026-11-07. Is that what you meant?" with the options "Yes, keep naming it (Recommended)" and "No, "check the folder" too": "Yes, keep naming it (Recommended)".
