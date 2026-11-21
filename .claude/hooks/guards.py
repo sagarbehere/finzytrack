@@ -9,7 +9,9 @@ when it is in their way (INV-24, a working rule; owner, 2026-10-29). The rules a
 The first line since 2026-11-21 is Claude Code's sandbox (`.claude/settings.json`): the OS refuses every agent shell
 write outside the checkout, the temp folder and the tool caches, and the live data folder and the legacy worktree by
 name (owner, 2026-11-21: "Sandbox + land (Recommended)", "Finzytrack only (Recommended)";
-design/inbox/answered/20261121-guard-shapes-or-sandbox.md). This guard is the second line.
+design/inbox/answered/20261121-guard-shapes-or-sandbox.md). This guard is the second line. The sandbox does not
+cover the commands its settings exempt (`excludedCommands`: `git push`, and `gh api`, `gh workflow run`, `gh run
+list/view/watch`, which can change things on GitHub, though not the local disk); for them this guard is the only line.
 
 Generated files (INV-19, BL-0307): a write to a file with a GENERATED first line is refused, except a copy in the
 system temp folder (`$TMPDIR`, `/tmp`, `/private/var/folders`) that is outside the repository by every spelling (a
@@ -29,6 +31,12 @@ Stated limits (S0139; the guard is a safety net, PROCESS.md §11; the sandbox co
   `uv --directory DIR`), and a firmlink spelling of the legacy worktree. A list of shapes cannot be complete.
 - A hard link's name outside the repository (or anywhere outside the temp folder) is refused for `rm` too, though
   removing a name changes no byte of the other (R2-5; the base refused it as well).
+- A glued option that writes but is not in `DEST_OPTS` (`--log-file=`, `--temp-dir=`, `--partial-dir=`,
+  `--write-batch=`, `--cache-dir=`, `--target-dir=`, `--wheel-dir=`, `--in-place=` and more) is checked only for the
+  live data folder, so its value may name the legacy worktree, `.git/config` or a generated file (S0139 round 3,
+  V3-1; round 1 refused these, before R2-4 narrowed the check to the list; owner, 2026-11-21: "Okay, let's go with
+  option 1"). The sandbox refuses writes to the legacy worktree and to `.git/config`, and `scripts/check_generated.py`
+  catches a changed generated file at commit.
 - A write aimed at a generated file's folder, not at the file (`cp page.md design/generated/`, `rm -r
   design/generated`), is not seen: `scripts/check_generated.py`, INV-19's gate, catches the drift at commit and push.
 - In-place edits spelled other than `sed -i...`/`perl -i...`/`--in-place` (`perl -pi -e`, `sed -Ei`) are not read as

@@ -468,6 +468,37 @@ class GuardTest(unittest.TestCase):
             with self.subTest(refused=cmd):
                 self.assertIn("live data folder", guards.bash_problem(cmd, R) or "", cmd)
 
+    def test_every_destination_option_is_write_checked(self) -> None:
+        """S0139 round 3, V3-3: each name in `DEST_OPTS` makes a writer's glued value a destination, so the legacy
+        worktree (by a symlink too) and a generated file are refused through it, for each kind of writer."""
+        L, T, R = self.legacy, self.t, self.repo
+        (T / "lg").symlink_to(L)
+        self.generated(R / "out.md")
+        names = {"prefix", "target", "target-directory", "root", "dir", "directory", "cwd", "output", "output-dir",
+                 "out-dir", "outdir", "backup-dir", "work-tree", "git-dir", "install-dir", "dest", "destination"}
+        self.assertEqual(guards.DEST_OPTS, names)  # written out, so a renamed or new name is a deliberate change
+        for opt in sorted(names):
+            for cmd, marker in ((f"pip install --{opt}={L}/x pkg", "legacy worktree"),
+                                (f"rsync -a src/ {T}/o/ --{opt}={T}/lg/x", "legacy worktree"),
+                                (f"touch {T}/new --{opt}={L}/x", "legacy worktree"),
+                                (f"cp y {T}/z --{opt}=out.md", "is generated")):
+                with self.subTest(cmd=cmd):
+                    self.assertIn(marker, guards.bash_problem(cmd, R) or "", cmd)
+
+    def test_a_temp_link_to_the_repos_page_by_its_firmlink_stays_refused(self) -> None:
+        """S0139 round 3, V3-4: a symlink in the temp folder whose target is the repository's page by the data
+        volume's firmlink path is in the temp folder only as written; resolved, it is neither in the temp folder nor
+        (by path) in the repository, so only the resolved temp check refuses it (read only: the link is the test's)."""
+        page = guards.REPO / "design/generated/engine-job-texts.md"
+        firm = Path("/System/Volumes/Data" + str(page))  # privacy-scan: allow home-path
+        if sys.platform == "darwin":  # elsewhere there is no firmlink spelling and nothing to refuse
+            self.assertTrue(firm.exists())
+        if firm.exists():
+            (self.t / "fl.md").symlink_to(firm)
+            raw = str(self.t / "fl.md")
+            self.assertIn("is generated", guards.path_problem(raw, self.t, writing=True) or "")
+            self.assertIn("is generated", guards.bash_problem(f"tee {raw}", self.t) or "")
+
     def test_option_values_glued_with_equals_are_checked_like_arguments(self) -> None:
         """S0139 F3-live (pre-existing): `npm --prefix=DIR` passed with DIR the live data folder by a symlink or `..`,
         since an argument that starts with `-` was never checked. A glued value is now an argument the path rules
