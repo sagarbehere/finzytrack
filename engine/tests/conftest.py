@@ -45,8 +45,8 @@ def _forget_ledger_plugins(tmp_path_factory: pytest.TempPathFactory) -> Iterator
     Limit: every other module an earlier test imported stays, and not all of them are ones a fresh engine imports
     at its start: Beancount imports some steps of its load only when a load runs them (`beancount.ops.documents`,
     `beancount.ops.pad`). A load records only the modules it imports itself, so a test that compares the fingerprints
-    of two loads in one process can depend on the order the suite runs in; such a test drops, between the two loads,
-    the modules the first imported (S0142, BL-0299: `tests/test_rebuild_ops.py`'s `fresh_setup`)."""
+    of two loads in one process can depend on the order the suite runs in; such a test runs each load in
+    `tests/fresh_engine.fresh_engine()` (S0142, BL-0299)."""
     before = set(sys.modules)
     yield
     base = str(tmp_path_factory.getbasetemp().resolve())

@@ -22,6 +22,7 @@ from ledger_engine.mirror import publish as pb
 from ledger_engine.mirror.core import schema
 from ledger_engine.mirror.store import SqliteStore
 from ledger_engine.protocol.save import engine_build
+from tests.fresh_engine import fresh_engine
 from tests.ledger import producer
 from tests.mirror.publish_support import current_in
 from tests.test_save_ops import Channel, engine, request
@@ -434,7 +435,7 @@ def test_the_preview_s_fingerprint_names_the_plugin_code_the_open_s_stamp_names(
 ) -> None:
     """BL-0106 (S0099 round 1): the plan's fingerprint and the generation's stamp record the same module lookups on the
     real job paths, else no rebuild after the save would find its generation fresh. The plugin is dropped between the
-    two jobs, as the fresh engine each job runs in would start without it."""
+    two jobs, with Beancount's lazily imported steps, as the fresh engine each job runs in would start without them."""
     monkeypatch.setitem(preview.PRODUCERS, producer.TEST_MUTATOR, producer.produce_json)
     case = Path(__file__).resolve().parents[2] / "corpora" / "ledgers" / "write" / "pythonpath-plugin"
     led = tmp_path / "L"
@@ -446,13 +447,11 @@ def test_the_preview_s_fingerprint_names_the_plugin_code_the_open_s_stamp_names(
     (ald / "locks").mkdir(parents=True)
     (tmp_path / "cache").mkdir()
     params = {"root": str(main), "app_local_data": str(ald), "workspace_key": "k1", "lineage": "lin1"}
-    number = opened(ald, params)
-    for name, module in list(sys.modules.items()):
-        file = getattr(module, "__file__", None)
-        if isinstance(file, str) and os.path.realpath(file).startswith(os.path.realpath(led)):
-            del sys.modules[name]
+    with fresh_engine():  # each job in its own fresh engine: the plugin and Beancount's lazy steps (S0142, BL-0299)
+        number = opened(ald, params)
     req = {"edits": [{"kind": "insert", "text": '2099-01-01 note Assets:Cash "s0116"\n', "default_file": str(main)}]}
-    result = call(ald, params, number, req)["result"]
+    with fresh_engine():
+        result = call(ald, params, number, req)["result"]
     assert result["outcome"] == "prepared", result
     mirror = ald.parent / "cache" / "workspaces" / "k1" / "mirror"
     con = sqlite3.connect(f"{(mirror / str(current_in(mirror))).as_uri()}?mode=ro", uri=True)

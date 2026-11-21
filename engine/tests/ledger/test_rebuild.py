@@ -35,6 +35,7 @@ from ledger_engine.ledger.policy import DesktopPolicy
 from ledger_engine.mirror import publish as pb
 from ledger_engine.mirror.store import SqliteStore
 from tests.beancount_text import escaped
+from tests.fresh_engine import fresh_engine
 from tests.mirror.publish_support import BUILT_AT, CUR, ENGINE_BUILD, KEY, TODAY, current_in, fs_now, meta
 from tests.windows_pending import NO_FIFO, NO_UID
 
@@ -81,8 +82,9 @@ def target(**kw: Any) -> rebuild.Target:
 
 
 def go(ports: rebuild.Ports, hint: Fingerprint, job: FakeJob, **kw: Any) -> rebuild.Answer:
-    """The rebuild with its publish into the test's cache folder (publish.md §4)."""
-    return rebuild.run(ports, hint, job, target(**kw))
+    """The rebuild with its publish into the test's cache folder (publish.md §4), in its own fresh engine (S0142)."""
+    with fresh_engine():
+        return rebuild.run(ports, hint, job, target(**kw))
 
 
 @pytest.fixture
@@ -95,8 +97,9 @@ def root(tmp_path: Path) -> Path:
 
 
 def hint_of(root: Path) -> Fingerprint:
-    """The saved plan's fingerprint: what the preview's load read."""
-    loaded = overlay.load(str(root), {}, DesktopPolicy())
+    """The saved plan's fingerprint: what the preview's load read, in its own fresh engine (S0142, BL-0299)."""
+    with fresh_engine():
+        loaded = overlay.load(str(root), {}, DesktopPolicy())
     assert isinstance(loaded, overlay.Loaded)
     return loaded.fingerprint
 
@@ -920,7 +923,8 @@ def test_a_refusal_by_plugin_code_changed_and_changed_back_around_the_load_is_mo
 
 
 def hint_of_refused(root: Path) -> Fingerprint:
-    out = overlay.load(str(root), {}, DesktopPolicy())
+    with fresh_engine():  # as `hint_of`
+        out = overlay.load(str(root), {}, DesktopPolicy())
     assert isinstance(out, overlay.LoadRefused), out
     assert out.read is not None
     return out.read

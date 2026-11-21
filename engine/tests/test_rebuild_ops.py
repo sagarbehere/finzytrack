@@ -7,13 +7,13 @@ from __future__ import annotations
 
 import json
 import sqlite3
-import sys
 from pathlib import Path
 from typing import Any
 
 import pytest
 
 from ledger_engine.protocol.server import Engine
+from tests.fresh_engine import fresh_engine
 from tests.mirror.publish_support import current_in
 from tests.test_save_ops import Channel, engine, request, save_setup
 from tests.test_save_ops import setup as setup  # the fixture, shared
@@ -41,23 +41,19 @@ def saved(ald: Path, params: dict[str, Any]) -> dict[str, Any]:
 
 def call(ald: Path | None, op: str, params: dict[str, Any]) -> dict[str, Any]:
     events = Channel(2, proceed=False)
-    reply = json.loads(engine(ald).handle(request(op, params, 2), events))
+    with fresh_engine():  # each job in its own fresh engine (S0142, BL-0299)
+        reply = json.loads(engine(ald).handle(request(op, params, 2), events))
     reply["events"] = [m.get("phase") for m in events.sent]
     return reply
 
 
 @pytest.fixture
 def fresh_setup(tmp_path: Path) -> tuple[Path, Path, dict[str, Any]]:
-    """The shared setup, then a fresh engine's module cache for the rebuild (S0142, BL-0299): the setup's load imports
-    Beancount's lazily imported steps (`beancount.ops.documents`, `beancount.ops.pad`, when no earlier test did) and
-    records them in the fingerprint, the rebuild's hint. A rebuild in the same process would find them in
-    `sys.modules`, record none, and its stamp would not cover the hint, so its second rebuild would load again. Every
-    job that loads runs in a fresh engine (engine-jobs §5.1), so the modules the setup imported are dropped here."""
-    before = set(sys.modules)
-    made = save_setup(tmp_path)
-    for name in set(sys.modules) - before:
-        del sys.modules[name]
-    return made
+    """The shared setup's load as a fresh engine runs it (S0142, BL-0299; `tests/fresh_engine.py`): it imports and
+    records Beancount's lazily imported steps (`beancount.ops.documents`, `beancount.ops.pad`) in the fingerprint, the
+    rebuild's hint, whatever earlier tests imported; each rebuild below runs in a fresh engine too (`call`)."""
+    with fresh_engine():
+        return save_setup(tmp_path)
 
 
 def test_a_saved_ledger_is_rebuilt_through_the_protocol(fresh_setup: tuple[Path, Path, dict[str, Any]]) -> None:

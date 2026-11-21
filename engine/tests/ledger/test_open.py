@@ -36,6 +36,7 @@ from ledger_engine.ledger.fingerprint import observe
 from ledger_engine.ledger.policy import DESKTOP
 from ledger_engine.mirror import publish as pb
 from ledger_engine.mirror.store import SqliteStore
+from tests.fresh_engine import fresh_engine
 from tests.mirror.publish_support import BUILT_AT, ENGINE_BUILD, KEY, TODAY, current_in, fs_now, meta
 from tests.windows_pending import NO_UID
 
@@ -153,7 +154,8 @@ class EditingStore(SqliteStore):
 
 def test_the_open_loads_with_the_overlay_load_and_publishes_what_it_parsed(w: World) -> None:
     job = FakeJob()
-    a = opening.run(opening.Ports(), str(w.root), job, w.target())
+    with fresh_engine():  # the open and the load below each as a fresh engine runs it (S0142, BL-0299)
+        a = opening.run(opening.Ports(), str(w.root), job, w.target())
     real_entries, real_errors, _ = port.real_load(str(w.root))
     assert (a.outcome, a.entries, a.errors) == ("loaded", len(real_entries), len(real_errors))
     assert job.events == ["reading"]
@@ -163,7 +165,8 @@ def test_the_open_loads_with_the_overlay_load_and_publishes_what_it_parsed(w: Wo
     assert name == a.published.gen.name
     facts = meta(w.mirror / a.published.gen.name)
     # stamped with exactly what the overlay load parsed (publish.md §8)
-    assert decode(facts["fingerprint"].encode("ascii")) == overlay_fp(w.root)
+    with fresh_engine():
+        assert decode(facts["fingerprint"].encode("ascii")) == overlay_fp(w.root)
     assert facts["ledger_version"] == a.published.ledger_version
     assert facts["as_of"] == TODAY.isoformat()
 
