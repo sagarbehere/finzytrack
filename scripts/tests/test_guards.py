@@ -10,6 +10,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / ".claude/hooks"))
 
@@ -425,6 +426,47 @@ class GuardTest(unittest.TestCase):
         self.assert_generated_refused("hard.md", self.t)
         (self.t / "copy.md").write_text(gen.read_text())
         self.assertIsNone(guards.bash_problem(f"tee {self.t}/copy.md", self.t))
+
+    def test_the_repos_page_by_its_macos_volume_spellings_stays_refused(self) -> None:
+        """S0139 round 2, R2-1: the data volume's firmlink path and the volfs path (`/.vol/<dev>/<inode>`) name the
+        repository's file without passing through it; the base refused both, and so must the scope (read only)."""
+        page = guards.REPO / "design/generated/engine-job-texts.md"
+        st = os.stat(page)
+        spellings = ["/System/Volumes/Data" + str(page), f"/.vol/{st.st_dev}/{st.st_ino}"]  # privacy-scan: allow home-path
+        present = [raw for raw in spellings if os.path.exists(raw)]
+        if sys.platform == "darwin":  # elsewhere neither spelling exists, and there is nothing to refuse
+            self.assertEqual(present, spellings)
+        for raw in present:
+            with self.subTest(raw=raw):
+                self.assertIn("is generated", guards.path_problem(raw, guards.REPO, writing=True) or "")
+                for cmd in (f"tee {raw}", f"printf x > {raw}", f"sed -i '' s/a/b/ {raw}"):
+                    self.assertIn("is generated", guards.bash_problem(cmd, guards.REPO) or "", cmd)
+
+    def test_a_generated_copy_outside_the_temp_folder_stays_refused(self) -> None:
+        """R2-1: only the temp folder holds copies that may be written; a GENERATED file anywhere else outside the
+        repository is refused, as before S0139 (here the test's folder stands for such a place)."""
+        f = self.generated(self.t / "x.md")
+        self.assertIsNone(guards.path_problem(str(f), self.repo, writing=True))  # in the temp folder: a copy
+        with mock.patch.object(guards, "temp_roots", lambda: [self.t / "elsewhere"]):
+            self.assertIn("is generated", guards.path_problem(str(f), self.repo, writing=True) or "")
+            self.assertIn("is generated", guards.bash_problem(f"rm {f}", self.repo) or "")
+        self.assertTrue(any(guards._under(Path(self.tmp.name), r) for r in guards.temp_roots()))  # tempfile's folder
+
+    def test_option_values_that_are_read_are_not_writes(self) -> None:
+        """S0139 round 2, R2-4: a glued value the command reads (`--exclude-from=`, `--reference=`, `--constraint=`)
+        is not a destination: copying out of the legacy worktree with its ignore file is allowed. The live data
+        folder stays refused in any option value."""
+        L, T, R = self.legacy, self.t, self.repo
+        g = self.generated(R / "design" / "generated" / "page.md")
+        (T / "ll").symlink_to(self.live)
+        for cmd in (f"rsync -a --exclude-from={L}/.gitignore {L}/ {T}/copy/", f"touch --reference={g} {T}/new",
+                    f"rsync -a --exclude=design/generated/page.md ./ {T}/c/",
+                    f"pip install -r r.txt --constraint={L}/c.txt", f"uv pip install --requirement={L}/req.txt"):
+            with self.subTest(allowed=cmd):
+                self.assertIsNone(guards.bash_problem(cmd, R), cmd)
+        for cmd in (f"rsync -a --exclude-from={T}/ll/x ./ {T}/c/", f"touch --reference={T}/ll/x {T}/new"):
+            with self.subTest(refused=cmd):
+                self.assertIn("live data folder", guards.bash_problem(cmd, R) or "", cmd)
 
     def test_option_values_glued_with_equals_are_checked_like_arguments(self) -> None:
         """S0139 F3-live (pre-existing): `npm --prefix=DIR` passed with DIR the live data folder by a symlink or `..`,

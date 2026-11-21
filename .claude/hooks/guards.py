@@ -6,15 +6,29 @@ in scripts/tests/test_guards.py). Commands built on purpose to slip past the par
 target (S0054). The owner's running app is not guarded: agents never stop, start or call it, and ask the owner
 when it is in their way (INV-24, a working rule; owner, 2026-10-29). The rules are in design/process/PROCESS.md §8.
 
-Generated files (INV-19, BL-0307): a write to a file with a GENERATED first line is refused when the file is under
-the repository (this checkout, by any spelling: a symlink, `..`, a case variant, a relative path), or when it has
-another hard link (it may be the repository's file by another name). A copy outside the repository, such as a
-reviewer's in a temp folder, may be written or removed.
+The first line since 2026-11-21 is Claude Code's sandbox (`.claude/settings.json`): the OS refuses every agent shell
+write outside the checkout, the temp folder and the tool caches, and the live data folder and the legacy worktree by
+name (owner, 2026-11-21: "Sandbox + land (Recommended)", "Finzytrack only (Recommended)";
+design/inbox/answered/20261121-guard-shapes-or-sandbox.md). This guard is the second line.
 
-Option values: the value of a glued `--opt=VALUE`, and of `-tDIR` for cp, mv, ln and install, is checked like any
-other argument, so the live data folder, the legacy worktree and generated files are seen through `=` as well.
+Generated files (INV-19, BL-0307): a write to a file with a GENERATED first line is refused, except a copy in the
+system temp folder (`$TMPDIR`, `/tmp`, `/private/var/folders`) that is outside the repository by every spelling (a
+symlink, `..`, a case variant, a relative path) and has one link; such a copy, a reviewer's for example, may be
+written or removed. Elsewhere the rule refuses any GENERATED file, as before S0139, since macOS spells a repository
+file in ways a path comparison cannot see (a hard link, the data volume's firmlink path, `/.vol/<dev>/<inode>`).
 
-Stated limits (PROCESS.md §11; S0139):
+Option values: the value of a glued `--opt=VALUE` is checked for the live data folder; for a writer, the value of an
+option that names where it writes (`DEST_OPTS`: `--prefix=`, `--target=`, `--target-directory=`, ...), and of `-tDIR`
+for cp, mv, ln and install, is checked by every write rule.
+
+Stated limits (S0139; the guard is a safety net, PROCESS.md §11; the sandbox covers the two real-data folders):
+- Shapes the parser cannot see (S0139 round 2, R2-2 and R2-3, behind the sandbox; owner, 2026-11-21: "Sandbox + land
+  (Recommended)"): git's own path options and a path git writes (`git -C DIR`, `git --work-tree=DIR`, `git add`), short
+  glued options (`curl -oFILE`, `tar -CDIR`, `sort -oFILE`, `cp -rtDIR`), value options in the space form or by an
+  alias (`pip install --target DIR`, `pip -t DIR`, `pnpm -C DIR`, `pnpm --dir DIR`, `yarn --cwd DIR`, `npm -C DIR`,
+  `uv --directory DIR`), and a firmlink spelling of the legacy worktree. A list of shapes cannot be complete.
+- A hard link's name outside the repository (or anywhere outside the temp folder) is refused for `rm` too, though
+  removing a name changes no byte of the other (R2-5; the base refused it as well).
 - A write aimed at a generated file's folder, not at the file (`cp page.md design/generated/`, `rm -r
   design/generated`), is not seen: `scripts/check_generated.py`, INV-19's gate, catches the drift at commit and push.
 - In-place edits spelled other than `sed -i...`/`perl -i...`/`--in-place` (`perl -pi -e`, `sed -Ei`) are not read as
@@ -118,7 +132,7 @@ def _expand(raw: str, cwd: Path) -> list[Path]:
 def path_problem(raw: str, cwd: Path, writing: bool) -> str | None:
     """Why an agent may not read or write this path, or None if it may. The live data folder is refused for reading
     and writing; the legacy worktree, `.git/config` and `.git/hooks`, `corpora/MANIFEST.tsv` and a generated file
-    under the repository (or one with another hard link) for writing. Limits: the module docstring."""
+    (except a one-link copy in the temp folder, outside the repository) for writing. Limits: the module docstring."""
     if LIVE_NAME.search(raw):
         return "the owner's live data folder is off-limits to agents (INV-24); use copies under a temp dir"
     for p in _expand(raw, cwd):
@@ -132,12 +146,28 @@ def path_problem(raw: str, cwd: Path, writing: bool) -> str | None:
         if writing and rp.name == "manifest.tsv" and rp.parent.name == "corpora":
             return ("only the owner adds rows to corpora/MANIFEST.tsv (INV-23: owner-reviewed exports); ask the owner "
                     "to review the anonymized file and add its row")
-        # INV-19 covers the repository's generated files, by any spelling (`_under` compares the resolved,
-        # lower-cased path); a copy outside it, such as a reviewer's in a temp folder, is not one (BL-0307). A file
-        # with another hard link may be the repository's file by another name, so it stays refused (S0139 F1).
-        if writing and p.is_file() and _generated(p) and (any(_under(p, r) for r in repo_roots()) or _links(p) > 1):
+        # INV-19 covers the repository's generated files. The one exception is a copy in the system temp folder,
+        # such as a reviewer's (BL-0307): outside the repository by every spelling, and with one link. Anything else
+        # with a GENERATED first line stays refused, as before S0139, since macOS spells a repository file in ways
+        # a path comparison cannot see (a hard link, the data volume's firmlink path, `/.vol/<dev>/<inode>`).
+        if writing and p.is_file() and _generated(p) and not _a_temp_copy(p):
             return "this file is generated (GENERATED header); edit its source and rerun the generator (INV-19)"
     return None
+
+
+def temp_roots() -> list[Path]:
+    """The system temp folder by its names: `$TMPDIR`, `/tmp` (macOS: `/private/tmp`) and `/private/var/folders`."""
+    roots = [Path("/tmp"), Path("/private/tmp"), Path("/private/var/folders")]
+    if os.environ.get("TMPDIR"):
+        roots.append(Path(os.environ["TMPDIR"]))
+    return roots
+
+
+def _a_temp_copy(p: Path) -> bool:
+    """A generated file's copy that may be written or removed (S0139 R2-1): in the temp folder, outside the
+    repository, and its only link (a hard link may be the repository's file by another name, F1)."""
+    return (any(_under(p, r) for r in temp_roots()) and not any(_under(p, r) for r in repo_roots())
+            and _links(p) == 1)
 
 
 def _links(p: Path) -> int:
@@ -147,13 +177,18 @@ def _links(p: Path) -> int:
         return 2  # cannot tell: refuse, as a hard link would be
 
 
-GLUED = re.compile(r"^--[\w-]+=(.+)$")  # `--opt=VALUE`
+GLUED = re.compile(r"^--([\w-]+)=(.+)$")  # `--opt=VALUE`
 GLUED_T = {"cp", "mv", "ln", "install"}  # their `-tDIR` names the destination folder
+# Options whose value is where a command writes. Other glued values are read (`--exclude-from=`, `--reference=`,
+# `--requirement=`), so they are checked only for the live data folder (S0139 R2-4).
+DEST_OPTS = {"prefix", "target", "target-directory", "root", "dir", "directory", "cwd", "output", "output-dir",
+             "out-dir", "outdir", "backup-dir", "work-tree", "git-dir", "install-dir", "dest", "destination"}
 
 
-def _glued(cmd: str, args: list[str]) -> list[str]:
-    """The values glued to their options: `--opt=VALUE`, and `-tDIR` where `-t` names a folder (S0139 F3-live)."""
-    values = [m.group(1) for a in args if (m := GLUED.match(a))]
+def _glued(cmd: str, args: list[str], dest_only: bool = False) -> list[str]:
+    """The values glued to their options: `--opt=VALUE`, and `-tDIR` where `-t` names a folder (S0139 F3-live);
+    with `dest_only`, only the options that name where the command writes."""
+    values = [m.group(2) for a in args if (m := GLUED.match(a)) and (not dest_only or m.group(1) in DEST_OPTS)]
     if cmd in GLUED_T:
         values += [a[2:] for a in args if re.match(r"^-t.", a)]
     return values
@@ -307,7 +342,7 @@ def bash_problem(command: str, cwd: Path) -> str | None:
                 return "find -delete/-exec in the legacy worktree is refused; it is read-only"
         # Writers: the refusal names its own reason (BL-0307), not one text for every rule.
         problem = None
-        glued = _glued(cmd, args)  # option values are arguments too (S0139 F3-live)
+        glued = _glued(cmd, args, dest_only=True)  # where an option says it writes (S0139 F3-live, R2-4)
         if cmd in WRITE_ANY_ARG or cmd in ("sed", "perl") and any(a.startswith("-i") or a == "--in-place" for a in args):
             problem = _first_problem(plain + glued, here)
             if not problem and any(_under(here, r) for r in legacy_roots()):
@@ -326,7 +361,7 @@ def bash_problem(command: str, cwd: Path) -> str | None:
             problem = _first_problem(prefix + glued, here)  # `--prefix DIR`, `--prefix=DIR`, `--target=DIR`
         if problem:
             return f"{cmd} refused: {problem}"
-        for a in plain + glued:
+        for a in plain + _glued(cmd, args):  # every option value, for the live data folder
             if (p := path_problem(a, here, writing=False)) and "live data" in p:
                 return p
         if any(_under(here, r) for r in legacy_roots()) and cmd not in READONLY_CMDS and cmd not in ("sed", "find"):
