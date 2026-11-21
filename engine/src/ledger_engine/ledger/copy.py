@@ -22,13 +22,18 @@ create's code; do not write a second cleanup") with the copy's own steps 2 and 5
       `path_key`); the layout and the rewrites (`core.copy_layout`): every ledger file the load parsed (each streamed
       from its source and checked against the fingerprint, or, when a line must be rewritten, read whole, checked,
       rewritten), every regular file under each documents root (no `.finzytrack` folder), every documents root folder,
-      and every `document` entry's file (streamed, their hashes recorded as copied).
+      and every `document` entry's file (streamed, their hashes recorded as copied). **A file the file system
+      encrypts** (Windows' EFS, which decrypts it for us as we read it) is never copied: each file the copy would write
+      from the source, ledger file or document, is asked about through the file-system port, the save's own question
+      (`EntryStat.encrypted`, S0128), and one refuses the copy (`encrypted`, detail `efs`, naming it; owner, 2026-11-18:
+      "a", and 2026-11-21: "Refuse any file (Recommended)"; S0138, BL-0287).
 5. **"Loads the same"**: the held locks released, the copy loaded **in a fresh process** (`fresh_load.check`,
    `copy_check`: nothing of the source's load, which ran its plugins in this engine, can reach it; the owner's choice
    of 2026-11-07, S0081 r2); it must run (`load_failed`), read only inside the target (`load_outside`, a `document`
    entry's file included), and give the source's summary (`load_differs`, or `plugin_modules` when the source names a
    plugin of its own). Then the re-check, just before the commit point: the source's ledger set observed again equals
-   the fingerprint, every copied document hashes as it was copied, every absent lock is still absent
+   the fingerprint, every copied document hashes as it was copied, no copied file is one the file system encrypts now
+   (`encrypted`, `efs`: its bytes are unchanged, so only this asks), every absent lock is still absent
    (`source_changed`, `legacy_saving`).
 
 `outcome(fs, plan)` is the create's outcome read; it names every entry in the target, since the file list was known
@@ -85,6 +90,19 @@ def _overlay_load(root: str) -> overlay.LoadResult:
     return overlay.load(root, {}, DESKTOP)
 
 
+def encrypted_on(fs: FileSystem, p: str) -> bool:
+    """Whether the file `p` leads to (links followed, as the copy reads it) is one the file system encrypts: the
+    entry's `EntryStat.encrypted` in its own folder, read through the port (Windows' EFS; never set on macOS or
+    Linux; S0128). A path that leads to nothing is not: nothing is copied from it (a read of it then fails, and the
+    re-check asks again). An error raises `OSError`."""
+    r = fs.resolve(p)
+    if r.rest or not r.existing:
+        return False
+    with fs.open_dir(host().join(r.existing[:-1])) as d:
+        st = d.stat(r.existing[-1])
+    return st is not None and st.encrypted
+
+
 def parsed_from(data: bytes, filename: str) -> cl.Parsed:
     """What Beancount parses from one file: its `include` strings, its `option "documents"` strings, and each
     `document` directive's line and resolved file."""
@@ -101,8 +119,8 @@ def parsed_from(data: bytes, filename: str) -> cl.Parsed:
 class CopyPorts:
     """The copy's effects: the file-system port (every write in the target, the journals), the legacy locks, the
     source's load, the copy's load in a fresh process (`fresh_load.check`), the reads of a source (`chunks`), the
-    observation of a ledger set and the state of one file, what the parser reads from one file, and whether a path is
-    a regular file."""
+    observation of a ledger set and the state of one file, what the parser reads from one file, whether a path is a
+    regular file, and whether the file a path leads to is one the file system encrypts (`encrypted_on`)."""
 
     fs: FileSystem
     legacy: LegacyLocks
@@ -113,6 +131,7 @@ class CopyPorts:
     file_state: Callable[[str], FileState] = fingerprint.file_state
     parse: Callable[[bytes, str], cl.Parsed] = parsed_from
     regular: Callable[[str], bool] = fingerprint.regular
+    encrypted: Callable[[FileSystem, str], bool] = encrypted_on
 
 
 def _absolute(p: str, what: str) -> None:
@@ -163,6 +182,7 @@ class _CopySteps:
     layout: cl.Layout | None = None
     documents: list[tuple[str, str]] = field(default_factory=lambda: [])  # (source, path in the copy)
     quoted: dict[str, set[str]] = field(default_factory=lambda: {})  # a rewritten include's text -> its old texts
+    copied: list[str] = field(default_factory=lambda: [])  # every source file the copy writes (asked: `_refuse_efs`)
     own_plugins: tuple[str, ...] = ()  # plugins the source names that are not Beancount's own
 
     def release(self) -> None:
@@ -336,6 +356,7 @@ class _CopySteps:
         out: dict[str, tuple[str, NewFile]] = {}
 
         def add(path: str, data: bytes | Streamed) -> bool:
+            self._refuse_efs(path)
             dst = _placed(lay, path)
             if _reserved(dst):
                 raise Stop("cannot_place", path, "reserved_name")
@@ -346,6 +367,7 @@ class _CopySteps:
                     raise Stop("cannot_place", path, "two_sources")
                 return False
             out[key] = (source, NewFile(dst, data))
+            self.copied.append(path)
             return True
 
         for p in src.files:
@@ -364,6 +386,16 @@ class _CopySteps:
             if there and add(path, Streamed(path, None)):
                 self.documents.append((path, _placed(lay, path)))
         return tuple(f for _, f in out.values())
+
+    def _refuse_efs(self, path: str) -> None:
+        """A file the file system encrypts is never copied (S0138, BL-0287): its bytes would land in the clear."""
+        try:
+            if self.ports.encrypted(self.ports.fs, path):
+                raise Stop("encrypted", path, "efs")
+        except OSError as e:
+            raise Stop("source_unreadable", path, err=e.errno) from None
+        except ValueError:
+            raise Stop("source_unreadable", path) from None
 
     def _ledger_file(self, lay: cl.Layout, src: cl.SourceSet, p: str, sha: str) -> bytes | Streamed:
         """One ledger file: streamed when no line changes, else its rewritten bytes (read whole, as the load read
@@ -422,6 +454,8 @@ class _CopySteps:
             wrote = create.written(run, dst)
             if not isinstance(state, Content) or wrote is None or state.sha256 != wrote[0]:
                 raise Stop("source_changed", path)
+        for path in self.copied:  # encrypted since step 2 asked: same bytes, so only this sees it
+            self._refuse_efs(path)
         for lock in self.absent:
             try:
                 got = self.ports.legacy.try_lock(lock)

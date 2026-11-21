@@ -663,6 +663,11 @@ COPY: tuple[Row, ...] = (
     ),
     ("msg:copy.encrypted", "the source holds an encrypted ledger file (ADR-0059)", lambda: _not_copied("encrypted")),
     (
+        "msg:copy.encrypted_efs",
+        "a file the copy would write, ledger file or document, is one Windows' EFS encrypts (S0138, BL-0287)",
+        lambda: _not_copied("encrypted", detail="efs"),
+    ),
+    (
         "msg:copy.source_changed",
         "a source changed while it was copied, or before the commit point (the owner's words)",
         lambda: _not_copied("source_changed"),

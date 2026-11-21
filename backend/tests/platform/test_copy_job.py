@@ -324,3 +324,21 @@ def test_the_copys_manifest_names_the_roots_file_as_this_os_cuts_its_path() -> N
     (manifest,) = copy_manifest_files(host("/data/ledgers/Main Books.beancount"))
     assert "Main Books.beancount" in manifest.text
     assert "ledgers" not in manifest.text
+
+
+def test_S0138_a_file_windows_encrypts_has_its_own_text_and_a_named_one_keeps_its_own(make: Any) -> None:
+    """Owner, 2026-11-21: "Own text (Recommended)": the reason stays `encrypted`; a file Windows' EFS encrypts (detail
+    `efs`) is told so, since Finzytrack does read such a file (the open) and refuses only to copy it. Must not pass:
+    the EFS case told "does not read encrypted ledger files", or a `.gpg` file told it is encrypted by Windows."""
+    rig = make({"copy": [answer(outcome="not_created", reason="encrypted", path=SOURCE, detail="efs")]})
+    value = rig.copy()
+    assert value == NotCopied("encrypted", FOLDER, (), path=SOURCE, detail="efs")
+    assert isinstance(value, NotCopied)
+    assert copy_text.text(value) == (
+        "Not copied. Main Books.beancount is encrypted by Windows. Finzytrack does not copy encrypted files, so their "
+        "contents are never written unencrypted."
+    )
+    named = NotCopied("encrypted", FOLDER, (), path=host("/data/ledgers/x.beancount.gpg"))
+    assert copy_text.text(named) == (
+        "Not copied. x.beancount.gpg is encrypted. This version of Finzytrack does not read encrypted ledger files."
+    )

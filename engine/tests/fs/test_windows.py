@@ -1915,3 +1915,66 @@ def test_S0136_RT2_a_share_refusing_the_flush_with_another_code_stops_the_save_b
         assert os.listdir(tmp_path / "app" / "local" / "backups") == []
     finally:
         shutil.rmtree(ledger, ignore_errors=True)
+
+
+# -- S0138 (BL-0287): a copy refuses a file EFS encrypts --------------------------------------------------------------
+
+EFS_ATTRIBUTE = 0x4000  # FILE_ATTRIBUTE_ENCRYPTED (winnt.h), as Python's own `os.stat` reports it
+
+
+def _efs(path: Path) -> None:
+    """`cipher /e` on one file; the attribute read back by Python's `os.stat`, apart from the adapter. In CI the runner
+    must have EFS: a skip there would hide that the refusal never ran (the 2026-11-21 brief)."""
+    run = subprocess.run(["cipher", "/e", str(path)], capture_output=True, text=True, check=False)  # noqa: S603, S607
+    if run.returncode != 0 or not os.stat(path).st_file_attributes & EFS_ATTRIBUTE:
+        why = f"EFS is not available on this runner: {run.stdout.strip()} {run.stderr.strip()}"
+        if os.environ.get("CI"):
+            pytest.fail(why)
+        pytest.skip(why)
+
+
+@pytest.mark.parametrize(
+    "where",
+    ["main.beancount", "inc.beancount", "receipt.pdf", os.path.join("docs", "Assets", "Cash", "2026-01-04.x.pdf")],
+)
+def test_S0138_a_copy_of_a_ledger_with_a_file_efs_encrypts_is_refused_before_anything_is_written(
+    fs: FileSystem, tmp_path: Path, where: str
+) -> None:
+    """Owner, 2026-11-18: "a" ("Refuse Copy of an EFS-encrypted ledger"); 2026-11-21: "Refuse any file
+    (Recommended)": the root, an include, a `document` entry's file or a file under the documents root, encrypted with
+    `cipher /e`, refuses the copy (`encrypted`, `efs`, naming it) before the target folder is made. Must not pass: the
+    copy reading the file (EFS decrypts it for us) and writing its bytes in the clear."""
+    from ledger_engine.ledger.copy import CopyPlan, CopyPorts, run
+    from ledger_engine.ledger.create import NewFile, NotCreated
+
+    src = tmp_path / "src"
+    (src / "docs" / "Assets" / "Cash").mkdir(parents=True)
+    (src / "main.beancount").write_text(
+        'option "documents" "docs"\n2026-01-01 open Assets:Cash EUR\ninclude "inc.beancount"\n'
+        '2026-01-03 document Assets:Cash "receipt.pdf"\n'
+    )
+    (src / "inc.beancount").write_text("2026-01-02 price EUR 1.10 USD\n")
+    (src / "receipt.pdf").write_bytes(b"%PDF receipt\n")
+    (src / "docs" / "Assets" / "Cash" / "2026-01-04.x.pdf").write_bytes(b"%PDF statement\n")
+    (tmp_path / "app").mkdir()
+    _efs(src / where)
+    target = tmp_path / "copy"
+    plan = CopyPlan(
+        "j1", str(target), str(src / "main.beancount"), (NewFile("workspace.json", b"{}\n"),), str(tmp_path / "app"), ()
+    )
+
+    gated: list[None] = []
+
+    class Job:
+        def progress(self, phase: str) -> None: ...
+
+        def gate(self) -> None:
+            gated.append(None)
+
+    out = run(plan, CopyPorts(fs, this_os.legacy_locks_for_this_os()), Job())
+    assert not gated, "never at the commit point"
+    assert isinstance(out, NotCreated), out
+    assert (out.reason, out.detail, out.left) == ("encrypted", "efs", ()), out
+    assert out.path is not None
+    assert os.path.samefile(out.path, src / where)
+    assert not target.exists(), "nothing written, not even the target folder"

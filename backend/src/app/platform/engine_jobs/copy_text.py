@@ -109,6 +109,11 @@ def _why(v: NotCopied) -> str | None:
                 f"Beancount cannot load your ledger{_at_line(v)} ({name_of(v.path)}). bean-check fails on it too. "
                 "A plugin of the ledger may have made an entry Beancount cannot check."
             )
+        case "encrypted" if v.detail == "efs":  # Windows' EFS (S0138; owner, 2026-11-21: "Own text (Recommended)")
+            return (
+                f"{name_of(v.path)} is encrypted by Windows. Finzytrack does not copy encrypted files, so their "
+                "contents are never written unencrypted."
+            )
         case "encrypted":
             return f"{name_of(v.path)} is encrypted. This version of Finzytrack does not read encrypted ledger files."
         case "source_changed":

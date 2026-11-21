@@ -19,6 +19,7 @@ from the spec's lines and the owner's decisions of 2026-11-07:
 
 from __future__ import annotations
 
+import dataclasses
 import errno
 import hashlib
 import posixpath
@@ -360,6 +361,83 @@ def test_an_encrypted_source_file_is_refused() -> None:
     w.load_result = lambda root: overlay.LoadRefused("encrypted", f"{B}/x.gpg")
     nc = not_copied(go(w)[0], "encrypted")
     assert nc.path == f"{B}/x.gpg"
+
+
+# -- S0138 (BL-0287): a file the file system encrypts (Windows' EFS) is never copied ------------------------------
+
+
+def efs_ports(w: World, encrypted: set[str]) -> CopyPorts:
+    """The world's ports, with the files in `encrypted` read as ones the file system encrypts (`EntryStat.encrypted`,
+    as Windows' EFS sets it: `tests/fs/test_windows.py` encrypts real files with `cipher /e`). The set may change while
+    the copy runs."""
+
+    def asked(fs: object, path: str) -> bool:
+        w.log.append(f"encrypted? {path}")
+        return path in encrypted
+
+    return dataclasses.replace(w.ports(), encrypted=asked)
+
+
+@pytest.mark.parametrize("file", [ROOT, PRICES, RATES, PDF])
+def test_S0138_a_source_file_the_file_system_encrypts_is_refused_before_anything_is_written(file: str) -> None:
+    """Owner, 2026-11-18: "a" ("Refuse Copy of an EFS-encrypted ledger"), and 2026-11-21: "Refuse any file
+    (Recommended)": a ledger file (the root, an include, one outside its folder) or a document the copy would write,
+    which EFS decrypts for us as we read it, refuses the copy before anything is written: `encrypted`, detail `efs`,
+    naming the file. Must not pass: the copy made, or the target folder made and removed."""
+    w = new_world()
+    out = run(PLAN, efs_ports(w, {file}), Job())
+    nc = not_copied(out, "encrypted")
+    assert (nc.path, nc.detail, nc.left) == (file, "efs", ())
+    assert w.fs.effects == [], "nothing written, not even the target folder"
+    assert not any(e.startswith("check") for e in w.log)
+
+
+def test_S0138_every_file_the_copy_writes_from_the_source_is_asked_about() -> None:
+    """The population: every ledger file the load parsed, every file under a documents root, every `document`
+    entry's file (`copy._files`). Must not pass: a file written that was never asked about."""
+    w = new_world()
+    out = run(PLAN, efs_ports(w, set()), Job())
+    assert out == Created(T)
+    asked = {e.removeprefix("encrypted? ") for e in w.log if e.startswith("encrypted? ")}
+    assert asked >= set(SOURCES), asked
+
+
+def test_S0138_a_file_encrypted_while_the_copy_runs_is_refused_before_its_manifest() -> None:
+    """A source file EFS encrypts after step 2 asked (its bytes as before, so the fingerprint is unchanged) stops
+    the copy at the re-check before the commit point: no copy stands that holds an encrypted file's bytes in the
+    clear, and what the job wrote is removed."""
+    w = new_world()
+    encrypted: set[str] = set()
+    w.on_copy_load = lambda: encrypted.add(PDF)
+    job = Job()
+    nc = not_copied(run(PLAN, efs_ports(w, encrypted), job), "encrypted")
+    assert (nc.path, nc.detail, nc.left) == (PDF, "efs", ())
+    assert job.gated == 0
+    assert not exists(w.fs, T)
+
+
+def test_S0138_a_file_whose_encryption_cannot_be_read_refuses_the_copy() -> None:
+    """Fail closed: a system that cannot answer "encrypted?" (an I/O error) refuses the copy, naming the file, before
+    anything is written. Must not pass: the file copied as if not encrypted."""
+    w = new_world()
+
+    def failing(fs: object, path: str) -> bool:
+        if path == PDF:
+            raise OSError(errno.EIO, "cannot read its attributes")
+        return False
+
+    nc = not_copied(run(PLAN, dataclasses.replace(w.ports(), encrypted=failing), Job()), "source_unreadable")
+    assert (nc.path, nc.errno) == (PDF, errno.EIO)
+    assert w.fs.effects == []
+
+
+def test_S0138_a_name_encrypted_file_keeps_its_own_refusal_without_a_detail() -> None:
+    """@regression-guard: a `.gpg` or `.asc` ledger file (ADR-0059, the load's refusal) is `encrypted` with no
+    detail, so its text stays "does not read encrypted ledger files"."""
+    w = new_world()
+    w.load_result = lambda root: overlay.LoadRefused("encrypted", f"{B}/x.gpg")
+    nc = not_copied(run(PLAN, efs_ports(w, set()), Job()), "encrypted")
+    assert (nc.path, nc.detail) == (f"{B}/x.gpg", None)
 
 
 def test_a_source_load_that_cannot_run_is_refused() -> None:

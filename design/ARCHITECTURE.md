@@ -324,7 +324,8 @@ engine/src/ledger_engine/
     copy.py      the copy job in the engine (engine-jobs §8.2, S0081): the legacy locks tried and held for the reads,
                  the source loaded once (the overlay load: its fingerprint is checked again just before the commit
                  point), no `.open` journal naming a source, the layout and rewrites of `include`, documents and
-                 `document` lines (core/copy_layout.py, pure),
+                 `document` lines (core/copy_layout.py, pure), no file the file system encrypts (Windows' EFS:
+                 the port's `EntryStat.encrypted`, asked before anything is written and again at the re-check, S0138),
                  every file streamed into the create's writer, "loads the same" (loads_same.py: entries, errors and
                  options, paths mapped back) on the copy loaded in a fresh process (fresh_load.py, copy_check.py);
                  protocol/copy.py its ops copy, copy_outcome
