@@ -42,8 +42,11 @@ def _forget_ledger_plugins(tmp_path_factory: pytest.TempPathFactory) -> Iterator
     """A test's ledger plugins leave the module cache after it, as a fresh engine starts without them (engine-jobs
     §5.1; S0099): a module imported during the test from a file under the run's temporary folders is dropped, so the
     next test's load imports its own plugins again (`ledger_engine.ledger.imports`: one load with plugins per engine).
-    Modules still loaded from earlier tests (Beancount's steps, the standard library) are like those a fresh engine
-    imported at its start."""
+    Limit: every other module an earlier test imported stays, and not all of them are ones a fresh engine imports
+    at its start: Beancount imports some steps of its load only when a load runs them (`beancount.ops.documents`,
+    `beancount.ops.pad`). A load records only the modules it imports itself, so a test that compares the fingerprints
+    of two loads in one process can depend on the order the suite runs in; such a test drops, between the two loads,
+    the modules the first imported (S0142, BL-0299: `tests/test_rebuild_ops.py`'s `fresh_setup`)."""
     before = set(sys.modules)
     yield
     base = str(tmp_path_factory.getbasetemp().resolve())
