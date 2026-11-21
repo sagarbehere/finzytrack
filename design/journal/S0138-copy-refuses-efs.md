@@ -48,6 +48,7 @@
     - "S0138 loosening mutants (temporary step)": the selection 4 passed; 2 tried, 2 killed, 0 survived (`adapter-never-reports-efs`, `copy-ignores-the-attribute`).
     - "tests": 11010 passed, 48 skipped; the S0138 skips are only the link test (symbolic-link privilege) and the regression check (`COPY_CHECK`); no `cipher /e` test skipped, no "EFS is not available".
     - backend-windows and every other job green.
+  - 2026-11-21 run 6 (head 4e32c409, the round 1 fixes): every job green. engine-windows: the tests-first step 8 failed, 2 skipped (the base's, as in run 5); the mutants step's selection 4 passed, then 2 tried, 2 killed, 0 survived; "tests" 11016 passed, 48 skipped (S0138 skips only the link test and the `COPY_CHECK` regression check; no `cipher /e` skip). backend-windows 3027 passed, 63 skipped, 23 xfailed, with `test_S0138_a_file_windows_encrypts_has_its_own_text_and_a_named_one_keeps_its_own` and the three `test_S0138_a_copy_left_after_the_efs_refusal_may_hold_the_files_contents_unencrypted` cases passing. The landing commit removes the two temporary steps (`ci.yml` back to the base's bytes).
 
 ## Verifier
 - Round 1, head 1095f0c4 (range a17209e2..1095f0c4): verifier PASS WITH FINDINGS, no High, nothing in class (a) or (b); data-safety red team PASS WITH FINDINGS, no High. Fixed in "S0138-copy-refuses-efs: round 1 fixes"; `copy_text.py` is product code, so a fresh verifier round follows on the fix range.
@@ -60,6 +61,15 @@
 | V-F3 | Low | e | The two temporary CI steps stay for the fix's manual run and are removed by the landing commit |
 | V-F4 | Low | d | BL-0287's row still prescribed `ENCRYPTED_FILE_NOT_EDITABLE`. Fixed: the row states what was built (reason `encrypted`, detail `efs`) and the owner's new quote |
 
+- Round 2 (the fresh round on 1095f0c4..4e32c409, the product fix 9f16e12f): verifier PASS WITH FINDINGS, no High, nothing in class (a) or (b). Under the owner's new rule (2026-11-21, in session: "I'm accepting the inbox note as written"; `design/inbox/20261121-pace-and-scope.md`, change B): a Low (c)/(d) finding is fixed in its round or dropped with a one-line reason, and a tests- or docs-only fix needs no further round. The fixes below are docs and CI only.
+
+| ID | Severity | Class | Disposition |
+|---|---|---|---|
+| V2-F1 | Low | d | engine-jobs §11's copy row said the reason's text is followed by what the job kept; for `msg:copy.encrypted_efs_left` that sentence is replaced. Fixed in the row (docs) |
+| V2-F2 | Low | d | The left-over line also shows when the cleanup removed the plaintext and kept only an unrelated entry (or the folder), and then names nothing kept. §8.2's limit now says the line appears whenever the cleanup left anything, without naming it (docs). The text stays as the owner chose it, dropped with this reason: "may hold" keeps it true; it needs a file encrypted mid-copy and an unrelated uncertain entry at once; changing the text is product code and would need another round |
+| V2-F3 | Low | e | The two temporary engine-windows steps: removed in the landing commit |
+
 ## Golden changes
 
 ## Retro
+- Build about 45 min (brief with two owner questions, tests first on three tiers, the check, docs, one Windows run), fix about 35 min (the owner's new wording, three tests, two runs, the landing); 2 verifier rounds and 1 data-safety red-team run; findings 0H/2M/7L (round 1: verifier 1M/3L, red team 1M/1L, one shared; round 2: 3L); no class (a) or (b). Cheaper gate: a user text that promises an absolute ("never written") gets a test on every outcome that reaches it, a cleanup that cannot finish included, before review. Process checks: the owner's policy questions at the brief 2 offered / 2 taken; the data-safety red team 1 catch (the false "never written unencrypted") / 0 false positive; the verifier's mutants 3 catch (M1-M3) / 0 false positive.

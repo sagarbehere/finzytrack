@@ -222,40 +222,6 @@ jobs:
           "FT_TEST_SHARE_LOCAL=$dir" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8  # the server's own path (S0136)
           [System.Environment]::OSVersion.VersionString
           .venv\Scripts\python.exe scripts\probe_windows_fs.py $env:RUNNER_TEMP $env:TEMP @vols @shares
-      - name: "S0138 tests first (temporary step): the slice's Windows tests against the base's engine source"
-        # Removed again by the slice's last commit: the tests S0138 adds (BL-0287), run against the engine source of the
-        # slice's base (a17209e2), to record which fail there (PROCESS.md §3 step 3).
-        continue-on-error: true
-        env:
-          TZ: PST8PDT
-        run: |
-          git fetch --no-tags --depth=1 origin a17209e25cc27f10334461f01e7d9742bd135ac7
-          git checkout FETCH_HEAD -- src
-          .venv\Scripts\python.exe -m pytest -q -rs -p no:cacheprovider tests/fs/test_windows.py tests/ledger/test_copy_efs.py -k "S0138"
-          git checkout HEAD -- src
-          git status --short
-      - name: "S0138 loosening mutants (temporary step): the EFS refusal of a copy on the runner (scripts/mutants.py)"
-        # Removed again by the slice's last commit (ADR-0057: a check guarding user data gets loosening mutants; these
-        # need the runner's real EFS). The selection runs first, so its passing is shown before the mutants.
-        continue-on-error: true
-        env:
-          TZ: PST8PDT
-        run: |
-          $py = Join-Path $env:GITHUB_WORKSPACE "engine\.venv\Scripts\python.exe"
-          $plan = Join-Path $env:RUNNER_TEMP "mutants-s0138.toml"
-          $q = "'" * 3
-          $cmd = "cd engine && set PYTHONPATH=src&& `"$py`" -m pytest -q -p no:cacheprovider tests/fs/test_windows.py -k `"S0138`""
-          $m = @(
-            @("adapter-never-reports-efs", "engine/src/ledger_engine/fs/windows.py", 'encrypted=bool(attrs & FILE_ATTRIBUTE_ENCRYPTED),', 'encrypted=False,'),
-            @("copy-ignores-the-attribute", "engine/src/ledger_engine/ledger/copy.py", 'return st is not None and st.encrypted', 'return False')
-          )
-          $toml = @("cmd = $q$cmd$q", "timeout = 1800")
-          foreach ($x in $m) { $toml += @("[[mutant]]", "id = '$($x[0])'", "file = '$($x[1])'", "find = $q$($x[2])$q", "replace = $q$($x[3])$q") }
-          $toml | Set-Content -Encoding utf8 $plan
-          Get-Content $plan
-          & $py -m pytest -q -rs -p no:cacheprovider tests/fs/test_windows.py -k "S0138"
-          Push-Location $env:GITHUB_WORKSPACE
-          try { & $py scripts\mutants.py $plan --work (Join-Path $env:RUNNER_TEMP "mutants-work") } finally { Pop-Location }
       - name: tests
         # INV-07 on Windows (S0127): its C runtime reads TZ only as a process starts and only in this form, so it is set
         # before Python starts (Los Angeles: tests/conftest.py checks it). `-rs`: each skip prints its reason, the
