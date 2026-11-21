@@ -1294,3 +1294,44 @@ def test_V2_2_a_target_folder_removed_then_its_parents_sync_failing_is_never_nam
     assert isinstance(out, NotCreated), out
     assert (out.reason, out.left) == ("load_errors", None), out
     assert names(fs, U) == [], "the folder is gone"
+
+
+@pytest.mark.parametrize("where", ["target", "nested"])
+@pytest.mark.parametrize("after", [True, False], ids=["carried_out", "not_carried_out"])
+def test_V3_1_a_folder_removal_that_answers_an_error_is_never_named_kept(where: str, after: bool) -> None:
+    """S0136 round 3, V3-1 (owner, 2026-11-21: "Say "check the folder" (Recommended)"): an `rmdir` in the cleanup that
+    answers an error, whether the system carried it out (a share's lost reply, a replay after a reconnect: the fake's
+    `after`) or not, is a cleanup that could not finish: `left` None (`unknown_folder`, "check the folder"), never the
+    folder named kept, which may be gone. The verifier's repro, at the target and at a nested folder."""
+
+    def errors(_root: str) -> LoadResult:
+        return LoadResult(errors=2, parsed=(f"{T}/main.beancount",))
+
+    fs0 = new_fs()
+    assert go(fs0, load=errors)[0] == NotCreated("load_errors", T, (), None, "2")
+    at = fs0.effects.index(f"rmdir {U}:new" if where == "target" else f"rmdir {T}:prices")
+    fs = new_fs()
+    fs.inject(at, crash=False, err=errno.EIO, after=after)
+    out, _ = go(fs, load=errors)
+    assert isinstance(out, NotCreated), out
+    assert (out.reason, out.left) == ("load_errors", None), out
+
+
+def test_V3_1_a_folder_holding_another_programs_entry_is_still_named_kept() -> None:
+    """The one answer that says what happened, `ENOTEMPTY`: the folder stands, so it is named kept, as the owner's
+    middle path has it (2026-11-07); its own sibling files of ours are removed."""
+
+    def errors(_root: str) -> LoadResult:
+        return LoadResult(errors=2, parsed=(f"{T}/main.beancount",))
+
+    fs = new_fs()
+    job = Job(at_gate=None)
+
+    def load(root: str) -> LoadResult:
+        fs.outside_write(f"{T}/prices/theirs.txt", FOREIGN)
+        return errors(root)
+
+    out, _ = go(fs, job, load=load)
+    assert isinstance(out, NotCreated), out
+    assert out.left == ("prices",), out
+    assert fs.file(f"{T}/prices/theirs.txt") == FOREIGN

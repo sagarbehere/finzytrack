@@ -153,6 +153,19 @@ class Created:
     folder: str
 
 
+def _removed_unless_not_empty(rmdir: Callable[[], None]) -> bool:
+    """A folder's `rmdir` in the cleanup: True when it answered done; False when it answered `ENOTEMPTY` (the folder
+    stands and holds an entry: named kept); any other error is raised, so the cleanup could not finish (`left` None):
+    it may have been carried out (S0136 round 3, V3-1)."""
+    try:
+        rmdir()
+    except OSError as e:
+        if e.errno == _errno.ENOTEMPTY:
+            return False
+        raise
+    return True
+
+
 @dataclass(frozen=True, slots=True)
 class NotCreated:
     """No `.finzytrack/` of ours stands in the folder (the plan's target as requested). `left`: what the job left in
@@ -401,14 +414,18 @@ class Run:
         a name whose exclusive create or mkdir succeeded in this run, never judged by its bytes alone. Just before
         each removal the entry must still be the one the job made (its identity, `(st_dev, st_ino)`, as recorded at
         its create) and, for a file, still hold exactly the job's bytes (a bounded read); a folder goes only by
-        `rmdir`, which fails on a non-empty one; the target folder last, when the job made it (named `.` when it
-        stays, r3 V1). Anything that fails a check is kept and named, with every name in `unsure` (a create that
-        failed otherwise than `EEXIST` but whose name stands there now, a made name whose identity could not be read;
-        it may be ours or another program's). Every folder is reached through the path guard. Returns the names
-        kept (relative to the target, a folder only when nothing kept is inside it), or None when the cleanup could
-        not finish (a folder moved, an error): the user is asked to check the folder. A name it removed is never named
-        as kept: a removal whose folder's sync then fails (the target's included, S0136 round 2, V2-2: a share's
-        server refusing the flush otherwise) is a cleanup that could not finish, None, as for a file's."""
+        `rmdir`; the target folder last, when the job made it. Anything that fails a check before its removal (another
+        identity, other bytes, the target not known as the job's) is kept and named, with every name in `unsure` (a
+        create that failed otherwise than `EEXIST` but whose name stands there now, a made name whose identity could
+        not be read; it may be ours or another program's). Every folder is reached through the path guard. Returns
+        the names kept (relative to the target, a folder only when nothing kept is inside it), or None when the
+        cleanup could not finish: a folder moved, or any error, a removal's included, at the target folder, a nested
+        folder or a file, and a removal's folder sync that fails after it: the user is asked to check the folder
+        (`unknown_folder`). So nothing is ever named kept that may already be gone: a removal that the system carried
+        out and still answered with an error (a share's lost reply, a replay after a reconnect) is never taken for
+        "not removed" (owner, 2026-11-21: "Say "check the folder" (Recommended)"; S0136 rounds 2 and 3, V2-2 and
+        V3-1). The one answer that says what happened is a folder's `ENOTEMPTY` (it stands, holding an entry: another
+        program's, or one kept above): that folder is named kept, as before (`_removed_unless_not_empty`)."""
         kept = list(self.unsure)
         try:
             for rel, m in reversed(list(self.made.items())):
@@ -421,10 +438,8 @@ class Run:
                     kept.append(rel)
                     continue
                 if m.data is None:
-                    try:
-                        h.rmdir(leaf)
-                    except OSError:
-                        kept.append(rel)
+                    if not _removed_unless_not_empty(lambda h=h, leaf=leaf: h.rmdir(leaf)):
+                        kept.append(rel)  # it stands, holding another entry (`ENOTEMPTY`): named
                         continue
                 elif st.kind is Kind.FILE and h.sha256(leaf, m.data[1] + 1) == m.data:
                     h.remove(leaf)
@@ -439,13 +454,11 @@ class Run:
                 if st is not None and self.target_identity is None:
                     kept.append(TARGET)  # not known as the job's: named, never removed
                 elif st is not None and st.identity == self.target_identity:
-                    try:
-                        self.handles.release(self.folder)
-                        ph.rmdir(name)
-                    except OSError:
-                        kept.append(TARGET)  # the folder the job made stays (another program's entry in it): named
+                    self.handles.release(self.folder)
+                    if _removed_unless_not_empty(lambda: ph.rmdir(name)):
+                        ledger_sync(ph)
                     else:
-                        ledger_sync(ph)  # removed: an error here is the cleanup not finishing (None), never "kept"
+                        kept.append(TARGET)  # it stands, holding another program's entry (`ENOTEMPTY`): named
         except (OSError, PathMovedError):
             return None
         return _named(kept)
