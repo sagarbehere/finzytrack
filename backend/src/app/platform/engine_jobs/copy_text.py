@@ -22,6 +22,15 @@ CHANGED: Final = "Your ledger changed while Finzytrack was copying it. Try again
 """The owner's words (2026-11-07, decision 2)."""
 
 
+def efs_left(folder: str) -> str:
+    """Instead of the left-over sentence, after the re-check found a file EFS encrypts and the cleanup could not
+    remove all it wrote (owner, 2026-11-21, in session: "Short + left-over line (Recommended)"; S0138 round 1)."""
+    return (
+        f"The unfinished copy in {folder} may hold that file's contents unencrypted. Check it before you delete "
+        "anything."
+    )
+
+
 def _system(errno: int | None) -> str:
     return f" The system answered: {recovery_text.system_answer(errno)}." if errno is not None else ""
 
@@ -109,11 +118,9 @@ def _why(v: NotCopied) -> str | None:
                 f"Beancount cannot load your ledger{_at_line(v)} ({name_of(v.path)}). bean-check fails on it too. "
                 "A plugin of the ledger may have made an entry Beancount cannot check."
             )
-        case "encrypted" if v.detail == "efs":  # Windows' EFS (S0138; owner, 2026-11-21: "Own text (Recommended)")
-            return (
-                f"{name_of(v.path)} is encrypted by Windows. Finzytrack does not copy encrypted files, so their "
-                "contents are never written unencrypted."
-            )
+        case "encrypted" if v.detail == "efs":  # Windows' EFS (S0138; owner, 2026-11-21: "Own text (Recommended)",
+            # then "Short + left-over line (Recommended)")
+            return f"{name_of(v.path)} is encrypted by Windows. Finzytrack does not copy encrypted files."
         case "encrypted":
             return f"{name_of(v.path)} is encrypted. This version of Finzytrack does not read encrypted ledger files."
         case "source_changed":
@@ -145,6 +152,8 @@ def text(v: NotCopied) -> str:
             return head if left is None else f"{head} {left}"
         case "legacy_saving":
             return " ".join(part for part in (NOT_COPIED, LEGACY_SAVING, left) if part)
+        case "encrypted" if v.detail == "efs" and left is not None:  # the re-check, then a cleanup that left something
+            return f"{NOT_COPIED} {_why(v)} {efs_left(v.folder)}"
         case _:
             return " ".join(part for part in (NOT_COPIED, _why(v), left) if part)
 

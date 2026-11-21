@@ -327,18 +327,33 @@ def test_the_copys_manifest_names_the_roots_file_as_this_os_cuts_its_path() -> N
 
 
 def test_S0138_a_file_windows_encrypts_has_its_own_text_and_a_named_one_keeps_its_own(make: Any) -> None:
-    """Owner, 2026-11-21: "Own text (Recommended)": the reason stays `encrypted`; a file Windows' EFS encrypts (detail
-    `efs`) is told so, since Finzytrack does read such a file (the open) and refuses only to copy it. Must not pass:
-    the EFS case told "does not read encrypted ledger files", or a `.gpg` file told it is encrypted by Windows."""
+    """Owner, 2026-11-21: "Own text (Recommended)", then "Short + left-over line (Recommended)": the reason stays
+    `encrypted`; a file Windows' EFS encrypts (detail `efs`) is told so, since Finzytrack does read such a file (the
+    open) and refuses only to copy it. Must not pass: the EFS case told "does not read encrypted ledger files", or a
+    `.gpg` file told it is encrypted by Windows."""
     rig = make({"copy": [answer(outcome="not_created", reason="encrypted", path=SOURCE, detail="efs")]})
     value = rig.copy()
     assert value == NotCopied("encrypted", FOLDER, (), path=SOURCE, detail="efs")
     assert isinstance(value, NotCopied)
     assert copy_text.text(value) == (
-        "Not copied. Main Books.beancount is encrypted by Windows. Finzytrack does not copy encrypted files, so their "
-        "contents are never written unencrypted."
+        "Not copied. Main Books.beancount is encrypted by Windows. Finzytrack does not copy encrypted files."
     )
     named = NotCopied("encrypted", FOLDER, (), path=host("/data/ledgers/x.beancount.gpg"))
     assert copy_text.text(named) == (
         "Not copied. x.beancount.gpg is encrypted. This version of Finzytrack does not read encrypted ledger files."
+    )
+
+
+@pytest.mark.parametrize("left", [None, ("documents",), (".",)])
+def test_S0138_a_copy_left_after_the_efs_refusal_may_hold_the_files_contents_unencrypted(
+    left: tuple[str, ...] | None,
+) -> None:
+    """Round 1, red team F1 (owner, 2026-11-21: "Short + left-over line (Recommended)"): the re-check refused after
+    the bytes were written, and the cleanup left something (named, or `None`: not finished). The left-over sentence
+    is replaced by one that says the copy may hold the file's contents unencrypted. Must not pass: "never written
+    unencrypted", or the generic left-over sentence alone."""
+    text = copy_text.text(NotCopied("encrypted", FOLDER, left, path=SOURCE, detail="efs"))
+    assert text == (
+        f"Not copied. Main Books.beancount is encrypted by Windows. Finzytrack does not copy encrypted files. The "
+        f"unfinished copy in {FOLDER} may hold that file's contents unencrypted. Check it before you delete anything."
     )

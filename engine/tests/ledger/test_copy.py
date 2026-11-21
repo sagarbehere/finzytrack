@@ -402,16 +402,61 @@ def test_S0138_every_file_the_copy_writes_from_the_source_is_asked_about() -> No
     assert asked >= set(SOURCES), asked
 
 
-def test_S0138_a_file_encrypted_while_the_copy_runs_is_refused_before_its_manifest() -> None:
+@pytest.mark.parametrize("file", [ROOT, PRICES, RATES, PDF])
+def test_S0138_a_file_encrypted_while_the_copy_runs_is_refused_before_its_manifest(file: str) -> None:
     """A source file EFS encrypts after step 2 asked (its bytes as before, so the fingerprint is unchanged) stops
-    the copy at the re-check before the commit point: no copy stands that holds an encrypted file's bytes in the
-    clear, and what the job wrote is removed."""
+    the copy at the re-check before the commit point, a ledger file (the root, an include, one outside its folder) as
+    well as a document: no copy stands that holds an encrypted file's bytes in the clear, and what the job wrote is
+    removed. Must not pass: the re-check asking about documents only, or a ledger file left out of what it asks
+    about (round 1, verifier F1, red team F2)."""
+    w = new_world()
+    encrypted: set[str] = set()
+    w.on_copy_load = lambda: encrypted.add(file)
+    job = Job()
+    nc = not_copied(run(PLAN, efs_ports(w, encrypted), job), "encrypted")
+    assert (nc.path, nc.detail, nc.left) == (file, "efs", ())
+    assert job.gated == 0
+    assert not exists(w.fs, T)
+
+
+def test_S0138_a_copy_the_cleanup_could_not_remove_is_named_with_the_encrypted_files_bytes_in_it() -> None:
+    """Round 1, red team F1: the re-check refuses after the bytes were written, and the stop cannot remove the copied
+    document (`EACCES` at its remove): the cleanup does not finish (`left` None, as the create's), so the text can say
+    that the unfinished copy may hold that file's contents unencrypted. Must not pass: `left` empty while the bytes
+    stand there."""
     w = new_world()
     encrypted: set[str] = set()
     w.on_copy_load = lambda: encrypted.add(PDF)
+    copied = f"{T}/documents/Assets/Bank/2026-01-07.x.pdf"
+    w.fs.on_effect = lambda i, label: (
+        w.fs.inject(i, crash=False, err=errno.EACCES)
+        if label == "remove /u/copy/documents/Assets/Bank:2026-01-07.x.pdf"
+        else None
+    )
+    nc = not_copied(run(PLAN, efs_ports(w, encrypted), Job()), "encrypted")
+    assert (nc.path, nc.detail) == (PDF, "efs")
+    assert w.fs.file(copied) == SOURCES[PDF], "the plaintext stands in the target"
+    assert nc.left is None, "the cleanup did not finish: nothing in the folder is said to be gone"
+    assert not exists(w.fs, f"{T}/{MANIFEST_DIR}")
+
+
+@pytest.mark.parametrize("when", ["step 2", "re-check"])
+def test_S0138_a_path_the_port_cannot_take_refuses_the_copy(when: str) -> None:
+    """Fail closed (round 1, verifier F2): a path the port refuses as malformed (`ValueError`) while asking
+    "encrypted?" refuses the copy (`source_unreadable`, naming the file), at step 2 or only at the re-check. Must not
+    pass: the file copied as if not encrypted."""
+    w = new_world()
+    late: list[bool] = []
+    w.on_copy_load = lambda: late.append(True)
+
+    def asked(fs: object, path: str) -> bool:
+        if path == PDF and (when == "step 2" or late):
+            raise ValueError
+        return False
+
     job = Job()
-    nc = not_copied(run(PLAN, efs_ports(w, encrypted), job), "encrypted")
-    assert (nc.path, nc.detail, nc.left) == (PDF, "efs", ())
+    nc = not_copied(run(PLAN, dataclasses.replace(w.ports(), encrypted=asked), job), "source_unreadable")
+    assert nc.path == PDF
     assert job.gated == 0
     assert not exists(w.fs, T)
 

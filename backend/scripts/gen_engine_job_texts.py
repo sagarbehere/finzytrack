@@ -668,6 +668,11 @@ COPY: tuple[Row, ...] = (
         lambda: _not_copied("encrypted", detail="efs"),
     ),
     (
+        "msg:copy.encrypted_efs_left",
+        "a file EFS encrypts found at the re-check; the cleanup could not remove all the copy wrote (S0138 r1)",
+        lambda: _not_copied("encrypted", detail="efs", left=None),
+    ),
+    (
         "msg:copy.source_changed",
         "a source changed while it was copied, or before the commit point (the owner's words)",
         lambda: _not_copied("source_changed"),
