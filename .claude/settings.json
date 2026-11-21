@@ -23,7 +23,7 @@
     "enabled": true,
     "allowUnsandboxedCommands": false,
     "excludedCommands": [
-      "git push *",
+      "git push origin next",
       "gh workflow run *",
       "gh run list *",
       "gh run view *",
