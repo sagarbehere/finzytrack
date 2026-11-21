@@ -635,7 +635,10 @@ class PushModes(Scratch):
                 ("in a body paragraph", f"S9: work\n\n{MARK}\n\nbody\n\n{TRAILERS}\n"),
                 ("in a last paragraph with prose", f"S9: work\n\nbody\n\nsome prose here\n{MARK}\n{TRAILERS}\n"),
                 ("in the body's last line", f"S9: work\n\nthe body ends\n{MARK}\n"),
-                ("a lookalike dash", f"S9: work\n\n{TRAILERS}\nGate: mid‑slice\n")):
+                ("a lookalike dash", f"S9: work\n\n{TRAILERS}\nGate: mid\u2011slice\n"),
+                # S0141 verifier V-1, V-2: a second Gate line in another case; a prose line holding ": "
+                ("a lowercase second Gate line", f"S9: work\n\n{TRAILERS}\n{MARK}\ngate: full\n"),
+                ("a prose line with a colon", f"S9: work\n\nthis lands the slice: S9\n{MARK}\n{TRAILERS}\n")):
             with self.subTest(label):
                 self.commit_message(message)
                 self.assertEqual(self.mode(), "full\n")

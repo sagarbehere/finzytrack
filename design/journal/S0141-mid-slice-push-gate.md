@@ -48,6 +48,7 @@ PROCESS.md §6 (T0 pre-push: the two modes and the mark) and §3 step 7 (the lan
 - The behaviour test runs the hook's real bytes in a scratch clone with a stub check timer (agent): the test sees which checks the hook would run, not what a reading of its text suggests. The stub runs only `true` and `false` (the canary keeps working); a `mktemp` shim gives the hook's report folder a place in the scratch folder, since macOS `mktemp -d` ignores `TMPDIR` and the sandbox refuses its default folder.
 - `scripts/tests/test_engine_gates.py` read the engine block at two spaces of indentation; it now compares the block's lines without indentation (the block moved inside the full-mode block).
 - Also logged: IMP-0077; the ADR-0060 amendment of 2026-11-21.
+- The tests went into `scripts/tests/test_push_gate.py` (classes `PushModes`, `HookModes`), not the `scripts/tests/test_push_mode.py` the brief named: that file already holds the scratch-repository fixture the push gate's tests share (verifier V-4).
 
 ## Hand-off (PROCESS.md §3 step 4; ADR-0057)
 (The verifier reads only the Brief, so this section does not steer its attacks; it is the implementer's own record.)
@@ -62,3 +63,21 @@ PROCESS.md §6 (T0 pre-push: the two modes and the mark) and §3 step 7 (the lan
   - the mark read elsewhere: anywhere in the message, a substring of a `Gate` line, one of several `Gate` lines, case and space folded, stripped, a block that is only partly trailers, the subject as a block, any paragraph, an environment variable: killed.
   - the push shape: tags allowed, a ref that is not HEAD allowed, malformed input ignored when a good line exists: killed; a deletion beside the marked push: killed after its case was added.
 - Population: the mid-slice list is checked against the hook's own `run` lines (`hook_labels`, 36 labels in the hook, the canary included; 11 run in mid-slice mode, 35 in full mode on a branch push: all but the pushed tag message scan, which a tag push adds).
+
+## Verifier
+- Round 1, head `672ab1b9`: PASS WITH FINDINGS, no High, no class (a)/(b). Attacks: the mark's reader (case, spacing, paragraph rules, git's own trailer reading), the hook's mode switch and its default, the range checks' starting points, the docs. Every finding is tests or docs only, so no further round (IMP-0075).
+
+| ID | Severity | Class | Disposition |
+|---|---|---|---|
+| V-1 | Low | c | Fixed: `test_no_mark_or_a_malformed_one_is_full` gains "a lowercase second Gate line" (`Gate: mid-slice` then `gate: full`); it kills the mutant that compares the key without `.lower()` (survived round 1's tests). |
+| V-2 | Low | c | Fixed: the same test gains "a prose line with a colon" (`this lands the slice: S9` in the last paragraph); it kills the mutant that loosens the trailer key to `^[^:]+: `. Both mutants: plan `s0141-mutants-v.toml` in the session scratchpad, 2 of 2 killed. |
+| V-3 | Low | d | Fixed: "at every push" now "at every full push" in ARCHITECTURE.md (the bounded write model, the TLA name test), ENGINEERING.md (both TLA name tests) and failure-modes.md (the check, the confidence paragraph); roadmap's exit condition says the exit commit is pushed unmarked, so the whole gate runs. |
+| V-4 | Low | d | Fixed: IMP-0077 says "every pushed ref a branch update to HEAD, no tag, no deletion", as the code reads; the test file's name is noted under Decisions. |
+| V-5 | Low | d | Not editable here: `.claude/skills/slice/SKILL.md` and `.claude/agents/implementer.md` are write-denied in the sandbox. The text for the owner to add is below; the orchestrator passes it on. |
+
+### V-5: text for the owner to add
+- `.claude/skills/slice/SKILL.md`, step 9 (Land), after "the pre-push hook runs the checks.": "A push before the slice lands may run the lighter gate: put the line `Gate: mid-slice` in the commit message's final trailer paragraph, together with the attribution lines (`Co-Authored-By:`, `Claude-Session:`), never in the subject or the body. A landing commit never carries it: its push runs the whole gate (PROCESS.md §6, S0141)."
+- `.claude/agents/implementer.md`, the line "Push `next` after the slice lands": add "A push before the landing may carry `Gate: mid-slice` in the final trailer paragraph, with the attribution lines; the landing commit never does (PROCESS.md §6)."
+
+## Retro
+- Build 95 min, fix 15 min, 1 verifier round, findings 0H/0M/5L. Cheaper gate: a mutant pass that folds key case and loosens each regex in the mark's reader would have found V-1 and V-2 before hand-off. Process checks: push gate 0 catch / 0 false positive; invariants 0 / 0; gate timer 0 / 0 (none fired).
