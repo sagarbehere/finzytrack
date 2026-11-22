@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import dataclasses
 import os
-import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -123,15 +122,19 @@ def test_S0138_a_file_the_file_system_encrypts_is_refused_before_anything_is_wri
 
 
 def test_S0138_a_link_to_an_encrypted_file_is_refused(tmp_path: Path) -> None:
-    """A ledger file reached through a link: the object it leads to is asked about, as the copy reads it."""
-    if sys.platform == "win32":
-        pytest.skip("a symbolic link needs a privilege the runner's user may not hold; the fake and macOS hold it")
+    """A ledger file reached through a link: the object it leads to is asked about, as the copy reads it. On Windows
+    it skips only when Windows refuses the link (error 1314, the privilege; S0146: the runner holds it)."""
     root = _ledger(tmp_path)
     real = tmp_path / "elsewhere"
     real.mkdir()
     (real / "secret.beancount").write_text("2026-01-02 price EUR 1.10 USD\n")
     (root.parent / "inc.beancount").unlink()
-    (root.parent / "inc.beancount").symlink_to(real / "secret.beancount")
+    try:
+        (root.parent / "inc.beancount").symlink_to(real / "secret.beancount")
+    except OSError as e:
+        if getattr(e, "winerror", None) == 1314:  # ERROR_PRIVILEGE_NOT_HELD
+            pytest.skip("Windows refused a symbolic link: the user lacks the privilege (error 1314)")
+        raise
     plan = CopyPlan(
         "j1", str(tmp_path / "copy"), str(root), (NewFile("workspace.json", WS_JSON),), str(tmp_path / "app"), ()
     )
