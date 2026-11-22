@@ -21,9 +21,9 @@ HELD_FOLDER: Final = (
 NO_MOUNT: Final = (
     "a volume mounted inside the mirror folder needs hdiutil or sudo mount; Windows' mount folders: untested"
 )
-COPY_CHECK: Final = (
-    "BL-0087: the copy's check (a fresh load) runs on Windows once writes are on "
-    "(it reads the child's answer with `selectors` on a pipe, POSIX only; its own tests send POSIX signals)"
+NO_FORK: Final = (
+    "a plugin's `os.fork` and `signal.pause`: Windows has neither; the cases of a process that holds the answer's "
+    "pipe run there as the S0146 tests of tests/ledger/test_fresh_load.py"
 )
 NO_FIFO: Final = "Windows has no FIFO in its file system: the non-blocking read it guards against cannot arise there"
 NO_UID: Final = "Windows has no POSIX user and group ids or permission bits on files"

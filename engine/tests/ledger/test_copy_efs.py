@@ -20,7 +20,6 @@ from ledger_engine.fs.port import DirHandle, EntryStat, FileSystem
 from ledger_engine.fs.this_os import for_this_os, legacy_locks_for_this_os
 from ledger_engine.ledger.copy import CopyPlan, CopyPorts, run
 from ledger_engine.ledger.create import Created, NewFile, NotCreated
-from tests.windows_pending import COPY_CHECK
 
 pytestmark = [pytest.mark.inv("INV-22"), pytest.mark.usefixtures("windows_port")]
 
@@ -144,8 +143,6 @@ def test_S0138_a_link_to_an_encrypted_file_is_refused(tmp_path: Path) -> None:
 
 def test_S0138_the_same_ledger_unencrypted_is_copied(tmp_path: Path) -> None:
     """@regression-guard: the wrapper changes nothing else; the port read finds no file encrypted on a plain disk."""
-    if sys.platform == "win32":
-        pytest.skip(COPY_CHECK)
     out, job = _copy(tmp_path, _EncryptingFS(for_this_os(), "other.beancount"))
     assert out == Created(str(tmp_path / "copy")), out
     assert job.gated == 1

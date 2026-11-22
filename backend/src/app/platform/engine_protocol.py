@@ -22,6 +22,7 @@ from dataclasses import dataclass
 from decimal import Decimal
 from typing import Any, Final, cast
 
+from app.platform import windows_paths
 from app.platform.engine import (
     PHASES,
     ActOutcome,
@@ -130,10 +131,55 @@ class Violation:
     detail: str
 
 
-def encode_request(rid: int, op: str, params: Mapping[str, object]) -> bytes:
-    """One request line. `params` must be JSON data (no NaN or infinity)."""
+ABS_PATHS: Final[tuple[tuple[str, tuple[str, ...]], ...]] = (
+    ("recover_list", ("app_local_data",)),
+    ("recover_try", ("app_local_data", "journal_dir")),
+    ("recover_act", ("app_local_data", "journal_dir", "file")),
+    ("save", ("root", "changes.*.path", "app_local_data", "confine.path")),
+    ("save_outcome", ("app_local_data", "targets.*.path")),
+    ("rebuild", ("root", "app_local_data")),
+    ("open", ("root", "app_local_data")),
+    ("preview", ("root", "app_local_data")),
+    ("create", ("target",)),
+    ("create_outcome", ("target",)),
+    ("copy", ("target", "source", "app_local_data", "legacy_locks.*")),
+    ("copy_outcome", ("target", "source", "app_local_data", "legacy_locks.*")),
+)
+"""Where each op's params hold an absolute path (the schema's `AbsPath`; `*` is each item of a list; the contract test
+holds the table to the schema): on Windows `encode_request` gives each the engine's normal form (S0146, BL-0087)."""
+
+
+def encode_request(rid: int, op: str, params: Mapping[str, object], platform: str = sys.platform) -> bytes:
+    """One request line. `params` must be JSON data (no NaN or infinity). On Windows every absolute path at its op's
+    `ABS_PATHS` is put in the engine's normal form (`windows_paths.normal`: the drive letter upper case, the
+    long-path prefix off), wherever it came from (a stored workspace, the registry, a request, config, a flag): the
+    engine's contract refuses any other spelling (`path_not_normal`; owner, 2026-11-22). On macOS and Linux the
+    params are sent as given."""
+    if platform == "win32":
+        params = _normalized(params, next((at for name, at in ABS_PATHS if name == op), ()))
     body = {"v": PROTOCOL_VERSION, "id": rid, "op": op, "params": dict(params)}
     return json.dumps(body, separators=(",", ":"), ensure_ascii=False, allow_nan=False).encode() + b"\n"
+
+
+def _normalized(params: Mapping[str, object], at: tuple[str, ...]) -> Mapping[str, object]:
+    out: object = params
+    for where in at:
+        out = _normal_at(out, where.split("."))
+    return cast("Mapping[str, object]", out)
+
+
+def _normal_at(value: object, steps: list[str]) -> object:
+    """`value` with the text at `steps` normalized (a copy along the way, the caller's data untouched); anything that
+    is not there, or not of the shape, is left for the engine to refuse."""
+    if not steps:
+        return windows_paths.normal(value) if isinstance(value, str) else value
+    head, rest = steps[0], steps[1:]
+    if head == "*":
+        return [_normal_at(v, rest) for v in cast("list[object]", value)] if isinstance(value, list) else value
+    if not isinstance(value, Mapping):
+        return value
+    m = cast("Mapping[str, object]", value)
+    return {**m, head: _normal_at(m[head], rest)} if head in m else m
 
 
 def encode_proceed(rid: int, op: str) -> bytes:

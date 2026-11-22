@@ -20,6 +20,7 @@ import dataclasses
 import hashlib
 import json
 import os
+import shutil
 import sys
 import unicodedata
 from collections.abc import Iterator
@@ -33,17 +34,14 @@ from ledger_engine.ledger import fingerprint
 from ledger_engine.ledger.core import journal
 from ledger_engine.protocol import copy as protocol_copy
 from ledger_engine.protocol.server import InputEnded
+from tests.beancount_text import escaped
 from tests.ledger.worlds import with_folders
 from tests.test_save_ops import Channel as SaveChannel
-from tests.test_save_ops import engine, request
-from tests.windows_pending import COPY_CHECK
-
-if sys.platform == "win32":
-    raise pytest.skip.Exception(COPY_CHECK, allow_module_level=True)
-
-import fcntl
+from tests.test_save_ops import engine, published_save, recorded_folder, request
+from tests.windows_pending import NO_FIFO
 
 pytestmark = [
+    pytest.mark.usefixtures("windows_port"),  # Windows: the adapter (S0146: the copy's check runs there)
     pytest.mark.inv("INV-22"),
     pytest.mark.inv("INV-26"),
     pytest.mark.inv("INV-32"),
@@ -161,7 +159,7 @@ def test_an_absolute_include_into_the_folder_is_made_relative(ald: Path, tmp_pat
     books = tmp_path / "src"
     books.mkdir()
     (books / "p.beancount").write_text(PRICES)
-    (books / "main.beancount").write_text(f'2026-01-01 open Assets:Cash EUR\ninclude "{books}/p.beancount"\n')
+    (books / "main.beancount").write_text(f'2026-01-01 open Assets:Cash EUR\ninclude "{escaped(books)}/p.beancount"\n')
     target = tmp_path / "copy"
     reply, _ = copy(ald, params(target, books / "main.beancount", ald))
     assert reply["result"]["outcome"] == "created", reply
@@ -236,7 +234,7 @@ def test_the_copys_load_runs_in_a_fresh_process_of_the_engines_group(
     (books / f"{name}.py").write_text(
         "import os\n__plugins__ = ['run']\n"
         "def run(entries, options):\n"
-        f"    open(os.path.join({str(marks)!r}, str(os.getpid())), 'w').write(str(os.getpgrp()))\n"
+        f"    open(os.path.join({str(marks)!r}, str(os.getpid())), 'w').write(str(getattr(os, 'getpgrp', int)()))\n"
         "    return entries, []\n"
     )
     (books / "main.beancount").write_text(
@@ -249,7 +247,10 @@ def test_the_copys_load_runs_in_a_fresh_process_of_the_engines_group(
     assert len(runs) == 2, runs
     assert os.getpid() in runs, "the source's load: in the engine"
     (child,) = set(runs) - {os.getpid()}
-    assert runs[child] == os.getpgrp(), "the copy's load: another process, in the engine's group"
+    if (
+        sys.platform != "win32"
+    ):  # Windows: the child in the engine's Job Object, backend/tests/platform/test_engine_windows.py
+        assert runs[child] == os.getpgrp(), "the copy's load: another process, in the engine's group"
 
 
 def test_a_documents_root_at_the_ledgers_folder_is_copied_whole_and_its_names_kept(ald: Path, tmp_path: Path) -> None:
@@ -286,7 +287,7 @@ def test_v03_document_directives_are_copied_in_and_point_at_the_copies(ald: Path
         'option "documents" "../documents/books-1a2b"\n2026-01-01 open Assets:Bank EUR\n'
         '2026-01-07 document Assets:Bank "../documents/books-1a2b/Assets/Bank/statement.pdf"\n'
         '2026-01-08 document Assets:Bank "../receipts/r.pdf"\n'
-        f'2026-01-09 document Assets:Bank "{books}/a.pdf"\n'
+        f'2026-01-09 document Assets:Bank "{escaped(books)}/a.pdf"\n'
     )
     target = tmp_path / ("data" if where == "beside" else "other") / "Books copy"
     target.parent.mkdir(exist_ok=True)
@@ -351,6 +352,8 @@ def test_a_workspace_with_documents_dot_is_copied_without_its_own_finzytrack(ald
 def test_a_fifo_in_the_documents_folder_is_left_out_and_never_hangs_the_copy(ald: Path, tmp_path: Path) -> None:
     """r1 F5: an entry of a documents folder that is not a regular file is left out (a FIFO is never opened). Were it
     opened, the job would wait for a writer: this test would hang, and the gate's hang detector stops it."""
+    if sys.platform == "win32":
+        pytest.skip(NO_FIFO)
     books = tmp_path / "src"
     (books / "docs").mkdir(parents=True)
     os.mkfifo(books / "docs" / "pipe")
@@ -368,7 +371,7 @@ def test_a_new_folder_inside_a_documents_root_named_through_a_link_is_refused_be
     """r1 F6: the documents root is compared as the volume names it (links resolved), before anything is written."""
     real = tmp_path / "real"
     (real / "docs").mkdir(parents=True)
-    (tmp_path / "link").symlink_to(real)
+    link(tmp_path / "link", real)
     (real / "main.beancount").write_text('option "documents" "docs"\n2026-01-01 open Assets:Cash EUR\n')
     reply, events = copy(ald, params(real / "docs" / "copy", tmp_path / "link" / "main.beancount", ald))
     r = reply["result"]
@@ -413,6 +416,17 @@ def test_a_ledger_beancount_cannot_load_is_refused_naming_its_line(ald: Path, tm
     assert not target.exists()
 
 
+def _key(file: Path) -> str:
+    """The file's `path_key` as a save records it: lower case on macOS (APFS's folding of ASCII names); on Windows the
+    engine's own (`ledger.paths.path_key`: the volume's ordinal upper case), which the test cannot spell by hand."""
+    if sys.platform == "win32":
+        from ledger_engine.fs.this_os import for_this_os
+        from ledger_engine.ledger.paths import path_key
+
+        return path_key(for_this_os(), str(file))
+    return str(file).lower()
+
+
 def write_open_journal(ald: Path, file: Path) -> None:
     rec = with_folders(
         session="s1",
@@ -424,7 +438,7 @@ def write_open_journal(ald: Path, file: Path) -> None:
         files=(
             journal.FileEntry(
                 canonical_path=str(file),
-                path_key=str(file).lower(),
+                path_key=_key(file),
                 pre="0" * 64,
                 post="1" * 64,
                 backup=journal.backup_name(0, file.name),
@@ -452,16 +466,36 @@ def test_an_open_journal_naming_a_source_refuses_the_copy(ald: Path, tmp_path: P
 
 @pytest.fixture
 def held_lock(tmp_path: Path) -> Iterator[Path]:
-    """The old app's `.write.lock`, held by another open file description the way portalocker holds it on POSIX."""
+    """The old app's `.write.lock`, held by another open file description the way portalocker holds it on POSIX; on
+    Windows by another process with portalocker itself, as `tests/fs/test_legacy_lock.py` holds it (S0146)."""
     lock = tmp_path / "legacy" / "data" / ".write.lock"
     lock.parent.mkdir(parents=True)
     lock.write_bytes(b"")
+    if sys.platform == "win32":
+        from tests.fs.test_legacy_lock import legacy_app_saving
+
+        with legacy_app_saving(lock):
+            yield lock
+        return
+    import fcntl
+
     fd = os.open(lock, os.O_RDWR)
     fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
     try:
         yield lock
     finally:
         os.close(fd)
+
+
+def link(at: Path, to: Path) -> None:
+    """A symbolic link; on Windows, where making one needs a privilege (`SeCreateSymbolicLinkPrivilege`, or developer
+    mode), a test skips naming it when Windows refuses (error 1314), and only then."""
+    try:
+        at.symlink_to(to, target_is_directory=to.is_dir())
+    except OSError as e:
+        if getattr(e, "winerror", None) == 1314:  # ERROR_PRIVILEGE_NOT_HELD
+            pytest.skip("Windows refused a symbolic link: the runner's user lacks the privilege (error 1314)")
+        raise
 
 
 def test_a_held_legacy_lock_refuses_the_copy_and_creates_nothing_there(
@@ -588,6 +622,14 @@ def test_one_document_named_in_nfc_and_nfd_is_one_source(ald: Path, tmp_path: Pa
     assert reply["result"]["outcome"] == "created", reply
 
 
+def _doubled_separator(p: Path) -> str:
+    """`p` with a separator doubled: a leading `//` on POSIX, `C:\\\\x` on Windows (both the same place there)."""
+    if sys.platform == "win32":
+        drive, rest = os.path.splitdrive(str(p))
+        return drive + "\\" + rest
+    return "/" + str(p)
+
+
 def test_absolute_document_paths_written_unnormalized_are_copied(ald: Path, tmp_path: Path) -> None:
     """r2 F3: Beancount keeps an absolute `document` path as written (`..`, a leading `//`); one file, one copy."""
     books = tmp_path / "data" / "ledgers"
@@ -598,8 +640,8 @@ def test_absolute_document_paths_written_unnormalized_are_copied(ald: Path, tmp_
     (books / "main.beancount").write_text(
         "2026-01-01 open Assets:Bank EUR\n"
         '2026-01-08 document Assets:Bank "../rec/r.pdf"\n'
-        f'2026-01-09 document Assets:Bank "{rec}/../rec/r.pdf"\n'
-        f'2026-01-10 document Assets:Bank "/{rec}/r.pdf"\n'
+        f'2026-01-09 document Assets:Bank "{escaped(rec)}/../rec/r.pdf"\n'
+        f'2026-01-10 document Assets:Bank "{escaped(_doubled_separator(rec))}/r.pdf"\n'
     )
     target = tmp_path / "copy"
     reply, _ = copy(ald, params(target, books / "main.beancount", ald))
@@ -633,7 +675,7 @@ def test_a_ledger_naming_a_path_inside_the_new_folder_is_refused_before_anything
     books = tmp_path / "data" / "ledgers"
     books.mkdir(parents=True)
     target = tmp_path / "copy"
-    (books / "main.beancount").write_text(f'2026-01-01 open Assets:Bank EUR\ninclude "{target}/x.beancount"\n')
+    (books / "main.beancount").write_text(f'2026-01-01 open Assets:Bank EUR\ninclude "{escaped(target)}/x.beancount"\n')
     reply, _ = copy(ald, params(target, books / "main.beancount", ald))
     r = reply["result"]
     assert (r["outcome"], r["reason"], r["detail"]) == ("not_created", "cannot_place", "inside_target"), r
@@ -641,12 +683,18 @@ def test_a_ledger_naming_a_path_inside_the_new_folder_is_refused_before_anything
 
 
 def test_a_document_directive_naming_a_fifo_or_a_folder_is_refused_naming_it(ald: Path, tmp_path: Path) -> None:
-    """r2 (h): a `document` entry's file is opened only if it is a regular file; anything else refuses, named."""
+    """r2 (h): a `document` entry's file is opened only if it is a regular file; anything else refuses, named (on
+    Windows the folder only: NO_FIFO)."""
     for kind in ("fifo", "folder"):
         books = tmp_path / kind / "src"
         books.mkdir(parents=True)
         odd = books / "odd.pdf"
-        os.mkfifo(odd) if kind == "fifo" else odd.mkdir()
+        if kind == "folder":
+            odd.mkdir()
+        elif sys.platform == "win32":
+            continue
+        else:
+            os.mkfifo(odd)
         (books / "main.beancount").write_text(
             '2026-01-01 open Assets:Bank EUR\n2026-01-08 document Assets:Bank "odd.pdf"\n'
         )
@@ -673,7 +721,7 @@ def test_a_documents_option_in_an_included_file_is_never_rewritten(ald: Path, tm
 OTHER_CASE = pytest.param(
     "other case",
     marks=pytest.mark.skipif(
-        sys.platform != "darwin",
+        sys.platform not in ("darwin", "win32"),  # NTFS, as APFS, compares names without case (S0146)
         reason="one folder under two case spellings needs a case-insensitive volume (APFS); on Linux `legacy` is "
         "another, missing folder, and the copy refuses `no_parent` (the 2026-11-16 run 3)",
     ),
@@ -691,7 +739,7 @@ def test_a_new_folder_in_a_named_legacy_root_is_refused_however_it_is_spelled(
     (books / "main.beancount").write_text("2026-01-01 open Assets:Bank EUR\n")
     legacy = tmp_path / "Legacy"
     (legacy / "data").mkdir(parents=True)
-    (tmp_path / "lnk").symlink_to(legacy)
+    link(tmp_path / "lnk", legacy)
     target = {
         "other case": tmp_path / "legacy" / "data" / "copy",
         "through a link": tmp_path / "lnk" / "data" / "copy",
@@ -751,3 +799,61 @@ def test_a_plugins_class_is_never_compared_by_its_name(
     reply, _ = copy(ald, params(tmp_path / "out" / "copy", books / "main.beancount", ald))
     r = reply["result"]
     assert (r["outcome"], r["reason"]) == ("not_created", reason), r
+
+
+# -- S0146 (BL-0087, S0128 verifier Q-C): a test copy's folder mark on Windows ------------------------------------
+
+
+def _scratch_refs() -> Path | None:
+    """The ReFS scratch drive `ci.yml` formats on the runner (`FT_TEST_VOLUMES`), if any."""
+    from ledger_engine.fs.this_os import for_this_os
+
+    for v in (v for v in os.environ.get("FT_TEST_VOLUMES", "").split(";") if v):
+        with for_this_os().open_dir(v) as d:
+            if d.mark().fs_type == "refs":
+                return Path(v)
+    return None
+
+
+@pytest.mark.parametrize("drive", ["ntfs", "refs"])
+def test_S0146_a_copys_folder_mark_is_its_file_id_and_a_save_confined_by_it_lands(
+    ald: Path, tmp_path: Path, drive: str
+) -> None:
+    """S0128 verifier Q-C: the mark a test copy records for its folder (the port's `DirHandle.mark()`, which the
+    sidecar's `CopyMark` keeps and a save's `confine` sends back) carries the folder's file ID on NTFS and ReFS, never
+    its creation time, which Windows tunnels to a folder made again at the same path. A save confined by that mark
+    lands in the copy; the same mark with the creation time as `born` is another folder (`copy_folder_moved`),
+    nothing written. The test copy's job records the mark (BL-0267, M3); here the test takes it as that job will."""
+    if sys.platform != "win32":
+        pytest.skip("Windows' folder mark (the file ID); macOS and Linux mark a folder by its creation time")
+    base = tmp_path
+    if drive == "refs":
+        refs = _scratch_refs()
+        if refs is None:
+            pytest.skip("no ReFS scratch drive (FT_TEST_VOLUMES)")
+        base = refs / f"ft-{os.getpid()}-{hashlib.sha256(str(tmp_path).encode()).hexdigest()[:12]}"
+        base.mkdir()
+    target = base / "Books copy"
+    try:
+        reply, _ = copy(ald, params(target, sources(tmp_path), ald))
+        assert (reply["result"]["outcome"], reply["result"]["reason"]) == ("created", None), reply
+        mark = recorded_folder(target)
+        st = os.stat(target)
+        assert mark["fs_type"] == drive, mark
+        assert mark["born"] == st.st_ino, "the folder's file ID (FileIdInfo, Python's st_ino)"
+        assert mark["born"] != st.st_birthtime_ns, "never its creation time"
+        main = target / "main.beancount"
+        p = published_save(main, ald, main.read_text() + "2026-01-09 open Expenses:Rent EUR\n")
+        p["confine"] = {**mark, "born": st.st_birthtime_ns}
+        out = json.loads(engine(ald).handle(request("save", p), Channel(1, proceed=True)))
+        assert (out["result"]["outcome"], out["result"]["reason"]) == ("not_saved", "copy_folder_moved"), out
+        assert main.read_text() == MAIN.replace("../documents/books-1a2b", "documents").replace(
+            "../shared/rates.beancount", "outside/rates.beancount"
+        )
+        p["confine"] = mark
+        out = json.loads(engine(ald).handle(request("save", p), Channel(1, proceed=True)))
+        assert out["result"]["outcome"] == "saved", out
+        assert main.read_text().endswith("2026-01-09 open Expenses:Rent EUR\n")
+    finally:
+        if drive == "refs":
+            shutil.rmtree(base, ignore_errors=True)

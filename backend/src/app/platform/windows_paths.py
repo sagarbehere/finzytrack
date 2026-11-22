@@ -8,10 +8,15 @@ A path is a root and names. The root is a drive (`C:`, upper case), a UNC share 
 spelling of the same place, not another one. Device paths (`\\\\.\\`, `\\\\?\\GLOBALROOT`, `\\??\\`), a UNC path
 without a share, `.` and `..`, and a name Windows cannot hold safely (a reserved device name, a trailing dot or space,
 `<>:"|?*` or a control character) are malformed: `split` answers None.
+
+`normal` gives a path the engine's normal form (`WindowsPaths.normpath`), which the engine's contract requires of every
+path it checks (`contract._normal`; S0146, BL-0087; owner, 2026-11-22: the sidecar normalizes a root before the
+engine): the codec applies it to every absolute path a request carries (`engine_protocol.encode_request`).
 """
 
 from __future__ import annotations
 
+import ntpath
 import re
 from typing import Final
 
@@ -127,3 +132,15 @@ def split(path: str) -> tuple[str, ...] | None:
         return (root, *(_name(n) for n in names))
     except _Malformed:
         return None
+
+
+def normal(path: str) -> str:
+    """`path` in the engine's normal form, when `split` takes it: the drive letter upper case (`c:\\x` to `C:\\x`),
+    the long-path prefix taken off (`\\\\?\\C:\\x` to `C:\\x`; `\\\\?\\UNC\\nas\\share\\x` to `\\\\nas\\share\\x`)
+    except before a volume GUID, which keeps it; then, as Windows itself reads a path, `/` as `\\`, separators not
+    doubled and none at the end (the engine's `WindowsPaths.normpath`). Any other text, `.` and `..` names among it
+    (`split` takes none), is returned as it is: the engine refuses it, naming why."""
+    if split(path) is None:
+        return path
+    root, rest = _root(path)
+    return root + ntpath.normpath("\\" + rest.lstrip("\\/"))

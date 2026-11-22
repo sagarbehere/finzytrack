@@ -8,14 +8,21 @@ A real child on Beancount's load, each ledger in a scratch folder with a plugin 
   never a hang. No test here has a time limit: a hang test waits on an event nothing sets, then asserts the answer;
 - what a plugin prints never reaches the answer (the child's standard output goes to standard error);
 - the parent reads exactly one answer: an empty answer, a non-zero exit or garbage on standard output is `failed`.
+
+On Windows too (S0146, BL-0087: the reader's Windows form). A plugin there cannot fork; the cases of a process that
+holds the answer's pipe are run on every OS with the child's own code put before the real child (`holding`): it
+starts a process that inherits its standard output and never ends, as a process a plugin started would.
 """
 
 from __future__ import annotations
 
+import json
 import os
 import signal
 import sys
 import threading
+from collections.abc import Generator
+from contextlib import contextmanager
 from pathlib import Path
 
 import pytest
@@ -23,10 +30,8 @@ import pytest
 from ledger_engine.ledger import fresh_load
 from ledger_engine.ledger.copy_check import CheckRequest, CheckResult
 from ledger_engine.ledger.core import copy_layout as cl
-from tests.windows_pending import COPY_CHECK
-
-if sys.platform == "win32":
-    raise pytest.skip.Exception(COPY_CHECK, allow_module_level=True)
+from tests.beancount_text import escaped
+from tests.windows_pending import NO_FORK
 
 LEDGER = "2026-01-01 open Assets:Cash EUR\n2026-01-02 open Income:Pay EUR\n"
 HEAD = "__plugins__ = ['run']\n"
@@ -37,7 +42,7 @@ def ledger(tmp_path: Path, plugin: str, config: str | None = None) -> CheckReque
     folder = tmp_path.resolve() / "books"
     folder.mkdir()
     (folder / "pl_s0082.py").write_text(plugin)
-    named = f'plugin "pl_s0082" "{config}"\n' if config is not None else 'plugin "pl_s0082"\n'
+    named = f'plugin "pl_s0082" "{escaped(config)}"\n' if config is not None else 'plugin "pl_s0082"\n'
     (folder / "main.beancount").write_text('option "insert_pythonpath" "True"\n' + named + LEDGER)
     return CheckRequest(str(folder / "main.beancount"), str(folder), cl.Layout(str(folder), ()), ())
 
@@ -95,6 +100,8 @@ def test_a_plugin_that_exits_is_a_failed_check(tmp_path: Path) -> None:
 def test_a_process_a_plugin_forked_that_holds_the_pipe_does_not_hold_the_answer(tmp_path: Path) -> None:
     """A plugin forks a process that lives on with the answer's pipe open; once the child has answered and ended,
     the job has its answer (the process is ended by the drain with the engine's group, §5.2; here by the test)."""
+    if sys.platform == "win32":
+        pytest.skip(NO_FORK)
     pid_file = tmp_path / "forked.pid"
     plugin = (
         "import os, signal\n" + HEAD + "def run(entries, options, config):\n"
@@ -123,6 +130,8 @@ def test_a_child_that_dies_before_answering_while_a_forked_process_holds_the_pip
     (here it kills itself, as a crash in a C extension would end it). The check answers as soon as the child has
     ended, with its exit status; it never waits for the forked process. On the base and at 5e8d9888 this test never
     returns."""
+    if sys.platform == "win32":
+        pytest.skip(NO_FORK)
     pid_file = tmp_path / "forked.pid"
     plugin = (
         "import os, signal\n" + HEAD + "def run(entries, options, config):\n"
@@ -149,8 +158,30 @@ def test_a_child_that_never_answers_is_ended_by_the_drain_and_the_check_fails(tm
     """@regression-guard (passes on the base: `subprocess.run` also returned once the killed child closed the pipe;
     BL-0203 asked for the case to be tested). A plugin that blocks forever: the check waits (no time limit, §5.4),
     and the drain that ends the engine's group ends the child too (§5.2); the check then answers `failed` with the
-    exit status, never a hang. The plugin tells its process id through a named pipe, so the test kills it only once
-    it is blocked."""
+    exit status, never a hang. The plugin tells its process id through a named pipe (POSIX: a FIFO; Windows: a pipe of
+    `multiprocessing.connection`), so the test kills it only once it is blocked (Windows: `TerminateProcess`, as the
+    Job Object's drain ends its members)."""
+    results: list[CheckResult] = []
+    if sys.platform == "win32":
+        from multiprocessing.connection import Listener
+
+        with Listener() as listener:
+            plugin = (
+                "import os, threading\nfrom multiprocessing.connection import Client\n"
+                + HEAD
+                + "def run(entries, options, config):\n"
+                "    Client(config).send(os.getpid())\n"
+                "    threading.Event().wait()\n"
+            )
+            request = ledger(tmp_path, plugin, str(listener.address))
+            t = threading.Thread(target=lambda: results.append(fresh_load.check(request)))
+            t.start()
+            with listener.accept() as conn:
+                pid = int(conn.recv())
+        os.kill(pid, signal.SIGTERM)  # TerminateProcess(15)
+        t.join()
+        assert results == [CheckResult("failed", subject=f"exit {int(signal.SIGTERM)}")]
+        return
     fifo = tmp_path / "pid.fifo"
     os.mkfifo(fifo)
     plugin = (
@@ -160,7 +191,6 @@ def test_a_child_that_never_answers_is_ended_by_the_drain_and_the_check_fails(tm
         "    threading.Event().wait()\n"
     )
     request = ledger(tmp_path, plugin, str(fifo))
-    results: list[CheckResult] = []
     t = threading.Thread(target=lambda: results.append(fresh_load.check(request)))
     t.start()
     with fifo.open() as f:  # opens once the plugin opens it to write
@@ -168,6 +198,65 @@ def test_a_child_that_never_answers_is_ended_by_the_drain_and_the_check_fails(tm
     os.kill(pid, signal.SIGKILL)
     t.join()
     assert results == [CheckResult("failed", subject=f"exit {-signal.SIGKILL}")]
+
+
+@contextmanager
+def holding(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, then: str) -> Generator[None]:
+    """The child's code: first a process started with the child's standard output and nothing else of its own to end
+    on (its standard input the null device), which never ends; then `then`. The holder is ended once the check has
+    answered (by the drain in the product, §5.2)."""
+    pid_file = tmp_path / "holder.pid"
+    head = (
+        "import os, subprocess, sys\n"
+        "h = subprocess.Popen([sys.executable, '-c', 'import threading; threading.Event().wait()'],"
+        " stdin=subprocess.DEVNULL)\n"
+        f"with open({str(pid_file)!r}, 'w') as f:\n"
+        "    f.write(str(h.pid))\n"
+    )
+    monkeypatch.setattr(fresh_load, "BOOT", head + then)
+    try:
+        yield
+    finally:
+        if pid_file.exists():
+            os.kill(int(pid_file.read_text()), signal.SIGTERM)
+
+
+def test_S0146_a_process_the_child_started_that_holds_the_pipe_does_not_hold_the_answer(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """@regression-guard on POSIX (the fork test above is its plugin form there): the real child answers after it
+    started a process that keeps the answer's pipe open and never ends; the check answers once the child has
+    answered and ended. On Windows at the base (b90455c8) this module could not run (`selectors` takes no pipe)."""
+    request = ledger(tmp_path, HEAD + "def run(entries, options):\n    return entries, []\n")
+    with holding(tmp_path, monkeypatch, fresh_load.BOOT):
+        checked(fresh_load.check(request))
+
+
+def test_S0146_what_the_child_wrote_before_it_ended_is_its_answer_while_a_process_holds_the_pipe(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """@regression-guard on POSIX: the child writes its answer without a newline and ends, while a process it started
+    holds the pipe: the parent reads what the child wrote (the answer it parses), never waiting for the pipe's end."""
+    request = ledger(tmp_path, HEAD + "def run(entries, options):\n    return entries, []\n")
+    partial = json.dumps(CheckResult("failed", subject="partial").encode())
+    then = f"sys.stdin.buffer.read()\nos.write(1, {partial.encode()!r})\nos._exit(0)\n"
+    with holding(tmp_path, monkeypatch, then):
+        assert fresh_load.check(request) == CheckResult("failed", subject="partial")
+
+
+def test_S0146_a_child_that_dies_before_answering_while_a_process_holds_the_pipe_is_a_failed_check(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """@regression-guard on POSIX (the fork test above is its plugin form there): the child writes part of a line and
+    is killed (Windows: `TerminateProcess`) while a process it started holds the pipe: the check answers at once with
+    the exit status."""
+    request = ledger(tmp_path, HEAD + "def run(entries, options):\n    return entries, []\n")
+    then = (
+        "import signal\nsys.stdin.buffer.read()\nos.write(1, b'{\"outcome\": ')\nos.kill(os.getpid(), signal.SIGTERM)\n"
+    )
+    killed = int(signal.SIGTERM) if sys.platform == "win32" else -signal.SIGTERM
+    with holding(tmp_path, monkeypatch, then):
+        assert fresh_load.check(request) == CheckResult("failed", subject=f"exit {killed}")
 
 
 @pytest.mark.parametrize(

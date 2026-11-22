@@ -1816,9 +1816,9 @@ def test_S0136_the_rollback_on_the_ci_share_puts_the_old_bytes_back_and_says_unc
 @pytest.mark.skipif(not _shares(), reason="no network share given (FT_TEST_SHARE)")
 @pytest.mark.parametrize("share", _shares() or ["-"])
 def test_S0136_a_create_on_the_ci_share_is_created(fs: FileSystem, share: str) -> None:
-    """The create job's writes on each spelling (copy writes through the same code; its own Windows test waits for
-    BL-0087's `COPY_CHECK`): every folder sync of the target refused by the share and taken as done; the manifest last;
-    "created" with every file whole."""
+    """The create job's writes on each spelling (copy writes through the same code; it runs on Windows since S0146,
+    on the runner's own disk in `tests/test_copy_ops.py`): every folder sync of the target refused by the share and
+    taken as done; the manifest last; "created" with every file whole."""
     from ledger_engine.ledger.create import Created, CreatePlan, LoadResult, NewFile, Ports, run
 
     target = Path(share) / f"ft-{uuid.uuid4().hex}"

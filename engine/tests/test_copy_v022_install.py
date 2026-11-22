@@ -16,8 +16,8 @@ The same goldens opened in place, and the seeded changes they catch, are `tests/
 
 from __future__ import annotations
 
+import os
 import posixpath
-import sys
 from pathlib import Path
 
 import pytest
@@ -25,14 +25,10 @@ import pytest
 from tests.mirror.support import build_loaded, load_root
 from tests.mirror.test_inv21 import INSTALL_GOLDENS, copy_install, first_difference, golden_postings, snapshot
 from tests.mirror.test_inv21 import mirror_postings as copy_postings
-from tests.windows_pending import COPY_CHECK
-
-if sys.platform == "win32":
-    raise pytest.skip.Exception(COPY_CHECK, allow_module_level=True)
-
 from tests.test_copy_ops import copy, params
 
 pytestmark = [
+    pytest.mark.usefixtures("windows_port"),  # Windows: the adapter (S0146: the copy's check runs there)
     pytest.mark.inv("INV-21"),
     pytest.mark.inv("INV-26"),
 ]
@@ -93,7 +89,7 @@ def test_a_copy_of_each_v022_root_keeps_its_goldens_and_its_bytes(
         if q.is_file() and ".finzytrack" not in q.relative_to(target).parts
     }
     source = {q.relative_to(install / base).as_posix(): q.read_bytes() for q in (install / base).rglob("*.beancount")}
-    parsed = {posixpath.relpath(f, str(install / base)) for f in load_root(install / rel).options["include"]}
+    parsed = {Path(os.path.relpath(f, install / base)).as_posix() for f in load_root(install / rel).options["include"]}
     assert set(copied) == parsed, "the copy holds exactly the ledger files the root loads"
     assert all(copied[name] == source[name] for name in copied), "every copied ledger file is its source's bytes"
 

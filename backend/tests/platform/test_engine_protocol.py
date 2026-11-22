@@ -32,6 +32,7 @@ from app.platform.engine import (
     TryOutcome,
 )
 from app.platform.engine_protocol import (
+    ABS_PATHS,
     MAX_ID,
     MAX_LINE_BYTES,
     OPS,
@@ -570,3 +571,103 @@ def test_the_codec_takes_this_oss_paths_in_a_reply() -> None:
     reply = {**ex, "result": {**ex["result"], "inspection": [windows]}}
     out = decoded(reply, "recover_try")
     assert isinstance(out, TryOutcome) is is_absolute(windows["backup"], sys.platform)
+
+
+# -- S0146 (BL-0087): every absolute path a request carries, in the engine's normal form on Windows ---------------
+
+ABS_PATH_PATTERN = r"^(?:/|[A-Za-z]:[\\/]|[\\/]{2})"
+
+
+def _abs_positions(node: dict[str, Any], defs: dict[str, Any], at: tuple[str, ...] = ()) -> list[str]:
+    """Where the schema puts an `AbsPath` under `node`, as `ABS_PATHS` spells it (`*` for each item of a list)."""
+    if "$ref" in node:
+        return _abs_positions(defs[node["$ref"].rsplit("/", 1)[1]], defs, at)
+    if node.get("pattern") == ABS_PATH_PATTERN:
+        return [".".join(at)]
+    out: list[str] = []
+    for sub in node.get("anyOf", []):
+        out += _abs_positions(sub, defs, at)
+    if node.get("type") == "array":
+        out += _abs_positions(node["items"], defs, (*at, "*"))
+    for name, sub in node.get("properties", {}).items():
+        out += _abs_positions(sub, defs, (*at, name))
+    return out
+
+
+def test_S0146_the_codecs_absolute_paths_are_the_schemas() -> None:
+    """The population, built from the schema (every `AbsPath` in every op's params, nested ones included): the codec's
+    table holds exactly those, so a path field added to the protocol fails here until the codec normalizes it."""
+    defs = schema()["$defs"]
+    found = {op: tuple(_abs_positions(defs[f"{stem(op)}Request"]["properties"]["params"], defs)) for op in OPS}
+    assert {op: at for op, at in found.items() if at} == dict(ABS_PATHS)
+    assert (len(ABS_PATHS), sum(len(at) for _, at in ABS_PATHS)) == (12, 28)
+
+
+def _respelled(value: Any, steps: list[str], spell: str) -> Any:
+    """`value` with the path at `steps` given as `spell` (each item of a list, a missing or null field left)."""
+    if not steps:
+        return spell if isinstance(value, str) else value
+    if steps[0] == "*":
+        return [_respelled(v, steps[1:], spell) for v in value]
+    d = cast("dict[str, Any]", value) if isinstance(value, dict) else {}
+    if d.get(steps[0]) is not None:
+        return {**d, steps[0]: _respelled(d[steps[0]], steps[1:], spell)}
+    return cast("Any", value)
+
+
+def _at(value: Any, steps: list[str]) -> list[Any]:
+    if not steps:
+        return [value]
+    if steps[0] == "*":
+        return [x for v in value for x in _at(v, steps[1:])]
+    d = cast("dict[str, Any]", value) if isinstance(value, dict) else {}
+    return _at(d[steps[0]], steps[1:]) if d.get(steps[0]) is not None else []
+
+
+@pytest.mark.parametrize("op", sorted(dict(ABS_PATHS)))
+@pytest.mark.parametrize(
+    ("spell", "sent"),
+    [
+        ("c:\\Books\\main.bean", "C:\\Books\\main.bean"),
+        ("\\\\?\\C:\\Books\\main.bean", "C:\\Books\\main.bean"),
+        ("\\\\?\\UNC\\nas\\share\\main.bean", "\\\\nas\\share\\main.bean"),
+    ],
+)
+def test_S0146_on_windows_every_absolute_path_of_a_request_reaches_the_engine_normalized(
+    op: str, spell: str, sent: str
+) -> None:
+    """Owner, 2026-11-22: the sidecar normalizes before the engine, wherever a path came from. Every absolute path of
+    the op's params spelled so (the schema's example, each path respelled) is sent in the normal form, and the
+    request stays valid. Must not pass: one field missed, or any other text touched: a save's new file text that
+    starts with a drive (`post`) and the plan's fingerprint text are sent as given."""
+    params: dict[str, Any] = schema()["$defs"][f"{stem(op)}Request"]["examples"][0]["params"]
+    if op.startswith("copy"):
+        params = {**params, "legacy_locks": ["/legacy/data/.write.lock", "/legacy2/data/.write.lock"]}
+    if op == "recover_act" and params.get("file") is None:
+        params = {**params, "file": "/ledgers/L/main.bean"}
+    for where in dict(ABS_PATHS)[op]:
+        params = _respelled(params, where.split("."), spell)
+    if op == "save":
+        params = {**params, "changes": [{**c, "post": spell + "\n"} for c in params["changes"]]}
+    raw = json.loads(encode_request(42, op, params, platform="win32"))
+    out = raw["params"]
+    for where in dict(ABS_PATHS)[op]:
+        assert _at(out, where.split(".")), f"the example holds no {where}: the case would be vacuous"
+        assert all(v == sent for v in _at(out, where.split("."))), (where, out)
+    assert {k: v for k, v in out.items() if k not in {w.split(".")[0] for w in dict(ABS_PATHS)[op]}} == {
+        k: v for k, v in params.items() if k not in {w.split(".")[0] for w in dict(ABS_PATHS)[op]}
+    }, "nothing but the paths changes"
+    if op == "save":
+        assert [c["post"] for c in out["changes"]] == [spell + "\n"], "a file's text is never a path"
+    assert valid(f"{stem(op)}Request", raw)
+
+
+@pytest.mark.parametrize("platform", ["darwin", "linux"])
+def test_S0146_on_macos_and_linux_a_request_is_sent_as_given(platform: str) -> None:
+    """POSIX byte for byte as before: the params are sent as given, a Windows spelling included (the engine there
+    takes only its own OS's paths and refuses it)."""
+    params = {"root": "c:\\Books\\main.bean", "app_local_data": "/app/./x//", "workspace_key": "k1"}
+    want = json.dumps(
+        {"v": 2, "id": 7, "op": "open", "params": params}, separators=(",", ":"), ensure_ascii=False
+    ).encode()
+    assert encode_request(7, "open", params, platform=platform) == want + b"\n"

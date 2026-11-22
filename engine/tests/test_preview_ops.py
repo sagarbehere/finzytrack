@@ -687,3 +687,50 @@ def test_an_answer_over_the_guard_is_refused_with_its_own_key_and_nothing_is_wri
     assert str(size - 1) in reply["error"]["message"]
     assert tree(main.parent.parent) == before  # nothing written
     assert json.loads(e.handle(request("ping", {}, 4)))["ok"] is True  # the engine keeps serving
+
+
+@pytest.mark.parametrize("spelling", ["as the sidecar sends it", "lower-case drive", "long-path prefix"])
+def test_S0146_on_windows_only_the_normal_spelling_of_a_root_reaches_a_save(
+    ws: tuple[Path, Path, dict[str, Any]], spelling: str
+) -> None:
+    """@regression-guard (S0146, BL-0087; S0133 verifier F2): the contract checks every plan path's normal form
+    (`contract._normal`), so a root spelled `c:\\...` or `\\\\?\\C:\\...` is refused (`path_not_normal`), and the
+    sidecar sends each absolute path in the normal form (`windows_paths.normal` in `engine_protocol.encode_request`,
+    the backend's tests; owner, 2026-11-22). The normal spelling's plan lands with every path in it unchanged."""
+    if sys.platform != "win32":
+        pytest.skip("Windows' spellings of one path (drive letter case, the long-path prefix)")
+    main, ald, params = ws
+    text = str(main)
+    assert text[0].isupper(), "the runner's temp folder is on an upper-case drive"
+    root = {
+        "as the sidecar sends it": text,
+        "lower-case drive": text[0].lower() + text[1:],
+        "long-path prefix": "\\\\?\\" + text,
+    }[spelling]
+    p = {**params, "root": root}
+    number = opened(ald, p)
+    reply = call(
+        ald,
+        p,
+        number,
+        {"edits": [{"path": root, "kind": "replace", "line": 4, "date": "2024-01-02", "keyword": "txn", "text": BUY}]},
+    )
+    result = reply["result"]
+    if spelling != "as the sidecar sends it":
+        assert (result["outcome"], result["step"], result["reason"]) == ("refused", "apply", "path_not_normal"), reply
+        return
+    assert result["outcome"] == "prepared", reply
+    assert [f["path"] for f in result["files"]] == [text]
+    save = {
+        "session": "s1",
+        "job": "j1",
+        "workspace_key": "k1",
+        "lineage": "lin1",
+        "root": text,
+        "changes": [{"path": f["path"], "pre": f["pre"], "post": f["text"]} for f in result["files"]],
+        "fingerprint": result["fingerprint"],
+        "app_local_data": str(ald),
+        "confine": None,
+    }
+    saved = json.loads(engine(ald).handle(request("save", save, 4), Channel(4, proceed=True)))
+    assert saved["result"]["outcome"] == "saved", saved

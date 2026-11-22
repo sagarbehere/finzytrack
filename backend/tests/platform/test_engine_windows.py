@@ -104,10 +104,12 @@ time.sleep(3600)
 
 
 @contextlib.contextmanager
-def in_a_job(script: str, *args: str) -> Generator[tuple[subprocess.Popen[str], EngineJob, Watched]]:
+def in_a_job(
+    script: str, *args: str, python: str = sys.executable
+) -> Generator[tuple[subprocess.Popen[str], EngineJob, Watched]]:
     """A leader started as the client starts an engine, put in its own job, then told to go."""
-    proc = subprocess.Popen(  # noqa: S603 (this interpreter with a fixed script)
-        [sys.executable, "-I", "-c", script, *args], stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True
+    proc = subprocess.Popen(  # noqa: S603 (this interpreter, or the engine's, with a fixed script)
+        [python, "-I", "-c", script, *args], stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True
     )
     leader = Watched(proc.pid)
     job = EngineJob.around(proc)
@@ -169,6 +171,58 @@ def test_the_drain_ends_a_plugins_child_and_every_handle_it_held_is_closed_at_th
                 )
             finally:
                 child.close()
+
+
+COPY_CHECK_ENGINE = r"""
+import sys
+sys.stdin.readline()  # nothing starts before the sidecar's first line: the engine is in its job by then
+from ledger_engine.ledger import fresh_load
+from ledger_engine.ledger.copy_check import CheckRequest
+from ledger_engine.ledger.core import copy_layout as cl
+folder = sys.argv[1]
+print(fresh_load.check(CheckRequest(folder + "\\main.beancount", folder, cl.Layout(folder, ()), ())), flush=True)
+"""
+"""An engine running the copy's "loads the same" check (`fresh_load.check`) on the ledger in `argv[1]`."""
+
+STUCK_PLUGIN = """
+import os, threading
+__plugins__ = ["run"]
+def run(entries, options, config):
+    with open(config + ".part", "w") as f:
+        f.write(str(os.getpid()))
+    os.replace(config + ".part", config)
+    threading.Event().wait()
+"""
+"""A plugin that names its process, then never returns."""
+
+
+def test_S0146_the_copy_checks_child_is_a_member_of_the_engines_job_and_ends_with_its_drain(tmp_path: Path) -> None:
+    """@regression-guard (Windows' own rule; at the base the check's reader failed, but its child was started the same
+    way). BL-0087 (fresh_load's docstring: the child "stays in the engine's process group"): on Windows the copy check's
+    child (`fresh_load.check`, started with `subprocess.Popen`, no breakaway asked) is a member of the engine's Job
+    Object, so the drain that ends the engine ends it too, never a process left running the user's plugin."""
+    if not ENGINE_PYTHON.exists():
+        pytest.skip("no engine environment: run `uv sync --locked` in engine/")
+    books = tmp_path / "books"
+    books.mkdir()
+    pid_file = tmp_path / "child.pid"
+    (books / "pl_s0146.py").write_text(STUCK_PLUGIN)
+    named = str(pid_file).replace("\\", "\\\\")  # Beancount reads a backslash in a string as an escape
+    (books / "main.beancount").write_text(
+        f'option "insert_pythonpath" "True"\nplugin "pl_s0146" "{named}"\n2026-01-01 open Assets:Cash EUR\n'
+    )
+    with in_a_job(COPY_CHECK_ENGINE, str(books), python=str(ENGINE_PYTHON)) as (proc, job, _):
+        assert wait_until(pid_file.exists, 15 * DEADLINE), "the copy check's child never ran the plugin"
+        child = Watched(int(pid_file.read_text()))
+        try:
+            members = job.member_ids()
+            assert members is not None
+            assert {proc.pid, child.pid} <= set(members), "the child is in the engine's job"
+            reaped = EngineGroup(job.ops, proc.pid).drain()
+            proc.returncode = reaped.returncode
+            assert child.gone(), "the child outlived the engine's drain"
+        finally:
+            child.close()
 
 
 SPAWNER = r"""

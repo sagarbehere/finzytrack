@@ -134,13 +134,17 @@ def validate(repo: Path, files: list[str], mutants: list[Mutant]) -> None:
 
 
 def run_cmd(cmd: str, cwd: Path, timeout: int) -> str:
-    """'pass', 'fail' or 'timeout'. The whole process group is killed on timeout."""
+    """'pass', 'fail' or 'timeout'. The whole process group (Windows: the process tree) is killed on timeout."""
     proc = subprocess.Popen(cmd, shell=True, cwd=cwd, stdout=subprocess.DEVNULL,
                             stderr=subprocess.DEVNULL, start_new_session=True)
     try:
         return "pass" if proc.wait(timeout=timeout) == 0 else "fail"
     except subprocess.TimeoutExpired:
-        os.killpg(proc.pid, signal.SIGKILL)
+        if sys.platform == "win32":  # no process groups there: end the tree by its parent links (S0146)
+            subprocess.run(["taskkill", "/F", "/T", "/PID", str(proc.pid)],  # noqa: S603, S607 (Windows' own tool)
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
+        else:
+            os.killpg(proc.pid, signal.SIGKILL)
         proc.wait()
         return "timeout"
 

@@ -73,24 +73,29 @@ def save_setup(tmp_path: Path) -> tuple[Path, Path, dict[str, Any]]:
     main.write_bytes(PRE)
     ald = tmp_path / "app"
     (ald / "locks").mkdir(parents=True)
+    return main, ald, published_save(main, ald, POST)
+
+
+def published_save(main: Path, ald: Path, post: str) -> dict[str, Any]:
+    """A save's params for the ledger at `main` (its whole text to `post`), after the open's publish into the cache
+    beside `ald` (`engine`'s default), so the save's gate finds the ledger's generation."""
     loaded = overlay.load(str(main), {}, DesktopPolicy())
     assert isinstance(loaded, overlay.Loaded)
-    cache = tmp_path / "cache"
-    cache.mkdir()
+    cache = ald.parent / "cache"
+    cache.mkdir(exist_ok=True)
     published = publish_job(for_this_os(), cache, main, ledger=loaded.fingerprint.ledger_set)  # the gate reads it
     assert isinstance(published, pb.Published), published
-    params: dict[str, Any] = {
+    return {
         "session": "s1",
         "job": "j7",
         "workspace_key": "k1",
         "lineage": "lin1",
         "root": str(main),
-        "changes": [{"path": str(main), "pre": sha(PRE), "post": POST}],
+        "changes": [{"path": str(main), "pre": sha(main.read_bytes()), "post": post}],
         "fingerprint": encode(loaded.fingerprint).decode("ascii"),
         "app_local_data": str(ald),
         "confine": None,
     }
-    return main, ald, params
 
 
 def engine(ald: Path | None, cache: Path | None = None) -> Engine:
@@ -494,7 +499,8 @@ def test_a_save_without_its_confine_field_is_refused(setup: tuple[Path, Path, di
     assert main.read_bytes() == PRE
 
 
-def _recorded(folder: Path) -> dict[str, Any]:
+def recorded_folder(folder: Path) -> dict[str, Any]:
+    """A save's `confine` for `folder`: its real path and its mark as the port gives it (what a test copy records)."""
     path = os.path.realpath(folder)
     m = for_this_os().open_dir(path).mark()
     return {"path": path, "volume": m.volume, "fs_type": m.fs_type, "born": m.born}
@@ -508,18 +514,21 @@ def test_a_save_confined_to_another_folder_is_not_saved_outside_folder(
     main, ald, params = setup
     other = tmp_path / "other"
     other.mkdir()
-    params["confine"] = _recorded(other)
+    params["confine"] = recorded_folder(other)
     reply = json.loads(engine(ald).handle(request("save", params), Channel(1, proceed=True)))
     assert reply["ok"], reply
     result = reply["result"]
     assert (result["outcome"], result["reason"], result["unchanged"]) == ("not_saved", "outside_folder", False)
     assert result["entry"] == os.path.realpath(other)
     assert main.read_bytes() == PRE
-    params["confine"] = {**_recorded(main.parent), "born": _recorded(main.parent)["born"] + 1}  # another folder
+    params["confine"] = {
+        **recorded_folder(main.parent),
+        "born": recorded_folder(main.parent)["born"] + 1,
+    }  # another folder
     reply = json.loads(engine(ald).handle(request("save", params), Channel(1, proceed=True)))
     assert reply["result"]["reason"] == "copy_folder_moved", reply
     assert main.read_bytes() == PRE
-    params["confine"] = _recorded(main.parent)
+    params["confine"] = recorded_folder(main.parent)
     reply = json.loads(engine(ald).handle(request("save", params), Channel(1, proceed=True)))
     assert reply["result"]["outcome"] == "saved", reply
 
@@ -538,7 +547,7 @@ def test_a_malformed_confine_is_refused_and_nothing_is_written(
     setup: tuple[Path, Path, dict[str, Any]], bad: dict[str, Any]
 ) -> None:
     main, ald, params = setup
-    params["confine"] = {**_recorded(main.parent), **bad}
+    params["confine"] = {**recorded_folder(main.parent), **bad}
     reply = json.loads(engine(ald).handle(request("save", params), Channel(1, proceed=True)))
     assert reply["error"]["key"] == "protocol.invalid_params", reply
     assert main.read_bytes() == PRE
