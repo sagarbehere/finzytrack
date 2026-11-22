@@ -33,7 +33,9 @@ import pytest
 from ledger_engine.fs.port import AclEntry, Right
 from ledger_engine.ledger.create import (
     MANIFEST_DIR,
+    TARGET,
     Created,
+    CreateOutcome,
     CreatePlan,
     LoadResult,
     NewFile,
@@ -1335,3 +1337,124 @@ def test_V3_1_a_folder_holding_another_programs_entry_is_still_named_kept() -> N
     assert isinstance(out, NotCreated), out
     assert out.left == ("prices",), out
     assert fs.file(f"{T}/prices/theirs.txt") == FOREIGN
+
+
+# -- S0145 (BL-0305, V4-1): `left` against the disk at every cleanup effect -------------------------------------------
+
+CLEANUP_ERRORS = (errno.ENOENT, errno.EACCES, errno.EBUSY, errno.EIO, errno.ENOTEMPTY, errno.EEXIST)
+"""The errors the round-4 verifier swept a cleanup's effects with (S0136 round 4)."""
+
+
+def check_left_holds_the_disk(fs: MemFS, target: str, ours: set[str], left: tuple[str, ...] | None) -> None:
+    """`NotCreated.left` as the disk holds it (S0136 round 4, V4-1): every name in it stands on disk (relative to the
+    target, `.` the target folder itself), and every name of ours that stands on disk is named, itself or by a name
+    named inside it (`_named` shows a folder only when nothing named is inside it). None asks the user to check the
+    folder: less, never false, so it holds whatever the disk is."""
+    if left is None:
+        return
+    here = set(fs.snapshot())
+
+    def stands(rel: str) -> bool:
+        return (target if rel == TARGET else f"{target}/{rel}") in here
+
+    for rel in left:
+        assert stands(rel), (rel, "named left, but not on disk", left)
+    for rel in ours:
+        if stands(rel):
+            named = rel in left or (rel == TARGET and bool(left)) or any(n.startswith(rel + "/") for n in left)
+            assert named, (rel, "ours on disk, not named", left)
+
+
+def cleanup_sweep(effects: tuple[str, ...], start: int) -> list[tuple[int | None, int, bool]]:
+    """Every cleanup effect (from `start`), each error, `after` both ways; `ENOTEMPTY` only before the effect (no real
+    volume answers it for a removal it carried out); and the cleanup without an error (`None`)."""
+    cases: list[tuple[int | None, int, bool]] = [(None, 0, False)]
+    for i in range(start, len(effects)):
+        for err in CLEANUP_ERRORS:
+            for after in (False, True):
+                if not (after and err == errno.ENOTEMPTY):
+                    cases.append((i, err, after))
+    return cases
+
+
+_OURS_CREATED = {TARGET, "main.beancount", "prices", "prices/p.beancount"}
+_FOREIGN_AT = {"none": None, "target": f"{T}/theirs.txt", "nested": f"{T}/prices/theirs.txt"}
+
+
+def _stopped_create(
+    stop: str, foreign: str, *, inject: tuple[int, int, bool] | None = None
+) -> tuple[MemFS, CreateOutcome]:
+    """A create in a folder it makes, stopped by its load's errors (`load_errors`) or by a `.finzytrack` another
+    program put at its commit point (`manifest_taken`), another program's file put into the target, its nested folder
+    or nowhere just before the stop; `inject` an error at one effect."""
+    fs = new_fs()
+    path = _FOREIGN_AT[foreign]
+    if inject is not None:
+        fs.inject(inject[0], crash=False, err=inject[1], after=inject[2])
+
+    def theirs() -> None:
+        if path is not None:
+            fs.outside_write(path, FOREIGN)
+
+    if stop == "load_errors":
+
+        def load(_root: str) -> LoadResult:
+            theirs()
+            return LoadResult(errors=2, parsed=(f"{T}/main.beancount",))
+
+        out, _ = go(fs, load=load)
+    else:
+
+        def at_gate() -> None:
+            theirs()
+            fs.outside_mkdirs(f"{T}/{MANIFEST_DIR}")
+            fs.outside_write(f"{T}/{MANIFEST_DIR}/workspace.json", FOREIGN)
+
+        out, _ = go(fs, Job(at_gate=at_gate))
+    return fs, out
+
+
+@cache
+def _cleanup_start(stop: str, foreign: str) -> tuple[tuple[str, ...], int]:
+    fs, out = _stopped_create(stop, foreign)
+    assert isinstance(out, NotCreated), out
+    assert out.reason == stop, out
+    e = tuple(fs.effects)
+    if stop == "load_errors":
+        start = next(i for i, x in enumerate(e) if x.startswith(("remove ", "rmdir ")))
+    else:
+        start = e.index(f"rename {T}:{MANIFEST_DIR}.ft-j7,{MANIFEST_DIR}") + 1
+    assert all(x.startswith(("remove ", "rmdir ", "sync ")) for x in e[start:]), e[start:]
+    return e, start
+
+
+_OURS_TAKEN = _OURS_CREATED | {
+    f"{MANIFEST_DIR}.ft-j7",
+    f"{MANIFEST_DIR}.ft-j7/workspace.json",
+    f"{MANIFEST_DIR}.ft-j7/rules",
+    f"{MANIFEST_DIR}.ft-j7/rules/r.yaml",
+}
+
+
+@pytest.mark.parametrize("foreign", list(_FOREIGN_AT))
+@pytest.mark.parametrize("stop", ["load_errors", "manifest_taken"])
+def test_V4_1_an_error_at_every_cleanup_effect_leaves_left_as_the_disk_holds_it(stop: str, foreign: str) -> None:
+    """@regression-guard (S0145: holds on the base; its must-not-pass are the mutants in the journal). S0136 round
+    4, V4-1 (BL-0305; owner, 2026-11-22: "Split OK. Do V4-1, let's go with your lean"): at each of the
+    cleanup's effects, each error, answered before or after the effect took place, with and without another program's
+    file in the target or its nested folder: what `left` names stands on disk, and what of ours stands is named
+    (`check_left_holds_the_disk`). The sweep that would have caught V2-2 and V3-1 in the build."""
+    effects, start = _cleanup_start(stop, foreign)
+    ours = _OURS_CREATED if stop == "load_errors" else _OURS_TAKEN
+    named = 0
+    for at, err, after in cleanup_sweep(effects, start):
+        fs, out = _stopped_create(stop, foreign, inject=None if at is None else (at, err, after))
+        assert isinstance(out, NotCreated), (at, err, after, out)
+        assert out.reason == stop, (at, err, after, out)
+        try:
+            check_left_holds_the_disk(fs, T, ours, out.left)
+        except AssertionError as e:
+            raise AssertionError((None if at is None else effects[at], errno.errorcode.get(err), after, e)) from e
+        named += out.left is not None and bool(out.left)
+    if foreign != "none" or stop == "manifest_taken":
+        assert named, "the sweep reaches a cleanup that names what it kept"

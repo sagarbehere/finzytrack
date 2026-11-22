@@ -426,6 +426,56 @@ def test_RT2_a_share_refusing_the_flush_otherwise_stops_the_save_before_any_writ
     assert all(e.startswith("sync /w/L") for e in w.fs.effects), w.fs.effects
 
 
+OTHER_SHARE_DEV = 8  # a second share's drive (S0145, V2-1)
+
+
+def _two_shares() -> World:
+    """`/w/L` on one share and `/w/L/inc` on another (a second drive mounted there), both refusing a folder's sync
+    as the CI share does (`SyncRefused`, taken as done)."""
+    w = world(volume="share")
+    w.fs.outside_mount("/w/L/inc", OTHER_SHARE_DEV)
+    w.fs.remote.add(OTHER_SHARE_DEV)
+    w.fs.sync_refused.add(OTHER_SHARE_DEV)
+    w.fs.outside_fs_type(OTHER_SHARE_DEV, "ntfs")
+    return w
+
+
+def test_V2_1_a_save_on_two_shares_lands() -> None:
+    """@regression-guard (S0145: holds on the base). The two-share world of the V2-1 test is a save that lands:
+    only the refusal it injects stops it."""
+    w = _two_shares()
+    assert isinstance(durable_commit(w.fs, w.commit), Landed)
+    for t in w.targets:
+        assert w.fs.file(t.path) == t.post
+    syncs = [e for e in w.fs.effects if e.startswith("sync /w/L")]
+    assert syncs[:2] == ["sync /w/L:", "sync /w/L/inc:"], ("each share folder synced before the first write", syncs)
+
+
+@pytest.mark.parametrize("refusing", ["/w/L", "/w/L/inc"], ids=["first", "second"])
+def test_V2_1_every_share_folder_of_a_save_is_synced_before_its_first_write(refusing: str) -> None:
+    """@regression-guard (S0145: holds on the base; its must-not-pass are the mutants in the journal). S0136 round
+    2, V2-1 (BL-0305; owner, 2026-11-22: "Split OK. Do V4-1, let's go with your lean"): a save whose
+    folders are on two shares, one of them refusing the folder's flush otherwise than `SyncRefused` (another code, an
+    untested NAS): the pre-write sync of **every** share folder (`writer._try_share_syncs`) stops the save before its
+    first write, whichever folder refuses: "not saved", unchanged, no journal, nothing written. A sync of only the
+    first or only the last folder lets the save start and fail after a replace."""
+    w = _two_shares()
+
+    def refuse_otherwise(i: int, label: str) -> None:
+        if label == f"sync {refusing}:":
+            w.fs.inject(i, crash=False, err=errno.EOPNOTSUPP)
+
+    w.fs.on_effect = refuse_otherwise
+    before = w.fs.snapshot()
+    out = durable_commit(w.fs, w.commit)
+    assert isinstance(out, NotSaved), out
+    assert (out.step, out.reason, out.unchanged, out.open_journal) == (Step.BACKUP, Reason.IO_ERROR, True, False), out
+    assert journals(w.fs) == {}
+    assert w.fs.snapshot() == before, "nothing written"
+    assert w.fs.effects[-1] == f"sync {refusing}:", w.fs.effects
+    assert all(e.startswith("sync /w/L") for e in w.fs.effects), w.fs.effects
+
+
 def test_RT2_the_pre_write_sync_is_only_on_a_share() -> None:
     """On a local volume no extra effect: the save's first effect is the backups folder's `mkdir`, as before."""
     for volume in ("swap", "plain"):
@@ -574,28 +624,52 @@ def _fat_backed_share() -> World:
     return w
 
 
+def _missing_have_their_backup(state: MemFS, w: World) -> set[str]:
+    """Each replaced file a power loss left missing has its previous version in the save's backup on this PC
+    (`<backups>/<record>/<n>-<name>`, `n` its place in the save; S0145, BL-0305 O-2: every file, not `main.bean`
+    only). Returns the missing ones."""
+    missing: set[str] = set()
+    for n, t in enumerate(w.targets):
+        if t.pre is not None and state.file(t.path) is None:
+            missing.add(t.path)
+            backup = f"{BD}/{NAME}/{n}-{t.path.rpartition('/')[2]}"
+            assert state.file(backup) == t.pre, (t.path, "its previous version is not in the backup", backup)
+    return missing
+
+
+def _outside_the_targets_unchanged(state: MemFS, w: World) -> None:
+    """Every entry of the ledger's folders that the save does not write (`other.bean`, the folders) is as it was
+    before the save, whatever the server's power loss kept (S0145, BL-0305 O-2)."""
+    written = {t.path for t in w.targets}
+    now = state.snapshot()
+    for path, entry in w.before.items():
+        if path.startswith("/w/L") and path not in written:
+            assert now.get(path) == entry, (path, "outside the targets, changed", now.get(path), entry)
+
+
 def test_RT1_on_a_share_kept_on_exfat_a_server_power_loss_can_leave_a_saved_file_missing_never_torn() -> None:
     """The accepted limit (owner, 2026-11-20: "State it, in limit and notice (Recommended)"): after "saved", a power
     loss of a server that keeps the files on exFAT, FAT or a USB drive can leave a ledger file missing; the previous
-    version is in the backup on this PC. Nothing beyond it: no file is ever torn, and "saved" was true when told."""
+    version is in the backup on this PC. Nothing beyond it: no file is ever torn, and "saved" was true when told.
+    @regression-guard (S0145, BL-0305 O-2: also every missing file's backup, and the files outside the targets)."""
     w = _fat_backed_share()
     assert isinstance(durable_commit(w.fs, w.commit), Landed)
     for t in w.targets:
         assert w.fs.file(t.path) == t.post, "saved was true when told"
-    missing = 0
+    missing: set[str] = set()
     for state in w.fs.power_loss_states():
         assert set(journals(state)) == {State.CLOSED}
         for t in w.targets:
             assert state.file(t.path) in (t.pre, t.post, None), (t.path, "torn")
-        if state.file(MAIN) is None:
-            missing += 1
-            assert state.file(f"{BD}/{NAME}/2-main.bean") == w.targets[2].pre, "the previous version is in the backup"
-    assert missing > 0, "the limit is reachable in the fake"
+        missing |= _missing_have_their_backup(state, w)
+        _outside_the_targets_unchanged(state, w)
+    assert {MAIN, "/w/L/inc/a.bean"} <= missing, ("the limit is reachable in the fake, for each replaced file", missing)
 
 
 def test_RT1_on_a_share_kept_on_exfat_an_undone_save_can_come_back_missing_its_backup_holding_it() -> None:
     """The same server: a save rolled back after its first replace is "not saved", unchanged, true when told; a
-    server power loss afterwards can leave that file missing, its previous version in the backup."""
+    server power loss afterwards can leave that file missing, its previous version in the backup. @regression-guard
+    (S0145, BL-0305 O-2: also the files outside the targets)."""
     probe = _fat_backed_share()
     assert isinstance(durable_commit(probe.fs, probe.commit), Landed)
     at = next(i for i, x in enumerate(probe.fs.effects) if x.startswith("move /w/L/inc:.a.bean.ft-s1-j7.new,a.bean"))
@@ -607,10 +681,29 @@ def test_RT1_on_a_share_kept_on_exfat_an_undone_save_can_come_back_missing_its_b
     for t in w.targets:
         if t.pre is not None:
             assert w.fs.file(t.path) == t.pre, "unchanged was true when told"
-    missing = [s for s in w.fs.power_loss_states() if s.file("/w/L/inc/a.bean") is None]
-    assert missing, "the limit is reachable in the fake"
-    for s in missing:
-        assert s.file(f"{BD}/{NAME}/0-a.bean") == w.targets[0].pre
+    _outside_the_targets_unchanged(w.fs, w)
+    missing: set[str] = set()
+    for s in w.fs.power_loss_states():
+        missing |= _missing_have_their_backup(s, w)
+        _outside_the_targets_unchanged(s, w)
+    assert "/w/L/inc/a.bean" in missing, ("the limit is reachable in the fake", missing)
+
+
+def test_O_2_the_RT1_checks_refuse_a_changed_file_outside_the_targets_and_a_missing_file_without_its_backup() -> None:
+    """@regression-guard (S0145: holds on the base). The must-not-pass cases of the RT1 tests' two checks (BL-0305
+    O-2): another file of the ledger changed, and a replaced file other than `main.bean` missing with no backup of
+    it."""
+    w = _fat_backed_share()
+    assert isinstance(durable_commit(w.fs, w.commit), Landed)
+    _outside_the_targets_unchanged(w.fs, w)
+    w.fs.outside_write("/w/L/other.bean", FOREIGN)
+    with pytest.raises(AssertionError, match="outside the targets"):
+        _outside_the_targets_unchanged(w.fs, w)
+    w.fs.outside_remove("/w/L/inc/a.bean")
+    assert _missing_have_their_backup(w.fs, w) == {"/w/L/inc/a.bean"}
+    w.fs.outside_remove(f"{BD}/{NAME}/0-a.bean")
+    with pytest.raises(AssertionError, match="not in the backup"):
+        _missing_have_their_backup(w.fs, w)
 
 
 def test_V2_2_a_create_on_a_share_refusing_the_flush_otherwise_never_names_a_removed_folder_kept(

@@ -1852,6 +1852,73 @@ def test_S0136_a_create_on_the_ci_share_is_created(fs: FileSystem, share: str) -
 
 
 @pytest.mark.skipif(not _shares(), reason="no network share given (FT_TEST_SHARE)")
+@pytest.mark.parametrize("share", _shares() or ["-"])
+@pytest.mark.parametrize("inside", ["file", "folder"])
+def test_S0145_V4_2_a_non_empty_folders_removal_on_the_ci_share_answers_enotempty(
+    fs: FileSystem, share: str, inside: str
+) -> None:
+    """@regression-guard (S0145: a fact of the runner's share). S0136 round 4, V4-2 (BL-0305): the create's cleanup
+    names a folder of ours kept only when its `rmdir` answers `ENOTEMPTY` (`create._removed_unless_not_empty`); on
+    local NTFS that is `test_entry_operations_relative_to_the_folder_handle`. On the CI share too, on each spelling:
+    the folder and what it holds stay."""
+    folder = Path(share) / f"ft-{uuid.uuid4().hex}"
+    (folder / "sub").mkdir(parents=True)
+    try:
+        if inside == "file":
+            (folder / "sub" / "theirs.txt").write_bytes(b"theirs\n")
+        else:
+            (folder / "sub" / "theirs").mkdir()
+        with fs.open_dir(str(folder)) as d:
+            with pytest.raises(OSError, match=r".") as full:
+                d.rmdir("sub")
+            assert full.value.errno == errno.ENOTEMPTY, full.value
+            assert d.names() == ["sub"]
+        assert os.listdir(folder / "sub") == ["theirs.txt" if inside == "file" else "theirs"]
+    finally:
+        shutil.rmtree(folder, ignore_errors=True)
+
+
+@pytest.mark.skipif(not _shares(), reason="no network share given (FT_TEST_SHARE)")
+@pytest.mark.parametrize("share", _shares() or ["-"])
+def test_S0145_V4_2_a_stopped_create_on_the_ci_share_names_its_folder_holding_another_programs_file(
+    fs: FileSystem, share: str
+) -> None:
+    """@regression-guard (S0145). The same answer through the create's cleanup: a create stopped by its load's
+    errors, another program's file put into a folder it made, removes its own files and names that folder kept
+    (`left` `('prices',)`), never "check the folder" for a share that answers as NTFS does."""
+    from ledger_engine.ledger.create import CreatePlan, LoadResult, NewFile, NotCreated, Ports, run
+
+    target = Path(share) / f"ft-{uuid.uuid4().hex}"
+    plan = CreatePlan(
+        job="j7",
+        target=str(target),
+        files=(NewFile("main.beancount", b'include "prices/p.beancount"\n'), NewFile("prices/p.beancount", b"; p\n")),
+        root="main.beancount",
+        manifest=(NewFile("workspace.json", b"{}\n"),),
+    )
+
+    def load(root: str) -> LoadResult:
+        (target / "prices" / "theirs.txt").write_bytes(b"theirs\n")
+        return LoadResult(errors=2, parsed=(root,))
+
+    class Job:
+        def progress(self, phase: object) -> None:
+            del phase
+
+        def gate(self) -> None:
+            pass
+
+    try:
+        out = run(plan, Ports(fs, load), Job())
+        assert isinstance(out, NotCreated), out
+        assert (out.reason, out.left) == ("load_errors", ("prices",)), out
+        assert sorted(os.listdir(target)) == ["prices"]
+        assert os.listdir(target / "prices") == ["theirs.txt"]
+    finally:
+        shutil.rmtree(target, ignore_errors=True)
+
+
+@pytest.mark.skipif(not _shares(), reason="no network share given (FT_TEST_SHARE)")
 def test_S0136_F1_a_share_without_file_id_info_has_no_drive_id_and_the_save_refuses_it(
     fs: FileSystem, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -36,9 +36,10 @@ from ledger_engine.ledger.copy import CopyPlan, CopyPorts, outcome, run
 from ledger_engine.ledger.core import journal
 from ledger_engine.ledger.core.journal import FileEntry, State
 from ledger_engine.ledger.core.ledger_set import Absent, Content, FileState, Fingerprint, LedgerSet
-from ledger_engine.ledger.create import MANIFEST_DIR, Created, CreateOutcome, NewFile, NotCreated
+from ledger_engine.ledger.create import MANIFEST_DIR, TARGET, Created, CreateOutcome, NewFile, NotCreated
 from ledger_engine.ledger.paths import path_key
 from tests.fakes.memfs import Crash, MemFS
+from tests.ledger import test_create as tc
 from tests.ledger.worlds import with_folders
 
 pytestmark = [pytest.mark.inv("INV-01"), pytest.mark.inv("INV-22"), pytest.mark.inv("INV-32")]
@@ -917,3 +918,87 @@ def test_a_malformed_plan_is_refused_before_anything_is_read_or_written(plan: Co
         go(w, plan=plan)
     assert w.log == []
     assert w.fs.effects == []
+
+
+# -- S0145 (BL-0305, V4-1): `left` against the disk at every cleanup effect -------------------------------------------
+
+
+def _ours_in_copy(stop: str) -> set[str]:
+    """Every name the copy makes in the target before it stops, relative to the target: its files, the folders they
+    are in, the target itself, and, at the commit point, its manifest's temp folder."""
+    files = [p[len(T) + 1 :] for p in EXPECTED]
+    if stop == "manifest_taken":
+        files.append(f"{MANIFEST_DIR}.ft-j8/workspace.json")
+    out = {TARGET}
+    for rel in files:
+        parts = rel.split("/")
+        out |= {"/".join(parts[: k + 1]) for k in range(len(parts))}
+    return out
+
+
+_FOREIGN_AT = {"none": None, "target": f"{T}/theirs.txt", "nested": f"{T}/documents/Assets/theirs.txt"}
+
+
+def _stopped_copy(
+    stop: str, foreign: str, *, inject: tuple[int, int, bool] | None = None
+) -> tuple[World, CreateOutcome]:
+    """A copy into a folder it makes, stopped by its load differing (`load_differs`) or by a `.finzytrack` another
+    program put at its commit point (`manifest_taken`), another program's file put into the target, a nested folder
+    or nowhere just before the stop; `inject` an error at one effect."""
+    w = new_world()
+    path = _FOREIGN_AT[foreign]
+    if inject is not None:
+        w.fs.inject(inject[0], crash=False, err=inject[1], after=inject[2])
+
+    def theirs() -> None:
+        if path is not None:
+            w.fs.outside_write(path, b"their bytes\n")
+
+    if stop == "load_differs":
+        w.on_copy_load = theirs
+        w.copy_title = b"Other"
+        out, _ = go(w)
+    else:
+
+        def at_gate() -> None:
+            theirs()
+            w.fs.outside_mkdirs(f"{T}/{MANIFEST_DIR}")
+            w.fs.outside_write(f"{T}/{MANIFEST_DIR}/workspace.json", b"their bytes\n")
+
+        out, _ = go(w, Job(at_gate=at_gate))
+    return w, out
+
+
+def _cleanup_start(stop: str, foreign: str) -> tuple[tuple[str, ...], int]:
+    w, out = _stopped_copy(stop, foreign)
+    nc = not_copied(out, stop)
+    e = tuple(w.fs.effects)
+    if stop == "load_differs":
+        start = next(i for i, x in enumerate(e) if x.startswith(("remove ", "rmdir ")))
+    else:
+        start = e.index(f"rename {T}:{MANIFEST_DIR}.ft-j8,{MANIFEST_DIR}") + 1
+    assert all(x.startswith(("remove ", "rmdir ", "sync ")) for x in e[start:]), e[start:]
+    assert nc.left is not None
+    return e, start
+
+
+@pytest.mark.parametrize("foreign", list(_FOREIGN_AT))
+@pytest.mark.parametrize("stop", ["load_differs", "manifest_taken"])
+def test_V4_1_an_error_at_every_cleanup_effect_leaves_left_as_the_disk_holds_it(stop: str, foreign: str) -> None:
+    """@regression-guard (S0145: holds on the base; its must-not-pass are the mutants in the journal). S0136 round
+    4, V4-1 (BL-0305; owner, 2026-11-22: "Split OK. Do V4-1, let's go with your lean"): the copy's
+    cleanup is the create's (`create.run_steps`), swept the same way (`test_create.py`'s V4-1 sweep): at each cleanup
+    effect, each error, before or after the effect, with and without another program's file: what `left` names stands
+    on disk, and what of ours stands is named."""
+    effects, start = _cleanup_start(stop, foreign)
+    ours = _ours_in_copy(stop)
+    named = 0
+    for at, err, after in tc.cleanup_sweep(effects, start):
+        w, out = _stopped_copy(stop, foreign, inject=None if at is None else (at, err, after))
+        nc = not_copied(out, stop)
+        try:
+            tc.check_left_holds_the_disk(w.fs, T, ours, nc.left)
+        except AssertionError as e:
+            raise AssertionError((None if at is None else effects[at], errno.errorcode.get(err), after, e)) from e
+        named += nc.left is not None and bool(nc.left)
+    assert named, "the sweep reaches a cleanup that names what it kept"
