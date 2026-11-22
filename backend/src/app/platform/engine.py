@@ -266,7 +266,8 @@ class SaveAnswer:
     `unfinished` (a file may have been replaced, the rollback stopped: `cause`, `cause_path`). `unchanged`: every file
     the save would write was hashed again and equals its pre bytes; `changed`: the first file it found not at them
     (S0100). `entry`, `detail`: the folder and the ACL entry of a `permission` refusal (`entry` also the folder of
-    `linked_folder`, `folder_appeared` and `app_folder_missing`)."""
+    `linked_folder`, `folder_appeared` and `app_folder_missing`, and of an `io_error` with no `path`: the network
+    share's folder whose sync refused the save, S0148, BL-0306)."""
 
     outcome: SaveOutcomeKind
     reason: str | None

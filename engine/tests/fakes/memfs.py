@@ -594,8 +594,14 @@ class MemFS:
     def outside_hold(self, path: str) -> None:
         """Windows (S0130): a reader holds the file open without sharing deletion (SQLite's own open, Python's
         `open`): until `outside_release`, removing it, renaming it away or over it, and asking for delete access to it
-        (`allowed`) are refused as the adapter refuses them (S0148): a rename over it `ReplaceDenied` (`EACCES`,
-        Windows' `ACCESS_DENIED`), the others `InUseError` (`EBUSY`, a sharing violation)."""
+        (`allowed`) are refused as the adapter refuses them (S0148): a plain rename over it `ReplaceDenied` (`EACCES`,
+        Windows' `ACCESS_DENIED`), `rename_shared` over it a plain `PermissionError`, the others `InUseError` (`EBUSY`,
+        a sharing violation). In POSIX mode (no such hold exists on macOS or Linux; kept so the publish sweeps run in
+        both forms) removing it or renaming it, away or over, is refused `PermissionError` (`EACCES`), as before S0148,
+        and `allowed` does not see it. **Limit (the hold model):** the hold refuses only delete-type operations (S0130's
+        model): a reader that shares reading only would also refuse a write open (the rollback's `_flush` on a share,
+        which a real such holder makes `Unfinished`, truthfully), which the fake lets through (S0148 round 1, red team
+        note)."""
         _, ino, rest, _ = self._walk(path)
         assert not rest
         assert isinstance(self.nodes[ino], _File)
@@ -1010,8 +1016,10 @@ class MemDir:
                 raise ReplaceDenied(key, "in use by another program" if hit[1] in self._fs.held else "read-only")
             if (isinstance(node, _File) or (isinstance(node, _Dir) and not self._fs.windows)) and node.locked:
                 raise PermissionError(errno.EPERM, "locked")  # Windows renames a read-only folder (S0132's P7)
-            if hit[1] in self._fs.held:
+            if hit[1] in self._fs.held and self._fs.windows:
                 raise InUseError(key)
+            if hit[1] in self._fs.held:  # POSIX mode: no such hold exists there; the S0130 model's answer as before
+                raise PermissionError(errno.EACCES, "in use by another program")
             if not self._may_delete(node):
                 raise PermissionError(errno.EACCES, "delete denied")
 
@@ -1079,7 +1087,7 @@ class MemDir:
         if hit is None:
             return False
         node = self._fs.nodes[hit[1]]
-        if right is Right.DELETE and hit[1] in self._fs.held:
+        if right is Right.DELETE and hit[1] in self._fs.held and self._fs.windows:
             raise InUseError(name)  # delete access asked: Windows' sharing violation (the adapter's `allowed`)
         if right is Right.DELETE:
             return self._may_delete(node)
@@ -1207,10 +1215,15 @@ class MemDir:
     def rename_shared(self, src: str, dst: str) -> None:
         """`rename` (S0130): on Windows a drive in `no_posix_rename` or `remote` refuses it (`NotOffered`, nothing
         done), as the adapter decides it by the volume's flag and `remote()` (S0132, BL-0294); a file held without
-        delete sharing (`outside_hold`) still refuses it."""
+        delete sharing (`outside_hold`) still refuses it, with a plain `PermissionError` (`EACCES`): the adapter's
+        `rename_shared` answers its status through `_nt_error`, never `ReplaceDenied`, which only the plain rename
+        raises (S0148 round 1, V3)."""
         if self._fs.windows and (self._d.dev in self._fs.no_posix_rename or self._d.dev in self._fs.remote):
             raise NotOffered(POSIX_RENAME)
-        self.rename(src, dst)
+        try:
+            self.rename(src, dst)
+        except ReplaceDenied as e:
+            raise PermissionError(errno.EACCES, str(e)) from None
 
     def clear_readonly(self, name: str) -> None:
         """Windows mode: the entry's read-only mark cleared (`outside_lock` undone), one effect; an absent name: the

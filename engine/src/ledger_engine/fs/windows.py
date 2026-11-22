@@ -62,7 +62,8 @@ Windows since S0129, each in its own Job Object).
   ("in use by another program"), "not saved", unchanged, naming the file. Opened after that check, or held by a
   program that shares deletion (antivirus, an indexer), the replace fails with nothing changed (`ACCESS_DENIED`,
   raised as `ReplaceDenied`, which the save tells `in_use`: the file passed its check just before) and the save
-  rolls back; recovery stops on it the same way (`EACCES`).
+  rolls back; recovery's put-back, after its own check granted delete access, tells it as the in-use error too
+  (`restore`, owner, 2026-11-22: "Fix it").
 - **Removing:** `FileDispositionInformationEx` with POSIX semantics, so the name goes at once as `unlink` makes it go
   (NTFS, ReFS); where a volume refuses those (FAT32, exFAT), the classic delete-on-close, whose name stays until every
   other handle on the file is closed (an antivirus scan holding one shows as a create at that name failing).

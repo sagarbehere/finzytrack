@@ -149,9 +149,10 @@ class ReplaceDenied(PermissionError):
     BL-0284): another handle holds the file, even one that shares deletion (antivirus, an indexer, OneDrive's upload,
     a program that merely looks at it; probed, S0130's P3 and the 2026-11-22 run 8), or an ACL or the read-only
     attribute forbids replacing it. Nothing was done. A `PermissionError` (`EACCES`), so every caller fails as on
-    any refused rename; only the save's replace tells it apart: there the file passed the save's check just before
-    (delete access granted, not read-only), so it is told `in_use` (owner, 2026-11-22: "opetion 2"; engine-jobs §6.8).
-    Raised by the Windows adapter only."""
+    any refused rename; two places tell it apart, each after its own check granted delete access to a file that is not
+    read-only: the save's replace (`writer._best_effort`, told `in_use`; owner, 2026-11-22: "opetion 2") and
+    recovery's put-back over a file at its new bytes (`restore`, raised there as `InUseError`; owner, 2026-11-22: "Fix
+    it"); engine-jobs §6.8. Raised by the Windows adapter only."""
 
     def __init__(self, *what: str) -> None:
         super().__init__(errno.EACCES, "the replace was refused: " + " ".join(what))

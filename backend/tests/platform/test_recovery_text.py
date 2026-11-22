@@ -469,3 +469,20 @@ def test_S0148_must_not_pass_another_error_or_posixs_ebusy_is_never_told_in_use(
     message = blocked_screen(Blocking(J, "failed", "io_error", "/L/a.bean", None, None, err), WS).message
     assert "Another program is using" not in message
     assert os.strerror(err) in message
+
+
+@pytest.mark.parametrize(("plat", "held"), [("darwin", False), ("linux", False), ("win32", True)])
+def test_S0148_V1_the_in_use_rule_is_windows_only_by_the_platform_itself(
+    monkeypatch: pytest.MonkeyPatch, plat: str, held: bool
+) -> None:
+    """S0148 round 1, V1: the predicate itself, not patched: only on Windows is a try's `EBUSY` told in use; on macOS
+    and Linux (a busy mount point) the system's answer stays."""
+    import sys
+
+    from app.platform.engine_jobs import recovery_text
+
+    monkeypatch.setattr(sys, "platform", plat)
+    assert recovery_text.holds_are_in_use() is held
+    message = blocked_screen(Blocking(J, "failed", "io_error", "/L/a.bean", None, None, errno.EBUSY), WS).message
+    assert ("Another program is using" in message) is held
+    assert (os.strerror(errno.EBUSY) in message) is not held

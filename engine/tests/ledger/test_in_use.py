@@ -279,3 +279,65 @@ def test_must_not_pass_a_plain_permission_error_at_recoverys_put_back_keeps_its_
     assert isinstance(tried, Failed), tried
     assert tried.errno == err, tried
     assert set(journals(w.fs)) == {State.OPEN}
+
+
+def test_V2_a_refused_move_of_a_missing_file_at_recoverys_put_back_is_never_told_in_use() -> None:
+    """S0148 round 1, V2 / RT-2 (`restore._put_back`'s guard): a replaced file found missing is put back by a move,
+    not a replace over a checked file; on a volume without the exclusive rename that move is a plain rename, so a
+    `ReplaceDenied` there keeps its own error (`EACCES`), never the in-use error. The journal stays `.open`."""
+
+    def crashed() -> World:
+        w = world(volume="plain")
+        w.fs.windows = True
+        targets = tuple(t for t in w.targets if t.pre is not None)
+        w = replace(w, commit=commit_for(targets), targets=targets)
+        main_move = next(i for i, e in enumerate(_plain_effects()) if e.startswith("move /w/L:"))
+        w.fs.inject(main_move, crash=True)
+        with pytest.raises(Crash):
+            durable_commit(w.fs, w.commit)
+        w.fs.outside_remove(A)  # a.bean, replaced, now missing: its backup holds the old bytes
+        return w
+
+    probe = crashed()
+    n = len(probe.fs.effects)
+    assert isinstance(recover(probe.fs), Resolved)
+    assert probe.fs.file(A) == next(t.pre for t in probe.targets if t.path == A)
+    put_back = next(i for i, e in enumerate(probe.fs.effects) if i >= n and e.startswith("move /w/L/inc:"))
+    w = crashed()
+    w.fs.inject(put_back, crash=False, denied=True)
+    tried = recover(w.fs)
+    assert isinstance(tried, Failed), tried
+    assert tried.errno == errno.EACCES, tried
+    assert set(journals(w.fs)) == {State.OPEN}
+
+
+@cache
+def _plain_effects() -> tuple[str, ...]:
+    w = world(volume="plain")
+    w.fs.windows = True
+    targets = tuple(t for t in w.targets if t.pre is not None)
+    w = replace(w, commit=commit_for(targets), targets=targets)
+    assert isinstance(durable_commit(w.fs, w.commit), Landed)
+    return tuple(w.fs.effects)
+
+
+@pytest.mark.parametrize(
+    "at", [i for i, e in enumerate(clean_effects()) if e.startswith(("create /w/local/backups/s1-j7:", "create /w/L"))]
+)
+def test_RT1_a_hold_on_the_saves_own_copy_is_named_by_the_ledger_file_it_copies(at: int) -> None:
+    """S0148 round 1, RT-1 (engine-jobs §6.8 "Limit (in use)"): a hold on Finzytrack's own copy of a file, its backup
+    in the app folder or its new version beside it (`.<name>.ft-….new`), is told `in_use` naming the ledger file that
+    copy is of (the save was working on it: `handles.on`); "not saved", unchanged, as for any hold."""
+    label = clean_effects()[at]
+    copied = label.rpartition(":")[2].removeprefix(".").split(".ft-")[0].split("-", 1)[-1]
+    w = _windows()
+    w.fs.inject(at, crash=False, in_use=True)
+    out = durable_commit(w.fs, w.commit)
+    check_told(w.fs, w, out)
+    if isinstance(out, Unfinished):  # main.bean's copy, after the created prices.bean was placed: writes paused
+        assert (out.reason, out.cause) == (Reason.IN_USE, "created_path_taken"), (label, out)
+    else:
+        assert isinstance(out, NotSaved), (label, out)
+        assert (out.reason, out.unchanged, out.open_journal) == (Reason.IN_USE, True, False), (label, out)
+    assert out.path is not None, out
+    assert out.path.rpartition("/")[2] == copied, (label, out)
