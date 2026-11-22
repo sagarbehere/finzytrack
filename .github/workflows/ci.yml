@@ -170,7 +170,8 @@ jobs:
     # The ledger engine on Windows (S0126, BL-0087; ADR-0061 decision 6 and its 2026-11-14 amendment): the Windows
     # file-system probe on the runner's folders and on scratch volumes (VHDs formatted FAT32, exFAT and ReFS; prints
     # only), then the engine's tests. Until the Windows port lands, the engine refuses every file operation there
-    # (`engine.unsupported_platform`) and its real-disk write-contract tests skip.
+    # (`engine.unsupported_platform`) and its real-disk write-contract tests skip. The Cloud Files probe (S0144,
+    # BL-0283) registers a sync root in the runner's temp folder and prints how the adapter sees its placeholders.
     runs-on: windows-2022
     timeout-minutes: 60
     defaults:
@@ -222,7 +223,11 @@ jobs:
           "FT_TEST_SHARE_LOCAL=$dir" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8  # the server's own path (S0136)
           [System.Environment]::OSVersion.VersionString
           .venv\Scripts\python.exe scripts\probe_windows_fs.py $env:RUNNER_TEMP $env:TEMP @vols @shares
+      - name: The Cloud Files probe (S0144, BL-0283; prints only, fails only on a bug of the probe itself)
+        id: cloud_probe
+        run: .venv\Scripts\python.exe scripts\probe_windows_cloud.py serve $env:RUNNER_TEMP
       - name: tests
+        if: success() || steps.cloud_probe.outcome == 'failure'  # a bug of the probe fails the job, the tests still run
         # INV-07 on Windows (S0127): its C runtime reads TZ only as a process starts and only in this form, so it is set
         # before Python starts (Los Angeles: tests/conftest.py checks it). `-rs`: each skip prints its reason, the
         # backlog item that turns it on (tests/windows_pending.py).
