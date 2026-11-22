@@ -209,12 +209,11 @@ def test_a_program_that_opens_the_file_after_the_check_gets_in_use_at_the_replac
     assert (out.reason, out.path, out.unchanged, out.open_journal) == (Reason.IN_USE, MAIN, True, False), out
 
 
-@pytest.mark.parametrize("at", range(len(clean_effects())))
+@pytest.mark.parametrize("at", [i for i, e in enumerate(clean_effects()) if e not in REPLACES])
 def test_must_not_pass_replace_denied_anywhere_but_a_checked_files_replace_is_never_in_use(at: int) -> None:
     """Must not pass: `ReplaceDenied` met anywhere but the plain rename over a file the save checked (its record, its
-    backups, a created file's placement, a folder's sync) is never told "in use"."""
-    if clean_effects()[at] in REPLACES:
-        pytest.skip("the replace itself: the test above")
+    backups, a created file's placement, a folder's sync) is never told "in use". The two replaces are left out of
+    the parameters (`test_a_replace_refused_access_denied_after_the_check_...` covers them)."""
     w = _windows()
     w.fs.inject(at, crash=False, denied=True)
     out = durable_commit(w.fs, w.commit)
@@ -235,24 +234,48 @@ def test_must_not_pass_a_plain_permission_error_at_the_replace_is_not_in_use(lab
     assert out.reason is Reason.IO_ERROR, out
 
 
-def test_recovery_meeting_replace_denied_keeps_the_error_eacces() -> None:
-    """Recovery's try keeps today's error for `ReplaceDenied` (`EACCES`, told with its permission text): only a sharing
-    violation (`EBUSY`) is told in use there (S0148; owner, 2026-11-22: "opetion 2")."""
+def _put_back_effect() -> tuple[int, int]:
+    """The effect at which main.bean's replace is cut by a crash, and the effect at which recovery's try then puts
+    a.bean back (its plain rename over a.bean, at its new bytes)."""
     main_move = replaced_only_effects().index(REPLACES[1])
-
-    def crashed() -> World:
-        w = _windows(replaced_only=True)
-        w.fs.inject(main_move, crash=True)
-        with pytest.raises(Crash):
-            durable_commit(w.fs, w.commit)
-        return w
-
-    probe = crashed()
+    probe = _crashed(main_move)
     n = len(probe.fs.effects)
     assert isinstance(recover(probe.fs), Resolved)
-    put_back = next(i for i, e in enumerate(probe.fs.effects) if i >= n and e.startswith("move /w/L/inc:"))
-    w = crashed()
+    return main_move, next(i for i, e in enumerate(probe.fs.effects) if i >= n and e.startswith("move /w/L/inc:"))
+
+
+def _crashed(at: int) -> World:
+    w = _windows(replaced_only=True)
+    w.fs.inject(at, crash=True)
+    with pytest.raises(Crash):
+        durable_commit(w.fs, w.commit)
+    return w
+
+
+def test_recovery_meeting_replace_denied_after_its_check_is_told_in_use_and_stays_blocked() -> None:
+    """Owner, 2026-11-22: "Fix it": recovery's try checks delete access to a file before it puts it back, so a
+    `ReplaceDenied` at that rename means another program holds it: the try fails with the in-use error (`EBUSY`,
+    which recovery's text on Windows says "Another program is using …, then press Retry"), naming a.bean, nothing
+    written, the journal `.open` (the workspace stays blocked); once nothing refuses, the next try resolves."""
+    main_move, put_back = _put_back_effect()
+    w = _crashed(main_move)
     w.fs.inject(put_back, crash=False, denied=True)
     tried = recover(w.fs)
     assert isinstance(tried, Failed), tried
-    assert tried.errno == errno.EACCES, tried
+    assert (tried.errno, tried.path) == (errno.EBUSY, A), tried
+    assert set(journals(w.fs)) == {State.OPEN}
+    assert isinstance(recover(w.fs), Resolved)
+    for t in w.targets:
+        assert w.fs.file(t.path) == t.pre, t.path
+
+
+@pytest.mark.parametrize("err", [errno.EACCES, errno.EPERM])
+def test_must_not_pass_a_plain_permission_error_at_recoverys_put_back_keeps_its_error(err: int) -> None:
+    """Must not pass: a plain `EACCES` or `EPERM` there (macOS's, Linux's) keeps its error, and so today's text."""
+    main_move, put_back = _put_back_effect()
+    w = _crashed(main_move)
+    w.fs.inject(put_back, crash=False, err=err)
+    tried = recover(w.fs)
+    assert isinstance(tried, Failed), tried
+    assert tried.errno == err, tried
+    assert set(journals(w.fs)) == {State.OPEN}

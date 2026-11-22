@@ -278,8 +278,8 @@ def in_use(name: str, then: str = "try again") -> str:
 
 def holds_are_in_use() -> bool:
     """On Windows a try's `EBUSY` is the engine's `InUseError` (a sharing violation: another program holds the file;
-    S0148); on macOS and Linux it is the system's own (a mount point in use), told in its own words. A rename over a
-    held file refused `EACCES` keeps the permission text (owner, 2026-11-22: "opetion 2")."""
+    S0148; also a rename over a file the try had checked, refused `ACCESS_DENIED`, which the engine raises as it: owner,
+    2026-11-22: "Fix it"); on macOS and Linux it is the system's own (a mount point in use), told in its own words."""
     return sys.platform == "win32"
 
 

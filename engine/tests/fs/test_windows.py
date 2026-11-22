@@ -1399,17 +1399,18 @@ def test_S0148_the_plain_rename_over_a_held_file_is_replace_denied_and_does_noth
 
 
 @pytest.mark.parametrize(
-    ("share", "told"), [(SHARE_READ_WRITE, errno.EBUSY), (SHARE_ALL, errno.EACCES)], ids=["editor", "antivirus"]
+    ("share", "told"), [(SHARE_READ_WRITE, errno.EBUSY), (SHARE_ALL, errno.EBUSY)], ids=["editor", "antivirus"]
 )
 def test_S0148_a_rollback_that_meets_a_held_file_leaves_the_journal_open_and_recovery_fails_until_it_is_released(
     fs: FileSystem, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, share: int, told: int
 ) -> None:
     """S0148: b.bean's replace fails, and another program opened a.bean (already replaced): the rollback cannot put
     a.bean back, so the save is unfinished (writes paused), never "not saved"; a.bean whole at its new bytes, the
-    journal `.open`. Recovery's try while it is held fails naming a.bean, nothing written: `EBUSY` for a holder that
-    does not share deletion (restore's own delete-access check meets the sharing violation: told in use on Windows),
-    `EACCES` for one that does (its rename over a.bean refused, `ReplaceDenied`: today's permission text, owner,
-    2026-11-22: "opetion 2"). Once the program closed it, recovery resolves with both files at their old bytes."""
+    journal `.open`. Recovery's try while it is held fails with the in-use error (`EBUSY`, told "in use, press Retry"
+    on Windows) naming a.bean, nothing written: for a holder that does not share deletion its own delete-access check
+    meets the sharing violation; for one that does (antivirus) that check passes and its rename over a.bean is refused
+    `ReplaceDenied`, told in use too (owner, 2026-11-22: "Fix it"). Once the program closed it, recovery resolves
+    with both files at their old bytes."""
     from ledger_engine.fs import windows
     from ledger_engine.ledger.restore import Failed, Resolved, recover_journal
 

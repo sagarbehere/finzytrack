@@ -87,7 +87,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 
 from ledger_engine.fs.pathmodel import host
-from ledger_engine.fs.port import DirHandle, EntryStat, FileSystem, Kind, Right
+from ledger_engine.fs.port import DirHandle, EntryStat, FileSystem, InUseError, Kind, ReplaceDenied, Right
 from ledger_engine.ledger.core import journal
 from ledger_engine.ledger.core import paths as core_paths
 from ledger_engine.ledger.core.journal import FileEntry, Record, State
@@ -518,6 +518,13 @@ def _put_back(handles: Handles, record: Record, x: _Checked) -> None:
                 h.rename(rs, x.base)
         except FileExistsError:
             raise _Halt(Cause.FOREIGN, f.canonical_path) from None
+        except ReplaceDenied:  # Windows' `ACCESS_DENIED` over a file at post, nothing done: the check granted delete
+            # access just before and it is not read-only (`_check`), so another program holds it; told as the in-use
+            # error (`EBUSY`), which recovery's text on Windows says "in use, press Retry" (owner, 2026-11-22: "Fix
+            # it"; S0148, BL-0284; engine-jobs §6.8). Only this rename: a missing file's `move` is not a replace
+            if x.verdict is Verdict.MISSING:
+                raise
+            raise InUseError("rename", rs, x.base) from None
         ledger_sync(h)
         return
     handles.entry = _join(x.parent, rt)
