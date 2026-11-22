@@ -422,6 +422,7 @@ def test_RT2_a_share_refusing_the_flush_otherwise_stops_the_save_before_any_writ
     out = durable_commit(w.fs, w.commit)
     assert isinstance(out, NotSaved), out
     assert (out.step, out.reason, out.unchanged, out.open_journal) == (Step.BACKUP, Reason.IO_ERROR, True, False), out
+    assert (out.path, out.entry) == (None, "/w/L"), ("S0148, BL-0306: the folder that refused is named", out)
     assert journals(w.fs) == {}
     assert w.fs.snapshot() == before, "nothing written"
     assert all(e.startswith("sync /w/L") for e in w.fs.effects), w.fs.effects
@@ -454,7 +455,8 @@ def test_V2_1_a_save_on_two_shares_lands() -> None:
 
 @pytest.mark.parametrize("refusing", ["/w/L", "/w/L/inc"], ids=["first", "second"])
 def test_V2_1_every_share_folder_of_a_save_is_synced_before_its_first_write(refusing: str) -> None:
-    """@regression-guard (S0145: holds on the base; its must-not-pass are the mutants in the journal). S0136 round
+    """S0145 (it held on S0145's base; its must-not-pass are the mutants in that journal); S0148 (BL-0306) adds that
+    the folder that refused is named (`entry`), which fails on S0148's base. S0136 round
     2, V2-1 (BL-0305; owner, 2026-11-22: "Split OK. Do V4-1, let's go with your lean"): a save whose
     folders are on two shares, one of them refusing the folder's flush otherwise than `SyncRefused` (another code, an
     untested NAS): the pre-write sync of **every** share folder (`writer._try_share_syncs`) stops the save before its
@@ -471,6 +473,7 @@ def test_V2_1_every_share_folder_of_a_save_is_synced_before_its_first_write(refu
     out = durable_commit(w.fs, w.commit)
     assert isinstance(out, NotSaved), out
     assert (out.step, out.reason, out.unchanged, out.open_journal) == (Step.BACKUP, Reason.IO_ERROR, True, False), out
+    assert (out.path, out.entry) == (None, refusing), ("S0148, BL-0306: the folder that refused is named", out)
     assert journals(w.fs) == {}
     assert w.fs.snapshot() == before, "nothing written"
     assert w.fs.effects[-1] == f"sync {refusing}:", w.fs.effects

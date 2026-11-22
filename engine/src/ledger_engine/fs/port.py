@@ -132,6 +132,19 @@ class SyncRefused(OSError):
         super().__init__(errno.EINVAL, "the network share refused the folder's sync")
 
 
+class InUseError(OSError):
+    """Another program holds the entry open in a way that refuses what was asked (S0148, BL-0284): Windows' sharing
+    violation (`STATUS_SHARING_VIOLATION`: an editor's usual open, which does not share deletion; antivirus, OneDrive's
+    upload or an indexer holding the file for a moment), or a rename over a file that another program holds open
+    (`DirHandle.rename`; the adapter asks the file itself before it says so). Nothing was done. It is an `OSError`
+    (`EBUSY`), so every caller fails as before; only the save tells it apart (`writer.Reason.IN_USE`: "in use by
+    another program", naming the file). Raised by the Windows adapter only: macOS and Linux have no such hold, and
+    their own `EBUSY` (a mount point in use) stays a plain `OSError`."""
+
+    def __init__(self, *what: str) -> None:
+        super().__init__(errno.EBUSY, "in use by another program: " + " ".join(what))
+
+
 class Kind(StrEnum):
     FILE = "file"
     DIR = "dir"

@@ -58,9 +58,11 @@ Windows since S0129, each in its own Job Object).
   refuses the call itself, `STATUS_NOT_SUPPORTED`, is `NotOffered`, remembered for the job).
 - **A file another program holds open** without sharing deletion (the usual open) cannot be renamed, replaced or
   removed (probed). The save asks for delete access to each file it replaces before its first effect (`allowed`),
-  so such a file stops the save there: `OSError` `EBUSY` ("in use by another program"), "not saved", unchanged,
-  naming the file. Opened after that check, the replace fails with nothing changed and the save rolls back; recovery
-  stops on it the same way.
+  so such a file stops the save there: `InUseError` (`EBUSY`; `fs.port`, S0148), which the save tells `in_use`
+  ("in use by another program"), "not saved", unchanged, naming the file. Opened after that check, or held by a
+  program that shares deletion (antivirus, an indexer), the replace fails with nothing changed (`ACCESS_DENIED`; the
+  rename then asks the file whether another handle holds it, `_held`, and raises `InUseError` when one does) and the
+  save rolls back; recovery stops on it the same way.
 - **Removing:** `FileDispositionInformationEx` with POSIX semantics, so the name goes at once as `unlink` makes it go
   (NTFS, ReFS); where a volume refuses those (FAT32, exFAT), the classic delete-on-close, whose name stays until every
   other handle on the file is closed (an antivirus scan holding one shows as a create at that name failing).
@@ -147,6 +149,7 @@ from ledger_engine.fs.port import (
     EntryStat,
     FolderMark,
     FoldRule,
+    InUseError,
     Kind,
     LegacyAbsent,
     LegacyHeld,
@@ -301,6 +304,8 @@ STATUS_ERRNO: Final = {
 }
 """What an NTSTATUS means as `errno`, so callers read Windows' answers as they read POSIX ones; any other status is
 `EIO` with its number in the message."""
+STATUS_SHARING_VIOLATION: Final = 0xC0000043
+STATUS_ACCESS_DENIED: Final = 0xC0000022
 REFUSED_STATUS: Final = frozenset({0xC00000BB, 0xC0000010})
 """What a volume answers to an information class it does not have: nothing done."""
 FS_SERIAL64: Final = frozenset({"ntfs", "refs"})
@@ -451,8 +456,11 @@ def _win_error(*what: str, code: int | None = None) -> OSError:
 
 
 def _nt_error(status: int, *what: str) -> OSError:
-    """An NTSTATUS as `OSError`, its `errno` from `STATUS_ERRNO`."""
+    """An NTSTATUS as `OSError`, its `errno` from `STATUS_ERRNO`; a sharing violation is `InUseError` (`EBUSY`:
+    another program holds the entry; S0148, BL-0284)."""
     s = status & 0xFFFFFFFF
+    if s == STATUS_SHARING_VIOLATION:
+        return InUseError(*what, f"(NTSTATUS {s:#010x})")
     return OSError(STATUS_ERRNO.get(s, errno.EIO), " ".join(what) + f" (NTSTATUS {s:#010x})")
 
 
@@ -1020,7 +1028,27 @@ class WindowsDir:
             if not replace and status & 0xFFFFFFFF in REFUSED_STATUS:
                 self._fs.no_excl.add(self.device())
                 raise NotOffered(EXCLUSIVE_RENAME)
+            if replace and status & 0xFFFFFFFF == STATUS_ACCESS_DENIED and self._held(dst):
+                raise InUseError("rename", src, dst)
             raise _nt_error(status, "rename", src, dst)
+
+    def _held(self, name: str) -> bool:
+        """Whether another program holds the file `name` open (S0148, BL-0284): asked after a rename over it was
+        refused `ACCESS_DENIED`, which Windows answers both for a file any other handle holds (even one that shares
+        deletion: antivirus, an indexer, OneDrive's upload; probed, S0130's P3) and for a file the system will not let
+        us replace (an ACL, the read-only attribute). The file is opened for delete access sharing nothing and closed
+        at once: a sharing violation means another handle holds it; any other answer, a granted open included, says
+        nothing is known to hold it, and the rename's own error is raised. Nothing is changed; for its instant the open
+        refuses another program's open of the file."""
+        try:
+            _nt_open(
+                self.api, self.handle, check_name(name), DELETE, FILE_OPEN, FILE_OPEN_REPARSE_POINT, share=0
+            ).close()
+        except InUseError:
+            return True
+        except OSError:
+            return False
+        return False
 
     def rename_shared(self, src: str, dst: str) -> None:
         """The rename with POSIX semantics (`FileRenameInformationEx`, `REPLACE_IF_EXISTS | POSIX_SEMANTICS`),

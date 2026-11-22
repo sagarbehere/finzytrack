@@ -38,6 +38,7 @@ from ledger_engine.fs.port import (
     FileSystem,
     FolderMark,
     FoldRule,
+    InUseError,
     Kind,
     NotOffered,
     Right,
@@ -413,32 +414,41 @@ def test_a_folder_with_an_inheritable_deny_entry_refuses_the_save(fs: FileSystem
     assert (led / "main.bean").read_bytes() == b"pre\n"
 
 
+GENERIC_READ_ = 0x80000000
+SHARE_ALL = 0x7
+SHARE_READ_WRITE = 0x3
+
+
 # -- the open-file refusal ---------------------------------------------------------------------------------------------
 
 
 def test_a_file_another_program_holds_open_is_not_saved_unchanged_and_named(fs: FileSystem, tmp_path: Path) -> None:
     """An editor's usual open shares reading and writing, not deletion: Windows cannot rename over the file then
-    (probed). The save stops before its first write, "not saved", unchanged, naming the file."""
+    (probed). The save stops before its first write, `in_use` (S0148, BL-0284), "not saved", unchanged, naming the
+    file."""
     led = tmp_path / "led"
     led.mkdir()
     main = led / "main.bean"
     main.write_bytes(b"pre\n")
     with main.open("rb"):  # Python's open shares reading and writing, never deletion
-        with fs.open_dir(str(led)) as d, pytest.raises(OSError, match=r".") as busy:
+        with fs.open_dir(str(led)) as d, pytest.raises(InUseError) as busy:
             d.allowed("main.bean", Right.DELETE)
         assert busy.value.errno == errno.EBUSY
         out = durable_commit(fs, commit(tmp_path / "app", Change(str(main), sha256(b"pre\n"), b"post\n")))
     assert isinstance(out, NotSaved), out
-    assert (out.step, out.reason, out.unchanged, out.path) == (Step.BACKUP, Reason.IO_ERROR, True, str(main))
+    assert (out.step, out.reason, out.unchanged, out.path) == (Step.BACKUP, Reason.IN_USE, True, str(main))
     assert main.read_bytes() == b"pre\n"
     assert not [n for n in os.listdir(led) if ".ft-" in n], "nothing of ours left beside it"
 
 
+@pytest.mark.parametrize("share", [SHARE_READ_WRITE, SHARE_ALL], ids=["editor", "antivirus"])
 def test_a_file_opened_after_the_check_stops_the_replace_and_the_save_rolls_back_unchanged(
-    fs: FileSystem, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    fs: FileSystem, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, share: int
 ) -> None:
-    """The editor opens the file between the save's checks and its rename: the rename fails with nothing changed, the
-    rollback undoes the save's other file from its backup, and the answer is "not saved", unchanged."""
+    """The editor opens the file between the save's checks and its rename (or a program that shares deletion, as
+    antivirus does, which the check lets through): the rename fails with nothing changed, the rollback undoes the
+    save's other file from its backup, and the answer is "not saved", unchanged, `in_use` naming the held file (S0148,
+    BL-0284: the adapter asks the file after the refused rename)."""
     from ledger_engine.fs import windows
 
     led = tmp_path / "led"
@@ -453,17 +463,16 @@ def test_a_file_opened_after_the_check_stops_the_replace_and_the_save_rolls_back
         if dst != "b.bean" or holder:
             real(self, src, dst)
             return
-        holder.append(b.open("rb"))  # opened without sharing deletion, just before the replace...
-        try:
-            real(self, src, dst)
-        finally:
-            holder.pop().close()  # ...and closed after it failed, so the rollback can undo a.bean
+        with held(b, share):  # opened just before the replace...
+            holder.append(True)
+            real(self, src, dst)  # ...and closed after it failed, so the rollback can undo a.bean
 
     monkeypatch.setattr(windows.WindowsDir, "rename", rename)
     c = commit(tmp_path / "app", Change(str(a), sha256(b"a\n"), b"A\n"), Change(str(b), sha256(b"b\n"), b"B\n"))
     out = durable_commit(fs, c)
     assert isinstance(out, NotSaved), out
-    assert (out.step, out.unchanged) == (Step.REPLACE, True), out
+    assert (out.step, out.unchanged, out.open_journal) == (Step.REPLACE, True, False), out
+    assert (out.reason, out.path) == (Reason.IN_USE, str(b)), out
     assert (a.read_bytes(), b.read_bytes()) == (b"a\n", b"b\n")
     assert not [n for n in os.listdir(led) if ".ft-" in n]
 
@@ -877,6 +886,7 @@ def test_RT_F1_a_rollback_while_another_program_holds_the_file_reading_only_is_n
         out = durable_commit(fs, c)
         assert isinstance(out, NotSaved), out
         assert (out.step, out.unchanged, out.open_journal) == (Step.REPLACE, True, False), out
+        assert (out.reason, out.path) == (Reason.IN_USE, str(b)), out  # S0148, BL-0284
         assert (a.read_bytes(), b.read_bytes()) == (b"a\n", b"b\n")
     assert not [n for n in os.listdir(led) if ".ft-" in n]
 
@@ -1241,16 +1251,19 @@ def test_Q_B_the_volumes_flags_decide_never_its_name(
     assert calls == [], calls
 
 
-@pytest.mark.parametrize("where", ["tmp", "volumes"])
+@pytest.mark.parametrize("where", ["tmp", "volumes", "share"])
 def test_V_F6_the_adapters_own_rename_never_leaves_the_name_missing(fs: FileSystem, tmp_path: Path, where: str) -> None:
     """Verifier F6, red team F3: S0126 measured `MoveFileExW`; this measures the adapter's rename by handle
     (`FileRenameInformation` with `ReplaceIfExists`), 300 replaces while another thread asks for the name, on the
     runner's disk and each scratch volume. A missing name is a state a power loss could keep. A rename refused because
     another program held the file at that instant (an antivirus scan on C:, the 2026-11-17 run 12) is counted, not a
-    failure: it is the open-file refusal, nothing done."""
-    places = [tmp_path] if where == "tmp" else [Path(v) / f"ft-{uuid.uuid4().hex}" for v in _volumes()]
+    failure: it is the open-file refusal, nothing done. S0148 (BL-0284) counts the refusals told `InUseError` (the
+    adapter found another handle on the file) apart from the others, and measures the CI share too (`share`: the
+    limit "a share's refused replaces", engine-jobs §6.8, where any refusal is counted by its error)."""
+    roots = {"tmp": [str(tmp_path)], "volumes": _volumes(), "share": _shares()}[where]
+    places = [tmp_path] if where == "tmp" else [Path(v) / f"ft-{uuid.uuid4().hex}" for v in roots]
     if not places:
-        pytest.skip("no scratch volumes given (FT_TEST_VOLUMES)")
+        pytest.skip(f"no {where} given (FT_TEST_VOLUMES, FT_TEST_SHARE)")
     for place in places:
         place.mkdir(exist_ok=True)
         try:
@@ -1267,8 +1280,17 @@ def test_V_F6_the_adapters_own_rename_never_leaves_the_name_missing(fs: FileSyst
                         d.create(".x.bean.ft-s-j.new", str(i).encode(), 0o644)
                         try:
                             d.rename(".x.bean.ft-s-j.new", "x.bean")
-                        except PermissionError:  # another program held x.bean that instant (run 12, C:): counted
+                        except PermissionError:  # refused, and no other handle found on x.bean (S0148): counted
                             seen["refused"] = seen.get("refused", 0) + 1
+                            d.remove(".x.bean.ft-s-j.new")
+                        except InUseError:  # another program held x.bean that instant (run 12, C:): counted apart
+                            seen["in_use"] = seen.get("in_use", 0) + 1
+                            d.remove(".x.bean.ft-s-j.new")
+                        except OSError as e:  # on the share only: any other refusal, counted by its error
+                            if where != "share":
+                                raise
+                            key = errno.errorcode.get(e.errno or 0, "other")
+                            seen[key] = seen.get(key, 0) + 1
                             d.remove(".x.bean.ft-s-j.new")
             finally:
                 stop.set()
@@ -1277,9 +1299,10 @@ def test_V_F6_the_adapters_own_rename_never_leaves_the_name_missing(fs: FileSyst
             warnings.warn(f"S0128 rename probe: {place.anchor} {_kind_of(fs, place)}: {seen}", stacklevel=1)
             assert seen["looks"] > 0
             assert seen["missing"] == 0, (str(place), seen)
-            assert seen.get("refused", 0) < 300, (str(place), seen)  # the rename works, refused only at instants
+            refused = sum(n for k, n in seen.items() if k not in ("looks", "missing"))
+            assert refused < 300, (str(place), seen)  # the rename works, refused only at instants
         finally:
-            if where == "volumes":
+            if where != "tmp":
                 shutil.rmtree(place, ignore_errors=True)
 
 
@@ -1301,10 +1324,6 @@ def test_RT_F6_the_engine_lock_file_cannot_be_removed_while_an_engine_holds_it(
 
 
 # -- S0130 (BL-0206): the rename the mirror's pointer swap takes -------------------------------------------------------
-
-GENERIC_READ_ = 0x80000000
-SHARE_ALL = 0x7
-SHARE_READ_WRITE = 0x3
 
 
 @contextlib.contextmanager
@@ -1353,6 +1372,68 @@ def test_rename_shared_is_refused_by_a_reader_that_does_not_share_deletion(fs: F
         d.rename_shared("b.tmp", "current.txt")
     assert (tmp_path / "current.txt").read_bytes() == b"old"
     assert (tmp_path / "b.tmp").read_bytes() == b"new"
+
+
+@pytest.mark.parametrize("share", [SHARE_READ_WRITE, SHARE_ALL], ids=["no-delete-sharing", "sharing-deletion"])
+def test_S0148_the_plain_rename_over_a_held_file_is_in_use_and_does_nothing(
+    fs: FileSystem, tmp_path: Path, share: int
+) -> None:
+    """S0148 (BL-0284): another program holding the file, sharing deletion or not, refuses the plain rename over it
+    (`ACCESS_DENIED`); the adapter then asks the file and raises `InUseError` (`EBUSY`), nothing done. The same rename
+    lands once the program closed it."""
+    (tmp_path / "main.bean").write_bytes(b"old")
+    (tmp_path / "new.tmp").write_bytes(b"new")
+    with fs.open_dir(str(tmp_path)) as d:
+        with held(tmp_path / "main.bean", share), pytest.raises(InUseError, match="rename") as busy:
+            d.rename("new.tmp", "main.bean")
+        assert busy.value.errno == errno.EBUSY
+        assert (tmp_path / "main.bean").read_bytes() == b"old"
+        assert (tmp_path / "new.tmp").read_bytes() == b"new"
+        d.rename("new.tmp", "main.bean")
+    assert (tmp_path / "main.bean").read_bytes() == b"new"
+
+
+def test_S0148_a_rollback_that_meets_a_held_file_leaves_the_journal_open_and_recovery_fails_until_it_is_released(
+    fs: FileSystem, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """S0148: b.bean's replace fails, and another program opened a.bean (already replaced) without sharing deletion:
+    the rollback cannot put a.bean back, so the save is unfinished (writes paused), never "not saved"; a.bean whole at
+    its new bytes, the journal `.open`. Recovery's try while it is held fails with `EBUSY` naming a.bean, nothing
+    written; once the program closed it, recovery resolves with both files at their old bytes."""
+    from ledger_engine.fs import windows
+    from ledger_engine.ledger.restore import Failed, Resolved, recover_journal
+
+    led = tmp_path / "led"
+    led.mkdir()
+    a, b = led / "a.bean", led / "b.bean"
+    a.write_bytes(b"a\n")
+    b.write_bytes(b"b\n")
+    stack = contextlib.ExitStack()
+    real = windows.WindowsDir.rename
+
+    def rename(self: windows.WindowsDir, src: str, dst: str) -> None:
+        if dst == "b.bean" and src.endswith(".new"):
+            stack.enter_context(held(a, SHARE_READ_WRITE))  # a.bean held from now on
+            raise OSError(errno.EIO, "the second replace fails")
+        real(self, src, dst)
+
+    monkeypatch.setattr(windows.WindowsDir, "rename", rename)
+    app = tmp_path / "app"
+    with stack:
+        out = durable_commit(
+            fs, commit(app, Change(str(a), sha256(b"a\n"), b"A\n"), Change(str(b), sha256(b"b\n"), b"B\n"))
+        )
+        assert isinstance(out, Unfinished), out
+        assert (a.read_bytes(), b.read_bytes()) == (b"A\n", b"b\n")
+        jd = app / "local" / "journal"
+        assert [n for n in os.listdir(jd) if n.endswith(".open")], "the journal is not left open"
+        monkeypatch.setattr(windows.WindowsDir, "rename", real)
+        tried = recover_journal(fs, str(jd), "s1-j1")
+        assert isinstance(tried, Failed), tried
+        assert (tried.errno, tried.path) == (errno.EBUSY, str(a)), tried
+        assert a.read_bytes() == b"A\n"
+    assert isinstance(recover_journal(fs, str(jd), "s1-j1"), Resolved)
+    assert (a.read_bytes(), b.read_bytes()) == (b"a\n", b"b\n")
 
 
 @pytest.mark.skipif(not _volumes(), reason="no scratch volumes given (FT_TEST_VOLUMES)")
@@ -1521,7 +1602,7 @@ def test_the_ports_remove_and_rename_still_refuse_a_read_only_file(fs: FileSyste
     os.chmod(f, 0o444)
     try:
         with fs.open_dir(str(tmp_path)) as d:
-            with pytest.raises(OSError, match="rename"):
+            with pytest.raises(PermissionError, match="rename"):  # S0148: refused, and nothing holds it: never in use
                 d.rename("new.tmp", "main.bean")
             with pytest.raises(OSError, match="rename"):
                 d.rename_shared("new.tmp", "main.bean")

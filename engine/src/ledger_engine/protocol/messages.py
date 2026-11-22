@@ -352,7 +352,8 @@ class SaveResult(Message):
     """How the save ended (§6.1, §11). `saved`: the closed record is durable (`published`: the mirror was published,
     never yet, BL-0113). `refused`: before the commit point, nothing written (`reason`: `unfinished_save`,
     `ledger_changed`, `mirror_stale`, `encrypted_file`). `not_saved`: the writer's `NotSaved` (`reason` its own:
-    `hard_linked`, `locked`, `not_a_file`, `permission`, `changed`, `path_moved`, `read_back`, `io_error`,
+    `hard_linked`, `locked`, `not_a_file`, `permission`, `changed`, `path_moved`, `read_back`, `io_error`, `in_use`
+    (another program holds the file `path`: Windows, S0148),
     `name_not_utf8`, `linked_folder`, `no_drive_id`, `no_folder_id`, `case_twins`, `folder_appeared`,
     `app_folder_missing`, `outside_folder`, `link_in_copy`, `copy_folder_moved`, `copy_folder_missing`,
     `unsafe_app_folder`, `encrypted_file` (a file the file system encrypts: Windows' EFS, S0128);
@@ -362,8 +363,9 @@ class SaveResult(Message):
     was hashed again and equals its pre bytes; `changed`: the first file that re-hash found not at them (None also when
     it could not read a file; S0100, BL-0163 (b)). `path`: the file it is about (the one an I/O error happened at);
     `entry`: the folder a `permission` refusal is about, the link a `linked_folder` refusal names, the folder that
-    appeared (`folder_appeared`), the app's folder that is missing (`app_folder_missing`) or the folder the save is
-    confined to (`outside_folder`); `detail`: the ACL entry
+    appeared (`folder_appeared`), the app's folder that is missing (`app_folder_missing`), the folder the save is
+    confined to (`outside_folder`) or the network share's folder whose sync refused the save (`io_error` with no
+    `path`: S0148, BL-0306); `detail`: the ACL entry
     that blocks it."""
 
     outcome: SaveOutcomeKind

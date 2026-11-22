@@ -137,6 +137,7 @@ type NotSavedReason = Literal[
     "not_a_file",  # a ledger path is a folder, a FIFO, a device
     "permission",  # the system would not allow the save: a mode, an ACL, unreadable extended attributes
     "io_error",  # the disk answered an error (a full disk, an I/O error)
+    "in_use",  # another program holds the file (Windows: an editor, antivirus, OneDrive's upload; S0148, BL-0284)
     "read_back",  # a written file did not read back as written (the save was rolled back)
     "name_not_utf8",  # a path is not valid UTF-8
     "linked_folder",  # a link stands in place of the workspace's own journal, backups or key folder (S0077, BL-0193)
@@ -160,7 +161,8 @@ class ChangeNotSavedDetails:
     file it is about (an I/O error's file); `folder` and `acl_entry`: for `permission`, the folder and the ACL entry
     (in `chmod`'s words, no subject) that stop it, for `linked_folder` the link in place of the save's own folder, for
     `folder_appeared` the folder that appeared, for `app_folder_missing` the app's folder, for `outside_folder` the test
-    copy's folder the save is confined to (`path`: the file that led out of it, when known); `unchanged`: every file
+    copy's folder the save is confined to (`path`: the file that led out of it, when known), for an `io_error` with no
+    `path` the network share's folder whose sync refused it (S0148, BL-0306); `unchanged`: every file
     the save would write was hashed again and equals its bytes before the save (only then may the user read "Your
     ledger is unchanged"); `changed`: the first file that re-hash found not at those bytes (None when none was found,
     or when it could not read a file; S0100, BL-0163 (b)). The UI words each reason

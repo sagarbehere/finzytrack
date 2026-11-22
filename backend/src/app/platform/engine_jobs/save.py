@@ -68,6 +68,7 @@ WRITER_REASONS: Final[frozenset[str]] = frozenset(
         "not_a_file",
         "permission",
         "io_error",
+        "in_use",
         "read_back",
         "name_not_utf8",
         "linked_folder",

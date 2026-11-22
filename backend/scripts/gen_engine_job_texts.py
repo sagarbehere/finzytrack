@@ -208,6 +208,18 @@ SAVE: tuple[Row, ...] = (
         lambda: _not_saved("io_error", unchanged=True),
     ),
     (
+        "msg:save.in_use",
+        "`CHANGE_NOT_SAVED {in_use}` naming the file another program holds (Windows; S0148, BL-0284); then the "
+        "re-hash's sentence",
+        lambda: _not_saved("in_use", unchanged=True),
+    ),
+    (
+        "msg:save.io_error_folder",
+        "`CHANGE_NOT_SAVED {io_error}` with no file and the folder whose sync refused it on a network share (S0148, "
+        "BL-0306); then the re-hash's sentence",
+        lambda: _not_saved("io_error", path=None, folder=FOLDER, unchanged=True),
+    ),
+    (
         "msg:save.read_back",
         "`CHANGE_NOT_SAVED {read_back}` (S0100); then the re-hash's sentence",
         lambda: _not_saved("read_back", unchanged=True),
@@ -356,6 +368,12 @@ def _screen(b: Blocking) -> str:
     return rt.blocked_screen(b, WS).message
 
 
+def _in_use_screen() -> str:
+    """The try's `EBUSY` as Windows tells it, on any OS the generator runs on."""
+    with mock.patch.object(rt, "holds_are_in_use", return_value=True):
+        return _screen(_blocking("failed", "<cause>", errno=errno.EBUSY))
+
+
 RECOVERY: tuple[Row, ...] = (
     ("msg:recovery.undone", "notice after recover-all undid a save", lambda: rt.undone_notice(WS)),
     (
@@ -429,6 +447,12 @@ RECOVERY: tuple[Row, ...] = (
         "msg:recovery.failed_permission",
         "`failed` with `EACCES` or `EPERM`",
         lambda: _screen(_blocking("failed", "<cause>", errno=errno.EACCES)),
+    ),
+    (
+        "msg:recovery.failed_in_use",
+        "`failed` with `EBUSY` on Windows: another program holds the file (S0148, BL-0284; elsewhere the system's "
+        "answer, `msg:recovery.failed_errno`)",
+        lambda: _in_use_screen(),
     ),
     (
         "msg:recovery.failed_read_only",

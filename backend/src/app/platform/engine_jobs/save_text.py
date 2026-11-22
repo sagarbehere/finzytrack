@@ -13,7 +13,7 @@ from collections.abc import Sequence
 from typing import Final
 
 from app.domain.errors import DomainError
-from app.platform.engine_jobs.recovery_text import REOPEN, reopen_after_created
+from app.platform.engine_jobs.recovery_text import REOPEN, in_use, reopen_after_created
 from app.platform.engine_paths import last_name
 from app.platform.errors import ChangeNotSavedDetails, ErrorCode, WritesPausedDetails, spec_for
 from app.platform.plans import LARGE_FILE_BYTES
@@ -58,6 +58,7 @@ def _name(path: str | None) -> str:
 
 
 NOT_CHECKED: Final = "Finzytrack could not check whether your ledger changed."
+
 EARLIER_UNFINISHED: Final = (
     "Your change was not saved. An earlier change is not finished. Reopen the workspace so Finzytrack can check your "
     "files and undo the unfinished change, then try again."
@@ -179,6 +180,13 @@ def not_saved_text(d: ChangeNotSavedDetails) -> str:
             return f"{did_not} {folder}, the test copy's folder, is missing. {_rehash(d)}"
         case "io_error" if d.path is not None:  # S0100 (BL-0163 (b)): the file named, the re-hash told apart
             return f"{NOT_SAVED} Finzytrack could not read or write {_name(d.path)}. {_rehash(d)}"
+        case "in_use":  # S0148 (BL-0284): another program holds the file; the engine names it (`path`)
+            return f"{NOT_SAVED} {in_use(_name(d.path))} {_rehash(d)}"
+        case "io_error" if d.folder is not None:  # S0148 (BL-0306): a network share's folder refused its sync
+            return (
+                f"{NOT_SAVED} Finzytrack could not write to the folder {d.folder}. Check that its drive is connected "
+                f"and that you can change files there, then try again. {_rehash(d)}"
+            )
         case "read_back" if d.path is not None:
             return f"{NOT_SAVED} {_name(d.path)} did not read back as Finzytrack wrote it. {_rehash(d)}"
         case "name_not_utf8" if d.path is not None:

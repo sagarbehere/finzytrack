@@ -79,6 +79,7 @@ from ledger_engine.fs.port import (
     FolderId,
     FolderMark,
     FoldRule,
+    InUseError,
     Kind,
     NotOffered,
     Right,
@@ -197,6 +198,8 @@ ENCRYPTED_SUFFIXES: Final = (".gpg", ".asc")
 
 class Reason(StrEnum):
     IO_ERROR = "io_error"  # an operation failed (a full disk, an I/O error)
+    IN_USE = "in_use"  # another program holds the file the save was working on (the adapter's `InUseError`: Windows'
+    # sharing violation, or a rename over a file another program holds; S0148, BL-0284): `_why`, naming the file
     CHANGED = "changed"  # a file is not at its pre bytes, appeared, or an outside save was displaced by a swap
     PATH_MOVED = "path_moved"  # a folder is no longer at its recorded canonical path (§6.3 path guard)
     READ_BACK = "read_back"  # a written file does not hold its post bytes
@@ -615,11 +618,15 @@ def _try_share_syncs(handles: Handles, targets: tuple[_Target, ...]) -> None:
     first write (S0136 round 1, red team RT2): a server that refuses the flush otherwise than the one refusal a ledger
     folder's sync takes as done (`handles.ledger_sync`) then stops the save here, "not saved" and unchanged, instead of
     after its first replace, where its rollback would fail at the same sync and leave the workspace paused for good.
-    The sync writes nothing. Not on a local volume (no extra effect where a sync is never refused)."""
+    The sync writes nothing. Not on a local volume (no extra effect where a sync is never refused). A refused sync is
+    `io_error` naming the folder (`entry`; S0148, BL-0306), whatever its error: no ledger file was being written."""
     for folder in sorted({t.seen.canonical_path for t in targets if t.seen is not None}):
         h = handles.at(folder)
         if h.remote() is True:
-            ledger_sync(h)
+            try:
+                ledger_sync(h)
+            except OSError:
+                raise _Stop(Reason.IO_ERROR, None, folder) from None
 
 
 def _prepare(fs: FileSystem, handles: Handles, c: Commit, targets: tuple[_Target, ...]) -> _Plan:
@@ -887,8 +894,13 @@ def _remove_temps(handles: Handles, targets: tuple[_Target, ...]) -> None:
 
 
 def _why(e: Exception, handles: Handles) -> tuple[Reason, str | None]:
+    """The reason and the file a failure is told with. A hold (`InUseError`) met while the save works on one of its
+    files (`handles.on`) is `in_use`, naming it (S0148, BL-0284); anywhere else (its record, its backups folder) it is
+    an `io_error` like any other error, with no ledger file to name."""
     if isinstance(e, _Stop):
         return e.reason, e.path
+    if isinstance(e, InUseError) and handles.on is not None:
+        return Reason.IN_USE, handles.on
     if isinstance(e, LinkedPathError):  # before its base class (S0117 round 4): a link, or a file for a folder
         return (Reason.LINK_IN_COPY if e.link else Reason.CHANGED), e.canonical
     if isinstance(e, PathMovedError):

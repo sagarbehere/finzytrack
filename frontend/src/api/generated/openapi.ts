@@ -93,7 +93,8 @@ export interface components {
          *     file it is about (an I/O error's file); `folder` and `acl_entry`: for `permission`, the folder and the ACL entry
          *     (in `chmod`'s words, no subject) that stop it, for `linked_folder` the link in place of the save's own folder, for
          *     `folder_appeared` the folder that appeared, for `app_folder_missing` the app's folder, for `outside_folder` the test
-         *     copy's folder the save is confined to (`path`: the file that led out of it, when known); `unchanged`: every file
+         *     copy's folder the save is confined to (`path`: the file that led out of it, when known), for an `io_error` with no
+         *     `path` the network share's folder whose sync refused it (S0148, BL-0306); `unchanged`: every file
          *     the save would write was hashed again and equals its bytes before the save (only then may the user read "Your
          *     ledger is unchanged"); `changed`: the first file that re-hash found not at those bytes (None when none was found,
          *     or when it could not read a file; S0100, BL-0163 (b)). The UI words each reason
@@ -524,7 +525,7 @@ export interface components {
         /** @constant */
         NotReadyPhase: "WARMING";
         /** @enum {string} */
-        NotSavedReason: "hard_linked" | "locked" | "not_a_file" | "permission" | "io_error" | "read_back" | "name_not_utf8" | "linked_folder" | "no_drive_id" | "no_folder_id" | "engine_stopped" | "case_twins" | "folder_appeared" | "app_folder_missing" | "outside_folder" | "link_in_copy" | "copy_folder_moved" | "copy_folder_missing" | "unsafe_app_folder";
+        NotSavedReason: "hard_linked" | "locked" | "not_a_file" | "permission" | "io_error" | "in_use" | "read_back" | "name_not_utf8" | "linked_folder" | "no_drive_id" | "no_folder_id" | "engine_stopped" | "case_twins" | "folder_appeared" | "app_folder_missing" | "outside_folder" | "link_in_copy" | "copy_folder_moved" | "copy_folder_missing" | "unsafe_app_folder";
         /** @enum {string} */
         PausedReason: "unfinished_save" | "earlier_unfinished";
         /** PlanAlreadyConfirmedError */

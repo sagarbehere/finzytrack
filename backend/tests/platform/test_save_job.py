@@ -773,3 +773,65 @@ def test_S0125_an_app_data_folder_that_cannot_save_safely_is_named_with_the_way_
     assert "cannot save safely" in text
     assert "local disk" in text
     assert "unchanged" in text
+
+
+# -- S0148 (BL-0284, BL-0306): a held file, and the share's folder ---------------------------------------------------
+
+IN_USE = (
+    "Another program is using main.bean, for example an editor, antivirus or OneDrive. Close that program or "
+    "wait a moment, then try again."
+)
+
+
+@pytest.mark.parametrize(
+    ("unchanged", "changed", "then"),
+    [
+        (True, None, "Your ledger is unchanged."),
+        (False, NEW, "prices.bean was changed by another program."),
+        (False, None, "Finzytrack could not check whether your ledger changed."),
+    ],
+)
+def test_S0148_in_use_names_the_file_and_keeps_the_rehashs_sentence(
+    unchanged: bool, changed: str | None, then: str
+) -> None:
+    text = save_text.not_saved_text(ChangeNotSavedDetails("in_use", MAIN, None, None, unchanged, changed))
+    assert text == f"Your change was not saved. {IN_USE} {then}"
+
+
+def test_S0148_must_not_pass_in_use_says_unchanged_only_after_the_rehash() -> None:
+    text = save_text.not_saved_text(ChangeNotSavedDetails("in_use", MAIN, None, None, False, None))
+    assert "unchanged" not in text
+
+
+@pytest.mark.parametrize("reason", ["io_error", "read_back", "permission", "engine_stopped", "locked"])
+def test_S0148_must_not_pass_no_other_reason_is_told_in_use(reason: str) -> None:
+    """@regression-guard (holds on the base, where no text says it): the in-use words belong to `in_use` alone."""
+    d = ChangeNotSavedDetails(reason, MAIN, None, None, True, None)  # type: ignore[arg-type]
+    assert "Another program is using" not in save_text.not_saved_text(d)
+
+
+def test_S0148_the_engines_in_use_is_change_not_saved_and_never_saved() -> None:
+    a = SaveAnswer("not_saved", "in_use", MAIN, None, None, True, False, None, None, False)
+    value = answer_of(a)
+    assert code(value) == ErrorCode.CHANGE_NOT_SAVED
+    assert details(value) == ChangeNotSavedDetails("in_use", MAIN, None, None, True, None)
+
+
+@pytest.mark.parametrize("outcome", ["not_saved", "unfinished"])
+def test_S0148_must_not_pass_a_rollback_that_stopped_keeps_the_paused_text(outcome: SaveOutcomeKind) -> None:
+    """@regression-guard (holds on the base): a held file met by a rollback that could not finish is told as writes
+    paused (Reopen), never the in-use text."""
+    a = SaveAnswer(outcome, "in_use", MAIN, None, None, False, True, "io_error", MAIN, False)
+    value = answer_of(a)
+    assert code(value) == ErrorCode.WRITES_PAUSED
+    assert isinstance(value, NotDone)
+    assert save_text.text(value.error) == REOPEN
+
+
+def test_S0148_BL0306_the_shares_folder_that_refused_is_named() -> None:
+    folder = host("/w/L")
+    text = save_text.not_saved_text(ChangeNotSavedDetails("io_error", None, folder, None, True, None))
+    assert text == (
+        f"Your change was not saved. Finzytrack could not write to the folder {folder}. Check that its drive is "
+        "connected and that you can change files there, then try again. Your ledger is unchanged."
+    )

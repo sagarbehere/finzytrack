@@ -18,6 +18,7 @@ from __future__ import annotations
 import errno as errnos
 import os
 import platform
+import sys
 from dataclasses import dataclass
 from typing import Final, Literal
 
@@ -266,6 +267,21 @@ APP_FOLDER_GONE: Final = (
 )
 
 
+def in_use(name: str, then: str = "try again") -> str:
+    """What a held file is told (S0148, BL-0284; owner, 2026-11-21: one clear "in use, try again" text naming the
+    file, no retry): the save's `in_use` (`save_text`) and recovery's try on Windows. `name`: the file or folder."""
+    return (
+        f"Another program is using {name}, for example an editor, antivirus or OneDrive. Close that program or wait "
+        f"a moment, then {then}."
+    )
+
+
+def holds_are_in_use() -> bool:
+    """On Windows a try's `EBUSY` is the engine's `InUseError` (a sharing violation, or a rename over a file another
+    program holds: S0148); on macOS and Linux it is the system's own (a mount point in use), told in its own words."""
+    return sys.platform == "win32"
+
+
 def _not_undone(b: Blocking, workspace: str) -> Screen:
     """§11's row for `cancelled`, `failed` and `not_tried`; for `failed` with an error, the file, the entry that
     failed when it is not the file, and the system's answer (S0061 rounds 5-7), with the read-only-drive wording for
@@ -283,6 +299,8 @@ def _not_undone(b: Blocking, workspace: str) -> Screen:
                 f" The drive with {where} is read-only, so Finzytrack cannot undo the change there. "
                 "Make the drive writable and press Retry, or choose Keep the files as they are now."
             )
+        elif b.errno == errnos.EBUSY and holds_are_in_use():  # S0148 (BL-0284): another program holds it
+            message += " " + in_use(where, "press Retry")
         else:
             message += f" Finzytrack could not read or change {where}: {system_answer(b.errno)}."
             if b.errno in (errnos.EACCES, errnos.EPERM):

@@ -435,3 +435,37 @@ def test_BL0261_an_engine_without_a_port_names_the_platform_not_a_missing_data_f
     screen = not_recovered_screen(NotRecovered(None, None, "engine.unsupported_platform"))
     assert screen.message == "Finzytrack cannot open or save ledgers on Windows yet. It works on macOS and Linux."
     assert screen.actions == ()
+
+
+# -- S0148 (BL-0284): a held file at recovery's try ------------------------------------------------------------------
+
+
+def test_S0148_on_windows_a_try_that_met_a_held_file_says_another_program_is_using_it(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """On Windows `EBUSY` is the engine's in-use error: the screen keeps its row (not undone yet, Retry) and names the
+    file another program holds, with what to do."""
+    from app.platform.engine_jobs import recovery_text
+
+    monkeypatch.setattr(recovery_text, "holds_are_in_use", lambda: True)
+    b = Blocking(J, "failed", "io_error", "/L/accounts.beancount", None, None, errno.EBUSY)
+    screen = blocked_screen(b, WS)
+    assert screen.message == (
+        "accounts.beancount has an unfinished save from Personal that Finzytrack has not undone yet. Another program "
+        "is using /L/accounts.beancount, for example an editor, antivirus or OneDrive. Close that program or wait a "
+        "moment, then press Retry."
+    )
+    assert screen.actions == blocked_screen(replace(b, errno=errno.EIO), WS).actions
+
+
+@pytest.mark.parametrize(("windows", "err"), [(False, errno.EBUSY), (True, errno.EACCES), (True, errno.EIO)])
+def test_S0148_must_not_pass_another_error_or_posixs_ebusy_is_never_told_in_use(
+    monkeypatch: pytest.MonkeyPatch, windows: bool, err: int
+) -> None:
+    """Must not pass: macOS's and Linux's own `EBUSY` (a mount point) and every other error keep the system's answer."""
+    from app.platform.engine_jobs import recovery_text
+
+    monkeypatch.setattr(recovery_text, "holds_are_in_use", lambda: windows)
+    message = blocked_screen(Blocking(J, "failed", "io_error", "/L/a.bean", None, None, err), WS).message
+    assert "Another program is using" not in message
+    assert os.strerror(err) in message

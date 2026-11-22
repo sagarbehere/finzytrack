@@ -24,7 +24,7 @@ from collections.abc import Iterator
 
 import pytest
 
-from ledger_engine.fs.port import Kind
+from ledger_engine.fs.port import InUseError, Kind
 from ledger_engine.ledger.core.ledger_set import Content, Fingerprint, digest
 from ledger_engine.mirror import publish as pb
 from tests.fakes.memfs import Crash, MemDir, MemFS
@@ -479,7 +479,7 @@ def test_a_reader_holding_the_pointer_without_sharing_deletion_refuses_the_swap_
     first = job(fs)
     assert isinstance(first, pb.Published)
     fs.outside_hold(f"{MIRROR}/current.txt")
-    with pytest.raises(PermissionError, match="in use"):
+    with pytest.raises(InUseError, match="in use"):  # the adapter's answer since S0148 (`EACCES` before)
         job(fs)
     assert seen_by_a_reader(fs) == first.gen.name
     fs.outside_release(f"{MIRROR}/current.txt")
