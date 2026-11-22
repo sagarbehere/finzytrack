@@ -989,13 +989,16 @@ def test_V4_1_an_error_at_every_cleanup_effect_leaves_left_as_the_disk_holds_it(
     4, V4-1 (BL-0305; owner, 2026-11-22: "Split OK. Do V4-1, let's go with your lean"): the copy's
     cleanup is the create's (`create.run_steps`), swept the same way (`test_create.py`'s V4-1 sweep): at each cleanup
     effect, each error, before or after the effect, with and without another program's file: what `left` names stands
-    on disk, and what of ours stands is named."""
+    on disk, and what of ours stands is named; any error but an `rmdir`'s `ENOTEMPTY` gives `left` None (round 1,
+    F-1)."""
     effects, start = _cleanup_start(stop, foreign)
     ours = _ours_in_copy(stop)
     named = 0
     for at, err, after in tc.cleanup_sweep(effects, start):
         w, out = _stopped_copy(stop, foreign, inject=None if at is None else (at, err, after))
         nc = not_copied(out, stop)
+        if at is not None and not (err == errno.ENOTEMPTY and effects[at].startswith("rmdir ")):
+            assert nc.left is None, (effects[at], errno.errorcode.get(err), after, nc)  # round 1, F-1
         try:
             tc.check_left_holds_the_disk(w.fs, T, ours, nc.left)
         except AssertionError as e:

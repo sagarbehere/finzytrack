@@ -211,6 +211,19 @@ def leftovers(fs: MemFS, w: World) -> list[str]:
     return out + [d for d in w.new_dirs if d in snap]
 
 
+def check_nothing_written_outside(fs: MemFS, w: World) -> None:
+    """Every entry on disk outside the save's recorded paths (its targets, their names of ours, the folders it makes,
+    its backups and journal) is as it was before the save: none changed, none new (`check_disk`; S0145 round 1, F-2,
+    shared with `test_share_saves.py`'s RT1 tests)."""
+    ours = {t.path for t in w.targets} | {n for t in w.targets for n in t.scratch}
+    ours |= {t.kept for t in w.targets}
+    ours |= set(w.new_dirs) | {SAVE_DIR, JD, BD}
+    for path, entry in fs.snapshot().items():
+        if path in ours or path.startswith((SAVE_DIR + "/", JD + "/")):
+            continue
+        assert w.before.get(path) == entry, f"written outside the recorded paths: {path}"
+
+
 def check_disk(fs: MemFS, w: World) -> None:
     """The oracle (the module's docstring)."""
     snap = fs.snapshot()
@@ -260,13 +273,7 @@ def check_disk(fs: MemFS, w: World) -> None:
         for name in leftovers(fs, w):
             assert name in w.new_dirs, f"a name of ours left beside a resolved journal: {name}"
             assert not any(p.startswith(name + "/") for p in snap), f"resolved, but the save's folder holds: {name}"
-    ours = {t.path for t in w.targets} | {n for t in w.targets for n in t.scratch}
-    ours |= {t.kept for t in w.targets}
-    ours |= set(w.new_dirs) | {SAVE_DIR, JD, BD}
-    for path, entry in snap.items():
-        if path in ours or path.startswith((SAVE_DIR + "/", JD + "/")):
-            continue
-        assert w.before.get(path) == entry, f"written outside the recorded paths: {path}"
+    check_nothing_written_outside(fs, w)
     for path in w.before:
         if w.plain and path in {t.path for t in w.targets}:
             continue  # a missing target was checked above (only under `.open`, its backup holding the pre bytes)

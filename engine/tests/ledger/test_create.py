@@ -1443,7 +1443,10 @@ def test_V4_1_an_error_at_every_cleanup_effect_leaves_left_as_the_disk_holds_it(
     4, V4-1 (BL-0305; owner, 2026-11-22: "Split OK. Do V4-1, let's go with your lean"): at each of the
     cleanup's effects, each error, answered before or after the effect took place, with and without another program's
     file in the target or its nested folder: what `left` names stands on disk, and what of ours stands is named
-    (`check_left_holds_the_disk`). The sweep that would have caught V2-2 and V3-1 in the build."""
+    (`check_left_holds_the_disk`). The sweep that would have caught V2-2 and V3-1 in the build. And §8.2's "the
+    cleanup cannot finish" (S0145 round 1, F-1): any error at a removal, at a folder's sync or at an `rmdir` other
+    than `ENOTEMPTY` (which says the folder stands) gives `left` None, never a list: a removal whose folder's sync
+    failed may not be durable, so the disk alone cannot show a name wrongly left out."""
     effects, start = _cleanup_start(stop, foreign)
     ours = _OURS_CREATED if stop == "load_errors" else _OURS_TAKEN
     named = 0
@@ -1451,6 +1454,8 @@ def test_V4_1_an_error_at_every_cleanup_effect_leaves_left_as_the_disk_holds_it(
         fs, out = _stopped_create(stop, foreign, inject=None if at is None else (at, err, after))
         assert isinstance(out, NotCreated), (at, err, after, out)
         assert out.reason == stop, (at, err, after, out)
+        if at is not None and not (err == errno.ENOTEMPTY and effects[at].startswith("rmdir ")):
+            assert out.left is None, (effects[at], errno.errorcode.get(err), after, out)  # round 1, F-1
         try:
             check_left_holds_the_disk(fs, T, ours, out.left)
         except AssertionError as e:

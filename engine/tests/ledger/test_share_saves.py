@@ -36,6 +36,7 @@ from tests.ledger.worlds import (
     World,
     check_disk,
     check_every_power_loss,
+    check_nothing_written_outside,
     check_recovered,
     journals,
     on_a_share,
@@ -638,13 +639,14 @@ def _missing_have_their_backup(state: MemFS, w: World) -> set[str]:
 
 
 def _outside_the_targets_unchanged(state: MemFS, w: World) -> None:
-    """Every entry of the ledger's folders that the save does not write (`other.bean`, the folders) is as it was
-    before the save, whatever the server's power loss kept (S0145, BL-0305 O-2)."""
+    """Nothing written outside the save's recorded paths, the oracle's own rule
+    (`worlds.check_nothing_written_outside`: no entry changed, none new), and no entry the save does not write
+    removed, whatever the server's power loss kept (S0145, BL-0305 O-2; round 1, F-2)."""
+    check_nothing_written_outside(state, w)
     written = {t.path for t in w.targets}
     now = state.snapshot()
-    for path, entry in w.before.items():
-        if path.startswith("/w/L") and path not in written:
-            assert now.get(path) == entry, (path, "outside the targets, changed", now.get(path), entry)
+    for path in w.before:
+        assert path in written or path in now, f"removed outside the targets: {path}"
 
 
 def test_RT1_on_a_share_kept_on_exfat_a_server_power_loss_can_leave_a_saved_file_missing_never_torn() -> None:
@@ -691,13 +693,21 @@ def test_RT1_on_a_share_kept_on_exfat_an_undone_save_can_come_back_missing_its_b
 
 def test_O_2_the_RT1_checks_refuse_a_changed_file_outside_the_targets_and_a_missing_file_without_its_backup() -> None:
     """@regression-guard (S0145: holds on the base). The must-not-pass cases of the RT1 tests' two checks (BL-0305
-    O-2): another file of the ledger changed, and a replaced file other than `main.bean` missing with no backup of
-    it."""
+    O-2; round 1, F-2): a new entry, another file of the ledger changed or removed, and a replaced file other than
+    `main.bean` missing with no backup of it."""
     w = _fat_backed_share()
     assert isinstance(durable_commit(w.fs, w.commit), Landed)
     _outside_the_targets_unchanged(w.fs, w)
+    w.fs.outside_write("/w/L/stray.bean", FOREIGN)
+    with pytest.raises(AssertionError, match=r"written outside the recorded paths: /w/L/stray\.bean"):
+        _outside_the_targets_unchanged(w.fs, w)
+    w.fs.outside_remove("/w/L/stray.bean")
+    _outside_the_targets_unchanged(w.fs, w)
     w.fs.outside_write("/w/L/other.bean", FOREIGN)
-    with pytest.raises(AssertionError, match="outside the targets"):
+    with pytest.raises(AssertionError, match=r"written outside the recorded paths: /w/L/other\.bean"):
+        _outside_the_targets_unchanged(w.fs, w)
+    w.fs.outside_remove("/w/L/other.bean")
+    with pytest.raises(AssertionError, match=r"removed outside the targets: /w/L/other\.bean"):
         _outside_the_targets_unchanged(w.fs, w)
     w.fs.outside_remove("/w/L/inc/a.bean")
     assert _missing_have_their_backup(w.fs, w) == {"/w/L/inc/a.bean"}
