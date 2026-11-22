@@ -24,10 +24,10 @@ Windows since S0129, each in its own Job Object).
   hides the reparse point: a placeholder file or folder, cloud-only or downloaded, and the sync root are a `FILE` or a
   `DIR` here, read and saved as one; a read of a cloud-only file downloads it; the save's rename leaves a plain file at
   the name (probed with Windows' own cloud filter, S0144 and the 2026-11-22 run 11). Links and junctions stay `LINK`
-  (run 11). Where a process exposes placeholders (not the engine's) a placeholder is `OTHER`. A read the cloud filter
-  refuses because a cloud-only file could not be downloaded (the sync app not running, offline:
-  `port.CLOUD_DOWNLOAD_ERRORS`, as Win32 codes or as `STATUS_CLOUD_FILE_*`) raises `port.CloudUnavailable`
-  (`_win_error`, `_nt_error`).
+  (run 11). Where a process exposes placeholders (not the engine's) a placeholder is `OTHER`. A read of a file's data
+  that the cloud filter refuses because a cloud-only file could not be downloaded (the sync app not running, offline:
+  `port.CLOUD_DOWNLOAD_ERRORS`) raises `port.CloudUnavailable` (`_read_error`, at `ReadFile` only); every other call
+  keeps such a code as a plain `OSError` (S0149 round 1, V2).
   A file with the read-only attribute is `locked` (Windows refuses to replace or remove it): the save refuses it before
   writing. A file Windows' EFS encrypts is `encrypted`: the save refuses it before writing (`encrypted_file`; owner,
   2026-11-17: "1a"), so its bytes never reach a backup or a staging file in the clear. Windows has no mode bits:
@@ -455,33 +455,26 @@ def _win_error(*what: str, code: int | None = None) -> OSError:
     """The last Win32 error (or `code`) as Python's `OSError`, its `errno` from Windows' own mapping; `what` names
     the call and the entry."""
     c = ctypes.get_last_error() if code is None else code
-    if c in CLOUD_DOWNLOAD_ERRORS:  # S0149 (BL-0283): a cloud-only file Windows could not download
-        return CloudUnavailable(None, *what, f"(Win32 {c})")
     return OSError(None, " ".join(what) + ": " + ctypes.FormatError(c).strip(), None, c)
 
 
-STATUS_CLOUD_FILE_MASK: Final = 0xFFFFFF00
-STATUS_CLOUD_FILE_FACILITY: Final = 0xC000CF00
-"""`STATUS_CLOUD_FILE_*` (`ntstatus.h`): the cloud filter's errors, told by their Win32 code (`_dos_error`)."""
-
-
-def _dos_error(status: int) -> int:
-    """The Win32 code Windows maps an NTSTATUS to (`RtlNtStatusToDosError`)."""
-    convert = ctypes.WinDLL("ntdll").RtlNtStatusToDosError
-    convert.argtypes = [wintypes.ULONG]
-    convert.restype = wintypes.ULONG
-    return int(convert(status))
+def _read_error(*what: str, code: int | None = None) -> OSError:
+    """`_win_error` of a read of a file's data (`ReadFile`), the one place a cloud-only file's download is met: a code
+    of `CLOUD_DOWNLOAD_ERRORS` is `CloudUnavailable` (S0149, BL-0283). Every other call (an open, a create, a write, a
+    rename, a flush, a folder's sync) keeps a cloud code as a plain `OSError`, told as any I/O error (round 1, V2)."""
+    c = ctypes.get_last_error() if code is None else code
+    if c in CLOUD_DOWNLOAD_ERRORS:
+        return CloudUnavailable(None, *what, f"(Win32 {c})")
+    return _win_error(*what, code=c)
 
 
 def _nt_error(status: int, *what: str) -> OSError:
     """An NTSTATUS as `OSError`, its `errno` from `STATUS_ERRNO`; a sharing violation is `InUseError` (`EBUSY`:
-    another program holds the entry; S0148, BL-0284); a cloud-only file Windows could not download is
-    `CloudUnavailable` (S0149, BL-0283)."""
+    another program holds the entry; S0148, BL-0284). No NTSTATUS is a data read here (reads are `ReadFile`'s,
+    `_read_error`), so a cloud filter status stays a plain `OSError` (S0149 round 1, V2)."""
     s = status & 0xFFFFFFFF
     if s == STATUS_SHARING_VIOLATION:
         return InUseError(*what, f"(NTSTATUS {s:#010x})")
-    if s & STATUS_CLOUD_FILE_MASK == STATUS_CLOUD_FILE_FACILITY and _dos_error(s) in CLOUD_DOWNLOAD_ERRORS:
-        return CloudUnavailable(None, *what, f"(NTSTATUS {s:#010x})")  # S0149 (BL-0283), as `_win_error`'s
     return OSError(STATUS_ERRNO.get(s, errno.EIO), " ".join(what) + f" (NTSTATUS {s:#010x})")
 
 
@@ -733,7 +726,7 @@ class _Handle:
         while left is None or left > 0:
             want = CHUNK if left is None else min(CHUNK, left)
             if not self.api.ReadFile(self.handle, buf, want, ctypes.byref(got), None):
-                raise _win_error("ReadFile")
+                raise _read_error("ReadFile")
             if got.value == 0:
                 break
             chunks.append(buf.raw[: got.value])
@@ -747,7 +740,7 @@ class _Handle:
         n = 0
         while n < limit:
             if not self.api.ReadFile(self.handle, buf, min(CHUNK, limit - n), ctypes.byref(got), None):
-                raise _win_error("ReadFile")
+                raise _read_error("ReadFile")
             if got.value == 0:
                 return
             n += got.value

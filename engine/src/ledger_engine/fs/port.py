@@ -164,8 +164,10 @@ cloud, because the download did not happen (S0149, BL-0283): `ERROR_CLOUD_FILE_P
 sync app not running or disconnected, the 2026-11-22 run 1), `_AUTHENTICATION_FAILED` (386), `_INSUFFICIENT_RESOURCES`
 (387), `_NETWORK_UNAVAILABLE` (388), `_UNSUCCESSFUL` (389), `_REQUEST_ABORTED` (393), `_REQUEST_CANCELED` (398),
 `_PROVIDER_TERMINATED` (404) and `_REQUEST_TIMEOUT` (426). The cloud filter's other codes (corrupt metadata, a file not
-in sync, a pinned file) are not "could not download" and stay plain errors. Each code's meaning is checked against
-Windows' own message table on the runner (`tests/fs/test_windows_cloud.py`)."""
+in sync, a pinned file) are not "could not download" and stay plain errors. Each code's meaning is checked on the runner
+by words its own message in Windows' message table must hold, with the near codes that must stay out (in use,
+pinned, access denied, not in sync; `tests/fs/test_windows_cloud.py`). The adapter raises `CloudUnavailable` only at
+a read of a file's data (`ReadFile`): every other call keeps these codes as plain errors (S0149 round 1, V2)."""
 
 
 class CloudUnavailable(OSError):

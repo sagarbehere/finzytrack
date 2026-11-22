@@ -26,7 +26,7 @@ import json
 from collections.abc import Callable, Iterator
 from functools import cache
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
@@ -106,21 +106,30 @@ def clean_effects() -> tuple[str, ...]:
     return tuple(w.fs.effects)
 
 
-@pytest.mark.parametrize("at", range(len(clean_effects())))
-def test_a_cloud_error_at_every_effect_is_told_only_when_not_saved_and_names_a_file_of_the_save(at: int) -> None:
-    """The error injected at every effect of the save: never "saved"; the outcome agrees with the disk in every
-    power-loss state (`check_told`); a "not saved" outcome is `cloud_unavailable` only while the save worked on one of
-    its files (the file named), else `io_error` (its own record, its backups folder: no ledger file to name)."""
+@pytest.mark.parametrize("path", ["/w/L/inc/a.bean", MAIN])
+def test_each_replaced_file_the_writer_reads_is_told_cloud_unavailable_named_with_nothing_written(path: str) -> None:
+    """The spec's sites (§11 row): the writer's read of a replaced file for its backup. Each of the save's replaced
+    files, cloud-only and not downloadable, stops the save there, naming that file; no journal, no ledger byte
+    written, the outcome as the disk says in every power-loss state."""
     w = _windows()
-    w.fs.inject(at, crash=False, cloud=True)
+    w.fs.outside_cloud_offline(path)
+    before = {t.path: w.fs.file(t.path) for t in w.targets}
     out = durable_commit(w.fs, w.commit)
-    assert not isinstance(out, Landed), out
+    assert isinstance(out, NotSaved), out
+    assert (out.reason, out.path, out.step) == (Reason.CLOUD_UNAVAILABLE, path, Step.BACKUP), out
+    assert journals(w.fs) == {}
+    assert {t.path: w.fs.file(t.path) for t in w.targets} == before
     check_told(w.fs, w, out)
-    if isinstance(out, NotSaved) and out.reason is Reason.CLOUD_UNAVAILABLE:
-        assert out.path in {t.path for t in w.targets}, out
-    effect = clean_effects()[at]
-    if isinstance(out, NotSaved) and (".part" in effect or "journal" in effect):
-        assert out.reason is not Reason.CLOUD_UNAVAILABLE, (effect, out)
+
+
+@pytest.mark.parametrize("at", range(len(clean_effects())))
+def test_must_not_pass_no_effect_of_the_save_is_ever_told_cloud_unavailable(at: int) -> None:
+    """Round 1 (V2, RT-2): a write, a rename, a flush, a folder's sync or the backups folder's own effects never come
+    back "could not download it": an I/O error injected at each one is never `cloud_unavailable`."""
+    w = _windows()
+    w.fs.inject(at, crash=False, err=errno.EIO)
+    out = durable_commit(w.fs, w.commit)
+    assert getattr(out, "reason", None) is not Reason.CLOUD_UNAVAILABLE, (clean_effects()[at], out)
 
 
 def test_must_not_pass_the_fake_in_its_posix_mode_never_raises_it() -> None:
@@ -154,10 +163,74 @@ def test_an_include_the_save_only_reads_is_cloud_unavailable_too(led: Ledger, mo
     """A file of the ledger the save does not write (`inc.bean`) that cannot be downloaded: the ledger did not change,
     Windows could not read it, so `cloud_unavailable` names it (not `ledger_changed`)."""
     plan = plan_for(led)
+    assert str(led.inc) not in {c.path for c in plan.changes}, "inc.bean is only read by the save"
     offline(monkeypatch, str(led.inc))
     out = sv.run(plan, ports_for(led), FakeJob())
     assert isinstance(out, NotSaved), out
     assert (out.reason, out.path) == (Reason.CLOUD_UNAVAILABLE, str(led.inc))
+    assert out.unchanged is False, "round 1 (V1, RT-1): nobody hashed inc.bean again: never 'unchanged'"
+
+
+def test_V1b_an_include_edited_elsewhere_then_made_cloud_only_is_never_told_unchanged(
+    led: Ledger, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Round 1 (V1b): the include changed after the plan (an edit synced from another PC), then the sync app freed its
+    space, then offline: the gate cannot read it, so it cannot tell it changed; "unchanged" is never said, and the
+    reason stays the true cause (it cannot be downloaded). The text says Finzytrack could not check."""
+    plan = plan_for(led)
+    led.inc.write_bytes(led.inc.read_bytes() + b"; edited on the other PC\n")
+    offline(monkeypatch, str(led.inc))
+    out = sv.run(plan, ports_for(led), FakeJob())
+    assert isinstance(out, NotSaved), out
+    assert (out.reason, out.unchanged) == (Reason.CLOUD_UNAVAILABLE, False), out
+
+
+def test_must_not_pass_a_file_the_plan_saw_absent_and_now_cloud_only_is_the_ledger_changing(
+    led: Ledger, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Round 1 (the verifier's M4): a file the save creates (the plan saw it absent) that now stands, cloud-only: a
+    file appeared, so the ledger changed (`ledger_changed`), never `cloud_unavailable`, which is only for a file whose
+    bytes the plan read."""
+    from ledger_engine.ledger.core.ledger_set import Absent
+    from ledger_engine.ledger.handles import sha256
+    from ledger_engine.ledger.writer import Change
+
+    late = led.root / "late.bean"
+    text = led.main.read_bytes()
+    plan = plan_for(
+        led,
+        (
+            Change(str(led.main), sha256(text), text + b'include "late.bean"\n'),
+            Change(str(late), None, b"; the save makes it\n"),
+        ),
+    )
+    assert dict(plan.fingerprint.files).get(str(late)) == Absent(), plan.fingerprint.files
+    late.write_bytes(b"; arrived\n")
+    offline(monkeypatch, str(late))
+    out = sv.run(plan, ports_for(led), FakeJob())
+    assert isinstance(out, sv.Refused), out
+    assert out.reason == "ledger_changed"
+
+
+def test_V3_a_generation_whose_own_set_cannot_be_downloaded_is_cloud_unavailable_not_mirror_stale(
+    led: Ledger, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Round 1 (V3), the save's freshness check: the plan's files read, but a file only the published generation's set
+    names (here the gate's observation is passed, and the generation's set observed with the file offline) is told
+    by name, not "the views are not up to date"."""
+    plan = plan_for(led)
+    real = sv.Ports(ports_for(led).fs).observe
+    calls: list[int] = []
+
+    def observe(fp: Any) -> Any:
+        calls.append(1)
+        if len(calls) == 2:  # the generation's own set, after the gate's look
+            offline(monkeypatch, str(led.inc))
+        return real(fp)
+
+    out = sv.run(plan, dataclasses.replace(ports_for(led), observe=observe), FakeJob())
+    assert isinstance(out, NotSaved), out
+    assert (out.reason, out.path, out.unchanged) == (Reason.CLOUD_UNAVAILABLE, str(led.inc), False), out
 
 
 def test_a_cloud_only_file_beside_another_change_stays_ledger_changed(
@@ -297,6 +370,34 @@ def test_beancounts_own_read_failing_is_cloud_unavailable_only_when_the_file_is_
         assert reply["error"]["key"] == "engine.internal"
 
 
+@pytest.mark.parametrize("where", ["early", "warnings"])
+def test_the_rebuild_tells_a_cloud_only_file_at_its_first_look_and_at_its_warnings_read(
+    led: Ledger, monkeypatch: pytest.MonkeyPatch, where: str
+) -> None:
+    """Round 1 (V5, M3 and M5): each of the rebuild's two sites by itself. `early`: offline before the first look,
+    which refuses before Beancount's load runs (no plugin runs on a set that cannot be read). `warnings`: online for
+    the look and the load, offline for the warnings' read of the files."""
+    from ledger_engine.ledger import beancount_port
+
+    led.main.write_bytes(led.main.read_bytes() + b"; changed\n")
+    real = beancount_port.real_load
+    loads: list[str] = []
+
+    def load(root: str, parsed: list[str]) -> Any:
+        loads.append(root)
+        out = real(root, parsed)
+        if where == "warnings":
+            offline(monkeypatch, str(led.main))
+        return out
+
+    monkeypatch.setattr(beancount_port, "real_load", load)
+    if where == "early":
+        offline(monkeypatch, str(led.main))
+    r = _rebuild(led)["result"]
+    assert (r["outcome"], r["refusal"], r["refused"]) == ("refused", "cloud_unavailable", str(led.main)), r
+    assert loads == ([] if where == "early" else [str(led.main)])
+
+
 # -- Copy ------------------------------------------------------------------------------------------------------------
 
 
@@ -330,6 +431,51 @@ def test_a_document_that_cannot_be_downloaded_mid_copy_stops_cloud_unavailable_a
     nc = tcopy.not_copied(tcopy.go(w)[0], "cloud_unavailable")
     assert (nc.path, nc.left) == (tcopy.PDF, ())
     assert not tcopy.exists(w.fs, tcopy.T)
+
+
+@pytest.mark.parametrize("which", ["ledger", "document"])
+def test_a_source_that_goes_cloud_only_before_the_recheck_is_cloud_unavailable_not_changed(which: str) -> None:
+    """Round 1 (RT-4): the re-check just before the commit point finds a ledger file, or a copied document, only in
+    the cloud and not downloadable: not copied, `cloud_unavailable` naming it (it did not change; Windows could not
+    read it)."""
+    from ledger_engine.ledger.fingerprint import CLOUD_UNAVAILABLE
+
+    w = tcopy.new_world()
+    real_observe, real_state = w.observe, w.file_state
+    late: list[bool] = []
+    w.on_copy_load = lambda: late.append(True)
+    target = tcopy.PRICES if which == "ledger" else tcopy.PDF
+
+    def observe(ls: Any) -> Any:
+        fp = real_observe(ls)
+        if not late or which != "ledger":
+            return fp
+        files = tuple((p, CLOUD_UNAVAILABLE if p == target else s) for p, s in fp.files)
+        return dataclasses.replace(fp, files=files)
+
+    def file_state(p: str) -> Any:
+        return CLOUD_UNAVAILABLE if late and p == target else real_state(p)
+
+    ports = dataclasses.replace(w.ports(), observe=observe, file_state=file_state)
+    nc = tcopy.not_copied(copy_run(tcopy.PLAN, ports, tcopy.Job()), "cloud_unavailable")
+    assert nc.path == target
+
+
+def test_the_copy_checks_child_refuses_when_the_pin_is_refused(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Round 1 (V5): the copy check's child pins the mode as the engine's start does, and a refused pin fails the
+    check (Copy then refuses `load_failed`), never a load in another mode."""
+    from ledger_engine.ledger import copy_check
+
+    monkeypatch.setattr(this_os, "pin_placeholder_mode", lambda: False)
+    loads: list[str] = []
+
+    def load(*args: object, **kwargs: object) -> None:
+        loads.append("loaded")
+
+    monkeypatch.setattr(copy_check.overlay, "load", load)
+    with pytest.raises(this_os.UnsupportedPlatform):
+        copy_check._checked(cast("Any", None))  # pyright: ignore[reportPrivateUsage] (the pin comes first)
+    assert loads == []
 
 
 def test_must_not_pass_a_plain_read_error_at_copys_load_is_source_unreadable() -> None:

@@ -61,6 +61,7 @@ describe('[S0046] the generated API types', () => {
       | 'WRITE_REFUSED_CHECK_FAILED'
       | 'ENCRYPTED_FILE_NOT_EDITABLE'
       | 'LEDGER_FILE_TOO_LARGE'
+      | 'LEDGER_FILE_NOT_DOWNLOADED'
       | 'PLAN_EXPIRED'
       | 'PLAN_ALREADY_CONFIRMED'
       | 'PLAN_UNKNOWN'

@@ -114,6 +114,7 @@ def test_the_codes_of_architecture_6_1_this_slice_raises_have_their_classes() ->
         "WRITE_REFUSED_CHECK_FAILED": ErrorClass.CONTRACT_REFUSED,
         "ENCRYPTED_FILE_NOT_EDITABLE": ErrorClass.CONTRACT_REFUSED,
         "LEDGER_FILE_TOO_LARGE": ErrorClass.CONTRACT_REFUSED,  # S0120: a preview answer over the protocol's guard
+        "LEDGER_FILE_NOT_DOWNLOADED": ErrorClass.UNAVAILABLE,  # S0149: a cloud-only ledger file, offline
         "PLAN_EXPIRED": ErrorClass.NOT_FOUND,
         "PLAN_ALREADY_CONFIRMED": ErrorClass.CONFLICT,  # S0117 round 1 (red team RT-F2)
         "PLAN_UNKNOWN": ErrorClass.NOT_FOUND,  # S0117 round 3 (verifier V-R3-5)
@@ -154,6 +155,7 @@ def test_not_ready_is_retryable_and_the_others_are_not() -> None:
         "ENGINE_STOPPED",
         "ENGINE_UNAVAILABLE",
         "LEDGER_CHANGING",  # S0088: §11's Try again, once the other program has stopped
+        "LEDGER_FILE_NOT_DOWNLOADED",  # S0149: Try again once online, the sync app running
     }
     assert {s.code for s in specs() if s.retryable} == retryable
 

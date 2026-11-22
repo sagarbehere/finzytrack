@@ -452,10 +452,14 @@ class _CopySteps:
     def _recheck(self, run: Run) -> None:
         """Just before the commit point (owner's decision 2; ADR-0062's re-check): the source as it was read."""
         assert self.fingerprint is not None  # noqa: S101
-        if self.ports.observe(self.fingerprint.ledger_set) != self.fingerprint:
-            raise Stop("source_changed")
+        now = self.ports.observe(self.fingerprint.ledger_set)
+        if now != self.fingerprint:
+            cloud = fingerprint.not_downloaded(now)  # S0149 round 1 (RT-4): not "changed" when it cannot be read
+            raise Stop("source_changed") if cloud is None else Stop("cloud_unavailable", cloud)
         for path, dst in self.documents:
             state = self.ports.file_state(path)
+            if state == fingerprint.CLOUD_UNAVAILABLE:  # S0149 round 1 (RT-4)
+                raise Stop("cloud_unavailable", path)
             wrote = create.written(run, dst)
             if not isinstance(state, Content) or wrote is None or state.sha256 != wrote[0]:
                 raise Stop("source_changed", path)

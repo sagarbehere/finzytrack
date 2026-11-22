@@ -9,6 +9,8 @@ write-safety contract's steps 1-3 and writes nothing. Its answer becomes the job
   error count of the candidate) and the tries it took. The use case (`app.workspaces.writes`) checks it and keeps it
   in the `PlanStore`.
 - **`NotPrepared(error)`**, a registry error:
+  - a ledger file only in the cloud that Windows could not download (the engine's `load` refusal `cloud_unavailable`;
+    S0149) is `LEDGER_FILE_NOT_DOWNLOADED {path}`;
   - the contract refused (ARCHITECTURE §6.1's `ContractRefused`, all at 422): an encrypted file (`apply`'s
     `encrypted_file`, or an encrypted file the load met: ADR-0059) is `ENCRYPTED_FILE_NOT_EDITABLE {path}`; a text
     that is not the intended change (steps `apply`, `parse`, `diff`, `spans`) is
@@ -49,6 +51,7 @@ from app.platform.engine_jobs.rebuild import QueueRebuild, RebuildTarget, rebuil
 from app.platform.engine_jobs.scheduler import EngineJobs, Failed, JobContext, JobTicket, Work, WorkResult
 from app.platform.engine_protocol import Violation, decode_preview
 from app.platform.errors import (
+    CloudFileDetails,
     ContractStepDetails,
     EncryptedFileDetails,
     ErrorCode,
@@ -64,6 +67,9 @@ TEXT_STEPS: Final[frozenset[str]] = frozenset({"apply", "parse", "diff", "spans"
 NOT_RUN: Final[frozenset[str]] = frozenset({"fault", "undecidable"})
 """Reasons that say a step did not run to a decision (INV-22): a check failed, whatever the step."""
 ENCRYPTED: Final[frozenset[tuple[str, str]]] = frozenset({("apply", "encrypted_file"), ("load", "encrypted")})
+CLOUD_UNAVAILABLE: Final = ("load", "cloud_unavailable")
+"""A ledger file only in the cloud that Windows could not download, met by the preview (S0149 round 1, V3):
+`LEDGER_FILE_NOT_DOWNLOADED {path}`, never `stale`'s "wait a moment" or a failed check."""
 HINTED: Final[frozenset[str]] = frozenset({"not_fresh"})
 """The `stale` reasons that may carry a hint and queue the rebuild (BL-0255, S0118 round 1): a generation of this
 ledger that no longer describes the disk; it carries one only when its stamp is this ledger's and can be read."""
@@ -152,6 +158,8 @@ def refusal_of(a: PreviewAnswer) -> NotPrepared:
     assert reason is not None  # noqa: S101 (`_holds_together`)
     if (step, reason) in ENCRYPTED:
         return _not_prepared(ErrorCode.ENCRYPTED_FILE_NOT_EDITABLE, EncryptedFileDetails(a.path))
+    if (step, reason) == CLOUD_UNAVAILABLE and a.path is not None:  # S0149 round 1 (V3): the file named
+        return _not_prepared(ErrorCode.LEDGER_FILE_NOT_DOWNLOADED, CloudFileDetails(a.path))
     if step in TEXT_STEPS and reason not in NOT_RUN:
         return _not_prepared(ErrorCode.WRITE_REFUSED_UNINTENDED_CHANGE, ContractStepDetails(step))
     return _not_prepared(ErrorCode.WRITE_REFUSED_CHECK_FAILED, ContractStepDetails(step))

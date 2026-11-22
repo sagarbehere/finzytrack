@@ -61,6 +61,7 @@ class ErrorCode(StrEnum):
     WRITE_REFUSED_CHECK_FAILED = "WRITE_REFUSED_CHECK_FAILED"
     ENCRYPTED_FILE_NOT_EDITABLE = "ENCRYPTED_FILE_NOT_EDITABLE"
     LEDGER_FILE_TOO_LARGE = "LEDGER_FILE_TOO_LARGE"
+    LEDGER_FILE_NOT_DOWNLOADED = "LEDGER_FILE_NOT_DOWNLOADED"
     PLAN_EXPIRED = "PLAN_EXPIRED"
     PLAN_ALREADY_CONFIRMED = "PLAN_ALREADY_CONFIRMED"
     PLAN_UNKNOWN = "PLAN_UNKNOWN"
@@ -195,6 +196,13 @@ class EncryptedFileDetails:
     """The encrypted file the change would edit (ADR-0059; S0117), when the refusal names one."""
 
     path: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class CloudFileDetails:
+    """The ledger file only in the cloud (OneDrive or another sync app) that Windows could not download (S0149)."""
+
+    path: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -422,6 +430,17 @@ def specs() -> tuple[ErrorSpec, ...]:
             data_safe=True,  # refused at the preview: nothing was written
             next_step="Split the file into smaller files with Beancount's include directive, then try again.",
             details=None,  # the engine's refusal names no file
+        ),
+        ErrorSpec(
+            ErrorCode.LEDGER_FILE_NOT_DOWNLOADED,
+            ErrorClass.UNAVAILABLE,
+            retryable=True,  # once the file can be downloaded (online, the sync app running)
+            # S0149 (BL-0283): the preview met a ledger file only in the cloud that Windows could not download
+            message="A ledger file is only in the cloud (OneDrive or another sync app), and Windows could not "
+            "download it, so Finzytrack did not make the change.",
+            data_safe=True,  # refused at the preview: nothing was written
+            next_step="Check that you are online and that the sync app is running, then try again.",
+            details=CloudFileDetails,
         ),
         ErrorSpec(
             ErrorCode.PLAN_EXPIRED,

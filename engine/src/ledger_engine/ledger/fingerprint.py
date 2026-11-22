@@ -56,6 +56,13 @@ CLOUD_UNAVAILABLE: Final = Unreadable("cloud_unavailable")
 `fs.port.CloudUnavailable`)."""
 
 
+def not_downloaded(fp: Fingerprint) -> str | None:
+    """The first ledger file `fp` observed only in the cloud and not downloaded (`CLOUD_UNAVAILABLE`), or None: the
+    one question every observation for freshness asks before it answers "changed" or "not fresh" (S0149 round 1, V3:
+    the save's gate, the preview, the rebuild)."""
+    return next((p for p, st in fp.files if st == CLOUD_UNAVAILABLE), None)
+
+
 def content(data: bytes) -> Content:
     return Content(hashlib.sha256(data).hexdigest())
 

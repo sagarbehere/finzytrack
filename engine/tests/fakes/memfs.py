@@ -219,7 +219,6 @@ class _Fault:
     after: bool
     in_use: bool = False
     denied: bool = False
-    cloud: bool = False
 
 
 def _is(entries: dict[str, tuple[str, int]], key: str, ino: str | None) -> bool:
@@ -312,14 +311,12 @@ class MemFS:
         after: bool = False,
         in_use: bool = False,
         denied: bool = False,
-        cloud: bool = False,
     ) -> None:
         """A fault at effect `at`: a crash, or (`crash=False`) the error `err`; with `in_use`, the Windows adapter's
         `InUseError` (a sharing violation, `EBUSY`), with `denied` its `ReplaceDenied` (a plain rename over a file
-        refused `ACCESS_DENIED`, `EACCES`; S0148), with `cloud` its `CloudUnavailable` (S0149), whatever `err` says."""
-        self._faults[at] = _Fault(
-            at=at, crash=crash, err=err, cut=cut, after=after, in_use=in_use, denied=denied, cloud=cloud
-        )
+        refused `ACCESS_DENIED`, `EACCES`; S0148), whatever `err` says. No effect raises the adapter's
+        `CloudUnavailable`: it comes only from a read of a file's data (`outside_cloud_offline`; S0149 round 1, V2)."""
+        self._faults[at] = _Fault(at=at, crash=crash, err=err, cut=cut, after=after, in_use=in_use, denied=denied)
 
     def _effect(self, label: str, do: Callable[[], None], write: Callable[[int], None] | None = None) -> None:
         """One numbered effect: `do` carries it out, unless an injected fault comes first (a write first writes its
@@ -343,8 +340,6 @@ class MemFS:
             raise InUseError(label)  # the effect it was injected at
         if f.denied:
             raise ReplaceDenied(label)
-        if f.cloud:
-            raise CloudUnavailable(None, label)
         raise OSError(f.err, f"injected at {label}")
 
     # -- tree ------------------------------------------------------------------------------------------------

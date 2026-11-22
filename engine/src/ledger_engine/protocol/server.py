@@ -854,7 +854,10 @@ def main(argv: list[str] | None = None) -> int:
     else:
         _log(f"the parent is pid {parent}; the engine ends on stdin EOF only")
     if not this_os.pin_placeholder_mode():  # S0149 (BL-0283): before any file operation; refused, never another mode
-        _log(f"the placeholder mode could not be pinned ({this_os.pin_refused()}); every file operation is refused")
+        _log(
+            f"the placeholder mode could not be pinned ({this_os.pin_refused()}); "
+            "ledger, journal and mirror ops are refused"
+        )
     lock: str | None = args.engine_lock
     identity: Identity | None = args.app_folder_id
     engine = Engine(test_ops=args.test_ops, app_cache=args.app_cache)

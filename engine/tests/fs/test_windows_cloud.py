@@ -271,28 +271,57 @@ def test_a_refused_pin_refuses_every_file_operation(tmp_path: Path) -> None:
     assert "cloud files" in reply["error"]["message"], reply
 
 
-def test_the_download_errors_are_the_cloud_filters_by_windows_own_messages() -> None:
-    """Each code of `CLOUD_DOWNLOAD_ERRORS` is a cloud-file error in Windows' message table (the runner is English),
-    and `ERROR_NOT_A_CLOUD_FILE` (376; run 11's dehydrate of a plain file) is not in the set."""
-    texts = {c: ctypes.FormatError(c) for c in sorted(CLOUD_DOWNLOAD_ERRORS)}
-    assert all("cloud" in t.lower() for t in texts.values()), texts
-    assert 376 not in CLOUD_DOWNLOAD_ERRORS
-    assert "cloud" in ctypes.FormatError(376).lower()
+DOWNLOAD_WORDS: dict[int, tuple[str, ...]] = {
+    362: ("not running",),  # ERROR_CLOUD_FILE_PROVIDER_NOT_RUNNING (probed: runs 1 and 11)
+    386: ("authenticat",),  # _AUTHENTICATION_FAILED
+    387: ("resource",),  # _INSUFFICIENT_RESOURCES
+    388: ("network",),  # _NETWORK_UNAVAILABLE
+    389: ("unsuccessful", "not successful", "failed"),  # _UNSUCCESSFUL
+    393: ("abort",),  # _REQUEST_ABORTED
+    398: ("cancel",),  # _REQUEST_CANCELED
+    404: ("terminat", "exited", "stopped"),  # _PROVIDER_TERMINATED
+    426: ("time",),  # _REQUEST_TIMEOUT
+}
+"""Each download code's meaning, as words its own message must hold (S0149 round 1, V4)."""
+NOT_DOWNLOAD_WORDS: dict[int, tuple[str, ...]] = {
+    376: ("not a cloud file",),  # ERROR_NOT_A_CLOUD_FILE (run 11's dehydrate of a plain file)
+    377: ("sync",),  # _NOT_IN_SYNC
+    391: ("in use",),  # _IN_USE
+    392: ("pinned",),  # _PINNED
+    395: ("access",),  # _ACCESS_DENIED
+}
+"""Cloud filter codes that are not "could not download": each is what its message says, and none is in the set."""
 
 
-def test_the_adapter_tells_only_the_download_errors_as_cloud_unavailable() -> None:
-    """`_win_error` and `_nt_error` give `CloudUnavailable` exactly for the download errors (an NTSTATUS by the Win32
-    code Windows maps it to); must not pass: access denied, an invalid parameter, a corrupt cloud file's metadata."""
+def test_each_download_code_means_what_the_set_says_by_windows_own_message() -> None:
+    """Round 1 (V4): every code of `CLOUD_DOWNLOAD_ERRORS` is in `DOWNLOAD_WORDS`, and the runner's (English) message
+    for it holds its words and "cloud"; the near codes of `NOT_DOWNLOAD_WORDS` hold theirs and are not in the set, so
+    adding the in-use, pinned, access-denied or not-in-sync code to the set fails here. What this proves: each number
+    names the error its constant says, by Windows' own message table on this build; not every message's exact
+    wording, and not which code real OneDrive gives (S0150's check by hand)."""
+    texts = {c: ctypes.FormatError(c) for c in sorted({*DOWNLOAD_WORDS, *NOT_DOWNLOAD_WORDS})}
+    fact("codes", messages=texts)
+    assert set(CLOUD_DOWNLOAD_ERRORS) == set(DOWNLOAD_WORDS)
+    for c, words in DOWNLOAD_WORDS.items():
+        t = texts[c].lower()
+        assert "cloud" in t, (c, texts[c])
+        assert any(w in t for w in words), (c, texts[c])
+    for c, words in NOT_DOWNLOAD_WORDS.items():
+        assert c not in CLOUD_DOWNLOAD_ERRORS, c
+        assert any(w in texts[c].lower() for w in words), (c, texts[c])
+
+
+def test_the_adapter_tells_a_download_code_only_at_a_read() -> None:
+    """Round 1 (V2): `_read_error` (the `ReadFile` of a file's data) gives `CloudUnavailable` exactly for the download
+    codes; `_win_error` (every other Win32 call) and `_nt_error` (every NTSTATUS: opens, renames, set-information,
+    the folder's queries) never do, the cloud filter's own statuses included."""
     for c in CLOUD_DOWNLOAD_ERRORS:
-        assert isinstance(win._win_error("ReadFile", code=c), CloudUnavailable), c
-    for c in (5, 87, 363, 376):
-        assert not isinstance(win._win_error("ReadFile", code=c), CloudUnavailable), c
-    mapped = {s: win._dos_error(s) for s in range(0xC000CF00, 0xC000D000)}
-    cloud = {s for s, c in mapped.items() if c in CLOUD_DOWNLOAD_ERRORS}
-    assert 362 in {mapped[s] for s in cloud}, "STATUS_CLOUD_FILE_PROVIDER_NOT_RUNNING maps to 362"
-    for s, c in mapped.items():
-        assert isinstance(win._nt_error(s, "NtReadFile"), CloudUnavailable) is (c in CLOUD_DOWNLOAD_ERRORS), hex(s)
-    assert not isinstance(win._nt_error(0xC0000022, "NtCreateFile"), CloudUnavailable)  # ACCESS_DENIED
+        assert isinstance(win._read_error("ReadFile", code=c), CloudUnavailable), c
+        assert not isinstance(win._win_error("FlushFileBuffers", code=c), CloudUnavailable), c
+    for c in (5, 87, 363, 376, 391, 392, 395):
+        assert not isinstance(win._read_error("ReadFile", code=c), CloudUnavailable), c
+    for s in (*range(0xC000CF00, 0xC000D000), 0xC0000022):
+        assert not isinstance(win._nt_error(s, "NtCreateFile"), CloudUnavailable), hex(s)
 
 
 # --- placeholders, pinned ------------------------------------------------------------------------------------------

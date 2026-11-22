@@ -396,6 +396,24 @@ def test_an_engine_refusal_is_internal(make: Any) -> None:
     assert error_of(rig.preview()) == (ErrorCode.INTERNAL, None)
 
 
+def test_S0149_a_file_windows_could_not_download_is_named_and_never_stale(make: Any) -> None:
+    """S0149 round 1 (V3): the engine refused at `load`, `cloud_unavailable`, naming the file: the sidecar says so with
+    the file, never `WORKSPACE_NOT_READY` (stale) and never a failed check; no rebuild is queued."""
+    from app.platform.errors import CloudFileDetails
+
+    refused = answer(
+        outcome="refused",
+        files=[],
+        fingerprint=None,
+        step="load",
+        reason="cloud_unavailable",
+        path=host("/L/main.bean"),
+        detail="not downloaded",
+    )
+    rig = make({"preview": [refused]})
+    assert error_of(rig.preview()) == (ErrorCode.LEDGER_FILE_NOT_DOWNLOADED, CloudFileDetails(host("/L/main.bean")))
+
+
 def test_an_answer_too_large_to_send_is_ledger_file_too_large_and_no_stop(make: Any) -> None:
     """S0120 (ADR-0008 amendment of 2026-11-15; engine-jobs §5.5). Must not pass: the engine's refusal of an answer
     over the protocol's guard ends the preview `INTERNAL` or `ENGINE_STOPPED`, or counts as a stop. Its code says the

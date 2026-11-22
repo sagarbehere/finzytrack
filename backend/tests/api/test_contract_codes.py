@@ -84,6 +84,19 @@ class Scenarios:
     def encrypted(self) -> object:
         return self._preview_error(self._refused("apply", "encrypted_file"))
 
+    def not_downloaded(self) -> object:  # S0149 round 1 (V3): a ledger file only in the cloud, offline
+        return self._preview_error(
+            self.rig.answer(
+                outcome="refused",
+                files=[],
+                fingerprint=None,
+                step="load",
+                reason="cloud_unavailable",
+                path=host("/L/main.bean"),
+                detail="not downloaded",
+            )
+        )
+
     def stale(self) -> object:
         return self._preview_error(  # no hint: no rebuild queued (S0118)
             self.rig.answer(outcome="stale", files=[], fingerprint=None, stale="other_generation")
@@ -184,6 +197,21 @@ def test_an_encrypted_file_is_refused_at_422_naming_it(scenarios: Scenarios) -> 
     assert status == 422
     assert (error["code"], error["class"]) == ("ENCRYPTED_FILE_NOT_EDITABLE", "contract_refused")
     assert error["details"] == {"path": host("/L/a.gpg")}
+
+
+@pytest.mark.error_code("LEDGER_FILE_NOT_DOWNLOADED")
+def test_a_ledger_file_windows_could_not_download_is_named_and_try_again(scenarios: Scenarios) -> None:
+    """S0149 round 1 (V3): the preview met a ledger file only in the cloud that Windows could not download; it is
+    named, nothing was written, and the words say to check the connection and the sync app (never "wait a moment",
+    the stale preview's `WORKSPACE_NOT_READY`, nor a failed check)."""
+    status, error = answer(scenarios, "not_downloaded")
+    assert status == 503
+    assert (error["code"], error["class"]) == ("LEDGER_FILE_NOT_DOWNLOADED", "unavailable")
+    assert error["details"] == {"path": host("/L/main.bean")}
+    assert error["data_safe"] is True
+    assert error["retryable"] is True
+    assert "only in the cloud" in error["message"]
+    assert "sync app is running" in error["next_step"]
 
 
 @pytest.mark.error_code("LEDGER_FILE_TOO_LARGE")

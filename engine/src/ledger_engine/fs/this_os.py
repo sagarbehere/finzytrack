@@ -45,7 +45,8 @@ class UnsupportedPlatform(OSError):
 def supported() -> bool:
     """Whether this operating system has a file-system port the product uses (Windows only under test), and on
     Windows whether this process runs in the engine's placeholder mode (`pin_placeholder_mode`; S0149): in any other
-    mode, a refused pin included, every file operation is refused, never run in another mode."""
+    mode, a refused pin included, every op that reads or writes ledger, journal or mirror files is refused, never run
+    in another mode (the engine lock in the app folder is still taken: a guard, not a ledger file; S0149 r1, V7)."""
     return sys.platform in PORTED or (sys.platform == "win32" and under_test.selected() and pin_refused() is None)
 
 
@@ -145,8 +146,9 @@ def pin_placeholder_mode() -> bool:
     run 11: 0 for the engine as the sidecar starts it, 1 for a child of the test process) and a child does not inherit
     a mode its parent set. True when the mode reads `PHCM_DISGUISE_PLACEHOLDER` after it (and off Windows, where there
     is nothing to pin). Nothing is kept: `supported()` and `for_this_os()` ask the mode itself (`pin_refused()`), so a
-    process in any other mode, the pin refused or never made, refuses every file operation
-    (`engine.unsupported_platform`, its message naming the mode): a missing primitive refuses, never falls back."""
+    process in any other mode, the pin refused or never made, refuses every op that reads or writes ledger, journal or
+    mirror files (`engine.unsupported_platform`, its message naming the mode; the engine lock is still taken): a
+    missing primitive refuses, never falls back."""
     if sys.platform != "win32":
         return True
     try:
