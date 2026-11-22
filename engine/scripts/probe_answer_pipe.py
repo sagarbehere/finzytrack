@@ -48,7 +48,9 @@ HOLDER = "import threading; threading.Event().wait()"
 
 def child_code(write: bytes, holder: bool, die: bool) -> str:
     lines = ["import os, subprocess, sys"]
-    if write:
+    if len(write) > 1000:  # a command line holds 32767 characters at most (run 3: error 206)
+        lines.append(f"os.write(1, {write[:1]!r} * {len(write)})")
+    elif write:
         lines.append(f"os.write(1, {write!r})")
     if holder:
         lines.append(
@@ -117,10 +119,14 @@ def read_until_line_or_end(server: int, process: int) -> tuple[bytes, list[str]]
             log.append(f"woke {woke}")
             if woke != _winapi.WAIT_OBJECT_0:
                 ov.cancel()
-        n, err = ov.GetOverlappedResult(True)
+        try:
+            n, err = ov.GetOverlappedResult(True)
+        except BrokenPipeError:
+            log.append("result: broken pipe (raised)")
+            break
         got += ov.getbuffer() or b""
         log.append(f"result n={n} err={err}")
-        if err in (ERROR_OPERATION_ABORTED, ERROR_BROKEN_PIPE):
+        if err == ERROR_OPERATION_ABORTED:
             break
     try:
         log.append(f"peek at the end: {_winapi.PeekNamedPipe(server, 0)}")

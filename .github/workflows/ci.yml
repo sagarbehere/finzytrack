@@ -268,6 +268,11 @@ jobs:
           .venv\Scripts\python.exe -m pytest -q -rs -p no:cacheprovider tests/ledger/test_fresh_load.py tests/test_copy_ops.py tests/test_copy_v022_install.py tests/ledger/test_copy_efs.py tests/test_preview_ops.py -k "S0146 or fresh_load or copy"
           git checkout HEAD -- src
           git status --short
+      - name: "S0146 diagnostics: the copy modules with full answers (-vv -l)"
+        continue-on-error: true
+        env:
+          TZ: PST8PDT
+        run: .venv\Scripts\python.exe -m pytest -vv -l -rs -p no:cacheprovider tests/test_copy_ops.py tests/test_copy_v022_install.py
       - name: "S0146 loosening mutants: the copy check's Windows reader (scripts/mutants.py)"
         continue-on-error: true
         env:
@@ -281,7 +286,8 @@ jobs:
           $m = @(
             @("never-cancel-on-the-childs-end", 'if woke != _winapi.WAIT_OBJECT_0:', 'if False:'),
             @("wait-only-for-data", '[ov.event, process], False', '[ov.event], False'),
-            @("cancel-taken-as-data", 'if err in (_winapi.ERROR_OPERATION_ABORTED, _winapi.ERROR_BROKEN_PIPE):', 'if err == _winapi.ERROR_BROKEN_PIPE:'),
+            @("cancel-taken-as-data", 'if err == _winapi.ERROR_OPERATION_ABORTED:', 'if False:'),
+            @("pipe-end-while-waiting-raises", 'break  # the pipe''s end while the read waited', 'raise  # the pipe''s end while the read waited'),
             @("exit-status-ignored", '                code = child.wait()', '                code = 0 if child.wait() is not None else 1'),
             @("closed-reader-raises", 'if not isinstance(e, BrokenPipeError) and e.errno != errno.EINVAL:', 'if True:')
           )

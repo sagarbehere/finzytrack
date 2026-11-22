@@ -211,13 +211,16 @@ def test_S0146_the_copy_checks_child_is_a_member_of_the_engines_job_and_ends_wit
     (books / "main.beancount").write_text(
         f'option "insert_pythonpath" "True"\nplugin "pl_s0146" "{named}"\n2026-01-01 open Assets:Cash EUR\n'
     )
-    with in_a_job(COPY_CHECK_ENGINE, str(books), python=str(ENGINE_PYTHON)) as (proc, job, _):
-        assert wait_until(pid_file.exists, 15 * DEADLINE), "the copy check's child never ran the plugin"
+    with in_a_job(COPY_CHECK_ENGINE, str(books), python=str(ENGINE_PYTHON)) as (proc, job, leader):
+        ran = wait_until(lambda: pid_file.exists() or proc.poll() is not None, 5 * DEADLINE)
+        assert ran, "the copy check's child never ran the plugin"
+        assert proc.poll() is None, f"the engine ended first: {proc.returncode}"
         child = Watched(int(pid_file.read_text()))
         try:
             members = job.member_ids()
             assert members is not None
             assert {proc.pid, child.pid} <= set(members), "the child is in the engine's job"
+            leader.end()  # the engine crashes (the drain starts once its leader has exited, §5.2)
             reaped = EngineGroup(job.ops, proc.pid).drain()
             proc.returncode = reaped.returncode
             assert child.gone(), "the child outlived the engine's drain"

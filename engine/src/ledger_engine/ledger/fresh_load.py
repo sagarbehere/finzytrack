@@ -231,8 +231,11 @@ if sys.platform == "win32":  # `_winapi` and `msvcrt` imported where used: tests
                 woke = _winapi.WaitForMultipleObjects([ov.event, process], False, _winapi.INFINITE)
                 if woke != _winapi.WAIT_OBJECT_0:  # the child has ended (data, when both are set, wakes index 0)
                     ov.cancel()
-            _, err = ov.GetOverlappedResult(True)
+            try:
+                _, err = ov.GetOverlappedResult(True)  # after a cancel: its data, or ERROR_OPERATION_ABORTED
+            except BrokenPipeError:
+                break  # the pipe's end while the read waited (`_winapi` raises it for ERROR_BROKEN_PIPE)
             got += ov.getbuffer() or b""
-            if err in (_winapi.ERROR_OPERATION_ABORTED, _winapi.ERROR_BROKEN_PIPE):
-                break  # cancelled: the child has ended and nothing more is in the pipe; or the pipe's end
+            if err == _winapi.ERROR_OPERATION_ABORTED:
+                break  # cancelled: the child has ended and nothing more is in the pipe
         return bytes(got).partition(b"\n")[0]

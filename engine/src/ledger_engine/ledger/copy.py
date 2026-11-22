@@ -64,7 +64,8 @@ from ledger_engine.ledger.policy import DESKTOP
 from ledger_engine.ledger.writer import BadPlanError
 from ledger_engine.tla import tla_action
 
-LEGACY_LOCK_TAIL = "/data/.write.lock"
+LEGACY_LOCK_NAMES = ("data", ".write.lock")
+"""A legacy install's write lock: `<legacy root>/data/.write.lock` (ADR-0062), in the OS's separator (S0146)."""
 BEANCOUNT_PACKAGES = frozenset({"beancount", "beanquery"})
 LOCAL = "local"
 JOURNAL = "journal"
@@ -145,7 +146,7 @@ def _check(plan: CopyPlan) -> CreatePlan:
     _absolute(plan.app_local_data, "app_local_data")
     for lock in plan.legacy_locks:
         _absolute(lock, "legacy_lock")
-        if not lock.endswith(LEGACY_LOCK_TAIL):  # `<legacy root>/data/.write.lock` only (ADR-0062; r2 F9)
+        if not lock.endswith(_legacy_tail()):  # `<legacy root>/data/.write.lock` only (ADR-0062; r2 F9)
             raise BadPlanError("legacy_lock")
     base = CreatePlan(plan.job, plan.target, (), "", plan.manifest)
     create.check_base(base)
@@ -195,7 +196,7 @@ class _CopySteps:
         run.say_saving()
         target = self._key(self.plan.target)
         for lock in self.plan.legacy_locks:  # INV-26: never a new folder under a legacy root (S0081 r1 question)
-            legacy_root = lock[: -len(LEGACY_LOCK_TAIL)]
+            legacy_root = lock[: -len(_legacy_tail())]
             if _in(self._key(legacy_root), target):
                 raise Stop("cannot_place", legacy_root, "inside_legacy")
         self._locks()
@@ -480,11 +481,21 @@ def _fold(name: str) -> str:
     return unicodedata.normalize("NFD", unicodedata.normalize("NFD", name).casefold())
 
 
+def _legacy_tail() -> str:
+    """`/data/.write.lock` (Windows: `\\data\\.write.lock`; S0146: the copy refused every legacy lock there)."""
+    sep = host().sep
+    return sep + sep.join(LEGACY_LOCK_NAMES)
+
+
 def _reserved(path: str) -> bool:
-    """Whether a component of `path` is Finzytrack's own (`.finzytrack`, `.finzytrack.ft-*`)."""
+    """Whether a component of `path` is Finzytrack's own (`.finzytrack`, `.finzytrack.ft-*`). `path` is relative: a
+    plan's (`/`), or a documents root's listing (the OS's separator, `os.path.join`; on Windows `\\` too, S0146: a
+    `.finzytrack` folder under a documents root was not seen there, and the copy refused `reserved_name`)."""
+    sep = host().sep
+    parts = path.split("/") if sep == "/" else path.replace(sep, "/").split("/")
     return any(
         (c := _fold(part)) == create.MANIFEST_DIR or c.startswith(create.MANIFEST_DIR + create.TEMP_INFIX)
-        for part in path.split("/")
+        for part in parts
     )
 
 

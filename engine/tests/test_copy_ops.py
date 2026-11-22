@@ -34,7 +34,6 @@ from ledger_engine.ledger import fingerprint
 from ledger_engine.ledger.core import journal
 from ledger_engine.protocol import copy as protocol_copy
 from ledger_engine.protocol.server import InputEnded
-from tests.beancount_text import escaped
 from tests.ledger.worlds import with_folders
 from tests.test_save_ops import Channel as SaveChannel
 from tests.test_save_ops import engine, published_save, recorded_folder, request
@@ -126,11 +125,19 @@ def snapshot(folder: Path) -> dict[str, tuple[str, int]]:
     out: dict[str, tuple[str, int]] = {}
     for p in sorted(folder.rglob("*")):
         st = p.lstat()
-        out[str(p.relative_to(folder))] = (
-            hashlib.sha256(p.read_bytes()).hexdigest() if p.is_file() else "dir",
-            st.st_mtime_ns,
-        )
+        out[str(p.relative_to(folder))] = (_digest(p) if p.is_file() else "dir", st.st_mtime_ns)
     return out
+
+
+def _digest(p: Path) -> str:
+    """A file's SHA-256; on Windows a file another process holds locked (the legacy app's lock) cannot be read, and
+    stands by its size (S0146)."""
+    try:
+        return hashlib.sha256(p.read_bytes()).hexdigest()
+    except PermissionError:
+        if sys.platform != "win32":
+            raise
+        return f"locked, {p.stat().st_size} bytes"
 
 
 def test_a_copy_brings_in_outside_files_and_documents_and_loads_the_same(ald: Path, tmp_path: Path) -> None:
@@ -159,7 +166,9 @@ def test_an_absolute_include_into_the_folder_is_made_relative(ald: Path, tmp_pat
     books = tmp_path / "src"
     books.mkdir()
     (books / "p.beancount").write_text(PRICES)
-    (books / "main.beancount").write_text(f'2026-01-01 open Assets:Cash EUR\ninclude "{escaped(books)}/p.beancount"\n')
+    (books / "main.beancount").write_text(
+        f'2026-01-01 open Assets:Cash EUR\ninclude "{books.as_posix()}/p.beancount"\n'
+    )
     target = tmp_path / "copy"
     reply, _ = copy(ald, params(target, books / "main.beancount", ald))
     assert reply["result"]["outcome"] == "created", reply
@@ -287,7 +296,7 @@ def test_v03_document_directives_are_copied_in_and_point_at_the_copies(ald: Path
         'option "documents" "../documents/books-1a2b"\n2026-01-01 open Assets:Bank EUR\n'
         '2026-01-07 document Assets:Bank "../documents/books-1a2b/Assets/Bank/statement.pdf"\n'
         '2026-01-08 document Assets:Bank "../receipts/r.pdf"\n'
-        f'2026-01-09 document Assets:Bank "{escaped(books)}/a.pdf"\n'
+        f'2026-01-09 document Assets:Bank "{books.as_posix()}/a.pdf"\n'
     )
     target = tmp_path / ("data" if where == "beside" else "other") / "Books copy"
     target.parent.mkdir(exist_ok=True)
@@ -514,6 +523,7 @@ def test_an_absent_legacy_lock_is_never_created(ald: Path, tmp_path: Path) -> No
     legacy = tmp_path / "legacy" / "data"
     legacy.mkdir(parents=True)
     reply, _ = copy(ald, params(tmp_path / "copy", source, ald, [str(legacy / ".write.lock")]))
+    assert reply.get("ok"), json.dumps(reply)
     assert reply["result"]["outcome"] == "created", reply
     assert list(legacy.iterdir()) == [], "INV-26: nothing created under a legacy root"
 
@@ -616,17 +626,20 @@ def test_one_document_named_in_nfc_and_nfd_is_one_source(ald: Path, tmp_path: Pa
     (books / "main.beancount").write_text(
         "2026-01-01 open Assets:Bank EUR\n"
         f'2026-01-08 document Assets:Bank "../rec eipts/{nfd}"\n'
-        f'2026-01-09 document Assets:Bank "../rec eipts/{nfc}"\n'
+        f'2026-01-09 document Assets:Bank "../rec eipts/{nfc}"\n',
+        encoding="utf-8",
     )
     reply, _ = copy(ald, params(tmp_path / "copy", books / "main.beancount", ald))
     assert reply["result"]["outcome"] == "created", reply
 
 
 def _doubled_separator(p: Path) -> str:
-    """`p` with a separator doubled: a leading `//` on POSIX, `C:\\\\x` on Windows (both the same place there)."""
+    """`p` with a separator doubled: a leading `//` on POSIX, `C://x` on Windows (both the same place there). A path
+    in a ledger is written with `/` on Windows (Beancount reads `\\` as an escape; engine-jobs §8.2, "Limit
+    (backslashes in a path, Windows)", BL-0301)."""
     if sys.platform == "win32":
-        drive, rest = os.path.splitdrive(str(p))
-        return drive + "\\" + rest
+        drive, rest = os.path.splitdrive(p.as_posix())
+        return drive + "/" + rest
     return "/" + str(p)
 
 
@@ -640,8 +653,8 @@ def test_absolute_document_paths_written_unnormalized_are_copied(ald: Path, tmp_
     (books / "main.beancount").write_text(
         "2026-01-01 open Assets:Bank EUR\n"
         '2026-01-08 document Assets:Bank "../rec/r.pdf"\n'
-        f'2026-01-09 document Assets:Bank "{escaped(rec)}/../rec/r.pdf"\n'
-        f'2026-01-10 document Assets:Bank "{escaped(_doubled_separator(rec))}/r.pdf"\n'
+        f'2026-01-09 document Assets:Bank "{rec.as_posix()}/../rec/r.pdf"\n'
+        f'2026-01-10 document Assets:Bank "{_doubled_separator(rec)}/r.pdf"\n'
     )
     target = tmp_path / "copy"
     reply, _ = copy(ald, params(target, books / "main.beancount", ald))
@@ -675,7 +688,9 @@ def test_a_ledger_naming_a_path_inside_the_new_folder_is_refused_before_anything
     books = tmp_path / "data" / "ledgers"
     books.mkdir(parents=True)
     target = tmp_path / "copy"
-    (books / "main.beancount").write_text(f'2026-01-01 open Assets:Bank EUR\ninclude "{escaped(target)}/x.beancount"\n')
+    (books / "main.beancount").write_text(
+        f'2026-01-01 open Assets:Bank EUR\ninclude "{target.as_posix()}/x.beancount"\n'
+    )
     reply, _ = copy(ald, params(target, books / "main.beancount", ald))
     r = reply["result"]
     assert (r["outcome"], r["reason"], r["detail"]) == ("not_created", "cannot_place", "inside_target"), r
@@ -746,6 +761,7 @@ def test_a_new_folder_in_a_named_legacy_root_is_refused_however_it_is_spelled(
         "the root itself": legacy / "copy",
     }[spelling]
     reply, _ = copy(ald, params(target, books / "main.beancount", ald, [str(legacy / "data" / ".write.lock")]))
+    assert reply.get("ok"), json.dumps(reply)
     r = reply["result"]
     assert (r["outcome"], r["reason"], r["detail"]) == ("not_created", "cannot_place", "inside_legacy"), r
     assert sorted(p.name for p in legacy.iterdir()) == ["data"]
@@ -846,6 +862,7 @@ def test_S0146_a_copys_folder_mark_is_its_file_id_and_a_save_confined_by_it_land
         p = published_save(main, ald, main.read_text() + "2026-01-09 open Expenses:Rent EUR\n")
         p["confine"] = {**mark, "born": st.st_birthtime_ns}
         out = json.loads(engine(ald).handle(request("save", p), Channel(1, proceed=True)))
+        assert out.get("ok"), json.dumps(out)
         assert (out["result"]["outcome"], out["result"]["reason"]) == ("not_saved", "copy_folder_moved"), out
         assert main.read_text() == MAIN.replace("../documents/books-1a2b", "documents").replace(
             "../shared/rates.beancount", "outside/rates.beancount"

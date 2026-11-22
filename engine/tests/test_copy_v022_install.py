@@ -16,6 +16,7 @@ The same goldens opened in place, and the seeded changes they catch, are `tests/
 
 from __future__ import annotations
 
+import json
 import os
 import posixpath
 from pathlib import Path
@@ -80,7 +81,7 @@ def test_a_copy_of_each_v022_root_keeps_its_goldens_and_its_bytes(
     p = params(target, install / rel, ald, [str(lock)])
     p["manifest"] = manifest(posixpath.basename(rel))
     reply, _ = copy(ald, p)
-    assert reply["ok"], reply
+    assert reply["ok"], json.dumps(reply)
     assert (reply["result"]["outcome"], reply["result"]["reason"]) == ("created", None), reply
 
     copied = {
