@@ -78,6 +78,9 @@ import fcntl
 import resource
 import signal
 
+# BL-0309: its children need a group kill or `ps` (tests/process_control.py).
+pytestmark = pytest.mark.needs_process_control
+
 REPO = Path(__file__).resolve().parents[3]
 ENGINE_VENV = REPO / "engine" / ".venv"
 DEADLINE = 20.0

@@ -8,6 +8,7 @@ import time
 
 import pytest
 
+from tests import process_control
 from tests.integrity.planned import PlannedMissing
 
 # INV-07 (ADR-0023 Consequences): the suite runs in a time zone west of UTC, set before any test and inherited by
@@ -35,3 +36,12 @@ def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
             meta = marker.kwargs
             reason = f"fixme {meta.get('id')} (due {meta.get('due')}): {meta.get('reason')}"
             item.add_marker(pytest.mark.xfail(strict=True, raises=PlannedMissing, reason=reason))
+    # BL-0309 (S0147): the process tests, where the OS refuses process groups or `ps` (tests/process_control.py).
+    process_control.apply(items, os.environ)
+
+
+def pytest_terminal_summary(terminalreporter: pytest.TerminalReporter) -> None:
+    """The process probe's answer, once it was asked (BL-0309)."""
+    line = process_control.summary()
+    if line is not None:
+        terminalreporter.write_line(line)

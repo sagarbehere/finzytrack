@@ -98,7 +98,8 @@ if [[ "$mode" != "mid-slice" ]]; then
     run "pyright" python3 scripts/pyright_platforms.py backend
     run "import contracts" bash -c "cd backend && .venv/bin/lint-imports"
     run "declared dependencies" bash -c "cd backend && .venv/bin/deptry src"
-    run "backend tests" bash -c "cd backend && .venv/bin/pytest -q -x --junitxml='$reports/backend.xml'"
+    # S0147 (BL-0309): the process tests must run here; a refused process probe fails the run instead of skipping.
+    run "backend tests" bash -c "cd backend && FT_REQUIRE_PROCESS_TESTS=1 .venv/bin/pytest -q -x --junitxml='$reports/backend.xml'"
   fi
   # The ledger engine, its own environment (S0035, ADR-0054): format, lint, strict types and tests, incl. its
   # architecture test (the import boundary). The backend tests above also need engine/.venv: they spawn the engine.

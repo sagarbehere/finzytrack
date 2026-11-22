@@ -51,6 +51,9 @@ from app.workspaces.access import Unknown
 from tests.api.support import Counted, FakeContainer, FixedAccess
 from tests.windows_pending import NO_MODE_BITS, NO_SIGTERM, POSIX_SUPERVISION, SHELL_STAND_IN
 
+# BL-0309: its children need a group kill or `ps` (tests/process_control.py).
+pytestmark = pytest.mark.needs_process_control
+
 
 def lock_held(path: Path) -> bool:
     """Whether another process holds this `flock` (POSIX; a fresh open file description, never blocking)."""

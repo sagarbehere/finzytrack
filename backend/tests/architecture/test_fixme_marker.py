@@ -85,6 +85,7 @@ def run_planted(tmp_path: Path) -> subprocess.CompletedProcess[str]:
     tests = tmp_path / "tests"
     (tests / "integrity").mkdir(parents=True)
     shutil.copy(TESTS / "conftest.py", tests / "conftest.py")
+    shutil.copy(TESTS / "process_control.py", tests / "process_control.py")  # the conftest calls it (BL-0309)
     shutil.copy(TESTS / "integrity" / "planned.py", tests / "integrity" / "planned.py")
     (tests / "__init__.py").write_text("")
     (tests / "integrity" / "__init__.py").write_text("")

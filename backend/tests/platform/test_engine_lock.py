@@ -28,7 +28,10 @@ if sys.platform == "win32":
 
 import fcntl
 
-pytestmark = pytest.mark.skipif(os.name != "posix", reason="flock is POSIX; Windows: test_engine_windows.py")
+pytestmark = [
+    pytest.mark.skipif(os.name != "posix", reason="flock is POSIX; Windows: test_engine_windows.py"),
+    pytest.mark.needs_process_control,  # BL-0309: its children need a group kill or `ps` (tests/process_control.py)
+]
 
 HOLDER = Path(__file__).with_name("lock_holder.py")
 DEADLINE = 15.0

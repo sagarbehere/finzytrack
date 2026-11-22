@@ -58,6 +58,9 @@ from app.workspaces import writes
 from app.workspaces.writes import CopyMark, Previewed, WriteServices, WriteTarget, mirror_generation
 from tests.windows_pending import WRITE_PATH
 
+# BL-0309: its children need a group kill or `ps` (tests/process_control.py).
+pytestmark = pytest.mark.needs_process_control
+
 REPO = Path(__file__).resolve().parents[3]
 ENGINE = REPO / "engine"
 ENGINE_VENV = ENGINE / ".venv"

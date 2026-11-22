@@ -28,7 +28,7 @@ Windows since S0129, each in its own Job Object).
   file shows only `RECALL_ON_DATA_ACCESS`; the adapter's `read`, a raw handle and `open()` each downloaded it at its
   first read; with the provider not running a read (`sha256` too) fails with `ERROR_CLOUD_FILE_PROVIDER_NOT_RUNNING`
   (362, `errno` `EINVAL`). Which mode the product's engine gets, and so whether this adapter reads and saves a OneDrive
-  file or refuses it (`not_a_file`), is S0148's to establish.
+  file or refuses it (`not_a_file`), is S0149's to establish.
   A file with the read-only attribute is `locked` (Windows refuses to replace or remove it): the save refuses it before
   writing. A file Windows' EFS encrypts is `encrypted`: the save refuses it before writing (`encrypted_file`; owner,
   2026-11-17: "1a"), so its bytes never reach a backup or a staging file in the clear. Windows has no mode bits:

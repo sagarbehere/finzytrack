@@ -47,7 +47,10 @@ if sys.platform == "win32":
 import fcntl
 import signal
 
-pytestmark = pytest.mark.skipif(os.name != "posix", reason="process groups are POSIX; Windows: test_engine_windows.py")
+pytestmark = [
+    pytest.mark.skipif(os.name != "posix", reason="process groups are POSIX; Windows: test_engine_windows.py"),
+    pytest.mark.needs_process_control,  # BL-0309: its children need a group kill or `ps` (tests/process_control.py)
+]
 
 DEADLINE = 20.0
 HANG_GUARD = 15 * DEADLINE  # the test's own hang detector (below), far above its longest wait (a bytecode fill)

@@ -109,6 +109,9 @@ jobs:
       - name: Engine environment (the engine client tests spawn the real engine; S0035)
         run: uv sync --locked --directory ../engine
       - name: tests
+        # S0147 (BL-0309): the process tests must run here; a refused process probe fails the job instead of skipping.
+        env:
+          FT_REQUIRE_PROCESS_TESTS: "1"
         run: .venv/bin/pytest -q
   engine:
     # The ledger engine, its own process and environment (S0035; ADR-0054; ARCHITECTURE.md §2.0, §10): format,
@@ -283,8 +286,10 @@ jobs:
         # Los Angeles). `-rs`: each skip prints its reason; `-v`: a line per test, so the log's timestamps show a slow
         # one even in a job cut at its limit, and `--durations` lists the slowest (S0131: one run took 59 of the job's
         # 60 minutes).
+        # S0147 (BL-0309): `FT_REQUIRE_PROCESS_TESTS`, as in the Linux job (the probe answers allowed on Windows).
         env:
           TZ: PST8PDT
+          FT_REQUIRE_PROCESS_TESTS: "1"
         run: >-
           .venv\Scripts\python.exe -m pytest -v -rs --durations=25 -p no:cacheprovider tests
   frontend:

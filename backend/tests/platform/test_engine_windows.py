@@ -49,6 +49,9 @@ from app.platform.engine_jobs.scheduler import EngineJobs
 from tests.platform.test_engine_scheduler import DELAY, Rig, outcome
 from tests.platform.windows_procs import Watched, lock_free, open_exclusively
 
+# BL-0309: its children need a group kill or `ps` (tests/process_control.py).
+pytestmark = pytest.mark.needs_process_control
+
 REPO = Path(__file__).resolve().parents[3]
 ENGINE_VENV = REPO / "engine" / ".venv"
 ENGINE_PYTHON = ENGINE_VENV / "Scripts" / "python.exe"

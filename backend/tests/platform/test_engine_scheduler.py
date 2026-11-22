@@ -82,6 +82,9 @@ from app.platform.observability import Event
 from app.platform.observability.events import ENGINE_EXIT, ENGINE_START_FAILED, JOB_INTERNAL_ERROR
 from tests.platform.fake_job_engine import FakeEngine
 
+# BL-0309: its children need a group kill or `ps` (tests/process_control.py).
+pytestmark = pytest.mark.needs_process_control
+
 REPO = Path(__file__).resolve().parents[3]
 ENGINE_VENV = REPO / "engine" / ".venv"
 DEADLINE = 20.0
