@@ -134,15 +134,27 @@ class SyncRefused(OSError):
 
 class InUseError(OSError):
     """Another program holds the entry open in a way that refuses what was asked (S0148, BL-0284): Windows' sharing
-    violation (`STATUS_SHARING_VIOLATION`: an editor's usual open, which does not share deletion; antivirus, OneDrive's
-    upload or an indexer holding the file for a moment), or a rename over a file that another program holds open
-    (`DirHandle.rename`; the adapter asks the file itself before it says so). Nothing was done. It is an `OSError`
-    (`EBUSY`), so every caller fails as before; only the save tells it apart (`writer.Reason.IN_USE`: "in use by
-    another program", naming the file). Raised by the Windows adapter only: macOS and Linux have no such hold, and
-    their own `EBUSY` (a mount point in use) stays a plain `OSError`."""
+    violation (`STATUS_SHARING_VIOLATION`: an editor's usual open, which does not share deletion). Nothing was done.
+    It is an `OSError` (`EBUSY`), so every caller fails as before; only the save tells it apart
+    (`writer.Reason.IN_USE`: "in use by another program", naming the file), and recovery's text on Windows. Raised by
+    the Windows adapter only: macOS and Linux have no such hold, and their own `EBUSY` (a mount point in use) stays a
+    plain `OSError`."""
 
     def __init__(self, *what: str) -> None:
         super().__init__(errno.EBUSY, "in use by another program: " + " ".join(what))
+
+
+class ReplaceDenied(PermissionError):
+    """Windows refused a plain rename over an existing file (`DirHandle.rename`) with `ACCESS_DENIED` (S0148,
+    BL-0284): another handle holds the file, even one that shares deletion (antivirus, an indexer, OneDrive's upload,
+    a program that merely looks at it; probed, S0130's P3 and the 2026-11-22 run 8), or an ACL or the read-only
+    attribute forbids replacing it. Nothing was done. A `PermissionError` (`EACCES`), so every caller fails as on
+    any refused rename; only the save's replace tells it apart: there the file passed the save's check just before
+    (delete access granted, not read-only), so it is told `in_use` (owner, 2026-11-22: "opetion 2"; engine-jobs §6.8).
+    Raised by the Windows adapter only."""
+
+    def __init__(self, *what: str) -> None:
+        super().__init__(errno.EACCES, "the replace was refused: " + " ".join(what))
 
 
 class Kind(StrEnum):

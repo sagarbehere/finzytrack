@@ -65,7 +65,8 @@ oracle can allow what only a power loss leaves (S0065 red team r1 F5).
 
 **Windows mode** (`MemFS(windows=True)`; S0130, BL-0206; S0132, BL-0294): no link is made (`caps().links` False), a
 file a reader holds without sharing deletion (`outside_hold`) cannot be removed or renamed, away or over, nor asked for
-delete access (`allowed`), each refused with the adapter's `InUseError` (`EBUSY`, S0148), and a file
+delete access (`allowed`), each refused with the adapter's `InUseError` (`EBUSY`), except a rename over it, refused
+`ReplaceDenied` (`EACCES`, Windows' `ACCESS_DENIED`, also for a read-only file; S0148), and a file
 with the read-only attribute is `outside_lock` (the adapter reports it `locked`, and Windows refuses its removal and a
 rename over it); on a folder it refuses only the folder's own removal (probed, S0132's P7: renaming it and changing
 what it holds work). `clear_readonly` is then an effect (labelled `clear_readonly`) that clears the mark on the entry (a
@@ -110,6 +111,7 @@ from ledger_engine.fs.port import (
     Kind,
     MalformedPathError,
     NotOffered,
+    ReplaceDenied,
     Resolved,
     Right,
     SyncRefused,
@@ -215,6 +217,7 @@ class _Fault:
     cut: int | None
     after: bool
     in_use: bool = False
+    denied: bool = False
 
 
 def _is(entries: dict[str, tuple[str, int]], key: str, ino: str | None) -> bool:
@@ -303,10 +306,12 @@ class MemFS:
         cut: int | None = None,
         after: bool = False,
         in_use: bool = False,
+        denied: bool = False,
     ) -> None:
         """A fault at effect `at`: a crash, or (`crash=False`) the error `err`; with `in_use`, the Windows adapter's
-        `InUseError` (another program holds the entry; S0148), whose errno is `EBUSY` whatever `err` says."""
-        self._faults[at] = _Fault(at=at, crash=crash, err=err, cut=cut, after=after, in_use=in_use)
+        `InUseError` (a sharing violation, `EBUSY`), with `denied` its `ReplaceDenied` (a plain rename over a file
+        refused `ACCESS_DENIED`, `EACCES`; S0148), whatever `err` says."""
+        self._faults[at] = _Fault(at=at, crash=crash, err=err, cut=cut, after=after, in_use=in_use, denied=denied)
 
     def _effect(self, label: str, do: Callable[[], None], write: Callable[[int], None] | None = None) -> None:
         """One numbered effect: `do` carries it out, unless an injected fault comes first (a write first writes its
@@ -328,6 +333,8 @@ class MemFS:
             raise Crash(label)
         if f.in_use:
             raise InUseError(label)  # the effect it was injected at
+        if f.denied:
+            raise ReplaceDenied(label)
         raise OSError(f.err, f"injected at {label}")
 
     # -- tree ------------------------------------------------------------------------------------------------
@@ -587,8 +594,8 @@ class MemFS:
     def outside_hold(self, path: str) -> None:
         """Windows (S0130): a reader holds the file open without sharing deletion (SQLite's own open, Python's
         `open`): until `outside_release`, removing it, renaming it away or over it, and asking for delete access to it
-        (`allowed`) are refused with the adapter's `InUseError` (`EBUSY`; S0148: the adapter answers it for a sharing
-        violation and for a rename over a file another program holds)."""
+        (`allowed`) are refused as the adapter refuses them (S0148): a rename over it `ReplaceDenied` (`EACCES`,
+        Windows' `ACCESS_DENIED`), the others `InUseError` (`EBUSY`, a sharing violation)."""
         _, ino, rest, _ = self._walk(path)
         assert not rest
         assert isinstance(self.nodes[ino], _File)
@@ -993,11 +1000,14 @@ class MemDir:
             mtime_ns=self._fs.mtimes.get(hit[1], 0),
         )
 
-    def _unlocked(self, key: str) -> None:
-        """The entry `key` may be renamed away or removed: not locked, and its deletion allowed."""
+    def _unlocked(self, key: str, *, over: bool = False) -> None:
+        """The entry `key` may be renamed away or removed: not locked, and its deletion allowed. `over`: a plain
+        rename over it, which Windows refuses `ACCESS_DENIED` for a held or read-only file (`ReplaceDenied`, S0148)."""
         hit = self._d.entries.get(key)
         if hit is not None:
             node = self._fs.nodes[hit[1]]
+            if over and self._fs.windows and isinstance(node, _File) and (node.locked or hit[1] in self._fs.held):
+                raise ReplaceDenied(key, "in use by another program" if hit[1] in self._fs.held else "read-only")
             if (isinstance(node, _File) or (isinstance(node, _Dir) and not self._fs.windows)) and node.locked:
                 raise PermissionError(errno.EPERM, "locked")  # Windows renames a read-only folder (S0132's P7)
             if hit[1] in self._fs.held:
@@ -1240,7 +1250,7 @@ class MemDir:
             self._may_add()
             self._unlocked(ks)
             if old is not None and old[1] != d.entries[ks][1]:
-                self._unlocked(kd)
+                self._unlocked(kd, over=True)
             stored = self._fs.stored(dst)
             src = str(d.entries[ks][1])
             _apply(d.entries, ("move", ks, kd, stored))

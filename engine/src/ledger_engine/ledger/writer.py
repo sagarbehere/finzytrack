@@ -82,6 +82,7 @@ from ledger_engine.fs.port import (
     InUseError,
     Kind,
     NotOffered,
+    ReplaceDenied,
     Right,
     check_name,
     fold,
@@ -198,8 +199,8 @@ ENCRYPTED_SUFFIXES: Final = (".gpg", ".asc")
 
 class Reason(StrEnum):
     IO_ERROR = "io_error"  # an operation failed (a full disk, an I/O error)
-    IN_USE = "in_use"  # another program holds the file the save was working on (the adapter's `InUseError`: Windows'
-    # sharing violation, or a rename over a file another program holds; S0148, BL-0284): `_why`, naming the file
+    IN_USE = "in_use"  # another program holds the file the save was working on (S0148, BL-0284): the adapter's
+    # `InUseError` (Windows' sharing violation; `_why`), or its `ReplaceDenied` at the replace of a checked file
     CHANGED = "changed"  # a file is not at its pre bytes, appeared, or an outside save was displaced by a swap
     PATH_MOVED = "path_moved"  # a folder is no longer at its recorded canonical path (§6.3 path guard)
     READ_BACK = "read_back"  # a written file does not hold its post bytes
@@ -809,7 +810,12 @@ def _best_effort(h: DirHandle, t: _Target, mode: int, like: str | None, progress
         if t.change.pre is None:
             move(h, t.mode, t.staging, t.base)  # RENAME_EXCL where the volume has it
         else:
-            h.rename(t.staging, t.base)  # a plain rename over the file
+            try:
+                h.rename(t.staging, t.base)  # a plain rename over the file
+            except ReplaceDenied:  # Windows' `ACCESS_DENIED`, nothing done: the file passed the save's check just
+                # before (delete access granted, not read-only: `_check_target`, and `_check_replaced` above), so
+                # another program holds it (owner, 2026-11-22: "opetion 2"; S0148, BL-0284; engine-jobs §6.8)
+                raise _Stop(Reason.IN_USE, t.canonical) from None
     except FileExistsError:
         progress.replaced = before  # ...except this one: a file stood at a created path, nothing was replaced
         raise _Stop(Reason.CHANGED, t.canonical) from None

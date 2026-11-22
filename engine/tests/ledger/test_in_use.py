@@ -20,6 +20,7 @@ import pytest
 from ledger_engine.ledger.core.journal import State
 from ledger_engine.ledger.restore import Failed, Resolved
 from ledger_engine.ledger.writer import Landed, NotSaved, Reason, Step, Unfinished, durable_commit
+from tests.fakes.memfs import Crash
 from tests.ledger.test_writer import check_told
 from tests.ledger.worlds import World, check_disk, commit_for, journals, recover, world
 
@@ -159,3 +160,99 @@ def test_a_rollback_that_meets_a_held_file_stays_unfinished_and_recovery_fails_o
     assert isinstance(recover(w.fs), Resolved)
     for t in w.targets:
         assert w.fs.file(t.path) == t.pre, t.path
+
+
+# -- the replace refused `ACCESS_DENIED` (owner, 2026-11-22: "opetion 2") ---------------------------------------------
+
+REPLACES = ("move /w/L/inc:.a.bean.ft-s1-j7.new,a.bean", "move /w/L:.main.bean.ft-s1-j7.new,main.bean")
+
+
+@cache
+def replaced_only_effects() -> tuple[str, ...]:
+    """The clean run of the world without its created file (`_windows(replaced_only=True)`), whose rollback a
+    replace's failure always resolves."""
+    w = _windows(replaced_only=True)
+    assert isinstance(durable_commit(w.fs, w.commit), Landed)
+    return tuple(w.fs.effects)
+
+
+@pytest.mark.parametrize("label", REPLACES)
+def test_a_replace_refused_access_denied_after_the_check_is_in_use_rolled_back_and_unchanged(label: str) -> None:
+    """Windows refuses a plain rename over a file another handle holds `ACCESS_DENIED` (`ReplaceDenied`), also when the
+    holder shares deletion (antivirus, a share's look), which the save's check lets through. The file passed that check
+    just before (delete access granted, not read-only), so the save tells `in_use`, naming it; the rollback resolves:
+    "not saved", unchanged after the re-hash."""
+    w = _windows(replaced_only=True)
+    w.fs.inject(replaced_only_effects().index(label), crash=False, denied=True)
+    out = durable_commit(w.fs, w.commit)
+    check_told(w.fs, w, out)
+    assert isinstance(out, NotSaved), out
+    path = label.rpartition(",")[2]
+    assert (out.step, out.reason, out.unchanged, out.open_journal) == (Step.REPLACE, Reason.IN_USE, True, False), out
+    assert out.path is not None, out
+    assert out.path.endswith("/" + path), out
+
+
+def test_a_program_that_opens_the_file_after_the_check_gets_in_use_at_the_replace() -> None:
+    """The fake's own hold, taken just before main.bean's replace: the rename over it is refused (`ReplaceDenied`, as
+    Windows refuses it), told `in_use` naming main.bean; a.bean put back, unchanged."""
+    w = _windows(replaced_only=True)
+    at = replaced_only_effects().index(REPLACES[1])
+
+    def hold(i: int, label: str) -> None:
+        if i == at:
+            w.fs.outside_hold(MAIN)
+
+    w.fs.on_effect = hold
+    out = durable_commit(w.fs, w.commit)
+    assert isinstance(out, NotSaved), out
+    assert (out.reason, out.path, out.unchanged, out.open_journal) == (Reason.IN_USE, MAIN, True, False), out
+
+
+@pytest.mark.parametrize("at", range(len(clean_effects())))
+def test_must_not_pass_replace_denied_anywhere_but_a_checked_files_replace_is_never_in_use(at: int) -> None:
+    """Must not pass: `ReplaceDenied` met anywhere but the plain rename over a file the save checked (its record, its
+    backups, a created file's placement, a folder's sync) is never told "in use"."""
+    if clean_effects()[at] in REPLACES:
+        pytest.skip("the replace itself: the test above")
+    w = _windows()
+    w.fs.inject(at, crash=False, denied=True)
+    out = durable_commit(w.fs, w.commit)
+    check_told(w.fs, w, out)
+    reasons = (out.reason,) if isinstance(out, NotSaved | Unfinished) else ()
+    assert Reason.IN_USE not in reasons, (at, clean_effects()[at], out)
+
+
+@pytest.mark.parametrize("err", [errno.EACCES, errno.EPERM])
+@pytest.mark.parametrize("label", REPLACES)
+def test_must_not_pass_a_plain_permission_error_at_the_replace_is_not_in_use(label: str, err: int) -> None:
+    """Must not pass: a plain `PermissionError` at the replace (macOS's or Linux's `EACCES`, `EPERM`: a lock flag set
+    since the check) is not Windows' `ACCESS_DENIED` and stays `io_error`."""
+    w = _windows(replaced_only=True)
+    w.fs.inject(replaced_only_effects().index(label), crash=False, err=err)
+    out = durable_commit(w.fs, w.commit)
+    assert isinstance(out, NotSaved), out
+    assert out.reason is Reason.IO_ERROR, out
+
+
+def test_recovery_meeting_replace_denied_keeps_the_error_eacces() -> None:
+    """Recovery's try keeps today's error for `ReplaceDenied` (`EACCES`, told with its permission text): only a sharing
+    violation (`EBUSY`) is told in use there (S0148; owner, 2026-11-22: "opetion 2")."""
+    main_move = replaced_only_effects().index(REPLACES[1])
+
+    def crashed() -> World:
+        w = _windows(replaced_only=True)
+        w.fs.inject(main_move, crash=True)
+        with pytest.raises(Crash):
+            durable_commit(w.fs, w.commit)
+        return w
+
+    probe = crashed()
+    n = len(probe.fs.effects)
+    assert isinstance(recover(probe.fs), Resolved)
+    put_back = next(i for i, e in enumerate(probe.fs.effects) if i >= n and e.startswith("move /w/L/inc:"))
+    w = crashed()
+    w.fs.inject(put_back, crash=False, denied=True)
+    tried = recover(w.fs)
+    assert isinstance(tried, Failed), tried
+    assert tried.errno == errno.EACCES, tried
