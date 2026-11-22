@@ -8,11 +8,13 @@ Each request line gets exactly one reply line. Expected values come from the pro
 from __future__ import annotations
 
 import json
+import sys
 from importlib.metadata import version
 from typing import Any
 
 import pytest
 
+from ledger_engine.fs import this_os
 from ledger_engine.protocol.messages import MAX_LINE_BYTES, PROTOCOL_VERSION
 from ledger_engine.protocol.server import Engine
 
@@ -237,6 +239,21 @@ def test_test_ops_exist_only_when_enabled() -> None:
     assert (reply["id"], reply["op"]) == (13, "test.fail")
     assert "boom" not in reply["error"]["message"], "internal details stay on stderr"
     assert answer(engine, request("ping", rid=14))["ok"] is True
+
+
+def test_S0149_the_placeholder_mode_op_answers_this_process_mode_and_only_with_test_ops() -> None:
+    """S0149 (BL-0283): `test.placeholder_mode` answers the engine process's placeholder compatibility mode on Windows
+    (a `PHCM_*` value) and None elsewhere; an engine without `--test-ops` does not know the op."""
+    engine = Engine(test_ops=True)
+    answer(engine, request("handshake"))
+    reply = answer(engine, request("test.placeholder_mode", rid=15))
+    assert reply["ok"] is True, reply
+    mode = reply["result"]["mode"]
+    if sys.platform == "win32":
+        assert mode in this_os.PLACEHOLDER_MODES
+    else:
+        assert mode is None
+    assert refusal(answer(ready(), request("test.placeholder_mode", rid=16))) == "protocol.unknown_op"
 
 
 def test_a_reply_is_compact_json_on_one_line() -> None:

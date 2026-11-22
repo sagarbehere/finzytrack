@@ -174,7 +174,9 @@ jobs:
     # file-system probe on the runner's folders and on scratch volumes (VHDs formatted FAT32, exFAT and ReFS; prints
     # only), then the engine's tests. Until the Windows port lands, the engine refuses every file operation there
     # (`engine.unsupported_platform`) and its real-disk write-contract tests skip. The Cloud Files probe (S0144,
-    # BL-0283) registers a sync root in the runner's temp folder and prints how the adapter sees its placeholders.
+    # BL-0283) registers a sync root in the runner's temp folder and prints how the adapter sees its placeholders; the
+    # tests' `tests/fs/test_windows_cloud.py` (S0149) runs the engine's jobs on a ledger in a sync root (its facts are
+    # JSON warnings in the warnings summary).
     runs-on: windows-2022
     timeout-minutes: 60
     defaults:

@@ -59,8 +59,8 @@
 - **No resident ledger (INV-10).** The engine holds no ledger between requests. The overlay load arrives with its
   slice (WS-WRITE, BL-0003); the main sidecar's engine job queue runs one job at a time (ADR-0064, BL-0109).
 - `--test-ops` adds ops for the process tests (`test.stall`, `test.noise`, `test.fail`, `test.read_stdin`,
-  `test.gate`, `test.child`, `test.interpreter`, `test.import_plugin`). They are not part of the protocol schema
-  and the main sidecar never passes the flag outside tests.
+  `test.gate`, `test.child`, `test.interpreter`, `test.import_plugin`, `test.placeholder_mode`). They are not part of
+  the protocol schema and the main sidecar never passes the flag outside tests.
 """
 
 from __future__ import annotations
@@ -296,6 +296,12 @@ class ValueResult(Message):
     value: int
 
 
+class PlaceholderModeResult(Message):
+    """The engine process's placeholder compatibility mode on Windows, None elsewhere (S0149, BL-0283)."""
+
+    mode: int | None
+
+
 class InterpreterResult(BaseModel):
     """What the engine's interpreter runs with (S0057; engine-jobs §5.1)."""
 
@@ -394,6 +400,10 @@ def _interpreter(_: Message, __: JobContext) -> Message:
     )
 
 
+def _placeholder_mode(_: Message, __: JobContext) -> Message:
+    return PlaceholderModeResult(mode=this_os.placeholder_mode())
+
+
 def _handler(op: str, run: Callable[[Message, JobContext], Message]) -> Handler:
     spec = OPS[op]
     missing = APP_FOLDER_MISSING_HANDLERS.get(op)
@@ -423,6 +433,7 @@ TEST_OPS: dict[str, Handler] = {
     "test.child": Handler(LockParams, _child),
     "test.interpreter": Handler(NoParams, _interpreter),
     "test.import_plugin": Handler(FolderParams, _import_plugin),
+    "test.placeholder_mode": Handler(NoParams, _placeholder_mode),
 }
 assert set(PRODUCTION) == set(OPS), "every op of the protocol has a handler"  # noqa: S101 (import-time invariant)
 assert all(PRODUCTION[op].needs_engine_lock == OPS[op].needs_engine_lock for op in OPS)  # noqa: S101

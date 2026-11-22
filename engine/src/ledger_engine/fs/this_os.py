@@ -17,6 +17,7 @@ platform (BL-0261)."""
 
 from __future__ import annotations
 
+import ctypes
 import errno
 import os
 import sys
@@ -108,3 +109,19 @@ def take_engine_lock(app: DirHandle, locks: str, name: str) -> None:
         windows.take_engine_lock(app, locks, name)
         return
     raise UnsupportedPlatform
+
+
+PLACEHOLDER_MODES = {0: "application_default", 1: "disguise_placeholder", 2: "expose_placeholders", 3: "disguise_full"}
+"""`PHCM_*` (`ntifs.h`): how the cloud filter shows this process a cloud placeholder (OneDrive's Files On-Demand)."""
+
+
+def placeholder_mode() -> int | None:
+    """Windows only: this process's placeholder compatibility mode (`RtlQueryProcessPlaceholderCompatibilityMode`, a
+    `PLACEHOLDER_MODES` key); None elsewhere. Read only, by the test op `test.placeholder_mode` (S0149, BL-0283: which
+    mode the engine runs in as the sidecar starts it)."""
+    if sys.platform == "win32":
+        query = ctypes.WinDLL("ntdll").RtlQueryProcessPlaceholderCompatibilityMode
+        query.argtypes = []
+        query.restype = ctypes.c_byte
+        return int(query())
+    return None
