@@ -17,8 +17,16 @@ Windows since S0129, each in its own Job Object).
   POSIX. Only `open_dir` and `resolve` take a path, with the long-path prefix (`\\\\?\\`, `PathModel.extended`), and
   follow links, as `open(2)` does. Names are checked by the Windows path model first (`check_name`: reserved device
   names, a trailing dot or space and the characters no name holds are refused).
-- **Kinds.** A reparse point whose tag is a symbolic link or a junction is a `LINK`; any other reparse point (a cloud
-  placeholder, a deduplicated file, an AppExecLink) is `OTHER`, so the save refuses it (`not_a_file`; BL-0283).
+- **Kinds.** A reparse point whose tag is a symbolic link or a junction is a `LINK`; any other reparse point the
+  process sees (a deduplicated file, an AppExecLink, a cloud placeholder where placeholders are exposed) is `OTHER`, so
+  the save refuses it (`not_a_file`). **Cloud placeholders** (OneDrive's Files On-Demand; probed in S0144 with
+  Windows' own cloud filter, BL-0283): in the placeholder mode a process gets by default (`disguise_placeholder`, as
+  the probe's reader had), the cloud filter hides the reparse point, so a placeholder file or folder, cloud-only or
+  hydrated, and the sync root itself are a `FILE` or a `DIR` here; a cloud-only file shows only
+  `RECALL_ON_DATA_ACCESS`, and any read of it downloads it through the provider; with the provider not running the read
+  fails with `ERROR_CLOUD_FILE_PROVIDER_NOT_RUNNING` (362, `errno` `EINVAL`). Only in the expose mode is a placeholder
+  `OTHER` (and a placeholder folder or sync root refused by `open_child`, `ELOOP`). Which mode the product's engine
+  runs in is S0148's to establish.
   A file with the read-only attribute is `locked` (Windows refuses to replace or remove it): the save refuses it before
   writing. A file Windows' EFS encrypts is `encrypted`: the save refuses it before writing (`encrypted_file`; owner,
   2026-11-17: "1a"), so its bytes never reach a backup or a staging file in the clear. Windows has no mode bits:
