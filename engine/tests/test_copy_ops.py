@@ -861,14 +861,14 @@ def test_S0146_a_copys_folder_mark_is_its_file_id_and_a_save_confined_by_it_land
         main = target / "main.beancount"
         p = published_save(main, ald, main.read_text() + "2026-01-09 open Expenses:Rent EUR\n")
         p["confine"] = {**mark, "born": st.st_birthtime_ns}
-        out = json.loads(engine(ald).handle(request("save", p), Channel(1, proceed=True)))
+        out = json.loads(engine(ald).handle(request("save", p), SaveChannel(1, proceed=True)))
         assert out.get("ok"), json.dumps(out)
         assert (out["result"]["outcome"], out["result"]["reason"]) == ("not_saved", "copy_folder_moved"), out
         assert main.read_text() == MAIN.replace("../documents/books-1a2b", "documents").replace(
             "../shared/rates.beancount", "outside/rates.beancount"
         )
         p["confine"] = mark
-        out = json.loads(engine(ald).handle(request("save", p), Channel(1, proceed=True)))
+        out = json.loads(engine(ald).handle(request("save", p), SaveChannel(1, proceed=True)))
         assert out["result"]["outcome"] == "saved", out
         assert main.read_text().endswith("2026-01-09 open Expenses:Rent EUR\n")
     finally:
