@@ -34,5 +34,6 @@
 - Gates (macOS): ruff format and check clean; `pyright_platforms.py .` 0 errors on every platform; the four touched files pass (550 passed, 1 skipped); the engine suite 11182 passed, 24 skipped, 1 failed (`test_darwin.py::test_volume_id_is_the_uuid_diskutil_reports`, the known failure of `diskutil` inside the sandbox; not touched here); `check_invariants.py` exit 0; `run_meta_tests.py` OK, 1012 tests in 40 modules, 0 failures. V4-2 runs only on the Windows runner: pushed mid-slice for the manual CI run (the result goes under Verifier once the run is in).
 
 ## Verifier
+- Windows: the 2026-11-22 run 2 (head 774bdd03), every job green; `engine-windows` 11041 passed, 48 skipped (run 1 on fb4ff90d: 11016 passed, 48 skipped). The +25 is what this slice adds on Windows: 16 fake test IDs (`test_share_saves.py` 4, the two V4-1 sweeps 6 each, `pytest --collect-only`) and the 3 V4-2 tests on each of the share's 3 spellings (`ci.yml`: the mapped drive, the UNC path, the UNC path by the machine's name), 9. The log prints no line per passing test (`-rs`); no S0145 or share test is in its skip summary and the skip count is unchanged, so the V4-2 tests ran and passed.
 
 ## Retro
