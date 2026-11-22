@@ -32,6 +32,10 @@ A Windows call's refusal is a finding: printed, never a failure. A bug of the pr
 child that fails or runs over 15 minutes) is printed as `probe_error` and ends `serve` with exit code 1 after the
 cleanup, so the CI step fails visibly. It writes only inside its scratch folder.
 
+**Limits:** five children may each run up to 15 minutes, more than the job's 60 minutes, so several hung children
+would cancel the job before its tests; and the timeout stops only the venv's `Scripts\\python.exe` launcher, not the
+interpreter it started. Unlikely: the cloud filter itself times a fetch out at 60 s.
+
 Usage (from `engine/`, on Windows only): python scripts/probe_windows_cloud.py serve <folder>
 """
 
@@ -832,7 +836,8 @@ def reader(root: str, mode: str) -> int:
         attempt("reader.root", lambda: {"path": d.path(), "fs_type": d.fs_type(), "remote": d.remote()}, mode=mode)
         for name in [*files, folder_of(mode)]:
             describe(d, folder, name, "before any read")  # item 2
-        # item 3: a cloud-only file read three ways, each way first once
+        # item 3: three cloud-only files, read first by the raw handle, the adapter's `read` and `open()`
+        # (`sha256` is never a first read here)
         all_ways = ("raw", "adapter_read", "adapter_sha256", "python_open")
         reads(d, folder, f"{mode}-cloud-raw.bean", ("raw", "adapter_read", "python_open"), "item3")
         reads(d, folder, f"{mode}-cloud-adapter.bean", ("adapter_read", "adapter_sha256", "raw"), "item3")

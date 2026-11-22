@@ -20,13 +20,15 @@ Windows since S0129, each in its own Job Object).
 - **Kinds.** A reparse point whose tag is a symbolic link or a junction is a `LINK`; any other reparse point the
   process sees (a deduplicated file, an AppExecLink, a cloud placeholder where placeholders are exposed) is `OTHER`, so
   the save refuses it (`not_a_file`). **Cloud placeholders** (OneDrive's Files On-Demand; probed in S0144 with
-  Windows' own cloud filter, BL-0283): in the placeholder mode a process gets by default (`disguise_placeholder`, as
-  the probe's reader had), the cloud filter hides the reparse point, so a placeholder file or folder, cloud-only or
-  hydrated, and the sync root itself are a `FILE` or a `DIR` here; a cloud-only file shows only
-  `RECALL_ON_DATA_ACCESS`, and any read of it downloads it through the provider; with the provider not running the read
-  fails with `ERROR_CLOUD_FILE_PROVIDER_NOT_RUNNING` (362, `errno` `EINVAL`). Only in the expose mode is a placeholder
-  `OTHER` (and a placeholder folder or sync root refused by `open_child`, `ELOOP`). Which mode the product's engine
-  runs in is S0148's to establish.
+  Windows' own cloud filter, BL-0283): a process's placeholder mode decides. Microsoft documents exposed placeholders
+  as most applications' default; there a placeholder is `OTHER` (refused, as above; a placeholder folder or sync root
+  refused by `open_child`, `ELOOP`). In the `disguise_placeholder` mode (which the probe's reader processes had without
+  any call, while the provider that started them had `application_default`) the cloud filter hides the reparse point:
+  a placeholder file or folder, cloud-only or hydrated, and the sync root are a `FILE` or a `DIR` here; a cloud-only
+  file shows only `RECALL_ON_DATA_ACCESS`; the adapter's `read`, a raw handle and `open()` each downloaded it at its
+  first read; with the provider not running a read (`sha256` too) fails with `ERROR_CLOUD_FILE_PROVIDER_NOT_RUNNING`
+  (362, `errno` `EINVAL`). Which mode the product's engine gets, and so whether this adapter reads and saves a OneDrive
+  file or refuses it (`not_a_file`), is S0148's to establish.
   A file with the read-only attribute is `locked` (Windows refuses to replace or remove it): the save refuses it before
   writing. A file Windows' EFS encrypts is `encrypted`: the save refuses it before writing (`encrypted_file`; owner,
   2026-11-17: "1a"), so its bytes never reach a backup or a staging file in the clear. Windows has no mode bits:
