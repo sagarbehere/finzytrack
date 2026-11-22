@@ -21,3 +21,17 @@
 ## Hand-off (PROCESS.md §3 step 4; ADR-0057)
 - Checks that accept, tag or refuse: none added or changed (docs only). No mutants (no check). Population claims: none.
 - Gates at the head: `check_invariants.py` exit 0 (silent); `run_meta_tests.py` OK, 1012 tests in 40 modules, 0 failures.
+
+## Verifier
+- Round 1 at 29823c68 (docs only: facts and doc consistency): PASS WITH FINDINGS, no High, no class (a) or (b). Every statement of publish.md §2 and §11 matches the code; in engine-jobs §8.2 all but one parenthetical do.
+
+| ID | Severity | Class | Finding | Outcome |
+|---|---|---|---|---|
+| F-1 | Low | d | §8.2's parenthetical said an unmoved `\\` include refuses when any other line of its file is rewritten; only a rewritten `include` or `option "documents"` line triggers it (a rewritten `document` line leaves it as it is) | Fixed in the spec and BL-0301's row (docs only, IMP-0075) |
+| F-2 | Low | d | The roadmap sentence read as if BL-0300 and BL-0301 moved to M11 | Fixed: the roadmap's M1b paragraph rewritten (updated 2026-11-22) |
+
+- Question (no finding): the swap's `<name>.<tag>.tmp` also goes through `_remove_tree`; a linked read-only file there is not placeable in advance (the build's random tag).
+- Process note: the implementer's pushes ran inside the sandbox (a command around the push keeps it sandboxed, so the hook's `mktemp`, `ps` and `diskutil` were refused); the orchestrator pushed 29823c68 with the bare `git push origin next`, whole gate green.
+
+## Retro
+Build about 25 min (implementer's estimate), fix about 5 min, 1 verifier round, findings 0H/0M/2L. Cheaper gate: when stating a limit, run the refusal's code on each shape the limit names (the verifier's repro found F-1 in one case). Process checks: none fired.
