@@ -20,6 +20,11 @@ the run is refused before the command starts; a mutant's own file may not be a s
 Outcomes: killed (the command failed), killed (timeout), survived (the command passed). A baseline that
 fails or times out, a malformed plan, a mutant whose `find` text is not exactly once in its file, or a mutant
 file outside the copy is an error: no mutant is counted. Exit 0 = every mutant killed, 1 = at least one survived, 2 = error.
+
+Stated limit (Windows, S0146 verifier F-2): a timed-out run is ended with `taskkill /F /T`, which follows parent
+links only, so a grandchild whose parent already exited survives. On Windows the tool runs only in temporary steps
+on CI's throwaway runners, where a survivor ends with the runner; never run it on Windows elsewhere without a Job
+Object around the run.
 """
 
 from __future__ import annotations
