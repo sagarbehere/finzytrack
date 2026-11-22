@@ -17,6 +17,10 @@ Stated limits: on Windows nothing is probed (no process group or `ps` to try, an
 is "allowed". The probe runs `ps` as found on `PATH`; a test that runs `/bin/ps` relies on it being the same.
 `scripts/check_invariants.py`'s static scan of a conftest does not follow `apply` (its stated limits); no enforcement
 file is marked, and the pre-push hook's run proof fails a skipped enforcement test whatever skipped it.
+If `ps` takes longer than `CHILD_LIFE`, the child has exited (unreaped) before the group kill, and the probe answers
+"refused" naming `os.killpg`: a misleading cause, but under `FT_REQUIRE_PROCESS_TESTS` a loud failure, never a silent
+skip (S0147 verifier F-3; unlikely). The probe does not try libproc's listing (`proc_listpids`), `os.kill` of a pid or
+`flock`, which the marked tests also use; the agents' sandbox allowed all three when S0147 probed it.
 """
 
 from __future__ import annotations

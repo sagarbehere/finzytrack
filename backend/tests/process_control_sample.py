@@ -9,3 +9,8 @@ pytestmark = pytest.mark.needs_process_control
 
 def test_sample() -> None:
     assert True
+
+
+def test_another_sample() -> None:
+    """A second marked test, so a rule that skips only some of them fails (S0147 verifier F-2)."""
+    assert True

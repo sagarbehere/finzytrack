@@ -189,7 +189,7 @@ REFUSED = "running `ps`: [Errno 1] Operation not permitted: 'ps'"
 def test_refused_and_not_required_the_marked_test_skips_with_the_named_reason() -> None:
     done = run_sample(REFUSED, required=False)
     assert done.returncode == 0, done.stdout + done.stderr
-    assert "1 skipped" in done.stdout, done.stdout
+    assert "2 skipped" in done.stdout, done.stdout
     assert "BL-0309" in done.stdout
     assert REFUSED in done.stdout
 
@@ -208,7 +208,7 @@ def test_refused_and_required_the_run_fails_naming_the_answer() -> None:
 def test_allowed_and_required_the_marked_test_runs() -> None:
     done = run_sample("", required=True)
     assert done.returncode == 0, done.stdout + done.stderr
-    assert "1 passed" in done.stdout, done.stdout
+    assert "2 passed" in done.stdout, done.stdout
 
 
 def test_the_answer_is_shown_once_probed() -> None:
@@ -218,13 +218,20 @@ def test_the_answer_is_shown_once_probed() -> None:
     assert "process tests: allowed" in allowed.stdout, allowed.stdout
 
 
-def test_an_unmarked_session_does_not_probe() -> None:
+def test_an_unmarked_session_does_not_probe(monkeypatch: pytest.MonkeyPatch) -> None:
     """The probe runs only when a marked test is collected (a run of other tests starts no probe child)."""
     calls: list[str] = []
+    asked: list[bool] = []
 
     class Item:
         def get_closest_marker(self, name: str) -> None:
             calls.append(name)
 
-    process_control.apply([Item()], {})  # type: ignore[list-item]
+    def answer() -> str | None:
+        asked.append(True)
+        return "refused"
+
+    monkeypatch.setattr(process_control, "answer", answer)
+    process_control.apply([Item()], {process_control.REQUIRE: "1"})  # type: ignore[list-item]
     assert calls == [process_control.MARK]
+    assert asked == [], "the probe was asked although no marked test was collected"
