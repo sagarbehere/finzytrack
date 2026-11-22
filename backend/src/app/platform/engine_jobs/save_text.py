@@ -13,7 +13,7 @@ from collections.abc import Sequence
 from typing import Final
 
 from app.domain.errors import DomainError
-from app.platform.engine_jobs.recovery_text import REOPEN, in_use, reopen_after_created
+from app.platform.engine_jobs.recovery_text import REOPEN, in_use, not_downloaded, reopen_after_created
 from app.platform.engine_paths import last_name
 from app.platform.errors import ChangeNotSavedDetails, ErrorCode, WritesPausedDetails, spec_for
 from app.platform.plans import LARGE_FILE_BYTES
@@ -182,6 +182,8 @@ def not_saved_text(d: ChangeNotSavedDetails) -> str:
             return f"{NOT_SAVED} Finzytrack could not read or write {_name(d.path)}. {_rehash(d)}"
         case "in_use":  # S0148 (BL-0284): another program holds the file; the engine names it (`path`)
             return f"{NOT_SAVED} {in_use(_name(d.path))} {_rehash(d)}"
+        case "cloud_unavailable":  # S0149 (BL-0283): only in the cloud, not downloaded; the engine names it (`path`)
+            return f"{NOT_SAVED} {not_downloaded(_name(d.path))} {_rehash(d)}"
         case "io_error" if d.folder is not None:  # S0148 (BL-0306): a network share's folder refused its sync
             return (
                 f"{NOT_SAVED} Finzytrack could not write to the folder {d.folder}. Check that its drive is connected "

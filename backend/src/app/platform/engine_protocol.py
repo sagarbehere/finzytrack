@@ -628,8 +628,12 @@ _REBUILD = frozenset(
     }
 )
 REBUILD_OUTCOMES: frozenset[str] = frozenset({"loaded", "moved", "fresh", "paused", "refused"})
-REBUILD_REFUSALS: frozenset[str] = frozenset({"number_failed", "beancount_failed", "cache_on_share"})
-OPEN_REFUSALS: frozenset[str] = frozenset({"encrypted", "number_failed", "beancount_failed", "cache_on_share"})
+REBUILD_REFUSALS: frozenset[str] = frozenset(
+    {"number_failed", "beancount_failed", "cache_on_share", "cloud_unavailable"}
+)
+OPEN_REFUSALS: frozenset[str] = frozenset(
+    {"encrypted", "number_failed", "beancount_failed", "cache_on_share", "cloud_unavailable"}
+)
 PUBLISH: frozenset[str] = frozenset({"published", "fresh", "inexact", "replaced", "incomplete"})
 _LEDGER_VERSION = re.compile(r"[1-9][0-9]*/sha256:[0-9a-f]{64}")
 

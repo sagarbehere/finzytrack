@@ -104,6 +104,7 @@ import pytest
 from ledger_engine.fs.port import (
     AclEntry,
     Caps,
+    CloudUnavailable,
     EntryStat,
     FolderMark,
     FoldRule,
@@ -218,6 +219,7 @@ class _Fault:
     after: bool
     in_use: bool = False
     denied: bool = False
+    cloud: bool = False
 
 
 def _is(entries: dict[str, tuple[str, int]], key: str, ino: str | None) -> bool:
@@ -290,6 +292,9 @@ class MemFS:
         self.held: set[int] = set()
         self.no_posix_rename: set[int] = set()  # devs whose volume lacks `FILE_SUPPORTS_POSIX_UNLINK_RENAME` (S0132)
         self.remote: set[int] = set()  # devs that are network shares: `remote()` (S0132, S0134)
+        # S0149 (BL-0283), Windows mode only: files (by inode) whose data is only in the cloud and that Windows cannot
+        # download now: `read` and `sha256` raise the adapter's `CloudUnavailable`, as its `ReadFile` does offline
+        self.cloud_offline: set[int] = set()
         self.sync_refused: set[int] = set()  # devs whose server refuses a folder's sync (S0136; the docstring)
 
     def stored(self, name: str) -> str:
@@ -307,11 +312,14 @@ class MemFS:
         after: bool = False,
         in_use: bool = False,
         denied: bool = False,
+        cloud: bool = False,
     ) -> None:
         """A fault at effect `at`: a crash, or (`crash=False`) the error `err`; with `in_use`, the Windows adapter's
         `InUseError` (a sharing violation, `EBUSY`), with `denied` its `ReplaceDenied` (a plain rename over a file
-        refused `ACCESS_DENIED`, `EACCES`; S0148), whatever `err` says."""
-        self._faults[at] = _Fault(at=at, crash=crash, err=err, cut=cut, after=after, in_use=in_use, denied=denied)
+        refused `ACCESS_DENIED`, `EACCES`; S0148), with `cloud` its `CloudUnavailable` (S0149), whatever `err` says."""
+        self._faults[at] = _Fault(
+            at=at, crash=crash, err=err, cut=cut, after=after, in_use=in_use, denied=denied, cloud=cloud
+        )
 
     def _effect(self, label: str, do: Callable[[], None], write: Callable[[int], None] | None = None) -> None:
         """One numbered effect: `do` carries it out, unless an injected fault comes first (a write first writes its
@@ -335,6 +343,8 @@ class MemFS:
             raise InUseError(label)  # the effect it was injected at
         if f.denied:
             raise ReplaceDenied(label)
+        if f.cloud:
+            raise CloudUnavailable(None, label)
         raise OSError(f.err, f"injected at {label}")
 
     # -- tree ------------------------------------------------------------------------------------------------
@@ -591,6 +601,15 @@ class MemFS:
         assert isinstance(node, _File | _Dir)
         node.locked = True
 
+    def outside_cloud_offline(self, path: str) -> None:
+        """Windows mode (S0149, BL-0283): the file at `path` is made cloud-only by its sync app (OneDrive's "free up
+        space") and the app cannot download it now (offline, not running): `read` and `sha256` raise
+        `CloudUnavailable` until a new object replaces it (our save's rename leaves a plain file, as on the runner)."""
+        _, ino, rest, _ = self._walk(path)
+        assert not rest
+        assert isinstance(self.nodes[ino], _File)
+        self.cloud_offline.add(ino)
+
     def outside_hold(self, path: str) -> None:
         """Windows (S0130): a reader holds the file open without sharing deletion (SQLite's own open, Python's
         `open`): until `outside_release`, removing it, renaming it away or over it, and asking for delete access to it
@@ -826,6 +845,7 @@ class MemFS:
         out.no_crtime = set(self.no_crtime)
         out.no_posix_rename = set(self.no_posix_rename)
         out.remote = set(self.remote)
+        out.cloud_offline = set(self.cloud_offline)
         out.sync_refused = set(self.sync_refused)
         for ino in reach:
             d = self.nodes[ino]
@@ -955,6 +975,8 @@ class MemDir:
             raise OSError(errno.EINVAL, "not a regular file")
         if _denies(node, "read"):
             raise PermissionError(errno.EACCES, "read denied")
+        if self._fs.windows and hit[1] in self._fs.cloud_offline:
+            raise CloudUnavailable(None, "ReadFile", "(Win32 362)")  # as the adapter's `_win_error` (S0149)
         return node.data if limit is None else node.data[:limit]
 
     def read_identified(self, name: str) -> tuple[bytes, tuple[int, int]] | None:

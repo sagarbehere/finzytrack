@@ -6,10 +6,8 @@ process group (on Windows its Job Object) cannot be made, which ends the engine 
 
 from __future__ import annotations
 
-import json
 import os
 import subprocess
-import warnings
 from pathlib import Path
 from typing import Any
 
@@ -109,26 +107,18 @@ def test_two_engines_hash_a_string_alike_and_run_with_the_specs_flags() -> None:
         assert flags["hash_seed"] == "0"
 
 
-def test_S0149_the_engine_reports_its_placeholder_mode_as_the_sidecar_starts_it() -> None:
-    """S0149 (BL-0283; phase 1, facts): the engine started exactly as the sidecar starts it (`for_venv`: `-s -S -B -P`,
-    the bootstrap, on Windows in its Job Object) answers its process's placeholder compatibility mode, which decides
-    whether the cloud filter shows it OneDrive's placeholders as plain files (disguised) or as reparse points
-    (exposed). On Windows the mode is printed as a warning (the CI log's warnings summary); elsewhere it is None."""
+def test_S0149_the_engine_started_as_the_sidecar_starts_it_runs_in_the_pinned_placeholder_mode() -> None:
+    """S0149 (BL-0283; owner, 2026-11-22: "A"; ADR-0070): the engine started exactly as the sidecar starts it
+    (`for_venv`: `-s -S -B -P`, the bootstrap, on Windows in its Job Object) pins `disguise_placeholder` (1) at its
+    start, so the cloud filter shows it OneDrive's placeholders as plain files: the 2026-11-22 run 11 showed it got 0
+    (`application_default`) without the pin. Elsewhere the mode is None."""
     c = EngineClient(engine_command())
     try:
         out = c.call("test.placeholder_mode", {})
     finally:
         c.close()
     assert isinstance(out, dict), out
-    mode = out["mode"]
-    if os.name == "nt":
-        assert mode in (0, 1, 2, 3), out
-        warnings.warn(
-            json.dumps({"S0149": "engine_placeholder_mode", "via": "EngineCommand.for_venv", "mode": mode}),
-            stacklevel=1,
-        )
-    else:
-        assert mode is None, out
+    assert out["mode"] == (1 if os.name == "nt" else None), out
 
 
 def test_a_start_whose_group_cannot_be_made_ends_the_engine_alone_and_fails_the_start(

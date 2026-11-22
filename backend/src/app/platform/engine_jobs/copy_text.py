@@ -103,6 +103,8 @@ def _why(v: NotCopied) -> str | None:
             return _blocked(v)
         case "source_missing":
             return f"{name_of(v.path)} does not exist."
+        case "cloud_unavailable":  # S0149 (BL-0283): a source file only in the cloud, not downloaded
+            return recovery_text.not_downloaded(name_of(v.path))
         case "source_unreadable":
             return f"Finzytrack could not read {name_of(v.path)}.{_system(v.errno)}"
         case "source_failed":

@@ -828,6 +828,34 @@ def test_S0148_must_not_pass_a_rollback_that_stopped_keeps_the_paused_text(outco
     assert save_text.text(value.error) == REOPEN
 
 
+NOT_DOWNLOADED = (
+    "main.bean is only in the cloud (OneDrive or another sync app), and Windows could not download it. Check that you "
+    "are online and that the sync app is running, then try again."
+)
+
+
+@pytest.mark.parametrize(
+    ("unchanged", "then"),
+    [(True, "Your ledger is unchanged."), (False, "Finzytrack could not check whether your ledger changed.")],
+)
+def test_S0149_cloud_unavailable_names_the_file_and_keeps_the_rehashs_sentence(unchanged: bool, then: str) -> None:
+    text = save_text.not_saved_text(ChangeNotSavedDetails("cloud_unavailable", MAIN, None, None, unchanged, None))
+    assert text == f"Your change was not saved. {NOT_DOWNLOADED} {then}"
+
+
+@pytest.mark.parametrize("reason", ["io_error", "in_use", "read_back", "permission", "engine_stopped", "not_a_file"])
+def test_S0149_must_not_pass_no_other_reason_is_told_only_in_the_cloud(reason: str) -> None:
+    d = ChangeNotSavedDetails(reason, MAIN, None, None, True, None)  # type: ignore[arg-type]
+    assert "only in the cloud" not in save_text.not_saved_text(d)
+
+
+def test_S0149_the_engines_cloud_unavailable_is_change_not_saved_and_never_saved() -> None:
+    a = SaveAnswer("not_saved", "cloud_unavailable", MAIN, None, None, False, False, None, None, False)
+    value = answer_of(a)
+    assert code(value) == ErrorCode.CHANGE_NOT_SAVED
+    assert details(value) == ChangeNotSavedDetails("cloud_unavailable", MAIN, None, None, False, None)
+
+
 def test_S0148_BL0306_the_shares_folder_that_refused_is_named() -> None:
     folder = host("/w/L")
     text = save_text.not_saved_text(ChangeNotSavedDetails("io_error", None, folder, None, True, None))

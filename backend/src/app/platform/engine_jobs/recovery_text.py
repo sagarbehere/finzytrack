@@ -276,6 +276,17 @@ def in_use(name: str, then: str = "try again") -> str:
     )
 
 
+def not_downloaded(name: str) -> str:
+    """What a ledger file only in the cloud that Windows could not download is told (S0149, BL-0283; owner,
+    2026-11-21, change D, and 2026-11-22: every sync app alike, "word the text accordingly"): the save's, the open's
+    and Copy's `cloud_unavailable`. `name`: the file. It names no cause Windows did not give: the sync app may be
+    offline, closed, paused or signed out (`ERROR_CLOUD_FILE_PROVIDER_NOT_RUNNING` and its kin)."""
+    return (
+        f"{name} is only in the cloud (OneDrive or another sync app), and Windows could not download it. Check that "
+        "you are online and that the sync app is running, then try again."
+    )
+
+
 def holds_are_in_use() -> bool:
     """On Windows a try's `EBUSY` is the engine's `InUseError` (a sharing violation: another program holds the file;
     S0148; also a rename over a file the try had checked, refused `ACCESS_DENIED`, which the engine raises as it: owner,

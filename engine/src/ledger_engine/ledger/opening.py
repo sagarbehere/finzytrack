@@ -40,7 +40,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Final, Literal, Protocol
 
-from ledger_engine.fs.port import FileSystem
+from ledger_engine.fs.port import CloudUnavailable, FileSystem
 from ledger_engine.fs.this_os import for_this_os
 from ledger_engine.ledger import fingerprint as _fingerprint
 from ledger_engine.ledger import overlay, publishing
@@ -53,7 +53,7 @@ from ledger_engine.tla import tla_action
 type Phase = Literal["reading"]
 PHASE: Final[Phase] = "reading"
 type Outcome = Literal["loaded", "moved", "fresh", "paused", "refused"]
-type Refusal = Literal["encrypted", "number-failed", "beancount-failed", "cache-on-share"]
+type Refusal = Literal["encrypted", "number-failed", "beancount-failed", "cache-on-share", "cloud-unavailable"]
 
 Target = publishing.Target
 
@@ -111,6 +111,11 @@ class Answer:
     line: int | None = None
 
 
+def _named(e: CloudUnavailable, root: str) -> str:
+    """The file a `CloudUnavailable` names (`fingerprint.chunks` names every file it reads), else the root."""
+    return e.filename if isinstance(e.filename, str) else root
+
+
 @tla_action("StartPublish", "P_Obs", "P_Read", model="mirror-publish")
 def run(ports: Ports, root: str, job: Job, target: Target) -> Answer:
     """The module's docstring: reads the ledger; writes only the workspace's mirror folder in the app's cache."""
@@ -130,7 +135,10 @@ def run(ports: Ports, root: str, job: Job, target: Target) -> Answer:
         if cur is not None:
             return Answer("fresh", published=pb.Published(cur.gen, cur.meta.ledger_version), cleaned=cleaned)
         job.progress(PHASE)
-        loaded = ports.load(root)  # step 3: Beancount's full load (user code)
+        try:
+            loaded = ports.load(root)  # step 3: Beancount's full load (user code)
+        except CloudUnavailable as e:  # S0149 (BL-0283): a cloud-only file Windows could not download, nothing loaded
+            return Answer("refused", cleaned=cleaned, refused=_named(e, root), refusal="cloud-unavailable")
         if isinstance(loaded, overlay.LoadRefused):
             if loaded.read is not None and ports.observe(loaded.read.ledger_set) != loaded.read:
                 return Answer("moved", cleaned=cleaned)  # the disk changed since Beancount failed on it: try again

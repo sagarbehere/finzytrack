@@ -17,7 +17,9 @@ from dataclasses import dataclass
 from typing import Final
 
 from app.platform.engine_jobs.queue import cancel_offered
+from app.platform.engine_jobs.recovery_text import not_downloaded
 from app.platform.engine_jobs.scheduler import DISPLAY_DELAY, JobsStatus, ShownPhase
+from app.platform.engine_paths import last_name
 from app.platform.errors import EngineUnavailableDetails, JobCancelledDetails
 
 PHASES: Final[tuple[tuple[str, str], ...]] = (
@@ -122,6 +124,14 @@ def cache_on_share_text(folder: str) -> str:
     return (
         f"Finzytrack cannot open this workspace. Finzytrack's cache is in {folder}, which is on a network share. "
         "Finzytrack keeps its cache only on a local disk. Your ledger files are not changed."
+    )
+
+
+def cloud_unavailable_text(path: str) -> str:
+    """§11, the open refused `cloud_unavailable` (S0149, BL-0283): `path`, the ledger file Windows could not download,
+    as the engine named it; the text names the file."""
+    return (
+        f"Finzytrack cannot open this workspace. {not_downloaded(last_name(path))} Your ledger files are not changed."
     )
 
 

@@ -85,7 +85,15 @@ class Loaded:
 
 
 type NotLoadedWhy = Literal[
-    "changing", "engine_failed", "refused", "violation", "paused", "number_failed", "beancount_failed", "cache_on_share"
+    "changing",
+    "engine_failed",
+    "refused",
+    "violation",
+    "paused",
+    "number_failed",
+    "beancount_failed",
+    "cache_on_share",
+    "cloud_unavailable",
 ]
 
 
@@ -93,8 +101,9 @@ type NotLoadedWhy = Literal[
 class NotLoaded:
     """The rebuild did not reach a result: logged, nothing shown, nothing gated, nothing owed. `number_failed` and
     `beancount_failed`: Beancount's own load raised on the ledger (S0098); `cache_on_share`: the cache folder is on a
-    network share, refused before any effect (S0134; the open names it to the user). The file or folder named is never
-    logged (INV-23), and no screen shows a rebuild's result yet."""
+    network share, refused before any effect (S0134; the open names it to the user); `cloud_unavailable`: a ledger file
+    only in the cloud that Windows could not download (S0149; the open and the save name it to the user). The file or
+    folder named is never logged (INV-23), and no screen shows a rebuild's result yet."""
 
     why: NotLoadedWhy
 

@@ -30,6 +30,7 @@ from app.platform.engine import EngineRefusal
 from app.platform.engine_jobs.opening import (
     MAX_TRIES,
     CacheOnShare,
+    CloudOnly,
     EncryptedFile,
     NotLoadable,
     NotOpened,
@@ -316,6 +317,25 @@ def test_a_cache_folder_on_a_network_share_is_named_tried_once_and_never_logged(
     assert host("/C/cache") in text
     assert "network share" in text
     assert "local disk" in text
+
+
+def test_S0149_a_ledger_file_windows_could_not_download_is_named_and_never_logged(make: Any) -> None:
+    """S0149 (BL-0283): the engine refused a ledger file only in the cloud that Windows could not download; the open's
+    value names it (`msg:open.cloud_unavailable`), never as an encrypted file; the log says only why (INV-23)."""
+    from app.platform.engine_jobs.text import cloud_unavailable_text
+
+    rig = make({"open": [outcome("refused", refused=host("/L/main.bean"), refusal="cloud_unavailable")]})
+    value = rig.value()
+    assert value == CloudOnly(host("/L/main.bean"))
+    assert not isinstance(value, EncryptedFile)
+    ((name, fields),) = rig.lines()
+    assert (name, fields["why"]) == ("open.not_loaded", "cloud_unavailable")
+    assert host("/L/main.bean") not in repr(fields)
+    assert cloud_unavailable_text(value.path) == (
+        "Finzytrack cannot open this workspace. main.bean is only in the cloud (OneDrive or another sync app), and "
+        "Windows could not download it. Check that you are online and that the sync app is running, then try again. "
+        "Your ledger files are not changed."
+    )
 
 
 def test_a_refusal_from_the_engine_is_internal(make: Any) -> None:

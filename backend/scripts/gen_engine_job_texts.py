@@ -179,6 +179,12 @@ JOB: tuple[Row, ...] = (
         "the open refused `cache_on_share`: the cache folder is on a network share (S0134, BL-0298)",
         lambda: jt.cache_on_share_text(FOLDER),
     ),
+    (
+        "msg:open.cloud_unavailable",
+        "the open refused `cloud_unavailable`: a ledger file only in the cloud that Windows could not download "
+        "(S0149, BL-0283)",
+        lambda: jt.cloud_unavailable_text(FILE),
+    ),
 )
 
 
@@ -212,6 +218,12 @@ SAVE: tuple[Row, ...] = (
         "`CHANGE_NOT_SAVED {in_use}` naming the file another program holds (Windows; S0148, BL-0284); then the "
         "re-hash's sentence",
         lambda: _not_saved("in_use", unchanged=True),
+    ),
+    (
+        "msg:save.cloud_unavailable",
+        "`CHANGE_NOT_SAVED {cloud_unavailable}` naming the file only in the cloud that Windows could not download "
+        "(Windows; S0149, BL-0283); then the re-hash's sentence (here it could not read the file)",
+        lambda: _not_saved("cloud_unavailable", unchanged=False),
     ),
     (
         "msg:save.io_error_folder",
@@ -673,6 +685,11 @@ COPY: tuple[Row, ...] = (
         "msg:copy.source_unreadable",
         "a source file could not be read (here `EIO`)",
         lambda: _not_copied("source_unreadable", errno=errno.EIO),
+    ),
+    (
+        "msg:copy.cloud_unavailable",
+        "a source ledger file only in the cloud that Windows could not download (S0149, BL-0283)",
+        lambda: _not_copied("cloud_unavailable"),
     ),
     ("msg:copy.source_failed", "the source's load could not run", lambda: _not_copied("source_failed")),
     (

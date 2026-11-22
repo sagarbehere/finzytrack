@@ -481,7 +481,10 @@ def test_an_unfinished_save_seen_at_the_recheck_stops_the_rebuild(make: Any) -> 
     assert [(n, f["why"]) for n, f in rig.lines()] == [("rebuild.not_loaded", "paused")]
 
 
-@pytest.mark.parametrize(("why", "line"), [("number_failed", 4), ("beancount_failed", None), ("cache_on_share", None)])
+@pytest.mark.parametrize(
+    ("why", "line"),
+    [("number_failed", 4), ("beancount_failed", None), ("cache_on_share", None), ("cloud_unavailable", None)],
+)
 def test_a_ledger_beancount_cannot_load_is_logged_with_why_and_not_tried_again(
     make: Any, why: str, line: int | None
 ) -> None:

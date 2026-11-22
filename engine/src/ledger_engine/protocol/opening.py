@@ -32,10 +32,12 @@ REFUSAL: Final[dict[opening.Refusal, OpenRefusal]] = {
     "number-failed": "number_failed",
     "beancount-failed": "beancount_failed",
     "cache-on-share": "cache_on_share",
+    "cloud-unavailable": "cloud_unavailable",
 }
 TABLE: Final = "engine.open"
-TABLE_VERSION: Final = 4  # 1 (S0088): the open's load and publish; 2 (S0098): `refusal` among the inputs; 3 (S0132):
-# `sync_refused`; 4 (S0134): `sync_refused` gone with the share's best effort, `refusal` `cache-on-share` (§2)
+TABLE_VERSION: Final = 5  # 1 (S0088): the open's load and publish; 2 (S0098): `refusal` among the inputs; 3 (S0132):
+# `sync_refused`; 4 (S0134): `sync_refused` gone with the share's best effort, `refusal` `cache-on-share` (§2);
+# 5 (S0149): `refusal` `cloud-unavailable`
 
 
 def run(params: Message, ctx: OpenJob) -> Message:

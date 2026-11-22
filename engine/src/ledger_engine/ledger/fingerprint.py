@@ -37,6 +37,8 @@ from collections.abc import Iterator
 from os import path
 from typing import Final
 
+from ledger_engine.fs import this_os
+from ledger_engine.fs.port import CloudUnavailable
 from ledger_engine.ledger import beancount_port as port
 from ledger_engine.ledger.core.ledger_set import (
     Absent,
@@ -48,6 +50,10 @@ from ledger_engine.ledger.core.ledger_set import (
     PackageListing,
     Unreadable,
 )
+
+CLOUD_UNAVAILABLE: Final = Unreadable("cloud_unavailable")
+"""The observed state of a file whose data is only in the cloud and that Windows could not download (S0149, BL-0283;
+`fs.port.CloudUnavailable`)."""
 
 
 def content(data: bytes) -> Content:
@@ -62,13 +68,16 @@ def matches(pattern: str) -> list[str]:
 def file_state(p: str) -> FileState:
     """What the next load would find at `p`: no file (nothing, or a link to nothing), these bytes, or a read that
     fails. Read with `chunks`, so a FIFO or another special file swapped in never blocks the observation (the save's
-    gate before its commit point, S0102, BL-0245): it is `Unreadable("EINVAL")`, as for the copy since S0081."""
+    gate before its commit point, S0102, BL-0245): it is `Unreadable("EINVAL")`, as for the copy since S0081. A
+    cloud-only file Windows could not download is `CLOUD_UNAVAILABLE` (S0149, BL-0283)."""
     if not path.exists(p):
         return Absent()
     h = hashlib.sha256()
     try:
         for chunk in chunks(p):
             h.update(chunk)
+    except CloudUnavailable:
+        return CLOUD_UNAVAILABLE
     except OSError as e:
         return Unreadable(errno.errorcode.get(e.errno, type(e).__name__) if e.errno else type(e).__name__)
     return Content(h.hexdigest())
@@ -84,7 +93,9 @@ def read_regular(p: str) -> bytes:
 def chunks(p: str, size: int = 1 << 20) -> Iterator[bytes]:
     """The bytes of the regular file at `p`, as the loader opens it (links followed), `size` at a time: a copy streams
     its sources with it (S0081), never holding a document whole. Opened without blocking, so a FIFO swapped in never
-    hangs the job (S0081 r1 F5): anything but a regular file raises `OSError` (`EINVAL`), as `open` and `read` do."""
+    hangs the job (S0081 r1 F5): anything but a regular file raises `OSError` (`EINVAL`), as `open` and `read` do. A
+    read Windows' cloud filter refused because a cloud-only file could not be downloaded raises
+    `fs.port.CloudUnavailable` naming `p` (S0149, BL-0283)."""
     # Without blocking (a FIFO swapped in never hangs) and never inherited, on POSIX; Windows has no FIFO a path opens
     # and no `O_NONBLOCK` (S0127, BL-0260). Chosen at the call: the engine imports on any platform (`test_this_os`).
     if sys.platform == "win32":
@@ -96,7 +107,15 @@ def chunks(p: str, size: int = 1 << 20) -> Iterator[bytes]:
             raise OSError(errno.EINVAL, "not a regular file", p)
         if sys.platform != "win32":
             os.set_blocking(fd, True)
-        while chunk := f.read(size):
+        while True:
+            try:
+                chunk = f.read(size)
+            except OSError as e:  # S0149 (BL-0283): the C runtime keeps no Win32 code; asked again with `ReadFile`
+                if this_os.cloud_download_failed(fd):
+                    raise CloudUnavailable(p, str(e)) from e
+                raise
+            if not chunk:
+                return
             yield chunk
 
 

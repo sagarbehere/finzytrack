@@ -114,11 +114,13 @@ def windows_port() -> Iterator[None]:
     """On Windows, the Windows adapter selected for the test (`ledger_engine.fs.under_test`, S0128): the product
     refuses file operations there until BL-0087 turns writes on, and a real-disk test runs the product's own code
     paths on the adapter. A no-op on macOS and Linux. A module opts in with
-    `pytestmark = pytest.mark.usefixtures("windows_port")`."""
+    `pytestmark = pytest.mark.usefixtures("windows_port")`. The test process's placeholder mode is pinned as every
+    engine process pins it at its start (S0149, ADR-0070; the port refuses in any other mode)."""
     if sys.platform != "win32":
         yield
         return
-    from ledger_engine.fs import under_test
+    from ledger_engine.fs import this_os, under_test
 
+    assert this_os.pin_placeholder_mode(), this_os.pin_refused()
     with under_test.windows_port_under_test():
         yield

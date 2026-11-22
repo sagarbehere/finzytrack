@@ -580,6 +580,9 @@ INTERNAL_MESSAGE = "The engine failed on this request; details are in its log."
 
 def unsupported_message() -> str:
     """`engine.unsupported_platform`'s message: the platform named (`sys.platform`), and the ones with a port."""
+    refused = this_os.mode_refusal()
+    if refused is not None:  # S0149 (BL-0283): Windows refused the placeholder mode the engine reads cloud files in
+        return f"Windows did not let the engine read cloud files (OneDrive, other sync apps) as plain files: {refused}."
     return f"This engine has no file-system port for {sys.platform}; it reads and writes ledgers on macOS and Linux."
 
 
@@ -850,6 +853,8 @@ def main(argv: list[str] | None = None) -> int:
         watch_parent(parent)
     else:
         _log(f"the parent is pid {parent}; the engine ends on stdin EOF only")
+    if not this_os.pin_placeholder_mode():  # S0149 (BL-0283): before any file operation; refused, never another mode
+        _log(f"the placeholder mode could not be pinned ({this_os.pin_refused()}); every file operation is refused")
     lock: str | None = args.engine_lock
     identity: Identity | None = args.app_folder_id
     engine = Engine(test_ops=args.test_ops, app_cache=args.app_cache)

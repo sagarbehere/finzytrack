@@ -64,7 +64,7 @@ from dataclasses import dataclass
 from typing import Final, Literal, Protocol
 
 from ledger_engine.fs.pathmodel import host
-from ledger_engine.fs.port import DirHandle, FileSystem, Kind, MalformedPathError, check_name
+from ledger_engine.fs.port import CloudUnavailable, DirHandle, FileSystem, Kind, MalformedPathError, check_name
 from ledger_engine.ledger import beancount_port as port
 from ledger_engine.ledger import fingerprint, overlay
 from ledger_engine.ledger.core import paths as core_paths
@@ -98,6 +98,7 @@ type Reason = Literal[
     "recovery_blocked",  # an `.open` journal names a source (`path`), or a journal could not be read (`detail`)
     "source_missing",  # the source's root does not exist (`path`)
     "source_unreadable",  # a source file could not be read (`path`, `errno`)
+    "cloud_unavailable",  # a source ledger file is only in the cloud and Windows could not download it (`path`; S0149)
     "source_failed",  # the source's load could not run
     "number_failed",  # Beancount's arithmetic failed on a transaction of the source (`path`, `detail`: its line)
     "beancount_failed",  # Beancount's own load raised on the source (`path`, `detail`: the line, if known)
@@ -546,6 +547,8 @@ class Run:
             written = None if feed is None else feed.digest()
         self.made[rel] = _Made(identity, written)
         if feed is not None and isinstance(data, Streamed):
+            if isinstance(feed.error, CloudUnavailable):  # S0149 (BL-0283): a source only in the cloud, not downloaded
+                raise Stop("cloud_unavailable", data.source)
             if feed.error is not None:
                 raise Stop("source_unreadable", data.source, err=feed.error.errno)
             if data.sha256 is not None and written is not None and written[0] != data.sha256:

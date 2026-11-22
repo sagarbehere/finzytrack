@@ -253,6 +253,14 @@ def test_every_reason_has_a_text_that_never_says_delete_it(reason: str) -> None:
     assert "You can delete" not in text
 
 
+def test_S0149_a_source_windows_could_not_download_is_named() -> None:
+    text = copy_text.text(NotCopied("cloud_unavailable", FOLDER, (), path=SOURCE))
+    assert text.startswith(
+        "Not copied. Main Books.beancount is only in the cloud (OneDrive or another sync app), and Windows could not "
+        "download it."
+    ), text
+
+
 def test_the_manifest_of_a_copy_has_a_new_lineage_and_the_sources_root_name() -> None:
     (only,) = MANIFEST
     read = read_manifest(only.text.encode("utf-8"))

@@ -158,6 +158,30 @@ class ReplaceDenied(PermissionError):
         super().__init__(errno.EACCES, "the replace was refused: " + " ".join(what))
 
 
+CLOUD_DOWNLOAD_ERRORS: Final = frozenset({362, 386, 387, 388, 389, 393, 398, 404, 426})
+"""The Win32 codes (`winerror.h`) with which Windows' cloud filter refuses a read of a file whose data is only in the
+cloud, because the download did not happen (S0149, BL-0283): `ERROR_CLOUD_FILE_PROVIDER_NOT_RUNNING` (362; probed: the
+sync app not running or disconnected, the 2026-11-22 run 1), `_AUTHENTICATION_FAILED` (386), `_INSUFFICIENT_RESOURCES`
+(387), `_NETWORK_UNAVAILABLE` (388), `_UNSUCCESSFUL` (389), `_REQUEST_ABORTED` (393), `_REQUEST_CANCELED` (398),
+`_PROVIDER_TERMINATED` (404) and `_REQUEST_TIMEOUT` (426). The cloud filter's other codes (corrupt metadata, a file not
+in sync, a pinned file) are not "could not download" and stay plain errors. Each code's meaning is checked against
+Windows' own message table on the runner (`tests/fs/test_windows_cloud.py`)."""
+
+
+class CloudUnavailable(OSError):
+    """A ledger file's data is only in the cloud (a OneDrive, Dropbox, Google Drive or Box placeholder: every Cloud
+    Files provider alike; owner, 2026-11-22: "Yes let's support every such provider and word the text accordingly")
+    and Windows could not download it: the sync app is not running, the PC is offline, the account is signed out
+    (`CLOUD_DOWNLOAD_ERRORS`; S0149, BL-0283). Nothing was read. An `OSError` (`EIO`, the file in `filename`; None for
+    the adapter's own reads, which know no path), so every caller fails as on any failed read; the save
+    (`writer.Reason.CLOUD_UNAVAILABLE`), the open, the rebuild and Copy tell it apart, naming the file. Raised on
+    Windows only: by the adapter for its own reads, and by `fingerprint.chunks` after a read through the C runtime
+    failed (`this_os.cloud_download_failed`)."""
+
+    def __init__(self, path: str | None, *what: str) -> None:
+        super().__init__(errno.EIO, "only in the cloud and not downloaded: " + " ".join(what), path)
+
+
 class Kind(StrEnum):
     FILE = "file"
     DIR = "dir"

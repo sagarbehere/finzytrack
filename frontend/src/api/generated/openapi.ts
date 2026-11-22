@@ -525,7 +525,7 @@ export interface components {
         /** @constant */
         NotReadyPhase: "WARMING";
         /** @enum {string} */
-        NotSavedReason: "hard_linked" | "locked" | "not_a_file" | "permission" | "io_error" | "in_use" | "read_back" | "name_not_utf8" | "linked_folder" | "no_drive_id" | "no_folder_id" | "engine_stopped" | "case_twins" | "folder_appeared" | "app_folder_missing" | "outside_folder" | "link_in_copy" | "copy_folder_moved" | "copy_folder_missing" | "unsafe_app_folder";
+        NotSavedReason: "hard_linked" | "locked" | "not_a_file" | "permission" | "io_error" | "in_use" | "cloud_unavailable" | "read_back" | "name_not_utf8" | "linked_folder" | "no_drive_id" | "no_folder_id" | "engine_stopped" | "case_twins" | "folder_appeared" | "app_folder_missing" | "outside_folder" | "link_in_copy" | "copy_folder_moved" | "copy_folder_missing" | "unsafe_app_folder";
         /** @enum {string} */
         PausedReason: "unfinished_save" | "earlier_unfinished";
         /** PlanAlreadyConfirmedError */

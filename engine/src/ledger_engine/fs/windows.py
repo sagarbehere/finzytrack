@@ -18,17 +18,16 @@ Windows since S0129, each in its own Job Object).
   follow links, as `open(2)` does. Names are checked by the Windows path model first (`check_name`: reserved device
   names, a trailing dot or space and the characters no name holds are refused).
 - **Kinds.** A reparse point whose tag is a symbolic link or a junction is a `LINK`; any other reparse point the
-  process sees (a deduplicated file, an AppExecLink, a cloud placeholder where placeholders are exposed) is `OTHER`, so
-  the save refuses it (`not_a_file`). **Cloud placeholders** (OneDrive's Files On-Demand; probed in S0144 with
-  Windows' own cloud filter, BL-0283): a process's placeholder mode decides. Microsoft documents exposed placeholders
-  as most applications' default; there a placeholder is `OTHER` (refused, as above; a placeholder folder or sync root
-  refused by `open_child`, `ELOOP`). In the `disguise_placeholder` mode (which the probe's reader processes had without
-  any call, while the provider that started them had `application_default`) the cloud filter hides the reparse point:
-  a placeholder file or folder, cloud-only or hydrated, and the sync root are a `FILE` or a `DIR` here; a cloud-only
-  file shows only `RECALL_ON_DATA_ACCESS`; the adapter's `read`, a raw handle and `open()` each downloaded it at its
-  first read; with the provider not running a read (`sha256` too) fails with `ERROR_CLOUD_FILE_PROVIDER_NOT_RUNNING`
-  (362, `errno` `EINVAL`). Which mode the product's engine gets, and so whether this adapter reads and saves a OneDrive
-  file or refuses it (`not_a_file`), is S0149's to establish.
+  process sees (a deduplicated file, an AppExecLink) is `OTHER`, so the save refuses it (`not_a_file`). **Cloud
+  placeholders** (OneDrive's Files On-Demand and every other Cloud Files provider alike; S0149, BL-0283, ADR-0070):
+  every engine process pins `disguise_placeholder` at its start (`this_os.pin_placeholder_mode`), so the cloud filter
+  hides the reparse point: a placeholder file or folder, cloud-only or downloaded, and the sync root are a `FILE` or a
+  `DIR` here, read and saved as one; a read of a cloud-only file downloads it; the save's rename leaves a plain file at
+  the name (probed with Windows' own cloud filter, S0144 and the 2026-11-22 run 11). Links and junctions stay `LINK`
+  (run 11). Where a process exposes placeholders (not the engine's) a placeholder is `OTHER`. A read the cloud filter
+  refuses because a cloud-only file could not be downloaded (the sync app not running, offline:
+  `port.CLOUD_DOWNLOAD_ERRORS`, as Win32 codes or as `STATUS_CLOUD_FILE_*`) raises `port.CloudUnavailable`
+  (`_win_error`, `_nt_error`).
   A file with the read-only attribute is `locked` (Windows refuses to replace or remove it): the save refuses it before
   writing. A file Windows' EFS encrypts is `encrypted`: the save refuses it before writing (`encrypted_file`; owner,
   2026-11-17: "1a"), so its bytes never reach a backup or a staging file in the clear. Windows has no mode bits:
@@ -145,8 +144,10 @@ from typing import Any, Final, Self
 from ledger_engine.fs.pathmodel import host
 from ledger_engine.fs.port import (
     CHUNK,
+    CLOUD_DOWNLOAD_ERRORS,
     AclEntry,
     Caps,
+    CloudUnavailable,
     EntryStat,
     FolderMark,
     FoldRule,
@@ -454,15 +455,33 @@ def _win_error(*what: str, code: int | None = None) -> OSError:
     """The last Win32 error (or `code`) as Python's `OSError`, its `errno` from Windows' own mapping; `what` names
     the call and the entry."""
     c = ctypes.get_last_error() if code is None else code
+    if c in CLOUD_DOWNLOAD_ERRORS:  # S0149 (BL-0283): a cloud-only file Windows could not download
+        return CloudUnavailable(None, *what, f"(Win32 {c})")
     return OSError(None, " ".join(what) + ": " + ctypes.FormatError(c).strip(), None, c)
+
+
+STATUS_CLOUD_FILE_MASK: Final = 0xFFFFFF00
+STATUS_CLOUD_FILE_FACILITY: Final = 0xC000CF00
+"""`STATUS_CLOUD_FILE_*` (`ntstatus.h`): the cloud filter's errors, told by their Win32 code (`_dos_error`)."""
+
+
+def _dos_error(status: int) -> int:
+    """The Win32 code Windows maps an NTSTATUS to (`RtlNtStatusToDosError`)."""
+    convert = ctypes.WinDLL("ntdll").RtlNtStatusToDosError
+    convert.argtypes = [wintypes.ULONG]
+    convert.restype = wintypes.ULONG
+    return int(convert(status))
 
 
 def _nt_error(status: int, *what: str) -> OSError:
     """An NTSTATUS as `OSError`, its `errno` from `STATUS_ERRNO`; a sharing violation is `InUseError` (`EBUSY`:
-    another program holds the entry; S0148, BL-0284)."""
+    another program holds the entry; S0148, BL-0284); a cloud-only file Windows could not download is
+    `CloudUnavailable` (S0149, BL-0283)."""
     s = status & 0xFFFFFFFF
     if s == STATUS_SHARING_VIOLATION:
         return InUseError(*what, f"(NTSTATUS {s:#010x})")
+    if s & STATUS_CLOUD_FILE_MASK == STATUS_CLOUD_FILE_FACILITY and _dos_error(s) in CLOUD_DOWNLOAD_ERRORS:
+        return CloudUnavailable(None, *what, f"(NTSTATUS {s:#010x})")  # S0149 (BL-0283), as `_win_error`'s
     return OSError(STATUS_ERRNO.get(s, errno.EIO), " ".join(what) + f" (NTSTATUS {s:#010x})")
 
 

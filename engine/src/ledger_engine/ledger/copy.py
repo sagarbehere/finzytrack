@@ -50,7 +50,7 @@ from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass, field
 
 from ledger_engine.fs.pathmodel import host
-from ledger_engine.fs.port import FileSystem, LegacyAbsent, LegacyHeld, LegacyLocks, Lock
+from ledger_engine.fs.port import CloudUnavailable, FileSystem, LegacyAbsent, LegacyHeld, LegacyLocks, Lock
 from ledger_engine.ledger import beancount_port as port
 from ledger_engine.ledger import copy_check, create, fingerprint, fresh_load, loads_same, overlay
 from ledger_engine.ledger.core import copy_layout as cl
@@ -278,6 +278,8 @@ class _CopySteps:
     def _load_source(self, root: str) -> overlay.Loaded:
         try:
             loaded = self.ports.load(root)
+        except CloudUnavailable as e:  # S0149 (BL-0283): nothing read past it, nothing written
+            raise Stop("cloud_unavailable", e.filename if isinstance(e.filename, str) else root) from None
         except OSError as e:
             raise Stop("source_unreadable", e.filename if isinstance(e.filename, str) else root, err=e.errno) from None
         except Exception:  # noqa: BLE001 (the load could not run: a plugin, Beancount)
@@ -403,6 +405,8 @@ class _CopySteps:
         it, and checked against the fingerprint first). What Beancount parses from it decides (`copy_layout`)."""
         try:
             data = b"".join(self.ports.source(p))
+        except CloudUnavailable:  # S0149 (BL-0283): dehydrated since the load read it, and not downloaded again
+            raise Stop("cloud_unavailable", p) from None
         except OSError as e:
             raise Stop("source_unreadable", p, err=e.errno) from None
         if fingerprint.content(data).sha256 != sha:

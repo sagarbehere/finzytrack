@@ -207,7 +207,8 @@ REBUILD_NOT_LOADED = Event(
             "why",
             Kind.ENUM,  # `changing`: the disk moved in every try; the rest: why no try reached a result
             # paused: an `.open` journal; number_failed, beancount_failed: Beancount's own load raised (S0098);
-            # cache_on_share: the cache folder is on a network share (S0134)
+            # cache_on_share: the cache folder is on a network share (S0134); cloud_unavailable: a ledger file only in
+            # the cloud that Windows could not download (S0149)
             frozenset(
                 {
                     "changing",
@@ -218,6 +219,7 @@ REBUILD_NOT_LOADED = Event(
                     "number_failed",
                     "beancount_failed",
                     "cache_on_share",
+                    "cloud_unavailable",
                 }
             ),
         ),
@@ -272,7 +274,8 @@ OPEN_NOT_LOADED = Event(
             "why",
             # `changing`: the disk moved in every try; `paused`: an `.open` journal; `encrypted`: ADR-0059;
             # `number_failed`, `beancount_failed`: Beancount's own load raised on the ledger (S0098);
-            # `cache_on_share`: the cache folder is on a network share (S0134)
+            # `cache_on_share`: the cache folder is on a network share (S0134); `cloud_unavailable`: a ledger file only
+            # in the cloud that Windows could not download (S0149)
             Kind.ENUM,
             frozenset(
                 {
@@ -284,6 +287,7 @@ OPEN_NOT_LOADED = Event(
                     "number_failed",
                     "beancount_failed",
                     "cache_on_share",
+                    "cloud_unavailable",
                 }
             ),
         ),

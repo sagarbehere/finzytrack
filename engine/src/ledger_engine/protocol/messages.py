@@ -353,7 +353,8 @@ class SaveResult(Message):
     never yet, BL-0113). `refused`: before the commit point, nothing written (`reason`: `unfinished_save`,
     `ledger_changed`, `mirror_stale`, `encrypted_file`). `not_saved`: the writer's `NotSaved` (`reason` its own:
     `hard_linked`, `locked`, `not_a_file`, `permission`, `changed`, `path_moved`, `read_back`, `io_error`, `in_use`
-    (another program holds the file `path`: Windows, S0148),
+    (another program holds the file `path`: Windows, S0148), `cloud_unavailable` (the file `path` is only in the cloud
+    and Windows could not download it: S0149),
     `name_not_utf8`, `linked_folder`, `no_drive_id`, `no_folder_id`, `case_twins`, `folder_appeared`,
     `app_folder_missing`, `outside_folder`, `link_in_copy`, `copy_folder_moved`, `copy_folder_missing`,
     `unsafe_app_folder`, `encrypted_file` (a file the file system encrypts: Windows' EFS, S0128);
@@ -434,15 +435,17 @@ class RebuildParams(Message):
 type Publish = Literal["published", "fresh", "inexact", "replaced", "incomplete"]
 
 
-type RebuildRefusal = Literal["number_failed", "beancount_failed", "cache_on_share"]
+type RebuildRefusal = Literal["number_failed", "beancount_failed", "cache_on_share", "cloud_unavailable"]
 """Why a rebuild was refused. Beancount's own load raised although it ran (S0098, `ledger.load_failure`):
 `number_failed`, its decimal arithmetic raised while it worked on the transaction `line` names (a filled-in amount it
 cannot quantize, a total price or cost for a quantity of 0); `beancount_failed`, anything else of its own load raised
 (a plugin's entry its checks cannot read, a plugin that fails while imported); bean-check fails on the same ledger. Or
 `cache_on_share`: the mirror's cache folder is on a network share, refused before any effect, `refused` naming that
-folder (`design/specs/mirror/publish.md` §2, S0134)."""
+folder (`design/specs/mirror/publish.md` §2, S0134). Or `cloud_unavailable`: a ledger file's data is only in the cloud
+(OneDrive or another sync app) and Windows could not download it, nothing loaded, `refused` naming that file (S0149,
+BL-0283)."""
 
-type OpenRefusal = Literal["encrypted", "number_failed", "beancount_failed", "cache_on_share"]
+type OpenRefusal = Literal["encrypted", "number_failed", "beancount_failed", "cache_on_share", "cloud_unavailable"]
 
 
 class RebuildResult(Message):
@@ -455,7 +458,8 @@ class RebuildResult(Message):
     `fresh`, else null. `removed`, `remove_failed`: the cleanup's counts. `refused` (S0098): Beancount's own load
     raised on the ledger, nothing published: `refusal` says why (`number_failed`, its arithmetic failed on the
     transaction `line` names; `beancount_failed`, any other failure; `cache_on_share`, the cache folder is on a network
-    share, nothing done, S0134), `refused` names the file (the folder) and `line` the line when known; all three are
+    share, nothing done, S0134; `cloud_unavailable`, a ledger file only in the cloud that Windows could not download,
+    nothing loaded, S0149), `refused` names the file (the folder) and `line` the line when known; all three are
     null otherwise. `errors` counts Beancount's errors, as bean-check does (the warnings on
     numbers it rounded are rows of `ledger_errors`, not errors). It runs the ledger's plugins, so the engine is retired
     after it."""
@@ -497,7 +501,8 @@ class OpenResult(Message):
     nothing published) or `refused` (nothing loaded: `refusal` says why, `refused` names the file and `line` the line
     when known: `encrypted`, an encrypted file, ADR-0059; `number_failed` and `beancount_failed`, Beancount's own load
     raised on the ledger, S0098; `cache_on_share`, the cache folder is on a network share, nothing done, `refused`
-    naming that folder, S0134; all three null otherwise). `publish`: what became of a
+    naming that folder, S0134; `cloud_unavailable`, a ledger file only in the cloud that Windows could not download,
+    S0149; all three null otherwise). `publish`: what became of a
     `loaded` result (`published`, or why not), `fresh` for `fresh`, null otherwise. `number` and `ledger_version`: the
     current generation's when `publish` is `published` or `fresh`, else null. `removed`, `remove_failed`: the
     cleanup's counts. It runs the ledger's plugins, so the engine is retired after it."""
@@ -651,7 +656,8 @@ class CopyParams(Message):
     the user named it), the files of `.finzytrack/` (the manifest, with the copy's new lineage id), the app's local data
     folder (its `local/<key>/journal/` folders are read for `.open` journals) and the legacy write-lock files to try
     (ADR-0062). Its answers are the create's (`CreateResult`, `CreateOutcomeResult`), with the copy's own reasons:
-    `legacy_saving`, `recovery_blocked`, `source_missing`, `source_unreadable`, `source_failed`, `number_failed` and
+    `legacy_saving`, `recovery_blocked`, `source_missing`, `source_unreadable`, `cloud_unavailable` (a source ledger
+    file only in the cloud that Windows could not download: S0149), `source_failed`, `number_failed` and
     `beancount_failed` (Beancount's own load raised on the source: `path`, `detail` the line when known; S0098),
     `encrypted`,
     `source_changed`, `cannot_rewrite`, `cannot_place`, `load_differs`, `plugin_modules` (and `load_failed`,

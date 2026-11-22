@@ -215,8 +215,9 @@ def test_only_the_server_takes_the_engine_lock_through_the_selection_point() -> 
 
 
 def test_the_selection_point_reads_the_switch_only_beside_a_windows_check() -> None:
-    """`supported`, `for_this_os` and `legacy_locks_for_this_os` read `under_test.selected()`, each in a condition that
-    also asks for win32; nothing else in the selection point reads it."""
+    """`supported`, `for_this_os`, `legacy_locks_for_this_os` and `mode_refusal` (S0149: which refusal message an
+    unsupported Windows gets) read `under_test.selected()`, each in a condition that also asks for win32; nothing else
+    in the selection point reads it."""
     tree = ast.parse((SRC / SELECTION).read_text(encoding="utf-8"))
     reads: set[str] = set()
     for f in tree.body:
@@ -227,7 +228,12 @@ def test_the_selection_point_reads_the_switch_only_beside_a_windows_check() -> N
             for n in ast.walk(f):
                 if isinstance(n, ast.BoolOp) and any("under_test" in ast.unparse(v) for v in n.values):
                     assert any("win32" in ast.unparse(v) for v in n.values), ast.unparse(n)
-    assert reads == {"supported.selected", "for_this_os.selected", "legacy_locks_for_this_os.selected"}
+    assert reads == {
+        "supported.selected",
+        "for_this_os.selected",
+        "legacy_locks_for_this_os.selected",
+        "mode_refusal.selected",
+    }
 
 
 PATHMODEL = "ledger_engine.fs.pathmodel"

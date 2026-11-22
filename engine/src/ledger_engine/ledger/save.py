@@ -70,6 +70,7 @@ from ledger_engine.ledger.core import journal
 from ledger_engine.ledger.core import paths as core_paths
 from ledger_engine.ledger.core.journal import FolderEntry, Record, State
 from ledger_engine.ledger.core.ledger_set import Absent, Content, Fingerprint, Unreadable
+from ledger_engine.ledger.fingerprint import CLOUD_UNAVAILABLE
 from ledger_engine.ledger.handles import join, sha256
 from ledger_engine.ledger.writer import (
     Anchor,
@@ -417,6 +418,20 @@ def _unreadable(now: Fingerprint, plan: Fingerprint, writes: Mapping[str, str | 
     return None
 
 
+def _not_downloaded(now: Fingerprint, plan: Fingerprint) -> str | None:
+    """The first ledger file the gate's observation found only in the cloud and not downloaded
+    (`fingerprint.CLOUD_UNAVAILABLE`, S0149, BL-0283) where the plan read its bytes, when nothing else of the
+    observation differs from the plan: the save is then not saved for that reason, naming it, whether or not the save
+    writes that file (an `include` it only reads counts too: the ledger did not change, Windows could not read it).
+    Any other difference beside it stays `_unreadable`'s and `ledger_changed`'s, as before."""
+    planned = dict(plan.files)
+    cloud = [p for p, st in now.files if st == CLOUD_UNAVAILABLE and isinstance(planned.get(p), Content)]
+    if not cloud:
+        return None
+    files = tuple((q, planned[q] if q in cloud else st) for q, st in now.files)
+    return cloud[0] if replace(now, files=files) == plan else None
+
+
 @tla_action("SaveCut", model="mirror-publish")
 def run(plan: SavePlan, ports: Ports, job: Job) -> SaveOutcome:
     """§6.1 steps 1-11 in this engine (the module's docstring). For the mirror-publish model, `SaveCut` is this run
@@ -465,6 +480,9 @@ def _gated(
 ) -> SaveOutcome:
     now = ports.observe(plan.fingerprint)  # step 4
     if now != plan.fingerprint:
+        cloud = _not_downloaded(now, plan.fingerprint)
+        if cloud is not None:  # S0149 (BL-0283): a cloud-only file Windows could not download, nothing else differs
+            return _not_saved(ports, plan, Reason.CLOUD_UNAVAILABLE, path=cloud)
         unreadable = _unreadable(now, plan.fingerprint, {c.path: c.pre for c in plan.changes})
         return refused("ledger_changed") if unreadable is None else io_error(unreadable)
     published = publish.read_published(ports.fs, plan.app_cache, plan.workspace_key, ports.store)

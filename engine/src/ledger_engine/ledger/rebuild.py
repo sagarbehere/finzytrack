@@ -43,7 +43,7 @@ from dataclasses import dataclass, field
 from typing import Final, Literal, Protocol
 
 from ledger_engine.fs.pathmodel import host
-from ledger_engine.fs.port import FileSystem
+from ledger_engine.fs.port import CloudUnavailable, FileSystem
 from ledger_engine.fs.this_os import for_this_os
 from ledger_engine.ledger import beancount_port as port
 from ledger_engine.ledger import fingerprint as _fingerprint
@@ -57,7 +57,7 @@ from ledger_engine.tla import tla_action
 type Phase = Literal["updating_views"]
 PHASE: Final[Phase] = "updating_views"
 type Outcome = Literal["loaded", "moved", "fresh", "paused", "refused"]
-type Refusal = load_failure.Reason | Literal["cache-on-share"]
+type Refusal = load_failure.Reason | Literal["cache-on-share", "cloud-unavailable"]
 """Why `refused`: Beancount's own load raised on the ledger (`load_failure.Reason`), or the mirror's cache folder is
 on a network share, refused before any effect (`cache-on-share`; publish.md §2, S0134)."""
 
@@ -203,6 +203,16 @@ def _refuse_special(seen: Fingerprint) -> None:
             raise OSError(errno.EINVAL, "not a regular file", p)
 
 
+def _named(e: CloudUnavailable, root: str) -> str:
+    return e.filename if isinstance(e.filename, str) else root
+
+
+def _not_downloaded(seen: Fingerprint) -> str | None:
+    """The first ledger file `seen` found only in the cloud and not downloaded (`fingerprint.CLOUD_UNAVAILABLE`; S0149,
+    BL-0283), or None."""
+    return next((p for p, st in seen.files if st == _fingerprint.CLOUD_UNAVAILABLE), None)
+
+
 @tla_action("StartPublish", "P_Obs", "P_Read", model="mirror-publish")
 def run(ports: Ports, hint: Fingerprint, job: Job, target: Target) -> Answer:
     """The module's docstring: reads the ledger; writes only the workspace's mirror folder in the app's cache."""
@@ -225,13 +235,21 @@ def run(ports: Ports, hint: Fingerprint, job: Job, target: Target) -> Answer:
         ledger_set = hint.ledger_set
         before = ports.observe(ledger_set)  # step 1
         _refuse_special(before)  # Beancount's own load would block on it (S0102 round 1, red team F5)
+        cloud = _not_downloaded(before)
+        if cloud is not None:  # S0149 (BL-0283): a cloud-only file Windows could not download; Beancount's own read
+            return Answer("refused", hint, cleaned=cleaned, refusal="cloud-unavailable", refused=cloud)  # names none
         job.progress(PHASE)
         parsed: list[str] = []
         modules: dict[ModuleKey, Module | None] = {}
         try:
             with imports.recording(modules):  # what its imports read (S0099, BL-0124)
                 result = ports.load(ledger_set.root, parsed)  # step 2: Beancount's own loader (user code)
-        except (OSError, port.EncryptedFileMet):
+        except OSError:
+            cloud = _not_downloaded(ports.observe(ledger_set))  # S0149: Beancount's `open` keeps no Win32 code
+            if cloud is None:
+                raise
+            return Answer("refused", hint, cleaned=cleaned, refusal="cloud-unavailable", refused=cloud)
+        except port.EncryptedFileMet:
             raise
         except Exception as e:  # Beancount's own load raised on the ledger: refused, never raised
             if not load_failure.beancounts(e):
@@ -263,6 +281,9 @@ def run(ports: Ports, hint: Fingerprint, job: Job, target: Target) -> Answer:
         # observed again, so a change in between is a moved disk; a file gone or unreadable meanwhile is one too.
         try:
             warnings = ports.warnings(entries, options, parsed)
+        except CloudUnavailable as e:  # S0149: dehydrated since the load read it, and not downloaded again
+            named = _named(e, ledger_set.root)
+            return Answer("refused", hint, cleaned=cleaned, refusal="cloud-unavailable", refused=named)
         except OSError:
             return Answer("moved", ports.observe(ledger_set), cleaned=cleaned)
         after = ports.observe(ledger_set)  # step 3

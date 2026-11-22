@@ -123,9 +123,26 @@ class CacheOnShare:
     folder: str
 
 
-type OpenValue = Opened | NotOpened | EncryptedFile | NotLoadable | CacheOnShare
+@dataclass(frozen=True, slots=True)
+class CloudOnly:
+    """A ledger file is only in the cloud (OneDrive or another sync app) and Windows could not download it, nothing
+    loaded (S0149, BL-0283): `path` names it, for the open's screen (`text.cloud_unavailable_text`; never logged,
+    INV-23)."""
+
+    path: str
+
+
+type OpenValue = Opened | NotOpened | EncryptedFile | NotLoadable | CacheOnShare | CloudOnly
 type NotLoadedWhy = Literal[
-    "changing", "paused", "encrypted", "refused", "violation", "number_failed", "beancount_failed", "cache_on_share"
+    "changing",
+    "paused",
+    "encrypted",
+    "refused",
+    "violation",
+    "number_failed",
+    "beancount_failed",
+    "cache_on_share",
+    "cloud_unavailable",
 ]
 
 
@@ -200,6 +217,8 @@ def run_open(ctx: JobContext, target: OpenTarget, clock: Clock) -> tuple[OpenVal
                     return NotLoadable(a.refusal, a.refused, a.line), a.refusal
                 if a.refusal == "cache_on_share":
                     return CacheOnShare(a.refused), "cache_on_share"
+                if a.refusal == "cloud_unavailable":  # S0149 (BL-0283): the same in every try until it can download
+                    return CloudOnly(a.refused), "cloud_unavailable"
                 return EncryptedFile(a.refused), "encrypted"
             case "moved":
                 continue

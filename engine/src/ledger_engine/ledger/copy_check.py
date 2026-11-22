@@ -24,6 +24,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Literal, NoReturn, cast
 
+from ledger_engine.fs import this_os
 from ledger_engine.ledger import loads_same, overlay
 from ledger_engine.ledger.core import copy_layout as cl
 from ledger_engine.ledger.policy import DESKTOP
@@ -150,12 +151,20 @@ def main(raw: Mapping[str, object]) -> NoReturn:
         os._exit(0 if answered else 1)
 
 
+def _checked(request: CheckRequest) -> CheckResult:
+    """The load of the copy, in this process's pinned placeholder mode (S0149: as the engine's start; a refused pin
+    fails the check)."""
+    if not this_os.pin_placeholder_mode():
+        raise this_os.UnsupportedPlatform
+    return check_loaded(overlay.load(request.root, {}, DESKTOP), request)
+
+
 def _answer(raw: Mapping[str, object]) -> bool:
     out = os.dup(1)
     os.dup2(2, 1)  # what a plugin prints goes to standard error, never into the answer
     request = CheckRequest.decode(cast("Mapping[str, object]", raw["request"]))
     try:
-        result = check_loaded(overlay.load(request.root, {}, DESKTOP), request)
+        result = _checked(request)
     except BaseException as e:  # noqa: BLE001 (the load could not run: a plugin, its `SystemExit` included, the disk)
         result = CheckResult("failed", subject=type(e).__name__)
     with os.fdopen(out, "wb") as f:

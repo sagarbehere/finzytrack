@@ -287,10 +287,10 @@ type Publish = Literal["published", "fresh", "inexact", "replaced", "incomplete"
 type LoadRefusal = Literal["number_failed", "beancount_failed"]
 """Beancount's own load raised on the ledger (S0098): its arithmetic failed on the transaction the line names, or
 anything else of its load failed (a plugin's entry its checks cannot read). bean-check fails on the same ledger."""
-type RebuildRefusal = Literal["number_failed", "beancount_failed", "cache_on_share"]
+type RebuildRefusal = Literal["number_failed", "beancount_failed", "cache_on_share", "cloud_unavailable"]
 """`LoadRefusal`, or `cache_on_share`: the mirror's cache folder is on a network share, refused before any effect
 (`design/specs/mirror/publish.md` §2, S0134); `refused` names that folder."""
-type OpenRefusal = Literal["encrypted", "number_failed", "beancount_failed", "cache_on_share"]
+type OpenRefusal = Literal["encrypted", "number_failed", "beancount_failed", "cache_on_share", "cloud_unavailable"]
 
 
 @dataclass(frozen=True, slots=True)

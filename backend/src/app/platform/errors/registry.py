@@ -138,6 +138,7 @@ type NotSavedReason = Literal[
     "permission",  # the system would not allow the save: a mode, an ACL, unreadable extended attributes
     "io_error",  # the disk answered an error (a full disk, an I/O error)
     "in_use",  # another program holds the file (Windows: an editor, antivirus, OneDrive's upload; S0148, BL-0284)
+    "cloud_unavailable",  # a ledger file only in the cloud that Windows could not download (S0149, BL-0283)
     "read_back",  # a written file did not read back as written (the save was rolled back)
     "name_not_utf8",  # a path is not valid UTF-8
     "linked_folder",  # a link stands in place of the workspace's own journal, backups or key folder (S0077, BL-0193)

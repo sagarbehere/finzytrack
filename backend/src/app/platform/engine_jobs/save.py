@@ -69,6 +69,7 @@ WRITER_REASONS: Final[frozenset[str]] = frozenset(
         "permission",
         "io_error",
         "in_use",
+        "cloud_unavailable",
         "read_back",
         "name_not_utf8",
         "linked_folder",

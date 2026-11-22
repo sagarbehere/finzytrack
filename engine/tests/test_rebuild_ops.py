@@ -66,7 +66,7 @@ def test_a_saved_ledger_is_rebuilt_through_the_protocol(fresh_setup: tuple[Path,
     assert (result["outcome"], result["errors"]) == ("loaded", 0)
     assert result["entries"] > 0
     assert reply["events"] == ["updating_views"]
-    assert (reply["decision"]["table"], reply["decision"]["version"]) == ("engine.rebuild", 5)
+    assert (reply["decision"]["table"], reply["decision"]["version"]) == ("engine.rebuild", 6)
     # S0087 (BL-0113): published after the save's generation (number 1, the setup's), the save's change in it
     assert (result["publish"], result["number"]) == ("published", 2)
     mirror = ald.parent / "cache" / "workspaces" / "k1" / "mirror"

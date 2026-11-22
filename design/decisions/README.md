@@ -85,6 +85,7 @@ This folder holds the architecture decision records of Finzytrack v0.4: why the 
 | [ADR-0067](ADR-0067-integrity-blocks-accounting-advises.md) | Integrity blocks, accounting advises | Accepted; parts superseded by ADR-0068 | 2026-10-31 | write path, data safety, engine |
 | [ADR-0068](ADR-0068-step-back-simplifications.md) | Step-back simplifications | Accepted; D6 narrowed and moved into the review budget (IMP-0067, IMP-0068) | 2026-11-01 | write path, data safety, engine, formal model, process |
 | [ADR-0069](ADR-0069-the-replace-on-windows.md) | The replace on Windows (Windows has no one-step swap) | Accepted (owner, 2026-11-17; S0126) | 2026-11-17 | write path, data safety, platforms |
+| [ADR-0070](ADR-0070-the-engines-placeholder-mode.md) | The engine's placeholder mode (cloud files on Windows) | Accepted (owner, 2026-11-22; S0149) | 2026-11-22 | write path, data safety, platforms |
 
 ## Template
 

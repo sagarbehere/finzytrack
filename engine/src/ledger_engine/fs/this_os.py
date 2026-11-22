@@ -22,9 +22,10 @@ import errno
 import os
 import sys
 from collections.abc import Callable
+from typing import Final
 
 from ledger_engine.fs import under_test
-from ledger_engine.fs.port import DirHandle, FileSystem, FolderId, LegacyLocks
+from ledger_engine.fs.port import CLOUD_DOWNLOAD_ERRORS, DirHandle, FileSystem, FolderId, LegacyLocks
 
 if sys.platform == "darwin":
     from ledger_engine.fs.darwin import DarwinFS, DarwinLegacyLocks
@@ -42,8 +43,10 @@ class UnsupportedPlatform(OSError):
 
 
 def supported() -> bool:
-    """Whether this operating system has a file-system port the product uses (Windows only under test)."""
-    return sys.platform in PORTED or (sys.platform == "win32" and under_test.selected())
+    """Whether this operating system has a file-system port the product uses (Windows only under test), and on
+    Windows whether this process runs in the engine's placeholder mode (`pin_placeholder_mode`; S0149): in any other
+    mode, a refused pin included, every file operation is refused, never run in another mode."""
+    return sys.platform in PORTED or (sys.platform == "win32" and under_test.selected() and pin_refused() is None)
 
 
 def for_this_os(on_fallback: Callable[[], None] | None = None) -> FileSystem:
@@ -53,7 +56,7 @@ def for_this_os(on_fallback: Callable[[], None] | None = None) -> FileSystem:
         return DarwinFS(on_fallback)
     if sys.platform == "linux":
         return linux.LinuxFS(on_fallback)
-    if sys.platform == "win32" and under_test.selected():
+    if sys.platform == "win32" and under_test.selected() and pin_refused() is None:  # S0149: another mode refuses
         from ledger_engine.fs import windows  # imported only here: the product never loads it (S0128)
 
         return windows.WindowsFS(on_fallback)
@@ -125,3 +128,80 @@ def placeholder_mode() -> int | None:
         query.restype = ctypes.c_byte
         return int(query())
     return None
+
+
+PHCM_DISGUISE_PLACEHOLDER: Final = 1
+"""The engine's placeholder mode (S0149, BL-0283; owner, 2026-11-22: "A"; ADR-0070): every cloud placeholder (OneDrive,
+Dropbox, Google Drive, Box: any Cloud Files provider) is a plain file or folder to this process, read and replaced as
+one; a read of a cloud-only file downloads it. Other reparse points (symbolic links, junctions, deduplicated files,
+AppExecLinks) are not placeholders and stay visible (probed, the 2026-11-22 run 11: links and junctions are `LINK` in
+every mode)."""
+
+
+def pin_placeholder_mode() -> bool:
+    """Windows only: this process's placeholder compatibility mode set to `PHCM_DISGUISE_PLACEHOLDER`
+    (`RtlSetProcessPlaceholderCompatibilityMode`), at the start of every engine process that reads a ledger (the
+    engine's `main`, the copy check's child): the mode a process gets is not the same for every start (the 2026-11-22
+    run 11: 0 for the engine as the sidecar starts it, 1 for a child of the test process) and a child does not inherit
+    a mode its parent set. True when the mode reads `PHCM_DISGUISE_PLACEHOLDER` after it (and off Windows, where there
+    is nothing to pin). Nothing is kept: `supported()` and `for_this_os()` ask the mode itself (`pin_refused()`), so a
+    process in any other mode, the pin refused or never made, refuses every file operation
+    (`engine.unsupported_platform`, its message naming the mode): a missing primitive refuses, never falls back."""
+    if sys.platform != "win32":
+        return True
+    try:
+        nt = ctypes.WinDLL("ntdll")
+        setter = nt.RtlSetProcessPlaceholderCompatibilityMode
+        setter.argtypes = [ctypes.c_byte]
+        setter.restype = ctypes.c_byte
+        setter(PHCM_DISGUISE_PLACEHOLDER)
+    except (OSError, AttributeError):  # an old Windows without the call: the mode below says so
+        return False
+    return pin_refused() is None
+
+
+def mode_refusal() -> str | None:
+    """Why a file operation is refused on Windows when the port would otherwise be selected: this process is not in
+    the engine's placeholder mode (`pin_refused()`); None otherwise, and off Windows, where the platform is the
+    reason (S0149; `protocol.server.unsupported_message`)."""
+    if sys.platform == "win32" and under_test.selected():
+        return pin_refused()
+    return None
+
+
+def pin_refused() -> str | None:
+    """Windows only: why this process is not in the engine's placeholder mode (the mode it reads, or that the mode
+    cannot be read), or None when it is; None off Windows."""
+    if sys.platform != "win32":
+        return None
+    try:
+        mode = placeholder_mode()
+    except (OSError, AttributeError):
+        return "the placeholder mode cannot be read"
+    if mode != PHCM_DISGUISE_PLACEHOLDER:
+        return f"the placeholder mode is {mode} ({PLACEHOLDER_MODES.get(mode or 0, 'unknown')})"
+    return None
+
+
+def cloud_download_failed(fd: int) -> bool:
+    """Windows only: after a read of the open file `fd` failed through the C runtime, which keeps no Win32 code
+    (probed: a bare `EINVAL`, S0144 Fact 6), one byte read again at the same place with `ReadFile`: whether Windows
+    refuses it with one of the cloud filter's download errors (`port.CLOUD_DOWNLOAD_ERRORS`; S0149, BL-0283). Never
+    True off Windows, or for any other error."""
+    if sys.platform != "win32":
+        return False
+    import msvcrt  # Windows only
+
+    k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    read = k32.ReadFile
+    read.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_ulong, ctypes.POINTER(ctypes.c_ulong), ctypes.c_void_p]
+    read.restype = ctypes.c_int
+    buf = ctypes.create_string_buffer(1)
+    got = ctypes.c_ulong()
+    try:
+        handle = msvcrt.get_osfhandle(fd)
+    except OSError:
+        return False
+    if read(handle, buf, 1, ctypes.byref(got), None):
+        return False
+    return ctypes.get_last_error() in CLOUD_DOWNLOAD_ERRORS

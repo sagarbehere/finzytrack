@@ -1,13 +1,15 @@
-"""OneDrive's placeholders and the engine, on the runner's real cloud filter (S0149, BL-0283; S0144's facts): a sync
-root under the test's temp folder served by a provider in its own process (`tests/fs/cloud_provider.py`), and the
-engine's own jobs (the open's overlay load, the save, the rebuild) on a ledger in it, through the protocol, in each
-placeholder compatibility mode of the engine's process: the one it inherits, `disguise_placeholder` and
-`expose_placeholders`.
+"""OneDrive's placeholders and the engine, on the runner's real cloud filter (S0149, BL-0283; ADR-0070): a sync root
+under the test's temp folder served by a provider in its own process (`tests/fs/cloud_provider.py`), and the engine's
+own jobs (the open's overlay load, the save, the rebuild) on a ledger in it, through the protocol, in the mode the
+engine pins (`this_os.pin_placeholder_mode`: `disguise_placeholder`; owner, 2026-11-22: "A"). Every Cloud Files
+provider is alike (owner, 2026-11-22: "Yes let's support every such provider and word the text accordingly").
 
-**Phase 1 (facts; the 2026-11-22 run 11):** each test records what happened as one JSON warning (`{"S0149": ...}`, in
-the CI log's warnings summary: the job runs `-rs`, which prints no line for a passing test) and fails only when the
-simulation itself does not start. Phase 2 turns the facts into the behaviour the owner chooses (the engine's mode, the
-offline refusal) with must-not-pass tests.
+What they hold: the pin takes (and a child does not inherit it); a placeholder, cloud-only or downloaded, is a plain
+file to the adapter and is read and saved, the save leaving a plain file at the name; links and junctions stay links;
+offline (the provider disconnected) a cloud-only file is `cloud_unavailable`, naming it, in the save ("not saved",
+nothing written), the open and the rebuild (refused), while a downloaded one still saves; the download error codes are
+the cloud filter's by Windows' own message table. The facts of the 2026-11-22 run 11, which chose the mode, are in
+`design/journal/S0149-onedrive.md`.
 
 **What the simulation cannot show:** OneDrive's own sync engine (its upload after our rename, a hold during it, its
 conflict copies, its own errors offline or paused): the owner's check by hand in S0150.
@@ -15,9 +17,12 @@ conflict copies, its own errors offline or paused): the owner's check by hand in
 
 from __future__ import annotations
 
+# pyright: reportPrivateUsage=false
+# (the adapter's own error mapping is checked against Windows' answers, as `probe_windows_cloud.py` reads it)
+import ctypes
 import json
 import os
-import stat
+import subprocess
 import sys
 import warnings
 from collections.abc import Callable, Iterator
@@ -27,7 +32,7 @@ from typing import Any
 import pytest
 
 from ledger_engine.fs.port import DirHandle
-from ledger_engine.fs.this_os import PLACEHOLDER_MODES, for_this_os
+from ledger_engine.fs.this_os import for_this_os
 from tests.fresh_engine import fresh_engine
 from tests.test_save_ops import POST, PRE, Channel, engine, published_save, request
 
@@ -38,21 +43,13 @@ if sys.platform != "win32":
 
 import _winapi  # noqa: E402 (Windows only)
 
-from tests.fs.cloud_provider import (  # noqa: E402 (Windows only)
-    ENGINE_FLAGS,
-    PHCM_DISGUISE,
-    PHCM_EXPOSE,
-    Cloud,
-    child_mode,
-    own_mode,
-    set_mode,
-)
+from ledger_engine.fs import this_os  # noqa: E402
+from ledger_engine.fs import windows as win  # noqa: E402 (the adapter's own error mapping)
+from ledger_engine.fs.port import CLOUD_DOWNLOAD_ERRORS, CloudUnavailable  # noqa: E402
+from tests.fs.cloud_provider import ENGINE, PHCM_DISGUISE, PHCM_EXPOSE, Cloud, own_mode, set_mode  # noqa: E402
 
 pytestmark = pytest.mark.usefixtures("windows_port")
 
-INITIAL_MODE = own_mode()
-"""The test process's mode before any test sets one."""
-MODES = {"inherited": None, "disguise": PHCM_DISGUISE, "expose": PHCM_EXPOSE}
 LEDGER = "L/main.bean"
 RECALL_ON_DATA_ACCESS = 0x400000
 ATTRS = (
@@ -69,21 +66,19 @@ ATTRS = (
 
 
 def fact(test: str, **fields: Any) -> None:
-    """One fact for the run's record, visible in the warnings summary."""
+    """A record for the run's log, visible in the warnings summary (the job runs `-rs`)."""
     warnings.warn(json.dumps({"S0149": test, **fields}, default=str), stacklevel=2)
 
 
-@pytest.fixture(params=list(MODES))
-def mode(request: pytest.FixtureRequest) -> Iterator[str]:
-    """This process's (the engine's, in these tests) placeholder mode for the test; the previous one is put back."""
-    name: str = request.param
-    value = MODES[name]
-    previous = None if value is None else set_mode(value)
+@pytest.fixture(autouse=True)
+def pinned() -> Iterator[None]:
+    """This process plays the engine: its mode pinned as the engine's start pins it; the previous one put back."""
+    previous = own_mode()
+    assert this_os.pin_placeholder_mode()
     try:
-        yield name
+        yield
     finally:
-        if previous is not None:
-            set_mode(previous)
+        set_mode(previous)
 
 
 @pytest.fixture
@@ -92,7 +87,9 @@ def cloud(tmp_path: Path) -> Iterator[Cloud]:
     try:
         yield c
     finally:
-        fact("provider_stop", answer=c.stop())
+        stopped = c.stop()
+        if stopped is not None and not stopped.get("ok"):
+            fact("provider_stop", answer=stopped)
 
 
 def started(c: Cloud, files: dict[str, bytes], folders: tuple[str, ...] = ()) -> None:
@@ -230,128 +227,196 @@ def ws(tmp_path: Path, cloud: Cloud) -> Workspace:
     return Workspace(tmp_path, cloud)
 
 
-# --- the modes ------------------------------------------------------------------------------------------------------
+# --- the mode -------------------------------------------------------------------------------------------------------
 
 
-def test_S0149_phase1_the_placeholder_mode_of_each_process(cloud: Cloud) -> None:
-    """Question 1, beside the backend's engine started by `EngineCommand.for_venv`
-    (`backend/tests/platform/test_engine_client_spawn.py`): this test process's mode before any test set one, the mode
-    of a child it starts (plain, and with the engine's flags), whether a child inherits a mode the parent set, and the
-    provider's own and its children's (S0144 saw its readers, children of the provider, in `disguise_placeholder`)."""
+PIN_CHILD = (
+    "from ledger_engine.fs import this_os; before = this_os.placeholder_mode(); ok = this_os.pin_placeholder_mode(); "
+    "print(before, ok, this_os.placeholder_mode(), this_os.supported())"
+)
+
+
+@pytest.mark.parametrize("parent_mode", [PHCM_EXPOSE, PHCM_DISGUISE])
+def test_the_pin_takes_in_a_fresh_process_whatever_its_parent_set(parent_mode: int) -> None:
+    """The engine's start pins `disguise_placeholder` and reads it back; a child does not inherit its parent's mode (run
+    11), so each process pins its own: here a child of this process, its parent in another mode."""
+    previous = set_mode(parent_mode)
+    try:
+        done = subprocess.run(  # noqa: S603 (this interpreter, a fixed one-liner)
+            [sys.executable, "-s", "-B", "-c", PIN_CHILD], cwd=ENGINE, capture_output=True, text=True, check=True
+        )
+    finally:
+        set_mode(previous)
+    before, ok, after, _supported = done.stdout.split()
+    assert (ok, after) == ("True", str(this_os.PHCM_DISGUISE_PLACEHOLDER)), done.stdout
+    fact("pin_child", parent=parent_mode, before=int(before))
+
+
+def test_a_refused_pin_refuses_every_file_operation(tmp_path: Path) -> None:
+    """Must not pass: an engine whose pin Windows refused runs in another mode. Its port is refused
+    (`UnsupportedPlatform`) and so is every op that needs it (`engine.unsupported_platform`, naming the cause)."""
+    ald = tmp_path / "app"
+    (ald / "locks").mkdir(parents=True)
+    e = engine(ald, tmp_path / "cache")  # started (its app folder's identity read) before the refusal is set
+    previous = set_mode(PHCM_EXPOSE)  # another mode than the pinned one: what a refused pin leaves
+    try:
+        assert this_os.pin_refused() == "the placeholder mode is 2 (expose_placeholders)"
+        assert not this_os.supported()
+        with pytest.raises(this_os.UnsupportedPlatform):
+            for_this_os()
+        reply = json.loads(e.handle(request("recover_list", {"app_local_data": str(ald)})))
+    finally:
+        set_mode(previous)
+    assert reply["error"]["key"] == "engine.unsupported_platform", reply
+    assert "cloud files" in reply["error"]["message"], reply
+
+
+def test_the_download_errors_are_the_cloud_filters_by_windows_own_messages() -> None:
+    """Each code of `CLOUD_DOWNLOAD_ERRORS` is a cloud-file error in Windows' message table (the runner is English),
+    and `ERROR_NOT_A_CLOUD_FILE` (376; run 11's dehydrate of a plain file) is not in the set."""
+    texts = {c: ctypes.FormatError(c) for c in sorted(CLOUD_DOWNLOAD_ERRORS)}
+    assert all("cloud" in t.lower() for t in texts.values()), texts
+    assert 376 not in CLOUD_DOWNLOAD_ERRORS
+    assert "cloud" in ctypes.FormatError(376).lower()
+
+
+def test_the_adapter_tells_only_the_download_errors_as_cloud_unavailable() -> None:
+    """`_win_error` and `_nt_error` give `CloudUnavailable` exactly for the download errors (an NTSTATUS by the Win32
+    code Windows maps it to); must not pass: access denied, an invalid parameter, a corrupt cloud file's metadata."""
+    for c in CLOUD_DOWNLOAD_ERRORS:
+        assert isinstance(win._win_error("ReadFile", code=c), CloudUnavailable), c
+    for c in (5, 87, 363, 376):
+        assert not isinstance(win._win_error("ReadFile", code=c), CloudUnavailable), c
+    mapped = {s: win._dos_error(s) for s in range(0xC000CF00, 0xC000D000)}
+    cloud = {s for s, c in mapped.items() if c in CLOUD_DOWNLOAD_ERRORS}
+    assert 362 in {mapped[s] for s in cloud}, "STATUS_CLOUD_FILE_PROVIDER_NOT_RUNNING maps to 362"
+    for s, c in mapped.items():
+        assert isinstance(win._nt_error(s, "NtReadFile"), CloudUnavailable) is (c in CLOUD_DOWNLOAD_ERRORS), hex(s)
+    assert not isinstance(win._nt_error(0xC0000022, "NtCreateFile"), CloudUnavailable)  # ACCESS_DENIED
+
+
+# --- placeholders, pinned ------------------------------------------------------------------------------------------
+
+
+def test_a_cloud_only_file_is_a_plain_file_and_its_first_read_downloads_it(cloud: Cloud) -> None:
+    """S0144 verifier F-2: the adapter's `sha256` (the save's fingerprint read) as the first read of a cloud-only file
+    downloads it, once, and answers its bytes."""
     started(cloud, {"a.bean": PRE})
-    seen: dict[str, Any] = {
-        "pytest_initial": INITIAL_MODE,
-        "pytest_now": own_mode(),
-        "child_plain": child_mode(),
-        "child_engine_flags": child_mode(*ENGINE_FLAGS),
-    }
-    for name, value in (("expose", PHCM_EXPOSE), ("disguise", PHCM_DISGUISE)):
-        previous = set_mode(value)
-        try:
-            seen[f"after_parent_set_{name}"] = {"parent": own_mode(), "child": child_mode(*ENGINE_FLAGS)}
-        finally:
-            set_mode(previous)
-    seen["provider"] = cloud.call("mode")
-    seen["provider_children"] = cloud.call("child_mode")
-    fact("modes", seen=seen, names=PLACEHOLDER_MODES)
-
-
-# --- S0144's re-probes ----------------------------------------------------------------------------------------------
-
-
-def test_S0149_phase1_sha256_as_the_first_read_of_a_cloud_only_file(mode: str, cloud: Cloud) -> None:
-    """S0144 verifier F-2: the adapter's `sha256` (the save's fingerprint read) as the first read of a cloud-only
-    file, through the port, in each mode."""
-    started(cloud, {"a.bean": PRE})
-    steps: list[dict[str, Any]] = [{"step": "before", "look": look(cloud.root / "a.bean"), "mode": own_mode()}]
+    assert look(cloud.root / "a.bean")["cloud_only"]
     with for_this_os().open_dir(str(cloud.root)) as d:
-        attempt(steps, "stat", lambda: kind(d, "a.bean"))
-        got = attempt(steps, "sha256", lambda: d.sha256("a.bean", 1 << 20))
-    steps.append({"step": "after", "look": look(cloud.root / "a.bean"), "fetches": cloud.fetches()})
-    if got is not None:
-        steps.append({"step": "is_content", "answer": got[1] == len(PRE)})
-    fact("sha256_first", mode=mode, steps=steps)
+        assert kind(d, "a.bean") == "file"
+        got = d.sha256("a.bean", 1 << 20)
+    assert got is not None
+    assert got[1] == len(PRE)
+    fetches = [f for f in cloud.fetches() if f.get("rel") == "a.bean"]
+    assert [f["reader_pid"] for f in fetches] == [os.getpid()], fetches
+    assert not look(cloud.root / "a.bean")["cloud_only"]
 
 
-def test_S0149_phase1_links_beside_placeholders(mode: str, tmp_path: Path) -> None:
-    """Whether each mode still shows a symbolic link and a junction as links (`LINK`): a disguise must hide only the
-    cloud filter's placeholders."""
+def test_offline_the_adapters_read_of_a_cloud_only_file_is_cloud_unavailable(cloud: Cloud) -> None:
+    started(cloud, {"a.bean": PRE})
+    cloud.call("disconnect")
+    with for_this_os().open_dir(str(cloud.root)) as d, pytest.raises(CloudUnavailable):
+        d.read("a.bean")
+    with pytest.raises(CloudUnavailable) as got:
+        list(fingerprint_chunks(str(cloud.root / "a.bean")))  # the C runtime's read, asked again with `ReadFile`
+    assert got.value.filename == str(cloud.root / "a.bean")
+
+
+def fingerprint_chunks(p: str) -> Iterator[bytes]:
+    from ledger_engine.ledger import fingerprint
+
+    return fingerprint.chunks(p)
+
+
+def test_links_and_junctions_stay_links_in_the_pinned_mode(tmp_path: Path) -> None:
+    """The disguise hides only the cloud filter's placeholders: a file link, a folder link and a junction are `LINK`
+    (refused by the save as before)."""
     (tmp_path / "f").write_bytes(b"x")
     (tmp_path / "dir").mkdir()
-    steps: list[dict[str, Any]] = []
-    attempt(steps, "symlink file", lambda: os.symlink(tmp_path / "f", tmp_path / "flink"))
-    attempt(steps, "symlink dir", lambda: os.symlink(tmp_path / "dir", tmp_path / "dlink", target_is_directory=True))
-    attempt(steps, "junction", lambda: _winapi.CreateJunction(str(tmp_path / "dir"), str(tmp_path / "junc")))
+    os.symlink(tmp_path / "f", tmp_path / "flink")
+    os.symlink(tmp_path / "dir", tmp_path / "dlink", target_is_directory=True)
+    _winapi.CreateJunction(str(tmp_path / "dir"), str(tmp_path / "junc"))
     with for_this_os().open_dir(str(tmp_path)) as d:
-        for name in ("flink", "dlink", "junc"):
-            attempt(steps, f"stat {name}", lambda name=name: kind(d, name))
-            attempt(steps, f"lstat {name}", lambda name=name: stat.S_ISLNK(os.lstat(tmp_path / name).st_mode))
-    fact("links", mode=mode, steps=steps)
+        assert [kind(d, n) for n in ("flink", "dlink", "junc")] == ["link", "link", "link"]
 
 
-# --- the jobs online ------------------------------------------------------------------------------------------------
+# --- the jobs online -----------------------------------------------------------------------------------------------
+
+
+def saved_result(reply: dict[str, Any] | None) -> dict[str, Any]:
+    assert reply is not None
+    assert reply["ok"], reply
+    return reply["result"]
 
 
 @pytest.mark.parametrize("state", ["hydrated", "cloud_only"])
-def test_S0149_phase1_open_save_and_rebuild_online(mode: str, state: str, ws: Workspace) -> None:
-    """Question 3: the open (the overlay load and the publish), the save (`ledger.save.run` through the protocol) and
-    the rebuild (Beancount's own load) on a ledger file in the sync root, hydrated or cloud-only at the save and the
-    rebuild, the provider serving; after the save, what is at the name (S0144's second re-probe: a plain file or still
-    a placeholder)."""
-    ws.op("open", ws.open)
-    attempt(ws.steps, "prepare_save", ws.prepare_save)
+def test_the_open_the_save_and_the_rebuild_land_on_a_placeholder(state: str, ws: Workspace) -> None:
+    """Online: the open loads, the save lands on a downloaded or a cloud-only placeholder (downloaded by its own
+    read), leaving a plain file with the new bytes at the name (no reparse point: the provider sees a new file, as
+    OneDrive uploads one), and the rebuild loads it again after it was made cloud-only (as OneDrive does after its
+    upload)."""
+    opened = saved_result(ws.op("open", ws.open))
+    assert opened["outcome"] == "loaded", opened
+    ws.prepare_save()
     if state == "cloud_only":
-        ws.provider("dehydrate")
-        ws.steps.append({"step": "before save", "look": look(ws.main)})
-    if ws.save_params is not None:
-        ws.op("save", ws.save)
-        attempt(ws.steps, "contents after save", ws.contents)
-        if state == "cloud_only":
-            ws.provider("dehydrate")
-        ws.op("rebuild", ws.rebuild)
-    attempt(ws.steps, "leftovers", ws.leftovers)
-    fact("online", mode=mode, state=state, steps=ws.steps)
+        assert ws.provider("dehydrate") is not None
+        assert look(ws.main)["cloud_only"]
+    out = saved_result(ws.op("save", ws.save))
+    assert out["outcome"] == "saved", out
+    assert ws.contents() == "POST"
+    after = look(ws.main)
+    assert "REPARSE_POINT" not in after["attrs"], after
+    assert not after["cloud_only"], after
+    assert (ws.provider("dehydrate") or {}).get("ok"), ws.steps
+    rebuilt = saved_result(ws.op("rebuild", ws.rebuild))
+    assert rebuilt["outcome"] == "loaded", rebuilt
 
 
 # --- offline --------------------------------------------------------------------------------------------------------
 
 
-def test_S0149_phase1_the_open_of_a_cloud_only_ledger_offline(mode: str, ws: Workspace) -> None:
-    """Question 4: the first open of a cloud-only ledger while the provider is not running."""
+def test_offline_the_open_of_a_cloud_only_ledger_is_refused_by_name(ws: Workspace) -> None:
     ws.provider("disconnect")
-    ws.op("open", ws.open)
-    ws.provider("connect")
-    attempt(ws.steps, "leftovers", ws.leftovers)
-    fact("offline_open", mode=mode, steps=ws.steps)
+    r = saved_result(ws.op("open", ws.open))
+    assert (r["outcome"], r["refusal"], r["refused"]) == ("refused", "cloud_unavailable", str(ws.main)), r
+    assert look(ws.main)["cloud_only"]
 
 
-@pytest.mark.parametrize("state", ["hydrated", "cloud_only"])
-def test_S0149_phase1_the_save_offline(mode: str, state: str, ws: Workspace) -> None:
-    """Question 4: a save while the provider is not running, the ledger file hydrated or cloud-only; then, online
-    again, the file's bytes and what the save left."""
-    ws.op("open", ws.open)
-    attempt(ws.steps, "prepare_save", ws.prepare_save)
-    if state == "cloud_only":
-        ws.provider("dehydrate")
+def test_offline_the_save_of_a_cloud_only_file_is_not_saved_by_name_and_writes_nothing(ws: Workspace) -> None:
+    """Not saved, `cloud_unavailable` naming the file, before the gate: no journal, no backup, the file still cloud-only
+    and (online again) at its old bytes. The re-hash cannot read it, so "unchanged" is not said."""
+    saved_result(ws.op("open", ws.open))
+    ws.prepare_save()
+    ws.provider("dehydrate")
     ws.provider("disconnect")
-    if ws.save_params is not None:
-        ws.op("save", ws.save)
+    r = saved_result(ws.op("save", ws.save))
+    assert (r["outcome"], r["reason"], r["path"], r["unchanged"]) == (
+        "not_saved",
+        "cloud_unavailable",
+        str(ws.main),
+        False,
+    ), r
+    assert look(ws.main)["cloud_only"]
+    assert ws.leftovers()["app_local"] == []
     ws.provider("connect")
-    attempt(ws.steps, "contents after save", ws.contents)
-    attempt(ws.steps, "leftovers", ws.leftovers)
-    fact("offline_save", mode=mode, state=state, steps=ws.steps)
+    assert ws.contents() == "PRE"
 
 
-def test_S0149_phase1_the_rebuild_of_a_cloud_only_ledger_offline(mode: str, ws: Workspace) -> None:
-    """Question 4: the rebuild after a landed save, the saved file made cloud-only (as OneDrive does after its
-    upload) and the provider not running."""
-    ws.op("open", ws.open)
-    attempt(ws.steps, "prepare_save", ws.prepare_save)
-    if ws.save_params is not None:
-        ws.op("save", ws.save)
-        ws.provider("dehydrate")
-        ws.provider("disconnect")
-        ws.op("rebuild", ws.rebuild)
-        ws.provider("connect")
-    attempt(ws.steps, "leftovers", ws.leftovers)
-    fact("offline_rebuild", mode=mode, steps=ws.steps)
+def test_offline_a_downloaded_file_still_saves(ws: Workspace) -> None:
+    saved_result(ws.op("open", ws.open))
+    ws.prepare_save()
+    ws.provider("disconnect")
+    r = saved_result(ws.op("save", ws.save))
+    assert r["outcome"] == "saved", r
+    assert ws.contents() == "POST"
+
+
+def test_offline_the_rebuild_of_a_cloud_only_ledger_is_refused_by_name(ws: Workspace) -> None:
+    saved_result(ws.op("open", ws.open))
+    ws.prepare_save()
+    assert saved_result(ws.op("save", ws.save))["outcome"] == "saved"
+    ws.provider("dehydrate")
+    ws.provider("disconnect")
+    r = saved_result(ws.op("rebuild", ws.rebuild))
+    assert (r["outcome"], r["refusal"], r["refused"]) == ("refused", "cloud_unavailable", str(ws.main)), r

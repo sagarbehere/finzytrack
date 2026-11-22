@@ -73,6 +73,7 @@ from typing import Final
 
 from ledger_engine.fs.pathmodel import host
 from ledger_engine.fs.port import (
+    CloudUnavailable,
     DirHandle,
     EntryStat,
     FileSystem,
@@ -201,6 +202,8 @@ class Reason(StrEnum):
     IO_ERROR = "io_error"  # an operation failed (a full disk, an I/O error)
     IN_USE = "in_use"  # another program holds the file the save was working on (S0148, BL-0284): the adapter's
     # `InUseError` (Windows' sharing violation; `_why`), or its `ReplaceDenied` at the replace of a checked file
+    CLOUD_UNAVAILABLE = "cloud_unavailable"  # the file's data is only in the cloud and Windows could not download it
+    # (S0149, BL-0283): the adapter's `CloudUnavailable` (`_why`), or the gate's read of it (`save._not_downloaded`)
     CHANGED = "changed"  # a file is not at its pre bytes, appeared, or an outside save was displaced by a swap
     PATH_MOVED = "path_moved"  # a folder is no longer at its recorded canonical path (§6.3 path guard)
     READ_BACK = "read_back"  # a written file does not hold its post bytes
@@ -901,12 +904,15 @@ def _remove_temps(handles: Handles, targets: tuple[_Target, ...]) -> None:
 
 def _why(e: Exception, handles: Handles) -> tuple[Reason, str | None]:
     """The reason and the file a failure is told with. A hold (`InUseError`) met while the save works on one of its
-    files (`handles.on`) is `in_use`, naming it (S0148, BL-0284); anywhere else (its record, its backups folder) it is
-    an `io_error` like any other error, with no ledger file to name."""
+    files (`handles.on`) is `in_use`, naming it (S0148, BL-0284), and a cloud-only file Windows could not download
+    (`CloudUnavailable`) is `cloud_unavailable`, naming it (S0149, BL-0283); anywhere else (its record, its backups
+    folder) either is an `io_error` like any other error, with no ledger file to name."""
     if isinstance(e, _Stop):
         return e.reason, e.path
     if isinstance(e, InUseError) and handles.on is not None:
         return Reason.IN_USE, handles.on
+    if isinstance(e, CloudUnavailable) and handles.on is not None:  # S0149 (BL-0283): a cloud-only file not downloaded
+        return Reason.CLOUD_UNAVAILABLE, handles.on
     if isinstance(e, LinkedPathError):  # before its base class (S0117 round 4): a link, or a file for a folder
         return (Reason.LINK_IN_COPY if e.link else Reason.CHANGED), e.canonical
     if isinstance(e, PathMovedError):

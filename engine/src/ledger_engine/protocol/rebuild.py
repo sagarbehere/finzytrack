@@ -33,14 +33,15 @@ from ledger_engine.protocol.save import app_cache_of, engine_build
 TABLE: Final = "engine.rebuild"
 EPOCH: Final = datetime(1970, 1, 1, tzinfo=UTC)
 TABLE_VERSION: Final = (
-    5  # 1 (S0070): the rebuild after a save (ADR-0068 D1); 2 (S0087): its publish; 3 (S0098): `refused`;
+    6  # 1 (S0070): the rebuild after a save (ADR-0068 D1); 2 (S0087): its publish; 3 (S0098): `refused`;
     # 4 (S0132): `sync_refused`; 5 (S0134): `sync_refused` gone with the share's best effort, `refusal`
-    # `cache-on-share` (publish.md §2)
+    # `cache-on-share` (publish.md §2); 6 (S0149): `refusal` `cloud-unavailable`
 )
 REFUSAL: Final[dict[rebuild.Refusal, RebuildRefusal]] = {
     "number-failed": "number_failed",
     "beancount-failed": "beancount_failed",
     "cache-on-share": "cache_on_share",
+    "cloud-unavailable": "cloud_unavailable",
 }
 
 

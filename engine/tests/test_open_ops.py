@@ -62,7 +62,7 @@ def test_the_open_loads_and_publishes_through_the_protocol(ws: tuple[Path, Path,
     assert result["entries"] > 0
     assert (result["refused"], result["refusal"], result["line"]) == (None, None, None)
     assert reply["events"] == ["reading"]
-    assert (reply["decision"]["table"], reply["decision"]["version"]) == ("engine.open", 4)
+    assert (reply["decision"]["table"], reply["decision"]["version"]) == ("engine.open", 5)
     mirror = ald.parent / "cache" / "workspaces" / "k1" / "mirror"
     name = current_in(mirror)
     assert name is not None
