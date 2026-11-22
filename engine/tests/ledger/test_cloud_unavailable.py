@@ -434,12 +434,17 @@ def test_a_document_that_cannot_be_downloaded_mid_copy_stops_cloud_unavailable_a
 
 
 @pytest.mark.parametrize("which", ["ledger", "document"])
-def test_a_source_that_goes_cloud_only_before_the_recheck_is_cloud_unavailable_not_changed(which: str) -> None:
+def test_a_source_that_goes_cloud_only_before_the_recheck_is_cloud_unavailable_not_changed(
+    which: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """Round 1 (RT-4): the re-check just before the commit point finds a ledger file, or a copied document, only in
     the cloud and not downloadable: not copied, `cloud_unavailable` naming it (it did not change; Windows could not
-    read it)."""
+    read it). The copy's world is `test_copy`'s fake, so its documents roots take POSIX's rules on Windows too
+    (`test_copy.posix_documents_roots`, that module's autouse fixture; the 2026-11-22 run 13 failed without it:
+    "loads the same" compared Windows' reading of the fake's `/...` roots and stopped at `load_differs`)."""
     from ledger_engine.ledger.fingerprint import CLOUD_UNAVAILABLE
 
+    tcopy.posix_documents_roots(monkeypatch)
     w = tcopy.new_world()
     real_observe, real_state = w.observe, w.file_state
     late: list[bool] = []
