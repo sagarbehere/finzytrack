@@ -736,61 +736,17 @@ def test_S0146_on_windows_only_the_normal_spelling_of_a_root_reaches_a_save(
     assert saved["result"]["outcome"] == "saved", saved
 
 
-def test_S0149_offline_a_cloud_only_file_at_the_freshness_look_is_refused_by_name(
+def test_S0149_offline_a_cloud_only_file_at_the_freshness_look_is_stale_not_fresh(
     ws: tuple[Path, Path, dict[str, Any]], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """S0149 round 1 (V3): the generation's set observed with a ledger file only in the cloud and not downloadable is
-    no "not fresh" (which the sidecar tells as "wait a moment" while a rebuild it queues is refused unseen): the
-    preview is refused at `load`, `cloud_unavailable`, naming the file."""
+    """S0149 (owner, 2026-11-23: "Remove the three early cloud checks"): the generation's set observed with a ledger
+    file only in the cloud is "not fresh", as any file the look cannot read; the preview names no file from a
+    generation's set, which may be another ledger's or name a file the ledger no longer includes (round 2, V2-1). Naming
+    it waits for the first mutator (BL-0310)."""
     from tests.ledger.test_cloud_unavailable import offline
 
     main, ald, params = ws
     number = opened(ald, params)
     offline(monkeypatch, str(main))
     result = call(ald, params, number, replace_buy(main))["result"]
-    assert (result["outcome"], result["step"], result["reason"], result["path"], result["stale"]) == (
-        "refused",
-        "load",
-        "cloud_unavailable",
-        str(main),
-        None,
-    ), result
-
-
-def test_S0149_a_cloud_only_file_met_by_the_snapshots_read_is_refused_by_name(
-    ws: tuple[Path, Path, dict[str, Any]],
-) -> None:
-    """S0149 round 1 (V3): online for the freshness look, then the snapshot's own read of the file meets Windows'
-    download error: refused `cloud_unavailable`, naming it, never the engine's failure."""
-    from ledger_engine.fs.port import CloudUnavailable
-
-    main, ald, params = ws
-    number = opened(ald, params)
-
-    def read(path: str) -> bytes:
-        raise CloudUnavailable(path, "ReadFile")
-
-    a = preview.run(
-        preview.Ports(read=read),
-        str(main),
-        number,
-        producer.TEST_MUTATOR,
-        replace_buy(main),
-        where(ald, engine_build()),
-        NoJob(),
-    )
-    assert a.outcome == "refused", a
-    assert a.refused is not None
-    assert (a.refused.step, a.refused.reason, a.refused.path) == ("load", "cloud_unavailable", str(main))
-
-
-def test_S0149_must_not_pass_a_plain_read_error_at_the_freshness_look_stays_not_fresh(
-    ws: tuple[Path, Path, dict[str, Any]], monkeypatch: pytest.MonkeyPatch
-) -> None:
-    from tests.ledger.test_cloud_unavailable import PLAIN_ERRORS, offline
-
-    main, ald, params = ws
-    number = opened(ald, params)
-    offline(monkeypatch, str(main), PLAIN_ERRORS["EIO"])
-    result = call(ald, params, number, replace_buy(main))["result"]
-    assert (result["outcome"], result["stale"]) == ("stale", "not_fresh"), result
+    assert (result["outcome"], result["stale"], result["reason"]) == ("stale", "not_fresh", None), result

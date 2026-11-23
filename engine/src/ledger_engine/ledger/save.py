@@ -69,7 +69,7 @@ from ledger_engine.ledger import history, overlay
 from ledger_engine.ledger.core import journal
 from ledger_engine.ledger.core import paths as core_paths
 from ledger_engine.ledger.core.journal import FolderEntry, Record, State
-from ledger_engine.ledger.core.ledger_set import Absent, Content, Fingerprint, UndecodableError, Unreadable, decode
+from ledger_engine.ledger.core.ledger_set import Absent, Content, Fingerprint, Unreadable
 from ledger_engine.ledger.fingerprint import CLOUD_UNAVAILABLE
 from ledger_engine.ledger.handles import join, sha256
 from ledger_engine.ledger.writer import (
@@ -427,16 +427,6 @@ def _cloud_only(ports: Ports, plan: SavePlan, path: str) -> NotSaved:
     return out if path in {c.path for c in plan.changes} else replace(out, unchanged=False)
 
 
-def _stamp_not_downloaded(ports: Ports, text: str) -> str | None:
-    """A file of the published generation's own set (its stamp, `text`) observed now only in the cloud and not
-    downloaded, or None (an undecodable stamp is the caller's `mirror_stale`)."""
-    try:
-        stamp = decode(text.encode("ascii"))
-    except (UnicodeEncodeError, UndecodableError):
-        return None
-    return _fingerprint.not_downloaded(ports.observe(stamp))
-
-
 def _not_downloaded(now: Fingerprint, plan: Fingerprint) -> str | None:
     """The first ledger file the gate's observation found only in the cloud and not downloaded
     (`fingerprint.CLOUD_UNAVAILABLE`, S0149, BL-0283) where the plan read its bytes, when nothing else of the
@@ -510,9 +500,6 @@ def _gated(
         return publish.same_ledger(ports.fs, root, plan.root)
 
     if published is None or not publish.fresh_on_disk(published.meta, ports.observe, ours):
-        cloud = None if published is None else _stamp_not_downloaded(ports, published.meta.fingerprint)
-        if cloud is not None:  # S0149 round 1 (V3): the generation's own set holds a file Windows could not download
-            return _cloud_only(ports, plan, cloud)
         return refused("mirror_stale")
     open_journal = _open_journal(ports.fs, plan)
     if open_journal is not None:

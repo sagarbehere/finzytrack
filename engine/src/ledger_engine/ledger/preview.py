@@ -40,7 +40,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from typing import Final, Literal, Protocol
 
-from ledger_engine.fs.port import CloudUnavailable, FileSystem
+from ledger_engine.fs.port import FileSystem
 from ledger_engine.fs.this_os import for_this_os
 from ledger_engine.ledger import contract, overlay, publishing
 from ledger_engine.ledger import fingerprint as _fingerprint
@@ -57,8 +57,6 @@ type Phase = Literal["checking_change"]
 PHASE: Final[Phase] = "checking_change"
 type Outcome = Literal["prepared", "refused", "moved", "paused", "stale"]
 type Stale = Literal["unpublished", "other_generation", "not_fresh"]
-CLOUD_UNAVAILABLE: Final = "cloud_unavailable"
-"""The `load` refusal's reason for a ledger file only in the cloud that Windows could not download (S0149)."""
 
 type Producer = Callable[[se.Snapshot, Mapping[str, object]], sd.Produced | se.Refusal]
 """An edit producer (ADR-0009): `(snapshot, request) -> EditPlan + IntendedChange`, or the primitives' refusal."""
@@ -173,30 +171,7 @@ def run(
     job: Job,
     producers: Mapping[str, Producer] = PRODUCERS,
 ) -> Answer:
-    """The module's docstring: steps 0 to 5. It writes nothing. A ledger file only in the cloud that Windows could not
-    download, met anywhere (the freshness look, the snapshot's reads, the contract's load), is refused at `load` with
-    the reason `cloud_unavailable`, naming it (S0149 round 1, V3), never `stale` (which the sidecar tells "wait a
-    moment") or the engine's failure."""
-    try:
-        return _run(ports, root, generation, mutator, request, where, job, producers)
-    except CloudUnavailable as e:
-        return _not_downloaded(e.filename if isinstance(e.filename, str) else root)
-
-
-def _not_downloaded(path: str) -> Answer:
-    return Answer("refused", refused=contract.Refused("load", CLOUD_UNAVAILABLE, path, "not downloaded"))
-
-
-def _run(
-    ports: Ports,
-    root: str,
-    generation: int,
-    mutator: str,
-    request: Mapping[str, object],
-    where: Where,
-    job: Job,
-    producers: Mapping[str, Producer],
-) -> Answer:
+    """The module's docstring: steps 0 to 5. It writes nothing."""
     if publishing.unfinished(ports.fs, where):  # step 0
         return Answer("paused")
     base = pb.read_baseline(ports.fs, where.app_cache, where.workspace_key, ports.store)  # step 1
@@ -209,9 +184,6 @@ def _run(
     except (UnicodeEncodeError, UndecodableError):
         return Answer("stale", stale="not_fresh")
     if not _baseline_fresh(ports, base, root, where):
-        cloud = _fingerprint.not_downloaded(ports.observe(stamp.ledger_set))
-        if cloud is not None:  # S0149 round 1 (V3): not "not fresh": Windows could not download a file of the set
-            return _not_downloaded(cloud)
         return Answer("stale", stale="not_fresh", hint=stamp if stamp.root == root else None)
     snapshot = _snapshot(ports, stamp)  # step 2
     if snapshot is None:

@@ -212,12 +212,12 @@ def test_must_not_pass_a_file_the_plan_saw_absent_and_now_cloud_only_is_the_ledg
     assert out.reason == "ledger_changed"
 
 
-def test_V3_a_generation_whose_own_set_cannot_be_downloaded_is_cloud_unavailable_not_mirror_stale(
+def test_a_generation_whose_own_set_cannot_be_downloaded_is_mirror_stale(
     led: Ledger, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Round 1 (V3), the save's freshness check: the plan's files read, but a file only the published generation's set
-    names (here the gate's observation is passed, and the generation's set observed with the file offline) is told
-    by name, not "the views are not up to date"."""
+    """The save's check of the published generation (owner, 2026-11-23: "Remove the three early cloud checks"): the
+    plan's files read, and the generation's own set observed with a file offline is `mirror_stale`, as any file that
+    look cannot read; its set may be another ledger's (round 2, V2-1, R1), so none of it is named. Nothing written."""
     plan = plan_for(led)
     real = sv.Ports(ports_for(led).fs).observe
     calls: list[int] = []
@@ -228,21 +228,11 @@ def test_V3_a_generation_whose_own_set_cannot_be_downloaded_is_cloud_unavailable
             offline(monkeypatch, str(led.inc))
         return real(fp)
 
+    before = led.tree()
     out = sv.run(plan, dataclasses.replace(ports_for(led), observe=observe), FakeJob())
-    assert isinstance(out, NotSaved), out
-    assert (out.reason, out.path, out.unchanged) == (Reason.CLOUD_UNAVAILABLE, str(led.inc), False), out
-
-
-def test_a_cloud_only_file_beside_another_change_stays_ledger_changed(
-    led: Ledger, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Any other difference beside it (an outside edit of `inc.bean`) is the ledger changing: `ledger_changed`."""
-    plan = plan_for(led)
-    led.inc.write_bytes(led.inc.read_bytes() + b"; edited outside\n")
-    offline(monkeypatch, str(led.main))
-    out = sv.run(plan, ports_for(led), FakeJob())
     assert isinstance(out, sv.Refused), out
-    assert out.reason == "ledger_changed"
+    assert out.reason == "mirror_stale"
+    assert led.tree() == before
 
 
 @pytest.mark.parametrize("kind", sorted(PLAIN_ERRORS))
@@ -298,8 +288,8 @@ def test_must_not_pass_a_plain_read_error_at_the_open_is_never_cloud_unavailable
     assert reply["error"]["key"] == "engine.internal"
 
 
-def _rebuild(led: Ledger) -> dict[str, Any]:
-    plan = plan_for(led)
+def _rebuild(led: Ledger, plan: sv.SavePlan | None = None) -> dict[str, Any]:
+    plan = plan or plan_for(led)
     params = {
         "root": str(led.main),
         "fingerprint": fingerprint_text(plan),
@@ -370,32 +360,34 @@ def test_beancounts_own_read_failing_is_cloud_unavailable_only_when_the_file_is_
         assert reply["error"]["key"] == "engine.internal"
 
 
-@pytest.mark.parametrize("where", ["early", "warnings"])
-def test_the_rebuild_tells_a_cloud_only_file_at_its_first_look_and_at_its_warnings_read(
-    led: Ledger, monkeypatch: pytest.MonkeyPatch, where: str
-) -> None:
-    """Round 1 (V5, M3 and M5): each of the rebuild's two sites by itself. `early`: offline before the first look,
-    which refuses before Beancount's load runs (no plugin runs on a set that cannot be read). `warnings`: online for
-    the look and the load, offline for the warnings' read of the files."""
+def test_the_rebuild_tells_a_cloud_only_file_at_its_warnings_read(led: Ledger, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Round 1 (V5, M5): online for the first look and the load, offline for the warnings' read of the files the load
+    parsed: refused `cloud_unavailable` naming the file (a file this load read, so this ledger's)."""
     from ledger_engine.ledger import beancount_port
 
     led.main.write_bytes(led.main.read_bytes() + b"; changed\n")
     real = beancount_port.real_load
-    loads: list[str] = []
 
     def load(root: str, parsed: list[str]) -> Any:
-        loads.append(root)
         out = real(root, parsed)
-        if where == "warnings":
-            offline(monkeypatch, str(led.main))
+        offline(monkeypatch, str(led.main))
         return out
 
     monkeypatch.setattr(beancount_port, "real_load", load)
-    if where == "early":
-        offline(monkeypatch, str(led.main))
     r = _rebuild(led)["result"]
     assert (r["outcome"], r["refusal"], r["refused"]) == ("refused", "cloud_unavailable", str(led.main)), r
-    assert loads == ([] if where == "early" else [str(led.main)])
+
+
+def test_no_file_of_the_hint_is_named_before_the_load_runs(led: Ledger, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Round 2 (V2-1, R2; owner, 2026-11-23: "Remove the three early cloud checks"): a file of the hint the ledger no
+    longer includes, cloud-only and offline, is never named: the rebuild loads the ledger as it is, which reads it no
+    more, and loads."""
+    hint = plan_for(led)  # the hint names inc.bean, as a generation of the ledger before the edit would
+    led.main.write_bytes(led.main.read_bytes().replace(b'include "inc.bean"\n', b""))
+    offline(monkeypatch, str(led.inc))
+    r = _rebuild(led, hint)["result"]
+    assert r["refusal"] is None, r
+    assert r["outcome"] in ("loaded", "moved"), r
 
 
 # -- Copy ------------------------------------------------------------------------------------------------------------
@@ -464,6 +456,7 @@ def test_a_source_that_goes_cloud_only_before_the_recheck_is_cloud_unavailable_n
     ports = dataclasses.replace(w.ports(), observe=observe, file_state=file_state)
     nc = tcopy.not_copied(copy_run(tcopy.PLAN, ports, tcopy.Job()), "cloud_unavailable")
     assert nc.path == target
+    assert not tcopy.exists(w.fs, tcopy.T), "round 2 (V2-3): what the copy made is removed"
 
 
 def test_the_copy_checks_child_refuses_when_the_pin_is_refused(monkeypatch: pytest.MonkeyPatch) -> None:

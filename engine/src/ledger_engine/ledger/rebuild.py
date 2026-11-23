@@ -229,9 +229,6 @@ def run(ports: Ports, hint: Fingerprint, job: Job, target: Target) -> Answer:
         ledger_set = hint.ledger_set
         before = ports.observe(ledger_set)  # step 1
         _refuse_special(before)  # Beancount's own load would block on it (S0102 round 1, red team F5)
-        cloud = _fingerprint.not_downloaded(before)
-        if cloud is not None:  # S0149 (BL-0283): a cloud-only file Windows could not download; Beancount's own read
-            return Answer("refused", hint, cleaned=cleaned, refusal="cloud-unavailable", refused=cloud)  # names none
         job.progress(PHASE)
         parsed: list[str] = []
         modules: dict[ModuleKey, Module | None] = {}

@@ -57,9 +57,9 @@ CLOUD_UNAVAILABLE: Final = Unreadable("cloud_unavailable")
 
 
 def not_downloaded(fp: Fingerprint) -> str | None:
-    """The first ledger file `fp` observed only in the cloud and not downloaded (`CLOUD_UNAVAILABLE`), or None: the
-    one question every observation for freshness asks before it answers "changed" or "not fresh" (S0149 round 1, V3:
-    the save's gate, the preview, the rebuild)."""
+    """The first ledger file `fp` observed only in the cloud and not downloaded (`CLOUD_UNAVAILABLE`), or None (S0149):
+    asked of a set this job read itself (the rebuild's look after its load failed, Copy's re-check of its own load),
+    never of a generation's or a hint's set before a load (owner, 2026-11-23: "Remove the three early cloud checks")."""
     return next((p for p, st in fp.files if st == CLOUD_UNAVAILABLE), None)
 
 

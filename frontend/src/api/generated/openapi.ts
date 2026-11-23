@@ -170,14 +170,6 @@ export interface components {
             /** Retryable */
             retryable: boolean;
         };
-        /**
-         * CloudFileDetails
-         * @description The ledger file only in the cloud (OneDrive or another sync app) that Windows could not download (S0149).
-         */
-        CloudFileDetails: {
-            /** Path */
-            path: string;
-        };
         /** @enum {string} */
         ContractStep: "plan" | "apply" | "parse" | "diff" | "spans" | "load" | "errors" | "files";
         /**
@@ -342,7 +334,7 @@ export interface components {
         /** ErrorEnvelope */
         ErrorEnvelope: {
             /** Error */
-            error: components["schemas"]["ValidationFailedError"] | components["schemas"]["RouteNotFoundError"] | components["schemas"]["WorkspaceUnknownError"] | components["schemas"]["WorkspaceNotOpenError"] | components["schemas"]["WorkspaceNotReadyError"] | components["schemas"]["EngineQueueFullError"] | components["schemas"]["JobCancelledError"] | components["schemas"]["EngineStoppedError"] | components["schemas"]["EngineUnavailableError"] | components["schemas"]["ChangeOutcomeUnknownError"] | components["schemas"]["LedgerExternallyChangedError"] | components["schemas"]["LedgerChangingError"] | components["schemas"]["WritesPausedError"] | components["schemas"]["ChangeNotSavedError"] | components["schemas"]["AckRequiredError"] | components["schemas"]["AckUnexpectedError"] | components["schemas"]["WriteRefusedUnintendedChangeError"] | components["schemas"]["WriteRefusedCheckFailedError"] | components["schemas"]["EncryptedFileNotEditableError"] | components["schemas"]["LedgerFileTooLargeError"] | components["schemas"]["LedgerFileNotDownloadedError"] | components["schemas"]["PlanExpiredError"] | components["schemas"]["PlanUnknownError"] | components["schemas"]["PlanAlreadyConfirmedError"] | components["schemas"]["PreviewStaleError"] | components["schemas"]["UnpromotedMutatorOnRealLedgerError"] | components["schemas"]["InternalError"];
+            error: components["schemas"]["ValidationFailedError"] | components["schemas"]["RouteNotFoundError"] | components["schemas"]["WorkspaceUnknownError"] | components["schemas"]["WorkspaceNotOpenError"] | components["schemas"]["WorkspaceNotReadyError"] | components["schemas"]["EngineQueueFullError"] | components["schemas"]["JobCancelledError"] | components["schemas"]["EngineStoppedError"] | components["schemas"]["EngineUnavailableError"] | components["schemas"]["ChangeOutcomeUnknownError"] | components["schemas"]["LedgerExternallyChangedError"] | components["schemas"]["LedgerChangingError"] | components["schemas"]["WritesPausedError"] | components["schemas"]["ChangeNotSavedError"] | components["schemas"]["AckRequiredError"] | components["schemas"]["AckUnexpectedError"] | components["schemas"]["WriteRefusedUnintendedChangeError"] | components["schemas"]["WriteRefusedCheckFailedError"] | components["schemas"]["EncryptedFileNotEditableError"] | components["schemas"]["LedgerFileTooLargeError"] | components["schemas"]["PlanExpiredError"] | components["schemas"]["PlanUnknownError"] | components["schemas"]["PlanAlreadyConfirmedError"] | components["schemas"]["PreviewStaleError"] | components["schemas"]["UnpromotedMutatorOnRealLedgerError"] | components["schemas"]["InternalError"];
             meta: components["schemas"]["Meta"];
         };
         /** HealthData */
@@ -479,34 +471,6 @@ export interface components {
             data_safe: boolean;
             /** Details */
             details: null;
-            /** Issues */
-            issues: components["schemas"]["Issue"][];
-            /** Message */
-            message: string;
-            /** Next Step */
-            next_step: string;
-            /** Retry After Ms */
-            retry_after_ms: number | null;
-            /** Retryable */
-            retryable: boolean;
-        };
-        /** LedgerFileNotDownloadedError */
-        LedgerFileNotDownloadedError: {
-            /**
-             * Class
-             * @constant
-             */
-            class: "unavailable";
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            code: "LEDGER_FILE_NOT_DOWNLOADED";
-            /** Correlation Id */
-            correlation_id: string;
-            /** Data Safe */
-            data_safe: boolean;
-            details: components["schemas"]["CloudFileDetails"];
             /** Issues */
             issues: components["schemas"]["Issue"][];
             /** Message */

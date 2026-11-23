@@ -3,7 +3,6 @@
 from app.platform.errors.registry import (
     AckRequiredDetails,
     ChangeNotSavedDetails,
-    CloudFileDetails,
     ContractStep,
     ContractStepDetails,
     EncryptedFileDetails,
@@ -29,7 +28,6 @@ from app.platform.errors.registry import (
 __all__ = [
     "AckRequiredDetails",
     "ChangeNotSavedDetails",
-    "CloudFileDetails",
     "ContractStep",
     "ContractStepDetails",
     "EncryptedFileDetails",
