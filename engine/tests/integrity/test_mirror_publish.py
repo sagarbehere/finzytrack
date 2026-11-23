@@ -14,7 +14,6 @@ act and assert are as written: ledger A and ledger B published alternately while
 
 from __future__ import annotations
 
-import contextvars
 import sqlite3
 import sys
 import threading
@@ -129,7 +128,7 @@ def test_readers_never_see_an_empty_or_partial_mirror(tmp_path: Path, monkeypatc
             except sqlite3.Error as exc:  # "no such table" or a torn file is exactly the I4 defect
                 errors.append(repr(exc))
 
-    thread = threading.Thread(target=contextvars.copy_context().run, args=(reader,))  # the Windows test switch
+    thread = threading.Thread(target=reader)
     thread.start()
     try:
         for i in range(200):

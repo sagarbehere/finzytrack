@@ -50,11 +50,11 @@ Finzytrack runs on Windows 10 and 11. It reads and saves your ledger there as on
 
 ## Saves on Windows are best effort
 
-Windows cannot replace a file in one step, as macOS can. So on Windows Finzytrack saves the way it saves on a USB stick:
+On a Mac, Finzytrack swaps the new file and the old one in one step, so it can see if another program saved the same file at the same moment. Windows has no such swap, so Finzytrack saves there by renaming the new file over the old one, as it does on a USB stick on a Mac:
 
 - Before it changes a file, it writes a backup of it on this computer.
 - Just before it replaces the file, it reads it again. If another program changed it, Finzytrack does not save, and tells you.
-- If the power fails during a save, the next start puts every file back as it was before the save.
+- If Finzytrack stops during a save (a crash, or the power fails), the next start finds the unfinished save and undoes it from the backup. When it cannot tell what is safe (for example a file that another program changed meanwhile, or a ledger file it cannot find on its drive), it does not guess: it shows you the files and asks what to do. Power cuts during a save have not been tested on Windows.
 
 One rare case remains: if another program saves the same file at the very moment Finzytrack saves, that program's change can be lost, and nothing tells you. Close other programs that edit your ledger (an editor, a script) while you save in Finzytrack.
 
@@ -73,7 +73,7 @@ Beancount reads a backslash (`\`) inside quotes as the start of a special charac
     include "D:/Ledger/2026.beancount"
     option "documents" "D:/Ledger/receipts"
 
-A path relative to the file, such as `include "years/2026.beancount"`, works too, and is the easiest. When Finzytrack copies a ledger, it cannot move a line that spells its path with `\\`: it does not copy, changes nothing, and tells you. Change the backslashes to `/`, then try again.
+A path relative to the file, such as `include "years/2026.beancount"`, works too, and is the easiest. When Finzytrack copies a ledger, it does not copy a ledger with a `document` line whose path is written with `\\`, or with an `include` line written with `\\` in a file where it must change another `include` or `option "documents"` line. It changes nothing and tells you. Change the backslashes to `/`, then try again.
 
 ## Who can read your ledger
 
@@ -81,11 +81,11 @@ On Windows, your ledger is as private as its folder. The folders in your user fo
 
 Finzytrack's backups and save records are as private as its app folder. The default app folder is in your user folder, so it is private. If you start Finzytrack with another app folder, they are as private as that folder.
 
-A file encrypted with Windows' file encryption (EFS) is not saved: Finzytrack would have to write its contents unencrypted into a backup. It tells you instead.
+A file encrypted with Windows' file encryption (EFS) is not saved: Finzytrack would have to write its contents unencrypted into a backup. It tells you instead. Note that Finzytrack keeps a copy of your ledger's entries, not encrypted, in its cache folder (to show them quickly), also for a ledger whose files EFS encrypts.
 
 ## OneDrive and other sync apps
 
-Finzytrack works with a ledger in OneDrive, Dropbox, Google Drive, Box or another sync app that uses Windows' cloud files (in OneDrive: Files On-Demand).
+Finzytrack works with a ledger in OneDrive and in other sync apps that use Windows' cloud files (in OneDrive: Files On-Demand).
 
 - **Files on this PC** (downloaded, or set to **Always keep on this device**) are read and saved as usual. After a save, the sync app uploads the changed file.
 - **A file that is only in the cloud** is downloaded by Windows when Finzytrack reads it, if you are online.
@@ -120,11 +120,30 @@ On Windows, every drive saves the best-effort way described below for USB sticks
   - The switch gone: `tests/architecture/test_platform_selection.py::test_the_windows_test_switch_is_gone`.
   - No one OS's how-to in a text: `backend/tests/platform/test_engine_job_texts_spec.py::test_no_engine_job_text_gives_one_os_how_to` (on the reference, which `check_generated.py` holds equal to the code).
   - The hand-check script's refusals: `backend/tests/test_windows_hand_check.py::test_a_folder_that_is_not_empty_is_refused_and_left_as_it_is`, `::test_without_a_folder_off_windows_it_refuses_before_anything`, `::test_the_report_names_no_absolute_path`.
+- Round 1's checks (Verifier, below): `test_no_sidecar_text_in_the_source_gives_one_os_how_to` (must not pass: a literal with a one-OS word in a text module), the hand check's `Cleaner.report` (must not pass: a non-ASCII path in the report) and its failure paths.
 - Self-mutation (`scripts/mutants.py`, plans in the session scratchpad): the selection 6 of 6 killed (`port-any-mode`, `port-not-windows-checked`, `locks-any-mode`, `supported-any-mode`, `mode-never-named`, `windows-still-refused`); the texts 3 of 3 killed (`mac-locked-back`, `mac-acl-back`, `refused-mac-back`; the command regenerates the reference and compares it, then runs the text tests). Not run through the tool, Windows only: the conftest pin (off Windows `pin_placeholder_mode` is a no-op, so a mutant there is equivalent on macOS; on the runner a missing pin refuses every real-disk test's port, which hundreds of tests would show).
 - Population: the switch's users (20 test modules, the selection point, one probe script, conftest; Decisions); the refusals on Windows (every `sys.platform not in ("darwin", "linux")`, `os.name` check and `windows_pending` reason in `engine/` and `backend/`, read one by one; Decisions: 8 turned on, 1 deleted, 2 kept with their reason); the texts (every row of the reference: 11 of its rows had one OS's words, all 11 changed; `ONE_OS_HOW_TO` finds none now).
+
+## Verifier
+- Round 1, head bccccb76 (range 25d0c3be..bccccb76): the verifier **PASS WITH FINDINGS** and the data-safety red team **PASS WITH FINDINGS**; no High, nothing of class (a) or (b). All fixed in this round under IMP-0078 (texts, tests, docs and the script; one product-code change beyond a text, below), no further round on them (the coordinator, relaying the review budget).
+
+| ID | Severity | Class | Disposition |
+|---|---|---|---|
+| V1 / M1 (red team R2) | Medium | d, with c | `recovery_text.not_recovered_screen` for `engine.unsupported_platform` said "…on Windows yet. It works on macOS and Linux.", false since this slice, and the reference never rendered it, so the text check missed it. Fixed: on Windows "Finzytrack cannot open or save ledgers on this computer: Windows did not let its ledger engine read cloud files (OneDrive and other sync apps) as plain files." (the only cause there now, a refused pin, told in the generic form); elsewhere "Finzytrack cannot open or save ledgers on <system>." The engine's own message (naming the mode) is not carried to this screen: `Report` and `NotRecovered` keep only the refusal's key, and carrying its message is a new field on both, beyond a text change, so it is left to the coordinator (the cause text is best effort, IMP-0078). Tests: `test_recovery_text.py::test_BL0261_…` now on FreeBSD, `::test_S0150_on_windows_the_refusal_is_the_refused_placeholder_mode_never_windows_unsupported`; the (c) part: `test_engine_job_texts_spec.py::test_no_sidecar_text_in_the_source_gives_one_os_how_to` scans every string literal (f-strings' parts, not docstrings) of the sidecar's text modules, the registry and `app_folder.py` (it finds the base's text), with `::test_the_source_scan_sees_a_literal_and_an_f_string_but_not_a_docstring`. |
+| V2 / M2 | Medium | c (privacy, INV-23) | The hand check cleaned its report after `ensure_ascii=True`, so a path with a character outside ASCII survived as `\\uXXXX`. Fixed: `Cleaner.report` cleans every string and key of the plain JSON values first, then writes ASCII, then cleans once more; `test_windows_hand_check.py::test_a_path_with_a_character_outside_ascii_is_cleaned_from_the_report` (three homes, built at run time so no home-path shape is in the source, INV-23: the Stop hook's privacy scan flagged the first spelling; a value, its `repr` and a key; the verifier's repro passes against `Cleaner.report`). With it (the verifier's question): a failure outside a step now ends with a cleaned report (`unexpected_failure`) and every scheduler closed (`run`'s `finally`), and `Product` closes its client and scheduler when their start fails: `::test_a_failure_outside_a_step_still_gives_a_cleaned_report_and_closes_the_scheduler`, `::test_a_scheduler_that_does_not_start_closes_its_client`. |
+| L1 | Low | c | `test_on_windows_out_of_the_pinned_mode_every_port_is_refused_naming_the_mode` and `test_windows.py::test_a_fresh_process_in_another_mode_refuses_every_port` were tagged `@regression-guard` but fail on the base (its `mode_refusal` read the switch): the tag is gone, each is a must-not-pass, and the first now also checks the refusal's message. |
+| L3 | Low | c | The pin in the mark-reading child (`measure_write.py`, `test_writes_end_to_end.py`, the hand check) was an `assert`, which `-O` strips: now `pin_placeholder_mode() or sys.exit(...)` (an expression, since the child is one line of `-c` code), naming the reason. |
+| L2 / V6 | Low | d | Stale wording fixed: `test_save_ops.save_setup`'s docstring; the `contextvars.copy_context().run` wrappers in `test_mirror_publish.py` and `test_publish.py` dropped (they served the switch; the path model's default is the host's in any thread, and these tests do not simulate another); `ci.yml`'s `engine-windows` and `backend-windows` comments; `UnsupportedPlatform` in a Windows process out of its mode now says "the engine is not in its placeholder mode for cloud files: <the mode>" (`UnsupportedPlatform(mode)`, raised by `for_this_os` and `legacy_locks_for_this_os`; the test above matches it). |
+| V3 | Low | d | The docs draft promised "the next start puts every file back" and said Windows "cannot replace a file in one step": rewritten (Windows has no swap, so the save renames over the file; recovery undoes from the backup, or stops and asks when it cannot tell what is safe; power cuts are untested on Windows). |
+| V4 | Low | d | The docs draft's Copy `\\` refusal was narrower than §8.2's limit: now every `document` line with `\\`, and an `include` with `\\` where another `include` or `option "documents"` line of its file is changed. |
+| V5 | Low | d | The docs draft now states §6.3's limit that the cache holds an EFS-encrypted ledger's entries unencrypted; BL-0087's row no longer calls the docs done until they are on the docs `v0.4` branch. |
+| Google Drive (verifier's question) | Low | d | Not named in the docs draft any more (no citation that Google Drive for desktop is a Cloud Files provider): "OneDrive and other sync apps that use Windows' cloud files". The code docstrings from S0149 (`this_os.PHCM_DISGUISE_PLACEHOLDER`, `port.CloudUnavailable`) still list it among examples; dropped with a reason: they describe the rule (every Cloud Files provider), and the examples are not a claim the product relies on. |
+
+- Self-mutation after round 1: the selection 6 of 6 killed again on its new form (`mode-not-named` among them); the round's own 5 of 5 killed (`windows-yet-back`, `clean-after-escape`, `keys-not-cleaned`, `start-failure-leaves-client`, `failure-outside-step-no-report`; the first run had 4 survivors because the hand-check tests all skipped without the engine's environment in the tool's copy: the skip is now on the four tests that start the engine only, and the start-failure test stubs the engine command).
 
 ## Golden changes
 - `backend/tests/platform/test_save_job.py::test_each_not_saved_reason_has_its_section_11_text` (4 expected texts: `locked`, `permission` with a file, `permission` at the journal folder, `no_folder_id`), `backend/tests/platform/test_recovery_text.py` (`test_a_permission_stop_on_a_file_says_how_to_remove_its_entry` became `test_a_permission_stop_on_a_file_names_that_file`, `test_failed_with_no_read_permission_gives_the_acl_way_out` became `test_failed_with_no_read_permission_says_to_check_the_permissions`), and 11 rows of `design/generated/engine-job-texts.md`: the old texts gave macOS's how-to ("Finder: Get Info", "Terminal: chmod -N", "Your Mac", "your Mac's own disk"), false for a Windows user now that Windows saves (owner: "fold the Mac wording into S0150"); each outcome sentence is unchanged.
 - `engine/tests/fs/test_this_os.py`: `win32` left the "other operating systems" parameters (Windows is ported); `freebsd14` stays.
 - `engine/tests/fs/test_windows.py`: the base's must-not-pass "the product does not select the Windows adapter" and "outside the switch this process refuses too" are turned round (the brief).
 - `backend/tests/test_main.py`: the Windows-only "answers the platform unsupported" test is deleted (Decisions).
+- Round 1: `test_recovery_text.py::test_BL0261_…` expected "…on Windows yet. It works on macOS and Linux.", false since this slice (V1); now FreeBSD's text, and Windows' its own test.

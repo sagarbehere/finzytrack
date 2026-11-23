@@ -16,7 +16,6 @@ link `current.db` (`CUR`, `current_in`, `point_at`), plus the Windows cases at t
 
 from __future__ import annotations
 
-import contextvars
 import os
 import re
 import sqlite3
@@ -621,9 +620,7 @@ def test_readers_during_continuous_publishes_read_only_whole_generations(
                 errors.append("meta names another generation")
             counts["reads"] += 1
 
-    # each thread runs in a copy of the test's context: the Windows adapter's test switch is a context variable, and a
-    # new thread starts with an empty context
-    threads = [threading.Thread(target=contextvars.copy_context().run, args=(reader,)) for _ in range(4)]
+    threads = [threading.Thread(target=reader) for _ in range(4)]
     for t in threads:
         t.start()
     swaps = 0

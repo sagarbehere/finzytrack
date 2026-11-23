@@ -345,17 +345,20 @@ def blocked_screen(b: Blocking, workspace: str) -> Screen:
 
 
 UNSUPPORTED_PLATFORM: Final = "engine.unsupported_platform"
-"""The engine's refusal on an operating system without its file-system port (S0125, BL-0261)."""
+"""The engine's refusal on an operating system without its file-system port (S0125, BL-0261), and on Windows since
+S0150 only when Windows refused the engine's placeholder mode (ADR-0070)."""
 
 
 def not_recovered_screen(n: NotRecovered) -> Screen:
     """Every open is blocked: a journal folder could not be listed, or recover-all never listed (fail closed)."""
     if n.why == UNSUPPORTED_PLATFORM:  # BL-0261: the platform, never "the data folder was removed"; Retry cannot help
-        return Screen(
-            f"Finzytrack cannot open or save ledgers on {platform.system() or 'this system'} yet. "
-            "It works on macOS and Linux.",
-            (),
-        )
+        if platform.system() == "Windows":  # S0150 (BL-0087): Windows is ported; only a refused pin refuses there
+            return Screen(
+                "Finzytrack cannot open or save ledgers on this computer: Windows did not let its ledger engine read "
+                "cloud files (OneDrive and other sync apps) as plain files.",
+                (),
+            )
+        return Screen(f"Finzytrack cannot open or save ledgers on {platform.system() or 'this system'}.", ())
     if n.why in APP_FOLDER_CAUSES:  # S0102 (BL-0244): Retry would meet the same folder
         return Screen(f"Finzytrack could not check for unfinished saves. {APP_FOLDER_GONE}", ())
     if n.folder is not None and n.linked:  # S0077 (BL-0193): the way out is the user's, so the screen names it

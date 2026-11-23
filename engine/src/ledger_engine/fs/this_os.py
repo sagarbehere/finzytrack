@@ -35,12 +35,16 @@ PORTED = ("darwin", "linux", "win32")
 
 
 class UnsupportedPlatform(OSError):
-    """An `OSError` (`ENOTSUP`): a file operation refuses on this OS like on any other I/O failure."""
+    """An `OSError` (`ENOTSUP`): a file operation refuses on this OS like on any other I/O failure; on Windows, out of
+    the engine's placeholder mode, its message names the mode (`mode`, `pin_refused()`'s answer; S0150 round 1)."""
 
-    def __init__(self) -> None:
-        super().__init__(
-            errno.ENOTSUP, f"the write path's file-system port is for macOS, Linux and Windows, not {sys.platform}"
-        )
+    def __init__(self, mode: str | None = None) -> None:
+        if mode is not None:
+            super().__init__(errno.ENOTSUP, f"the engine is not in its placeholder mode for cloud files: {mode}")
+        else:
+            super().__init__(
+                errno.ENOTSUP, f"the write path's file-system port is for macOS, Linux and Windows, not {sys.platform}"
+            )
 
 
 def supported() -> bool:
@@ -58,8 +62,11 @@ def for_this_os(on_fallback: Callable[[], None] | None = None) -> FileSystem:
         return DarwinFS(on_fallback)
     if sys.platform == "linux":
         return linux.LinuxFS(on_fallback)
-    if sys.platform == "win32" and pin_refused() is None:  # S0149: another mode refuses
-        return windows.WindowsFS(on_fallback)
+    if sys.platform == "win32":
+        refused = pin_refused()
+        if refused is None:  # S0149: another mode refuses, naming it
+            return windows.WindowsFS(on_fallback)
+        raise UnsupportedPlatform(refused)
     raise UnsupportedPlatform
 
 
@@ -70,8 +77,11 @@ def legacy_locks_for_this_os() -> LegacyLocks:
         return DarwinLegacyLocks()
     if sys.platform == "linux":
         return linux.LinuxLegacyLocks()
-    if sys.platform == "win32" and pin_refused() is None:
-        return windows.WindowsLegacyLocks()
+    if sys.platform == "win32":
+        refused = pin_refused()
+        if refused is None:
+            return windows.WindowsLegacyLocks()
+        raise UnsupportedPlatform(refused)
     raise UnsupportedPlatform
 
 

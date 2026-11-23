@@ -130,8 +130,9 @@ def test_the_product_on_windows_selects_the_adapter_in_a_fresh_pinned_process_an
 
 
 def test_a_fresh_process_in_another_mode_refuses_every_port() -> None:
-    """@regression-guard (S0149's rule, ADR-0070): a process in another placeholder mode refuses the port and the
-    legacy locks, and the refusal names the mode."""
+    """S0149's rule (ADR-0070) in a fresh process, without the test switch: a process in another placeholder mode
+    refuses the port and the legacy locks, and the refusal names the mode. Must not pass: either selected, or no mode
+    named (on the base `mode_refusal` read the switch and answered None)."""
     got = _selection("expose")
     refused = {"supported": False, "port": "refused", "locks": "refused"}
     assert got["here"] == refused, got

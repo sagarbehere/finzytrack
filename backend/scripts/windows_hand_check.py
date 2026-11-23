@@ -55,7 +55,7 @@ import time
 from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Final, NoReturn, override
+from typing import Any, Final, NoReturn, cast, override
 
 from app.main import engine_command, parse_args
 from app.platform.adapters.app_folder import AppFolder, prepare
@@ -161,6 +161,24 @@ class Cleaner:
             if len(p) > 3:
                 self.labels.append((p, label))
         self.labels.sort(key=lambda pl: -len(pl[0]))
+
+    def tree(self, value: object) -> object:
+        """`value` (as JSON gives it: dicts, lists, strings, numbers) with every string and key cleaned, before any
+        escaping, so a path with a character outside ASCII (a user folder named with an "ø") is found as it is spelled
+        (S0150 round 1, V2)."""
+        if isinstance(value, str):
+            return self(value)
+        if isinstance(value, list):
+            return [self.tree(v) for v in cast("list[object]", value)]
+        if isinstance(value, dict):
+            return {self(str(k)): self.tree(v) for k, v in cast("dict[object, object]", value).items()}
+        return value
+
+    def report(self, report: dict[str, Any]) -> str:
+        """The report as the owner pastes it: plain JSON values cleaned (`tree`), then written in ASCII, then cleaned
+        once more for a spelling the escaping made (a backslash doubled)."""
+        plain = json.loads(json.dumps(report, ensure_ascii=False, default=str))
+        return self(json.dumps(self.tree(plain), indent=2, ensure_ascii=True))
 
     def __call__(self, text: str) -> str:
         for path, label in self.labels:
@@ -330,7 +348,7 @@ def recorded_mark(folder: Path) -> CopyMark:
     path = os.path.realpath(folder)
     code = (
         "import json, sys; from ledger_engine.fs.this_os import for_this_os, pin_placeholder_mode; "
-        "assert pin_placeholder_mode(); "
+        "pin_placeholder_mode() or sys.exit('the placeholder mode could not be pinned'); "
         "m = for_this_os().open_dir(sys.argv[-1]).mark(); "
         "print(json.dumps([m.volume, m.fs_type, m.born]))"
     )
@@ -401,9 +419,13 @@ class Product:
         self.jobs = Jobs(self.client, wait_engine_lock=lambda: wait_engine_lock(app), restart=restart)
         holder.append(self.jobs)
         self.jobs.tickets = []
-        boot = self.jobs.start()
-        if not isinstance(boot, JobTicket) or boot.wait(DEADLINE) is None:
-            fail(f"the scheduler did not start: {boot!r}")
+        try:
+            boot = self.jobs.start()
+            if not isinstance(boot, JobTicket) or boot.wait(DEADLINE) is None:
+                fail(f"the scheduler did not start: {boot!r}")
+        except BaseException:
+            self.close()  # round 1: never an engine left running when the start fails
+            raise
         self.services = WriteServices(jobs=self.jobs, plans=PlanStore(CLOCK), clock=CLOCK, ids=_Ids(), session="h1")
         self.marks: dict[Path, CopyMark] = {}
 
@@ -505,85 +527,101 @@ def run(scratch: Path, auto: bool, packaged: Path | None, clean: Cleaner) -> dic
     clean.add(local, "<app>")
     looks: dict[str, Any] = {}
     report["looks"] = looks
-    product: Product | None = None
+    products: list[Product] = []
     try:
-        a = scratch / "ledger"
-        main = write(a / "main.bean", MAIN)
-        included = [write(a / "accounts.bean", ACCOUNTS), write(a / "sub" / "more.bean", MORE)]
-        b = scratch / "plugin"
-        plugin_main = write(b / "main.bean", PLUGIN_MAIN)
-        plugin = write(b / f"{PLUGIN}.py", PLUGIN_CODE)
-        c = scratch / "q1"
-        q1_main = write(c / "main.bean", Q1_MAIN)
-        files = [main, *included, plugin_main, plugin, q1_main]
-
-        def modes() -> dict[str, Any]:
-            got: dict[str, Any] = {"engine": mode_of(EngineCommand.for_venv(ENGINE_VENV, test_ops=True))}
-            if packaged is None:
-                got["packaged"] = "not asked (no --packaged)"
-            else:
-                python = packaged / "sidecar" / "python" / ("python.exe" if os.name == "nt" else "bin/python3.13")
-                site = packaged_engine_site(python.parent if os.name == "nt" else python.parents[1])
-                got["packaged"] = mode_of(EngineCommand.for_packaged(python, site, test_ops=True))
-            return got
-
-        step(report, "mode", modes)
-        say("-- setup: waiting up to 2 minutes for OneDrive to upload the test ledgers")
-        looks["after_setup"] = watch(files, scratch, 0 if auto else 120, _synced)
-        report["setup"] = {"files": [f.relative_to(scratch).as_posix() for f in files]}
-        app = prepare(local / "app")
-        if not isinstance(app, AppFolder):
-            fail(f"the app folder: {app!r}")
-        cache = local / "cache"
-        cache.mkdir()
-        product = Product(app, cache)
-        p = product
-        targets: dict[str, WriteTarget] = {}
-
-        def open_a() -> object:
-            result, target = p.open("ka", main)
-            if target is not None:
-                targets["a"] = target
-            return result
-
-        step(report, "open", open_a)
-
-        def save_once() -> object:
-            if "a" not in targets:
-                fail("the open did not succeed")
-            return p.save(targets["a"], '2026-01-05 note Assets:Cash "saved by the hand check"\n')
-
-        step(report, "save", save_once)
-        say("-- watching what OneDrive does to the saved file (up to 2 minutes)")
-        looks["after_save"] = watch([main], scratch, 0 if auto else 120, _synced)
-
-        def burst() -> object:
-            if "a" not in targets:
-                fail("the open did not succeed")
-            saves = [p.save(targets["a"], f'2026-01-06 note Assets:Cash "burst {n}"\n') for n in range(BURST)]
-            return {"count": BURST, "saves": saves}
-
-        step(report, "burst", burst)
-
-        def online() -> object:
-            freed = free_up_space([*included, plugin], scratch)
-            looks["after_free_up_space"] = watch([*included, plugin], scratch, 0 if auto else 60, _all("cloud_only"))
-            result, target = p.open("ka", main)
-            if target is not None:
-                targets["a"] = target
-            return {"free_up_space": freed, "open": result, "looks_after": [look(f, scratch) for f in included]}
-
-        step(report, "free_up_space", online)
-        if auto:
-            for name in ("offline", "paused", "q1_unlisted_folder", "q2_cloud_only_plugin"):
-                report[name] = "skipped (--auto)"
-            return report
-        by_hand(report, p, targets, scratch, main, included, plugin, plugin_main, q1_main, looks)
-        return report
+        _steps(report, scratch, auto, packaged, local, looks, products)
+    except Exception as e:  # noqa: BLE001 (round 1: a failure outside a step still gives the report, cleaned)
+        report["unexpected_failure"] = f"{type(e).__name__}: {e}"
     finally:
-        if product is not None:
+        for product in products:
             product.close()
         shutil.rmtree(local, ignore_errors=True)
+    return report
+
+
+def _steps(
+    report: dict[str, Any],
+    scratch: Path,
+    auto: bool,
+    packaged: Path | None,
+    local: Path,
+    looks: dict[str, Any],
+    products: list[Product],
+) -> None:
+    """The steps in order (the module's docstring); `products` gets the scheduler as soon as it exists, for `run` to
+    close whatever happens."""
+    a = scratch / "ledger"
+    main = write(a / "main.bean", MAIN)
+    included = [write(a / "accounts.bean", ACCOUNTS), write(a / "sub" / "more.bean", MORE)]
+    b = scratch / "plugin"
+    plugin_main = write(b / "main.bean", PLUGIN_MAIN)
+    plugin = write(b / f"{PLUGIN}.py", PLUGIN_CODE)
+    c = scratch / "q1"
+    q1_main = write(c / "main.bean", Q1_MAIN)
+    files = [main, *included, plugin_main, plugin, q1_main]
+
+    def modes() -> dict[str, Any]:
+        got: dict[str, Any] = {"engine": mode_of(EngineCommand.for_venv(ENGINE_VENV, test_ops=True))}
+        if packaged is None:
+            got["packaged"] = "not asked (no --packaged)"
+        else:
+            python = packaged / "sidecar" / "python" / ("python.exe" if os.name == "nt" else "bin/python3.13")
+            site = packaged_engine_site(python.parent if os.name == "nt" else python.parents[1])
+            got["packaged"] = mode_of(EngineCommand.for_packaged(python, site, test_ops=True))
+        return got
+
+    step(report, "mode", modes)
+    say("-- setup: waiting up to 2 minutes for OneDrive to upload the test ledgers")
+    looks["after_setup"] = watch(files, scratch, 0 if auto else 120, _synced)
+    report["setup"] = {"files": [f.relative_to(scratch).as_posix() for f in files]}
+    app = prepare(local / "app")
+    if not isinstance(app, AppFolder):
+        fail(f"the app folder: {app!r}")
+    cache = local / "cache"
+    cache.mkdir()
+    p = Product(app, cache)
+    products.append(p)
+    targets: dict[str, WriteTarget] = {}
+
+    def open_a() -> object:
+        result, target = p.open("ka", main)
+        if target is not None:
+            targets["a"] = target
+        return result
+
+    step(report, "open", open_a)
+
+    def save_once() -> object:
+        if "a" not in targets:
+            fail("the open did not succeed")
+        return p.save(targets["a"], '2026-01-05 note Assets:Cash "saved by the hand check"\n')
+
+    step(report, "save", save_once)
+    say("-- watching what OneDrive does to the saved file (up to 2 minutes)")
+    looks["after_save"] = watch([main], scratch, 0 if auto else 120, _synced)
+
+    def burst() -> object:
+        if "a" not in targets:
+            fail("the open did not succeed")
+        saves = [p.save(targets["a"], f'2026-01-06 note Assets:Cash "burst {n}"\n') for n in range(BURST)]
+        return {"count": BURST, "saves": saves}
+
+    step(report, "burst", burst)
+
+    def online() -> object:
+        freed = free_up_space([*included, plugin], scratch)
+        looks["after_free_up_space"] = watch([*included, plugin], scratch, 0 if auto else 60, _all("cloud_only"))
+        result, target = p.open("ka", main)
+        if target is not None:
+            targets["a"] = target
+        return {"free_up_space": freed, "open": result, "looks_after": [look(f, scratch) for f in included]}
+
+    step(report, "free_up_space", online)
+    if auto:
+        for name in ("offline", "paused", "q1_unlisted_folder", "q2_cloud_only_plugin"):
+            report[name] = "skipped (--auto)"
+        return
+    by_hand(report, p, targets, scratch, main, included, plugin, plugin_main, q1_main, looks)
 
 
 def by_hand(
@@ -686,7 +724,7 @@ def main(argv: list[str] | None = None) -> int:
     clean.add(tempfile.gettempdir(), "<temp>")
     say(f"Scratch folder: {scratch.name} (in OneDrive unless --folder was given).")
     report = run(scratch, args.auto, args.packaged, clean)
-    text = clean(json.dumps(report, indent=2, ensure_ascii=True, default=str))
+    text = clean.report(report)
     (scratch / "report.json").write_text(text + "\n", encoding="utf-8")
     sys.stdout.write(text + "\n")
     say(f"\nDone. The report above is also in {scratch.name}/report.json. Paste it back into the session.")

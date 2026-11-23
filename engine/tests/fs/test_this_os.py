@@ -66,12 +66,14 @@ def test_on_windows_in_the_pinned_mode_the_adapters_are_the_windows_ones(monkeyp
 def test_on_windows_out_of_the_pinned_mode_every_port_is_refused_naming_the_mode(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """@regression-guard (S0149's rule, ADR-0070): in any other placeholder mode the port, the legacy locks and every op
-    that needs them are refused, and the refusal names the mode, never a missing port."""
+    """S0149's rule (ADR-0070), without the test switch: in any other placeholder mode the port, the legacy locks and
+    every op that needs them are refused, and the refusal names the mode, never a missing port. Must not pass: either
+    selected, or the refusal naming the platform (S0150 round 1, L1: it fails on the base, whose `mode_refusal` read
+    the switch, so it is no regression guard)."""
     _as_windows(monkeypatch, "the placeholder mode is 0 (application_default)")
-    with pytest.raises(this_os.UnsupportedPlatform):
+    with pytest.raises(this_os.UnsupportedPlatform, match=r"placeholder mode .*: the placeholder mode is 0"):
         this_os.for_this_os()
-    with pytest.raises(this_os.UnsupportedPlatform):
+    with pytest.raises(this_os.UnsupportedPlatform, match=r"placeholder mode .*: the placeholder mode is 0"):
         this_os.legacy_locks_for_this_os()
     assert not this_os.supported()
     assert this_os.mode_refusal() == "the placeholder mode is 0 (application_default)"

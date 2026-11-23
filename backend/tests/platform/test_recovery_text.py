@@ -434,13 +434,30 @@ def test_S0100_BL0223_no_backup_sentence_no_drive_check(cause: str) -> None:
 def test_BL0261_an_engine_without_a_port_names_the_platform_not_a_missing_data_folder(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """BL-0261 (S0112, S0125): off macOS and Linux the engine refuses `engine.unsupported_platform`; the screen names
-    the system and offers no Retry (it cannot help), and never says the data folder was removed."""
+    """BL-0261 (S0112, S0125): on an OS without a port the engine refuses `engine.unsupported_platform`; the screen
+    names the system and offers no Retry (it cannot help), and never says the data folder was removed."""
+    import platform
+
+    monkeypatch.setattr(platform, "system", lambda: "FreeBSD")
+    screen = not_recovered_screen(NotRecovered(None, None, "engine.unsupported_platform"))
+    assert screen.message == "Finzytrack cannot open or save ledgers on FreeBSD."
+    assert screen.actions == ()
+
+
+def test_S0150_on_windows_the_refusal_is_the_refused_placeholder_mode_never_windows_unsupported(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """S0150 round 1 (V1, M1): Windows is ported, so there `engine.unsupported_platform` comes only from a refused
+    placeholder-mode pin (ADR-0070). Must not pass: the screen says Windows is not supported yet."""
     import platform
 
     monkeypatch.setattr(platform, "system", lambda: "Windows")
     screen = not_recovered_screen(NotRecovered(None, None, "engine.unsupported_platform"))
-    assert screen.message == "Finzytrack cannot open or save ledgers on Windows yet. It works on macOS and Linux."
+    assert screen.message == (
+        "Finzytrack cannot open or save ledgers on this computer: Windows did not let its ledger engine read cloud "
+        "files (OneDrive and other sync apps) as plain files."
+    )
+    assert "yet" not in screen.message
     assert screen.actions == ()
 
 

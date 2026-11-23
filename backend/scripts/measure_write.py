@@ -329,7 +329,8 @@ def recorded_mark(folder: Path) -> CopyMark:
     path = os.path.realpath(folder)
     code = (
         "import json, sys; from ledger_engine.fs.this_os import for_this_os, pin_placeholder_mode; "
-        "assert pin_placeholder_mode(); "  # Windows: as an engine's start pins it (ADR-0070); a no-op elsewhere
+        # Windows: pinned as an engine's start does (ADR-0070); not an `assert`, which `-O` strips
+        "pin_placeholder_mode() or sys.exit('the placeholder mode could not be pinned'); "
         "m = for_this_os().open_dir(sys.argv[-1]).mark(); "
         "print(json.dumps([m.volume, m.fs_type, m.born]))"
     )

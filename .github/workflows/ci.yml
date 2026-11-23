@@ -172,8 +172,8 @@ jobs:
   engine-windows:
     # The ledger engine on Windows (S0126, BL-0087; ADR-0061 decision 6 and its 2026-11-14 amendment): the Windows
     # file-system probe on the runner's folders and on scratch volumes (VHDs formatted FAT32, exFAT and ReFS; prints
-    # only), then the engine's tests. Until the Windows port lands, the engine refuses every file operation there
-    # (`engine.unsupported_platform`) and its real-disk write-contract tests skip. The Cloud Files probe (S0144,
+    # only), then the engine's tests, its real-disk write-contract tests on the Windows adapter the product selects
+    # since S0150 (BL-0087). The Cloud Files probe (S0144,
     # BL-0283) registers a sync root in the runner's temp folder and prints how the adapter sees its placeholders; the
     # tests' `tests/fs/test_windows_cloud.py` (S0149) runs the engine's jobs on a ledger in a sync root (its facts are
     # JSON warnings in the warnings summary).
@@ -241,8 +241,8 @@ jobs:
         run: .venv\Scripts\python.exe -m pytest -q -rs -p no:cacheprovider
   backend-windows:
     # The main sidecar on Windows (S0129, BL-0281; ADR-0061 and its 2026-11-14 amendment): the whole backend suite
-    # (S0131, BL-0290). Each test passes or skips with a reason from `tests/windows_pending.py` (the engine's write path,
-    # which Windows refuses until BL-0087; POSIX-only rules, with their Windows tests named). Lint and types run in the
+    # (S0131, BL-0290). Each test passes or skips with a reason from `tests/windows_pending.py` (POSIX-only rules, with
+    # their Windows tests named, or the open row); the engine's write path runs there since S0150 (BL-0087). Lint and types run in the
     # `backend` job (pyright for all three platforms).
     runs-on: windows-2022
     timeout-minutes: 60
