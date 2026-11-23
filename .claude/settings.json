@@ -37,7 +37,8 @@
       ],
       "allowWrite": [
         "~/.cache/uv",
-        "~/Library/pnpm"
+        "~/Library/pnpm",
+        "~/experiments/finzytrack-docs"
       ]
     },
     "network": {
