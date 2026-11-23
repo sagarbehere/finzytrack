@@ -716,3 +716,11 @@ Format:
 - Why: the skipped checks read the whole tree, so the landing push runs them on a tree that holds every mid-slice commit; the range checks stay because a mid-slice push moves the start of their range.
 - Expected effect: a mid-slice push takes well under a minute (about 22 s from the medians). Metric: pre-push time per mid-slice push; failures found at a landing push that a mid-slice commit introduced (a delay, counted in the retro).
 - Status: new.
+
+## IMP-0078: the outcome is exact; its cause is best effort (2026-11-23)
+- Trigger: the owner's question during S0149 ("Is that really so complicated?? It feelings like we've been spinning our wheels for days and weeks on tackling various file management edge cases."). S0144 to S0149's journals: no lost, torn or overwritten byte found; one outcome escape (S0149 V1, a false "unchanged", fixed in one round); most rounds, CI runs and owner questions spent on which cause and which file a refusal names (S0148: two extra runs and three owner questions; S0149: three fix rounds and two options notes). Owner, 2026-11-23, in session: "Yes, write it up. I'm already accepting it as you have explained"; `design/inbox/answered/20261123-outcome-exact-cause-best-effort.md`.
+- What changed: process (a loosening of the finding classes on the owner's words; the safety core unchanged). A refusal's cause and the file it names as the cause are class (d), told by default with one generic honest text and the system's own message; a specific cause only where cheap and obvious; the outcome, the state recovery leaves and the bytes on disk stay class (a). A best-effort write mode is told to the user. A brief that adds a refusal uses the generic text unless the owner asks for a specific one.
+- PROCESS.md section: §3, the review budget (the finding classes).
+- Why: the owner's direction is high integrity where possible and best effort, told, where not; precision in a refusal's cause cost rounds without protecting a byte.
+- Expected effect: a slice that adds a refusal lands in one round unless its outcome is wrong. Metric: fix rounds and owner questions per write-path slice after IMP-0078 against S0144 to S0149; class (a) escapes after landing (target 0).
+- Status: new.
