@@ -9,6 +9,7 @@ mirror in a scratch folder, and must print its JSON report. The cases are checke
 
 from __future__ import annotations
 
+import importlib.util
 import json
 import os
 import subprocess
@@ -128,7 +129,9 @@ def write(tmp_path: Path) -> None:
         assert r["outcome"] == "published", r
         for job in JOBS:
             assert cast("float", r[f"{job}_ms"]) > 0, r
-            assert cast("float", r[f"{job}_peak_rss_mb"]) > 0, r
+            peak = r[f"{job}_peak_rss_mb"]  # measured on every OS (Windows' working set since S0150)
+            assert isinstance(peak, float), r
+            assert peak > 0, r
         assert cast("float", r["total_ms"]) >= cast("float", r["confirm_to_published_ms"]) > 0, r
         assert "load_average" in r, r
         assert r["large_files"] == 0, r  # S0120: the tip's list, by count (no path in the report)
@@ -208,3 +211,19 @@ def test_a_script_that_fails_fails_its_case(tmp_path: Path) -> None:
     (tmp_path / "measure_broken.py").write_text('import sys\nprint("{}")\nsys.exit(1)\n')
     with pytest.raises(AssertionError, match="assert 1 == 0"):
         run("measure_broken.py", tmp_path=tmp_path, scripts=tmp_path)
+
+
+def test_measure_write_reports_an_unsampled_peak_as_none_never_zero() -> None:
+    """S0150 (the 2026-11-23 run 18). Must not pass: a job whose engine no sample read reports a peak of 0.0, which
+    reads as a measurement."""
+    spec = importlib.util.spec_from_file_location("measure_write", SCRIPTS / "measure_write.py")
+    assert spec is not None
+    assert spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module  # its dataclasses look their module up by name
+    try:
+        spec.loader.exec_module(module)
+        assert module.peak_mb({}, "save") is None
+        assert module.peak_mb({"save": 123_456_789}, "save") == 123.5
+    finally:
+        del sys.modules[spec.name]

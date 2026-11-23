@@ -40,14 +40,15 @@ for every unpromoted mutator: `writes.promotion_refusal`, `writes.confinement`).
 
 **One write**: open the copy (its mirror published; timed for the record), then a preview of a one-transaction insert
 into the file that holds the most recent entry (dated that entry's date), its confirm, and the background rebuild the
-landed save queues, each waited for in turn. Per run it reports each job's wall time from its submit to its answer
-(the rebuild's from the save's answer to its own), the time from the confirm's submit to the new generation
-published, the user-visible total from the preview's submit to that publish, each job's engine's peak resident size
-(sampled every 5 ms, macOS `proc_pid_rusage`) and its lifetime peak footprint, and the 1-minute load average before
-the run. A job that does not end as expected, or does not answer within `--deadline` seconds (600 by default; a
-stuck job, not a budget), ends that run with its outcome and the figures measured so far (the report says which, e.g.
-a preview refused, with the client's `engine.stopped` events); the other runs go on, and the script exits 0 and prints
-its JSON report. Its summary is over the published runs only. With `--runs N` the layouts alternate within each run.
+landed save queues, each waited for in turn. Per run it reports each job's wall time from its submit to its answer (the
+rebuild's from the save's answer to its own), the time from the confirm's submit to the new generation published, the
+user-visible total from the preview's submit to that publish, each job's engine's peak resident size (sampled every 5
+ms: macOS `proc_pid_rusage`, Linux `/proc/<pid>/status`, Windows `K32GetProcessMemoryInfo`'s working set; None when no
+sample was read) and its lifetime peak footprint, and the 1-minute load average before the run. A job that does not end
+as expected, or does not answer within `--deadline` seconds (600 by default; a stuck job, not a budget), ends that run
+with its outcome and the figures measured so far (the report says which, e.g. a preview refused, with the client's
+`engine.stopped` events); the other runs go on, and the script exits 0 and prints its JSON report. Its summary is over
+the published runs only. With `--runs N` the layouts alternate within each run.
 
 **Stated limits.** The smoke test (`tests/test_measure_scripts.py`) checks the report's shape, the layouts' file,
 line and transaction counts and that every run publishes; it does not check how `files12` spreads the entries over
@@ -133,6 +134,12 @@ class Measured(Exception):
 
 def fail(what: str) -> NoReturn:
     raise Measured(what)
+
+
+def peak_mb(samples: dict[str, int], job: str) -> float | None:
+    """A job's peak in MB, or None, never 0, when no sample of its engine was read (S0150, the 2026-11-23 run 18:
+    Windows had no reader and reported 0.0, which read as a measurement)."""
+    return round(samples[job] / 1e6, 1) if job in samples else None
 
 
 def ms(seconds: float) -> float:
@@ -239,6 +246,47 @@ def stats(layout: Layout) -> dict[str, int | float]:
 # -- the engine's memory ----------------------------------------------------------------------------------------------
 
 
+def _windows_memory(pid: int) -> tuple[int, int] | None:
+    """Windows only: the process's working set (resident) and its peak working set over its life, the counterparts of
+    macOS's resident size and lifetime footprint, from `PROCESS_MEMORY_COUNTERS`; None when it cannot be read."""
+    if sys.platform != "win32":
+        return None
+    from ctypes import wintypes
+
+    class Counters(ctypes.Structure):
+        _fields_ = [
+            ("cb", wintypes.DWORD),
+            ("PageFaultCount", wintypes.DWORD),
+            ("PeakWorkingSetSize", ctypes.c_size_t),
+            ("WorkingSetSize", ctypes.c_size_t),
+            ("QuotaPeakPagedPoolUsage", ctypes.c_size_t),
+            ("QuotaPagedPoolUsage", ctypes.c_size_t),
+            ("QuotaPeakNonPagedPoolUsage", ctypes.c_size_t),
+            ("QuotaNonPagedPoolUsage", ctypes.c_size_t),
+            ("PagefileUsage", ctypes.c_size_t),
+            ("PeakPagefileUsage", ctypes.c_size_t),
+        ]
+
+    k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    k32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+    k32.OpenProcess.restype = wintypes.HANDLE
+    k32.K32GetProcessMemoryInfo.argtypes = [wintypes.HANDLE, ctypes.c_void_p, wintypes.DWORD]
+    k32.K32GetProcessMemoryInfo.restype = wintypes.BOOL
+    k32.CloseHandle.argtypes = [wintypes.HANDLE]
+    query_limited, vm_read = 0x1000, 0x0010
+    h = k32.OpenProcess(query_limited | vm_read, False, pid)
+    if not h:
+        return None
+    try:
+        c = Counters()
+        c.cb = ctypes.sizeof(Counters)
+        if not k32.K32GetProcessMemoryInfo(h, ctypes.byref(c), c.cb):
+            return None
+        return int(c.WorkingSetSize), int(c.PeakWorkingSetSize)
+    finally:
+        k32.CloseHandle(h)
+
+
 class Sampler:
     """Polls the running engine's resident size (and its lifetime peak footprint) every `SAMPLE_EVERY` seconds, by
     the label the main thread sets: the job running. A sample of an engine first seen under one label stays with it."""
@@ -268,6 +316,8 @@ class Sampler:
         self.engines.clear()
 
     def _read(self, pid: int) -> tuple[int, int] | None:
+        if sys.platform == "win32":  # S0150: the working set and its peak (`K32GetProcessMemoryInfo`), in bytes
+            return _windows_memory(pid)
         if sys.platform == "linux":  # S0125: `/proc/<pid>/status`, resident (VmRSS) and its peak (VmHWM), in kB
             try:
                 with open(f"/proc/{pid}/status", encoding="ascii") as f:
@@ -473,8 +523,8 @@ def one_run(
     result["confirm_to_published_ms"] = ms(t4 - t2)
     result["total_ms"] = ms(t4 - t0)
     for job in JOBS:
-        result[f"{job}_peak_rss_mb"] = round(sampler.rss.get(job, 0) / 1e6, 1)
-        result[f"{job}_peak_footprint_mb"] = round(sampler.footprint.get(job, 0) / 1e6, 1)
+        result[f"{job}_peak_rss_mb"] = peak_mb(sampler.rss, job)
+        result[f"{job}_peak_footprint_mb"] = peak_mb(sampler.footprint, job)
         result[f"{job}_engines"] = len(sampler.engines.get(job, ()))
     return stop("published")
 
@@ -595,7 +645,12 @@ def main(argv: list[str] | None = None) -> int:
                 name: {
                     "published": len(done),
                     "not_published": sum(1 for r in runs if r["layout"] == name) - len(done),
-                    **{k: summary([float(str(r[k])) for r in done]) for k in keys if done},
+                    **{
+                        k: summary(values)
+                        for k in keys
+                        for values in ([float(str(r[k])) for r in done if r.get(k) is not None],)
+                        if values  # a figure no run measured (None) is left out, never summed as 0
+                    },
                 }
                 for name in layouts
                 for done in ([r for r in runs if r["layout"] == name and r.get("outcome") == "published"],)
