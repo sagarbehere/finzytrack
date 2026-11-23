@@ -144,8 +144,7 @@ def test_onedrives_own_entries_pass_where_removals_are_decided_per_entry() -> No
 def test_onedrives_own_entries_are_refused_by_the_posix_rule() -> None:
     """@regression-guard (it holds on the base): macOS and Linux keep the owner's rule of 2026-10-30."""
     assert blocking_entry((ONEDRIVE_ROOT,)) == ONEDRIVE_ROOT
-    assert blocking_entry((ONEDRIVE_FOLDER,)) == ONEDRIVE_FOLDER
-    assert blocking_entry((ONEDRIVE_FOLDER,), by_entry=False) == ONEDRIVE_FOLDER
+    assert blocking_entry((ONEDRIVE_FOLDER,)) == ONEDRIVE_FOLDER  # the default, `by_entry=False`, which the base lacks
 
 
 @pytest.mark.parametrize("flags", NOT_INHERITING + KNOWN_INHERITING)

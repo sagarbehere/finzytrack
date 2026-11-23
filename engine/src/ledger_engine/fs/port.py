@@ -65,12 +65,16 @@ class Right(StrEnum):
 
     CHANGE_ENTRIES = "change_entries"  # in a folder: add, rename and remove entries (write and search)
     REMOVE_ENTRIES = "remove_entries"
-    """In a folder: the entries the save makes here may be removed and renamed away. macOS and Linux ask the folder
-    (`delete_child`, `_RMFILE_OK`; write and search). Windows decides a removal per entry (the folder's
-    `FILE_DELETE_CHILD`, or the entry's own `DELETE`), so it answers yes when the folder grants `FILE_DELETE_CHILD`,
-    or else when every file and folder made here, or in a folder made here, would grant us `DELETE` by the security
-    Windows gives a new entry there (S0151; owner, 2026-11-23: "1"). Every entry already there that the save removes
-    or renames away is asked `DELETE` on its own."""
+    """In a folder: the entries the save makes here, and in the folders it makes here, may be removed and renamed away.
+    macOS and Linux ask the folder (`delete_child`, `_RMFILE_OK`; write and search). Windows decides a removal per
+    entry (its folder's `FILE_DELETE_CHILD`, or the entry's own `DELETE`), so on a local NTFS volume
+    (`Caps.delete_by_entry`) it answers yes when each file and folder made here, and in folders made here, may be
+    removed one way or the other: at each level by the folder it is made in or by the security Windows gives it there
+    (S0151; owner, 2026-11-23: "1"; round 1, red team RT-1). On a network share and on other Windows volumes, the
+    folder's own `FILE_DELETE_CHILD`, as before S0151. Of the entries already there, the file the save replaces, the
+    restore's put-back target, and the names of ours and the folders the save made that the undo removes are asked
+    `DELETE` on their own before any effect; Keep's move of an outside file, the history trim, a kept copy's delete
+    and a `.part`'s removal are not asked first: a refusal there is that effect's own error."""
     SEARCH = "search"  # in a folder: look names up in it (`X_OK`; only to name the folder when a lookup fails)
     DELETE = "delete"  # an entry may be renamed away or removed (its own ACL, or the folder's delete_child)
     READ_XATTRS = "read_xattrs"  # a file's extended attributes may be read (to copy them to the temp)
@@ -101,11 +105,13 @@ class Caps:
     excl: bool
     links: bool = True
     delete_by_entry: bool = False
-    """Windows (S0151; owner, 2026-11-23: "1"): an entry may be removed or renamed away when the folder grants
-    `FILE_DELETE_CHILD` **or** the entry itself grants `DELETE`, and the folder rule asks it that way
-    (`Right.REMOVE_ENTRIES`, `ledger.handles.blocking_entry`): a deny of `delete_child` alone then blocks no folder.
-    False on macOS and Linux, where the owner's rule of 2026-10-30 asks the folder (macOS's kernel also grants a
-    removal by the entry's own `delete` ACL entry, but its rule stays as it is)."""
+    """Windows on a local NTFS volume (S0151; owner, 2026-11-23: "1"): an entry may be removed or renamed away when its
+    folder grants `FILE_DELETE_CHILD` **or** the entry itself grants `DELETE`, and the folder rule asks it that way
+    (`Right.REMOVE_ENTRIES`, level by level; `ledger.handles.blocking_entry`): a deny of `delete_child` alone then
+    blocks no folder. False on a network share (the server judges us by its own view of our logon, which this
+    process's token does not show: round 1, red team Q1), on ReFS, FAT32 and exFAT (never probed), and on macOS and
+    Linux, where the owner's rule of 2026-10-30 asks the folder (macOS's kernel also grants a removal by the entry's own
+    `delete` ACL entry, but its rule stays as it is)."""
 
 
 @dataclass(frozen=True, slots=True)

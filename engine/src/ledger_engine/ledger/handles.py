@@ -319,8 +319,9 @@ NOT_INHERITED: Final = frozenset({"inherited", "limit_inherit"})
 
 DECIDED_BY_ENTRY: Final = frozenset({"delete_child"})
 """What a deny entry may deny anywhere, inherited or not, where removals are decided per entry (`Caps.delete_by_entry`:
-Windows, S0151): a removal or rename away is then granted by the entry's own `DELETE` as well, which the save asks of
-every entry it removes or renames away, and `Right.REMOVE_ENTRIES` of every entry it makes."""
+Windows on local NTFS, S0151): a removal or rename away is then granted by the entry's own `DELETE` as well, which
+`Right.REMOVE_ENTRIES` asks of every entry the save makes, level by level, and the save and the undo ask of the
+existing entries they replace or remove (the rest: `Right.REMOVE_ENTRIES`'s docstring)."""
 KNOWN_FLAGS: Final = frozenset({"file_inherit", "directory_inherit", "only_inherit", "limit_inherit", "inherited"})
 """The inheritance flags an adapter names; any other (`unknown`) fails closed."""
 
@@ -339,12 +340,12 @@ def blocking_entry(entries: tuple[AclEntry, ...], *, by_entry: bool = False) -> 
     asked: S0061 r7 found the membership lookup answering "not a member" for subjects the kernel applies to us. The
     one place this rule lives.
 
-    `by_entry` (`Caps.delete_by_entry`: Windows; S0151, owner, 2026-11-23: "1"): a denied `delete_child` counts for
-    nothing, wherever the entry reaches (`DECIDED_BY_ENTRY`), and the entry's other bits are judged as above: an entry
-    that denies only `delete_child`, with flags an adapter names, passes (OneDrive's `(D;CI;DT;;;WD)` on its root,
-    inherited by every folder in it, probed on the owner's PC, 2026-11-23). An entry that reaches files
-    (`file_inherit`) or new folders (`directory_inherit`) with any other bit still blocks, and so does a direct deny of
-    adding entries."""
+    `by_entry` (`Caps.delete_by_entry`: Windows on local NTFS; S0151, owner, 2026-11-23: "1"): a denied
+    `delete_child` counts for nothing, wherever the entry reaches (`DECIDED_BY_ENTRY`), and the entry's other bits are
+    judged as above: an entry that denies only `delete_child`, with flags an adapter names, passes (OneDrive's
+    `(D;CI;DT;;;WD)` on its root, inherited by every folder in it, probed on the owner's PC, 2026-11-23). An entry
+    that reaches files (`file_inherit`) or new folders (`directory_inherit`) with any other bit still blocks, and so
+    does a direct deny of adding entries."""
     for e in entries:
         if not e.deny:
             continue

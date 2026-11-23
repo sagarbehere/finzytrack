@@ -18,6 +18,7 @@ Keep, the history trim and the create there. The runner's real folder with OneDr
 
 from __future__ import annotations
 
+import dataclasses
 import errno
 from functools import cache
 
@@ -30,7 +31,7 @@ from ledger_engine.ledger.core.recovery import Cause
 from ledger_engine.ledger.create import Created, NotCreated
 from ledger_engine.ledger.handles import Blocked, folder_blocked
 from ledger_engine.ledger.recover_all import ActFailed, Done, delete_kept, keep
-from ledger_engine.ledger.restore import Resolved, Stopped
+from ledger_engine.ledger.restore import Failed, Resolved, Stopped
 from ledger_engine.ledger.writer import Landed, NotSaved, Reason, Unfinished, durable_commit, sha256
 from tests.fakes.memfs import Crash, MemFS
 from tests.ledger import test_create as tc
@@ -100,6 +101,42 @@ def test_on_macos_and_linux_the_same_folder_is_refused_as_before() -> None:
     assert isinstance(out, NotSaved), out
     assert (out.reason, out.unchanged, out.entry) == (Reason.PERMISSION, True, "/w/L/inc"), out  # the first target
     assert w.fs.snapshot() == w.before
+
+
+def _off_local_ntfs(where: str) -> World:
+    """A folder with OneDrive's ACL on a network share (an NTFS server's, `remote`) or on a local drive of another
+    type: removals are not judged per entry there (S0151 round 1, red team Q1: a share's server judges us by its own
+    view of our logon, which this process's token does not show; ReFS, FAT32 and exFAT never probed)."""
+    if where == "share":
+        w = world(volume="share")
+        w.fs.outside_acl("/w/L", ONEDRIVE_ROOT_DENY)
+        w.fs.outside_acl("/w/L/inc", ONEDRIVE_DENY)
+    else:
+        w = onedrive()
+        w.fs.outside_fs_type(1, where)
+    return dataclasses.replace(w, before=w.fs.snapshot())
+
+
+@pytest.mark.parametrize("where", ["share", "refs", "exfat", "fat32"])
+def test_off_local_ntfs_the_folder_rule_asks_the_folders_own_delete_child_as_before_s0151(where: str) -> None:
+    """Must-not-pass (fails closed): `Caps.delete_by_entry` False, `REMOVE_ENTRIES` the folder's own `delete_child`,
+    so OneDrive's deny refuses the save `permission`, nothing written, as at e8c4f19d (on aa51aca8 the share and
+    every Windows drive judged removals per entry, and the save landed)."""
+    w = _off_local_ntfs(where)
+    with w.fs.open_dir("/w/L") as d:
+        assert not d.caps().delete_by_entry
+        assert not d.allowed(".", Right.REMOVE_ENTRIES)
+        assert folder_blocked(d) == Blocked(None)
+    out = _refused(w)
+    assert (out.entry, out.detail) == ("/w/L/inc", None), out
+
+
+def test_on_a_share_a_folder_that_grants_delete_child_still_saves() -> None:
+    """@regression-guard (it holds on the base): the share's folders with no deny keep saving."""
+    w = world(volume="share")
+    with w.fs.open_dir("/w/L") as d:
+        assert d.allowed(".", Right.REMOVE_ENTRIES)
+    assert isinstance(durable_commit(w.fs, w.commit), Landed)
 
 
 def test_a_save_in_a_onedrive_folder_lands_with_nothing_of_ours_left() -> None:
@@ -207,6 +244,34 @@ def test_a_folder_made_in_a_folder_whose_new_folders_would_get_no_delete_refuses
     assert out.entry == "/w/L", out
 
 
+def test_a_folder_whose_made_folders_deny_delete_child_refuses_where_their_entries_get_no_delete() -> None:
+    """Must-not-pass (S0151 round 1, red team RT-1): the folder grants itself `delete_child`, its new folders inherit a
+    deny of it (`(D;CIIO;DT;;;WD)`), and what is made here gets no `DELETE`. The folder's own `delete_child` covers
+    only its direct entries: what the save puts in the folder it makes could never be removed. Refused `permission`,
+    nothing written (on aa51aca8 the folder's own `delete_child` answered yes for every level, and the save that made
+    a folder ended `Unfinished`, its recovery never resolving)."""
+    w = onedrive(new_dir=True)
+    w.fs.outside_acl_clear("/w/L")
+    w.fs.outside_acl_clear("/w/L/inc")
+    w.fs.outside_acl("/w/L", deny("delete_child", flags=("directory_inherit", "only_inherit")))
+    w.fs.outside_grant_no_delete("/w/L")
+    w = dataclasses.replace(w, before=w.fs.snapshot())
+    with w.fs.open_dir("/w/L") as d:
+        assert not d.allowed(".", Right.REMOVE_ENTRIES)
+    out = _refused(w)
+    assert (out.entry, out.detail) == ("/w/L", None), out
+
+
+def test_a_folder_whose_made_folders_deny_delete_child_is_fine_while_their_entries_grant_delete() -> None:
+    """@regression-guard (it holds on the base). Its twin: the same deny, with what is made here granting `DELETE` (the
+    entry's own side): the save lands."""
+    w = onedrive(new_dir=True)
+    w.fs.outside_acl_clear("/w/L")
+    w.fs.outside_acl_clear("/w/L/inc")
+    w.fs.outside_acl("/w/L", deny("delete_child", flags=("directory_inherit", "only_inherit")))
+    assert isinstance(durable_commit(w.fs, w.commit), Landed)
+
+
 def test_a_journal_or_backups_folder_with_onedrives_acl_is_judged_by_the_same_rule() -> None:
     w = onedrive()
     in_onedrive(w.fs, "/w/local")
@@ -273,17 +338,15 @@ def test_recovery_stops_on_an_entry_of_ours_that_lost_its_delete_and_writes_noth
 
 
 def test_an_outside_file_at_our_name_that_grants_no_delete_is_never_lost_and_never_told_resolved() -> None:
-    """Keep's move of an outside save at one of our names needs its `DELETE`: refused, the try ends without
-    "undone", the outside bytes where they were, the journal still `.open`."""
+    """@regression-guard (it holds on the base; S0151 round 1, RT-4: the outcome pinned, no `OSError` let through).
+    Keep's move of an outside save at one of our names needs its `DELETE`: refused, the try ends `Failed` (`io_error`,
+    `EACCES`), never "undone", the outside bytes where they were, the journal still `.open`."""
     w = _crashed()
     temp = "/w/L/.main.bean.ft-s1-j7.tmp"
     w.fs.outside_write(temp, FOREIGN)
     w.fs.outside_grant_no_delete(temp, new=False, own=True)
-    try:
-        out = recover(w.fs)
-    except OSError:
-        out = None
-    assert not isinstance(out, Resolved), out
+    out = recover(w.fs)
+    assert out == Failed(Cause.IO_ERROR, MAIN, errno.EACCES), out  # RT-4: the outcome pinned, never an exception
     assert FOREIGN in {w.fs.file(p) for p in w.fs.snapshot() if p.startswith("/w/L/")}
     assert set(journals(w.fs)) == {State.OPEN}
 

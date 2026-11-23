@@ -148,7 +148,7 @@ def test_every_windows_volume_offers_the_exclusive_rename_and_no_swap(fs: FileSy
     (tmp_path / "a").write_bytes(b"A")
     (tmp_path / "b").write_bytes(b"B")
     with fs.open_dir(str(tmp_path)) as d:
-        assert d.caps() == Caps(swap=False, excl=True, links=False)
+        assert d.caps() == Caps(swap=False, excl=True, links=False, delete_by_entry=True)  # local NTFS (S0151)
         with pytest.raises(NotOffered):
             d.swap("a", "b")
         with pytest.raises(FileExistsError):
@@ -533,7 +533,7 @@ def test_the_rollback_in_a_folder_with_onedrives_acl_and_recovery_after_it(
 
 @pytest.mark.parametrize(
     "extra",
-    ["(D;OI;DE;;;WD)", "(D;;0x2;;;WD)", "(D;CI;DE;;;WD)"],
+    ["(D;OI;SD;;;WD)", "(D;;0x2;;;WD)", "(D;CI;SD;;;WD)"],
     ids=["files_no_delete", "no_add_file", "dirs_no_delete"],
 )
 def test_must_not_pass_a_onedrive_folder_with_a_deny_that_reaches_what_the_save_writes_refuses(
@@ -597,6 +597,121 @@ def test_must_not_pass_a_folder_whose_new_entries_would_get_no_delete_refuses_be
     assert out.entry is not None
     assert out.entry.endswith("Finance"), out
     assert sorted(os.listdir(led)) == ["main.bean"]
+
+
+@pytest.mark.parametrize(
+    "allows",
+    [
+        # new files get full access; new folders read, write and execute, without DELETE
+        "(A;;FA;;;{sid})(A;OIIO;FA;;;{sid})(A;CIIO;0x1201bf;;;{sid})",
+        # entries made right here get full access (NP: one level); what is made in a folder made here gets no DELETE
+        "(A;;FA;;;{sid})(A;OICINPIO;FA;;;{sid})(A;OICIIO;0x1201bf;;;{sid})",
+    ],
+    ids=["folders_no_delete", "depth1_no_delete"],
+)
+def test_must_not_pass_new_folders_or_deeper_entries_without_delete_refuse_remove_entries(
+    fs: FileSystem, tmp_path: Path, allows: str
+) -> None:
+    """S0151 round 1 (verifier V1, red team RT-3): OneDrive's deny `(D;CI;DT;;;WD)` (so the folder's own
+    `FILE_DELETE_CHILD` is refused), and one level of the chain whose entries get no `DELETE`. No deny entry shows
+    it, so only `_new_entries_deletable`'s `AccessCheck` chain can refuse it: `REMOVE_ENTRIES` no. `folders_no_delete`
+    kills a chain that asks no folder (`(False,)` at every level); `depth1_no_delete` kills `NEW_ENTRY_DEPTH = 0` and a
+    chain that never moves to the folder made one level up."""
+    from tests.fs import onedrive_acl
+
+    led = tmp_path / "Finance"
+    led.mkdir()
+    onedrive_acl.set_dacl(led, "D:PAI" + onedrive_acl.ONEDRIVE_DENY + allows.format(sid=onedrive_acl.user_sid()))
+    try:
+        with fs.open_dir(str(led)) as d:
+            assert d.allowed(".", Right.CHANGE_ENTRIES)
+            assert not d.allowed(".", Right.REMOVE_ENTRIES)
+    finally:
+        onedrive_acl.reset(led)
+
+
+def test_must_not_pass_a_folder_made_two_levels_down_that_neither_its_folder_nor_itself_lets_go_refuses(
+    fs: FileSystem, tmp_path: Path
+) -> None:
+    """S0151 round 1: the folder grants `FILE_DELETE_CHILD`, and so does a folder made in it (an `NP` grant, one level
+    only); a folder made one level further down grants neither `FILE_DELETE_CHILD` nor `DELETE`, while files there
+    get full access. Only the level-2 folder's removal fails: kills a chain that asks no folder at its last level
+    (`NEW_ENTRY_DEPTH = 1`, or `(False,)` at the last level, as aa51aca8 did)."""
+    from tests.fs import onedrive_acl
+
+    led = tmp_path / "Finance"
+    led.mkdir()
+    sid = onedrive_acl.user_sid()
+    onedrive_acl.set_dacl(
+        led,
+        f"D:PAI(A;;FA;;;{sid})(A;OIIO;FA;;;{sid})(A;CINPIO;DT;;;{sid})(A;CIIO;{onedrive_acl.NO_DELETE_FOR_NEW};;;{sid})",
+    )
+    try:
+        with fs.open_dir(str(led)) as d:
+            assert d.allowed(".", Right.CHANGE_ENTRIES)
+            assert not d.allowed(".", Right.REMOVE_ENTRIES)
+    finally:
+        onedrive_acl.reset(led)
+
+
+def test_must_not_pass_a_folder_whose_made_folders_deny_delete_child_and_whose_new_files_get_no_delete_refuses(
+    fs: FileSystem, tmp_path: Path
+) -> None:
+    """S0151 round 1 (red team RT-1), the runner twin of `tests/ledger/test_onedrive_saves.py`'s: the folder grants
+    itself `FILE_DELETE_CHILD`, its new folders inherit a deny of it (`(D;CIIO;DT;;;WD)`), and new files get no
+    `DELETE`: what the save puts in the folder it makes could never be removed. Refused `permission`, unchanged
+    (aa51aca8 answered `REMOVE_ENTRIES` from the folder's own `FILE_DELETE_CHILD` alone)."""
+    from tests.fs import onedrive_acl
+
+    led = tmp_path / "Finance"
+    led.mkdir()
+    main = led / "main.bean"
+    main.write_bytes(b"pre\n")
+    sid = onedrive_acl.user_sid()
+    onedrive_acl.set_dacl(
+        led, f"D:P(D;CIIO;DT;;;WD)(A;;FA;;;{sid})(A;CIIO;FA;;;{sid})(A;OIIO;{onedrive_acl.NO_DELETE_FOR_NEW};;;{sid})"
+    )
+    try:
+        with fs.open_dir(str(led)) as d:
+            assert d.allowed(".", Right.CHANGE_ENTRIES)
+            assert not d.allowed(".", Right.REMOVE_ENTRIES)
+        out = _save(
+            fs,
+            tmp_path,
+            Change(str(main), sha256(b"pre\n"), b"post\n"),
+            Change(str(led / "y" / "n.bean"), None, b"n\n"),
+        )
+        assert isinstance(out, NotSaved), out
+        assert (out.reason, out.unchanged) == (Reason.PERMISSION, True), out
+        assert main.read_bytes() == b"pre\n"
+        assert sorted(os.listdir(led)) == ["main.bean"]
+    finally:
+        onedrive_acl.reset(led)
+
+
+def test_must_not_pass_a_onedrive_folder_reached_through_a_network_share_is_judged_by_its_folder_alone(
+    fs: FileSystem, onedrive: Path
+) -> None:
+    """S0151 round 1 (red team Q1; fails closed): through `\\\\localhost\\C$` the same OneDrive folder is a network
+    share's, whose server judges us by its own view of our logon: removals are not judged per entry there
+    (`delete_by_entry` False), `REMOVE_ENTRIES` is the folder's own `FILE_DELETE_CHILD`, which OneDrive's deny refuses:
+    `permission`, unchanged, as before S0151 (aa51aca8 judged it per entry and saved)."""
+    led = onedrive / "Finance"
+    led.mkdir()
+    (led / "main.bean").write_bytes(b"pre\n")
+    unc = f"\\\\localhost\\{str(led)[0]}$" + str(led)[2:]
+    try:
+        os.stat(unc)
+    except OSError:
+        pytest.skip("the runner's administrative share is not reachable")
+    with fs.open_dir(unc) as d:
+        assert d.remote() is True
+        assert not d.caps().delete_by_entry
+        assert not d.allowed(".", Right.REMOVE_ENTRIES)
+    out = _save(fs, onedrive.parent, Change(unc + "\\main.bean", sha256(b"pre\n"), b"post\n"))
+    assert isinstance(out, NotSaved), out
+    assert (out.reason, out.unchanged) == (Reason.PERMISSION, True), out
+    assert (led / "main.bean").read_bytes() == b"pre\n"
 
 
 def test_a_plain_local_folder_still_answers_remove_entries_from_its_delete_child(
@@ -775,7 +890,7 @@ def test_a_save_its_crash_and_its_recovery_on_a_real_scratch_volume(
         mark = v.mark()
         caps = v.caps()
         dev, ino = v.identity()
-    assert caps == Caps(swap=False, excl=True, links=False)
+    assert caps == Caps(swap=False, excl=True, links=False), "removals judged per entry only on local NTFS (S0151)"
     assert mark.fs_type in ("fat32", "exfat", "refs"), mark
     assert mark.volume is not None
     if mark.fs_type == "refs":
@@ -1662,6 +1777,15 @@ def test_rename_shared_is_not_offered_off_ntfs_and_does_nothing(fs: FileSystem, 
 
 def _shares() -> list[str]:
     return [v for v in os.environ.get("FT_TEST_SHARE", "").split(";") if v]
+
+
+@pytest.mark.skipif(not _shares(), reason="no network share given (FT_TEST_SHARE)")
+@pytest.mark.parametrize("share", _shares() or ["-"])
+def test_on_a_network_share_removals_are_never_judged_per_entry(fs: FileSystem, share: str) -> None:
+    """S0151 round 1 (red team Q1): `Caps.delete_by_entry` False on every share the runner offers."""
+    with fs.open_dir(share) as d:
+        assert d.remote() is True
+        assert d.caps() == Caps(swap=False, excl=True, links=False)
 
 
 def _read_only(path: Path) -> bool:

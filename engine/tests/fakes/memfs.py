@@ -124,6 +124,7 @@ from ledger_engine.fs.port import (
 ROOT = 1
 BORN_BASE = 1_790_000_000 * 1_000_000_000  # folders' creation times start here (S0089)
 MAX_STATES = 200_000
+NEW_ENTRY_DEPTH = 2  # the adapter's `fs.windows.NEW_ENTRY_DEPTH` (S0151): levels 0 to 2 stand for every level
 
 
 class Crash(BaseException):
@@ -1099,22 +1100,31 @@ class MemDir:
             and not self._folder_locked()
         )
 
+    def _by_entry(self) -> bool:
+        """Windows mode on a local NTFS drive (the adapter's `_by_entry`; S0151 round 1): removals judged per entry
+        (`Caps.delete_by_entry`). A drive in `remote`, or of another type (`fs_types`), keeps the folder's own side
+        alone, as before S0151."""
+        dev = self._d.dev
+        return self._fs.windows and dev not in self._fs.remote and self._fs.fs_types.get(dev) == "ntfs"
+
     def _new_deletable(self) -> bool:
         """Windows mode (S0151; the adapter's `_new_entries_deletable`): every file and folder made here, and in
-        folders made here down to depth 2, would grant us DELETE: no deny of `delete` it would inherit, and allow
-        entries that grant it (not `new_ungranted`). The folder must be searchable."""
+        folders made here down to depth 2, may be removed: at each level by the folder it is made in (this folder's
+        `_may_remove`; below, what a made folder inherits: no deny of `delete_child` or `search`) **or** by its own
+        DELETE (no deny of `delete` it would inherit, and not `new_ungranted`; S0151 round 1, red team RT-1). The
+        folder must be searchable."""
         d = self._d
-        if _denies(d, "search") or d.new_ungranted:
+        if _denies(d, "search"):
             return False
+        holder = self._may_remove()
         level = d.acl
-        for depth in range(3):
-            if _acl_denies(_inherited(level, "file_inherit", windows=True), "delete"):
-                return False
-            if depth == 2:
-                break
-            level = _inherited(level, "directory_inherit", windows=True)
-            if _acl_denies(level, "delete"):
-                return False
+        for _ in range(NEW_ENTRY_DEPTH + 1):
+            made = _inherited(level, "directory_inherit", windows=True)
+            for new in (_inherited(level, "file_inherit", windows=True), made):
+                if not holder and (d.new_ungranted or _acl_denies(new, "delete")):
+                    return False
+            holder = not _acl_denies(made, "delete_child") and not _acl_denies(made, "search")
+            level = made
         return True
 
     def _folder_locked(self) -> bool:
@@ -1147,7 +1157,7 @@ class MemDir:
         d = self._d
         if name == ".":
             if right is Right.REMOVE_ENTRIES:
-                return self._may_remove() or (self._fs.windows and self._new_deletable())
+                return self._new_deletable() if self._by_entry() else self._may_remove()
             if right is Right.SEARCH:
                 return not _denies(d, "search")
             if right is Right.CHANGE_ENTRIES and (
@@ -1176,7 +1186,7 @@ class MemDir:
             swap=not d.no_swap,
             excl=not d.no_excl or d.excl_unknown,
             links=not self._fs.windows,
-            delete_by_entry=self._fs.windows,
+            delete_by_entry=self._by_entry(),
         )
 
     def acl(self) -> tuple[AclEntry, ...]:

@@ -21,7 +21,9 @@ Steps (each is recorded in the report; a step that fails is recorded with its er
 3. `open`, `save`: the first ledger opened and one change saved; then for 2 minutes what OneDrive does to the saved
    file (`looks.after_save`: a plain file after our rename, a placeholder again, in sync).
 4. `burst`: 8 saves one after another, so that some meet OneDrive's upload of the one before (an "in use" refusal
-   is a fact, not a failure).
+   is a fact, not a failure). Then `made_folder` (S0151 round 1, an open question): a folder with one file made in
+   the scratch folder, watched for up to 2 minutes as the saved file was (does OneDrive mark it read-only once it
+   syncs it?), then the file and the folder removed, each outcome reported.
 5. `free_up_space`: the included files and the plugin set to "free up space" (`attrib +U -P`, as File Explorer's
    command), then up to 1 minute for OneDrive to make them cloud-only; `online_open` opens the ledger again: Windows
    should download them.
@@ -299,6 +301,25 @@ def _all(kind: str) -> Callable[[list[dict[str, Any]]], bool]:
 
 def _synced(looks: list[dict[str, Any]]) -> bool:
     return os.name != "nt" or all(str(lk.get("sync", "")).startswith("in_sync") for lk in looks)
+
+
+def made_folder(root: Path, seconds: float) -> dict[str, Any]:
+    """S0151 round 1 (red team RT-2, an open question): does OneDrive mark a folder made in it read-only once it syncs
+    it, as it marks its own folders, so that removing it (a save's undo removes the folders the save made) is refused?
+    A folder `made` with one file is made in the scratch folder (by Python, not by a save: OneDrive cannot tell them
+    apart), both are watched over the same window as the saved file, then the file is removed and the folder: each
+    outcome reported."""
+    folder = root / "made"
+    file = write(folder / "new.bean", MORE)
+    out: dict[str, Any] = {"looks": watch([folder, file], root, seconds, _synced)}
+    out["folder_before_removal"] = look(folder, root)
+    for name, act in (("remove_file", lambda: file.unlink()), ("rmdir", lambda: folder.rmdir())):
+        try:
+            act()
+            out[name] = "ok"
+        except OSError as e:
+            out[name] = f"{type(e).__name__}: {e.strerror} ({getattr(e, 'winerror', None) or e.errno})"
+    return out
 
 
 def free_up_space(files: list[Path], root: Path) -> list[dict[str, Any]]:
@@ -607,6 +628,8 @@ def _steps(
         return {"count": BURST, "saves": saves}
 
     step(report, "burst", burst)
+    say("-- made_folder: a new folder in OneDrive, watched as the saved file was (up to 2 minutes)")
+    step(report, "made_folder", lambda: made_folder(scratch, 0 if auto else 120))
 
     def online() -> object:
         freed = free_up_space([*included, plugin], scratch)

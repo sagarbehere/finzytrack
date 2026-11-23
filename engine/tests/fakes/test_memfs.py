@@ -974,12 +974,19 @@ def test_a_replayed_rename_moves_only_the_object_it_moved() -> None:
     assert seen == {b"target\n", b"new\n"}, seen
 
 
+def _ntfs() -> MemFS:
+    """The fake in Windows mode on a local NTFS drive, where removals are judged per entry (S0151 round 1)."""
+    fs = MemFS(windows=True)
+    fs.outside_fs_type(1, "ntfs")
+    return fs
+
+
 def test_in_windows_mode_a_removal_is_granted_by_the_folders_delete_child_or_the_entrys_own_delete() -> None:
     """S0151 (Windows, probed on the owner's PC, 2026-11-23: a OneDrive folder denies `delete_child`, its files grant
     `DELETE`, and the save's renames and removals land there): either side grants it; neither refuses it. POSIX mode
     keeps both sides needed."""
     for windows in (True, False):
-        fs = MemFS(windows=windows)
+        fs = _ntfs() if windows else MemFS()
         fs.outside_mkdirs("/d")
         fs.outside_write("/d/f", b"x")
         fs.outside_write("/d/g", b"y")
@@ -1013,7 +1020,7 @@ def test_in_windows_mode_new_entries_without_a_delete_grant_make_removals_refuse
     """`outside_grant_no_delete` (S0151): the folder's allow entries give what is made in it no `DELETE`, and the
     folders made in it pass that on; no deny entry shows it. `REMOVE_ENTRIES` then answers no where `delete_child` is
     denied, yes where it is granted."""
-    fs = MemFS(windows=True)
+    fs = _ntfs()
     fs.outside_mkdirs("/d")
     fs.outside_grant_no_delete("/d")
     with fs.open_dir("/d") as d:
@@ -1044,7 +1051,7 @@ def test_in_windows_mode_new_entries_without_a_delete_grant_make_removals_refuse
     ],
 )
 def test_in_windows_mode_remove_entries_asks_what_a_new_entry_would_inherit(entry: AclEntry, removable: bool) -> None:
-    fs = MemFS(windows=True)
+    fs = _ntfs()
     fs.outside_mkdirs("/d")
     fs.outside_acl("/d", _deny("delete_child"))
     fs.outside_acl("/d", entry)
@@ -1074,3 +1081,40 @@ def test_in_windows_mode_a_new_folder_passes_a_file_only_entry_on_to_its_files_a
             fs.outside_acl("/d/sub", _deny("delete_child"))
             with fs.open_dir("/d/sub") as sub:
                 assert not sub.allowed("f", Right.DELETE)
+
+
+def test_in_windows_mode_each_level_is_removed_by_its_own_folder_or_its_own_delete() -> None:
+    """S0151 round 1 (red team RT-1): a folder's own `delete_child` covers only its direct entries. Here it grants it,
+    its new folders inherit a deny of it (`directory_inherit,only_inherit`), and what is made gets no `DELETE`: a file
+    made in a folder made here could never be removed, so `REMOVE_ENTRIES` answers no, as the effects then show."""
+    fs = _ntfs()
+    fs.outside_mkdirs("/d")
+    fs.outside_acl("/d", _deny("delete_child", "directory_inherit,only_inherit"))
+    fs.outside_grant_no_delete("/d")
+    with fs.open_dir("/d") as d:
+        assert not d.allowed(".", Right.REMOVE_ENTRIES)
+        d.create("f", b"x", 0o644)
+        d.remove("f")  # level 0: the folder's own delete_child
+        d.mkdir("sub")
+    with fs.open_dir("/d/sub") as sub:
+        sub.create("g", b"y", 0o644)
+        with pytest.raises(PermissionError):
+            sub.remove("g")  # level 1: neither its folder nor itself grants it
+
+
+@pytest.mark.parametrize(("fs_type", "remote"), [("ntfs", True), ("refs", False), ("exfat", False), ("apfs", False)])
+def test_in_windows_mode_off_local_ntfs_remove_entries_is_the_folders_own_side(fs_type: str, remote: bool) -> None:
+    """S0151 round 1 (red team Q1; fails closed): on a share and on a drive other than NTFS, removals are not judged
+    per entry: `Caps.delete_by_entry` False and `REMOVE_ENTRIES` the folder's own side, as before S0151."""
+    fs = MemFS(windows=True)
+    fs.outside_mkdirs("/d")
+    fs.outside_fs_type(1, fs_type)
+    if remote:
+        fs.remote.add(1)
+    fs.outside_acl("/d", _deny("delete_child", "directory_inherit"))
+    with fs.open_dir("/d") as d:
+        assert not d.caps().delete_by_entry
+        assert not d.allowed(".", Right.REMOVE_ENTRIES)
+    fs.outside_acl_clear("/d")
+    with fs.open_dir("/d") as d:
+        assert d.allowed(".", Right.REMOVE_ENTRIES)

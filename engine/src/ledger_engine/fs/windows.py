@@ -92,25 +92,27 @@ file operation (`UnsupportedPlatform`) except the engine lock (`take_engine_lock
   (`FileCaseSensitiveInfo`), which compares exactly. Names are never normalized.
 - **Rights and the ACL:** `allowed` asks Windows itself, by opening the entry with the access the save needs (delete
   access to a file it replaces, `FILE_ADD_FILE` and `FILE_DELETE_CHILD` on a folder it writes in, traverse to search):
-  granted is yes, `ACCESS_DENIED` no, a sharing violation `EBUSY` (above). Windows grants removing an entry when the
-  folder grants `FILE_DELETE_CHILD` or the entry grants `DELETE`, so where the folder refuses `FILE_DELETE_CHILD` (every
-  OneDrive folder: probed on the owner's PC, 2026-11-23), `allowed(".", REMOVE_ENTRIES)` asks whether the entries the
-  save makes would grant `DELETE` (`_may_remove_entries`; S0151, owner, 2026-11-23: "1"), and `caps().delete_by_entry`
-  is True. `acl` reads the folder's DACL (`GetSecurityInfo`), each entry's kind, access bits and inheritance flags in
-  `chmod`'s words, so `handles.acl_denial` judges it as on macOS (any deny entry, whoever it names, unless it is not
-  inherited and denies only what protects the folder itself), except that a denied `delete_child` counts for nothing
-  there (`handles.blocking_entry`). `create(..., like=...)` (a replaced file's new version) takes the old file's
-  alternate data streams, its hidden attribute and its DACL with its protected or inherited state (owner, 2026-11-17:
-  "1a", narrowed 2026-11-20: "Drop archive from rule 1a (Recommended)", so the archive attribute is Windows' own, set on
-  the saved file as on any edit; replacing for Windows the 2026-10-29 rule that keeps no ACL: a Windows file's own ACL
-  is its only privacy setting, as the mode bits are on macOS); not its owner or SACL, which need a privilege.
-  `allowed(name, READ_XATTRS)` asks for what that copy reads. **The volume's own flags decide** what is asked (S0135,
-  BL-0285; owner, 2026-11-20: "The drive's own flags (Recommended)"): a DACL (the file's, and the folder's in `acl`)
-  only where `FILE_PERSISTENT_ACLS` is set, the streams only where `FILE_NAMED_STREAMS` is; where a flag is set, any
-  refusal raises (the save is "not saved", nothing changed), never read as "this volume keeps none". **Limit (Windows
-  privacy during a save)** (owner, 2026-11-20: "State it as a limit"): the new bytes are written into the staging file,
-  which has the folder's ACL, before its own DACL is set, and a put-back likewise: on Windows a ledger is as private as
-  its folder (engine-jobs §6.3).
+  granted is yes, `ACCESS_DENIED` no, a sharing violation `EBUSY` (above). Windows grants removing an entry when its
+  folder grants `FILE_DELETE_CHILD` or the entry grants `DELETE`, so on a local NTFS volume (`_by_entry`: where it was
+  probed; every OneDrive folder refuses `FILE_DELETE_CHILD`, the owner's PC, 2026-11-23) `allowed(".", REMOVE_ENTRIES)`
+  asks, level by level, whether each entry the save makes may be removed by its folder's `FILE_DELETE_CHILD` or its own
+  `DELETE` (`_may_remove_entries`; S0151, owner, 2026-11-23: "1"), and `caps().delete_by_entry` is True; on a network
+  share, ReFS, FAT32 and exFAT, the folder's own `FILE_DELETE_CHILD` alone, as before S0151. `acl` reads the folder's
+  DACL (`GetSecurityInfo`), each entry's kind, access bits and inheritance flags in `chmod`'s words, so
+  `handles.acl_denial` judges it as on macOS (any deny entry, whoever it names, unless it is not inherited and denies
+  only what protects the folder itself), except that where removals are judged per entry a denied `delete_child`
+  counts for nothing (`handles.blocking_entry`). `create(..., like=...)` (a replaced file's new version) takes the old
+  file's alternate data streams, its hidden attribute and its DACL with its protected or inherited state (owner,
+  2026-11-17: "1a", narrowed 2026-11-20: "Drop archive from rule 1a (Recommended)", so the archive attribute is
+  Windows' own, set on the saved file as on any edit; replacing for Windows the 2026-10-29 rule that keeps no ACL: a
+  Windows file's own ACL is its only privacy setting, as the mode bits are on macOS); not its owner or SACL, which need
+  a privilege. `allowed(name, READ_XATTRS)` asks for what that copy reads. **The volume's own flags decide** what is
+  asked (S0135, BL-0285; owner, 2026-11-20: "The drive's own flags (Recommended)"): a DACL (the file's, and the
+  folder's in `acl`) only where `FILE_PERSISTENT_ACLS` is set, the streams only where `FILE_NAMED_STREAMS` is; where a
+  flag is set, any refusal raises (the save is "not saved", nothing changed), never read as "this volume keeps none".
+  **Limit (Windows privacy during a save)** (owner, 2026-11-20: "State it as a limit"): the new bytes are written into
+  the staging file, which has the folder's ACL, before its own DACL is set, and a put-back likewise: on Windows a
+  ledger is as private as its folder (engine-jobs §6.3).
 - **Links:** hard links on NTFS and ReFS only (probed); a file with several is refused as on macOS (`nlink`).
   `symlink` refuses (`ENOTSUP`): the mirror's `current.db` link is ADR-0015's pointer file `current.txt` on Windows
   (`caps().links` False; S0130, BL-0206), and `readlink` reads no link target (a link: `ENOTSUP`).
@@ -288,9 +290,10 @@ FILE_GENERIC_MAPPING: Final = (0x120089, 0x120116, 0x1200A0, 0x1F01FF)
 """A file's generic rights (read, write, execute, all), as `GENERIC_MAPPING`."""
 NEW_ENTRY_DEPTH: Final = 2
 """How deep the folders the save makes are followed when asking whether its new entries may be removed
-(`WindowsDir._new_entries_deletable`): what a folder passes on is the same from its second level down (an entry
-`limit_inherit` stops after one level; every other inheritable entry passes on unchanged), so a file and a folder at
-depths 0 to 2 stand for every depth."""
+(`WindowsDir._new_entries_deletable`): a folder made at level 1 or deeper gets the same security as one made at level 1
+(an entry `limit_inherit` stops after one level; every other inheritable entry passes on unchanged), so the entries at
+levels 2 and deeper sit in alike folders and get alike security: a file and a folder at levels 0 to 2, each judged by
+the folder it is made in, stand for every level."""
 EPOCH_AS_FILETIME: Final = 116_444_736_000_000_000
 """1970-01-01 in 100 ns units since 1601-01-01 (a FILETIME)."""
 MAX_PATH_CHARS: Final = 32_768
@@ -1026,33 +1029,43 @@ class WindowsDir:
             return False
         return True
 
+    def _by_entry(self) -> bool:
+        """Whether this folder's removals are judged per entry (`Caps.delete_by_entry`; S0151 round 1): only on a
+        local NTFS volume, where it was probed (the owner's PC, 2026-11-23; OneDrive's folder must be on NTFS).
+        On a network share the server decides with its own view of us (a network logon, not this token: red team Q1),
+        and on ReFS, FAT32 and exFAT it was never probed: the folder's own `FILE_DELETE_CHILD` alone, as before S0151
+        (fails closed)."""
+        return self.fs_type() == "ntfs" and bool(self._h.flags() & FILE_PERSISTENT_ACLS) and not self._h.remote()
+
     def _may_remove_entries(self) -> bool:
-        """Whether the entries the save makes in this folder may be removed and renamed away, as Windows decides it
-        (S0151; owner, 2026-11-23: "1"; `Right.REMOVE_ENTRIES`): Windows grants deleting an entry when the folder
-        grants `FILE_DELETE_CHILD` **or** the entry grants `DELETE`. So: the folder opened with `FILE_DELETE_CHILD`
-        and traverse, as before; where that is refused (OneDrive denies `delete_child` to every folder in it, probed
-        on the owner's PC, 2026-11-23), the folder opened for traverse and `_new_entries_deletable`. A DACL we may not
-        read answers no (fails closed); any other refusal raises."""
+        """Whether the entries the save makes in this folder, and in the folders it makes here, may be removed and
+        renamed away, as Windows decides it (S0151; owner, 2026-11-23: "1"; `Right.REMOVE_ENTRIES`): Windows grants
+        deleting an entry when its own folder grants `FILE_DELETE_CHILD` **or** the entry grants `DELETE`. So: this
+        folder opened with `FILE_DELETE_CHILD` and traverse; where removals are not judged per entry (`_by_entry`),
+        that alone answers, as before S0151. Else the folder must be searchable and `_new_entries_deletable` asks
+        each level. A DACL we may not read answers no (fails closed); any other refusal raises."""
         try:
             self._reopen(FILE_DELETE_CHILD | FILE_TRAVERSE).close()
         except (PermissionError, FileNotFoundError):
-            pass
+            holder = False
         else:
-            return True
+            holder = True
+        if not self._by_entry():
+            return holder
         try:
             self._reopen(FILE_TRAVERSE).close()
-            return self._new_entries_deletable()
+            return self._new_entries_deletable(holder)
         except (PermissionError, FileNotFoundError):
             return False
 
-    def _new_entries_deletable(self) -> bool:
-        """Whether every file and folder made here, and in folders made here (`NEW_ENTRY_DEPTH`), would grant us
-        `DELETE`: the security Windows would give each (`CreatePrivateObjectSecurityEx` from this folder's, chained
-        through the new folders, with this process's token: what NTFS assigns a new entry with no security of its
-        own), asked with `AccessCheck`. Asking writes nothing. A volume that keeps no ACL (FAT32, exFAT) has no
-        entry that could grant it: no."""
-        if not self._h.flags() & FILE_PERSISTENT_ACLS:
-            return False
+    def _new_entries_deletable(self, holder: bool) -> bool:
+        """Whether every file and folder made here, and in folders made here (`NEW_ENTRY_DEPTH`), may be removed: at
+        each level, by the `FILE_DELETE_CHILD` of the folder it is made in (`holder`: this folder's, as Windows
+        answered it; below, the folder made one level up) **or** by its own `DELETE` (S0151 round 1, red team RT-1:
+        this folder's own `delete_child` covers only its direct entries). The security Windows would give each new
+        entry (`CreatePrivateObjectSecurityEx` from its folder's, chained through the new folders, with this
+        process's token: what NTFS assigns a new entry with no security of its own) is asked with `AccessCheck`.
+        Asking writes nothing."""
         api = self.api
         with self._reopen(READ_CONTROL) as h:
             sd = ctypes.c_void_p()
@@ -1073,18 +1086,18 @@ class WindowsDir:
             with _impersonation_token(api) as token:
                 mapping = (wintypes.DWORD * 4)(*FILE_GENERIC_MAPPING)
                 level = sd
-                for depth in range(NEW_ENTRY_DEPTH + 1):
-                    kinds = (False,) if depth == NEW_ENTRY_DEPTH else (False, True)
-                    for container in kinds:
+                for _ in range(NEW_ENTRY_DEPTH + 1):
+                    for container in (False, True):
                         new = ctypes.c_void_p()
                         if not api.CreatePrivateObjectSecurityEx(
                             level, None, ctypes.byref(new), None, container, SEF_NEW_ENTRY, token, mapping
                         ):
                             raise _win_error("CreatePrivateObjectSecurityEx")
                         made.append(new)
-                        if not _grants(api, new, token, DELETE, mapping):
+                        if not holder and not _grants(api, new, token, DELETE, mapping):
                             return False
-                    level = made[-1]  # the folder made at this depth
+                    level = made[-1]  # the folder made at this level holds the next one
+                    holder = _grants(api, level, token, FILE_DELETE_CHILD, mapping)
                 return True
         finally:
             for new in made:
@@ -1092,7 +1105,9 @@ class WindowsDir:
             api.LocalFree(sd)
 
     def caps(self) -> Caps:
-        return Caps(swap=False, excl=self.device() not in self._fs.no_excl, links=False, delete_by_entry=True)
+        return Caps(
+            swap=False, excl=self.device() not in self._fs.no_excl, links=False, delete_by_entry=self._by_entry()
+        )
 
     def acl(self) -> tuple[AclEntry, ...]:
         """The folder's DACL entries in order (none: empty). A volume whose flags lack `FILE_PERSISTENT_ACLS` (FAT32,

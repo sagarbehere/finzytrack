@@ -56,6 +56,10 @@ def test_the_automatic_part_opens_and_saves_through_the_product_and_reports_each
     burst = got["burst"]
     assert [b["outcome"] for b in burst["saves"]] == ["saved"] * burst["count"], burst
     assert burst["count"] >= 5
+    made = got["made_folder"]  # S0151 round 1: a folder made there, watched, then removed
+    assert (made["remove_file"], made["rmdir"]) == ("ok", "ok"), made
+    assert made["folder_before_removal"]["file"] == "made", made
+    assert not (scratch / "made").exists()
     for step in ("offline", "paused", "q1_unlisted_folder", "q2_cloud_only_plugin"):
         assert got[step] == "skipped (--auto)", (step, got[step])
     assert set(got["looks"]) >= {"after_setup", "after_save", "after_free_up_space"}, got["looks"]
