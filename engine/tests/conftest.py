@@ -13,7 +13,7 @@ from pathlib import Path
 import pytest
 
 from ledger_engine.fs import pathmodel, this_os
-from tests.windows_pending import HOST_MODEL_MODULES, POSIX_PATH_MODULES
+from tests.windows_pending import POSIX_PATH_MODULES
 
 # INV-07 (ADR-0023 Consequences): the suite runs in a time zone west of UTC, set before any test and inherited by
 # every process a test starts (the engine itself among them), so a UTC "today" taken for the local one fails instead
@@ -83,9 +83,10 @@ def _posix_model_for_the_fake(request: pytest.FixtureRequest) -> Iterator[None]:
     """On Windows a test over the in-memory fake (`tests/fakes/memfs.py`, a POSIX file system) runs with the POSIX path
     model, as on macOS and Linux (S0127): its paths are `/...`, which Windows' model refuses. The Windows model's own
     tests simulate it on every OS (`tests/fs/test_pathmodel.py`, `tests/ledger/test_journal_windows.py`); every other
-    test on Windows runs with Windows' model, and so does every test of a real-disk module that also names the fake
-    (`windows_pending.HOST_MODEL_MODULES`: S0130, the 2026-11-18 run 8, `test_save.py`)."""
-    if sys.platform == "win32" and _uses_the_fake(request.path) and request.path.name not in HOST_MODEL_MODULES:
+    test on Windows runs with Windows' model, and so does every test that asks for `host_path_model`: a real-disk test
+    in a module that also names the fake (S0130, the 2026-11-18 run 8, `test_save.py`; the 2026-11-23 run 17, the
+    tests of `test_cloud_unavailable.py` that take `test_save`'s `led`)."""
+    if sys.platform == "win32" and _uses_the_fake(request.path) and "host_path_model" not in request.fixturenames:
         with pathmodel.simulating(pathmodel.POSIX):
             yield
     else:
@@ -103,3 +104,12 @@ def pytest_make_collect_report(
         with pathmodel.simulating(pathmodel.POSIX):
             return (yield)
     return (yield)
+
+
+@pytest.fixture
+def host_path_model() -> None:
+    """A real-disk test, or a fixture that makes one (`tests/ledger/test_save.led`), in a module that also names the
+    fake asks for this: on Windows it then runs with Windows' path model, never the fake's POSIX one (S0150; until then
+    the test switch's fixture did this as well). It does nothing itself: `_posix_model_for_the_fake`
+    reads the test's fixture names. A module whose every test is on the real disk opts in whole with
+    `pytestmark = pytest.mark.usefixtures("host_path_model")`."""

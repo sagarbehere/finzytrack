@@ -27,7 +27,8 @@ through the sidecar's own scheduler (`EngineJobs`) and write use cases (`app.wor
 them (`app.main.wire`), on the sidecar's own engine command (`app.main.engine_command`: the engine of `../engine/.venv`,
 its bytecode folder, the engine lock and the app cache), so each job gets the engine the scheduler gives it: a fresh
 one after any job that ran the ledger's plugins (engine-jobs §5.1), its start inside the job's time. The bytecode fill
-is awaited before the first open (the state of every launch after the first).
+is awaited before the first open (the state of every launch after the first); on Windows the product has no fill
+(BL-0288), so none is awaited and each engine compiles the engine's code as it imports it, as there.
 
 **The producer.** No mutator exists yet and the shipped engine registers none (`preview.PRODUCERS` is empty,
 `tests/workspaces/test_writes_end_to_end.py::test_the_shipped_engine_has_no_producer`). This script's engine command
@@ -545,7 +546,9 @@ def main(argv: list[str] | None = None) -> int:
         boot = jobs.start()
         if not isinstance(boot, JobTicket) or boot.wait(JOB_DEADLINE) is None:
             fail(f"the scheduler did not start: {boot}")
-        bytecode = command.bytecode
+        # Windows: the product starts every engine without the fill (`EngineClient._bytecode_for_spawn`, BL-0288), so
+        # nothing fills and there is nothing to wait for; each engine compiles as it imports, as the product's do there
+        bytecode = None if sys.platform == "win32" else command.bytecode
         waited_from = time.perf_counter()
         while bytecode is not None and not bytecode.ready():  # the fill the first engine began
             if fill_failed:

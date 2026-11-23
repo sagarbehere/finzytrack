@@ -43,6 +43,7 @@ pytestmark = [
     pytest.mark.inv("INV-22"),
     pytest.mark.inv("INV-26"),
     pytest.mark.inv("INV-32"),
+    pytest.mark.usefixtures("host_path_model"),  # real-disk tests in a module that names the fake (conftest)
 ]
 
 WS_JSON = (

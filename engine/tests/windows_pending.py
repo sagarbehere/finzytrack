@@ -36,8 +36,3 @@ POSIX_PATH_MODULES: Final = frozenset(
 """Pure tests written in POSIX paths: on Windows they run with the POSIX path model, as the tests over the fake do
 (`tests/conftest.py`); the Windows model has its own (`tests/fs/test_pathmodel.py`, `tests/ledger/
 test_journal_windows.py`, the Windows case of `test_copy_layout.py`, which simulates it inside)."""
-
-HOST_MODEL_MODULES: Final = frozenset({"test_save.py", "test_copy_ops.py"})
-"""Real-disk modules that also name the fake: on Windows every test of theirs runs with the host's (Windows') path
-model, not the POSIX one the fake's modules get (`tests/conftest.py`; S0130, the 2026-11-18 run 8; until S0150 the
-test switch's fixture chose it)."""

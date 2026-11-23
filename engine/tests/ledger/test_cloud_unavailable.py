@@ -651,3 +651,21 @@ def test_the_download_errors_are_the_cloud_filters_and_never_a_common_code() -> 
     assert 362 in CLOUD_DOWNLOAD_ERRORS
     assert all(358 <= c <= 427 for c in CLOUD_DOWNLOAD_ERRORS)
     assert not CLOUD_DOWNLOAD_ERRORS & {5, 32, 87, 1, 2, 3}
+
+
+def test_S0150_a_test_on_test_saves_real_ledger_runs_with_this_os_path_model(led: Ledger) -> None:
+    """S0150 (the 2026-11-23 run 17): this module also names the fake, so on Windows its tests over the fake run with
+    the POSIX path model; a test that takes `test_save`'s real-disk `led` runs with this OS's model (`host_path_model`,
+    `tests/conftest.py`). Must not pass: `led`'s publish meeting the POSIX model on Windows (its setup failed
+    `not_absolute` there)."""
+    from ledger_engine.fs import pathmodel
+
+    assert pathmodel.host() is pathmodel.HOST
+    assert led.main.is_file()
+
+
+def test_S0150_a_test_over_the_fake_here_runs_with_the_posix_model() -> None:
+    """@regression-guard (the base's rule for a module that names the fake): its fake-world tests keep POSIX paths."""
+    from ledger_engine.fs import pathmodel
+
+    assert pathmodel.host() is pathmodel.POSIX

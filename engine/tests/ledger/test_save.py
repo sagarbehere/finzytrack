@@ -50,6 +50,7 @@ pytestmark = [
     pytest.mark.inv("INV-01"),
     pytest.mark.inv("INV-22"),
     pytest.mark.inv("INV-26"),
+    pytest.mark.usefixtures("host_path_model"),  # real-disk tests in a module that names the fake (conftest)
 ]
 
 MAIN = b'option "operating_currency" "USD"\ninclude "inc.bean"\n2026-01-01 open Assets:Cash\n'
@@ -112,7 +113,8 @@ class Ledger:
 
 
 @pytest.fixture
-def led(tmp_path: Path) -> Ledger:
+def led(tmp_path: Path, host_path_model: None) -> Ledger:  # Windows' path model in any module (conftest)
+    del host_path_model
     root = tmp_path / "L"
     root.mkdir()
     (root / "main.bean").write_bytes(MAIN)
