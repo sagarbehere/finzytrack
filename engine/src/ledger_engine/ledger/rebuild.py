@@ -207,9 +207,12 @@ def _opened_not_downloaded(ports: Ports, root: str, parsed: Sequence[str]) -> st
     """After Beancount's own load failed (an `OSError`, or its own failure: offline its C parser turns the cloud
     filter's refused read into a `SystemError`; S0149 round 3, V3-1): the file this load opened last that is now only
     in the cloud and not downloadable, or None. Only the files this load opened are asked (`parsed`: each is recorded
-    before Beancount reads it, so the one whose read failed is among them, the last one opened): never the hint's set,
-    which may name a file the ledger no longer includes (round 3, V3-2; owner, 2026-11-23: "Option 2."). The last one
-    opened is named, since Beancount reads each file it opens before it opens the next."""
+    when Beancount's `parse_file` is called for it, before its parser reads it, so the one whose parse read failed is
+    among them; an `.asc` include is read once before that, by Beancount's encryption test, and is not recorded if
+    that read fails): never the hint's set, which may name a file the ledger no longer includes (round 3, V3-2; owner,
+    2026-11-23: "Option 2."). The last cloud-only one opened is named, since Beancount reads each file it opens before
+    it opens the next. The cause is best effort (IMP-0078): a real Beancount failure after a file it read was freed by
+    the sync app before this look is told as that file's (round 4, F1, a stated limit)."""
     if not parsed:
         return None
     seen = ports.observe(LedgerSet(root, tuple(dict.fromkeys(parsed)), (), (), (), ()))

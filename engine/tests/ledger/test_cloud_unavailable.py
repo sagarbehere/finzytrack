@@ -405,6 +405,21 @@ def test_the_file_whose_read_failed_is_named_the_last_one_the_load_opened(
     assert (r["outcome"], r["refusal"], r["refused"]) == ("refused", "cloud_unavailable", str(led.inc)), r
 
 
+def test_a_readable_last_opened_file_is_never_named_an_earlier_cloud_only_one_is(
+    led: Ledger, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Round 4 (F2): the file named is a cloud-only one among those this load opened, never simply the last opened.
+    Here Beancount's read of inc.bean (opened last) fails while inc.bean itself reads, and main.bean (opened first,
+    already read) was freed by the sync app before the look: main.bean is named, never the readable inc.bean (the
+    cause is best effort, IMP-0078; §6.3's stated limit of the rule)."""
+    led.main.write_bytes(led.main.read_bytes() + b"; changed\n")
+    hint = plan_for(led)
+    offline(monkeypatch, str(led.main))
+    _offline_in_beancounts_parser(monkeypatch, str(led.inc), at="read")
+    r = _rebuild(led, hint)["result"]
+    assert (r["outcome"], r["refusal"], r["refused"]) == ("refused", "cloud_unavailable", str(led.main)), r
+
+
 def test_R7_must_not_pass_a_plain_oserror_never_names_a_dropped_cloud_only_file(
     led: Ledger, monkeypatch: pytest.MonkeyPatch
 ) -> None:
