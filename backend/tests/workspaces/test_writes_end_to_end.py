@@ -26,7 +26,6 @@ import json
 import os
 import shutil
 import subprocess
-import sys
 import threading
 from collections.abc import Iterator
 from datetime import UTC, datetime
@@ -56,7 +55,6 @@ from app.platform.errors import ChangeNotSavedDetails, ErrorCode, WorkspaceNotRe
 from app.platform.plans import PlannedFile, PlanStore, WritePlan, new_plan
 from app.workspaces import writes
 from app.workspaces.writes import CopyMark, Previewed, WriteServices, WriteTarget, mirror_generation
-from tests.windows_pending import WRITE_PATH
 
 # BL-0309: its children need a group kill or `ps` (tests/process_control.py).
 pytestmark = pytest.mark.needs_process_control
@@ -91,7 +89,8 @@ def recorded_mark(folder: Path) -> CopyMark:
     interpreter (the sidecar never imports the engine)."""
     path = os.path.realpath(folder)
     code = (
-        "import json, sys; from ledger_engine.fs.this_os import for_this_os; "
+        "import json, sys; from ledger_engine.fs.this_os import for_this_os, pin_placeholder_mode; "
+        "assert pin_placeholder_mode(); "  # Windows: as an engine's start pins it (ADR-0070); a no-op elsewhere
         "m = for_this_os().open_dir(sys.argv[-1]).mark(); "
         "print(json.dumps([m.volume, m.fs_type, m.born]))"
     )
@@ -210,8 +209,6 @@ class _Ids:
 
 @pytest.fixture
 def rig(tmp_path: Path) -> Iterator[Rig]:
-    if sys.platform == "win32":
-        pytest.skip(WRITE_PATH)
     r = Rig(tmp_path)
     yield r
     r.close()
@@ -638,8 +635,6 @@ def test_a_single_21_mb_file_is_previewed_confirmed_and_saved_byte_for_byte(tmp_
     """S0120 (ADR-0008 amendment of 2026-11-15; INV-01, INV-22). Must not pass: a single ledger file above the old
     16 MiB line fails its preview (S0119: the engine was stopped), or its file after the save is not exactly the plan's
     text, or the plan does not list it for the tip. The real engine, a test copy, the test producer."""
-    if sys.platform == "win32":
-        pytest.skip(WRITE_PATH)
     before = meta20_54k()
     assert len(before) > 21_000_000
     rig = Rig(tmp_path, before)

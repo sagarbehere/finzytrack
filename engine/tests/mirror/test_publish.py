@@ -10,7 +10,7 @@
 - §4 steps 4, 7, 8; §6 the keep set (current, previous, at most 2 others younger than the grace, oldest going first);
   §7 the gate's read; §8 what `meta` carries and when a generation is fresh.
 The crash, power-loss and I/O-error sweeps are `test_publish_crash.py`'s (the in-memory fake). On Windows (S0130,
-BL-0206) the same tests run on the adapter (`windows_port`), with the pointer file `current.txt` where POSIX has the
+BL-0206) the same tests run on the Windows adapter, with the pointer file `current.txt` where POSIX has the
 link `current.db` (`CUR`, `current_in`, `point_at`), plus the Windows cases at the end of this file.
 """
 
@@ -57,7 +57,7 @@ from tests.mirror.publish_support import (
 )
 from tests.windows_pending import NO_MOUNT
 
-pytestmark = [pytest.mark.inv("INV-05"), pytest.mark.inv("INV-10"), pytest.mark.usefixtures("windows_port")]
+pytestmark = [pytest.mark.inv("INV-05"), pytest.mark.inv("INV-10")]
 WINDOWS = sys.platform == "win32"
 
 MINUTE_NS = 60 * 10**9
@@ -65,8 +65,7 @@ NAME = re.compile(r"gen-([1-9][0-9]*)-([0-9a-f]{16})\.db")
 
 
 @pytest.fixture
-def fs(windows_port: None) -> FileSystem:
-    del windows_port  # the adapter on Windows (the test's context) before the port is chosen
+def fs() -> FileSystem:
     return for_this_os()
 
 

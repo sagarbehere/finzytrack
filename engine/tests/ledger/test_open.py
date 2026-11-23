@@ -43,7 +43,6 @@ from tests.windows_pending import NO_UID
 pytestmark = [
     pytest.mark.inv("INV-05"),
     pytest.mark.inv("INV-30"),
-    pytest.mark.usefixtures("windows_port"),  # Windows: the adapter (S0130, BL-0206 done)
 ]
 
 MAIN = b'option "operating_currency" "USD"\ninclude "inc.bean"\n2026-01-01 open Assets:Cash\n'

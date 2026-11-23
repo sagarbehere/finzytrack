@@ -29,7 +29,6 @@ from tests.mirror.publish_support import publish_job
 from tests.windows_pending import HELD_FOLDER
 
 pytestmark = [
-    pytest.mark.usefixtures("windows_port"),  # Windows: the adapter (S0130, BL-0206 done)
     pytest.mark.inv("INV-22"),
 ]
 

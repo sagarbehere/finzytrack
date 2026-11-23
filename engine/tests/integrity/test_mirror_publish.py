@@ -30,7 +30,6 @@ from tests.mirror.publish_support import BUILT_AT, ENGINE_BUILD, KEY, TODAY, cur
 
 pytestmark = [
     pytest.mark.inv("INV-05"),
-    pytest.mark.usefixtures("windows_port"),  # Windows: the adapter (S0130, BL-0206 done)
 ]
 
 # Two hand-written ledgers: A has 2 transactions (4 postings), B has 3 (6 postings).

@@ -148,13 +148,10 @@ CASES: dict[str, Callable[[Path], None]] = {
 
 
 NEEDS_ENGINE = pytest.mark.skipif(not ENGINE_VENV.is_dir(), reason="needs the engine's environment (engine/.venv)")
-MAC_ONLY = pytest.mark.skipif(
-    sys.platform not in ("darwin", "linux"), reason="the save's port: macOS and Linux; Windows is BL-0087"
-)
 MARKS: dict[str, tuple[pytest.MarkDecorator, ...]] = {
     "measure_health.py": (NEEDS_ENGINE,),
-    "measure_protocol.py": (NEEDS_ENGINE, MAC_ONLY),
-    "measure_write.py": (NEEDS_ENGINE, MAC_ONLY),
+    "measure_protocol.py": (NEEDS_ENGINE,),
+    "measure_write.py": (NEEDS_ENGINE,),
 }
 
 
@@ -170,7 +167,6 @@ def test_measurement_script_runs(name: str, tmp_path: Path) -> None:
 
 
 @NEEDS_ENGINE
-@MAC_ONLY
 def test_measure_write_reports_a_run_that_does_not_publish(tmp_path: Path) -> None:
     """S0119 verifier F1. Must not pass: a run that does not publish ends the script without its report, or is counted
     in the summary. S0120: a file over 16 MiB no longer stops the engine, so the run that does not publish is a preview
@@ -192,7 +188,6 @@ def test_measure_write_reports_a_run_that_does_not_publish(tmp_path: Path) -> No
 
 
 @NEEDS_ENGINE
-@MAC_ONLY
 def test_measure_write_publishes_a_file_over_16_mib_and_reports_it_large(tmp_path: Path) -> None:
     """S0120 (ADR-0008 amendment of 2026-11-15). Must not pass: a single file over the old 16 MiB line fails its
     preview (S0119: the engine was stopped as a protocol violation), or its plan does not list it for the tip. The

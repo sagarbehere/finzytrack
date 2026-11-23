@@ -48,8 +48,6 @@ from ledger_engine.fs import windows as win  # noqa: E402 (the adapter's own err
 from ledger_engine.fs.port import CLOUD_DOWNLOAD_ERRORS, CloudUnavailable  # noqa: E402
 from tests.fs.cloud_provider import ENGINE, PHCM_DISGUISE, PHCM_EXPOSE, Cloud, own_mode, set_mode  # noqa: E402
 
-pytestmark = pytest.mark.usefixtures("windows_port")
-
 LEDGER = "L/main.bean"
 RECALL_ON_DATA_ACCESS = 0x400000
 ATTRS = (

@@ -40,7 +40,6 @@ from tests.test_save_ops import engine, published_save, recorded_folder, request
 from tests.windows_pending import NO_FIFO
 
 pytestmark = [
-    pytest.mark.usefixtures("windows_port"),  # Windows: the adapter (S0146: the copy's check runs there)
     pytest.mark.inv("INV-22"),
     pytest.mark.inv("INV-26"),
     pytest.mark.inv("INV-32"),

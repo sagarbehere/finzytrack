@@ -233,9 +233,9 @@ ENGINE_VENV = REPO / "engine" / ".venv"
 DEADLINE = 30.0
 # S0113: a test of macOS-only names skips elsewhere with `raise pytest.skip.Exception(MACOS_ONLY)` before them; a
 # `raise`, not a call to `pytest.skip`, so pyright checks the code after it for macOS only (`--pythonplatform`).
-MACOS_ONLY = "macOS only: F_FULLFSYNC (Linux syncs with fsync; Windows is BL-0087)"
+MACOS_ONLY = "macOS only: F_FULLFSYNC (Linux syncs with fsync; Windows: FlushFileBuffers, test_engine_windows.py)"
 LINUX_SYNC = "Linux's sync (macOS: the F_FULLFSYNC tests)"
-NO_PORT = "the app folder's sync and its descriptor's path: macOS and Linux; Windows is BL-0087"
+NO_PORT = "the app folder's sync by its descriptor: POSIX; Windows' form is windows_files (test_engine_windows.py)"
 
 
 def test_engine_venv_selects_the_venv_engine(dirs: tuple[Path, Path]) -> None:
@@ -304,10 +304,6 @@ def test_wire_builds_the_engine_client_without_starting_it(dirs: tuple[Path, Pat
         wiring.engine.close()
 
 
-@pytest.mark.skipif(
-    sys.platform not in ("darwin", "linux"),
-    reason="the boot's recover-all lists through the engine's file-system port: macOS and Linux; Windows is BL-0087",
-)
 def test_the_boots_recover_all_starts_the_first_engine_through_the_scheduler(dirs: tuple[Path, Path]) -> None:
     """engine-jobs §5.1, §5.5: "The engine is spawned when a job needs one, not at boot; at start the first job is
     the boot's `recover_all`, so an engine still starts early". The scheduler waits for the engine lock first
@@ -325,30 +321,6 @@ def test_the_boots_recover_all_starts_the_first_engine_through_the_scheduler(dir
         wiring.engine.close()
 
 
-@pytest.mark.skipif(sys.platform != "win32", reason="the boot on Windows before its write path (BL-0087)")
-def test_on_windows_the_boots_recover_all_runs_in_an_engine_and_answers_the_platform_unsupported(
-    dirs: tuple[Path, Path],
-) -> None:
-    """S0129 (BL-0281; BL-0261): on Windows the sidecar waits for the engine lock and starts the boot's engine in its
-    job; the engine refuses every file operation there until BL-0087, so recover-all ends unlisted with
-    `engine.unsupported_platform` (the boot's screen names the platform), never "the app folder is missing".
-    @regression-guard (it passes on the base, where the wait returned at once and the engine ran alone; it must keep
-    passing with the real wait and the job)."""
-    wiring = _wire(main.parse_args(argv(*dirs, "--engine-venv", str(ENGINE_VENV))), no_log, VERSION)
-    try:
-        boot = wiring.jobs.start()
-        assert isinstance(boot, JobTicket)
-        assert boot.wait(DEADLINE) == Done(Report(listed=False, why_not_listed="engine.unsupported_platform"))
-        assert wiring.engine.pid is not None
-        assert (dirs[0] / "locks" / "engine.lock").exists(), "the engine did not take the engine lock"
-    finally:
-        wiring.jobs.close()
-        wiring.engine.close()
-
-
-@pytest.mark.skipif(
-    sys.platform not in ("darwin", "linux"), reason="the write path's port: macOS and Linux; Windows is BL-0087"
-)
 def test_the_boots_recover_all_lists_the_journals_in_its_engine(dirs: tuple[Path, Path]) -> None:
     """engine-jobs §8.1 (S0062), end to end through the composition root and a real engine: the boot's recover-all
     removes a `.part` record and reports an `.open` record it cannot read as blocking every open."""

@@ -1,5 +1,5 @@
 """The legacy app's write lock adapter (`legacy_locks_for_this_os`: macOS and Linux, both `flock`, S0125; Windows,
-`LockFileEx` over the range portalocker's `MsvcrtLocker` locks, S0128, reached under the `windows_port` fixture; INV-26,
+`LockFileEx` over the range portalocker's `MsvcrtLocker` locks, S0128, the product's since S0150; INV-26,
 ADR-0062 decisions 2 and 5, narrowed to Copy by ADR-0068 D4): tried once, without waiting, with the call portalocker
 3.2.0 makes, on the file opened read-only and only if it exists. Copy is BL-0026's; the save no longer tries the lock
 (S0071), so these are the adapter's own tests, against a holder that takes the lock with portalocker 3.2.0 itself, as
@@ -19,7 +19,7 @@ import pytest
 from ledger_engine.fs.port import LegacyAbsent, LegacyHeld
 from ledger_engine.fs.this_os import legacy_locks_for_this_os
 
-pytestmark = [pytest.mark.inv("INV-26"), pytest.mark.usefixtures("windows_port")]
+pytestmark = pytest.mark.inv("INV-26")
 
 HOLDER = """
 import sys, portalocker

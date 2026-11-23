@@ -3,11 +3,10 @@ S0128, BL-0280, BL-0218; ADR-0069). It writes exactly what the macOS and Linux a
 only these primitives differ (owner, 2026-11-16: "Rule unchanged (Recommended)"). Facts from S0126's probe on the
 Windows runner (Windows Server 2022) are marked "probed".
 
-**Not selected by the product yet.** `ledger_engine.fs.this_os` gives this adapter only inside a test's
-`ledger_engine.fs.under_test.windows_port_under_test()` (BL-0087 turns writes on; the mirror's pointer file is S0130's);
-the product on Windows refuses every file operation (`UnsupportedPlatform`). The engine lock (`take_engine_lock`) is the
-one exception: it is a guard that writes only `locks/engine.lock` in the app folder (the sidecar starts engines on
-Windows since S0129, each in its own Job Object).
+**Selected by the product since S0150** (BL-0087: Windows writes on). `ledger_engine.fs.this_os` gives this adapter
+while the process is in the engine's placeholder mode (ADR-0070, below); in any other mode the product refuses every
+file operation (`UnsupportedPlatform`) except the engine lock (`take_engine_lock`), a guard that writes only
+`locks/engine.lock` in the app folder (the sidecar starts engines on Windows since S0129, each in its own Job Object).
 
 - **Handles and names.** A `WindowsDir` holds a folder handle (shared for reading, writing and deleting, as a POSIX
   descriptor blocks nothing). Every entry is opened, made, renamed and removed **relative to that handle**

@@ -4,7 +4,7 @@
 Pure: words from a `recovery.Report`'s parts and the workspace's display name (the registry's; the caller passes it).
 The screen that shows them is M2's (BL-0092); the open that raises `RECOVERY_BLOCKED` is BL-0152/BL-0154's. Each
 text is short and plain, for readers whose first language is not English. Files are named by their file name; a
-folder, a kept copy and an entry the user must act on in Terminal by its full path.
+folder, a kept copy and an entry the user must act on by its full path.
 
 **Actions** are named, not worded, so the screen can place them (`Action`): `retry`; `stay_or_back` ("Stay" or "Back
 to <previous workspace>" at a switch, "Open another workspace" at boot, §9.1, §9.2); `keep` ("Keep the files as they
@@ -142,7 +142,7 @@ def _drive_backup_tail(b: Blocking, named: int) -> str:
 
 
 def _drive_backups(b: Blocking) -> str:
-    """F4 (S0100): "from its folder", which holds for a folder on the Mac's own disk too."""
+    """F4 (S0100): "from its folder", which holds for a folder on the computer's own disk too."""
     named = _behind_the_drive(b)
     listed = "".join(
         f" If {name} is missing from its folder, its old version is in {backup}." for name, backup in named
@@ -204,9 +204,7 @@ def _permission(b: Blocking, workspace: str) -> Screen:
         )
     target = where or "the file"
     return Screen(
-        f"{head} Your Mac does not allow Finzytrack to change {target}. If it has a permission entry (ACL), "
-        f'remove it (Terminal: chmod -N "{target}"), then press Retry.',
-        BASE,
+        f"{head} Finzytrack has no permission to change {target}. Check its permissions, then press Retry.", BASE
     )
 
 
@@ -316,7 +314,7 @@ def _not_undone(b: Blocking, workspace: str) -> Screen:
         else:
             message += f" Finzytrack could not read or change {where}: {system_answer(b.errno)}."
             if b.errno in (errnos.EACCES, errnos.EPERM):
-                message += f' If it has a permission entry (ACL), remove it (Terminal: chmod -N "{where}").'
+                message += " Check its permissions."
             message += " Then press Retry."
     elif b.reason == "not_tried":
         message += " The ledger engine is not working. Press Retry when it works again."
@@ -429,7 +427,7 @@ ACTION_REFUSED: Final[tuple[tuple[str, str], ...]] = (
     ("not_open", "This unfinished save was already resolved."),
     ("unlisted", "Finzytrack could not read the folder of this unfinished save, so it did not do this. Press Retry."),
     ("path_moved", "The folder moved. Press Retry."),
-    ("permission", "Your Mac does not allow Finzytrack to change this folder."),
+    ("permission", "Finzytrack has no permission to change this folder. Check its permissions."),
     (
         "wrong_drive",
         "This file is not in the folder Finzytrack saved it in (another drive, or the folder changed). "

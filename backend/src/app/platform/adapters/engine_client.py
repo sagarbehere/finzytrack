@@ -202,6 +202,11 @@ def packaged_engine_site(prefix: Path) -> Path:
     return prefix.parent.joinpath(*ENGINE_SITE_PARTS)
 
 
+def venv_python(venv: Path) -> Path:
+    """A virtual environment's interpreter: `Scripts/python.exe` on Windows, `bin/python` elsewhere."""
+    return venv / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
+
+
 def venv_site(venv: Path) -> Path:
     """A virtual environment's site-packages (the engine's, in development); a path that does not exist when there is
     none, so the start fails as a start, never by finding the engine elsewhere."""
@@ -344,8 +349,9 @@ class EngineCommand:
     ) -> EngineCommand:
         """The engine installed in a virtual environment (development and tests), under the same bootstrap as the
         bundle's, with the venv's site-packages."""
-        python = venv / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
-        return cls._bootstrapped(python, venv_site(venv), test_ops, environ, engine_lock, bytecode_dir, app_folder)
+        return cls._bootstrapped(
+            venv_python(venv), venv_site(venv), test_ops, environ, engine_lock, bytecode_dir, app_folder
+        )
 
     @classmethod
     def for_packaged(

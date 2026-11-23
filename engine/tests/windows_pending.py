@@ -1,6 +1,6 @@
 """The reasons a test skips on Windows until the Windows port lands (S0127, BL-0279; ADR-0069's split), each naming the
 backlog item that turns it on, or why the test has no Windows meaning. The real-disk write path runs on Windows since
-S0128 (BL-0280: `tests/fs/test_windows.py`, and the modules that take the `windows_port` fixture). Written as the
+S0128 (BL-0280: `tests/fs/test_windows.py`), and in the product since S0150 (BL-0087). Written as the
 macOS-only skip is (`tests/macos_only.py`), so pyright checks the code after it for the other platforms only:
 
     if sys.platform == "win32":
@@ -36,3 +36,8 @@ POSIX_PATH_MODULES: Final = frozenset(
 """Pure tests written in POSIX paths: on Windows they run with the POSIX path model, as the tests over the fake do
 (`tests/conftest.py`); the Windows model has its own (`tests/fs/test_pathmodel.py`, `tests/ledger/
 test_journal_windows.py`, the Windows case of `test_copy_layout.py`, which simulates it inside)."""
+
+HOST_MODEL_MODULES: Final = frozenset({"test_save.py", "test_copy_ops.py"})
+"""Real-disk modules that also name the fake: on Windows every test of theirs runs with the host's (Windows') path
+model, not the POSIX one the fake's modules get (`tests/conftest.py`; S0130, the 2026-11-18 run 8; until S0150 the
+test switch's fixture chose it)."""

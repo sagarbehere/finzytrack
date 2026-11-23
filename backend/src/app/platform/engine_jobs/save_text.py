@@ -97,7 +97,7 @@ def not_saved_text(d: ChangeNotSavedDetails) -> str:
                 "replace the file with a copy, then try again."
             )
         case "locked":
-            return f"{did_not} {_name(d.path)} is locked. Unlock it (Finder: Get Info), then try again."
+            return f"{did_not} {_name(d.path)} is locked or read-only. Allow changes to it, then try again."
         case "not_a_file":
             return f"{did_not} {_name(d.path)} is not a normal file."
         case "permission":
@@ -107,10 +107,7 @@ def not_saved_text(d: ChangeNotSavedDetails) -> str:
                     f"safely: {d.acl_entry}. Remove that entry, then try again."
                 )
             where = _name(d.path) if d.path is not None else (d.folder or "your ledger")
-            return (
-                f"{did_not} Your Mac does not allow changes to {where}. Check its permissions (Finder: Get Info), "
-                "then try again."
-            )
+            return f"{did_not} Finzytrack has no permission to change {where}. Check its permissions, then try again."
         case "linked_folder":  # S0077 (BL-0193): recovery never reads a save record through such a link
             return (
                 f"{did_not} The folder {d.folder or 'of its save records'} is a link to another place. Finzytrack "
@@ -121,7 +118,7 @@ def not_saved_text(d: ChangeNotSavedDetails) -> str:
             return (
                 f"{did_not} Finzytrack cannot identify the drive that holds {_name(d.path)}, so it could not undo "
                 "the change if saving were interrupted. Keep your ledger on a drive Finzytrack can identify, such as "
-                "your Mac's own disk or a USB drive."
+                "your computer's own disk or a USB drive."
             )
         case "no_folder_id":  # S0089 rounds 1, 2: the top level of a FAT or exFAT drive, or a drive that keeps no
             # folder creation time at all (S0090, BL-0220 V2-1: the way out names both)
@@ -130,7 +127,7 @@ def not_saved_text(d: ChangeNotSavedDetails) -> str:
                 "Finzytrack cannot tell it from a folder at the same place on another drive. It could not undo the "
                 f"change safely if saving were interrupted. If {_name(d.path)} is at the top level of a USB drive, "
                 "make a folder on the drive, move your ledger into it, and open it from there. Otherwise keep your "
-                "ledger on another drive, such as your Mac's own disk."
+                "ledger on another drive, such as your computer's own disk."
             )
         case "case_twins":  # S0100 (BL-0162): the journal compares names under the widest fold (case, `ß`/`ss`, the
             # Kelvin sign, HFS+'s own fold), so "only in capital letters" is not always true (round 1, red team F5)

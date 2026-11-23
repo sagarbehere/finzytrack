@@ -81,23 +81,12 @@ CASES: dict[str, Callable[[Path], None]] = {
 }
 
 
-PORTED_ONLY = {"measure_save.py": "the save as the product runs it: Windows writes are off until BL-0087"}
-
-
 def test_every_measurement_script_has_a_case() -> None:
     """Must not pass: a `measure_*.py` in the folder that no case runs."""
     assert {p.name for p in SCRIPTS.glob("measure_*.py")} == set(CASES)
 
 
-@pytest.mark.parametrize(
-    "name",
-    [
-        pytest.param(n, marks=pytest.mark.skipif(sys.platform not in ("darwin", "linux"), reason=PORTED_ONLY[n]))
-        if n in PORTED_ONLY
-        else n
-        for n in sorted(CASES)
-    ],
-)
+@pytest.mark.parametrize("name", sorted(CASES))
 def test_measurement_script_runs(name: str, tmp_path: Path) -> None:
     """Every case runs (S0106 verifier F2: a case without its own test function never ran)."""
     CASES[name](tmp_path)

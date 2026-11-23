@@ -12,8 +12,8 @@ from pathlib import Path
 
 import pytest
 
-from ledger_engine.fs import pathmodel
-from tests.windows_pending import POSIX_PATH_MODULES
+from ledger_engine.fs import pathmodel, this_os
+from tests.windows_pending import HOST_MODEL_MODULES, POSIX_PATH_MODULES
 
 # INV-07 (ADR-0023 Consequences): the suite runs in a time zone west of UTC, set before any test and inherited by
 # every process a test starts (the engine itself among them), so a UTC "today" taken for the local one fails instead
@@ -31,6 +31,12 @@ if sys.platform == "win32":
 else:
     os.environ["TZ"] = WEST_OF_UTC
     time.tzset()
+
+# S0150 (BL-0087, ADR-0070): the test process plays the engine, so on Windows its placeholder mode is pinned as every
+# engine process pins it at its start (`this_os.pin_placeholder_mode`); the port refuses in any other mode. A test that
+# sets another mode puts this one back (`tests/fs/test_windows_cloud.py`).
+if not this_os.pin_placeholder_mode():
+    raise pytest.UsageError(f"the engine's placeholder mode could not be pinned: {this_os.pin_refused()}")  # noqa: TRY003
 
 # The overlay's comparison with Beancount's loader lives in a helper module both corpus tests share (S0094); pytest
 # rewrites its asserts too, so a failure shows what differs.
@@ -77,9 +83,9 @@ def _posix_model_for_the_fake(request: pytest.FixtureRequest) -> Iterator[None]:
     """On Windows a test over the in-memory fake (`tests/fakes/memfs.py`, a POSIX file system) runs with the POSIX path
     model, as on macOS and Linux (S0127): its paths are `/...`, which Windows' model refuses. The Windows model's own
     tests simulate it on every OS (`tests/fs/test_pathmodel.py`, `tests/ledger/test_journal_windows.py`); every other
-    test on Windows runs with Windows' model, and so does every test that asks for `windows_port` (a real-disk test
-    on the adapter, even in a module that also names the fake: S0130, the 2026-11-18 run 8, `test_save.py`)."""
-    if sys.platform == "win32" and _uses_the_fake(request.path) and "windows_port" not in request.fixturenames:
+    test on Windows runs with Windows' model, and so does every test of a real-disk module that also names the fake
+    (`windows_pending.HOST_MODEL_MODULES`: S0130, the 2026-11-18 run 8, `test_save.py`)."""
+    if sys.platform == "win32" and _uses_the_fake(request.path) and request.path.name not in HOST_MODEL_MODULES:
         with pathmodel.simulating(pathmodel.POSIX):
             yield
     else:
@@ -97,30 +103,3 @@ def pytest_make_collect_report(
         with pathmodel.simulating(pathmodel.POSIX):
             return (yield)
     return (yield)
-
-
-@pytest.fixture(autouse=True)
-def _windows_port_first(request: pytest.FixtureRequest) -> None:
-    """A test that asks for `windows_port` (`pytestmark = pytest.mark.usefixtures("windows_port")`) gets it before any
-    other fixture of its own: autouse fixtures are set up first, so a fixture that touches the disk (a ledger, a
-    published mirror) already runs on the Windows adapter and its path model (S0130, the 2026-11-18 run 7: `led`
-    published before the switch and met the POSIX model)."""
-    if "windows_port" in request.fixturenames:
-        request.getfixturevalue("windows_port")
-
-
-@pytest.fixture
-def windows_port() -> Iterator[None]:
-    """On Windows, the Windows adapter selected for the test (`ledger_engine.fs.under_test`, S0128): the product
-    refuses file operations there until BL-0087 turns writes on, and a real-disk test runs the product's own code
-    paths on the adapter. A no-op on macOS and Linux. A module opts in with
-    `pytestmark = pytest.mark.usefixtures("windows_port")`. The test process's placeholder mode is pinned as every
-    engine process pins it at its start (S0149, ADR-0070; the port refuses in any other mode)."""
-    if sys.platform != "win32":
-        yield
-        return
-    from ledger_engine.fs import this_os, under_test
-
-    assert this_os.pin_placeholder_mode(), this_os.pin_refused()
-    with under_test.windows_port_under_test():
-        yield

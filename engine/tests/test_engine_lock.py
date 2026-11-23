@@ -26,8 +26,6 @@ import pytest
 from ledger_engine.fs.port import FolderId
 from tests.fs.real_volume import app_identity
 
-pytestmark = pytest.mark.usefixtures("windows_port")  # Windows: the identity through the adapter (S0128 round 1, F2)
-
 DEADLINE = 15.0
 
 
@@ -396,6 +394,6 @@ def test_BL0261_the_app_folder_check_passes_an_unsupported_platform_through(
     app = tmp_path / "app"
     app.mkdir()
     start = identity(app)
-    monkeypatch.setattr(this_os.sys, "platform", "freebsd14" if sys.platform == "win32" else "win32")
+    monkeypatch.setattr(this_os.sys, "platform", "freebsd14")
     with pytest.raises(this_os.UnsupportedPlatform):
         app_folder.changed(str(app / "locks" / "engine.lock"), start)

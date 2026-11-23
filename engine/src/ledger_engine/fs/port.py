@@ -17,7 +17,7 @@ FAT: `rename`). Nothing is assumed about the order in which unsynced operations 
 
 Every operation may raise `OSError`. The real adapters are `ledger_engine.fs.darwin` (macOS) and
 `ledger_engine.fs.linux` (Linux, S0125), sharing `ledger_engine.fs.posix`, and `ledger_engine.fs.windows` (Windows,
-S0128: `FlushFileBuffers`, no swap; selected only under test until BL-0087), taken only through
+S0128: `FlushFileBuffers`, no swap; selected since S0150, BL-0087), taken only through
 `ledger_engine.fs.this_os.for_this_os` (S0113); the test adapter is the in-memory fake `tests/fakes/memfs.py`, with a
 separate durable layer, crash, I/O-error and power-loss injection.
 """

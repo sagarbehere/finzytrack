@@ -19,7 +19,6 @@ from tests.test_save_ops import Channel, engine, request, save_setup
 from tests.test_save_ops import setup as setup  # the fixture, shared
 
 pytestmark = [
-    pytest.mark.usefixtures("windows_port"),  # Windows: the adapter (S0130, BL-0206 done)
     pytest.mark.inv("INV-22"),
 ]
 

@@ -583,7 +583,10 @@ def unsupported_message() -> str:
     refused = this_os.mode_refusal()
     if refused is not None:  # S0149 (BL-0283): Windows refused the placeholder mode the engine reads cloud files in
         return f"Windows did not let the engine read cloud files (OneDrive, other sync apps) as plain files: {refused}."
-    return f"This engine has no file-system port for {sys.platform}; it reads and writes ledgers on macOS and Linux."
+    return (
+        f"This engine has no file-system port for {sys.platform}; it reads and writes ledgers on macOS, Linux and "
+        "Windows."
+    )
 
 
 SIZE_GUARDED: Final = frozenset({"preview"})

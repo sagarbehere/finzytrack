@@ -49,3 +49,17 @@ def test_no_sentence_of_the_reference_is_also_quoted_in_the_spec() -> None:
         if len(fragment) >= MIN_FRAGMENT and fragment in spec
     )
     assert doubled == [], "words with two homes: cite the key instead"
+
+
+ONE_OS_HOW_TO = re.compile(r"\bMac\b|macOS|Finder|Terminal|chmod|Get Info|File Explorer|PowerShell|icacls")
+"""Words of one OS's way to do something (S0150; owner, 2026-11-22: "fold the Mac wording into S0150")."""
+
+
+def test_no_engine_job_text_gives_one_os_how_to() -> None:
+    """S0150 (BL-0087): the sidecar's save, recovery, open, create and copy texts reach a user on macOS, Linux and
+    Windows alike, so none gives one OS's way to do something (the base's 11 keys said "Your Mac does not allow",
+    "Finder: Get Info", "Terminal: chmod -N", "your Mac's own disk"). Under IMP-0078 the cause is told in the generic
+    form. Checked on the reference, which `scripts/check_generated.py` holds equal to the code. Must not pass: any
+    rendered text with such a word."""
+    found = sorted(f"{key}: {m.group(0)}" for key, text in _texts().items() for m in ONE_OS_HOW_TO.finditer(text))
+    assert found == [], found

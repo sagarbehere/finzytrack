@@ -19,7 +19,7 @@ from ledger_engine.protocol.server import InputEnded
 from tests.test_save_ops import Channel as SaveChannel
 from tests.test_save_ops import engine, request
 
-pytestmark = [pytest.mark.inv("INV-22"), pytest.mark.usefixtures("windows_port")]
+pytestmark = pytest.mark.inv("INV-22")
 
 MAIN = 'option "title" "Books"\n2026-01-01 open Assets:Cash EUR\ninclude "prices/p.beancount"\n'
 PRICES = "2026-01-02 price EUR 1.10 USD\n"

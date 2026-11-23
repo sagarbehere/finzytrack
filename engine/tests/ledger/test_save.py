@@ -50,7 +50,6 @@ pytestmark = [
     pytest.mark.inv("INV-01"),
     pytest.mark.inv("INV-22"),
     pytest.mark.inv("INV-26"),
-    pytest.mark.usefixtures("windows_port"),
 ]
 
 MAIN = b'option "operating_currency" "USD"\ninclude "inc.bean"\n2026-01-01 open Assets:Cash\n'
@@ -113,8 +112,7 @@ class Ledger:
 
 
 @pytest.fixture
-def led(tmp_path: Path, windows_port: None) -> Ledger:  # the adapter on Windows before the setup's publish
-    del windows_port
+def led(tmp_path: Path) -> Ledger:
     root = tmp_path / "L"
     root.mkdir()
     (root / "main.bean").write_bytes(MAIN)

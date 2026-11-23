@@ -1,13 +1,14 @@
-"""The file-system port on Windows (`ledger_engine.fs.windows`, reached through `ledger_engine.fs.this_os` inside
-`windows_port_under_test`; S0128, BL-0280, BL-0218; ADR-0069; `design/specs/engine-jobs.md` §6.2, §6.3, §6.8, §15):
+"""The file-system port on Windows (`ledger_engine.fs.windows`, reached through `ledger_engine.fs.this_os` in the
+engine's pinned placeholder mode; S0128, BL-0280, BL-0218, S0150; ADR-0069; `design/specs/engine-jobs.md` §6.2, §6.3,
+§6.8, §15):
 the primitives the durable order relies on and the writer's save, crash and recovery, on the runner's real disk (temp
 folders only, INV-24) and on the scratch volumes the manual CI run formats (`FT_TEST_VOLUMES`, `;`-separated: FAT32,
 exFAT and ReFS; `ci.yml`, the `engine-windows` job).
 
 The ownership rule (owner, 2026-11-16: "Rule unchanged (Recommended)"): the Windows port writes exactly what the macOS
 port writes; where Windows cannot give a primitive safely it takes the stated refusal or the stated best-effort mode
-(ADR-0069: §6.8's mode on every Windows volume). The product does not select this adapter yet (BL-0087): the first test
-holds that.
+(ADR-0069: §6.8's mode on every Windows volume). The product selects this adapter since S0150 (BL-0087): the first two
+tests hold that, in the pinned placeholder mode only (ADR-0070).
 """
 
 from __future__ import annotations
@@ -55,7 +56,7 @@ WINDOWS_ONLY = "the Windows adapter's own tests (macOS: tests/fs/test_darwin.py;
 if sys.platform != "win32":
     raise pytest.skip.Exception(WINDOWS_ONLY, allow_module_level=True)
 
-pytestmark = [pytest.mark.inv("INV-01"), pytest.mark.usefixtures("windows_port")]
+pytestmark = pytest.mark.inv("INV-01")
 
 UPPER = FoldRule(nfd=False, casefold=False, upper=True)
 EXACT = FoldRule(nfd=False, casefold=False)
@@ -76,60 +77,66 @@ def _kind_of(fs: FileSystem, path: Path) -> str:
         return d.mark().fs_type
 
 
-# -- the product does not select it ------------------------------------------------------------------------------------
+# -- the product selects it (S0150, BL-0087) ---------------------------------------------------------------------------
 
-NO_SELECTION = """
-import json, sys
-import ledger_engine.protocol.server
+SELECTION = """
+import json, sys, threading
 from ledger_engine.fs import this_os
 from ledger_engine.protocol.server import Engine
+if sys.argv[1] == "pin":
+    pinned = this_os.pin_placeholder_mode()  # as the engine's `main` does at its start
+else:
+    nt = __import__("ctypes").WinDLL("ntdll")
+    nt.RtlSetProcessPlaceholderCompatibilityMode(2)  # another mode: expose
+    pinned = False
 e = Engine()
 replies = [json.loads(e.handle(json.dumps({"v": 2, "id": i, "op": op, "params": {}}).encode() + b"\\n"))
            for i, op in ((1, "handshake"), (2, "ping"))]
-try:
-    this_os.for_this_os()
-    port = "selected"
-except this_os.UnsupportedPlatform:
-    port = "refused"
-try:
-    this_os.legacy_locks_for_this_os()
-    locks = "selected"
-except this_os.UnsupportedPlatform:
-    locks = "refused"
-print(json.dumps({"ok": [r["ok"] for r in replies], "port": port, "locks": locks, "supported": this_os.supported(),
-                  "loaded": "ledger_engine.fs.windows" in sys.modules}))
+def ask():
+    out = {"supported": this_os.supported()}
+    try:
+        out["port"] = type(this_os.for_this_os()).__name__
+    except this_os.UnsupportedPlatform:
+        out["port"] = "refused"
+    try:
+        out["locks"] = type(this_os.legacy_locks_for_this_os()).__name__
+    except this_os.UnsupportedPlatform:
+        out["locks"] = "refused"
+    return out
+seen = []
+t = threading.Thread(target=lambda: seen.append(ask()))
+t.start()
+t.join(60)
+print(json.dumps({"pinned": pinned, "ok": [r["ok"] for r in replies], "here": ask(), "thread": seen,
+                  "refusal": this_os.mode_refusal()}))
 """
 
 
-def test_the_product_on_windows_still_refuses_file_operations_and_never_loads_the_adapter() -> None:
-    """Must not pass if the product selects the Windows adapter (BL-0087 turns writes on): a fresh
-    engine process answers its handshake and ping, refuses the port and the legacy locks, says the platform is not
-    supported, and has not imported `ledger_engine.fs.windows`."""
+def _selection(how: str) -> dict[str, Any]:
     run = subprocess.run(  # noqa: S603 (our own interpreter and code)
-        [sys.executable, "-c", NO_SELECTION], capture_output=True, text=True, check=False, timeout=120
+        [sys.executable, "-c", SELECTION, how], capture_output=True, text=True, check=False, timeout=120
     )
     assert run.returncode == 0, run.stderr
-    got = json.loads(run.stdout.splitlines()[-1])
-    assert got == {"ok": [True, True], "port": "refused", "locks": "refused", "supported": False, "loaded": False}
+    return json.loads(run.stdout.splitlines()[-1])
 
 
-def test_outside_the_test_switch_this_process_refuses_too() -> None:
-    """The switch is a context variable: a thread started here runs in a fresh context, where it is off."""
-    assert this_os.supported()
-    seen: list[object] = []
+def test_the_product_on_windows_selects_the_adapter_in_a_fresh_pinned_process_and_its_threads() -> None:
+    """S0150 (BL-0087 turns writes on; turned round from S0128's "the product does not select it"). Must not pass: a
+    fresh engine process that pins its mode as `main` does still refuses the port or the legacy locks, in itself or in
+    a thread it starts (the base's switch was a context variable, off in a new thread)."""
+    got = _selection("pin")
+    windows = {"supported": True, "port": "WindowsFS", "locks": "WindowsLegacyLocks"}
+    assert got == {"pinned": True, "ok": [True, True], "here": windows, "thread": [windows], "refusal": None}
 
-    def ask() -> None:
-        seen.append(this_os.supported())
-        try:
-            this_os.for_this_os()
-        except this_os.UnsupportedPlatform as e:
-            seen.append(e)
 
-    t = threading.Thread(target=ask)
-    t.start()
-    t.join(DEADLINE)
-    assert seen[0] is False
-    assert isinstance(seen[1], this_os.UnsupportedPlatform)
+def test_a_fresh_process_in_another_mode_refuses_every_port() -> None:
+    """@regression-guard (S0149's rule, ADR-0070): a process in another placeholder mode refuses the port and the
+    legacy locks, and the refusal names the mode."""
+    got = _selection("expose")
+    refused = {"supported": False, "port": "refused", "locks": "refused"}
+    assert got["here"] == refused, got
+    assert got["thread"] == [refused], got
+    assert got["refusal"] == "the placeholder mode is 2 (expose_placeholders)", got
 
 
 # -- the primitives ----------------------------------------------------------------------------------------------------

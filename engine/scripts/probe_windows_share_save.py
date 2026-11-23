@@ -7,7 +7,7 @@ Commands (run from `engine/`, on Windows only):
 - `probe <folder> [<folder> ...]`: for each folder (the CI share's spellings and, for comparison, a local NTFS
   folder), in a scratch folder `.ft-share-save-<pid>-<index>` it makes there:
   1. `save`: a small ledger, then the engine's real write path on it, as `tests/ledger/test_save.py` runs it on a
-     real disk (the Windows adapter selected by the tests' switch, `windows_port_under_test`): the open's publish (the
+     real disk (the Windows adapter, the mode pinned as the engine pins it): the open's publish (the
      app's cache, local), the preview's load, the save (`ledger.save.run`: its gate, the journal and backups in the
      app's machine-local folder, local; each create, write, flush and rename in the ledger folder), the rebuild, a
      second save, a third save with a failure injected after its rename (the rollback), recover-all over a journal
@@ -84,7 +84,7 @@ if sys.platform != "win32":
 
 import uuid
 
-from ledger_engine.fs import port, under_test, windows
+from ledger_engine.fs import port, this_os, windows
 from ledger_engine.fs.port import DirHandle, FileSystem, Resolved
 from ledger_engine.fs.this_os import for_this_os
 from ledger_engine.ledger import handles, opening, overlay, publishing, rebuild, recover_all, restore
@@ -1328,14 +1328,21 @@ USAGE = (
 )
 
 
+def _pinned() -> None:
+    """This process plays the engine: its placeholder mode pinned as the engine's start pins it (ADR-0070; the port
+    refuses in any other mode)."""
+    if not this_os.pin_placeholder_mode():
+        raise SystemExit(f"the placeholder mode could not be pinned: {this_os.pin_refused()}")  # noqa: TRY003
+
+
 def main(argv: list[str]) -> int:
     if len(argv) >= 2 and argv[0] == "probe":
-        with under_test.windows_port_under_test():
-            probe(argv[1:])
+        _pinned()
+        probe(argv[1:])
         return 0
     if len(argv) == 3 and argv[0] in ("cut", "readback"):
-        with under_test.windows_port_under_test():
-            (cut_part if argv[0] == "cut" else readback_part)(argv[1], argv[2])
+        _pinned()
+        (cut_part if argv[0] == "cut" else readback_part)(argv[1], argv[2])
         return 0
     if len(argv) >= 3 and argv[0] == "identity":
         identity(argv[1], argv[2:])

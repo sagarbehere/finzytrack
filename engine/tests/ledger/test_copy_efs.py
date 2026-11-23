@@ -20,7 +20,7 @@ from ledger_engine.fs.this_os import for_this_os, legacy_locks_for_this_os
 from ledger_engine.ledger.copy import CopyPlan, CopyPorts, run
 from ledger_engine.ledger.create import Created, NewFile, NotCreated
 
-pytestmark = [pytest.mark.inv("INV-22"), pytest.mark.usefixtures("windows_port")]
+pytestmark = pytest.mark.inv("INV-22")
 
 WS_JSON = b'{"format": 1, "min_reader": 1, "lineage_id": "7e1c3b52-6a0e-4f43-9d2c-8f1b2c3d4e5f"}\n'
 MAIN = (

@@ -29,7 +29,6 @@ from tests.mirror.test_inv21 import mirror_postings as copy_postings
 from tests.test_copy_ops import copy, params
 
 pytestmark = [
-    pytest.mark.usefixtures("windows_port"),  # Windows: the adapter (S0146: the copy's check runs there)
     pytest.mark.inv("INV-21"),
     pytest.mark.inv("INV-26"),
 ]

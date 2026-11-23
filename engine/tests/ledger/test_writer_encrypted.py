@@ -16,7 +16,7 @@ from ledger_engine.fs.this_os import for_this_os
 from ledger_engine.ledger.writer import Change, Landed, NotSaved, Reason, Step, durable_commit, sha256
 from tests.fs.real_volume import commit
 
-pytestmark = [pytest.mark.inv("INV-01"), pytest.mark.usefixtures("windows_port")]
+pytestmark = pytest.mark.inv("INV-01")
 
 
 class _Dir:

@@ -48,7 +48,6 @@ import argparse
 import asyncio
 import contextlib
 import json
-import os
 import signal
 import socket
 import sys
@@ -73,6 +72,7 @@ from app.platform.adapters.engine_client import (
     EngineCommand,
     bytecode_build_dir,
     packaged_engine_site,
+    venv_python,
     venv_site,
 )
 from app.platform.adapters.engine_lock import engine_lock_path, wait_engine_lock
@@ -203,8 +203,9 @@ def engine_command(args: Args, folder: AppFolder, app_version: str) -> EngineCom
     (S0102, BL-0244): the engine and the fill write in it only while it is that object."""
     lock = engine_lock_path(folder.path)
     if args.engine_venv is not None:
-        python = args.engine_venv / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
-        bytecode = bytecode_build_dir(folder.path, python, venv_site(args.engine_venv), app_version)
+        bytecode = bytecode_build_dir(
+            folder.path, venv_python(args.engine_venv), venv_site(args.engine_venv), app_version
+        )
         command = EngineCommand.for_venv(args.engine_venv, engine_lock=lock, bytecode_dir=bytecode, app_folder=folder)
     else:
         python, site = Path(sys.executable), packaged_engine_site(Path(sys.prefix))

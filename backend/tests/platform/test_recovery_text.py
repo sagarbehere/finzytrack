@@ -95,11 +95,15 @@ def test_the_acl_row_names_the_folder_and_the_entry() -> None:
     assert "Remove that entry, then press Retry." in message
 
 
-def test_a_permission_stop_on_a_file_says_how_to_remove_its_entry() -> None:
-    """§15: an entry added during a save may be inherited by a hidden file of ours; the screen names that file."""
+def test_a_permission_stop_on_a_file_names_that_file() -> None:
+    """§15: an entry added during a save may be inherited by a hidden file of ours; the screen names that file and
+    says to check its permissions (S0150: no one OS's way to do it)."""
     b = Blocking(J, "stopped", "permission", "/L/accounts.beancount", "/L/.accounts.beancount.ft-s1-j7.tmp")
     message = blocked_screen(b, WS).message
-    assert 'chmod -N "/L/.accounts.beancount.ft-s1-j7.tmp"' in message
+    assert (
+        "Finzytrack has no permission to change /L/.accounts.beancount.ft-s1-j7.tmp. Check its permissions, then "
+        "press Retry." in message
+    )
 
 
 def test_a_journal_that_could_not_be_undone_has_adr_0063s_text() -> None:
@@ -157,9 +161,12 @@ def test_failed_on_a_read_only_drive_says_so() -> None:
     assert "Make the drive writable and press Retry, or choose Keep the files as they are now." in message
 
 
-def test_failed_with_no_read_permission_gives_the_acl_way_out() -> None:
+def test_failed_with_no_read_permission_says_to_check_the_permissions() -> None:
+    """S0150: the entry named with the system's answer, then the generic way out (no one OS's way to do it)."""
     b = Blocking(J, "failed", "io_error", "/L/accounts.beancount", "/app/local/k1/journal/s1-j7.open", None, 13)
-    assert 'chmod -N "/app/local/k1/journal/s1-j7.open"' in blocked_screen(b, WS).message
+    message = blocked_screen(b, WS).message
+    assert f"could not read or change /app/local/k1/journal/s1-j7.open: {os.strerror(13)}." in message
+    assert message.endswith(" Check its permissions. Then press Retry."), message
 
 
 def test_an_engine_that_stopped_while_undoing() -> None:

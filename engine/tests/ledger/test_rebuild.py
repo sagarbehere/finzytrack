@@ -39,7 +39,7 @@ from tests.fresh_engine import fresh_engine
 from tests.mirror.publish_support import BUILT_AT, CUR, ENGINE_BUILD, KEY, TODAY, current_in, fs_now, meta
 from tests.windows_pending import NO_FIFO, NO_UID
 
-pytestmark = [pytest.mark.inv("INV-22"), pytest.mark.usefixtures("windows_port")]
+pytestmark = pytest.mark.inv("INV-22")
 
 MAIN = b'option "operating_currency" "USD"\ninclude "inc.bean"\n2026-01-01 open Assets:Cash\n'
 INC = b'2026-01-01 open Expenses:Food\n2026-01-02 * "Lunch"\n  Expenses:Food  5 USD\n  Assets:Cash\n'

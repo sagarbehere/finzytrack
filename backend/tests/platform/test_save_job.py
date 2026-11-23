@@ -422,12 +422,12 @@ def test_not_saved_says_unchanged_only_after_the_rehash() -> None:
         ),
         (
             ChangeNotSavedDetails("locked", MAIN, None, None, True, None),
-            "main.bean is locked. Unlock it (Finder: Get Info)",
+            "main.bean is locked or read-only. Allow changes to it, then try again.",
         ),
         (ChangeNotSavedDetails("not_a_file", MAIN, None, None, True, None), "main.bean is not a normal file."),
         (
             ChangeNotSavedDetails("permission", MAIN, None, None, True, None),
-            "Your Mac does not allow changes to main.bean.",
+            "Finzytrack has no permission to change main.bean. Check its permissions, then try again.",
         ),
         (
             ChangeNotSavedDetails("permission", None, host("/L"), "deny delete_child,directory_inherit", True, None),
@@ -436,7 +436,7 @@ def test_not_saved_says_unchanged_only_after_the_rehash() -> None:
         ),
         (
             ChangeNotSavedDetails("permission", None, host("/app/local/k1/journal"), None, True, None),
-            f"allow changes to {host('/app/local/k1/journal')}.",
+            f"no permission to change {host('/app/local/k1/journal')}.",
         ),
         (  # S0100 (BL-0163 (b)): the file named
             ChangeNotSavedDetails("io_error", MAIN, None, None, True, None),
@@ -457,7 +457,7 @@ def test_not_saved_says_unchanged_only_after_the_rehash() -> None:
             ChangeNotSavedDetails("no_folder_id", MAIN, None, None, True, None),
             "If main.bean is at the top level of a USB drive, make a folder on the drive, move your "
             "ledger into it, and open it from there. Otherwise keep your ledger on another drive, such as your "
-            "Mac's own disk.",
+            "computer's own disk.",
         ),
         (
             ChangeNotSavedDetails("no_drive_id", MAIN, None, None, True, None),

@@ -84,6 +84,7 @@ from app.platform.adapters.engine_client import (
     EngineCommand,
     bootstrap_argv,
     engine_env,
+    venv_python,
     venv_site,
 )
 from app.platform.adapters.engine_lock import wait_engine_lock
@@ -327,12 +328,13 @@ def recorded_mark(folder: Path) -> CopyMark:
     and its identity, read by the engine's own file-system port in the engine's interpreter."""
     path = os.path.realpath(folder)
     code = (
-        "import json, sys; from ledger_engine.fs.this_os import for_this_os; "
+        "import json, sys; from ledger_engine.fs.this_os import for_this_os, pin_placeholder_mode; "
+        "assert pin_placeholder_mode(); "  # Windows: as an engine's start pins it (ADR-0070); a no-op elsewhere
         "m = for_this_os().open_dir(sys.argv[-1]).mark(); "
         "print(json.dumps([m.volume, m.fs_type, m.born]))"
     )
     out = subprocess.run(  # noqa: S603 (fixed argv: the engine's interpreter under the sidecar's bootstrap)
-        [*bootstrap_argv(ENGINE_VENV / "bin" / "python", venv_site(ENGINE_VENV), code), path],
+        [*bootstrap_argv(venv_python(ENGINE_VENV), venv_site(ENGINE_VENV), code), path],
         capture_output=True,
         text=True,
         check=True,
@@ -348,7 +350,7 @@ def command_for(folder: AppFolder, cache: Path) -> EngineCommand:
         ["--app-local-data", str(folder.path), "--app-cache", str(cache), "--engine-venv", str(ENGINE_VENV)]
     )
     product = engine_command(sidecar, folder, VERSION)
-    python, site = ENGINE_VENV / "bin" / "python", venv_site(ENGINE_VENV)
+    python, site = venv_python(ENGINE_VENV), venv_site(ENGINE_VENV)
     if product.argv != bootstrap_argv(python, site, ENGINE_RUN):
         fail(f"the product's engine command is not the one this script changes: {product.argv}")
     return dataclasses.replace(product, argv=bootstrap_argv(python, site, WITH_LAZY_TEST_PRODUCER))

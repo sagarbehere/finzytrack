@@ -21,7 +21,6 @@ import hashlib
 import json
 import os
 import subprocess
-import sys
 import threading
 import time
 from collections.abc import Callable, Iterator, Mapping
@@ -35,7 +34,7 @@ import pytest
 from app.mirror.files import MirrorInfo, pin
 from app.mirror.reader import Reader
 from app.platform.adapters.app_folder import AppFolder
-from app.platform.adapters.engine_client import EngineClient, EngineCommand
+from app.platform.adapters.engine_client import EngineClient, EngineCommand, venv_python
 from app.platform.adapters.engine_lock import engine_lock_path, wait_engine_lock
 from app.platform.clock import FrozenClock
 from app.platform.engine import (
@@ -1263,7 +1262,7 @@ def test_a_fresh_engine_asked_for_after_close_is_closed_never_a_hang(rig: Rig) -
 
 
 def real_rig(tmp_path: Path, ends: list[EngineEnd] | None = None) -> tuple[EngineJobs, EngineClient]:
-    if not (ENGINE_VENV / "bin" / "python").exists():
+    if not venv_python(ENGINE_VENV).exists():
         pytest.fail("engine/.venv is missing: run `uv sync --locked` in engine/ (the engine tests need it)")
     lock = engine_lock_path(tmp_path)
     folder = AppFolder.of(tmp_path)  # S0102: the app folder of the start, with its identity
@@ -1372,7 +1371,7 @@ def test_with_the_real_engine_a_retire_during_another_client_call_does_not_wedge
     """S0058 verifier F1: a user-code job finishing while another public client call is in flight (a reset) made
     `EngineClient.end("retire")` raise on the scheduler thread, and the slot stayed `ending` for the session. Our
     ends never raise; the retire is carried out when the other call has returned."""
-    if not (ENGINE_VENV / "bin" / "python").exists():
+    if not venv_python(ENGINE_VENV).exists():
         pytest.fail("engine/.venv is missing: run `uv sync --locked` in engine/ (the engine tests need it)")
     lock = engine_lock_path(tmp_path)
     folder = AppFolder.of(tmp_path)  # S0102: the app folder of the start, with its identity
@@ -1469,7 +1468,7 @@ print(json.dumps({"fp": encode(r.fingerprint).decode()}))
 def _plan_fingerprint(main: Path) -> str:
     return json.loads(
         subprocess.run(  # noqa: S603 (the engine's own interpreter, a fixed script, a test path)
-            [str(ENGINE_VENV / "bin" / "python"), "-c", _FINGERPRINT, str(main)],
+            [str(venv_python(ENGINE_VENV)), "-c", _FINGERPRINT, str(main)],
             check=True,
             capture_output=True,
             text=True,
@@ -1480,9 +1479,6 @@ def _plan_fingerprint(main: Path) -> str:
 CLOCK = FrozenClock(datetime(2026, 11, 8, 12, 0, tzinfo=UTC))
 
 
-@pytest.mark.skipif(
-    sys.platform not in ("darwin", "linux"), reason="the save's port: macOS and Linux; Windows is BL-0087"
-)
 def test_with_the_real_engine_a_save_job_lands_and_retires_its_engine(tmp_path: Path) -> None:
     """@regression-guard (S0069; it passes on the base: the path works, it had no test). Step-back area review F6: the
     sidecar's save job through the real client and engine, end to end, on a scratch
@@ -1541,9 +1537,6 @@ def test_with_the_real_engine_a_save_job_lands_and_retires_its_engine(tmp_path: 
         client.close()
 
 
-@pytest.mark.skipif(
-    sys.platform not in ("darwin", "linux"), reason="the save's port: macOS and Linux; Windows is BL-0087"
-)
 def test_with_the_real_engine_a_landed_save_is_published_and_a_pinned_read_sees_it(tmp_path: Path) -> None:
     """S0087 (BL-0113), end to end: a save with no published generation is refused `WORKSPACE_NOT_READY {WARMING}`
     (publish.md §7); once a rebuild published the disk it lands; its background rebuild publishes the saved state; a

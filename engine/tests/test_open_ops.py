@@ -17,7 +17,6 @@ from tests.mirror.publish_support import current_in
 from tests.test_save_ops import Channel, engine, request
 
 pytestmark = [
-    pytest.mark.usefixtures("windows_port"),  # Windows: the adapter (S0130, BL-0206 done)
     pytest.mark.inv("INV-05"),
 ]
 

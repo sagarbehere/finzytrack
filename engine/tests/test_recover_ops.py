@@ -27,7 +27,7 @@ from ledger_engine.protocol.server import Engine
 from tests.fs.real_volume import app_identity, app_identity_text
 from tests.windows_pending import FLOCK_HOLDER
 
-pytestmark = [pytest.mark.inv("INV-32"), pytest.mark.usefixtures("windows_port")]
+pytestmark = pytest.mark.inv("INV-32")
 
 DEADLINE = 15.0
 PRE = b"2026-01-01 open Assets:A\n"

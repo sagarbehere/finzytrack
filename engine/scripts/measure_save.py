@@ -37,7 +37,7 @@ from pathlib import Path
 from typing import Any
 
 from ledger_engine.fs.port import DirHandle, FileSystem, Resolved
-from ledger_engine.fs.this_os import for_this_os
+from ledger_engine.fs.this_os import for_this_os, pin_placeholder_mode, pin_refused
 from ledger_engine.ledger import opening, overlay, publishing, rebuild, restore
 from ledger_engine.ledger import save as sv
 from ledger_engine.ledger.core.ledger_set import Fingerprint, as_before
@@ -254,6 +254,9 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--runs", type=int, default=3)
     p.add_argument("--app", type=Path, default=None)
     a = p.parse_args(argv)
+    if not pin_placeholder_mode():  # Windows: as the engine's start pins it (ADR-0070); the port refuses otherwise
+        sys.stderr.write(f"the placeholder mode could not be pinned: {pin_refused()}\n")
+        return 2
     if any(a.work.iterdir()) or (a.app is not None and any(a.app.iterdir())):
         sys.stderr.write("WORK_DIR and APP_DIR must be empty\n")
         return 2
