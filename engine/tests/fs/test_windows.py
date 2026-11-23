@@ -423,6 +423,190 @@ def test_a_folder_with_an_inheritable_deny_entry_refuses_the_save(fs: FileSystem
     assert (led / "main.bean").read_bytes() == b"pre\n"
 
 
+# -- a folder with OneDrive's ACL (S0151, BL-0283; owner, 2026-11-23: "1") ---------------------------------------------
+
+
+@pytest.fixture
+def onedrive(tmp_path: Path) -> Iterator[Path]:
+    """A scratch folder with OneDrive's DACL and read-only attribute, as on the owner's PC (`tests/fs/onedrive_acl.py`);
+    the ledger folder `Finance` inside it inherits `(D;CIID;DT;;;WD)`, as every folder in OneDrive does."""
+    from tests.fs import onedrive_acl
+
+    root = tmp_path / "OneDrive"
+    root.mkdir()
+    onedrive_acl.onedrive_folder(root)
+    try:
+        yield root
+    finally:
+        onedrive_acl.reset(root)
+
+
+def _denies_delete_child_to_folders(fs: FileSystem, folder: Path, *, inherited: bool) -> None:
+    with fs.open_dir(str(folder)) as d:
+        denies = [e for e in d.acl() if e.deny]
+    flags = {"directory_inherit", "inherited"} if inherited else {"directory_inherit"}
+    assert [(e.perms, e.flags) for e in denies] == [(frozenset({"delete_child"}), frozenset(flags))], denies
+
+
+@pytest.mark.parametrize("where", ["root", "inside"])
+def test_onedrives_acl_is_read_as_onedrives_and_passes_the_folder_rule(
+    fs: FileSystem, onedrive: Path, where: str
+) -> None:
+    """The adapter's answers in a folder with OneDrive's DACL, as the owner's PC gave them (the diagnostic, 2026-11-23):
+    the folder refuses `FILE_DELETE_CHILD`; the entries the save makes would grant `DELETE`, so `REMOVE_ENTRIES` is
+    yes (`_may_remove_entries`); the deny is read; the folder rule lets it through. Fails on the base: `REMOVE_ENTRIES`
+    was the folder's `FILE_DELETE_CHILD` alone, and the deny entry blocked."""
+    from ledger_engine.fs import windows
+    from ledger_engine.ledger.handles import folder_blocked
+
+    led = onedrive if where == "root" else onedrive / "Finance"
+    led.mkdir(exist_ok=True)
+    (led / "main.bean").write_bytes(b"pre\n")
+    _denies_delete_child_to_folders(fs, led, inherited=where == "inside")
+    with fs.open_dir(str(led)) as d:
+        assert isinstance(d, windows.WindowsDir)
+        with pytest.raises(PermissionError):
+            d._reopen(windows.FILE_DELETE_CHILD).close()  # pyright: ignore[reportPrivateUsage]
+        assert d.allowed(".", Right.CHANGE_ENTRIES)
+        assert d.allowed(".", Right.REMOVE_ENTRIES)
+        assert d.allowed("main.bean", Right.DELETE)
+        assert d.caps().delete_by_entry
+        assert folder_blocked(d) is None
+
+
+def test_a_save_a_crash_and_recovery_in_a_folder_with_onedrives_acl(fs: FileSystem, onedrive: Path) -> None:
+    """The real-volume run (`tests/fs/real_volume.py`: a save that replaces two files and makes a folder, which inherits
+    OneDrive's deny; a crash before the close and recovery from the backups; outside saves met and kept) in a OneDrive
+    folder, through the engine's writer and restore on the real adapter. Fails on the base: `permission`."""
+    led = onedrive / "Finance"
+    led.mkdir()
+    (led / "inc").mkdir()
+    app = onedrive.parent / "app"
+    app.mkdir()
+    real_volume_run(fs, app, led)
+    _denies_delete_child_to_folders(fs, led / "y2026", inherited=True)
+
+
+def test_the_rollback_in_a_folder_with_onedrives_acl_and_recovery_after_it(
+    fs: FileSystem, onedrive: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An I/O error at the last replace (the root file): the created file in the folder the save made is kept and
+    asked about (owner, 2026-10-30: never removed), the replaced file put back; recovery then stops on that created
+    file; once it is deleted, Retry resolves and removes the folder the save made, by its own `DELETE`."""
+    from ledger_engine.fs import windows
+    from ledger_engine.ledger.core.recovery import Cause
+    from ledger_engine.ledger.restore import Resolved, Stopped, recover_journal
+
+    led = onedrive / "Finance"
+    led.mkdir()
+    a, main, made = led / "a.bean", led / "main.bean", led / "y2026" / "new.bean"
+    a.write_bytes(b"a\n")
+    main.write_bytes(b"pre\n")
+    real = windows.WindowsDir.rename
+
+    def failing(self: windows.WindowsDir, src: str, dst: str) -> None:
+        if dst == "main.bean":
+            raise OSError(errno.EIO, "an I/O error at the root file's replace")
+        real(self, src, dst)
+
+    monkeypatch.setattr(windows.WindowsDir, "rename", failing)
+    app = onedrive.parent / "app"
+    c = commit(
+        app,
+        Change(str(a), sha256(b"a\n"), b"A\n"),
+        Change(str(made), None, b"new\n"),
+        Change(str(main), sha256(b"pre\n"), b"post\n"),
+    )
+    out = durable_commit(fs, c)
+    monkeypatch.setattr(windows.WindowsDir, "rename", real)
+    assert isinstance(out, Unfinished | NotSaved), out
+    assert (a.read_bytes(), main.read_bytes()) == (b"a\n", b"pre\n"), "the replaced file is put back"
+    if isinstance(out, Unfinished):
+        named = core_paths.canonical_path(fs.resolve(str(made)))
+        stop = recover_journal(fs, c.journal_dir, "s1-j1")
+        assert stop == Stopped(Cause.CREATED_PATH_TAKEN, named), stop
+        made.unlink()
+        assert recover_journal(fs, c.journal_dir, "s1-j1") == Resolved("s1-j1")
+    assert not made.parent.exists(), "the folder the save made is removed"
+    assert not [n for n in os.listdir(led) if ".ft-" in n], "nothing of ours left"
+
+
+@pytest.mark.parametrize(
+    "extra",
+    ["(D;OI;DE;;;WD)", "(D;;0x2;;;WD)", "(D;CI;DE;;;WD)"],
+    ids=["files_no_delete", "no_add_file", "dirs_no_delete"],
+)
+def test_must_not_pass_a_onedrive_folder_with_a_deny_that_reaches_what_the_save_writes_refuses(
+    fs: FileSystem, onedrive: Path, extra: str
+) -> None:
+    """OneDrive's DACL with one more deny: `DELETE` to new files (`OI`), adding files on the folder (`0x2`, write data,
+    is `FILE_ADD_FILE` on a folder), `DELETE` to new folders (`CI`): "not saved", unchanged, `permission`, nothing of
+    ours left."""
+    from tests.fs import onedrive_acl
+
+    led = onedrive / "Finance"
+    led.mkdir()
+    main = led / "main.bean"
+    main.write_bytes(b"pre\n")
+    onedrive_acl.set_dacl(led, onedrive_acl.onedrive_sddl(extra=extra))
+    out = _save(
+        fs,
+        onedrive.parent,
+        Change(str(main), sha256(b"pre\n"), b"post\n"),
+        Change(str(led / "y" / "n.bean"), None, b"n\n"),
+    )
+    assert isinstance(out, NotSaved), out
+    assert (out.reason, out.unchanged) == (Reason.PERMISSION, True), out
+    assert main.read_bytes() == b"pre\n"
+    assert sorted(os.listdir(led)) == ["main.bean"]
+
+
+def test_must_not_pass_a_file_without_delete_in_a_onedrive_folder_refuses_naming_the_file(
+    fs: FileSystem, onedrive: Path
+) -> None:
+    led = onedrive / "Finance"
+    led.mkdir()
+    main = led / "main.bean"
+    main.write_bytes(b"pre\n")
+    subprocess.run(["icacls", str(main), "/deny", "*S-1-1-0:(DE)"], check=True, capture_output=True)  # noqa: S603, S607
+    out = _save(fs, onedrive.parent, Change(str(main), sha256(b"pre\n"), b"post\n"))
+    assert isinstance(out, NotSaved), out
+    assert (out.reason, out.unchanged, out.path) == (Reason.PERMISSION, True, str(main)), out
+    assert main.read_bytes() == b"pre\n"
+
+
+def test_must_not_pass_a_folder_whose_new_entries_would_get_no_delete_refuses_before_any_effect(
+    fs: FileSystem, onedrive: Path
+) -> None:
+    """OneDrive's deny with the user's entry granting read, write and execute but no `DELETE`: no deny entry shows
+    it; Windows' own answer for a new entry (`AccessCheck` on the security it would get) refuses it, so the folder
+    rule does (`REMOVE_ENTRIES` no; `entry` the folder, no `detail`)."""
+    from tests.fs import onedrive_acl
+
+    led = onedrive / "Finance"
+    led.mkdir()
+    main = led / "main.bean"
+    main.write_bytes(b"pre\n")
+    onedrive_acl.set_dacl(led, onedrive_acl.onedrive_sddl(user_access=onedrive_acl.NO_DELETE_FOR_NEW))
+    with fs.open_dir(str(led)) as d:
+        assert d.allowed(".", Right.CHANGE_ENTRIES)
+        assert not d.allowed(".", Right.REMOVE_ENTRIES)
+    out = _save(fs, onedrive.parent, Change(str(main), sha256(b"pre\n"), b"post\n"))
+    assert isinstance(out, NotSaved), out
+    assert (out.reason, out.unchanged, out.detail) == (Reason.PERMISSION, True, None), out
+    assert out.entry is not None
+    assert out.entry.endswith("Finance"), out
+    assert sorted(os.listdir(led)) == ["main.bean"]
+
+
+def test_a_plain_local_folder_still_answers_remove_entries_from_its_delete_child(
+    fs: FileSystem, tmp_path: Path
+) -> None:
+    """@regression-guard (it holds on the base): a folder that grants `FILE_DELETE_CHILD` asks nothing more."""
+    with fs.open_dir(str(tmp_path)) as d:
+        assert d.allowed(".", Right.REMOVE_ENTRIES)
+
+
 GENERIC_READ_ = 0x80000000
 SHARE_ALL = 0x7
 SHARE_READ_WRITE = 0x3

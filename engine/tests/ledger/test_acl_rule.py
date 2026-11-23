@@ -3,7 +3,11 @@ subject (Recommended)"; ADR-0013 amendments of that date; S0061 r6, r7), tested 
 code's answers: a folder the save or the undo writes in is refused when it carries **any** deny entry, whoever it
 names, unless new entries do not inherit it (no `file_inherit`, `directory_inherit` or `only_inherit`) and every bit
 it denies protects only the folder itself (`delete`, `writeextattr`, `writeattr`, `writesecurity`, `chown`). Unknown
-bits and flags fail closed. The rule never sees a subject: an `AclEntry` carries none."""
+bits and flags fail closed. The rule never sees a subject: an `AclEntry` carries none.
+
+On Windows (`by_entry=True`; S0151, owner, 2026-11-23: "1"; ADR-0013 amendment of that date) a denied `delete_child`
+counts for nothing, wherever the entry reaches, and the entry's other bits are judged as above (OneDrive's
+`(D;CI;DT;;;WD)` passes; everything else that refuses on macOS still refuses)."""
 
 from __future__ import annotations
 
@@ -123,3 +127,73 @@ def test_the_first_blocking_entry_is_named_and_an_empty_acl_passes() -> None:
     first, second = deny("search"), deny("delete_child")
     assert blocking_entry((deny("delete"), first, second)) == first
     assert blocking_entry(()) is None
+
+
+# -- Windows: removals decided per entry (S0151; owner, 2026-11-23: "1") ----------------------------------------------
+
+KNOWN_INHERITING = tuple(f for f in INHERITING if "unknown" not in f)
+ONEDRIVE_ROOT = deny("delete_child", flags=frozenset({"directory_inherit"}))  # (D;CI;DT;;;WD), the owner's PC
+ONEDRIVE_FOLDER = deny("delete_child", flags=frozenset({"directory_inherit", "inherited"}))  # (D;CIID;DT;;;WD)
+
+
+def test_onedrives_own_entries_pass_where_removals_are_decided_per_entry() -> None:
+    assert blocking_entry((ONEDRIVE_ROOT,), by_entry=True) is None
+    assert blocking_entry((ONEDRIVE_FOLDER,), by_entry=True) is None
+
+
+def test_onedrives_own_entries_are_refused_by_the_posix_rule() -> None:
+    """@regression-guard (it holds on the base): macOS and Linux keep the owner's rule of 2026-10-30."""
+    assert blocking_entry((ONEDRIVE_ROOT,)) == ONEDRIVE_ROOT
+    assert blocking_entry((ONEDRIVE_FOLDER,)) == ONEDRIVE_FOLDER
+    assert blocking_entry((ONEDRIVE_FOLDER,), by_entry=False) == ONEDRIVE_FOLDER
+
+
+@pytest.mark.parametrize("flags", NOT_INHERITING + KNOWN_INHERITING)
+def test_a_deny_of_delete_child_alone_passes_per_entry_wherever_it_reaches(flags: frozenset[str]) -> None:
+    """A denied `delete_child` cannot stop a removal Windows grants by the entry's own `DELETE`, which the save asks of
+    every entry it removes or renames away (and `REMOVE_ENTRIES` of every entry it makes)."""
+    assert blocking_entry((deny("delete_child", flags=flags),), by_entry=True) is None
+
+
+def test_a_deny_of_delete_child_with_a_flag_no_adapter_names_still_refuses_per_entry() -> None:
+    e = deny("delete_child", flags=frozenset({"unknown"}))
+    assert blocking_entry((e,), by_entry=True) == e
+
+
+@pytest.mark.parametrize("flags", NOT_INHERITING + INHERITING)
+@pytest.mark.parametrize("bit", [b for b in OTHER_BITS if b != "delete_child"])
+def test_per_entry_every_other_deny_bit_is_still_refused_alone_and_beside_delete_child(
+    bit: str, flags: frozenset[str]
+) -> None:
+    """Must-not-pass: an entry that reaches files or new folders, or denies adding entries here, with any bit but
+    `delete_child` still blocks."""
+    e = deny(bit, flags=flags)
+    assert blocking_entry((e,), by_entry=True) == e
+    mixed = deny("delete_child", bit, flags=flags)
+    assert blocking_entry((mixed,), by_entry=True) == mixed
+
+
+@pytest.mark.parametrize("flags", INHERITING)
+@pytest.mark.parametrize("bit", SELF_BITS)
+def test_per_entry_an_inheritable_folder_self_bit_is_still_refused(bit: str, flags: frozenset[str]) -> None:
+    """Must-not-pass: what a new file or a folder the save makes inherits (an inherited `delete` would keep the undo
+    from removing the folder it made)."""
+    e = deny("delete_child", bit, flags=flags)
+    assert blocking_entry((e,), by_entry=True) == e
+
+
+@pytest.mark.parametrize("flags", NOT_INHERITING)
+def test_per_entry_the_folder_self_bits_pass_as_on_macos(flags: frozenset[str]) -> None:
+    assert blocking_entry((deny(*SELF_BITS, flags=flags),), by_entry=True) is None
+    assert blocking_entry((deny("delete_child", *SELF_BITS, flags=flags),), by_entry=True) is None
+
+
+@pytest.mark.parametrize("flags", NOT_INHERITING + INHERITING)
+def test_per_entry_a_deny_of_no_bit_is_judged_by_its_flags_as_on_macos(flags: frozenset[str]) -> None:
+    e = deny(flags=flags)
+    assert blocking_entry((e,), by_entry=True) == (None if flags in NOT_INHERITING else e)
+
+
+def test_per_entry_the_first_blocking_entry_after_onedrives_is_named() -> None:
+    blocking = deny("delete", flags=frozenset({"file_inherit"}))
+    assert blocking_entry((ONEDRIVE_FOLDER, blocking), by_entry=True) == blocking

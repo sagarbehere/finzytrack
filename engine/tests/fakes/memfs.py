@@ -144,6 +144,7 @@ class _File:
     locked: bool = False
     deny: set[Right] = field(default_factory=lambda: set())
     acl: list[_Ace] = field(default_factory=lambda: [])
+    ungranted: bool = False  # Windows mode: no allow entry grants us DELETE on it (`outside_grant_no_delete`)
 
 
 @dataclass
@@ -172,6 +173,8 @@ class _Dir:
     locked: bool = False  # `uchg`: no entry may be added, removed or renamed in it, and it may not be removed
     dev: int = 1  # its volume (S0087: `outside_mount` puts another volume at a folder)
     born: int = 0  # its creation time in ns (S0089): set by `MemFS._new` from its inode, unless given
+    ungranted: bool = False  # Windows mode: no allow entry grants us DELETE on it (`outside_grant_no_delete`)
+    new_ungranted: bool = False  # Windows mode: what is made in it gets no DELETE (`outside_grant_no_delete`)
 
 
 _Node = _File | _Dir | _Link | _Other
@@ -187,7 +190,10 @@ class _Ace:
 
 def _denies(node: _Node, perm: str) -> bool:
     """A deny entry of `node` that applies to us and acts on it (not `only_inherit`) denies `perm`."""
-    acl: list[_Ace] = node.acl if isinstance(node, _File | _Dir) else []
+    return _acl_denies(node.acl if isinstance(node, _File | _Dir) else [], perm)
+
+
+def _acl_denies(acl: list[_Ace], perm: str) -> bool:
     return any(
         a.applies and a.entry.deny and "only_inherit" not in a.entry.flags and perm in a.entry.perms for a in acl
     )
@@ -198,15 +204,24 @@ def _no_search(d: _Dir) -> None:
         raise PermissionError(errno.EACCES, "search denied")
 
 
-def _inherited(parent: _Dir, flag: str) -> list[_Ace]:
-    """The entries a new file (`file_inherit`) or folder (`directory_inherit`) made in `parent` gets: a file's act on
-    it and pass nothing on; a folder's keep their flags but `only_inherit` (probed on APFS, S0061 r6)."""
+def _inherited(acl: list[_Ace], flag: str, *, windows: bool = False) -> list[_Ace]:
+    """The entries a new file (`file_inherit`) or folder (`directory_inherit`) made in a folder whose ACL is `acl`
+    gets: a file's act on it and pass nothing on; a folder's keep their flags but `only_inherit` (probed on APFS, S0061
+    r6). In Windows mode (S0151), as Windows passes them on: a folder also gets each `file_inherit` entry without
+    `directory_inherit` as an `only_inherit` one, to pass to the files made in it; an entry with `limit_inherit` passes
+    to the new entry and stops there."""
     out: list[_Ace] = []
-    for a in parent.acl:
+    for a in acl:
         e = a.entry
+        stop = windows and "limit_inherit" in e.flags
         if flag in e.flags:
-            kept = frozenset({"inherited"}) if flag == "file_inherit" else (e.flags - {"only_inherit"}) | {"inherited"}
+            if flag == "file_inherit" or stop:
+                kept = frozenset({"inherited"})
+            else:
+                kept = (e.flags - {"only_inherit"}) | {"inherited"}
             out.append(_Ace(AclEntry(e.deny, e.perms, kept), a.applies))
+        elif windows and flag == "directory_inherit" and "file_inherit" in e.flags and not stop:
+            out.append(_Ace(AclEntry(e.deny, e.perms, e.flags | {"only_inherit", "inherited"}), a.applies))
     return out
 
 
@@ -654,6 +669,16 @@ class MemFS:
         assert isinstance(node, _File | _Dir)
         node.acl.append(_Ace(entry, applies))
 
+    def outside_grant_no_delete(self, path: str, *, new: bool = True, own: bool = False) -> None:
+        """Windows mode (S0151): the folder's allow entries grant what is made in it no DELETE (`new`; passed to the
+        folders made in it), and with `own` the file or folder at `path` itself none: a missing allow, which no deny
+        entry shows (the fake's deny entries alone never model it)."""
+        node = self._at(path)
+        assert isinstance(node, _File | _Dir)
+        node.ungranted = own
+        if isinstance(node, _Dir):
+            node.new_ungranted = new
+
     def outside_acl_clear(self, path: str) -> None:
         """`chmod -N`: every ACL entry of the file or folder at `path` removed."""
         node = self._at(path)
@@ -859,6 +884,8 @@ class MemFS:
                 locked=d.locked,
                 dev=d.dev,
                 born=d.born,
+                ungranted=d.ungranted,
+                new_ungranted=d.new_ungranted,
             )
         for ino in reach:
             for _, child in tables[ino].values():
@@ -876,6 +903,7 @@ class MemFS:
                         locked=node.locked,
                         deny=set(node.deny),
                         acl=list(node.acl),
+                        ungranted=node.ungranted,
                     )
                 elif isinstance(node, _Link):
                     out.nodes[child] = _Link(target=node.target)
@@ -1041,7 +1069,18 @@ class MemDir:
                 raise PermissionError(errno.EACCES, "delete denied")
 
     def _may_delete(self, node: _Node) -> bool:
+        """The entry `node` of this folder may be removed or renamed away. POSIX mode: the folder allows removals
+        (`_may_remove`) and the entry's own deletion is not denied. Windows mode (S0151): Windows grants it when the
+        folder grants `FILE_DELETE_CHILD` **or** the entry grants `DELETE` (no deny of `delete` on it, a file's own
+        denied DELETE, or no allow that grants it: `ungranted`)."""
         own: set[Right] = node.deny if isinstance(node, _File | _Dir) else set()
+        if self._fs.windows:
+            by_entry = (
+                not (isinstance(node, _File | _Dir) and node.ungranted)
+                and not (isinstance(node, _File) and Right.DELETE in own)  # a folder's DELETE is its delete_child
+                and not _denies(node, "delete")
+            )
+            return by_entry or self._may_remove()
         return (
             self._may_remove()
             and Right.DELETE not in own
@@ -1059,6 +1098,24 @@ class MemDir:
             and not _denies(d, "search")  # probed on APFS: `_RMFILE_OK` answers no under `deny search`
             and not self._folder_locked()
         )
+
+    def _new_deletable(self) -> bool:
+        """Windows mode (S0151; the adapter's `_new_entries_deletable`): every file and folder made here, and in
+        folders made here down to depth 2, would grant us DELETE: no deny of `delete` it would inherit, and allow
+        entries that grant it (not `new_ungranted`). The folder must be searchable."""
+        d = self._d
+        if _denies(d, "search") or d.new_ungranted:
+            return False
+        level = d.acl
+        for depth in range(3):
+            if _acl_denies(_inherited(level, "file_inherit", windows=True), "delete"):
+                return False
+            if depth == 2:
+                break
+            level = _inherited(level, "directory_inherit", windows=True)
+            if _acl_denies(level, "delete"):
+                return False
+        return True
 
     def _folder_locked(self) -> bool:
         """`uchg` on this folder: no entry added, removed or renamed in it. Windows' read-only attribute on a folder
@@ -1090,7 +1147,7 @@ class MemDir:
         d = self._d
         if name == ".":
             if right is Right.REMOVE_ENTRIES:
-                return self._may_remove()
+                return self._may_remove() or (self._fs.windows and self._new_deletable())
             if right is Right.SEARCH:
                 return not _denies(d, "search")
             if right is Right.CHANGE_ENTRIES and (
@@ -1115,7 +1172,12 @@ class MemDir:
 
     def caps(self) -> Caps:
         d = self._d
-        return Caps(swap=not d.no_swap, excl=not d.no_excl or d.excl_unknown, links=not self._fs.windows)
+        return Caps(
+            swap=not d.no_swap,
+            excl=not d.no_excl or d.excl_unknown,
+            links=not self._fs.windows,
+            delete_by_entry=self._fs.windows,
+        )
 
     def acl(self) -> tuple[AclEntry, ...]:
         return tuple(a.entry for a in self._d.acl)
@@ -1148,7 +1210,8 @@ class MemDir:
         def link() -> None:
             if key in d.entries:
                 raise FileExistsError(errno.EEXIST, "exists")
-            f.acl = _inherited(d, "file_inherit")  # what the folder holds when the entry is made (S0061 r7)
+            f.acl = _inherited(d.acl, "file_inherit")  # what the folder holds when the entry is made (S0061 r7)
+            f.ungranted = self._fs.windows and d.new_ungranted
             ino = self._fs._new(f)
             made.append(ino)
             stored = self._fs.stored(name)
@@ -1328,7 +1391,9 @@ class MemDir:
                     no_swap=d.no_swap,
                     no_excl=d.no_excl,
                     excl_unknown=d.excl_unknown,
-                    acl=_inherited(d, "directory_inherit"),
+                    acl=_inherited(d.acl, "directory_inherit", windows=self._fs.windows),
+                    ungranted=self._fs.windows and d.new_ungranted,
+                    new_ungranted=d.new_ungranted,
                 )
             )
             stored = self._fs.stored(name)

@@ -64,7 +64,13 @@ class Right(StrEnum):
     """What the save needs to be allowed, as the system would decide it (permissions and ACLs, `access(2)`)."""
 
     CHANGE_ENTRIES = "change_entries"  # in a folder: add, rename and remove entries (write and search)
-    REMOVE_ENTRIES = "remove_entries"  # in a folder: remove and rename away entries (`delete_child`; `_RMFILE_OK`)
+    REMOVE_ENTRIES = "remove_entries"
+    """In a folder: the entries the save makes here may be removed and renamed away. macOS and Linux ask the folder
+    (`delete_child`, `_RMFILE_OK`; write and search). Windows decides a removal per entry (the folder's
+    `FILE_DELETE_CHILD`, or the entry's own `DELETE`), so it answers yes when the folder grants `FILE_DELETE_CHILD`,
+    or else when every file and folder made here, or in a folder made here, would grant us `DELETE` by the security
+    Windows gives a new entry there (S0151; owner, 2026-11-23: "1"). Every entry already there that the save removes
+    or renames away is asked `DELETE` on its own."""
     SEARCH = "search"  # in a folder: look names up in it (`X_OK`; only to name the folder when a lookup fails)
     DELETE = "delete"  # an entry may be renamed away or removed (its own ACL, or the folder's delete_child)
     READ_XATTRS = "read_xattrs"  # a file's extended attributes may be read (to copy them to the temp)
@@ -94,6 +100,12 @@ class Caps:
     swap: bool
     excl: bool
     links: bool = True
+    delete_by_entry: bool = False
+    """Windows (S0151; owner, 2026-11-23: "1"): an entry may be removed or renamed away when the folder grants
+    `FILE_DELETE_CHILD` **or** the entry itself grants `DELETE`, and the folder rule asks it that way
+    (`Right.REMOVE_ENTRIES`, `ledger.handles.blocking_entry`): a deny of `delete_child` alone then blocks no folder.
+    False on macOS and Linux, where the owner's rule of 2026-10-30 asks the folder (macOS's kernel also grants a
+    removal by the entry's own `delete` ACL entry, but its rule stays as it is)."""
 
 
 @dataclass(frozen=True, slots=True)

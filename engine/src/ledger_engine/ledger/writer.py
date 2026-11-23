@@ -541,7 +541,8 @@ def _check_folder(h: DirHandle, canonical: str, folder: str) -> Mode:
     and remove them (`deny delete_child` answers yes to write and search: S0061
     red team r6 F1, probed); and no ACL deny entry, whoever it names, blocks it (`handles.acl_denial`: owner,
     2026-10-30, "Allowlist (Recommended)", "Any subject (Recommended)"; what new entries inherit, a folder the save
-    makes included, is then never a deny: red team r5 F2, r6 F1-F3, r7 F1)."""
+    makes included, is then never a deny: red team r5 F2, r6 F1-F3, r7 F1). On Windows its per-entry form (S0151:
+    OneDrive's deny of `delete_child`; the file it replaces is asked `DELETE` in `_check_target`)."""
     blocked = folder_blocked(h)  # a mode, a lock flag (probed: `uchg`), an ACL entry
     if blocked is not None:
         raise _Stop(Reason.PERMISSION, canonical, folder, blocked.detail)

@@ -317,10 +317,18 @@ NOT_INHERITED: Final = frozenset({"inherited", "limit_inherit"})
 `directory_inherit`, `only_inherit`, or a flag the adapter cannot name)."""
 
 
+DECIDED_BY_ENTRY: Final = frozenset({"delete_child"})
+"""What a deny entry may deny anywhere, inherited or not, where removals are decided per entry (`Caps.delete_by_entry`:
+Windows, S0151): a removal or rename away is then granted by the entry's own `DELETE` as well, which the save asks of
+every entry it removes or renames away, and `Right.REMOVE_ENTRIES` of every entry it makes."""
+KNOWN_FLAGS: Final = frozenset({"file_inherit", "directory_inherit", "only_inherit", "limit_inherit", "inherited"})
+"""The inheritance flags an adapter names; any other (`unknown`) fails closed."""
+
+
 UNREADABLE_ACL: Final = "an ACL we may not read"
 
 
-def blocking_entry(entries: tuple[AclEntry, ...]) -> AclEntry | None:
+def blocking_entry(entries: tuple[AclEntry, ...], *, by_entry: bool = False) -> AclEntry | None:
     """The first ACL entry that refuses a folder the save or the undo writes in, or makes or removes a folder in
     (owner, 2026-10-30: "Allowlist (Recommended)", then "Any subject (Recommended)"; ADR-0013 amendments of that
     date): **any deny entry, whoever it names** (a user, a group, everyone, macOS's `owner` and `group` subjects,
@@ -329,9 +337,21 @@ def blocking_entry(entries: tuple[AclEntry, ...]) -> AclEntry | None:
     home folder, Desktop, Documents and Downloads). An inheritable one of any bit and an unknown bit or flag included;
     allow entries are not weighed (an allow before a deny still refuses: fails closed). Whom an entry names is never
     asked: S0061 r7 found the membership lookup answering "not a member" for subjects the kernel applies to us. The
-    one place this rule lives."""
+    one place this rule lives.
+
+    `by_entry` (`Caps.delete_by_entry`: Windows; S0151, owner, 2026-11-23: "1"): a denied `delete_child` counts for
+    nothing, wherever the entry reaches (`DECIDED_BY_ENTRY`), and the entry's other bits are judged as above: an entry
+    that denies only `delete_child`, with flags an adapter names, passes (OneDrive's `(D;CI;DT;;;WD)` on its root,
+    inherited by every folder in it, probed on the owner's PC, 2026-11-23). An entry that reaches files
+    (`file_inherit`) or new folders (`directory_inherit`) with any other bit still blocks, and so does a direct deny of
+    adding entries."""
     for e in entries:
-        if e.deny and (not e.flags <= NOT_INHERITED or not e.perms <= FOLDER_SELF):
+        if not e.deny:
+            continue
+        perms = e.perms - DECIDED_BY_ENTRY if by_entry else e.perms
+        if by_entry and e.perms and not perms and e.flags <= KNOWN_FLAGS:
+            continue  # a deny of `delete_child` alone
+        if not e.flags <= NOT_INHERITED or not perms <= FOLDER_SELF:
             return e
     return None
 
@@ -345,7 +365,7 @@ def acl_denial(h: DirHandle) -> str | None:
         entries = h.acl()
     except PermissionError:
         return UNREADABLE_ACL
-    e = blocking_entry(entries)
+    e = blocking_entry(entries, by_entry=h.caps().delete_by_entry)
     if e is None:
         return None
     return "deny " + ",".join([*sorted(e.perms), *sorted(e.flags - {"inherited"})])
@@ -362,8 +382,10 @@ class Blocked:
 
 def folder_blocked(h: DirHandle) -> Blocked | None:
     """The folder rule for a folder the save writes in or makes a folder in, and for the journal and backups folders
-    (S0061 r6, r7): entries may be added and removed there (`access(2)`: write and search, `_RMFILE_OK`), and no ACL
-    entry blocks it (`acl_denial`, whoever it names). None when it may be written. The one place this rule lives."""
+    (S0061 r6, r7): entries may be added there and the entries the save makes may be removed (`access(2)`: write and
+    search, `_RMFILE_OK`; on Windows, where a removal is decided per entry, the folder's `FILE_DELETE_CHILD` or the
+    `DELETE` its new entries would get: `Right.REMOVE_ENTRIES`, S0151), and no ACL entry blocks it (`acl_denial`,
+    whoever it names). None when it may be written. The one place this rule lives."""
     if not h.allowed(".", Right.CHANGE_ENTRIES) or not h.allowed(".", Right.REMOVE_ENTRIES):
         return Blocked(None)
     detail = acl_denial(h)

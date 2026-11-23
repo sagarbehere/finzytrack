@@ -220,6 +220,25 @@ def test_a_save_lands_after_its_gate_with_no_load_and_its_record_carries_no_pred
     assert "adopted_digest" not in raw
 
 
+def test_on_windows_a_save_job_in_a_folder_with_onedrives_acl_lands(led: Ledger) -> None:
+    """The runner's real folder with OneDrive's DACL (`tests/fs/onedrive_acl.py`; S0151, BL-0283; owner, 2026-11-23:
+    "1"): the save job as the engine runs it (the gate, the writer, the history trim) lands there. Fails on the base:
+    `permission` (the owner's hand check, 2026-11-23)."""
+    if sys.platform != "win32":
+        pytest.skip("the Windows runner's own: Windows' OneDrive DACL (tests/fs/onedrive_acl.py)")
+    from tests.fs import onedrive_acl
+
+    onedrive_acl.onedrive_folder(led.root)
+    try:
+        publish_disk(led)
+        out = sv.run(plan_for(led), ports_for(led), FakeJob())
+        assert isinstance(out, sv.Saved), out
+        assert led.main.read_bytes() == MAIN + TXN
+        assert not [n for n in os.listdir(led.root) if ".ft-" in n]
+    finally:
+        onedrive_acl.reset(led.root)
+
+
 def test_a_save_takes_no_lock_of_its_own(led: Ledger) -> None:
     """ADR-0068 D3, D4: no per-file lock file is made (the engine lock is the guard) and the plan names no legacy
     lock to try (only Copy tries one, INV-26)."""

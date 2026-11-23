@@ -972,3 +972,105 @@ def test_a_replayed_rename_moves_only_the_object_it_moved() -> None:
         d.rename("s", "t")
     seen = {s.file("/m/t") for s in fs.power_loss_states()}
     assert seen == {b"target\n", b"new\n"}, seen
+
+
+def test_in_windows_mode_a_removal_is_granted_by_the_folders_delete_child_or_the_entrys_own_delete() -> None:
+    """S0151 (Windows, probed on the owner's PC, 2026-11-23: a OneDrive folder denies `delete_child`, its files grant
+    `DELETE`, and the save's renames and removals land there): either side grants it; neither refuses it. POSIX mode
+    keeps both sides needed."""
+    for windows in (True, False):
+        fs = MemFS(windows=windows)
+        fs.outside_mkdirs("/d")
+        fs.outside_write("/d/f", b"x")
+        fs.outside_write("/d/g", b"y")
+        fs.outside_acl("/d", _deny("delete_child", "directory_inherit"))
+        with fs.open_dir("/d") as d:
+            assert d.allowed("f", Right.DELETE) is windows
+            assert d.allowed(".", Right.REMOVE_ENTRIES) is windows, "what is made here would grant DELETE"
+            assert d.caps().delete_by_entry is windows
+        fs.outside_deny("/d/g", Right.DELETE)
+        with fs.open_dir("/d") as d:
+            assert not d.allowed("g", Right.DELETE), "neither side grants it"
+            with pytest.raises(PermissionError):
+                d.remove("g")
+            if windows:
+                d.remove("f")
+                d.create("new", b"z", 0o644)
+                d.rename("new", "renamed")
+                d.remove("renamed")
+    fs = MemFS(windows=True)
+    fs.outside_mkdirs("/d")
+    fs.outside_write("/d/g", b"y")
+    fs.outside_deny("/d/g", Right.DELETE)
+    with fs.open_dir("/d") as d:
+        assert d.allowed("g", Right.DELETE), "the folder's delete_child grants it"
+        d.remove("g")
+
+
+def test_in_windows_mode_new_entries_without_a_delete_grant_make_removals_refused_where_delete_child_is_denied() -> (
+    None
+):
+    """`outside_grant_no_delete` (S0151): the folder's allow entries give what is made in it no `DELETE`, and the
+    folders made in it pass that on; no deny entry shows it. `REMOVE_ENTRIES` then answers no where `delete_child` is
+    denied, yes where it is granted."""
+    fs = MemFS(windows=True)
+    fs.outside_mkdirs("/d")
+    fs.outside_grant_no_delete("/d")
+    with fs.open_dir("/d") as d:
+        assert d.allowed(".", Right.REMOVE_ENTRIES), "the folder's delete_child still grants it"
+        d.create("f", b"x", 0o644)
+        d.mkdir("sub")
+    fs.outside_acl("/d", _deny("delete_child", "directory_inherit"))
+    with fs.open_dir("/d") as d:
+        assert not d.allowed(".", Right.REMOVE_ENTRIES)
+        assert not d.allowed("f", Right.DELETE)
+        assert not d.allowed("sub", Right.DELETE)
+    fs.outside_acl("/d/sub", _deny("delete_child"))
+    with fs.open_dir("/d/sub") as sub:
+        assert not sub.allowed(".", Right.REMOVE_ENTRIES), "passed on to the folders made in it"
+
+
+@pytest.mark.parametrize(
+    ("entry", "removable"),
+    [
+        (_deny("delete", "file_inherit"), False),  # a new file inherits it
+        (_deny("delete", "directory_inherit"), False),  # a new folder inherits it
+        (_deny("delete", "file_inherit,only_inherit"), False),
+        (_deny("delete", "directory_inherit,only_inherit"), False),
+        (_deny("delete", "file_inherit,directory_inherit,limit_inherit"), False),
+        (_deny("delete"), True),  # the folder's own deletion only
+        (_deny("delete_child", "directory_inherit"), True),  # OneDrive's
+        (_deny("search"), False),  # the folder cannot be searched
+    ],
+)
+def test_in_windows_mode_remove_entries_asks_what_a_new_entry_would_inherit(entry: AclEntry, removable: bool) -> None:
+    fs = MemFS(windows=True)
+    fs.outside_mkdirs("/d")
+    fs.outside_acl("/d", _deny("delete_child"))
+    fs.outside_acl("/d", entry)
+    with fs.open_dir("/d") as d:
+        assert d.allowed(".", Right.REMOVE_ENTRIES) is removable
+
+
+def test_in_windows_mode_a_new_folder_passes_a_file_only_entry_on_to_its_files_as_windows_does() -> None:
+    """Windows gives a new folder each `file_inherit` entry without `directory_inherit` as an `only_inherit` one (it
+    acts on the files made in it, not on the folder); `limit_inherit` stops after one level. APFS (POSIX mode) does
+    not pass a `file_inherit`-only entry to a subfolder."""
+    for windows in (True, False):
+        fs = MemFS(windows=windows)
+        fs.outside_mkdirs("/d")
+        fs.outside_acl("/d", _deny("delete", "file_inherit"))
+        fs.outside_acl("/d", _deny("readattr", "file_inherit,directory_inherit,limit_inherit"))
+        with fs.open_dir("/d") as d:
+            d.mkdir("sub")
+        with fs.open_dir("/d/sub") as sub:
+            want = [AclEntry(True, frozenset({"delete"}), frozenset({"file_inherit", "only_inherit", "inherited"}))]
+            want = want if windows else []
+            stopped = AclEntry(True, frozenset({"readattr"}), frozenset({"inherited"}))
+            kept = frozenset({"file_inherit", "directory_inherit", "limit_inherit", "inherited"})
+            assert list(sub.acl()) == [*want, stopped if windows else AclEntry(True, frozenset({"readattr"}), kept)]
+            sub.create("f", b"x", 0o644)
+        if windows:  # the file made in it inherits the deny: with `delete_child` denied there, it cannot be removed
+            fs.outside_acl("/d/sub", _deny("delete_child"))
+            with fs.open_dir("/d/sub") as sub:
+                assert not sub.allowed("f", Right.DELETE)

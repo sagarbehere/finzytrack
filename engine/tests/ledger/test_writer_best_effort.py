@@ -47,7 +47,7 @@ from tests.ledger.worlds import (
 
 pytestmark = [pytest.mark.inv("INV-01"), pytest.mark.inv("INV-22")]
 
-BEST_EFFORT = ("no_swap", "plain")
+BEST_EFFORT = ("no_swap", "plain", "onedrive")
 FOREIGN = b"; saved by an editor\n"
 MAIN = "/w/L/main.bean"
 
@@ -76,7 +76,7 @@ def _hook(fs: MemFS, label: str | tuple[str, ...], act: Callable[[], None]) -> N
 def _put(volume: str, folder: str, base: str, *, created: bool = False) -> str:
     """The effect that puts a file's new bytes at its name: a plain rename of its staging name (`move`); for a
     created file `RENAME_EXCL` where the volume has it (`rename`)."""
-    verb = "rename" if created and volume == "no_swap" else "move"
+    verb = "rename" if created and volume in ("no_swap", "onedrive") else "move"
     return f"{verb} {folder}:.{base}.ft-s1-j7.new,{base}"
 
 

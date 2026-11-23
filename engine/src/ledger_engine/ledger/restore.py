@@ -330,7 +330,9 @@ def _writable(handles: Handles, h: DirHandle, folder: str, path: str) -> None:
     blocks it (`handles.acl_denial`; owner, 2026-10-30: "Allowlist (Recommended)", then "Any subject (Recommended)",
     S0061 r7; one may have appeared since the
     save, verifier r6 F2: what the restore makes there would inherit it, and every later try would stop on our own
-    leftover even after the entry is gone). Else `permission`, nothing written."""
+    leftover even after the entry is gone). On Windows, where a removal is decided per entry, `REMOVE_ENTRIES` and the
+    ACL rule take its form (`Right.REMOVE_ENTRIES`, `handles.blocking_entry`; S0151), and every name it removes is
+    asked `DELETE` below. Else `permission`, nothing written."""
     handles.entry = folder
     if not h.allowed(".", Right.REMOVE_ENTRIES):
         raise _Halt(Cause.PERMISSION, path, folder)

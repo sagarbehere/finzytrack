@@ -34,12 +34,21 @@ world's share is kept on NTFS by its server, whose replace is one entry operatio
 leave a file missing after a power loss, the stated limit `test_share_saves.py`'s RT1 tests pin), nothing outside our
 names is changed or removed, and the journal and backups, on the machine's own disk, keep every rule. `check_recovered`
 still requires recovery to resolve, and the disk as recovery left it (before any further power loss) at pre.
+
+**In a OneDrive folder** (`volume="onedrive"`; S0151, BL-0283; owner, 2026-11-23: "1"): the fake in Windows mode
+(`MemFS(windows=True)`: a removal granted by the folder's `delete_child` or the entry's own `DELETE`), `/w/L` and every
+folder in it on local NTFS (no swap, the exclusive rename: ADR-0069) with OneDrive's ACL as probed on the owner's PC,
+2026-11-23 (`in_onedrive`): `/w/L` is the OneDrive root, `(D;CI;DT;;;WD)`, every folder in it inherits
+`(D;CIID;DT;;;WD)` (deny everyone `delete_child`, to folders only), the files carry no deny, and the folders have
+Windows' read-only attribute (which marks a customized folder and stops only the folder's own removal). The oracle above
+holds as it is.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 
+from ledger_engine.fs.port import AclEntry
 from ledger_engine.ledger.core import journal
 from ledger_engine.ledger.core.journal import DirEntry, FileEntry, FolderEntry, Record, State, needed_folders
 from ledger_engine.ledger.core.recovery import Cause
@@ -134,7 +143,7 @@ class World:
         return self.volume == "share"
 
 
-VOLUMES = ("swap", "no_swap", "plain", "share")
+VOLUMES = ("swap", "no_swap", "plain", "share", "onedrive")
 SHARE_DEV = 7  # the share's drive in the fake; the journal and backups stay on the default one
 
 
@@ -151,12 +160,33 @@ def on_a_share(fs: MemFS, path: str) -> None:
     fs.outside_fs_type(SHARE_DEV, "ntfs")
 
 
+ONEDRIVE_ROOT_DENY = AclEntry(deny=True, perms=frozenset({"delete_child"}), flags=frozenset({"directory_inherit"}))
+"""OneDrive's own entry on its root, `(D;CI;DT;;;WD)` (probed on the owner's PC, 2026-11-23), as the adapter reads
+it."""
+ONEDRIVE_DENY = AclEntry(
+    deny=True, perms=frozenset({"delete_child"}), flags=frozenset({"directory_inherit", "inherited"})
+)
+"""What every folder in OneDrive carries from it: `(D;CIID;DT;;;WD)`."""
+
+
+def in_onedrive(fs: MemFS, path: str) -> None:
+    """The folder `path` (made already) as the OneDrive root, and every folder in it, with OneDrive's ACL and read-only
+    attribute, on local NTFS (the module's docstring). `fs` is in Windows mode."""
+    assert fs.windows
+    for folder, entry in fs.snapshot().items():
+        if entry == ("dir",) and (folder == path or folder.startswith(path + "/")):
+            fs.outside_no_swap(folder, excl=True)  # a folder the code makes there inherits it
+            fs.outside_acl(folder, ONEDRIVE_ROOT_DENY if folder == path else ONEDRIVE_DENY)
+            fs.outside_lock(folder)  # Windows' read-only attribute on a customized folder
+    fs.outside_fs_type(1, "ntfs")
+
+
 def world(*, new_dir: bool = False, mode: int = 0o644, stores_nfd: bool = False, volume: str = "swap") -> World:
     """A ledger set in `/w/L`: `inc/a.bean` (a child, replaced), `prices.bean` (created; with `new_dir`, in a new
     folder `y2026/`), `main.bean` (the root, replaced last) and `other.bean` (in the set, not written). `volume`: the
     drive `/w/L` is on (S0065); the journal and backups stay on the Mac's own disk (INV-27, INV-30)."""
     assert volume in VOLUMES, volume
-    fs = MemFS(stores_nfd=stores_nfd, windows=volume == "share")
+    fs = MemFS(stores_nfd=stores_nfd, windows=volume in ("share", "onedrive"))
     for d in (JD, BD):
         fs.outside_mkdirs(d)
     if volume == "swap":
@@ -164,6 +194,9 @@ def world(*, new_dir: bool = False, mode: int = 0o644, stores_nfd: bool = False,
     elif volume == "share":
         fs.outside_mkdirs("/w/L/inc")
         on_a_share(fs, "/w/L")
+    elif volume == "onedrive":
+        fs.outside_mkdirs("/w/L/inc")
+        in_onedrive(fs, "/w/L")
     else:
         fs.outside_mkdirs("/w/L", no_swap=True, no_excl=volume == "plain")
         fs.outside_mkdirs("/w/L/inc")
