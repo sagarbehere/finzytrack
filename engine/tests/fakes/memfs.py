@@ -1110,9 +1110,10 @@ class MemDir:
     def _new_deletable(self) -> bool:
         """Windows mode (S0151; the adapter's `_new_entries_deletable`): every file and folder made here, and in
         folders made here down to depth 2, may be removed: at each level by the folder it is made in (this folder's
-        `_may_remove`; below, what a made folder inherits: no deny of `delete_child` or `search`) **or** by its own
-        DELETE (no deny of `delete` it would inherit, and not `new_ungranted`; S0151 round 1, red team RT-1). The
-        folder must be searchable."""
+        `_may_remove`; below, what a made folder inherits: no deny of `delete_child`, as the adapter asks only
+        `FILE_DELETE_CHILD` there; a made folder that denies `search` refuses the save's writes in it, so nothing
+        is made there to remove; S0151 round 2, V2-1) **or** by its own DELETE (no deny of `delete` it would
+        inherit, and not `new_ungranted`; S0151 round 1, red team RT-1). The folder must be searchable."""
         d = self._d
         if _denies(d, "search"):
             return False
@@ -1123,7 +1124,7 @@ class MemDir:
             for new in (_inherited(level, "file_inherit", windows=True), made):
                 if not holder and (d.new_ungranted or _acl_denies(new, "delete")):
                     return False
-            holder = not _acl_denies(made, "delete_child") and not _acl_denies(made, "search")
+            holder = not _acl_denies(made, "delete_child")
             level = made
         return True
 

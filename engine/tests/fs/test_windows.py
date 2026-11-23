@@ -717,9 +717,46 @@ def test_must_not_pass_a_onedrive_folder_reached_through_a_network_share_is_judg
 def test_a_plain_local_folder_still_answers_remove_entries_from_its_delete_child(
     fs: FileSystem, tmp_path: Path
 ) -> None:
-    """@regression-guard (it holds on the base): a folder that grants `FILE_DELETE_CHILD` asks nothing more."""
+    """@regression-guard (it holds on the base): the runner's scratch folder grants `FILE_DELETE_CHILD`, and what is
+    made in it inherits the same grants, so every level of the chain passes: `REMOVE_ENTRIES` yes."""
     with fs.open_dir(str(tmp_path)) as d:
         assert d.allowed(".", Right.REMOVE_ENTRIES)
+
+
+DEFAULT_DACLS = {
+    # a folder on a freshly formatted NTFS drive, without its SYSTEM and Administrators entries: Users read and
+    # execute, add files (DC) and folders (LC); Authenticated Users Modify (no FILE_DELETE_CHILD) and, on what is
+    # made, DELETE (SD); CREATOR OWNER full access on what is made
+    "second_drive": "D:PAI(A;OICIIO;GA;;;CO)(A;OICI;0x1200a9;;;BU)(A;CI;LC;;;BU)(A;CI;DC;;;BU)(A;;0x1301bf;;;AU)"
+    "(A;OICIIO;SDGXGWGR;;;AU)",
+    # a folder in the user's profile: the user's full access, passed on to everything made
+    "profile": "D:PAI(A;OICI;FA;;;{sid})",
+    # a folder another account made: only Authenticated Users' Modify on it, and the usual grants on what is made
+    "made_by_other": "D:PAI(A;;0x1301bf;;;AU)(A;OICIIO;SDGXGWGR;;;AU)(A;OICIIO;GA;;;CO)",
+}
+"""Windows' common default DACLs, without the runner's own Administrators full access, which would answer yes alone."""
+
+
+@pytest.mark.parametrize("name", sorted(DEFAULT_DACLS))
+def test_must_not_refuse_windows_default_dacls_answer_remove_entries_yes(
+    fs: FileSystem, tmp_path: Path, name: str
+) -> None:
+    """S0151 round 2 (verifier V2-2): on local NTFS every folder now runs the per-level chain, so a common default
+    must still answer yes. `profile`: the folder's own `FILE_DELETE_CHILD`, and each made folder's (FA inherited).
+    `second_drive` and `made_by_other`: the folder grants no `FILE_DELETE_CHILD` (Modify is 0x1301bf), but each new
+    file and folder gets `DELETE` (AU's `SD`, and CREATOR OWNER's GA resolved to this process's owner), and each
+    made folder grants `FILE_DELETE_CHILD` through that GA, so levels 1 and 2 pass too."""
+    from tests.fs import onedrive_acl
+
+    led = tmp_path / "Ledger"
+    led.mkdir()
+    onedrive_acl.set_dacl(led, DEFAULT_DACLS[name].format(sid=onedrive_acl.user_sid()))
+    try:
+        with fs.open_dir(str(led)) as d:
+            assert d.allowed(".", Right.CHANGE_ENTRIES)
+            assert d.allowed(".", Right.REMOVE_ENTRIES)
+    finally:
+        onedrive_acl.reset(led)
 
 
 GENERIC_READ_ = 0x80000000

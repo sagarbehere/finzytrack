@@ -1102,6 +1102,25 @@ def test_in_windows_mode_each_level_is_removed_by_its_own_folder_or_its_own_dele
             sub.remove("g")  # level 1: neither its folder nor itself grants it
 
 
+def test_in_windows_mode_a_made_folder_that_denies_search_still_holds_as_the_adapter_answers() -> None:
+    """S0151 round 2 (verifier V2-1): the adapter asks a made folder for `FILE_DELETE_CHILD` alone, so the fake's
+    holder weighs only a deny of `delete_child`. A made folder that inherits a deny of `search` strands nothing: the
+    save's first write in it is refused, and the folder itself is removed by this one. Kills a holder that also
+    weighs `search` (the fake diverged from the adapter there, 44532ec9)."""
+    fs = _ntfs()
+    fs.outside_mkdirs("/d")
+    fs.outside_acl("/d", _deny("search", "directory_inherit,only_inherit"))
+    fs.outside_grant_no_delete("/d")
+    with fs.open_dir("/d") as d:
+        assert d.allowed(".", Right.REMOVE_ENTRIES)
+        d.mkdir("sub")
+    with fs.open_dir("/d/sub") as sub, pytest.raises(PermissionError):
+        sub.create("g", b"y", 0o644)  # nothing is made in it
+    with fs.open_dir("/d") as d:
+        d.rmdir("sub")  # the made folder itself: this folder's own delete_child
+    assert fs.names_in("/d") == []
+
+
 @pytest.mark.parametrize(("fs_type", "remote"), [("ntfs", True), ("refs", False), ("exfat", False), ("apfs", False)])
 def test_in_windows_mode_off_local_ntfs_remove_entries_is_the_folders_own_side(fs_type: str, remote: bool) -> None:
     """S0151 round 1 (red team Q1; fails closed): on a share and on a drive other than NTFS, removals are not judged
