@@ -26,7 +26,7 @@ import json
 from collections.abc import Callable, Iterator
 from functools import cache
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, cast, override
 
 import pytest
 
@@ -235,6 +235,20 @@ def test_a_generation_whose_own_set_cannot_be_downloaded_is_mirror_stale(
     assert led.tree() == before
 
 
+def test_a_cloud_only_file_beside_another_change_stays_ledger_changed(
+    led: Ledger, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Any other difference beside it (an outside edit of `inc.bean`) is the ledger changing: `ledger_changed`
+    (restored in round 3, V3-3: round 2 removed it with the early checks, though it tests the gate on the plan's own
+    files)."""
+    plan = plan_for(led)
+    led.inc.write_bytes(led.inc.read_bytes() + b"; edited outside\n")
+    offline(monkeypatch, str(led.main))
+    out = sv.run(plan, ports_for(led), FakeJob())
+    assert isinstance(out, sv.Refused), out
+    assert out.reason == "ledger_changed"
+
+
 @pytest.mark.parametrize("kind", sorted(PLAIN_ERRORS))
 def test_must_not_pass_a_plain_read_error_at_the_gate_is_never_cloud_unavailable(
     led: Ledger, monkeypatch: pytest.MonkeyPatch, kind: str
@@ -310,12 +324,46 @@ def fingerprint_text(plan: sv.SavePlan) -> str:
     return encode(plan.fingerprint).decode("ascii")
 
 
-def test_the_rebuild_of_a_cloud_only_file_is_refused_cloud_unavailable_named(
-    led: Ledger, monkeypatch: pytest.MonkeyPatch
+def _offline_in_beancounts_parser(monkeypatch: pytest.MonkeyPatch, path: str, *, at: str) -> None:
+    """What the cloud filter does offline to Beancount's own read (S0144 Fact 6; round 3's R9 model): `at="read"`, its
+    parser's `open()` of `path` succeeds and the first read raises a bare `EINVAL` (Beancount's C parser then raises
+    its own `SystemError`); `at="open"`, the `open()` itself raises the bare `EINVAL`."""
+    import builtins
+    import io
+
+    real_open: Callable[..., Any] = builtins.open
+
+    class Offline(io.RawIOBase):
+        @override
+        def readable(self) -> bool:
+            return True
+
+        @override
+        def readinto(self, buffer: Any) -> int:
+            raise OSError(errno.EINVAL, "Invalid argument")
+
+    def fake_open(file: object, *args: object, **kwargs: object) -> object:
+        if str(file) == path:
+            if at == "open":
+                raise OSError(errno.EINVAL, "Invalid argument")
+            return io.BufferedReader(Offline())
+        return real_open(file, *args, **kwargs)
+
+    # Beancount's `parse_file` opens the file by the builtin name `open` in its parser module
+    monkeypatch.setattr("beancount.parser.parser.open", fake_open, raising=False)
+
+
+@pytest.mark.parametrize("at", ["read", "open"])
+def test_offline_beancounts_own_failed_read_of_a_file_it_opened_is_cloud_unavailable_named(
+    led: Ledger, monkeypatch: pytest.MonkeyPatch, at: str
 ) -> None:
-    """The rebuild's first observation finds it (Beancount's own `open` would give a bare error)."""
+    """Round 3 (V3-1, R9; owner, 2026-11-23: "Option 2."): offline, Beancount's own load of a cloud-only ledger file
+    fails at its read (its C parser's `SystemError`, which `load_failure` calls Beancount's own failure) or at its
+    open (an `OSError`): the rebuild asks the files this load opened and refuses `cloud_unavailable` naming that one,
+    never `beancount_failed` (a false cause) nor the engine's failure."""
     led.main.write_bytes(led.main.read_bytes() + b"; changed\n")  # not fresh: the rebuild loads
     offline(monkeypatch, str(led.main))
+    _offline_in_beancounts_parser(monkeypatch, str(led.main), at=at)
     reply = _rebuild(led)
     assert reply["ok"], reply
     r = reply["result"]
@@ -326,38 +374,67 @@ def test_the_rebuild_of_a_cloud_only_file_is_refused_cloud_unavailable_named(
 def test_must_not_pass_a_plain_read_error_at_the_rebuild_is_never_cloud_unavailable(
     led: Ledger, monkeypatch: pytest.MonkeyPatch, kind: str
 ) -> None:
-    """`EINVAL` is refused before the load as a special file (`_refuse_special`), `EIO` reaches the load: neither is
-    `cloud_unavailable`."""
+    """A file that fails Beancount's read for another cause (its own look also gives a plain error) is never
+    `cloud_unavailable`: `EINVAL` is refused before the load as a special file (`_refuse_special`), `EIO` reaches the
+    load and Beancount's read of it fails as Beancount's own failure."""
     led.main.write_bytes(led.main.read_bytes() + b"; changed\n")
     offline(monkeypatch, str(led.main), PLAIN_ERRORS[kind])
+    _offline_in_beancounts_parser(monkeypatch, str(led.main), at="read")
     reply = _rebuild(led)
     assert not (reply["ok"] and reply["result"]["refusal"] == "cloud_unavailable"), reply
 
 
-@pytest.mark.parametrize("dehydrated", [True, False])
-def test_beancounts_own_read_failing_is_cloud_unavailable_only_when_the_file_is_not_downloadable(
-    led: Ledger, monkeypatch: pytest.MonkeyPatch, dehydrated: bool
+def test_the_file_whose_read_failed_is_named_the_last_one_the_load_opened(
+    led: Ledger, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The file made cloud-only after the rebuild's first look and Beancount's own `open` failing on it with a bare
-    `OSError` (the C runtime keeps no code): the rebuild looks again and refuses `cloud_unavailable` naming it. Must
-    not pass: the same failure on a file that reads (a plain I/O error) stays the engine's failure, never this text."""
-    from ledger_engine.ledger import beancount_port
-
+    """Round 3 (option 2's rule): when several files this load opened are cloud-only at the look (main.bean read and
+    then freed again by the sync app, inc.bean's read failing), the one named is the last one opened, whose read is
+    the one that failed (Beancount reads each file it opens before it opens the next)."""
     led.main.write_bytes(led.main.read_bytes() + b"; changed\n")
+    hint = plan_for(led)
+    real = fingerprint.chunks
 
-    def failing(root: str, parsed: list[str]) -> Any:
-        if dehydrated:
-            offline(monkeypatch, str(led.main))
-        raise OSError(errno.EINVAL, "Invalid argument")
+    def both(p: str, size: int = 1 << 20) -> Iterator[bytes]:
+        if p in (str(led.main), str(led.inc)):
+            raise CloudUnavailable(p, "ReadFile")
+        return real(p, size)
 
-    monkeypatch.setattr(beancount_port, "real_load", failing)
-    reply = _rebuild(led)
-    if dehydrated:
-        r = reply["result"]
-        assert (r["outcome"], r["refusal"], r["refused"]) == ("refused", "cloud_unavailable", str(led.main)), reply
-    else:
-        assert not reply["ok"], reply
-        assert reply["error"]["key"] == "engine.internal"
+    monkeypatch.setattr(fingerprint, "chunks", both)
+    _offline_in_beancounts_parser(monkeypatch, str(led.inc), at="read")
+    r = _rebuild(led, hint)["result"]
+    assert (r["outcome"], r["refusal"], r["refused"]) == ("refused", "cloud_unavailable", str(led.inc)), r
+
+
+def test_R7_must_not_pass_a_plain_oserror_never_names_a_dropped_cloud_only_file(
+    led: Ledger, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Round 3 (V3-2, R7): the hint names inc.bean, which the ledger no longer includes and which is cloud-only
+    offline; the load fails on a folder named as an include (a plain `OSError`). inc.bean is never named: only the
+    files this load opened are asked."""
+    hint = plan_for(led)
+    (led.root / "new.bean").mkdir()
+    led.main.write_bytes(led.main.read_bytes().replace(b'include "inc.bean"\n', b'include "new.bean"\n'))
+    offline(monkeypatch, str(led.inc))
+    reply = _rebuild(led, hint)
+    r: dict[str, Any] = reply.get("result") or {}
+    assert not (r.get("refusal") == "cloud_unavailable" and r.get("refused") == str(led.inc)), reply
+
+
+def test_R8_a_new_include_that_cannot_be_read_is_named_never_a_dropped_one(
+    led: Ledger, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Round 3 (V3-2, R8): offline both the dropped inc.bean and the newly included new.bean are cloud-only, and
+    Beancount's read of new.bean fails: the refusal names new.bean (the file this load could not read), never
+    inc.bean."""
+    hint = plan_for(led)
+    new = led.root / "new.bean"
+    new.write_bytes(b"2020-01-01 open Assets:New\n")
+    led.main.write_bytes(led.main.read_bytes().replace(b'include "inc.bean"\n', b'include "new.bean"\n'))
+    offline(monkeypatch, str(led.inc))
+    offline(monkeypatch, str(new))
+    _offline_in_beancounts_parser(monkeypatch, str(new), at="read")
+    r = _rebuild(led, hint)["result"]
+    assert (r["outcome"], r["refusal"], r["refused"]) == ("refused", "cloud_unavailable", str(new)), r
 
 
 def test_the_rebuild_tells_a_cloud_only_file_at_its_warnings_read(led: Ledger, monkeypatch: pytest.MonkeyPatch) -> None:

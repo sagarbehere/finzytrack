@@ -203,6 +203,20 @@ def _refuse_special(seen: Fingerprint) -> None:
             raise OSError(errno.EINVAL, "not a regular file", p)
 
 
+def _opened_not_downloaded(ports: Ports, root: str, parsed: Sequence[str]) -> str | None:
+    """After Beancount's own load failed (an `OSError`, or its own failure: offline its C parser turns the cloud
+    filter's refused read into a `SystemError`; S0149 round 3, V3-1): the file this load opened last that is now only
+    in the cloud and not downloadable, or None. Only the files this load opened are asked (`parsed`: each is recorded
+    before Beancount reads it, so the one whose read failed is among them, the last one opened): never the hint's set,
+    which may name a file the ledger no longer includes (round 3, V3-2; owner, 2026-11-23: "Option 2."). The last one
+    opened is named, since Beancount reads each file it opens before it opens the next."""
+    if not parsed:
+        return None
+    seen = ports.observe(LedgerSet(root, tuple(dict.fromkeys(parsed)), (), (), (), ()))
+    states = dict(seen.files)
+    return next((p for p in reversed(parsed) if states.get(p) == _fingerprint.CLOUD_UNAVAILABLE), None)
+
+
 def _named(e: CloudUnavailable, root: str) -> str:
     return e.filename if isinstance(e.filename, str) else root
 
@@ -236,8 +250,7 @@ def run(ports: Ports, hint: Fingerprint, job: Job, target: Target) -> Answer:
             with imports.recording(modules):  # what its imports read (S0099, BL-0124)
                 result = ports.load(ledger_set.root, parsed)  # step 2: Beancount's own loader (user code)
         except OSError:
-            # S0149: Beancount's own `open` keeps no Win32 code, so the set is looked at again
-            cloud = _fingerprint.not_downloaded(ports.observe(ledger_set))
+            cloud = _opened_not_downloaded(ports, ledger_set.root, parsed)
             if cloud is None:
                 raise
             return Answer("refused", hint, cleaned=cleaned, refusal="cloud-unavailable", refused=cloud)
@@ -246,6 +259,9 @@ def run(ports: Ports, hint: Fingerprint, job: Job, target: Target) -> Answer:
         except Exception as e:  # Beancount's own load raised on the ledger: refused, never raised
             if not load_failure.beancounts(e):
                 raise
+            cloud = _opened_not_downloaded(ports, ledger_set.root, parsed)
+            if cloud is not None:  # offline its C parser's failed read is its own error (round 3, V3-1)
+                return Answer("refused", hint, cleaned=cleaned, refusal="cloud-unavailable", refused=cloud)
             f = load_failure.of(e, ledger_set.root)
             # A second look at what the failed load read (S0098 round 2, verifier F2): a file it parsed outside the
             # set was never observed before the load, so the set widened by it is tried again; a disk changed since
