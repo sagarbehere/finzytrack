@@ -49,7 +49,8 @@ def render(caps: list[dict]) -> str:
     out = [HEADER, "", "# Capability map", ""]
     out.append(
         "Every user-visible capability of Finzytrack, with its status: `planned`, `partial`, `built`, "
-        "`cut` (absent on purpose) or `deferred` (not in v0.4.0). This page is the index; each row's full "
+        "`cut` (absent on purpose) or `deferred` (not in v0.4.0), and what it writes: `ledger`, `config` (files that "
+        "are not ledger files) or `none` (BL-0049). This page is the index; each row's full "
         "description, what changes in v0.4, where it lived in v0.3, its doc page, backlog items, ADRs, code and "
         "tests are in `design/capabilities.toml` (search for the ID). Edit the `.toml`, then run "
         "`python3 scripts/gen_capabilities.py`. Rules: `design/process/PROCESS.md` (\"Project memory\")."
@@ -57,9 +58,11 @@ def render(caps: list[dict]) -> str:
     out.append("")
     by_status = Counter(c["status"] for c in caps)
     blocking = sum(1 for c in caps if c["release_blocking"] == "yes")
+    writes = Counter(c["writes"] for c in caps)
     out.append(
         "**Totals:** " + ", ".join(f"{k} {by_status[k]}" for k in sorted(by_status))
-        + f"; {len(caps)} rows; release-blocking {blocking}."
+        + f"; {len(caps)} rows; release-blocking {blocking}; writes: "
+        + ", ".join(f"{k} {writes[k]}" for k in sorted(writes)) + "."
     )
     out.append("")
     areas: dict[str, list[dict]] = {}
@@ -67,13 +70,13 @@ def render(caps: list[dict]) -> str:
         areas.setdefault(c["area"], []).append(c)
     for area, rows in areas.items():
         out += [f"## {area}", ""]
-        out.append("| ID | Capability | v0.4 | Status | Milestone | Blocks release |")
-        out.append("|---|---|---|---|---|---|")
+        out.append("| ID | Capability | v0.4 | Status | Milestone | Blocks release | Writes |")
+        out.append("|---|---|---|---|---|---|---|")
         for c in rows:
             out.append(
                 "| " + " | ".join([
                     c["id"], short(c["capability"]), c["v04"], c["status"],
-                    c.get("milestone", "—"), c["release_blocking"],
+                    c.get("milestone", "—"), c["release_blocking"], c["writes"],
                 ]) + " |"
             )
         out.append("")

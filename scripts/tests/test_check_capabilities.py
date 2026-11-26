@@ -21,7 +21,7 @@ ADRS = {"ADR-0030"}
 
 def row(status: str, adrs: list[str], **extra: str) -> dict:
     base = {"id": "CAP-X-Y", "area": "Test", "capability": "a fictional row (a real ID here would count as its tagged test)", "v04": "cut", "status": status,
-            "release_blocking": "no", "adrs": adrs}
+            "release_blocking": "no", "adrs": adrs, "writes": "none"}
     return {**base, **extra}
 
 
@@ -49,6 +49,29 @@ class CutAndDeferredRows(unittest.TestCase):
         caps = tomllib.loads((cc.ROOT / "design/capabilities.toml").read_text())["capability"]
         adr_ids = {p.name[:8] for p in (cc.ROOT / "design/decisions").glob("ADR-*.md")}
         self.assertEqual(cc.check(caps, adr_ids, None)[0], [])
+
+
+class Writes(unittest.TestCase):
+    """BL-0049: every row says what it writes, `ledger`, `config` or `none`; the intent table's check reads it."""
+
+    def test_each_value_passes(self) -> None:
+        for value in ("ledger", "config", "none"):
+            with self.subTest(writes=value):
+                self.assertEqual(cc.check([row("cut", ["ADR-0030"], writes=value)], ADRS, None)[0], [])
+
+    def test_rows_that_must_not_pass(self) -> None:
+        cases = {
+            "no writes field": {k: v for k, v in row("cut", ["ADR-0030"]).items() if k != "writes"},
+            "an empty value": row("cut", ["ADR-0030"], writes=""),
+            "another word": row("cut", ["ADR-0030"], writes="files"),
+            "a capitalised value": row("cut", ["ADR-0030"], writes="Ledger"),
+            "a list": {**row("cut", ["ADR-0030"]), "writes": ["ledger"]},
+        }
+        for name, r in cases.items():
+            with self.subTest(case=name):
+                errors = cc.check([r], ADRS, None)[0]
+                self.assertEqual(len(errors), 1, errors)
+                self.assertIn("writes", errors[0])
 
 
 class PathsExist(unittest.TestCase):

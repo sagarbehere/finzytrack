@@ -65,7 +65,7 @@ What each ledger-writing mutator may change. Column meanings and rules: [README.
 
 ### `ws.create-ledger`
 
-- **Capabilities:** CAP-SETUP-FRESH; CAP-SETUP-CURRENCY
+- **Capabilities:** CAP-SETUP-FRESH; CAP-SETUP-CURRENCY; CAP-SETUP-WIZARD; CAP-WS-CREATE
 - **Kind of edit:** many
 - **Old endpoint:** POST /api/setup/complete
 - **Edits:** new_file
@@ -81,7 +81,7 @@ What each ledger-writing mutator may change. Column meanings and rules: [README.
 
 ### `ws.seed-demo`
 
-- **Capabilities:** CAP-DATA-DEMO-GEN
+- **Capabilities:** CAP-DATA-DEMO-GEN; CAP-SETUP-WIZARD; CAP-SETUP-DEMO-MODE; CAP-WS-DEMO
 - **Kind of edit:** many
 - **Old endpoint:** n/a
 - **Edits:** new_file
@@ -97,7 +97,7 @@ What each ledger-writing mutator may change. Column meanings and rules: [README.
 
 ### `account.create`
 
-- **Capabilities:** CAP-ACCT-CREATE
+- **Capabilities:** CAP-ACCT-CREATE; CAP-ACCT-NEW-FROM-PICKER; CAP-AI-LEDGER-WRITES
 - **Kind of edit:** add
 - **Old endpoint:** POST /api/accounts
 - **Edits:** insert
@@ -113,7 +113,7 @@ What each ledger-writing mutator may change. Column meanings and rules: [README.
 
 ### `account.edit`
 
-- **Capabilities:** CAP-ACCT-EDIT
+- **Capabilities:** CAP-ACCT-EDIT; CAP-AI-LEDGER-WRITES
 - **Kind of edit:** change-one
 - **Old endpoint:** PUT /api/accounts/{name} (without new_name)
 - **Edits:** replace; insert_meta; delete_meta
@@ -225,7 +225,7 @@ What each ledger-writing mutator may change. Column meanings and rules: [README.
 
 ### `balance.add`
 
-- **Capabilities:** CAP-ACCT-ASSERTIONS
+- **Capabilities:** CAP-ACCT-ASSERTIONS; CAP-RECON-IMPORT-CHECK; CAP-RECON-AUTO-ACCEPT
 - **Kind of edit:** many
 - **Old endpoint:** POST /api/accounts/{name}/balance-directives
 - **Edits:** insert
@@ -321,7 +321,7 @@ What each ledger-writing mutator may change. Column meanings and rules: [README.
 
 ### `txn.edit`
 
-- **Capabilities:** CAP-TXN-INLINE-EDIT; CAP-TXN-SAVE; CAP-TXN-METADATA
+- **Capabilities:** CAP-TXN-INLINE-EDIT; CAP-TXN-SAVE; CAP-TXN-METADATA; CAP-AI-LEDGER-WRITES
 - **Kind of edit:** change-one
 - **Old endpoint:** PUT /api/ledger/transactions (one transaction)
 - **Edits:** replace
@@ -337,7 +337,7 @@ What each ledger-writing mutator may change. Column meanings and rules: [README.
 
 ### `txn.bulk-edit`
 
-- **Capabilities:** CAP-TXN-BULK
+- **Capabilities:** CAP-TXN-BULK; CAP-TXN-BULK-CATEGORIZE; CAP-AI-LEDGER-WRITES
 - **Kind of edit:** many
 - **Old endpoint:** PUT /api/ledger/transactions (several transactions)
 - **Edits:** replace; replace_token
@@ -385,7 +385,7 @@ What each ledger-writing mutator may change. Column meanings and rules: [README.
 
 ### `import.commit`
 
-- **Capabilities:** CAP-IMP-COMMIT; CAP-IMP-BLANK
+- **Capabilities:** CAP-IMP-COMMIT; CAP-IMP-BLANK; CAP-IMP-FX-PENDING; CAP-AI-ATTACH-INTENT
 - **Kind of edit:** many
 - **Old endpoint:** POST /api/import/commit
 - **Edits:** insert
@@ -401,7 +401,7 @@ What each ledger-writing mutator may change. Column meanings and rules: [README.
 
 ### `import.settle-pending`
 
-- **Capabilities:** CAP-IMP-COMMIT
+- **Capabilities:** CAP-IMP-COMMIT; CAP-IMP-TRANSFER-PAIR; CAP-IMP-FX-PENDING
 - **Kind of edit:** change-one
 - **Old endpoint:** n/a
 - **Edits:** replace
@@ -417,7 +417,7 @@ What each ledger-writing mutator may change. Column meanings and rules: [README.
 
 ### `import.link-element`
 
-- **Capabilities:** CAP-IMP-DEDUPE; CAP-RECON-STATEMENT
+- **Capabilities:** CAP-IMP-DEDUPE; CAP-RECON-STATEMENT; CAP-IMP-TRANSFER-PAIR
 - **Kind of edit:** change-one
 - **Old endpoint:** n/a
 - **Edits:** delete_meta; insert_meta
@@ -433,7 +433,7 @@ What each ledger-writing mutator may change. Column meanings and rules: [README.
 
 ### `recon.proceed`
 
-- **Capabilities:** CAP-RECON-STATEMENT
+- **Capabilities:** CAP-RECON-STATEMENT; CAP-AI-LEDGER-WRITES; CAP-AI-ATTACH-INTENT
 - **Kind of edit:** many
 - **Old endpoint:** n/a
 - **Edits:** insert; replace; delete_meta; insert_meta
@@ -545,7 +545,7 @@ What each ledger-writing mutator may change. Column meanings and rules: [README.
 
 ### `inv.commodity-metadata`
 
-- **Capabilities:** CAP-INV-SETUP-META
+- **Capabilities:** CAP-INV-SETUP-META; CAP-INV-AMFI-FINDER; CAP-INV-EXPOSURE
 - **Kind of edit:** change-one
 - **Old endpoint:** PUT /api/commodities/metadata
 - **Edits:** replace; insert; insert_meta; delete_meta
@@ -561,7 +561,7 @@ What each ledger-writing mutator may change. Column meanings and rules: [README.
 
 ### `inv.booking-method`
 
-- **Capabilities:** CAP-ACCT-EDIT
+- **Capabilities:** CAP-ACCT-EDIT; CAP-INV-BOOKING-METHODS
 - **Kind of edit:** change-one
 - **Old endpoint:** n/a
 - **Edits:** replace
@@ -593,7 +593,7 @@ What each ledger-writing mutator may change. Column meanings and rules: [README.
 
 ### `price.write`
 
-- **Capabilities:** CAP-PRICE-UPDATE; CAP-PRICE-ADD; CAP-PRICE-SIDECAR
+- **Capabilities:** CAP-PRICE-UPDATE; CAP-PRICE-ADD; CAP-PRICE-SIDECAR; CAP-DASH-ACTION-PRICES; CAP-DASH-SEED-OVERVIEW; CAP-INV-HOLDINGS-VIEW; CAP-INV-COMPARE-BROKER; CAP-PRICE-AUTO
 - **Kind of edit:** many
 - **Old endpoint:** POST /api/prices/update (fetch); PUT /api/prices (add)
 - **Edits:** insert; replace
@@ -801,7 +801,7 @@ What each ledger-writing mutator may change. Column meanings and rules: [README.
 
 ### `settings.booking-default`
 
-- **Capabilities:** CAP-SET-BOOKING-DEFAULT
+- **Capabilities:** CAP-SET-BOOKING-DEFAULT; CAP-INV-BOOKING-METHODS
 - **Kind of edit:** change-one
 - **Old endpoint:** n/a
 - **Edits:** option_line
@@ -849,7 +849,7 @@ What each ledger-writing mutator may change. Column meanings and rules: [README.
 
 ### `ws.refresh-demo`
 
-- **Capabilities:** CAP-DATA-SEED-REFRESH
+- **Capabilities:** CAP-DATA-SEED-REFRESH; CAP-WS-DEMO
 - **Kind of edit:** many
 - **Old endpoint:** n/a
 - **Edits:** replace_file
@@ -862,6 +862,27 @@ What each ledger-writing mutator may change. Column meanings and rules: [README.
 - **Status:** draft
 - **Milestone:** M3
 - **ADRs:** ADR-0022; ADR-0008
+
+## Ledger writers without a mutator row
+
+Capability rows that write the ledger and that no row above cites, with why (BL-0049; checked by `LedgerWriters` in `scripts/tests/test_intent_table.py`).
+
+| Capability | Why |
+|---|---|
+| `CAP-WS-RECOVER-FIRST` | machinery: ADR-0012 (recovery puts back the bytes an unfinished save's journal recorded; it has no intended change of its own) |
+| `CAP-DATA-WRITE-GATE` | machinery: ADR-0008 (the write-safety contract every mutator's write passes) |
+| `CAP-DATA-ENGINE-JOBS` | machinery: ADR-0064 (every save runs as an engine job; what the save changes is its mutator's) |
+| `CAP-DATA-MULTIFILE` | machinery: ADR-0009 (where a mutator's insert lands: Fava's insert-entry options, else the default file) |
+| `CAP-DATA-BACKUPS` | machinery: ADR-0012 (the backup before each write and the save's rollback; the restore of a run's backup is ADR-0019's) |
+| `CAP-DATA-NEWER-REFUSE` | machinery: ADR-0019 ("restore backup of run X" puts back the bytes that run backed up) |
+| `CAP-DESK-AUTOUPDATE` | machinery: ADR-0019 (the rollback restores the pre-upgrade backup: the bytes that run backed up) |
+| `CAP-AI-PROPOSALS` | machinery: ADR-0038 (an AI proposal is previewed and confirmed through the one plan store; its ledger write is the mutator of what it proposes, CAP-AI-LEDGER-WRITES) |
+| `CAP-WS-IMPORT` | not built: ADR-0043 (the workspace archive is deferred to after v0.4.0; its row comes with the feature) |
+| `CAP-WS-BRING-IN` | pending: BL-0311 (copies an externally referenced ledger set into the workspace folder) |
+| `CAP-WS-MULTI-ROOT` | pending: BL-0311 (a copied workspace for another root ledger of the folder) |
+| `CAP-WS-SETTINGS` | pending: BL-0311 (hosts Bring in; whether its documents-folder field writes `option "documents"` through doc.documents-option is not specified) |
+| `CAP-DATA-CURRENCY-UPGRADE` | pending: BL-0311 (the ISO-codes-are-cash migration: what it writes is not specified) |
+| `CAP-NOTIFY-STARTUP` | pending: BL-0311 (the startup gate runs consented migrations; whether one writes the ledger is not specified) |
 
 ## Legacy mutators
 

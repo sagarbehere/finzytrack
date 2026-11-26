@@ -40,14 +40,18 @@ class Index(unittest.TestCase):
     ROW = {
         "id": "CAP-X-Y", "area": "Area", "capability": "Do a thing; with details", "v04": "change",
         "v04_note": "long note that stays in the toml", "status": "planned", "milestone": "M2",
-        "release_blocking": "yes", "legacy_entry": "`old.py`",
+        "release_blocking": "yes", "legacy_entry": "`old.py`", "writes": "ledger",
     }
 
     def test_index_row_has_the_index_columns_and_not_the_detail(self) -> None:
         text = gc.render([self.ROW])
-        self.assertIn("| CAP-X-Y | Do a thing | change | planned | M2 | yes |", text)
+        self.assertIn("| CAP-X-Y | Do a thing | change | planned | M2 | yes | ledger |", text)
         self.assertNotIn("long note that stays in the toml", text)
         self.assertNotIn("old.py", text)
+
+    def test_totals_count_what_the_rows_write(self) -> None:  # BL-0049
+        rows = [self.ROW, {**self.ROW, "id": "CAP-X-Z", "writes": "none"}, {**self.ROW, "id": "CAP-X-W"}]
+        self.assertIn("; writes: ledger 2, none 1.", gc.render(rows))
 
     def test_header_points_to_the_source_for_detail(self) -> None:
         self.assertIn("capabilities.toml", gc.render([self.ROW]).split("## ")[0])

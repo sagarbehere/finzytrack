@@ -7,6 +7,7 @@ import re
 import tomllib
 import unittest
 from pathlib import Path
+from typing import ClassVar
 
 ROOT = Path(__file__).resolve().parents[2]
 TABLE = ROOT / "design/specs/write-path/intent-table.toml"
@@ -77,6 +78,128 @@ def refusal_ok(ref: str, refers_to_a_row: bool) -> bool:
     if any(cls in ref for cls in BEANCOUNT_ERRORS - PARSE_ERRORS):
         return False
     return not ACCOUNTING_WORDS.search(ref)
+
+
+# BL-0049 (ADR-0057 decision 3, its mechanical form): every capability row that writes the ledger and will be built is
+# cited by a mutator row or named in `[ledger_writers]` with why it has none. A line is one of:
+#   "not built: ADR-nnnn (why)"   the capability is not built as a ledger writer in v0.4 (the ADR decided it);
+#   "machinery: ADR-nnnn (why)"   its writes are the contract's or the lifecycle's own (a save, a backup, a rollback,
+#                                 recovery, the restore of a run's backup), not a use case's intended change;
+#   "pending: BL-nnnn (why)"      a ledger writer whose mutator row is not written yet; the open backlog row says when.
+# Cut and deferred rows need neither (check_capabilities.py makes them cite the ADR that decided them). Stated limits:
+# the check trusts each row's `writes` value (filled by behaviour, S0157) and proves that every ledger writer is named,
+# not that a pending row's mutator will match it.
+LIVE = {"planned", "partial", "built"}
+LINE = re.compile(r"^(?:(?P<kind>not built|machinery): (?P<adr>ADR-\d{4})|pending: (?P<bl>BL-\d{4})) \(.+\)$")
+
+
+def open_backlog_ids(backlog: str) -> set[str]:
+    """The IDs of the backlog rows whose status column is `open`."""
+    out = set()
+    for line in backlog.splitlines():
+        cells = [c.strip() for c in re.split(r"(?<!\\)\|", line.strip())]
+        if len(cells) == 8 and re.fullmatch(r"BL-\d{4}", cells[1]) and cells[5] == "open":
+            out.add(cells[1])
+    return out
+
+
+def ledger_writer_problems(caps: list[dict], table: dict, adrs: set[str], backlog: str) -> list[str]:
+    """What breaks BL-0049's rule in `table` (the intent table) against `caps` (the capability rows)."""
+    by_id = {c["id"]: c for c in caps}
+    cited: dict[str, list[str]] = {}
+    problems: list[str] = []
+    for r in table["mutator"]:
+        for cap in r["caps"]:
+            cited.setdefault(cap, []).append(r["id"])
+            if cap in by_id and by_id[cap].get("writes") != "ledger":
+                problems.append(f"{r['id']}: cites {cap}, whose writes is {by_id[cap].get('writes')!r}, not 'ledger'")
+    lines = table.get("ledger_writers", {})
+    open_ids = open_backlog_ids(backlog)
+    for cap, line in lines.items():
+        c = by_id.get(cap)
+        if c is None:
+            problems.append(f"[ledger_writers] {cap}: no such capability row")
+            continue
+        if c.get("writes") != "ledger":
+            problems.append(f"[ledger_writers] {cap}: its writes is {c.get('writes')!r}, not 'ledger'")
+        if c.get("status") not in LIVE:
+            problems.append(f"[ledger_writers] {cap}: a {c.get('status')} row needs no line")
+        if cap in cited:
+            problems.append(f"[ledger_writers] {cap}: already cited by {', '.join(cited[cap])}; drop the line")
+        m = LINE.match(line) if isinstance(line, str) else None
+        if m is None:
+            problems.append(f"[ledger_writers] {cap}: {line!r} is not 'not built: ADR-nnnn (why)', "
+                            "'machinery: ADR-nnnn (why)' or 'pending: BL-nnnn (why)'")
+        elif m.group("adr") and m.group("adr") not in adrs:
+            problems.append(f"[ledger_writers] {cap}: {m.group('adr')} does not exist")
+        elif m.group("bl") and m.group("bl") not in open_ids:
+            problems.append(f"[ledger_writers] {cap}: {m.group('bl')} is not an open backlog row")
+    for c in caps:
+        if c.get("writes") == "ledger" and c.get("status") in LIVE and c["id"] not in cited and c["id"] not in lines:
+            problems.append(f"{c['id']}: writes the ledger, but no mutator row cites it and [ledger_writers] has no line")
+    return problems
+
+
+class LedgerWriters(unittest.TestCase):
+    """BL-0049's check, on small tables beside the real one (EP-29: each passing case beside one that must not pass)."""
+
+    ADRS: ClassVar[set[str]] = {"ADR-0012", "ADR-0043"}
+    BACKLOG = ("| BL-0001 | a row | WS-X | M3 | open | — |\n"
+               "| BL-0002 | a closed row | WS-X | M3 | done | — |\n")
+
+    @staticmethod
+    def cap(cid: str, writes: str = "ledger", status: str = "planned") -> dict:
+        return {"id": cid, "writes": writes, "status": status}
+
+    def problems(self, caps: list[dict], cites: list[str], lines: dict | None = None) -> list[str]:
+        table = {"mutator": [{"id": "x.write", "caps": cites}], "ledger_writers": lines or {}}
+        return ledger_writer_problems(caps, table, self.ADRS, self.BACKLOG)
+
+    def test_what_passes(self) -> None:
+        caps = [self.cap("CAP-A"), self.cap("CAP-B"), self.cap("CAP-C"), self.cap("CAP-D"), self.cap("CAP-E"),
+                self.cap("CAP-F", "config"), self.cap("CAP-G", "none"), self.cap("CAP-H", status="cut"),
+                self.cap("CAP-I", status="deferred"), self.cap("CAP-J", status="partial")]
+        lines = {"CAP-B": "not built: ADR-0043 (deferred)", "CAP-C": "machinery: ADR-0012 (recovery)",
+                 "CAP-D": "pending: BL-0001 (no row yet)"}
+        self.assertEqual(self.problems(caps, ["CAP-A", "CAP-E", "CAP-J"], lines), [])
+
+    def test_what_must_not_pass(self) -> None:
+        cases = {
+            "a planned ledger row nobody names": ([self.cap("CAP-A")], [], {}),
+            "a partial ledger row nobody names": ([self.cap("CAP-A", status="partial")], [], {}),
+            "a built ledger row nobody names": ([self.cap("CAP-A", status="built")], [], {}),
+            "a mutator citing a config row": ([self.cap("CAP-A", "config")], ["CAP-A"], {}),
+            "a mutator citing a none row": ([self.cap("CAP-A", "none")], ["CAP-A"], {}),
+            "a mutator citing a row with no writes": ([{"id": "CAP-A", "status": "planned"}], ["CAP-A"], {}),
+            "a line for a config row": ([self.cap("CAP-A", "config")], [], {"CAP-A": "machinery: ADR-0012 (x)"}),
+            "a line for an unknown row": ([], [], {"CAP-Z": "machinery: ADR-0012 (x)"}),
+            "a line for a cut row": ([self.cap("CAP-A", status="cut")], [], {"CAP-A": "not built: ADR-0043 (x)"}),
+            "a line for a cited row": ([self.cap("CAP-A")], ["CAP-A"], {"CAP-A": "machinery: ADR-0012 (x)"}),
+            "a line with no reason": ([self.cap("CAP-A")], [], {"CAP-A": "machinery: ADR-0012"}),
+            "a line with another word": ([self.cap("CAP-A")], [], {"CAP-A": "later: ADR-0012 (x)"}),
+            "a line with no ADR": ([self.cap("CAP-A")], [], {"CAP-A": "not built: (x)"}),
+            "a line citing a missing ADR": ([self.cap("CAP-A")], [], {"CAP-A": "not built: ADR-9999 (x)"}),
+            "a pending line citing an ADR": ([self.cap("CAP-A")], [], {"CAP-A": "pending: ADR-0012 (x)"}),
+            "a pending line citing a missing row": ([self.cap("CAP-A")], [], {"CAP-A": "pending: BL-0003 (x)"}),
+            "a pending line citing a closed row": ([self.cap("CAP-A")], [], {"CAP-A": "pending: BL-0002 (x)"}),
+            "a not-built line citing a backlog row": ([self.cap("CAP-A")], [], {"CAP-A": "not built: BL-0001 (x)"}),
+            "an empty line": ([self.cap("CAP-A")], [], {"CAP-A": ""}),
+            "a line that is a list": ([self.cap("CAP-A")], [], {"CAP-A": ["machinery: ADR-0012 (x)"]}),
+        }
+        for name, (caps, cites, lines) in cases.items():
+            with self.subTest(case=name):
+                self.assertNotEqual(self.problems(caps, cites, lines), [])
+
+    def test_a_backlog_row_counts_as_open_only_by_its_status_column(self) -> None:
+        self.assertEqual(open_backlog_ids(self.BACKLOG), {"BL-0001"})
+        self.assertEqual(open_backlog_ids("| BL-0004 | a \\| b | WS-X | M3 | open | — |\n"), {"BL-0004"})  # an escaped pipe
+
+    def test_every_ledger_writer_of_the_capability_map_is_named(self) -> None:
+        with (ROOT / "design/capabilities.toml").open("rb") as f:
+            caps = tomllib.load(f)["capability"]
+        adrs = {"-".join(p.name.split("-")[:2]) for p in (ROOT / "design/decisions").glob("ADR-*.md")}
+        backlog = (ROOT / "design/backlog.md").read_text(encoding="utf-8")
+        self.assertEqual(ledger_writer_problems(caps, load(), adrs, backlog), [])
 
 
 class IntentTableTest(unittest.TestCase):

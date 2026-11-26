@@ -102,6 +102,25 @@ class OtherPlatformsAndOptions(unittest.TestCase):
             cl.bundled([("fastapi", "0.143.0", "MIT"), ("foo", "3.0", "MIT")], reqs, "backend",
                        {"foo": cl.Elsewhere("1.0", "BSD-3-Clause", "x", "")}, {win: False, lin: True}, set())
 
+    def test_each_forked_version_keeps_its_own_acknowledgment(self) -> None:  # BL-0254 (S0105 part B round 2, R2-F2)
+        # Must not pass: foo 1.0 bundled on another OS (its entry's sentence) and foo 2.0 installed here (its licence's
+        # sentence, configured for 2.0) in one group; neither sentence may be printed under the other version's line.
+        ack1, ack2 = "This product includes Foo One.", "This product includes Foo Two."
+        groups = {"G": [("foo", "1.0", "BSD-4-Clause"), ("foo", "2.0", "BSD-4-Clause")]}
+        texts = {"G": {"foo": f"must retain the following acknowledgment: '{ack2}'"}}
+        problems, notes = cl.acknowledgments(groups, texts, {"foo": cl.Acknowledgment("2.0", ack2, "x")}, {},
+                                             {"foo": cl.Elsewhere("1.0", "BSD-4-Clause", "x", ack1)})
+        self.assertEqual(problems, [])
+        self.assertEqual(notes, {("G", "foo", "1.0"): ack1, ("G", "foo", "2.0"): ack2})
+        _, _, text = cl.evaluate(groups, {"BSD-4-Clause"}, set(), None, notes)
+        self.assertIn(f"foo 1.0  BSD-4-Clause\n  Acknowledgment: {ack1}\nfoo 2.0  BSD-4-Clause\n  Acknowledgment: {ack2}\n",
+                      text)
+        # a fork with no acknowledgment carries none, though its sibling does
+        _, notes = cl.acknowledgments(groups, texts, {"foo": cl.Acknowledgment("2.0", ack2, "x")}, {},
+                                      {"foo": cl.Elsewhere("1.0", "BSD-3-Clause", "x", "")})
+        _, _, text = cl.evaluate(groups, {"BSD-4-Clause"}, set(), None, notes)
+        self.assertIn("foo 1.0  BSD-4-Clause\nfoo 2.0", text)
+
     def bundle(self, holds: dict[str, bool], elsewhere: dict | None = None, export: str = MARKED):
         reqs, _ = cl.runtime_requirements(export)
         used: set[str] = set()
@@ -138,7 +157,7 @@ class OtherPlatformsAndOptions(unittest.TestCase):
         self.assertEqual((problems, notes), ([], {}))
         noted = {"colorama": cl.Elsewhere("0.4.6", "BSD-4-Clause", "x", "This product includes software by X.")}
         problems, notes = cl.acknowledgments(groups, {"G": {}}, {}, {}, noted)
-        self.assertEqual((problems, notes), ([], {("G", "colorama"): "This product includes software by X."}))
+        self.assertEqual((problems, notes), ([], {("G", "colorama", "0.4.6"): "This product includes software by X."}))
         problems, _ = cl.acknowledgments({"G": [("colorama", "0.4.7", "BSD-3-Clause")]}, {"G": {}}, {}, {}, ELSEWHERE)
         self.assertTrue(problems)  # its text was not read and no entry for this version says what it requires
 
@@ -183,6 +202,32 @@ class Wiring(unittest.TestCase):
         self.assertIn("--no-dev", export)
         self.assertIn("--frozen", export)
         self.assertEqual(sorted(n for n, _, _ in deps or []), ["fastapi", "pydantic", "typing_extensions"])
+
+
+    def test_a_fork_installed_at_another_version_still_evaluates_the_other_lines_marker(self) -> None:  # @regression-guard
+        # BL-0254 (S0105 part B round 2, R2-F3): foo 2.0 is installed here; the foo 1.0 line's marker must still be
+        # evaluated, so its [other_platform] entry can cover it. Must not pass: a name-only check that drops the marker
+        # of every line whose name is installed (the line then stops as "not evaluated").
+        win, lin = "sys_platform == 'win32'", "sys_platform == 'linux'"
+        export = f"fastapi==0.143.0\nfoo==1.0 ; {win}\nfoo==2.0 ; {lin}\n"
+        evaluated: list[list[str]] = []
+
+        def fake_run(cmd, **kwargs):
+            if "export" in cmd:
+                return mock.Mock(stdout=export)
+            if "--eval-markers" in cmd:
+                markers = json.loads(kwargs["input"])
+                evaluated.append(markers)
+                return mock.Mock(returncode=0, stdout=json.dumps({m: m == lin for m in markers}), stderr="")
+            return mock.Mock(stdout='[{"Name": "fastapi", "Version": "0.143.0", "License": "MIT"},'
+                                    ' {"Name": "foo", "Version": "2.0", "License": "MIT"}]')
+
+        with mock.patch.object(cl.subprocess, "run", fake_run), \
+                mock.patch.object(cl.shutil, "which", lambda _n: "/bin/uv"), \
+                mock.patch.object(cl.Path, "exists", lambda _p: True):
+            deps = cl.python_deps("backend", None, {"foo": cl.Elsewhere("1.0", "BSD-3-Clause", "x", "")}, set())
+        self.assertEqual(evaluated, [[win]])  # the installed line's marker needs no evaluation
+        self.assertEqual(deps, [("fastapi", "0.143.0", "MIT"), ("foo", "1.0", "BSD-3-Clause"), ("foo", "2.0", "MIT")])
 
 
 class JavaScript(unittest.TestCase):
@@ -448,14 +493,14 @@ class Acknowledgments(unittest.TestCase):
     TEXTS = {ENGINE: {"tatsu-lts": TATSU_TEXT, "six": "Permission is hereby granted, free of charge"}}
 
     @staticmethod
-    def one(text: str, configured: str | None = None) -> tuple[list[str], dict[tuple[str, str], str]]:
+    def one(text: str, configured: str | None = None) -> tuple[list[str], dict[tuple[str, str, str], str]]:
         """acknowledgments() for one package `lib` 1 in group P with licence text `text`, optionally configured."""
         acks = {} if configured is None else {"lib": cl.Acknowledgment("1", configured, "LICENSE")}
         return cl.acknowledgments({"P": [("lib", "1", "MIT")]}, {"P": {"lib": text}}, acks)
 
     def test_a_configured_acknowledgment_found_in_the_licence_passes_and_is_noted(self) -> None:
         problems, notes = cl.acknowledgments(self.DEPS, self.TEXTS, self.ACK)
-        self.assertEqual((problems, notes), ([], {(ENGINE, "tatsu-lts"): TATSU_ACK}))
+        self.assertEqual((problems, notes), ([], {(ENGINE, "tatsu-lts", "5.16.0"): TATSU_ACK}))
 
     def test_a_clause_without_a_configured_acknowledgment_is_refused(self) -> None:
         # Must not pass: the notices would drop a required acknowledgment.
@@ -547,13 +592,13 @@ class Acknowledgments(unittest.TestCase):
 
     def test_the_notices_carry_the_acknowledgment_under_the_package(self) -> None:
         _, _, text = cl.evaluate(self.DEPS, {"MIT", "BSD-3-Clause-Attribution"}, set(),
-                                 notes={(ENGINE, "tatsu-lts"): TATSU_ACK})
+                                 notes={(ENGINE, "tatsu-lts", "5.16.0"): TATSU_ACK})
         self.assertIn(f"TatSu-LTS 5.16.0  BSD-3-Clause-Attribution\n  Acknowledgment: {TATSU_ACK}\n", text)
         self.assertNotIn("six 1.17.0  MIT\n  Acknowledgment", text)
 
     def test_a_note_belongs_to_its_own_group(self) -> None:
         groups = {"A": [("lib", "1", "MIT")], "B": [("lib", "2", "MIT")]}
-        _, _, text = cl.evaluate(groups, {"MIT"}, set(), notes={("A", "lib"): "Includes lib."})
+        _, _, text = cl.evaluate(groups, {"MIT"}, set(), notes={("A", "lib", "1"): "Includes lib."})
         self.assertIn("lib 1  MIT\n  Acknowledgment: Includes lib.\n", text)
         self.assertNotIn("lib 2  MIT\n  Acknowledgment", text)
 
@@ -575,7 +620,7 @@ class PerProcess(unittest.TestCase):
     def test_an_entry_for_one_process_is_refused_for_the_others_version(self) -> None:
         acks = {"lib": cl.Acknowledgment("1.0", "Includes Lib.", "LICENSE")}
         problems, notes = cl.acknowledgments(self.GROUPS, self.TEXTS, acks)
-        self.assertEqual(notes, {("Python (backend sidecar)", "lib"): "Includes Lib."})
+        self.assertEqual(notes, {("Python (backend sidecar)", "lib", "1.0"): "Includes Lib."})
         self.assertEqual(len(problems), 1)  # lib 2.0 in the engine: the entry is for another version
         self.assertIn("lib 2.0", problems[0])
 

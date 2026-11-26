@@ -56,6 +56,16 @@ def render(table: dict) -> str:
                            ("Status", "status"), ("Milestone", "milestone"), ("ADRs", "adrs")):
             out.append(f"- **{label}:** {cell(r[key])}")
     out.append("")
+    out.append("## Ledger writers without a mutator row")
+    out.append("")
+    out.append("Capability rows that write the ledger and that no row above cites, with why (BL-0049; checked by "
+               "`LedgerWriters` in `scripts/tests/test_intent_table.py`).")
+    out.append("")
+    out.append("| Capability | Why |")
+    out.append("|---|---|")
+    for cap, why in table.get("ledger_writers", {}).items():
+        out.append(f"| `{cap}` | {cell(why)} |")
+    out.append("")
     out.append("## Legacy mutators")
     out.append("")
     out.append("| v0.3 `LedgerManager` method | v0.4 row(s) |")

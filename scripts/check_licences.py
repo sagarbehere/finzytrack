@@ -19,7 +19,7 @@ clause 4, the 4-clause BSD and Apache 1.1 clauses). For each Python process the 
 venv's own interpreter, which reads every licence and notice file each installed distribution declares or records
 (`read_texts` says which), and judges each bundled package with that process's own text and version. A text that
 asks for "the following acknowledgment" needs an `[acknowledgment.<package>]` entry for that exact version whose text
-equals the sentence the licence quotes, and the notices carry it under the package's line in that process's group.
+equals the sentence the licence quotes, and the notices carry it under that version's line in that process's group.
 Fails closed: a bundled package whose text was not read, a declared or recorded licence file that cannot be read, an
 entry for a package that is not bundled or whose text cannot be confirmed, and a bundled package that ships no
 licence text at all, unless `[no_licence_text.<package>]` records its exact version and why. Stated limits: the
@@ -520,15 +520,16 @@ def acknowledgments(
     groups: dict[str, list[tuple[str, str, str]] | None], texts: dict[str, dict[str, str]],
     configured: dict[str, Acknowledgment], textless: dict[str, Textless] | None = None,
     elsewhere: dict[str, Elsewhere] | None = None,
-) -> tuple[list[str], dict[tuple[str, str], str]]:
+) -> tuple[list[str], dict[tuple[str, str, str], str]]:
     """(problems, notes) for the groups whose licence texts were read (`texts`: group -> normalized name -> text),
     each package judged in its own group with that group's text and version: its text was read; it is not empty, or
     `textless` names its exact version; every acknowledgment it requires is the text of a configured entry for its
-    exact version. Every configured and `textless` entry names a bundled package. `notes` ((group, normalized name) ->
-    text) are what the notices carry."""
+    exact version. Every configured and `textless` entry names a bundled package. `notes` ((group, normalized name,
+    version) -> text) are what the notices carry: keyed by version, so two forked versions of one package in a group
+    (one installed here, one bundled on another OS) each keep their own sentence (BL-0254)."""
     textless = textless or {}
     problems: list[str] = []
-    notes: dict[tuple[str, str], str] = {}
+    notes: dict[tuple[str, str, str], str] = {}
     seen: set[str] = set()
     for group, group_texts in texts.items():
         for name, version, _ in sorted(groups.get(group) or []):
@@ -539,7 +540,7 @@ def acknowledgments(
             other = (elsewhere or {}).get(key)
             if other is not None and other.version == version:  # bundled on another OS (BL-0050); its own entry
                 if other.acknowledgment.strip():
-                    notes[(group, key)] = squash(other.acknowledgment)
+                    notes[(group, key, version)] = squash(other.acknowledgment)
                 continue
             if text is None:
                 problems.append(f"{name} {version}: its licence text was not read, so its acknowledgments cannot be "
@@ -570,7 +571,7 @@ def acknowledgments(
                 problems.append(f"{name} {version}: the configured acknowledgment is not the sentence its licence "
                                 "requires")
             else:
-                notes[(group, key)] = squash(entry.text)
+                notes[(group, key, version)] = squash(entry.text)
     for key in sorted(configured.keys() - seen):
         problems.append(f"{key}: [acknowledgment] names a package that is not bundled; remove the entry")
     for key in sorted(textless.keys() - seen):
@@ -580,11 +581,11 @@ def acknowledgments(
 
 def evaluate(
     groups: dict[str, list[tuple[str, str, str]] | None], allowed: set[str], pending: set[str],
-    overrides: dict[str, Policy] | None = None, notes: dict[tuple[str, str], str] | None = None,
+    overrides: dict[str, Policy] | None = None, notes: dict[tuple[str, str, str], str] | None = None,
 ) -> tuple[list[str], list[str], str]:
     """(problems, warnings, notices text), each dependency judged by `judge` under its group's policy: the shared
-    `allowed`/`pending`, or the group's entry in `overrides`. `notes` ((group, normalized name) -> acknowledgment)
-    are written under the package's line in that group."""
+    `allowed`/`pending`, or the group's entry in `overrides`. `notes` ((group, normalized name, version) ->
+    acknowledgment) are written under the line of that version in that group."""
     problems, warnings, lines = [], [], [HEADER]
     shared = Policy(frozenset(allowed), frozenset(pending))
     for title, deps in groups.items():
@@ -606,8 +607,8 @@ def evaluate(
                     where = " of the ledger engine (ADR-0054)" if policy is not shared else ""
                     problems.append(f"{name} {version}: licence {lic!r} is not on the allowlist{where}")
             lines.append(f"{name} {version}  {lic}\n")
-            if (title, norm(name)) in (notes or {}):
-                lines.append(f"  Acknowledgment: {(notes or {})[(title, norm(name))]}\n")
+            if (title, norm(name), version) in (notes or {}):
+                lines.append(f"  Acknowledgment: {(notes or {})[(title, norm(name), version)]}\n")
     return problems, warnings, "".join(lines)
 
 

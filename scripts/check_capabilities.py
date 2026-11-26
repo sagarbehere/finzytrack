@@ -3,6 +3,14 @@
 
 Checks design/capabilities.toml:
   - every row has the required fields with allowed values; IDs are unique and look like CAP-<AREA>-<NAME>;
+  - `writes` says what the capability writes, by behaviour (its row, spec and code), never by its name (BL-0049):
+    `ledger` (a file of a ledger set: an entry, a directive, an option line, a new or copied ledger file, or the bytes
+    a restore puts back), `config` (files on disk that are not ledger files: the workspace's `.finzytrack/`, app
+    settings and the registry, machine-local state, caches, logs, archives, document files) or `none` (nothing on
+    disk: reads, checks, browser-only UI state). A row whose flow may write the ledger is `ledger`, also when it writes
+    through another row's mutator; one that only hands drafts on (an import source) writes what its own step keeps.
+    The intent table's T1 check (`scripts/tests/test_intent_table.py`) requires every `ledger` row that will be built
+    to be cited by a mutator row or named in its `[ledger_writers]` table;
   - planned/partial/built rows name a milestone M0-M12; cut and deferred rows block nothing and cite the ADR
     that decided them (BL-0039);
   - every path in a row's `code` and `tests` lists exists: a file, or a folder written with a trailing `/`; relative,
@@ -40,10 +48,11 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 import check_invariants  # noqa: E402  (the enforcement-file rules: fixme markers and switched-off tests)
 
-REQUIRED = ["id", "area", "capability", "v04", "status", "release_blocking"]
+REQUIRED = ["id", "area", "capability", "v04", "status", "release_blocking", "writes"]
 V04 = {"keep", "change", "cut", "new", "deferred"}
 STATUS = {"planned", "partial", "built", "cut", "deferred"}
 BLOCKING = {"yes", "no", "n/a"}
+WRITES = {"ledger", "config", "none"}  # BL-0049: what the capability writes; the intent table's check reads `ledger`
 MILESTONE = re.compile(r"^M(1[0-2]|[0-9])$")
 CAP_ID = re.compile(r"^CAP-[A-Z0-9]+(-[A-Z0-9]+)+$")
 # engine/ since S0105 part B (BL-0252; owner, 2026-11-11, in session: "Count engine tests (Recommended)")
@@ -310,6 +319,9 @@ def check(caps: list[dict], adr_ids: set[str], backlog_text: str | None, root: P
             errors.append(f"{where}: status must be one of {sorted(STATUS)}")
         if c.get("release_blocking") not in BLOCKING:
             errors.append(f"{where}: release_blocking must be one of {sorted(BLOCKING)}")
+        writes = c.get("writes")
+        if writes and not (isinstance(writes, str) and writes in WRITES):
+            errors.append(f"{where}: writes must be one of {sorted(WRITES)}, not {writes!r}")
         if status in {"planned", "partial", "built"} and not MILESTONE.match(c.get("milestone", "")):
             errors.append(f"{where}: a {status} row needs a milestone M0-M12")
         if status in {"cut", "deferred"} and c.get("release_blocking") == "yes":

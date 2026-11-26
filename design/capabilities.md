@@ -2,473 +2,473 @@
 
 # Capability map
 
-Every user-visible capability of Finzytrack, with its status: `planned`, `partial`, `built`, `cut` (absent on purpose) or `deferred` (not in v0.4.0). This page is the index; each row's full description, what changes in v0.4, where it lived in v0.3, its doc page, backlog items, ADRs, code and tests are in `design/capabilities.toml` (search for the ID). Edit the `.toml`, then run `python3 scripts/gen_capabilities.py`. Rules: `design/process/PROCESS.md` ("Project memory").
+Every user-visible capability of Finzytrack, with its status: `planned`, `partial`, `built`, `cut` (absent on purpose) or `deferred` (not in v0.4.0), and what it writes: `ledger`, `config` (files that are not ledger files) or `none` (BL-0049). This page is the index; each row's full description, what changes in v0.4, where it lived in v0.3, its doc page, backlog items, ADRs, code and tests are in `design/capabilities.toml` (search for the ID). Edit the `.toml`, then run `python3 scripts/gen_capabilities.py`. Rules: `design/process/PROCESS.md` ("Project memory").
 
-**Totals:** cut 16, deferred 13, partial 4, planned 309; 342 rows; release-blocking 308.
+**Totals:** cut 16, deferred 13, partial 4, planned 309; 342 rows; release-blocking 308; writes: config 62, ledger 94, none 186.
 
 ## Setup and workspaces
 
-| ID | Capability | v0.4 | Status | Milestone | Blocks release |
-|---|---|---|---|---|---|
-| CAP-SETUP-WIZARD | First-run wizard: currency → ledger mode (fresh / demo / existing) → optional AI → done | change | planned | M3 | yes |
-| CAP-SETUP-CURRENCY | Pick the default currency from 30 ISO codes or type a custom code | change | planned | M3 | yes |
-| CAP-SETUP-FRESH | Create a starter ledger with common accounts in the chosen currency | change | planned | M3 | yes |
-| CAP-SETUP-EXISTING | Use an existing ledger in place, without copying it (multi-file allowed) | change | planned | M2 | yes |
-| CAP-SETUP-DEMO-MODE | Wizard "demo" mode points `ledger_file` at `data/ledgers/fake.beancount` inside the user's own… | change | planned | M3 | yes |
-| CAP-SETUP-AI | Wizard step: skip, or bring your own model (provider, URL, key, model) | keep | planned | M6 | yes |
-| CAP-WS-LEDGER-SWITCH | Switch ledger by typing a path (or Browse) in Settings → Data | change | planned | M2 | yes |
-| CAP-WS-AUTOCREATE | A nonexistent ledger path (a typo, a moved file, a sync client mid-replace) silently creates a… | cut | cut | M2 | n/a |
-| CAP-WS-MULTI-ROOT | Several root ledgers in one folder, switched freely | keep | planned | M2 | yes |
-| CAP-WS-SHARED-CONFIG | Rules, dashboards, themes and settings shared by every ledger (one `config/`) | change | planned | M3 | yes |
-| CAP-WS-SWITCH | Switch between registered workspaces from the shell header (pinned and recent, with status per row) | new | planned | M2 | yes |
-| CAP-WS-PALETTE | Command palette (⌘/Ctrl-K) with "Switch workspace" over the recents | new | planned | M2 | yes |
-| CAP-WS-CREATE | New workspace: Blank (currency + starter accounts) or "from settings of <workspace>" (copies… | new | planned | M3 | yes |
-| CAP-WS-ADOPT | Open an existing folder or `.beancount` as a workspace | new | planned | M2 | yes |
-| CAP-WS-RECOVER-FIRST | Every unfinished save in the app is undone before any workspace opens (at start and at each switch) | new | planned | M2 | yes |
-| CAP-WS-PORTABLE | One folder layout that is safe to sync, version and tar: no secrets, caches, absolute paths or… | new | planned | M3 | yes |
-| CAP-WS-PORTABILITY-CHECK | "Portable ✓" or a per-file issue list, in Settings and as a switcher badge (same check as the… | new | planned | M3 | yes |
-| CAP-WS-EXPORT | Export a locked, consistent `.tar.zst` of the ledger set and `.finzytrack/` with file list and… | new | planned | M3 | no |
-| CAP-WS-IMPORT | Import a workspace archive: safe extract, assessment and portability check, "same workspace or a… | new | planned | M3 | no |
-| CAP-WS-BRING-IN | "Bring the ledger into this folder": copy an externally referenced ledger set in, making the… | new | planned | M3 | yes |
-| CAP-WS-TEST-COPY | Make a test copy: copies files (never an external reference) into a new workspace marked… | new | planned | M3 | yes |
-| CAP-WS-SECRETS | Per-workspace secret scope | new | planned | M3 | yes |
-| CAP-WS-SYNC-CONFLICT | Detect sync-client conflicted copies in the ledger set and `.finzytrack/` | new | planned | M2 | yes |
-| CAP-WS-DEMO | "Try the demo": a separate demo workspace (`kind: demo`), replaced on each release without asking… | new | planned | M3 | yes |
-| CAP-WS-REGISTRY | Manage workspaces: recents, pin, rename, reveal, locate, forget (never deletes files) | new | planned | M2 | yes |
-| CAP-WS-UNAVAILABLE | "Ledger unavailable" screen with Retry / Locate / Stay / Forget | new | planned | M2 | yes |
-| CAP-WS-COPY-ITEM | "Copy to workspace…" on a dashboard, rule or theme, keeping its origin | new | planned | M7 | yes |
-| CAP-WS-UI-MEMORY | UI memory (tabs, selections, layouts) scoped per workspace in localStorage | new | planned | M2 | yes |
-| CAP-WS-RESUME | Import sessions and AI threads survive a switch and come back with their workspace | new | planned | M9 | yes |
-| CAP-WS-ALLOW-AI | "Allow AI in this workspace" switch, stored in the folder so the policy travels (default on; AI… | new | planned | M6 | yes |
-| CAP-WS-SETTINGS | Settings → Workspace: name, folder, ledger root or external reference, documents folder… | new | planned | M3 | yes |
-| CAP-MIRROR-EXTERNAL | Stable read-only mirror path with Copy / Reveal, and a documented `r_*` view surface for outside… | new | planned | M7 | yes |
-| CAP-SHELL-OPEN | File association (alternate handler), single-instance forward, drag-and-drop a ledger, CLI… | new | planned | M2 | yes |
-| CAP-SHELL-RECENTS | OS "Open Recent" menu / jump list from the registry | new | planned | M2 | yes |
-| CAP-LEGACY-ADOPT | Bring in a v0.2/v0.3 install: detect it, classify each ledger, copy settings, rules and dashboards | new | planned | M3 | yes |
-| CAP-LEGACY-COEXIST | Share a ledger with a running legacy app: take every legacy lock, banner when a legacy app runs… | new | cut | M3 | n/a |
-| CAP-WS-MULTIWINDOW | Several native windows on different workspaces | cut | cut | M2 | n/a |
+| ID | Capability | v0.4 | Status | Milestone | Blocks release | Writes |
+|---|---|---|---|---|---|---|
+| CAP-SETUP-WIZARD | First-run wizard: currency → ledger mode (fresh / demo / existing) → optional AI → done | change | planned | M3 | yes | ledger |
+| CAP-SETUP-CURRENCY | Pick the default currency from 30 ISO codes or type a custom code | change | planned | M3 | yes | ledger |
+| CAP-SETUP-FRESH | Create a starter ledger with common accounts in the chosen currency | change | planned | M3 | yes | ledger |
+| CAP-SETUP-EXISTING | Use an existing ledger in place, without copying it (multi-file allowed) | change | planned | M2 | yes | config |
+| CAP-SETUP-DEMO-MODE | Wizard "demo" mode points `ledger_file` at `data/ledgers/fake.beancount` inside the user's own… | change | planned | M3 | yes | ledger |
+| CAP-SETUP-AI | Wizard step: skip, or bring your own model (provider, URL, key, model) | keep | planned | M6 | yes | config |
+| CAP-WS-LEDGER-SWITCH | Switch ledger by typing a path (or Browse) in Settings → Data | change | planned | M2 | yes | config |
+| CAP-WS-AUTOCREATE | A nonexistent ledger path (a typo, a moved file, a sync client mid-replace) silently creates a… | cut | cut | M2 | n/a | ledger |
+| CAP-WS-MULTI-ROOT | Several root ledgers in one folder, switched freely | keep | planned | M2 | yes | ledger |
+| CAP-WS-SHARED-CONFIG | Rules, dashboards, themes and settings shared by every ledger (one `config/`) | change | planned | M3 | yes | config |
+| CAP-WS-SWITCH | Switch between registered workspaces from the shell header (pinned and recent, with status per row) | new | planned | M2 | yes | config |
+| CAP-WS-PALETTE | Command palette (⌘/Ctrl-K) with "Switch workspace" over the recents | new | planned | M2 | yes | config |
+| CAP-WS-CREATE | New workspace: Blank (currency + starter accounts) or "from settings of <workspace>" (copies… | new | planned | M3 | yes | ledger |
+| CAP-WS-ADOPT | Open an existing folder or `.beancount` as a workspace | new | planned | M2 | yes | config |
+| CAP-WS-RECOVER-FIRST | Every unfinished save in the app is undone before any workspace opens (at start and at each switch) | new | planned | M2 | yes | ledger |
+| CAP-WS-PORTABLE | One folder layout that is safe to sync, version and tar: no secrets, caches, absolute paths or… | new | planned | M3 | yes | none |
+| CAP-WS-PORTABILITY-CHECK | "Portable ✓" or a per-file issue list, in Settings and as a switcher badge (same check as the… | new | planned | M3 | yes | none |
+| CAP-WS-EXPORT | Export a locked, consistent `.tar.zst` of the ledger set and `.finzytrack/` with file list and… | new | planned | M3 | no | config |
+| CAP-WS-IMPORT | Import a workspace archive: safe extract, assessment and portability check, "same workspace or a… | new | planned | M3 | no | ledger |
+| CAP-WS-BRING-IN | "Bring the ledger into this folder": copy an externally referenced ledger set in, making the… | new | planned | M3 | yes | ledger |
+| CAP-WS-TEST-COPY | Make a test copy: copies files (never an external reference) into a new workspace marked… | new | planned | M3 | yes | ledger |
+| CAP-WS-SECRETS | Per-workspace secret scope | new | planned | M3 | yes | config |
+| CAP-WS-SYNC-CONFLICT | Detect sync-client conflicted copies in the ledger set and `.finzytrack/` | new | planned | M2 | yes | none |
+| CAP-WS-DEMO | "Try the demo": a separate demo workspace (`kind: demo`), replaced on each release without asking… | new | planned | M3 | yes | ledger |
+| CAP-WS-REGISTRY | Manage workspaces: recents, pin, rename, reveal, locate, forget (never deletes files) | new | planned | M2 | yes | config |
+| CAP-WS-UNAVAILABLE | "Ledger unavailable" screen with Retry / Locate / Stay / Forget | new | planned | M2 | yes | config |
+| CAP-WS-COPY-ITEM | "Copy to workspace…" on a dashboard, rule or theme, keeping its origin | new | planned | M7 | yes | config |
+| CAP-WS-UI-MEMORY | UI memory (tabs, selections, layouts) scoped per workspace in localStorage | new | planned | M2 | yes | none |
+| CAP-WS-RESUME | Import sessions and AI threads survive a switch and come back with their workspace | new | planned | M9 | yes | config |
+| CAP-WS-ALLOW-AI | "Allow AI in this workspace" switch, stored in the folder so the policy travels (default on; AI… | new | planned | M6 | yes | config |
+| CAP-WS-SETTINGS | Settings → Workspace: name, folder, ledger root or external reference, documents folder… | new | planned | M3 | yes | ledger |
+| CAP-MIRROR-EXTERNAL | Stable read-only mirror path with Copy / Reveal, and a documented `r_*` view surface for outside… | new | planned | M7 | yes | none |
+| CAP-SHELL-OPEN | File association (alternate handler), single-instance forward, drag-and-drop a ledger, CLI… | new | planned | M2 | yes | config |
+| CAP-SHELL-RECENTS | OS "Open Recent" menu / jump list from the registry | new | planned | M2 | yes | config |
+| CAP-LEGACY-ADOPT | Bring in a v0.2/v0.3 install: detect it, classify each ledger, copy settings, rules and dashboards | new | planned | M3 | yes | ledger |
+| CAP-LEGACY-COEXIST | Share a ledger with a running legacy app: take every legacy lock, banner when a legacy app runs… | new | cut | M3 | n/a | config |
+| CAP-WS-MULTIWINDOW | Several native windows on different workspaces | cut | cut | M2 | n/a | none |
 
 ## Deferred by decision (listed so "did we do X?" has an answer; not counted below)
 
-| ID | Capability | v0.4 | Status | Milestone | Blocks release |
-|---|---|---|---|---|---|
-| CAP-WS-TRUST | Desktop trust prompt for ledgers that run code (plugins, `insert_pythonpath`) | deferred | deferred | — | no |
-| CAP-LEGACY-REIMPORT | Re-import settings from the legacy install later, with a per-file diff | deferred | deferred | — | no |
-| CAP-WS-LIBRARY | App-level user library of dashboards/rules referenced by workspaces | deferred | deferred | — | no |
-| CAP-HOSTED-WORKSPACES | Hosted multi-user workspaces | deferred | deferred | — | no |
-| CAP-FISCAL-YEAR | Fiscal year (start month and day) for presets, budgets, dashboards | deferred | deferred | — | no |
-| CAP-BUD-GOALS | Asset/Liability goals (a target balance by a date) | deferred | deferred | — | no |
-| CAP-DASH-GUI-BUILDER | GUI dashboard builder | deferred | deferred | — | no |
-| CAP-PHONE-UI | A phone UI | deferred | deferred | — | no |
-| CAP-INV-TAX-PROFILE | Jurisdiction rules (Indian debt MFs, holding periods) | deferred | deferred | — | no |
-| CAP-INV-TWR | Time-weighted return beside a benchmark | deferred | deferred | — | no |
-| CAP-SEC-KEYCHAIN | OS keychain for secrets | deferred | deferred | — | no |
-| CAP-MIRROR-INCREMENTAL | Incremental mirror diff | deferred | deferred | — | no |
+| ID | Capability | v0.4 | Status | Milestone | Blocks release | Writes |
+|---|---|---|---|---|---|---|
+| CAP-WS-TRUST | Desktop trust prompt for ledgers that run code (plugins, `insert_pythonpath`) | deferred | deferred | — | no | config |
+| CAP-LEGACY-REIMPORT | Re-import settings from the legacy install later, with a per-file diff | deferred | deferred | — | no | config |
+| CAP-WS-LIBRARY | App-level user library of dashboards/rules referenced by workspaces | deferred | deferred | — | no | config |
+| CAP-HOSTED-WORKSPACES | Hosted multi-user workspaces | deferred | deferred | — | no | ledger |
+| CAP-FISCAL-YEAR | Fiscal year (start month and day) for presets, budgets, dashboards | deferred | deferred | — | no | config |
+| CAP-BUD-GOALS | Asset/Liability goals (a target balance by a date) | deferred | deferred | — | no | ledger |
+| CAP-DASH-GUI-BUILDER | GUI dashboard builder | deferred | deferred | — | no | config |
+| CAP-PHONE-UI | A phone UI | deferred | deferred | — | no | ledger |
+| CAP-INV-TAX-PROFILE | Jurisdiction rules (Indian debt MFs, holding periods) | deferred | deferred | — | no | none |
+| CAP-INV-TWR | Time-weighted return beside a benchmark | deferred | deferred | — | no | none |
+| CAP-SEC-KEYCHAIN | OS keychain for secrets | deferred | deferred | — | no | config |
+| CAP-MIRROR-INCREMENTAL | Incremental mirror diff | deferred | deferred | — | no | config |
 
 ## Accounts
 
-| ID | Capability | v0.4 | Status | Milestone | Blocks release |
-|---|---|---|---|---|---|
-| CAP-ACCT-TREE | Accounts view: hierarchy with implicit (virtual) parents, rolled-up per-currency balances (top 2… | change | planned | M4 | yes |
-| CAP-ACCT-PERIOD-BAL | Period balances: Assets/Liabilities/Equity cumulative to the end date, Income/Expenses within the… | change | planned | M4 | yes |
-| CAP-ACCT-FILTERS | Filters: date preset or range, search (300 ms debounce), type, status | change | planned | M4 | yes |
-| CAP-ACCT-CARDS | Phone card list for accounts | cut | cut | M4 | n/a |
-| CAP-ACCT-CREATE | Create an account: name, open date, currencies (or any), description, banking details… | change | planned | M4 | yes |
-| CAP-ACCT-EDIT | Edit an account: metadata as a diff (set/remove), currencies, open date, close date of a closed… | change | planned | M4 | yes |
-| CAP-ACCT-RENAME | Rename an account, updating every transaction that references it | change | planned | M4 | yes |
-| CAP-ACCT-MERGE | "Merge into…" an existing account, with preview rules (target open over the span, currency… | new | planned | M4 | yes |
-| CAP-ACCT-DELETE | Delete an account, with an "also delete N transactions" checkbox whose count comes from the… | change | planned | M4 | yes |
-| CAP-ACCT-CLOSE | Close an account (date ≥ open date, optional reason) | keep | planned | M4 | yes |
-| CAP-ACCT-ASSERTIONS | Balance assertions per account: list with Pass/Fail and the error, add / edit / delete, optional… | change | planned | M4 | yes |
-| CAP-ACCT-STATEMENT | Account statement (register): transactions with a posting on the exact account, per-currency… | change | planned | M4 | yes |
-| CAP-ACCT-BREAKDOWN | "+N more" balance breakdown with currency search and sort | keep | planned | M4 | yes |
-| CAP-ACCT-DRAWER | Account detail drawer: dates, declared currencies, balance with a range note, current budget per… | change | planned | M4 | yes |
-| CAP-ACCT-DRILL | "View transactions" drill-through (Income/Expenses add `dateFrom`; balance sheet is cumulative) and… | change | planned | M4 | yes |
-| CAP-ACCT-DOC-COUNT | Paperclip badge with the document count per account | change | planned | M4 | yes |
-| CAP-ACCT-CUSTOM-ROOTS | Ledgers with custom root names (`option "name_assets"` etc.) work end to end | new | planned | M4 | yes |
-| CAP-ACCT-NEW-FROM-PICKER | "New account…" inside account pickers opens the normal account form blank | new | planned | M4 | yes |
+| ID | Capability | v0.4 | Status | Milestone | Blocks release | Writes |
+|---|---|---|---|---|---|---|
+| CAP-ACCT-TREE | Accounts view: hierarchy with implicit (virtual) parents, rolled-up per-currency balances (top 2… | change | planned | M4 | yes | none |
+| CAP-ACCT-PERIOD-BAL | Period balances: Assets/Liabilities/Equity cumulative to the end date, Income/Expenses within the… | change | planned | M4 | yes | none |
+| CAP-ACCT-FILTERS | Filters: date preset or range, search (300 ms debounce), type, status | change | planned | M4 | yes | none |
+| CAP-ACCT-CARDS | Phone card list for accounts | cut | cut | M4 | n/a | none |
+| CAP-ACCT-CREATE | Create an account: name, open date, currencies (or any), description, banking details… | change | planned | M4 | yes | ledger |
+| CAP-ACCT-EDIT | Edit an account: metadata as a diff (set/remove), currencies, open date, close date of a closed… | change | planned | M4 | yes | ledger |
+| CAP-ACCT-RENAME | Rename an account, updating every transaction that references it | change | planned | M4 | yes | ledger |
+| CAP-ACCT-MERGE | "Merge into…" an existing account, with preview rules (target open over the span, currency… | new | planned | M4 | yes | ledger |
+| CAP-ACCT-DELETE | Delete an account, with an "also delete N transactions" checkbox whose count comes from the… | change | planned | M4 | yes | ledger |
+| CAP-ACCT-CLOSE | Close an account (date ≥ open date, optional reason) | keep | planned | M4 | yes | ledger |
+| CAP-ACCT-ASSERTIONS | Balance assertions per account: list with Pass/Fail and the error, add / edit / delete, optional… | change | planned | M4 | yes | ledger |
+| CAP-ACCT-STATEMENT | Account statement (register): transactions with a posting on the exact account, per-currency… | change | planned | M4 | yes | none |
+| CAP-ACCT-BREAKDOWN | "+N more" balance breakdown with currency search and sort | keep | planned | M4 | yes | none |
+| CAP-ACCT-DRAWER | Account detail drawer: dates, declared currencies, balance with a range note, current budget per… | change | planned | M4 | yes | none |
+| CAP-ACCT-DRILL | "View transactions" drill-through (Income/Expenses add `dateFrom`; balance sheet is cumulative) and… | change | planned | M4 | yes | none |
+| CAP-ACCT-DOC-COUNT | Paperclip badge with the document count per account | change | planned | M4 | yes | none |
+| CAP-ACCT-CUSTOM-ROOTS | Ledgers with custom root names (`option "name_assets"` etc.) work end to end | new | planned | M4 | yes | none |
+| CAP-ACCT-NEW-FROM-PICKER | "New account…" inside account pickers opens the normal account form blank | new | planned | M4 | yes | ledger |
 
 ## Transactions
 
-| ID | Capability | v0.4 | Status | Milestone | Blocks release |
-|---|---|---|---|---|---|
-| CAP-TXN-QUERY | Filter panel: date range with presets (default last 90 days), amount > / < (absolute), search… | change | planned | M5 | yes |
-| CAP-TXN-DEEPLINK | URL parameters prefill the filters and run the query | change | planned | M5 | yes |
-| CAP-TXN-GRID | Ledger grid: one row per posting, transaction columns rowspanned, 19 columns with visibility and… | change | planned | M5 | yes |
-| CAP-TXN-INLINE-EDIT | Inline edit of date, flag, payee, memo, narration, tags/links (`#`, `^`, macOS `ˆ`), account… | change | planned | M5 | yes |
-| CAP-TXN-SAVE | Save only the modified transactions ("Save Changes (N)"), Reset, unsaved guard on route leave and… | change | planned | M5 | yes |
-| CAP-TXN-MODIFIED | Modified marker per row and an in-table diff ("Show changes": old struck through over new) | keep | planned | M5 | yes |
-| CAP-TXN-QUICKFIND | Quick-find over the loaded rows (date, payee, narration, tags, links, account, currency, amount) | change | planned | M5 | yes |
-| CAP-TXN-SELECT | Select transactions: per row, select all visible, Shift-click ranges | keep | planned | M5 | yes |
-| CAP-TXN-BULK | Bulk edits on the selection: replace account, add/remove tag or link, set flag, set/append payee or… | change | planned | M5 | yes |
-| CAP-TXN-OPLOG | Staged operation list with per-operation Undo | change | planned | M5 | yes |
-| CAP-TXN-BULK-CATEGORIZE | Autocategorize the selected transactions that have one unknown-account leg, as one undoable… | change | planned | M6 | yes |
-| CAP-TXN-DELETE | Delete one row or the selection, written immediately after a confirm | change | planned | M5 | yes |
-| CAP-TXN-STATUS | Info cell: document count, unbalanced ⚠, duplicate, categorize confidence, modified, new | change | planned | M5 | yes |
-| CAP-TXN-SUMMARY | Summary: edited, unbalanced, per top-level account totals over the quick-find set | change | planned | M5 | yes |
-| CAP-TXN-KEYBOARD | Keyboard: ↑/↓ between cells and postings, Alt+←/→ across columns, F2 to the first editable cell… | change | planned | M5 | yes |
-| CAP-TXN-METADATA | Edit free metadata fields in the transaction drawer, with key validation, reserved and duplicate… | keep | planned | M5 | yes |
-| CAP-TXN-CARDS | Phone card-list editor | cut | cut | M5 | n/a |
+| ID | Capability | v0.4 | Status | Milestone | Blocks release | Writes |
+|---|---|---|---|---|---|---|
+| CAP-TXN-QUERY | Filter panel: date range with presets (default last 90 days), amount > / < (absolute), search… | change | planned | M5 | yes | none |
+| CAP-TXN-DEEPLINK | URL parameters prefill the filters and run the query | change | planned | M5 | yes | none |
+| CAP-TXN-GRID | Ledger grid: one row per posting, transaction columns rowspanned, 19 columns with visibility and… | change | planned | M5 | yes | none |
+| CAP-TXN-INLINE-EDIT | Inline edit of date, flag, payee, memo, narration, tags/links (`#`, `^`, macOS `ˆ`), account… | change | planned | M5 | yes | ledger |
+| CAP-TXN-SAVE | Save only the modified transactions ("Save Changes (N)"), Reset, unsaved guard on route leave and… | change | planned | M5 | yes | ledger |
+| CAP-TXN-MODIFIED | Modified marker per row and an in-table diff ("Show changes": old struck through over new) | keep | planned | M5 | yes | none |
+| CAP-TXN-QUICKFIND | Quick-find over the loaded rows (date, payee, narration, tags, links, account, currency, amount) | change | planned | M5 | yes | none |
+| CAP-TXN-SELECT | Select transactions: per row, select all visible, Shift-click ranges | keep | planned | M5 | yes | none |
+| CAP-TXN-BULK | Bulk edits on the selection: replace account, add/remove tag or link, set flag, set/append payee or… | change | planned | M5 | yes | ledger |
+| CAP-TXN-OPLOG | Staged operation list with per-operation Undo | change | planned | M5 | yes | ledger |
+| CAP-TXN-BULK-CATEGORIZE | Autocategorize the selected transactions that have one unknown-account leg, as one undoable… | change | planned | M6 | yes | ledger |
+| CAP-TXN-DELETE | Delete one row or the selection, written immediately after a confirm | change | planned | M5 | yes | ledger |
+| CAP-TXN-STATUS | Info cell: document count, unbalanced ⚠, duplicate, categorize confidence, modified, new | change | planned | M5 | yes | none |
+| CAP-TXN-SUMMARY | Summary: edited, unbalanced, per top-level account totals over the quick-find set | change | planned | M5 | yes | none |
+| CAP-TXN-KEYBOARD | Keyboard: ↑/↓ between cells and postings, Alt+←/→ across columns, F2 to the first editable cell… | change | planned | M5 | yes | none |
+| CAP-TXN-METADATA | Edit free metadata fields in the transaction drawer, with key validation, reserved and duplicate… | keep | planned | M5 | yes | ledger |
+| CAP-TXN-CARDS | Phone card-list editor | cut | cut | M5 | n/a | ledger |
 
 ## Import
 
-| ID | Capability | v0.4 | Status | Milestone | Blocks release |
-|---|---|---|---|---|---|
-| CAP-IMP-OFX | OFX/QFX import: parsed in the browser, file summary (count, date range, balance), account and… | change | planned | M6 | yes |
-| CAP-IMP-OFX-DETECT | Detect the account from the OFX `ACCTID` via `ofx_mappings.yaml` | change | planned | M6 | yes |
-| CAP-IMP-OFX-CREATE-ACCT | "Learn account" offers to create a missing account (native confirm, opened today) | cut | cut | M6 | n/a |
-| CAP-IMP-OFX-MAPPINGS | Settings → Import Rules → OFX: raw YAML editor for `ofx_mappings.yaml` | cut | cut | M6 | n/a |
-| CAP-IMP-CSV | CSV import with a rule: rule picker, invalid-rule banner, Reload, 5-row preview, "account not in… | change | planned | M6 | yes |
-| CAP-IMP-XLS | XLS/XLSX import with a rule (sheet by index or name) | change | planned | M6 | yes |
-| CAP-IMP-RULES-TABULAR | CSV/XLS rule files: column mappings, date formats, amount parsing (decimal separator, cleanup… | change | planned | M6 | yes |
-| CAP-IMP-RULE-EDITOR | Settings → Import Rules: list per type (valid and invalid with reason), YAML editor, New from… | change | planned | M6 | yes |
-| CAP-IMP-SEED-RULES | Shipped example rules: BofA and Axis CSV, Axis and ICICI XLS, Axis and ICICI email | change | planned | M6 | yes |
-| CAP-IMP-EMAIL | Email import: IMAP profiles, date range, regex or AI mode, Test Connection, Reload, fetch with… | change | planned | M6 | yes |
-| CAP-IMP-EMAIL-RULES | Email rule files: `imap_server` with `${ENV}` expansion, `bank_emails`, `body_keyword`… | change | planned | M6 | yes |
-| CAP-IMP-EMAIL-AI | AI parsing mode for email bodies | change | planned | M6 | yes |
-| CAP-IMP-EMAIL-TRIAL | Try a rule's extraction on one email (used when writing rules) | keep | planned | M6 | yes |
-| CAP-IMP-AI-PARSE | AI file import: CSV, TSV, XLS/XLSX, PDF, EML, JPG/PNG/GIF/WebP | change | planned | M6 | yes |
-| CAP-IMP-CAS-HANDOVER | The AI import recognizes a mutual-fund CAS and hands over without sending it to the AI | change | planned | M8 | yes |
-| CAP-IMP-NL | Natural-language entry ("Paid $45 for dinner…", ⌘/Ctrl+Enter) | change | planned | M6 | yes |
-| CAP-IMP-BLANK | Add a blank transaction row for a chosen account and currency | keep | planned | M6 | yes |
-| CAP-IMP-REVIEW | Review table: drafts from several files and sources accumulate | change | planned | M6 | yes |
-| CAP-IMP-SESSION-PERSIST | An import session survives tab switches and an app restart (spilled to a machine-local file… | new | planned | M6 | yes |
-| CAP-IMP-AUTOCAT | Autocategorize staged rows with the classifier or the AI engine | change | planned | M6 | yes |
-| CAP-IMP-DEDUPE | Duplicate detection (exact id/hash, then fuzzy) with a comparison dialog: Keep this / Remove as… | change | planned | M6 | yes |
-| CAP-IMP-TRANSFER-PAIR | Matching outcomes beyond "duplicate": an imported line that is the other side of a transfer already… | new | planned | M6 | yes |
-| CAP-IMP-BUCKETS | Every row of a file is accounted for: a line, rejected with a reason, or a recognised… | new | planned | M6 | yes |
-| CAP-IMP-ANCHOR-CHECK | The source account must be an open Assets/Liabilities account over the lines' dates (v0.3 shows… | change | planned | M6 | yes |
-| CAP-IMP-FX-PENDING | Foreign-currency card lines (original amount in metadata, price on the expense leg if shown) and… | new | planned | M6 | yes |
-| CAP-IMP-COMMIT | Register: confirm when duplicates or unbalanced rows exist ("Register Anyway"), then write, routed… | change | planned | M6 | yes |
+| ID | Capability | v0.4 | Status | Milestone | Blocks release | Writes |
+|---|---|---|---|---|---|---|
+| CAP-IMP-OFX | OFX/QFX import: parsed in the browser, file summary (count, date range, balance), account and… | change | planned | M6 | yes | none |
+| CAP-IMP-OFX-DETECT | Detect the account from the OFX `ACCTID` via `ofx_mappings.yaml` | change | planned | M6 | yes | ledger |
+| CAP-IMP-OFX-CREATE-ACCT | "Learn account" offers to create a missing account (native confirm, opened today) | cut | cut | M6 | n/a | ledger |
+| CAP-IMP-OFX-MAPPINGS | Settings → Import Rules → OFX: raw YAML editor for `ofx_mappings.yaml` | cut | cut | M6 | n/a | config |
+| CAP-IMP-CSV | CSV import with a rule: rule picker, invalid-rule banner, Reload, 5-row preview, "account not in… | change | planned | M6 | yes | none |
+| CAP-IMP-XLS | XLS/XLSX import with a rule (sheet by index or name) | change | planned | M6 | yes | none |
+| CAP-IMP-RULES-TABULAR | CSV/XLS rule files: column mappings, date formats, amount parsing (decimal separator, cleanup… | change | planned | M6 | yes | config |
+| CAP-IMP-RULE-EDITOR | Settings → Import Rules: list per type (valid and invalid with reason), YAML editor, New from… | change | planned | M6 | yes | config |
+| CAP-IMP-SEED-RULES | Shipped example rules: BofA and Axis CSV, Axis and ICICI XLS, Axis and ICICI email | change | planned | M6 | yes | none |
+| CAP-IMP-EMAIL | Email import: IMAP profiles, date range, regex or AI mode, Test Connection, Reload, fetch with… | change | planned | M6 | yes | config |
+| CAP-IMP-EMAIL-RULES | Email rule files: `imap_server` with `${ENV}` expansion, `bank_emails`, `body_keyword`… | change | planned | M6 | yes | config |
+| CAP-IMP-EMAIL-AI | AI parsing mode for email bodies | change | planned | M6 | yes | none |
+| CAP-IMP-EMAIL-TRIAL | Try a rule's extraction on one email (used when writing rules) | keep | planned | M6 | yes | none |
+| CAP-IMP-AI-PARSE | AI file import: CSV, TSV, XLS/XLSX, PDF, EML, JPG/PNG/GIF/WebP | change | planned | M6 | yes | none |
+| CAP-IMP-CAS-HANDOVER | The AI import recognizes a mutual-fund CAS and hands over without sending it to the AI | change | planned | M8 | yes | none |
+| CAP-IMP-NL | Natural-language entry ("Paid $45 for dinner…", ⌘/Ctrl+Enter) | change | planned | M6 | yes | none |
+| CAP-IMP-BLANK | Add a blank transaction row for a chosen account and currency | keep | planned | M6 | yes | ledger |
+| CAP-IMP-REVIEW | Review table: drafts from several files and sources accumulate | change | planned | M6 | yes | config |
+| CAP-IMP-SESSION-PERSIST | An import session survives tab switches and an app restart (spilled to a machine-local file… | new | planned | M6 | yes | config |
+| CAP-IMP-AUTOCAT | Autocategorize staged rows with the classifier or the AI engine | change | planned | M6 | yes | config |
+| CAP-IMP-DEDUPE | Duplicate detection (exact id/hash, then fuzzy) with a comparison dialog: Keep this / Remove as… | change | planned | M6 | yes | ledger |
+| CAP-IMP-TRANSFER-PAIR | Matching outcomes beyond "duplicate": an imported line that is the other side of a transfer already… | new | planned | M6 | yes | ledger |
+| CAP-IMP-BUCKETS | Every row of a file is accounted for: a line, rejected with a reason, or a recognised… | new | planned | M6 | yes | none |
+| CAP-IMP-ANCHOR-CHECK | The source account must be an open Assets/Liabilities account over the lines' dates (v0.3 shows… | change | planned | M6 | yes | none |
+| CAP-IMP-FX-PENDING | Foreign-currency card lines (original amount in metadata, price on the expense leg if shown) and… | new | planned | M6 | yes | ledger |
+| CAP-IMP-COMMIT | Register: confirm when duplicates or unbalanced rows exist ("Register Anyway"), then write, routed… | change | planned | M6 | yes | ledger |
 
 ## Reconciliation
 
-| ID | Capability | v0.4 | Status | Milestone | Blocks release |
-|---|---|---|---|---|---|
-| CAP-RECON-STATEMENT | "My balance doesn't match": give a statement (PDF, CSV/XLS, OFX, a pasted list or screenshot) and… | new | planned | M6 | yes |
-| CAP-RECON-IMPORT-CHECK | During import, opening balance + lines = closing balance is checked, and a `balance` assertion is… | new | planned | M6 | yes |
-| CAP-RECON-AUTO-ACCEPT | The offered assertion is accepted by default only when the internal check passed, the day is fully… | new | planned | M6 | yes |
-| CAP-RECON-THROUGH | Per account and currency: "reconciled through <date>" and the difference, derived from `balance`… | new | planned | M6 | yes |
-| CAP-RECON-ASSISTANT | The assistant can parse a pasted statement and explain a residual, using the same matcher | new | planned | M9 | yes |
+| ID | Capability | v0.4 | Status | Milestone | Blocks release | Writes |
+|---|---|---|---|---|---|---|
+| CAP-RECON-STATEMENT | "My balance doesn't match": give a statement (PDF, CSV/XLS, OFX, a pasted list or screenshot) and… | new | planned | M6 | yes | ledger |
+| CAP-RECON-IMPORT-CHECK | During import, opening balance + lines = closing balance is checked, and a `balance` assertion is… | new | planned | M6 | yes | ledger |
+| CAP-RECON-AUTO-ACCEPT | The offered assertion is accepted by default only when the internal check passed, the day is fully… | new | planned | M6 | yes | ledger |
+| CAP-RECON-THROUGH | Per account and currency: "reconciled through <date>" and the difference, derived from `balance`… | new | planned | M6 | yes | none |
+| CAP-RECON-ASSISTANT | The assistant can parse a pasted statement and explain a residual, using the same matcher | new | planned | M9 | yes | none |
 
 ## Runtime, authoring and format
 
-| ID | Capability | v0.4 | Status | Milestone | Blocks release |
-|---|---|---|---|---|---|
-| CAP-DASH-TABS | Dashboard tabs: open, close, reorder (drag, Alt+←/→), persisted and synced across browser tabs… | keep | planned | M7 | yes |
-| CAP-DASH-PICKER | Dashboard picker: add, "Added" badge, delete a user recipe (timestamped backup kept) | keep | planned | M7 | yes |
-| CAP-DASH-URL | URL state `?tab=<id>&<param>=…` | change | planned | M7 | yes |
-| CAP-DASH-LOAD-ERRORS | Banners for recipe files that fail to load (invalid JSON, N validation errors) and for duplicate… | change | planned | M7 | yes |
-| CAP-DASH-RELOAD | Reload recipes from the toolbar | change | planned | M7 | yes |
-| CAP-DASH-RUN | Run a dashboard: per-widget steps (query, compute, transform) as a DAG, dashboard-level shared… | change | planned | M7 | yes |
-| CAP-DASH-PARAMS | Parameter bar: date / select / number / boolean controls, `optionsFrom` sources… | change | planned | M7 | yes |
-| CAP-DASH-LINKS | Click-through links: route links with templated queries, per-series chart links, `select`… | change | planned | M7 | yes |
-| CAP-DASH-TITLE-TOKENS | `{{params.x:format}}` tokens in widget titles | keep | planned | M7 | yes |
-| CAP-DASH-HELP | Widget help text on hover | change | planned | M7 | yes |
-| CAP-DASH-MULTICURRENCY | Dashboard currency filter (All or one) cascading to widget pickers | change | planned | M7 | yes |
-| CAP-DASH-THEMES | Dashboard color themes (Dusty Spectrum, Quiet Slate, Vivid Jewel), picker in Settings → Dashboards… | change | planned | M7 | yes |
-| CAP-DASH-DARK | Charts and tables follow dark mode | keep | planned | M7 | yes |
-| CAP-DASH-METAHINT | Dismissible "add details" offer above a dashboard when recognized metadata is unset, linking to… | keep | planned | M7 | yes |
-| CAP-DASH-ACTION-PRICES | Dashboard action `update-prices`: button with the price date in use and how many holdings need a… | keep | planned | M8 | yes |
-| CAP-DASH-EDITOR | Settings → Dashboards: recipe file list, JSON editor, New, Save (backup on overwrite), Delete… | change | planned | M7 | yes |
-| CAP-DASH-FILES | Edit recipe files directly in `config/recipes/dashboards/` | change | planned | M7 | yes |
-| CAP-DASH-VALIDATION | Recipe validation (dashboard, widget and step rules; id-conflict detection) on save and for the AI | change | planned | M7 | yes |
-| CAP-DASH-SCHEMA | Recipe format v2 (`schemaVersion: 2`, steps/DAG), one JSON Schema with generated TS, enums and AI… | change | planned | M7 | yes |
-| CAP-DASH-OPTIONS-SAFE | ECharts `options` pass-through (silent allow-list: `calendar`, `visualMap`, `radar`, `graphic`… | change | planned | M7 | yes |
-| CAP-DASH-SEED-FIX | Updated shipped dashboards: pristine copies refreshed | change | planned | M7 | yes |
-| CAP-DASH-WIDGET-LIBRARY | Dashboards reference shipped widgets by id and override only what changes, so fixes flow through | new | planned | M7 | yes |
-| CAP-DASH-LEDGER-STEP | Semantic `ledger` step: measures (balance, flow, value, cost, unrealized and realized gain, income… | new | planned | M7 | yes |
-| CAP-DASH-SQL-OVER-STEPS | SQL over the outputs of earlier steps (an in-memory `steps` schema) | new | planned | M7 | yes |
-| CAP-DASH-SQL-HELPERS | SQL helpers for exact, composable user SQL: `dsum` (REAL from an exact sum), `price_asof` | new | planned | M7 | yes |
-| CAP-DASH-PARTIAL-RUN | Run a single widget or a partial recipe and get column metadata, for live preview | new | planned | M7 | yes |
+| ID | Capability | v0.4 | Status | Milestone | Blocks release | Writes |
+|---|---|---|---|---|---|---|
+| CAP-DASH-TABS | Dashboard tabs: open, close, reorder (drag, Alt+←/→), persisted and synced across browser tabs… | keep | planned | M7 | yes | none |
+| CAP-DASH-PICKER | Dashboard picker: add, "Added" badge, delete a user recipe (timestamped backup kept) | keep | planned | M7 | yes | config |
+| CAP-DASH-URL | URL state `?tab=<id>&<param>=…` | change | planned | M7 | yes | none |
+| CAP-DASH-LOAD-ERRORS | Banners for recipe files that fail to load (invalid JSON, N validation errors) and for duplicate… | change | planned | M7 | yes | none |
+| CAP-DASH-RELOAD | Reload recipes from the toolbar | change | planned | M7 | yes | none |
+| CAP-DASH-RUN | Run a dashboard: per-widget steps (query, compute, transform) as a DAG, dashboard-level shared… | change | planned | M7 | yes | none |
+| CAP-DASH-PARAMS | Parameter bar: date / select / number / boolean controls, `optionsFrom` sources… | change | planned | M7 | yes | none |
+| CAP-DASH-LINKS | Click-through links: route links with templated queries, per-series chart links, `select`… | change | planned | M7 | yes | none |
+| CAP-DASH-TITLE-TOKENS | `{{params.x:format}}` tokens in widget titles | keep | planned | M7 | yes | none |
+| CAP-DASH-HELP | Widget help text on hover | change | planned | M7 | yes | none |
+| CAP-DASH-MULTICURRENCY | Dashboard currency filter (All or one) cascading to widget pickers | change | planned | M7 | yes | none |
+| CAP-DASH-THEMES | Dashboard color themes (Dusty Spectrum, Quiet Slate, Vivid Jewel), picker in Settings → Dashboards… | change | planned | M7 | yes | config |
+| CAP-DASH-DARK | Charts and tables follow dark mode | keep | planned | M7 | yes | none |
+| CAP-DASH-METAHINT | Dismissible "add details" offer above a dashboard when recognized metadata is unset, linking to… | keep | planned | M7 | yes | none |
+| CAP-DASH-ACTION-PRICES | Dashboard action `update-prices`: button with the price date in use and how many holdings need a… | keep | planned | M8 | yes | ledger |
+| CAP-DASH-EDITOR | Settings → Dashboards: recipe file list, JSON editor, New, Save (backup on overwrite), Delete… | change | planned | M7 | yes | config |
+| CAP-DASH-FILES | Edit recipe files directly in `config/recipes/dashboards/` | change | planned | M7 | yes | none |
+| CAP-DASH-VALIDATION | Recipe validation (dashboard, widget and step rules; id-conflict detection) on save and for the AI | change | planned | M7 | yes | none |
+| CAP-DASH-SCHEMA | Recipe format v2 (`schemaVersion: 2`, steps/DAG), one JSON Schema with generated TS, enums and AI… | change | planned | M7 | yes | none |
+| CAP-DASH-OPTIONS-SAFE | ECharts `options` pass-through (silent allow-list: `calendar`, `visualMap`, `radar`, `graphic`… | change | planned | M7 | yes | none |
+| CAP-DASH-SEED-FIX | Updated shipped dashboards: pristine copies refreshed | change | planned | M7 | yes | config |
+| CAP-DASH-WIDGET-LIBRARY | Dashboards reference shipped widgets by id and override only what changes, so fixes flow through | new | planned | M7 | yes | none |
+| CAP-DASH-LEDGER-STEP | Semantic `ledger` step: measures (balance, flow, value, cost, unrealized and realized gain, income… | new | planned | M7 | yes | none |
+| CAP-DASH-SQL-OVER-STEPS | SQL over the outputs of earlier steps (an in-memory `steps` schema) | new | planned | M7 | yes | none |
+| CAP-DASH-SQL-HELPERS | SQL helpers for exact, composable user SQL: `dsum` (REAL from an exact sum), `price_asof` | new | planned | M7 | yes | none |
+| CAP-DASH-PARTIAL-RUN | Run a single widget or a partial recipe and get column metadata, for live preview | new | planned | M7 | yes | none |
 
 ## Shipped (seed) dashboards
 
-| ID | Capability | v0.4 | Status | Milestone | Blocks release |
-|---|---|---|---|---|---|
-| CAP-DASH-SEED-OVERVIEW | Financial Overview: Net Worth, Total Assets, Total Liabilities, assets and liabilities breakdown… | change | planned | M7 | yes |
-| CAP-DASH-SEED-MONTH | Month Summary: income, expenses, savings, expense treemap (year and month pickers) | keep | planned | M7 | yes |
-| CAP-DASH-SEED-YEAR | Year Summary: income, expenses, savings, monthly income vs expenses, expenses pivot | keep | planned | M7 | yes |
-| CAP-DASH-SEED-BALANCES | Account Balances: tree-table as of a date with the assertion check | change | planned | M7 | yes |
-| CAP-DASH-SEED-HOLDINGS | Holdings & Performance: Invested, Current Value, Unrealized Gain, Value Over Time, Holdings, Market… | change | planned | M8 | yes |
-| CAP-DASH-SEED-CASH | Cash & Deposits: total cash and deposits, Unattributed Interest KPI ("All interest attributed" when… | change | planned | M8 | yes |
-| CAP-DASH-SEED-RETURNS | Returns & Income: interest and dividends (KPI, over time, by source), realized gain (KPI, by year… | change | planned | M8 | yes |
-| CAP-DASH-SEED-GALLERY | Widget Gallery: one example of every viz and chart type | keep | planned | M7 | yes |
+| ID | Capability | v0.4 | Status | Milestone | Blocks release | Writes |
+|---|---|---|---|---|---|---|
+| CAP-DASH-SEED-OVERVIEW | Financial Overview: Net Worth, Total Assets, Total Liabilities, assets and liabilities breakdown… | change | planned | M7 | yes | ledger |
+| CAP-DASH-SEED-MONTH | Month Summary: income, expenses, savings, expense treemap (year and month pickers) | keep | planned | M7 | yes | none |
+| CAP-DASH-SEED-YEAR | Year Summary: income, expenses, savings, monthly income vs expenses, expenses pivot | keep | planned | M7 | yes | none |
+| CAP-DASH-SEED-BALANCES | Account Balances: tree-table as of a date with the assertion check | change | planned | M7 | yes | none |
+| CAP-DASH-SEED-HOLDINGS | Holdings & Performance: Invested, Current Value, Unrealized Gain, Value Over Time, Holdings, Market… | change | planned | M8 | yes | none |
+| CAP-DASH-SEED-CASH | Cash & Deposits: total cash and deposits, Unattributed Interest KPI ("All interest attributed" when… | change | planned | M8 | yes | none |
+| CAP-DASH-SEED-RETURNS | Returns & Income: interest and dividends (KPI, over time, by source), realized gain (KPI, by year… | change | planned | M8 | yes | none |
+| CAP-DASH-SEED-GALLERY | Widget Gallery: one example of every viz and chart type | keep | planned | M7 | yes | none |
 
 ## Catalog: compute functions
 
-| ID | Capability | v0.4 | Status | Milestone | Blocks release |
-|---|---|---|---|---|---|
-| CAP-FN-BUDGET-FOR-RANGE | `budget_for_range`: resolve budgets over a date range, one row per budgeted (account, currency) | change | planned | M7 | yes |
-| CAP-FN-CASH-INSTRUMENTS | `cash_instruments`: cash and fixed-income accounts with interest earned (attributed), effective… | change | planned | M8 | yes |
-| CAP-FN-PORTFOLIO-RETURNS | `portfolio_returns`: XIRR (money-weighted, windowed, per asset class) and simple gain | cut | cut | M8 | n/a |
-| CAP-FN-PORTFOLIO-SERIES | `portfolio_series`: market value and cost of holdings at sampled dates | cut | cut | M8 | n/a |
-| CAP-FN-LEDGER-MEASURES | The financial primitives as parameterized server functions: as-of balances, valuation, flows… | new | planned | M7 | yes |
+| ID | Capability | v0.4 | Status | Milestone | Blocks release | Writes |
+|---|---|---|---|---|---|---|
+| CAP-FN-BUDGET-FOR-RANGE | `budget_for_range`: resolve budgets over a date range, one row per budgeted (account, currency) | change | planned | M7 | yes | none |
+| CAP-FN-CASH-INSTRUMENTS | `cash_instruments`: cash and fixed-income accounts with interest earned (attributed), effective… | change | planned | M8 | yes | none |
+| CAP-FN-PORTFOLIO-RETURNS | `portfolio_returns`: XIRR (money-weighted, windowed, per asset class) and simple gain | cut | cut | M8 | n/a | none |
+| CAP-FN-PORTFOLIO-SERIES | `portfolio_series`: market value and cost of holdings at sampled dates | cut | cut | M8 | n/a | none |
+| CAP-FN-LEDGER-MEASURES | The financial primitives as parameterized server functions: as-of balances, valuation, flows… | new | planned | M7 | yes | none |
 
 ## Catalog: transforms
 
-| ID | Capability | v0.4 | Status | Milestone | Blocks release |
-|---|---|---|---|---|---|
-| CAP-TX-NONE | `none`: rows unchanged | change | planned | M7 | yes |
-| CAP-TX-FIRSTROW | `firstRow`: the first row object | change | planned | M7 | yes |
-| CAP-TX-FIRSTVALUE | `firstValue`: first value of the first row | change | planned | M7 | yes |
-| CAP-TX-SORTBY | `sortBy`: sorted rows | change | planned | M7 | yes |
-| CAP-TX-LIMIT | `limit`: first N rows | change | planned | M7 | yes |
-| CAP-TX-PLUCK | `pluck`: an array of one field | change | planned | M7 | yes |
-| CAP-TX-WHERE | `where`: rows matching a predicate | change | planned | M7 | yes |
-| CAP-TX-PIVOT | `pivot`: rows → pivot data (rows × columns) | change | planned | M7 | yes |
-| CAP-TX-APPENDTOTAL | `appendTotal`: rows (optionally top N) plus a grand-total row over the full input | change | planned | M7 | yes |
-| CAP-TX-GROUPBY | `groupBy`: one row per key with exact sums | change | planned | M7 | yes |
-| CAP-TX-RUNNINGSUM | `runningSum`: cumulative columns | change | planned | M7 | yes |
-| CAP-TX-JOINBUDGETACTUAL | `joinBudgetActual`: budget vs actual variance rows (remainder mode adds Unbudgeted and Total) | change | planned | M7 | yes |
-| CAP-TX-JOINBYPERIOD | `joinByPeriod`: budget and actual per period with calendar bounds | change | planned | M7 | yes |
-| CAP-TX-JOINBUDGETACTUALBYPERIOD | `joinBudgetActualByPeriod`: one row per budgeted (account, currency, period) with remaining and %… | change | planned | M7 | yes |
-| CAP-TX-BUDGETSUMMARY | `budgetSummary`: one aggregate row (maximal named subtree, no double count) | change | planned | M7 | yes |
-| CAP-TX-UNBUDGETED | `unbudgetedSpending`: actuals for accounts covered by no budget | change | planned | M7 | yes |
-| CAP-TX-ENVELOPEROLLOVER | `envelopeRollover`: stateless rollover per period (available, carryover, overspent) | change | planned | M7 | yes |
-| CAP-TX-ENVELOPEBALANCES | `envelopeBalances`: inception-aware running envelope balance per account | change | planned | M7 | yes |
-| CAP-TX-BUDGETTREE | `budgetTree`: the total split into maximal budgeted children plus an `:Unbudgeted` remainder | change | planned | M7 | yes |
+| ID | Capability | v0.4 | Status | Milestone | Blocks release | Writes |
+|---|---|---|---|---|---|---|
+| CAP-TX-NONE | `none`: rows unchanged | change | planned | M7 | yes | none |
+| CAP-TX-FIRSTROW | `firstRow`: the first row object | change | planned | M7 | yes | none |
+| CAP-TX-FIRSTVALUE | `firstValue`: first value of the first row | change | planned | M7 | yes | none |
+| CAP-TX-SORTBY | `sortBy`: sorted rows | change | planned | M7 | yes | none |
+| CAP-TX-LIMIT | `limit`: first N rows | change | planned | M7 | yes | none |
+| CAP-TX-PLUCK | `pluck`: an array of one field | change | planned | M7 | yes | none |
+| CAP-TX-WHERE | `where`: rows matching a predicate | change | planned | M7 | yes | none |
+| CAP-TX-PIVOT | `pivot`: rows → pivot data (rows × columns) | change | planned | M7 | yes | none |
+| CAP-TX-APPENDTOTAL | `appendTotal`: rows (optionally top N) plus a grand-total row over the full input | change | planned | M7 | yes | none |
+| CAP-TX-GROUPBY | `groupBy`: one row per key with exact sums | change | planned | M7 | yes | none |
+| CAP-TX-RUNNINGSUM | `runningSum`: cumulative columns | change | planned | M7 | yes | none |
+| CAP-TX-JOINBUDGETACTUAL | `joinBudgetActual`: budget vs actual variance rows (remainder mode adds Unbudgeted and Total) | change | planned | M7 | yes | none |
+| CAP-TX-JOINBYPERIOD | `joinByPeriod`: budget and actual per period with calendar bounds | change | planned | M7 | yes | none |
+| CAP-TX-JOINBUDGETACTUALBYPERIOD | `joinBudgetActualByPeriod`: one row per budgeted (account, currency, period) with remaining and %… | change | planned | M7 | yes | none |
+| CAP-TX-BUDGETSUMMARY | `budgetSummary`: one aggregate row (maximal named subtree, no double count) | change | planned | M7 | yes | none |
+| CAP-TX-UNBUDGETED | `unbudgetedSpending`: actuals for accounts covered by no budget | change | planned | M7 | yes | none |
+| CAP-TX-ENVELOPEROLLOVER | `envelopeRollover`: stateless rollover per period (available, carryover, overspent) | change | planned | M7 | yes | none |
+| CAP-TX-ENVELOPEBALANCES | `envelopeBalances`: inception-aware running envelope balance per account | change | planned | M7 | yes | none |
+| CAP-TX-BUDGETTREE | `budgetTree`: the total split into maximal budgeted children plus an `:Unbudgeted` remainder | change | planned | M7 | yes | none |
 
 ## Catalog: visualization types
 
-| ID | Capability | v0.4 | Status | Milestone | Blocks release |
-|---|---|---|---|---|---|
-| CAP-VIZ-REGISTRY | Viz types declared in six places (schema, `vizRegistry.ts`, chart part lists, renderer chain… | change | planned | M7 | yes |
-| CAP-VIZ-KPI | `kpi`: one metric with icon and color, format, trend, secondary value, `multiCurrency` stack… | change | planned | M7 | yes |
-| CAP-VIZ-CHART | `chart`: ECharts with `chartType`, `options`, `encode`, series/axis label formats, click and… | change | planned | M7 | yes |
-| CAP-VIZ-TABLE | `table`: columns with formats, alignment, per-row currency, column links, `emptyText` | change | planned | M7 | yes |
-| CAP-VIZ-TREETABLE | `tree-table`: hierarchy from a path field (separator, skip levels, group by, label field, fold… | keep | planned | M7 | yes |
-| CAP-VIZ-PIVOT | `pivot`: row header, row and column totals, color by value, `warnAt`, value links, column lines… | keep | planned | M7 | yes |
-| CAP-VIZ-BUDGET | `budget-progress`: bars per account (budget, actual, remaining, % used, direction), `warnAt`… | change | planned | M7 | yes |
-| CAP-CHART-BAR | Chart type `bar` | keep | planned | M7 | yes |
-| CAP-CHART-LINE | Chart type `line` | keep | planned | M7 | yes |
-| CAP-CHART-PIE | Chart type `pie` | keep | planned | M7 | yes |
-| CAP-CHART-AREA | Chart type `area` | keep | planned | M7 | yes |
-| CAP-CHART-SCATTER | Chart type `scatter` | keep | planned | M7 | yes |
-| CAP-CHART-TREEMAP | Chart type `treemap` (data injected into the series; ≤ 0 values handled) | keep | planned | M7 | yes |
-| CAP-CHART-FUNNEL | Chart type `funnel` | keep | planned | M7 | yes |
-| CAP-CHART-GAUGE | Chart type `gauge` | keep | planned | M7 | yes |
-| CAP-CHART-CALENDAR | Chart type `calendar` (heat map by date) | change | planned | M7 | yes |
-| CAP-CHART-SANKEY | Chart type `sankey` (source, target, value, optional accounts) | change | planned | M7 | yes |
-| CAP-CHART-RADAR | Chart type `radar` | change | planned | M7 | yes |
-| CAP-CHART-SUNBURST | Chart type `sunburst` | keep | planned | M7 | yes |
-| CAP-VIZ-A11Y | Accessible charts: ECharts `aria` description, decal/marker patterns beyond colour, and a "Show as… | new | planned | M7 | yes |
+| ID | Capability | v0.4 | Status | Milestone | Blocks release | Writes |
+|---|---|---|---|---|---|---|
+| CAP-VIZ-REGISTRY | Viz types declared in six places (schema, `vizRegistry.ts`, chart part lists, renderer chain… | change | planned | M7 | yes | none |
+| CAP-VIZ-KPI | `kpi`: one metric with icon and color, format, trend, secondary value, `multiCurrency` stack… | change | planned | M7 | yes | none |
+| CAP-VIZ-CHART | `chart`: ECharts with `chartType`, `options`, `encode`, series/axis label formats, click and… | change | planned | M7 | yes | none |
+| CAP-VIZ-TABLE | `table`: columns with formats, alignment, per-row currency, column links, `emptyText` | change | planned | M7 | yes | none |
+| CAP-VIZ-TREETABLE | `tree-table`: hierarchy from a path field (separator, skip levels, group by, label field, fold… | keep | planned | M7 | yes | none |
+| CAP-VIZ-PIVOT | `pivot`: row header, row and column totals, color by value, `warnAt`, value links, column lines… | keep | planned | M7 | yes | none |
+| CAP-VIZ-BUDGET | `budget-progress`: bars per account (budget, actual, remaining, % used, direction), `warnAt`… | change | planned | M7 | yes | none |
+| CAP-CHART-BAR | Chart type `bar` | keep | planned | M7 | yes | none |
+| CAP-CHART-LINE | Chart type `line` | keep | planned | M7 | yes | none |
+| CAP-CHART-PIE | Chart type `pie` | keep | planned | M7 | yes | none |
+| CAP-CHART-AREA | Chart type `area` | keep | planned | M7 | yes | none |
+| CAP-CHART-SCATTER | Chart type `scatter` | keep | planned | M7 | yes | none |
+| CAP-CHART-TREEMAP | Chart type `treemap` (data injected into the series; ≤ 0 values handled) | keep | planned | M7 | yes | none |
+| CAP-CHART-FUNNEL | Chart type `funnel` | keep | planned | M7 | yes | none |
+| CAP-CHART-GAUGE | Chart type `gauge` | keep | planned | M7 | yes | none |
+| CAP-CHART-CALENDAR | Chart type `calendar` (heat map by date) | change | planned | M7 | yes | none |
+| CAP-CHART-SANKEY | Chart type `sankey` (source, target, value, optional accounts) | change | planned | M7 | yes | none |
+| CAP-CHART-RADAR | Chart type `radar` | change | planned | M7 | yes | none |
+| CAP-CHART-SUNBURST | Chart type `sunburst` | keep | planned | M7 | yes | none |
+| CAP-VIZ-A11Y | Accessible charts: ECharts `aria` description, decal/marker patterns beyond colour, and a "Show as… | new | planned | M7 | yes | none |
 
 ## Catalog: generators, formats, parameter sources, engines
 
-| ID | Capability | v0.4 | Status | Milestone | Blocks release |
-|---|---|---|---|---|---|
-| CAP-GEN-VALUE | Value generators `currentYear`, `currentMonth`, `defaultCurrency` | change | planned | M7 | yes |
-| CAP-GEN-OPTIONS | Option generators `yearRange`, `monthOptions`, `quarterOptions`, `accountTypeOptions`… | change | planned | M7 | yes |
-| CAP-GEN-DATES | Date generators `today`, `startOfMonth`, `endOfMonth`, `startOfYear`, `endOfYear` | change | planned | M7 | yes |
-| CAP-GEN-OPTIONS-FROM | Parameter `optionsFrom` sources: `currencies`, `holdings`, `commodities`, `years`, `accounts`… | change | planned | M7 | yes |
-| CAP-FMT-VALUE | Value formats: `currency`, `signedCurrency`, `percent`, `number`, `units`, `compact`, `date`… | change | planned | M7 | yes |
-| CAP-ENGINE-SQLITE | `query` steps in SQLite SQL over the mirror | change | planned | M7 | yes |
-| CAP-ENGINE-BQL | `query` steps with `engine: beanquery` (BQL) | change | planned | M7 | yes |
+| ID | Capability | v0.4 | Status | Milestone | Blocks release | Writes |
+|---|---|---|---|---|---|---|
+| CAP-GEN-VALUE | Value generators `currentYear`, `currentMonth`, `defaultCurrency` | change | planned | M7 | yes | none |
+| CAP-GEN-OPTIONS | Option generators `yearRange`, `monthOptions`, `quarterOptions`, `accountTypeOptions`… | change | planned | M7 | yes | none |
+| CAP-GEN-DATES | Date generators `today`, `startOfMonth`, `endOfMonth`, `startOfYear`, `endOfYear` | change | planned | M7 | yes | none |
+| CAP-GEN-OPTIONS-FROM | Parameter `optionsFrom` sources: `currencies`, `holdings`, `commodities`, `years`, `accounts`… | change | planned | M7 | yes | none |
+| CAP-FMT-VALUE | Value formats: `currency`, `signedCurrency`, `percent`, `number`, `units`, `compact`, `date`… | change | planned | M7 | yes | none |
+| CAP-ENGINE-SQLITE | `query` steps in SQLite SQL over the mirror | change | planned | M7 | yes | none |
+| CAP-ENGINE-BQL | `query` steps with `engine: beanquery` (BQL) | change | planned | M7 | yes | none |
 
 ## Analyze (SQL / BQL)
 
-| ID | Capability | v0.4 | Status | Milestone | Blocks release |
-|---|---|---|---|---|---|
-| CAP-QUERY-SQL | Query view, SQLite mode: editor, ⌘/Ctrl+Enter, "N rows in T ms", inline DB error, Clear | change | planned | M7 | yes |
-| CAP-QUERY-BQL | Query view, BQL mode (language toggle changes copy, placeholder and docs links) | change | planned | M7 | yes |
-| CAP-QUERY-SURFACE | The queryable mirror: `postings`, `accounts`, `account_balances`, `balance_assertions`… | change | planned | M7 | yes |
-| CAP-QUERY-NL | Quick query builder: describe a query in words, the AI writes SQL or BQL (⌘/Ctrl+Enter; disabled… | keep | planned | M7 | yes |
-| CAP-QUERY-RESULTS | Results table (raw columns; integers grouped, other numbers to 2 dp) | change | planned | M7 | yes |
-| CAP-QUERY-CHART | Chart the results: bar, line, pie, area, scatter, treemap | change | planned | M7 | yes |
+| ID | Capability | v0.4 | Status | Milestone | Blocks release | Writes |
+|---|---|---|---|---|---|---|
+| CAP-QUERY-SQL | Query view, SQLite mode: editor, ⌘/Ctrl+Enter, "N rows in T ms", inline DB error, Clear | change | planned | M7 | yes | none |
+| CAP-QUERY-BQL | Query view, BQL mode (language toggle changes copy, placeholder and docs links) | change | planned | M7 | yes | none |
+| CAP-QUERY-SURFACE | The queryable mirror: `postings`, `accounts`, `account_balances`, `balance_assertions`… | change | planned | M7 | yes | none |
+| CAP-QUERY-NL | Quick query builder: describe a query in words, the AI writes SQL or BQL (⌘/Ctrl+Enter; disabled… | keep | planned | M7 | yes | none |
+| CAP-QUERY-RESULTS | Results table (raw columns; integers grouped, other numbers to 2 dp) | change | planned | M7 | yes | none |
+| CAP-QUERY-CHART | Chart the results: bar, line, pie, area, scatter, treemap | change | planned | M7 | yes | none |
 
 ## Budgets
 
-| ID | Capability | v0.4 | Status | Milestone | Blocks release |
-|---|---|---|---|---|---|
-| CAP-BUD-DIRECTIVE | Budgets as `custom "budget"` directives: effective-dating, `none` ends a budget, inclusive-parent… | change | planned | M7 | yes |
-| CAP-BUD-VIEW | Budgets view: account filter, "budget as of" date, currency filter | change | planned | M7 | yes |
-| CAP-BUD-HISTORY | Budget history per row: end the budget as of a date (tombstone), edit or delete each directive | keep | planned | M7 | yes |
-| CAP-BUD-DASH-OVERVIEW | Budget: Overview (Budgeted, Spent, Remaining, Unbudgeted spending, progress by account) | change | planned | M7 | yes |
-| CAP-BUD-DASH-ENVELOPES | Budget: Envelopes (envelope balances, available, spent, in envelope now, balance over time) | change | planned | M7 | yes |
-| CAP-BUD-DASH-ZERO | Budget: Zero-based (total budget carved into children plus Unbudgeted) | change | planned | M7 | yes |
-| CAP-BUD-DASH-HISTORY | Budget: History (total budget vs actual by month, adherence heat-map) | change | planned | M7 | yes |
-| CAP-BUD-BUILD-OWN | Build your own budget dashboard (copy a demo, or ask the assistant with its budget guide) | change | planned | M7 | yes |
+| ID | Capability | v0.4 | Status | Milestone | Blocks release | Writes |
+|---|---|---|---|---|---|---|
+| CAP-BUD-DIRECTIVE | Budgets as `custom "budget"` directives: effective-dating, `none` ends a budget, inclusive-parent… | change | planned | M7 | yes | none |
+| CAP-BUD-VIEW | Budgets view: account filter, "budget as of" date, currency filter | change | planned | M7 | yes | ledger |
+| CAP-BUD-HISTORY | Budget history per row: end the budget as of a date (tombstone), edit or delete each directive | keep | planned | M7 | yes | ledger |
+| CAP-BUD-DASH-OVERVIEW | Budget: Overview (Budgeted, Spent, Remaining, Unbudgeted spending, progress by account) | change | planned | M7 | yes | none |
+| CAP-BUD-DASH-ENVELOPES | Budget: Envelopes (envelope balances, available, spent, in envelope now, balance over time) | change | planned | M7 | yes | none |
+| CAP-BUD-DASH-ZERO | Budget: Zero-based (total budget carved into children plus Unbudgeted) | change | planned | M7 | yes | none |
+| CAP-BUD-DASH-HISTORY | Budget: History (total budget vs actual by month, adherence heat-map) | change | planned | M7 | yes | none |
+| CAP-BUD-BUILD-OWN | Build your own budget dashboard (copy a demo, or ask the assistant with its budget guide) | change | planned | M7 | yes | config |
 
 ## Recording activity
 
-| ID | Capability | v0.4 | Status | Milestone | Blocks release |
-|---|---|---|---|---|---|
-| CAP-INV-QA-BUY | Quick action Buy: holding account, security, units, unit price, cash account, optional fee and fee… | keep | planned | M8 | yes |
-| CAP-INV-QA-DRIP | Quick action Reinvest: a reinvested dividend buys more units | keep | planned | M8 | yes |
-| CAP-INV-QA-DIVIDEND | Quick action Dividend paid to cash | keep | planned | M8 | yes |
-| CAP-INV-QA-SELL | Quick action Sell: app-side lot picking (FIFO, LIFO, HIFO, specific lots) with a live realized-gain… | change | planned | M8 | yes |
-| CAP-INV-QA-MERGER | Quick action Merger: a fund merges into another or changes face value | keep | planned | M8 | yes |
-| CAP-INV-QA-CD-MATURITY | Quick action CD Matures: principal and any final interest to another account | change | planned | M8 | yes |
-| CAP-INV-QA-INTEREST | Quick action Interest: credited to the instrument (compounding) or paid to another account | keep | planned | M8 | yes |
-| CAP-INV-QA-ADD-HOLDING | Quick action Add Holding: an existing position at average cost against an Equity opening account | keep | planned | M8 | yes |
-| CAP-INV-OPEN-DEPOSIT | Open Deposit: a new savings, CD or bond account with rate and maturity, an optional linked interest… | keep | planned | M8 | yes |
-| CAP-INV-STAGING | Quick actions stage drafts into a review table below the tabs | change | planned | M8 | yes |
-| CAP-INV-AI-EVENTS | AI file import and natural-language entry produce investment events (buys, sales, dividends… | change | planned | M8 | yes |
+| ID | Capability | v0.4 | Status | Milestone | Blocks release | Writes |
+|---|---|---|---|---|---|---|
+| CAP-INV-QA-BUY | Quick action Buy: holding account, security, units, unit price, cash account, optional fee and fee… | keep | planned | M8 | yes | ledger |
+| CAP-INV-QA-DRIP | Quick action Reinvest: a reinvested dividend buys more units | keep | planned | M8 | yes | ledger |
+| CAP-INV-QA-DIVIDEND | Quick action Dividend paid to cash | keep | planned | M8 | yes | ledger |
+| CAP-INV-QA-SELL | Quick action Sell: app-side lot picking (FIFO, LIFO, HIFO, specific lots) with a live realized-gain… | change | planned | M8 | yes | ledger |
+| CAP-INV-QA-MERGER | Quick action Merger: a fund merges into another or changes face value | keep | planned | M8 | yes | ledger |
+| CAP-INV-QA-CD-MATURITY | Quick action CD Matures: principal and any final interest to another account | change | planned | M8 | yes | ledger |
+| CAP-INV-QA-INTEREST | Quick action Interest: credited to the instrument (compounding) or paid to another account | keep | planned | M8 | yes | ledger |
+| CAP-INV-QA-ADD-HOLDING | Quick action Add Holding: an existing position at average cost against an Equity opening account | keep | planned | M8 | yes | ledger |
+| CAP-INV-OPEN-DEPOSIT | Open Deposit: a new savings, CD or bond account with rate and maturity, an optional linked interest… | keep | planned | M8 | yes | ledger |
+| CAP-INV-STAGING | Quick actions stage drafts into a review table below the tabs | change | planned | M8 | yes | ledger |
+| CAP-INV-AI-EVENTS | AI file import and natural-language entry produce investment events (buys, sales, dividends… | change | planned | M8 | yes | none |
 
 ## Statement (CAS) import, v0.3 only
 
-| ID | Capability | v0.4 | Status | Milestone | Blocks release |
-|---|---|---|---|---|---|
-| CAP-INV-CAS-IMPORT | Import statement: read a CAMS/KFintech CAS PDF locally (password, not saved), map accounts per… | cut | cut | M8 | n/a |
-| CAP-INV-CAS-REPLACE | "Replace hand entries" per fund | cut | cut | M8 | n/a |
-| CAP-INV-CAS-UNDO | List of earlier statement imports, each with Undo | cut | cut | M8 | n/a |
-| CAP-INV-TAX-ROLES | Taxes account for stamp duty, STT and TDS in statement import | cut | cut | M8 | n/a |
+| ID | Capability | v0.4 | Status | Milestone | Blocks release | Writes |
+|---|---|---|---|---|---|---|
+| CAP-INV-CAS-IMPORT | Import statement: read a CAMS/KFintech CAS PDF locally (password, not saved), map accounts per… | cut | cut | M8 | n/a | ledger |
+| CAP-INV-CAS-REPLACE | "Replace hand entries" per fund | cut | cut | M8 | n/a | ledger |
+| CAP-INV-CAS-UNDO | List of earlier statement imports, each with Undo | cut | cut | M8 | n/a | ledger |
+| CAP-INV-TAX-ROLES | Taxes account for stamp duty, STT and TDS in statement import | cut | cut | M8 | n/a | ledger |
 
 ## Holdings, metadata, gains
 
-| ID | Capability | v0.4 | Status | Milestone | Blocks release |
-|---|---|---|---|---|---|
-| CAP-INV-SETUP-META | Setup & Metadata tab: per holding (`asset-class`, `name`, `fetch-symbol`, I-bond… | change | planned | M8 | yes |
-| CAP-INV-AMFI-FINDER | Find an Indian mutual fund's AMFI scheme code (search by name; NAV older than 30 days flagged) and… | keep | planned | M8 | yes |
-| CAP-INV-ASSET-CLASS | Cash vs holding (`is_currency`), decided by operating currencies, `asset-class`, codes held only at… | change | partial | M8 | yes |
-| CAP-INV-EXPOSURE | `exposure` metadata (equity, debt, hybrid, gold, cash, real-estate), filled from the CAS/SEBI… | new | planned | M8 | yes |
-| CAP-INV-INCOME-TYPE | Income kind from `income-type` on the Income account's `open`, never from account names | keep | planned | M8 | yes |
-| CAP-INV-INTEREST-ATTR | Interest attributed to the instrument that earned it (`interest-account` link (per 28, owner… | keep | planned | M8 | yes |
-| CAP-INV-DIVIDEND-ATTR | Dividends attributed to the holding via `dividend-of` (per 28, owner 2026-10-24) | keep | planned | M8 | yes |
-| CAP-INV-UNREALIZED | Unrealized gain = value − cost | change | planned | M8 | yes |
-| CAP-INV-REALIZED | Realized gains (from sale-leg `@` annotations) | change | planned | M8 | yes |
-| CAP-INV-SIMPLE-RETURN | Simple total return % = (unrealized + realized + income) ÷ cost, per holding, category, account or… | new | planned | M8 | yes |
-| CAP-INV-XIRR | XIRR (money-weighted return), windowed returns, per-asset-class returns | cut | cut | M8 | n/a |
-| CAP-INV-HOLDING-PERIOD | Short vs long-term labels on realized gains | cut | cut | M8 | n/a |
-| CAP-INV-LOTS-WIDGET | Purchase lots per holding (from the end-of-ledger `lots` table) | change | planned | M8 | yes |
-| CAP-INV-HOLDINGS-VIEW | Per-account Holdings view laid out like a broker's positions page: symbol, units, price, price date… | new | planned | M8 | yes |
-| CAP-INV-COMPARE-BROKER | "Compare with broker": type the broker's total, paste/upload a positions export, or give a full… | new | planned | M8 | yes |
-| CAP-INV-ONE-UPLOAD-SYNC | "One upload, one confirm": upload one broker statement or CAS | new | planned | M8 | yes |
-| CAP-INV-POSITIONS-ADAPTERS | Positions/holdings CSV exports (Fidelity, E*Trade, Indian brokers) read as import adapters | new | planned | M8 | no |
-| CAP-INV-UNITS-ASSERT | Units `balance` assertions as the durable "matches broker as of X" record, written only when units… | new | planned | M8 | yes |
-| CAP-INV-BOOKING-METHODS | Every booking method Beancount books: ledger default (`option "booking_method"`) and per-account… | new | planned | M8 | yes |
+| ID | Capability | v0.4 | Status | Milestone | Blocks release | Writes |
+|---|---|---|---|---|---|---|
+| CAP-INV-SETUP-META | Setup & Metadata tab: per holding (`asset-class`, `name`, `fetch-symbol`, I-bond… | change | planned | M8 | yes | ledger |
+| CAP-INV-AMFI-FINDER | Find an Indian mutual fund's AMFI scheme code (search by name; NAV older than 30 days flagged) and… | keep | planned | M8 | yes | ledger |
+| CAP-INV-ASSET-CLASS | Cash vs holding (`is_currency`), decided by operating currencies, `asset-class`, codes held only at… | change | partial | M8 | yes | none |
+| CAP-INV-EXPOSURE | `exposure` metadata (equity, debt, hybrid, gold, cash, real-estate), filled from the CAS/SEBI… | new | planned | M8 | yes | ledger |
+| CAP-INV-INCOME-TYPE | Income kind from `income-type` on the Income account's `open`, never from account names | keep | planned | M8 | yes | none |
+| CAP-INV-INTEREST-ATTR | Interest attributed to the instrument that earned it (`interest-account` link (per 28, owner… | keep | planned | M8 | yes | none |
+| CAP-INV-DIVIDEND-ATTR | Dividends attributed to the holding via `dividend-of` (per 28, owner 2026-10-24) | keep | planned | M8 | yes | none |
+| CAP-INV-UNREALIZED | Unrealized gain = value − cost | change | planned | M8 | yes | none |
+| CAP-INV-REALIZED | Realized gains (from sale-leg `@` annotations) | change | planned | M8 | yes | none |
+| CAP-INV-SIMPLE-RETURN | Simple total return % = (unrealized + realized + income) ÷ cost, per holding, category, account or… | new | planned | M8 | yes | none |
+| CAP-INV-XIRR | XIRR (money-weighted return), windowed returns, per-asset-class returns | cut | cut | M8 | n/a | none |
+| CAP-INV-HOLDING-PERIOD | Short vs long-term labels on realized gains | cut | cut | M8 | n/a | none |
+| CAP-INV-LOTS-WIDGET | Purchase lots per holding (from the end-of-ledger `lots` table) | change | planned | M8 | yes | none |
+| CAP-INV-HOLDINGS-VIEW | Per-account Holdings view laid out like a broker's positions page: symbol, units, price, price date… | new | planned | M8 | yes | ledger |
+| CAP-INV-COMPARE-BROKER | "Compare with broker": type the broker's total, paste/upload a positions export, or give a full… | new | planned | M8 | yes | ledger |
+| CAP-INV-ONE-UPLOAD-SYNC | "One upload, one confirm": upload one broker statement or CAS | new | planned | M8 | yes | ledger |
+| CAP-INV-POSITIONS-ADAPTERS | Positions/holdings CSV exports (Fidelity, E*Trade, Indian brokers) read as import adapters | new | planned | M8 | no | none |
+| CAP-INV-UNITS-ASSERT | Units `balance` assertions as the durable "matches broker as of X" record, written only when units… | new | planned | M8 | yes | ledger |
+| CAP-INV-BOOKING-METHODS | Every booking method Beancount books: ledger default (`option "booking_method"`) and per-account… | new | planned | M8 | yes | ledger |
 
 ## Prices
 
-| ID | Capability | v0.4 | Status | Milestone | Blocks release |
-|---|---|---|---|---|---|
-| CAP-PRICE-UPDATE | Update prices: Yahoo (via beanprice), AMFI NAVs (mfapi.in), I-bonds computed from… | change | planned | M8 | yes |
-| CAP-PRICE-AUTO | Prices kept current automatically | new | planned | M8 | yes |
-| CAP-PRICE-OVERVIEW | Prices tab: one row per (commodity, quote) with asset class, cadence, latest price (written… | change | planned | M8 | yes |
-| CAP-PRICE-HISTORY | Price history per pair: paginated, inline edit (Enter saves, Esc cancels), delete | keep | planned | M8 | yes |
-| CAP-PRICE-ADD | Add a price | keep | planned | M8 | yes |
-| CAP-PRICE-SIDECAR | Fetched and manual prices live in `<stem>.prices.beancount`, outside the include tree | change | planned | M8 | yes |
-| CAP-PRICE-FX | Totals in the reporting currency via exchange rates | new | planned | M8 | yes |
+| ID | Capability | v0.4 | Status | Milestone | Blocks release | Writes |
+|---|---|---|---|---|---|---|
+| CAP-PRICE-UPDATE | Update prices: Yahoo (via beanprice), AMFI NAVs (mfapi.in), I-bonds computed from… | change | planned | M8 | yes | ledger |
+| CAP-PRICE-AUTO | Prices kept current automatically | new | planned | M8 | yes | ledger |
+| CAP-PRICE-OVERVIEW | Prices tab: one row per (commodity, quote) with asset class, cadence, latest price (written… | change | planned | M8 | yes | none |
+| CAP-PRICE-HISTORY | Price history per pair: paginated, inline edit (Enter saves, Esc cancels), delete | keep | planned | M8 | yes | ledger |
+| CAP-PRICE-ADD | Add a price | keep | planned | M8 | yes | ledger |
+| CAP-PRICE-SIDECAR | Fetched and manual prices live in `<stem>.prices.beancount`, outside the include tree | change | planned | M8 | yes | ledger |
+| CAP-PRICE-FX | Totals in the reporting currency via exchange rates | new | planned | M8 | yes | none |
 
 ## Documents
 
-| ID | Capability | v0.4 | Status | Milestone | Blocks release |
-|---|---|---|---|---|---|
-| CAP-DOC-TXN | Attach files to a transaction: drop onto its row or use the drawer's upload zone | keep | planned | M5 | yes |
-| CAP-DOC-ACCOUNT | Account documents (`document` directives): list, upload and attach, detach | keep | planned | M4 | yes |
-| CAP-DOC-PREVIEW | Preview images and PDFs | keep | planned | M5 | yes |
-| CAP-DOC-ORPHANS | Find and remove unreferenced files: scan, recent files (24 h grace) unselected, range selection… | change | planned | M5 | yes |
-| CAP-DOC-LOCATION | Documents folder: `option "documents"` wins, else `data/documents/<stem>-<hash>/`, written as the… | change | planned | M3 | yes |
-| CAP-DOC-PATH-SAFETY | Uploads and served files confined to the documents folder | keep | planned | M4 | yes |
+| ID | Capability | v0.4 | Status | Milestone | Blocks release | Writes |
+|---|---|---|---|---|---|---|
+| CAP-DOC-TXN | Attach files to a transaction: drop onto its row or use the drawer's upload zone | keep | planned | M5 | yes | ledger |
+| CAP-DOC-ACCOUNT | Account documents (`document` directives): list, upload and attach, detach | keep | planned | M4 | yes | ledger |
+| CAP-DOC-PREVIEW | Preview images and PDFs | keep | planned | M5 | yes | none |
+| CAP-DOC-ORPHANS | Find and remove unreferenced files: scan, recent files (24 h grace) unselected, range selection… | change | planned | M5 | yes | config |
+| CAP-DOC-LOCATION | Documents folder: `option "documents"` wins, else `data/documents/<stem>-<hash>/`, written as the… | change | planned | M3 | yes | ledger |
+| CAP-DOC-PATH-SAFETY | Uploads and served files confined to the documents folder | keep | planned | M4 | yes | none |
 
 ## AI assistant
 
-| ID | Capability | v0.4 | Status | Milestone | Blocks release |
-|---|---|---|---|---|---|
-| CAP-AI-CHAT | Chat: streamed answers, reasoning ("thinking") block, tool-call badges, New Chat, composer with… | change | planned | M9 | yes |
-| CAP-AI-MARKDOWN | Answers rendered as markdown | change | planned | M9 | yes |
-| CAP-AI-MODES | Two modes: attaching a file forces rule-setup mode (no ledger tools) | change | planned | M9 | yes |
-| CAP-AI-RULES | Create CSV, XLS or email import rules from an attached file: quick-fill fields (save as, account… | change | planned | M9 | yes |
-| CAP-AI-ANALYST | Financial questions answered with SQL and compute tools over the ledger | change | planned | M9 | yes |
-| CAP-AI-VALIDATION | Response validation warnings after an answer: unknown account, date out of range, amount mismatch… | change | planned | M9 | yes |
-| CAP-AI-DASHBOARDS | Build dashboards and widgets: read the schema and examples, preview in the sidebar, save the recipe | change | planned | M9 | yes |
-| CAP-AI-FILE-PREVIEW | Sidebar preview of an attached CSV/XLS with row and column numbers and sheet tabs | change | planned | M9 | yes |
-| CAP-AI-PROVIDERS | Providers: OpenAI-compatible (LM Studio, Ollama, OpenAI, Groq…) and Anthropic | change | planned | M6 | yes |
-| CAP-AI-FINZYTRACK | "Finzytrack AI" provider mode (hosted proxy with a token) | change | planned | M9 | no |
-| CAP-AI-DIAGNOSTICS | AI diagnostics log and endpoint | keep | planned | M9 | yes |
-| CAP-AI-DATA-SHARING | "What is shared with the AI" links on every AI surface, and the reference page | keep | planned | M6 | yes |
-| CAP-AI-PROPOSALS | One write model for everything the AI changes: propose → preview (diff) → confirm → commit → undo | new | planned | M9 | yes |
-| CAP-AI-LEDGER-WRITES | AI ledger proposals: create/update an account, recategorize, reconcile | new | planned | M9 | yes |
-| CAP-AI-ATTACH-INTENT | Attach a statement and ask to reconcile it, import it once, or analyse it (one clarifying question… | new | planned | M9 | yes |
+| ID | Capability | v0.4 | Status | Milestone | Blocks release | Writes |
+|---|---|---|---|---|---|---|
+| CAP-AI-CHAT | Chat: streamed answers, reasoning ("thinking") block, tool-call badges, New Chat, composer with… | change | planned | M9 | yes | none |
+| CAP-AI-MARKDOWN | Answers rendered as markdown | change | planned | M9 | yes | none |
+| CAP-AI-MODES | Two modes: attaching a file forces rule-setup mode (no ledger tools) | change | planned | M9 | yes | none |
+| CAP-AI-RULES | Create CSV, XLS or email import rules from an attached file: quick-fill fields (save as, account… | change | planned | M9 | yes | config |
+| CAP-AI-ANALYST | Financial questions answered with SQL and compute tools over the ledger | change | planned | M9 | yes | none |
+| CAP-AI-VALIDATION | Response validation warnings after an answer: unknown account, date out of range, amount mismatch… | change | planned | M9 | yes | none |
+| CAP-AI-DASHBOARDS | Build dashboards and widgets: read the schema and examples, preview in the sidebar, save the recipe | change | planned | M9 | yes | config |
+| CAP-AI-FILE-PREVIEW | Sidebar preview of an attached CSV/XLS with row and column numbers and sheet tabs | change | planned | M9 | yes | none |
+| CAP-AI-PROVIDERS | Providers: OpenAI-compatible (LM Studio, Ollama, OpenAI, Groq…) and Anthropic | change | planned | M6 | yes | config |
+| CAP-AI-FINZYTRACK | "Finzytrack AI" provider mode (hosted proxy with a token) | change | planned | M9 | no | config |
+| CAP-AI-DIAGNOSTICS | AI diagnostics log and endpoint | keep | planned | M9 | yes | config |
+| CAP-AI-DATA-SHARING | "What is shared with the AI" links on every AI surface, and the reference page | keep | planned | M6 | yes | none |
+| CAP-AI-PROPOSALS | One write model for everything the AI changes: propose → preview (diff) → confirm → commit → undo | new | planned | M9 | yes | ledger |
+| CAP-AI-LEDGER-WRITES | AI ledger proposals: create/update an account, recategorize, reconcile | new | planned | M9 | yes | ledger |
+| CAP-AI-ATTACH-INTENT | Attach a statement and ask to reconcile it, import it once, or analyse it (one clarifying question… | new | planned | M9 | yes | ledger |
 
 ## Settings
 
-| ID | Capability | v0.4 | Status | Milestone | Blocks release |
-|---|---|---|---|---|---|
-| CAP-SET-TABS | Settings page: General / Import Rules / Dashboards / About tabs, `?tab=`, `?type=`, `#ai-settings`… | change | planned | M10 | yes |
-| CAP-SET-DATA | Data section: read-only config-file path | change | planned | M3 | yes |
-| CAP-SET-ACCOUNTS | Default currency and default unknown account (free text) | change | planned | M10 | yes |
-| CAP-SET-OPCURRENCY | Operating currencies: chips, add with validation, save writes `option "operating_currency"` to the… | change | planned | M10 | yes |
-| CAP-SET-AI | AI section: Finzytrack AI toggle and token (hidden in v0.4.0 with Finzytrack AI mode, DECIDED… | change | planned | M6 | yes |
-| CAP-SET-CATEGORIZATION | Categorization on/off and engine (classifier or AI) | keep | planned | M6 | yes |
-| CAP-SET-EMAIL | Email import: enabled, default lookback days, max emails, IMAP timeout, default parsing mode | keep | planned | M6 | yes |
-| CAP-SET-BACKUP | Backups on/off and retention count (applied live) | change | planned | M10 | yes |
-| CAP-SET-LOGGING | Log level (live), max file size, rotated files kept | keep | planned | M10 | yes |
-| CAP-SET-SERVER | Server host and port (restart required) | change | planned | M10 | yes |
-| CAP-SET-NOTICES | "Show dismissed notices" | keep | planned | M10 | yes |
-| CAP-SET-ABOUT | About: version, links (docs, website, source, discussions), diagnostics with Copy, "Report an… | keep | planned | M10 | yes |
-| CAP-SET-YAML | Hand-edit `config.yaml` (comment-preserving merge, validated, atomic with backup) | change | planned | M10 | yes |
-| CAP-SET-NUMBER-FORMAT | App-wide decimal mark and group separator, plus a per-currency override | new | planned | M10 | yes |
-| CAP-SET-BOOKING-DEFAULT | Ledger default booking method | new | planned | M8 | yes |
-| CAP-SET-UPDATE-CHANNEL | Update channel (stable / beta) | new | planned | M11 | no |
+| ID | Capability | v0.4 | Status | Milestone | Blocks release | Writes |
+|---|---|---|---|---|---|---|
+| CAP-SET-TABS | Settings page: General / Import Rules / Dashboards / About tabs, `?tab=`, `?type=`, `#ai-settings`… | change | planned | M10 | yes | config |
+| CAP-SET-DATA | Data section: read-only config-file path | change | planned | M3 | yes | none |
+| CAP-SET-ACCOUNTS | Default currency and default unknown account (free text) | change | planned | M10 | yes | config |
+| CAP-SET-OPCURRENCY | Operating currencies: chips, add with validation, save writes `option "operating_currency"` to the… | change | planned | M10 | yes | ledger |
+| CAP-SET-AI | AI section: Finzytrack AI toggle and token (hidden in v0.4.0 with Finzytrack AI mode, DECIDED… | change | planned | M6 | yes | config |
+| CAP-SET-CATEGORIZATION | Categorization on/off and engine (classifier or AI) | keep | planned | M6 | yes | config |
+| CAP-SET-EMAIL | Email import: enabled, default lookback days, max emails, IMAP timeout, default parsing mode | keep | planned | M6 | yes | config |
+| CAP-SET-BACKUP | Backups on/off and retention count (applied live) | change | planned | M10 | yes | config |
+| CAP-SET-LOGGING | Log level (live), max file size, rotated files kept | keep | planned | M10 | yes | config |
+| CAP-SET-SERVER | Server host and port (restart required) | change | planned | M10 | yes | config |
+| CAP-SET-NOTICES | "Show dismissed notices" | keep | planned | M10 | yes | config |
+| CAP-SET-ABOUT | About: version, links (docs, website, source, discussions), diagnostics with Copy, "Report an… | keep | planned | M10 | yes | none |
+| CAP-SET-YAML | Hand-edit `config.yaml` (comment-preserving merge, validated, atomic with backup) | change | planned | M10 | yes | config |
+| CAP-SET-NUMBER-FORMAT | App-wide decimal mark and group separator, plus a per-currency override | new | planned | M10 | yes | config |
+| CAP-SET-BOOKING-DEFAULT | Ledger default booking method | new | planned | M8 | yes | ledger |
+| CAP-SET-UPDATE-CHANNEL | Update channel (stable / beta) | new | planned | M11 | no | config |
 
 ## Notifications
 
-| ID | Capability | v0.4 | Status | Milestone | Blocks release |
-|---|---|---|---|---|---|
-| CAP-NOTIFY-TOASTS | Toasts: auto-dismiss after 5 s unless persistent | change | planned | M2 | yes |
-| CAP-NOTIFY-PANEL | Notification bell with unread badge and a history panel (mark all read, clear, expandable details… | change | planned | M2 | yes |
-| CAP-NOTIFY-SERVER | Server notice banners: ledger parse errors (with details), plugin not loaded, multi-file… | change | planned | M2 | yes |
-| CAP-NOTIFY-STARTUP | Startup tasks: a blocking gate for migrations needing consent and dismissible notices (seed… | change | planned | M3 | yes |
-| CAP-NOTIFY-ERRORS | Errors shown with code and details | change | planned | M2 | yes |
+| ID | Capability | v0.4 | Status | Milestone | Blocks release | Writes |
+|---|---|---|---|---|---|---|
+| CAP-NOTIFY-TOASTS | Toasts: auto-dismiss after 5 s unless persistent | change | planned | M2 | yes | none |
+| CAP-NOTIFY-PANEL | Notification bell with unread badge and a history panel (mark all read, clear, expandable details… | change | planned | M2 | yes | none |
+| CAP-NOTIFY-SERVER | Server notice banners: ledger parse errors (with details), plugin not loaded, multi-file… | change | planned | M2 | yes | none |
+| CAP-NOTIFY-STARTUP | Startup tasks: a blocking gate for migrations needing consent and dismissible notices (seed… | change | planned | M3 | yes | ledger |
+| CAP-NOTIFY-ERRORS | Errors shown with code and details | change | planned | M2 | yes | none |
 
 ## Desktop app
 
-| ID | Capability | v0.4 | Status | Milestone | Blocks release |
-|---|---|---|---|---|---|
-| CAP-DESK-WINDOW | A native window on the system webview (WebKit, WebView2, WebKitGTK) with the Python backend in one… | change | planned | M2 | yes |
-| CAP-DESK-INSTALLERS | macOS `.app` (ad-hoc signed, Gatekeeper warnings), Linux AppImage, Windows build | change | planned | M11 | yes |
-| CAP-DESK-AUTOUPDATE | Signed auto-update from GitHub Releases | new | planned | M11 | yes |
-| CAP-DESK-STARTUP | The launcher waits up to 180 s for the backend with no window | change | planned | M2 | yes |
-| CAP-DESK-HEADLESS | `--headless` server-only mode for browser, phone or self-hosting | keep | planned | M2 | yes |
-| CAP-DESK-CLI | Command-line options `--config/-c`, `--host`, `--port`, `--ledger-file`, `--log-level`, `--debug` | change | planned | M2 | yes |
-| CAP-DESK-DATA-DIRS | User data in the per-OS Finzytrack folder (`config/`, `data/`, logs) | change | planned | M2 | yes |
-| CAP-DESK-FILE-PICKER | In-app server file browser for choosing ledger files | change | planned | M2 | yes |
-| CAP-DESK-ZOOM | Ctrl/Cmd +/−/0 zoom | keep | planned | M10 | yes |
-| CAP-DESK-CACHE-RESET | Drop the webview's cached frontend after an upgrade | change | planned | M11 | yes |
-| CAP-DESK-LICENSE-NOTICES | Third-party licence notices (`THIRD_PARTY_NOTICES`) shipped in every bundle and shown in About | new | planned | M11 | yes |
+| ID | Capability | v0.4 | Status | Milestone | Blocks release | Writes |
+|---|---|---|---|---|---|---|
+| CAP-DESK-WINDOW | A native window on the system webview (WebKit, WebView2, WebKitGTK) with the Python backend in one… | change | planned | M2 | yes | none |
+| CAP-DESK-INSTALLERS | macOS `.app` (ad-hoc signed, Gatekeeper warnings), Linux AppImage, Windows build | change | planned | M11 | yes | none |
+| CAP-DESK-AUTOUPDATE | Signed auto-update from GitHub Releases | new | planned | M11 | yes | ledger |
+| CAP-DESK-STARTUP | The launcher waits up to 180 s for the backend with no window | change | planned | M2 | yes | none |
+| CAP-DESK-HEADLESS | `--headless` server-only mode for browser, phone or self-hosting | keep | planned | M2 | yes | none |
+| CAP-DESK-CLI | Command-line options `--config/-c`, `--host`, `--port`, `--ledger-file`, `--log-level`, `--debug` | change | planned | M2 | yes | none |
+| CAP-DESK-DATA-DIRS | User data in the per-OS Finzytrack folder (`config/`, `data/`, logs) | change | planned | M2 | yes | config |
+| CAP-DESK-FILE-PICKER | In-app server file browser for choosing ledger files | change | planned | M2 | yes | none |
+| CAP-DESK-ZOOM | Ctrl/Cmd +/−/0 zoom | keep | planned | M10 | yes | none |
+| CAP-DESK-CACHE-RESET | Drop the webview's cached frontend after an upgrade | change | planned | M11 | yes | config |
+| CAP-DESK-LICENSE-NOTICES | Third-party licence notices (`THIRD_PARTY_NOTICES`) shipped in every bundle and shown in About | new | planned | M11 | yes | none |
 
 ## Data and lifecycle
 
-| ID | Capability | v0.4 | Status | Milestone | Blocks release |
-|---|---|---|---|---|---|
-| CAP-DATA-SEED | First-run seeding of rules, dashboards and themes from the shipped template | change | planned | M3 | yes |
-| CAP-DATA-SEED-REFRESH | Demo refresh: demo ledger replaced with consent and a backup | change | planned | M3 | yes |
-| CAP-DATA-DEMO-GEN | Demo ledger: one hand-written generator on a fixed calendar, date-shifted at build time (interest… | change | partial | M3 | yes |
-| CAP-DATA-RECIPE-MIGRATION | Dashboard v1 → v2 (steps) migration with backups, as a startup task | change | planned | M7 | yes |
-| CAP-DATA-CURRENCY-UPGRADE | Currencies vs holdings upgrade (Layer 1/2) | change | planned | M8 | yes |
-| CAP-DATA-NEWER-REFUSE | A workspace written by a newer app is refused, with "restore backup of run X" | new | planned | M3 | yes |
-| CAP-DATA-BOOT | Boot phases with a screen for each (unprovisioned, recovering, config invalid, needs ledger, ledger… | new | planned | M2 | yes |
-| CAP-DATA-BACKUPS | A timestamped backup of every file before each write, retention, atomic writes, backups during… | change | planned | M3 | yes |
-| CAP-DATA-LOGS | Rotating log file and console output | keep | planned | M2 | yes |
-| CAP-DATA-MIRROR | SQLite mirror of the ledger, rebuilt after each write and on every switch | change | partial | M2 | yes |
-| CAP-DATA-EXPORT-API | Manual mirror export endpoints | cut | cut | M2 | n/a |
-| CAP-DATA-MULTIFILE | Multi-file ledgers: new entries routed by Fava's `insert-entry` / `default-file` options | keep | planned | M4 | yes |
-| CAP-DATA-WRITE | Writes re-render whole files: comments dropped, elided amounts and `{}` reductions baked in, plugin… | change | planned | M4 | yes |
-| CAP-DATA-WRITE-GATE | A write that adds booking errors is refused | change | partial | M1 | yes |
-| CAP-DATA-EXTERNAL-EDIT | A ledger changed outside the app (Fava, an editor, a legacy app) is detected: the write is refused… | new | planned | M4 | yes |
-| CAP-DATA-ENGINE-JOBS | Ledger work runs one job at a time: work the user waits for goes first, a long job shows its phase… | new | planned | M1 | yes |
-| CAP-DATA-UNDO | Undo for the app's ledger writes (delete, edits, proposals) | new | planned | M5 | yes |
-| CAP-DATA-PLUGINS | Ledgers using plugins (`implicit_prices`, documents, others) | change | planned | M3 | yes |
-| CAP-DATA-ENCRYPTED | Encrypted (`.gpg`) ledger files, as far as Beancount's loader reads them | deferred | deferred | M1 | n/a |
+| ID | Capability | v0.4 | Status | Milestone | Blocks release | Writes |
+|---|---|---|---|---|---|---|
+| CAP-DATA-SEED | First-run seeding of rules, dashboards and themes from the shipped template | change | planned | M3 | yes | config |
+| CAP-DATA-SEED-REFRESH | Demo refresh: demo ledger replaced with consent and a backup | change | planned | M3 | yes | ledger |
+| CAP-DATA-DEMO-GEN | Demo ledger: one hand-written generator on a fixed calendar, date-shifted at build time (interest… | change | partial | M3 | yes | ledger |
+| CAP-DATA-RECIPE-MIGRATION | Dashboard v1 → v2 (steps) migration with backups, as a startup task | change | planned | M7 | yes | config |
+| CAP-DATA-CURRENCY-UPGRADE | Currencies vs holdings upgrade (Layer 1/2) | change | planned | M8 | yes | ledger |
+| CAP-DATA-NEWER-REFUSE | A workspace written by a newer app is refused, with "restore backup of run X" | new | planned | M3 | yes | ledger |
+| CAP-DATA-BOOT | Boot phases with a screen for each (unprovisioned, recovering, config invalid, needs ledger, ledger… | new | planned | M2 | yes | none |
+| CAP-DATA-BACKUPS | A timestamped backup of every file before each write, retention, atomic writes, backups during… | change | planned | M3 | yes | ledger |
+| CAP-DATA-LOGS | Rotating log file and console output | keep | planned | M2 | yes | config |
+| CAP-DATA-MIRROR | SQLite mirror of the ledger, rebuilt after each write and on every switch | change | partial | M2 | yes | config |
+| CAP-DATA-EXPORT-API | Manual mirror export endpoints | cut | cut | M2 | n/a | config |
+| CAP-DATA-MULTIFILE | Multi-file ledgers: new entries routed by Fava's `insert-entry` / `default-file` options | keep | planned | M4 | yes | ledger |
+| CAP-DATA-WRITE | Writes re-render whole files: comments dropped, elided amounts and `{}` reductions baked in, plugin… | change | planned | M4 | yes | ledger |
+| CAP-DATA-WRITE-GATE | A write that adds booking errors is refused | change | partial | M1 | yes | ledger |
+| CAP-DATA-EXTERNAL-EDIT | A ledger changed outside the app (Fava, an editor, a legacy app) is detected: the write is refused… | new | planned | M4 | yes | none |
+| CAP-DATA-ENGINE-JOBS | Ledger work runs one job at a time: work the user waits for goes first, a long job shows its phase… | new | planned | M1 | yes | ledger |
+| CAP-DATA-UNDO | Undo for the app's ledger writes (delete, edits, proposals) | new | planned | M5 | yes | ledger |
+| CAP-DATA-PLUGINS | Ledgers using plugins (`implicit_prices`, documents, others) | change | planned | M3 | yes | none |
+| CAP-DATA-ENCRYPTED | Encrypted (`.gpg`) ledger files, as far as Beancount's loader reads them | deferred | deferred | M1 | n/a | none |
 
 ## Shell and cross-cutting UI
 
-| ID | Capability | v0.4 | Status | Milestone | Blocks release |
-|---|---|---|---|---|---|
-| CAP-UI-NAV | Sidebar navigation (Dashboards, Import, Transactions, Accounts, Budgets, Investments, Query, AI… | keep | planned | M2 | yes |
-| CAP-UI-SIDEBAR-RESIZE | Drag to resize the sidebar (200–500 px, persisted) | keep | planned | M2 | yes |
-| CAP-UI-HISTORY-BUTTONS | Back, Forward and Refresh buttons in the top bar | keep | planned | M2 | yes |
-| CAP-UI-GLOBAL-SEARCH | Global search: top 6 account matches plus "Search transactions for…", keyboard navigation | keep | planned | M5 | yes |
-| CAP-UI-THEME | Theme toggle system → light → dark, following the OS live | change | planned | M2 | yes |
-| CAP-UI-DATE-PRESETS | Date preset selector: All Time, YTD, This Month, Last Month, Last Quarter, Last Year, Last 30 / 90… | change | planned | M4 | yes |
-| CAP-UI-MONEY-FORMAT | Money and number display | change | planned | M4 | yes |
-| CAP-UI-TODAY | "Today" defaults across forms and filters | change | planned | M4 | yes |
-| CAP-UI-INCLUDE-SCHEDULED | "Include scheduled" toggle: current balances and net worth exclude future-dated entries unless asked | new | planned | M4 | yes |
-| CAP-UI-CONFIRM | Confirmation dialogs | change | planned | M2 | yes |
-| CAP-UI-UNSAVED-GUARD | Unsaved-change guards (five versions with different coverage) | change | planned | M2 | yes |
-| CAP-UI-PICKERS | Account and commodity dropdowns (about 19 implementations, free text accepted) | change | planned | M4 | yes |
-| CAP-UI-A11Y | Accessible names, linked labels and errors, tab semantics, keyboard alternatives to mouse-only… | change | planned | M2 | yes |
-| CAP-UI-ROUTER | Per-route scroll restoration of the main pane | keep | planned | M2 | yes |
-| CAP-APP-OFFLINE | Everything works offline except prices, AI, IMAP and the update check | new | planned | M10 | yes |
+| ID | Capability | v0.4 | Status | Milestone | Blocks release | Writes |
+|---|---|---|---|---|---|---|
+| CAP-UI-NAV | Sidebar navigation (Dashboards, Import, Transactions, Accounts, Budgets, Investments, Query, AI… | keep | planned | M2 | yes | none |
+| CAP-UI-SIDEBAR-RESIZE | Drag to resize the sidebar (200–500 px, persisted) | keep | planned | M2 | yes | none |
+| CAP-UI-HISTORY-BUTTONS | Back, Forward and Refresh buttons in the top bar | keep | planned | M2 | yes | none |
+| CAP-UI-GLOBAL-SEARCH | Global search: top 6 account matches plus "Search transactions for…", keyboard navigation | keep | planned | M5 | yes | none |
+| CAP-UI-THEME | Theme toggle system → light → dark, following the OS live | change | planned | M2 | yes | none |
+| CAP-UI-DATE-PRESETS | Date preset selector: All Time, YTD, This Month, Last Month, Last Quarter, Last Year, Last 30 / 90… | change | planned | M4 | yes | none |
+| CAP-UI-MONEY-FORMAT | Money and number display | change | planned | M4 | yes | none |
+| CAP-UI-TODAY | "Today" defaults across forms and filters | change | planned | M4 | yes | none |
+| CAP-UI-INCLUDE-SCHEDULED | "Include scheduled" toggle: current balances and net worth exclude future-dated entries unless asked | new | planned | M4 | yes | none |
+| CAP-UI-CONFIRM | Confirmation dialogs | change | planned | M2 | yes | none |
+| CAP-UI-UNSAVED-GUARD | Unsaved-change guards (five versions with different coverage) | change | planned | M2 | yes | none |
+| CAP-UI-PICKERS | Account and commodity dropdowns (about 19 implementations, free text accepted) | change | planned | M4 | yes | none |
+| CAP-UI-A11Y | Accessible names, linked labels and errors, tab semantics, keyboard alternatives to mouse-only… | change | planned | M2 | yes | none |
+| CAP-UI-ROUTER | Per-route scroll restoration of the main pane | keep | planned | M2 | yes | none |
+| CAP-APP-OFFLINE | Everything works offline except prices, AI, IMAP and the update check | new | planned | M10 | yes | none |

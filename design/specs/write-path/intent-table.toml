@@ -17,6 +17,27 @@
 #   status      decided (an accepted ADR settles every column) | draft (confirm in the vertical's first slice) | owner:<inbox file>
 #   milestone   where the mutator is built                         adrs     ADRs it implements
 
+# Capability rows that write the ledger (`writes = "ledger"` in design/capabilities.toml) and that no mutator row above
+# cites, each with why (BL-0049; the check is `LedgerWriters` in scripts/tests/test_intent_table.py). One of:
+#   "not built: ADR-nnnn (why)"   not built as a ledger writer in v0.4;
+#   "machinery: ADR-nnnn (why)"   the writes are the contract's or the lifecycle's own, not a use case's intended change;
+#   "pending: BL-nnnn (why)"      a ledger writer whose row is not written yet; the open backlog row says when.
+[ledger_writers]
+"CAP-WS-RECOVER-FIRST" = "machinery: ADR-0012 (recovery puts back the bytes an unfinished save's journal recorded; it has no intended change of its own)"
+"CAP-DATA-WRITE-GATE" = "machinery: ADR-0008 (the write-safety contract every mutator's write passes)"
+"CAP-DATA-ENGINE-JOBS" = "machinery: ADR-0064 (every save runs as an engine job; what the save changes is its mutator's)"
+"CAP-DATA-MULTIFILE" = "machinery: ADR-0009 (where a mutator's insert lands: Fava's insert-entry options, else the default file)"
+"CAP-DATA-BACKUPS" = "machinery: ADR-0012 (the backup before each write and the save's rollback; the restore of a run's backup is ADR-0019's)"
+"CAP-DATA-NEWER-REFUSE" = "machinery: ADR-0019 (\"restore backup of run X\" puts back the bytes that run backed up)"
+"CAP-DESK-AUTOUPDATE" = "machinery: ADR-0019 (the rollback restores the pre-upgrade backup: the bytes that run backed up)"
+"CAP-AI-PROPOSALS" = "machinery: ADR-0038 (an AI proposal is previewed and confirmed through the one plan store; its ledger write is the mutator of what it proposes, CAP-AI-LEDGER-WRITES)"
+"CAP-WS-IMPORT" = "not built: ADR-0043 (the workspace archive is deferred to after v0.4.0; its row comes with the feature)"
+"CAP-WS-BRING-IN" = "pending: BL-0311 (copies an externally referenced ledger set into the workspace folder)"
+"CAP-WS-MULTI-ROOT" = "pending: BL-0311 (a copied workspace for another root ledger of the folder)"
+"CAP-WS-SETTINGS" = "pending: BL-0311 (hosts Bring in; whether its documents-folder field writes `option \"documents\"` through doc.documents-option is not specified)"
+"CAP-DATA-CURRENCY-UPGRADE" = "pending: BL-0311 (the ISO-codes-are-cash migration: what it writes is not specified)"
+"CAP-NOTIFY-STARTUP" = "pending: BL-0311 (the startup gate runs consented migrations; whether one writes the ledger is not specified)"
+
 # The 26 legacy mutators (`@_serialized_write` in the legacy LedgerManager, review:D1 §5) and where each went.
 [legacy]
 mutators = [
@@ -61,7 +82,7 @@ delete_balance_directive = ["balance.delete"]
 
 [[mutator]]
 id = "ws.create-ledger"
-caps = ["CAP-SETUP-FRESH", "CAP-SETUP-CURRENCY"]
+caps = ["CAP-SETUP-FRESH", "CAP-SETUP-CURRENCY", "CAP-SETUP-WIZARD", "CAP-WS-CREATE"]
 kind = "many"
 old = "POST /api/setup/complete"
 edits = ["new_file"]
@@ -77,7 +98,7 @@ adrs = ["ADR-0008", "ADR-0052", "ADR-0019"]
 
 [[mutator]]
 id = "ws.seed-demo"
-caps = ["CAP-DATA-DEMO-GEN"]
+caps = ["CAP-DATA-DEMO-GEN", "CAP-SETUP-WIZARD", "CAP-SETUP-DEMO-MODE", "CAP-WS-DEMO"]
 kind = "many"
 old = "n/a"
 edits = ["new_file"]
@@ -95,7 +116,7 @@ adrs = ["ADR-0008", "ADR-0022"]
 
 [[mutator]]
 id = "account.create"
-caps = ["CAP-ACCT-CREATE"]
+caps = ["CAP-ACCT-CREATE", "CAP-ACCT-NEW-FROM-PICKER", "CAP-AI-LEDGER-WRITES"]
 kind = "add"
 old = "POST /api/accounts"
 edits = ["insert"]
@@ -111,7 +132,7 @@ adrs = ["ADR-0009", "ADR-0026", "ADR-0031"]
 
 [[mutator]]
 id = "account.edit"
-caps = ["CAP-ACCT-EDIT"]
+caps = ["CAP-ACCT-EDIT", "CAP-AI-LEDGER-WRITES"]
 kind = "change-one"
 old = "PUT /api/accounts/{name} (without new_name)"
 edits = ["replace", "insert_meta", "delete_meta"]
@@ -223,7 +244,7 @@ adrs = ["ADR-0009"]
 
 [[mutator]]
 id = "balance.add"
-caps = ["CAP-ACCT-ASSERTIONS"]
+caps = ["CAP-ACCT-ASSERTIONS", "CAP-RECON-IMPORT-CHECK", "CAP-RECON-AUTO-ACCEPT"]
 kind = "many"
 old = "POST /api/accounts/{name}/balance-directives"
 edits = ["insert"]
@@ -321,7 +342,7 @@ adrs = ["ADR-0009", "ADR-0017"]
 
 [[mutator]]
 id = "txn.edit"
-caps = ["CAP-TXN-INLINE-EDIT", "CAP-TXN-SAVE", "CAP-TXN-METADATA"]
+caps = ["CAP-TXN-INLINE-EDIT", "CAP-TXN-SAVE", "CAP-TXN-METADATA", "CAP-AI-LEDGER-WRITES"]
 kind = "change-one"
 old = "PUT /api/ledger/transactions (one transaction)"
 edits = ["replace"]
@@ -337,7 +358,7 @@ adrs = ["ADR-0009", "ADR-0026", "ADR-0008"]
 
 [[mutator]]
 id = "txn.bulk-edit"
-caps = ["CAP-TXN-BULK"]
+caps = ["CAP-TXN-BULK", "CAP-TXN-BULK-CATEGORIZE", "CAP-AI-LEDGER-WRITES"]
 kind = "many"
 old = "PUT /api/ledger/transactions (several transactions)"
 edits = ["replace", "replace_token"]
@@ -387,7 +408,7 @@ adrs = ["ADR-0009", "ADR-0026"]
 
 [[mutator]]
 id = "import.commit"
-caps = ["CAP-IMP-COMMIT", "CAP-IMP-BLANK"]
+caps = ["CAP-IMP-COMMIT", "CAP-IMP-BLANK", "CAP-IMP-FX-PENDING", "CAP-AI-ATTACH-INTENT"]
 kind = "many"
 old = "POST /api/import/commit"
 edits = ["insert"]
@@ -403,7 +424,7 @@ adrs = ["ADR-0027", "ADR-0026", "ADR-0009"]
 
 [[mutator]]
 id = "import.settle-pending"
-caps = ["CAP-IMP-COMMIT"]
+caps = ["CAP-IMP-COMMIT", "CAP-IMP-TRANSFER-PAIR", "CAP-IMP-FX-PENDING"]
 kind = "change-one"
 old = "n/a"
 edits = ["replace"]
@@ -419,7 +440,7 @@ adrs = ["ADR-0026", "ADR-0027"]
 
 [[mutator]]
 id = "import.link-element"
-caps = ["CAP-IMP-DEDUPE", "CAP-RECON-STATEMENT"]
+caps = ["CAP-IMP-DEDUPE", "CAP-RECON-STATEMENT", "CAP-IMP-TRANSFER-PAIR"]
 kind = "change-one"
 old = "n/a"
 edits = ["delete_meta", "insert_meta"]
@@ -435,7 +456,7 @@ adrs = ["ADR-0026"]
 
 [[mutator]]
 id = "recon.proceed"
-caps = ["CAP-RECON-STATEMENT"]
+caps = ["CAP-RECON-STATEMENT", "CAP-AI-LEDGER-WRITES", "CAP-AI-ATTACH-INTENT"]
 kind = "many"
 old = "n/a"
 edits = ["insert", "replace", "delete_meta", "insert_meta"]
@@ -551,7 +572,7 @@ adrs = ["ADR-0030", "ADR-0026"]
 
 [[mutator]]
 id = "inv.commodity-metadata"
-caps = ["CAP-INV-SETUP-META"]
+caps = ["CAP-INV-SETUP-META", "CAP-INV-AMFI-FINDER", "CAP-INV-EXPOSURE"]
 kind = "change-one"
 old = "PUT /api/commodities/metadata"
 edits = ["replace", "insert", "insert_meta", "delete_meta"]
@@ -567,7 +588,7 @@ adrs = ["ADR-0026", "ADR-0030"]
 
 [[mutator]]
 id = "inv.booking-method"
-caps = ["CAP-ACCT-EDIT"]
+caps = ["CAP-ACCT-EDIT", "CAP-INV-BOOKING-METHODS"]
 kind = "change-one"
 old = "n/a"
 edits = ["replace"]
@@ -599,7 +620,7 @@ adrs = ["ADR-0032", "ADR-0031", "ADR-0030"]
 
 [[mutator]]
 id = "price.write"
-caps = ["CAP-PRICE-UPDATE", "CAP-PRICE-ADD", "CAP-PRICE-SIDECAR"]
+caps = ["CAP-PRICE-UPDATE", "CAP-PRICE-ADD", "CAP-PRICE-SIDECAR", "CAP-DASH-ACTION-PRICES", "CAP-DASH-SEED-OVERVIEW", "CAP-INV-HOLDINGS-VIEW", "CAP-INV-COMPARE-BROKER", "CAP-PRICE-AUTO"]
 kind = "many"
 old = "POST /api/prices/update (fetch); PUT /api/prices (add)"
 edits = ["insert", "replace"]
@@ -811,7 +832,7 @@ adrs = ["ADR-0030", "ADR-0031", "ADR-0009"]
 
 [[mutator]]
 id = "settings.booking-default"
-caps = ["CAP-SET-BOOKING-DEFAULT"]
+caps = ["CAP-SET-BOOKING-DEFAULT", "CAP-INV-BOOKING-METHODS"]
 kind = "change-one"
 old = "n/a"
 edits = ["option_line"]
@@ -859,7 +880,7 @@ adrs = ["ADR-0020", "ADR-0017", "ADR-0062", "ADR-0063"]
 
 [[mutator]]
 id = "ws.refresh-demo"
-caps = ["CAP-DATA-SEED-REFRESH"]
+caps = ["CAP-DATA-SEED-REFRESH", "CAP-WS-DEMO"]
 kind = "many"
 old = "n/a"
 edits = ["replace_file"]
