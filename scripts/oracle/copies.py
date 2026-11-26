@@ -121,13 +121,14 @@ def local_tier_dir() -> tuple[Path | None, str | None]:
     return tier, None
 
 
-def refuse_local_tier_source(folder: Path) -> str | None:
+def refuse_local_tier_source(folder: Path, *, allow_repo_corpora: bool = True) -> str | None:
     """Why *folder* must not be read as a ledger source by a run that may see real-ledger copies, or None.
 
-    Allowed: the repo's synthetic `corpora/`, and folders inside the local-tier folder (local_tier_dir). Anything
-    else could be a real ledger in an unexpected place (PROCESS.md §8; INV-24; S0030).
+    Allowed: the repo's synthetic `corpora/` (unless *allow_repo_corpora* is False: the engine's D2 runner,
+    `engine/scripts/d2_local.py`, reads only the local-tier folder; S0158), and folders inside the local-tier folder
+    (local_tier_dir). Anything else could be a real ledger in an unexpected place (PROCESS.md §8; INV-24; S0030).
     """
-    if within(folder, CORPORA):
+    if allow_repo_corpora and within(folder, CORPORA):
         return refuse_dir(folder, allow_repo_corpora=True)
     tier, why = local_tier_dir()
     if tier is None:

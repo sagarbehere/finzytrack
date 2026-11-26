@@ -173,6 +173,15 @@ class LocalTierTest(unittest.TestCase):
             with self.subTest(bad=bad):
                 self.assertIsNotNone(copies.refuse_local_tier_source(bad))
 
+    def test_without_the_corpora_exception_only_the_tier_is_accepted(self) -> None:
+        # S0158: the D2 runner reads no repo ledger, so the synthetic corpora are refused like the rest of the repo.
+        self.assertIsNone(copies.refuse_local_tier_source(self.tier / "bank", allow_repo_corpora=False))
+        for bad in (copies.CORPORA, copies.CORPORA / "ledgers/oracle", copies.REPO, self.base / "elsewhere"):
+            with self.subTest(bad=bad):
+                self.assertIsNotNone(copies.refuse_local_tier_source(bad, allow_repo_corpora=False))
+        os.environ.pop(copies.LOCAL_TIER_ENV)
+        self.assertIsNotNone(copies.refuse_local_tier_source(self.tier / "bank", allow_repo_corpora=False))
+
     def test_a_symlink_from_the_tier_to_elsewhere_is_refused(self) -> None:
         (self.tier / "link").symlink_to(self.base / "elsewhere")
         self.assertIsNotNone(copies.refuse_local_tier_source(self.tier / "link"))

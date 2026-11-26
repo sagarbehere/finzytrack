@@ -4,6 +4,7 @@
   "pythonVersion": "3.13",
   "venvPath": ".",
   "venv": ".venv",
+  "extraPaths": ["src", "../scripts/oracle"],
   "reportMissingModuleSource": "error",
   "reportMissingTypeStubs": "error",
   "reportMatchNotExhaustive": "error",

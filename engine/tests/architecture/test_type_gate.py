@@ -19,6 +19,9 @@ EXPECTED_PYRIGHT: dict[str, object] = {
     "pythonVersion": "3.13",
     "venvPath": ".",
     "venv": ".venv",
+    # `src` is the root pyright assumes when no extra path is given; the oracle's folder resolves `copies`, the copy
+    # rule the local tier's D2 runner reuses (`scripts/d2_local.py`, S0158). Paths only: no check is loosened.
+    "extraPaths": ["src", "../scripts/oracle"],
     "reportMissingModuleSource": "error",
     "reportMissingTypeStubs": "error",
     "reportMatchNotExhaustive": "error",

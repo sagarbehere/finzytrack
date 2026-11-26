@@ -3,7 +3,9 @@
 `same` is the comparison S0049 built for the D1 write corpus (moved here unchanged in S0094 so the parity corpus uses
 it too): entries equal, errors equal by type, source and message, options equal key by key (`dcontext` by its text;
 `input_hash` left out only when the files were written between the two loads). `load_file` is Beancount's own loader,
-the oracle (ADR-0024).
+the oracle (ADR-0024). The local tier's D2 runner (`engine/scripts/d2_local.py`, S0158) uses the same comparison as
+counts by kind (`differences`, empty exactly when `same` passes) and Beancount's load without its pickle cache
+(`beancount_load`), which writes nothing beside the ledger.
 
 The parity corpus (S0094; `corpora/ledgers/parity/`, `cases.toml`) and the cases generated at test time live here too:
 `corpus_cases` reads the hand-written ones, `generated_cases` writes the others into a temp folder (Beancount's example
@@ -21,9 +23,10 @@ import re
 import shutil
 import sys
 import tomllib
+from collections import Counter
 from collections.abc import Callable, Generator, Iterator
 from contextlib import contextmanager
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from datetime import date
 from os import path
 from pathlib import Path
@@ -44,7 +47,26 @@ CORPUS = REPO / "corpora" / "ledgers" / "parity"
 type Result = tuple[list[Any], list[Any], dict[str, Any]]
 
 
-# ---- the comparison (S0049) --------------------------------------------------------------------------------------
+# ---- the comparison (S0049; countable since S0158) ----------------------------------------------------------------
+
+
+type Comparable = tuple[tuple[list[Any], list[Any]], tuple[list[Any], list[Any]], tuple[dict[str, Any], dict[str, Any]]]
+
+
+def _comparable(result: Loaded, expected: Result, *, written_after: bool) -> Comparable:
+    """The overlay's result and Beancount's, side by side, in the form they are compared in: entries as they are,
+    errors by type, source and message, options key by key (`dcontext` by its text). `written_after`: the files
+    changed between the two loads, so `input_hash` (a stat of the files on disk, which only Beancount's pickle cache
+    reads) differs by design and is left out."""
+    entries, errors, options = expected
+
+    def opts(o: dict[str, Any]) -> dict[str, Any]:
+        return {k: str(v) if k == "dcontext" else v for k, v in o.items() if not (written_after and k == "input_hash")}
+
+    def errs(e: list[Any]) -> list[Any]:
+        return [(type(x).__name__, x.source, x.message) for x in e]
+
+    return (result.entries, list(entries)), (errs(result.errors), errs(errors)), (opts(result.options), opts(options))
 
 
 def same(
@@ -53,27 +75,77 @@ def same(
     *,
     written_after: bool = False,
 ) -> None:
-    """`written_after`: the files changed between the two loads, so `input_hash` (a stat of the files on disk, which
-    only Beancount's pickle cache reads) differs by design and is left out."""
+    """The overlay's result is Beancount's (`_comparable`); pytest shows what differs."""
     assert isinstance(result, Loaded), result
-    entries, errors, options = expected
-    if written_after:
-        options = {k: v for k, v in options.items() if k != "input_hash"}
-        result = replace(result, options={k: v for k, v in result.options.items() if k != "input_hash"})
-    assert result.entries == entries
-    assert [(type(e).__name__, e.source, e.message) for e in result.errors] == [
-        (type(e).__name__, e.source, e.message) for e in errors
-    ]
-    assert set(result.options) == set(options)
-    for key, value in options.items():
-        if key == "dcontext":
-            assert str(result.options[key]) == str(value)
-        else:
-            assert result.options[key] == value, key
+    (ours, theirs), (our_errors, their_errors), (our_options, their_options) = _comparable(
+        result, expected, written_after=written_after
+    )
+    assert ours == theirs
+    assert our_errors == their_errors
+    assert set(our_options) == set(their_options)
+    for key, value in their_options.items():
+        assert our_options[key] == value, key
+
+
+KINDS = ("refused", "entries", "errors", "options")
+"""The kinds of difference `differences` counts. The price map is not a kind of its own: Beancount builds it from the
+entries, so equal entries give an equal price map."""
+
+
+def differences(
+    result: Loaded | LoadRefused,
+    expected: Result,
+    *,
+    written_after: bool = False,
+) -> Counter[str]:
+    """`same` as counts by kind, for a report that may show no ledger text (the local tier, S0158): `refused` 1 when
+    the overlay refused the load; `entries` and `errors`, the positions that differ (a longer list's extra items
+    included); `options`, the keys that differ or that only one side has. Empty exactly when `same` passes."""
+    if not isinstance(result, Loaded):
+        return Counter(refused=1)
+    (ours, theirs), (our_errors, their_errors), (our_options, their_options) = _comparable(
+        result, expected, written_after=written_after
+    )
+    found = Counter(
+        entries=_positions(ours, theirs),
+        errors=_positions(our_errors, their_errors),
+        options=sum(
+            1
+            for k in set(our_options) | set(their_options)
+            if k not in our_options or k not in their_options or our_options[k] != their_options[k]
+        ),
+    )
+    return +found  # without the kinds that are 0
+
+
+def _positions(a: list[Any], b: list[Any]) -> int:
+    return abs(len(a) - len(b)) + sum(1 for x, y in zip(a, b, strict=False) if x != y)
 
 
 def load_file(root: Path) -> Result:
     entries, errors, options = loader.load_file(str(root))
+    return list(entries), list(errors), dict(options)
+
+
+class DecryptRefused(Exception):
+    """Beancount's load met a file it would decrypt; `beancount_load` never runs `gpg`."""
+
+
+def beancount_load(root: Path) -> Result:
+    """Beancount's own load of the ledger at `root`, as `loader.load_file` runs it after its pickle cache step
+    (`loader._load`), for a run that may write nothing beside the ledger (the local tier, S0158): `load_file` reads a
+    `.picklecache` file beside the root (a pickle runs code), writes one when the load took over a second, and deletes
+    it when the cache is switched off. A file Beancount would decrypt raises `DecryptRefused` instead."""
+    real = encryption.read_encrypted_file
+
+    def refuse(filename: str) -> str:
+        raise DecryptRefused
+
+    setattr(encryption, "read_encrypted_file", refuse)  # noqa: B010 (the module's function, for this load only)
+    try:
+        entries, errors, options = loader._load([(str(root), True)], None, None, None)  # pyright: ignore[reportPrivateUsage]
+    finally:
+        setattr(encryption, "read_encrypted_file", real)  # noqa: B010
     return list(entries), list(errors), dict(options)
 
 
