@@ -724,3 +724,12 @@ Format:
 - Why: the owner's direction is high integrity where possible and best effort, told, where not; precision in a refusal's cause cost rounds without protecting a byte.
 - Expected effect: a slice that adds a refusal lands in one round unless its outcome is wrong. Metric: fix rounds and owner questions per write-path slice after IMP-0078 against S0144 to S0149; class (a) escapes after landing (target 0).
 - Status: new.
+
+## IMP-0079: one-off tools get one review round; the stated limit is offered at the first High (2026-11-26)
+- Trigger: S0158 (the D2 runner, a one-off tool the owner runs on copies of their ledgers) took about 4 h: three verifier rounds, each a FAIL with a High under the "guard of real data" row, over hostile-ledger bypasses whose worst effect after round 1 was an outside folder's names listed in memory (never read, printed or written); the comparison itself was right from round 1. Owner, 2026-11-26, in session: "We need to stop this. I get being anal if it is about product code.. but we can't be wasting time and tokens like this on one-off tool runs."; asked "What do we need to do to prevent this kind of waste in future?", and on the three rules below: "Yes, all three (Recommended)".
+- What changed: process. (1) A review-budget row for a one-off tool the owner runs (not shipped): the verifier once, no fresh round; High only if it can change the owner's originals or copies, or put ledger content where it persists or leaves the machine; every other finding a stated limit. (2) Every brief names its kind (product code, or a tool: who runs it, how often), which picks the row. (3) At the first High in a slice that is not product code, the orchestrator offers "accept it as a stated limit" before any fix round. Product code's review budget is unchanged.
+- PROCESS.md section: §3, the review budget; `design/journal/README.md`, the brief template.
+- Why: review cost matched to risk (IMP-0068): a tool run once on the owner's own machine, on copies, cannot lose a ledger byte or mislead a user; the coordinator did not offer the cheap option at round 1, though round 1 rated the same effect Medium.
+- Expected effect: a tool slice lands in one verifier round. Metric: rounds and wall time per tool slice after IMP-0079 against S0158; harm to originals or copies from a tool (target 0).
+- Status: new.
+
