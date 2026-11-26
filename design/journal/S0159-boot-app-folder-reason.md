@@ -27,9 +27,17 @@
 - Self-mutation (the check guards the fail-closed open, so ledger data; `scripts/mutants.py`, plan `s0159-mutants.toml` in the session scratchpad, the copy's `src` first on `PYTHONPATH`): 4 tried, 4 killed: an error falling through to the report branch, an error letting every open through, the reason dropped (`no_report` always), the screen matching only the engine's spelling `engine.app_folder_missing` (which also shows the copy's source ran).
 - Population: the report-less ends of a recover-all job are the scheduler's `Failed` outcomes: `ENGINE_UNAVAILABLE` (its five reasons, `EngineUnavailableDetails.reason`), `JOB_CANCELLED` (`Cancelled` effect), `ENGINE_STOPPED {crashed}` (`_lost_outcome`), `INTERNAL` (a raised work); found by reading `scheduler._effect`, `_closing` and `_lost_outcome`. In: 8 parametrized cases, one per reason or code; out: none. Any error whose details are not `EngineUnavailableDetails` takes the `no_report` branch, by type, not by code.
 
-## Verifier
-
 ## Golden changes
 - `design/generated/engine-job-texts.md`, row `msg:recovery.app_folder_missing`: only its description column (when the text shows) gains the lock-wait case and BL-0248; the text itself is unchanged. No screen text changed.
 
+## Verifier (round 1)
+- Head 1d4002c7 (range 3cb50b79..1d4002c7): **PASS WITH FINDINGS**, no High, no code defect; fail closed holds for every error shape (one blocker for any end without a report). Two Low (d), fixed by the coordinator in docs.
+
+| ID | Sev | Class | Finding | What was done |
+|---|---|---|---|---|
+| V1-1 | Low | d | No product caller of `blocking_for` yet; BL-0154's row did not say the open must pass the job's `Failed.error`, so the fix could be lost silently (fail closed either way) | One clause on BL-0154's row |
+| V1-2 | Low | d | The brief named `test_app_folder_identity.py` and spec §8.1; the test landed in `test_recover_all.py` and the spec change in §6.1 step 8's limit and the §11 row | Noted here; the backlog row names the right file |
+
 ## Retro
+- About 25 min (the slice about 12 min, the verifier about 4 min). Findings 0H / 0M / 2L. The first slice under IMP-0079's brief line (kind: product code).
+
