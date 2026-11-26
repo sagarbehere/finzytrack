@@ -93,7 +93,9 @@ def mask_home(
     link), and on Windows in any case and with either slash. Unchanged when there is no home to mask (none, empty, or
     a root). Limits (S0153 round 1, V1-1): a Windows 8.3 short name of the home and macOS's firmlinked spelling of it
     (under the system's data volume) are not masked; a home whose name is the start of a longer folder name is masked
-    there too (a home `al` inside a path to `al2`), which hides more, never less."""
+    there too (a home `al` inside a path to `al2`), which hides more, never less; a home with a non-ASCII letter in
+    output the probe wrote in another encoding than UTF-8 (Windows' ANSI code page on a pipe) is decoded with a
+    replacement letter first, so it is not masked (S0153 round 2, V2-1)."""
     if not home or _is_root(home):
         return text
     spellings = {s for s in (home, real(home)) if s and not _is_root(s)}

@@ -76,4 +76,21 @@ Outside the product, read for completeness: `shell/sidecar/build_sidecar.py` run
 | V1-3 | Low | c | The mutants that drop the env or the cwd from `view_failure_detail` survived | Fixed: test with `PYTHONFOO`, `LD_FOO` and `chdir`; the env shown is now the probe's own (phase 2 decision) |
 | V1-4 | Low | e | A listed variable whose name looks secret was printed | Fixed (point 3): its value shown `<hidden>`; test |
 
+### Round 2 (head cdc8f3d6, range 3179ff4b..cdc8f3d6; a fresh round, since phase 2 changed a privacy guard): PASS WITH FINDINGS, no High
+The verifier checked the fix (the probe's environment is the engine's, `engine_env` imported), redid the inventory of Python-spawning sites (none missed), the workflow's strictness (no `--expect-fail` left on the AppImage run) and the two allow markers (made-up 3-character values only; the privacy scan over the range: 0 findings).
+
+| ID | Sev | Class | Finding | Resolution |
+|---|---|---|---|---|
+| V2-1 | Low | c | V1-2's fix decodes the probe's bytes as UTF-8 with replacement before masking, so a home with a non-ASCII letter in output written in another encoding (reasoned: Windows' ANSI code page on a pipe, `engine_env` sets no UTF-8 mode) is not masked; only the `--smoke-test` line shows it | A stated limit in `mask_home`'s docstring beside the 8.3 short name (a Low (c) in a fresh round: fixed in tests or docs, or dropped with a reason, IMP-0075; a code fix would start another round for a line that never reaches the repository or leaves the machine) |
+
+### The 2026-11-26 packaged run on cdc8f3d6
+Every job green. Linux: the AppImage's smoke run strict and passing (`FT_SMOKE_OK`, Beancount 3.2.0, the engine site and Python prefix under the AppImage's mount); the `.deb` strict and passing, its two must-not-pass runs refused as expected (the engine away, the interpreter away). macOS and Windows unchanged. The phase-1 run on 3179ff4b had shown the cause (the AppImage's launcher sets `PYTHONHOME` and `PYTHONPATH`; the view probe inherited them: `No module named 'encodings'`).
+
+## Landing
+Lands at the commit after cdc8f3d6, the verifier's head of round 2 (the round-2 fix is a docstring line only). BL-0263 done: the AppImage passes strictly, so Linux's `known_failure` is gone.
+
 ## Retro
+- About 1 h 30 min from "Yes, start 8c" to landing (phase 1 about 8 min, its packaged run about 8 min, phase 2 about 12 min, its run about 8 min, two verifier rounds about 4 and 3 min). 2 verifier rounds; findings 0H / 0M / 5L (4 fixed in phase 2, 1 a stated limit).
+- Cheaper gate: the self-check reported only an exception's name for 13 days (S0112 to S0153); a probe's failure report should carry its exit code and error output from its first day. Measuring first (phase 1) turned a guess into the exact cause in one run.
+- Process checks: the mid-slice push gate 2 pushes / 0 false positive; the privacy scan 2 catches in the implementer's commit (home-shaped literals, secret-keyword fixtures) / 0 false positive after the fix; check_workflows 0 / 0; run_meta_tests 0 / 0.
+
