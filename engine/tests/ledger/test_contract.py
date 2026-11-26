@@ -2,11 +2,11 @@
 ADR-0010; INV-01, INV-22): an edit plan and its intended change checked into a write plan, without writing.
 
 Each step's refusal has a must-not-pass test, and each step fails closed: a fault injected into it (an exception, an
-undecidable result) gives `Refused` naming the step, with nothing on disk changed. A plan whose result is not the
-intended change is made here by doctoring what `apply_edits` returns (as a bug in the primitives would), since the
-primitives themselves refuse such text before the contract sees it. The D1 write corpus runs the test-only producer's
-edits through prepare at the end, against an oracle independent of prepare: Beancount's own loader on a copy of the
-case with the candidate texts written.
+undecidable result) gives `Refused` naming the step, with nothing on disk changed (`test_contract_faults.py`, S0156).
+A plan whose result is not the intended change is made here by doctoring what `apply_edits` returns (as a bug in the
+primitives would), since the primitives themselves refuse such text before the contract sees it. The D1 write corpus
+runs the test-only producer's edits through prepare at the end, against an oracle independent of prepare: Beancount's
+own loader on a copy of the case with the candidate texts written.
 """
 
 from __future__ import annotations
@@ -164,66 +164,7 @@ def test_an_insert_a_delete_and_a_token_edit_in_one_plan_are_prepared(tmp_path: 
     assert [e.type for e in out.new_errors] == ["BalanceError"]
 
 
-# ---- every step fails closed (INV-22's per-step fault test) ---------------------------------------------------------
-
-
-def _boom(*args: object, **kwargs: object) -> Any:
-    msg = "injected"
-    raise RuntimeError(msg)
-
-
-def _patch(target: object, name: str) -> Callable[[pytest.MonkeyPatch], dict[str, Any]]:
-    def inject(mp: pytest.MonkeyPatch) -> dict[str, Any]:
-        mp.setattr(target, name, _boom)
-        return {}
-
-    return inject
-
-
-def _load_fault(mp: pytest.MonkeyPatch) -> dict[str, Any]:
-    return {"load": _boom}
-
-
-FAULTS: dict[contract.Step, Callable[[pytest.MonkeyPatch], dict[str, Any]]] = {
-    "apply": _patch(se, "apply_edits"),
-    "parse": _patch(sd, "parse"),
-    "diff": _patch(sd, "diff"),
-    "spans": _patch(sd, "outside_spans"),
-    "load": _load_fault,
-    "errors": _patch(ledger_set, "as_before"),
-}
-
-
-def test_every_step_has_a_fault_test() -> None:
-    assert set(FAULTS) == set(contract.STEPS) - {"plan"}  # the producer's step is the job's (`preview`)
-
-
-@pytest.mark.parametrize("step", sorted(FAULTS))
-def test_a_fault_in_any_step_refuses_naming_the_step_and_writes_nothing(
-    step: contract.Step, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    root, current = ledger(tmp_path)
-    base = baseline(root)
-    p = produced(
-        current,
-        [pr.ReplaceReq(at(LUNCH, root), '2024-01-05 * "Shop" "lunch"\n  Expenses:Food  10.50 USD\n  Assets:Cash\n')],
-    )
-    before = tree(tmp_path)
-    kw = FAULTS[step](monkeypatch)
-    out = refused(contract.prepare(current, p, root, base, DESKTOP, **kw), step, "fault")
-    assert out.detail == "RuntimeError"
-    assert tree(tmp_path) == before
-
-
-def test_a_load_that_gives_no_decidable_result_refuses(tmp_path: Path) -> None:
-    root, current = ledger(tmp_path)
-    before = tree(tmp_path)
-
-    def undecided(root: str, overlay_: Mapping[str, bytes], policy: object) -> Any:
-        return None
-
-    refused(prep(root, current, [pr.DeleteReq(at(DINNER, root))], load=undecided), "load", "undecidable")
-    assert tree(tmp_path) == before
+# ---- every step fails closed: `test_contract_faults.py` (INV-22's per-step fault test; S0156) ----------------------
 
 
 # ---- step 2: the semantic diff is the intended change --------------------------------------------------------------

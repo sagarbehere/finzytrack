@@ -12,7 +12,6 @@ deviation, as in S0053).
 
 from __future__ import annotations
 
-import contextlib
 import dataclasses
 import faulthandler
 import inspect
@@ -69,6 +68,8 @@ from app.platform.engine_supervision import (
     Unavailable,
 )
 from app.platform.observability import Event
+from tests.platform import held_leaders
+from tests.platform.held_leaders import signal_held
 from tests.windows_pending import POSIX_SUPERVISION
 
 if sys.platform == "win32":
@@ -85,6 +86,13 @@ REPO = Path(__file__).resolve().parents[3]
 ENGINE_VENV = REPO / "engine" / ".venv"
 DEADLINE = 20.0
 HANG_GUARD = 15 * DEADLINE  # the test's own hang detector (below), far above its longest wait (a bytecode fill)
+
+
+@pytest.fixture(autouse=True)
+def held(monkeypatch: pytest.MonkeyPatch) -> None:
+    """BL-0195 (S0156): the hang paths below signal an engine only while the client's reaper holds its leader
+    unreaped (`tests/platform/held_leaders.py`)."""
+    held_leaders.install(monkeypatch)
 
 
 @pytest.fixture(autouse=True)
@@ -798,8 +806,7 @@ def test_an_exception_while_waiting_for_a_reply_stops_the_engine_and_leaves_the_
         if not done.wait(DEADLINE):
             pid = c.pid
             if pid is not None:
-                with contextlib.suppress(OSError):
-                    os.killpg(pid, signal.SIGKILL)
+                signal_held(pid, signal.SIGKILL, group=True)  # BL-0195: never a reaped engine's id
 
     # A shell starts a background job with SIGINT ignored; this test needs Python's own handler (found in S0057).
     previous = signal.signal(signal.SIGINT, signal.default_int_handler)
@@ -950,7 +957,7 @@ def frozen_until_released(pid: int, *threads: threading.Thread) -> list[threadin
         t.join(DEADLINE)
     hung = [t for t in threads if t.is_alive()]
     if hung:
-        os.kill(pid, signal.SIGCONT)
+        signal_held(pid, signal.SIGCONT, group=False)  # BL-0195: never a reaped engine's id
         for t in hung:
             t.join(DEADLINE)
     return hung
@@ -1862,8 +1869,7 @@ def bounded_call(c: EngineClient, op: str, params: dict[str, Any], on_event: Cal
     if t.is_alive():
         pid = c.pid
         if pid is not None:
-            with contextlib.suppress(OSError):
-                os.killpg(pid, signal.SIGKILL)
+            signal_held(pid, signal.SIGKILL, group=True)  # BL-0195: never a reaped engine's id
         t.join(DEADLINE)
         pytest.fail(f"the call to {op} was still waiting after {DEADLINE} s: the client missed what should end it")
     return out[0]

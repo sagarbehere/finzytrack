@@ -579,14 +579,16 @@ class MemFS:
         d.durable = dict(d.entries)
         d.pending = []
 
-    def outside_excl_refused_at_use(self, path: str) -> None:
+    def outside_excl_refused_at_use(self, path: str, *, swap: bool = False) -> None:
         """The folder at `path` is on a volume without the swap and without the exclusive rename that says so only
         when the exclusive rename is used (S0125 round 1, owner: "A2": Linux's `RENAME_NOREPLACE`): `caps` offers
         `excl` until the first `rename_excl`, which raises `NotOffered` with nothing done; after it, `caps` says no.
-        Calling it again starts a fresh job's knowledge."""
+        Calling it again starts a fresh job's knowledge. With `swap`, a volume that has the swap (so the write mode
+        is `SWAP` until the refusal): no probed volume is so, since every swap type accepts `RENAME_NOREPLACE`
+        (S0156, BL-0277 (2): SWAP mode never falls back)."""
         node = self._at(path)
         assert isinstance(node, _Dir)
-        node.no_swap = True
+        node.no_swap = not swap
         node.no_excl = True
         node.excl_unknown = True
 

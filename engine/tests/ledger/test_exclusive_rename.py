@@ -13,6 +13,8 @@ from __future__ import annotations
 
 import pytest
 
+from ledger_engine.fs.port import NotOffered
+from ledger_engine.ledger.handles import Mode, keep, move, write_mode
 from ledger_engine.ledger.restore import Stopped, recover_journal
 from ledger_engine.ledger.writer import Landed, NotSaved, Reason, Unfinished, durable_commit
 from tests.fakes.memfs import Crash, MemFS
@@ -122,3 +124,39 @@ def test_C1_a_journal_folder_without_the_exclusive_rename_is_a_named_refusal_and
     if not unknown:  # the volume said so when asked: refused before the backups and the record were written
         assert w.fs.names_in(JD) == []
         assert w.fs.names_in(BD) == []
+
+
+# -- BL-0277 (2), S0125 round 2's V2-F2: SWAP mode never falls back on `NotOffered` ------------------------------------
+
+
+def _swap_volume_refusing_excl_at_use() -> MemFS:
+    """`/w/L` on a volume that has the swap and offers the exclusive rename until its first use, which refuses it
+    (`NotOffered`, nothing done). No probed volume is so (every swap type accepts `RENAME_NOREPLACE`), so its write
+    mode is `SWAP`; the fake form is the only case."""
+    w = world()
+    w.fs.outside_excl_refused_at_use("/w/L", swap=True)
+    with w.fs.open_dir("/w/L") as d:
+        assert write_mode(d) is Mode.SWAP
+    w.fs.outside_write("/w/L/.prices.bean.ft-s1-j7.new", b"2026-01-03 price X 1 EUR\n")
+    return w.fs
+
+
+def test_V2F2_swap_modes_move_raises_not_offered_and_places_nothing() -> None:
+    """Must not pass a `move` that, in SWAP mode, falls back to the check and a plain rename where the exclusive rename
+    is refused: SWAP mode promises the exclusive rename (ADR-0013), so a created file stops with nothing done."""
+    fs = _swap_volume_refusing_excl_at_use()
+    before = fs.snapshot()
+    with fs.open_dir("/w/L") as d, pytest.raises(NotOffered):
+        move(d, Mode.SWAP, ".prices.bean.ft-s1-j7.new", "prices.bean")
+    assert fs.file(CREATED) is None, "the created file was placed by a plain rename"
+    assert fs.snapshot() == before
+
+
+def test_V2F2_swap_modes_keep_raises_not_offered_and_moves_nothing() -> None:
+    """`keep`, `move`'s caller in SWAP mode (an outside save met at a temp name): the entry is never moved by a plain
+    rename, which on a volume without the exclusive rename could replace an earlier kept copy."""
+    fs = _swap_volume_refusing_excl_at_use()
+    before = fs.snapshot()
+    with fs.open_dir("/w/L") as d, pytest.raises(NotOffered):
+        keep(d, ".prices.bean.ft-s1-j7.new", "prices.bean", NAME, Mode.SWAP)
+    assert fs.snapshot() == before

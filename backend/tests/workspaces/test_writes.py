@@ -13,6 +13,8 @@ writes a ledger file; the same cases on a real disk are `test_writes_end_to_end.
    refusing by default.
 Rule 4 (the gate's re-check) and rule 7 ("saved" only once durable) are the save's own (`app.platform.engine_jobs.
 save`, S0063), which the confirm runs unchanged; a fault in each of the use case's own steps fails closed (INV-22).
+Rules 1, 3 and 6 are INV-01's sidecar half: new errors written only on "Save anyway", and no unpromoted mutator on a
+real ledger.
 """
 
 from __future__ import annotations

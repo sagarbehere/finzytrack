@@ -1436,7 +1436,7 @@ _OURS_TAKEN = _OURS_CREATED | {
 }
 
 
-@pytest.mark.parametrize("foreign", list(_FOREIGN_AT))
+@pytest.mark.parametrize("foreign", ["none", "target", "nested"])  # `_FOREIGN_AT`'s keys
 @pytest.mark.parametrize("stop", ["load_errors", "manifest_taken"])
 def test_V4_1_an_error_at_every_cleanup_effect_leaves_left_as_the_disk_holds_it(stop: str, foreign: str) -> None:
     """@regression-guard (S0145: holds on the base; its must-not-pass are the mutants in the journal). S0136 round

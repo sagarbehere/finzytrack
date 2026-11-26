@@ -1226,3 +1226,18 @@ def test_in_windows_mode_off_local_ntfs_remove_entries_is_the_folders_own_side(f
     fs.outside_acl_clear("/d")
     with fs.open_dir("/d") as d:
         assert d.allowed(".", Right.REMOVE_ENTRIES)
+
+
+def test_a_swap_volume_that_refuses_the_exclusive_rename_at_first_use_keeps_its_swap() -> None:
+    """S0156 (BL-0277 (2)): `outside_excl_refused_at_use(..., swap=True)` offers the swap and the exclusive rename until
+    the exclusive rename's first use, which refuses with nothing done; the swap stays offered."""
+    fs = MemFS()
+    fs.outside_mkdirs("/v")
+    fs.outside_write("/v/a", b"a")
+    fs.outside_excl_refused_at_use("/v", swap=True)
+    with fs.open_dir("/v") as d:
+        assert (d.caps().swap, d.caps().excl) == (True, True)
+        with pytest.raises(NotOffered):
+            d.rename_excl("a", "b")
+        assert (d.caps().swap, d.caps().excl) == (True, False)
+    assert (fs.file("/v/a"), fs.file("/v/b")) == (b"a", None)
