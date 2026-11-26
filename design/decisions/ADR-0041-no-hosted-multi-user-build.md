@@ -61,3 +61,8 @@ Owner, 2026-10-29, in session: "I'm wondering if we should remove this feature f
 ## Note (2026-10-31): R4 after ADR-0067
 
 Owner, 2026-10-31, in session: "Yes, draft that ADR. I'm approving it already, so go ahead and implement it." (S0068). R4 compares and shows a notice and gates nothing; nothing about it is owed to a workspace or recorded for its next open. The status line names the superseded words.
+
+## Note (2026-11-26): the rebuild's `LoadPolicy` seam is deferred with hosted mode (L11.M-6)
+
+Owner, 2026-11-26, in session, offered "ADR-0041 wants LoadPolicy (the load limits for hosted mode) asked on every load path; the background rebuild after a save does not ask it. Hosted mode is not built in v0.4. What should happen?", with the options "Amend ADR-0041 (Recommended)", "Wire LoadPolicy in" and "Defer to hosted mode": "Defer to hosted mode" (S0154); and, asked whether this ADR should point to that deferral: "Yes, add the note to ADR-0041".
+- **Qualified in "Decision":** "the **`LoadPolicy`** on every load path (ADR-0010)". **Instead:** every load path but one asks it in v0.4; the background rebuild after a save (`ledger.rebuild`, its real Beancount load) does not, and its seam is built with hosted mode (backlog L11.M-6, `post-v0.4`). On desktop the `LoadPolicy` body allows everything (the note of 2026-10-29), so v0.4's behaviour is unchanged.
