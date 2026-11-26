@@ -35,3 +35,18 @@
   - `gen_capabilities.render` (the index shows `writes`, the totals count it) → `Index.test_index_row_has_the_index_columns_and_not_the_detail`, `test_totals_count_what_the_rows_write`.
 - Self-mutation (optional on tooling; done, `scripts/mutants.py`, plans in the session scratchpad): licence check 4 tried, 4 killed (the two note keys dropped to name only, `evaluate` matching by name, the name-only `present`). `writes` and the ledger-writer check 10 tried, 10 killed (`LIVE` narrowed to planned, the mutator-citation check, the line's `writes` check, the cited-line check, the ADR and backlog checks, the cut-line check, any backlog status taken as open, any `writes` value, `writes` not required). The capability mutants ran on `LedgerWriters`, `Writes` and `CutAndDeferredRows` only: in the runner's copy, which is not a git work tree, `PathsExist` and `TaggedTestsAreRealTests` need git (they fail there on base too).
 - Population: inventory `design/capabilities.toml`, 342 rows, each read by its capability text and `v04_note` (the full row for 25 borderline ones) against what it writes, never its name. Out: `ledger` 94 (planned 82, partial 2, cut 7, deferred 3), `config` 62, `none` 186. Of the 84 ledger rows that will be built: 50 were cited by the intent table before, 20 more now (above), 14 named in `[ledger_writers]` (8 `machinery`, 1 `not built`, 5 `pending` on BL-0311); the 10 cut or deferred ledger rows need nothing. No mutator row cited a non-ledger row.
+
+## Verifier (round 1)
+- Head 6d4dbb83 (range ea3c57e8..6d4dbb83): **PASS WITH FINDINGS**, no High. The verifier sampled about 95 live rows' `writes` (all live `none` and `config` rows scanned): none writes the ledger; counts confirmed (ledger 94, config 62, none 186; 84 live ledger rows, 70 cited, 14 named). Tooling stop rule: both findings are shapes outside the check's promises, so each became a line in its stated limits (write-path README rule 5), by the coordinator; no further round.
+
+| ID | Sev | Class | Finding | What was done |
+|---|---|---|---|---|
+| V1-1 | Low | c | A `[ledger_writers]` line's ADR is checked only to exist: a superseded ADR is accepted | A stated limit in README rule 5 (as in the sibling checks; review reads the reason) |
+| V1-2 | Low | c | A `not built` line is accepted on a planned, release-blocking ledger writer | A stated limit in README rule 5; today's only `not built` line, CAP-WS-IMPORT, is after v0.4.0 per ADR-0043 item 1 (its `planned` status is a question for a later row clean-up, not this slice) |
+
+- `Wiring.test_a_fork_installed_at_another_version_still_evaluates_the_other_lines_marker` passes on the base by design (a mutant killer, tagged `@regression-guard`); the brief's "each fails on base" is read with that exception.
+
+## Retro
+- About 40 min (the slice about 16 min, the verifier about 5 min, the limits by the coordinator). Findings 0H / 0M / 2L, both stated limits.
+- Cheaper gate: a citation check should ask the cited ADR's status as well as its existence; one shared helper for every check that cites ADRs would close V1-1 everywhere at once (not done: tooling stop rule).
+
