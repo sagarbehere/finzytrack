@@ -47,6 +47,7 @@ from app.platform.errors import (
     ErrorCode,
     WorkspaceNotReadyDetails,
     WritesPausedDetails,
+    spec_for,
 )
 from tests.host_paths import host
 from tests.platform.fake_job_engine import CRASH, CRASH_TO_BOUND, GATE_DIE, FakeEngine, Gated
@@ -764,15 +765,47 @@ def test_S0102_r1_an_outcome_refused_for_the_app_folder_before_the_gate_says_qui
     assert details(value) == EngineUnavailableDetails(reason="app_folder_missing")
 
 
-def test_S0125_an_app_data_folder_that_cannot_save_safely_is_named_with_the_way_out() -> None:
+@pytest.mark.parametrize("folder", [host("/data/finzytrack/local/k1/journal"), None])
+def test_S0125_an_app_data_folder_that_cannot_save_safely_is_named_with_the_way_out(folder: str | None) -> None:
     """Must not pass (verifier F3; owner, 2026-11-17: "C1"): the engine's `unsafe_app_folder` is its own text naming
-    the folder and what it needs, not the generic disk error, and the ledger is said unchanged when it was hashed so."""
-    folder = host("/data/finzytrack/local/k1/journal")
+    the folder, not the generic disk error, and the ledger is said unchanged when it was hashed so. BL-0278 (owner,
+    2026-11-26: "Generic text (Recommended)"): one generic cause, shown on macOS and Linux alike, so no Linux
+    file-system name; the folder is the journal folder, so never "data folder"; no setting moves it, so no move
+    instruction."""
     text = save_text.not_saved_text(ChangeNotSavedDetails("unsafe_app_folder", None, folder, None, True, None))
-    assert text.startswith("Finzytrack did not save your change. Its data folder " + folder), text
+    assert text.startswith("Finzytrack did not save your change. "), text  # the outcome, unchanged
+    assert text.endswith(" Your ledger is unchanged."), text  # the re-hash's outcome, unchanged
+    assert "keeps a record of each save" in text
+    if folder is not None:
+        assert folder in text
     assert "cannot save safely" in text
-    assert "local disk" in text
-    assert "unchanged" in text
+    assert "report a problem" in text
+    for wrong in ("ext4", "xfs", "btrfs", "data folder", "Move", "local disk"):
+        assert wrong not in text, (wrong, text)
+
+
+def test_S0125_an_unsafe_app_folder_whose_ledger_was_not_checked_says_so() -> None:
+    """@regression-guard (BL-0278): the cause text never claims an outcome itself: without the re-hash the text says
+    the ledger was not checked."""
+    folder = host("/data/finzytrack/local/k1/journal")
+    text = save_text.not_saved_text(ChangeNotSavedDetails("unsafe_app_folder", None, folder, None, False, None))
+    assert "unchanged" not in text
+    assert text.endswith(save_text.NOT_CHECKED), text
+
+
+def test_BL0271_the_gates_warming_tells_a_confirm_to_preview_again(make: Any) -> None:
+    """Must not pass (BL-0271): the save's gate answers `mirror_stale` as `WORKSPACE_NOT_READY` after the confirm took
+    its plan, so the same confirm again is `PLAN_ALREADY_CONFIRMED`; the next step must send a save to a new preview,
+    and still say to try again (reads and the preview get the same code)."""
+    spec = spec_for(ErrorCode.WORKSPACE_NOT_READY)
+    assert spec is not None
+    assert spec.message == "This workspace is still getting ready."  # the outcome, unchanged
+    assert "try again" in spec.next_step
+    assert "preview it again" in spec.next_step, spec.next_step
+    rig = make({"save": [answer(outcome="refused", reason="mirror_stale", unchanged=True)]})
+    value = rig.save()
+    assert code(value) == ErrorCode.WORKSPACE_NOT_READY
+    assert details(value) == WorkspaceNotReadyDetails("WARMING")
 
 
 # -- S0148 (BL-0284, BL-0306): a held file, and the share's folder ---------------------------------------------------

@@ -267,7 +267,9 @@ def specs() -> tuple[ErrorSpec, ...]:
             retryable=True,
             message="This workspace is still getting ready.",
             data_safe=True,
-            next_step="Wait a moment and try again.",
+            # BL-0271: the save's gate answers it too, after the confirm took its plan, so the same confirm again is
+            # PLAN_ALREADY_CONFIRMED; a save goes back to a new preview (one text for reads, the preview and the save)
+            next_step="Wait a moment and try again. If you were saving a change, preview it again.",
             details=WorkspaceNotReadyDetails,
         ),
         ErrorSpec(

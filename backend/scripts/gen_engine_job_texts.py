@@ -293,7 +293,7 @@ SAVE: tuple[Row, ...] = (
     ),
     (
         "msg:save.unsafe_app_folder",
-        "`CHANGE_NOT_SAVED {unsafe_app_folder}`: the app's data folder offers no exclusive rename (S0125 round 1)",
+        "`CHANGE_NOT_SAVED {unsafe_app_folder}`: the journal folder has no exclusive rename (S0125, BL-0278)",
         lambda: _not_saved("unsafe_app_folder", path=None, folder=FOLDER, unchanged=True),
     ),
     ("msg:save.ledger_changed", "`LEDGER_EXTERNALLY_CHANGED`", lambda: st.LEDGER_CHANGED),
