@@ -35,8 +35,24 @@
 ## Hand-off (PROCESS.md §3 step 4; ADR-0057)
 - Checks that accept, tag or refuse: none added or changed.
 - Self-mutation: not applicable (no check changed).
-- Population: the M1b rows due at the exit, from `FT_MILESTONE_EXIT=M1b python3 scripts/check_invariants.py` before the slice: 2 invariants pending and 28 rows open; after it: 2 invariants pending and 13 rows open (listed in roadmap §1's plan).
+- Population: the M1b rows due at the exit, from `FT_MILESTONE_EXIT=M1b python3 scripts/check_invariants.py` before the slice: 2 invariants pending and 26 rows open (the round-1 verifier, V1-4; 28 was a miscount); after it: 2 invariants pending and 13 rows open (listed in roadmap §1's plan).
 
 ## Verifier
 
 ## Retro
+
+## Verifier
+- Round 1, head 6f76d4fe (range 378bbc0b..6f76d4fe): **PASS WITH FINDINGS**, no High. A docs slice: one round; the findings fixed by the coordinator in docs (PROCESS.md §3).
+
+| ID | Sev | Class | Finding | What was done |
+|---|---|---|---|---|
+| V1-1 | Medium | e | BL-0091, BL-0272 and BL-0106 moved to M2 with BL-0268, whose own consumer, the confirm's route, comes with the first mutator (ARCHITECTURE.md §9.2 step 4), M3's; M2 writes nothing, so M2's exit was set to fail on four rows | BL-0268 moves to M3 with BL-0267 (IMP-0070; BL-0267's route test comes with the confirm's route), and BL-0091, BL-0272 and BL-0106 to M3 with BL-0267 too (a row may not cite one that moves in the same push); failure-modes.md (BL-0091 at M3) and roadmap §1 follow. The Decisions above that say M2 are superseded by this line. |
+| V1-2 | Low | d | The reason for moving I2, I3 and I10 to M4 said M3's mutators write only new files; `ws.adopt-legacy` rewrites the `option "documents"` line in its copied root, and `doc.documents-option` (filed at M3) lists I10, I2 and I3 | Both exceptions stated on the three rows: adopt's rewrite is the copy job's own write, not through the contract; documents-option's first use is M4's attach. |
+| V1-3 | Low | d | BL-0265's note said pushed tags and metadata land on transactions only; on Beancount 3.2.0 pushed tags also land on `note` and `document` entries | Corrected; the move holds (M4 changes notes and documents by a token replace or a delete, never a whole-entry replace). |
+| V1-4 | Low | d | The journal said 28 rows were open at the exit before the slice; the base had 26 | Corrected above. |
+| V1-5 | Low | d | ADR-0041 still says the LoadPolicy seam is kept on every load path, while L11.M-6 (the rebuild's) is now post-v0.4 | Not changed here: the owner declined "Amend ADR-0041 (Recommended)" for "Defer to hosted mode"; whether the ADR gets a pointer to the deferral is the owner's (asked in session). |
+
+## Retro
+- About 50 min (the slice about 17 min, the verifier about 9 min, the round's fixes by the coordinator). Findings 0H / 1M / 4L, four fixed in docs, one asked of the owner.
+- Cheaper gate: a move by IMP-0070 checks that the cited row is open on the target milestone, not that the cited row is itself on its own consumer's milestone; one look at the cited row's own "with …" clause would have caught V1-1.
+
