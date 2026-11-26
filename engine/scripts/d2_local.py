@@ -4,7 +4,12 @@ result (ADR-0010 guardrail 1, ADR-0046; roadmap M1b exit).
 How to run it (from the repository's `engine/` folder, with the engine's environment):
 
   1. Copy each ledger, with every file it includes, its plugins and its documents, into one folder outside the
-     repository, for example `~/ft-local-tier/` (never your live data folder).
+     repository, as a plain copy that follows links (never your live data folder), for example:
+
+       cp -RL ~/MyLedgers/personal ~/ft-local-tier/personal
+
+     The run refuses a folder that is not a plain, self-contained copy (see "What it reads"); edit the lines it
+     names in the copy, never in your ledger.
   2. Run, naming each copy's root file:
 
        FT_LOCAL_TIER_DIR=~/ft-local-tier .venv/bin/python scripts/d2_local.py \\
@@ -23,19 +28,23 @@ candidate text (as a save's preview gives the files it changes); `entries` and `
 tests use). Nothing else is printed: no amount, account, payee, narration, file name or path (INV-23, PROCESS.md §8).
 Exit status: 0 when every ledger is EQUAL, 2 when an input is refused, 1 otherwise (DIFFERENT or ERROR).
 
-**What it reads.** Only files inside `FT_LOCAL_TIER_DIR` (INV-24), by the oracle harness's rule
-(`scripts/oracle/copies.py`: the folder must be absolute, existing, and outside the repository, the live data folder
-and the legacy worktree; each root must be a file inside it, links resolved). Before any load, the whole folder is
-walked without following links (`refuse_tree`): a link whose target is outside it (a plugin module or package, an
-include, any file; `cp -R` keeps links) refuses every ledger, and so does any `include` line or `option "documents"`
-value in any file of it whose path leaves the folder (a text scan, looser than Beancount's grammar: it may refuse a
-ledger that would not read outside, never the reverse). A link that stays inside is allowed. Then the overlay load
-runs under a policy that refuses any file, `pythonpath` folder or documents root outside the folder before it is read
-(a second line); Beancount's load runs only after that, and follows the same includes. A refused ledger is REFUSED:
-copy the whole ledger in, as files. The scan reads every file in the folder, documents included, twice per
-ledger (before any load, and again in the ledger's own process).
-Limits: a `document` directive's file is checked for existence, not read, wherever it is; a plugin's own code may read
-anything: it runs as Beancount runs it.
+**What it reads.** Only files inside `FT_LOCAL_TIER_DIR` (INV-24), and only a plain, self-contained copy (owner,
+2026-11-26: "Strict plain-copy rule (Recommended)"). The folder must be absolute, existing, and outside the
+repository, the live data folder and the legacy worktree, and each root a file inside it (the oracle harness's rule,
+`scripts/oracle/copies.py`). Before any load, the whole folder is checked (`refuse_tree`), and any of these refuses
+the whole run, exit 2, nothing loaded:
+  - a link of any kind, a file with a second hard link, or anything that is neither a file nor a folder: make the
+    copy again with `cp -RL`;
+  - a folder that cannot be listed or a file that cannot be read;
+  - in any file, an `include` line or an `option "include"` or `option "documents"` value that is absolute, starts
+    with `~` or `$`, has `..` in it as a folder, or holds a backslash: edit that line in the copy to a path relative
+    to its file, below it. This is a plain text scan, looser than Beancount's grammar: a commented-out line or a
+    binary file can cause a refusal too.
+Then the overlay load runs under a policy that refuses any file, `pythonpath` folder or documents root outside the
+folder before it is read (a second line); Beancount's load runs only after that, and follows the same includes. The
+ledger's own process checks the folder again before it loads. Limits: a change made to the folder between the check
+and the loads is not seen (do not edit the copy during a run); a `document` directive's file is checked for
+existence, not read, wherever it is; a plugin's own code may read anything: it runs as Beancount runs it.
 
 **What it writes.** Nothing: no mirror, no cache, no pickle (Beancount's load without its pickle cache,
 `parity.beancount_load`), no bytecode (this process and each ledger's child write none).
@@ -53,6 +62,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import stat
 import subprocess
 import sys
 from collections.abc import Callable, Mapping
@@ -91,8 +101,12 @@ REASONS: Final[Mapping[str, str]] = {
     ),
     "root": "not a file inside FT_LOCAL_TIER_DIR (or it is inside the repository, the live data folder or the legacy "
     "worktree)",
-    "link": "a link in FT_LOCAL_TIER_DIR points outside it; copy the files themselves, not links to them",
-    "reaches-out": "a file in FT_LOCAL_TIER_DIR includes or names a folder outside it; copy the whole ledger into it",
+    "link": "FT_LOCAL_TIER_DIR holds a link; make a plain copy (cp -RL) instead",
+    "hardlink": "a file in FT_LOCAL_TIER_DIR has a second hard link; make a plain copy (cp -RL) instead",
+    "special": "FT_LOCAL_TIER_DIR holds something that is neither a file nor a folder; remove it from the copy",
+    "unreadable": "a file or folder in FT_LOCAL_TIER_DIR cannot be listed or read",
+    "reaches-out": "an include or documents path in FT_LOCAL_TIER_DIR is absolute or has '..', '~', '$' or a "
+    "backslash; edit that line in the copy",
     "read-refused": "the ledger reads a file outside FT_LOCAL_TIER_DIR; copy the whole ledger into it",
     "pythonpath-refused": "the ledger's pythonpath is outside FT_LOCAL_TIER_DIR; copy the whole ledger into it",
     "documents-refused": "a documents folder of the ledger is outside FT_LOCAL_TIER_DIR; copy it in, or remove the "
@@ -177,12 +191,13 @@ def refused(path: Path) -> bool:
 def refuse_root(root: Path) -> str | None:
     """The reason (a `REASONS` key) a root given on the command line is refused, or None: the T-local folder must be
     usable, and the root a file inside it, links resolved."""
-    tier = copies.local_tier_dir()[0]
-    if tier is None:
-        return "tier"
-    if not root.is_absolute() or not root.is_file():
-        return "root"
-    if refused(root):  # links resolved; any other link out of the folder is `refuse_tree`'s
+    try:
+        tier = copies.local_tier_dir()[0]
+        if tier is None:
+            return "tier"
+        if not root.is_absolute() or not root.is_file() or refused(root):  # links in the root's path resolved
+            return "root"
+    except Exception:  # noqa: BLE001 (any failure refuses, told by a fixed reason, never by its message)
         return "root"
     return refuse_tree(tier)
 
@@ -190,65 +205,59 @@ def refuse_root(root: Path) -> str | None:
 # Looser than Beancount's grammar on purpose (a false refusal is fine, a miss is not): the keyword anywhere not inside a
 # word, any whitespace before the string, a string over several lines.
 _STRING = rb'"((?:[^"\\]|\\.)*)"'
-INCLUDE = re.compile(rb"(?<![\w-])include\s*" + _STRING, re.S)
-DOCUMENTS = re.compile(rb'(?<![\w-])option\s*"documents"\s*' + _STRING, re.S)
-GLOB = re.compile(r"[*?\[]")
+PATHS = re.compile(rb'(?<![\w-])(?:include|option\s*"(?:include|documents)")\s*' + _STRING, re.S)
 
 
 def refuse_tree(tier: Path) -> str | None:
-    """Why the T-local folder cannot be loaded from, before any load reads it (S0158 V1-1, V1-2), or None. Walked
-    without following links, every file of it:
-    - **a link whose target is outside the folder** (`link`): a plugin module or package, an include or a document
-      reached through it would be read or run from outside (the policy never sees module files);
-    - **an `include` line or an `option "documents"` value whose path leaves the folder** (`reaches-out`): its part
-      before the first glob character, joined to the file's folder (Beancount honours `documents` only in the root
-      file, whose folder that is), lexically and with links followed; any `..` after a glob character is refused. The
-      overlay lists a glob's folders before its policy is asked, so this is checked first.
-    A plain text scan of every file, not a parse: a commented-out line, a string that is not a directive or a binary
-    file can refuse a ledger that would not read outside (a false refusal, by design); a line Beancount reads as an
-    include is not missed. `insert_pythonpath` adds the folder of the file that sets it, inside the folder."""
-    for folder, dirs, files in os.walk(tier, followlinks=False):
-        here = Path(folder)
-        for name in (*dirs, *files):
-            entry = here / name
-            if entry.is_symlink() and _link_leaves(entry):
+    """Why the T-local folder is not a plain, self-contained copy, before any load reads it (owner, 2026-11-26: "Strict
+    plain-copy rule (Recommended)"; S0158 round 2), or None. Every folder is listed and every entry looked at without
+    following anything, and the first of these refuses the whole run:
+    - a link of any kind, inside or out (`link`; `cp -RL` copies what a link points to);
+    - a file with a second hard link (`hardlink`), or an entry that is neither a file nor a folder (`special`);
+    - a folder that cannot be listed or a file that cannot be read, or any other failure of the check (`unreadable`);
+    - in any file's text, an `include` line or an `option "include"` or `option "documents"` value that is absolute,
+      starts with `~` or `$`, has `..` as a segment, or holds a backslash (`reaches-out`): with none of these and no
+      link, a relative path (a glob included) names only things under the file's folder, or for `documents` under the
+      root's, both inside the T-local folder.
+    A plain text scan of every file, not a parse, looser than Beancount's grammar: a commented-out line, a string that
+    is not a directive or a binary file can refuse a ledger that would load only from inside (a false refusal, by
+    design); a line Beancount reads as an include is not missed. `insert_pythonpath` adds the folder of the file that
+    sets it, inside the folder. The tier's own path may be spelled through a link (`/tmp`); nothing below it may.
+    Limit: the folder is checked, then loaded; a change made to it between the two (by the owner) is not seen."""
+    try:
+        return _first_problem(tier)
+    except Exception:  # noqa: BLE001 (any failure refuses, told by a fixed reason, never by its message)
+        return "unreadable"
+
+
+def _first_problem(tier: Path) -> str | None:
+    folders = [str(tier)]
+    while folders:
+        with os.scandir(folders.pop()) as listing:
+            entries = list(listing)
+        for entry in entries:
+            if entry.is_symlink():
                 return "link"
-        for name in files:
-            entry = here / name
-            if entry.is_symlink() or not entry.is_file():
-                continue  # a link inside the folder: its target is a file of the folder, scanned there
-            data = entry.read_bytes()
-            for pattern in (INCLUDE, DOCUMENTS):
-                for m in pattern.finditer(data):
-                    if _leaves(m.group(1).decode("utf-8", "surrogateescape"), here):
-                        return "reaches-out"
+            st = entry.stat(follow_symlinks=False)
+            if stat.S_ISDIR(st.st_mode):
+                folders.append(entry.path)
+            elif not stat.S_ISREG(st.st_mode):
+                return "special"
+            elif st.st_nlink > 1:
+                return "hardlink"
+            else:
+                with open(entry.path, "rb") as f:
+                    data = f.read()
+                if any(_leaves(m.group(1)) for m in PATHS.finditer(data)):
+                    return "reaches-out"
     return None
 
 
-def _link_leaves(link: Path) -> bool:
-    """A link whose target, links followed, is outside the T-local folder; a target that cannot be resolved counts as
-    outside (fail closed)."""
-    try:
-        return refused(link.resolve(strict=False))
-    except (OSError, RuntimeError):
+def _leaves(value: bytes) -> bool:
+    """Whether a path as written could name something outside its file's folder."""
+    if b"\\" in value or value.startswith((b"/", b"~", b"$")) or re.match(rb"[A-Za-z]:", value):
         return True
-
-
-def _leaves(value: str, base: Path) -> bool:
-    """Whether a path as written (a glob allowed) leaves the T-local folder from `base`, as written or with
-    Beancount's escapes, `~` or `$NAME` expanded."""
-    spellings = {value, re.sub(r"\\(.)", r"\1", value)}
-    spellings |= {os.path.expanduser(v) for v in spellings} | {os.path.expandvars(v) for v in spellings}
-    for spelling in spellings:
-        hit = GLOB.search(spelling)
-        if hit and ".." in re.split(r"[\\/]", spelling[hit.start() :]):
-            return True  # a `..` after a glob character climbs from folders the glob found: refused, never followed
-        prefix = os.path.dirname(spelling[: hit.start()]) if hit else spelling
-        joined = os.path.join(base, prefix)  # an absolute prefix stays as it is
-        # Lexically, as Beancount's loader joins an include (`normpath`), and with links followed, as the OS opens it.
-        if refused(Path(os.path.normpath(joined))) or refused(Path(joined)):
-            return True
-    return False
+    return b".." in re.split(rb"/", value)
 
 
 @dataclass(frozen=True, slots=True)
@@ -358,6 +367,14 @@ def say(text: str) -> None:
 # ---- the run -----------------------------------------------------------------------------------------------------
 
 
+def _guarded(child: Callable[[Path], Report], root: Path) -> Report:
+    """One ledger's report; any failure of the run itself is an ERROR with a fixed reason, never a traceback."""
+    try:
+        return child(root)
+    except Exception:  # noqa: BLE001 (told by a fixed reason, never by its message)
+        return Report("ERROR", reason="crash")
+
+
 def main(argv: list[str], child: Callable[[Path], Report] = in_fresh_process) -> int:
     if len(argv) == 2 and argv[0] == "--child":
         return child_main(Path(argv[1]))
@@ -373,7 +390,7 @@ def main(argv: list[str], child: Callable[[Path], Report] = in_fresh_process) ->
         say("d2-local: nothing was loaded")
         return 2
     say(f"d2-local: {len(roots)} ledger(s), Beancount's own load against the overlay load")
-    reports = [child(root) for root in roots]
+    reports = [_guarded(child, root) for root in roots]
     for case, report in zip(cases, reports, strict=True):
         say(line(case, report))
     totals = ", ".join(f"{sum(r.verdict == v for r in reports)} {v}" for v in VERDICTS)
