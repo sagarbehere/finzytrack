@@ -1868,10 +1868,12 @@ def bounded_call(c: EngineClient, op: str, params: dict[str, Any], on_event: Cal
     t.join(DEADLINE)
     if t.is_alive():
         pid = c.pid
-        if pid is not None:
-            signal_held(pid, signal.SIGKILL, group=True)  # BL-0195: never a reaped engine's id
+        sent = pid is not None and signal_held(pid, signal.SIGKILL, group=True)  # BL-0195: never a reaped engine's id
         t.join(DEADLINE)
-        pytest.fail(f"the call to {op} was still waiting after {DEADLINE} s: the client missed what should end it")
+        pytest.fail(
+            f"the call to {op} was still waiting after {DEADLINE} s: the client missed what should end it"
+            f" (the test's own kill {'sent' if sent else 'not sent: no engine held unreaped'})"
+        )
     return out[0]
 
 

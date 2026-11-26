@@ -18,6 +18,12 @@ Rules:
     the same ban holds for every test file under backend/tests/architecture, named or not (S0033);
     stated limits: string indirection (getattr), a conftest hook that filters or marks items, and the pytest
     configuration are out of this static scan;
+    the parametrize rule (a non-empty literal list) is not applied to a test under `engine/tests/` or
+    `backend/tests/` whose package's `pyproject.toml` sets `empty_parameter_set_mark = "fail_at_collect"` under
+    `[tool.pytest.ini_options]` and has no `pytest.ini`, `tox.ini` or `setup.cfg` beside it that pytest would read
+    first (S0156 round 1, V1-2): there pytest fails an empty parameter set at collection, however it is spelled,
+    so the rule only kept cases built from names (effect counts, typed lambdas) out of the count; its stated
+    limit: a runner given `-c` or `-o` in the pre-push hook could override that setting;
   - `pending`: the backlog item exists in design/backlog.md and is not marked done; with
     FT_MILESTONE_EXIT=<Mx> set (a milestone-exit run), a pending invariant due by Mx or earlier fails;
   - backlog items (every row of a design/backlog.md table whose header starts with `ID` and has `Milestone` and
@@ -44,6 +50,7 @@ import ast
 import os
 import re
 import sys
+import tomllib
 import xml.etree.ElementTree as ET
 from pathlib import Path, PurePosixPath
 
@@ -97,6 +104,29 @@ def looks_like_path(tok: str) -> bool:
 def is_test(path: str) -> bool:
     name = Path(path).name
     return "/tests/" in f"/{path}" and (name.startswith("test_") or ".test." in name or ".spec." in name)
+
+
+# S0156 round 1 (V1-2): the test folders whose package configures pytest itself; there an empty parameter set fails at
+# collection when the package says so (`fails_empty_sets`).
+PYTEST_PACKAGES = {"engine/tests/": "engine", "backend/tests/": "backend"}
+OTHER_PYTEST_CONFIGS = ("pytest.ini", ".pytest.ini", "tox.ini", "setup.cfg")
+
+
+def fails_empty_sets(path: str, root: Path) -> bool:
+    """Whether pytest, run as the pre-push hook runs it (from the package folder), fails an empty parameter set at
+    collection for the test `path`: its package's `pyproject.toml` sets `empty_parameter_set_mark = "fail_at_collect"`
+    under `[tool.pytest.ini_options]`, and no other pytest configuration file stands beside it (pytest would read that
+    one first). Anything unreadable answers False: the literal rule then applies (fails closed)."""
+    package = next((pkg for folder, pkg in PYTEST_PACKAGES.items() if path.startswith(folder)), None)
+    if package is None or any((root / package / name).exists() for name in OTHER_PYTEST_CONFIGS):
+        return False
+    try:
+        with (root / package / "pyproject.toml").open("rb") as fh:
+            data = tomllib.load(fh)
+    except (OSError, tomllib.TOMLDecodeError):
+        return False
+    options = data.get("tool", {}).get("pytest", {}).get("ini_options", {})
+    return isinstance(options, dict) and options.get("empty_parameter_set_mark") == "fail_at_collect"
 
 
 def runs_at_push(path: str, root: Path) -> bool:
@@ -468,7 +498,8 @@ def check(text: str, root: Path, backlog: str | None, milestone_exit: str | None
                     errors.append(f"{iid}: enforcement file {p} does not mention {iid}")
                 if _has_fixme(p, content):  # S0029 verifier F4: a pending test enforces nothing
                     errors.append(f"{iid}: enforcement file {p} holds fixme tests; it enforces once none is left")
-                errors += [f"{iid}: {e}" for e in switched_off(p, content, root)]
+                literal = not fails_empty_sets(p, root)  # S0156 round 1 (V1-2)
+                errors += [f"{iid}: {e}" for e in switched_off(p, content, root, parametrize=literal)]
                 if (is_test(p) and runs_at_push(p, root)) or (not is_test(p) and runs_somewhere(p, root)):
                     ok_runner = True
             if paths and not ok_runner:

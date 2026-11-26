@@ -595,6 +595,37 @@ class EnforcementFilesDoNotSwitchTestsOff(unittest.TestCase):
         body = "# INV-01\nimport pytest\n" + "@" + "pytest.mark.parametrize('x', [1, 2])\ndef test_x(x):\n    pass\n"
         self.assertEqual(self.errors("scripts/tests/test_one.py", body), [])
 
+    def test_a_named_parametrize_counts_where_the_package_fails_an_empty_set_at_collection(self) -> None:
+        """S0156 round 1 (V1-2): under `engine/tests/` and `backend/tests/`, a package whose pytest configuration fails
+        an empty parameter set at collection needs no literal list; anywhere else, or without that setting, or with
+        another pytest configuration file pytest would read first, the literal rule stays (must not pass)."""
+        at = "@"
+        body = "# INV-01\nimport pytest\nCASES = list(range(3))\n" + at + "pytest.mark.parametrize('x', CASES)\n"
+        body += "def test_x(x):\n    pass\n"
+        fails = '[tool.pytest.ini_options]\nempty_parameter_set_mark = "fail_at_collect"\n'
+        self.put(".githooks/pre-push", ".venv/bin/pytest\ncd engine && .venv/bin/python -m pytest\n")
+        for pkg in ("engine", "backend"):
+            with self.subTest(pkg=pkg):
+                rel = f"{pkg}/tests/test_one.py"
+                self.assertTrue(any("parametrize" in e for e in self.errors(rel, body)), "no config: the rule stays")
+                self.put(f"{pkg}/pyproject.toml", fails.replace("fail_at_collect", "skip"))
+                self.assertTrue(any("parametrize" in e for e in self.errors(rel, body)), "another mark: it stays")
+                self.put(f"{pkg}/pyproject.toml", "[tool.other]\n" + fails.split("\n", 1)[1])
+                self.assertTrue(any("parametrize" in e for e in self.errors(rel, body)), "not pytest's table")
+                self.put(f"{pkg}/pyproject.toml", fails)
+                self.assertEqual(self.errors(rel, body), [])
+                self.put(f"{pkg}/pytest.ini", "[pytest]\n")
+                self.assertTrue(any("parametrize" in e for e in self.errors(rel, body)), "pytest.ini read first")
+                (self.root / f"{pkg}/pytest.ini").unlink()
+                self.put(f"{pkg}/pyproject.toml", "not toml [\n")
+                self.assertTrue(any("parametrize" in e for e in self.errors(rel, body)), "unreadable: fails closed")
+                self.put(f"{pkg}/pyproject.toml", fails)
+                skipped = body + "pytestmark = pytest.mark.skip(reason='x')\n"
+                self.assertTrue(any("switches a test off" in e for e in self.errors(rel, skipped)), "skips still")
+        self.put("frontend/pyproject.toml", fails)
+        self.put("scripts/pyproject.toml", fails)
+        self.assertTrue(any("parametrize" in e for e in self.errors("scripts/tests/test_one.py", body)), "elsewhere")
+
     def test_a_conftest_above_an_enforcement_test_cannot_drop_it(self) -> None:
         test = "backend/tests/architecture/test_globals.py"
         body = "# INV-01\ndef test_x():\n    pass\n"

@@ -2,8 +2,9 @@
 injected into any of the gate's calls, before the commit point, refuses the save with nothing written.
 
 The gate's calls, in order: step 4's observation of the disk (`Ports.observe`), the published generation's read
-(`publish.read_published`, through the store's `meta`), the freshness check's observation of that generation's ledger
-set (`Ports.observe` again, inside `publish.fresh_on_disk`), and the `.open` re-check (`save.records`). A fault there
+(`publish.read_published`, through the store's `meta`), the freshness check's root comparison (`publish.same_ledger`)
+and its observation of that generation's ledger set (`Ports.observe` again, inside `publish.fresh_on_disk`), and the
+`.open` re-check (`save.records`). A fault there
 either becomes a decided refusal (an `OSError` where the call states one: `mirror_stale`, `unfinished_save`) or
 escapes `save.run`, which the engine's request boundary answers `engine.internal` (`protocol.server`), and the
 sidecar's scheduler ends the job `INTERNAL` with no `gate` seen (`app.workspaces.writes`). Either way the job never
@@ -21,11 +22,11 @@ import errno
 import sqlite3
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import override
+from typing import cast, override
 
 import pytest
 
-from ledger_engine.fs.port import DirHandle
+from ledger_engine.fs.port import DirHandle, FileSystem
 from ledger_engine.ledger import save as sv
 from ledger_engine.ledger.core.ledger_set import Fingerprint
 from ledger_engine.mirror import publish
@@ -98,6 +99,17 @@ class _FaultingStore(FakeStore):
         raise self._make()
 
 
+class _Unresolvable:
+    """The file system as the freshness check's root comparison (`publish.same_ledger`, the gate's `ours`) sees it:
+    resolving a path raises (S0156 round 1, V1-1)."""
+
+    def __init__(self, make: Callable[[], Exception]) -> None:
+        self._make = make
+
+    def resolve(self, path: str) -> object:
+        raise self._make()
+
+
 def _inject(fault: Fault, fs: MemFS, monkeypatch: pytest.MonkeyPatch) -> sv.Ports:
     observe: Callable[[Fingerprint], Fingerprint] = lambda fp: fp  # noqa: E731 (the disk is as the plan saw it)
     store: publish.Store = FakeStore()
@@ -113,6 +125,14 @@ def _inject(fault: Fault, fs: MemFS, monkeypatch: pytest.MonkeyPatch) -> sv.Port
             raise fault.make()
 
         monkeypatch.setattr(publish, "read_published", read_published)
+    elif fault.at.startswith("same_ledger"):
+        real_same = publish.same_ledger
+        unresolvable = cast(FileSystem, _Unresolvable(fault.make))
+
+        def same_ledger(fs_: FileSystem, a: str, b: str) -> bool:
+            return real_same(unresolvable, a, b)  # the root comparison's own resolve faults
+
+        monkeypatch.setattr(publish, "same_ledger", same_ledger)
     elif fault.at.startswith("open_recheck"):
         real = sv.records
         calls = 0
@@ -148,6 +168,8 @@ def _world() -> MemFS:
         Fault("store_meta_oserror", _eio, refused=sv.Refused("mirror_stale", True)),
         Fault("store_meta_database_error", lambda: sqlite3.DatabaseError("injected"), escapes=sqlite3.DatabaseError),
         Fault("read_published_bug", _bug, escapes=RuntimeError),
+        Fault("same_ledger_oserror", _eio, refused=sv.Refused("mirror_stale", True)),
+        Fault("same_ledger_bug", _bug, escapes=RuntimeError),
         Fault("open_recheck_oserror", _eio, refused=sv.Refused("unfinished_save", True, f"{ALD}/local/k1/journal")),
         Fault("open_recheck_bug", _bug, escapes=RuntimeError),
     ],

@@ -478,3 +478,19 @@ def test_S0125_an_app_folder_whose_creation_time_changes_after_step_8_stops_the_
     assert isinstance(out, NotSaved), out
     assert out.reason is Reason.APP_FOLDER_MISSING
     assert (fs.file("/L/a.bean"), fs.file("/L/b.bean")) == (A, B)
+
+
+def _cases(test: object, argname: str) -> list[object]:
+    """The literal list a test is parametrized with for `argname` (S0156 round 1, V1-4)."""
+    marks = getattr(test, "pytestmark", [])
+    return next(list(m.args[1]) for m in marks if m.name == "parametrize" and m.args[0] == argname)
+
+
+def test_the_folder_chain_cases_are_every_folder_of_the_chain() -> None:
+    """S0156 round 1 (V1-4): the parametrize lists are written out for `check_invariants.py`; a folder added to
+    `CHAIN` fails here instead of silently getting no case."""
+    for test in (
+        test_a_landed_save_keeps_its_closed_record_and_backups_through_a_power_loss,
+        test_a_save_cut_after_its_first_swap_never_leaves_a_half_applied_ledger_without_its_journal,
+    ):
+        assert _cases(test, "not_durable") == list(CHAIN)

@@ -1005,3 +1005,11 @@ def test_V4_1_an_error_at_every_cleanup_effect_leaves_left_as_the_disk_holds_it(
             raise AssertionError((None if at is None else effects[at], errno.errorcode.get(err), after, e)) from e
         named += nc.left is not None and bool(nc.left)
     assert named, "the sweep reaches a cleanup that names what it kept"
+
+
+def test_V4_1_the_foreign_cases_are_every_key_of_foreign_at() -> None:
+    """S0156 round 1 (V1-4): the parametrize list is written out for `check_invariants.py`; a key added to
+    `_FOREIGN_AT` fails here instead of silently getting no case."""
+    marks = getattr(test_V4_1_an_error_at_every_cleanup_effect_leaves_left_as_the_disk_holds_it, "pytestmark", [])
+    cases = next(list(m.args[1]) for m in marks if m.name == "parametrize" and m.args[0] == "foreign")
+    assert cases == list(_FOREIGN_AT)

@@ -1,8 +1,7 @@
 """INV-22 in the write-safety contract's prepare (S0116; moved here from `test_contract.py` in S0156, BL-0022): a fault
 injected into each step (an exception, an undecidable load) gives `Refused` naming the step, with nothing on disk
-changed, and the step list is pinned to `contract.STEPS`. In a file of its own so that INV-22's Enforced-by line can
-name it: `scripts/check_invariants.py` counts only a file whose every parametrize is a non-empty literal list, and
-`test_contract.py`'s refusal cases are lists of typed lambdas held in names.
+changed, and the step list is pinned to `contract.STEPS` and to the parametrize list. Kept apart from the refusal cases
+so that INV-22's Enforced-by line names exactly the fault tests.
 """
 
 from __future__ import annotations
