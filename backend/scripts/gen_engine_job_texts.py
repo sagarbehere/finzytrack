@@ -483,7 +483,8 @@ RECOVERY: tuple[Row, ...] = (
     ),
     (
         "msg:recovery.app_folder_missing",
-        "every open blocked: the listing was refused, the app's data folder removed or replaced (S0102, BL-0244)",
+        "every open blocked: the listing was refused, or the lock wait refused the job's engine; the app's data "
+        "folder removed or replaced (S0102, BL-0244, BL-0248)",
         lambda: rt.not_recovered_screen(NotRecovered(None, None, rt.APP_FOLDER_MISSING)).message,
     ),
     (

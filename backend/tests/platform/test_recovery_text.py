@@ -181,6 +181,15 @@ def test_nothing_listed_blocks_every_open_with_retry() -> None:
     assert os.strerror(5) in message
 
 
+@pytest.mark.parametrize("why", [None, "no_report", "stopped_often", "incompatible", "cannot_start", "closing"])
+def test_S0159_other_unavailable_reasons_keep_the_retry_screen(why: str | None) -> None:
+    """@regression-guard (holds on 3cb50b79): S0159 (BL-0248) carries a report-less job's `ENGINE_UNAVAILABLE` reason
+    into `NotRecovered.why`; every reason but `app_folder_missing` keeps today's screen, with Retry."""
+    screen = not_recovered_screen(NotRecovered(None, None, why))
+    assert screen.message == "Finzytrack could not check for unfinished saves, so no workspace opens yet. Press Retry."
+    assert screen.actions == ("retry",)
+
+
 def test_a_linked_journal_folder_says_to_put_the_real_folder_back() -> None:
     """S0077 (BL-0193): the cause is named, and the way out; "could not read" would send the user to Retry alone."""
     screen = not_recovered_screen(NotRecovered("/app/local/k1/journal", None, linked=True))

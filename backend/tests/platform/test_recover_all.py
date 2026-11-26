@@ -21,7 +21,9 @@ from typing import Any
 
 import pytest
 
+from app.domain.errors import DomainError
 from app.platform.engine import EngineFailure, EngineRefusal
+from app.platform.engine_jobs.queue import Boot, EngineLockFailed, NoEngine, QueuePolicy, QueueState, transition
 from app.platform.engine_jobs.recovery import (
     ENGINE_STOPPED,
     Blocking,
@@ -35,10 +37,13 @@ from app.platform.engine_jobs.recovery import (
     recover_all_spec,
     recover_all_work,
 )
-from app.platform.engine_jobs.scheduler import Done, EngineJobs, Failed, JobContext, JobTicket
-from app.platform.errors import ErrorCode
+from app.platform.engine_jobs.recovery_text import not_recovered_screen
+from app.platform.engine_jobs.scheduler import Done, EngineJobs, Failed, JobContext, JobTicket, no_engine_reason
+from app.platform.errors import EngineStoppedDetails, EngineUnavailableDetails, ErrorCode, JobCancelledDetails, error
 from tests.host_paths import host
 from tests.platform.fake_job_engine import BLOCK, CRASH, CRASH_TO_BOUND, FakeEngine
+from tests.platform.test_engine_queue import run as run_queue
+from tests.platform.test_engine_queue import submit, switch_job
 from tests.platform.test_engine_scheduler import DEADLINE, LockWait, wait_until
 
 pytestmark = [pytest.mark.inv("INV-32"), pytest.mark.cap("CAP-WS-RECOVER-FIRST")]
@@ -479,6 +484,52 @@ def test_a_recover_all_that_never_listed_blocks_every_open(report: Report | None
     out = blocking_for(report, workspace_key="k7", lineage="lin7", ledger_keys=set())
     assert len(out) == 1
     assert isinstance(out[0], NotRecovered)
+
+
+ENDED_WITHOUT_REPORT = [
+    *(
+        error(ErrorCode.ENGINE_UNAVAILABLE, EngineUnavailableDetails(reason))
+        for reason in ("stopped_often", "incompatible", "cannot_start", "closing", "app_folder_missing")
+    ),
+    error(ErrorCode.JOB_CANCELLED, JobCancelledDetails(cannot_stop_ahead=False)),
+    error(ErrorCode.ENGINE_STOPPED, EngineStoppedDetails(reason="crashed")),
+    error(ErrorCode.INTERNAL),
+]
+
+
+@pytest.mark.parametrize("ended", ENDED_WITHOUT_REPORT, ids=lambda e: f"{e.code}-{getattr(e.details, 'reason', '')}")
+def test_S0159_an_ended_job_with_no_report_blocks_every_open_whatever_its_error(ended: DomainError) -> None:
+    """Must not pass (BL-0248): a recover-all job that ended with an error and no report lets an open through. Fail
+    closed (§8.1 "Afterwards"): exactly one `NotRecovered`, never a folder, for every `ENGINE_UNAVAILABLE` reason and
+    any other error; only an `ENGINE_UNAVAILABLE` reason is carried, as `why`."""
+    out = blocking_for(ended, workspace_key="k7", lineage="lin7", ledger_keys={host("/x")})
+    assert len(out) == 1
+    (n,) = out
+    assert isinstance(n, NotRecovered)
+    assert (n.folder, n.errno, n.linked) == (None, None, False)
+    reason = getattr(ended.details, "reason", None) if ended.code == ErrorCode.ENGINE_UNAVAILABLE else None
+    assert n.why == (reason or "no_report")
+
+
+def test_S0159_a_boot_whose_lock_wait_finds_the_folder_gone_says_to_quit_and_reopen() -> None:
+    """BL-0248: the boot's own engine-lock wait finds the app folder removed or replaced. The table ends the waiting
+    recover-all `NoEngine(app_folder)`, the scheduler gives it `ENGINE_UNAVAILABLE {app_folder_missing}` with no
+    report, and the blocked screen then says to quit and reopen (S0102's text), never Retry, which would meet the same
+    folder. "Could not check" stays: the listing never ran."""
+    state, _ = run_queue(QueueState(), Boot())
+    state, (recover,) = submit(state, switch_job("recover_all"))
+    step = transition(QueuePolicy(), state, EngineLockFailed(app_folder=True))
+    assert step.effects == (NoEngine(recover, "app_folder"),)
+    reason = no_engine_reason("app_folder", "stopped_often")
+    ended = error(ErrorCode.ENGINE_UNAVAILABLE, EngineUnavailableDetails(reason))
+    (n,) = blocking_for(ended, workspace_key="k7", lineage="lin7", ledger_keys=set())
+    assert isinstance(n, NotRecovered)
+    screen = not_recovered_screen(n)
+    assert screen.message == (
+        "Finzytrack could not check for unfinished saves. Its data folder was removed or replaced while Finzytrack "
+        "was open. Quit Finzytrack and open it again."
+    )
+    assert screen.actions == ()
 
 
 def test_an_undone_or_kept_journal_blocks_nothing() -> None:

@@ -259,7 +259,8 @@ APP_FOLDER_MISSING: Final = "engine.app_folder_missing"
 """The engine's refusal of a recovery op in an app folder that is not the one of the start (S0102, BL-0244)."""
 APP_FOLDER_CAUSES: Final = frozenset({APP_FOLDER_MISSING, "app_folder_missing"})
 """The refusal, or the scheduler's failure for a fresh engine the lock wait refused for the same reason (`not_tried`,
-`why_not_listed`; S0102 round 1, BL-0248)."""
+`why_not_listed`; S0102 round 1), or the reason of a recover-all job that ended `ENGINE_UNAVAILABLE` with no report
+(`recovery.blocking_for`: the lock wait found the folder gone; S0159, BL-0248)."""
 APP_FOLDER_GONE: Final = (
     "Its data folder was removed or replaced while Finzytrack was open. Quit Finzytrack and open it again."
 )

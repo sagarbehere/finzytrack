@@ -44,6 +44,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Final, Literal
 
+from app.domain.errors import DomainError
 from app.platform.engine import (
     ActOutcome,
     EngineFailure,
@@ -58,6 +59,7 @@ from app.platform.engine import (
 from app.platform.engine_jobs.queue import JobSpec
 from app.platform.engine_jobs.scheduler import JobContext, Work, WorkResult
 from app.platform.engine_protocol import Violation, decode_recover_act, decode_recover_list, decode_recover_try
+from app.platform.errors import EngineUnavailableDetails
 
 type Reason = Literal["stopped", "failed", "cancelled", "not_tried"]
 """Why a journal blocks (§11): its try stopped on a cause found on disk; the try failed (an error the system
@@ -209,7 +211,7 @@ def _journal(j: ListedJournal) -> Journal:
 
 
 def blocking_for(
-    report: Report | None,
+    report: Report | DomainError | None,
     *,
     workspace_key: str | None,
     lineage: str | None,
@@ -217,10 +219,14 @@ def blocking_for(
 ) -> tuple[Blocking | NotRecovered, ...]:
     """What blocks an open of the workspace (`workspace_key`, `lineage`; None for a copy, which is matched by its
     files only) whose ledger set has the `path_key`s `ledger_keys` (§8.1 "Afterwards", ADR-0063 decision 2): empty
-    when it may open. `report` None: recover-all ended without one (it never ran its work, or was cancelled before
-    its listing): every open is blocked."""
-    if report is None:
-        return (NotRecovered(None, None, "no_report"),)
+    when it may open. `report` None, or the job's error: recover-all ended without one (it never ran its work, or was
+    cancelled before its listing): every open is blocked. An `ENGINE_UNAVAILABLE` error's reason is carried as the
+    `why`, so a lock wait that found the app folder removed or replaced says to quit and reopen, not Retry (S0159,
+    BL-0248); any other end is `no_report`."""
+    if report is None or isinstance(report, DomainError):
+        details = report.details if report is not None else None
+        why = details.reason if isinstance(details, EngineUnavailableDetails) else "no_report"
+        return (NotRecovered(None, None, why),)
     if not report.listed:
         return (NotRecovered(None, None, report.why_not_listed),)
     keys = frozenset(ledger_keys)
