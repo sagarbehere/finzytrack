@@ -38,9 +38,10 @@ jobs:
           # Strict since S0114 fixed the build check's path false positive (BL-0264 closes when a run shows it green).
           - os: windows-2022
             known_failure: ""
-          # fixme due M1b, BL-0263: the AppImage's bundled engine (ADR-0061 amendment of 2026-11-14).
+          # Strict since S0153 ran the self-check's view probe with the engine's environment (BL-0263 closes when a
+          # run shows the AppImage green).
           - os: ubuntu-22.04  # the oldest supported Ubuntu, so the glibc baseline is 22.04 (ARCHITECTURE.md §5)
-            known_failure: "the bundled engine failed: engine view: CalledProcessError"
+            known_failure: ""
     runs-on: ${{ matrix.os }}
     env:
       KNOWN_FAILURE: ${{ matrix.known_failure }}

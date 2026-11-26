@@ -54,15 +54,21 @@ class Verdict(unittest.TestCase):
             with self.subTest(case=name):
                 self.assertFalse(verdict(code, out, expect_fail="cannot start the bundled interpreter")[0])
 
-    # S0153 (BL-0263): the self-check now follows a failed view probe's reason with its detail, on the same line.
-    # `--expect-fail` matches by containment, so the AppImage's known reason still counts and nothing else does.
+    # S0153 (BL-0263): the self-check follows a failed view probe's reason with its detail, on the same line.
+    # `--expect-fail` matches by containment, so a known reason followed by its detail still counts and nothing else
+    # does. Phase 2 fixed the AppImage's probe, so no job expects this reason any more; the mechanism stays for a
+    # future fixme OS (and the must-not-pass runs use it).
     KNOWN = "the bundled engine failed: engine view: CalledProcessError"
     VIEW_FAILED = "FT_SMOKE_FAIL the bundled engine failed: engine view: "
     DETAIL = '{"exit": 1, "stderr": "Fatal Python error: ...", "stdout": "", "argv": ["~/x"], "cwd": "/", "env": {}}'
 
-    def test_the_known_reason_followed_by_its_detail_is_expected(self) -> None:  # @regression-guard (S0153)
+    def test_no_job_expects_the_appimages_old_failure(self) -> None:
+        """Must not pass on 3179ff4b: the AppImage's smoke run is strict since its view probe got the engine's
+        environment, so its old reason is no OS's known failure."""
         workflow = (Path(__file__).resolve().parents[2] / ".github/workflows/packaged.yml").read_text()
-        self.assertIn(f'known_failure: "{self.KNOWN}"', workflow)  # the reason the Linux job really expects
+        self.assertNotIn(self.KNOWN, workflow)
+
+    def test_the_known_reason_followed_by_its_detail_is_expected(self) -> None:  # @regression-guard (S0153)
         out = f"FT_SMOKE_FAIL {self.KNOWN} {self.DETAIL}"
         self.assertTrue(verdict(1, out, expect_fail=self.KNOWN)[0])
 

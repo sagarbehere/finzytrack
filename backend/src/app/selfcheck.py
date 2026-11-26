@@ -10,10 +10,13 @@ of the sidecar build (`shell/sidecar/build_sidecar.py`). It prints one JSON repo
   must be false), its `sys.path` and its own site-packages folders (`main_sites`: `site.getsitepackages()` without
   the interpreter's prefix, which Windows lists there too although only the standard library lies in it; S0114);
 - the engine side's view under the same bootstrap: its `sys.path` (`engine_path`) and whether it finds `app`
-  (`engine_finds_app`; must be false). When that probe fails, `error` is `engine view: <exception name>` followed, on
-  the same line, by a JSON object of what it saw (`view_failure_detail`: the exit code, the end of its stderr and
-  stdout, its argv and working folder, and the variables that steer Python, the loader or an AppImage), with the home
-  folder written `~` (S0153, BL-0263: the AppImage's probe failed and only the name was seen).
+  (`engine_finds_app`; must be false). The probe runs with the engine's environment (`engine_env`: no `PYTHON*` or
+  `FT_*` variable of the parent): the AppImage's launcher sets `PYTHONHOME` and `PYTHONPATH` to its mount, and a probe
+  that inherited them could not start its interpreter (S0153, BL-0263). When that probe fails, `error` is
+  `engine view: <exception name>` followed, on the same line, by a JSON object of what it saw
+  (`view_failure_detail`: the exit code, the end of its stderr and stdout, its argv and working folder, and the
+  variables of its environment that steer Python, the loader or an AppImage, a value whose name looks secret hidden),
+  with the home folder written `~`.
 It never raises on a broken engine: a failure is a fact in the report, so the judges can name it.
 """
 
@@ -21,6 +24,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import site
 import subprocess
 import sys
@@ -33,6 +37,7 @@ from app.platform.adapters.engine_client import (
     EngineClient,
     EngineCommand,
     bootstrap_argv,
+    engine_env,
     packaged_engine_site,
 )
 from app.platform.engine import EngineFailure, EngineRefusal
@@ -45,6 +50,9 @@ VIEW_HANG_SECONDS = 30.0
 # or an AppImage's launcher.
 VIEW_TAIL = 4000
 VIEW_ENV_PREFIXES = ("PYTHON", "FT_", "LD_", "DYLD_", "APPIMAGE", "APPDIR", "ARGV0", "OWD")
+# A listed variable whose name holds one of these (any case) shows only its name (S0153 round 1, V1-4).
+VIEW_SECRET_WORDS = ("TOKEN", "SECRET", "KEY", "PASSWORD")
+VIEW_HIDDEN = "<hidden>"
 ENGINE_VIEW = (
     "import importlib.util as u, json; print(json.dumps({'path': sys.path, 'app': u.find_spec('app') is not None}))"
 )
@@ -70,11 +78,29 @@ def home_folder() -> str | None:
     return None if home == "~" else home
 
 
-def mask_home(text: str, home: str | None) -> str:
-    """`text` with `home` written `~`; unchanged when there is no home to mask (none, empty, or a root)."""
-    if not home or home.strip("/\\") == "":
+def _is_root(path: str) -> bool:
+    return path.strip("/\\") == "" or (len(path.rstrip("/\\")) == 2 and path[1] == ":")
+
+
+def mask_home(
+    text: str,
+    home: str | None,
+    *,
+    windows: bool = os.name == "nt",
+    real: Callable[[str], str] = os.path.realpath,
+) -> str:
+    """`text` with each spelling of `home` written `~`: as given and as `real` resolves it (a home reached through a
+    link), and on Windows in any case and with either slash. Unchanged when there is no home to mask (none, empty, or
+    a root). Limits (S0153 round 1, V1-1): a Windows 8.3 short name of the home and macOS's firmlinked spelling of it
+    (under the system's data volume) are not masked; a home whose name is the start of a longer folder name is masked
+    there too (a home `al` inside a path to `al2`), which hides more, never less."""
+    if not home or _is_root(home):
         return text
-    return text.replace(home, "~")
+    spellings = {s for s in (home, real(home)) if s and not _is_root(s)}
+    if windows:
+        spellings = {v for s in spellings for v in (s.replace("/", "\\"), s.replace("\\", "/"))}
+    pattern = "|".join(re.escape(s) for s in sorted(spellings, key=len, reverse=True))
+    return re.sub(pattern, "~", text, flags=re.IGNORECASE if windows else 0)
 
 
 def view_failure_detail(
@@ -87,13 +113,17 @@ def view_failure_detail(
     home: str | None,
 ) -> str:
     """One line of JSON about a failed view probe: its exit code (None: it did not exit), the last `VIEW_TAIL`
-    characters of its stdout and stderr, its argv, its working folder, and the variables of `environ` that steer
-    Python, the loader or an AppImage (the probe sets none of its own: it inherits them). `home` is written `~`."""
+    characters of its stdout and stderr, its argv, its working folder, and the variables of `environ` (the
+    environment the probe ran under) that steer Python, the loader or an AppImage; a listed variable whose name holds
+    a `VIEW_SECRET_WORDS` word shows `VIEW_HIDDEN`. `home` is written `~`."""
 
     def m(text: str) -> str:
         return mask_home(text, home)
 
-    env = {k: m(v) for k, v in sorted(environ.items()) if k.upper().startswith(VIEW_ENV_PREFIXES)}
+    def shown(name: str, value: str) -> str:
+        return VIEW_HIDDEN if any(w in name.upper() for w in VIEW_SECRET_WORDS) else m(value)
+
+    env = {k: shown(k, v) for k, v in sorted(environ.items()) if k.upper().startswith(VIEW_ENV_PREFIXES)}
     return json.dumps(
         {
             "exit": exit_code,
@@ -107,25 +137,27 @@ def view_failure_detail(
 
 
 def _text(output: str | bytes | None) -> str:
-    """A process's captured output as text (`TimeoutExpired` may hold bytes even when text was asked for)."""
+    """A process's captured output as text: bytes are decoded here, any that are not UTF-8 replaced, so output that
+    is not UTF-8 never hides the exit code or the output itself (S0153 round 1, V1-2)."""
     if output is None:
         return ""
-    return output.decode(errors="replace") if isinstance(output, bytes) else output
+    return output.decode("utf-8", errors="replace") if isinstance(output, bytes) else output
 
 
 def engine_view(python: Path, engine_site: Path) -> tuple[list[str] | None, bool | None, str | None]:
-    """(sys.path, finds app, error) of a process started as the packaged engine is; the error carries
-    `view_failure_detail`."""
+    """(sys.path, finds app, error) of a process started as the packaged engine is: its flags, bootstrap and
+    environment (`engine_env`, one rule with the engine's start); the error carries `view_failure_detail`."""
     argv = bootstrap_argv(python, engine_site, ENGINE_VIEW)
+    env = engine_env(os.environ)
     exit_code: int | None = None
     stdout = stderr = ""
     try:
         out = subprocess.run(  # noqa: S603 (the packaged bootstrap with a fixed probe)
-            argv, capture_output=True, text=True, timeout=VIEW_HANG_SECONDS, check=False
+            argv, capture_output=True, env=env, timeout=VIEW_HANG_SECONDS, check=False
         )
-        exit_code, stdout, stderr = out.returncode, out.stdout, out.stderr
+        exit_code, stdout, stderr = out.returncode, _text(out.stdout), _text(out.stderr)
         out.check_returncode()
-        view = json.loads(out.stdout, parse_float=Decimal)
+        view = json.loads(stdout, parse_float=Decimal)
         return [str(p) for p in view["path"]], view["app"] is True, None
     except subprocess.TimeoutExpired as e:
         stdout, stderr = _text(e.stdout), _text(e.stderr)
@@ -136,7 +168,7 @@ def engine_view(python: Path, engine_site: Path) -> tuple[list[str] | None, bool
         cwd = os.getcwd()
     except OSError as e:  # a working folder removed under it
         cwd = f"<{type(e).__name__}>"
-    detail = view_failure_detail(argv, exit_code, stdout, stderr, os.environ, cwd, home_folder())
+    detail = view_failure_detail(argv, exit_code, stdout, stderr, env, cwd, home_folder())
     return None, None, f"engine view: {name} {detail}"
 
 

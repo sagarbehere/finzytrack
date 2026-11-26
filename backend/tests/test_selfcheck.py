@@ -290,3 +290,105 @@ def test_the_detail_lists_only_the_variables_that_steer_python_the_loader_or_the
         "OWD",
         "FT_DEBUG",
     }
+
+
+# S0153 phase 2 (BL-0263). The packaged run on 3179ff4b showed the AppImage's launcher setting `PYTHONHOME` and
+# `PYTHONPATH` to its own mount; the view probe inherited them and its interpreter could not find `encodings`, while
+# the engine (started with `engine_env`, which drops every `PYTHON*` variable) handshaked. The probe now runs with the
+# engine's environment rule.
+def test_a_view_probe_under_a_launchers_python_variables_still_sees_the_engines_path(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Must not pass on 3179ff4b: a parent with a `PYTHONHOME` and `PYTHONPATH` that break any Python started without
+    `-E` (as the AppImage's launcher sets them) still gets a working view probe and a clean report."""
+    monkeypatch.setenv("PYTHONHOME", str(tmp_path / "launcher-mount" / "usr"))
+    monkeypatch.setenv("PYTHONPATH", f"{tmp_path / 'launcher-mount' / 'share' / 'pyshared'}{os.pathsep}")
+    path, app, error = selfcheck.engine_view(Path(sys.executable), engine_site())
+    assert error is None, error
+    assert path is not None
+    assert app is False
+    report = selfcheck.report(Path(sys.executable), engine_site())
+    assert report["error"] is None, report["error"]
+    assert report["pong"] is True
+
+
+def test_a_view_probe_writing_non_utf8_output_reports_its_exit_and_output(monkeypatch: pytest.MonkeyPatch) -> None:
+    """S0153 round 1, V1-2: bytes that are not UTF-8 are decoded with replacement, so the report says the probe
+    exited 1 with its stderr, never that it did not exit."""
+    probe = "sys.stderr.buffer.write(b'Fatal: /opt/caf\\xe9/lib not found\\n'); sys.stderr.flush(); raise SystemExit(1)"
+    monkeypatch.setattr(selfcheck, "ENGINE_VIEW", probe)
+    _path, _app, error = selfcheck.engine_view(Path(sys.executable), engine_site())
+    detail = detail_of(error)
+    assert detail["exit"] == 1
+    assert detail["stderr"] == "Fatal: /opt/caf\ufffd/lib not found\n"
+
+
+def test_the_detail_shows_the_probes_own_environment_and_working_folder(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """S0153 round 1, V1-3: the env listed is the one the probe ran under (the engine's rule: no `PYTHON*` from the
+    parent, `PYTHONHASHSEED=0`), a loader variable kept, and the working folder is this process's."""
+    monkeypatch.setenv("PYTHONFOO", "bar")
+    monkeypatch.setenv("LD_FOO", "baz")
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(selfcheck, "ENGINE_VIEW", "raise SystemExit(2)")
+    _path, _app, error = selfcheck.engine_view(Path(sys.executable), engine_site())
+    detail = detail_of(error)
+    env = detail["env"]
+    assert isinstance(env, dict)
+    assert env.get("LD_FOO") == "baz"  # pyright: ignore[reportUnknownMemberType]
+    assert env.get("PYTHONHASHSEED") == "0"  # pyright: ignore[reportUnknownMemberType]
+    assert "PYTHONFOO" not in env
+    assert detail["cwd"] == selfcheck.mask_home(str(tmp_path.resolve()), selfcheck.home_folder())
+
+
+def test_a_listed_variable_named_like_a_secret_shows_only_its_name() -> None:
+    """S0153 round 1, V1-4. Must not pass: the value of a listed variable whose name holds TOKEN, SECRET, KEY or
+    PASSWORD (any case) is never written."""
+    env = {
+        "FT_SHELL_TOKEN": "x1x",
+        "PYTHON_KEYRING": "x2x",
+        "ld_secret_dir": "x3x",  # a fake value  privacy-scan: allow secret-entropy
+        "APPIMAGE_Password": "x4x",  # a fake value  privacy-scan: allow secret-entropy
+        "PYTHONPATH": "/b",
+    }
+    text = selfcheck.view_failure_detail(["py"], 1, "", "", env, "/", None)
+    for value in ("x1x", "x2x", "x3x", "x4x"):
+        assert value not in text
+    assert json.loads(text)["env"] == {
+        "APPIMAGE_Password": "<hidden>",
+        "FT_SHELL_TOKEN": "<hidden>",
+        "PYTHONPATH": "/b",
+        "PYTHON_KEYRING": "<hidden>",
+        "ld_secret_dir": "<hidden>",
+    }
+
+
+def test_a_home_reached_through_a_link_is_masked_in_its_real_spelling(tmp_path: Path) -> None:
+    """S0153 round 1, V1-1. Must not pass: a home that is a symbolic link leaks through its real path (what
+    `os.getcwd()` and a resolved path give)."""
+    real = tmp_path / "data" / "someone"
+    real.mkdir(parents=True)
+    link = tmp_path / "home_someone"
+    link.symlink_to(real, target_is_directory=True)
+    real_text = str(real.resolve())
+    assert selfcheck.mask_home(f"{real_text}/work", str(link)) == "~/work"
+    assert selfcheck.mask_home(f"{link}/work", str(link)) == "~/work"
+
+
+def test_a_windows_home_is_masked_in_any_case_and_with_either_slash() -> None:
+    """S0153 round 1, V1-1. Must not pass: Windows paths ignore case and take both slashes, so each spelling of the
+    home is masked there; elsewhere the case is kept, since another case is another folder."""
+    home = ntpath.join("C:\\", "Users", "Someone")  # built at run time: no home-shaped literal (INV-23's scan)
+    forward = home.replace("\\", "/")
+
+    def win(text: str, home: str) -> str:
+        return selfcheck.mask_home(text, home, windows=True, real=str)
+
+    assert win(home.lower() + r"\AppData\python.exe", home) == r"~\AppData\python.exe"
+    assert win(f"Fatal: {forward}/AppData/x", home) == "Fatal: ~/AppData/x"
+    assert win(home.upper(), home) == "~"
+    assert win(forward.lower() + "/x", forward) == "~/x"
+    posix_home = posixpath.join("/", "Users", "Someone")
+    posix = selfcheck.mask_home(posix_home.lower() + "/x", posix_home, windows=False, real=str)
+    assert posix == posix_home.lower() + "/x"
