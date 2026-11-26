@@ -66,7 +66,7 @@ def test_a_failed_view_probe_is_named_while_the_engine_works(monkeypatch: pytest
     def failed_view(_python: Path, _site: Path) -> tuple[list[str] | None, bool | None, str | None]:
         return None, None, "engine view: TimeoutExpired"
 
-    monkeypatch.setattr(selfcheck, "_engine_view", failed_view)
+    monkeypatch.setattr(selfcheck, "engine_view", failed_view)
     report = selfcheck.report(Path(sys.executable), engine_site())
     assert report["pong"] is True
     assert report["error"] == "engine view: TimeoutExpired"
@@ -160,3 +160,133 @@ def test_the_report_names_the_real_site_packages_on_a_windows_shaped_interpreter
     monkeypatch.setattr(site, "getsitepackages", lambda: [sys.prefix, real])
     report = selfcheck.report(Path(sys.executable), tmp_path / "missing")
     assert report["main_sites"] == [real]
+
+
+# S0153 (BL-0263, phase 1): a failed view probe reports why, not only the exception's name. The AppImage's probe
+# exits non-zero and nobody has seen its error output; the report now carries it on the same one line.
+VIEW_FAILED = "engine view: CalledProcessError "
+
+
+def detail_of(error: object, head: str = VIEW_FAILED) -> dict[str, object]:
+    assert isinstance(error, str), error
+    assert "\n" not in error, "the smoke line must stay one line"
+    assert "\r" not in error, "the smoke line must stay one line"
+    assert error.startswith(head), error
+    detail = json.loads(error.removeprefix(head))
+    assert isinstance(detail, dict)
+    return detail  # pyright: ignore[reportUnknownVariableType]
+
+
+def test_a_failed_view_probe_reports_its_exit_code_and_error_output(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The real probe process fails (exit 3, two lines on stderr, some stdout): the report names the old reason
+    first, so the packaged run's known reason still matches, and then the exit code and both outputs."""
+    probe = "sys.stdout.write('half a view'); sys.stderr.write('first line\\nview-broke here\\n'); raise SystemExit(3)"
+    monkeypatch.setattr(selfcheck, "ENGINE_VIEW", probe)
+    report = selfcheck.report(Path(sys.executable), engine_site())
+    assert report["pong"] is True  # the engine itself works; only the view failed
+    detail = detail_of(report["error"])
+    assert detail["exit"] == 3
+    assert detail["stderr"] == "first line\nview-broke here\n"
+    assert detail["stdout"] == "half a view"
+    argv = detail["argv"]
+    assert isinstance(argv, list)
+    assert len(argv) >= 3  # pyright: ignore[reportUnknownArgumentType]
+    assert argv[-1] == selfcheck.mask_home(str(engine_site()), selfcheck.home_folder())
+    assert isinstance(detail["env"], dict)
+    assert isinstance(detail["cwd"], str)
+
+
+def test_a_hung_view_probe_reports_its_output_so_far(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    probe = "sys.stderr.write('stuck'); sys.stderr.flush(); import time; time.sleep(30)"
+    monkeypatch.setattr(selfcheck, "ENGINE_VIEW", probe)
+    monkeypatch.setattr(selfcheck, "VIEW_HANG_SECONDS", 2.0)
+    report = selfcheck.report(Path(sys.executable), tmp_path / "missing")
+    assert isinstance(report["error"], str)
+    assert "start_failed" in report["error"]  # no engine there: the start's error comes first, as before
+    _path, _app, error = selfcheck.engine_view(Path(sys.executable), tmp_path)
+    detail = detail_of(error, "engine view: TimeoutExpired ")
+    assert detail["exit"] is None
+    assert detail["stderr"] == "stuck"
+
+
+def test_a_view_probe_with_unreadable_output_reports_it(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(selfcheck, "ENGINE_VIEW", "print('not json')")
+    _path, _app, error = selfcheck.engine_view(Path(sys.executable), tmp_path)
+    detail = detail_of(error, "engine view: JSONDecodeError ")
+    assert detail["exit"] == 0
+    assert detail["stdout"].strip() == "not json"  # pyright: ignore[reportAttributeAccessIssue, reportUnknownMemberType]
+
+
+def test_a_working_view_probe_reports_no_detail() -> None:
+    path, app, error = selfcheck.engine_view(Path(sys.executable), engine_site())
+    assert error is None
+    assert path is not None
+    assert app is False
+
+
+def test_the_detail_keeps_only_the_end_of_long_output() -> None:
+    long = "x" * 10_000 + "THE END"
+    detail = json.loads(selfcheck.view_failure_detail(["py"], 1, long, long, {}, "/", None))
+    for key in ("stdout", "stderr"):
+        assert len(detail[key]) == selfcheck.VIEW_TAIL
+        assert detail[key].endswith("THE END")
+
+
+def test_the_detail_masks_the_home_folder_everywhere(tmp_path: Path) -> None:
+    """Must not pass: the home folder in the argv, the working folder, a variable or either output is written `~`."""
+    home = str(tmp_path / "someone")
+    detail_text = selfcheck.view_failure_detail(
+        [f"{home}/app/python3.13", "-c", "code", f"{home}/app/engine"],
+        1,
+        f"out {home}/x",
+        f"Fatal: {home}/lib not found",
+        {"PYTHONPATH": f"{home}/lib", "APPIMAGE": f"{home}/Finzytrack.AppImage"},
+        f"{home}/work",
+        home,
+    )
+    assert home not in detail_text
+    detail = json.loads(detail_text)
+    assert detail["argv"] == ["~/app/python3.13", "-c", "code", "~/app/engine"]
+    assert detail["cwd"] == "~/work"
+    assert detail["stderr"] == "Fatal: ~/lib not found"
+    assert detail["stdout"] == "out ~/x"
+    assert detail["env"] == {"APPIMAGE": "~/Finzytrack.AppImage", "PYTHONPATH": "~/lib"}
+
+
+def test_no_home_folder_masks_nothing() -> None:
+    """A home of `/` or none would turn every path into nonsense: nothing is masked then."""
+    for home in (None, "", "/", "\\"):
+        assert selfcheck.mask_home("/usr/lib/x", home) == "/usr/lib/x"
+
+
+def test_the_detail_lists_only_the_variables_that_steer_python_the_loader_or_the_appimage() -> None:
+    """Must not pass: an unrelated variable (a token, the path, the home) is never listed, in any case."""
+    env = {
+        "PYTHONHOME": "/a",
+        "PYTHONPATH": "/b",
+        "pythonhashseed": "1",
+        "LD_LIBRARY_PATH": "/c",
+        "DYLD_LIBRARY_PATH": "/d",
+        "APPDIR": "/e",
+        "APPIMAGE": "/f",
+        "ARGV0": "g",
+        "OWD": "/h",
+        "FT_DEBUG": "1",
+        "API_TOKEN": "secret-value",
+        "PATH": "/usr/bin",
+        "HOME": "/i",
+        "MY_PYTHONHOME": "/j",
+    }
+    detail = json.loads(selfcheck.view_failure_detail(["py"], 1, "", "", env, "/", None))
+    assert set(detail["env"]) == {
+        "PYTHONHOME",
+        "PYTHONPATH",
+        "pythonhashseed",
+        "LD_LIBRARY_PATH",
+        "DYLD_LIBRARY_PATH",
+        "APPDIR",
+        "APPIMAGE",
+        "ARGV0",
+        "OWD",
+        "FT_DEBUG",
+    }

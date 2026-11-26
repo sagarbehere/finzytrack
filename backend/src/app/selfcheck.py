@@ -10,7 +10,10 @@ of the sidecar build (`shell/sidecar/build_sidecar.py`). It prints one JSON repo
   must be false), its `sys.path` and its own site-packages folders (`main_sites`: `site.getsitepackages()` without
   the interpreter's prefix, which Windows lists there too although only the standard library lies in it; S0114);
 - the engine side's view under the same bootstrap: its `sys.path` (`engine_path`) and whether it finds `app`
-  (`engine_finds_app`; must be false).
+  (`engine_finds_app`; must be false). When that probe fails, `error` is `engine view: <exception name>` followed, on
+  the same line, by a JSON object of what it saw (`view_failure_detail`: the exit code, the end of its stderr and
+  stdout, its argv and working folder, and the variables that steer Python, the loader or an AppImage), with the home
+  folder written `~` (S0153, BL-0263: the AppImage's probe failed and only the name was seen).
 It never raises on a broken engine: a failure is a fact in the report, so the judges can name it.
 """
 
@@ -21,7 +24,7 @@ import os
 import site
 import subprocess
 import sys
-from collections.abc import Callable
+from collections.abc import Callable, Mapping, Sequence
 from decimal import Decimal
 from importlib.util import find_spec
 from pathlib import Path
@@ -38,6 +41,10 @@ ENGINE_ONLY = ("beancount", "beanquery", "ledger_engine")
 # The probe below is a build-time check, not the engine: its hang detector stays (the engine has no time limit since
 # S0057; a hung packaged engine is stopped by the smoke test's own runner).
 VIEW_HANG_SECONDS = 30.0
+# A failed view probe's report (S0153): the end of its output, and the variables that steer the interpreter, the loader
+# or an AppImage's launcher.
+VIEW_TAIL = 4000
+VIEW_ENV_PREFIXES = ("PYTHON", "FT_", "LD_", "DYLD_", "APPIMAGE", "APPDIR", "ARGV0", "OWD")
 ENGINE_VIEW = (
     "import importlib.util as u, json; print(json.dumps({'path': sys.path, 'app': u.find_spec('app') is not None}))"
 )
@@ -57,20 +64,80 @@ def main_site_packages(sites: list[str], prefixes: list[str], same: Callable[[st
     return [s for s in sites if same(s) not in own]
 
 
-def _engine_view(python: Path, engine_site: Path) -> tuple[list[str] | None, bool | None, str | None]:
-    """(sys.path, finds app, error) of a process started as the packaged engine is."""
+def home_folder() -> str | None:
+    """This user's home folder, or None when it cannot be told."""
+    home = os.path.expanduser("~")
+    return None if home == "~" else home
+
+
+def mask_home(text: str, home: str | None) -> str:
+    """`text` with `home` written `~`; unchanged when there is no home to mask (none, empty, or a root)."""
+    if not home or home.strip("/\\") == "":
+        return text
+    return text.replace(home, "~")
+
+
+def view_failure_detail(
+    argv: Sequence[str],
+    exit_code: int | None,
+    stdout: str,
+    stderr: str,
+    environ: Mapping[str, str],
+    cwd: str,
+    home: str | None,
+) -> str:
+    """One line of JSON about a failed view probe: its exit code (None: it did not exit), the last `VIEW_TAIL`
+    characters of its stdout and stderr, its argv, its working folder, and the variables of `environ` that steer
+    Python, the loader or an AppImage (the probe sets none of its own: it inherits them). `home` is written `~`."""
+
+    def m(text: str) -> str:
+        return mask_home(text, home)
+
+    env = {k: m(v) for k, v in sorted(environ.items()) if k.upper().startswith(VIEW_ENV_PREFIXES)}
+    return json.dumps(
+        {
+            "exit": exit_code,
+            "stderr": m(stderr[-VIEW_TAIL:]),
+            "stdout": m(stdout[-VIEW_TAIL:]),
+            "argv": [m(a) for a in argv],
+            "cwd": m(cwd),
+            "env": env,
+        }
+    )
+
+
+def _text(output: str | bytes | None) -> str:
+    """A process's captured output as text (`TimeoutExpired` may hold bytes even when text was asked for)."""
+    if output is None:
+        return ""
+    return output.decode(errors="replace") if isinstance(output, bytes) else output
+
+
+def engine_view(python: Path, engine_site: Path) -> tuple[list[str] | None, bool | None, str | None]:
+    """(sys.path, finds app, error) of a process started as the packaged engine is; the error carries
+    `view_failure_detail`."""
+    argv = bootstrap_argv(python, engine_site, ENGINE_VIEW)
+    exit_code: int | None = None
+    stdout = stderr = ""
     try:
         out = subprocess.run(  # noqa: S603 (the packaged bootstrap with a fixed probe)
-            bootstrap_argv(python, engine_site, ENGINE_VIEW),
-            capture_output=True,
-            text=True,
-            timeout=VIEW_HANG_SECONDS,
-            check=True,
+            argv, capture_output=True, text=True, timeout=VIEW_HANG_SECONDS, check=False
         )
+        exit_code, stdout, stderr = out.returncode, out.stdout, out.stderr
+        out.check_returncode()
         view = json.loads(out.stdout, parse_float=Decimal)
         return [str(p) for p in view["path"]], view["app"] is True, None
+    except subprocess.TimeoutExpired as e:
+        stdout, stderr = _text(e.stdout), _text(e.stderr)
+        name = type(e).__name__
     except (OSError, subprocess.SubprocessError, ValueError, KeyError, TypeError) as e:
-        return None, None, f"engine view: {type(e).__name__}"
+        name = type(e).__name__
+    try:
+        cwd = os.getcwd()
+    except OSError as e:  # a working folder removed under it
+        cwd = f"<{type(e).__name__}>"
+    detail = view_failure_detail(argv, exit_code, stdout, stderr, os.environ, cwd, home_folder())
+    return None, None, f"engine view: {name} {detail}"
 
 
 def report(python: Path, engine_site: Path) -> dict[str, object]:
@@ -98,7 +165,7 @@ def report(python: Path, engine_site: Path) -> dict[str, object]:
                 pong = True
     finally:
         client.close()
-    engine_path, engine_finds_app, view_error = _engine_view(python, engine_site)
+    engine_path, engine_finds_app, view_error = engine_view(python, engine_site)
     return {
         "site": str(engine_site),
         "handshake": handshake,

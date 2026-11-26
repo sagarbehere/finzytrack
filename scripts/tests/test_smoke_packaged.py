@@ -54,6 +54,33 @@ class Verdict(unittest.TestCase):
             with self.subTest(case=name):
                 self.assertFalse(verdict(code, out, expect_fail="cannot start the bundled interpreter")[0])
 
+    # S0153 (BL-0263): the self-check now follows a failed view probe's reason with its detail, on the same line.
+    # `--expect-fail` matches by containment, so the AppImage's known reason still counts and nothing else does.
+    KNOWN = "the bundled engine failed: engine view: CalledProcessError"
+    VIEW_FAILED = "FT_SMOKE_FAIL the bundled engine failed: engine view: "
+    DETAIL = '{"exit": 1, "stderr": "Fatal Python error: ...", "stdout": "", "argv": ["~/x"], "cwd": "/", "env": {}}'
+
+    def test_the_known_reason_followed_by_its_detail_is_expected(self) -> None:  # @regression-guard (S0153)
+        workflow = (Path(__file__).resolve().parents[2] / ".github/workflows/packaged.yml").read_text()
+        self.assertIn(f'known_failure: "{self.KNOWN}"', workflow)  # the reason the Linux job really expects
+        out = f"FT_SMOKE_FAIL {self.KNOWN} {self.DETAIL}"
+        self.assertTrue(verdict(1, out, expect_fail=self.KNOWN)[0])
+
+    def test_other_failures_with_a_detail_are_not_the_known_reason(self) -> None:  # @regression-guard (S0153)
+        cases = {
+            "the view probe hung": f"{self.VIEW_FAILED}TimeoutExpired {self.DETAIL}",
+            "the view output unreadable": f"{self.VIEW_FAILED}JSONDecodeError {self.DETAIL}",
+            "the engine did not start, stderr naming the error class": (
+                "FT_SMOKE_FAIL the bundled engine failed: start_failed: CalledProcessError in a child"
+            ),
+            "another cause": "FT_SMOKE_FAIL the bundled engine did not answer a ping",
+        }
+        for name, out in cases.items():
+            with self.subTest(case=name):
+                self.assertFalse(verdict(1, out, expect_fail=self.KNOWN)[0])
+        with self.subTest(case="the known reason, but the run exited 0"):
+            self.assertFalse(verdict(0, f"FT_SMOKE_FAIL {self.KNOWN} {self.DETAIL}", expect_fail=self.KNOWN)[0])
+
 
 if __name__ == "__main__":
     unittest.main()
