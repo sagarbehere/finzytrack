@@ -53,3 +53,7 @@
 
 ## Retro
 - Build about 75 min, fix about 25 min, 1 verifier round, findings 0H/3M/1L. Cheaper gate: running `check_invariants.py` before writing the brief's file list would have shown the literal-parametrize rule at the start. Process checks: `check_invariants.py` 1 catch (the literal rule, then found redundant for the engine and backend) / 0 false positive.
+
+## Owner approval (the change to `check_invariants.py`, V1-2)
+- Owner, 2026-11-26, in session, asked whether the invariant check may skip its literal-parametrize rule for test files under `engine/tests/` and `backend/tests/`, where pytest already fails an empty parameter list at collection (`empty_parameter_set_mark = "fail_at_collect"`), so `test_writer.py` and `test_contract.py` count in INV-01's and INV-22's proof (skips still refused, the rule unchanged elsewhere): **"Approve (Recommended)"**. Covers d535ea0c (PROCESS.md §5: changes to rules or checks).
+
