@@ -385,8 +385,6 @@ def test_the_scan_misses_no_spelling_of_a_path_that_could_leave(tier: Path, tmp_
         'include "C:/x.beancount"\n',
         f'option "documents" "{out}"\n',
         'option  "documents"  "../docs"\n',
-        f'option "include" "{out}/*.beancount"\n',
-        'option\t"include"\t"../*.beancount"\n',
         f'include "{out}/[ab]/x.beancount"\n',
         '; a comment\n; include "../x.beancount"\n',  # a false refusal, by design
     ]
@@ -395,6 +393,28 @@ def test_the_scan_misses_no_spelling_of_a_path_that_could_leave(tier: Path, tmp_
     for text in spellings:
         (folder / "main.beancount").write_text(text, encoding="utf-8")
         assert d2_local.refuse_tree(tier) == "reaches-out", repr(text)
+
+
+def test_any_option_include_refuses_the_run_whatever_its_value(tier: Path, tmp_path: Path) -> None:
+    """The owner's plain-copy rule refuses any `option "include"` (2026-11-26), a value below its file too."""
+    out = (tmp_path / "elsewhere").as_posix()
+    folder = tier / "s"
+    (folder / "sub").mkdir(parents=True)
+    for text in (
+        'option "include" "sub/x.beancount"\n',
+        'option "include" "x.beancount"\n',
+        f'option "include" "{out}/*.beancount"\n',
+        'option\t"include"\t"../*.beancount"\n',
+        '\ufeffoption  "include"\n  "sub/*.beancount"\r\n',
+        '; option "include" "x.beancount"\n',  # a false refusal, by design
+    ):
+        (folder / "main.beancount").write_text(text, encoding="utf-8")
+        assert d2_local.refuse_tree(tier) == "option-include", repr(text)
+    shutil.rmtree(folder)
+    root = private_ledger(tier)
+    root.write_bytes(b'option "include" "other.beancount"\n' + PRIVATE)
+    (root.parent / "other.beancount").write_text("2020-01-01 open Assets:Other USD\n", encoding="utf-8")
+    refused_with_nothing_loaded(run(str(root), tier=tier), str(tier))
 
 
 @pytest.mark.parametrize(

@@ -36,10 +36,12 @@ the whole run, exit 2, nothing loaded:
   - a link of any kind, a file with a second hard link, or anything that is neither a file nor a folder: make the
     copy again with `cp -RL`;
   - a folder that cannot be listed or a file that cannot be read;
-  - in any file, an `include` line or an `option "include"` or `option "documents"` value that is absolute, starts
-    with `~` or `$`, has `..` in it as a folder, or holds a backslash: edit that line in the copy to a path relative
-    to its file, below it. This is a plain text scan, looser than Beancount's grammar: a commented-out line or a
-    binary file can cause a refusal too.
+  - in any file, an `option "include"` line, whatever its value: write it as an `include` line in the copy;
+  - in any file, an `include` line or an `option "documents"` value that is absolute, starts with `~` or `$`, has
+    `..` in it as a folder, or holds a backslash: edit that line in the copy to a path relative to its file, below
+    it.
+  This is a plain text scan, looser than Beancount's grammar: a commented-out line or a binary file can cause a
+  refusal too.
 Then the overlay load runs under a policy that refuses any file, `pythonpath` folder or documents root outside the
 folder before it is read (a second line); Beancount's load runs only after that, and follows the same includes. The
 ledger's own process checks the folder again before it loads. Limits: a change made to the folder between the check
@@ -105,6 +107,7 @@ REASONS: Final[Mapping[str, str]] = {
     "hardlink": "a file in FT_LOCAL_TIER_DIR has a second hard link; make a plain copy (cp -RL) instead",
     "special": "FT_LOCAL_TIER_DIR holds something that is neither a file nor a folder; remove it from the copy",
     "unreadable": "a file or folder in FT_LOCAL_TIER_DIR cannot be listed or read",
+    "option-include": 'a file in FT_LOCAL_TIER_DIR uses option "include"; write it as an include line in the copy',
     "reaches-out": "an include or documents path in FT_LOCAL_TIER_DIR is absolute or has '..', '~', '$' or a "
     "backslash; edit that line in the copy",
     "read-refused": "the ledger reads a file outside FT_LOCAL_TIER_DIR; copy the whole ledger into it",
@@ -205,7 +208,8 @@ def refuse_root(root: Path) -> str | None:
 # Looser than Beancount's grammar on purpose (a false refusal is fine, a miss is not): the keyword anywhere not inside a
 # word, any whitespace before the string, a string over several lines.
 _STRING = rb'"((?:[^"\\]|\\.)*)"'
-PATHS = re.compile(rb'(?<![\w-])(?:include|option\s*"(?:include|documents)")\s*' + _STRING, re.S)
+PATHS = re.compile(rb'(?<![\w-])(?:include|option\s*"documents")\s*' + _STRING, re.S)
+OPTION_INCLUDE = re.compile(rb'(?<![\w-])option\s*"include"')
 
 
 def refuse_tree(tier: Path) -> str | None:
@@ -215,10 +219,11 @@ def refuse_tree(tier: Path) -> str | None:
     - a link of any kind, inside or out (`link`; `cp -RL` copies what a link points to);
     - a file with a second hard link (`hardlink`), or an entry that is neither a file nor a folder (`special`);
     - a folder that cannot be listed or a file that cannot be read, or any other failure of the check (`unreadable`);
-    - in any file's text, an `include` line or an `option "include"` or `option "documents"` value that is absolute,
-      starts with `~` or `$`, has `..` as a segment, or holds a backslash (`reaches-out`): with none of these and no
-      link, a relative path (a glob included) names only things under the file's folder, or for `documents` under the
-      root's, both inside the T-local folder.
+    - in any file's text, `option "include"` with any value (`option-include`; the owner's rule names it outright);
+    - in any file's text, an `include` line or an `option "documents"` value that is absolute, starts with `~` or `$`,
+      has `..` as a segment, or holds a backslash (`reaches-out`): with none of these and no link, a relative path (a
+      glob included) names only things under the file's folder, or for `documents` under the root's, both inside the
+      T-local folder.
     A plain text scan of every file, not a parse, looser than Beancount's grammar: a commented-out line, a string that
     is not a directive or a binary file can refuse a ledger that would load only from inside (a false refusal, by
     design); a line Beancount reads as an include is not missed. `insert_pythonpath` adds the folder of the file that
@@ -248,6 +253,8 @@ def _first_problem(tier: Path) -> str | None:
             else:
                 with open(entry.path, "rb") as f:
                     data = f.read()
+                if OPTION_INCLUDE.search(data):
+                    return "option-include"
                 if any(_leaves(m.group(1)) for m in PATHS.finditer(data)):
                     return "reaches-out"
     return None
