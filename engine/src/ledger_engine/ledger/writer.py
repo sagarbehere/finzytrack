@@ -237,8 +237,8 @@ class Reason(StrEnum):
     # `ENCRYPTED_FILE_NOT_EDITABLE`, as for a `.gpg` name (ADR-0059)
     UNSAFE_APP_FOLDER = "unsafe_app_folder"  # the journal folder (in the app's data folder) is on a file system
     # without the exclusive rename (on Linux ecryptfs or an NFS home; overlay has it, BL-0278; on macOS a volume
-    # that says so): the record could not become `.open` without the risk of replacing another entry, so this save
-    # is refused (S0125 round 1; owner, 2026-11-17: "C1")
+    # that says so; on Windows a volume that refuses it, `NotOffered`): the record could not become `.open`
+    # without the risk of replacing another entry, so this save is refused (S0125 round 1; owner, 2026-11-17: "C1")
 
 
 class Step(StrEnum):

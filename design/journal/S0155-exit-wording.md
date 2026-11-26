@@ -31,10 +31,23 @@
 - Tests first, on base 4fbca4ff with only the test file changed: 3 failed, 1 passed. Failed: `test_S0125_an_app_data_folder_that_cannot_save_safely_is_named_with_the_way_out[<folder>]` and `[None]` (`assert 'keeps a record of each save' in 'Finzytrack did not save your change. Its data folder … such as one with ext4, xfs or btrfs. Your ledger is unchanged.'`), `test_BL0271_the_gates_warming_tells_a_confirm_to_preview_again` (`AssertionError: Wait a moment and try again.`). Passed on base, tagged `@regression-guard`: `test_S0125_an_unsafe_app_folder_whose_ledger_was_not_checked_says_so` (the cause text claims no outcome without the re-hash).
 - Gates: backend and engine ruff (format and check) clean; `scripts/pyright_platforms.py` 0 errors on Darwin, Linux and Windows for backend and engine; backend `tests/platform`, `tests/api`, `tests/workspaces` 1605 passed, 270 skipped (the process tests skipped: the sandbox refuses `ps`); engine `tests/ledger/test_exclusive_rename.py` 6 passed; `check_generated.py`, `check_invariants.py` exit 0; `run_meta_tests.py` OK, 1015 tests, 0 failures (the known `ps` error in test_gate_timer did not appear this run).
 
-## Verifier
 
 ## Golden changes
-- `backend/tests/platform/test_save_job.py::test_S0125_an_app_data_folder_that_cannot_save_safely_is_named_with_the_way_out`: it asserted "Its data folder <folder>" and "local disk", the wording BL-0278 found wrong (the folder is the journal folder; no setting moves it; "local disk" with ext4, xfs, btrfs is Linux-only, and BL-0278 names macOS's exFAT, a local disk, among the volumes that show it). Now it asserts the generic cause, the folder named, the report step, and the outcome sentences at both ends unchanged; parametrized with no folder. Verifier verdict: pending.
+- `backend/tests/platform/test_save_job.py::test_S0125_an_app_data_folder_that_cannot_save_safely_is_named_with_the_way_out`: it asserted "Its data folder <folder>" and "local disk", the wording BL-0278 found wrong (the folder is the journal folder; no setting moves it; "local disk" with ext4, xfs, btrfs is Linux-only, and BL-0278 names macOS's exFAT, a local disk, among the volumes that show it). Now it asserts the generic cause, the folder named, the report step, and the outcome sentences at both ends unchanged; parametrized with no folder. Verifier verdict: accepted (round 1).
 - `design/generated/engine-job-texts.md`: `msg:save.unsafe_app_folder` and `msg:code.WORKSPACE_NOT_READY` regenerated from the code (texts before and after in the commit message).
 
+
+## Verifier (round 1)
+- Head ae32be5c (range 4fbca4ff..ae32be5c): **PASS WITH FINDINGS**, no High; the wording row under IMP-0078 holds (no changed sentence states an outcome; every outcome sentence byte-identical). Today a confirm meets `WORKSPACE_NOT_READY` only from the gate's `mirror_stale`, refused before any write, so "preview it again" cannot cause a second write. Fixed by the coordinator in comments and the spec (no further round: wording slice).
+
+| ID | Sev | Class | Finding | What was done |
+|---|---|---|---|---|
+| V1-1 | Low | d | §6.8, the writer's and save_text's comments listed only Linux and macOS as sources of `unsafe_app_folder`; a Windows volume that refuses the exclusive rename (`NotOffered`) gives it too | Added to all three; the user text is generic, so it was already true |
+| V1-2 | Low | d | `registry.py` still said "the app's data folder" for `unsafe_app_folder` | Now "the save's journal folder" |
+| V1-3 | Low | d | `save.py`'s docstring said the queued rebuild makes "wait a moment and try again" come true for the gate's WARMING; for a confirm the same confirm again is `PLAN_ALREADY_CONFIRMED` | Reworded: a new preview after a moment can be saved, hence the text's "preview again" |
+| Q1 | — | a, for M3 | Once the confirm's route is gated and the workspace warms after a landed save, a resent confirm refused `WORKSPACE_NOT_READY` at the edge would be told to preview again, inviting a second write | Not reachable today (no route); written on BL-0268's row (M3, with the confirm's route) with the three options and a test |
+
 ## Retro
+- About 30 min (the slice about 9 min, the verifier about 5 min, the fixes by the coordinator). Findings 0H / 0M / 3L and one question for M3.
+- Cheaper gate: a next step shared by every route that answers a code (the registry holds one text per code) should be checked against every answerer of that code, present and planned; Q1 came from the planned confirm route.
+

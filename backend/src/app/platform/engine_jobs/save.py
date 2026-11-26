@@ -10,8 +10,8 @@ save`); the sidecar never reads a journal or a ledger file itself. Its answer be
 - **`NotDone(error)`**, a registry error with §11's text (`save_text`): `WRITES_PAUSED {unfinished_save}` (this
   save's journal left open) or `{earlier_unfinished}` (refused at step 1 or 4 by an earlier save's: S0100, BL-0183),
   `LEDGER_EXTERNALLY_CHANGED`, `WORKSPACE_NOT_READY {WARMING}` (the gate's `mirror_stale`: the job queues the
-  workspace's rebuild too, with the plan's fingerprint as its hint, so "wait a moment and try again" comes true;
-  S0118, BL-0255),
+  workspace's rebuild too, with the plan's fingerprint as its hint, so a new preview after a moment can be saved;
+  the same confirm again is `PLAN_ALREADY_CONFIRMED`, so the text says to preview again: S0118, BL-0255, BL-0271),
   `CHANGE_NOT_SAVED {reason, path, folder, acl_entry, unchanged, changed}`, and the save's step 0 refusal of an
   encrypted file `ENCRYPTED_FILE_NOT_EDITABLE {path}` (the confirm refuses one first, S0117; the save meets one only
   through a link made after the preview); an engine refusal before the engine's `gate` is `INTERNAL` (it wrote

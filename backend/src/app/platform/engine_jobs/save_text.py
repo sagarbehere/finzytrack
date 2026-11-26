@@ -148,9 +148,9 @@ def not_saved_text(d: ChangeNotSavedDetails) -> str:
                 f"{_rehash(d)}"
             )
         case "unsafe_app_folder":  # S0125 round 1 (owner, 2026-11-17: "C1"): ecryptfs or an NFS home on Linux,
-            # any volume macOS says lacks it. BL-0278 (owner, 2026-11-26: "Generic text (Recommended)"): one cause
-            # for every OS, the folder is the journal folder (not "data folder"), and no setting moves it, so no move
-            # instruction
+            # any volume macOS says lacks it, a Windows volume that refuses it. BL-0278 (owner, 2026-11-26:
+            # "Generic text (Recommended)"): one cause for every OS, the folder is the journal folder (not "data
+            # folder"), and no setting moves it, so no move instruction
             where = "in its own folder" if d.folder is None else f"in the folder {d.folder}"
             return (
                 f"{did_not} Finzytrack keeps a record of each save {where}. That folder is on a drive where Finzytrack "
