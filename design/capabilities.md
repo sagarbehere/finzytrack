@@ -445,7 +445,7 @@ Every user-visible capability of Finzytrack, with its status: `planned`, `partia
 | CAP-DATA-MIRROR | SQLite mirror of the ledger, rebuilt after each write and on every switch | change | partial | M2 | yes |
 | CAP-DATA-EXPORT-API | Manual mirror export endpoints | cut | cut | M2 | n/a |
 | CAP-DATA-MULTIFILE | Multi-file ledgers: new entries routed by Fava's `insert-entry` / `default-file` options | keep | planned | M4 | yes |
-| CAP-DATA-WRITE | Writes re-render whole files: comments dropped, elided amounts and `{}` reductions baked in, plugin… | change | planned | M1 | yes |
+| CAP-DATA-WRITE | Writes re-render whole files: comments dropped, elided amounts and `{}` reductions baked in, plugin… | change | planned | M4 | yes |
 | CAP-DATA-WRITE-GATE | A write that adds booking errors is refused | change | partial | M1 | yes |
 | CAP-DATA-EXTERNAL-EDIT | A ledger changed outside the app (Fava, an editor, a legacy app) is detected: the write is refused… | new | planned | M4 | yes |
 | CAP-DATA-ENGINE-JOBS | Ledger work runs one job at a time: work the user waits for goes first, a long job shows its phase… | new | planned | M1 | yes |

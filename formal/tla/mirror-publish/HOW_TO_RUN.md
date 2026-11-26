@@ -16,8 +16,8 @@ uses too; its options and results are described in `formal/tla/engine-jobs/HOW_T
 
 ```sh
 formal/tla/mirror-publish/run_all.sh --tier S          # small worlds, every mutant and witness: about 20 s
-formal/tla/mirror-publish/run_all.sh --tier M          # M_all: not measured (the owner's)
-formal/tla/mirror-publish/run_all.sh --tier L          # L_all: not measured (the owner's)
+formal/tla/mirror-publish/run_all.sh --tier M          # M_all: about 4 min (the owner's)
+formal/tla/mirror-publish/run_all.sh --tier L          # L_all: over 27 h, in pieces (the owner's; deferred past v0.4)
 formal/tla/mirror-publish/run_all.sh --list            # what would run; runs nothing
 ```
 
@@ -34,8 +34,8 @@ Measured on the owner's Mac (Apple M4 Pro) on 2026-11-08 with 8 TLC workers, on 
 | S | 7 mutants | each violates its property | 294 to 23,481 distinct states | 0-1 s each |
 | S | 11 witnesses | each reached | 136 to 17,831 distinct states | 0-1 s each |
 | S | all 22 | **all as expected** | | about 18 s together |
-| M | `M_all` | not run (the owner's, BL-0110) | | |
-| L | `L_all` | in pieces (the owner's, BL-0110): no violation in 364M distinct states, depth 34, after 27 h (2026-11-14); see "Running `L_all` in pieces" | | |
+| M | `M_all` | **pass** on 2026-11-13 (model sha256 90acfd933696): 10,658,934 distinct states, depth 58 | | 236 s |
+| L | `L_all` | in part: no violation in 364M distinct states, depth 34, after 27 h (2026-11-14); **deferred past v0.4** (BL-0110; owner, 2026-11-26: "Let's defer the L_all indefinitely. I'll run it maybe after v0.4 release.."); to resume, see "Running `L_all` in pieces" | | |
 
 Each run rewrites `results/SUMMARY.md` with the numbers per configuration.
 
