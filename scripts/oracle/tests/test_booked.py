@@ -432,6 +432,21 @@ class UndoTest(unittest.TestCase):
         self.assertEqual(c.report.verdict, "EXPECTED_DIVERGENCE", c)
         self.assertEqual(dict(c.report.undone), {"I2": 1}, c)
 
+    def test_a_copy_from_a_file_below_a_glob_match_is_undone_like_the_others(self) -> None:
+        # S0160 (ADR-0014 amendment of 2026-11-26), the `includes` corpus's shape: the lunch lives in a file a
+        # glob-matched file includes; the legacy copies it into the root and leaves it there, so it is held twice.
+        lunch = '\n2020-01-04 * "Shop" "lunch two"\n  Expenses:Food  8.00 USD\n  Assets:Cash  -8.00 USD\n'
+        before = {"main.beancount": 'include "y/*.beancount"\n' + OPENS + T1, "y/2020.beancount": 'include "x.bean"\n',
+                  "y/x.bean": lunch}
+        after = {**before, "main.beancount": 'include "y/*.beancount"\n' + OPENS + T1_EDITED + lunch}
+        c = Case(before, after, update_t1)
+        self.assertEqual(sorted(d.cls for d in c.report.divergences if d.check == "parsed"), ["I2"], c)
+        self.assertEqual((c.report.verdict, c.booked(), dict(c.report.undone)), ("EXPECTED_DIVERGENCE", [], {"I2": 1}), c)
+        # Must-not-pass: the copy written with another amount is no copy; it stays UNEXPLAINED with its money.
+        c = Case(before, {**after, "main.beancount": after["main.beancount"].replace("8.00", "9.00")}, update_t1)
+        self.assertEqual(c.report.verdict, "UNEXPLAINED", c)
+        self.assertEqual(c.booked(), ["balance", "balance"], c)
+
     def test_a_t_local_report_names_the_classes_undone_and_no_amount(self) -> None:
         a, b = buy("a", "10 USD"), buy("b", "20 USD")
         before = {"main.beancount": PAD_HEAD + T1 + a + b + SELL, "y/2020.beancount": COFFEE}
@@ -513,6 +528,26 @@ class ImportOrderTest(unittest.TestCase):
         self.assertEqual(Case(before, {"main.beancount": src + "\n" + aa + "\n" + zz}, imp).report.verdict, "MATCH")
         self.assertEqual(Case(before, {"main.beancount": src + "\n" + zz + "\n" + aa}, imp).report.verdict,
                          "UNEXPLAINED")
+
+
+class DocumentTest(unittest.TestCase):
+    def test_document_paths_compare_in_another_folder_and_a_persisted_folder_scan_is_i3(self) -> None:
+        # S0160, the `documents` corpus's shape: Beancount makes a document's path absolute from its file's folder,
+        # and the legacy's result lives in another folder than the source. The legacy also writes the documents the
+        # `documents` option's folder scan generates (I3). Must-not-pass twin: a document whose path changed.
+        doc = '2020-01-03 document Assets:Cash "docs/Assets/Cash/2020-01-03.a.txt"\n'
+        scanned = '2020-01-04 document Assets:Cash "docs/Assets/Cash/2020-01-04.b.txt"\n'
+        head = 'option "documents" "docs"\n' + OPENS
+        files = {"docs/Assets/Cash/2020-01-03.a.txt": "a", "docs/Assets/Cash/2020-01-04.b.txt": "b",
+                 "other/2020-01-03.a.txt": "a"}
+        before = {**files, "main.beancount": head + T1 + doc}
+        c = Case(before, {"main.beancount": head + T1_EDITED + doc + scanned}, update_t1)
+        self.assertEqual(sorted(d.cls for d in c.report.divergences), ["I3"], c)
+        for moved in (doc.replace("a.txt", "b.txt"), doc.replace("docs/Assets/Cash/", "other/")):
+            with self.subTest(moved):
+                c = Case(before, {"main.beancount": head + T1_EDITED + moved}, update_t1)
+                self.assertIn(("UNEXPLAINED", "an entry that was not targeted changed"),
+                              [(d.cls, d.note) for d in c.report.divergences], c)
 
 
 class ReportTest(unittest.TestCase):

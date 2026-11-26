@@ -1,16 +1,19 @@
 """Compare the legacy app's actual change with the intended change, and tag every divergence (ADR-0014).
 
-Classes: I2 (glob-included entries copied into the root), I3 (plugin- or pad-generated entries persisted), I10
+Classes: I2 (entries of files reached only through a glob copied into the root), I3 (plugin- or pad-generated
+entries persisted, or a plugin's change to an entry), I10
 (elided amounts or `{}` baked in as Beancount booked them; comments lost), M28 (metadata contract: legacy machinery
 keys instead of v0.4's, on entries the mutator creates), FIX-L3-02 (a `@@` total written as exactly the legacy's rounded
 unit price; a lot's label dropped), FIX-L3-05 (the written decimal scale changed,
-`10` → `10.00`), FIX-L3-15 (typed metadata written as strings).
+`10` → `10.00`), FIX-L3-15 (typed metadata written as strings), CUSTOM-ACCT (an account value of a `custom` entry
+written as a quoted string).
 
 An entry the legacy wrote differently is paired with the entry it should have been, and tagged with the smallest set
 of classes whose erasers make the two equal ("I10+M28"). Each pairing allows only the erasers that can apply to it:
-an untargeted entry may differ only by what booking filled in (checked against Beancount's own booking); M28 applies
-only to entries the mutator creates. A new Beancount error after the write is never expected. Anything else is
-UNEXPLAINED (an unexpected change) or NOT_APPLIED (an intended change that did not happen); either blocks promotion.
+an untargeted entry may differ only by what the load made of it, booking's fills (I10) or a plugin's change (I3), each
+checked against Beancount's own load; M28 applies only to entries the mutator creates. A new Beancount error after
+the write is never expected. Anything else is UNEXPLAINED (an unexpected change) or NOT_APPLIED (an intended change
+that did not happen); either blocks promotion.
 
 The parsed comparison cannot see a change of money that leaves every entry as written: Beancount sorts entries by
 date, kind and line number, across files, so a reprint that moves lines can make a reduction take another lot and
@@ -37,6 +40,7 @@ from decimal import Decimal
 from typing import Any
 
 from beancount import loader
+from beancount.core import account as bc_account
 from beancount.core import data
 from beancount.core.number import MISSING
 from beancount.core.position import Cost, CostSpec
@@ -70,11 +74,10 @@ def legacy_unit_price(units: Decimal, total: Decimal) -> Decimal:
 @dataclass(frozen=True)
 class Ctx:
     """What an eraser may know about the entry *x* the legacy should have written: its booked form (an untargeted
-    entry's in the source's load; an intended entry's in the reference, the intended ledger booked by Beancount),
-    its `@@` postings, and whether it is an intended entry."""
+    entry's in the source's load; an intended entry's in the reference, the intended ledger booked by Beancount)
+    and its `@@` postings."""
     booked: Any | None = None
     totals: dict[int, Decimal] = field(default_factory=dict)  # posting index → its `@@` total as written
-    intended: bool = False
 
 
 Pair = tuple[Any, Any]
@@ -158,8 +161,10 @@ def erase_i10(x: Any, y: Any, ctx: Ctx) -> Pair:
     """Where *x* left something for Beancount to fill (elided units, `{}`), accept what the legacy app wrote only if
     it is exactly what Beancount booked for *x* (`ctx.booked`: for an intended entry, the reference's booking).
     Without a booked form nothing is accepted: Beancount's tolerance loads a filled number that is off by less than
-    it (`-10.54` for `-10.5`) with no error, so no other check would see it (S0124 verifier F1). A `{}` on an
-    intended entry is not accepted baked (as before S0124)."""
+    it (`-10.54` for `-10.5`) with no error, so no other check would see it (S0124 verifier F1). A cost spec is
+    accepted as written with what booking filled in (a lot's date, a `{}` reduction's lot) only when it is exactly the
+    booked lot, on an intended entry too (S0160: a rename's replacement `{1.00 USD}` written `{1.00 USD, 2020-04-15}`;
+    the reference books the intended entry, so a stale or wrong lot does not match)."""
     if not isinstance(x, data.Transaction):
         return x, y
     booked = ctx.booked if isinstance(ctx.booked, data.Transaction) and len(ctx.booked.postings) == len(x.postings) else None
@@ -170,17 +175,41 @@ def erase_i10(x: Any, y: Any, ctx: Ctx) -> Pair:
             if pb is not None and not _unset(pb.units) and not _unset(py.units) and pb.units == py.units:
                 py = py._replace(units=px.units)
         if isinstance(px.cost, CostSpec) and px.cost != py.cost and isinstance(py.cost, CostSpec) \
-                and not ctx.intended and pb is not None and isinstance(pb.cost, Cost) and _as_spec(pb.cost) == py.cost:
+                and pb is not None and isinstance(pb.cost, Cost) and _as_spec(pb.cost) == py.cost:
             py = py._replace(cost=px.cost)
         return px, py
     return _postings_pairwise(x, y, fix)
 
 
+def erase_i3(x: Any, y: Any, ctx: Ctx) -> Pair:
+    """The legacy writes the entries of its full load, so a plugin's change to an entry lands in the file (a tag, a
+    posting; S0160). Accepted only when the written entry is exactly *x* as the load gave it (`ctx.booked`: an
+    untargeted entry's in the source's load, an intended entry's in the reference, plugins run); its undo is *x*,
+    which the next load changes again. Tried after I10, so an entry that differs only by what booking filled in
+    stays I10."""
+    if ctx.booked is not None and canonical_key(ctx.booked) == canonical_key(y):
+        return x, x
+    return x, y
+
+
+def erase_custom_acct(x: Any, y: Any, ctx: Ctx) -> Pair:
+    """On some runs the legacy writes an account value of a `custom` entry as a quoted string of the same account
+    (`custom "budget" Expenses:Rent` → `"Expenses:Rent"`): Beancount's printer writes it bare only when its type `is`
+    `account.TYPE`, compared by identity (S0160; ADR-0014 amendment of 2026-11-26). Only that direction, only the
+    same text; the undo puts the account back."""
+    if not (isinstance(x, data.Custom) and isinstance(y, data.Custom)) or len(x.values) != len(y.values):
+        return x, y
+    values = [vx if vx.dtype is bc_account.TYPE and vy.dtype is str and vy.value == vx.value else vy
+              for vx, vy in zip(x.values, y.values)]
+    return x, y._replace(values=values)
+
+
 ERASERS: dict[str, Callable[[Any, Any, Ctx], Pair]] = {
-    "I10": erase_i10, "M28": erase_m28, "FIX-L3-02": erase_l3_02, "FIX-L3-05": erase_l3_05, "FIX-L3-15": erase_l3_15,
+    "I10": erase_i10, "I3": erase_i3, "M28": erase_m28, "FIX-L3-02": erase_l3_02, "FIX-L3-05": erase_l3_05,
+    "FIX-L3-15": erase_l3_15, "CUSTOM-ACCT": erase_custom_acct,
 }
-UNTARGETED = ("I10",)  # a full rewrite may only re-print what booking filled in
-REPLACED = ("I10", "FIX-L3-02", "FIX-L3-05", "FIX-L3-15")  # an entry the legacy payload carried
+UNTARGETED = ("I10", "I3", "CUSTOM-ACCT")  # a full rewrite may only re-print what the load made of the entry
+REPLACED = ("I10", "I3", "FIX-L3-02", "FIX-L3-05", "FIX-L3-15", "CUSTOM-ACCT")  # an entry the legacy payload carried
 CREATED = REPLACED + ("M28",)  # an entry the mutator creates
 
 
@@ -283,6 +312,8 @@ def compare(before: LedgerSet, after: LedgerSet, expected: Expected, before_fact
         a, e = actual.files.get(f), expected.files.get(f)
         a_rem, a_add = (a.removed, a.added) if a else (Counter(), Counter())
         e_rem, e_add = (e.removed, e.added) if e else (Counter(), Counter())
+        same = e_rem & e_add  # an edit to the entry it replaces changes nothing in the file (S0160: demo upd-017)
+        e_rem, e_add = e_rem - same, e_add - same
         u_rem[f], u_add[f], n_rem[f], n_add[f] = a_rem - e_rem, a_add - e_add, e_rem - a_rem, e_add - a_add
 
     def entry(key: str) -> Any:
@@ -305,7 +336,7 @@ def compare(before: LedgerSet, after: LedgerSet, expected: Expected, before_fact
 
     def intended_ctx(key: str) -> tuple[tuple[str, ...], Ctx]:
         allowed = CREATED if key in expected.created else REPLACED
-        return allowed, Ctx(ref_booked.get(key), expected.totals.get(key, {}), True)
+        return allowed, Ctx(ref_booked.get(key), expected.totals.get(key, {}))
 
     def untargeted_ctx(key: str, facts: LoadFacts) -> tuple[tuple[str, ...], Ctx]:
         return UNTARGETED, Ctx(booked_of(facts, entry(key)))

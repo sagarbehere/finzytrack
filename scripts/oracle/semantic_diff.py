@@ -47,8 +47,17 @@ def strip_location(entry: Any) -> Any:
     return entry
 
 
+def _document_relative(entry: Any) -> Any:
+    """A document's path relative to the folder of the file that holds it (a folder scan's: the root file): Beancount
+    makes it absolute from that folder, so the key would otherwise name the folder a copy lives in (S0160)."""
+    holder = (entry.meta or {}).get("filename")
+    if isinstance(entry, data.Document) and holder and os.path.isabs(entry.filename) and not holder.startswith("<"):
+        return entry._replace(filename=Path(os.path.relpath(entry.filename, os.path.dirname(holder))).as_posix())
+    return entry
+
+
 def canonical_key(entry: Any) -> str:
-    return printer.format_entry(strip_location(entry))
+    return printer.format_entry(strip_location(_document_relative(entry)))
 
 
 def _hashable(value: Any) -> Any:
@@ -142,12 +151,18 @@ def _inside(path: Path, base: Path) -> bool:
 
 def parse_set(base: Path, root_file: str) -> LedgerSet:
     """The root file and every file it includes (globs expanded as Beancount's loader does), keyed by path
-    relative to *base*. Include targets that resolve outside *base* are listed in `outside` and not followed."""
+    relative to *base*. Include targets that resolve outside *base* are listed in `outside` and not followed.
+
+    `glob_files` are the files reached only through a glob match: the matches and every file below one through plain
+    includes, at any depth (I2's files, ADR-0014 amendment of 2026-11-26). The legacy app walks `include` lines as
+    literal paths, so these are the files it does not know; a file plain includes reach from the root is not one,
+    even when a glob also matches it."""
     base = base.resolve()
     files: dict[str, ParsedFile] = {}
-    via_glob: set[str] = set()
+    plain: dict[str, list[str]] = {}  # file → the files its plain (non-glob) includes reach
     outside: set[str] = set()
-    todo = [(base / root_file).resolve()]
+    root = (base / root_file).resolve()
+    todo = [root]
     while todo:
         path = todo.pop()
         rel = Path(os.path.relpath(path, base)).as_posix()
@@ -155,6 +170,7 @@ def parse_set(base: Path, root_file: str) -> LedgerSet:
             continue
         pf, includes = parse_file(path)
         files[rel] = pf
+        plain[rel] = []
         for inc in includes:
             pattern = os.path.join(path.parent, inc)
             if not _inside(Path(os.path.realpath(pattern)), base):
@@ -162,10 +178,17 @@ def parse_set(base: Path, root_file: str) -> LedgerSet:
             matches = [Path(m).resolve() for m in sorted(glob.glob(pattern, recursive=True))]
             outside.update(str(m) for m in matches if not _inside(m, base))
             matches = [m for m in matches if _inside(m, base)]
-            if GLOB_CHARS & set(inc):
-                via_glob.update(Path(os.path.relpath(m, base)).as_posix() for m in matches)
+            if not GLOB_CHARS & set(inc):
+                plain[rel] += [Path(os.path.relpath(m, base)).as_posix() for m in matches]
             todo.extend(matches)
-    return LedgerSet(base, Path(root_file).as_posix(), files, frozenset(via_glob), tuple(sorted(outside)))
+    known: set[str] = set()  # the files the legacy's literal walk reaches from the root
+    walk = [Path(os.path.relpath(root, base)).as_posix()]
+    while walk:
+        rel = walk.pop()
+        if rel in files and rel not in known:
+            known.add(rel)
+            walk += plain[rel]
+    return LedgerSet(base, Path(root_file).as_posix(), files, frozenset(files) - known, tuple(sorted(outside)))
 
 
 def location(entry: Any) -> tuple[str, int]:

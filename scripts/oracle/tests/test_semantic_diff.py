@@ -42,6 +42,29 @@ class ParseSetTest(unittest.TestCase):
         self.assertEqual(s.glob_files, frozenset({"years/2020.beancount", "years/2021.beancount"}))
         self.assertEqual(sum(s.files["accounts.beancount"].keys.values()), 3)
 
+    def test_a_file_below_a_glob_match_is_glob_reached(self) -> None:
+        # S0160 (ADR-0014 amendment of 2026-11-26): the legacy walks literal includes only, so a file a glob-matched
+        # file includes, at any depth, is as unknown to it as the match itself; plain includes from the root are not.
+        self.d = LedgerDir({
+            "main.beancount": 'include "accounts.beancount"\ninclude "years/*.beancount"\n',
+            "accounts.beancount": 'include "more.beancount"\n' + OPENS,
+            "more.beancount": "",
+            "years/2020.beancount": 'include "extra/lunch.bean"\n' + TXN,
+            "years/extra/lunch.bean": 'include "deeper.bean"\n',
+            "years/extra/deeper.bean": TXN.replace("2020-01-02", "2020-01-03"),
+        })
+        s = sd.parse_set(self.d.path, "main.beancount")
+        self.assertEqual(s.glob_files, frozenset({"years/2020.beancount", "years/extra/lunch.bean", "years/extra/deeper.bean"}))
+
+    def test_a_file_plain_includes_reach_from_the_root_is_not_glob_reached_even_when_a_glob_matches_it(self) -> None:
+        # The legacy knows such a file and rewrites it, so its copy into the root would not be I2's cause.
+        self.d = LedgerDir({
+            "main.beancount": 'include "years/2020.beancount"\ninclude "years/*.beancount"\n' + OPENS,
+            "years/2020.beancount": TXN,
+            "years/2021.beancount": TXN.replace("2020-01-02", "2021-01-02"),
+        })
+        self.assertEqual(sd.parse_set(self.d.path, "main.beancount").glob_files, frozenset({"years/2021.beancount"}))
+
     def test_includes_outside_the_folder_are_listed_and_not_followed(self) -> None:
         self.d = LedgerDir({"set/main.beancount": 'include "../elsewhere.beancount"\ninclude "/abs/x/*.beancount"\n' + OPENS,
                             "elsewhere.beancount": TXN})

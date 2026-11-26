@@ -2,7 +2,7 @@
 
 This record decides when a feature that writes to the books is cleared for real use.
 
-- **Status:** Accepted. Amended on 2026-11-16 (S0123, S0124): how a class explains a difference in the booked result
+- **Status:** Accepted. Amended on 2026-11-16 (S0123, S0124): how a class explains a difference in the booked result; on 2026-11-26 (S0160): I2 covers every file a glob match reaches; class CUSTOM-ACCT
 - **Date:** 2026-10-24
 - **Deciders:** owner
 - **Area:** write path, process
@@ -77,3 +77,14 @@ Owner, 2026-11-16, in session, accepting the orchestrator's recommendation (opti
 - **Unchanged:** the classes, their causes, the oracle's role (a second opinion on what an edit means, not on the old app's bytes or formatting; S0122), and that an untagged divergence blocks promotion.
 - Built in S0124 (`scripts/oracle/classify.py`).
 
+
+## Amendment (2026-11-26): I2 covers every file a glob match reaches; class CUSTOM-ACCT (S0160)
+
+Owner, 2026-11-26, on BL-0274 (offered: "Should a copy of an entry reached through a glob-matched file count as class I2 (legacy's glob duplicate) and be undone like the others?"): "Count it as I2 (Recommended)". The option: "Same cause as I2 (legacy copies glob-reached entries into the root and leaves them in place), so an ADR-0014 amendment extends I2 to every file a glob match reaches, direct or nested."
+
+- **Context:** the old app finds a ledger's files by walking its `include` lines as literal paths (`discover_includes_per_file`); `include "years/*.beancount"` names no file, so neither the files the glob matches nor any file they include are known to it. It writes every entry of a file it does not know into the root and never rewrites that file. The oracle counted only direct glob matches, so in the `includes` corpus the lunch in `years/2023-extra.bean` (included by the glob-matched `years/2023.beancount`) was UNEXPLAINED when copied, and NOT_APPLIED when a rename left it in place.
+- **Decided:** I2's files are the files the ledger reaches only through a glob match: the matches themselves and every file below one through plain includes, at any depth. A file that plain includes reach from the root is not one, even when a glob also matches it: the old app knows and rewrites it. Each I2 shape is undone as before (the 2026-11-16 amendment).
+- **Unchanged:** the undo rule, and that a new Beancount error is never expected (the errors a rename leaves in a file the old app never rewrites stay with BL-0047).
+- **Also in S0160, within existing classes by their own cause** (agent; ADR-0014's rule: no new class): the old app writes the entries of its full load, so **I3** also covers a plugin's change to an entry (a tag a local plugin adds), accepted only when the written entry is exactly the entry as the load gives it, and undone by the entry as written in the source; **I10** also accepts a lot written with what booking filled in (`{1.00 USD}` written `{1.00 USD, 2020-04-15}`) on an entry the change replaces (a rename's), only when it is exactly the lot the intended ledger books. A document's path is compared relative to its file's folder, a harness fix: Beancount makes it absolute, so the copy's folder showed as a change.
+- **A new class, CUSTOM-ACCT** (agent, S0160; the brief allowed a new class for one cheap cause): on some runs the old app writes an account value of a `custom` entry as a quoted string of the same account (`custom "budget" Expenses:Rent` becomes `"Expenses:Rent"`). Beancount 3.2.0's printer writes the value bare only when its type `is` `account.TYPE`, a string compared by identity, so any copy of it that is not the same object prints quoted; which path in the old app makes that copy was not found. Only that direction and the same text are accepted; the undo puts the account back. No money depends on it.
+- Built in S0160 (`scripts/oracle/semantic_diff.py`, `LedgerSet.glob_files`, `canonical_key`; `scripts/oracle/classify.py`, `erase_i3`, `erase_i10`, `erase_custom_acct`, the netting of a no-op edit in `compare`).

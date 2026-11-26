@@ -86,6 +86,30 @@ class ClassifyTest(unittest.TestCase):
         after = {"main.beancount": 'include "y/*.beancount"\n' + OPENS + T1_EDITED, "y/2020.beancount": T1}
         self.assertEqual(Case(before, after, update_t1).classes(), ["I2", "I2"])
 
+    def test_i2_an_entry_of_a_file_below_a_glob_match_duplicated_into_the_root(self) -> None:
+        # S0160 (ADR-0014 amendment of 2026-11-26): the `includes` corpus's lunch, in a file a glob-matched file
+        # includes; the legacy copies it into the root and leaves it in place.
+        before = {"main.beancount": 'include "y/*.beancount"\n' + OPENS + T1, "y/2020.beancount": 'include "x.bean"\n',
+                  "y/x.bean": ELIDED}
+        after = {**before, "main.beancount": 'include "y/*.beancount"\n' + OPENS + T1_EDITED + ELIDED_BAKED}
+        c = Case(before, after, update_t1)
+        self.assertEqual(c.classes(), ["I10+I2"])
+        self.assertEqual(c.report.verdict, "EXPECTED_DIVERGENCE")
+
+    def test_i2_an_edit_inside_a_file_below_a_glob_match_lands_in_the_root_and_the_file_is_not_rewritten(self) -> None:
+        before = {"main.beancount": 'include "y/*.beancount"\n' + OPENS, "y/2020.beancount": 'include "x.bean"\n',
+                  "y/x.bean": T1}
+        after = {**before, "main.beancount": 'include "y/*.beancount"\n' + OPENS + T1_EDITED}
+        self.assertEqual(Case(before, after, update_t1).classes(), ["I2", "I2"])
+
+    def test_a_copy_from_a_file_the_root_also_includes_by_name_is_unexplained(self) -> None:
+        # Must-not-pass: a glob matches the file, but a plain include from the root reaches it too, so the legacy
+        # knows and rewrites it: a copy of its entry into the root is not I2's cause.
+        head = 'include "y/2020.beancount"\ninclude "y/*.beancount"\n' + OPENS
+        before = {"main.beancount": head + T1, "y/2020.beancount": ELIDED}
+        after = {"main.beancount": head + T1_EDITED + ELIDED, "y/2020.beancount": ELIDED}
+        self.assertEqual(Case(before, after, update_t1).classes(), ["UNEXPLAINED"])
+
     def test_an_edit_not_applied_in_a_rewritten_glob_file_is_not_i2(self) -> None:
         before = {"main.beancount": 'include "y/*.beancount"\n' + OPENS, "y/2020.beancount": T1 + ELIDED}
         after = {"main.beancount": 'include "y/*.beancount"\n' + OPENS, "y/2020.beancount": T1}
@@ -155,6 +179,68 @@ class ClassifyTest(unittest.TestCase):
         c = Case({"main.beancount": opens + src}, {"main.beancount": opens + legacy},
                  lambda b: model.update_transaction(b, "t-9", src.replace('"Buy"', '"Buy" "x"')))
         self.assertEqual(c.classes(), ["FIX-L3-02"])
+
+    BOND_OPENS = OPENS + "2020-01-01 open Assets:Bonds\n2020-01-01 open Assets:Other\n"
+    BOND = '2020-04-15 * "Bond purchase"\n  Assets:Bonds  10 BOND {1.00 USD}\n  Assets:Cash  -10.00 USD\n'
+
+    def bond_case(self, written_lot: str) -> Case:
+        """A rename of the account holding a lot written `{1.00 USD}`; the legacy writes the renamed entry with
+        *written_lot* (the demo's ren-* shape, BL-0274)."""
+        renamed = self.BOND.replace("Assets:Bonds ", "Assets:Stocks ").replace("{1.00 USD}", written_lot)
+        opens = self.BOND_OPENS.replace("open Assets:Bonds", "open Assets:Stocks")
+        return Case({"main.beancount": self.BOND_OPENS + self.BOND}, {"main.beancount": opens + renamed},
+                    lambda b: model.rename_account(b, "Assets:Bonds", "Assets:Stocks"))
+
+    def test_i10_a_renamed_entrys_lot_written_with_its_booked_date(self) -> None:
+        # S0160: the legacy prints the booked lot `{1.00 USD, 2020-04-15}`; the date is what booking filled in for the
+        # intended entry, as the reference books it (I10's own cause, the same as on an untargeted entry).
+        c = self.bond_case("{1.00 USD, 2020-04-15}")
+        self.assertEqual(c.classes(), ["I10"], c.report.divergences)
+        self.assertEqual(c.report.verdict, "EXPECTED_DIVERGENCE")
+        # Must-not-pass: a lot date or a cost booking would not fill in.
+        for lot in ("{1.00 USD, 2020-04-14}", "{1.01 USD, 2020-04-15}"):
+            with self.subTest(lot):
+                self.assertIn("NOT_APPLIED", self.bond_case(lot).classes())
+
+    def test_i3_a_plugins_change_to_an_entry_persisted(self) -> None:
+        # S0160, the `pythonpath-plugin` corpus's shape: a local plugin tags every transaction #seen in the load; the
+        # legacy writes the loaded entries, so the tag lands in the file, on an untargeted entry and on the edit.
+        plugin = ('from beancount.core import data\n__plugins__ = ["tag_all"]\n\n'
+                  'def tag_all(entries, options_map):\n'
+                  '    return [e._replace(tags=(e.tags or frozenset()) | {"seen"}) if isinstance(e, data.Transaction) else e\n'
+                  '            for e in entries], []\n')
+        head = 'option "insert_pythonpath" "TRUE"\nplugin "s0160_tagger"\n' + OPENS
+        snack = ELIDED.replace("2.00 USD\n  Assets:Cash\n", "2.00 USD\n  Assets:Cash  -2.00 USD\n")
+        seen = lambda t: t.replace('"\n', '" #seen\n', 1)  # noqa: E731 - the tag after the first line's narration
+        before = {"s0160_tagger.py": plugin, "main.beancount": head + T1 + snack}
+        c = Case(before, {"main.beancount": head + seen(T1_EDITED) + seen(snack)}, update_t1)
+        self.assertEqual(c.classes(), ["I3", "I3"], c.report.divergences)
+        self.assertEqual(c.report.verdict, "EXPECTED_DIVERGENCE")
+        # Must-not-pass: a tag the plugin does not add.
+        c = Case(before, {"main.beancount": head + seen(T1_EDITED) + seen(snack).replace("#seen", "#other")}, update_t1)
+        self.assertEqual(c.report.verdict, "UNEXPLAINED")
+
+    def test_an_edit_that_changes_nothing_left_as_it_was_is_a_match(self) -> None:
+        # S0160, the 210-case demo's upd-017: the generator's date edit of an entry on the 28th gives the 28th again,
+        # so the intended change is none; a write that leaves the entry as it was is the intended result.
+        c = Case({"main.beancount": OPENS + T1}, {"main.beancount": OPENS + T1}, lambda b: model.update_transaction(b, "t-1", T1))
+        self.assertEqual((c.classes(), c.report.verdict), ([], "MATCH"))
+        # Must-not-pass: the same no-op edit, and the legacy changed the entry anyway.
+        c = Case({"main.beancount": OPENS + T1}, {"main.beancount": OPENS + T1_EDITED}, lambda b: model.update_transaction(b, "t-1", T1))
+        self.assertEqual(c.report.verdict, "UNEXPLAINED")
+
+    def test_custom_acct_an_account_value_of_a_custom_entry_written_as_a_string(self) -> None:
+        # S0160 (ADR-0014 amendment of 2026-11-26): on some runs the legacy writes `custom "budget" Expenses:Rent ...`
+        # as `"Expenses:Rent"` (the demo's upd-065, upd-066 in the 210-case run; S0123's imp-000, imp-001).
+        budget = '2020-01-01 custom "budget" Expenses:Rent "monthly" 900 USD\n'
+        quoted = budget.replace(" Expenses:Rent ", ' "Expenses:Rent" ')
+        c = Case({"main.beancount": OPENS + T1 + budget}, {"main.beancount": OPENS + T1_EDITED + quoted}, update_t1)
+        self.assertEqual((c.classes(), c.report.verdict), (["CUSTOM-ACCT"], "EXPECTED_DIVERGENCE"))
+        # Must-not-pass: a string naming another account; a string turned into an account (not the cause's direction).
+        for source, written in ((budget, budget.replace(" Expenses:Rent ", ' "Expenses:Food" ')), (quoted, budget)):
+            with self.subTest(written):
+                c = Case({"main.beancount": OPENS + T1 + source}, {"main.beancount": OPENS + T1_EDITED + written}, update_t1)
+                self.assertEqual(c.report.verdict, "UNEXPLAINED")
 
     def test_an_untargeted_amount_change_is_unexplained(self) -> None:
         c = Case({"main.beancount": OPENS + T1 + ELIDED},
