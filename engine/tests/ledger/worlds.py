@@ -40,8 +40,9 @@ still requires recovery to resolve, and the disk as recovery left it (before any
 folder in it on local NTFS (no swap, the exclusive rename: ADR-0069) with OneDrive's ACL as probed on the owner's PC,
 2026-11-23 (`in_onedrive`): `/w/L` is the OneDrive root, `(D;CI;DT;;;WD)`, every folder in it inherits
 `(D;CIID;DT;;;WD)` (deny everyone `delete_child`, to folders only), the files carry no deny, and the folders have
-Windows' read-only attribute (which marks a customized folder and stops only the folder's own removal). The oracle above
-holds as it is.
+Windows' read-only attribute (which marks a customized folder and stops only the folder's own removal), which OneDrive
+also gives every folder made there (the owner's hand check, 2026-11-26; S0152: the undo and the create's cleanup clear
+it on a folder their job made, just before removing it). The oracle above holds as it is.
 """
 
 from __future__ import annotations
@@ -171,13 +172,15 @@ ONEDRIVE_DENY = AclEntry(
 
 def in_onedrive(fs: MemFS, path: str) -> None:
     """The folder `path` (made already) as the OneDrive root, and every folder in it, with OneDrive's ACL and read-only
-    attribute, on local NTFS (the module's docstring). `fs` is in Windows mode."""
+    attribute, which every folder made there gets too, on local NTFS (the module's docstring). `fs` is in Windows
+    mode."""
     assert fs.windows
     for folder, entry in fs.snapshot().items():
         if entry == ("dir",) and (folder == path or folder.startswith(path + "/")):
             fs.outside_no_swap(folder, excl=True)  # a folder the code makes there inherits it
             fs.outside_acl(folder, ONEDRIVE_ROOT_DENY if folder == path else ONEDRIVE_DENY)
             fs.outside_lock(folder)  # Windows' read-only attribute on a customized folder
+            fs.outside_new_folders_read_only(folder)  # and on every folder made there (S0152)
     fs.outside_fs_type(1, "ntfs")
 
 

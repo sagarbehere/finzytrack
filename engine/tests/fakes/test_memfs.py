@@ -933,6 +933,95 @@ def test_windows_mode_a_read_only_folder_refuses_only_its_own_removal() -> None:
     assert fs.names_in("/m") == []
 
 
+# -- S0152 (BL-0283): a read-only folder the caller's own job made; OneDrive's mark on new folders --------------------
+
+
+def _ro_folder(*, windows: bool = True) -> MemFS:
+    fs = MemFS(windows=windows)
+    fs.outside_mkdirs("/m/ro")
+    fs.outside_lock("/m/ro")
+    return fs
+
+
+def test_S0152_windows_mode_rmdir_made_clears_a_read_only_folder_and_removes_it_in_one_effect() -> None:
+    fs = _ro_folder()
+    with fs.open_dir("/m") as d:
+        with pytest.raises(PermissionError):
+            d.rmdir("ro")  # without `made`: refused as before (S0132's P7)
+        assert fs.read_only("/m/ro")
+        n = len(fs.effects)
+        d.rmdir("ro", made=True)
+        assert fs.effects[n:] == ["rmdir /m:ro"], "one effect, labelled as without `made`"
+    assert fs.names_in("/m") == []
+
+
+def test_S0152_must_not_pass_rmdir_made_on_a_folder_that_holds_an_entry_answers_enotempty_and_clears_nothing() -> None:
+    """The adapter lists the folder on the object it opened before it clears anything: a folder that holds another
+    program's entry (the undo relies on `ENOTEMPTY` to keep it) keeps its attribute."""
+    fs = _ro_folder()
+    fs.outside_write("/m/ro/f", b"x")
+    with fs.open_dir("/m") as d:
+        with pytest.raises(OSError, match="not empty") as e:
+            d.rmdir("ro", made=True)
+        assert e.value.errno == errno.ENOTEMPTY
+    assert fs.file("/m/ro/f") == b"x"
+    assert fs.read_only("/m/ro")
+
+
+def test_S0152_must_not_pass_rmdir_made_on_a_folder_whose_deletion_is_not_granted_clears_nothing() -> None:
+    """The adapter opens the folder for deletion first; a folder that grants it no `DELETE` in a folder that grants no
+    `delete_child` refuses that open, so nothing is cleared."""
+    fs = _ro_folder()
+    fs.outside_acl("/m", AclEntry(deny=True, perms=frozenset({"delete_child"}), flags=frozenset()))
+    fs.outside_grant_no_delete("/m/ro", new=False, own=True)
+    with fs.open_dir("/m") as d, pytest.raises(PermissionError):
+        d.rmdir("ro", made=True)
+    assert fs.read_only("/m/ro")
+
+
+def test_S0152_must_not_pass_rmdir_made_on_a_link_or_a_file_clears_nothing_and_removes_nothing() -> None:
+    fs = _ro_folder()
+    fs.outside_write("/m/f", b"x")
+    fs.outside_lock("/m/f")
+    fs.outside_symlink("/m/lnk", "/m/ro")
+    with fs.open_dir("/m") as d:
+        for name in ("lnk", "f"):
+            with pytest.raises(NotADirectoryError):
+                d.rmdir(name, made=True)
+    assert fs.read_only("/m/ro")
+    assert fs.read_only("/m/f")
+    assert sorted(fs.names_in("/m")) == ["f", "lnk", "ro"]
+
+
+def test_S0152_posix_mode_ignores_made_and_a_uchg_folder_still_refuses_its_removal() -> None:
+    """@regression-guard (the POSIX adapters make no call for `made`; `uchg` is not Windows' attribute)."""
+    fs = _ro_folder(windows=False)
+    with fs.open_dir("/m") as d:
+        n = len(fs.effects)
+        with pytest.raises(PermissionError):
+            d.rmdir("ro", made=True)
+        assert [e.split(" ")[0] for e in fs.effects[n:]] == ["rmdir"]
+    assert fs.read_only("/m/ro")
+
+
+def test_S0152_onedrives_mark_reaches_every_folder_the_port_makes_there_and_nothing_else() -> None:
+    fs = MemFS(windows=True)
+    fs.outside_mkdirs("/od")
+    fs.outside_mkdirs("/elsewhere")
+    fs.outside_new_folders_read_only("/od")
+    with fs.open_dir("/od") as d:
+        d.mkdir("a")
+        d.create("f", b"x", 0o600)
+        with d.open_child("a") as a:
+            a.mkdir("b")
+    with fs.open_dir("/elsewhere") as e:
+        e.mkdir("c")
+    assert (fs.read_only("/od/a"), fs.read_only("/od/a/b")) == (True, True)
+    assert not fs.read_only("/od/f"), "OneDrive marks folders, not files"
+    assert not fs.read_only("/elsewhere/c")
+    assert not fs.read_only("/od"), "only what is made there"
+
+
 # -- S0136: a share that refuses a folder's sync; entry operations act on the object they found -----------------------
 
 

@@ -21,9 +21,12 @@ Steps (each is recorded in the report; a step that fails is recorded with its er
 3. `open`, `save`: the first ledger opened and one change saved; then for 2 minutes what OneDrive does to the saved
    file (`looks.after_save`: a plain file after our rename, a placeholder again, in sync).
 4. `burst`: 8 saves one after another, so that some meet OneDrive's upload of the one before (an "in use" refusal
-   is a fact, not a failure). Then `made_folder` (S0151 round 1, an open question): a folder with one file made in
-   the scratch folder, watched for up to 2 minutes as the saved file was (does OneDrive mark it read-only once it
-   syncs it?), then the file and the folder removed, each outcome reported.
+   is a fact, not a failure). Then `made_folder` (S0151 round 1; the owner's check of 2026-11-26 found that OneDrive
+   marks it read-only and its `rmdir` is refused): a folder with one file made in the scratch folder, watched for up
+   to 2 minutes as the saved file was, then the file and the folder removed; when the folder's `rmdir` is refused, the
+   engine's own port removes it as the undo does (S0152: clear the read-only attribute, then remove), each outcome
+   reported. A save that makes a folder and is then undone is not run: the test producer only edits existing files,
+   and an undo needs a failure in the middle of a save, which the product offers no way to cause.
 5. `free_up_space`: the included files and the plugin set to "free up space" (`attrib +U -P`, as File Explorer's
    command), then up to 1 minute for OneDrive to make them cloud-only; `online_open` opens the ledger again: Windows
    should download them.
@@ -303,22 +306,62 @@ def _synced(looks: list[dict[str, Any]]) -> bool:
     return os.name != "nt" or all(str(lk.get("sync", "")).startswith("in_sync") for lk in looks)
 
 
-def made_folder(root: Path, seconds: float) -> dict[str, Any]:
-    """S0151 round 1 (red team RT-2, an open question): does OneDrive mark a folder made in it read-only once it syncs
-    it, as it marks its own folders, so that removing it (a save's undo removes the folders the save made) is refused?
-    A folder `made` with one file is made in the scratch folder (by Python, not by a save: OneDrive cannot tell them
-    apart), both are watched over the same window as the saved file, then the file is removed and the folder: each
-    outcome reported."""
+def _outcome(act: Callable[[], object]) -> str:
+    try:
+        act()
+    except OSError as e:
+        return f"{type(e).__name__}: {e.strerror} ({getattr(e, 'winerror', None) or e.errno})"
+    return "ok"
+
+
+def engine_rmdir_made(folder: Path) -> str:
+    """The folder removed by the engine's own port, as the undo and the create's cleanup remove a folder their job made
+    (`DirHandle.rmdir(name, made=True)`, S0152: Windows' read-only attribute cleared on the object opened for the
+    removal, just before it), in the engine's interpreter with its placeholder mode pinned as an engine's start does
+    (`recorded_mark`'s way). "ok", or the error the port raised."""
+    code = (
+        "import sys; from ledger_engine.fs.this_os import for_this_os, pin_placeholder_mode; "
+        "pin_placeholder_mode() or sys.exit('the placeholder mode could not be pinned'); "
+        "d = for_this_os().open_dir(sys.argv[-2])\n"
+        "try:\n    d.rmdir(sys.argv[-1], made=True)\n"
+        "except OSError as e:\n    print(type(e).__name__ + ': ' + str(e.strerror) + ' (' + str(e.errno) + ')')\n"
+        "else:\n    print('ok')"
+    )
+    out = subprocess.run(  # noqa: S603 (fixed argv: the engine's interpreter under the sidecar's bootstrap)
+        [*bootstrap_argv(venv_python(ENGINE_VENV), venv_site(ENGINE_VENV), code), str(folder.parent), folder.name],
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=120,
+        env=engine_env(os.environ),
+    )
+    return out.stdout.strip() or f"the engine's interpreter ended {out.returncode}: {out.stderr.strip()[-300:]}"
+
+
+def made_folder(root: Path, seconds: float, *, auto: bool = False) -> dict[str, Any]:
+    """S0151 round 1 (red team RT-2): does OneDrive mark a folder made in it read-only once it syncs it, as it marks
+    its own folders, so that removing it (a save's undo removes the folders the save made) is refused? The owner's
+    check of 2026-11-26 found yes. A folder `made` with one file is made in the scratch folder (by Python, not by a
+    save: OneDrive cannot tell them apart), both are watched over the same window as the saved file, then the file is
+    removed and the folder (`rmdir`, Python's own). S0152: when that `rmdir` is refused, the engine's own port removes
+    it as the undo does (`engine_rmdir_made`: clear the read-only attribute, then remove), and the folder's look and
+    whether it is gone are reported. With `--auto` on Windows (no OneDrive: the CI runner) the script sets the
+    attribute itself before the `rmdir`, as OneDrive would (`read_only_set_by`). Each outcome reported."""
     folder = root / "made"
     file = write(folder / "new.bean", MORE)
     out: dict[str, Any] = {"looks": watch([folder, file], root, seconds, _synced)}
     out["folder_before_removal"] = look(folder, root)
-    for name, act in (("remove_file", lambda: file.unlink()), ("rmdir", lambda: folder.rmdir())):
-        try:
-            act()
-            out[name] = "ok"
-        except OSError as e:
-            out[name] = f"{type(e).__name__}: {e.strerror} ({getattr(e, 'winerror', None) or e.errno})"
+    out["remove_file"] = _outcome(file.unlink)
+    if auto and sys.platform == "win32" and not os.stat(folder).st_file_attributes & 0x1:
+        os.chmod(folder, 0o444)  # `SetFileAttributesW` READONLY, as OneDrive sets it
+        out["read_only_set_by"] = "the script (--auto: no OneDrive here)"
+    out["rmdir"] = _outcome(folder.rmdir)
+    if out["rmdir"] == "ok":
+        out["engine_rmdir_made"] = "not needed (rmdir ok)"
+    else:
+        out["folder_after_refusal"] = look(folder, root)
+        out["engine_rmdir_made"] = engine_rmdir_made(folder)
+    out["gone"] = not os.path.lexists(folder)
     return out
 
 
@@ -629,7 +672,7 @@ def _steps(
 
     step(report, "burst", burst)
     say("-- made_folder: a new folder in OneDrive, watched as the saved file was (up to 2 minutes)")
-    step(report, "made_folder", lambda: made_folder(scratch, 0 if auto else 120))
+    step(report, "made_folder", lambda: made_folder(scratch, 0 if auto else 120, auto=auto))
 
     def online() -> object:
         freed = free_up_space([*included, plugin], scratch)

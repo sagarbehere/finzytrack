@@ -121,8 +121,12 @@ file operation (`UnsupportedPlatform`) except the engine lock (`take_engine_lock
   `rename` (probed, S0130's P3 and P5). Offered by what the volume offers (S0132, BL-0294; owner, 2026-11-18): the flag
   `FILE_SUPPORTS_POSIX_UNLINK_RENAME`, and not a network share (probed, S0132's P6: an SMB share reports NTFS and the
   flag and refuses the rename, `INVALID_PARAMETER`); ReFS, FAT32 and exFAT clear the flag. Elsewhere `NotOffered`.
-- **The read-only attribute** (`clear_readonly`, S0132, BL-0294): only the mirror's publish clears it, on what it
-  removes or replaces in its own folder (ADR-0015 amendment of 2026-11-18). Probed (S0132's P7) on NTFS, ReFS, FAT32
+- **The read-only attribute** (`clear_readonly`, S0132, BL-0294): the mirror's publish clears it, on what it removes
+  or replaces in its own folder (ADR-0015 amendment of 2026-11-18); the ledger's write path only on a folder its own
+  job made, in `rmdir(name, made=True)` (S0152, BL-0283; owner, 2026-11-26: "Clear it, then remove (Recommended)";
+  ADR-0069 amendment of that date): OneDrive gives every folder made in it the attribute within 2 s (the owner's hand
+  check, 2026-11-26), so the undo and the create's cleanup could not remove one; never on a file, whose attribute the
+  save's `locked` refusal reads (`stat` reports only a file `locked`). Probed (S0132's P7) on NTFS, ReFS, FAT32
   and exFAT: a read-only file refuses its removal and a rename over it (POSIX or plain), and a read-only folder its
   removal; clearing the attribute works while SQLite, a share-all reader or a plain `open()` holds the file, and then
   the removal (once no reader holds it) and the renames land. Setting a read-only file's modification time works.
@@ -1204,11 +1208,16 @@ class WindowsDir:
                 return
             if not attrs & FILE_ATTRIBUTE_DIRECTORY and h.links() > 1:
                 raise OSError(errno.EMLINK, "a file with several links: its read-only attribute is not ours", name)
-            kept = attrs & FILE_ATTRIBUTE_VALID_SET_FLAGS & ~FILE_ATTRIBUTE_READONLY
-            info = struct.pack("<qqqqI4x", 0, 0, 0, 0, kept or FILE_ATTRIBUTE_NORMAL)  # 0 leaves a time as it is
-            buf = ctypes.create_string_buffer(info, len(info))
-            if not self.api.SetInfo(h.handle, FILE_BASIC_INFO, buf, len(info)):
-                raise _win_error("clear_readonly", name)
+            self._unset_readonly(h, attrs, "clear_readonly", name)
+
+    def _unset_readonly(self, h: _Handle, attrs: int, *what: str) -> None:
+        """The read-only bit of `attrs` cleared on the entry `h` holds (opened with `FILE_WRITE_ATTRIBUTES`), every
+        other attribute and every time left as they are (`FileBasicInfo`)."""
+        kept = attrs & FILE_ATTRIBUTE_VALID_SET_FLAGS & ~FILE_ATTRIBUTE_READONLY
+        info = struct.pack("<qqqqI4x", 0, 0, 0, 0, kept or FILE_ATTRIBUTE_NORMAL)  # 0 leaves a time as it is
+        buf = ctypes.create_string_buffer(info, len(info))
+        if not self.api.SetInfo(h.handle, FILE_BASIC_INFO, buf, len(info)):
+            raise _win_error(*what)
 
     def rename_excl(self, src: str, dst: str) -> None:
         if self.device() in self._fs.no_excl:
@@ -1286,11 +1295,28 @@ class WindowsDir:
             return UPPER
         return EXACT if flags & 1 else UPPER
 
-    def rmdir(self, name: str) -> None:
+    def rmdir(self, name: str, *, made: bool = False) -> None:
+        """With `made` (S0152, BL-0283; the port's docstring), a read-only folder's attribute is cleared on the very
+        object this handle opened for deletion (a second handle opened relative to it with an empty name: the same
+        object, so no other folder put at the name since can be cleared), right before the removal; a link was refused
+        before (`ENOTDIR`, opened as the link itself), and a folder that grants no deletion refused the open. A folder
+        that holds an entry answers `ENOTEMPTY` with nothing cleared (listed on that second handle). Only the attribute
+        is written, when it is set. **Limit:** an entry another program adds between that listing and the removal, or
+        another failure of the removal, leaves the folder without the attribute (it stopped only the folder's own
+        removal). Without `made`, Windows refuses a read-only folder's removal (`CANNOT_DELETE`: `EACCES`; S0132's
+        P7)."""
         with self._open(check_name(name), DELETE | FILE_READ_ATTRIBUTES, options=FILE_DIRECTORY_FILE) as h:
             attrs, _ = h.attrs_tag()
             if attrs & FILE_ATTRIBUTE_REPARSE_POINT:
                 raise NotADirectoryError(errno.ENOTDIR, "a link", name)  # never followed, as `unlinkat` answers
+            if made and attrs & FILE_ATTRIBUTE_READONLY:
+                access = FILE_LIST_DIRECTORY | FILE_READ_ATTRIBUTES | FILE_WRITE_ATTRIBUTES
+                with WindowsDir(
+                    self._fs, _nt_open(self.api, h.handle, "", access, FILE_OPEN, FILE_DIRECTORY_FILE)
+                ) as w:
+                    if w.names():
+                        raise OSError(errno.ENOTEMPTY, "a folder that holds an entry", name)  # nothing cleared
+                    self._unset_readonly(w._h, w._h.basic()[2], "rmdir", name)
             self._delete(h, "rmdir " + name)
 
     def names(self) -> list[str]:

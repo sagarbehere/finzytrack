@@ -2049,6 +2049,107 @@ def test_clear_readonly_clears_a_read_only_folder_which_then_goes(fs: FileSystem
     assert not ro.exists()
 
 
+# -- S0152 (BL-0283): a read-only folder the caller's own job made ---------------------------------------------------
+# The owner's hand check (2026-11-26): OneDrive gives every folder made in it the read-only attribute within 2 s, and
+# its `rmdir` is refused. `os.chmod(path, 0o444)` sets that attribute on a folder (`SetFileAttributesW`), as OneDrive
+# does.
+
+
+def test_S0152_rmdir_made_clears_a_read_only_folder_and_removes_it_where_the_plain_rmdir_is_refused(
+    fs: FileSystem, tmp_path: Path
+) -> None:
+    ro = tmp_path / "ro"
+    ro.mkdir()
+    os.chmod(ro, 0o444)
+    assert _read_only(ro)
+    with fs.open_dir(str(tmp_path)) as d:
+        with pytest.raises(PermissionError):
+            d.rmdir("ro")
+        assert _read_only(ro), "the plain rmdir clears nothing"
+        d.rmdir("ro", made=True)
+    assert not ro.exists()
+
+
+def test_S0152_must_not_pass_rmdir_made_on_a_read_only_folder_that_holds_an_entry_clears_nothing(
+    fs: FileSystem, tmp_path: Path
+) -> None:
+    """`ENOTEMPTY` before any clear: the undo relies on it to keep a folder that holds another program's entry."""
+    ro = tmp_path / "ro"
+    ro.mkdir()
+    (ro / "f").write_bytes(b"x")
+    os.chmod(ro, 0o444)
+    try:
+        with fs.open_dir(str(tmp_path)) as d, pytest.raises(OSError, match=r".") as e:
+            d.rmdir("ro", made=True)
+        assert e.value.errno == errno.ENOTEMPTY, e.value
+        assert (ro / "f").read_bytes() == b"x"
+        assert _read_only(ro), "nothing cleared"
+    finally:
+        os.chmod(ro, 0o700)
+
+
+def test_S0152_must_not_pass_rmdir_made_follows_no_link_and_clears_nothing_behind_it(
+    fs: FileSystem, tmp_path: Path
+) -> None:
+    """A junction at the name: `ENOTDIR` before any clear (opened as the link itself, `FILE_OPEN_REPARSE_POINT`), its
+    target keeps its attribute and the junction stays."""
+    import _winapi
+
+    target = tmp_path / "target"
+    target.mkdir()
+    os.chmod(target, 0o444)
+    folder = tmp_path / "m"
+    folder.mkdir()
+    _winapi.CreateJunction(str(target), str(folder / "j"))
+    try:
+        with fs.open_dir(str(folder)) as d, pytest.raises(NotADirectoryError):
+            d.rmdir("j", made=True)
+        assert _read_only(target)
+        assert os.path.lexists(folder / "j")
+    finally:
+        os.chmod(target, 0o700)
+
+
+def test_S0152_recovery_removes_the_folder_the_save_made_once_marked_read_only_and_leaves_an_outside_one(
+    fs: FileSystem, onedrive: Path
+) -> None:
+    """In a folder with OneDrive's ACL: a save that makes `y2026`, the engine dies at the close, the made folder gets
+    the read-only attribute (as OneDrive gives it); recovery stops on the created file (kept and asked, owner,
+    2026-10-30), and once it is deleted Retry resolves and removes the folder. The ledger's `inc`, read-only too and
+    not the save's, keeps its attribute. Fails on the base: the Retry's `rmdir` answered `EACCES` on every try."""
+    from ledger_engine.ledger.core.recovery import Cause
+    from ledger_engine.ledger.restore import Resolved, Stopped, recover_journal
+    from tests.fs.real_volume import Died, DyingFS
+
+    led = onedrive / "Finance"
+    (led / "inc").mkdir(parents=True)
+    main, inc, made = led / "main.bean", led / "inc" / "a.bean", led / "y2026" / "new.bean"
+    main.write_bytes(b"pre\n")
+    inc.write_bytes(b"inc\n")
+    os.chmod(led / "inc", 0o444)
+    c = commit(
+        onedrive.parent / "app",
+        Change(str(inc), sha256(b"inc\n"), b"inc2\n"),
+        Change(str(made), None, b"new\n"),
+        Change(str(main), sha256(b"pre\n"), b"post\n"),
+    )
+    try:
+        with pytest.raises(Died):
+            durable_commit(DyingFS(fs, ".closed"), c)  # type: ignore[arg-type]
+        os.chmod(made.parent, 0o444)
+        assert _read_only(made.parent)
+        stop = recover_journal(fs, c.journal_dir, "s1-j1")
+        assert isinstance(stop, Stopped), stop
+        assert stop.cause is Cause.CREATED_PATH_TAKEN, stop
+        made.unlink()
+        assert recover_journal(fs, c.journal_dir, "s1-j1") == Resolved("s1-j1")
+        assert not made.parent.exists(), "the folder the save made is removed"
+        assert (main.read_bytes(), inc.read_bytes()) == (b"pre\n", b"inc\n")
+        assert _read_only(led / "inc"), "an outside folder keeps its attribute"
+    finally:
+        os.chmod(led / "inc", 0o700)
+
+
 def test_clear_readonly_on_an_entry_gone_between_its_two_opens_does_nothing(
     fs: FileSystem, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

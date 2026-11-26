@@ -34,7 +34,7 @@ At the end it prints the report (JSON). Copy all of it into the session. It name
 - the engine's placeholder mode as the app starts it (it must be 1);
 - what OneDrive does after Finzytrack's save replaces a file (a plain file, a placeholder again, in sync);
 - 8 saves one after another, so some meet OneDrive's upload of the previous one ("in use, try again" is a result, not a failure);
-- a new folder with one file in the check's folder: whether OneDrive marks the folder read-only once it syncs it, and whether it can then be removed (an open question for Finzytrack's undo, which removes the folders a save made);
+- a new folder with one file in the check's folder: whether OneDrive marks the folder read-only once it syncs it (on 2026-11-26 it did, and Windows then refused to remove it), and whether Finzytrack's own code can then remove it, as its undo removes the folders a save made: it clears the read-only mark, then removes the folder (`engine_rmdir_made` in the report: `ok` is the result we want);
 - cloud-only files ("Free up space") opened online: Windows should download them;
 - offline and paused: what the open and a save say;
 - a folder this PC has not listed yet, offline (Q1), and a ledger whose plugin file is cloud-only, offline (Q2).

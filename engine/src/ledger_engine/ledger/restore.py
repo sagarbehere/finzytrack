@@ -131,7 +131,8 @@ class Resolved:
     """The record is `.resolved` and durable; every file it names durably holds its pre bytes (a created file is
     absent); no kept copy of this journal; no name of ours is left beside any of its files, and each folder the save
     made is gone unless it holds other entries (§8.1 step 4; an `rmdir` that answered `ENOENT` or `ENOTEMPTY` may
-    leave an empty one, spec §15)."""
+    leave an empty one, spec §15; removed as made by the save, `rmdir(..., made=True)`: on Windows the read-only
+    attribute OneDrive gives it is cleared first, S0152)."""
 
     name: str
 
@@ -614,7 +615,7 @@ def _restore_all(
         parent, name = _parent(d.canonical_path)
         handles.entry = d.canonical_path
         try:
-            handles.at(parent).rmdir(name)
+            handles.at(parent).rmdir(name, made=True)  # ours: the record names it (S0152; one holding an entry stays)
         except (FileNotFoundError, NotADirectoryError):
             continue  # never made, already removed, or not a folder of ours any more
         except OSError as e:

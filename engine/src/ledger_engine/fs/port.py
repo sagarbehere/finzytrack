@@ -402,10 +402,17 @@ class DirHandle(Protocol):
         as `resolve` counts it."""
         ...
 
-    def rmdir(self, name: str) -> None:
+    def rmdir(self, name: str, *, made: bool = False) -> None:
         """Remove the directory `name` if it is empty: it fails with `ENOTEMPTY` when it holds any entry, `ENOTDIR`
         when it is not a directory (a link to one included: never followed) and `ENOENT` when there is none. Durable
-        only after `sync`."""
+        only after `sync`. `made` (S0152, BL-0283; owner, 2026-11-26: "Clear it, then remove (Recommended)"; ADR-0069
+        amendment of that date): the caller states that the folder is one its own job made, named in its journal or
+        plan and checked as the caller checks it before any removal (the undo: `ledger.restore`; the create's cleanup:
+        `ledger.create`; `tests/architecture/test_mirror_only_relaxations.py` lists the sites). Windows: its read-only
+        attribute, which OneDrive gives every folder made in it, is cleared on the object opened for the removal,
+        right before it, unless the folder holds an entry (`ENOTEMPTY`, nothing cleared). POSIX: ignored
+        (no such attribute; `uchg` is not it and stays). Without `made` a read-only folder refuses its removal on
+        Windows, as before."""
         ...
 
     def names(self) -> list[str]:

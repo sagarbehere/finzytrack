@@ -57,8 +57,16 @@ def test_the_automatic_part_opens_and_saves_through_the_product_and_reports_each
     assert [b["outcome"] for b in burst["saves"]] == ["saved"] * burst["count"], burst
     assert burst["count"] >= 5
     made = got["made_folder"]  # S0151 round 1: a folder made there, watched, then removed
-    assert (made["remove_file"], made["rmdir"]) == ("ok", "ok"), made
+    assert made["remove_file"] == "ok", made
     assert made["folder_before_removal"]["file"] == "made", made
+    if os.name == "nt":  # S0152: no OneDrive on the runner, so the script marks it read-only itself, as OneDrive does
+        assert made["read_only_set_by"] == "the script (--auto: no OneDrive here)", made
+        assert made["rmdir"].startswith("PermissionError"), made
+        assert "READONLY" in made["folder_after_refusal"]["attrs"], made
+        assert made["engine_rmdir_made"] == "ok", made  # the engine's port: clear, then remove
+    else:
+        assert (made["rmdir"], made["engine_rmdir_made"]) == ("ok", "not needed (rmdir ok)"), made
+    assert made["gone"] is True, made
     assert not (scratch / "made").exists()
     for step in ("offline", "paused", "q1_unlisted_folder", "q2_cloud_only_plugin"):
         assert got[step] == "skipped (--auto)", (step, got[step])

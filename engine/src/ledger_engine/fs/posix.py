@@ -311,7 +311,8 @@ class PosixDir:
         """A descriptor on the directory `name` of this directory, never through a link (`open_child`)."""
         return os.open(check_name(name), os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC, dir_fd=self.fd)
 
-    def rmdir(self, name: str) -> None:
+    def rmdir(self, name: str, *, made: bool = False) -> None:
+        del made  # no read-only attribute on POSIX (S0152); `uchg` is never cleared
         os.rmdir(check_name(name), dir_fd=self.fd)
 
     def names(self) -> list[str]:

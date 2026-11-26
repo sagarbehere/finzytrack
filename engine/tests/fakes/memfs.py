@@ -73,8 +73,11 @@ what it holds work). `clear_readonly` is then an effect (labelled `clear_readonl
 file's or a folder's), and does nothing on an absent name; a read-only file with several links refuses it
 (`EMLINK`, nothing done; owner, 2026-11-19); in POSIX mode it is a no-op and no effect, as the macOS and
 Linux adapters make no call (`uchg` stays). A power loss keeps the attribute as last set: an attribute cleared and then
-lost only makes the next job clear it again. The rename with POSIX semantics (`rename_shared`) is offered on a drive
-unless its volume lacks the flag (`no_posix_rename`) or is a network share (`remote`), as the adapter decides it. A
+lost only makes the next job clear it again. `rmdir(name, made=True)` (S0152, BL-0283) clears a read-only folder's
+attribute just before removing it, as the adapter does for a folder the caller's own job made;
+`outside_new_folders_read_only` gives every folder the port makes in a folder the attribute, as OneDrive does. The
+rename with POSIX semantics (`rename_shared`) is offered on a drive unless its volume lacks the flag
+(`no_posix_rename`) or is a network share (`remote`), as the adapter decides it. A
 drive in `remote` is a network share; only the Windows mode's `remote()` says so (S0134), which the mirror's publish
 refuses; in POSIX mode `remote()` answers None, as the macOS and Linux adapters do.
 
@@ -176,6 +179,7 @@ class _Dir:
     born: int = 0  # its creation time in ns (S0089): set by `MemFS._new` from its inode, unless given
     ungranted: bool = False  # Windows mode: no allow entry grants us DELETE on it (`outside_grant_no_delete`)
     new_ungranted: bool = False  # Windows mode: what is made in it gets no DELETE (`outside_grant_no_delete`)
+    new_readonly: bool = False  # Windows mode: a folder made in it gets the read-only attribute (OneDrive; S0152)
 
 
 _Node = _File | _Dir | _Link | _Other
@@ -680,6 +684,22 @@ class MemFS:
         if isinstance(node, _Dir):
             node.new_ungranted = new
 
+    def outside_new_folders_read_only(self, path: str) -> None:
+        """Windows mode (S0152, BL-0283): every folder the port makes in the folder at `path`, and in a folder made
+        there, gets the read-only attribute, as OneDrive gives it to every folder made in it once it syncs it (the
+        owner's hand check, 2026-11-26: within 2 s). The fake marks it at once, the earliest OneDrive could."""
+        assert self.windows
+        node = self._at(path)
+        assert isinstance(node, _Dir)
+        node.new_readonly = True
+
+    def read_only(self, path: str) -> bool:
+        """The test's own look (not the port's, whose `stat` reports only a file `locked` in Windows mode): whether the
+        file or folder at `path` has the read-only attribute (`uchg` in POSIX mode)."""
+        node = self._at(path)
+        assert isinstance(node, _File | _Dir)
+        return node.locked
+
     def outside_acl_clear(self, path: str) -> None:
         """`chmod -N`: every ACL entry of the file or folder at `path` removed."""
         node = self._at(path)
@@ -887,6 +907,7 @@ class MemFS:
                 born=d.born,
                 ungranted=d.ungranted,
                 new_ungranted=d.new_ungranted,
+                new_readonly=d.new_readonly,
             )
         for ino in reach:
             for _, child in tables[ino].values():
@@ -1405,6 +1426,8 @@ class MemDir:
                     acl=_inherited(d.acl, "directory_inherit", windows=self._fs.windows),
                     ungranted=self._fs.windows and d.new_ungranted,
                     new_ungranted=d.new_ungranted,
+                    locked=self._fs.windows and d.new_readonly,  # OneDrive marks it read-only (S0152)
+                    new_readonly=d.new_readonly,
                 )
             )
             stored = self._fs.stored(name)
@@ -1414,7 +1437,11 @@ class MemDir:
 
         self._fs._effect(self._label("mkdir", name), do)
 
-    def rmdir(self, name: str) -> None:
+    def rmdir(self, name: str, *, made: bool = False) -> None:
+        """`made` (S0152): in Windows mode an empty read-only folder's attribute is cleared first, as the adapter clears
+        it on the object it opened for deletion (which a folder that grants no deletion refuses first); a folder that
+        holds an entry answers `ENOTEMPTY` with nothing cleared; one effect, labelled `rmdir` as without it. POSIX
+        mode: ignored."""
         d = self._d
         key = _key(check_name(name), d.ci)
 
@@ -1428,6 +1455,10 @@ class MemDir:
                 raise NotADirectoryError(errno.ENOTDIR, "not a directory")
             if node.entries:
                 raise OSError(errno.ENOTEMPTY, "directory not empty")
+            if made and self._fs.windows and node.locked:
+                if not self._may_delete(node):
+                    raise PermissionError(errno.EACCES, "delete denied")  # the adapter's open for deletion
+                node.locked = False
             if self._fs.windows and node.locked:
                 raise PermissionError(errno.EACCES, "a read-only folder")  # Windows: CANNOT_DELETE (S0132's P7)
             if not self._may_delete(node):

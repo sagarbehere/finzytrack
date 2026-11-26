@@ -35,7 +35,8 @@ Step 2 (reading sources) and a copy's step 5 are `ledger_engine.ledger.copy`'s (
 removes what this run made, and only that** (`_cleanup`; owner, 2026-11-07, the middle path): a name whose exclusive
 create or `mkdir` succeeded in this run, still the same entry (a file's identity read from the create's own descriptor,
 a folder's by a `stat` right after its `mkdir`) and, for a file, still holding exactly the job's bytes (its SHA-256 and
-length, a bounded read); a folder only by `rmdir`; the target folder last, when the job made it. Whatever fails a check,
+length, a bounded read); a folder only by `rmdir`, as one the job made (`made=True`: on Windows the read-only attribute
+OneDrive gives it is cleared first, S0152); the target folder last, when the job made it. Whatever fails a check,
 a name whose identity could not be read, a name whose create failed otherwise than `EEXIST` but that stands there now,
 and the target folder the job made when it cannot be removed (`.`) are kept and named (`NotCreated.left`); another
 program's entry at a name the job never made is neither removed nor named. None when the cleanup could not finish.
@@ -439,7 +440,7 @@ class Run:
                     kept.append(rel)
                     continue
                 if m.data is None:
-                    if not _removed_unless_not_empty(lambda h=h, leaf=leaf: h.rmdir(leaf)):
+                    if not _removed_unless_not_empty(lambda h=h, leaf=leaf: h.rmdir(leaf, made=True)):
                         kept.append(rel)  # it stands, holding another entry (`ENOTEMPTY`): named
                         continue
                 elif st.kind is Kind.FILE and h.sha256(leaf, m.data[1] + 1) == m.data:
@@ -456,7 +457,7 @@ class Run:
                     kept.append(TARGET)  # not known as the job's: named, never removed
                 elif st is not None and st.identity == self.target_identity:
                     self.handles.release(self.folder)
-                    if _removed_unless_not_empty(lambda: ph.rmdir(name)):
+                    if _removed_unless_not_empty(lambda: ph.rmdir(name, made=True)):
                         ledger_sync(ph)
                     else:
                         kept.append(TARGET)  # it stands, holding another program's entry (`ENOTEMPTY`): named

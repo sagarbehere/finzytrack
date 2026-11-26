@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import dataclasses
 import errno
+from collections.abc import Callable
 from functools import cache
 
 import pytest
@@ -438,6 +439,150 @@ def test_an_io_error_at_every_effect_of_a_create_in_a_onedrive_folder_is_told_as
         else:
             assert isinstance(out, NotCreated), out
             assert outcome(fs, tc.PLAN).manifest != "ours", (i, fs0.effects[i])
+
+
+# -- S0152 (BL-0283): OneDrive marks every folder made in it read-only ------------------------------------------------
+# The owner's hand check (2026-11-26): a folder made in OneDrive got the read-only attribute within 2 s and its `rmdir`
+# was refused. The undo and the create's cleanup clear it on a folder their own job made, just before removing it
+# (owner, 2026-11-26: "Clear it, then remove (Recommended)"); never on any other folder.
+
+Y = "/w/L/y2026"
+
+
+def test_S0152_the_folder_a_save_makes_there_is_read_only_and_its_plain_rmdir_is_refused() -> None:
+    w = onedrive(new_dir=True)
+    assert isinstance(durable_commit(w.fs, w.commit), Landed)
+    assert w.fs.read_only(Y)
+    with w.fs.open_dir(Y) as d:
+        d.remove("prices.bean")
+    with w.fs.open_dir("/w/L") as d, pytest.raises(PermissionError):
+        d.rmdir("y2026")
+
+
+def test_S0152_recovery_after_a_crash_removes_the_read_only_folder_the_save_made_and_resolves() -> None:
+    """Fails on the base: every try's `rmdir` of the folder answered `EACCES`, so recovery never resolved (INV-32)."""
+    w = onedrive(new_dir=True)
+    w.fs.inject(clean_effects(True).index(f"rename {JD}:{NAME}.open,{NAME}.closed"), crash=True)
+    with pytest.raises(Crash):
+        durable_commit(w.fs, w.commit)
+    assert w.fs.read_only(Y)
+    out = recover(w.fs)
+    assert isinstance(out, Stopped), out  # the created file holds our bytes: kept and asked (owner, 2026-10-30)
+    assert out.cause is Cause.CREATED_PATH_TAKEN, out
+    w.fs.outside_remove(out.path or "")
+    assert recover(w.fs) == Resolved(NAME)
+    assert Y not in w.fs.snapshot()
+    assert (w.fs.read_only("/w/L"), w.fs.read_only("/w/L/inc")) == (True, True), "an outside folder keeps its mark"
+    for t in w.targets:
+        if t.pre is not None:
+            assert w.fs.file(t.path) == t.pre
+
+
+def test_S0152_the_rollback_removes_the_read_only_folder_the_save_made_and_says_not_saved() -> None:
+    """An I/O error at the created file's rename, after the folder was made: the rollback puts the replaced file back
+    and removes the folder, so the save is "not saved" with nothing open. Fails on the base: `Unfinished`."""
+    w = onedrive(new_dir=True)
+    w.fs.inject(
+        clean_effects(True).index(f"rename {Y}:.prices.bean.ft-s1-j7.new,prices.bean"), crash=False, err=errno.EIO
+    )
+    out = durable_commit(w.fs, w.commit)
+    assert isinstance(out, NotSaved), out
+    check_told(w.fs, w, out)
+    assert Y not in w.fs.snapshot()
+    assert set(journals(w.fs)) == {State.RESOLVED}
+    assert w.fs.file("/w/L/inc/a.bean") == w.targets[0].pre
+    assert w.fs.read_only("/w/L/inc")
+
+
+def test_S0152_must_not_pass_a_read_only_folder_the_record_names_that_now_holds_another_entry_is_never_touched() -> (
+    None
+):
+    """@regression-guard (held on the base, where nothing was cleared; it pins that the fix clears only ours). The
+    folder the save made, with another program's file in it: not ours to remove (red team r2 L5), and its read-only
+    attribute is never cleared; recovery still resolves."""
+    w = onedrive(new_dir=True)
+    w.fs.inject(clean_effects(True).index(f"rename {JD}:{NAME}.open,{NAME}.closed"), crash=True)
+    with pytest.raises(Crash):
+        durable_commit(w.fs, w.commit)
+    w.fs.outside_write(f"{Y}/theirs.bean", FOREIGN)
+    out = recover(w.fs)
+    if isinstance(out, Stopped) and out.cause is Cause.CREATED_PATH_TAKEN:
+        w.fs.outside_remove(out.path or "")
+        out = recover(w.fs)
+    assert out == Resolved(NAME), out
+    assert w.fs.file(f"{Y}/theirs.bean") == FOREIGN
+    assert w.fs.read_only(Y)
+
+
+def test_S0152_on_macos_and_linux_a_locked_folder_the_save_made_still_stops_recovery_with_permission() -> None:
+    """@regression-guard (`made` changes nothing off Windows: `uchg` is not Windows' attribute and is never cleared)."""
+    w = world(new_dir=True)
+    w.fs.inject(clean_effects_posix().index(f"rename {JD}:{NAME}.open,{NAME}.closed"), crash=True)
+    with pytest.raises(Crash):
+        durable_commit(w.fs, w.commit)
+    w.fs.outside_remove(f"{Y}/prices.bean")
+    w.fs.outside_lock(Y)
+    out = recover(w.fs)
+    assert isinstance(out, Stopped), out
+    assert out.cause is Cause.PERMISSION, out
+    assert w.fs.read_only(Y)
+
+
+@cache
+def clean_effects_posix() -> tuple[str, ...]:
+    w = world(new_dir=True)
+    assert isinstance(durable_commit(w.fs, w.commit), Landed)
+    return tuple(w.fs.effects)
+
+
+def _stop_at_load(fs: MemFS, look: list[bool]) -> Callable[[str], tc.LoadResult]:
+    def load(_root: str) -> tc.LoadResult:
+        look.extend((fs.read_only(tc.T), fs.read_only(f"{tc.T}/prices")))
+        return tc.LoadResult(errors=1, parsed=())
+
+    return load
+
+
+def test_S0152_the_creates_cleanup_removes_the_read_only_folders_it_made_and_names_nothing() -> None:
+    """Fails on the base: the cleanup's `rmdir` of `prices` answered `EACCES`, so it could not finish (`left` None)."""
+    fs = _create_fs()
+    look: list[bool] = []
+    out, _ = tc.go(fs, load=_stop_at_load(fs, look))
+    assert look == [True, True], "OneDrive marked both folders the create made"
+    assert isinstance(out, NotCreated), out
+    assert out.left == ()
+    assert tc.names(fs, tc.U) == []
+
+
+def test_S0152_must_not_pass_a_create_target_that_was_there_before_keeps_its_mark_and_stays() -> None:
+    fs = MemFS(windows=True)
+    fs.outside_mkdirs(tc.T)
+    in_onedrive(fs, tc.U)
+    out, _ = tc.go(fs, load=lambda _root: tc.LoadResult(errors=1, parsed=()))
+    assert isinstance(out, NotCreated), out
+    assert out.left == ()
+    assert tc.names(fs, tc.T) == []
+    assert fs.read_only(tc.T), "the user's folder: not the job's, never cleared"
+
+
+def test_S0152_must_not_pass_a_made_folder_replaced_by_another_read_only_folder_is_kept_and_keeps_its_mark() -> None:
+    """@regression-guard (held on the base, where nothing was cleared): the identity check before the removal decides
+    what is ours; another program's folder at a made name is kept, named, its mark never cleared."""
+    fs = _create_fs()
+    prices = f"{tc.T}/prices"
+
+    def load(_root: str) -> tc.LoadResult:
+        fs.outside_remove(f"{prices}/p.beancount")
+        fs.outside_remove(prices)
+        fs.outside_mkdirs(prices)  # another program's folder at the same name
+        fs.outside_lock(prices)
+        return tc.LoadResult(errors=1, parsed=())
+
+    out, _ = tc.go(fs, load=load)
+    assert isinstance(out, NotCreated), out
+    assert out.left is not None
+    assert "prices" in out.left, out
+    assert fs.read_only(prices)
 
 
 # -- sweeps with the folder the save makes (the best-effort file sweeps the rest) --------------------------------------
