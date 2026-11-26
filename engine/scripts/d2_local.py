@@ -226,7 +226,11 @@ def refuse_tree(tier: Path) -> str | None:
       T-local folder.
     A plain text scan of every file, not a parse, looser than Beancount's grammar: a commented-out line, a string that
     is not a directive or a binary file can refuse a ledger that would load only from inside (a false refusal, by
-    design); a line Beancount reads as an include is not missed. `insert_pythonpath` adds the folder of the file that
+    design). Limit (S0158 round 3, V3-1, V3-2; accepted by the owner): the scan can miss an include hidden behind a
+    string that ends in `include`, or written with a `-` or a digit before the keyword; a glob there may list an
+    outside folder's names in memory before the load policy refuses every read (nothing outside is read, printed
+    or written). Limit (V3-3): give each root file's path inside the folder, not through a link from outside it.
+    `insert_pythonpath` adds the folder of the file that
     sets it, inside the folder. The tier's own path may be spelled through a link (`/tmp`); nothing below it may.
     Limit: the folder is checked, then loaded; a change made to it between the two (by the owner) is not seen."""
     try:
