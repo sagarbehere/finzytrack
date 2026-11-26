@@ -13,7 +13,7 @@ How to run it (from the repository's `engine/` folder, with the engine's environ
 It prints one line per ledger, numbered L1, L2 … in the order given, and a total:
 
   L1 EQUAL entries=5821 errors=0 options=56
-  L2 DIFFERENT entries=1203 errors=2 options=56 differ: plain.entries=1 candidates.entries=1
+  L2 DIFFERENT entries=1203 errors=2 options=56 differ: candidates.entries=1 plain.entries=1
   d2-local: 1 EQUAL, 1 DIFFERENT, 0 REFUSED, 0 ERROR
 
 `entries`, `errors` and `options` count what Beancount's own load gave. A DIFFERENT line names what differed as counts:
@@ -25,12 +25,17 @@ Exit status: 0 when every ledger is EQUAL, 2 when an input is refused, 1 otherwi
 
 **What it reads.** Only files inside `FT_LOCAL_TIER_DIR` (INV-24), by the oracle harness's rule
 (`scripts/oracle/copies.py`: the folder must be absolute, existing, and outside the repository, the live data folder
-and the legacy worktree; each root must be a file inside it, links resolved). The overlay load runs first, under a
-policy that refuses any file, `pythonpath` folder or documents root outside the folder before it is read (a ledger
-that reads outside it is REFUSED: copy the whole ledger in); Beancount's load runs only after that, and follows the
-same includes. Limits (`overlay.py`, `policy.py`): an `include` glob lists folder names before the policy is asked
-about the files it matched, and a `document` directive's file is checked for existence, not read, wherever it is; a
-plugin's own code may read anything: it runs as Beancount runs it.
+and the legacy worktree; each root must be a file inside it, links resolved). Before any load, the whole folder is
+walked without following links (`refuse_tree`): a link whose target is outside it (a plugin module or package, an
+include, any file; `cp -R` keeps links) refuses every ledger, and so does any `include` line or `option "documents"`
+value in any file of it whose path leaves the folder (a text scan, looser than Beancount's grammar: it may refuse a
+ledger that would not read outside, never the reverse). A link that stays inside is allowed. Then the overlay load
+runs under a policy that refuses any file, `pythonpath` folder or documents root outside the folder before it is read
+(a second line); Beancount's load runs only after that, and follows the same includes. A refused ledger is REFUSED:
+copy the whole ledger in, as files. The scan reads every file in the folder, documents included, twice per
+ledger (before any load, and again in the ledger's own process).
+Limits: a `document` directive's file is checked for existence, not read, wherever it is; a plugin's own code may read
+anything: it runs as Beancount runs it.
 
 **What it writes.** Nothing: no mirror, no cache, no pickle (Beancount's load without its pickle cache,
 `parity.beancount_load`), no bytecode (this process and each ledger's child write none).
@@ -47,6 +52,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import sys
 from collections.abc import Callable, Mapping
@@ -66,7 +72,8 @@ import copies  # noqa: E402
 
 from ledger_engine.fs import this_os  # noqa: E402
 from ledger_engine.ledger import fresh_load, overlay  # noqa: E402
-from ledger_engine.ledger.overlay import LoadRefused  # noqa: E402
+from ledger_engine.ledger.core.ledger_set import Content  # noqa: E402
+from ledger_engine.ledger.overlay import Loaded, LoadRefused, LoadResult  # noqa: E402
 
 # isort: split
 from tests.ledger import parity  # noqa: E402  (first-party from engine/, third-party from the root: kept apart)
@@ -84,6 +91,8 @@ REASONS: Final[Mapping[str, str]] = {
     ),
     "root": "not a file inside FT_LOCAL_TIER_DIR (or it is inside the repository, the live data folder or the legacy "
     "worktree)",
+    "link": "a link in FT_LOCAL_TIER_DIR points outside it; copy the files themselves, not links to them",
+    "reaches-out": "a file in FT_LOCAL_TIER_DIR includes or names a folder outside it; copy the whole ledger into it",
     "read-refused": "the ledger reads a file outside FT_LOCAL_TIER_DIR; copy the whole ledger into it",
     "pythonpath-refused": "the ledger's pythonpath is outside FT_LOCAL_TIER_DIR; copy the whole ledger into it",
     "documents-refused": "a documents folder of the ledger is outside FT_LOCAL_TIER_DIR; copy it in, or remove the "
@@ -120,6 +129,13 @@ class Report:
     def decode(raw: object) -> Report:
         """A child's answer, checked field by field: anything but a verdict, counts, known kinds and a known reason is
         an ERROR, so a line can never echo text the child (or a plugin in it) wrote."""
+        try:
+            return Report._decode(raw)
+        except (TypeError, ValueError, KeyError):  # an unhashable reason or verdict, among others (S0158 V1-5)
+            return Report("ERROR", reason="crash")
+
+    @staticmethod
+    def _decode(raw: object) -> Report:
         crash = Report("ERROR", reason="crash")
         if not isinstance(raw, dict):
             return crash
@@ -161,12 +177,78 @@ def refused(path: Path) -> bool:
 def refuse_root(root: Path) -> str | None:
     """The reason (a `REASONS` key) a root given on the command line is refused, or None: the T-local folder must be
     usable, and the root a file inside it, links resolved."""
-    if copies.local_tier_dir()[0] is None:
+    tier = copies.local_tier_dir()[0]
+    if tier is None:
         return "tier"
     if not root.is_absolute() or not root.is_file():
         return "root"
-    resolved = root.resolve()
-    return "root" if refused(root.parent) or refused(resolved.parent) or refused(resolved) else None
+    if refused(root):  # links resolved; any other link out of the folder is `refuse_tree`'s
+        return "root"
+    return refuse_tree(tier)
+
+
+# Looser than Beancount's grammar on purpose (a false refusal is fine, a miss is not): the keyword anywhere not inside a
+# word, any whitespace before the string, a string over several lines.
+_STRING = rb'"((?:[^"\\]|\\.)*)"'
+INCLUDE = re.compile(rb"(?<![\w-])include\s*" + _STRING, re.S)
+DOCUMENTS = re.compile(rb'(?<![\w-])option\s*"documents"\s*' + _STRING, re.S)
+GLOB = re.compile(r"[*?\[]")
+
+
+def refuse_tree(tier: Path) -> str | None:
+    """Why the T-local folder cannot be loaded from, before any load reads it (S0158 V1-1, V1-2), or None. Walked
+    without following links, every file of it:
+    - **a link whose target is outside the folder** (`link`): a plugin module or package, an include or a document
+      reached through it would be read or run from outside (the policy never sees module files);
+    - **an `include` line or an `option "documents"` value whose path leaves the folder** (`reaches-out`): its part
+      before the first glob character, joined to the file's folder (Beancount honours `documents` only in the root
+      file, whose folder that is), lexically and with links followed; any `..` after a glob character is refused. The
+      overlay lists a glob's folders before its policy is asked, so this is checked first.
+    A plain text scan of every file, not a parse: a commented-out line, a string that is not a directive or a binary
+    file can refuse a ledger that would not read outside (a false refusal, by design); a line Beancount reads as an
+    include is not missed. `insert_pythonpath` adds the folder of the file that sets it, inside the folder."""
+    for folder, dirs, files in os.walk(tier, followlinks=False):
+        here = Path(folder)
+        for name in (*dirs, *files):
+            entry = here / name
+            if entry.is_symlink() and _link_leaves(entry):
+                return "link"
+        for name in files:
+            entry = here / name
+            if entry.is_symlink() or not entry.is_file():
+                continue  # a link inside the folder: its target is a file of the folder, scanned there
+            data = entry.read_bytes()
+            for pattern in (INCLUDE, DOCUMENTS):
+                for m in pattern.finditer(data):
+                    if _leaves(m.group(1).decode("utf-8", "surrogateescape"), here):
+                        return "reaches-out"
+    return None
+
+
+def _link_leaves(link: Path) -> bool:
+    """A link whose target, links followed, is outside the T-local folder; a target that cannot be resolved counts as
+    outside (fail closed)."""
+    try:
+        return refused(link.resolve(strict=False))
+    except (OSError, RuntimeError):
+        return True
+
+
+def _leaves(value: str, base: Path) -> bool:
+    """Whether a path as written (a glob allowed) leaves the T-local folder from `base`, as written or with
+    Beancount's escapes, `~` or `$NAME` expanded."""
+    spellings = {value, re.sub(r"\\(.)", r"\1", value)}
+    spellings |= {os.path.expanduser(v) for v in spellings} | {os.path.expandvars(v) for v in spellings}
+    for spelling in spellings:
+        hit = GLOB.search(spelling)
+        if hit and ".." in re.split(r"[\\/]", spelling[hit.start() :]):
+            return True  # a `..` after a glob character climbs from folders the glob found: refused, never followed
+        prefix = os.path.dirname(spelling[: hit.start()]) if hit else spelling
+        joined = os.path.join(base, prefix)  # an absolute prefix stays as it is
+        # Lexically, as Beancount's loader joins an include (`normpath`), and with links followed, as the OS opens it.
+        if refused(Path(os.path.normpath(joined))) or refused(Path(joined)):
+            return True
+    return False
 
 
 @dataclass(frozen=True, slots=True)
@@ -212,16 +294,17 @@ def measure(root: Path) -> Report:
             expected = parity.beancount_load(root)
     except Exception:  # noqa: BLE001 (Beancount's own load raised: told by a fixed reason, never by its message)
         return Report("ERROR", reason="beancount-failed")
-    files = [Path(f) for f in expected[2]["include"] if not f.lower().endswith(".asc")]
-    if any(refused(f) for f in files):  # a plugin may add a file name to `include`
-        return Report("REFUSED", reason="read-refused")
-    candidates = {str(f): f.read_bytes() for f in files if f.is_file()}
-    with parity.fresh_plugins(tier):
-        with_candidates = overlay.load(str(root), candidates, policy)
+    checks: list[tuple[str, LoadResult]] = [("plain", plain)]
+    if isinstance(plain, Loaded):
+        # The files the overlay's parse read (the ones a save could edit), never a name a plugin added to `include`
+        # (S0158 V1-3); a `.asc` file is refused as a candidate (ADR-0010 guardrail 4).
+        files = [Path(f) for f, state in plain.fingerprint.files if isinstance(state, Content)]
+        files = [f for f in files if not f.name.lower().endswith(".asc")]  # each one the policy let it read
+        candidates = {str(f): f.read_bytes() for f in files}
+        with parity.fresh_plugins(tier):
+            checks.append(("candidates", overlay.load(str(root), candidates, policy)))
     kinds = {
-        f"{check}.{kind}": n
-        for check, result in (("plain", plain), ("candidates", with_candidates))
-        for kind, n in parity.differences(result, expected).items()
+        f"{check}.{kind}": n for check, result in checks for kind, n in parity.differences(result, expected).items()
     }
     entries, errors, options = expected
     return Report("DIFFERENT" if kinds else "EQUAL", len(entries), len(errors), len(options), kinds)

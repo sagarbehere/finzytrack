@@ -323,13 +323,15 @@ def generated_cases(tmp: Path) -> list[Case]:
 @contextmanager
 def fresh_plugins(folder: Path) -> Generator[None]:
     """A case's own plugin modules are forgotten after each load, so the next copy imports its own (the engine runs
-    a ledger's plugins in an engine it then retires; ADR-0064)."""
+    a ledger's plugins in an engine it then retires; ADR-0064). Both sides are resolved, so another spelling of the
+    folder (`/tmp` and `/private/tmp`, a link to it) is the same folder (S0158 V1-4)."""
+    home = folder.resolve()
     try:
         yield
     finally:
         for name, module in list(sys.modules.items()):
             origin = getattr(module, "__file__", None)
-            if isinstance(origin, str) and Path(origin).is_relative_to(folder):
+            if isinstance(origin, str) and Path(origin).resolve().is_relative_to(home):
                 del sys.modules[name]
 
 

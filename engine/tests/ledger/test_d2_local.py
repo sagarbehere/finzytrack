@@ -15,6 +15,7 @@ import re
 import shutil
 import subprocess
 import sys
+from collections.abc import Callable, Iterator
 from dataclasses import replace
 from pathlib import Path
 
@@ -191,6 +192,9 @@ def test_a_child_answer_cannot_carry_text(tier: Path) -> None:
         {"verdict": "EQUAL", "entries": True, "errors": 0, "options": 1, "kinds": {}, "reason": ""},
         {"verdict": "EQUAL", "entries": -1, "errors": 0, "options": 1, "kinds": {}, "reason": ""},
         ["EQUAL"],
+        {"verdict": "EQUAL", "entries": 1, "errors": 0, "options": 1, "kinds": {}, "reason": ["unhashable"]},
+        {"verdict": ["EQUAL"], "entries": 1, "errors": 0, "options": 1, "kinds": {}, "reason": ""},
+        {"verdict": {"x": 1}, "entries": 1, "errors": 0, "options": 1, "kinds": {}, "reason": {}},
     ]
     for answer in answers:
         report = d2_local.Report.decode(answer)
@@ -283,20 +287,170 @@ def no_beancount_load(monkeypatch: pytest.MonkeyPatch) -> None:
     return
 
 
+def no_scan(tier: Path) -> str | None:
+    return None
+
+
 @pytest.mark.usefixtures("no_beancount_load")
-def test_a_ledger_that_reads_outside_the_tier_is_refused_before_beancount_loads_it(
-    tier: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+def test_a_ledger_that_names_a_path_outside_the_tier_is_refused_before_any_load(
+    tier: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    for line, reason in (
+    """The text scan refuses first (`refuse_tree`), and the overlay's policy refuses the same ledgers when the scan is
+    switched off (a shape the scan missed): either way Beancount's load never runs."""
+    lines = (
         ('include "{outside}/other.beancount"', "read-refused"),
+        ('include "../../elsewhere/other.beancount"', "read-refused"),
         ('option "documents" "{outside}/docs"', "documents-refused"),
-    ):
+    )
+    for line, policy_reason in lines:
         root = outside_ledger(tier, tmp_path, line)
         report = d2_local.measure(root)
-        assert (report.verdict, report.reason) == ("REFUSED", reason), line
+        assert (report.verdict, report.reason) == ("REFUSED", "reaches-out"), line
         assert d2_local.main([str(root)], child=d2_local.measure) == 2
-        assert str(tmp_path) not in capsys.readouterr().out
+        out = capsys.readouterr().out
+        assert "nothing was loaded" in out, line
+        assert str(tmp_path) not in out
+        with monkeypatch.context() as m:
+            m.setattr(d2_local, "refuse_tree", no_scan)
+            report = d2_local.measure(root)
+        assert (report.verdict, report.reason) == ("REFUSED", policy_reason), line
         shutil.rmtree(root.parent)
+
+
+def test_globs_that_leave_the_tier_are_refused_with_no_folder_listed_outside(
+    tier: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """S0158 V1-2: the overlay lists a glob's folders before its policy is asked; the scan refuses such a ledger first,
+    so no folder outside the tier is listed (`os.scandir`, `os.listdir` recorded)."""
+    outside = (tmp_path / "elsewhere").resolve()
+    (outside / "deep" / "er").mkdir(parents=True)
+    listed: list[str] = []
+    real_scandir, real_listdir = os.scandir, os.listdir
+
+    def note(p: object) -> None:
+        if isinstance(p, (str, os.PathLike)) and Path(os.fspath(p)).resolve().is_relative_to(outside):
+            listed.append(os.fspath(p))
+
+    def scandir(p: str = ".") -> Iterator[os.DirEntry[str]]:
+        note(p)
+        return real_scandir(p)
+
+    def listdir(p: str = ".") -> list[str]:
+        note(p)
+        return real_listdir(p)
+
+    monkeypatch.setattr(os, "scandir", scandir)
+    monkeypatch.setattr(os, "listdir", listdir)
+    for line in (
+        'include "{outside}/**/*.beancount"',
+        'include "../../elsewhere/**/*.beancount"',
+        'include "{outside}/deep/*/x.beancount"',
+        'include "../*/../../elsewhere/deep/*.beancount"',
+        'option "documents" "{outside}/deep"',
+    ):
+        root = outside_ledger(tier, tmp_path, line)
+        assert d2_local.main([str(root)], child=d2_local.measure) == 2, line
+        assert listed == [], line
+        shutil.rmtree(root.parent)
+
+
+def test_the_scan_misses_no_spelling_of_an_include_or_documents_line(tier: Path, tmp_path: Path) -> None:
+    """Must not pass: each spelling Beancount could read as a line that leaves the folder is refused by the scan."""
+    out = (tmp_path / "elsewhere").as_posix()
+    spellings = [
+        f'\ufeffinclude "{out}/x.beancount"\n',
+        f'2020-01-01 open Assets:A\r\ninclude "{out}/x.beancount"\r\n',
+        f'2020-01-01 open Assets:A\rinclude "{out}/x.beancount"\r',
+        f'\tinclude\t"{out}/x.beancount"\n',
+        f'include "{out}\n/x.beancount"\n',
+        'include "~/x.beancount"\n',
+        'include "$HOME/x.beancount"\n',
+        f'include "{out.replace("/", "\\/")}/x.beancount"\n',
+        f'option "documents" "{out}"\n',
+        'option  "documents"  "../../.."\n',
+        f'include "{out}/[ab]/x.beancount"\n',
+        f'include "{out}?/x.beancount"\n',
+    ]
+    folder = tier / "s"
+    folder.mkdir()
+    for text in spellings:
+        (folder / "main.beancount").write_text(text, encoding="utf-8")
+        assert d2_local.refuse_tree(tier) == "reaches-out", repr(text)
+
+
+def test_a_dot_dot_after_an_inside_link_is_judged_both_ways(tier: Path) -> None:
+    """Beancount joins an include lexically (`normpath`), the OS follows links: a path that leaves the folder either way
+    is refused, though each link stays inside it."""
+    a = tier / "a"
+    (a / "b" / "c").mkdir(parents=True)
+    (a / "up").symlink_to(tier, target_is_directory=True)  # inside; `up/../..` leaves when the link is followed
+    (a / "down").symlink_to(a / "b" / "c", target_is_directory=True)  # inside; `down/../../..` leaves lexically
+    for value in ("up/../../x.beancount", "down/../../../x.beancount"):
+        (a / "main.beancount").write_text(f'include "{value}"\n', encoding="utf-8")
+        assert d2_local.refuse_tree(tier) == "reaches-out", value
+
+
+@pytest.mark.parametrize(
+    "value",
+    ["../in-tier.beancount", "sub/*.beancount", "**/*.beancount", "../b/sub/*.beancount"],
+)
+def test_paths_that_stay_inside_the_tier_are_allowed(tier: Path, value: str) -> None:
+    folder = tier / "a" / "b"
+    (folder / "sub").mkdir(parents=True)
+    (tier / "a" / "in-tier.beancount").write_text("2020-01-01 open Assets:In USD\n", encoding="utf-8")
+    root = folder / "main.beancount"
+    root.write_text(f'include "{value}"\n2020-01-01 open Assets:Cash USD\n', encoding="utf-8")
+    assert d2_local.refuse_tree(tier) is None
+
+
+def links(tier: Path, tmp_path: Path) -> dict[str, Callable[[], Path]]:
+    """Each way a copy can hold a link out of the tier (`cp -R` keeps links), as a function that builds the ledger."""
+    outside = tmp_path / "elsewhere"
+    outside.mkdir(exist_ok=True)
+    (outside / "linked_s0158.py").write_text("__plugins__ = []\n", encoding="utf-8")
+    (outside / "linkpkg_s0158").mkdir(exist_ok=True)
+    (outside / "linkpkg_s0158" / "__init__.py").write_text("__plugins__ = []\n", encoding="utf-8")
+    (outside / "other.beancount").write_text("2020-01-01 open Assets:Other USD\n", encoding="utf-8")
+
+    def ledger(head: str, link: str, target: Path) -> Path:
+        root = private_ledger(tier)
+        root.write_bytes(head.encode() + b"\n" + PRIVATE)
+        (root.parent / link).symlink_to(target, target_is_directory=target.is_dir())
+        return root
+
+    return {
+        "module": lambda: ledger(
+            'option "insert_pythonpath" "TRUE"\nplugin "linked_s0158"', "linked_s0158.py", outside / "linked_s0158.py"
+        ),
+        "package": lambda: ledger(
+            'option "insert_pythonpath" "TRUE"\nplugin "linkpkg_s0158"', "linkpkg_s0158", outside / "linkpkg_s0158"
+        ),
+        "include": lambda: ledger('include "other.beancount"', "other.beancount", outside / "other.beancount"),
+        "unused": lambda: ledger("", "stray.txt", outside / "other.beancount"),
+    }
+
+
+def test_a_link_out_of_the_tier_refuses_every_ledger_before_any_load(tier: Path, tmp_path: Path) -> None:
+    """S0158 V1-1: a plugin module, a plugin package or an include linked to a file outside the tier is refused, and
+    so is any other link out of it (the scan covers the whole folder)."""
+    for kind, build in links(tier, tmp_path).items():
+        root = build()
+        done = run(str(root), tier=tier)
+        assert done.returncode == 2, (kind, done.stdout + done.stderr)
+        assert "L1 REFUSED" in done.stdout, kind
+        assert "nothing was loaded" in done.stdout, kind
+        shutil.rmtree(root.parent)
+
+
+def test_a_link_inside_the_tier_is_allowed(tier: Path) -> None:
+    root = private_ledger(tier)
+    (tier / "shared").mkdir()
+    (tier / "shared" / "other.beancount").write_text("2020-01-01 open Assets:Other USD\n", encoding="utf-8")
+    (root.parent / "other.beancount").symlink_to(tier / "shared" / "other.beancount")
+    root.write_bytes(b'include "other.beancount"\n' + PRIVATE)
+    done = run(str(root), tier=tier)
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert "L1 EQUAL" in done.stdout
 
 
 WIDEN = b"""__plugins__ = ["widen"]
@@ -310,14 +464,56 @@ def widen(entries, options_map, config):
 
 @pytest.mark.usefixtures("no_reads_outside")
 def test_a_file_a_plugin_adds_to_the_includes_is_not_read_when_outside_the_tier(tier: Path, tmp_path: Path) -> None:
-    """The candidates are read from Beancount's `include` list, which a plugin may extend: a name outside the folder
-    is refused before it is read."""
+    """The candidates are the files the overlay's parse read; a name a plugin adds to `include` (here outside the
+    folder) is never read."""
     root = outside_ledger(
         tier, tmp_path, 'option "insert_pythonpath" "TRUE"\nplugin "widen_s0158" "{outside}/other.beancount"'
     )
     (root.parent / "widen_s0158.py").write_bytes(WIDEN)
     report = d2_local.measure(root)
-    assert (report.verdict, report.reason) == ("REFUSED", "read-refused")
+    assert report.verdict == "EQUAL", report  # the added name is no candidate (S0158 V1-3), so it is never read
+
+
+def test_a_file_a_plugin_adds_to_the_includes_inside_the_tier_is_no_candidate(tier: Path, tmp_path: Path) -> None:
+    """S0158 V1-3: Beancount and the overlay agree on a ledger whose plugin adds an existing file of the folder to
+    `include`; the runner must not turn that name into a candidate the overlay never reaches (a false DIFFERENT)."""
+    root = private_ledger(tier)
+    other = root.parent / "unreached.beancount"
+    other.write_text("2020-01-01 open Assets:Other USD\n", encoding="utf-8")
+    root.write_bytes(
+        f'option "insert_pythonpath" "TRUE"\nplugin "widen_s0158" "{other.as_posix()}"\n'.encode() + PRIVATE
+    )
+    (root.parent / "widen_s0158.py").write_bytes(WIDEN)
+    done = run(str(root), tier=tier)
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert "L1 EQUAL" in done.stdout
+
+
+STATEFUL = b"""import collections
+
+E = collections.namedtuple("E", "source message entry")
+N = [0]
+__plugins__ = ["count"]
+
+
+def count(entries, options_map):
+    N[0] += 1
+    return entries, [E({"filename": "x", "lineno": 1}, "e", None) for _ in range(N[0])]
+"""
+
+
+def test_another_spelling_of_the_tier_still_forgets_the_plugins_between_loads(tier: Path, tmp_path: Path) -> None:
+    """S0158 V1-4: the tier named through a link, the root by its real path: a plugin that counts its runs must still
+    be imported afresh for each load (each load sees one run), so the ledger is EQUAL."""
+    root = private_ledger(tier)
+    root.write_bytes(b'option "insert_pythonpath" "TRUE"\nplugin "stateful_s0158"\n' + PRIVATE)
+    (root.parent / "stateful_s0158.py").write_bytes(STATEFUL)
+    spelled = tmp_path / "tier-link"
+    spelled.symlink_to(tier, target_is_directory=True)
+    for given_tier, given_root in ((spelled, root), (tier, spelled / root.relative_to(tier))):
+        done = run(str(given_root), tier=given_tier)
+        assert done.returncode == 0, done.stdout + done.stderr
+        assert "L1 EQUAL" in done.stdout
 
 
 @pytest.fixture
