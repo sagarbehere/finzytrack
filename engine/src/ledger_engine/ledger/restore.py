@@ -132,7 +132,8 @@ class Resolved:
     absent); no kept copy of this journal; no name of ours is left beside any of its files, and each folder the save
     made is gone unless it holds other entries (§8.1 step 4; an `rmdir` that answered `ENOENT` or `ENOTEMPTY` may
     leave an empty one, spec §15; removed as made by the save, `rmdir(..., made=True)`: on Windows the read-only
-    attribute OneDrive gives it is cleared first, S0152)."""
+    attribute OneDrive gives it is cleared first, S0152; ours by the name the record lists, no folder identity: an
+    empty folder another program put there is removed, as on POSIX, ADR-0069 amendment of 2026-11-26)."""
 
     name: str
 
