@@ -22,7 +22,7 @@ import sys
 from dataclasses import dataclass
 from typing import Final, Literal
 
-from app.platform.engine import ActOutcome
+from app.platform.engine import ActOutcome, InspectedFile
 from app.platform.engine_jobs.recovery import ENGINE_STOPPED, UNREADABLE, Blocking, NotRecovered
 from app.platform.engine_paths import folder_of, last_name
 
@@ -76,8 +76,12 @@ def _missing(b: Blocking) -> tuple[list[str], list[str]]:
     missing (§6.8); Keep leaves it missing, so the screen and the Keep confirmation name it (S0071 red team F2), and
     they promise the backup only where it was checked (round 2, R2-1: a try that stops `backup_bad` there). A file the
     save was creating, or one whose folder is not there or could not be read, is not counted."""
-    absent = [i for i in b.inspection or () if not i.created and i.reachable and i.now is None and i.errno is None]
+    absent = _absent(b)
     return [_name(i.path) for i in absent if i.backup], [_name(i.path) for i in absent if not i.backup]
+
+
+def _absent(b: Blocking) -> list[InspectedFile]:
+    return [i for i in b.inspection or () if not i.created and i.reachable and i.now is None and i.errno is None]
 
 
 def _are(names: list[str]) -> str:
@@ -99,13 +103,29 @@ def _missing_now(b: Blocking) -> str:
     return text
 
 
+KEPT_BACKUPS: Final = 16
+"""The `.kept` saves whose backups the history trim keeps per workspace (engine-jobs §6.5; the engine's
+`ledger_engine.ledger.core.history.KEEP`, held equal by `test_recovery_text`)."""
+
+
 def _missing_kept(b: Blocking) -> str:
-    """§11's sentences for Keep's confirmation when a replaced file is absent ("" when none is)."""
+    """§11's sentences for Keep's confirmation when a replaced file is absent ("" when none is). The backup is named by
+    its path and is not kept for ever: the history trim deletes a kept save's backups at the first landed save after
+    16 newer saves were kept (S0161, M1b data-safety red team DS-F3; owner, 2026-11-27: "Say it in the text")."""
+    backups = [i.backup for i in _absent(b) if i.backup]
     good, other = _missing(b)
     text = ""
     if good:
-        old = "Its old version is" if len(good) == 1 else "Their old versions are"
-        text += f" {_are(good)} missing now and will stay missing. {old} only in Finzytrack's backup."
+        one = len(good) == 1
+        old = "Its old version is" if one else "Their old versions are"
+        where = "backup" if one else "backups"
+        files = "that file" if one else "those files"
+        them = "it" if one else "them"
+        text += (
+            f" {_are(good)} missing now and will stay missing. {old} only in Finzytrack's {where}: "
+            f"{', '.join(backups)}. Finzytrack keeps backups only for the last {KEPT_BACKUPS} saves you chose to "
+            f"keep, so copy {files} to a safe place if you need {them}."
+        )
     if other:
         text += f" {_are(other)} missing now and will stay missing."
     return text

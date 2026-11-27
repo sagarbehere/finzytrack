@@ -598,6 +598,16 @@ def test_S0128_on_windows_the_notice_never_advises_the_computers_own_disk() -> N
     assert "own disk" not in save_text.BEST_EFFORT_WINDOWS
 
 
+def test_S0161_the_best_effort_notices_name_the_whole_save_not_one_moment() -> None:
+    """M1b data-safety red team DS-F1 (owner, 2026-11-27: "State it honestly"): in this mode another program's change
+    written into the file is lost at any time from the backup's read to the file's rename (§6.8 "Limit (no swap)"),
+    several disk syncs, not "the very moment". Must not pass: a notice that still says the window is one moment."""
+    for notice in (save_text.BEST_EFFORT_DRIVE, save_text.BEST_EFFORT_WINDOWS):
+        assert "moment" not in notice, notice
+        assert "while Finzytrack is saving it (usually less than a second)" in notice, notice
+        assert "can be lost" in notice, notice
+
+
 def test_S0136_the_network_share_notice_is_its_own_row_and_says_a_server_crash_can_undo_a_save() -> None:
     """BL-0219 (owner, 2026-11-20: "Best effort + open notice (Recommended)"): a ledger on a network share gets its own
     notice (§11's row, `save_text.BEST_EFFORT_SHARE`, rendered from the code), which names the share's limit: a crash

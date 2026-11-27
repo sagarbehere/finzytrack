@@ -888,6 +888,12 @@ def test_the_tip_names_each_large_file_and_says_to_split_it_with_include() -> No
         ("win32", "c", "c\\main.bean", False),
         ("darwin", "", "/real/main.bean", False),
         ("darwin", "c", "c/main.bean", False),
+        # S0161 (M1b security red team F1, class c): a `..` name is never inside, as on Windows (`windows_paths.split`
+        # takes none); `_where_written` keeps one below a folder that does not exist yet, so the path leaves the copy
+        ("darwin", "/c", "/c/new/../../etc/main.bean", False),
+        ("darwin", "/c", "/c/sub/../main.bean", False),
+        ("darwin", "/c/..", "/c/main.bean", False),
+        ("win32", "C:\\c", "C:\\c\\new\\..\\..\\etc\\main.bean", False),
     ],
 )
 def test_inside_the_copy_is_judged_as_each_os_spells_paths(platform: str, folder: str, path: str, inside: bool) -> None:

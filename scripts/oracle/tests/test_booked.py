@@ -169,6 +169,42 @@ class MustPassTest(unittest.TestCase):
         c = Case(before, {"main.beancount": OPENS + T1_EDITED + b + a + SELL}, update_t1)
         self.assertEqual(c.report.verdict, "UNEXPLAINED", c)
 
+    def test_a_bake_that_swaps_two_lots_between_postings_is_not_i10(self) -> None:
+        # S0161 (M1b finance red team F1): Beancount's booking regroups a sale's postings by currency, so the booked
+        # posting at index i is not always the entry's posting i. A legacy bake that gives each reduction the other
+        # lot (NONE booking, so no error) must stay UNEXPLAINED; the booked postings are matched by account.
+        opens = ('2020-01-01 open Assets:Cash\n2020-01-01 open Expenses:Food USD\n2020-01-01 open Equity:O\n'
+                 '2020-01-01 open Assets:X "NONE"\n2020-01-01 open Assets:Y "NONE"\n')
+        buys = ('\n2020-01-02 * "buy"\n  Assets:X  1 XX {30 USD}\n  Assets:Y  1 YY {50 EUR}\n'
+                '  Equity:O  -30 USD\n  Equity:O  -50 EUR\n')
+        sell = ('\n2020-02-01 * "sell"\n  Assets:Cash  30 USD\n  Assets:Y  -1 YY {}\n  Assets:X  -1 XX {}\n'
+                '  Assets:Cash  50 EUR\n')
+        before = {"main.beancount": opens + buys + T1 + sell}
+        swapped = sell.replace("-1 YY {}", "-1 YY {30 USD, 2020-02-01}").replace("-1 XX {}", "-1 XX {50 EUR, 2020-02-01}")
+        c = Case(before, {"main.beancount": opens + buys + T1_EDITED + swapped}, update_t1)
+        self.assertEqual(c.report.verdict, "UNEXPLAINED", c)
+        # Must-pass twin: each reduction baked with the lot Beancount books for it (under NONE, at the sale's date)
+        # is only I10; with the booked postings paired by index it was a false alarm.
+        baked = sell.replace("-1 YY {}", "-1 YY {50 EUR, 2020-02-01}").replace("-1 XX {}", "-1 XX {30 USD, 2020-02-01}")
+        c = Case(before, {"main.beancount": opens + buys + T1_EDITED + baked}, update_t1)
+        self.assertEqual((c.report.verdict, sorted(c.report.class_counts())), ("EXPECTED_DIVERGENCE", ["I10"]), c)
+
+    def test_a_bake_that_swaps_two_lots_within_one_account_is_not_i10(self) -> None:
+        # S0161: booking regroups by currency inside one account too (here XX's USD group goes before YY's EUR one),
+        # so the account's second booked posting is the entry's first. A bake that swaps the two lots must not be
+        # accepted by taking another posting's booked lot: the booked units must be the written ones.
+        opens = ('2020-01-01 open Assets:Cash\n2020-01-01 open Expenses:Food USD\n2020-01-01 open Equity:O\n'
+                 '2020-01-01 open Assets:X "NONE"\n')
+        buys = ('\n2020-01-02 * "buy"\n  Assets:X  1 XX {30 USD}\n  Assets:X  1 YY {50 EUR}\n'
+                '  Equity:O  -30 USD\n  Equity:O  -50 EUR\n')
+        sell = ('\n2020-02-01 * "sell"\n  Assets:Cash  30 USD\n  Assets:X  -1 YY {EUR}\n  Assets:X  -1 XX {USD}\n'
+                '  Assets:Cash  50 EUR\n')
+        before = {"main.beancount": opens + buys + T1 + sell}
+        swapped = sell.replace("-1 YY {EUR}", "-1 YY {30 USD, 2020-02-01}").replace(
+            "-1 XX {USD}", "-1 XX {50 EUR, 2020-02-01}")
+        c = Case(before, {"main.beancount": opens + buys + T1_EDITED + swapped}, update_t1)
+        self.assertEqual(c.report.verdict, "UNEXPLAINED", c)
+
 
 class ExclusionTest(unittest.TestCase):
     """What a class explains in the booked result, and only that (classify.booked's docstring): since S0124, a

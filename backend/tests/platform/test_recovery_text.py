@@ -238,8 +238,10 @@ def test_a_replaced_file_found_missing_is_named_on_the_screen_and_in_the_keep_co
         "a.bean has an unfinished save from Personal that could not be undone. "
         "main.bean is missing now. Finzytrack has its old version in its backup."
     )
-    assert keep_confirmation(b, WS).endswith(
-        " main.bean is missing now and will stay missing. Its old version is only in Finzytrack's backup."
+    assert keep_confirmation(b, WS).endswith(  # S0161 (DS-F3): the backup by its path, and how long it is kept
+        " main.bean is missing now and will stay missing. Its old version is only in Finzytrack's backup: "
+        "/app/local/k1/backups/s1-j7/0-main.bean. Finzytrack keeps backups only for the last 16 saves you chose to "
+        "keep, so copy that file to a safe place if you need it."
     )
     two = _with_missing("main.bean", "c.bean")
     assert "main.bean and c.bean are missing now. Finzytrack has their old versions in its backup." in (
@@ -247,7 +249,8 @@ def test_a_replaced_file_found_missing_is_named_on_the_screen_and_in_the_keep_co
     )
     assert (
         "main.bean and c.bean are missing now and will stay missing. Their old versions are only in Finzytrack's "
-        "backup."
+        "backups: /app/local/k1/backups/s1-j7/0-main.bean, /app/local/k1/backups/s1-j7/0-c.bean. Finzytrack keeps "
+        "backups only for the last 16 saves you chose to keep, so copy those files to a safe place if you need them."
     ) in keep_confirmation(two, WS)
     nothing_missing = _with_missing()
     assert "missing" not in blocked_screen(nothing_missing, WS).message
@@ -278,8 +281,9 @@ def test_a_missing_file_whose_backup_is_not_known_good_is_named_without_promisin
         " c.bean is missing now. Finzytrack has its old version in its backup. main.bean is missing now."
     )
     assert keep_confirmation(mixed, WS).endswith(
-        " c.bean is missing now and will stay missing. Its old version is only in Finzytrack's backup."
-        " main.bean is missing now and will stay missing."
+        " c.bean is missing now and will stay missing. Its old version is only in Finzytrack's backup: "
+        "/app/local/k1/backups/s1-j7/0-c.bean. Finzytrack keeps backups only for the last 16 saves you chose to "
+        "keep, so copy that file to a safe place if you need it. main.bean is missing now and will stay missing."
     )
 
 
@@ -519,3 +523,17 @@ def test_S0148_V1_the_in_use_rule_is_windows_only_by_the_platform_itself(
     message = blocked_screen(Blocking(J, "failed", "io_error", "/L/a.bean", None, None, errno.EBUSY), WS).message
     assert ("Another program is using" in message) is held
     assert (os.strerror(errno.EBUSY) in message) is not held
+
+
+def test_S0161_keeps_count_is_the_history_trims() -> None:
+    """DS-F3: Keep's confirmation says how many kept saves keep their backups; the engine's trim decides it (§6.5).
+    Read from the engine's source, since the sidecar never imports the engine (ADR-0054)."""
+    import re
+    from pathlib import Path
+
+    from app.platform.engine_jobs import recovery_text
+
+    src = Path(__file__).resolve().parents[3] / "engine/src/ledger_engine/ledger/core/history.py"
+    found = re.search(r"^KEEP: Final = (\d+)$", src.read_text(encoding="utf-8"), re.M)
+    assert found is not None
+    assert int(found.group(1)) == recovery_text.KEPT_BACKUPS

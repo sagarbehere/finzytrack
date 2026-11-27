@@ -694,6 +694,53 @@ def test_RT1_on_a_share_kept_on_exfat_an_undone_save_can_come_back_missing_its_b
     assert "/w/L/inc/a.bean" in missing, ("the limit is reachable in the fake", missing)
 
 
+@cache
+def _fat_share_effects() -> tuple[str, ...]:
+    w = _fat_backed_share()
+    assert isinstance(durable_commit(w.fs, w.commit), Landed)
+    return tuple(w.fs.effects)
+
+
+@pytest.mark.parametrize("at", range(len(_fat_share_effects())))
+def test_S0161_on_a_share_kept_on_exfat_a_crash_at_every_effect_then_every_power_loss_recovery_ends_at_pre(
+    at: int,
+) -> None:
+    """@regression-guard (S0161, the S0136 spot audit at the M1b milestone review: held on the base). A crash at each
+    effect of a save on a share whose server keeps the files on exFAT, then every state a power loss may leave: no
+    file torn, a missing file has its backup, nothing changed outside the targets, and where recovery resolves, every
+    replaced file is back at its old bytes."""
+    w = _fat_backed_share()
+    w.fs.inject(at, crash=True)
+    with pytest.raises(Crash):
+        durable_commit(w.fs, w.commit)
+    for state in (w.fs, *w.fs.power_loss_states()):
+        for t in w.targets:
+            assert state.file(t.path) in (t.pre, t.post, None), (_fat_share_effects()[at], t.path, "torn")
+        _missing_have_their_backup(state, w)
+        _outside_the_targets_unchanged(state, w)
+        if isinstance(recover(state), Resolved):
+            for t in w.targets:
+                assert state.file(t.path) == t.pre, (_fat_share_effects()[at], t.path, "not back at pre")
+
+
+@pytest.mark.parametrize("at", range(len(_fat_share_effects())))
+def test_S0161_on_a_share_kept_on_exfat_an_io_error_at_every_effect_is_told_truthfully(at: int) -> None:
+    """@regression-guard (S0161, the same audit). An I/O error at each effect: never "saved"; "not saved, unchanged"
+    only with every replaced file at its old bytes; an unfinished save that recovery resolves ends at the old bytes."""
+    w = _fat_backed_share()
+    w.fs.inject(at, crash=False, err=errno.EIO)
+    out = durable_commit(w.fs, w.commit)
+    assert not isinstance(out, Landed), (_fat_share_effects()[at], out)
+    # not `check_told`: its power-loss oracle refuses a missing file, which this server may leave (RT1, a stated limit)
+    _outside_the_targets_unchanged(w.fs, w)
+    if isinstance(out, NotSaved) and out.unchanged:
+        for t in w.targets:
+            assert w.fs.file(t.path) == t.pre, (_fat_share_effects()[at], out, t.path)
+    if isinstance(out, Unfinished) and isinstance(recover(w.fs), Resolved):
+        for t in w.targets:
+            assert w.fs.file(t.path) == t.pre, (_fat_share_effects()[at], t.path)
+
+
 def test_O_2_the_RT1_checks_refuse_a_changed_file_outside_the_targets_and_a_missing_file_without_its_backup() -> None:
     """@regression-guard (S0145: holds on the base). The must-not-pass cases of the RT1 tests' two checks (BL-0305
     O-2; round 1, F-2): a new entry, another file of the ledger changed or removed, and a replaced file other than

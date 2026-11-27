@@ -22,6 +22,11 @@ BL-0106). No route calls them yet: each mutator's slice adds its `…:preview` r
    files, and refuses a change that is not in the plan's fingerprint at its `pre` bytes (`ledger_engine.ledger.save`,
    before anything is written); `plan_problems`, at the preview (an engine answer that breaks it is never kept) and
    again at the confirm, refuses an encrypted file by name and a text that is not the one the preview checked.
+   **The engine trusts the sidecar here** (S0161, M1b security red team F2): a save with no confinement (`confine`
+   null) creates a file the plan names at `pre` null at any absolute path the fingerprint has absent or does not
+   list (`save._check`); only a plan this app's preview made, whose files the engine's own `prepare` named, ever
+   reaches it. Before a mutator is
+   promoted, the engine refuses such a create outside the root's folder, or this trust is stated (ADR-0014; BL-0001).
 6. Until a mutator is promoted, its plans are confirmed only on test copies: `promotion_refusal`
    (`UNPROMOTED_MUTATOR_ON_REAL_LEDGER`), refusing by default.
 7. "Saved" only once the save is durable, and "unchanged" only after a re-hash: the save's own (S0063).
@@ -200,7 +205,8 @@ def _where_written(path: str) -> str:
     """Where the save would write `path`, resolved through links as the save resolves an unconfined path: the file's own
     real path, or for a file (or folders) it creates, its deepest existing folder's real path followed by the names it
     makes (S0117 round 4, red team overflow: a created file was judged as if missing, and refused). A resolution that
-    fails raises `OSError` (the caller refuses)."""
+    fails raises `OSError` (the caller refuses). A `..` name below the deepest existing folder stays in the result as
+    written, so the result is not where the save writes it: `is_inside` refuses any `..` (S0161)."""
     head, tail = path, list[str]()
     while not os.path.lexists(head):
         head, name = os.path.split(head)
@@ -218,15 +224,16 @@ def is_inside(folder: str, path: str, platform: str = sys.platform) -> bool:
     without case and every name exactly, the long-path prefix a spelling of the same place. A path that is not an
     absolute Windows path, an incomplete root (`\\\\?\\C:` is a root; `\\\\nas` has no share) or a device path is never
     inside, and neither is anything under a folder that is a root itself (a copy's folder is never a drive or a share;
-    the engine refuses one). On macOS and Linux: an absolute path, compared component by component as before. Before
-    S0131 the POSIX rule ran on Windows too, where no file was ever inside (BL-0295)."""
+    the engine refuses one). On macOS and Linux: an absolute path with no `..` name (the engine's `change_path` refuses
+    one too; S0161, M1b security red team F1), compared component by component. Before S0131 the POSIX rule ran on
+    Windows too, where no file was ever inside (BL-0295)."""
     if platform == "win32":
         f, p = windows_paths.split(folder), windows_paths.split(path)
         if f is None or p is None or len(f) < 2:
             return False
         return ordinal_upper(f[0]) == ordinal_upper(p[0]) and p[1 : len(f)] == f[1:]
-    if not (folder.startswith("/") and path.startswith("/")):
-        return False
+    if not (folder.startswith("/") and path.startswith("/")) or ".." in (folder + "/" + path).split("/"):
+        return False  # a `..` name, as on Windows: `_where_written` keeps one below a folder not made yet (S0161)
     return posixpath.commonpath([folder, path]) == folder
 
 

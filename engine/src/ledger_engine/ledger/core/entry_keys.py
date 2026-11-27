@@ -9,6 +9,10 @@
   implementation note of 2026-11-14, S0116 round 1). What Beancount's parser does not tell apart, no key can: a
   metadata value written `Assets:Foo` or `"Assets:Foo"` (or `USD` and `"USD"`) is the same string; the bytes are
   held by step 2b instead (an untargeted entry's bytes, and a targeted span's text against the plan's).
+  **Limit (location metadata):** a user's own `lineno:` or `filename:` metadata line replaces the location the parser
+  records, and the key leaves it out, so a `lineno:` line can change Beancount's order of same-date entries (a booked
+  lot, the price map's same-day price) with no key changed; a `lineno:` that is not a number makes `Snapshot.parsed`
+  and `semantic_diff._lineno` raise (prepare fails closed, `locate` raises; engine-jobs §2; S0161, M1b finance F2).
 - **An error's key** (step 3) is its type, its entry and its message, each without locations, so a splice that shifts
   lines does not make an old error new. It is read from a `ledger_errors` row (`mirror.core.rows.error_rows`), the
   form in which the baseline is published (the published mirror generation's `ledger_errors`): the candidate's

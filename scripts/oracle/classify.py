@@ -157,6 +157,28 @@ def _as_spec(cost: Cost) -> CostSpec:
     return CostSpec(cost.number, None, cost.currency, cost.date, cost.label, False)
 
 
+def _booked_by_account(x: Any, booked: Any) -> list[Any] | None:
+    """Each posting of *x* with the booked posting that is the same account's same place in *booked*, or None when the
+    two do not have the same postings per account. Beancount's booking regroups an entry's postings by currency, so the
+    booked posting at index i is not always posting i (S0161, the M1b finance red team F1: a bake that swapped two
+    lots between postings was accepted as I10)."""
+    if not (isinstance(booked, data.Transaction) and len(booked.postings) == len(x.postings)):
+        return None
+    by_account: dict[str, list[Any]] = {}
+    for pb in booked.postings:
+        by_account.setdefault(pb.account, []).append(pb)
+    seen: dict[str, int] = {}
+    out = []
+    for px in x.postings:
+        k = seen.get(px.account, 0)
+        same = by_account.get(px.account, [])
+        if k >= len(same):
+            return None
+        seen[px.account] = k + 1
+        out.append(same[k])
+    return out
+
+
 def erase_i10(x: Any, y: Any, ctx: Ctx) -> Pair:
     """Where *x* left something for Beancount to fill (elided units, `{}`), accept what the legacy app wrote only if
     it is exactly what Beancount booked for *x* (`ctx.booked`: for an intended entry, the reference's booking).
@@ -164,18 +186,24 @@ def erase_i10(x: Any, y: Any, ctx: Ctx) -> Pair:
     it (`-10.54` for `-10.5`) with no error, so no other check would see it (S0124 verifier F1). A cost spec is
     accepted as written with what booking filled in (a lot's date, a `{}` reduction's lot) only when it is exactly the
     booked lot, on an intended entry too (S0160: a rename's replacement `{1.00 USD}` written `{1.00 USD, 2020-04-15}`;
-    the reference books the intended entry, so a stale or wrong lot does not match)."""
+    the reference books the intended entry, so a stale or wrong lot does not match). The booked posting is the same
+    account's same place (`_booked_by_account`), and a lot is taken from it only when its booked units are the written
+    ones (S0161, M1b finance red team F1). **Limit:** booking regroups by currency inside one account too, so a correct
+    bake of two reductions in one account with different currencies, written in the other order, is not accepted
+    (UNEXPLAINED: a false alarm, never a false acceptance)."""
     if not isinstance(x, data.Transaction):
         return x, y
-    booked = ctx.booked if isinstance(ctx.booked, data.Transaction) and len(ctx.booked.postings) == len(x.postings) else None
+    booked = _booked_by_account(x, ctx.booked)
 
     def fix(i: int, px: Any, py: Any) -> Pair:
-        pb = booked.postings[i] if booked is not None else None
+        pb = booked[i] if booked is not None else None
+        wrote = py.units
         if px.units is MISSING or (not _unset(px.units) and px.units.number is MISSING):
             if pb is not None and not _unset(pb.units) and not _unset(py.units) and pb.units == py.units:
                 py = py._replace(units=px.units)
         if isinstance(px.cost, CostSpec) and px.cost != py.cost and isinstance(py.cost, CostSpec) \
-                and pb is not None and isinstance(pb.cost, Cost) and _as_spec(pb.cost) == py.cost:
+                and pb is not None and isinstance(pb.cost, Cost) and _as_spec(pb.cost) == py.cost \
+                and pb.units == wrote:  # the booked lot of this very posting, not another one's of its account
             py = py._replace(cost=px.cost)
         return px, py
     return _postings_pairwise(x, y, fix)
