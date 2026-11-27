@@ -31,7 +31,12 @@ FLOCK_HOLDER: Final = "a POSIX `flock` holder; the Windows engine lock's own tes
 NO_RLIMIT: Final = "Windows has no descriptor limit to lower (`resource.RLIMIT_NOFILE`)"
 
 POSIX_PATH_MODULES: Final = frozenset(
-    {"test_journal_record.py", "test_copy_layout.py", "test_v_journal_folder_born.py"}
+    {
+        "test_journal_record.py",
+        "test_copy_layout.py",
+        "test_v_journal_folder_born.py",
+        "test_v_backups_and_key_folders_born.py",
+    }
 )
 """Pure tests written in POSIX paths: on Windows they run with the POSIX path model, as the tests over the fake do
 (`tests/conftest.py`); the Windows model has its own (`tests/fs/test_pathmodel.py`, `tests/ledger/

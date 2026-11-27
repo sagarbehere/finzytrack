@@ -140,10 +140,12 @@ def view_failure_detail(
 
 def _text(output: str | bytes | None) -> str:
     """A process's captured output as text: bytes are decoded here, any that are not UTF-8 replaced, so output that
-    is not UTF-8 never hides the exit code or the output itself (S0153 round 1, V1-2)."""
+    is not UTF-8 never hides the exit code or the output itself (S0153 round 1, V1-2); Windows' `\r\n` line ends read
+    as `\n`, so the report reads the same on every OS (the M1b exit run)."""
     if output is None:
         return ""
-    return output.decode("utf-8", errors="replace") if isinstance(output, bytes) else output
+    text = output.decode("utf-8", errors="replace") if isinstance(output, bytes) else output
+    return text.replace("\r\n", "\n")
 
 
 def engine_view(python: Path, engine_site: Path) -> tuple[list[str] | None, bool | None, str | None]:

@@ -252,7 +252,7 @@ def _first_problem(tier: Path) -> str | None:
                 folders.append(entry.path)
             elif not stat.S_ISREG(st.st_mode):
                 return "special"
-            elif st.st_nlink > 1:
+            elif os.lstat(entry.path).st_nlink > 1:  # on Windows `DirEntry.stat` leaves st_nlink 0 (the M1b exit run)
                 return "hardlink"
             else:
                 with open(entry.path, "rb") as f:
