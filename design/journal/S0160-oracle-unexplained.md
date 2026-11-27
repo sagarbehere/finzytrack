@@ -55,8 +55,17 @@ On copies only, through the harness (`launch_legacy.py`, its own port and data r
 - **Self-mutation** (optional on tooling; done because the classes decide what blocks promotion; `scripts/mutants.py`, plans in the session scratchpad, command: the oracle's unittest discovery with its venv): 8 loosening mutants: I3 accepting any booked form; I10 accepting any baked lot; every included file glob-reached; no file known by the literal walk; every intended removal netted as a no-op; a document keyed by its file name only; CUSTOM-ACCT for any text; CUSTOM-ACCT in either direction. 7 killed at once; the document-name mutant survived (no test moved a document to another folder under the same name): the "another folder" twin added to `DocumentTest`; re-run: 8 of 8 killed.
 - **Population:** the repo corpora: nasty (its 10 cases), the demo (15 at the default size; 210 at 70 per mutator), and every `load` folder of `corpora/ledgers/write/cases.toml` (17 of 19; the 2 `refuse` folders are encrypted and never loaded), 5 per mutator, seed 9. Counts under "The runs".
 
-## Verifier
-(pending)
+
+## Verifier (round 1)
+- Head 9d624dea (range 6996c012..9d624dea): **PASS WITH FINDINGS**, no High. A tool (IMP-0079): one round; findings handled by the coordinator in docs, no fix round.
+
+| ID | Sev | Class | Finding | What was done |
+|---|---|---|---|---|
+| V1 | Medium | c | A `document` copied from a glob-reached subfolder file into the root keeps its key (relative to its holder's folder), so it is taken as I2 although it names another file; the reverse shows UNEXPLAINED | A stated limit in ADR-0014's amendment of 2026-11-26 (no repo corpus has the shape; the fix named) |
+| V2 | Medium | e | CUSTOM-ACCT, a new oracle class, was added by the agent; ADR-0014 makes new classes the owner's | Ratified: owner, 2026-11-27, in session: "Keep CUSTOM-ACCT (Recommended)"; quoted on the amendment, whose "no new class" sentence is corrected |
+| V3 | Low | d, c | The ADR said I10's widening applies to a rename's replacement; the code accepts it on any intended entry (a created `{}` sale too), refusing a wrong lot | The ADR wording now says what was built |
+| V4 | Low | c | A file reached both by a plain include from the root and through a glob-reached file is not pinned by a test | A stated limit in the amendment |
 
 ## Retro
-(pending)
+- About 1 h 20 min of agent work (the harness runs most of it), one verifier round (IMP-0079), 0H / 2M / 2L, all docs or the owner's ratification. UNEXPLAINED on the repo corpora 24 to 6 (5 moved with BL-0047 to M4, 1 a stated legacy defect); the 210-case demo run 10 to 0.
+
