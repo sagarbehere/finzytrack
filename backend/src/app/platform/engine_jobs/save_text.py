@@ -26,8 +26,8 @@ LEDGER_CHANGED: Final = (
 BEST_EFFORT_DRIVE: Final = (
     "This drive (for example a USB stick or network share) can't replace files in one safe step. Finzytrack still "
     "keeps a backup of every save, but if another program changes the same file while Finzytrack is saving it "
-    "(usually less than a second), that program's change can be lost. For full protection, keep your ledger on your "
-    "computer's own disk."
+    "(usually less than a second, longer for a large file or a slow drive), that program's change can be lost. For "
+    "full protection, keep your ledger on your computer's own disk."
 )
 """§11's notice when a workspace whose ledger is on a drive without the swap opens (ADR-0068 D2, the owner's words;
 §6.8). The workspace open shows it (BL-0166); this is the one place its words live. S0161 (M1b data-safety red team
@@ -35,8 +35,9 @@ DS-F1; owner, 2026-11-27: "State it honestly"): the window is the save's durable
 file's rename (several disk syncs), not "the very moment you save"."""
 BEST_EFFORT_WINDOWS: Final = (
     "On Windows, Finzytrack can't replace a file in one safe step. It still keeps a backup of every save, but if "
-    "another program changes the same file while Finzytrack is saving it (usually less than a second), that "
-    "program's change can be lost. Close other programs that edit your ledger while you save in Finzytrack."
+    "another program changes the same file while Finzytrack is saving it (usually less than a second, longer for a "
+    "large file or a slow drive), that program's change can be lost. Close other programs that edit your ledger "
+    "while you save in Finzytrack."
 )
 """§11's notice on Windows, where every drive takes §6.8's mode (ADR-0069; S0128): the owner's words (2026-11-17, "1a,
 wording ok"); `BEST_EFFORT_DRIVE`'s advice to use the computer's own disk does not hold there. The workspace open shows

@@ -176,7 +176,15 @@ def _drive_backups_kept(b: Blocking) -> str:
         f" If {name} is missing from its folder, it will stay missing. Its old version is in {backup}."
         for name, backup in named
     )
-    return listed + _drive_backup_tail(b, len(named))
+    if not named:
+        return listed + _drive_backup_tail(b, 0)
+    # S0161 round 1, L2: the same `.kept` save's backups are trimmed like any kept save's (DS-F3)
+    tail = (
+        f" Finzytrack keeps backups only for the last {KEPT_BACKUPS} saves you chose to keep, so copy "
+        f"{'that file' if len(named) == 1 else 'those files'} to a safe place if you need "
+        f"{'it' if len(named) == 1 else 'them'}."
+    )
+    return listed + tail + _drive_backup_tail(b, len(named))
 
 
 def _kept_copy(b: Blocking, workspace: str) -> Screen:

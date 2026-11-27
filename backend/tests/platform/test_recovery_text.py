@@ -20,6 +20,7 @@ import pytest
 from app.platform.engine import ActOutcome, EntrySeen, InspectedFile, JournalFile, KeptCopySeen
 from app.platform.engine_jobs.recovery import ENGINE_STOPPED, Blocking, Journal, NotRecovered
 from app.platform.engine_jobs.recovery_text import (
+    KEPT_BACKUPS,
     REOPEN,
     action_text,
     blocked_screen,
@@ -403,9 +404,10 @@ def test_a_drive_stop_names_the_backup_of_each_file_on_that_drive(cause: str) ->
         f" If main.bean is missing from its folder, its old version is in {where}. {OTHERS} {CHECK_DRIVE}"
     ), screen
     assert keep.endswith(
-        f" If main.bean is missing from its folder, it will stay missing. Its old version is in {where}. {OTHERS} "
-        f"{CHECK_DRIVE}"
-    ), keep
+        f" If main.bean is missing from its folder, it will stay missing. Its old version is in {where}. Finzytrack "
+        f"keeps backups only for the last {KEPT_BACKUPS} saves you chose to keep, so copy that file to a "
+        f"safe place if you need it. {OTHERS} {CHECK_DRIVE}"
+    ), keep  # S0161 round 1, L2: the drive stop's Keep says the backup is trimmed too (DS-F3)
     for text in (screen, keep):
         assert text.count("/app/local/k1/backups/") == 1, text  # not a.bean's (not confirmed), not b.bean's
         assert "a.bean is missing" not in text

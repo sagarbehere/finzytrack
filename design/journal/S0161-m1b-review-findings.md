@@ -35,9 +35,9 @@
 
 | Source | ID | Severity | Class | Disposition |
 |---|---|---|---|---|
-| data-safety red team | DS-F1 | n/s | a (accepted as a limit) | Owner: "State it honestly". Wording corrected in ADR-0068 (note), engine-jobs §6.8, ARCHITECTURE.md, both best-effort notices, the user docs; no code |
-| data-safety red team | DS-F2 | n/s | d | Owner: "State it as a limit (Recommended)". engine-jobs §8.1 "Limit (later temps)", §15 |
-| data-safety red team | DS-F3 | n/s | d | Owner: "Say it in the text". Keep's confirmation names the backup's path and that only the last 16 kept saves keep theirs |
+| data-safety red team | DS-F1 | Medium | a (accepted as a limit) | Owner: "State it honestly". Wording corrected in ADR-0068 (note), engine-jobs §6.8, ARCHITECTURE.md, both best-effort notices, the user docs; no code |
+| data-safety red team | DS-F2 | Low | d | Owner: "State it as a limit (Recommended)". engine-jobs §8.1 "Limit (later temps)", §15 |
+| data-safety red team | DS-F3 | Low | d | Owner: "Say it in the text". Keep's confirmation names the backup's path and that only the last 16 kept saves keep theirs |
 | finance red team | F1 | Medium | c | Fixed (the oracle): booked postings matched by account and units; two tests; limit stated |
 | finance red team | F2 | Low | d | Stated limit: engine-jobs §2 "Limit (location metadata)", §15, `entry_keys.py` |
 | finance red team | F3 | Low | d | The same-date limit extended to same-day prices |
@@ -45,12 +45,12 @@
 | security red team | F2 | Low | c | Rule 5's docstring states the trust; BL-0001 carries the condition for promotion |
 | security red team | note (a) | — | e | BL-0115 (M2) and BL-0268 (M3) |
 | security red team | note (b) | — | d | BL-0157 |
-| S0136 spot audit | 1 | n/s | d | ARCHITECTURE.md corrected |
-| S0136 spot audit | 2 | n/s | d | BL-0166: gates the v0.4 release |
-| S0136 spot audit | 3 | n/s | c | The exFAT-backed share crash, power-loss and I/O sweeps added (`@regression-guard`) |
-| S0136 spot audit | 4 | n/s | d | §6.3 "Limit (a share's file ID)" extended |
+| S0136 spot audit | 1 | Low | d | ARCHITECTURE.md corrected |
+| S0136 spot audit | 2 | Low | d | BL-0166: gates the v0.4 release |
+| S0136 spot audit | 3 | Low | c | The exFAT-backed share crash, power-loss and I/O sweeps added (`@regression-guard`) |
+| S0136 spot audit | 4 | Low | d | §6.3 "Limit (a share's file ID)" extended |
 
-Severities are the reviews' where the hand-off gave them; n/s: not stated in the hand-off to this slice (none was High). A note carries none.
+Severities: the reviews' own (DS-F1 Medium, DS-F2 and DS-F3 Low; the spot audit's all Low; none High), filled in by the coordinator.
 
 ## Hand-off (PROCESS.md §3 step 4; ADR-0057)
 - Checks that accept, tag or refuse, each with its must-not-pass test:
@@ -61,7 +61,14 @@ Severities are the reviews' where the hand-off gave them; n/s: not stated in the
 - Population: none claimed. The exFAT sweeps cover every effect of the fake's clean save (crash and I/O error at each), as the existing sweeps do.
 
 ## Verifier
-(pending: the orchestrator starts it)
+- Round 1, head 7b389d23 (range ac6fc485..7b389d23): **PASS WITH FINDINGS**, no High, no Medium. Two Low (d), fixed by the coordinator in texts and their goldens (no further round: wording, IMP-0078).
+
+| ID | Sev | Class | Finding | What was done |
+|---|---|---|---|---|
+| L1 | Low | d | The two best-effort notices said "(usually less than a second)" without the spec's and docs' "longer for a large file or a slow drive"; the drive notice is shown exactly on the slow drives in question | Both notices now say "(usually less than a second, longer for a large file or a slow drive)"; the test pins the clause; the texts reference regenerated |
+| L2 | Low | d | After a drive stop, Keep's confirmation names each missing file's backup but not that the backup is trimmed after 16 kept saves (DS-F3 covered only the other Keep path) | The drive stop's Keep adds the same sentence (`KEPT_BACKUPS`), singular and plural; its golden updated |
+
+- Golden changes (round 1): `test_save_job.py::test_S0161_the_best_effort_notices_name_the_whole_save_not_one_moment` (the added clause) and `test_recovery_text.py::test_a_drive_stop_names_the_backup_of_each_file_on_that_drive` (the trim sentence), both from L1 and L2 above.
 
 ## Retro
-(pending)
+- About 1 h 40 min (the slice about 19 min, the verifier about 6 min, the round's text fixes by the coordinator). Findings in the reviews: 0 High across four reviews (data safety, finance, security, spot audit); this slice's own verifier 0H / 0M / 2L. The one code fix of the round is the oracle's I10 pairing (a tool) and the sidecar's `..` refusal; every data-safety finding became honest wording or a limit on the owner's choice.

@@ -604,7 +604,10 @@ def test_S0161_the_best_effort_notices_name_the_whole_save_not_one_moment() -> N
     several disk syncs, not "the very moment". Must not pass: a notice that still says the window is one moment."""
     for notice in (save_text.BEST_EFFORT_DRIVE, save_text.BEST_EFFORT_WINDOWS):
         assert "moment" not in notice, notice
-        assert "while Finzytrack is saving it (usually less than a second)" in notice, notice
+        assert (
+            "while Finzytrack is saving it (usually less than a second, longer for a large file or a slow drive)"
+            in notice
+        ), notice
         assert "can be lost" in notice, notice
 
 
