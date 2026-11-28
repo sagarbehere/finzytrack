@@ -14,8 +14,10 @@ TABLE = ROOT / "design/specs/write-path/intent-table.toml"
 COLUMNS = ("id", "caps", "kind", "old", "edits", "files", "intent", "meta", "ack", "refuses", "oracle", "status",
            "milestone", "adrs")
 KINDS = {"add", "change-one", "many"}  # ADR-0014's clearance kinds; "no old-app comparison" is old = "n/a"
-# ADR-0009's primitives, plus `replace_file` for the demo only (INV-25, ADR-0022).
-EDITS = {"insert", "replace", "delete", "replace_token", "insert_meta", "delete_meta", "option_line", "new_file", "replace_file"}
+# ADR-0009's primitives, plus `replace_file` for the demo only (INV-25, ADR-0022). Adding, removing or changing a
+# metadata line is a spliced whole-entry `replace` (ADR-0009 amendment of 2026-11-28, S0167): no `insert_meta` or
+# `delete_meta`.
+EDITS = {"insert", "replace", "delete", "replace_token", "option_line", "new_file", "replace_file"}
 # Error classes Beancount 3.2.0 reports (listed from the pinned package, S0004).
 BEANCOUNT_ERRORS = {"BalanceError", "PadError", "ValidationError", "DocumentError", "BookingError", "ReductionError",
                     "AmbiguousMatchError", "InterpolationError", "CategorizationError", "SelfReduxError", "LexerError",

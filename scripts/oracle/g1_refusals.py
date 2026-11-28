@@ -27,8 +27,9 @@ How to run it (from the repository's root, with the oracle's environment; `backe
 **Outcomes.** `saved`; `save_anyway`: the preview listed new errors (an accounting error, ADR-0067), the tool
 acknowledged them as the user's "Save anyway" would, and the save landed: not a refusal; `refused` with its code, the
 contract's step and the engine's reason; `not_expressible`: a rename that would also change a metadata or `custom`
-value naming the account, which the test producer's primitives cannot do (no metadata primitive yet, BL-0313): not
-run and not counted in the rate. Each refusal is **justified** only when `JUSTIFIED` names its (code, step, reason) and
+value naming the account, which the test producer cannot do (it does not splice metadata lines; the spliced
+whole-entry replace of the ADR-0009 amendment of 2026-11-28 comes with M4's `account.rename`): not run and not counted
+in the rate. Each refusal is **justified** only when `JUSTIFIED` names its (code, step, reason) and
 that rule's condition holds in the copy (`facts_of`, a check apart from the engine's); every other refusal is
 **unjustified**: an unknown code, an internal error, a runner answer that does not decode, a case it did not answer.
 The rate is unjustified refusals / cases run; exit 0 when it is under 5%, 1 otherwise, 2 on a refused input, 3 when

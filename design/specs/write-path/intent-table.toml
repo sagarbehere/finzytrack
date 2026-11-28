@@ -4,7 +4,8 @@
 # Columns per [[mutator]]:
 #   id          stable id of the v0.4 mutator (use case)            caps     capability rows it serves
 #   kind        clearance kind (ADR-0014): add | change-one | many  old      v0.3 endpoint, or "n/a"
-#   edits       edit primitives (ADR-0009): insert, replace, delete, replace_token, insert_meta, delete_meta, option_line, new_file
+#   edits       edit primitives (ADR-0009): insert, replace, delete, replace_token, option_line, new_file (and replace_file,
+#               demo only); a metadata line added, removed or changed is a spliced `replace` (ADR-0009 amendment 2026-11-28)
 #   files       which files the edits may touch
 #   intent      the exact intended change contract step 2 checks (everything else must be identical)
 #   meta        metadata keys the app writes (ADR-0026 §4.1 list or §4.2 user vocabulary entered by the user)
@@ -135,9 +136,9 @@ id = "account.edit"
 caps = ["CAP-ACCT-EDIT", "CAP-AI-LEDGER-WRITES"]
 kind = "change-one"
 old = "PUT /api/accounts/{name} (without new_name)"
-edits = ["replace", "insert_meta", "delete_meta"]
+edits = ["replace"]
 files = "the file holding the account's `open` (and its `close`, for a close-date edit)"
-intent = "the `open` (or `close`) replaced by the same entry with exactly the requested metadata set/removed, currencies, open date or booking method; untouched keys keep their value and type"
+intent = "the `open` (or `close`) replaced by the same entry with exactly the requested metadata set/removed, currencies, open date or booking method; untouched keys keep their value and type; a metadata line is spliced into the entry's own text, never re-printed (ADR-0009 amendment 2026-11-28)"
 meta = ["the vocabulary keys of account.create"]
 ack = ["ValidationError on a posting dated before the new open date", "ValidationError on a posting whose currency the edited `open` no longer allows"]
 refuses = ["consent: a booking-method change without the re-booking preview confirmed (ADR-0031)"]
@@ -151,9 +152,9 @@ id = "account.rename"
 caps = ["CAP-ACCT-RENAME"]
 kind = "many"
 old = "PUT /api/accounts/{name} with new_name"
-edits = ["replace_token", "delete_meta", "insert_meta", "replace"]
+edits = ["replace_token", "replace"]
 files = "every file of the set with a reference to the account"
-intent = "A and every subaccount `A:…` become B and `B:…` (ADR-0049 amendment): every account token naming one of them (postings, `open`, `close`, `balance`, `pad` both accounts, `note`, `document`, account-typed `custom` values), and every metadata value on any entry and every `custom` string value that is exactly one of those account names; text that merely contains a name is untouched. Nothing else changes. No renamed name may already exist (that is a merge)"
+intent = "A and every subaccount `A:…` become B and `B:…` (ADR-0049 amendment): every account token naming one of them (postings, `open`, `close`, `balance`, `pad` both accounts, `note`, `document`, account-typed `custom` values), and every metadata value on any entry and every `custom` string value that is exactly one of those account names; text that merely contains a name is untouched; a changed metadata or `custom` line is spliced into its entry's own text, never re-printed (ADR-0009 amendment 2026-11-28). Nothing else changes. No renamed name may already exist (that is a merge)"
 meta = []
 ack = []
 refuses = ["integrity: a target name already exists (use account.merge)", "grammar: a target name breaks the account grammar", "not-editable: an encrypted file references a renamed account (not editable, ADR-0009)"]
@@ -393,9 +394,9 @@ id = "doc.txn-attach"
 caps = ["CAP-DOC-TXN"]
 kind = "change-one"
 old = "POST /api/documents/upload, then PUT /api/ledger/transactions with the `document` key"
-edits = ["insert_meta"]
+edits = ["replace"]
 files = "the file holding the transaction (the file goes into the documents folder first)"
-intent = "one `document` metadata line (or the next free `documentN`) added to the transaction, holding the stored path; nothing else in the entry changes"
+intent = "the transaction replaced by the same entry plus one `document` metadata line (or the next free `documentN`), holding the stored path, spliced into the entry's own text (ADR-0009 amendment 2026-11-28); nothing else in the entry changes"
 meta = ["document*"]
 ack = []
 refuses = ["target: entry_hash mismatch", "policy: the path leaves the documents root"]
@@ -443,9 +444,9 @@ id = "import.link-element"
 caps = ["CAP-IMP-DEDUPE", "CAP-RECON-STATEMENT", "CAP-IMP-TRANSFER-PAIR"]
 kind = "change-one"
 old = "n/a"
-edits = ["delete_meta", "insert_meta"]
+edits = ["replace"]
 files = "the file holding the matched entry"
-intent = "the anchor posting's `import-key` line replaced (delete + insert of that one meta line) by the same elements plus one appended (a transfer counterpart, a confirmed scored duplicate, or a reconciliation match); elements never reordered or recomputed"
+intent = "the anchor posting's `import-key` line replaced (the entry replaced by the same entry with that one meta line changed, spliced into its own text, ADR-0009 amendment 2026-11-28) by the same elements plus one appended (a transfer counterpart, a confirmed scored duplicate, or a reconciliation match); elements never reordered or recomputed"
 meta = ["import-key"]
 ack = []
 refuses = ["target: the element is already present"]
@@ -459,9 +460,9 @@ id = "recon.proceed"
 caps = ["CAP-RECON-STATEMENT", "CAP-AI-LEDGER-WRITES", "CAP-AI-ATTACH-INTENT"]
 kind = "many"
 old = "n/a"
-edits = ["insert", "replace", "delete_meta", "insert_meta"]
+edits = ["insert", "replace"]
 files = "the routed insert file and the files of the matched entries"
-intent = "the additions and amount fixes the user chose (as import.commit and txn.edit), the chosen match elements (as import.link-element), then one `balance` on the anchor account dated closing + 1"
+intent = "the additions and amount fixes the user chose (as import.commit and txn.edit), the chosen match elements (as import.link-element), then one `balance` on the anchor account dated closing + 1; a match element's line is spliced into its entry's own text (ADR-0009 amendment 2026-11-28)"
 meta = ["import-key", "txn-date", "original", "statement-amount", "memo"]
 ack = ["BalanceError on the inserted assertion (Finzytrack proposes none that fails, ADR-0028; one the user adds anyway is listed with its residual, and Save anyway records it)", "Warning: an unsettled pending entry falls on or before the as-of date (no assertion is proposed, ADR-0028; one the user adds anyway may fail when the entry settles)"]
 refuses = []
@@ -475,9 +476,9 @@ id = "import.bank-id-migration"
 caps = ["CAP-IMP-OFX-DETECT"]
 kind = "many"
 old = "n/a"
-edits = ["insert_meta"]
+edits = ["replace"]
 files = "the files holding the mapped accounts' `open` directives"
-intent = "for each `ofx_mappings.yaml` entry the user consents to: `account_number` / `ofx-bank-id` added to the account's `open`; nothing else"
+intent = "for each `ofx_mappings.yaml` entry the user consents to: `account_number` / `ofx-bank-id` added to the account's `open` (the `open` replaced by the same entry plus those lines, spliced into its own text, ADR-0009 amendment 2026-11-28); nothing else"
 meta = ["account_number", "ofx-bank-id"]
 ack = []
 refuses = ["target: the mapped account has no `open` directive in this ledger (nothing to write the key on)", "identity: the key is already present with a different value (listed, never overwritten)"]
@@ -575,9 +576,9 @@ id = "inv.commodity-metadata"
 caps = ["CAP-INV-SETUP-META", "CAP-INV-AMFI-FINDER", "CAP-INV-EXPOSURE"]
 kind = "change-one"
 old = "PUT /api/commodities/metadata"
-edits = ["replace", "insert", "insert_meta", "delete_meta"]
+edits = ["replace", "insert"]
 files = "the file holding the `commodity` directive, or the routed insert file for a new one"
-intent = "the commodity's vocabulary keys set or removed as asked (`name`, `asset-class`, `exposure`, `fetch-symbol`, `isin`, `issue-date`, `denomination`); a missing `commodity` directive is inserted"
+intent = "the commodity's vocabulary keys set or removed as asked (`name`, `asset-class`, `exposure`, `fetch-symbol`, `isin`, `issue-date`, `denomination`), each line spliced into the `commodity` directive's own text (ADR-0009 amendment 2026-11-28); a missing `commodity` directive is inserted"
 meta = ["name", "asset-class", "exposure", "fetch-symbol", "isin", "issue-date", "denomination"]
 ack = []
 refuses = ["grammar: a typed key with a value of the wrong type (dates, numbers)"]
@@ -673,9 +674,9 @@ id = "meta.cleanup"
 caps = ["CAP-DATA-WRITE"]
 kind = "many"
 old = "n/a"
-edits = ["insert_meta", "delete_meta", "replace_token"]
+edits = ["replace", "replace_token"]
 files = "every file of the set with a legacy key"
-intent = "the consented cleanup (ADR-0026): legacy refs rewritten into posting-level `import-key` first, then machinery keys removed, snake_case vocabulary renamed, legacy ids removed only if the user opted in; every exact-match key survives (fail-closed proof)"
+intent = "the consented cleanup (ADR-0026): legacy refs rewritten into posting-level `import-key` first, then machinery keys removed, snake_case vocabulary renamed, legacy ids removed only if the user opted in, each line spliced into its entry's own text (ADR-0009 amendment 2026-11-28); every exact-match key survives (fail-closed proof)"
 meta = ["import-key"]
 ack = []
 refuses = ["identity: any exact-match identity that would not survive the rewrite"]

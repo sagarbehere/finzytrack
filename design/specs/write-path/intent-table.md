@@ -13,8 +13,8 @@ What each ledger-writing mutator may change. Column meanings and rules: [README.
 | `ws.create-ledger` | many | POST /api/setup/complete | new_file | draft | M3 |
 | `ws.seed-demo` | many | n/a | new_file | decided | M3 |
 | `account.create` | add | POST /api/accounts | insert | decided | M4 |
-| `account.edit` | change-one | PUT /api/accounts/{name} (without new_name) | replace; insert_meta; delete_meta | decided | M4 |
-| `account.rename` | many | PUT /api/accounts/{name} with new_name | replace_token; delete_meta; insert_meta; replace | decided | M4 |
+| `account.edit` | change-one | PUT /api/accounts/{name} (without new_name) | replace | decided | M4 |
+| `account.rename` | many | PUT /api/accounts/{name} with new_name | replace_token; replace | decided | M4 |
 | `account.merge` | many | n/a | replace_token; delete | decided | M4 |
 | `account.delete-reassign` | many | n/a (the legacy delete cannot reassign) | replace_token; delete | decided | M4 |
 | `account.delete-with-transactions` | many | DELETE /api/accounts/{name} (delete_transactions=true, the default) | delete | decided | M4 |
@@ -29,24 +29,24 @@ What each ledger-writing mutator may change. Column meanings and rules: [README.
 | `txn.edit` | change-one | PUT /api/ledger/transactions (one transaction) | replace | decided | M5 |
 | `txn.bulk-edit` | many | PUT /api/ledger/transactions (several transactions) | replace; replace_token | decided | M5 |
 | `txn.delete` | change-one | DELETE /api/ledger/transactions | delete | decided | M5 |
-| `doc.txn-attach` | change-one | POST /api/documents/upload, then PUT /api/ledger/transactions with the `document` key | insert_meta | draft | M5 |
+| `doc.txn-attach` | change-one | POST /api/documents/upload, then PUT /api/ledger/transactions with the `document` key | replace | draft | M5 |
 | `import.commit` | many | POST /api/import/commit | insert | decided | M6 |
 | `import.settle-pending` | change-one | n/a | replace | decided | M6 |
-| `import.link-element` | change-one | n/a | delete_meta; insert_meta | decided | M6 |
-| `recon.proceed` | many | n/a | insert; replace; delete_meta; insert_meta | draft | M6 |
-| `import.bank-id-migration` | many | n/a | insert_meta | draft | M6 |
+| `import.link-element` | change-one | n/a | replace | decided | M6 |
+| `recon.proceed` | many | n/a | insert; replace | draft | M6 |
+| `import.bank-id-migration` | many | n/a | replace | draft | M6 |
 | `budget.create` | add | POST /api/budgets | insert | draft | M7 |
 | `budget.edit` | change-one | PUT /api/budgets/{budget_id} | replace | draft | M7 |
 | `budget.delete` | change-one | DELETE /api/budgets/{budget_id} | delete | draft | M7 |
 | `inv.add-holding` | add | POST /api/import/commit (staged quick action) | insert | draft | M8 |
 | `inv.open-deposit` | many | POST /api/investments/open-deposit | insert | draft | M8 |
-| `inv.commodity-metadata` | change-one | PUT /api/commodities/metadata | replace; insert; insert_meta; delete_meta | draft | M8 |
+| `inv.commodity-metadata` | change-one | PUT /api/commodities/metadata | replace; insert | draft | M8 |
 | `inv.booking-method` | change-one | n/a | replace | decided | M8 |
 | `inv.one-upload-sync` | many | n/a (import_statement is cut) | insert | draft | M8 |
 | `price.write` | many | POST /api/prices/update (fetch); PUT /api/prices (add) | insert; replace | decided | M8 |
 | `price.edit` | change-one | PUT /api/prices (change, remove) | replace; delete | decided | M8 |
 | `settings.operating-currencies` | change-one | PUT /api/commodities/operating-currencies | option_line | decided | M10 |
-| `meta.cleanup` | many | n/a | insert_meta; delete_meta; replace_token | decided | M10 |
+| `meta.cleanup` | many | n/a | replace; replace_token | decided | M10 |
 | `txn.delete-many` | many | DELETE /api/ledger/transactions (several) | delete | decided | M5 |
 | `data.undo` | many | n/a | insert; replace; delete | draft | M5 |
 | `inv.buy` | add | POST /api/investments/assemble, then POST /api/import/commit | insert | draft | M8 |
@@ -116,9 +116,9 @@ What each ledger-writing mutator may change. Column meanings and rules: [README.
 - **Capabilities:** CAP-ACCT-EDIT; CAP-AI-LEDGER-WRITES
 - **Kind of edit:** change-one
 - **Old endpoint:** PUT /api/accounts/{name} (without new_name)
-- **Edits:** replace; insert_meta; delete_meta
+- **Edits:** replace
 - **Files:** the file holding the account's `open` (and its `close`, for a close-date edit)
-- **Intended change:** the `open` (or `close`) replaced by the same entry with exactly the requested metadata set/removed, currencies, open date or booking method; untouched keys keep their value and type
+- **Intended change:** the `open` (or `close`) replaced by the same entry with exactly the requested metadata set/removed, currencies, open date or booking method; untouched keys keep their value and type; a metadata line is spliced into the entry's own text, never re-printed (ADR-0009 amendment 2026-11-28)
 - **Metadata written:** the vocabulary keys of account.create
 - **The preview may list (never a refusal, ADR-0067):** ValidationError on a posting dated before the new open date; ValidationError on a posting whose currency the edited `open` no longer allows
 - **Refused when:** consent: a booking-method change without the re-booking preview confirmed (ADR-0031)
@@ -132,9 +132,9 @@ What each ledger-writing mutator may change. Column meanings and rules: [README.
 - **Capabilities:** CAP-ACCT-RENAME
 - **Kind of edit:** many
 - **Old endpoint:** PUT /api/accounts/{name} with new_name
-- **Edits:** replace_token; delete_meta; insert_meta; replace
+- **Edits:** replace_token; replace
 - **Files:** every file of the set with a reference to the account
-- **Intended change:** A and every subaccount `A:…` become B and `B:…` (ADR-0049 amendment): every account token naming one of them (postings, `open`, `close`, `balance`, `pad` both accounts, `note`, `document`, account-typed `custom` values), and every metadata value on any entry and every `custom` string value that is exactly one of those account names; text that merely contains a name is untouched. Nothing else changes. No renamed name may already exist (that is a merge)
+- **Intended change:** A and every subaccount `A:…` become B and `B:…` (ADR-0049 amendment): every account token naming one of them (postings, `open`, `close`, `balance`, `pad` both accounts, `note`, `document`, account-typed `custom` values), and every metadata value on any entry and every `custom` string value that is exactly one of those account names; text that merely contains a name is untouched; a changed metadata or `custom` line is spliced into its entry's own text, never re-printed (ADR-0009 amendment 2026-11-28). Nothing else changes. No renamed name may already exist (that is a merge)
 - **Metadata written:** —
 - **The preview may list (never a refusal, ADR-0067):** —
 - **Refused when:** integrity: a target name already exists (use account.merge); grammar: a target name breaks the account grammar; not-editable: an encrypted file references a renamed account (not editable, ADR-0009)
@@ -372,9 +372,9 @@ What each ledger-writing mutator may change. Column meanings and rules: [README.
 - **Capabilities:** CAP-DOC-TXN
 - **Kind of edit:** change-one
 - **Old endpoint:** POST /api/documents/upload, then PUT /api/ledger/transactions with the `document` key
-- **Edits:** insert_meta
+- **Edits:** replace
 - **Files:** the file holding the transaction (the file goes into the documents folder first)
-- **Intended change:** one `document` metadata line (or the next free `documentN`) added to the transaction, holding the stored path; nothing else in the entry changes
+- **Intended change:** the transaction replaced by the same entry plus one `document` metadata line (or the next free `documentN`), holding the stored path, spliced into the entry's own text (ADR-0009 amendment 2026-11-28); nothing else in the entry changes
 - **Metadata written:** document*
 - **The preview may list (never a refusal, ADR-0067):** —
 - **Refused when:** target: entry_hash mismatch; policy: the path leaves the documents root
@@ -420,9 +420,9 @@ What each ledger-writing mutator may change. Column meanings and rules: [README.
 - **Capabilities:** CAP-IMP-DEDUPE; CAP-RECON-STATEMENT; CAP-IMP-TRANSFER-PAIR
 - **Kind of edit:** change-one
 - **Old endpoint:** n/a
-- **Edits:** delete_meta; insert_meta
+- **Edits:** replace
 - **Files:** the file holding the matched entry
-- **Intended change:** the anchor posting's `import-key` line replaced (delete + insert of that one meta line) by the same elements plus one appended (a transfer counterpart, a confirmed scored duplicate, or a reconciliation match); elements never reordered or recomputed
+- **Intended change:** the anchor posting's `import-key` line replaced (the entry replaced by the same entry with that one meta line changed, spliced into its own text, ADR-0009 amendment 2026-11-28) by the same elements plus one appended (a transfer counterpart, a confirmed scored duplicate, or a reconciliation match); elements never reordered or recomputed
 - **Metadata written:** import-key
 - **The preview may list (never a refusal, ADR-0067):** —
 - **Refused when:** target: the element is already present
@@ -436,9 +436,9 @@ What each ledger-writing mutator may change. Column meanings and rules: [README.
 - **Capabilities:** CAP-RECON-STATEMENT; CAP-AI-LEDGER-WRITES; CAP-AI-ATTACH-INTENT
 - **Kind of edit:** many
 - **Old endpoint:** n/a
-- **Edits:** insert; replace; delete_meta; insert_meta
+- **Edits:** insert; replace
 - **Files:** the routed insert file and the files of the matched entries
-- **Intended change:** the additions and amount fixes the user chose (as import.commit and txn.edit), the chosen match elements (as import.link-element), then one `balance` on the anchor account dated closing + 1
+- **Intended change:** the additions and amount fixes the user chose (as import.commit and txn.edit), the chosen match elements (as import.link-element), then one `balance` on the anchor account dated closing + 1; a match element's line is spliced into its entry's own text (ADR-0009 amendment 2026-11-28)
 - **Metadata written:** import-key; txn-date; original; statement-amount; memo
 - **The preview may list (never a refusal, ADR-0067):** BalanceError on the inserted assertion (Finzytrack proposes none that fails, ADR-0028; one the user adds anyway is listed with its residual, and Save anyway records it); Warning: an unsettled pending entry falls on or before the as-of date (no assertion is proposed, ADR-0028; one the user adds anyway may fail when the entry settles)
 - **Refused when:** —
@@ -452,9 +452,9 @@ What each ledger-writing mutator may change. Column meanings and rules: [README.
 - **Capabilities:** CAP-IMP-OFX-DETECT
 - **Kind of edit:** many
 - **Old endpoint:** n/a
-- **Edits:** insert_meta
+- **Edits:** replace
 - **Files:** the files holding the mapped accounts' `open` directives
-- **Intended change:** for each `ofx_mappings.yaml` entry the user consents to: `account_number` / `ofx-bank-id` added to the account's `open`; nothing else
+- **Intended change:** for each `ofx_mappings.yaml` entry the user consents to: `account_number` / `ofx-bank-id` added to the account's `open` (the `open` replaced by the same entry plus those lines, spliced into its own text, ADR-0009 amendment 2026-11-28); nothing else
 - **Metadata written:** account_number; ofx-bank-id
 - **The preview may list (never a refusal, ADR-0067):** —
 - **Refused when:** target: the mapped account has no `open` directive in this ledger (nothing to write the key on); identity: the key is already present with a different value (listed, never overwritten)
@@ -548,9 +548,9 @@ What each ledger-writing mutator may change. Column meanings and rules: [README.
 - **Capabilities:** CAP-INV-SETUP-META; CAP-INV-AMFI-FINDER; CAP-INV-EXPOSURE
 - **Kind of edit:** change-one
 - **Old endpoint:** PUT /api/commodities/metadata
-- **Edits:** replace; insert; insert_meta; delete_meta
+- **Edits:** replace; insert
 - **Files:** the file holding the `commodity` directive, or the routed insert file for a new one
-- **Intended change:** the commodity's vocabulary keys set or removed as asked (`name`, `asset-class`, `exposure`, `fetch-symbol`, `isin`, `issue-date`, `denomination`); a missing `commodity` directive is inserted
+- **Intended change:** the commodity's vocabulary keys set or removed as asked (`name`, `asset-class`, `exposure`, `fetch-symbol`, `isin`, `issue-date`, `denomination`), each line spliced into the `commodity` directive's own text (ADR-0009 amendment 2026-11-28); a missing `commodity` directive is inserted
 - **Metadata written:** name; asset-class; exposure; fetch-symbol; isin; issue-date; denomination
 - **The preview may list (never a refusal, ADR-0067):** —
 - **Refused when:** grammar: a typed key with a value of the wrong type (dates, numbers)
@@ -644,9 +644,9 @@ What each ledger-writing mutator may change. Column meanings and rules: [README.
 - **Capabilities:** CAP-DATA-WRITE
 - **Kind of edit:** many
 - **Old endpoint:** n/a
-- **Edits:** insert_meta; delete_meta; replace_token
+- **Edits:** replace; replace_token
 - **Files:** every file of the set with a legacy key
-- **Intended change:** the consented cleanup (ADR-0026): legacy refs rewritten into posting-level `import-key` first, then machinery keys removed, snake_case vocabulary renamed, legacy ids removed only if the user opted in; every exact-match key survives (fail-closed proof)
+- **Intended change:** the consented cleanup (ADR-0026): legacy refs rewritten into posting-level `import-key` first, then machinery keys removed, snake_case vocabulary renamed, legacy ids removed only if the user opted in, each line spliced into its entry's own text (ADR-0009 amendment 2026-11-28); every exact-match key survives (fail-closed proof)
 - **Metadata written:** import-key
 - **The preview may list (never a refusal, ADR-0067):** —
 - **Refused when:** identity: any exact-match identity that would not survive the rewrite
