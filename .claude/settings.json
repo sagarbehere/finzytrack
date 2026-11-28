@@ -28,7 +28,9 @@
       "gh run list *",
       "gh run view *",
       "gh run watch *",
-      "gh api *"
+      "gh api *",
+      "pnpm --dir frontend -s e2e",
+      "pnpm --dir frontend install --frozen-lockfile"
     ],
     "filesystem": {
       "denyWrite": [
@@ -38,7 +40,8 @@
       "allowWrite": [
         "~/.cache/uv",
         "~/Library/pnpm",
-        "~/experiments/finzytrack-docs"
+        "~/experiments/finzytrack-docs",
+        "~/ft-local-tier"
       ]
     },
     "network": {
