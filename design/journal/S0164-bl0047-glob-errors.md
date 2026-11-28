@@ -49,7 +49,18 @@ On copies only, through the harness (`launch_legacy.py` on its own port 18961 an
 - **Population:** the repo corpora as S0160: nasty (its cases file), the demo at 5 per mutator and at 70 per mutator, seed 9, and every `load` folder of `corpora/ledgers/write/cases.toml` (17 of 19; the 2 `refuse` folders are encrypted and never loaded), 5 per mutator, seed 9. Counts under "The runs".
 
 ## Verifier
-- Pending (the orchestrator starts it on the commit range).
+One round (tooling row, the stop rule). Head verified: f774bf70. Verdict: PASS WITH FINDINGS; no High, no Medium. Attacks: an error with no tagged cause beside an I2 copy (a `LexerError`: stays UNEXPLAINED), condition (3) with a duplicated erroneous glob entry, a copy that differs from the intended entry (UNEXPLAINED), a renamed non-money glob entry with no copy, mutants of `errors_after_undo` (6 killed, 2 survived), the smallest-tag search's soundness (it changes only the label, never the verdict), the new tests on the base's `scripts/oracle` (all 5 `ErrorUndoTest` methods fail), the suites at head (134 pass), and the nasty row of the runs table rerun on its own ports (base 7 expected / 2 UNEXPLAINED, head 9 expected: matches).
+
+| ID | Severity | Class | Disposition |
+|---|---|---|---|
+| V1 | Low | c | Stated limit 1 below (outside the stop rule's points (1)-(3): not a shape the docstring or the must-not-pass list promises to refuse; the base already tagged an intended entry never written as I2) |
+| V2 | Low | c | Stated limit 2 below (M7: condition (3) as sets; M6: label only) |
+| V3 | Low | d | Fixed (comment only): the must-pass half of `test_an_error_the_undo_did_not_remove_...` is the plain rename case, not "with an edit elsewhere" |
+
+### Stated limits (added by the verifier round)
+1. A renamed entry in a glob-reached file that the old app neither rewrites nor copies into the root is I2 ("file not rewritten"); its error is explained by the undo though no copy exists. The error rule does not check that the undo restores the intended entry, and the booked comparison sees only money, so a lost note or balance assertion is not reported.
+2. Condition (3) is pinned only for a single instance of an error key: duplicate keys, and which combined-tag causes the smallest-set search undoes, are not pinned.
 
 ## Retro
-- Pending.
+- The owner's choice ("Build BL-0047 now (Recommended)") took the five rename cases from UNEXPLAINED to I2 mechanically; G1's comparisons on the repo corpora are now 336 of 337 expected, the one left (`documents` ren-004) explained by hand.
+- The implementer's condition (3) closed a loosening the option's wording left open; the verifier confirmed it holds (its mutant is killed).

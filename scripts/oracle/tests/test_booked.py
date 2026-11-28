@@ -565,7 +565,7 @@ class ErrorUndoTest(unittest.TestCase):
         self.assertEqual(c.report.verdict, "UNEXPLAINED", c)
 
     def test_an_error_the_undo_did_not_remove_is_not_explained_even_when_the_reference_has_it(self) -> None:
-        # Must-pass: the glob coffee copied into the root (I2) and the old name left behind, with an edit elsewhere.
+        # Must-pass: the glob coffee copied into the root (I2) and the old name left behind (the plain rename case).
         c = Case(self.GLOB, self.LEGACY, to_cafe)
         self.assertEqual(c.report.verdict, "EXPECTED_DIVERGENCE", c)
         # Must-not-pass: an edit that itself posts to an account the ledger never opens, so the reference has the
