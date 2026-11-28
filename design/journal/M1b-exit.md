@@ -76,3 +76,7 @@ A fresh reviewer at head 78f105fa (PROCESS.md §4, altitude 2). **Verdict: no Hi
 - **Agent misses recorded:** the coordinator wrapped sandbox-exempt commands and misread the failure as a sandbox limit (S0151 retro; memory updated); left the area review out of the exit plan until roadmap §3.2 was reread (this record).
 - **Owner time:** not measured in M1b (as in M1a); the owner's decisions are quoted in each slice's journal. Subagent token totals per slice were not collected in M1b.
 
+
+## The architecture explainer
+- Refreshed after this record (2026-11-28; link in `design/README.md`): the write contract's checks, the best-effort mode and its stated limit, Windows (OneDrive included) and Linux, the oracles at M1b's exit, the status table (M1b built; G1 next; M2 beside it).
+- **Next:** G1, the go/no-go on the write core (roadmap §4 G1, ADR-0046): an evidence pack for the owner (old-vs-new comparisons, refusals on copies, write cost at demo size and 54k, seeded-defect catch rate, the cross-cutting lens reviews and a spot audit).
