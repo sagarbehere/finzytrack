@@ -31,3 +31,26 @@ Run started with `milestone_exit: M1b`: **success**, every job green: `repo-chec
 ## macOS green (ADR-0061 decision 4a)
 - The T0 pre-push gate passed at the exit code commit 78f105fa (the push `574629fa..78f105fa`, unmarked, so the whole gate ran).
 - The acceptance suite passed locally through the harness, run by the owner (2026-11-28): **39 passed, 21 skipped** (the integrity flows A1, A2, A4 (two), A7, A10 and A13 in each of the three browser projects, `fixme` for their later milestones), 22.9 s; as at M1a's exit.
+
+## Area review (2026-11-28)
+
+A fresh reviewer at head 78f105fa (PROCESS.md §4, altitude 2). **Verdict: no High; nothing in class (a) or (b)**, so no finding became a slice (PROCESS.md §4's triage: integrity, security and wrong-number findings only). Four Medium, seven Low, an overflow list, and five simplification proposals. Landed in `design/journal/S0162-m1b-area-review-triage.md`; IDs and dispositions only.
+
+| ID | Severity | Class | Disposition |
+|---|---|---|---|
+| F1 | Medium | e | The write-path README's `insert_meta`, `delete_meta`, `option_line`, `new_file`, `replace_file` are not built (only `Insert`, `Replace`, `Delete`, `ReplaceToken`); step 2 refuses every option change; the preview cannot plan a create. Rows BL-0312 (M3: `option_line` and the step-2 exception with `doc.documents-option`, `replace_file` with `ws.refresh-demo`, `new_file` and planned creates with `ws.create-ledger`) and BL-0313 (M4: the two metadata primitives with `account.edit`, their first consumer, not M3); README marks each "not built" |
+| F2 | Medium | d | ARCHITECTURE.md §9.2 steps 1-2, §2.3 and §12 rewritten to what is built (producers in the engine's `preview.PRODUCERS`, untyped request, the whole fingerprint read, no `parse_files`, promotion in `app.workspaces.writes.PROMOTED`); the old→new `TransactionId` map (ADR-0026) added to BL-0059 (M5), its consumer, instead of a new row |
+| F3 | Medium | e | The no-double-write rule for a resent confirm written into engine-jobs §11 and ARCHITECTURE.md §9.2 step 4 (the confirm's route asks the plan's fate before the edge's `WARMING`, or is exempt); BL-0268's lead corrected (`PLAN_UNKNOWN` since S0117 round 3); `app.platform.plans`'s docstring corrected too |
+| F4 | Medium | e | Already tracked: BL-0257 (M2, M1a area review F3) is this decision; BL-0257 and BL-0154 carry a pointer, engine-jobs §8.1 "Afterwards" names it as M2's open question. No new row |
+| F5 | Low | e | Row BL-0314 (M3, the first new whole-file caller) |
+| F6 | Low | d | engine-jobs Orientation fixed: the preview is built; `ledger.preview`, `ledger.contract`, `app.workspaces.writes`, `app.platform.plans` in its code map |
+| F7 | Low | d | §15's index: the 16 missing limits added, "request size" removed (no such limit since S0120; the line guard is §5.5's rule); `scripts/tests/test_engine_jobs_limits.py` holds the index to the body both ways |
+| F8 | Low | d | Row BL-0318 (M2, a docs slice) |
+| F9 | Low | e | Row BL-0315 (M3, with the first mutator's preview) |
+| F10 | Low | c | Row BL-0316 (M3, before the next new world) |
+| F11 | Low | e | Row BL-0317 (M2, pytest-xdist) |
+| Overflow: `PLAN_UNKNOWN`, `PLAN_ALREADY_CONFIRMED` missing from ARCHITECTURE §6.1 | — | d | Added to the table and the "Built" line |
+| Overflow: BL-0256's limit | — | d | Noted on BL-0256's row for M4's brief |
+| Overflow: the rest | — | — | Dropped by the orchestrator's triage; their lines were not passed to the implementer, so their IDs are not recorded here |
+
+**Simplification proposals 1-5** (each narrows an ADR, so the owner's): `design/inbox/20261128-m1b-simplifications.md`; nothing implemented.

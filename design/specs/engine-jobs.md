@@ -2,8 +2,8 @@
 
 ## Orientation
 - **What this is:** the rules for how the main sidecar runs ledger work on the ledger engine: one engine doing one job at a time (ADR-0064), how a save becomes durable, how Cancel, a crash, a quit and a workspace switch end each job, and how interrupted saves are recovered. Rules only: why is in the ADRs below, when and how in the journals (S0053 to S0073).
-- **Where the code is:** the queue's pure table `app.platform.engine_jobs.queue`, its shell `app.platform.engine_jobs.scheduler`, the job texts `app.platform.engine_jobs.text` (every text the user reads is rendered in `design/generated/engine-job-texts.md`, §11); supervision `app.platform.engine_supervision`, driven by `app.platform.adapters.engine_client.EngineClient`, the process group `app.platform.adapters.engine_group`; the save `ledger_engine.ledger.save` (durable order `ledger_engine.ledger.writer.durable_commit`, paths `ledger_engine.ledger.paths`, the record `ledger_engine.ledger.core.journal`, the file-system port `ledger_engine.fs.port` and its macOS adapter `ledger_engine.fs.darwin`, selected by `ledger_engine.fs.this_os.for_this_os`) with the sidecar's `app.platform.engine_jobs.save` and `save_text`; the restore `ledger_engine.ledger.restore`; recover-all `ledger_engine.ledger.recover_all` with the sidecar's `app.platform.engine_jobs.recovery` and `recovery_text`; the rebuild `ledger_engine.ledger.rebuild` with `app.platform.engine_jobs.rebuild`; the open `ledger_engine.ledger.opening` (what it shares with the rebuild: `ledger_engine.ledger.publishing`) with `app.platform.engine_jobs.opening`; the create `ledger_engine.ledger.create` with `app.platform.engine_jobs.create`, `create_text` and `app.workspaces.creation`; the copy `ledger_engine.ledger.copy` (its layout `ledger_engine.ledger.core.copy_layout`, its comparison `ledger_engine.ledger.loads_same`) with `app.platform.engine_jobs.copy` and `copy_text`; the history trim `ledger_engine.ledger.history` (its choice `ledger_engine.ledger.core.history`). Checked over the in-memory fake `engine/tests/fakes/memfs.py` and the durability model of §13.
-- **Not built yet:** the switch and the boot, which consume the recovery report, submit the open and offer saves only once its mirror is ready (BL-0154); copying a ledger's own plugin modules (BL-0202); a create whose ledger stays outside its folder (BL-0197); registering a created workspace (§8.2 step 8, BL-0102); the focus check and its waited-for rebuild (BL-0215); the preview (BL-0106, with §7's rules); the BQL job (BL-0216); the screens that read the published mirror and their "Checking…" text (BL-0126, BL-0211); the decision log's lines (§12, BL-0154).
+- **Where the code is:** the queue's pure table `app.platform.engine_jobs.queue`, its shell `app.platform.engine_jobs.scheduler`, the job texts `app.platform.engine_jobs.text` (every text the user reads is rendered in `design/generated/engine-job-texts.md`, §11); supervision `app.platform.engine_supervision`, driven by `app.platform.adapters.engine_client.EngineClient`, the process group `app.platform.adapters.engine_group`; the save `ledger_engine.ledger.save` (durable order `ledger_engine.ledger.writer.durable_commit`, paths `ledger_engine.ledger.paths`, the record `ledger_engine.ledger.core.journal`, the file-system port `ledger_engine.fs.port` and its macOS adapter `ledger_engine.fs.darwin`, selected by `ledger_engine.fs.this_os.for_this_os`) with the sidecar's `app.platform.engine_jobs.save` and `save_text`; the restore `ledger_engine.ledger.restore`; recover-all `ledger_engine.ledger.recover_all` with the sidecar's `app.platform.engine_jobs.recovery` and `recovery_text`; the rebuild `ledger_engine.ledger.rebuild` with `app.platform.engine_jobs.rebuild`; the open `ledger_engine.ledger.opening` (what it shares with the rebuild: `ledger_engine.ledger.publishing`) with `app.platform.engine_jobs.opening`; the create `ledger_engine.ledger.create` with `app.platform.engine_jobs.create`, `create_text` and `app.workspaces.creation`; the copy `ledger_engine.ledger.copy` (its layout `ledger_engine.ledger.core.copy_layout`, its comparison `ledger_engine.ledger.loads_same`) with `app.platform.engine_jobs.copy` and `copy_text`; the history trim `ledger_engine.ledger.history` (its choice `ledger_engine.ledger.core.history`); the preview `ledger_engine.ledger.preview` (the contract's steps `ledger_engine.ledger.contract`) with the sidecar's `app.platform.engine_jobs.preview`, the preview and confirm use cases and the promotion guard `app.workspaces.writes`, and the plan store `app.platform.plans` (§7, §11; S0116, S0117). Checked over the in-memory fake `engine/tests/fakes/memfs.py` and the durability model of §13.
+- **Not built yet:** the switch and the boot, which consume the recovery report, submit the open and offer saves only once its mirror is ready (BL-0154); copying a ledger's own plugin modules (BL-0202); a create whose ledger stays outside its folder (BL-0197); registering a created workspace (§8.2 step 8, BL-0102); the focus check and its waited-for rebuild (BL-0215); a mutator's edit producer (the preview is built, S0116 and S0117, and `ledger_engine.ledger.preview.PRODUCERS` is empty until the first mutator's slice) and the preview and confirm routes (BL-0268, M3); the BQL job (BL-0216); the screens that read the published mirror and their "Checking…" text (BL-0126, BL-0211); the decision log's lines (§12, BL-0154).
 - **Decisions it applies:** ADR-0064 (this design), ADR-0067 (integrity blocks, accounting advises), ADR-0068 (step-back simplifications), ADR-0008 (write-safety contract), ADR-0010 (overlay load), ADR-0011 (no resident ledger), ADR-0012 (journal and recovery, as amended by ADR-0063), ADR-0013 (atomic swap), ADR-0015 (mirror publish), ADR-0054 (engine process), ADR-0062 (single instance; legacy-lock detection), ADR-0063 (one open workspace; the switch; recover-all before open).
 - **Invariants:** INV-01 and INV-22 (every write passes the contract and fails closed), INV-10 (no resident ledger; bounded caches), INV-11 (the queue hangs off `UserContainer`), INV-20 (performance absolutes), INV-28 (`WORKSPACE_NOT_OPEN`), INV-29, INV-30 (recovery is the one write on open), INV-31 (only the open workspace runs jobs), INV-32 (recover every unfinished save before any workspace opens).
 - **Sources:** each rule, or cluster of rules, names its source in brackets: an invariant or an ADR.
@@ -331,6 +331,7 @@ stateDiagram-v2
 **Afterwards,** at the end of every recover-all (the boot's, a Retry's, a switch's) (`app.platform.engine_jobs.recovery`: `Report`, `blocking_for`):
 - a one-line notice names each workspace whose save was undone (`msg:recovery.undone`);
 - a blocking journal blocks every open of a workspace whose ledger set uses a file it names by `path_key`, its own workspace included and its folder opened by Locate or "Open folder…" (matched by the registry key and lineage id the journal records, §6.5), and every copy that would read such a file: `RECOVERY_BLOCKED {path, workspace, reason}` with Retry, Stay or Back, and "Keep the files as they are now". A journal whose file list cannot be read blocks every open and every copy. Forget keeps journals;
+- **Open question for M2** (BL-0257, with BL-0154; M1b area review F4): `blocking_for` needs the ledger set's `path_key`s (`ledger_keys`) before the workspace opens, and nothing yet says where the open gets them: the last published stamp (missing after a purged cache and on a first open), the open's own load (which this check must come before), or the registry. BL-0257 settles it before the switch is built;
 - **Keep** writes nothing to the ledger files: it first `durable_sync`s every file and folder the journal names, so "now" is what a power loss keeps, then renames the journal `.kept`, syncs its directory, and is logged. A folder that is not the one the journal records (another drive, file system or creation time), or on a drive with no reliable UUID, is skipped like a folder that is not there (nothing synced there); its confirmation says the save will not be undone there, now or later (`msg:recovery.keep_other_drive`, `msg:recovery.keep_unknown_drive`), and for each replaced file there whose backup holds its old version, where that is, in case the file is missing on the right drive (`msg:recovery.keep_drive_backup`; S0090); a link in place of a recorded folder still refuses Keep (`path_moved`). Delete the kept copy and Delete it refuse a file on such a drive (`wrong_drive`, `unknown_drive`), removing nothing; the blocked screen's inspection shows its files as not reachable, never the other drive's files as this save's. Its confirmation lists the files it releases (`msg:recovery.keep`); for reasons `cancelled`, `failed` and `not_tried` it says Retry may still undo the save (`msg:recovery.keep_not_finished`). A kept copy stays where it is: the Keep confirmation and the blocked screen say that it must be deleted or moved before the ledger is used (`msg:recovery.keep_kept_copy`), and offer **Delete the kept copy** once the user has looked at it (`recover_all.delete_kept`: only a kept copy the journal derives, exact up to NFD, `journal.derives_kept_name`, and only while its bytes equal those the screen showed; the screen is BL-0092). **Limit (keep read-only):** Keep on a read-only drive takes `EROFS` from the sync as nothing pending. A read-only exFAT or FAT32 mount (a locked SD card, for example) answers `EACCES`, not `EROFS`, to `F_FULLFSYNC` (probed, S0101, S0110): there Keep fails with the generic action-failed text, and a try with the files at post stops `permission` in step 2 (as on any read-only mount, since `access(2)` refuses writing) and shows §11's permission row with its ACL advice, not a read-only wording; a try that meets a file already at pre fails at the sync with the permission wording. Making the drive writable, then Retry (which undoes the save) or Keep, works. Nothing is written and the journal stays `.open` (owner, 2026-11-13, S0110, BL-0246). **Limit (kept copies):** a kept copy is a visible file beside the ledger's, so a bare `*` glob `include` would load one once the user has chosen Keep (the screens say to delete or move it first); deleting a kept copy or a file at a created path checks its bytes first, but a write in the instant between that check and the removal is lost; a kept copy spelled otherwise than ours is left for the user. **Limit (later temps)** (M1b data-safety red team DS-F2; owner, 2026-11-27: "State it as a limit (Recommended)"): a try moves a foreign temp to its kept name only for the file it stops on, so an outside save left in a **later** file's hidden temp (`.<name>.ft-….tmp`) after a crash is not moved to a kept name, and after Keep the user is not told about it; its bytes are not deleted (they stay at the temp name). It needs a crash during a save, an editor that wrote through a handle it held from before the swap, and a second edit.
 [INV-32; ADR-0063 decision 2; model mutant `crash_unmarked`; a cancelled or untried journal's reason: `backend/tests/platform/test_recover_all.py`]
 
@@ -479,6 +480,8 @@ New codes join the registry of ARCHITECTURE §6.1; the existing ones keep their 
 | request for a workspace that is not open | `msg:code.WORKSPACE_NOT_OPEN` | Switch back | `WORKSPACE_NOT_OPEN {open_workspace, switching}` |
 | quitting during a save (§9.3 step 3) | "Finishing your last change…"; Quit anyway asks "Quit now? The change being saved may be undone the next time Finzytrack starts. N more changes waiting to be saved will not be saved. Your ledger stays safe." During a switch's or the boot's `recover_all` it asks "Quit now? Finzytrack will finish undoing interrupted saves the next time it starts." (BL-0154) | Quit anyway | — |
 
+**A resent confirm never invites a second write** (to be built with the confirm's route, BL-0268, M3; S0155 round 1, M1b area review F3): a confirm sent again after its plan was used (a lost answer, a double click) while the workspace warms after that plan's own landed save must not be answered `WORKSPACE_NOT_READY`, whose next step says "preview it again" (BL-0271) and would invite the same change twice. Every `/api/w/{ws}` route is a `GatedRoute` (`app.api.workspace`), whose gate raises `NotReady` before the handler runs, so the route structure works against this rule: the confirm's route asks the plan store first (`app.platform.plans.PlanStore.fate`: a used plan is `PLAN_ALREADY_CONFIRMED`, an id this run never knew `PLAN_UNKNOWN`) before the edge's `WARMING` answer, or is exempt from that answer, with a test.
+
 ## 12. The decision log
 
 Every scheduling decision is a pure, versioned step, so that it can be logged without ledger content. [ADR-0064; ADR-0068 D7]
@@ -526,8 +529,10 @@ Unit tests run on macOS; the write path's real-disk tests on macOS and, in the m
 
 ## 15. Honest limits
 
-Each limit is stated with the rule it qualifies, marked **Limit (topic):**. Where each one is:
+Each limit is stated with the rule it qualifies, marked **Limit (topic):**. Where each one is (held to the body both ways by `scripts/tests/test_engine_jobs_limits.py`, S0162):
 - plugin files: §1
+- package portions: §1
+- temporary code: §1
 - no usable mirror: §2
 - same-date entries across files: §2
 - location metadata: §2
@@ -536,13 +541,13 @@ Each limit is stated with the rule it qualifies, marked **Limit (topic):**. Wher
 - a write made before a save's rebuild: §3
 - inherited lock: §5.1
 - old lock files: §5.1
+- data named `.pyc`: §5.1
 - sidecar gone: §5.2
 - stuck process: §5.2
 - job CPU: §5.2
 - Windows reach: §5.2
 - lock release on Windows: §5.2
 - Windows bytecode: §5.2
-- request size: §5.5
 - a FIFO swapped in during Beancount's own load: §7
 - records unreadable: §6.1
 - preview: §6.1
@@ -554,6 +559,7 @@ Each limit is stated with the rule it qualifies, marked **Limit (topic):**. Wher
 - read-back: §6.1
 - speed: §6.1
 - app folder: §6.1
+- by path: §6.1
 - full sync refused: §6.2
 - Linux sync: §6.2
 - Windows durability: §6.2
@@ -588,8 +594,15 @@ Each limit is stated with the rule it qualifies, marked **Limit (topic):**. Wher
 - twin server disks: §6.3
 - a share's file ID: §6.3
 - Windows exact names: §6.3
+- a mutator's request: §6.3
+- offline, not ready: §6.3
+- Windows privacy during a save: §6.3
+- Windows backups and journals: §6.3
 - unsafe app folder: §6.8
 - network share durability: §6.8
+- in use, the race: §6.8
+- in use: §6.8
+- a share's refused replaces: §6.8
 - journal link: §8.1
 - unreadable entry: §8.1
 - foreign empty folder: §8.1
@@ -598,6 +611,7 @@ Each limit is stated with the rule it qualifies, marked **Limit (topic):**. Wher
 - keep read-only: §8.1
 - kept copies: §8.1
 - later temps: §8.1
+- the skip's key: §8.1
 - Finder file: §8.2
 - legacy lock: §8.2
 - no manifest: §8.2
@@ -609,6 +623,10 @@ Each limit is stated with the rule it qualifies, marked **Limit (topic):**. Wher
 - legacy root: §8.2
 - undone change: §8.2
 - copy time: §8.2
+- the name's folding, Windows: §8.2
+- backslashes in a path, Windows: §8.2
+- plugin objects: §8.2
+- encrypted during a copy: §8.2
 - quit exposure: §9.3
 - closing the app: §9.3
 - old glibc: §14

@@ -29,8 +29,8 @@ Limits (S0117 round 1): a plan whose confirm waits in the queue can be let go by
 S0120 the byte budget) or by its TTL before its job starts; that confirm then writes nothing and answers `PLAN_EXPIRED`
 (red team RT-F3). The TTL follows the injected wall clock: a clock set back before a plan was made expires it; under the
 test-only `--frozen-clock` no plan expires by age, only by count (red team RT-F5, verifier V1). A used id let go after
-`max_used` later confirms, or from an earlier run of the app, reads as `PLAN_EXPIRED`, whose words say only that this
-request saved nothing.
+`max_used` later confirms, or from an earlier run of the app, is `unknown` to `fate` and answered `PLAN_UNKNOWN`, whose
+words ask the user to check the ledger first (S0117 round 3; BL-0268).
 """
 
 from __future__ import annotations
