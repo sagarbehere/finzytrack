@@ -3,7 +3,9 @@
 The checkpoint after M1b, before any write capability ships (ADR-0046; roadmap §4 G1). This record holds the evidence and, below, the owner's decision. G1 ran on 2026-11-28 from M1b's exit (d3022ac4): slices S0163 to S0165 (G1), S0166 (M2's first, beside it).
 
 ## Decision
-- Pending: the owner's answer (go; go with named changes; no-go).
+- **Go** (owner, 2026-11-28, in session). First asked as go / go with named changes / no-go, the owner questioned the projection: "Are you saying it could take up to mid-October 2027 for v0.4 to reach feature parity with the legacy series that users and I are already using? It's end-Nov now. You are saying it'll take 11 more months to finish? That's nuts!" The coordinator laid out what drives it and the levers (a smaller v0.4.0, macOS first, a lighter process off the write path, two writers, no-go), and checked the legacy's history at the owner's request (about 4 active months to v0.1.1, about 8.5 to v0.3.0; commits by month on `main`). The owner: "I think that subsequent milestones might move a lot faster. My gut feeling is: Let's do a go here, but have a gate at the end of every milestone. Right now, I'm inclined to say Go, without trusting your word that it'll take 10 more months to finish v0.4." Then: "Go + pace gate (Recommended)".
+- Recorded as ADR-0046's amendment of 2026-11-28; the pace gate is in roadmap §3.2 from M2's exit on. The projection below (criterion 6) stands as an upper bound extrapolated from M0 and M1, not a forecast.
+- The levers named in the discussion (a smaller v0.4.0, macOS first, a lighter process for read-only work, two writers) are not adopted; each pace gate can bring them back.
 
 ## The criteria (ADR-0046)
 

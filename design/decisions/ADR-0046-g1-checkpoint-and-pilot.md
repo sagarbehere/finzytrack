@@ -27,6 +27,13 @@ The rebuild needs a kill/continue point after the write core. The first G1 crite
 - **Pilot:** the per-feature **"intended change" table** (the per-mutator intent table M1 needs anyway), run under the full process. After 3–5 slices the rubric and gates are adjusted and the result is recorded as an ADR; then a rough slice count for M1–M12 is estimated.
 - **M1 is split:** **M1a** "read core + workspace-format core" (mirror, overlay load and `beancount_port`, platform ports, the first domain types, the workspace-format core with the extended fingerprint and persisted `ledger_version`, the API skeleton) and **M1b** "write contract" (`ledger/core`, the contract, writer, journal, promotion machinery, the TLA+ and Hypothesis models, the oracle classifiers). M2 (read-only shell) may start after M1a, in parallel with M1b.
 
+## Amendment of 2026-11-28: G1's decision, and a pace gate at every milestone exit
+
+(owner, 2026-11-28, in session, on the evidence pack `design/journal/G1-evidence.md`)
+- **G1: Go.** The owner, after reading the projection (v0.4.0 between mid-July and mid-October 2027): "Let's do a go here, but have a gate at the end of every milestone. Right now, I'm inclined to say Go, without trusting your word that it'll take 10 more months to finish v0.4." Then, choosing between "Go + pace gate (Recommended)" and "Plain Go": "Go + pace gate (Recommended)".
+- **A pace gate at every milestone exit from M2 on** (roadmap §3.2): the exit record states the milestone's slices and days against ADR-0057's estimate, redoes the projection to v0.4.0 from the milestones since G1 only (M0 and M1 held the one-time foundations), and the owner chooses continue, adjust (scope, platforms, process) or stop. G2 stays as decided (a confidence checkpoint after M4).
+- **The G1 projection is an upper bound, not a forecast:** it extrapolated M0 and M1, which held the one-time work (gates, harness, engine process, oracles, formal models, the Windows and OneDrive file systems). For scale, the legacy's history: about 4 active months to v0.1.1 (2026-06-02), about 8.5 to v0.3.0 (2026-10-23).
+
 ## Alternatives considered and rejected
 
 - **Keep the original "no failures" criteria.** Rejected: they cannot fail and do not measure pace.
