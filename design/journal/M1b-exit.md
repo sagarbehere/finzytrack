@@ -65,7 +65,7 @@ A fresh reviewer at head 78f105fa (PROCESS.md §4, altitude 2). **Verdict: no Hi
 
 ## T2 at the exit (2026-11-28)
 - **Packaged builds on three OSes** (`packaged.yml`, the run of 2026-11-28 at 78f105fa): **success**. macOS, Windows and Linux built, installed and smoke-tested strictly; Linux's AppImage now strict too (S0153, BL-0263), the `.deb`'s must-not-pass runs refused.
-- **Cargo dates** (`nightly.yml`'s `cargo-age`): `shell/src-tauri/Cargo.lock` is unchanged since M1a's exit (23b8b5d6), whose run re-read every date; no new crate to verify. `nightly.yml` itself cannot be started by hand: GitHub runs a manual workflow only when it exists on the default branch, and it exists only on `next` (agents never push `main`); its two jobs were covered as above.
+- **Cargo dates** (`nightly.yml`'s `cargo-age`): `shell/src-tauri/Cargo.lock` is unchanged since M1a's exit (23b8b5d6), whose run re-read every date; no new crate to verify. `nightly.yml` itself cannot be started by hand: GitHub runs a manual workflow only when it exists on the default branch, and it exists only on `next` (agents never push `main`); its two jobs were covered as above. **Corrected at G1 (2026-11-28):** that was wrong: `main`'s dispatcher `run-next-ci` runs `nightly.yml` from `next` with `ci.yml` (it last ran at M1a's exit); G1's full runs used it (`G1-evidence.md`).
 - **Performance and memory against the baseline:** no CI job exists yet (roadmap §6: "the other T2 items arrive with the code they check"); the write path's costs are measured by the measurement scripts, each run in the suites on every OS (`measure_save.py`, `measure_write.py`, `measure_protocol.py`).
 
 ## Reflection and process metrics
