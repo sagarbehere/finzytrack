@@ -490,7 +490,7 @@ Execution rule: every `async def` handler only `await`s. Sync work runs on a wor
 
 ## 3. Frontend — Vue 3 (ADR-0053)
 
-**Framework: Vue 3 (ADR-0053).** The frontend is a Vue 3 + Vite single-page app (no Nuxt, no server rendering), in TypeScript with `<script setup>` single-file components. Spike S13 decided it on 2026-10-25 under ADR-0006's rule: in WebKit, timing was a tie and the Vue prototype's webview process used less memory (the other one used 22–64% more by RSS). The stack is the one ADR-0006 named for Vue and ADR-0053 adopted: vue-router, TanStack Vue Query / Table / Virtual, TanStack Form, shadcn-vue on Reka UI, `@lucide/vue`, `vue-sonner`, `@xstate/vue`, `@ai-sdk/vue`, `eslint-plugin-vue` + `eslint-plugin-vuejs-accessibility`, and `vue-tsc` as the type gate. Logic sits in domain modules, composables (Vue's `use…` functions) and machines, never in components (INV-12). Everything below except these bindings is framework-neutral. Built today: the shell (`main.ts`, `App.vue`), the lint, type and test gates, the layer map, the generated API types and the acceptance harness (M0); the data layer of S0166: `api/client.ts`, `api/errors.ts`, `api/keys.ts` with the generated `keys.gen.ts` and `errors.gen.ts`, `app/errors/` and `app/queryClient.ts`, installed by `main.ts`; the UI foundations of S0169: the theme (`app/theme.css`, Tailwind v4 with shadcn-vue's token names, light on `:root` and dark on `.dark`) with the pre-paint script inline in `index.html`, and `components/ui/` with the vendored `button` and `input`. The other folders below arrive with the slices that need them.
+**Framework: Vue 3 (ADR-0053).** The frontend is a Vue 3 + Vite single-page app (no Nuxt, no server rendering), in TypeScript with `<script setup>` single-file components. Spike S13 decided it on 2026-10-25 under ADR-0006's rule: in WebKit, timing was a tie and the Vue prototype's webview process used less memory (the other one used 22–64% more by RSS). The stack is the one ADR-0006 named for Vue and ADR-0053 adopted: vue-router, TanStack Vue Query / Table / Virtual, TanStack Form, shadcn-vue on Reka UI, `@lucide/vue`, `vue-sonner`, `@xstate/vue`, `@ai-sdk/vue`, `eslint-plugin-vue` + `eslint-plugin-vuejs-accessibility`, and `vue-tsc` as the type gate. Logic sits in domain modules, composables (Vue's `use…` functions) and machines, never in components (INV-12). Everything below except these bindings is framework-neutral. Built today: the shell (`main.ts`, `App.vue`), the lint, type and test gates, the layer map, the generated API types and the acceptance harness (M0); the data layer of S0166: `api/client.ts`, `api/errors.ts`, `api/keys.ts` with the generated `keys.gen.ts` and `errors.gen.ts`, `app/errors/` and `app/queryClient.ts`, installed by `main.ts`; the UI foundations of S0169: the theme (`app/theme.css`, Tailwind v4 with shadcn-vue's token names, light on `:root` and dark on `.dark`) with the pre-paint script inline in `index.html`, and `components/ui/` with the vendored `button` and `input`; the visual language of S0170 (`specs/visual-language.md`): `app/theme.css` as the one source of the look (colour, type, density, radius and shadow tokens; the lint `ft/no-raw-colour` refuses raw colours elsewhere), the vendored `checkbox`, `components/app/DestructiveButton.vue`, and the dev-only design gallery `app/gallery/` (mounted by `main.ts` at `/dev/gallery` under the dev server only; a production build leaves it out). The other folders below arrive with the slices that need them.
 
 ### 3.1 Structure
 
@@ -499,6 +499,7 @@ frontend/src/
   main.ts, App.vue  entry: createApp, plugins, global error handlers (§6A.2), mount
   app/              shell: router (/w/:ws/... routes, vue-router), the Vue Query plugin (queryClient.ts),
                     app-level machines (boot, workspace switch, updater), error host (errors/: presentError's sink)
+                    theme.css (the one source of the look, S0170), gallery/ (the dev-only design gallery)
   api/              the only module that talks HTTP
     generated/      openapi-typescript output (types only; never hand-edited)
     client.ts       createApi over openapi-fetch: envelope unwrap, AppError, AbortSignal, the meta.workspace_id
@@ -519,7 +520,7 @@ frontend/src/
                     (components/app may read these, ADR-0035)
   components/
     ui/             vendored shadcn-vue on Reka UI (the CLI's bytes, except the type-gate patches listed in
-                    ui/PATCHES.md; ADR-0035 amendment of 2026-11-28); prettier and two style rules are off here
+                    ui/PATCHES.md; ADR-0035 amendment of 2026-11-28); prettier, two style rules and the raw-colour rule are off here
     app/            domain primitives: AccountCombobox, CommodityCombobox, MoneyText/Cell/Input,
                     DateField/DateRangeField, ConfirmHost + useConfirm, DialogShell/SheetShell,
                     useUnsavedGuard, Field + useFieldErrors, QueryState/EmptyState/ErrorState,
@@ -1035,7 +1036,7 @@ The versions below are the newest stable releases published on or before **2026-
 | @tanstack/vue-virtual | pinned when first used (candidate 3.13.40) | |
 | @tanstack/vue-form | pinned when first used | forms with `useFieldErrors` (the `Field` primitive, ADR-0035) |
 | reka-ui | 2.11.0 | vendored shadcn-vue 2.9.0 (style new-york-v4; ADR-0035): the CLI's bytes except the recorded type-gate patches (S0169); the copies also need `cn` 0.5.2 (shadcn's class merging, which replaced clsx + tailwind-merge in the registry), `class-variance-authority` 0.7.1 (Apache-2.0, pending legal advice) and `@vueuse/core` 14.4.0 (the line reka-ui itself resolves, so one copy) |
-| tailwindcss + @tailwindcss/vite | 4.3.3 | dev dependencies (build time); the theme is `src/app/theme.css` (S0169) |
+| tailwindcss + @tailwindcss/vite | 4.3.3 | dev dependencies (build time); the theme is `src/app/theme.css` (S0169), the one source of the look (S0170, ADR-0035 amendment) |
 | @lucide/vue | 1.55.0 | ADR-0035; the one icon set (lint refuses `lucide-vue-next` and `@heroicons/*`, S0169) |
 | vue-sonner | pinned when first used (candidate 2.0.9) | toasts outside inert regions (ADR-0035) |
 | xstate / @xstate/vue / @xstate/graph | pinned when first used (candidates 5.33.2 / 5.0.1 / 3.0.4) | §7 |

@@ -6,6 +6,7 @@ import globals from 'globals'
 import tseslint from 'typescript-eslint'
 
 import boundaries from './eslint.boundaries.js'
+import { plugin as rawColours } from './scripts/raw-colours.mjs'
 
 const today = 'INV-07: no system "today" or clock; use src/domain dates'
 const floatParse = 'INV-06: money is never parsed as a float; parse it through src/domain'
@@ -366,6 +367,10 @@ export default tseslint.config(
       ],
       // The same bans inside Vue templates, where display formatting happens.
       'vue/no-restricted-syntax': ['error', ...templateBans],
+      // INV-18 (S0170): the vendored checkbox (a Reka button with role="checkbox") is a form control, so a label
+      // around it with a matching `for` passes; the rule's own requirement (nesting and `for`) is unchanged. The
+      // vendored Input already counts, by its name.
+      'vuejs-accessibility/label-has-for': ['error', { controlComponents: ['Checkbox'] }],
     },
   },
   {
@@ -415,6 +420,15 @@ export default tseslint.config(
     // shadcn-vue's names and optional props; only these two style rules are off there (tests/unit/gates.test.ts).
     files: ['src/components/ui/**'],
     rules: { 'vue/multi-word-component-names': 'off', 'vue/require-default-prop': 'off' },
+  },
+  {
+    // S0170 (ADR-0035 amendment of 2026-11-28): the look has one source, src/app/theme.css; elsewhere in src a raw
+    // colour or a Tailwind palette class is refused (scripts/raw-colours.mjs, with its stated limits). The vendored
+    // copies are the CLI's bytes and keep shadcn-vue's own classes (`text-white` on the destructive button).
+    files: srcFiles,
+    ignores: ['src/components/ui/**'],
+    plugins: { ft: rawColours },
+    rules: { 'ft/no-raw-colour': 'error' },
   },
   {
     // L2-03 (S0166): the home of the one QueryClient.

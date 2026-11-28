@@ -131,6 +131,9 @@ Not repeated per milestone (review:27 §0.5): every slice met the definition of 
 
 **Lanes** (ADR-0044): the full process for anything that writes the ledger; finance and security red teams once per area unless a change alters what a number means or adds an input; a light lane for read-only screens and catalogue entries, whose user docs are written at milestone end. Cross-cutting lens reviews run at G1, G2, after M8 and at M11 only, each with a spot audit by a fresh context and the seeded-defect catch rate (ADR-0044, ADR-0045); one whole-system review runs at M11.
 
+### 3.3 A design step opens every vertical with UI
+(Owner, 2026-11-28: "I like your suggestions."; ADR-0035 amendment of 2026-11-28; S0170.) The look is fixed (`visual-language.md`); what each screen shows is decided per vertical. The vertical's brief starts with a design step: the owner sees two versions of its screens on a canvas, **faithful** (v0.3's information in the new look) and **re-imagined** (the same capabilities, presented anew, ADR-0043), and picks per screen. Restyling changes presentation only: no information element v0.3 shows is dropped without the owner ("I'll need all the information elements"). The pick is quoted in the vertical's journal.
+
 ## 4. The milestones
 
 Each entry: what is built, the exit beyond §3.2, and the dogfood rule. Detail per milestone: review:27 §1–§13.

@@ -1,7 +1,9 @@
 // @vitest-environment node
-// Theme tokens (L9-11, ADR-0035; INV-18): one set of CSS variables in src/app/theme.css, defined for light (`:root`)
-// and dark (`.dark`). Text on its surface reaches 4.5:1 and a field's border and the focus ring (as drawn) 3:1 against the page
-// (WCAG 2.2 AA, 1.4.3 and 1.4.11), in both modes. Fields are 16 px on touch screens, so iOS does not zoom on focus
+// Theme tokens (L9-11, L9-12, ADR-0035 and its amendment of 2026-11-28; INV-18; S0170): src/app/theme.css is the one
+// source of the look (design/specs/visual-language.md), defined for light (`:root`) and dark (`.dark`). Text reaches
+// 4.5:1 on every surface the look draws it on, and a field's border and the focus ring (as drawn) 3:1 (WCAG 2.2 AA,
+// 1.4.3 and 1.4.11), in both modes. The type, density, radius and shadow tokens exist, Inter first with system-ui
+// behind it. Fields are 16 px on touch screens, so iOS does not zoom on focus
 // (L9-16): an unlayered rule, which beats Tailwind's layered utilities such as the vendored input's `md:text-sm`.
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
@@ -65,6 +67,13 @@ function tokens(css: string, mode: Mode): Map<string, string> {
 
 type Rgb = [number, number, number] // gamma-encoded sRGB, 0..1
 
+/** A token's colour: `#rrggbb` (the board's values, S0170) or `oklch(L C H)`, as gamma-encoded sRGB. */
+function toSrgb(value: string): Rgb {
+  const hex = /^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(value)
+  if (hex) return [1, 2, 3].map((i) => parseInt(hex[i] ?? '', 16) / 255) as Rgb
+  return oklchToSrgb(value)
+}
+
 /** CSS `oklch(L C H)` (L as a number or a percentage) to gamma-encoded sRGB, clamped to the gamut. */
 function oklchToSrgb(value: string): Rgb {
   const m = /^oklch\(\s*([\d.]+)(%?)\s+([\d.]+)\s+([\d.]+)\s*\)$/.exec(value)
@@ -106,7 +115,10 @@ function over(top: Rgb, alpha: number, bottom: Rgb): Rgb {
 
 const WHITE: Rgb = [1, 1, 1]
 
-/** The tokens the vendored components and our pages use (shadcn-vue's names). */
+/** The badge tones, one per Beancount account type (the type comes from the backend, never from a name). */
+const BADGES = ['assets', 'liabilities', 'equity', 'income', 'expenses'] as const
+
+/** The colour tokens: shadcn-vue's names (the vendored components draw with them), its sidebar names, and ours. */
 const TOKENS = [
   'background',
   'foreground',
@@ -126,10 +138,19 @@ const TOKENS = [
   'border',
   'input',
   'ring',
+  'sidebar',
+  'sidebar-foreground',
+  'sidebar-accent',
+  'sidebar-accent-foreground',
+  'sidebar-border',
+  'hairline',
+  'card-outline',
+  'link-underline',
+  ...BADGES.flatMap((b) => [`badge-${b}`, `badge-${b}-foreground`] as const),
 ] as const
 type Token = (typeof TOKENS)[number]
 
-/** A colour as the page shows it: a token, white, or a token drawn at some alpha over the page background. */
+/** A colour as the page shows it: a token, white, or a token drawn at some alpha over another (the page by default). */
 type Paint = Token | 'white' | { token: Token; alpha: number; over?: Token }
 
 interface Pair {
@@ -140,39 +161,76 @@ interface Pair {
   modes?: Mode[]
 }
 
-// Each pair is a place the components draw one colour on another; the alphas are the vendored classes'
-// (`dark:bg-input/30` on fields and outline buttons, `dark:bg-destructive/60` on the destructive button).
+/** The surfaces text and controls sit on: the page, a card (tables, the top bar), the sidebar, a muted track. */
+const SURFACES = [
+  ['the page', 'background'],
+  ['a card', 'card'],
+  ['the sidebar', 'sidebar'],
+  ['a muted surface', 'muted'],
+] as const
+
+// Each pair is a place the look draws one colour on another (design/specs/visual-language.md); the alphas are the
+// classes' (`dark:bg-input/30` on fields and outline buttons, `dark:bg-destructive/60` on the destructive button,
+// `ring-ring/50` and `outline-ring/50` for focus).
 const PAIRS: Pair[] = [
   { name: 'text on the page', fg: 'foreground', bg: 'background', min: 4.5 },
   { name: 'text on a card', fg: 'card-foreground', bg: 'card', min: 4.5 },
   { name: 'text on a popover', fg: 'popover-foreground', bg: 'popover', min: 4.5 },
+  { name: 'text on a muted surface', fg: 'foreground', bg: 'muted', min: 4.5 },
+  { name: 'sidebar text', fg: 'sidebar-foreground', bg: 'sidebar', min: 4.5 },
+  { name: 'active sidebar item', fg: 'sidebar-accent-foreground', bg: 'sidebar-accent', min: 4.5 },
   { name: 'primary button text', fg: 'primary-foreground', bg: 'primary', min: 4.5 },
-  { name: 'link text (primary on the page)', fg: 'primary', bg: 'background', min: 4.5 },
+  { name: 'link text on the page', fg: 'primary', bg: 'background', min: 4.5 },
+  { name: 'link text on a card', fg: 'primary', bg: 'card', min: 4.5 },
   { name: 'secondary button text', fg: 'secondary-foreground', bg: 'secondary', min: 4.5 },
-  { name: 'helper text on the page', fg: 'muted-foreground', bg: 'background', min: 4.5 },
-  { name: 'helper text on a card', fg: 'muted-foreground', bg: 'card', min: 4.5 },
-  { name: 'helper text on a muted surface', fg: 'muted-foreground', bg: 'muted', min: 4.5 },
   { name: 'text on a hovered item', fg: 'accent-foreground', bg: 'accent', min: 4.5 },
+  // L9-12: helper text on every surface it is drawn on (the top bar's search sits on --secondary).
+  ...SURFACES.map(([where, bg]): Pair => ({ name: `helper text on ${where}`, fg: 'muted-foreground', bg, min: 4.5 })),
+  { name: 'helper text on a secondary surface', fg: 'muted-foreground', bg: 'secondary', min: 4.5 },
   { name: 'error text on the page', fg: 'destructive', bg: 'background', min: 4.5 },
+  { name: 'error text on a card', fg: 'destructive', bg: 'card', min: 4.5 },
   { name: 'destructive button text', fg: 'white', bg: 'destructive', min: 4.5, modes: ['light'] },
-  { name: 'destructive button text', fg: 'white', bg: { token: 'destructive', alpha: 0.6 }, min: 4.5, modes: ['dark'] },
-  { name: 'field text', fg: 'foreground', bg: { token: 'input', alpha: 0.3 }, min: 4.5, modes: ['dark'] },
-  { name: 'placeholder text', fg: 'muted-foreground', bg: { token: 'input', alpha: 0.3 }, min: 4.5, modes: ['dark'] },
-  { name: 'field border', fg: 'input', bg: 'background', min: 3 },
+  ...(['background', 'card'] as const).map((over): Pair => ({
+    name: `destructive button text over ${over}`,
+    fg: 'white',
+    bg: { token: 'destructive', alpha: 0.6, over },
+    min: 4.5,
+    modes: ['dark'],
+  })),
+  ...(['background', 'card'] as const).flatMap((over): Pair[] => [
+    {
+      name: `field text over ${over}`,
+      fg: 'foreground',
+      bg: { token: 'input', alpha: 0.3, over },
+      min: 4.5,
+      modes: ['dark'],
+    },
+    {
+      name: `placeholder text over ${over}`,
+      fg: 'muted-foreground',
+      bg: { token: 'input', alpha: 0.3, over },
+      min: 4.5,
+      modes: ['dark'],
+    },
+  ]),
+  ...BADGES.map((b): Pair => ({ name: `${b} badge`, fg: `badge-${b}-foreground`, bg: `badge-${b}`, min: 4.5 })),
+  { name: 'field border on the page', fg: 'input', bg: 'background', min: 3 },
+  { name: 'field border on a card', fg: 'input', bg: 'card', min: 3 },
   { name: 'focused field border', fg: 'ring', bg: 'background', min: 3 },
-  // The focus ring as drawn (verifier round 1 F1): `focus-visible:ring-ring/50` on the button and input, and
-  // `outline-ring/50` on everything (our base layer), so --ring at 50% over the surface it sits on.
-  { name: 'focus ring as drawn', fg: { token: 'ring', alpha: 0.5 }, bg: 'background', min: 3 },
-  { name: 'focus ring as drawn on a card', fg: { token: 'ring', alpha: 0.5, over: 'card' }, bg: 'card', min: 3 },
-  // Stated limit (backlog BL-0325): the vendored destructive button's ring is `ring-destructive/20` (light) and
-  // `/40` (dark); at 20% no colour reaches 3:1 over white (black gives 1.6:1), so no token can fix it. Owner,
-  // 2026-11-28: "App-level override (Recommended)": our own destructive button in components/app passes a stronger
-  // ring class (`cn` lets the caller's class win), built and tested with the confirm dialog. A field's invalid ring
-  // is drawn beside its `border-destructive` edge at full colour.
+  // The focus ring as drawn (S0169 verifier round 1 F1): `focus-visible:ring-ring/50` on the controls and
+  // `outline-ring/50` on everything (our base layer), so --ring at 50% over the surface it sits on. The destructive
+  // button draws the same ring (BL-0325: components/app/DestructiveButton.vue overrides the vendored
+  // `ring-destructive/20`, which no colour can bring to 3:1; tests/unit/components/app.test.ts).
+  ...SURFACES.map(([where, bg]): Pair => ({
+    name: `focus ring as drawn on ${where}`,
+    fg: { token: 'ring', alpha: 0.5, over: bg },
+    bg,
+    min: 3,
+  })),
 ]
 
 function paint(p: Paint, t: Map<string, string>): Rgb {
-  const of = (token: Token) => oklchToSrgb(t.get(`--${token}`) ?? 'missing')
+  const of = (token: Token) => toSrgb(t.get(`--${token}`) ?? 'missing')
   if (p === 'white') return WHITE
   if (typeof p === 'string') return of(p)
   return over(of(p.token), p.alpha, of(p.over ?? 'background'))
@@ -233,27 +291,104 @@ describe('[L9-11][INV-18] theme tokens', () => {
   })
 
   it('refuses helper text under 4.5:1 (gray-400 on white)', () => {
-    const planted = themeCss.replace(/(:root\s*\{[^}]*?--muted-foreground:)[^;]*;/, '$1 oklch(70.7% 0.022 261.325);')
+    const planted = themeCss.replace(/(:root\s*\{[^}]*?--muted-foreground:)[^;]*;/, '$1 #9ca3af;')
     expect(tokenProblems(planted).some((p) => p.startsWith('light: helper text on the page'))).toBe(true)
   })
 
-  it('refuses helper text just under 4.5:1 (gray-500 on gray-100, 4.4:1)', () => {
-    const planted = themeCss.replace(/(:root\s*\{[^}]*?--muted-foreground:)[^;]*;/, '$1 oklch(55.1% 0.027 264.364);')
-    expect(tokenProblems(planted).filter((p) => p.startsWith('light: '))).toEqual([
-      expect.stringMatching(/^light: helper text on a muted surface 4\.\d+ < 4\.5$/),
-    ])
+  it('refuses helper text just under 4.5:1 on a muted surface while it passes on the page', () => {
+    // #6f6f6f is about 4.45:1 on the muted surface and 4.7:1 on the page.
+    const planted = themeCss.replace(/(:root\s*\{[^}]*?--muted-foreground:)[^;]*;/, '$1 #6f6f6f;')
+    const light = tokenProblems(planted).filter((p) => p.startsWith('light: '))
+    expect(light).toContainEqual(expect.stringMatching(/^light: helper text on a muted surface 4\.\d+ < 4\.5$/))
+    expect(light.some((p) => p.startsWith('light: helper text on the page'))).toBe(false)
   })
 
-  it('refuses a field border under 3:1 (gray-200 on white)', () => {
-    const planted = themeCss.replace(/(:root\s*\{[^}]*?--input:)[^;]*;/, '$1 oklch(92.8% 0.006 264.531);')
-    expect(tokenProblems(planted).some((p) => p.startsWith('light: field border'))).toBe(true)
+  it("refuses the board's own field border (#9aa1ad, 2.4:1 on the page)", () => {
+    const planted = themeCss.replace(/(:root\s*\{[^}]*?--input:)[^;]*;/, '$1 #9aa1ad;')
+    expect(tokenProblems(planted).some((p) => p.startsWith('light: field border on the page'))).toBe(true)
   })
 
-  it('computes known contrasts (black on white 21:1, white on white 1:1)', () => {
+  it("refuses the board's dark field border (#596075, 2.8:1 on a card)", () => {
+    const planted = themeCss.replace(/(\.dark\s*\{[^}]*?--input:)[^;]*;/, '$1 #596075;')
+    expect(tokenProblems(planted)).toContainEqual(expect.stringMatching(/^dark: field border on a card 2\.\d+ < 3$/))
+  })
+
+  it('refuses a badge whose text is under 4.5:1 on its tone', () => {
+    const planted = themeCss.replace(/(:root\s*\{[^}]*?--badge-assets-foreground:)[^;]*;/, '$1 #6fbf8f;')
+    expect(tokenProblems(planted)).toContainEqual(expect.stringMatching(/^light: assets badge \d\.\d+ < 4\.5$/))
+  })
+
+  it('refuses a focus ring that is too faint on the sidebar', () => {
+    const planted = themeCss.replace(/(:root\s*\{[^}]*?--ring:)[^;]*;/, '$1 #4338ca;')
+    expect(tokenProblems(planted)).toContainEqual(expect.stringMatching(/^light: focus ring as drawn on the sidebar/))
+  })
+
+  it('computes known contrasts (black on white 21:1, white on white 1:1) @regression-guard', () => {
+    expect(contrast(toSrgb('#000000'), WHITE)).toBeCloseTo(21, 1)
+    expect(contrast(toSrgb('#6b7280'), WHITE)).toBeCloseTo(4.83, 1)
     expect(contrast(oklchToSrgb('oklch(0 0 0)'), WHITE)).toBeCloseTo(21, 1)
     expect(contrast(oklchToSrgb('oklch(1 0 0)'), WHITE)).toBeCloseTo(1, 3)
     // Tailwind's gray-500 (#6b7280) on white is 4.83:1.
     expect(contrast(oklchToSrgb('oklch(55.1% 0.027 264.364)'), WHITE)).toBeCloseTo(4.83, 1)
+  })
+})
+
+/** The declarations of every top-level `@theme` block (Tailwind's theme variables). */
+function themeVariables(css: string): Map<string, string> {
+  const out = new Map<string, string>()
+  for (const block of topLevelBlocks(css).filter((b) => /^@theme\b/.test(b.prelude)))
+    for (const [k, v] of declarations(block.body)) out.set(k, v)
+  return out
+}
+
+describe('[S0170] type, density, radius and shadow tokens (design/specs/visual-language.md)', () => {
+  const vars = themeVariables(themeCss)
+  const root = tokens(themeCss, 'light')
+
+  it('sets Inter first and falls back to the system font', () => {
+    const stack = (vars.get('--font-sans') ?? '').split(',').map((f) => f.trim().replace(/^['"]|['"]$/g, ''))
+    expect(stack[0]).toBe('Inter Variable')
+    expect(stack).toContain('Inter')
+    expect(stack).toContain('system-ui')
+    expect(stack.at(-1)).toBe('sans-serif')
+  })
+
+  it('holds density comfortable as on the board (owner, 2026-11-28: "Density comfortable")', () => {
+    expect(Object.fromEntries([...root].filter(([k]) => k.startsWith('--density-')))).toEqual({
+      '--density-text': '15px',
+      '--density-table-text': '14px',
+      '--density-page-x': '32px',
+      '--density-page-y': '28px',
+      '--density-gap': '20px',
+      '--density-cell-y': '11px',
+    })
+  })
+
+  it('maps every colour token and the type, density, radius and shadow tokens into Tailwind', () => {
+    const names = [
+      '--spacing-page-x',
+      '--spacing-page-y',
+      '--spacing-section',
+      '--spacing-cell-y',
+      '--text-body',
+      '--text-table',
+      '--text-table-head',
+      '--text-caption',
+      '--text-badge',
+      '--text-page-title',
+      '--text-brand',
+      '--tracking-title',
+      '--radius-md',
+      '--radius-xl',
+      '--shadow-card',
+      '--shadow-segment',
+      ...TOKENS.map((t) => `--color-${t}`),
+    ]
+    expect(names.filter((name) => !vars.has(name))).toEqual([])
+  })
+
+  it("draws the card's outline with its token (a faint outline, not a border)", () => {
+    expect(vars.get('--shadow-card')).toMatch(/^0 0 0 1px var\(--card-outline\)/)
   })
 })
 

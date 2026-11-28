@@ -2,7 +2,7 @@
 
 This record decides the UI component layers, the theme, accessibility rules and lint guards.
 
-- **Status:** Accepted. Amended 2026-10-29 (Vue 3) and 2026-11-28 (recorded type-gate patches in vendored copies).
+- **Status:** Accepted. Amended 2026-10-29 (Vue 3), 2026-11-28 (recorded type-gate patches in vendored copies) and 2026-11-28 (the look: one theme file, no user theming; S0170).
 - **Date:** 2026-10-24
 - **Deciders:** owner
 - **Area:** frontend, UI, accessibility
@@ -52,6 +52,16 @@ Owner, 2026-11-28, in session: "Patch + record (Recommended)", on `design/inbox/
 - **Replaces "unedited copies"** with: copies are byte for byte what the shadcn-vue CLI writes, except the patches listed in `src/components/ui/PATCHES.md`. A patch exists only to make a copy pass the type gate, keeps the copy's behaviour, and is re-applied whenever the component is copied again. The first one: the input's `useVModel` call passes `defaultValue` only when it is defined, since `exactOptionalPropertyTypes` refuses an option present with the value `undefined`.
 - **Gate scoping for `src/components/ui/` only:** prettier skips it, and ESLint turns off `vue/multi-word-component-names` and `vue/require-default-prop` there (shadcn-vue names its components `Button`, `Input` and leaves optional props without defaults). Every other rule stays on there, type-checked, accessibility and layer rules included; `tests/unit/gates.test.ts` pins that only those two rules differ.
 - The `data-*` attributes the copies set (`data-slot`, `data-variant`, `data-size`) are declared in our own type file (`src/app/vendored-ui.d.ts`), not by a patch.
+
+## Amendment (2026-11-28): the look, one theme file, no user theming
+
+Owner, 2026-11-28, in session, on a design canvas (S0170; the words in full in `design/journal/S0170-design-foundations.md`): "We can take a new direction. We don't need to adhere to v0.3's look"; "the v0.3 1 Refined's sidebar and top bar are to my liking. They also match the existing v0.3 that I like. I like the table of v0.3 3 over v0.3 1's table."; "Yes, Balance links should be neutral, I think. Density comfortable. We want full support for Dark mode from Day 1"; on theming: "I don't think I or other users will spend time changing the theme.. it's a finance app after all, for serious users", and on the recommendation below: "Yes, take that into S0170's brief".
+- **Replaces "Today's indigo/gray look is kept"** with: the look is the owner's chosen board ("v0.3 · 4 Synthesis": cool slate surfaces, an indigo accent, v0.3's sidebar and top bar refined, sentence-case tables in a faintly outlined card, neutral balance links), written down in `design/specs/visual-language.md`. Its values move only where WCAG 2.2 AA needs more (INV-18; the spec's §14).
+- **One theme file:** `frontend/src/app/theme.css` is the only place a colour, size, radius or shadow value is written. Components use token names only; a lint rule (`ft/no-raw-colour`, `frontend/scripts/raw-colours.mjs`) refuses raw colours, Tailwind palette classes and faded text tokens anywhere else under `src`. The vendored copies in `components/ui` are exempt from that one rule, as from the two style rules: they are the CLI's bytes and keep shadcn-vue's own classes (`text-white` on the destructive button).
+- **No user theming:** light, dark or system, nothing else; no theme files and no theme editor. Dashboard colour themes (CAP-DASH-THEMES) colour charts only.
+- **Visual language and information design are separate** (owner: "I like your suggestions."): restyling changes presentation only, and no information element v0.3 shows is dropped without the owner ("No, that isn't good.. because I'll need all the information elements that are now missing in your update"). Each vertical's brief starts with a design step: the owner sees "faithful" and "re-imagined" (ADR-0043) versions on a canvas and picks per screen (roadmap §3.3).
+- **Rejected along the way** (owner, same session): option C ("it looks a bit like a toy (not serious) look"); "v0.3 2" ("it looks .. just cluttered.."); a cream background with indigo ("I think the Indigo accents go well with the bluish/grayish/slate kind of background colors"); a restyle that dropped columns.
+- The rest of this ADR stands: two layers, safe focus, pickers, the bans, the accessibility target, and the token contrast test, which now covers every pair the look draws.
 
 ## References
 

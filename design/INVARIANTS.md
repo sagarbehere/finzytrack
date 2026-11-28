@@ -119,7 +119,7 @@ Origin: accepted by the owner as a starting point on 2026-10-24 (review:20 §2),
 ### INV-18: Accessibility
 - **Rule:** Accessibility meets WCAG 2.2 AA.
 - **Why:** The app must work with a keyboard and a screen reader (review:17).
-- **Enforced by:** planned: eslint-plugin-vuejs-accessibility (ADR-0053; its recommended rules already run in `frontend/eslint.config.js`, S0009); axe in acceptance tests; a token contrast test (built: `frontend/tests/unit/app/theme.test.ts`, text 4.5:1, field border and focus ring 3:1, both modes, S0169).
+- **Enforced by:** planned: eslint-plugin-vuejs-accessibility (ADR-0053; its recommended rules already run in `frontend/eslint.config.js`, S0009); axe in acceptance tests; a token contrast test (built: `frontend/tests/unit/app/theme.test.ts`, text 4.5:1, field border and focus ring 3:1, both modes, S0169; every pair the visual language draws, sidebar, badges and muted surfaces included, S0170), and the raw-colour lint, so no component draws a colour the test does not see (`ft/no-raw-colour`, S0170).
 - **Status:** pending (BL-0018, by M11)
 
 ### INV-19: Docs do not drift

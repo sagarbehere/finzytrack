@@ -1,7 +1,11 @@
-/* The theme (L9-11, ADR-0035): one set of tokens, light on :root and dark on .dark, which the pre-paint script in
-   index.html sets before the first paint. The names are shadcn-vue's, so the vendored components (components/ui)
-   draw with them; the colours are Tailwind's gray and indigo (today's look), each pair checked for contrast in both
-   modes by tests/unit/app/theme.test.ts (INV-18). */
+/* The theme: the one place the look is defined (ADR-0035 and its amendment of 2026-11-28; the visual language,
+   design/specs/visual-language.md; S0170). Components use these tokens by name only; the lint refuses raw colours and
+   Tailwind palette classes anywhere else in src (scripts/raw-colours.mjs). Light is on :root and dark on .dark, which
+   the pre-paint script in index.html sets before the first paint (L9-11). The names are shadcn-vue's where it has one,
+   so the vendored components (components/ui) draw with them; the values are the owner's chosen board ("v0.3 · 4
+   Synthesis": cool slate surfaces, an indigo accent), except where WCAG needs more (the field border, the focus ring,
+   the destructive red). Every pair the look draws is checked for contrast in both modes by
+   tests/unit/app/theme.test.ts (INV-18). */
 @import 'tailwindcss';
 
 /* `dark:` in the vendored classes means "inside .dark". */
@@ -10,53 +14,133 @@
 :root {
   color-scheme: light;
   --radius: 0.5rem;
-  --background: oklch(1 0 0);
-  --foreground: oklch(21% 0.034 264.665); /* gray-900 */
-  --card: oklch(1 0 0);
-  --card-foreground: oklch(21% 0.034 264.665);
-  --popover: oklch(1 0 0);
-  --popover-foreground: oklch(21% 0.034 264.665);
-  --primary: oklch(51.1% 0.262 276.966); /* indigo-600 */
-  --primary-foreground: oklch(1 0 0);
-  --secondary: oklch(96.7% 0.003 264.542); /* gray-100 */
-  --secondary-foreground: oklch(21% 0.034 264.665);
-  --muted: oklch(96.7% 0.003 264.542);
-  --muted-foreground: oklch(44.6% 0.03 256.802); /* gray-600: helper text at AA on white and on gray-100 */
-  --accent: oklch(96.7% 0.003 264.542);
-  --accent-foreground: oklch(21% 0.034 264.665);
-  --destructive: oklch(57.7% 0.245 27.325); /* red-600 */
-  --border: oklch(92.8% 0.006 264.531); /* gray-200: separators, decorative */
-  --input: oklch(55.1% 0.027 264.364); /* gray-500: a field's edge at 3:1 */
-  --ring: oklch(25.7% 0.09 281.288); /* indigo-950: the ring is drawn at 50% (ring-ring/50), 3.2:1 as drawn */
+
+  /* Surfaces and text. */
+  --background: #f6f7f9; /* the page */
+  --foreground: #111827;
+  --card: #ffffff; /* tables, the top bar, the active segment */
+  --card-foreground: #111827;
+  --popover: #ffffff;
+  --popover-foreground: #111827;
+  --primary: #4338ca; /* the indigo accent: primary buttons, links, a hovered balance link */
+  --primary-foreground: #ffffff;
+  --secondary: #eff1f5; /* the soft surface: the top bar's search */
+  --secondary-foreground: #111827;
+  --muted: #eff1f5; /* the segmented control's track */
+  --muted-foreground: #5b6372; /* helper text, table headers, inactive segments: 5.3:1 or more on every surface */
+  --accent: #eff1f5; /* a hovered item */
+  --accent-foreground: #111827;
+  --destructive: #b91c1c; /* red-700: error text 6:1 on the page (red-600 was 4.51:1) */
+  --border: #e5e7eb; /* separators: the sidebar's edge, the top bar's edge */
+  --input: #7d8492; /* a field's edge: 3.5:1 on the page (the board's #9aa1ad was 2.4:1) */
+  --ring: #1e1b4b; /* the focus ring, drawn at 50% (ring-ring/50): 3.1:1 or more on every surface */
+
+  /* The sidebar (shadcn-vue's sidebar names). */
+  --sidebar: #ffffff;
+  --sidebar-foreground: #111827;
+  --sidebar-accent: #eef0ff; /* the current page's item */
+  --sidebar-accent-foreground: #3730a3;
+  --sidebar-border: #e5e7eb;
+
+  /* Tables and links: decorative lines, no contrast duty (the card's edge, a row's separator, a link's dots). */
+  --hairline: #eef0f3;
+  --card-outline: #e4e7ec;
+  --link-underline: #a7adb8;
+
+  /* Account-type badges: one tone per Beancount account type, text at 5.9:1 or more. */
+  --badge-assets: #e9f5ee;
+  --badge-assets-foreground: #17643a;
+  --badge-liabilities: #fbebe8;
+  --badge-liabilities-foreground: #a1261b;
+  --badge-equity: #f2ecfb;
+  --badge-equity-foreground: #653ba8;
+  --badge-income: #e9effc;
+  --badge-income-foreground: #1f4f9e;
+  --badge-expenses: #fbf1de;
+  --badge-expenses-foreground: #7f5300;
+
+  /* Density: comfortable (owner, 2026-11-28). A compact set would redefine only these. */
+  --density-text: 15px;
+  --density-table-text: 14px;
+  --density-page-x: 32px;
+  --density-page-y: 28px;
+  --density-gap: 20px;
+  --density-cell-y: 11px;
 }
 
 .dark {
   color-scheme: dark;
-  --background: oklch(13% 0.028 261.692); /* gray-950 */
-  --foreground: oklch(98.5% 0.002 247.839); /* gray-50 */
-  --card: oklch(21% 0.034 264.665); /* gray-900 */
-  --card-foreground: oklch(98.5% 0.002 247.839);
-  --popover: oklch(21% 0.034 264.665);
-  --popover-foreground: oklch(98.5% 0.002 247.839);
-  --primary: oklch(67.3% 0.182 276.935); /* indigo-400 */
-  --primary-foreground: oklch(13% 0.028 261.692);
-  --secondary: oklch(27.8% 0.033 256.848); /* gray-800 */
-  --secondary-foreground: oklch(98.5% 0.002 247.839);
-  --muted: oklch(27.8% 0.033 256.848);
-  --muted-foreground: oklch(70.7% 0.022 261.325); /* gray-400 */
-  --accent: oklch(27.8% 0.033 256.848);
-  --accent-foreground: oklch(98.5% 0.002 247.839);
-  --destructive: oklch(63.7% 0.237 25.331); /* red-500 */
-  --border: oklch(27.8% 0.033 256.848);
-  --input: oklch(55.1% 0.027 264.364);
-  --ring: oklch(87% 0.065 274.039); /* indigo-200: drawn at 50%, 3.9:1 on the page */
+  --background: #0f1117;
+  --foreground: #e6e8ef;
+  --card: #171a24;
+  --card-foreground: #e6e8ef;
+  --popover: #171a24;
+  --popover-foreground: #e6e8ef;
+  --primary: #a5b4fc;
+  --primary-foreground: #15133a;
+  --secondary: #232838;
+  --secondary-foreground: #e6e8ef;
+  --muted: #232838;
+  --muted-foreground: #a2a8b8;
+  --accent: #232838;
+  --accent-foreground: #e6e8ef;
+  --destructive: #ef4444;
+  --border: #2a2f40;
+  --input: #6b7287; /* 3.6:1 on a card (the board's #596075 was 2.8:1) */
+  --ring: #c7d2fe;
+
+  --sidebar: #141722;
+  --sidebar-foreground: #e6e8ef;
+  --sidebar-accent: #232744;
+  --sidebar-accent-foreground: #c7d0fe;
+  --sidebar-border: #2a2f40;
+
+  --hairline: #232838;
+  --card-outline: #2a2f40;
+  --link-underline: #596075;
+
+  --badge-assets: #14301f;
+  --badge-assets-foreground: #94dcb2;
+  --badge-liabilities: #3a1714;
+  --badge-liabilities-foreground: #ffb3a8;
+  --badge-equity: #2b1d3f;
+  --badge-equity-foreground: #d4b8ff;
+  --badge-income: #14264a;
+  --badge-income-foreground: #a8c8ff;
+  --badge-expenses: #3a2a0e;
+  --badge-expenses-foreground: #ffd28a;
+}
+
+/* The type scale. Inter is the face; until the app serves its font file (S0170 hand-off: @fontsource-variable/inter,
+   imported in main.ts), the system font stands in. */
+@theme {
+  --font-sans: 'Inter Variable', Inter, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --text-brand: 20px; /* the app's name in the sidebar */
+  --text-page-title: 26px;
+  --text-page-title--line-height: 1.3;
+  --text-table-head: 12.5px;
+  --text-caption: 13px; /* secondary cells: a row's currencies */
+  --text-badge: 12px;
+  --tracking-title: -0.02em;
 }
 
 @theme inline {
   --radius-sm: calc(var(--radius) - 4px);
-  --radius-md: calc(var(--radius) - 2px);
-  --radius-lg: var(--radius);
-  --radius-xl: calc(var(--radius) + 4px);
+  --radius-md: calc(var(--radius) - 2px); /* a segment */
+  --radius-lg: var(--radius); /* controls */
+  --radius-xl: calc(var(--radius) + 4px); /* a card */
+
+  --text-body: var(--density-text);
+  --text-table: var(--density-table-text);
+  --spacing-page-x: var(--density-page-x);
+  --spacing-page-y: var(--density-page-y);
+  --spacing-section: var(--density-gap);
+  --spacing-cell-y: var(--density-cell-y);
+
+  /* A card is a faint outline with a hint of lift; the active segment floats on its track. */
+  --shadow-card: 0 0 0 1px var(--card-outline), 0 1px 2px rgb(16 24 40 / 4%);
+  --shadow-segment: 0 1px 2px rgb(0 0 0 / 12%);
+
   --color-background: var(--background);
   --color-foreground: var(--foreground);
   --color-card: var(--card);
@@ -75,6 +159,24 @@
   --color-border: var(--border);
   --color-input: var(--input);
   --color-ring: var(--ring);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-hairline: var(--hairline);
+  --color-card-outline: var(--card-outline);
+  --color-link-underline: var(--link-underline);
+  --color-badge-assets: var(--badge-assets);
+  --color-badge-assets-foreground: var(--badge-assets-foreground);
+  --color-badge-liabilities: var(--badge-liabilities);
+  --color-badge-liabilities-foreground: var(--badge-liabilities-foreground);
+  --color-badge-equity: var(--badge-equity);
+  --color-badge-equity-foreground: var(--badge-equity-foreground);
+  --color-badge-income: var(--badge-income);
+  --color-badge-income-foreground: var(--badge-income-foreground);
+  --color-badge-expenses: var(--badge-expenses);
+  --color-badge-expenses-foreground: var(--badge-expenses-foreground);
 }
 
 @layer base {
@@ -82,7 +184,10 @@
     @apply border-border outline-ring/50;
   }
   body {
-    @apply bg-background text-foreground;
+    @apply bg-background text-foreground text-body font-sans;
+    line-height: 1.5;
+    /* Amounts line up in columns (the board sets tabular figures everywhere). */
+    font-variant-numeric: tabular-nums;
   }
 }
 

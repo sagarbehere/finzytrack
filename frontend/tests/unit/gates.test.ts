@@ -606,10 +606,29 @@ describe('[L9-16][L9-17] UI primitives and icons have one source (ADR-0035; S016
   })
 })
 
-describe('[ADR-0035] vendored copies: only the two style rules and prettier are off in components/ui (S0169)', () => {
+describe('[INV-18] labels name their controls, the vendored checkbox included (S0170)', () => {
+  const page = (body: string) =>
+    `<script setup lang="ts">\nimport { Checkbox } from './components/ui/checkbox'\n</script>\n\n<template>\n  <main>${body}</main>\n</template>\n`
+  it('accepts a label around the checkbox with a matching for', async () => {
+    expect(await ruleIds(page('<label for="c"><Checkbox id="c" />Show closed</label>'), 'App.vue')).not.toContain(
+      'vuejs-accessibility/label-has-for',
+    )
+  })
+  it.each([
+    ['a label around the checkbox without for', '<label><Checkbox id="c" />Show closed</label>'],
+    ['a label with for but no control inside', '<label for="c">Show closed</label><Checkbox id="c" />'],
+  ])('refuses %s @regression-guard', async (_label, body) => {
+    expect(await ruleIds(page(body), 'App.vue')).toContain('vuejs-accessibility/label-has-for')
+  })
+})
+
+describe('[ADR-0035] vendored copies: only the two style rules, the raw-colour rule and prettier are off in components/ui (S0169, S0170)', () => {
   // Owner, 2026-11-28: "Patch + record (Recommended)": prettier and two style-only lint rules are off in
   // components/ui only; every type, accessibility and layer rule stays on there.
-  const VENDOR_OFF = ['vue/multi-word-component-names', 'vue/require-default-prop']
+  // S0170 (ADR-0035 amendment of 2026-11-28, the look): the raw-colour rule is also off there, since the copies keep
+  // shadcn-vue's own classes (`text-white` on the destructive button); tests/unit/rawColours.test.ts.
+  const VENDOR_OFF = ['ft/no-raw-colour', 'vue/multi-word-component-names', 'vue/require-default-prop']
+  const STYLE_RULES = ['vue/multi-word-component-names', 'vue/require-default-prop']
   const level = (entry: Linter.RuleEntry | undefined): string => {
     const head: unknown = Array.isArray(entry) ? entry[0] : entry
     return head === 'error' || head === 2 ? 'error' : head === 'warn' || head === 1 ? 'warn' : 'off'
@@ -629,20 +648,20 @@ describe('[ADR-0035] vendored copies: only the two style rules and prettier are 
     return out
   }
 
-  it('differs from components/app only in the two style rules, both off, for a component', async () => {
+  it('differs from components/app only in the two style rules and the raw-colour rule, all off, for a component', async () => {
     const diff = await differing('src/components/ui/button/Button.vue', 'src/components/app/IconButton.vue')
     expect(Object.keys(diff).sort()).toEqual(VENDOR_OFF)
     for (const name of VENDOR_OFF) expect(diff[name]?.[0]).toBe('off')
   })
 
-  it('differs at most in the same two rules for a module @regression-guard', async () => {
+  it('differs at most in the same rules for a module @regression-guard', async () => {
     const diff = await differing('src/components/ui/button/index.ts', 'src/components/app/index.ts')
     for (const name of Object.keys(diff)) expect(VENDOR_OFF).toContain(name)
   })
 
   it('keeps the two style rules on in our own components @regression-guard', async () => {
     const rules = ((await eslint.calculateConfigForFile(`${root}/src/App.vue`)) as Linter.Config).rules ?? {}
-    for (const name of VENDOR_OFF) expect(level(rules[name]), name).not.toBe('off')
+    for (const name of STYLE_RULES) expect(level(rules[name]), name).not.toBe('off')
   })
 
   it('has prettier skip components/ui and nothing more than before', async () => {

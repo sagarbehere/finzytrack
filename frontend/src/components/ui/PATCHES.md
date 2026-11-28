@@ -22,3 +22,17 @@ options do not allow it. The default is passed only when the caller gave one, wh
 +  ...(props.defaultValue === undefined ? {} : { defaultValue: props.defaultValue }),
  })
 ```
+
+## checkbox/Checkbox.vue (S0170)
+
+The same `exactOptionalPropertyTypes` rule: the forwarded props carry optional values that may be `undefined`, which
+`CheckboxRoot`'s declared props do not allow. The object is bound unchanged; only its type is narrowed (a template
+`as`), so the emitted handlers and every prop still reach the root.
+
+```diff
+   <CheckboxRoot
+     v-slot="slotProps"
+     data-slot="checkbox"
+-    v-bind="forwarded"
++    v-bind="forwarded as CheckboxRootProps"
+```
