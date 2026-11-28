@@ -436,7 +436,9 @@ type RecordSeen = Literal["none", "part", "open", "closed", "resolved", "kept", 
 @dataclass(frozen=True, slots=True)
 class OutcomeFacts:
     """The engine's `save_outcome` result (§6.6): the record's state after its folder's sync, and with no record, a
-    `.part` or `.resolved`, whether every target equals its pre bytes (`path`: the first that does not)."""
+    `.part` or `.resolved`, whether every target hashed again equals its pre bytes (`path`: the first read and found
+    not at them; a target that cannot be read makes `unchanged` false and is never named, so `unchanged` false with
+    `path` None means "not checked")."""
 
     record: RecordSeen
     unchanged: bool | None

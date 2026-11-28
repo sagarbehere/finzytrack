@@ -402,7 +402,9 @@ type RecordSeen = Literal["none", "part", "open", "closed", "resolved", "kept", 
 
 class SaveOutcomeResult(Message):
     """The record's state after its folder's sync (`unknown`: it could not be read; `errno`), and with no record, a
-    `.part` or `.resolved`, whether every target equals its pre bytes (`unchanged`; `path`: the first that does not)."""
+    `.part` or `.resolved`, whether every target hashed again equals its pre bytes (`unchanged`; `path`: the first read
+    and found not at them; a target that cannot be read makes `unchanged` false and is never named, so `unchanged` false
+    with `path` null means "not checked")."""
 
     record: RecordSeen
     unchanged: bool | None

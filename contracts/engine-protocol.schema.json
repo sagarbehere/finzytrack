@@ -3829,7 +3829,7 @@
     },
     "SaveOutcomeResult": {
       "additionalProperties": false,
-      "description": "The record's state after its folder's sync (`unknown`: it could not be read; `errno`), and with no record, a\n`.part` or `.resolved`, whether every target equals its pre bytes (`unchanged`; `path`: the first that does not).",
+      "description": "The record's state after its folder's sync (`unknown`: it could not be read; `errno`), and with no record, a\n`.part` or `.resolved`, whether every target hashed again equals its pre bytes (`unchanged`; `path`: the first read\nand found not at them; a target that cannot be read makes `unchanged` false and is never named, so `unchanged` false\nwith `path` null means \"not checked\").",
       "properties": {
         "record": {
           "$ref": "#/$defs/RecordSeen"
