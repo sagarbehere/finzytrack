@@ -134,7 +134,7 @@ What each ledger-writing mutator may change. Column meanings and rules: [README.
 - **Old endpoint:** PUT /api/accounts/{name} with new_name
 - **Edits:** replace_token; replace
 - **Files:** every file of the set with a reference to the account
-- **Intended change:** A and every subaccount `A:…` become B and `B:…` (ADR-0049 amendment): every account token naming one of them (postings, `open`, `close`, `balance`, `pad` both accounts, `note`, `document`, account-typed `custom` values), and every metadata value on any entry and every `custom` string value that is exactly one of those account names; text that merely contains a name is untouched; a changed metadata or `custom` line is spliced into its entry's own text, never re-printed (ADR-0009 amendment 2026-11-28). Nothing else changes. No renamed name may already exist (that is a merge)
+- **Intended change:** A and every subaccount `A:…` become B and `B:…` (ADR-0049 amendment): every account token naming one of them (postings, `open`, `close`, `balance`, `pad` both accounts, `note`, `document`, account-typed `custom` values), and every metadata value on any entry and every `custom` string value that is exactly one of those account names; text that merely contains a name is untouched; a changed metadata line is spliced into its entry's own text, never re-printed (ADR-0009 amendment 2026-11-28). Nothing else changes. No renamed name may already exist (that is a merge)
 - **Metadata written:** —
 - **The preview may list (never a refusal, ADR-0067):** —
 - **Refused when:** integrity: a target name already exists (use account.merge); grammar: a target name breaks the account grammar; not-editable: an encrypted file references a renamed account (not editable, ADR-0009)

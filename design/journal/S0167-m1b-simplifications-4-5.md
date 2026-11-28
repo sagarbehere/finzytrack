@@ -43,3 +43,19 @@ Inventory: `grep -rn "insert_meta\|delete_meta"` over `design/`, `engine/`, `bac
 - Self-mutation: skipped (tooling; the check guards the spec, not ledger data). The one loosening that matters, putting the two names back into `EDITS`, is the base commit's own state, shown above to let the 8 rows through.
 - Population: see "Population" above (grep over design/, engine/, backend/, scripts/, frontend/src, .claude; counts in and out there).
 - Gates: `check_invariants.py`, `check_capabilities.py`, `check_generated.py` exit 0; `run_meta_tests.py` OK, 1032 tests in 41 modules.
+
+## Verifier
+One round (docs row). Head verified: f114324b. Verdict: PASS WITH FINDINGS. Checks: every owner quote verbatim; D3 implied by the decision (`_overlap` refuses a `Replace` and a `ReplaceToken` on one entry, so folding is forced); D5 conservative; the 8 rows and the regenerated view (byte-identical); the test fails on the base table (8 subtests); no live mention left; the D4 limit true against `semantic_diff._file_diff` and `outside_spans`; the ADR-0008 note's facts (`PLAN_UNKNOWN`, `PlanPolicy.max_used`, `fate`); BL-0268's remainder real and on M3; BL-0313 closable.
+
+| ID | Severity | Class | Disposition |
+|---|---|---|---|
+| V1 | Low | d | Fixed (the coordinator): `account.rename`'s intent no longer extends the splicing rule to a `custom` line (the owner's decision covers metadata lines only) |
+| V2 | Low | d | Fixed (the coordinator): ADR-0009's limit and the write-path README now say the contract also cannot see a metadata value's quoting or the order of tags and links inside a spliced span; each producer's tests pin all four |
+| Observation | — | d | Fixed: ADR-0008's Status line now names the G1 amendment of 2026-11-28 too |
+
+## Landing
+BL-0313 done.
+
+## Retro
+- The note the coordinator wrote cited "ADR-0008 step 4" for the confirm; the step is ARCHITECTURE.md §9.2's (D1). Cite the spec step, not a guess.
+
