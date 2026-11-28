@@ -276,28 +276,40 @@ const templateBans = [
     message: floatParse,
   },
 ]
-// L9-16 (S0169, ADR-0035; verifier round 1 F4): buttons and fields come from the primitives; only components/ui (the
-// vendored shadcn-vue copies) and components/app draw the raw elements, in any letter case, or make them through
-// `as`/`is` (Reka's Primitive, <component>) or `h()`. <table> and confirm() join with their primitives.
-// Stated limits (left to review): a tag name computed at run time (`:is="tag"`, `h(tag)`), and `createVNode` or
-// JSX, which src/ does not use.
+// L9-16 (S0169, ADR-0035; verifier rounds 1 F4 and 2 F6, F8): buttons and fields come from the primitives; only
+// components/ui (the vendored shadcn-vue copies) and components/app draw the raw elements, written in lower or upper
+// case (`<Button>` and `<Input>` are the primitives), or make them through `as`/`is` (Reka's Primitive,
+// <component>: a static value, a bound literal, or a branch of a bound ternary) or `h()`. <table> and confirm() join
+// with their primitives. Stated limits (left to review): a tag computed at run time (`:is="tag"`, `h(tag)`), a
+// template-literal tag (`` :is="`button`" ``), a `v-bind` object (`v-bind="{ is: 'input' }"`), a namespace or
+// aliased `h` (`Vue.h(...)`, `import { h as el }`), and `createVNode` or JSX, which src/ does not use.
 const rawElement = 'L9-16: use the Button or Input primitive (components/ui, components/app)'
+const rawTag = '/^(button|input|BUTTON|INPUT)$/'
+const boundAsIs =
+  "VAttribute[directive=true][key.name.name='bind'][key.argument.name=/^(as|is)$/] > VExpressionContainer"
 const rawElementTemplate = [
-  { selector: 'VElement[rawName=/^(button|input)$/i]', message: rawElement },
+  { selector: `VElement[rawName=${rawTag}]`, message: rawElement },
   {
     selector: 'VAttribute[directive=false][key.name=/^(as|is)$/][value.value=/^(button|input)$/i]',
     message: rawElement,
   },
+  { selector: `${boundAsIs} > Literal[value=/^(button|input)$/i]`, message: rawElement },
   {
-    selector:
-      "VAttribute[directive=true][key.name.name='bind'][key.argument.name=/^(as|is)$/] Literal[value=/^(button|input)$/i]",
+    selector: `${boundAsIs} ConditionalExpression > Literal.consequent[value=/^(button|input)$/i]`,
+    message: rawElement,
+  },
+  {
+    selector: `${boundAsIs} ConditionalExpression > Literal.alternate[value=/^(button|input)$/i]`,
     message: rawElement,
   },
 ]
 const rawElementScript = [
   { selector: "CallExpression[callee.name='h'][arguments.0.value=/^(button|input)$/i]", message: rawElement },
 ]
+// The syntax bans of app code (the src/** block below), without the raw-element ban.
+const appSyntax = [...systemTime, ...appClock, ...kernelConcepts, ...unboundedCache, ...networkSyntax]
 const srcFiles = ['src/**/*.{ts,mts,cts,tsx,js,mjs,cjs,jsx,vue}']
+
 const appProperties = [
   { property: 'toFixed', message: 'INV-06: format money through src/domain' },
   { object: 'globalThis', property: 'Date', message: today },
@@ -360,15 +372,7 @@ export default tseslint.config(
     files: srcFiles,
     ignores: ['src/platform/**'],
     rules: {
-      'no-restricted-syntax': [
-        'error',
-        ...systemTime,
-        ...appClock,
-        ...kernelConcepts,
-        ...unboundedCache,
-        ...networkSyntax,
-        ...rawElementScript,
-      ],
+      'no-restricted-syntax': ['error', ...appSyntax, ...rawElementScript],
       'no-restricted-globals': [
         'error',
         { name: 'Date', message: today },
@@ -378,6 +382,12 @@ export default tseslint.config(
       'no-restricted-properties': ['error', ...appProperties, ...networkProperties],
       '@typescript-eslint/no-restricted-imports': restrictedImports(false, false),
     },
+  },
+  {
+    // L9-16 (S0169 verifier round 2 F8): the two primitive layers may make the raw elements with h() too; the other
+    // app-code syntax bans stay (later config replaces a rule's options, so they are repeated).
+    files: ['src/components/ui/**', 'src/components/app/**'],
+    rules: { 'no-restricted-syntax': ['error', ...appSyntax] },
   },
   {
     // L2-06 (S0166): src/api may talk HTTP; the INV-06/INV-07 bans above are repeated (later config replaces options).

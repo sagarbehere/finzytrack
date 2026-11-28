@@ -164,9 +164,11 @@ const PAIRS: Pair[] = [
   // `outline-ring/50` on everything (our base layer), so --ring at 50% over the surface it sits on.
   { name: 'focus ring as drawn', fg: { token: 'ring', alpha: 0.5 }, bg: 'background', min: 3 },
   { name: 'focus ring as drawn on a card', fg: { token: 'ring', alpha: 0.5, over: 'card' }, bg: 'card', min: 3 },
-  // Stated limit (backlog BL-0325): the destructive button's ring is `ring-destructive/20` (light) and `/40`
-  // (dark); at 20% no colour reaches 3:1 over white (black gives 1.6:1), so no token can fix it: a patch is the
-  // owner's decision. A field's invalid ring is drawn beside its `border-destructive` edge at full colour.
+  // Stated limit (backlog BL-0325): the vendored destructive button's ring is `ring-destructive/20` (light) and
+  // `/40` (dark); at 20% no colour reaches 3:1 over white (black gives 1.6:1), so no token can fix it. Owner,
+  // 2026-11-28: "App-level override (Recommended)": our own destructive button in components/app passes a stronger
+  // ring class (`cn` lets the caller's class win), built and tested with the confirm dialog. A field's invalid ring
+  // is drawn beside its `border-destructive` edge at full colour.
 ]
 
 function paint(p: Paint, t: Map<string, string>): Rgb {

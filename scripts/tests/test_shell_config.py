@@ -8,6 +8,7 @@ import base64
 import copy
 import hashlib
 import json
+import re
 import unittest
 from html.parser import HTMLParser
 from pathlib import Path
@@ -88,7 +89,8 @@ NEVER = ("fs:", "shell:allow-execute", "shell:default")
 
 
 def csp_directives(csp: str) -> dict[str, list[str]]:
-    """Directive name (lower case: CSP directive names are case-insensitive) -> its source list."""
+    """Directive name (lower case) -> its source list, from its first copy (a browser's rule). Only meaningful once
+    `csp_problems` has refused repeats and names not in lower case (Tauri keeps the last copy, by exact name)."""
     out: dict[str, list[str]] = {}
     for part in csp.split(";"):
         words = part.split()
@@ -127,6 +129,12 @@ def csp_problems(csp: str | None, prepaint: str | None = None) -> list[str]:
     d = csp_directives(csp)
     allowed = reviewed_csp(prepaint)
     out = []
+    # Verifier round 2 F7: browsers keep a directive's first copy, Tauri's header its last (by exact name), so a
+    # repeat is refused outright, and a name must be written as the reviewed ones are (lower case).
+    names = [part.split()[0] for part in csp.split(";") if part.split()]
+    if len({n.lower() for n in names}) != len(names):
+        out.append("csp directive repeated")
+    out += [f"csp directive name {n}" for n in names if not re.fullmatch(r"[a-z-]+", n)]
     for name, sources in d.items():
         if name not in allowed:
             out.append(f"csp directive {name}")
@@ -220,11 +228,13 @@ class ShellConfig(unittest.TestCase):
         c["app"]["security"]["csp"] = GOOD_CSP
         self.assertEqual(problems(c, CAPS), [])
 
-    def test_a_repeated_directive_is_ignored_as_browsers_do(self) -> None:
-        # CSP: only the first occurrence of a directive counts, so a later looser copy changes nothing.
-        c = copy.deepcopy(CONF)
-        c["app"]["security"]["csp"] = GOOD_CSP + "; script-src 'self' 'unsafe-inline'"
-        self.assertEqual(problems(c, CAPS), [])
+    def test_a_repeated_directive_is_refused(self) -> None:
+        # S0169 verifier round 2 F7: a browser keeps a directive's first copy, but Tauri builds the desktop header
+        # from a map filled in order (tauri-utils' Csp to HashMap, then Display), so the last copy wins there, and
+        # it compares names case-sensitively. A repeat, in any letter case, is refused whichever copy is looser.
+        for extra in ("; script-src 'self' 'unsafe-inline'", "; Script-Src 'self'", f"; script-src 'self' {PREPAINT}"):
+            with self.subTest(extra=extra):
+                self.assertIn("csp directive repeated", csp_problems(GOOD_CSP + extra))
 
     def test_planted_variants_fail(self) -> None:
         variants = {
@@ -255,6 +265,12 @@ class ShellConfig(unittest.TestCase):
             "unsafe-hashes": with_csp(GOOD_CSP.replace("script-src 'self'", "script-src 'self' 'unsafe-hashes'")),
             "strict-dynamic": with_csp(GOOD_CSP.replace("script-src 'self'", "script-src 'self' 'strict-dynamic'")),
             "upper-case directive": with_csp(GOOD_CSP.replace("script-src 'self'", "SCRIPT-SRC 'self' 'unsafe-inline'")),
+            # S0169 verifier round 2 F7: Tauri keeps a directive's last copy, by its exact name.
+            "a repeated script-src": with_csp(GOOD_CSP + "; script-src 'self' 'unsafe-inline' 'unsafe-eval'"),
+            "a repeated base-uri": with_csp(GOOD_CSP + "; base-uri *"),
+            "a repeated connect-src": with_csp(GOOD_CSP + "; connect-src *"),
+            "an upper-case SCRIPT-SRC beside script-src": with_csp(GOOD_CSP + "; SCRIPT-SRC *"),
+            "an upper-case name alone": with_csp(GOOD_CSP.replace("object-src", "OBJECT-SRC")),
             "script-src-elem": with_csp(GOOD_CSP + "; script-src-elem 'self' 'unsafe-inline'"),
             "data: script": with_csp(GOOD_CSP.replace("script-src 'self'", "script-src 'self' data:")),
             "https: script": with_csp(GOOD_CSP.replace("script-src 'self'", "script-src 'self' https:")),

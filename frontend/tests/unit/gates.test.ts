@@ -524,7 +524,7 @@ describe('[L9-16][L9-17] UI primitives and icons have one source (ADR-0035; S016
     return (result?.messages ?? []).filter((m) => m.message.startsWith('L9-16')).length
   }
 
-  it.each(['button', 'input', 'BUTTON', 'Input'])('refuses a raw <%s> in app code', async (tag) => {
+  it.each(['button', 'input', 'BUTTON', 'INPUT'])('refuses a raw <%s> in app code', async (tag) => {
     expect(await ruleIds(withElement(tag), 'App.vue')).toContain(elementBan)
     expect(await rawElementMessages(withElement(tag))).toBe(1)
   })
@@ -542,6 +542,34 @@ describe('[L9-16][L9-17] UI primitives and icons have one source (ADR-0035; S016
   it.each(["h('button')", "h('input', { type: 'text' })"])('refuses %s in app code', async (call) => {
     const code = `import { h } from 'vue'\nexport const v = () => ${call}\n`
     expect(await rawElementMessages(code, 'main.ts')).toBe(1)
+  })
+
+  // @regression-guard (S0169 verifier round 2 F6): app code uses the primitives, whose names differ only in case.
+  it('allows the Button and Input primitives in app code @regression-guard', async () => {
+    const script = "\nimport { Button } from './components/ui/button'\nimport { Input } from './components/ui/input'\n"
+    const code = inTemplate('<Button>Save</Button><Input aria-label="amount" />', script)
+    expect(await rawElementMessages(code)).toBe(0)
+  })
+
+  // S0169 verifier round 2 F8: a literal that is not the tag (a comparison inside a ternary) is not refused; a
+  // ternary that yields a raw tag is.
+  it('refuses a bound is whose branch is a raw tag, and accepts one that only compares with it', async () => {
+    expect(
+      await rawElementMessages(inTemplate(`<component :is="wide ? 'button' : 'a'" />`, '\nconst wide = true\n')),
+    ).toBe(1)
+    expect(
+      await rawElementMessages(
+        inTemplate(`<component :is="kind === 'button' ? 'a' : 'span'" />`, "\nconst kind = 'x'\n"),
+      ),
+    ).toBe(0)
+  })
+
+  it('lets components/ui and components/app make the elements with h() (S0169 verifier round 2 F8)', async () => {
+    const config = (await eslint.calculateConfigForFile(`${root}/src/components/app/IconButton.ts`)) as Linter.Config
+    expect(JSON.stringify(config.rules?.['no-restricted-syntax'])).not.toContain('L9-16')
+    const ui = (await eslint.calculateConfigForFile(`${root}/src/components/ui/button/index.ts`)) as Linter.Config
+    expect(JSON.stringify(ui.rules?.['no-restricted-syntax'])).not.toContain('L9-16')
+    expect(JSON.stringify(ui.rules?.['no-restricted-syntax'])).toContain('INV-07') // the other bans stay
   })
 
   it('refuses them in a feature (src/features has no file yet: its rules are read from the resolved config)', async () => {
