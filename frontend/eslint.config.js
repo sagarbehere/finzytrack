@@ -282,7 +282,11 @@ const templateBans = [
 // <component>: a static value, a bound literal, or a branch of a bound ternary) or `h()`. <table> and confirm() join
 // with their primitives. Stated limits (left to review): a tag computed at run time (`:is="tag"`, `h(tag)`), a
 // template-literal tag (`` :is="`button`" ``), a `v-bind` object (`v-bind="{ is: 'input' }"`), a namespace or
-// aliased `h` (`Vue.h(...)`, `import { h as el }`), and `createVNode` or JSX, which src/ does not use.
+// aliased `h` (`Vue.h(...)`, `import { h as el }`), a bound literal inside a logical or cast expression
+// (`:is="a || 'button'"`, `:is="a ?? 'input'"`, `:is="('button' as const)"`; S0169 quick check F9), and `createVNode`
+// or JSX, which src/ does not use. An unimported mixed-case tag (`<Button>` with no import, `<bUTTON>`) would render a
+// native element (Vue falls back to the name and HTML lower-cases it); it is refused by vue-tsc's `strictTemplates`
+// (pinned in tests/unit/gates.test.ts), not by this rule.
 const rawElement = 'L9-16: use the Button or Input primitive (components/ui, components/app)'
 const rawTag = '/^(button|input|BUTTON|INPUT)$/'
 const boundAsIs =

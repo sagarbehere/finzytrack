@@ -82,3 +82,10 @@
 | BL-0325 | — | — | Owner, 2026-11-28, in session: "App-level override (Recommended)": recorded on the row (open, M2, consumer: the confirm-dialog slice) and in `theme.test.ts`'s stated-limit comment. |
 
 - Gates after round 2: `pnpm typecheck`, `lint`, `format:check`, `test` (19 files, 395 passed, 9 expected fail), `knip`; `run_meta_tests.py` (1041), `check_invariants.py`, `check_generated.py`, `check_licences.py`: green.
+
+### Quick check after round 2 (owner-approved second round, ADR-0068 D6)
+Head verified: a4198418 (range f7bb9f67..a4198418). Verdict: PASS WITH FINDINGS. Confirmed no shipped runtime change in the range (lint config, the test-side CSP checker, docs). F6: lower and upper case refused, the imported primitives pass. An unimported mixed-case tag (`<Button>` without its import, `<bUTTON>`) would render a native element (Vue's `resolveComponent` falls back to the name; HTML lower-cases it), and is refused by vue-tsc's `strictTemplates`, not by L9-16. F7: repeats in any case refused; the surviving mutant `last-copy-only-checked` is equivalent. F8: the `h()` exemption is scoped to components/ui and components/app; INV-07 stays on there.
+
+| ID | Severity | Class | Disposition |
+|---|---|---|---|
+| F9 | Low | c | Stated limit (the coordinator; IMP-0075): narrowing round 2's `:is` rule stopped refusing a bound literal inside a logical or cast expression (`a \|\| 'button'`, `a ?? 'input'`, `('button' as const)`); listed in `eslint.config.js`'s stated limits with the `strictTemplates` note |
