@@ -209,16 +209,19 @@ def gen_updates(before: sd.LedgerSet, n: int, rng: random.Random) -> list[dict[s
     pool = [ts[0] for ts in by_id.values() if len(ts) == 1]
     cases = []
     for i, t in enumerate(rng.sample(pool, min(n, len(pool)))):
-        edit = i % 3
-        if edit == 0:
-            new = t._replace(narration=(t.narration or "") + " (edited)")
-        elif edit == 1:
-            new = t._replace(payee="Oracle Payee", tags=frozenset(t.tags) | {"oracle"})
-        else:
-            new = t._replace(date=t.date.replace(day=min(t.date.day, 27) + 1))
         cases.append({"id": f"upd-{i:03d}", "mutator": "update_transaction",
-                      "params": {"txn_id": t.meta["id"], "entry": _render(new)}})
+                      "params": {"txn_id": t.meta["id"], "entry": _render(edited(t, i))}})
     return cases
+
+
+def edited(t: Any, i: int) -> Any:
+    """The *i*-th generated edit of transaction *t*, in turn: the narration, the payee and a tag, the date."""
+    edit = i % 3
+    if edit == 0:
+        return t._replace(narration=(t.narration or "") + " (edited)")
+    if edit == 1:
+        return t._replace(payee="Oracle Payee", tags=frozenset(t.tags) | {"oracle"})
+    return t._replace(date=t.date.replace(day=min(t.date.day, 27) + 1))
 
 
 def gen_renames(before: sd.LedgerSet, n: int, rng: random.Random) -> list[dict[str, Any]]:

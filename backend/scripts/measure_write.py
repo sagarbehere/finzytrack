@@ -408,6 +408,74 @@ def command_for(folder: AppFolder, cache: Path) -> EngineCommand:
     return dataclasses.replace(product, argv=bootstrap_argv(python, site, WITH_LAZY_TEST_PRODUCER))
 
 
+@dataclasses.dataclass(frozen=True, slots=True)
+class Wired:
+    """The product's scheduler on this script's engine command, started in a folder of its own (`wire`)."""
+
+    folder: AppFolder
+    cache: Path
+    client: EngineClient
+    jobs: Jobs
+
+    def close(self) -> None:
+        self.jobs.close()
+        self.client.close()
+
+
+def wire(top: Path, stops: list[str]) -> Wired:
+    """The app's folder (`top/app`) and cache (`top/cache`), the engine client on `command_for`'s command and the
+    product's scheduler on it, started, with the bytecode fill awaited (the module's docstring); each `engine.stopped`
+    event is appended to `stops`. Also used by `g1_runner.py` (S0163). A failure after the client was made closes it
+    before it raises."""
+    cache = top / "cache"
+    cache.mkdir()
+    folder = prepare(top / "app")
+    if not isinstance(folder, AppFolder):
+        fail(f"the app folder: {folder}")
+    command = command_for(folder, cache)
+    fill_failed: list[str] = []
+
+    def log(event: Event, /, **fields: object) -> None:
+        if event is ENGINE_BYTECODE:
+            fill_failed.append(str(fields))
+        elif event is ENGINE_STOPPED:
+            stops.append(f"{fields.get('kind')}: {str(fields.get('detail'))[:200]}")
+
+    restart = RestartPolicy()
+    jobs: Jobs | None = None
+
+    def spawned(serial: int) -> None:
+        assert jobs is not None  # noqa: S101 (bound before the first spawn)
+        jobs.engine_spawned(serial)
+
+    def ended(end: EngineEnd) -> None:
+        assert jobs is not None  # noqa: S101 (bound before the first spawn)
+        jobs.engine_ended(end)
+
+    client = EngineClient(command, restart, log=log, on_engine_spawned=spawned, on_engine_ended=ended)
+    jobs = Jobs(client, wait_engine_lock=lambda: wait_engine_lock(folder), restart=restart, log=log)
+    jobs.tickets = []
+    wired = Wired(folder, cache, client, jobs)
+    try:
+        boot = jobs.start()
+        if not isinstance(boot, JobTicket) or boot.wait(JOB_DEADLINE) is None:
+            fail(f"the scheduler did not start: {boot}")
+        # Windows: the product starts every engine without the fill (`EngineClient._bytecode_for_spawn`, BL-0288), so
+        # nothing fills and there is nothing to wait for; each engine compiles as it imports, as the product's do there
+        bytecode = None if sys.platform == "win32" else command.bytecode
+        waited_from = time.perf_counter()
+        while bytecode is not None and not bytecode.ready():  # the fill the first engine began
+            if fill_failed:
+                fail(f"the bytecode fill: {fill_failed}")
+            if time.perf_counter() - waited_from > JOB_DEADLINE:
+                fail("the bytecode fill did not finish")
+            threading.Event().wait(0.05)  # a poll of the fill's mark, no sleep (EP-28)
+    except BaseException:
+        wired.close()
+        raise
+    return wired
+
+
 def waited(ticket: JobTicket | Failed | NotDone, what: str, deadline: float = JOB_DEADLINE) -> Outcome:
     if not isinstance(ticket, JobTicket):
         fail(f"{what}: not queued: {ticket}")
@@ -432,6 +500,31 @@ def cut(text: str, transactions: int) -> str:
 # -- one run ----------------------------------------------------------------------------------------------------------
 
 
+def open_copy(
+    jobs: Jobs, folder: AppFolder, cache: Path, key: str, copy: Path, root_name: str, deadline: float
+) -> tuple[WriteTarget, int, float]:
+    """Open the test copy in the folder `copy` (resolved) as the workspace `key`, as the product opens one (an exclusive
+    job), and wait for its mirror: its write target, carrying the test-copy mark, the published generation, and the
+    open job's seconds from its submit to its answer. Also used by `g1_runner.py` (S0163)."""
+    root = copy / root_name
+    jobs.exclusive_began()
+    try:
+        t = time.perf_counter()
+        opening = submit_open(jobs, key, OpenJobTarget(key, str(root), LINEAGE, folder.path), clock=CLOCK)
+        opened = waited(opening, "open", deadline)
+        seconds = time.perf_counter() - t
+    finally:
+        jobs.exclusive_ended()
+    if not (isinstance(opened, Done) and isinstance(opened.value, Opened) and opened.value.mirror_ready):
+        fail(f"open: {opened}")
+    jobs.workspace_opened(key)
+    target = WriteTarget(key, str(root), LINEAGE, folder.path, cache, copy=recorded_mark(copy))
+    before = mirror_generation(target)
+    if before is None:
+        fail("no generation published after the open")
+    return target, before, seconds
+
+
 def one_run(
     jobs: Jobs,
     sampler: Sampler,
@@ -452,27 +545,14 @@ def one_run(
         (copy / rel).parent.mkdir(parents=True, exist_ok=True)
         (copy / rel).write_text(text, encoding="utf-8", newline="")
     copy = copy.resolve()
-    root, latest = copy / root_name, copy / layout.latest
+    latest = copy / layout.latest
     result["load_average"] = None if sys.platform == "win32" else round(os.getloadavg()[0], 2)  # POSIX only
     jobs.tickets = []
     stops.clear()
     sampler.reset()
-    jobs.exclusive_began()
-    try:
-        t = time.perf_counter()
-        opening = submit_open(jobs, key, OpenJobTarget(key, str(root), LINEAGE, folder.path), clock=CLOCK)
-        opened = waited(opening, "open", deadline)
-        result["open_ms"] = ms(time.perf_counter() - t)
-    finally:
-        jobs.exclusive_ended()
-    if not (isinstance(opened, Done) and isinstance(opened.value, Opened) and opened.value.mirror_ready):
-        fail(f"open: {opened}")
-    jobs.workspace_opened(key)
-    target = WriteTarget(key, str(root), LINEAGE, folder.path, cache, copy=recorded_mark(copy))
+    target, before, open_seconds = open_copy(jobs, folder, cache, key, copy, root_name, deadline)
+    result["open_ms"] = ms(open_seconds)
     services = WriteServices(jobs=jobs, plans=PlanStore(CLOCK), clock=CLOCK, ids=_Ids(), session="m1")
-    before = mirror_generation(target)
-    if before is None:
-        fail("no generation published after the open")
     txn = f'{layout.latest_date} * "Measured write"\n  Expenses:Food:Groceries  12.34 USD\n  Assets:Bank:Checking\n'
     request = {"edits": [{"kind": "insert", "text": txn, "default_file": str(latest)}]}
     jobs.tickets = []
@@ -560,52 +640,14 @@ def main(argv: list[str] | None = None) -> int:
         sys.stdout.write(json.dumps({name: stats(layout) for name, layout in layouts.items()}, indent=2) + "\n")
         return 0
     top = Path(tempfile.mkdtemp(prefix="ft-measure-write-"))
-    jobs: Jobs | None = None
-    client: EngineClient | None = None
+    wired: Wired | None = None
     sampler: Sampler | None = None
     try:
-        cache, work = top / "cache", top / "work"
-        cache.mkdir()
+        work = top / "work"
         work.mkdir()
-        folder = prepare(top / "app")
-        if not isinstance(folder, AppFolder):
-            fail(f"the app folder: {folder}")
-        command = command_for(folder, cache)
-        fill_failed: list[str] = []
         stops: list[str] = []
-
-        def log(event: Event, /, **fields: object) -> None:
-            if event is ENGINE_BYTECODE:
-                fill_failed.append(str(fields))
-            elif event is ENGINE_STOPPED:
-                stops.append(f"{fields.get('kind')}: {str(fields.get('detail'))[:200]}")
-
-        restart = RestartPolicy()
-
-        def spawned(serial: int) -> None:
-            assert jobs is not None  # noqa: S101 (bound before the first spawn)
-            jobs.engine_spawned(serial)
-
-        def ended(end: EngineEnd) -> None:
-            assert jobs is not None  # noqa: S101 (bound before the first spawn)
-            jobs.engine_ended(end)
-
-        client = EngineClient(command, restart, log=log, on_engine_spawned=spawned, on_engine_ended=ended)
-        jobs = Jobs(client, wait_engine_lock=lambda: wait_engine_lock(folder), restart=restart, log=log)
-        jobs.tickets = []
-        boot = jobs.start()
-        if not isinstance(boot, JobTicket) or boot.wait(JOB_DEADLINE) is None:
-            fail(f"the scheduler did not start: {boot}")
-        # Windows: the product starts every engine without the fill (`EngineClient._bytecode_for_spawn`, BL-0288), so
-        # nothing fills and there is nothing to wait for; each engine compiles as it imports, as the product's do there
-        bytecode = None if sys.platform == "win32" else command.bytecode
-        waited_from = time.perf_counter()
-        while bytecode is not None and not bytecode.ready():  # the fill the first engine began
-            if fill_failed:
-                fail(f"the bytecode fill: {fill_failed}")
-            if time.perf_counter() - waited_from > JOB_DEADLINE:
-                fail("the bytecode fill did not finish")
-            threading.Event().wait(0.05)  # a poll of the fill's mark, no sleep (EP-28)
+        wired = wire(top, stops)
+        jobs, client, folder, cache = wired.jobs, wired.client, wired.folder, wired.cache
         sampler = Sampler(client)
         sampler.start()
         runs: list[dict[str, object]] = []
@@ -663,10 +705,8 @@ def main(argv: list[str] | None = None) -> int:
     finally:
         if sampler is not None:
             sampler.stop()
-        if jobs is not None:
-            jobs.close()
-        if client is not None:
-            client.close()
+        if wired is not None:
+            wired.close()
         shutil.rmtree(top, ignore_errors=True)
 
 
