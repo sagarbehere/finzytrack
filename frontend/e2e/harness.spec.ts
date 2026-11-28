@@ -157,9 +157,13 @@ test('a WebSocket is refused and recorded', async ({ page, problems }) => {
 test('console errors and uncaught page errors are recorded', async ({ page, problems }) => {
   await page.goto('/')
   await page.evaluate("console.error('provoked')")
-  // An inline script tag (`addScriptTag({ content })`) is refused by the app's CSP (S0169); a timer set through
-  // evaluate, which runs outside the page's CSP, throws in the page's own task.
-  await page.evaluate("setTimeout(() => { throw new Error('provoked uncaught') })")
+  // An inline script tag (`addScriptTag({ content })`) is refused by the app's CSP (S0169), and a timer runs inside
+  // the harness's frozen clock, whose controller catches the throw and logs it as a console error. A MessageChannel
+  // message is a real task the clock does not fake: set up through evaluate (outside the page's CSP), its handler
+  // throws uncaught in the page.
+  await page.evaluate(
+    "{ const c = new MessageChannel(); c.port1.onmessage = () => { throw new Error('provoked uncaught') }; c.port2.postMessage(0) }",
+  )
   await expect.poll(() => problems).toContainEqual('uncaught page error: provoked uncaught')
   expect(problems).toContainEqual('console error: provoked')
   problems.length = 0

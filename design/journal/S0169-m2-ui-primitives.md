@@ -90,3 +90,13 @@ Head verified: a4198418 (range f7bb9f67..a4198418). Verdict: PASS WITH FINDINGS.
 | ID | Severity | Class | Disposition |
 |---|---|---|---|
 | F9 | Low | c | Stated limit (the coordinator; IMP-0075): narrowing round 2's `:is` rule stopped refusing a bound literal inside a logical or cast expression (`a \|\| 'button'`, `a ?? 'input'`, `('button' as const)`); listed in `eslint.config.js`'s stated limits with the `strictTemplates` note |
+
+## Landing (2026-11-28)
+- The owner's second acceptance run (at 13918078): 48 passed, 21 skipped, 3 failed: "console errors and uncaught page errors are recorded" in every project. The `setTimeout` the e2e fix used runs inside the harness's frozen clock (Playwright's `page.clock`), whose controller catches the throw and logs it as a console error, so no uncaught page error arrives. Fixed by the coordinator (test only): the error is thrown from a `MessageChannel` handler, a real task the clock does not fake.
+- The acceptance suite through the harness, run by the coordinator after the owner's sandbox change (below): **51 passed, 21 skipped** (the integrity flows, `fixme` for later milestones), Chromium, WebKit and chromium-kolkata.
+- L9-11, L9-16, L9-17, BL-0032 done; BL-0324 (the backend's CSP header in headless mode) and BL-0325 (the destructive ring, with the confirm dialog) stay open on M2.
+
+## Retro
+- Three review rounds and three acceptance runs, most of the cost in what the sandbox kept from being checked: the CSP met the harness's own injections (`addScriptTag` is subject to the page's CSP, `evaluate` is not) and the frozen clock caught a timer's throw; neither could run where the work was done. The owner then let the coordinator run the suite itself (the sandbox exemption below).
+- The owner's look-and-feel decisions made in this slice's time (the visual direction, the per-vertical design step, the theming rule) go to S0170.
+

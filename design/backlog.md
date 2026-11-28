@@ -465,13 +465,13 @@ Evidence: `review:L9`, `review:L9-verif`, `review:17`; index `review:99 §4.10`.
 | L9-08 | One select/combobox family; menus flip and are not clipped | Medium | WS-UI | M4 | open | — | `review:L9` |
 | L9-09 | Account pickers select existing accounts only ("New account…" opens a blank form) | Medium | WS-UI | M4 | open | L9.M-4 (also L4-10), L9.M-8 | `review:L9` |
 | L9-10 | Every interaction works with the keyboard | Medium | WS-UI | M2 | open | — | `review:L9` |
-| L9-11 | Theme tokens and a pre-paint script; the first frame is in the right theme | Medium | WS-UI | M2 | in-progress | — | `review:L9` |
+| L9-11 | Theme tokens and a pre-paint script; the first frame is in the right theme | Medium | WS-UI | M2 | done | — | `review:L9` |
 | L9-12 | Helper text meets WCAG contrast | Medium | WS-UI | M2 | open | — | `review:L9` |
 | L9-13 | Toasts are announced and usable over dialogs | Medium | WS-UI | M2 | open | L9.M-2 | `review:L9` |
 | L9-14 | One loading/empty/error state family | Low-Med | WS-UI | M2 | open | — | `review:L9` |
 | L9-15 | One DataTable for interactive tables | Medium | WS-UI | M5 | open | — | `review:L9` |
-| L9-16 | Button and input primitives; no iOS zoom on inputs | Low | WS-UI | M2 | in-progress | — | `review:L9` |
-| L9-17 | One icon set (Lucide) | Low | WS-UI | M2 | in-progress | — | `review:L9` |
+| L9-16 | Button and input primitives; no iOS zoom on inputs | Low | WS-UI | M2 | done | — | `review:L9` |
+| L9-17 | One icon set (Lucide) | Low | WS-UI | M2 | done | — | `review:L9` |
 | L9-18 | CI runs lint, type check and frontend tests; lint does not change files | Low-Med (enabler) | WS-QA | M0 | done | — | `review:L9`; closed by S0009 (eslint without fix, vue-tsc, vitest in pre-commit, pre-push, ci.yml), S0023 |
 | L9.M-1 | A Settings tab switch guards unsaved edits | High | WS-UI | M2 | open | — | `review:L9-verif` |
 | L9.M-3 | One unsaved-change guard covering route, reload, tab and dialog | Medium | WS-UI | M2 | open | — | `review:L9-verif` |
@@ -624,7 +624,7 @@ Each item builds the check that turns one invariant from "pending" into "enforce
 
 | ID | Item | Area | Milestone | Status | Ref |
 |---|---|---|---|---|---|
-| BL-0032 | Strict CSP on the web app and the desktop window (`script-src 'self'`, no inline script; a hash for the pre-paint theme script). This row has no review finding ID. S0169: the desktop window (`tauri.conf.json`) and the `vite preview` header the acceptance harness loads, one policy, its one hash held to the shipped script by `scripts/tests/test_shell_config.py`; the backend's header when it serves the page is BL-0324. | WS-SECURITY | M2 | in-progress | `review:99 §1.3`, `review:27 App. A` |
+| BL-0032 | Strict CSP on the web app and the desktop window (`script-src 'self'`, no inline script; a hash for the pre-paint theme script). This row has no review finding ID. S0169: the desktop window (`tauri.conf.json`) and the `vite preview` header the acceptance harness loads, one policy, its one hash held to the shipped script by `scripts/tests/test_shell_config.py`; the backend's header when it serves the page is BL-0324. | WS-SECURITY | M2 | done | `review:99 §1.3`, `review:27 App. A` |
 | BL-0033 | Rust licence check: wire cargo-about 0.9.2 and cargo-deny 0.20.2 into `scripts/check_licences.py` and `THIRD_PARTY_NOTICES` when `shell/` lands. Done in S0010 with `cargo metadata` (the shipped closure on every target); cargo-about collects the licence texts at bundling | WS-QA | M0 | done | `review:F §2 item 9` |
 | BL-0034 | T1 process checks not yet built: `tests-fail-on-base`, verifier head-SHA binding, owner-approval quote check, golden-change justification check (PROCESS.md §3, §5, §8) | WS-QA | — | parked | `review:F §3.5`, `ADR-0058` |
 | BL-0035 | Add detect-secrets 1.5.0 (entropy checks) to the T0 privacy scanner once a pinned Python dev environment exists; today the scanner is pattern-only, stdlib. Done in S0016 (`scripts/secrets-scan/`, rule `secret-entropy`) | WS-QA | M0 | done | `review:27 §1(d)` |
