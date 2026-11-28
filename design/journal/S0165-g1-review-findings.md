@@ -95,3 +95,6 @@ One round. Head verified: 50227771 (range 52ca6ffe..50227771). Verdict: PASS WIT
 ## Retro
 - The G1 lens reviews found no High; the one false-sounding text (L2-F1) was a cause, not an outcome ("not saved" was true), fixed in one round with a fresh verifier.
 - The seeded-defect run's four survivors became tests in the same slice; each now kills its plant.
+
+## After landing: the G1 CI run (2026-11-28)
+The full manual run at 30368ddc (`run-next-ci`, T1 and T2) was green except `engine-windows`: 2 failed, 12554 passed, 49 skipped. Both failures were this slice's: its new test over the in-memory fake (`test_S0165_a_link_to_a_gpg_file_reaching_the_writer_is_the_encrypted_refusal`) went into `tests/ledger/test_writer_encrypted.py`, whose other tests run on the real disk; naming `tests.fakes.memfs` there made the conftest run the whole module with the POSIX path model on Windows (`_uses_the_fake`), so the two real-disk tests met `not_absolute`. No product code involved. Fixed by the coordinator (tests only, no further review round, PROCESS.md §3 step 7): the test moved to `tests/ledger/test_writer.py`, which runs over the fake. The same slip as M1b's first exit run (`M1b-exit.md`: a module's dependency on the fake decides its path model); the verifier ran only on macOS, where both models agree.

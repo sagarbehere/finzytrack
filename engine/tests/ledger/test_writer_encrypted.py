@@ -13,8 +13,7 @@ import pytest
 
 from ledger_engine.fs.port import DirHandle, EntryStat, FileSystem
 from ledger_engine.fs.this_os import for_this_os
-from ledger_engine.ledger.writer import Change, Commit, Landed, NotSaved, Reason, Step, durable_commit, sha256
-from tests.fakes.memfs import MemFS
+from ledger_engine.ledger.writer import Change, Landed, NotSaved, Reason, Step, durable_commit, sha256
 from tests.fs.real_volume import commit
 
 pytestmark = pytest.mark.inv("INV-01")
@@ -83,22 +82,3 @@ def test_the_same_file_not_encrypted_is_saved(tmp_path: Path) -> None:
     out = durable_commit(_EncryptingFS(for_this_os(), "other.bean"), c)  # type: ignore[arg-type]
     assert isinstance(out, Landed), out
     assert main.read_bytes() == b"post\n"
-
-
-def test_S0165_a_link_to_a_gpg_file_reaching_the_writer_is_the_encrypted_refusal() -> None:
-    """G1 L1-F6: the save's step 0 refuses a change whose name resolves to a `.gpg` or `.asc` file; when one reaches
-    the writer anyway (a link made after step 0), it is refused `encrypted_file` (the sidecar's
-    `ENCRYPTED_FILE_NOT_EDITABLE`), never `changed` ("another program changed your ledger"), before any effect."""
-    jd, bd = "/w/local/journal", "/w/local/backups"
-    fs = MemFS()
-    for d in (jd, bd, "/w/L"):
-        fs.outside_mkdirs(d)
-    fs.outside_write("/w/L/secret.bean.gpg", b"pre\n")
-    fs.outside_symlink("/w/L/main.bean", "/w/L/secret.bean.gpg")
-    c = Commit("s1", "j7", "k1", "lin1", "build1", (Change("/w/L/main.bean", sha256(b"pre\n"), b"post\n"),), jd, bd)
-    before = len(fs.effects)
-    out = durable_commit(fs, c)
-    assert isinstance(out, NotSaved), out
-    assert (out.reason, out.open_journal) == (Reason.ENCRYPTED_FILE, False)  # `unchanged`: not re-hashed this early
-    assert out.path == "/w/L/secret.bean.gpg"
-    assert len(fs.effects) == before

@@ -2508,3 +2508,23 @@ def test_a_confined_save_failing_at_every_effect_is_told_truthfully(new_dir: boo
         check_disk(w.fs, w)
         check_every_power_loss(w.fs, w)
         check_told(w.fs, w, out)
+
+
+def test_S0165_a_link_to_a_gpg_file_reaching_the_writer_is_the_encrypted_refusal() -> None:
+    """G1 L1-F6 (over the fake, so here and not in `test_writer_encrypted.py`, whose real-disk tests keep Windows'
+    path model): the save's step 0 refuses a change whose name resolves to a `.gpg` or `.asc` file; when one reaches
+    the writer anyway (a link made after step 0), it is refused `encrypted_file` (the sidecar's
+    `ENCRYPTED_FILE_NOT_EDITABLE`), never `changed` ("another program changed your ledger"), before any effect."""
+    jd, bd = "/w/local/journal", "/w/local/backups"
+    fs = MemFS()
+    for d in (jd, bd, "/w/L"):
+        fs.outside_mkdirs(d)
+    fs.outside_write("/w/L/secret.bean.gpg", b"pre\n")
+    fs.outside_symlink("/w/L/main.bean", "/w/L/secret.bean.gpg")
+    c = Commit("s1", "j7", "k1", "lin1", "build1", (Change("/w/L/main.bean", sha256(b"pre\n"), b"post\n"),), jd, bd)
+    before = len(fs.effects)
+    out = durable_commit(fs, c)
+    assert isinstance(out, NotSaved), out
+    assert (out.reason, out.open_journal) == (Reason.ENCRYPTED_FILE, False)  # `unchanged`: not re-hashed this early
+    assert out.path == "/w/L/secret.bean.gpg"
+    assert len(fs.effects) == before
