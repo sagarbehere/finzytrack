@@ -27,3 +27,7 @@ Run started with `milestone_exit: M1b`. Green: `repo-checks` (the exit check inc
 
 ## The milestone-exit CI run (2026-11-27, at 78f105fa): green
 Run started with `milestone_exit: M1b`: **success**, every job green: `repo-checks` (meta-tests, privacy scan, staged-file guard, invariants with the M1b exit check, capabilities, generated artifacts, licences), `backend`, `engine` (Linux, the write-contract tests on real scratch volumes), `engine-windows` (12546 passed, 49 skipped: the first run's 12541 plus its 5 fixed, the skips unchanged), `backend-windows` (3208 passed, 49 skipped, 23 xfailed), `frontend` (the acceptance flows through the harness), `shell`, `oracle-unit`. The engine's write-contract tests green on a Windows runner and a Linux runner (roadmap §4 M1b exit; ADR-0061 and its amendment of 2026-11-14).
+
+## macOS green (ADR-0061 decision 4a)
+- The T0 pre-push gate passed at the exit code commit 78f105fa (the push `574629fa..78f105fa`, unmarked, so the whole gate ran).
+- The acceptance suite passed locally through the harness, run by the owner (2026-11-28): **39 passed, 21 skipped** (the integrity flows A1, A2, A4 (two), A7, A10 and A13 in each of the three browser projects, `fixme` for their later milestones), 22.9 s; as at M1a's exit.
