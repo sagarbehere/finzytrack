@@ -30,8 +30,9 @@ product calls it. Each rule names its spec line.
 - **Admission** (§3): a job of a workspace that is not open is refused `WORKSPACE_NOT_OPEN` (INV-28); beyond
   `max_queued` queued jobs `ENGINE_QUEUE_FULL` (INV-10); a second queued background `rebuild` or background save of one
   workspace is not queued (`AlreadyQueued`; every job is idempotent at its start, §2: the queued rebuild loads the
-  disk when it runs, S0070; a second background save joins the queued one only when its work can take the changes,
-  else it is refused: ADR-0068 D8).
+  disk when it runs, S0070; the scheduler refuses a second background save with its own `ENGINE_QUEUE_FULL`, never
+  the queued job's ticket: ADR-0068 D8. Nothing in the product submits a background save until BL-0177 (M8), which
+  builds D8's join; S0168).
 - **Cancel** (§4): the job's own requester cancels it, queued (removed; nothing ran) or running (its engine ended with
   reason `cancel`, recorded before the signal, so it is never a stop; §5.2), except past its commit point ("too late").
   **A Cancel only ever ends your own job** (ADR-0068 D7, owner 2026-11-01: "Keep B7 (Recommended)"): a waiting user's

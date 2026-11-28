@@ -50,10 +50,6 @@ CATCH_ALL: dict[tuple[str, str, str], tuple[int, str]] = {
         1,
         "one effect of a step: logged, the step's other effects still happen (S0058 verifier F1)",
     ),
-    ("app.platform.engine_jobs.scheduler", "EngineJobs._joined", "swallow"): (
-        1,
-        "a queued work's join: logged, the request is not joined",
-    ),
     ("app.platform.engine_jobs.scheduler", "EngineJobs._run", "swallow"): (
         1,
         "the job runner (§6.3): logged, the job ends INTERNAL",

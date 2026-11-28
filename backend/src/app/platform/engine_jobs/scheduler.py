@@ -5,7 +5,7 @@
 in `platform/state_registry.py`), it holds the `QueueState` on its **scheduler thread**, feeds every observation in as
 a table event and carries out the effects, in order:
 
-- **Requests** (`submit`, `submit_background_save`, `cancel`, `client_gone`, `try_again`, the workspace's open and
+- **Requests** (`submit`, `cancel`, `client_gone`, `try_again`, the workspace's open and
   close, the switch's window) are steps on the scheduler thread; each caller waits only for that step's answer, never
   for the engine. A job's outcome comes later on its `JobTicket`: its value, or a `Failed` with a registry error
   (`JOB_CANCELLED`, `ENGINE_STOPPED`, `ENGINE_UNAVAILABLE`, `ENGINE_QUEUE_FULL`, `WORKSPACE_NOT_OPEN`, `INTERNAL`).
@@ -55,7 +55,7 @@ import threading
 import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
-from typing import Final, Literal, Protocol, runtime_checkable
+from typing import Final, Literal, Protocol
 
 from app.domain.errors import DomainError
 from app.platform.engine import (
@@ -263,16 +263,6 @@ class JobTicket:
 
 
 type Work = Callable[[JobContext], WorkResult]
-
-
-@runtime_checkable
-class JoinableWork(Protocol):
-    """A background save's work that can take a later request's changes (ADR-0068 D8): `joined` returns the one work
-    that saves both (planned when it runs), or None when it cannot; then the later request is refused."""
-
-    def __call__(self, ctx: JobContext, /) -> WorkResult: ...
-
-    def joined(self, later: Work, /) -> Work | None: ...
 
 
 class JobContext:
@@ -581,18 +571,11 @@ class EngineJobs:
     def submit(self, spec: JobSpec, work: Work) -> JobTicket | Failed:
         """Queue a job; refused at once for a workspace that is not open or a full queue (§3). A kind the queue keeps
         one of (`AlreadyQueued`) answers with the queued job's ticket (the background rebuild after a save: the queued
-        one loads the disk when it runs, so it shows the newer save too, §6.7). A background save is the exception:
-        see `submit_background_save` (ADR-0068 D8)."""
+        one loads the disk when it runs, so it shows the newer save too, §6.7). A save is the exception: a second
+        queued background save is refused with its own `ENGINE_QUEUE_FULL`, never given the queued job's ticket, which
+        would tell it "saved" for changes that job does not hold (ADR-0068 D8, step-back area review F1). Nothing in
+        the product submits a background save yet: it and D8's join come with the price update (BL-0177, M8; S0168)."""
         return self._ask(lambda: self._submit(spec, work, boot=False), self._closing())
-
-    def submit_background_save(self, workspace: str, work: Work) -> JobTicket | Failed:
-        """A save the app starts itself (prices; §2): background, unconfirmed, and at most one queued per workspace
-        (§3). Its work plans when it runs (ADR-0068 D8). A second one while one is queued joins it
-        only when the queued work can take its changes (`JoinableWork.joined`): both requesters then get that job's
-        outcome. Otherwise it is refused with its own answer (`ENGINE_QUEUE_FULL`); it never gets the queued job's
-        ticket, which would tell it "saved" for changes that job does not hold (step-back area review F1)."""
-        spec = JobSpec(kind="save", workspace=workspace, waited_for=False, confirmed=False, owner="app")
-        return self.submit(spec, work)
 
     def cancel(self, job_id: int) -> CancelAnswer:
         """The job's own requester pressed Cancel (§4)."""
@@ -809,14 +792,11 @@ class EngineJobs:
                 case Queued(job=job):
                     return self._jobs[job.id].ticket
                 case AlreadyQueued(job_id=job_id):
-                    # still queued (`AlreadyQueued` names a queued job): it has not started, so its work may change
-                    queued = self._jobs[job_id]
-                    if spec.kind == "save":  # a save's ticket is only ever its own changes' (ADR-0068 D8)
-                        joined = self._joined(queued.work, work)
-                        if joined is None:
-                            return Failed(error(ErrorCode.ENGINE_QUEUE_FULL))
-                        queued.work = joined
-                    return queued.ticket
+                    # a queued background rebuild loads the disk when it runs, so it serves this request too (§6.7);
+                    # a save's ticket is only ever its own changes' (ADR-0068 D8; the join is BL-0177)
+                    if spec.kind == "save":
+                        return Failed(error(ErrorCode.ENGINE_QUEUE_FULL))
+                    return self._jobs[job_id].ticket
                 case Refused(code="WORKSPACE_NOT_OPEN"):
                     details = WorkspaceNotOpenDetails(open_workspace=self._state.open_workspace, switching=False)
                     return Failed(error(ErrorCode.WORKSPACE_NOT_OPEN, details))
@@ -826,17 +806,6 @@ class EngineJobs:
                     pass
         msg = "the queue answered a Submit with neither Queued nor a refusal"  # pragma: no cover (the table's contract)
         raise RuntimeError(msg)
-
-    def _joined(self, queued: Work, later: Work) -> Work | None:
-        """The one work that saves both, or None: the queued work cannot join, or its `joined` raised (a bug, logged;
-        the later request is then refused with its own answer, never the scheduler's `closing`; S0069 red team L1)."""
-        if not isinstance(queued, JoinableWork):
-            return None
-        try:
-            return queued.joined(later)
-        except Exception as exc:  # noqa: BLE001 (a work's bug: logged, and the request refused as not joined)
-            self._log_internal(None, exc)
-            return None
 
     def _cancel(self, job_id: int) -> CancelAnswer:
         effects = self._step(Cancel(job_id))

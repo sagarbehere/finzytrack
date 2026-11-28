@@ -1,0 +1,60 @@
+# S0168: remove the background save and `JoinableWork` until BL-0177 (M8)
+
+## Brief
+- Goal: carry out the owner's answer to proposal 1 of `design/inbox/answered/20261128-m1b-simplifications.md` (owner, 2026-11-28: "Accept (Recommended)"). The proposal: "Delete the background save and `JoinableWork` until BL-0177 (M8). Remove `scheduler.submit_background_save`, `JoinableWork`, and `save.submit_save(background=True)` with their tests; BL-0177 builds them with the price update, its first caller. ADR-0068 D8 gets a dated note: the rule stands (a background save plans when it runs, a second one joins it), the code waits for its caller."
+- Implements: ADR-0068 D8 (dated note of 2026-11-28), spec `design/specs/engine-jobs.md` §1, §2, §3.
+- Capabilities: CAP-DATA-ENGINE-JOBS (no status change), CAP-PRICE-AUTO (M8; BL-0177 now builds both the background save and its join).
+- Invariants touched: INV-01 (a request is never told "saved" for changes another job holds), INV-10 (the queue's bound), INV-28.
+- Kind: product code (shipped): a removal on the write path's job layer (`app.platform.engine_jobs`: scheduler, save; queue docstring only). Review row: hardening an existing write path / other product code: verifier, fresh round after any product fix.
+- Risk class / lane: High (write path's job layer) / full.
+- The bytes it protects: none added. The removal must keep the truthful outcome D8 protects: a second queued background save is never given the first one's ticket (a false "saved").
+- Must not change: the foreground save (`save.submit_save`, `save_spec`), the confirm's queueing (`app.workspaces.writes._confirm_work` via `jobs.submit(save_spec(...))`), the queue table's rules (`queue.transition`, every job kind), Cancel, quit/drain, the rebuild's `AlreadyQueued` ticket sharing.
+- Which real setup needs this, and can a policy forbid the rest? Not applicable: a removal of code with no caller.
+- Two or more fix rounds before? The join was built in S0069 (one verifier round, one red-team round: V1, L1, L2); no fix round since.
+- Acceptance tests: the existing queue, scheduler, save, rebuild and API job tests stay green. One rewritten test (`test_a_second_queued_background_save_is_refused_never_given_the_first_ones_ticket`) pins the kept refusal through the generic `submit`; it passes on the base commit by design (behaviour kept), so it is a regression guard, exempt from tests-fail-on-base (PROCESS.md §3 step 3).
+- Expected doc impact: ADR-0068 note; engine-jobs spec §1, §2 (`save` row), §3 (bound, the D8 paragraph); BL-0177 row; the scheduler, queue and save module docstrings. No generated doc, statechart, failure-mode row or TLA+ action names the background save (inventory below).
+- Open questions: none for the inbox (D1 below is a choice inside the owner's decision, recorded for the verifier and the orchestrator).
+
+## Decisions
+- D1 (agent): **the scheduler keeps its refusal of a second queued background save; only the join goes.** The queue table (`queue._submit`) keeps at most one queued background `save` per workspace and answers a second with `AlreadyQueued`. The scheduler's generic `submit` answers `AlreadyQueued` with the queued job's ticket, which for a save is the false "saved" ADR-0068 D8 fixed (step-back area review F1, High). Removing the scheduler's save branch with `JoinableWork` would bring that defect back for any future caller of `submit` with a background save spec. So `_submit` now refuses every second queued background save with its own `ENGINE_QUEUE_FULL` (what it already did for every work that was not a `JoinableWork`, which is every work the product has). Alternatives rejected: (a) narrow the queue table's cap to `rebuild` only, so a background save is never `AlreadyQueued` and the scheduler branch becomes unreachable: it changes the queue table, its exhaustive tests and spec §3's rule for no gain, and BL-0177 would rebuild the cap; (b) refuse background save specs outright in `submit`: a new check, not a removal. Effect: no behaviour change for any work the product can submit; the queue table is untouched.
+- D2 (agent): the queue tests that build a background `save` spec (`background("save")` in `test_engine_queue.py`: the cap, the uncapped user save, the order, Cancel, the quiesce and the stateful test) stay: they test the queue table, which is unchanged and still admits such a spec (D1). The spec's "background save" mentions that describe the table's rule stay, with a line that nothing in the product submits one until BL-0177.
+- D3 (agent): `save_spec(background=...)` loses its parameter with `submit_save(background=...)`: its only caller with `background=True` was `submit_save`.
+
+## Population: every reference to the background save and `JoinableWork`
+Inventory, by behaviour: `grep -rn -i "JoinableWork|submit_background_save|background=True|background save|background_save|joinable|joined"` over `backend/`, `engine/`, `design/`, `formal/`, `scripts/`, `.claude/`, plus every construction of a save `JobSpec` with `waited_for=False` (`grep "save_spec|submit_save|waited_for=False"`), the generated docs (`design/generated/`), the statechart generator (`backend/scripts/gen_statecharts.py`), the failure-mode spec (`design/specs/failure-modes.md`) and the TLA+ model (`formal/tla/engine-jobs/`). Base commit 006335f6 (work began on f114324b; S0167's landing between them changed docs only, no backend file).
+
+| Where | Count | Disposition |
+|---|---|---|
+| `scheduler.py`: `JoinableWork` (class + docstring), `submit_background_save`, `_joined`, the save branch of `_submit`, module docstring, `submit` docstring | 6 sites | removed; the save branch narrowed to the refusal (D1); docstrings updated |
+| `save.py`: `save_spec(background=)`, `submit_save(background=)` and its docstring | 3 sites | removed (D3) |
+| `queue.py`: the admission docstring (one background save joins) | 1 | rewritten: refused by the scheduler, the join is BL-0177 |
+| Product callers of `submit_background_save` / `submit_save(background=True)` / `save_spec(background=True)` | 0 | none existed |
+| `test_engine_scheduler.py`: class `Joinable`, 5 tests (`..._never_gets_the_first_ones_ticket`, `..._joins_a_queued_one_...`, `..._of_the_products_plain_work_is_refused`, `a_join_that_raises_...`, `a_join_that_declines_...`) | 6 | `Joinable` and 4 tests removed; the products-plain-work test rewritten through the generic `submit` (the kept refusal) |
+| `tests/architecture/test_error_model.py`: the reviewed catch-all `EngineJobs._joined` (found by the full pytest run, not the first grep, which missed `_joined`) | 1 | removed with `_joined` |
+| `test_engine_queue.py`: `background("save")` uses (lines 266, 465-475, 671, 703, 1348) | 6 | kept (D2: the queue table is unchanged) |
+| Spec `engine-jobs.md`: §1 background job, §2 `save` row, §3 bound, §3 D8 paragraph | 4 | rewritten (rule stands in ADR-0068 D8; code with BL-0177) |
+| `ADR-0068` D8, its rejected alternatives, context | 3 | kept as decided; a dated note added |
+| `backlog.md` BL-0177 | 1 | a line added: it now builds the background save and the join |
+| `roadmap.md` line 36 (step-back history) | 1 | history, untouched |
+| `scripts/check_retired_terms.py` + its test ("background save given another's ticket") | 2 | kept: a retired wording guard, still valid |
+| `formal/tla/engine-jobs/MAPPING.md` §5 (history: "the app's background save" removed from the model in S0072); `results/*.log` (`AppBgSave` in old traces) | 1 + 5 | history, untouched; the current `EngineJobs.tla` has no background save |
+| `backlog.md` BL-0150 (done, M1a: "`AppBgSave`'s entry") and `check_retired_terms.py` (`AppBgSave` as a retired model name) | 2 | history and a retired-term guard, untouched |
+| `design/generated/` | 0 | none (the `engine-supervision` statechart's "background" is the rebuild) |
+| `backend/scripts/gen_statecharts.py` | 0 | none |
+| `design/specs/failure-modes.md` | 0 | none |
+| `ARCHITECTURE.md`, `glossary.md`, `capabilities.toml` | 0 | none name the background save (their "background" is the rebuild, the household or the price trigger) |
+| `design/journal/`, `design/inbox/answered/` | — | history, untouched |
+
+Counts: 15 code or spec sites changed (scheduler 6, save 3, queue 1, catch-all registry 1, spec 4: §1, §2, §3 bound, §3 D8; 15 counted), plus the ADR note and the BL-0177 line; 4 tests and 1 helper class removed, 1 test rewritten, 6 queue-test uses kept; 0 product callers; 0 generated, statechart, failure-mode or TLA+ sites.
+
+## Hand-off (PROCESS.md §3 step 4; ADR-0057)
+(The verifier reads only the Brief, so this section does not steer its attacks; it is the implementer's own record.)
+
+- Base commit 006335f6 (work began on f114324b; S0167's landing between them changed docs only, no backend file). Files: `backend/src/app/platform/engine_jobs/{scheduler,save,queue}.py`, `backend/tests/platform/test_engine_scheduler.py`, `backend/tests/architecture/test_error_model.py`, `design/specs/engine-jobs.md`, `design/decisions/ADR-0068-step-back-simplifications.md`, `design/backlog.md` (BL-0177), this journal. No backlog row tracks the slice itself (the owner's answer is the inbox note); BL-0177 stays `open` (M8).
+- Checks that accept, tag or refuse: one kept, narrowed: `EngineJobs._submit` refuses a second queued background save (`AlreadyQueued` for `kind == "save"`) with `ENGINE_QUEUE_FULL` (D1). Must-not-pass test: `test_a_second_queued_background_save_is_refused_never_given_the_first_ones_ticket` (a second background save, through the generic `submit`, with the product's plain `save_work` and with a plain work; the queue holds one save).
+- Self-mutation: the guard keeps a write outcome truthful, so one loosening mutant was seeded by hand (a removal adds no new check; `scripts/mutants.py` not used): the branch `if spec.kind == "save":` replaced by `if False:` (a second save gets the queued ticket). Killed: the test above fails (1 failed, 52 passed); restored, 53 passed.
+- Tests removed, and what each covered only: `test_a_second_background_save_never_gets_the_first_ones_ticket` (via `submit_background_save`; its refusal half is kept by the rewritten test), `test_a_second_background_save_joins_a_queued_one_that_can_take_its_changes` (the join: removed code only), `test_a_join_that_raises_refuses_the_second_save_and_is_logged` (`_joined`'s catch-all: removed code only), `test_a_join_that_declines_refuses_the_second_save_with_its_own_answer` (`JoinableWork.joined` answering None: removed code only), and the helper class `Joinable`. Rewritten: `test_a_second_background_save_of_the_products_plain_work_is_refused` became the test above (it used `submit_save(background=True)` and `submit_background_save`).
+- Tests first: the rewritten test passes on the base commit's code (run against `git archive f114324b backend` with the new test file: 1 passed), by design: the slice keeps that behaviour, so it is a regression guard, exempt from tests-fail-on-base. No test can fail on the base for a removal of code with no caller; the deviation is the removal's nature.
+- Remaining queue/save tests: `test_engine_queue.py`, `test_engine_scheduler.py`, `test_save_job.py`, `test_rebuild_job.py`, `tests/api/test_engine_job_codes.py`: 310 passed, 53 skipped in the sandbox (the scheduler module is `needs_process_control`, skipped because the sandbox refuses `ps`). With the BL-0309 probe answered "allowed" by a scratch wrapper (sandbox only; not `FT_REQUIRE_PROCESS_TESTS`), `test_engine_scheduler.py` 53 passed, and `tests/platform` + `tests/api` 1443 passed, 243 skipped.
+- Gates: `ruff check` and `ruff format --check` clean; `python3 scripts/pyright_platforms.py backend` 0 errors on Darwin, Linux, Windows; backend `pytest -n auto` 3095 passed, 326 skipped, 23 xfailed; `check_generated.py` 0; `check_failure_modes.py` ok (28 rows); `check_invariants.py` 0; `check_capabilities.py` 0; `check_retired_terms.py` 0 refused; `run_meta_tests.py` OK (1032 tests). Not run: `FT_REQUIRE_PROCESS_TESTS=1` (the sandbox refuses `ps`; the pre-push hook and CI run it).
+- Population: see "Population" above.

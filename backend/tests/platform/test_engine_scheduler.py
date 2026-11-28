@@ -353,69 +353,12 @@ def test_a_request_beyond_max_queued_is_refused_with_engine_queue_full() -> None
         rig.close()
 
 
-class Joinable:
-    """A background save's work that can take a later request's changes (ADR-0068 D8): `joined` answers the one work
-    that runs both (here: every name it was given), or None when it cannot."""
-
-    def __init__(self, *names: str, ran: list[str], can_join: bool = True) -> None:
-        self.names = names
-        self._ran = ran
-        self._can_join = can_join
-
-    def __call__(self, ctx: JobContext) -> WorkResult:
-        ctx.call("ok", {})
-        self._ran.extend(self.names)
-        return WorkResult(self.names)
-
-    def joined(self, later: Work) -> Work | None:
-        if not self._can_join or not isinstance(later, Joinable):
-            return None
-        return Joinable(*self.names, *later.names, ran=self._ran)
-
-
-def test_a_second_background_save_never_gets_the_first_ones_ticket(rig: Rig) -> None:
-    """ADR-0068 D8 (step-back area review F1, High): a second background save while one is queued is never answered
-    with the queued job's ticket unless its own changes are in that job; a work that cannot join is refused with its
-    own answer (`ENGINE_QUEUE_FULL`: nothing of it was saved). §3 still keeps one queued background save per
-    workspace (model `AppBgSave`)."""
-    first = submit(rig, user("bql"), calls("block"))
-    blocked(rig)
-    ran: list[str] = []
-    save = rig.jobs.submit_background_save(W1, Joinable("A", ran=ran, can_join=False))
-    again = rig.jobs.submit_background_save(W1, calls("ok"))
-    assert isinstance(save, JobTicket)
-    assert code_of(again) == ErrorCode.ENGINE_QUEUE_FULL
-    queued = rig.jobs.status().queue.queued
-    assert [(j.kind, j.waited_for, j.owner) for j in queued] == [("save", False, "app")]
-    rig.engine.release()
-    assert isinstance(outcome(first), Done)
-    assert outcome(save) == Done(("A",))
-    assert ran == ["A"]
-
-
-def test_a_second_background_save_joins_a_queued_one_that_can_take_its_changes(rig: Rig) -> None:
-    """ADR-0068 D8: a work that declares it can join (`joined`) takes the second request's changes; the queued job
-    runs both, once, and both requesters get that job's true outcome."""
-    first = submit(rig, user("bql"), calls("block"))
-    blocked(rig)
-    ran: list[str] = []
-    save = rig.jobs.submit_background_save(W1, Joinable("A", ran=ran))
-    again = rig.jobs.submit_background_save(W1, Joinable("B", ran=ran))
-    assert isinstance(save, JobTicket)
-    assert isinstance(again, JobTicket)
-    assert again.id == save.id
-    assert len(rig.jobs.status().queue.queued) == 1
-    rig.engine.release()
-    assert isinstance(outcome(first), Done)
-    assert outcome(save) == Done(("A", "B"))
-    assert outcome(again) == Done(("A", "B"))
-    assert ran == ["A", "B"]
-
-
-def test_a_second_background_save_of_the_products_plain_work_is_refused(rig: Rig, tmp_path: Path) -> None:
-    """S0069 verifier V1: the product's background save (`save.submit_save(..., background=True)`, a plain
-    `save.save_work` closure that cannot join) queued, a second one is refused with its own `ENGINE_QUEUE_FULL`;
-    it never gets the queued ticket (ADR-0068 D8)."""
+def test_a_second_queued_background_save_is_refused_never_given_the_first_ones_ticket(rig: Rig, tmp_path: Path) -> None:
+    """ADR-0068 D8 (step-back area review F1, High; S0069 verifier V1): the queue keeps one queued background save
+    per workspace (§3); a second one is refused with its own `ENGINE_QUEUE_FULL` and never gets the queued job's
+    ticket, which would tell it "saved" for changes that job does not hold. Nothing in the product submits a
+    background save until BL-0177 (M8), which builds D8's join (S0168); the refusal stays for any caller of
+    `submit`, a plain `save.save_work` closure included."""
     first = submit(rig, user("bql"), calls("block"))
     blocked(rig)
     request = SaveRequest(
@@ -428,56 +371,17 @@ def test_a_second_background_save_of_the_products_plain_work_is_refused(rig: Rig
         app_local_data=tmp_path,
         confine=None,
     )
-    save = submit_save(rig.jobs, W1, request, clock=CLOCK, background=True)
-    again = submit_save(rig.jobs, W1, request, clock=CLOCK, background=True)
+    save = rig.jobs.submit(background("save"), save_work(request))
+    again = rig.jobs.submit(background("save"), save_work(request))
+    plain = rig.jobs.submit(background("save"), calls("ok"))
     assert isinstance(save, JobTicket)
     assert code_of(again) == ErrorCode.ENGINE_QUEUE_FULL
-    plain = rig.jobs.submit_background_save(W1, calls("ok"))
     assert code_of(plain) == ErrorCode.ENGINE_QUEUE_FULL
-    assert len(rig.jobs.status().queue.queued) == 1
+    queued = rig.jobs.status().queue.queued
+    assert [(j.kind, j.waited_for, j.owner) for j in queued] == [("save", False, "app")]
     rig.engine.release()
     assert isinstance(outcome(first), Done)
     assert outcome(save) is not None
-
-
-def test_a_join_that_raises_refuses_the_second_save_and_is_logged(rig: Rig) -> None:
-    """S0069 red team L1: a `joined` that raises (a bug) refuses the second request with its own
-    `ENGINE_QUEUE_FULL`, never the scheduler's `closing`; the queued job runs its own work."""
-
-    class Raises(Joinable):
-        @override
-        def joined(self, later: Work) -> Work | None:
-            msg = "join failed"
-            raise RuntimeError(msg)
-
-    first = submit(rig, user("bql"), calls("block"))
-    blocked(rig)
-    ran: list[str] = []
-    save = rig.jobs.submit_background_save(W1, Raises("A", ran=ran))
-    again = rig.jobs.submit_background_save(W1, Joinable("B", ran=ran))
-    assert isinstance(save, JobTicket)
-    assert code_of(again) == ErrorCode.ENGINE_QUEUE_FULL
-    assert rig.log.of(JOB_INTERNAL_ERROR)
-    rig.engine.release()
-    assert isinstance(outcome(first), Done)
-    assert outcome(save) == Done(("A",))
-    assert ran == ["A"]
-
-
-def test_a_join_that_declines_refuses_the_second_save_with_its_own_answer(rig: Rig) -> None:
-    """ADR-0068 D8: `joined` answering None (it cannot take these changes) leaves the queued job as it was and refuses
-    the second request; its changes ran nowhere."""
-    first = submit(rig, user("bql"), calls("block"))
-    blocked(rig)
-    ran: list[str] = []
-    save = rig.jobs.submit_background_save(W1, Joinable("A", ran=ran, can_join=False))
-    again = rig.jobs.submit_background_save(W1, Joinable("B", ran=ran))
-    assert isinstance(save, JobTicket)
-    assert code_of(again) == ErrorCode.ENGINE_QUEUE_FULL
-    rig.engine.release()
-    assert isinstance(outcome(first), Done)
-    assert outcome(save) == Done(("A",))
-    assert ran == ["A"]
 
 
 # -- Cancel (§4) ------------------------------------------------------------------------------------------------------

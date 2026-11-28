@@ -167,10 +167,9 @@ class NotDone:
 type SaveValue = Saved | NotDone
 
 
-def save_spec(workspace: str, *, background: bool = False) -> JobSpec:
-    """A save the user confirmed (waited for), or one the app started itself (prices: background, unconfirmed)."""
-    if background:
-        return JobSpec(kind="save", workspace=workspace, waited_for=False, confirmed=False, owner="app")
+def save_spec(workspace: str) -> JobSpec:
+    """A save the user confirmed (waited for). A save the app starts itself in the background (the price update) comes
+    with BL-0177 (M8; ADR-0068 D8, S0168)."""
     return JobSpec(kind="save", workspace=workspace, waited_for=True, confirmed=True, owner="user")
 
 
@@ -270,18 +269,13 @@ def save_work(request: SaveRequest, *, queue_rebuild: QueueRebuild | None = None
     return work
 
 
-def submit_save(
-    jobs: EngineJobs, workspace: str, request: SaveRequest, *, clock: Clock, background: bool = False
-) -> JobTicket | Failed:
-    """Queue a save (the user's, or the app's own in the background) whose landing queues the background rebuild
-    (§6.1 step 10, ADR-0068 D1). A background save of a fixed request cannot join a queued one (ADR-0068 D8: only a
-    work that plans when it runs can), so a second one while one is queued is refused with its own
-    `ENGINE_QUEUE_FULL`. At most one rebuild waits per workspace (§3): a newer save's finds the queued one, which loads
-    the disk when it runs and so shows both saves (its fingerprint is a hint: a set that misses a file the newer save
-    added makes it try once more with the wider set, `ledger_engine.ledger.rebuild`). A refused rebuild is logged
-    (`rebuild_submitter`)."""
+def submit_save(jobs: EngineJobs, workspace: str, request: SaveRequest, *, clock: Clock) -> JobTicket | Failed:
+    """Queue the user's save whose landing queues the background rebuild (§6.1 step 10, ADR-0068 D1). At most one
+    rebuild waits per workspace (§3): a newer save's finds the queued one, which loads the disk when it runs and so
+    shows both saves (its fingerprint is a hint: a set that misses a file the newer save added makes it try once more
+    with the wider set, `ledger_engine.ledger.rebuild`). A refused rebuild is logged (`rebuild_submitter`)."""
     work = save_work(request, queue_rebuild=rebuild_submitter(jobs, workspace, clock))
-    return jobs.submit_background_save(workspace, work) if background else jobs.submit(save_spec(workspace), work)
+    return jobs.submit(save_spec(workspace), work)
 
 
 class _Run:
