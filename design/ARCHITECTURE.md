@@ -505,7 +505,7 @@ frontend/src/
                     check; readQuery (key and request from the same parameters); installApi / useApi
     errors.ts       AppError, the envelope decoder, the client codes and their messages
     keys.ts         query keys from the declared scope (['app', path, pathParams, query],
-                    ['ws', ws, 'config'|'ledger', path, otherPathParams, query]): every parameter sent is in the key
+                    ['ws', ws, 'config'|'ledger', path, otherPathParams, query]): every path and query parameter sent is in the key (header and cookie parameters are not: no GET has one yet)
     generated/keys.gen.ts    each operation's x-ft-scope and x-ft-writes (gen-api-extras.mjs)
     generated/errors.gen.ts  each error code's class (gen-api-extras.mjs)
     decode.gen.ts   generated decoders: wire brands -> domain types (Money check, PlainDate, ...) (BL-0107)

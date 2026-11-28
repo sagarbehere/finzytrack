@@ -206,8 +206,10 @@ const kernelConcepts = [
 // network globals are refused, by name and through globalThis, window or self, and so is the HTTP client package.
 // By syntax (S0166 verifier F4): a network name read as a property of anything (`document.defaultView.fetch`,
 // `window.parent.WebSocket`), `sendBeacon`, and a dynamic `import('openapi-fetch')`.
-// Stated limits (left to review): an alias made in src/api and exported, a computed property
-// (`Reflect.get(globalThis, 'fetch')`, `window['fetch']`), and a network API by another name (`<img src>`, a form).
+// Stated limits (left to review): an alias made in src/api and exported, a property read through a key held in a
+// variable or `Reflect.get(globalThis, 'fetch')` (a literal `window['fetch']` is refused), a network name taken by
+// destructuring from an object other than globalThis, window or self (`const { sendBeacon } = navigator`; S0166
+// round 2, V2-2), and a network API by another name (`<img src>`, a form).
 const network = 'L2-06: only src/api talks HTTP; call it through src/api'
 const networkNames = ['fetch', 'XMLHttpRequest', 'EventSource', 'WebSocket']
 const networkGlobals = networkNames.map((name) => ({ name, message: network }))

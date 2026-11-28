@@ -54,6 +54,15 @@
 | F5 | Low (c) | Fixed: `queryClient.test.ts` "keeps a query just added by an observer when the cap is full of observed queries"; kills `F5-new-query-not-skipped`. |
 | Question | n/a | Stated limit added (queryClient.ts, ARCHITECTURE.md §3.2), no fix. |
 
+## Verifier round 2 (fresh round on the fix range 72af0682..c52f8a6f; head c52f8a6f, PASS WITH FINDINGS)
+No High, nothing in class (a) or (b). Attacks: F1's key against its request for every parameter shape (order, undefined against absent, an empty query: one duplicate entry, never a wrong answer), the generator's new refusal, F4's member ban for false positives (none in `src`) and bypasses (`globalThis.fetch`, optional and comma forms, `globalThis['fetch']`, destructuring from `window`/`globalThis`: all refused), F2 for a lost network path (none: `failureOf`'s one caller wraps the fetch and the body read), the new tests on 72af0682 (11 fail; F3 and F5 kill their mutants).
+
+| ID | Severity | Class | Disposition |
+|---|---|---|---|
+| V2-1 | Low | c | Docs (the coordinator): header and cookie parameters are not in a key; `keys.ts` and ARCHITECTURE.md §3.1 now say "every path and query parameter", with the limit and the rule that the first GET declaring one adds them. No such GET exists |
+| V2-2 | Low | c | Stated limit in `eslint.config.js`: a network name taken by destructuring from an object other than globalThis, window or self |
+| V2-3 | Low | d | Fixed (docs): the stated limits no longer call a literal `window['fetch']` unrefused; the real limit is a key held in a variable or `Reflect.get` |
+
 ## Hand-off (PROCESS.md §3 step 4; ADR-0057)
 - Checks that accept, tag or refuse, each with its must-not-pass test:
   - `api/errors.ts` `decodeError` (accepts a server envelope, else `CLIENT_DECODE`) → `tests/unit/api/errors.test.ts` "turns %s into CLIENT_DECODE" (16 shapes: unknown code, unknown code with no class, an inherited name as code, wrong class, each missing or mistyped field, no error object, HTML, nothing, null) and "never takes a message from an invalid body"; must-pass "keeps every field of a valid envelope".

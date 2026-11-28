@@ -2,8 +2,10 @@
 // (`x-ft-scope`, generated into keys.gen.ts from the contract), never by hand:
 //   app scope:           ['app', path, pathParams, query]
 //   ledger/config scope: ['ws', ws, scope, path, otherPathParams, query]
-// Every parameter the request sends is in its key, so two requests that may answer differently never share an entry
-// (`staleTime: Infinity` would keep the wrong answer; S0166 verifier F1).
+// Every path and query parameter the request sends is in its key, so two such requests that may answer differently
+// never share an entry (`staleTime: Infinity` would keep the wrong answer; S0166 verifier F1). Stated limit (S0166
+// round 2, V2-1): header and cookie parameters are not in the key; no GET declares one today, and the first that
+// does must add them here.
 // `ws` is the same `{ws}` path parameter the request sends (ADR-0018: no global "current workspace"), so two
 // workspaces never share a key below ['ws'] and a switch never shows another workspace's data (INV-28); and every
 // key of one workspace and scope shares the prefix ['ws', ws, scope], which the event invalidation will use.
