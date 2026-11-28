@@ -59,9 +59,32 @@ function expectAbortedAndClear(problems: string[], f: Foreign): void {
 test('a page request to a foreign origin is aborted and recorded', async ({ page, problems }) => {
   const f = await foreignHttp()
   try {
-    await page.goto('/')
+    // A page without the app's CSP (the test's own about:blank page): the harness's route guard aborts the request.
+    await page.setContent(PAGE)
     expect(await page.evaluate(`fetch('${f.origin}/x').then(() => true, () => false)`)).toBe(false)
     expectAbortedAndClear(problems, f)
+  } finally {
+    f.close()
+  }
+})
+
+test('under the app CSP a foreign request is refused before the guard, and still recorded', async ({
+  page,
+  problems,
+}) => {
+  // S0169: the app's connect-src makes the browser refuse the fetch itself, so the route guard never sees it; the
+  // refusal is a console error (Chromium: "... violates the following Content Security Policy directive ...";
+  // WebKit: "Refused to connect to ... connect-src ..."), which the harness records as a problem either way.
+  const f = await foreignHttp()
+  try {
+    await page.goto('/')
+    expect(await page.evaluate(`fetch('${f.origin}/x').then(() => true, () => false)`)).toBe(false)
+    expect(f.hits(), 'requests that reached the foreign server').toBe(0)
+    const refused = (p: string) =>
+      p === `request to a foreign origin, aborted: ${f.origin}/x` ||
+      (p.startsWith('console error: ') && p.includes(`${f.origin}/x`) && /Content Security Policy|connect-src/.test(p))
+    await expect.poll(() => problems.some(refused)).toBe(true)
+    problems.length = 0
   } finally {
     f.close()
   }
@@ -134,7 +157,9 @@ test('a WebSocket is refused and recorded', async ({ page, problems }) => {
 test('console errors and uncaught page errors are recorded', async ({ page, problems }) => {
   await page.goto('/')
   await page.evaluate("console.error('provoked')")
-  await page.addScriptTag({ content: "throw new Error('provoked uncaught')" }).catch(() => undefined)
+  // An inline script tag (`addScriptTag({ content })`) is refused by the app's CSP (S0169); a timer set through
+  // evaluate, which runs outside the page's CSP, throws in the page's own task.
+  await page.evaluate("setTimeout(() => { throw new Error('provoked uncaught') })")
   await expect.poll(() => problems).toContainEqual('uncaught page error: provoked uncaught')
   expect(problems).toContainEqual('console error: provoked')
   problems.length = 0
