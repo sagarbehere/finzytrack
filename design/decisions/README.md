@@ -50,7 +50,7 @@ This folder holds the architecture decision records of Finzytrack v0.4: why the 
 | [ADR-0032](ADR-0032-broker-sanity-check-and-one-upload-sync.md) | Broker sanity check, holdings reconciliation and one-upload sync | Accepted | 2026-10-24 | investments, import |
 | [ADR-0033](ADR-0033-ai-assistant-capabilities-and-proposals.md) | One AI assistant over shared capabilities; changes are proposals, never auto-applied | Accepted | 2026-10-24 | AI |
 | [ADR-0034](ADR-0034-ai-stack.md) | AI stack: Pydantic AI, AI SDK v7, markdown-it + DOMPurify, our own components | Accepted; amended by S0056 (Vue 3) | 2026-10-24 | AI, stack |
-| [ADR-0035](ADR-0035-ui-layers-and-design-system.md) | UI layers and design system: shadcn/ui on Radix plus our own domain primitives | Accepted; amended by S0056 (Vue 3) | 2026-10-24 | frontend, UI, accessibility |
+| [ADR-0035](ADR-0035-ui-layers-and-design-system.md) | UI layers and design system: shadcn/ui on Radix plus our own domain primitives | Accepted; amended by S0056 (Vue 3), S0169 (recorded type-gate patches) | 2026-10-24 | frontend, UI, accessibility |
 | [ADR-0036](ADR-0036-frontend-rewrite-structure-and-phone-principle.md) | Frontend rewrite from a behaviour spec; structure; desktop first, phone not precluded | Accepted; amended by ADR-0066 | 2026-10-24 | frontend |
 | [ADR-0037](ADR-0037-server-state-with-tanstack-query.md) | Server state lives in TanStack Query, scoped by workspace, invalidated by ledger version | Accepted; amended by S0056 (Vue 3) | 2026-10-24 | frontend, API |
 | [ADR-0038](ADR-0038-api-contract-and-code-generation.md) | API contract: one envelope, plans and confirm, offline OpenAPI, openapi-typescript | Accepted | 2026-10-24 | API, codegen |

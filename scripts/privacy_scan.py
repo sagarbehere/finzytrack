@@ -26,7 +26,7 @@ Rules (design/process/PROCESS.md, "Privacy gate"):
   secret-entropy what detect-secrets 1.5.0 finds (vendor key formats, secret keywords, high-entropy strings),
                 run from its pinned environment `scripts/secrets-scan/` with network verification off, on every
                 blob whatever its name (BL-0035); a 64-hex value under a `sha256` or `checksum` key is a hash
-                pin. A mark or pin excuses a hit only on its own line under every numbering detect-secrets may
+                pin, and `'sha256-<44 base64 ending in =>'` (quotes included) a CSP hash source (S0169). A mark or pin excuses a hit only on its own line under every numbering detect-secrets may
                 use, so in a YAML file with a NEL, LINE or PARAGRAPH SEPARATOR above the value it may not excuse:
                 put the mark on a line of its own there (fails closed by design, S0016) If the tool cannot run, the scan fails (exit 2), never passes
   home-path     a real home directory (/Users/<name>, /home/<name>, /Volumes/<name>, ~<name>/, C:\\Users\\<name>)
@@ -372,6 +372,10 @@ SECRETS_ENV = Path(__file__).resolve().parent / "secrets-scan"
 # A pin in a lockfile or pin file: a 64-hex value under a key named exactly `sha256` or `checksum`. The key
 # must start at a word boundary, so `api_secret_sha256` is not a pin.
 HASH_PIN = re.compile(r"""(?<![\w-])["']?(?:sha256|checksum)["']?\s*[:=]\s*["']([0-9a-f]{64})["']""")
+# A CSP hash source (S0169; owner, 2026-11-28: "Teach the scan"): exactly `'sha256-` + 44 base64 characters
+# ending in `=` + `'`, as a CSP writes the public fingerprint of a committed inline script. Only that value is
+# excused (detect-secrets reports it as `sha256-...` without the quotes); the rest of its line is still scanned.
+CSP_HASH = re.compile(r"'(sha256-[A-Za-z0-9+/]{43}=)'")
 SAFE_SUFFIX = re.compile(r"\.[A-Za-z0-9]{1,12}")
 # detect-secrets skips files by name (lock files) and extension (.css, .svg, .map, ...); every blob is scanned.
 DS_DISABLED_FILTERS = ("detect_secrets.filters.heuristic.is_lock_file",
@@ -458,10 +462,14 @@ def located(line: str, hashed: str) -> str:
 
 
 def excused(line: str, hashed: str) -> bool:
-    """The line carries the rule's allow mark, or the value on it is a hash pin."""
+    """The line carries the rule's allow mark, or the value on it is a hash pin or a CSP hash source."""
     allowed = {r.strip() for m in ALLOW_MARK.finditer(line) for r in m.group(1).split(",")}
     token = located(line, hashed)
-    return "secret-entropy" in allowed or bool(token and any(m.group(1) == token for m in HASH_PIN.finditer(line)))
+    return (
+        "secret-entropy" in allowed
+        or bool(token and any(m.group(1) == token for m in HASH_PIN.finditer(line)))
+        or any(hashlib.sha1(m.group(1).encode()).hexdigest() == hashed for m in CSP_HASH.finditer(line))  # noqa: S324
+    )
 
 
 def entropy_findings(texts: dict, hits: dict | None = None) -> list[Finding]:

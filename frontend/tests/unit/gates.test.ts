@@ -510,6 +510,99 @@ describe('[L2-03][INV-10] every cached query has a bound (S0166)', () => {
   })
 })
 
+describe('[L9-16][L9-17] UI primitives and icons have one source (ADR-0035; S0169)', () => {
+  async function rulesFor(file: string): Promise<Partial<Linter.RulesRecord>> {
+    const config = (await eslint.calculateConfigForFile(`${root}/${file}`)) as Linter.Config
+    return config.rules ?? {}
+  }
+  const elementBan = 'vue/no-restricted-html-elements'
+  const withElement = (tag: string) =>
+    `<script setup lang="ts"></script>\n\n<template>\n  <main><${tag} aria-label="probe" /></main>\n</template>\n`
+
+  it.each(['button', 'input'])('refuses a raw <%s> in app code', async (tag) => {
+    expect(await ruleIds(withElement(tag), 'App.vue')).toContain(elementBan)
+  })
+
+  it('refuses them in a feature (src/features has no file yet: its rules are read from the resolved config)', async () => {
+    const ban = JSON.stringify((await rulesFor('src/features/accounts/views/AccountsView.vue'))[elementBan])
+    expect(ban).toContain('"button"')
+    expect(ban).toContain('"input"')
+  })
+
+  // @regression-guard: the must-pass beside the ban: the two primitive layers may draw them.
+  it('allows them in components/ui and components/app @regression-guard', async () => {
+    expect(await ruleIds(withElement('button'), 'Button.vue', 'src/components/ui/button')).not.toContain(elementBan)
+    const app = (await rulesFor('src/components/app/IconButton.vue'))[elementBan]
+    expect(app === undefined || app === 'off' || app === 0 || (Array.isArray(app) && [0, 'off'].includes(app[0]))).toBe(
+      true,
+    )
+  })
+
+  it.each([
+    ["lucide-vue-next (Lucide's old Vue package)", "import { Sun } from 'lucide-vue-next'\nexport const i = Sun\n"],
+    ['heroicons (the legacy set)', "import { SunIcon } from '@heroicons/vue/24/outline'\nexport const i = SunIcon\n"],
+  ])('refuses %s', async (_label, code) => {
+    expect(await ruleIds(code)).toContain('@typescript-eslint/no-restricted-imports')
+    expect(await ruleIds(code, 'client.ts', 'src/api')).toContain('@typescript-eslint/no-restricted-imports')
+  })
+
+  // @regression-guard: the must-pass beside the icon ban.
+  it('accepts @lucide/vue @regression-guard', async () => {
+    expect(await ruleIds("import { Sun } from '@lucide/vue'\nexport const i = Sun\n")).toEqual([])
+  })
+})
+
+describe('[ADR-0035] vendored copies: only the two style rules and prettier are off in components/ui (S0169)', () => {
+  // Owner, 2026-11-28: "Patch + record (Recommended)": prettier and two style-only lint rules are off in
+  // components/ui only; every type, accessibility and layer rule stays on there.
+  const VENDOR_OFF = ['vue/multi-word-component-names', 'vue/require-default-prop']
+  const level = (entry: Linter.RuleEntry | undefined): string => {
+    const head: unknown = Array.isArray(entry) ? entry[0] : entry
+    return head === 'error' || head === 2 ? 'error' : head === 'warn' || head === 1 ? 'warn' : 'off'
+  }
+  async function differing(vendored: string, ours: string): Promise<Record<string, [string, string]>> {
+    const a = ((await eslint.calculateConfigForFile(`${root}/${vendored}`)) as Linter.Config).rules ?? {}
+    const b = ((await eslint.calculateConfigForFile(`${root}/${ours}`)) as Linter.Config).rules ?? {}
+    const out: Record<string, [string, string]> = {}
+    for (const name of new Set([...Object.keys(a), ...Object.keys(b)])) {
+      const [x, y] = [a[name], b[name]]
+      if (
+        level(x) !== level(y) ||
+        JSON.stringify(Array.isArray(x) ? x.slice(1) : []) !== JSON.stringify(Array.isArray(y) ? y.slice(1) : [])
+      )
+        out[name] = [level(x), level(y)]
+    }
+    return out
+  }
+
+  it('differs from components/app only in the two style rules, both off, for a component', async () => {
+    const diff = await differing('src/components/ui/button/Button.vue', 'src/components/app/IconButton.vue')
+    expect(Object.keys(diff).sort()).toEqual(VENDOR_OFF)
+    for (const name of VENDOR_OFF) expect(diff[name]?.[0]).toBe('off')
+  })
+
+  it('differs at most in the same two rules for a module @regression-guard', async () => {
+    const diff = await differing('src/components/ui/button/index.ts', 'src/components/app/index.ts')
+    for (const name of Object.keys(diff)) expect(VENDOR_OFF).toContain(name)
+  })
+
+  it('keeps the two style rules on in our own components @regression-guard', async () => {
+    const rules = ((await eslint.calculateConfigForFile(`${root}/src/App.vue`)) as Linter.Config).rules ?? {}
+    for (const name of VENDOR_OFF) expect(level(rules[name]), name).not.toBe('off')
+  })
+
+  it('has prettier skip components/ui and nothing more than before', async () => {
+    expect(readFileSync(`${root}/.prettierignore`, 'utf8')).toBe(
+      'dist\npnpm-lock.yaml\nplaywright-report\ntest-results\nsrc/api/generated\nsrc/components/ui\n',
+    )
+    const ignorePath = `${root}/.prettierignore`
+    const info = (file: string) => prettier.getFileInfo(`${root}/${file}`, { ignorePath })
+    expect((await info('src/components/ui/button/Button.vue')).ignored).toBe(true)
+    expect((await info('src/components/app/IconButton.vue')).ignored).toBe(false)
+    expect((await info('src/App.vue')).ignored).toBe(false)
+  })
+})
+
 describe('[EP-22] the knip config', () => {
   // Seeded plant E12: an `ignore` of src/** hid every unused file and export while knip stayed green.
   it('is exactly the reviewed one @regression-guard', () => {

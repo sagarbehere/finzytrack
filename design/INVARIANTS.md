@@ -65,7 +65,7 @@ Origin: accepted by the owner as a starting point on 2026-10-24 (review:20 §2),
 ### INV-09: Data is never markup
 - **Rule:** Data is never markup: no HTML or script from ledger, recipe, import or AI content. Query engines are confined.
 - **Why:** Ledger, import and AI text is untrusted input (review:18).
-- **Enforced by:** the SQL hardening tests of the one user-SQL runner, `backend/tests/mirror/test_query.py` (S0052). Planned: XSS payload tests; BQL hardening tests; the CSP.
+- **Enforced by:** the SQL hardening tests of the one user-SQL runner, `backend/tests/mirror/test_query.py` (S0052); the CSP of the desktop window and the preview server (`script-src 'self'` and the pre-paint script's one hash), `scripts/tests/test_shell_config.py` and `frontend/tests/unit/app/csp.test.ts` (S0169). Planned: XSS payload tests; BQL hardening tests; the backend's CSP header (BL-0324).
 - **Status:** pending (BL-0009, by M2)
 
 ### INV-10: No resident parsed ledger; every cache is bounded
@@ -119,7 +119,7 @@ Origin: accepted by the owner as a starting point on 2026-10-24 (review:20 §2),
 ### INV-18: Accessibility
 - **Rule:** Accessibility meets WCAG 2.2 AA.
 - **Why:** The app must work with a keyboard and a screen reader (review:17).
-- **Enforced by:** planned: eslint-plugin-vuejs-accessibility (ADR-0053; its recommended rules already run in `frontend/eslint.config.js`, S0009); axe in acceptance tests; a token contrast test.
+- **Enforced by:** planned: eslint-plugin-vuejs-accessibility (ADR-0053; its recommended rules already run in `frontend/eslint.config.js`, S0009); axe in acceptance tests; a token contrast test (built: `frontend/tests/unit/app/theme.test.ts`, text 4.5:1, field border and focus ring 3:1, both modes, S0169).
 - **Status:** pending (BL-0018, by M11)
 
 ### INV-19: Docs do not drift

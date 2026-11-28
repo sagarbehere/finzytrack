@@ -2,7 +2,7 @@
 
 This record decides the UI component layers, the theme, accessibility rules and lint guards.
 
-- **Status:** Accepted
+- **Status:** Accepted. Amended 2026-10-29 (Vue 3) and 2026-11-28 (recorded type-gate patches in vendored copies).
 - **Date:** 2026-10-24
 - **Deciders:** owner
 - **Area:** frontend, UI, accessibility
@@ -45,6 +45,13 @@ Owner: "Yes, rename to composables everywhere including INV-12. Agreed with the 
 - `useConfirm`, `useUnsavedGuard` and `useFieldErrors` are composables; `components/app/` may read the shared catalog query composables.
 - The guards are `eslint-plugin-vue` and **`eslint-plugin-vuejs-accessibility`** recommended rules with typescript-eslint strict type-checked rules and `--max-warnings 0`, and `vue-tsc --noEmit` as the type gate (ARCHITECTURE.md §3.1); the React hooks rules have no Vue counterpart and are not run.
 - Nothing else changes: the two layers, safe focus, pickers, theme, the bans and the accessibility target.
+
+## Amendment (2026-11-28): recorded type-gate patches in vendored copies
+
+Owner, 2026-11-28, in session: "Patch + record (Recommended)", on `design/inbox/answered/20261128-vendored-ui-strict-gates.md`. The option as put to the owner: "Change that one line (same behaviour), list it in `components/ui/PATCHES.md` so it is re-applied on every re-copy, and amend ADR-0035: vendored copies are unedited except for recorded type-gate patches. Prettier and two style-only lint rules are switched off in `components/ui/` only; every type, accessibility and layer rule stays on." (S0169)
+- **Replaces "unedited copies"** with: copies are byte for byte what the shadcn-vue CLI writes, except the patches listed in `src/components/ui/PATCHES.md`. A patch exists only to make a copy pass the type gate, keeps the copy's behaviour, and is re-applied whenever the component is copied again. The first one: the input's `useVModel` call passes `defaultValue` only when it is defined, since `exactOptionalPropertyTypes` refuses an option present with the value `undefined`.
+- **Gate scoping for `src/components/ui/` only:** prettier skips it, and ESLint turns off `vue/multi-word-component-names` and `vue/require-default-prop` there (shadcn-vue names its components `Button`, `Input` and leaves optional props without defaults). Every other rule stays on there, type-checked, accessibility and layer rules included; `tests/unit/gates.test.ts` pins that only those two rules differ.
+- The `data-*` attributes the copies set (`data-slot`, `data-variant`, `data-size`) are declared in our own type file (`src/app/vendored-ui.d.ts`), not by a patch.
 
 ## References
 

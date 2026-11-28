@@ -4,6 +4,18 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Finzytrack</title>
+    <!-- The pre-paint theme script (L9-11, ADR-0035): the one inline script, allowed by its hash in the CSP
+         (ADR-0040; tauri.conf.json). Any change to it changes the hash: scripts/tests/test_shell_config.py names both. -->
+    <script>
+      ;(function () {
+        var theme = 'system'
+        try {
+          theme = JSON.parse(localStorage.getItem('ft/v1/app/theme'))
+        } catch (e) {}
+        var dark = theme === 'dark' || (theme !== 'light' && matchMedia('(prefers-color-scheme: dark)').matches)
+        document.documentElement.classList.toggle('dark', dark)
+      })()
+    </script>
   </head>
   <body>
     <div id="app"></div>

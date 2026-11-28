@@ -235,9 +235,12 @@ const unboundedCache = [
   },
   { selector: "Property[key.name='gcTime'] > UnaryExpression > Identifier[name='Infinity']", message: cacheBound },
 ]
+// L9-17 (S0169, ADR-0035): Lucide (`@lucide/vue`) is the one icon set; the names a copied snippet brings are refused.
+const oneIconSet = 'L9-17: icons come from @lucide/vue only (ADR-0035)'
 const restrictedImports = (apiAllowed, cacheAllowed) => [
   'error',
   {
+    patterns: [{ group: ['@heroicons/*', 'lucide-vue-next', 'lucide-vue-next/*'], message: oneIconSet }],
     paths: [
       ...(apiAllowed ? [] : [{ name: 'openapi-fetch', message: network }]),
       ...(cacheAllowed
@@ -362,6 +365,27 @@ export default tseslint.config(
       'no-restricted-properties': ['error', ...appProperties],
       '@typescript-eslint/no-restricted-imports': restrictedImports(true, false),
     },
+  },
+  {
+    // L9-16 (S0169, ADR-0035): buttons and fields come from the primitives; only components/ui (the vendored
+    // shadcn-vue copies) and components/app draw the raw elements. <table> and confirm() join with their primitives.
+    files: ['src/**/*.vue'],
+    ignores: ['src/components/ui/**', 'src/components/app/**'],
+    rules: {
+      'vue/no-restricted-html-elements': [
+        'error',
+        {
+          element: ['button', 'input'],
+          message: 'L9-16: use the Button or Input primitive (components/ui, components/app)',
+        },
+      ],
+    },
+  },
+  {
+    // ADR-0035, amendment of 2026-11-28 (owner: "Patch + record (Recommended)"): the vendored copies keep
+    // shadcn-vue's names and optional props; only these two style rules are off there (tests/unit/gates.test.ts).
+    files: ['src/components/ui/**'],
+    rules: { 'vue/multi-word-component-names': 'off', 'vue/require-default-prop': 'off' },
   },
   {
     // L2-03 (S0166): the home of the one QueryClient.

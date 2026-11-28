@@ -733,3 +733,12 @@ Format:
 - Expected effect: a tool slice lands in one verifier round. Metric: rounds and wall time per tool slice after IMP-0079 against S0158; harm to originals or copies from a tool (target 0).
 - Status: new.
 
+
+## IMP-0080: the privacy scan excuses a CSP hash source (S0169, 2026-11-28)
+- Trigger: S0169's hand-off commit was refused by the pre-commit privacy scan: detect-secrets' entropy rule flagged the CSP's `'sha256-…'` hash of the pre-paint script in `shell/src-tauri/tauri.conf.json`, a JSON file, which cannot carry the allow mark (`design/inbox/answered/20261128-csp-hash-privacy-scan.md`).
+- What changed: gate (a loosening). `scripts/privacy_scan.py` excuses a detect-secrets hit whose value is exactly the inner `sha256-…=` of `'sha256-` + 44 base64 characters ending in `=` + `'` (`CSP_HASH`), as it already excuses a 64-hex value under a `sha256` or `checksum` key; the rest of the line is still scanned; the bare base64 value, double quotes, sha384, sha512, other lengths, no padding, base64url characters and other prefixes stay flagged (`scripts/tests/test_privacy_scan.py`).
+- PROCESS.md section: §6 "Privacy gate (INV-23)" (its text names detect-secrets' entropy rule; unchanged).
+- Why: the value is the public fingerprint of a committed script, needed in the CSP (ADR-0040), and the file it must live in has no comments.
+- Expected effect: CSP hashes commit without a workaround; no secret passes in that shape (metric: privacy findings in review, target 0).
+- Status: new.
+- Owner approval: "Teach the scan" (2026-11-28, in session; the option as put: "The privacy scan accepts exactly the form `'sha256-<44 base64 characters>'`, as it already accepts a 64-hex value under a sha256/checksum key; the rest of the line is still scanned. ADR-0040 is unchanged. It loosens the INV-23 privacy guard by one shape.")

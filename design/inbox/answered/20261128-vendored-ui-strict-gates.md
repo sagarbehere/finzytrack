@@ -23,3 +23,4 @@ The owner installed the packages and I copied shadcn-vue 2.9.0's `button` and `i
 Option 1: one recorded line beats new build machinery (3) or a fork (2), and keeps every check on our own code as it is. The lint and prettier scoping is part of any vendoring option: an unedited copy cannot meet our style rules. Review history: none (new mechanism family).
 
 ## Answer (owner, verbatim, with date)
+Owner, 2026-11-28, in session: "Patch + record (Recommended)". The option as put to the owner: "Change that one line (same behaviour), list it in `components/ui/PATCHES.md` so it is re-applied on every re-copy, and amend ADR-0035: vendored copies are unedited except for recorded type-gate patches. Prettier and two style-only lint rules are switched off in `components/ui/` only; every type, accessibility and layer rule stays on." Recorded in ADR-0035's amendment of 2026-11-28 (S0169).

@@ -1,0 +1,98 @@
+/* The theme (L9-11, ADR-0035): one set of tokens, light on :root and dark on .dark, which the pre-paint script in
+   index.html sets before the first paint. The names are shadcn-vue's, so the vendored components (components/ui)
+   draw with them; the colours are Tailwind's gray and indigo (today's look), each pair checked for contrast in both
+   modes by tests/unit/app/theme.test.ts (INV-18). */
+@import 'tailwindcss';
+
+/* `dark:` in the vendored classes means "inside .dark". */
+@custom-variant dark (&:is(.dark *));
+
+:root {
+  color-scheme: light;
+  --radius: 0.5rem;
+  --background: oklch(1 0 0);
+  --foreground: oklch(21% 0.034 264.665); /* gray-900 */
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(21% 0.034 264.665);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(21% 0.034 264.665);
+  --primary: oklch(51.1% 0.262 276.966); /* indigo-600 */
+  --primary-foreground: oklch(1 0 0);
+  --secondary: oklch(96.7% 0.003 264.542); /* gray-100 */
+  --secondary-foreground: oklch(21% 0.034 264.665);
+  --muted: oklch(96.7% 0.003 264.542);
+  --muted-foreground: oklch(44.6% 0.03 256.802); /* gray-600: helper text at AA on white and on gray-100 */
+  --accent: oklch(96.7% 0.003 264.542);
+  --accent-foreground: oklch(21% 0.034 264.665);
+  --destructive: oklch(57.7% 0.245 27.325); /* red-600 */
+  --border: oklch(92.8% 0.006 264.531); /* gray-200: separators, decorative */
+  --input: oklch(55.1% 0.027 264.364); /* gray-500: a field's edge at 3:1 */
+  --ring: oklch(51.1% 0.262 276.966);
+}
+
+.dark {
+  color-scheme: dark;
+  --background: oklch(13% 0.028 261.692); /* gray-950 */
+  --foreground: oklch(98.5% 0.002 247.839); /* gray-50 */
+  --card: oklch(21% 0.034 264.665); /* gray-900 */
+  --card-foreground: oklch(98.5% 0.002 247.839);
+  --popover: oklch(21% 0.034 264.665);
+  --popover-foreground: oklch(98.5% 0.002 247.839);
+  --primary: oklch(67.3% 0.182 276.935); /* indigo-400 */
+  --primary-foreground: oklch(13% 0.028 261.692);
+  --secondary: oklch(27.8% 0.033 256.848); /* gray-800 */
+  --secondary-foreground: oklch(98.5% 0.002 247.839);
+  --muted: oklch(27.8% 0.033 256.848);
+  --muted-foreground: oklch(70.7% 0.022 261.325); /* gray-400 */
+  --accent: oklch(27.8% 0.033 256.848);
+  --accent-foreground: oklch(98.5% 0.002 247.839);
+  --destructive: oklch(63.7% 0.237 25.331); /* red-500 */
+  --border: oklch(27.8% 0.033 256.848);
+  --input: oklch(55.1% 0.027 264.364);
+  --ring: oklch(67.3% 0.182 276.935);
+}
+
+@theme inline {
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
+}
+
+/* L9-16: iOS zooms into a field whose text is under 16 px when it is focused. The vendored input is 16 px below
+   768 px wide and 14 px above (md:text-sm), which an iPhone in landscape or an iPad crosses. Unlayered, this rule
+   beats Tailwind's layered utilities without a patch to the copy; mouse and trackpad screens keep 14 px. */
+@media (pointer: coarse) {
+  input,
+  textarea,
+  select {
+    font-size: 16px;
+  }
+}

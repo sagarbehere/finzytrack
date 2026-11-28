@@ -466,6 +466,49 @@ class SecretEntropy(unittest.TestCase):
             with self.subTest(text=text[:20]):
                 self.assertEqual(self.found(text), [])
 
+    def test_a_csp_hash_source_is_not_a_secret(self) -> None:
+        # S0169 (owner, 2026-11-28: "Teach the scan"): a CSP hash source, exactly `'sha256-` + 44 base64
+        # characters ending in `=` + `'`, is the public fingerprint of a committed inline script.
+        csp = f"'sha256-{self.B64}'"
+        for name, text in {
+            "in a CSP string": f'"csp": "default-src \'self\'; script-src \'self\' {csp}; object-src \'none\'",\n',
+            "alone on its line": f"{csp}\n",
+        }.items():
+            with self.subTest(case=name):
+                self.assertEqual(self.found(text, "conf.json"), [])
+
+    def test_only_that_exact_form_is_excused(self) -> None:
+        """@regression-guard: each near miss is a value detect-secrets flags, and stays flagged."""
+        b64 = self.B64
+        b64_48 = base64.b64encode(hashlib.sha384(b"another test value").digest()).decode()
+        b64_64 = base64.b64encode(hashlib.sha512(b"another test value").digest()).decode()
+        cases = {
+            "the bare base64 value": f'token = "{b64}"\n',
+            "double quotes instead of single": f'"sha256-{b64}"\n',
+            "sha384": f"'sha384-{b64_48}'\n",
+            "sha512": f"'sha512-{b64_64}'\n",
+            "one character short": f"'sha256-{b64[:42]}='\n",
+            "one character long": f"'sha256-{b64[:43]}A='\n",
+            "no padding": f"'sha256-{b64[:43]}A'\n",
+            "base64url characters": "'sha256-" + b64[:41].replace(b64[0], "-") + "_x='\n",
+            "a nonce": f"'nonce-{b64}'\n",
+            "another algorithm name": f"'sha1-{b64}'\n",
+        }
+        for name, text in cases.items():
+            with self.subTest(case=name):
+                self.assertIn("secret-entropy", self.found(text, "conf.json"))
+
+    def test_a_csp_hash_does_not_excuse_a_secret_on_its_line(self) -> None:
+        # The rest of the line is still scanned: one finding, the other value's.
+        other = base64.b64encode(hashlib.sha256(b"a third test value").digest()).decode()
+        text = f"'sha256-{self.B64}' token = \"{other}\"\n"
+        self.assertEqual(self.found(text, "conf.json"), ["secret-entropy"])
+
+    def test_the_same_value_bare_beside_its_csp_form_stays_flagged(self) -> None:
+        # S0169 self-mutation survivor: only the quoted form is excused, not its base64 part found elsewhere.
+        text = f"'sha256-{self.B64}' token = \"{self.B64}\"\n"
+        self.assertEqual(self.found(text, "conf.json"), ["secret-entropy"])
+
     def test_file_type_rules_still_apply(self) -> None:
         # S0016 round-2 F2: the suffix is kept, so detect-secrets' per-language keyword rules run.
         word = "pass" + "word"

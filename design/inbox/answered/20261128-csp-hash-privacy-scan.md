@@ -17,3 +17,4 @@ The pre-commit privacy scan (detect-secrets, rule `secret-entropy`) sees a 44-ch
 Option 2: it removes the problem instead of excusing it, and it makes the CSP stricter (`'self'` only) and simpler (nothing to keep in step). Option 1 is sound too if the owner prefers the inline script; it is a small, tested change to the privacy guard. Review history: none for either (new mechanism family).
 
 ## Answer (owner, verbatim, with date)
+Owner, 2026-11-28, in session: "Teach the scan". The option as put to the owner: "The privacy scan accepts exactly the form `'sha256-<44 base64 characters>'`, as it already accepts a 64-hex value under a sha256/checksum key; the rest of the line is still scanned. ADR-0040 is unchanged. It loosens the INV-23 privacy guard by one shape." Built in S0169 (`scripts/privacy_scan.py`, `CSP_HASH`).

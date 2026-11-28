@@ -4,9 +4,12 @@ must fail it."""
 
 from __future__ import annotations
 
+import base64
 import copy
+import hashlib
 import json
 import unittest
+from html.parser import HTMLParser
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -16,6 +19,67 @@ CAPS = {p.name: json.loads(p.read_text()) for p in sorted((TAURI / "capabilities
 # The packaged build merges this file over tauri.conf.json (`tauri build --config`, S0012).
 PACKAGED_NAME = "tauri.packaged.conf.json"
 PACKAGED = json.loads((TAURI / PACKAGED_NAME).read_text())
+INDEX_HTML = (ROOT / "frontend/index.html").read_text(encoding="utf-8")
+
+
+class _Page(HTMLParser):
+    """The inline scripts of a page and every markup shape a strict CSP would block or that runs script outside it."""
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=False)
+        self.inline: list[str] = []
+        self.other: list[str] = []
+        self._in_script = False
+        self._buffer: list[str] = []
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        names = {k.lower(): v or "" for k, v in attrs}
+        for name, value in names.items():
+            if name.startswith("on"):
+                self.other.append(f"event handler {name}")  # inline handlers run only under 'unsafe-inline'
+            if name == "style":
+                self.other.append("style attribute")
+            if value.strip().lower().startswith("javascript:"):
+                self.other.append(f"javascript: url in {name}")
+        if tag == "style":
+            self.other.append("style element")
+        if tag == "script" and "src" not in names:
+            self._in_script, self._buffer = True, []
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag == "script" and self._in_script:
+            self.inline.append("".join(self._buffer))
+            self._in_script = False
+
+    def handle_data(self, data: str) -> None:
+        if self._in_script:
+            self._buffer.append(data)
+
+
+def page_of(html: str) -> _Page:
+    page = _Page()
+    page.feed(html)
+    page.close()
+    return page
+
+
+def csp_hash(script: str) -> str:
+    """The CSP source that allows exactly this inline script: SHA-256 of its text, base64 (CSP Level 2)."""
+    return "'sha256-" + base64.b64encode(hashlib.sha256(script.encode("utf-8")).digest()).decode("ascii") + "'"
+
+
+def page_problems(html: str) -> list[str]:
+    """ADR-0040: the page's one inline script is the pre-paint theme script; nothing else inline."""
+    page = page_of(html)
+    out = list(page.other)
+    if len(page.inline) != 1:
+        out.append(f"{len(page.inline)} inline scripts")
+    return out
+
+
+def prepaint_hash(html: str) -> str | None:
+    page = page_of(html)
+    return csp_hash(page.inline[0]) if len(page.inline) == 1 else None
 
 # Permissions the webview may hold. M0 grants none; the M2 shell slice adds the dialog, opener, updater and
 # process permissions ADR-0007 lists. fs and shell execution are never granted (ARCHITECTURE.md §5).
@@ -33,7 +97,10 @@ def csp_directives(csp: str) -> dict[str, list[str]]:
     return out
 
 
-def csp_problems(csp: str | None) -> list[str]:
+def csp_problems(csp: str | None, prepaint: str | None = None) -> list[str]:
+    """`prepaint`: the hash source of the page's pre-paint script, the one hash the script sources may hold."""
+    if prepaint is None:
+        prepaint = prepaint_hash(INDEX_HTML)
     if not csp:
         return ["csp missing"]
     d = csp_directives(csp)
@@ -43,7 +110,7 @@ def csp_problems(csp: str | None) -> list[str]:
         script_lists = [d.get("default-src", ["*"])]
     for sources in script_lists:
         # ADR-0040: script-src 'self' plus the pre-paint script's hash; nothing inline, evaluated or remote.
-        if any(s != "'self'" and not s.startswith("'sha256-") for s in sources):
+        if sorted(sources) != sorted(["'self'", prepaint]):
             out.append("csp script source")
     if d.get("object-src") != ["'none'"]:
         out.append("csp object-src")
@@ -116,16 +183,18 @@ def with_csp(value: str):
     return lambda c, k: c["app"]["security"].update(csp=value)
 
 
-GOOD_CSP = "default-src 'self'; script-src 'self'; connect-src 'self' ipc: http://ipc.localhost; object-src 'none'"
+PREPAINT = prepaint_hash(INDEX_HTML)
+GOOD_CSP = (f"default-src 'self'; script-src 'self' {PREPAINT}; connect-src 'self' ipc: http://ipc.localhost; "
+            "object-src 'none'")
 
 
 class ShellConfig(unittest.TestCase):
     def test_the_committed_config_holds(self) -> None:
         self.assertEqual(problems(CONF, CAPS), [])
 
-    def test_a_pre_paint_hash_is_allowed(self) -> None:
+    def test_the_good_csp_holds(self) -> None:
         c = copy.deepcopy(CONF)
-        c["app"]["security"]["csp"] = GOOD_CSP.replace("script-src 'self'", "script-src 'self' 'sha256-abc='")
+        c["app"]["security"]["csp"] = GOOD_CSP
         self.assertEqual(problems(c, CAPS), [])
 
     def test_a_repeated_directive_is_ignored_as_browsers_do(self) -> None:
@@ -140,6 +209,12 @@ class ShellConfig(unittest.TestCase):
             "productName": lambda c, k: c.update(productName="Other"),
             "macOS minimum": lambda c, k: c["bundle"]["macOS"].update(minimumSystemVersion="13.0"),
             "unsafe-inline": with_csp(GOOD_CSP.replace("script-src 'self'", "script-src 'self' 'unsafe-inline'")),
+            # S0169: the hash must be the pre-paint script's, and the only one.
+            "a stale hash": with_csp(GOOD_CSP.replace(str(PREPAINT), csp_hash("old script"))),
+            "a second hash": with_csp(GOOD_CSP.replace(str(PREPAINT), f"{PREPAINT} {csp_hash('other()')}")),
+            "no hash": with_csp(GOOD_CSP.replace(f" {PREPAINT}", "")),
+            "unsafe-hashes": with_csp(GOOD_CSP.replace("script-src 'self'", "script-src 'self' 'unsafe-hashes'")),
+            "strict-dynamic": with_csp(GOOD_CSP.replace("script-src 'self'", "script-src 'self' 'strict-dynamic'")),
             "upper-case directive": with_csp(GOOD_CSP.replace("script-src 'self'", "SCRIPT-SRC 'self' 'unsafe-inline'")),
             "script-src-elem": with_csp(GOOD_CSP + "; script-src-elem 'self' 'unsafe-inline'"),
             "data: script": with_csp(GOOD_CSP.replace("script-src 'self'", "script-src 'self' data:")),
@@ -162,6 +237,40 @@ class ShellConfig(unittest.TestCase):
                 c, k = copy.deepcopy(CONF), copy.deepcopy(CAPS)
                 plant(c, k)
                 self.assertNotEqual(problems(c, k), [], f"{name} passed the check")
+
+
+class PrePaintPage(unittest.TestCase):
+    """ADR-0040 and its 2026-10-25 amendment (S0169): the CSP's one hash is the shipped pre-paint script's."""
+
+    def test_the_committed_page_holds(self) -> None:
+        self.assertEqual(page_problems(INDEX_HTML), [])
+        self.assertIsNotNone(PREPAINT)
+        self.assertIn(str(PREPAINT), csp_directives(CONF["app"]["security"]["csp"])["script-src"])
+
+    def test_the_hash_is_the_csp_level_2_one(self) -> None:
+        # The example of the CSP Level 2 spec: <script>alert('Hello, world.');</script>
+        spec = "'sha256-qznLcsROx4GACP2dm0UCKCzCG+HiZ1guq6ZZDob/Tng='"  # a public hash  privacy-scan: allow secret-entropy
+        self.assertEqual(csp_hash("alert('Hello, world.');"), spec)
+
+    def test_an_edited_script_no_longer_matches(self) -> None:
+        edited = INDEX_HTML.replace("</script>", " </script>", 1)
+        self.assertNotEqual(prepaint_hash(edited), PREPAINT)
+        self.assertNotEqual(csp_problems(CONF["app"]["security"]["csp"], prepaint_hash(edited)), [])
+
+    def test_planted_pages_fail(self) -> None:
+        head = "<head>"
+        variants = {
+            "a second inline script": INDEX_HTML.replace(head, head + "<script>x()</script>", 1),
+            "no inline script": "<!doctype html><html><head></head><body></body></html>",
+            "an inline handler": INDEX_HTML.replace("<body>", '<body onload="x()">', 1),
+            "an upper-case handler": INDEX_HTML.replace("<body>", '<body ONLOAD="x()">', 1),
+            "a style element": INDEX_HTML.replace(head, head + "<style>a{}</style>", 1),
+            "a style attribute": INDEX_HTML.replace("<body>", '<body style="color:red">', 1),
+            "a javascript: url": INDEX_HTML.replace("<body>", '<body><a href="javascript:x()">x</a>', 1),
+        }
+        for name, html in variants.items():
+            with self.subTest(variant=name):
+                self.assertNotEqual(page_problems(html), [], f"{name} passed the check")
 
 
 class PackagedOverride(unittest.TestCase):

@@ -1,5 +1,7 @@
 import { createApp } from 'vue'
 
+import './app/theme.css'
+
 import App from './App.vue'
 import { createApi, installApi } from './api/client'
 import { createErrorSink, installErrors } from './app/errors'
