@@ -51,6 +51,21 @@ A fresh reviewer at head 78f105fa (PROCESS.md §4, altitude 2). **Verdict: no Hi
 | F11 | Low | e | Row BL-0317 (M2, pytest-xdist) |
 | Overflow: `PLAN_UNKNOWN`, `PLAN_ALREADY_CONFIRMED` missing from ARCHITECTURE §6.1 | — | d | Added to the table and the "Built" line |
 | Overflow: BL-0256's limit | — | d | Noted on BL-0256's row for M4's brief |
-| Overflow: the rest | — | — | Dropped by the orchestrator's triage; their lines were not passed to the implementer, so their IDs are not recorded here |
+| Overflow: the save checks for an `.open` journal at step 1 (`save.py`, around 467) and again at step 4 (around 504); step 1 is redundant with one job at a time | Low | e | Dropped: the step-1 check refuses before any read and costs one listing; removing it buys nothing a user sees |
+| Overflow: `ENCRYPTED_SUFFIXES` exists in both the sidecar and the engine, held by no shared test | Low | c | Dropped: across the process boundary a copy is expected (ADR-0054); the engine's own refusal is the authority |
 
 **Simplification proposals 1-5** (each narrows an ADR, so the owner's): `design/inbox/20261128-m1b-simplifications.md`; nothing implemented.
+
+## T2 at the exit (2026-11-28)
+- **Packaged builds on three OSes** (`packaged.yml`, the run of 2026-11-28 at 78f105fa): **success**. macOS, Windows and Linux built, installed and smoke-tested strictly; Linux's AppImage now strict too (S0153, BL-0263), the `.deb`'s must-not-pass runs refused.
+- **Cargo dates** (`nightly.yml`'s `cargo-age`): `shell/src-tauri/Cargo.lock` is unchanged since M1a's exit (23b8b5d6), whose run re-read every date; no new crate to verify. `nightly.yml` itself cannot be started by hand: GitHub runs a manual workflow only when it exists on the default branch, and it exists only on `next` (agents never push `main`); its two jobs were covered as above.
+- **Performance and memory against the baseline:** no CI job exists yet (roadmap §6: "the other T2 items arrive with the code they check"); the write path's costs are measured by the measurement scripts, each run in the suites on every OS (`measure_save.py`, `measure_write.py`, `measure_protocol.py`).
+
+## Reflection and process metrics
+- **Span:** 2026-11-13 to 2026-11-28; slices S0114 to S0162 (49 journals) plus this record.
+- **Process changes from the milestone's reflection** (IMPROVEMENTS.md): IMP-0075 (refuse first; a Low (c)/(d) is never a backlog row), IMP-0076 (the push gate parses workflow files), IMP-0077 (the lighter mid-slice push gate), IMP-0078 (the outcome is exact, its cause best effort), IMP-0079 (one-off tools get one review round; the stated limit is offered at the first High outside product code).
+- **What cost the most:** the file-system edge cases of Windows and OneDrive (S0144 to S0152: refused folder rules, held files, cloud placeholders, read-only folders), and S0158 (a one-off tool's guard: three failed rounds, about 4 h, stopped by the owner; IMP-0079 followed). Most rounds were spent on which cause a refusal names and on hostile inputs to tools, not on lost bytes: across the four milestone reviews and 49 slices no ledger byte was found lost, torn or overwritten in product code, and the one false outcome found in the milestone (S0149 V1) was fixed in its round.
+- **What worked:** measuring on the runner or the owner's PC before building (S0151's OneDrive probe, S0152's hand check, S0153's AppImage phase 1); policy before a second fix round (S0158's plain-copy rule, BL-0249 as a limit); the owner's hand checks on real OneDrive.
+- **Agent misses recorded:** the coordinator wrapped sandbox-exempt commands and misread the failure as a sandbox limit (S0151 retro; memory updated); left the area review out of the exit plan until roadmap §3.2 was reread (this record).
+- **Owner time:** not measured in M1b (as in M1a); the owner's decisions are quoted in each slice's journal. Subagent token totals per slice were not collected in M1b.
+

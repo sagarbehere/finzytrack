@@ -31,10 +31,7 @@
 - Population: the §15 index against every `**Limit (…)**` marker in §1-§14 (101 in the body after the slice, 101 in the index; before: 101 body topics, 86 index entries, 16 missing, 1 stated nowhere). The sixteen mutators of F1 from `intent-table.toml`: 16 rows name one of the five unbuilt primitives (`new_file` 4, `replace_file` 1, `option_line` 4, `insert_meta` 8, `delete_meta` 6, overlapping).
 
 ## Verifier
-- Round 1: pending.
-
-| ID | Severity | Class | Disposition |
-|---|---|---|---|
+- Round 1, head a1a16db3 (range df738f0e..a1a16db3): **PASS**, no findings (docs only, one round). The verifier checked every changed ARCHITECTURE sentence against the code (nothing unbuilt stated as built), the resent-confirm rule against `PlanStore.fate` and `GatedRoute`, the §15 test on the base (17 problems) and now (pass), and each new row's milestone against `intent-table.toml`.
 
 ## Retro
-- Pending.
+- About 25 min (the slice about 10 min, the verifier about 3 min). Findings 0. The orchestrator's brief left out two of the area review's overflow items (the save's `.open` check at step 1, `ENCRYPTED_SUFFIXES` in both processes); recorded in `M1b-exit.md` by the orchestrator.
