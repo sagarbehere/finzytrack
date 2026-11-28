@@ -742,3 +742,13 @@ Format:
 - Expected effect: CSP hashes commit without a workaround. Accepted residual (the owner's "loosens the INV-23 privacy guard by one shape"): a secret written exactly as `'sha256-<43 base64>='` passes the entropy rule (`test_privacy_scan.py` documents it). Metric: privacy findings in review, target 0.
 - Status: new.
 - Owner approval: "Teach the scan" (2026-11-28, in session; the option as put: "The privacy scan accepts exactly the form `'sha256-<44 base64 characters>'`, as it already accepts a 64-hex value under a sha256/checksum key; the rest of the line is still scanned. ADR-0040 is unchanged. It loosens the INV-23 privacy guard by one shape.")
+
+## IMP-0081: push every hand-off, fix-round and record commit with the light gate (2026-11-28)
+- Trigger: pushes were batched at landing, each running the full gate (11-13 min, about 10 of it the engine and backend suites), so hours of work stayed only on the owner's machine; a docs-only push took 13 min.
+- What changed: practice. PROCESS.md §3 step 7: every commit pushed before its slice lands (the hand-off, each fix round) and every commit that lands no slice (docs, records) carries `Gate: mid-slice` and is pushed when it is made; only the landing commit runs the full gate. No gate changes: the light gate (S0141) keeps the push gate, the privacy scans, the staged-file guard, invariants and the workflow parse on every push. The path-aware full gate (a push touching only `design/**` and Markdown runs the doc checks, not the package suites) is added to BL-0317.
+- PROCESS.md section: §3 step 7 (the push sentence); §6 unchanged.
+- Why: backing up and verifying are different needs; the landing push still verifies everything that reaches "done".
+- Expected effect: unpushed work at any time is at most one commit's worth; non-landing pushes take about a minute. Metric: gate time per push (the gate timer), and the age of the oldest unpushed commit at a session's end.
+- Status: new.
+- Owner approval: "I agree with the mid-slice push habit." (2026-11-28, in session; the habit as put: push every hand-off and fix-round commit with `Gate: mid-slice`; full gate only on landing; commits that land no slice take the trailer too). Covers the commit that adds this entry.
+
