@@ -80,3 +80,13 @@ No High, nothing in class (a) or (b). Attacks: F1's key against its request for 
 - Population: the error codes come from the contract's error union (26 codes in, 26 in `errors.gen.ts`); the operations from `contracts/openapi.json` (1 operation, `GET /health`, 1 in `keys.gen.ts`).
 - Base: the tests fail on 30368ddc (part 1's run on the base tree: 3 files fail to load, 18 gates tests fail). Part 2's two new files fail there too (their modules are missing).
 - **The acceptance suite was not run to a result** (skipped, for the owner): `main.ts` now installs the sink, the API and the QueryClient, which the smoke flow loads. An agent run of `pnpm e2e` in the sandbox ended with failures at 0-18 ms, at setup (their reasons were cut by the agent's output filter); a rerun was refused because port 4173 (the preview server) was held by a process the sandbox does not let the agent identify (`ps` refused), possibly left over from that run; it was not stopped. The owner runs `pnpm e2e` in `frontend/` (after freeing port 4173 if it is still held).
+
+## Landing (2026-11-28)
+- The macOS acceptance suite through the harness, run by the owner after round 1's fixes: **39 passed, 21 skipped**, exit 0 (as at M1b's exit).
+- L2-03, L2-05, L2-06, L8-30 done; BL-0107 and BL-0028 stay open (their remaining parts); BL-0323 (M2) holds the invalidation on a ledger change.
+- Owner's manual steps in this slice: the install of the two packages (`pnpm add --save-exact @tanstack/vue-query@5.104.1 openapi-fetch@0.17.0`; the agent sandbox refuses pnpm's store lock), then `pnpm install --frozen-lockfile` (exit 0); vue-demi's build script denied (`allowBuilds`), its shipped lib already Vue 3.
+
+## Retro
+- Two verifier rounds: round 1's F1 (Medium, b) was latent (no app-scoped route with a path parameter yet) and cheap; round 2 found only Low (c)/(d), fixed in docs.
+- A dependency add needs the owner while the sandbox refuses pnpm's lock folder; the coordinator asks with the exact command.
+
