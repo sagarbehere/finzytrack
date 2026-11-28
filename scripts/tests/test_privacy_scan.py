@@ -509,6 +509,14 @@ class SecretEntropy(unittest.TestCase):
         text = f"'sha256-{self.B64}' token = \"{self.B64}\"\n"
         self.assertEqual(self.found(text, "conf.json"), ["secret-entropy"])
 
+    def test_the_accepted_residual_a_secret_in_csp_hash_form_passes(self) -> None:
+        # @regression-guard. S0169 verifier round 1 F5: the owner accepted this residual ("It loosens the INV-23
+        # privacy guard by one shape", 2026-11-28): any value written exactly as `'sha256-<43 base64>='` passes
+        # the entropy rule, a secret too. This test documents the shape; tightening the rule (for example by
+        # requiring a CSP directive on the line) would make it fail, deliberately.
+        planted = base64.b64encode(hashlib.sha256(b"a value that is not a hash").digest()).decode()
+        self.assertEqual(self.found(f"x = 'sha256-{planted}'\n", "conf.json"), [])
+
     def test_file_type_rules_still_apply(self) -> None:
         # S0016 round-2 F2: the suffix is kept, so detect-secrets' per-language keyword rules run.
         word = "pass" + "word"

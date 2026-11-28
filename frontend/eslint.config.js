@@ -256,6 +256,47 @@ const restrictedImports = (apiAllowed, cacheAllowed) => [
     ],
   },
 ]
+// The INV-06/INV-07/EP-23 bans inside Vue templates, where display formatting happens.
+const templateBans = [
+  ...systemTime,
+  {
+    selector: "CallExpression[callee.property.name='toFixed']",
+    message: 'INV-06: format money through src/domain',
+  },
+  // INV-07 (S0092): templates may not name the Date class (a field `row.Date` is not it), nor format now;
+  // INV-06: nor parse money as a float.
+  {
+    selector: "Identifier[name='Date']:not(MemberExpression[computed=false] > Identifier.property)",
+    message: today,
+  },
+  clockByFormat,
+  ...kernelConcepts,
+  {
+    selector: "Identifier[name='parseFloat']:not(MemberExpression[computed=false] > Identifier.property)",
+    message: floatParse,
+  },
+]
+// L9-16 (S0169, ADR-0035; verifier round 1 F4): buttons and fields come from the primitives; only components/ui (the
+// vendored shadcn-vue copies) and components/app draw the raw elements, in any letter case, or make them through
+// `as`/`is` (Reka's Primitive, <component>) or `h()`. <table> and confirm() join with their primitives.
+// Stated limits (left to review): a tag name computed at run time (`:is="tag"`, `h(tag)`), and `createVNode` or
+// JSX, which src/ does not use.
+const rawElement = 'L9-16: use the Button or Input primitive (components/ui, components/app)'
+const rawElementTemplate = [
+  { selector: 'VElement[rawName=/^(button|input)$/i]', message: rawElement },
+  {
+    selector: 'VAttribute[directive=false][key.name=/^(as|is)$/][value.value=/^(button|input)$/i]',
+    message: rawElement,
+  },
+  {
+    selector:
+      "VAttribute[directive=true][key.name.name='bind'][key.argument.name=/^(as|is)$/] Literal[value=/^(button|input)$/i]",
+    message: rawElement,
+  },
+]
+const rawElementScript = [
+  { selector: "CallExpression[callee.name='h'][arguments.0.value=/^(button|input)$/i]", message: rawElement },
+]
 const srcFiles = ['src/**/*.{ts,mts,cts,tsx,js,mjs,cjs,jsx,vue}']
 const appProperties = [
   { property: 'toFixed', message: 'INV-06: format money through src/domain' },
@@ -308,26 +349,7 @@ export default tseslint.config(
         { property: 'toFixed', message: 'INV-06: format money through src/domain' },
       ],
       // The same bans inside Vue templates, where display formatting happens.
-      'vue/no-restricted-syntax': [
-        'error',
-        ...systemTime,
-        {
-          selector: "CallExpression[callee.property.name='toFixed']",
-          message: 'INV-06: format money through src/domain',
-        },
-        // INV-07 (S0092): templates may not name the Date class (a field `row.Date` is not it), nor format now;
-        // INV-06: nor parse money as a float.
-        {
-          selector: "Identifier[name='Date']:not(MemberExpression[computed=false] > Identifier.property)",
-          message: today,
-        },
-        clockByFormat,
-        ...kernelConcepts,
-        {
-          selector: "Identifier[name='parseFloat']:not(MemberExpression[computed=false] > Identifier.property)",
-          message: floatParse,
-        },
-      ],
+      'vue/no-restricted-syntax': ['error', ...templateBans],
     },
   },
   {
@@ -345,6 +367,7 @@ export default tseslint.config(
         ...kernelConcepts,
         ...unboundedCache,
         ...networkSyntax,
+        ...rawElementScript,
       ],
       'no-restricted-globals': [
         'error',
@@ -367,19 +390,11 @@ export default tseslint.config(
     },
   },
   {
-    // L9-16 (S0169, ADR-0035): buttons and fields come from the primitives; only components/ui (the vendored
-    // shadcn-vue copies) and components/app draw the raw elements. <table> and confirm() join with their primitives.
+    // L9-16: the raw-element ban (rawElementTemplate above); later config replaces options, so the template bans
+    // are repeated.
     files: ['src/**/*.vue'],
     ignores: ['src/components/ui/**', 'src/components/app/**'],
-    rules: {
-      'vue/no-restricted-html-elements': [
-        'error',
-        {
-          element: ['button', 'input'],
-          message: 'L9-16: use the Button or Input primitive (components/ui, components/app)',
-        },
-      ],
-    },
+    rules: { 'vue/no-restricted-syntax': ['error', ...templateBans, ...rawElementTemplate] },
   },
   {
     // ADR-0035, amendment of 2026-11-28 (owner: "Patch + record (Recommended)"): the vendored copies keep

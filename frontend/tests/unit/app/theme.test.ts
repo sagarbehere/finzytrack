@@ -1,6 +1,6 @@
 // @vitest-environment node
 // Theme tokens (L9-11, ADR-0035; INV-18): one set of CSS variables in src/app/theme.css, defined for light (`:root`)
-// and dark (`.dark`). Text on its surface reaches 4.5:1 and a field's border and the focus ring 3:1 against the page
+// and dark (`.dark`). Text on its surface reaches 4.5:1 and a field's border and the focus ring (as drawn) 3:1 against the page
 // (WCAG 2.2 AA, 1.4.3 and 1.4.11), in both modes. Fields are 16 px on touch screens, so iOS does not zoom on focus
 // (L9-16): an unlayered rule, which beats Tailwind's layered utilities such as the vendored input's `md:text-sm`.
 import { readFileSync } from 'node:fs'
@@ -130,7 +130,7 @@ const TOKENS = [
 type Token = (typeof TOKENS)[number]
 
 /** A colour as the page shows it: a token, white, or a token drawn at some alpha over the page background. */
-type Paint = Token | 'white' | { token: Token; alpha: number }
+type Paint = Token | 'white' | { token: Token; alpha: number; over?: Token }
 
 interface Pair {
   name: string
@@ -159,14 +159,21 @@ const PAIRS: Pair[] = [
   { name: 'field text', fg: 'foreground', bg: { token: 'input', alpha: 0.3 }, min: 4.5, modes: ['dark'] },
   { name: 'placeholder text', fg: 'muted-foreground', bg: { token: 'input', alpha: 0.3 }, min: 4.5, modes: ['dark'] },
   { name: 'field border', fg: 'input', bg: 'background', min: 3 },
-  { name: 'focus ring', fg: 'ring', bg: 'background', min: 3 },
+  { name: 'focused field border', fg: 'ring', bg: 'background', min: 3 },
+  // The focus ring as drawn (verifier round 1 F1): `focus-visible:ring-ring/50` on the button and input, and
+  // `outline-ring/50` on everything (our base layer), so --ring at 50% over the surface it sits on.
+  { name: 'focus ring as drawn', fg: { token: 'ring', alpha: 0.5 }, bg: 'background', min: 3 },
+  { name: 'focus ring as drawn on a card', fg: { token: 'ring', alpha: 0.5, over: 'card' }, bg: 'card', min: 3 },
+  // Stated limit (backlog BL-0325): the destructive button's ring is `ring-destructive/20` (light) and `/40`
+  // (dark); at 20% no colour reaches 3:1 over white (black gives 1.6:1), so no token can fix it: a patch is the
+  // owner's decision. A field's invalid ring is drawn beside its `border-destructive` edge at full colour.
 ]
 
 function paint(p: Paint, t: Map<string, string>): Rgb {
   const of = (token: Token) => oklchToSrgb(t.get(`--${token}`) ?? 'missing')
   if (p === 'white') return WHITE
   if (typeof p === 'string') return of(p)
-  return over(of(p.token), p.alpha, of('background'))
+  return over(of(p.token), p.alpha, of(p.over ?? 'background'))
 }
 
 /** Every problem of a stylesheet's tokens: a token missing in a mode, or a pair under its ratio. */

@@ -16,7 +16,7 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self'; script-src 'self' 'sha256-MDdhdE6pCnckoApu2Iz/ac+NzdwLlySsrHgdFb9jkdI='; style-src 'self'; img-src 'self' data:; connect-src 'self' ipc: http://ipc.localhost; object-src 'none'",
+      "csp": "default-src 'self'; script-src 'self' 'sha256-MDdhdE6pCnckoApu2Iz/ac+NzdwLlySsrHgdFb9jkdI='; style-src 'self'; img-src 'self' data:; connect-src 'self' ipc: http://ipc.localhost; object-src 'none'; base-uri 'self'; form-action 'self'",
       "dangerousDisableAssetCspModification": [
         "script-src"
       ]

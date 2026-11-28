@@ -515,27 +515,53 @@ describe('[L9-16][L9-17] UI primitives and icons have one source (ADR-0035; S016
     const config = (await eslint.calculateConfigForFile(`${root}/${file}`)) as Linter.Config
     return config.rules ?? {}
   }
-  const elementBan = 'vue/no-restricted-html-elements'
-  const withElement = (tag: string) =>
-    `<script setup lang="ts"></script>\n\n<template>\n  <main><${tag} aria-label="probe" /></main>\n</template>\n`
+  const elementBan = 'vue/no-restricted-syntax'
+  const inTemplate = (body: string, script = '') =>
+    `<script setup lang="ts">${script}</script>\n\n<template>\n  <main>${body}</main>\n</template>\n`
+  const withElement = (tag: string) => inTemplate(`<${tag} aria-label="probe" />`)
+  const rawElementMessages = async (code: string, file = 'App.vue', dir = 'src') => {
+    const [result] = await eslint.lintText(code, { filePath: `${root}/${dir}/${file}` })
+    return (result?.messages ?? []).filter((m) => m.message.startsWith('L9-16')).length
+  }
 
-  it.each(['button', 'input'])('refuses a raw <%s> in app code', async (tag) => {
+  it.each(['button', 'input', 'BUTTON', 'Input'])('refuses a raw <%s> in app code', async (tag) => {
     expect(await ruleIds(withElement(tag), 'App.vue')).toContain(elementBan)
+    expect(await rawElementMessages(withElement(tag))).toBe(1)
+  })
+
+  // S0169 verifier round 1 F4: the same elements made another way.
+  it.each([
+    ["Reka's Primitive as a button", '<Primitive as="button" />', "\nimport { Primitive } from 'reka-ui'\n"],
+    ["Reka's Primitive as an input, bound", '<Primitive :as="\'input\'" />', "\nimport { Primitive } from 'reka-ui'\n"],
+    ['a component with is', '<component is="button" />', ''],
+    ['a component with a bound is', '<component :is="\'INPUT\'" />', ''],
+  ])('refuses %s in app code', async (_label, body, script) => {
+    expect(await rawElementMessages(inTemplate(body, script))).toBe(1)
+  })
+
+  it.each(["h('button')", "h('input', { type: 'text' })"])('refuses %s in app code', async (call) => {
+    const code = `import { h } from 'vue'\nexport const v = () => ${call}\n`
+    expect(await rawElementMessages(code, 'main.ts')).toBe(1)
   })
 
   it('refuses them in a feature (src/features has no file yet: its rules are read from the resolved config)', async () => {
-    const ban = JSON.stringify((await rulesFor('src/features/accounts/views/AccountsView.vue'))[elementBan])
-    expect(ban).toContain('"button"')
-    expect(ban).toContain('"input"')
+    const ban = JSON.stringify(
+      (await rulesFor('src/features/accounts/views/AccountsView.vue'))['vue/no-restricted-syntax'],
+    )
+    expect(ban).toContain('L9-16')
   })
 
-  // @regression-guard: the must-pass beside the ban: the two primitive layers may draw them.
+  // @regression-guard: the must-pass beside the ban: the two primitive layers may draw them, and other tags and
+  // other `as` values pass.
   it('allows them in components/ui and components/app @regression-guard', async () => {
-    expect(await ruleIds(withElement('button'), 'Button.vue', 'src/components/ui/button')).not.toContain(elementBan)
-    const app = (await rulesFor('src/components/app/IconButton.vue'))[elementBan]
-    expect(app === undefined || app === 'off' || app === 0 || (Array.isArray(app) && [0, 'off'].includes(app[0]))).toBe(
-      true,
-    )
+    expect(await rawElementMessages(withElement('button'), 'Button.vue', 'src/components/ui/button')).toBe(0)
+    const app = JSON.stringify((await rulesFor('src/components/app/IconButton.vue'))['vue/no-restricted-syntax'])
+    expect(app).not.toContain('L9-16')
+    expect(
+      await rawElementMessages(inTemplate('<Primitive as="a" />', "\nimport { Primitive } from 'reka-ui'\n")),
+    ).toBe(0)
+    expect(await rawElementMessages(withElement('section'))).toBe(0)
+    expect(await rawElementMessages("import { h } from 'vue'\nexport const v = () => h('span')\n", 'main.ts')).toBe(0)
   })
 
   it.each([

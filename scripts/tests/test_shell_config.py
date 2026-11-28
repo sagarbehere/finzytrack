@@ -97,23 +97,46 @@ def csp_directives(csp: str) -> dict[str, list[str]]:
     return out
 
 
+def reviewed_csp(prepaint: str | None) -> dict[str, set[str]]:
+    """The reviewed policy (ADR-0040, its 2026-10-25 amendment; S0169): each directive and the only sources it may
+    hold. A directive not listed is refused, so nothing is loosened by adding one (`frame-src *`, `worker-src blob:`)."""
+    return {
+        "default-src": {"'self'"},
+        "script-src": {"'self'", str(prepaint)},  # the pre-paint script's hash; nothing inline, evaluated or remote
+        "style-src": {"'self'"},
+        "img-src": {"'self'", "data:"},
+        "connect-src": {"'self'", "ipc:", "http://ipc.localhost"},
+        "object-src": {"'none'"},
+        "base-uri": {"'self'"},  # does not fall back to default-src
+        "form-action": {"'self'"},  # does not fall back to default-src
+    }
+
+
+# Directives that must be present with exactly their reviewed sources: default-src bounds every fetch directive not
+# named; script-src must allow the pre-paint script; base-uri and form-action have no fallback.
+EXACT_DIRECTIVES = ("default-src", "script-src", "object-src", "base-uri", "form-action")
+
+
 def csp_problems(csp: str | None, prepaint: str | None = None) -> list[str]:
-    """`prepaint`: the hash source of the page's pre-paint script, the one hash the script sources may hold."""
+    """Every way `csp` is looser than the reviewed policy, or misses what the app needs (verifier round 1 F2).
+    `prepaint`: the hash source of the page's pre-paint script."""
     if prepaint is None:
         prepaint = prepaint_hash(INDEX_HTML)
     if not csp:
         return ["csp missing"]
     d = csp_directives(csp)
+    allowed = reviewed_csp(prepaint)
     out = []
-    script_lists = [d[k] for k in ("script-src", "script-src-elem", "script-src-attr") if k in d]
-    if not script_lists:
-        script_lists = [d.get("default-src", ["*"])]
-    for sources in script_lists:
-        # ADR-0040: script-src 'self' plus the pre-paint script's hash; nothing inline, evaluated or remote.
-        if sorted(sources) != sorted(["'self'", prepaint]):
-            out.append("csp script source")
-    if d.get("object-src") != ["'none'"]:
-        out.append("csp object-src")
+    for name, sources in d.items():
+        if name not in allowed:
+            out.append(f"csp directive {name}")
+        elif not set(sources) <= allowed[name]:
+            out.append(f"csp {name} source")
+    for name in EXACT_DIRECTIVES:
+        if name in d and set(d[name]) != allowed[name]:
+            out.append(f"csp {name} not exact")
+        elif name not in d:
+            out.append(f"csp {name} missing")
     if not {"ipc:", "http://ipc.localhost"} <= set(d.get("connect-src", [])):
         out.append("csp ipc")  # ADR-0040 amendment: without it IPC falls back to postMessage
     return out
@@ -185,7 +208,7 @@ def with_csp(value: str):
 
 PREPAINT = prepaint_hash(INDEX_HTML)
 GOOD_CSP = (f"default-src 'self'; script-src 'self' {PREPAINT}; connect-src 'self' ipc: http://ipc.localhost; "
-            "object-src 'none'")
+            "object-src 'none'; base-uri 'self'; form-action 'self'")
 
 
 class ShellConfig(unittest.TestCase):
@@ -209,6 +232,22 @@ class ShellConfig(unittest.TestCase):
             "productName": lambda c, k: c.update(productName="Other"),
             "macOS minimum": lambda c, k: c["bundle"]["macOS"].update(minimumSystemVersion="13.0"),
             "unsafe-inline": with_csp(GOOD_CSP.replace("script-src 'self'", "script-src 'self' 'unsafe-inline'")),
+            # S0169 verifier round 1 F2, F3: nothing looser than the reviewed policy, anywhere.
+            "style-src 'unsafe-inline'": with_csp(GOOD_CSP + "; style-src 'self' 'unsafe-inline'"),
+            "default-src *": with_csp(GOOD_CSP.replace("default-src 'self'", "default-src *")),
+            "default-src removed": with_csp(GOOD_CSP.replace("default-src 'self'; ", "")),
+            "img-src *": with_csp(GOOD_CSP + "; img-src *"),
+            "connect-src *": with_csp(GOOD_CSP.replace("connect-src 'self'", "connect-src *")),
+            "connect-src to a host": with_csp(GOOD_CSP.replace("connect-src 'self'", "connect-src 'self' https://example.com")),
+            "worker-src blob:": with_csp(GOOD_CSP + "; worker-src * blob: data:"),
+            "frame-src *": with_csp(GOOD_CSP + "; frame-src *"),
+            "base-uri *": with_csp(GOOD_CSP.replace("base-uri 'self'", "base-uri *")),
+            "base-uri missing": with_csp(GOOD_CSP.replace("; base-uri 'self'", "")),
+            "form-action missing": with_csp(GOOD_CSP.replace("; form-action 'self'", "")),
+            "form-action *": with_csp(GOOD_CSP.replace("form-action 'self'", "form-action *")),
+            "object-src removed": with_csp(GOOD_CSP.replace("; object-src 'none'", "")),
+            "script-src removed": with_csp(GOOD_CSP.replace(f"script-src 'self' {PREPAINT}; ", "")),
+            "report-uri": with_csp(GOOD_CSP + "; report-uri https://example.com/r"),
             # S0169: the hash must be the pre-paint script's, and the only one.
             "a stale hash": with_csp(GOOD_CSP.replace(str(PREPAINT), csp_hash("old script"))),
             "a second hash": with_csp(GOOD_CSP.replace(str(PREPAINT), f"{PREPAINT} {csp_hash('other()')}")),
