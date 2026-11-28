@@ -26,3 +26,12 @@ Accept 1, 4 and 5; accept 3 as tracked (BL-0314); keep 2 as is for now.
 - **5:** no rounds; the primitives were never built. It removes two of the four missing primitives before anyone builds them.
 
 ## Answer (owner, verbatim, with date)
+Owner, 2026-11-28, in session (each proposal answered on its own):
+- 1: "Accept (Recommended)"
+- 2: "Keep for now (Recommended)" (revisit when CAP-WS-TEST-COPY lands in M3)
+- 3: no decision needed (BL-0314, M3)
+- 4: "Accept (Recommended)"
+- 5: "Accept, splice only (Recommended)" (the option as put: accept, with the rule that the producer splices the line into the entry's own text, so comments and spacing are kept (I10), never re-printed; intent-table rows and ADR-0009 amended; BL-0313 closes without code)
+
+Carried out by S0167 (4 and 5, docs and spec) and S0168 (1, the code removal).
+
