@@ -1,6 +1,13 @@
-# M1b exit: Write contract (in progress)
+# M1b exit: Write contract (2026-11-28)
 
-The milestone's exit record (roadmap §3.2: "the milestone's journal entry"), started 2026-11-27 with the owner's local-tier runs; the exit decision, the red teams, the spot audit, the area review and the green manual CI run are added as they happen.
+The milestone's exit record (roadmap §3.2: "the milestone's journal entry"). M1b ran from 2026-11-13 (M1a's exit, 23b8b5d6) to 2026-11-28: slices S0114 to S0162 (49 journals).
+
+## Decision
+
+- Owner, 2026-11-28, in session, asked to close M1b on the evidence below: "Close M1b (Recommended)" (first asked before the §3.2 gates were complete; the coordinator then found the area review, T2 and the reflection missing from its plan, the owner chose "Do them first, then close (Recommended)", and confirmed "Close M1b (Recommended)" once they were done).
+- `FT_MILESTONE_EXIT=M1b python3 scripts/check_invariants.py` passes at the exit code commit 78f105fa: no invariant pending and no backlog item open that is due by M1b.
+- Exit code commit: 78f105fa (every later commit of this record is docs, journals and backlog only).
+
 
 ## Local tier (T-local) on copies of the owner's ledgers (2026-11-27)
 
