@@ -51,3 +51,36 @@ The write corpus by folder (run / refused): asc-plain 7 / 3 (upd-000, ren-000 ju
   - End to end → `EndToEndTest` (the source unchanged, no work folder left, no ledger text or path in the output, a push-region refusal justified, Save anyway not a refusal); the runner → `backend/tests/test_g1_runner.py` (saved, save anyway, a refused request with its step and reason, the copy removed, the source unchanged).
 - Self-mutation (`scripts/mutants.py`, plan in the session scratchpad; the parent's checks guard real-data privacy): 16 tried, 13 killed at first. Survivors: `decode-any-step` and `decode-any-reason` (the test's bad answers carried a bad step and a bad reason together, so either check alone refused them; split into separate answers) and `parse-error-text-shown` (no realistic parse failure quotes the ledger; a test now makes `generate` raise with ledger text). All 16 killed after. Not mutated: the runner's own reason check (`g1_runner.REASON`), a second layer behind `decode`, which re-checks every field (equivalent at the output).
 - Population: none claimed. The table is a list of decided refusals, not an inventory of every refusal the core can give; a refusal it does not name is unjustified by construction.
+
+## Verifier
+One round (PROCESS.md §3 review budget, one-off tool row; IMP-0079). Head verified: 10fca248. Verdict: PASS WITH FINDINGS. Attacks: a marker copy end to end (17 marker strings, file names and the base path absent from stdout and stderr; source hashes unchanged; no work folder left), the runner failing on a copy, an unopenable file in the copy, the push-region condition against ADR-0009, the summary's per-key verdicts, mutants of the runner, the guards, the decoder, and the three repo-corpus rows (all reproduced exactly).
+
+| ID | Severity | Class | Disposition |
+|---|---|---|---|
+| F1 | High (by the row's letter) | a | A file in the copy the tool cannot open (permissions, a socket) crashes the source hash with a traceback naming its path on stderr, exit 1. Offered as a stated limit before any fix round (IMP-0079); owner, 2026-11-28, in session: "All as stated limits". Limit 3 below |
+| F2 | Medium | c | The push-region rule's condition is ledger-wide. Owner: "All as stated limits". Limit 1 below |
+| F3 | Medium | a (in the report) | The summary's per-key verdict is the first case's; the counts are right. Owner: "All as stated limits". Limit 7 below |
+| F4 | Medium | c | Returning after the preview without the confirm and save passes the tests. Owner: "All as stated limits". Limit 8 below |
+| F5 | Low | d | Fixed (docs only): the runner's usage line no longer advertises `--deadline`; the missing comma in PROCESS.md's T-local row |
+| Question | — | — | Rule 1 justifies `ENCRYPTED_FILE_NOT_EDITABLE` on a ledger-wide fact. Limit 2 below |
+
+The coordinator reads every refusal the tool calls justified by hand before it enters the G1 evidence pack, so limits 1, 2 and 7 cannot flatter the reported rate.
+
+### Stated limits (added by the verifier round)
+1. The push-region rule's condition is ledger-wide (any `pushtag`/`pushmeta` line in any file), not "the insert point is inside an open region": an `insert_in_push_region` refusal for another cause (the parser cannot place an entry at the end) on a ledger with any push line counts as justified.
+2. Rule 1 justifies `ENCRYPTED_FILE_NOT_EDITABLE` whenever the set holds an encrypted-named file, whether or not the case touches it.
+3. A file in the copy that cannot be opened (permissions, a socket) crashes the hash with a traceback naming its path, exit 1 (read as "rate at or over 5%"); a FIFO in the copy hangs the hash. `cp -RL` does not copy a file it cannot read.
+4. An absolute `option "documents"` path, or a plugin, reads outside the copy; only includes are checked for containment.
+5. The update cases replace the transaction with Beancount's printed form, which drops comments inside the entry: "saved" does not mean the comments were kept.
+6. A rename whose account appears in metadata or a `custom` value is not_expressible and leaves the sample: read the not_expressible count beside the rate.
+7. The summary's per-key verdict is the first case's: read the per-case lines.
+8. No test notices a runner that skips the confirm and the save (the verifier's F4 mutant); the per-case answers are trusted.
+
+## The owner's runs (2026-11-28)
+On the owner's `cp -RL` copy in the T-local folder (root L1), from a clean clone at 10fca248, run by the owner (counts only):
+- `--per-mutator 20`, seed 9: 60 generated, 49 run, 11 not_expressible (renames), 49 saved, 0 Save anyway, 0 refused; unjustified rate 0.0.
+- `--per-mutator 50`, seed 9: 150 generated, 128 run (50 updates, 28 renames, 50 imports), 22 not_expressible (renames), 128 saved, 0 Save anyway, 0 refused; unjustified rate 0.0 (with 0 of 128, the 95% upper bound on the rate is about 2.3%).
+
+## Retro
+- The tool found one real over-refusal on the repo corpora on its first run (BL-0319), which the oracle, comparing against the legacy, could not.
+- IMP-0079 held: the High was a rare-trigger privacy shape on the owner's own terminal; offered as a limit at once, no fix round.

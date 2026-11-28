@@ -5,7 +5,7 @@ use cases (`app.workspaces.writes`), in a fresh test copy of the source folder p
 
 Started only by `scripts/oracle/g1_refusals.py`, which generates the cases, checks the source, classifies the answers
 and reports (its docstring has the command and the stated limits). usage (cwd = backend/):
-    .venv/bin/python -I scripts/g1_runner.py --source DIR --root-file REL --work DIR [--deadline SECONDS] < cases.json
+    .venv/bin/python -I scripts/g1_runner.py --source DIR --root-file REL --work DIR < cases.json
 
 stdin: a JSON list of cases, `{"id", "edits": [...]}`, each edit the engine's test producer's request
 (`engine/tests/ledger/producer.py`: `insert {text, default_file}`, `replace {path, line, date, keyword, text}`,
