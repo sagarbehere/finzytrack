@@ -6,8 +6,8 @@
 // Reads contracts/openapi.json (exported offline by backend/scripts/export_openapi.py) and writes
 // frontend/src/api/generated/openapi.ts with openapi-typescript (with --stdout, prints it instead).
 // scripts/check_generated.py runs it with --stdout and fails when the committed file differs, so the contract and
-// its types land in the same commit. Types only: the client (openapi-fetch), the x-ft-type brands, the decoders and
-// the query keys arrive with the frontend's API foundations (BL-0107).
+// its types land in the same commit. Types only: the runtime tables (operation scopes, error classes) are
+// gen-api-extras.mjs's (S0166); the x-ft-type brands and the decoders are still to come (BL-0107).
 import { readFileSync, writeFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 

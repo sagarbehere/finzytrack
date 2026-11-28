@@ -102,6 +102,16 @@ GENERATORS: dict[str, tuple[list[str], list[str]]] = {
         ["node", "frontend/scripts/gen-api-types.mjs", "--stdout"],
         ["contracts/openapi.json", "frontend/scripts/gen-api-types.mjs", "frontend/package.json", "frontend/pnpm-lock.yaml"],
     ),
+    # Its runtime tables: each operation's scope and writes (the query keys' source) and each error code's class
+    # (ADR-0037, ADR-0038, BL-0107; S0166).
+    "frontend/src/api/generated/keys.gen.ts": (
+        ["node", "frontend/scripts/gen-api-extras.mjs", "--stdout", "keys"],
+        ["contracts/openapi.json", "frontend/scripts/gen-api-extras.mjs"],
+    ),
+    "frontend/src/api/generated/errors.gen.ts": (
+        ["node", "frontend/scripts/gen-api-extras.mjs", "--stdout", "errors"],
+        ["contracts/openapi.json", "frontend/scripts/gen-api-extras.mjs"],
+    ),
 }
 MARK = "GENERATED"
 

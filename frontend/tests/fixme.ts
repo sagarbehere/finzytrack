@@ -6,7 +6,7 @@
 // The only accepted failure is `PlannedMissing` from `planned()` (S0032, seeded plants G02/G03): once the planned file
 // exists, any other error is a real failure (a buggy first implementation), so the wrapper reports it and returns,
 // which `it.fails` turns red ("expected to fail"). Rethrowing it instead would let `it.fails` pass it.
-import { existsSync } from 'node:fs'
+import { statSync } from 'node:fs'
 
 import { it } from 'vitest'
 
@@ -47,7 +47,10 @@ const candidates = (path: string): string[] => [path, `${path}.ts`, `${path}/ind
 // (`/src/...`). When it lands, the landing slice replaces the call with a static import. PlannedMissing until the
 // file exists; after that, whatever the import does (an error in the module is a real failure). `exists` is for the
 // helper's own test only.
-export async function planned<T>(path: string, exists: (file: string) => boolean = existsSync): Promise<T> {
+// A folder is not a module: on a case-insensitive disk `/src/App` names the folder `src/app` (S0166).
+const isFile = (file: string): boolean => statSync(file, { throwIfNoEntry: false })?.isFile() ?? false
+
+export async function planned<T>(path: string, exists: (file: string) => boolean = isFile): Promise<T> {
   if (!path.startsWith('/src/')) throw new Error(`planned(): ${path} is not a /src/ path`)
   if (!candidates(path).some((p) => exists(`${root}${p.slice(1)}`))) throw new PlannedMissing(path)
   const mod: unknown = await import(/* @vite-ignore */ path)

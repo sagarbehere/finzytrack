@@ -202,7 +202,54 @@ const kernelConcepts = [
   { selector: `Property[value.value=${roots}]`, message: kernel('account kinds') },
   { selector: `TSEnumMember[initializer.value=${roots}]`, message: kernel('account kinds') },
 ]
+// L2-06 (S0166): src/api is the only code that talks HTTP (ARCHITECTURE.md §3.1, §6.4): elsewhere in src the
+// network globals are refused, by name and through globalThis, window or self, and so is the HTTP client package.
+// Stated limits (left to review): an alias made in src/api and exported, and `Reflect.get(globalThis, 'fetch')`.
+const network = 'L2-06: only src/api talks HTTP; call it through src/api'
+const networkNames = ['fetch', 'XMLHttpRequest', 'EventSource', 'WebSocket']
+const networkGlobals = networkNames.map((name) => ({ name, message: network }))
+const networkProperties = ['globalThis', 'window', 'self'].flatMap((object) =>
+  networkNames.map((property) => ({ object, property, message: network })),
+)
+// L2-03, INV-10 (S0166): the one QueryClient is made by src/app/queryClient.ts with its declared bound (gcTime and
+// a cap on cached queries); elsewhere its classes are refused, and nowhere may a query or a client switch its
+// garbage collection off. Stated limit (left to review): an Infinity held in a variable or computed.
+const cacheBound = 'L2-03, INV-10: every cached query has a bound; gcTime is never Infinity'
+const unboundedCache = [
+  { selector: "Property[key.name='gcTime'][value.name='Infinity']", message: cacheBound },
+  {
+    selector: "Property[key.name='gcTime'] > MemberExpression[property.name='POSITIVE_INFINITY']",
+    message: cacheBound,
+  },
+  { selector: "Property[key.name='gcTime'] > UnaryExpression > Identifier[name='Infinity']", message: cacheBound },
+]
+const restrictedImports = (apiAllowed, cacheAllowed) => [
+  'error',
+  {
+    paths: [
+      ...(apiAllowed ? [] : [{ name: 'openapi-fetch', message: network }]),
+      ...(cacheAllowed
+        ? []
+        : [
+            {
+              name: '@tanstack/vue-query',
+              importNames: ['QueryClient', 'QueryCache', 'MutationCache', 'VueQueryPlugin'],
+              message: 'L2-03, INV-10: the one QueryClient is src/app/queryClient.ts',
+              allowTypeImports: true,
+            },
+          ]),
+    ],
+  },
+]
 const srcFiles = ['src/**/*.{ts,mts,cts,tsx,js,mjs,cjs,jsx,vue}']
+const appProperties = [
+  { property: 'toFixed', message: 'INV-06: format money through src/domain' },
+  { object: 'globalThis', property: 'Date', message: today },
+  { object: 'window', property: 'Date', message: today },
+  { object: 'self', property: 'Date', message: today },
+  { property: 'Now', message: today },
+  { object: 'Number', property: 'parseFloat', message: floatParse },
+]
 const srcTests = ['src/**/*.{test,spec}.{ts,mts,cts,tsx,js,mjs,cjs,jsx}']
 const testFiles = ['tests/**/*.ts', 'src/**/*.test.ts', 'src/**/*.spec.ts']
 
@@ -276,18 +323,30 @@ export default tseslint.config(
     files: srcFiles,
     ignores: ['src/platform/**'],
     rules: {
-      'no-restricted-syntax': ['error', ...systemTime, ...appClock, ...kernelConcepts],
-      'no-restricted-globals': ['error', { name: 'Date', message: today }, { name: 'parseFloat', message: floatParse }],
-      'no-restricted-properties': [
+      'no-restricted-syntax': ['error', ...systemTime, ...appClock, ...kernelConcepts, ...unboundedCache],
+      'no-restricted-globals': [
         'error',
-        { property: 'toFixed', message: 'INV-06: format money through src/domain' },
-        { object: 'globalThis', property: 'Date', message: today },
-        { object: 'window', property: 'Date', message: today },
-        { object: 'self', property: 'Date', message: today },
-        { property: 'Now', message: today },
-        { object: 'Number', property: 'parseFloat', message: floatParse },
+        { name: 'Date', message: today },
+        { name: 'parseFloat', message: floatParse },
+        ...networkGlobals,
       ],
+      'no-restricted-properties': ['error', ...appProperties, ...networkProperties],
+      '@typescript-eslint/no-restricted-imports': restrictedImports(false, false),
     },
+  },
+  {
+    // L2-06 (S0166): src/api may talk HTTP; the INV-06/INV-07 bans above are repeated (later config replaces options).
+    files: ['src/api/**/*.{ts,mts,cts,tsx,js,mjs,cjs,jsx,vue}'],
+    rules: {
+      'no-restricted-globals': ['error', { name: 'Date', message: today }, { name: 'parseFloat', message: floatParse }],
+      'no-restricted-properties': ['error', ...appProperties],
+      '@typescript-eslint/no-restricted-imports': restrictedImports(true, false),
+    },
+  },
+  {
+    // L2-03 (S0166): the home of the one QueryClient.
+    files: ['src/app/queryClient.ts'],
+    rules: { '@typescript-eslint/no-restricted-imports': restrictedImports(false, true) },
   },
   {
     // INV-24 (S0030): every e2e file but the harness's own fixtures module (and the nested self-test's config) takes
@@ -334,12 +393,29 @@ export default tseslint.config(
     // EP-23 (S0104 verifier F5): every file under src, whatever its suffix, src/platform and src's own tests
     // included, gets the kernel bans. Later config replaces a rule's options, so each block repeats what it keeps.
     files: ['src/platform/**/*.{ts,mts,cts,tsx,js,mjs,cjs,jsx,vue}'],
-    rules: { 'no-restricted-syntax': ['error', ...systemTime, ...kernelConcepts] },
+    rules: {
+      'no-restricted-syntax': ['error', ...systemTime, ...kernelConcepts, ...unboundedCache],
+      // L2-06, L2-03 (S0166): src/platform may name Date, but neither talk HTTP nor make a QueryClient.
+      'no-restricted-globals': ['error', ...networkGlobals],
+      'no-restricted-properties': [
+        'error',
+        { property: 'toFixed', message: 'INV-06: format money through src/domain' },
+        ...networkProperties,
+      ],
+      '@typescript-eslint/no-restricted-imports': restrictedImports(false, false),
+    },
   },
   {
     files: srcTests,
     rules: {
-      'no-restricted-syntax': ['error', ...systemTime, ...stubsByName, ...deferredAssertions, ...kernelConcepts],
+      'no-restricted-syntax': [
+        'error',
+        ...systemTime,
+        ...stubsByName,
+        ...deferredAssertions,
+        ...kernelConcepts,
+        ...unboundedCache,
+      ],
     },
   },
 )

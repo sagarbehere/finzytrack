@@ -384,6 +384,98 @@ describe('[INV-24] Playwright specs run through the acceptance harness (S0030)',
   })
 })
 
+describe('[L2-06] only src/api talks HTTP (S0166)', () => {
+  it.each([
+    ['fetch', "export const r = fetch('/health')\n", 'no-restricted-globals'],
+    ['an alias of fetch', 'const f = fetch\nexport const r = f\n', 'no-restricted-globals'],
+    ['XMLHttpRequest', 'export const x = new XMLHttpRequest()\n', 'no-restricted-globals'],
+    ['EventSource', "export const s = new EventSource('/x')\n", 'no-restricted-globals'],
+    ['WebSocket', "export const s = new WebSocket('ws://x')\n", 'no-restricted-globals'],
+    ['window.fetch', "export const r = window.fetch('/health')\n", 'no-restricted-properties'],
+    ['globalThis.fetch', 'export const f = globalThis.fetch\n', 'no-restricted-properties'],
+    [
+      'the HTTP client package',
+      "import createClient from 'openapi-fetch'\nexport const c = createClient\n",
+      '@typescript-eslint/no-restricted-imports',
+    ],
+  ])('refuses %s outside src/api', async (_label, code, rule) => {
+    expect(await ruleIds(code)).toContain(rule)
+    expect(await ruleIds(code, 'index.ts', 'src/app/errors')).toContain(rule)
+  })
+
+  // @regression-guard (S0166): the must-pass beside the bans above.
+  it.each([
+    ["fetch('/health')", "export const r = fetch('/health')\n"],
+    ['openapi-fetch', "import createClient from 'openapi-fetch'\nexport const c = createClient\n"],
+  ])('accepts %s in src/api', async (_label, code) => {
+    const ids = await ruleIds(code, 'keys.ts', 'src/api')
+    expect(ids).not.toContain('no-restricted-globals')
+    expect(ids).not.toContain('@typescript-eslint/no-restricted-imports')
+  })
+
+  // @regression-guard (S0166): the must-pass beside the bans above.
+  it('keeps the INV-06 and INV-07 bans in src/api', async () => {
+    expect(await ruleIds('const D = Date\nexport const d = new D(1)\n', 'keys.ts', 'src/api')).toContain(
+      'no-restricted-globals',
+    )
+    expect(await ruleIds('export const s = (1.5).toFixed(2)\n', 'keys.ts', 'src/api')).toContain(
+      'no-restricted-properties',
+    )
+  })
+
+  it('refuses the network in src/platform too', async () => {
+    const config = (await eslint.calculateConfigForFile(`${root}/src/platform/clock.ts`)) as Linter.Config
+    expect(JSON.stringify(config.rules?.['no-restricted-globals'])).toContain('"fetch"')
+    expect(JSON.stringify(config.rules?.['@typescript-eslint/no-restricted-imports'])).toContain('openapi-fetch')
+  })
+})
+
+describe('[L2-03][INV-10] every cached query has a bound (S0166)', () => {
+  it.each([
+    ['gcTime: Infinity', 'export const o = { gcTime: Infinity }\n'],
+    ['gcTime: Number.POSITIVE_INFINITY', 'export const o = { gcTime: Number.POSITIVE_INFINITY }\n'],
+    ['gcTime: +Infinity', 'export const o = { gcTime: +Infinity }\n'],
+  ])('refuses %s in src', async (_label, code) => {
+    expect(await ruleIds(code)).toContain('no-restricted-syntax')
+    expect(await ruleIds(code, 'keys.ts', 'src/api')).toContain('no-restricted-syntax')
+  })
+
+  // @regression-guard (S0166): the must-pass beside the bans above.
+  it('accepts a finite gcTime and staleTime: Infinity', async () => {
+    expect(await ruleIds('export const o = { gcTime: 60_000, staleTime: Infinity }\n')).toEqual([])
+  })
+
+  it.each(['QueryClient', 'QueryCache', 'MutationCache', 'VueQueryPlugin'])(
+    'refuses importing %s outside src/app/queryClient.ts',
+    async (name) => {
+      const code = `import { ${name} } from '@tanstack/vue-query'\nexport const c = ${name}\n`
+      expect(await ruleIds(code)).toContain('@typescript-eslint/no-restricted-imports')
+      expect(await ruleIds(code, 'keys.ts', 'src/api')).toContain('@typescript-eslint/no-restricted-imports')
+    },
+  )
+
+  // @regression-guard (S0166): the must-pass beside the bans above.
+  it('accepts the query composables outside it', async () => {
+    const code = "import { useQuery } from '@tanstack/vue-query'\nexport const q = useQuery\n"
+    expect(await ruleIds(code)).not.toContain('@typescript-eslint/no-restricted-imports')
+  })
+
+  it('lets src/app/queryClient.ts make the client, and keeps the gcTime ban there', async () => {
+    const config = (await eslint.calculateConfigForFile(`${root}/src/app/queryClient.ts`)) as Linter.Config
+    expect(JSON.stringify(config.rules?.['@typescript-eslint/no-restricted-imports'] ?? 'off')).not.toContain(
+      'QueryClient',
+    )
+    expect(JSON.stringify(config.rules?.['no-restricted-syntax'])).toContain('gcTime')
+  })
+
+  it('keeps the gcTime ban in tests under src and in src/platform', async () => {
+    for (const file of ['src/domain/x.test.ts', 'src/platform/clock.ts']) {
+      const config = (await eslint.calculateConfigForFile(`${root}/${file}`)) as Linter.Config
+      expect(JSON.stringify(config.rules?.['no-restricted-syntax'])).toContain('gcTime')
+    }
+  })
+})
+
 describe('[EP-22] the knip config', () => {
   // Seeded plant E12: an `ignore` of src/** hid every unused file and export while knip stayed green.
   it('is exactly the reviewed one @regression-guard', () => {
