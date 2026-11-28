@@ -490,21 +490,24 @@ Execution rule: every `async def` handler only `await`s. Sync work runs on a wor
 
 ## 3. Frontend — Vue 3 (ADR-0053)
 
-**Framework: Vue 3 (ADR-0053).** The frontend is a Vue 3 + Vite single-page app (no Nuxt, no server rendering), in TypeScript with `<script setup>` single-file components. Spike S13 decided it on 2026-10-25 under ADR-0006's rule: in WebKit, timing was a tie and the Vue prototype's webview process used less memory (the other one used 22–64% more by RSS). The stack is the one ADR-0006 named for Vue and ADR-0053 adopted: vue-router, TanStack Vue Query / Table / Virtual, TanStack Form, shadcn-vue on Reka UI, `@lucide/vue`, `vue-sonner`, `@xstate/vue`, `@ai-sdk/vue`, `eslint-plugin-vue` + `eslint-plugin-vuejs-accessibility`, and `vue-tsc` as the type gate. Logic sits in domain modules, composables (Vue's `use…` functions) and machines, never in components (INV-12). Everything below except these bindings is framework-neutral. Built today (M0): the empty shell (`main.ts`, `App.vue`), the lint, type and test gates, the layer map, the generated API types and the acceptance harness; the folders below arrive with the slices that need them.
+**Framework: Vue 3 (ADR-0053).** The frontend is a Vue 3 + Vite single-page app (no Nuxt, no server rendering), in TypeScript with `<script setup>` single-file components. Spike S13 decided it on 2026-10-25 under ADR-0006's rule: in WebKit, timing was a tie and the Vue prototype's webview process used less memory (the other one used 22–64% more by RSS). The stack is the one ADR-0006 named for Vue and ADR-0053 adopted: vue-router, TanStack Vue Query / Table / Virtual, TanStack Form, shadcn-vue on Reka UI, `@lucide/vue`, `vue-sonner`, `@xstate/vue`, `@ai-sdk/vue`, `eslint-plugin-vue` + `eslint-plugin-vuejs-accessibility`, and `vue-tsc` as the type gate. Logic sits in domain modules, composables (Vue's `use…` functions) and machines, never in components (INV-12). Everything below except these bindings is framework-neutral. Built today: the shell (`main.ts`, `App.vue`), the lint, type and test gates, the layer map, the generated API types and the acceptance harness (M0); the data layer of S0166: `api/client.ts`, `api/errors.ts`, `api/keys.ts` with the generated `keys.gen.ts` and `errors.gen.ts`, `app/errors/` and `app/queryClient.ts`, installed by `main.ts`. The other folders below arrive with the slices that need them.
 
 ### 3.1 Structure
 
 ```
 frontend/src/
   main.ts, App.vue  entry: createApp, plugins, global error handlers (§6A.2), mount
-  app/              shell: router (/w/:ws/... routes, vue-router), the Vue Query plugin,
-                    app-level machines (boot, workspace switch, updater), error host
+  app/              shell: router (/w/:ws/... routes, vue-router), the Vue Query plugin (queryClient.ts),
+                    app-level machines (boot, workspace switch, updater), error host (errors/: presentError's sink)
   api/              the only module that talks HTTP
     generated/      openapi-typescript output (types only; never hand-edited)
-    client.ts       openapi-fetch instance: envelope unwrap, AppError, AbortSignal, request id
-    decode.gen.ts   generated decoders: wire brands -> domain types (Money check, PlainDate, ...)
-    keys.gen.ts     generated query-key factories from x-ft-scope (['app'], ['ws', ws, 'config'|'ledger', ...])
-    errors.gen.ts   generated ErrorCode union, presentation table, client-side messages
+    client.ts       createApi over openapi-fetch: envelope unwrap, AppError, AbortSignal, the meta.workspace_id
+                    check; readQuery (key and request from the same parameters); installApi / useApi
+    errors.ts       AppError, the envelope decoder, the client codes and their messages
+    keys.ts         query keys from the declared scope (['app', …], ['ws', ws, 'config'|'ledger', …])
+    generated/keys.gen.ts    each operation's x-ft-scope and x-ft-writes (gen-api-extras.mjs)
+    generated/errors.gen.ts  each error code's class (gen-api-extras.mjs)
+    decode.gen.ts   generated decoders: wire brands -> domain types (Money check, PlainDate, ...) (BL-0107)
     sse.ts          typed reader for the non-chat event streams
     chat.ts         AI SDK chat transport (@ai-sdk/vue; Vercel AI UI message stream, v7 protocol)
   domain/           pure kernel: money.ts, format.ts, dates.ts (Temporal), accounts.ts, commodities.ts,
@@ -547,6 +550,7 @@ The rules come from ADR-0035, ADR-0036 (including the phone principle) and ADR-0
 - **Every `queryFn` consumes `signal`**, so a workspace switch aborts its queries. The server stops recipe runs between steps.
 - Large results skip structural sharing (`structuralSharing: false`), are held in `shallowRef` (no deep reactivity over 54k rows, ADR-0053) and are shaped with `select`. Recipe widgets are one query per widget (`['ws', ws, 'ledger', 'recipe-run', widgetHash, params]`), with a run token (I7).
 - The transaction grid is TanStack Vue Table + TanStack Vue Virtual (54k rows), the shape S13 measured.
+- **Built (S0166).** `app/queryClient.ts` makes the one `QueryClient` with its bound (INV-10): `gcTime` and a cap on cached queries (`CacheBounds`, desktop defaults `DESKTOP_CACHE_BOUNDS` injected by `main.ts`; the oldest unobserved query goes first, an observed one never), `staleTime: Infinity`, no automatic retry; a bound that is not finite is refused, and the lint refuses a `QueryClient` made elsewhere and `gcTime: Infinity` anywhere in `src/`. Keys come from `api/keys.ts` over the generated scope table; `api/client.ts`'s `readQuery(api, path, params)` gives a query its key and request from the same parameters and passes the signal. The event invalidation is BL-0323 (nothing sends `meta.ledger_version` yet).
 
 ---
 
@@ -554,8 +558,8 @@ The rules come from ADR-0035, ADR-0036 (including the phone principle) and ADR-0
 
 ### 4.1 Contract and generation (schemas as the single source, EP-16)
 
-**One contract file, generated offline.** `backend/scripts/export_openapi.py` imports `app.api.create_app` with a no-I/O container factory and writes `app.openapi()` to `contracts/openapi.json` (sorted keys, stable output). No server is started. **Built (S0046):** the export refuses a contract that breaks `app.api.contract.contract_problems` (every operation declares `x-ft-scope` and `x-ft-writes`, answers errors with the error envelope as `default` and as every other non-2xx answer it declares, and success inside `{data, meta}`; every field of a response schema is required; no FastAPI default error schema, no separate input/output schemas); `frontend/scripts/gen-api-types.mjs` generates `frontend/src/api/generated/openapi.ts` from it with openapi-typescript; both files are registered in `scripts/check_generated.py` (the contract's source is the whole `backend/src/app/` folder), so T0 refuses a commit that changes the backend without both, and T0 pre-push and T1 refuse drift. FastAPI's own `/openapi.json` route and documentation pages are off, as are its trailing-slash redirects (an address with a trailing slash is `ROUTE_NOT_FOUND`), and so is its built-in OpenTelemetry (it would record request bodies and stack traces; S0046). `openapi-fetch`, `client.ts`, the `x-ft-type` brands, `decode.gen.ts`, `keys.gen.ts` and `errors.gen.ts` are BL-0107; the breaking-change check is BL-0108. This replaces today's "restart the backend, then `npm run generate-api`" step: **the root `CLAUDE.md` backend-then-frontend rule is retired on `next`.** A schema change and its client regeneration land in the same commit.
-- **Pre-commit (T0):** if anything under `backend/src/app/` (or the export script, `backend/pyproject.toml`, `backend/uv.lock`) is staged, the hook re-exports the spec, and if the spec is staged it regenerates `frontend/src/api/generated/openapi.ts` (later also `*.gen.ts`, BL-0107). It blocks the commit if either differs from the staged copies (`check_generated.py --staged`); it does not write them: run `backend/.venv/bin/python -I backend/scripts/export_openapi.py`, then `node frontend/scripts/gen-api-types.mjs`.
+**One contract file, generated offline.** `backend/scripts/export_openapi.py` imports `app.api.create_app` with a no-I/O container factory and writes `app.openapi()` to `contracts/openapi.json` (sorted keys, stable output). No server is started. **Built (S0046):** the export refuses a contract that breaks `app.api.contract.contract_problems` (every operation declares `x-ft-scope` and `x-ft-writes`, answers errors with the error envelope as `default` and as every other non-2xx answer it declares, and success inside `{data, meta}`; every field of a response schema is required; no FastAPI default error schema, no separate input/output schemas); `frontend/scripts/gen-api-types.mjs` generates `frontend/src/api/generated/openapi.ts` from it with openapi-typescript; both files are registered in `scripts/check_generated.py` (the contract's source is the whole `backend/src/app/` folder), so T0 refuses a commit that changes the backend without both, and T0 pre-push and T1 refuse drift. FastAPI's own `/openapi.json` route and documentation pages are off, as are its trailing-slash redirects (an address with a trailing slash is `ROUTE_NOT_FOUND`), and so is its built-in OpenTelemetry (it would record request bodies and stack traces; S0046). `openapi-fetch`, `client.ts`, `keys.gen.ts` and `errors.gen.ts` are built (S0166; `frontend/scripts/gen-api-extras.mjs`, both registered in `check_generated.py`); the `x-ft-type` brands and `decode.gen.ts` are BL-0107; the breaking-change check is BL-0108. This replaces today's "restart the backend, then `npm run generate-api`" step: **the root `CLAUDE.md` backend-then-frontend rule is retired on `next`.** A schema change and its client regeneration land in the same commit.
+- **Pre-commit (T0):** if anything under `backend/src/app/` (or the export script, `backend/pyproject.toml`, `backend/uv.lock`) is staged, the hook re-exports the spec, and if the spec is staged it regenerates `frontend/src/api/generated/openapi.ts` and `keys.gen.ts` / `errors.gen.ts` (`node frontend/scripts/gen-api-extras.mjs`). It blocks the commit if either differs from the staged copies (`check_generated.py --staged`); it does not write them: run `backend/.venv/bin/python -I backend/scripts/export_openapi.py`, then `node frontend/scripts/gen-api-types.mjs`.
 - **CI (T1):** the same regeneration from a clean checkout, then `git diff --exit-code`. A second job compares `contracts/openapi.json` with the previous release's spec through a breaking-change check (`oasdiff`, pinned binary) and fails on an unlabelled break (EP-14).
 - Testing against a *running* backend is still required for acceptance flows. Agents start their own isolated backend on its own port and data dir (INV-24). They never restart the owner's backend. The acceptance harness does this per Playwright worker (S0030): `scripts/acceptance/launcher.py` makes a fresh `mkdtemp` root, generates the demo into it, starts the sidecar with `--port 0`, folders it made itself and `--frozen-clock`, starts the LLM stub, and announces the run; `frontend/e2e/harness/fixtures.ts` arms the test's browser context and every context the test opens (all their pages and popups): it freezes the clock, aborts any request to an origin that is not the preview server or the run's sidecar, refuses WebSockets, and fails a test on console errors, page errors, failed or HTTP-error requests, axe violations on the pages left open and unscripted LLM calls. Requests test code sends itself (`page.request`, `context.request`, `fetch`) are not checked yet (BL-0071).
 
@@ -662,7 +666,7 @@ The taxonomy lives in `app.domain.errors`, and the code registry in `app.platfor
 ### 6.2 Translation once, at the edge
 
 - Core and shell code raise `DomainError` subclasses built with registry codes. **No module below `api` knows an HTTP status.** `api/errors.py` holds the one class → status table and the one exception handler that builds the envelope's `error` object (§4.1) from the code's registry entry and the error's typed details.
-- The registry is exported into the OpenAPI spec as `ErrorEnvelope.error`: a union of one error shape per code (`<Code>Error`, its `code` and `class` constants and its typed `details`), discriminated by `code` (S0046). The generated types therefore carry the code union as `components["schemas"]["ErrorEnvelope"]["error"]["code"]` and each code's details by narrowing on `code`; no separate `ErrorCode` enum schema is exported. The generator then emits `errors.gen.ts`: the code union, the presentation table, and client-side messages for the client-only codes (`CLIENT_NETWORK`, `CLIENT_TIMEOUT`, `CLIENT_DECODE`, `CLIENT_ABORTED`).
+- The registry is exported into the OpenAPI spec as `ErrorEnvelope.error`: a union of one error shape per code (`<Code>Error`, its `code` and `class` constants and its typed `details`), discriminated by `code` (S0046). The generated types therefore carry the code union as `components["schemas"]["ErrorEnvelope"]["error"]["code"]` and each code's details by narrowing on `code`; no separate `ErrorCode` enum schema is exported. The generator emits `errors.gen.ts`, each code with its class (S0166); the presentation follows the class (§6.1, §6.4). The client-only codes and their messages are written in `api/errors.ts`: `CLIENT_NETWORK` (no answer; retryable), `CLIENT_DECODE` (an answer that is not a valid envelope, an unknown code or a code with another class), `CLIENT_WRONG_WORKSPACE` (a workspace call answered for another workspace, INV-28), `CLIENT_UNEXPECTED` (a thrown value that is not an `AppError`; its own text is never shown) and `CLIENT_ABORTED` (never shown). A client code claims nothing about the user's data (`data_safe` false): the client cannot know whether a request it sent ran. There is no `CLIENT_TIMEOUT`: the client sets no time limit.
 - **No string matching anywhere.** Code compares codes, never messages. Lint and an AST test enforce this (EP-13).
 
 ### 6.3 No swallowing; fail closed
@@ -672,8 +676,8 @@ The taxonomy lives in `app.domain.errors`, and the code registry in `app.platfor
 
 ### 6.4 One frontend path
 
-- The `api/client.ts` middleware turns every non-2xx response, network failure and decode failure into one typed **`AppError`** (code, class, message, issues, retryable, correlation id, typed details). Nothing else reads response bodies.
-- **One handler**, `presentError(error, context?)` in `app/errors/`, maps code → presentation using the generated table and ADR-0039's rules:
+- `api/client.ts` turns every non-2xx response, network failure and decode failure into one typed **`AppError`** (`api/errors.ts`: code, class, message, data safety, next step, issues, retryable, retry delay, correlation id, details, status). Nothing else reads response bodies, and the lint refuses `fetch`, `XMLHttpRequest`, `EventSource`, `WebSocket` and `openapi-fetch` in `src/` outside `src/api` (S0166).
+- **One handler** in `app/errors/` maps each error to its presentation by class (§6.1) and ADR-0039's rules. **Built (S0166):** the app's error sink (`createErrorSink`, `installErrors`, `useErrors`; `present(thrown)` records each failure once, never a cancelled request, and keeps the last 50); the notices' look, the form context and Retry come with the UI primitives (L9-13, L8.M-15). The rules:
   - toast-class errors auto-dismiss and stay in history;
   - modal-class errors are sticky;
   - when `context.form` is given, located issues go to `useFieldErrors` (the `Field` primitive, ADR-0035), and the rest go to a toast;
@@ -1024,7 +1028,7 @@ The versions below are the newest stable releases published on or before **2026-
 |---|---|---|
 | vue | 3.5.43 | ADR-0053; `<script setup>` single-file components |
 | vue-router | pinned when first used (candidate 5.4.0) | SPA routes `/w/:ws/…`; no data loading in routes (ADR-0050 item 10) |
-| @tanstack/vue-query | pinned when first used (candidate 5.104.1) | ADR-0037 |
+| @tanstack/vue-query | 5.104.1 | ADR-0037 (S0166); its dependency vue-demi's install script is not run (`allowBuilds`), the shipped build already targets Vue 3 |
 | @tanstack/vue-table | pinned when first used (candidate 9.2.8) | ADR-0035 (v9 for the grid) |
 | @tanstack/vue-virtual | pinned when first used (candidate 3.13.40) | |
 | @tanstack/vue-form | pinned when first used | forms with `useFieldErrors` (the `Field` primitive, ADR-0035) |
@@ -1038,7 +1042,7 @@ The versions below are the newest stable releases published on or before **2026-
 | echarts | pinned when first used (candidate 6.1.0) | behind the own `useECharts` composable (ADR-0050 item 11); ADR-0053 also allows `vue-echarts` (candidate 8.3.2), not adopted |
 | markdown-it / dompurify | pinned when first used (candidates 14.3.2 / 3.4.16) | html off + sanitize |
 | ai / @ai-sdk/vue | pinned when first used (candidates 7.0.136 / 4.0.136) | AI SDK v7, matched to pydantic-ai `sdk_version=7`; upgraded together (§4.3) |
-| openapi-typescript / openapi-fetch | 7.13.0 / pinned when first used (candidate 0.17.0) | §4.1; openapi-typescript is a dev dependency (S0046) |
+| openapi-typescript / openapi-fetch | 7.13.0 / 0.17.0 | §4.1; openapi-typescript is a dev dependency (S0046) and declares a peer `typescript ^5`; it runs on 6.0.3 (the generated types are checked by `check_generated.py`); openapi-fetch since S0166 |
 | zod | pinned when first used (candidate 4.6.4) | parsing non-API edges only: localStorage, route params, shell messages (EP-06) |
 
 **Frontend dev and verification tools**

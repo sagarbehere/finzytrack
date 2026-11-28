@@ -70,6 +70,8 @@ describe('[L2-05] the error envelope decodes once into one AppError', () => {
   // must-not-pass: what is not a valid envelope never becomes a server code
   it.each([
     ['an unknown code', envelope({ code: 'NO_SUCH_CODE' })],
+    ['an unknown code with no class', envelope({ code: 'NO_SUCH_CODE', class: undefined })],
+    ['an inherited name as the code', envelope({ code: 'toString', class: undefined })],
     ['a code with another class', envelope({ class: 'internal' })],
     ['a missing message', envelope({ message: undefined })],
     ['a message that is not text', envelope({ message: 42 })],

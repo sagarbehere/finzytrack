@@ -20,6 +20,8 @@
     "knip": "knip"
   },
   "dependencies": {
+    "@tanstack/vue-query": "5.104.1",
+    "openapi-fetch": "0.17.0",
     "vue": "3.5.43"
   },
   "devDependencies": {

@@ -1,2 +1,6 @@
+allowBuilds:
+  # vue-demi (via @tanstack/vue-query): its postinstall only switches between Vue 2 and Vue 3 builds; the shipped
+  # lib already targets Vue 3 (S0166), so its script is not run.
+  vue-demi: false
 # EP-24: a release is adopted only when it is at least 14 days old (minutes).
 minimumReleaseAge: 20160
