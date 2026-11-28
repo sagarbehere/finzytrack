@@ -135,9 +135,12 @@ describe('[L2-03] a read query', () => {
     const s = stub(() => json(200, { data: { status: 'ok', version: '0.4.0' }, meta: meta(null) }))
     const q = readQuery(createApi({ baseUrl: base, fetch: s.fetch }), '/health', {})
     expect(q.queryKey).toEqual(queryKey('/health', {}))
-    const signal = new AbortController().signal
-    expect(await q.queryFn({ signal })).toEqual({ status: 'ok', version: '0.4.0' })
-    expect(s.seen[0]?.signal).toBeDefined()
+    const controller = new AbortController()
+    expect(await q.queryFn({ signal: controller.signal })).toEqual({ status: 'ok', version: '0.4.0' })
+    // S0166 verifier F3: the request follows the query's own signal (Vue Query aborts it on a switch)
+    expect(s.seen[0]?.signal.aborted).toBe(false)
+    controller.abort()
+    expect(s.seen[0]?.signal.aborted).toBe(true)
   })
 })
 

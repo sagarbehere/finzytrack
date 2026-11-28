@@ -204,16 +204,26 @@ const kernelConcepts = [
 ]
 // L2-06 (S0166): src/api is the only code that talks HTTP (ARCHITECTURE.md §3.1, §6.4): elsewhere in src the
 // network globals are refused, by name and through globalThis, window or self, and so is the HTTP client package.
-// Stated limits (left to review): an alias made in src/api and exported, and `Reflect.get(globalThis, 'fetch')`.
+// By syntax (S0166 verifier F4): a network name read as a property of anything (`document.defaultView.fetch`,
+// `window.parent.WebSocket`), `sendBeacon`, and a dynamic `import('openapi-fetch')`.
+// Stated limits (left to review): an alias made in src/api and exported, a computed property
+// (`Reflect.get(globalThis, 'fetch')`, `window['fetch']`), and a network API by another name (`<img src>`, a form).
 const network = 'L2-06: only src/api talks HTTP; call it through src/api'
 const networkNames = ['fetch', 'XMLHttpRequest', 'EventSource', 'WebSocket']
 const networkGlobals = networkNames.map((name) => ({ name, message: network }))
 const networkProperties = ['globalThis', 'window', 'self'].flatMap((object) =>
   networkNames.map((property) => ({ object, property, message: network })),
 )
+const networkSyntax = [
+  {
+    selector: `MemberExpression[computed=false][property.name=/^(${[...networkNames, 'sendBeacon'].join('|')})$/]`,
+    message: network,
+  },
+  { selector: "ImportExpression[source.value='openapi-fetch']", message: network },
+]
 // L2-03, INV-10 (S0166): the one QueryClient is made by src/app/queryClient.ts with its declared bound (gcTime and
 // a cap on cached queries); elsewhere its classes are refused, and nowhere may a query or a client switch its
-// garbage collection off. Stated limit (left to review): an Infinity held in a variable or computed.
+// garbage collection off. Stated limit (left to review): an Infinity held in a variable or computed (`1 / 0`).
 const cacheBound = 'L2-03, INV-10: every cached query has a bound; gcTime is never Infinity'
 const unboundedCache = [
   { selector: "Property[key.name='gcTime'][value.name='Infinity']", message: cacheBound },
@@ -323,7 +333,14 @@ export default tseslint.config(
     files: srcFiles,
     ignores: ['src/platform/**'],
     rules: {
-      'no-restricted-syntax': ['error', ...systemTime, ...appClock, ...kernelConcepts, ...unboundedCache],
+      'no-restricted-syntax': [
+        'error',
+        ...systemTime,
+        ...appClock,
+        ...kernelConcepts,
+        ...unboundedCache,
+        ...networkSyntax,
+      ],
       'no-restricted-globals': [
         'error',
         { name: 'Date', message: today },
@@ -338,6 +355,7 @@ export default tseslint.config(
     // L2-06 (S0166): src/api may talk HTTP; the INV-06/INV-07 bans above are repeated (later config replaces options).
     files: ['src/api/**/*.{ts,mts,cts,tsx,js,mjs,cjs,jsx,vue}'],
     rules: {
+      'no-restricted-syntax': ['error', ...systemTime, ...appClock, ...kernelConcepts, ...unboundedCache],
       'no-restricted-globals': ['error', { name: 'Date', message: today }, { name: 'parseFloat', message: floatParse }],
       'no-restricted-properties': ['error', ...appProperties],
       '@typescript-eslint/no-restricted-imports': restrictedImports(true, false),
@@ -394,7 +412,7 @@ export default tseslint.config(
     // included, gets the kernel bans. Later config replaces a rule's options, so each block repeats what it keeps.
     files: ['src/platform/**/*.{ts,mts,cts,tsx,js,mjs,cjs,jsx,vue}'],
     rules: {
-      'no-restricted-syntax': ['error', ...systemTime, ...kernelConcepts, ...unboundedCache],
+      'no-restricted-syntax': ['error', ...systemTime, ...kernelConcepts, ...unboundedCache, ...networkSyntax],
       // L2-06, L2-03 (S0166): src/platform may name Date, but neither talk HTTP nor make a QueryClient.
       'no-restricted-globals': ['error', ...networkGlobals],
       'no-restricted-properties': [
@@ -415,6 +433,7 @@ export default tseslint.config(
         ...deferredAssertions,
         ...kernelConcepts,
         ...unboundedCache,
+        ...networkSyntax,
       ],
     },
   },

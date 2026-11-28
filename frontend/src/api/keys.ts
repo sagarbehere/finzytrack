@@ -1,7 +1,9 @@
 // Query keys (ADR-0037; ARCHITECTURE.md §3.2; L2-03, S0166). A key is built from the operation's declared scope
 // (`x-ft-scope`, generated into keys.gen.ts from the contract), never by hand:
-//   app scope:           ['app', path, query]
-//   ledger/config scope: ['ws', ws, scope, path, pathParams, query]
+//   app scope:           ['app', path, pathParams, query]
+//   ledger/config scope: ['ws', ws, scope, path, otherPathParams, query]
+// Every parameter the request sends is in its key, so two requests that may answer differently never share an entry
+// (`staleTime: Infinity` would keep the wrong answer; S0166 verifier F1).
 // `ws` is the same `{ws}` path parameter the request sends (ADR-0018: no global "current workspace"), so two
 // workspaces never share a key below ['ws'] and a switch never shows another workspace's data (INV-28); and every
 // key of one workspace and scope shares the prefix ['ws', ws, scope], which the event invalidation will use.
@@ -29,7 +31,7 @@ export function keyFor(table: OperationTable, path: string, params: KeyParams): 
   const scope = Object.hasOwn(table, path) ? table[path]?.['get']?.scope : undefined
   if (scope === undefined) throw new Error(`no declared scope for GET ${path}`)
   const query = params.query ?? null
-  if (scope === 'app') return ['app', path, query]
+  if (scope === 'app') return ['app', path, params.path ?? {}, query]
   const { ws, ...rest } = params.path ?? {}
   if (typeof ws !== 'string' || ws === '') throw new Error(`GET ${path} is workspace-scoped and needs its ws`)
   return ['ws', ws, scope, path, rest, query]

@@ -48,6 +48,16 @@ describe('[L2-05] presentError records each error once', () => {
     expect(sink.notices.value).toEqual([])
   })
 
+  // S0166 verifier F2: only the API layer knows a failed fetch (and maps it there); anything else thrown is a bug.
+  it.each([
+    ['a TypeError', new TypeError("Cannot read properties of undefined (reading 'x')")],
+    ['a SyntaxError', new SyntaxError('Unexpected token')],
+  ])('records %s from a bug as CLIENT_UNEXPECTED, never as a network failure', (_label, thrown) => {
+    const sink = createErrorSink()
+    sink.present(thrown)
+    expect(sink.notices.value[0]?.error.code).toBe('CLIENT_UNEXPECTED')
+  })
+
   it('records a thrown value that is not an AppError once, in our own words', () => {
     const sink = createErrorSink()
     const thrown = new Error('private detail')

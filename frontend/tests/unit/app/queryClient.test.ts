@@ -62,6 +62,24 @@ describe('[L2-03][INV-10] the QueryClient declares its bound', () => {
     expect(keys).toHaveLength(3)
     unsubscribe()
   })
+  // S0166 verifier F5: a query made by an observer (useQuery's path) is added before its observer subscribes, so
+  // with the cap full of observed queries it is the only one without an observer, and must not be the one dropped.
+  it('keeps a query just added by an observer when the cap is full of observed queries', () => {
+    const client = createAppQueryClient(bounds, createErrorSink())
+    const watch = (name: string) =>
+      new QueryObserver(client, { queryKey: ['app', name, null], queryFn: () => 0, enabled: false }).subscribe(
+        () => undefined,
+      )
+    const unsubscribe = ['/w1', '/w2', '/w3', '/new'].map(watch)
+    const keys = client
+      .getQueryCache()
+      .getAll()
+      .map((q) => q.queryKey[1])
+    expect(keys).toEqual(['/w1', '/w2', '/w3', '/new'])
+    unsubscribe.forEach((u) => {
+      u()
+    })
+  })
 })
 
 describe('[L2-05] query and mutation errors reach the one error path once', () => {

@@ -9,7 +9,8 @@
 //                  the query keys are built from it (`api/keys.ts`), never by hand (ADR-0037);
 //   errors.gen.ts  every error code of the registry with its class, read from the error envelope's union
 //                  (`ErrorEnvelope.error`, one schema per code with `code` and `class` constants; S0046).
-// Fails closed: an operation without both declarations, or an error schema without its two constants, stops the
+// Fails closed: an operation without both declarations, a scope that does not match its path (a ledger or config
+// operation outside /api/w/{ws}/, an app one inside it), or an error schema without its two constants, stops the
 // generator with a message instead of emitting a table that leaves it out. Not generated yet (BL-0107): the
 // `x-ft-type` brands and `decode.gen.ts`.
 import { readFileSync, writeFileSync } from 'node:fs'
@@ -41,6 +42,10 @@ function keysModule(doc) {
       if (!WRITES.has(writes)) fail(`${method.toUpperCase()} ${path}: x-ft-writes is ${JSON.stringify(writes)}`)
       if (scope !== 'app' && !path.startsWith('/api/w/{ws}/')) {
         fail(`${method.toUpperCase()} ${path}: a ${scope} operation must sit under /api/w/{ws}/`)
+      }
+      // Its key would sit outside the workspace's ['ws', ws] prefix, so a switch would not drop it.
+      if (scope === 'app' && path.startsWith('/api/w/{ws}/')) {
+        fail(`${method.toUpperCase()} ${path}: an app operation must not sit under /api/w/{ws}/`)
       }
       ops.push(`    ${method}: { scope: '${scope}', writes: '${writes}' },`)
     }

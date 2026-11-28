@@ -6,6 +6,8 @@
 // Ledger-derived data stays fresh until an event invalidates it (`staleTime: Infinity`; the event invalidation is
 // BL-0323), and Retry is the user's (§6.4), so nothing retries by itself. Every query or mutation error goes to the
 // one error path (src/app/errors), except a cancelled one and one whose query asks for its error as state.
+// Stated limit: eviction can remove an unobserved query while `fetchQuery`/`ensureQueryData` is fetching it, which
+// cancels that fetch (the caller gets a CancelledError); a screen reads through `useQuery`, whose query is observed.
 import {
   CancelledError,
   MutationCache,

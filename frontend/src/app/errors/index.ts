@@ -5,7 +5,7 @@
 // One sink per app (`createErrorSink`, provided by `installErrors`), never a module-level store (EP-04).
 import { inject, readonly, shallowRef, type App, type InjectionKey, type Ref } from 'vue'
 
-import { AppError, failureOf, type ErrorClass } from '../../api/errors'
+import { AppError, clientError, type ErrorClass } from '../../api/errors'
 
 export type Presentation = 'toast' | 'modal' | 'none'
 
@@ -36,7 +36,8 @@ export const NOTICE_HISTORY = 50
 
 export interface ErrorSink {
   readonly notices: Readonly<Ref<readonly ErrorNotice[]>>
-  /** Records `thrown` once (as its AppError); a cancelled request or an error already recorded adds nothing. */
+  /** Records `thrown` once (as its AppError, or CLIENT_UNEXPECTED if it is none); a cancelled request or an error
+   * already recorded adds nothing. */
   present(thrown: unknown): void
 }
 
@@ -50,7 +51,9 @@ export function createErrorSink(limit = NOTICE_HISTORY): ErrorSink {
         if (seen.has(thrown)) return
         seen.add(thrown)
       }
-      const error = thrown instanceof AppError ? thrown : failureOf(thrown, undefined)
+      // Only src/api knows that a throw was a failed request (and turns it into its AppError there); anything else
+      // that reaches here unconverted is a bug, never "no answer from the server" (S0166 verifier F2).
+      const error = thrown instanceof AppError ? thrown : clientError('CLIENT_UNEXPECTED')
       seen.add(error)
       const presentation = presentationOf(error)
       if (presentation === 'none') return

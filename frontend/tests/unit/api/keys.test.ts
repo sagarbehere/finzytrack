@@ -15,6 +15,7 @@ import { keyFor, queryKey } from '../../../src/api/keys'
 
 const table = {
   '/health': { get: { scope: 'app' } },
+  '/api/app/jobs/{job_id}': { get: { scope: 'app' } },
   '/api/w/{ws}/accounts': { get: { scope: 'ledger' } },
   '/api/w/{ws}/settings': { get: { scope: 'config' } },
   '/api/w/{ws}/plans/{plan_id}:confirm': { post: { scope: 'ledger' } },
@@ -22,7 +23,15 @@ const table = {
 
 describe('[L2-03][INV-28] query keys are scoped by the declared scope', () => {
   it('starts an app-scoped key with app', () => {
-    expect(keyFor(table, '/health', {})).toEqual(['app', '/health', null])
+    expect(keyFor(table, '/health', {})).toEqual(['app', '/health', {}, null])
+  })
+
+  // S0166 verifier F1: an app key without its path parameters gave two jobs one cache entry.
+  it('gives two path parameters of an app-scoped path two keys', () => {
+    const a = keyFor(table, '/api/app/jobs/{job_id}', { path: { job_id: 'A' } })
+    const b = keyFor(table, '/api/app/jobs/{job_id}', { path: { job_id: 'B' } })
+    expect(a).toEqual(['app', '/api/app/jobs/{job_id}', { job_id: 'A' }, null])
+    expect(a).not.toEqual(b)
   })
 
   it('starts a workspace key with ws, the workspace and the scope', () => {
@@ -56,7 +65,7 @@ describe('[L2-03][INV-28] query keys are scoped by the declared scope', () => {
   })
 
   it("builds the contract's own keys from the generated table", () => {
-    expect(queryKey('/health', {})).toEqual(['app', '/health', null])
+    expect(queryKey('/health', {})).toEqual(['app', '/health', {}, null])
   })
 })
 
@@ -114,6 +123,8 @@ describe('[L2-03] the generated tables', () => {
     ['an operation with an unknown scope', { '/health': { get: op('global', 'none') } }],
     ['an operation without x-ft-writes', { '/health': { get: { 'x-ft-scope': 'app' } } }],
     ['a ledger operation outside /api/w/{ws}/', { '/api/accounts': { get: op('ledger', 'none') } }],
+    // S0166 verifier F1: an app key would sit outside its workspace's ['ws', ws] prefix
+    ['an app operation under /api/w/{ws}/', { '/api/w/{ws}/jobs': { get: op('app', 'none') } }],
   ])('refuse %s', (_label, paths) => {
     const out = generate({ paths, components: { schemas: errorUnion } }, 'keys')
     expect(out.status).not.toBe(0)

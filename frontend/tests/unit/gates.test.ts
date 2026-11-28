@@ -403,6 +403,35 @@ describe('[L2-06] only src/api talks HTTP (S0166)', () => {
     expect(await ruleIds(code, 'index.ts', 'src/app/errors')).toContain(rule)
   })
 
+  // S0166 verifier F4: the bypasses of the bans above, refused by syntax.
+  it.each([
+    ['a dynamic import of the HTTP client package', "export const m = import('openapi-fetch')\n"],
+    ['navigator.sendBeacon', "export const r = navigator.sendBeacon('/x')\n"],
+    ['fetch through document.defaultView', "export const r = document.defaultView?.fetch('/x')\n"],
+    ['WebSocket through another window', "export const s = new window.parent.WebSocket('ws://x')\n"],
+  ])('refuses %s outside src/api', async (_label, code) => {
+    expect(await ruleIds(code)).toContain('no-restricted-syntax')
+    expect(await ruleIds(code, 'index.ts', 'src/app/errors')).toContain('no-restricted-syntax')
+  })
+
+  // @regression-guard (S0166 verifier F4): the must-pass beside the bans above.
+  it.each([
+    ['a dynamic import of our own module', "export const m = import('./app/errors')\n"],
+    ['a method that only starts with fetch', 'declare const c: { fetchQuery(): void }\nc.fetchQuery()\n'],
+  ])('accepts %s outside src/api', async (_label, code) => {
+    expect(await ruleIds(code)).not.toContain('no-restricted-syntax')
+  })
+
+  // @regression-guard (S0166 verifier F4): src/api keeps these, and the other syntax bans.
+  it('accepts a dynamic import of the HTTP client package in src/api, and keeps its syntax bans', async () => {
+    expect(await ruleIds("export const m = import('openapi-fetch')\n", 'keys.ts', 'src/api')).not.toContain(
+      'no-restricted-syntax',
+    )
+    expect(await ruleIds('export const o = { gcTime: Infinity }\n', 'keys.ts', 'src/api')).toContain(
+      'no-restricted-syntax',
+    )
+  })
+
   // @regression-guard (S0166): the must-pass beside the bans above.
   it.each([
     ["fetch('/health')", "export const r = fetch('/health')\n"],
@@ -427,6 +456,11 @@ describe('[L2-06] only src/api talks HTTP (S0166)', () => {
     const config = (await eslint.calculateConfigForFile(`${root}/src/platform/clock.ts`)) as Linter.Config
     expect(JSON.stringify(config.rules?.['no-restricted-globals'])).toContain('"fetch"')
     expect(JSON.stringify(config.rules?.['@typescript-eslint/no-restricted-imports'])).toContain('openapi-fetch')
+    // S0166 verifier F4: and the syntax bans (src/platform has no file yet to lint)
+    expect(JSON.stringify(config.rules?.['no-restricted-syntax'])).toContain('sendBeacon')
+    expect(JSON.stringify(config.rules?.['no-restricted-syntax'])).toContain(
+      "ImportExpression[source.value='openapi-fetch']",
+    )
   })
 })
 
