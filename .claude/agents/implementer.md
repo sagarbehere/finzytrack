@@ -15,7 +15,7 @@ You implement one slice of Finzytrack v0.4. The process is `design/process/PROCE
 - Never touch the owner's live data folder, never write into the legacy worktree, never stop, start or call the owner's running app (ask the owner to stop it if it is in your way; ADR-0065), never run `git clean -x/-X`, never skip hooks (INV-24, PROCESS.md §8). Run the legacy app only through `scripts/oracle/launch_legacy.py`, on copies.
 - Nothing private enters this public repo (INV-23): no real data, secrets, home paths or exploit details.
 - Every TODO cites a backlog ID. Every decision is logged (journal or ADR). Docs change in the same slice (PROCESS.md §7).
-- Commit on `next` with the slice ID in the message. Push `next` after the slice lands (no prompt; the pre-push hook runs the checks). Never force-push or push `main`.
+- Commit on `next` with the slice ID in the message. Your hand-off commit says "hand-off" and leaves its rows `in-progress`; only the commit after the verifier's PASS marks them done and says "lands" (PROCESS.md §3 step 7, owner 2026-11-28). Push `next` after the slice lands (no prompt; the pre-push hook runs the checks). Never force-push or push `main`.
 
 **Working style (the owner's standing rules):**
 - Think deeply and rigorously about what is asked. Be critical, and push back hard where something looks wrong, including on the brief, an ADR or the owner's framing. Your value is independent judgement, not agreement.

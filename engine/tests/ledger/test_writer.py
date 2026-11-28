@@ -567,6 +567,24 @@ def test_a_read_back_mismatch_stops_the_save_unfinished() -> None:
     assert set(journals(w.fs)) == {State.OPEN}
 
 
+def test_S0165_a_read_back_mismatch_of_the_same_length_stops_the_save_unfinished() -> None:
+    """G1 plant P1-03 (S0165): the read-back compares the bytes, not only their length; an outside write of exactly
+    the written length, one byte changed, is caught."""
+    w = world()
+    post = next(t.post for t in w.targets if t.path == "/w/L/inc/a.bean")
+    same_length = bytes([post[0] ^ 0x01]) + post[1:]
+
+    def late(_: int, label: str) -> None:
+        if label == "sync /w/L:" and w.fs.file("/w/L/main.bean") == w.targets[2].post:
+            w.fs.on_effect = None
+            w.fs.outside_write("/w/L/inc/a.bean", same_length)
+
+    w.fs.on_effect = late
+    out = durable_commit(w.fs, w.commit)
+    assert out == Unfinished(Step.READ_BACK, Reason.READ_BACK, "/w/L/inc/a.bean", "foreign", "/w/L/inc/a.bean")
+    assert set(journals(w.fs)) == {State.OPEN}
+
+
 def test_a_malformed_plan_raises_before_any_effect() -> None:
     w = world()
     for bad in (

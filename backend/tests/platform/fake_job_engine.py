@@ -27,6 +27,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 
 from app.platform.engine import (
+    Committed,
     EndReason,
     EngineEnd,
     EngineEvent,
@@ -50,6 +51,14 @@ class Gated:
     past its commit point, S0063 round 1)."""
 
     result: dict[str, object] | EngineRefusal
+    committed: bool | None = None
+    """Whether the engine sends `committed` after `proceed`, before this result; None: as the real engine does, only
+    before a `saved` result (§6.1 step 9). S0165 (G1 L2-F6) scripts the two shapes that break that rule."""
+
+    def sends_committed(self) -> bool:
+        if self.committed is not None:
+            return self.committed
+        return isinstance(self.result, dict) and self.result.get("outcome") == "saved"
 
 
 DEADLINE = 20.0
@@ -167,6 +176,9 @@ class FakeEngine:
                         return EngineFailure("cancelled", "ended by us")
                     self._released.discard(op)
                     answer = self.scripted[op].pop(0)
+                    if isinstance(answer, Gated):  # a blocked save that then lands (S0165: its `committed` too)
+                        eng.gate = "pending"
+                        gated = answer
                 if gated is None and isinstance(answer, EngineRefusal):
                     return answer  # the engine refused the request (an exception in its handler; S0066)
                 if gated is None:
@@ -202,6 +214,8 @@ class FakeEngine:
                 return EngineFailure("crashed", "the engine's output ended")
             if isinstance(gated, Gated):
                 eng.past_commit = False
+                if gated.sends_committed() and on_event is not None:
+                    on_event(Committed())
                 return gated.result
             self._cond.wait_for(lambda: "gate" in self._released or eng.ended is not None)
             self._released.discard("gate")

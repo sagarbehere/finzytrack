@@ -18,7 +18,6 @@ may leave from it.
 
 from __future__ import annotations
 
-import contextlib
 import errno
 from collections.abc import Iterator
 
@@ -28,7 +27,7 @@ from ledger_engine.fs.port import Kind
 from ledger_engine.ledger.core.ledger_set import Content, Fingerprint, digest
 from ledger_engine.mirror import publish as pb
 from tests.fakes.memfs import Crash, MemDir, MemFS
-from tests.mirror.fake_store import FakeStore
+from tests.mirror.fake_store import BODY, FakeStore
 from tests.mirror.publish_support import BUILT_AT, ENGINE_BUILD, KEY, TODAY
 
 pytestmark = [pytest.mark.inv("INV-05")]
@@ -97,6 +96,10 @@ def seen_by_a_reader(fs: MemFS, *, folder_at_current: bool = False) -> str | Non
         assert pb.gen_of(target) is not None, f"current.db names {target!r}"
         facts = FakeStore().meta(d, target)
         assert facts is not None, f"current.db leads to {target}, which is not a whole mirror"
+        # the store reads only the header and the stamp (S0165, G1 L3-F3): the oracle checks the body too
+        whole = d.read(target)
+        assert whole is not None
+        assert whole.endswith(b"\n" + BODY), f"current.db leads to {target}, which is torn"
         assert facts.build_complete
         assert facts.ledger_version == f"{pb.gen_of(target).number}/{digest(FP)}"  # type: ignore[union-attr]
         return target
@@ -171,11 +174,11 @@ def test_a_death_at_every_effect_never_leaves_a_reader_a_partial_mirror(
     for i in range(total):
         fs, published = prepared(prepare, with_junk=with_junk, windows=windows)
         fs.inject(len(fs.effects) + i, crash=True)
-        with contextlib.suppress(Crash):
+        with pytest.raises(Crash):  # every effect of a clean job is reached (S0165, G1 L3-F4)
             job(fs)
         for s in states(fs):
             seen = seen_by_a_reader(s)
-            if s is fs and published and i < total:
+            if s is fs and published:
                 # a death leaves the folder as it is: a reader sees the old generation or, after the rename, the new
                 assert seen is not None
             assert_clean_after_the_next_job(s)
@@ -560,7 +563,7 @@ def test_a_death_at_every_effect_among_read_only_entries_never_leaves_a_reader_a
     for i in range(total):
         fs = read_only_prepared(prepare)
         fs.inject(len(fs.effects) + i, crash=True)
-        with contextlib.suppress(Crash):
+        with pytest.raises(Crash):  # every effect of a clean job is reached (S0165, G1 L3-F4)
             job(fs)
         for s in states(fs):
             assert seen_by_a_reader(s) is not None
@@ -820,3 +823,48 @@ def test_a_linked_file_that_is_not_read_only_is_removed_as_a_name() -> None:
     assert isinstance(job(fs), pb.Published)
     assert "stray.bean" not in fs.names_in(MIRROR)
     assert fs.file("/L/main.bean") == b"x"
+
+
+def _torn_but_accepted(fs: MemFS) -> int:
+    """Generations in the folder the store accepts (header and stamp whole) whose body a power loss tore."""
+    try:
+        d = fs.open_dir(MIRROR)
+    except OSError:
+        return 0
+    n = 0
+    with d:
+        for name in d.names():
+            if pb.gen_of(name) is None or FakeStore().meta(d, name) is None:
+                continue
+            data = d.read(name)
+            if data is not None and not data.endswith(b"\n" + BODY):
+                n += 1
+    return n
+
+
+def test_S0165_L3F3_the_sweep_meets_torn_generations_the_store_accepts(windows: bool) -> None:
+    """G1 L3-F3: the real store reads only SQLite's header and `m_meta`, so a generation torn after them passes its
+    `meta`. The fake keeps that blind spot, and the power-loss sweep above meets such files: the sweeps hold by the
+    publish's order (data durable before `current.db` names it), never by a detection the product lacks."""
+    total = effects_of(1, windows=windows)
+    met = 0
+    for i in range(total):
+        fs, _ = prepared(1, with_junk=False, windows=windows)
+        fs.inject(len(fs.effects) + i, crash=True)
+        with pytest.raises(Crash):
+            job(fs)
+        met += sum(_torn_but_accepted(s) for s in fs.power_loss_states())
+    assert met > 0
+
+
+def test_S0165_L3F3_the_fake_store_accepts_a_file_torn_after_its_stamp() -> None:
+    fs = world()
+    assert isinstance(job(fs), pb.Published)
+    with fs.open_dir(MIRROR) as d:
+        name = next(n for n in d.names() if pb.gen_of(n) is not None)
+        data = d.read(name)
+    assert data is not None
+    assert data.endswith(BODY)
+    fs.outside_write(f"{MIRROR}/{name}", data[: -len(BODY)] + bytes(len(BODY)))  # header and stamp kept, rest zeros
+    with fs.open_dir(MIRROR) as d:
+        assert FakeStore().meta(d, name) is not None

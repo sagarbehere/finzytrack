@@ -6,8 +6,12 @@ makes them (the model does the same, `formal/tla/mirror-publish/MAPPING.md` §3)
 folder's handle (the real store's `DirHandle.create`, data synced, entry not), the rollback journal made beside it, the
 database's bytes written into the file without a sync (SQLite's own syncs do not reach the disk on macOS, §4 step 5),
 the journal removed at the commit. `meta` refuses what a reader refuses: a file with its journal beside it (a hot
-journal), and bytes that are not a whole mirror (torn, cut, empty). A file it accepts is whole and says what the build
-stamped it with.
+journal), and bytes whose header or stamp is not whole (torn, cut, empty). Like the real store (`mirror.store.meta`
+reads only SQLite's header and the `m_meta` table), it reads only the header and the stamp: a file is `MAGIC`, the
+stamp as one line of JSON, then `BODY` (the tables), and a file torn after its stamp (its body cut off or zeroed, a
+shape `MemFS.tears` gives a power loss) is accepted as the build stamped it (S0165, G1 L3-F3). So the §9 sweeps hold
+only by the publish's order (the generation's data durable before `current.db` names it), never by a detection the
+real store lacks.
 """
 
 from __future__ import annotations
@@ -25,6 +29,12 @@ from ledger_engine.mirror.core import schema
 from tests.fakes.memfs import MemDir, MemFS
 
 MAGIC = b"FAKE MIRROR v1\n"
+BODY = b"the tables' rows\n" * 128
+"""Longer than the header and stamp, so `MemFS.tears`' cut shape (the first half) keeps them whole."""
+
+
+def _file(facts: dict[str, str]) -> bytes:
+    return MAGIC + json.dumps(facts, sort_keys=True).encode() + b"\n" + BODY
 
 
 class FakeStore:
@@ -51,7 +61,7 @@ class FakeStore:
         made = d.create(name, b"", 0o600)
         try:
             d.create(journal, b"hot journal", 0o600)
-            d.write_in(name, MAGIC + json.dumps(facts, sort_keys=True).encode())
+            d.write_in(name, _file(facts))
             d.remove(journal)  # the commit
         except OSError:
             for leftover in (name, journal):
@@ -72,8 +82,11 @@ class FakeStore:
             return None
         if data is None or not data.startswith(MAGIC):
             return None
+        stamp, newline, _ = data[len(MAGIC) :].partition(b"\n")  # the body is never read, as in the real store
+        if not newline:
+            return None
         try:
-            facts = json.loads(data[len(MAGIC) :])
+            facts = json.loads(stamp)
         except ValueError:
             return None
         if not isinstance(facts, dict):
@@ -101,5 +114,5 @@ def outside_publish(fs: MemFS, fp: Fingerprint, key: str, cache: str = "/cache")
         "build_complete": "1",
         "published_by": "rebuild",
     }
-    fs.outside_write(f"{folder}/{name}", MAGIC + json.dumps(facts, sort_keys=True).encode(), mode=0o600)
+    fs.outside_write(f"{folder}/{name}", _file(facts), mode=0o600)
     fs.outside_symlink(f"{folder}/{pb.CURRENT}", name)

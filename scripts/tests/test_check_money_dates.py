@@ -46,6 +46,9 @@ DECIMAL_OF_A_VALUE = (
     "import decimal\nx = decimal.getcontext().create_decimal(rate)\n",
     "from decimal import Decimal\nx = Decimal(int(rate))\n",
     "from decimal import Decimal\nx = Decimal(rate)  # exact:\n",
+    # G1 plant T-01 (S0165): a float literal is a float on its face, never exact
+    "from decimal import Decimal\nx = Decimal(0.1)\n",
+    "from decimal import Decimal\nx = Decimal(-1.5)\n",
 )
 JSON_AS_FLOAT = (
     "import json\nx = json.loads('{\"amount\": 10.50}')\n",

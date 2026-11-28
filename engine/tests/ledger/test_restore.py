@@ -1569,6 +1569,7 @@ def test_R4_an_in_place_write_through_a_name_during_recovery_then_a_crash_and_a_
     restore swap, so no removal of ours is ever durable before the swap it follows. A crash at the effect the write
     came before, or at one of the two after it; the editor's bytes survive in every power-loss state."""
     k_max = len(_recovery_effects(at, False))
+    ran = 0  # S0165 (G1 L3-F4): cases where the edit fired; a sweep where none did would prove nothing
     for m in range(k_max):
         for victim in range(3):
             for crash2 in (0, 1, 2):
@@ -1598,8 +1599,10 @@ def test_R4_an_in_place_write_through_a_name_during_recovery_then_a_crash_and_a_
                 w.fs.on_effect = None
                 if not fired[0]:
                     continue
+                ran += 1
                 for state in (w.fs, *w.fs.power_loss_states()):
                     assert FOREIGN in _all_bytes(state), (m, t.path, crash2, "the editor's save was lost")
+    assert ran > 0, "the editor's write never fired"
 
 
 # ---- S0061 round 5 (owner, 2026-10-30: "Never remove it (Recommended)", "Yes to both (Recommended)"; red team r5 F1,

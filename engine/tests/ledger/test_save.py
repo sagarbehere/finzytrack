@@ -403,7 +403,8 @@ def test_a_target_that_links_to_an_encrypted_file_is_refused(led: Ledger) -> Non
 
 
 def test_a_link_to_an_encrypted_file_swapped_in_after_the_gate_is_not_written(led: Ledger) -> None:
-    """S0070 red team r1 F1 (their P6): the writer checks the resolved name again before its first effect."""
+    """S0070 red team r1 F1 (their P6): the writer checks the resolved name again before its first effect; since
+    S0165 (G1 L1-F6) it says ADR-0059's own refusal, naming the encrypted file, not `changed`."""
     secret = led.root / "secret.gpg"
     secret.write_bytes(MAIN)
 
@@ -413,7 +414,9 @@ def test_a_link_to_an_encrypted_file_swapped_in_after_the_gate_is_not_written(le
 
     out = sv.run(plan_for(led), ports_for(led), FakeJob(on_gate=swap))
     assert isinstance(out, NotSaved), out
-    assert out.reason is Reason.CHANGED
+    assert out.reason is Reason.ENCRYPTED_FILE
+    assert out.path is not None
+    assert Path(out.path).samefile(secret)
     assert secret.read_bytes() == MAIN
     assert led.main.is_symlink()
 

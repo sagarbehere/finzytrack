@@ -294,7 +294,7 @@ def _filler(_ctx: JobContext) -> WorkResult:
     ("scripted", "expected"),
     [
         pytest.param(STALE, "warming", id="refused mirror_stale"),
-        pytest.param(answer(), "saved", id="landed"),  # dropped silently before S0118 (BLOCK precedes no gate)
+        pytest.param(Gated(answer()), "saved", id="landed"),  # dropped silently before S0118 (BLOCK precedes no gate)
     ],
 )
 def test_a_refused_rebuild_submit_is_logged_and_never_changes_the_answer(

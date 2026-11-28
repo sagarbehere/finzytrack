@@ -109,3 +109,11 @@ Owner, 2026-11-15, in session, after S0119's measurements (`design/inbox/answere
 - **The parse cache** (the 2026-10-27 amendment) is not built: every layout within 15 MB per file met 5 s in S0119, and the cache would not change the size of what the protocol carries.
 - **Unchanged:** every step of the contract, fail-closed (INV-22); the 2026-10-31 amendment's counting per job. The cleaner long-term transport, a plan that sends edits instead of whole texts (BL-0106's remaining part), is not needed for this and stays a backlog row.
 
+
+## Amendment (2026-11-28): each wait meets the target (G1, S0165)
+
+Owner, 2026-11-28, in session, on G1 item 4 (the spot audit's SA-F2: G1's speed passed only on S0119's "per job" reading, which cited the 2026-10-31 amendment's sentence about R4, half superseded by ADR-0067), choosing "Each wait counts (Recommended)". The option as put: the preview's wait and the wait from Confirm to the mirror's publish must each meet this ADR's target (≤ 1 s at demo size, ≤ 5 s at 54k entries); the G1 pack reports the totals beside them.
+- **Decided:** a write has two waits, each judged against the target on its own: (1) the preview, from its submit to its answer; (2) from Confirm to the new mirror generation published (the save, then the rebuild with its publish). The total from the preview's submit to the publish is reported beside them, never judged. Example from S0119 (54k entries in one 8.7 MB file): preview 3.95-4.07 s and Confirm to publish 3.21-3.35 s, each within 5 s; the total 7.2-7.4 s is reported.
+- **Where the wait ends (SA-F3):** both waits are measured until the mirror's publish, not until a screen shows the change: no screen reads the mirror before M2. "Until everything on screen reflects the change" (the 2026-10-25 amendment) is therefore not measured yet; the screen's own read joins the second wait when M2 builds it.
+- **Superseded:** the 2026-10-31 amendment's "The 5 s target counts jobs" as the basis for judging speed (its R4 half was already superseded by ADR-0067); the 2026-11-15 amendment's "counting per job" reads as these two waits.
+- **Unchanged:** the 1 s and 5 s targets, the 15 MB per-file condition (2026-11-15), every step of the contract.

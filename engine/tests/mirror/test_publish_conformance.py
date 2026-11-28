@@ -165,7 +165,8 @@ class ReplayStore(FakeStore):
         journal_ = f"{name}-journal"
         made = d.create(name, b"", 0o600)
         d.create(journal_, b"hot journal", 0o600)
-        d.write_in(name, MAGIC + json.dumps(facts, sort_keys=True).encode())
+        # the fake store's layout with no body (S0165): a torn file is never whole, the model's `part`
+        d.write_in(name, MAGIC + json.dumps(facts, sort_keys=True).encode() + b"\n")
         d.remove(journal_)
         st = d.stat(name)
         if st is None or st.identity != made:
@@ -233,7 +234,7 @@ def file_content(data: bytes | None) -> tuple[str, tuple[int, ...], tuple[int, .
         return "abs", (0, 0), (0, 0)
     if not data.startswith(MAGIC):
         return "part", (0, 0), (0, 0)
-    facts = json.loads(data[len(MAGIC) :])
+    facts = json.loads(data[len(MAGIC) :].partition(b"\n")[0])
     fp = decode(str(facts["fingerprint"]).encode("ascii"))
     states = dict(fp.files)
     lab = tuple(version(i, s.sha256) if isinstance(s := states.get(PATH[i]), Content) else 0 for i in (1, 2))

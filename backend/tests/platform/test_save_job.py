@@ -909,3 +909,33 @@ def test_S0148_BL0306_the_shares_folder_that_refused_is_named() -> None:
         f"Your change was not saved. Finzytrack could not write to the folder {folder}. Check that its drive is "
         "connected and that you can change files there, then try again. Your ledger is unchanged."
     )
+
+
+# -- S0165 (G1 L2-F6): the final reply is cross-checked with `committed` ---------------------------------------------
+
+
+def test_S0165_L2F6_a_saved_reply_without_committed_is_read_from_disk(make: Any) -> None:
+    """The engine sends `committed` before every `saved` (§6.1 step 9): a `saved` without it is not believed; the disk
+    decides (here: no record, so not saved)."""
+    rig = make({"save": [Gated(answer(), committed=False)], "save_outcome": [facts("none", unchanged=True)]})
+    assert code(rig.save()) == ErrorCode.CHANGE_NOT_SAVED
+    assert [op for _, op in rig.engine.calls] == ["save", "save_outcome"]
+
+
+def test_S0165_L2F6_a_not_saved_reply_after_committed_is_read_from_disk(make: Any) -> None:
+    """After `committed` the save landed: a reply that says otherwise is not believed; the disk decides (here: the
+    closed record, so saved)."""
+    reply = answer(outcome="not_saved", reason="io_error", unchanged=True)
+    rig = make({"save": [Gated(reply, committed=True)], "save_outcome": [facts("closed")]})
+    assert rig.save() == Saved(published=False)
+    assert [op for _, op in rig.engine.calls] == ["save", "save_outcome"]
+
+
+def test_S0165_L2F9_the_outcome_unknown_text_names_no_one_job() -> None:
+    """`CHANGE_OUTCOME_UNKNOWN` answers a save, a create and a copy (`engine_jobs.create`, `engine_jobs.copy`): its
+    words fit all three."""
+    spec = spec_for(ErrorCode.CHANGE_OUTCOME_UNKNOWN)
+    assert spec is not None
+    words = f"{spec.message} {spec.next_step}".lower()
+    for one_job in ("sav", "creat", "cop", "ledger"):
+        assert one_job not in re.sub(r"ledger engine", "", words), one_job

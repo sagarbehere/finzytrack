@@ -35,3 +35,10 @@ Each item is answered on its own.
 - **4 (a):** wording only; the record matches what happened.
 
 ## Answer (owner, verbatim, with date)
+Owner, 2026-11-28, in session (relayed by the coordinator to S0165):
+1. (a), after asking: "If we keep as is, will it eventually be fixed or become no problem after M3? If yes, I think we just leave it." The answer given was yes: BL-0001's S0161 condition requires, before the first mutator is promoted, either the engine refusing an unconfined create outside the root's folder (with a must-not-pass test) or that trust stated on the clearance page, and BL-0312 builds `new_file` in M3. So the create branch stays as is.
+2. "Keep; fix fake at M3 (Recommended)": L3-F1 is a stated limit until then; the M3 row is BL-0322 (with CAP-WS-TEST-COPY).
+3. "Keep as is (Recommended)".
+4. "Hand-off, then lands (Recommended)": PROCESS.md §3 step 7 gained the sentence (S0165).
+
+Also recorded at G1 (owner, 2026-11-28, in session, on G1 item 4, SA-F2): "Each wait counts (Recommended)", in ADR-0008's amendment of 2026-11-28.

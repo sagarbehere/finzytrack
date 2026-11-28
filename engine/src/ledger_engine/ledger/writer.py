@@ -399,7 +399,9 @@ def _target(fs: FileSystem, handles: Handles, index: int, c: Commit, ch: Change)
     r = fs.resolve(ch.path)
     canonical, key = core_paths.canonical_path(r), core_paths.path_key(r)
     if canonical.lower().endswith(ENCRYPTED_SUFFIXES):
-        raise _Stop(Reason.CHANGED, ch.path)  # the path leads to an encrypted file since the save's step 0 (a link)
+        # the path leads to an encrypted file since the save's step 0 (a link): ADR-0059's refusal, naming that file
+        # (S0165, G1 L1-F6: it was `changed` before)
+        raise _Stop(Reason.ENCRYPTED_FILE, canonical)
     try:
         canonical.encode()
     except UnicodeEncodeError:
@@ -517,7 +519,7 @@ def _confined_target(handles: Handles, root: str, root_key: str, index: int, c: 
         key.append(fold(name, rule))
     full, full_key = sep.join(canonical), sep.join(key)
     if full.lower().endswith(ENCRYPTED_SUFFIXES):
-        raise _Stop(Reason.CHANGED, ch.path)
+        raise _Stop(Reason.ENCRYPTED_FILE, full)  # as `_target` (S0165, G1 L1-F6)
     try:
         full.encode()
     except UnicodeEncodeError:

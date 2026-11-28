@@ -556,20 +556,14 @@ type RecordSeen = Literal["none", "part", "open", "closed", "resolved", "kept", 
 class OutcomeFacts:
     """What the disk says about one save (§6.6), after its journal folder's sync: its record's state (`unknown`: the
     folder could not be synced or listed, or the record stands in two states); with no record or a `.part` (and after
-    `.resolved`), `unchanged`: every target hashed again equals its pre bytes, and `path` the first that does not; with
-    an `.open` record, `path`: a file the save was creating that stands there now (the undo will ask about it)."""
+    `.resolved`), `unchanged`: every target hashed again equals its pre bytes, and `path` the first read and found not
+    at them (a file that cannot be read: not unchanged, never named; `_rehash`); with an `.open` record, `path`: a file
+    the save was creating, read and found standing there now (the undo will ask about it)."""
 
     record: RecordSeen
     unchanged: bool | None = None
     path: str | None = None
     errno: int | None = None
-
-
-def _first_changed(fs: FileSystem, changes: tuple[Change, ...]) -> str | None:
-    for c in changes:
-        if not _unchanged(fs, (c,)):
-            return c.path
-    return None
 
 
 def outcome(
@@ -595,9 +589,11 @@ def outcome(
         return OutcomeFacts("unknown")
     seen: RecordSeen = "none" if not states else states[0].value
     if seen in ("none", "part", "resolved"):
-        changed = _first_changed(fs, changes)
-        return OutcomeFacts(seen, changed is None, changed)
+        # the in-save re-hash's rule (§11): an unreadable file is neither unchanged nor changed (S0165, G1 L2-F1)
+        unchanged, changed = _rehash(fs, changes)
+        return OutcomeFacts(seen, unchanged, changed)
     if seen in ("open", "kept"):
-        # a file the save was creating that now stands there: the undo will ask about it (§6.4; spec §11's Reopen)
-        return OutcomeFacts(seen, path=_first_changed(fs, tuple(c for c in changes if c.pre is None)))
+        # a file the save was creating that now stands there, read and found present: the undo will ask about it (§6.4;
+        # spec §11's Reopen); one that cannot be read is not named (S0165, G1 L2-F1)
+        return OutcomeFacts(seen, path=_rehash(fs, tuple(c for c in changes if c.pre is None))[1])
     return OutcomeFacts(seen)

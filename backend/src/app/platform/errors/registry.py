@@ -313,10 +313,11 @@ def specs() -> tuple[ErrorSpec, ...]:
             ErrorCode.CHANGE_OUTCOME_UNKNOWN,
             ErrorClass.UNAVAILABLE,
             retryable=False,  # the change may have landed: a retry could make it twice
-            message="The ledger engine stopped while it was saving your change, so Finzytrack does not know yet "
-            "whether it was saved.",
+            # one text for a save, a create and a copy (S0165, G1 L2-F9): no word that names only one of them
+            message="The ledger engine stopped before it finished, so Finzytrack does not know yet whether it was "
+            "done.",
             data_safe=False,
-            next_step="Do not make the change again until you have checked whether it is in your ledger.",
+            next_step="Check your files before you try again: trying again could do it twice.",
             details=None,  # only when no engine could read the outcome from disk (§6.6; S0063)
         ),
         ErrorSpec(

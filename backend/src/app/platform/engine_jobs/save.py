@@ -40,7 +40,15 @@ from typing import Final, cast
 
 from app.domain.errors import DomainError
 from app.platform.clock import Clock
-from app.platform.engine import EngineEvent, EngineFailure, EngineRefusal, GateReached, OutcomeFacts, SaveAnswer
+from app.platform.engine import (
+    Committed,
+    EngineEvent,
+    EngineFailure,
+    EngineRefusal,
+    GateReached,
+    OutcomeFacts,
+    SaveAnswer,
+)
 from app.platform.engine_jobs.queue import JobSpec
 from app.platform.engine_jobs.rebuild import QueueRebuild, RebuildTarget, rebuild_submitter
 from app.platform.engine_jobs.scheduler import EngineJobs, Failed, JobContext, JobTicket, Work, WorkResult
@@ -283,10 +291,13 @@ class _Run:
         self._queue_rebuild = queue_rebuild
         self._job = new_job_name()  # this save's name: the save and its outcome read use it (§6.5, §6.6)
         self.gated = False
+        self.committed = False
 
     def _seen(self, event: EngineEvent) -> None:
         if isinstance(event, GateReached):
             self.gated = True
+        elif isinstance(event, Committed):
+            self.committed = True
 
     def run(self) -> WorkResult:
         out = self._ctx.call("save", params_of(self._r, self._job), on_event=self._seen)
@@ -303,6 +314,10 @@ class _Run:
         answer = decode_save(out)
         if isinstance(answer, Violation):
             return self._from_disk()  # a final reply we cannot read: what happened is on disk
+        if (answer.outcome == "saved") != self.committed:
+            # the engine sends `committed` before every `saved` and never another outcome after it (§6.1 step 9): a
+            # reply that disagrees with it is not believed; the disk decides (S0165, G1 L2-F6)
+            return self._from_disk()
         if answer.outcome == "refused" and answer.reason == "mirror_stale":
             self._rebuild()  # BL-0255: the mirror describes no disk; nothing else would rebuild it until a reopen
         return self._answered(answer_of(answer))

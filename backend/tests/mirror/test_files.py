@@ -99,7 +99,21 @@ def test_a_pinned_generation_that_is_gone_is_cannot_open(tmp_path: Path) -> None
     assert out.reason == "cannot_open"
 
 
-@pytest.mark.parametrize("damage", ["no_folder", "no_link", "not_a_generation", "absolute", "a_file", "link_at_mirror"])
+@pytest.mark.parametrize(
+    "damage",
+    [
+        "no_folder",
+        "no_link",
+        "not_a_generation",
+        "absolute",
+        "a_file",
+        "link_at_mirror",
+        # G1 plant P2-08 (S0165): a name that only starts like a generation is none (the whole name is matched)
+        "a_journal",
+        "a_temp",
+        "out_through_a_generation",
+    ],
+)
 def test_no_published_mirror_is_not_published(tmp_path: Path, damage: str) -> None:
     folder = published(tmp_path)
     if damage == "no_folder":
@@ -110,6 +124,12 @@ def test_no_published_mirror_is_not_published(tmp_path: Path, damage: str) -> No
         swap(folder, "../../other.db")
     elif damage == "absolute":
         swap(folder, str(folder / GEN1))
+    elif damage == "a_journal":
+        swap(folder, f"{GEN1}-journal")
+    elif damage == "a_temp":
+        swap(folder, f"{GEN1}.tmp")
+    elif damage == "out_through_a_generation":
+        swap(folder, f"{GEN1}/../../other.db")  # outside the mirror folder
     elif damage == "a_file":
         (folder / "current.db").unlink()
         make_mirror(folder / "current.db")

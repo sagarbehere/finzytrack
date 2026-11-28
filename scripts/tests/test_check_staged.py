@@ -51,6 +51,16 @@ class RefusesBypassesFoundByReview(unittest.TestCase):
         for name in ("notes.txt", "export", "data.json"):
             self.assertTrue(cs.check([name], blobs({name: rows})), name)
 
+    def test_S0165_five_dated_lines_are_a_statement_and_four_are_not(self) -> None:
+        """G1 plant T-05 (S0165): the sniff's threshold is five dated lines with amounts, five included."""
+        def rows(n: int) -> bytes:
+            return b"".join(b"2026-01-%02d,Coffee shop,-4.50,1234.56\n" % d for d in range(1, n + 1))
+
+        self.assertTrue(cs.looks_like_statement(rows(5)))
+        self.assertTrue(cs.check(["notes.txt"], blobs({"notes.txt": rows(5)})))
+        self.assertFalse(cs.looks_like_statement(rows(4)))
+        self.assertEqual(cs.check(["notes.txt"], blobs({"notes.txt": rows(4)})), [])
+
     def test_ofx_in_xml(self) -> None:
         self.assertTrue(cs.check(["bank.xml"], blobs({"bank.xml": b"<?xml?><OFX><BANKTRANLIST>"})))
 

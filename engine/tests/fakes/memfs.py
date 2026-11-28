@@ -25,6 +25,13 @@ rollback's, S0061): `Crash` (a `BaseException`, as a process death that no `exce
 `after=True` after the effect took place (an operation that happened but answered an error). `on_effect(i, label)`
 runs before each effect, for an outside program to act between two effects (`outside_*`: durable, as an editor that
 syncs its save; they are not effects); `on_read(label)` before each `sha256` read (S0084).
+**Limit (a failed sync):** an injected error at a sync leaves the data unsynced, and a later sync of the same file or
+folder makes it durable, as on macOS. Linux reports a writeback error to `fsync` only once and a later `fsync` can then
+succeed with the data lost (engine-jobs §6.2's Linux limit, §13's assumptions): the fake does not model that (S0165,
+G1 L3-F2).
+**Limit (name folding):** every case-insensitive folder folds names as APFS does (NFD, then case folding), so the fake
+never holds two names that fold equal there and models neither ext4's exact names, NTFS's upper-casing nor a folder
+that reports a wide rule but compares exactly; Windows mode uses the same keys (G1 L3-F1; BL-0322, M3).
 
 **Resolution, as the macOS adapter does it:** links are followed, a dangling link counts as absent (its own name is the
 first missing component), and `Resolved.identity` is `(dev, inode)`, `dev` that of the entry's drive. Files may have

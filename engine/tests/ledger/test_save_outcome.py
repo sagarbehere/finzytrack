@@ -14,7 +14,7 @@ from dataclasses import replace
 
 import pytest
 
-from ledger_engine.fs.port import Resolved
+from ledger_engine.fs.port import AclEntry, Resolved
 from ledger_engine.ledger import save as sv
 from ledger_engine.ledger.core.ledger_set import Absent, Content, Fingerprint, Unreadable
 from ledger_engine.ledger.writer import Change, NotSaved, Reason, sha256
@@ -114,6 +114,34 @@ def test_an_open_record_names_a_file_the_save_was_creating_that_stands_there() -
     assert facts(fs) == sv.OutcomeFacts("open")
     fs.outside_write("/L/new.bean", b"x")
     assert facts(fs) == sv.OutcomeFacts("open", path="/L/new.bean")
+
+
+NO_READ = AclEntry(deny=True, perms=frozenset({"read"}))
+"""An ACL that denies us reading the file (EACCES at its read)."""
+
+
+@pytest.mark.parametrize("state", ["part", "resolved", None])
+def test_S0165_L2F1_an_unreadable_target_is_not_checked_never_changed_by_another_program(state: str | None) -> None:
+    """G1 L2-F1: after an engine death the outcome uses the in-save re-hash's rule (§11): a file it cannot read is
+    neither unchanged nor changed, so the answer is "not checked" (`unchanged` False, no path), never "main.bean was
+    changed by another program"."""
+    fs = world()
+    if state is not None:
+        fs.outside_write(f"{JD}/s1-j7.{state}", b"{}")
+    seen = "none" if state is None else state
+    fs.outside_acl("/L/main.bean", NO_READ)
+    assert facts(fs) == sv.OutcomeFacts(seen, unchanged=False)  # pyright: ignore[reportArgumentType]
+    fs.outside_write("/L/new.bean", b"x")  # another file read and found changed is still named
+    assert facts(fs) == sv.OutcomeFacts(seen, unchanged=False, path="/L/new.bean")  # pyright: ignore[reportArgumentType]
+
+
+@pytest.mark.parametrize("state", ["open", "kept"])
+def test_S0165_L2F1_an_open_record_names_only_a_created_file_read_and_found_present(state: str) -> None:
+    fs = world()
+    fs.outside_write(f"{JD}/s1-j7.{state}", b"{}")
+    fs.outside_write("/L/new.bean", b"x")
+    fs.outside_acl("/L/new.bean", NO_READ)
+    assert facts(fs) == sv.OutcomeFacts(state)  # pyright: ignore[reportArgumentType]
 
 
 # -- round 1: the save's own folders are durable before its commit point (verifier r1 F1) --------------------------
