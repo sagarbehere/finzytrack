@@ -6,7 +6,8 @@ Each case runs in a fresh data root (a copy of --ledger-dir plus a seeded legacy
 process, so no state leaks between cases. The source folder is only read (INV-24). Each case is compared twice:
 the parsed entries per file, and Beancount's booked result against the intended ledger booked by Beancount
 (`classify.booked`, BL-0275; one more booking of the source's parse per case, and one of the legacy's result with
-its tagged classes' causes undone when the two differ: ADR-0014 amendment of 2026-11-16). Reports carry entry text
+its tagged classes' causes undone when the two differ or the write brings new Beancount errors: ADR-0014 amendments
+of 2026-11-16 and 2026-11-28). Reports carry entry text
 only for repo corpora and generated ledgers; for anything else (a copy of a real ledger, T-local) they carry counts,
 classes and case IDs only (the booked divergences as a count per check, and the causes undone as a count per class:
 no amount, account or lot). A

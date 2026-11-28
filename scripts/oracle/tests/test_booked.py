@@ -497,6 +497,111 @@ class UndoTest(unittest.TestCase):
         self.assertEqual(summary["undone"], {"I2": 2})
 
 
+CAFE_HEAD = 'include "y/*.beancount"\n' + OPENS + "2020-01-01 open Expenses:Coffee USD\n"
+TYPO = '\n2020-01-07 * "Shop" "typo"\n  Expenses:Typo  1.00 USD\n  Assets:Cash  -1.00 USD\n'
+
+
+def to_cafe(before: sd.LedgerSet) -> model.Expected:
+    return model.rename_account(before, "Expenses:Coffee", "Expenses:Cafe")
+
+
+def cafe(text: str) -> str:
+    return text.replace("Expenses:Coffee", "Expenses:Cafe")
+
+
+def error_classes(c: Case) -> list[str]:
+    return sorted(d.cls for d in c.report.divergences if "new Beancount error" in d.note)
+
+
+class ErrorUndoTest(unittest.TestCase):
+    """BL-0047 (S0164; ADR-0014 amendment of 2026-11-28): a new Beancount error is explained only when undoing the
+    tagged causes and booking again leaves exactly the reference's errors, the undo itself having removed it. Each
+    must-pass shape is followed by its must-not-pass twin, so every test fails on the rule it pins."""
+
+    GLOB = {"main.beancount": CAFE_HEAD + T1, "y/2020.beancount": COFFEE}
+    # The legacy writes the renamed copies into the root and leaves the glob file as it was.
+    LEGACY = {"main.beancount": cafe(CAFE_HEAD + T1 + "\n" + COFFEE), "y/2020.beancount": COFFEE}
+
+    def test_a_rename_leaves_the_old_name_in_the_glob_file_the_legacy_never_rewrites(self) -> None:
+        # Must-pass, nasty ren-coffee's shape: the glob file's entries name an account no longer opened ("Invalid
+        # reference to unknown account"). Undoing I2 (each copy back in its file, the old entry taken out) leaves
+        # no error, exactly as the reference.
+        c = Case(self.GLOB, self.LEGACY, to_cafe)
+        self.assertEqual(error_classes(c), ["I2", "I2"], c)
+        self.assertTrue(all(d.note.endswith(", gone after undoing I2")
+                            for d in c.report.divergences if "new Beancount error" in d.note), c)
+        self.assertEqual(c.report.verdict, "EXPECTED_DIVERGENCE", c)
+        self.assertEqual(c.report.undone["I2"], 4, c)
+        # Must-not-pass: the same, and the legacy also writes an entry on an account that is not the old name. The
+        # undo leaves that error, so the errors are not the reference's, and no new error is explained.
+        c = Case(self.GLOB, {**self.LEGACY, "main.beancount": self.LEGACY["main.beancount"] + TYPO}, to_cafe)
+        self.assertEqual(error_classes(c), ["UNEXPLAINED"] * 3, c)
+        self.assertEqual(c.report.verdict, "UNEXPLAINED", c)
+
+    def test_the_error_is_tagged_with_the_smallest_set_of_classes_whose_undo_removes_it(self) -> None:
+        # Must-pass: the same rename, and the legacy also bakes an untargeted entry's elided amount (I10). The errors
+        # are I2's alone: undoing I2 by itself removes them, as the erasers name the smallest set for an entry.
+        snack = '\n2020-01-03 * "Shop" "snack"\n  Expenses:Food  2.00 USD\n  Assets:Cash\n'
+        before = {**self.GLOB, "main.beancount": CAFE_HEAD + T1 + snack}
+        baked = snack.replace("Assets:Cash\n", "Assets:Cash  -2.00 USD\n")
+        after = {**self.LEGACY, "main.beancount": cafe(CAFE_HEAD + T1 + baked + "\n" + COFFEE)}
+        c = Case(before, after, to_cafe)
+        self.assertIn("I10", [d.cls for d in c.report.divergences if "new Beancount error" not in d.note], c)
+        self.assertEqual((error_classes(c), c.report.verdict), (["I2", "I2"], "EXPECTED_DIVERGENCE"), c)
+
+    def test_the_old_name_left_in_a_file_below_a_glob_match_but_not_in_one_the_root_includes_by_name(self) -> None:
+        # Must-pass, the `includes` corpus's shape: the coffee lives in a file a glob-matched file includes.
+        before = {"main.beancount": CAFE_HEAD + T1, "y/2020.beancount": 'include "x.bean"\n', "y/x.bean": COFFEE}
+        c = Case(before, {**before, "main.beancount": cafe(CAFE_HEAD + T1 + "\n" + COFFEE)}, to_cafe)
+        self.assertEqual((error_classes(c), c.report.verdict), (["I2", "I2"], "EXPECTED_DIVERGENCE"), c)
+        # Must-not-pass: the root includes the coffee's file by name, so the legacy knows it and rewrites it; the old
+        # name left there is no I2 cause, though an I2 copy of the glob file's lunch is undone in the same case.
+        lunch = '\n2020-01-04 * "Shop" "lunch two"\n  Expenses:Food  8.00 USD\n  Assets:Cash  -8.00 USD\n'
+        head = CAFE_HEAD.replace('include "y/*.beancount"\n', 'include "y/*.beancount"\ninclude "c.bean"\n')
+        before = {"main.beancount": head + T1, "y/2020.beancount": lunch, "c.bean": COFFEE}
+        c = Case(before, {**before, "main.beancount": cafe(head + T1) + lunch}, to_cafe)
+        self.assertIn("I2", [d.cls for d in c.report.divergences if "new Beancount error" not in d.note], c)
+        self.assertEqual(error_classes(c), ["UNEXPLAINED", "UNEXPLAINED"], c)
+        self.assertEqual(c.report.verdict, "UNEXPLAINED", c)
+
+    def test_an_error_the_undo_did_not_remove_is_not_explained_even_when_the_reference_has_it(self) -> None:
+        # Must-pass: the glob coffee copied into the root (I2) and the old name left behind, with an edit elsewhere.
+        c = Case(self.GLOB, self.LEGACY, to_cafe)
+        self.assertEqual(c.report.verdict, "EXPECTED_DIVERGENCE", c)
+        # Must-not-pass: an edit that itself posts to an account the ledger never opens, so the reference has the
+        # error too; the legacy writes the edit and copies the glob file's coffee into the root (I2). Undoing the
+        # copies leaves exactly the reference's errors, but the undo did not remove the new one: UNEXPLAINED.
+        bad = T1_EDITED.replace("Expenses:Food", "Expenses:Never")
+        after = {"main.beancount": CAFE_HEAD + bad + "\n" + COFFEE, "y/2020.beancount": COFFEE}
+        c = Case(self.GLOB, after, lambda b: model.update_transaction(b, "t-1", bad.strip("\n") + "\n"))
+        self.assertEqual(sorted(d.cls for d in c.report.divergences if "new Beancount error" not in d.note),
+                         ["I2", "I2"], c)
+        self.assertEqual(error_classes(c), ["UNEXPLAINED"], c)
+        self.assertEqual(c.report.verdict, "UNEXPLAINED", c)
+
+    def test_the_errors_left_after_the_undo_must_be_exactly_the_references(self) -> None:
+        # Must-pass: the legacy copies the glob file's `open` into the root (I2), a "duplicate open" error; taking
+        # the copy out leaves no error, as the reference.
+        opened = "2020-01-01 open Expenses:Coffee USD\n" + COFFEE
+        head = 'include "y/*.beancount"\n' + OPENS
+        before = {"main.beancount": head + T1, "y/2020.beancount": opened}
+        c = Case(before, {**before, "main.beancount": head + T1_EDITED + opened.split("\n")[0] + "\n"}, update_t1)
+        self.assertEqual((error_classes(c), c.report.verdict), (["I2"], "EXPECTED_DIVERGENCE"), c)
+        # Must-not-pass: an error the reference does not have is left (the source's unbalanced entry, which the
+        # intended edit fixes and the legacy leaves as it was), though the undo took the new error away.
+        unbalanced = T1.replace("-10.50 USD", "-10.40 USD")
+        before = {"main.beancount": head + unbalanced, "y/2020.beancount": opened}
+        c = Case(before, {**before, "main.beancount": head + unbalanced + opened.split("\n")[0] + "\n"}, update_t1)
+        self.assertEqual(error_classes(c), ["UNEXPLAINED"], c)
+        # Must-not-pass: an error the reference has is missing (the intended edit posts to an account never opened;
+        # the legacy leaves the entry as it was), though the undo took the new error away.
+        bad = T1_EDITED.replace("Expenses:Food", "Expenses:Never")
+        before = {"main.beancount": head + T1, "y/2020.beancount": opened}
+        c = Case(before, {**before, "main.beancount": head + T1 + opened.split("\n")[0] + "\n"},
+                 lambda b: model.update_transaction(b, "t-1", bad.strip("\n") + "\n"))
+        self.assertEqual(error_classes(c), ["UNEXPLAINED"], c)
+
+
 class FilledNumberTest(unittest.TestCase):
     """S0124 verifier F1: an intended entry's elided posting, filled by the legacy, is I10 only when the number is
     exactly what Beancount books for the intended entry (the reference); a number within Beancount's tolerance

@@ -2,7 +2,7 @@
 
 This record decides when a feature that writes to the books is cleared for real use.
 
-- **Status:** Accepted. Amended on 2026-11-16 (S0123, S0124): how a class explains a difference in the booked result; on 2026-11-26 (S0160): I2 covers every file a glob match reaches; class CUSTOM-ACCT
+- **Status:** Accepted. Amended on 2026-11-16 (S0123, S0124): how a class explains a difference in the booked result; on 2026-11-26 (S0160): I2 covers every file a glob match reaches; class CUSTOM-ACCT; on 2026-11-28 (S0164): a new Beancount error is explained only by undoing its tagged cause
 - **Date:** 2026-10-24
 - **Deciders:** owner
 - **Area:** write path, process
@@ -92,3 +92,13 @@ Owner, 2026-11-26, on BL-0274 (offered: "Should a copy of an entry reached throu
 ## Note (2026-11-27): I10 matches a booked posting by account (S0161, M1b finance red team F1)
 
 A narrowing of I10, decided by the agent (a tool fix, no new class). I10 took the booked posting at the same index as the entry's, but Beancount's booking regroups an entry's postings by currency, so a bake that gave each of two reductions the other's lot (NONE booking, no error) was accepted as I10, and a correct bake of a regrouped sale was a false alarm. `classify.erase_i10` now takes the booked posting at the same account's same place (`_booked_by_account`) and accepts a lot only when that posting's booked units are the written ones. **Limit:** booking regroups inside one account too, so a correct bake of two reductions in one account with different currencies, written in the other order, is UNEXPLAINED (a false alarm, never a false acceptance). Tests: `scripts/oracle/tests/test_booked.py`, `test_a_bake_that_swaps_two_lots_between_postings_is_not_i10` and `…_within_one_account_is_not_i10`.
+
+## Amendment (2026-11-28): a new Beancount error is explained only by undoing its tagged cause (S0164, BL-0047)
+
+Owner, 2026-11-28, in session, on G1 item 2 (the six oracle cases on the repo corpora still UNEXPLAINED): "Build BL-0047 now (Recommended)". The option: pull BL-0047 to G1 as a tooling slice; by this record's rule an error is explained only when undoing the tagged causes and booking again leaves exactly the reference's errors; the five rename cases then class as I2 mechanically; `documents` ren-004 stays explained by hand.
+
+- **Context:** a rename on a ledger with a glob include: the old app writes the renamed copies of the glob-reached entries into the root and never rewrites the glob-reached file, so that file still names the old account, which is no longer opened. Beancount reports "Invalid reference to unknown account" for each such entry. The parsed and booked comparisons already class and undo these copies (I2); only the new errors were UNEXPLAINED, by the rule "a new Beancount error is never expected" (nasty `ren-coffee`, `ren-rent`; write corpus `includes` ren-000, ren-001, ren-003).
+- **Decided:** this replaces the oracle's rule "a new Beancount error after the write is never expected" (`classify.py`, restated in the 2026-11-26 amendment's "Unchanged" line). An error the old app's result has and the source did not is explained only when (1) the case's tagged causes are undone on the old app's result, as the 2026-11-16 amendment undoes them, and the result is booked again with Beancount's own steps, (2) the errors then are exactly the errors of the intended ledger booked by Beancount, and (3) the undo itself removed every new error. Condition (3) keeps out an error the intended change makes itself: the reference has it too, and no class's undo removes it. Such an error is tagged with the smallest set of the case's classes whose undo alone meets the same test (for the rename cases, I2), as an entry is tagged with the smallest set of erasers. Any other new error is UNEXPLAINED and blocks promotion, as before.
+- **Unchanged:** the classes and their undo; an error is never explained by a class being present.
+- **Limits (tool review, IMP-0079):** the conditions compare Beancount's error keys (type, entry, message without file and line), so two errors that differ only by their place count as one shape; the oracle's own booking (`semantic_diff.book`) stands in for Beancount's loader, held to it by `test_booked.FidelityTest`. A case with new errors and several classes books once more for each smaller set of classes it tries (at most 2^k − 2 for k classes).
+- Built in S0164 (`scripts/oracle/classify.py`, `errors_after_undo`, `rebook`; tests `scripts/oracle/tests/test_booked.py`, `ErrorUndoTest`).

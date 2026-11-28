@@ -12,8 +12,8 @@ An entry the legacy wrote differently is paired with the entry it should have be
 of classes whose erasers make the two equal ("I10+M28"). Each pairing allows only the erasers that can apply to it:
 an untargeted entry may differ only by what the load made of it, booking's fills (I10) or a plugin's change (I3), each
 checked against Beancount's own load; M28 applies only to entries the mutator creates. A new Beancount error after
-the write is never expected. Anything else is UNEXPLAINED (an unexpected change) or NOT_APPLIED (an intended change
-that did not happen); either blocks promotion.
+the write is explained only by undoing its tagged causes (below; BL-0047). Anything else is UNEXPLAINED (an unexpected
+change) or NOT_APPLIED (an intended change that did not happen); either blocks promotion.
 
 The parsed comparison cannot see a change of money that leaves every entry as written: Beancount sorts entries by
 date, kind and line number, across files, so a reprint that moves lines can make a reduction take another lot and
@@ -28,6 +28,14 @@ legacy's parsed result (`Undo`: I2's copies taken out, or moved back to their pl
 out; for every other class, the written entry with its eraser's change applied), that is booked again with
 Beancount's own steps, and only an exact match with the intended booked result explains the difference. Whatever is
 left is UNEXPLAINED. No class hides a booked difference by being present.
+
+New Beancount errors follow the same rule (BL-0047, S0164; ADR-0014 amendment of 2026-11-28): the errors of the
+legacy's result that the source did not have are explained only when, with the tagged causes undone and the result
+booked again, the errors are exactly the reference's (the intended ledger's) and the undo itself took every new one
+away (`errors_after_undo`). Each is then tagged with the smallest set of the classes undone that does so. The shape
+it serves: a rename on a glob-include ledger leaves the old account name in the glob-reached file the legacy never
+rewrites ("Invalid reference to unknown account"), and I2's undo puts the renamed entry back there. Otherwise every
+new error is UNEXPLAINED.
 """
 
 from __future__ import annotations
@@ -47,7 +55,8 @@ from beancount.core.position import Cost, CostSpec
 from beancount.parser import printer
 
 from model import Expected, intended_entries, placed
-from semantic_diff import LedgerSet, LoadFacts, Parsed, at_kind, book, booked_of, canonical_key, diff, location, strip_location
+from semantic_diff import (LedgerSet, LoadFacts, Parsed, at_kind, book, booked_of, canonical_key, diff, error_key, location,
+                           strip_location)
 
 BLOCKING = frozenset({"UNEXPLAINED", "NOT_APPLIED"})
 # ADR-0026: what the legacy app writes that v0.4 does not, and what v0.4 writes instead.
@@ -322,10 +331,54 @@ def _tag(*parts: str | None) -> str:
     return "+".join(sorted({c for p in parts if p for c in p.split("+")}))
 
 
-def new_errors(before: LoadFacts, after: LoadFacts, root: str) -> list[Divergence]:
-    """Beancount errors after the write that were not there before: never an expected divergence."""
-    return [Divergence("UNEXPLAINED", root, None, None, f"new Beancount error: {k.split('|', 1)[0]}")
-            for k in (after.errors - before.errors).elements()]
+@dataclass(frozen=True)
+class Rebooked:
+    """The legacy's parsed result with every tagged cause undone (`apply_undo`), booked again (`semantic_diff.book`):
+    its entries, the key of each parsed one by kind and place, and its errors keyed (`semantic_diff.error_key`)."""
+    entries: list[Any]
+    keys: dict[tuple[str, str, int], str]
+    errors: Counter[str]
+
+
+def rebook(after: LedgerSet, after_facts: LoadFacts, undo: list[Undo]) -> Rebooked:
+    if after_facts.parsed is None:
+        raise ValueError("undoing a class needs the legacy result's parse (load_facts(keep_parsed=True))")
+    entries, keys = apply_undo(after_facts.parsed, after, after_facts.keys_at, undo)
+    booked_entries, errors = book(entries, after_facts.parsed)
+    return Rebooked(booked_entries, keys, Counter(error_key(e, after.base) for e in errors))
+
+
+def errors_after_undo(before_facts: LoadFacts, after_facts: LoadFacts, ref_errors: Counter[str], undo: list[Undo],
+                      rebooked: Callable[[], Rebooked], rebook_only: Callable[[list[Undo]], Rebooked],
+                      root: str) -> tuple[list[Divergence], bool]:
+    """Beancount errors after the write that the source did not have (BL-0047; ADR-0014 amendment of 2026-11-28).
+    They are explained only when the tagged causes are undone (*undo*, `rebooked`) and the errors left are exactly
+    *ref_errors*, the reference's (the intended ledger booked by Beancount), and the undo itself took every new error
+    away: an error the reference has too, which the undo did not remove, is no class's cause (the intended change
+    made it). Otherwise each is UNEXPLAINED. An explained error is tagged with the smallest set of the case's classes
+    whose undo alone (`rebook_only`: the causes whose classes are all in the set) meets the same test, as an entry is
+    tagged with the smallest set of erasers; the whole set when no smaller one does. The second result tells whether
+    the undo was used."""
+    new = after_facts.errors - before_facts.errors
+    if not new:
+        return [], False
+
+    def removes(r: Rebooked) -> bool:
+        return r.errors == ref_errors and not (new - (after_facts.errors - r.errors))
+
+    tag = None
+    if undo and removes(rebooked()):
+        classes = sorted({c for u in undo for c in u.cls.split("+")})
+        tag = "+".join(classes)
+        for size in range(1, len(classes)):
+            found = next((s for s in itertools.combinations(classes, size)
+                          if removes(rebook_only([u for u in undo if set(u.cls.split("+")) <= set(s)]))), None)
+            if found is not None:
+                tag = "+".join(found)
+                break
+    return [Divergence(tag or "UNEXPLAINED", root, None, None,
+                       f"new Beancount error: {k.split('|', 1)[0]}" + (f", gone after undoing {tag}" if tag else ""))
+            for k in new.elements()], bool(undo)
 
 
 def compare(before: LedgerSet, after: LedgerSet, expected: Expected, before_facts: LoadFacts,
@@ -356,7 +409,7 @@ def compare(before: LedgerSet, after: LedgerSet, expected: Expected, before_fact
                 pass
         raise KeyError(key)
 
-    reference, ref_keys = _reference(before, expected, before_facts)
+    reference, ref_keys, ref_errors = _reference(before, expected, before_facts)
     ref_booked: dict[str, Any] = {}  # an intended entry's key → its booked form in the reference
     for e in reference:
         if at_kind(e) in ref_keys:
@@ -457,9 +510,19 @@ def compare(before: LedgerSet, after: LedgerSet, expected: Expected, before_fact
         out.append(Divergence("UNEXPLAINED", f, None, None, "options, plugins or includes changed"))
     for f, n in actual.comments_lost.items():
         out.append(Divergence("I10", f, None, None, f"{n} comment line(s) lost"))
-    out += new_errors(before_facts, after_facts, before.root)
-    left, undone_classes = booked(before, after, reference, ref_keys, after_facts, pairs, undo)
-    return Report(out + left, undone_classes)
+    cache: list[Rebooked] = []
+
+    def rebooked() -> Rebooked:  # one undo and booking per case, shared by the errors and the booked comparison
+        if not cache:
+            cache.append(rebook(after, after_facts, undo))
+        return cache[0]
+
+    errors, undid = errors_after_undo(before_facts, after_facts, ref_errors, undo, rebooked,
+                                      lambda some: rebook(after, after_facts, some), before.root)
+    left, undone_classes = booked(before, after, reference, ref_keys, after_facts, pairs, undo, rebooked)
+    if undid and not undone_classes:
+        undone_classes = Counter(c for u in undo for c in u.cls.split("+"))
+    return Report(out + errors + left, undone_classes)
 
 
 # --- the booked comparison (BL-0275) ------------------------------------------------------------------------------
@@ -601,18 +664,20 @@ def apply_undo(parsed: Parsed, after: LedgerSet, keys_at: dict[tuple[str, str, i
     return kept, {at_kind(e): keys[at_kind(e)] for e in kept if at_kind(e) in keys}
 
 
-def _reference(before: LedgerSet, expected: Expected, before_facts: LoadFacts) -> tuple[list[Any], dict[tuple[str, str, int], str]]:
-    """The intended ledger booked by Beancount (`model.intended_entries`, then `semantic_diff.book`), and the key of
-    each of its parsed entries by kind and place."""
+def _reference(before: LedgerSet, expected: Expected,
+               before_facts: LoadFacts) -> tuple[list[Any], dict[tuple[str, str, int], str], Counter[str]]:
+    """The intended ledger booked by Beancount (`model.intended_entries`, then `semantic_diff.book`), the key of
+    each of its parsed entries by kind and place, and its errors keyed (`semantic_diff.error_key`)."""
     if before_facts.parsed is None:
         raise ValueError("the booked comparison needs the source's parse (load_facts(keep_parsed=True))")
     intended = intended_entries(before_facts.parsed, before, expected)
-    reference, _ = book(intended, before_facts.parsed)
-    return reference, {at_kind(e): canonical_key(e) for e in intended}
+    reference, errors = book(intended, before_facts.parsed)
+    return reference, {at_kind(e): canonical_key(e) for e in intended}, Counter(error_key(e, before.base) for e in errors)
 
 
 def booked(before: LedgerSet, after: LedgerSet, reference: list[Any], ref_keys: dict[tuple[str, str, int], str],
-           after_facts: LoadFacts, pairs: list[tuple[str, str]], undo: list[Undo]) -> tuple[list[Divergence], Counter[str]]:
+           after_facts: LoadFacts, pairs: list[tuple[str, str]], undo: list[Undo],
+           rebooked: Callable[[], Rebooked] | None = None) -> tuple[list[Divergence], Counter[str]]:
     """Beancount's booked result of the intended ledger against the legacy's (INV-02: its booking, not ours).
 
     The reference is the intended ledger booked by Beancount (`model.intended_entries`, then `semantic_diff.book`,
@@ -627,7 +692,8 @@ def booked(before: LedgerSet, after: LedgerSet, reference: list[Any], ref_keys: 
     account and currency, `check` "balance").
 
     When the two differ and the parsed comparison tagged divergences with classes (*undo*), each class's own cause
-    is undone on the legacy's parsed result (`apply_undo`), booked again (`semantic_diff.book`) and compared again:
+    is undone on the legacy's parsed result (`apply_undo`), booked again (`semantic_diff.book`; *rebooked*, which
+    `compare` shares with `errors_after_undo`, so a case is undone and booked again at most once) and compared again:
     - I2: a copy of a glob-included entry left in its file is taken out; an entry moved out of it is put back at its
       line there; an edit written into the root goes back to the place of the entry it replaces in the glob file,
       and that entry, left in place, is taken out;
@@ -645,13 +711,10 @@ def booked(before: LedgerSet, after: LedgerSet, reference: list[Any], ref_keys: 
     left = _differences(reference, ref_keys, after_facts.booked, after_facts.keys_at, pairs, before.root)
     if not left or not undo:
         return left, Counter()
-    if after_facts.parsed is None:
-        raise ValueError("undoing a class needs the legacy result's parse (load_facts(keep_parsed=True))")
-    entries, keys = apply_undo(after_facts.parsed, after, after_facts.keys_at, undo)
-    rebooked, _ = book(entries, after_facts.parsed)
+    r = (rebooked or (lambda: rebook(after, after_facts, undo)))()
     classes = Counter(c for u in undo for c in u.cls.split("+"))
     prefix = f"after undoing {', '.join(sorted(classes))}: "
-    return _differences(reference, ref_keys, rebooked, keys, pairs, before.root, prefix), classes
+    return _differences(reference, ref_keys, r.entries, r.keys, pairs, before.root, prefix), classes
 
 
 def balances(entries: list[Any], before: LedgerSet) -> bool:
